@@ -37,12 +37,17 @@ export async function GET(req: NextRequest) {
   if (market === 'domestic') {
     try {
       const { getKisToken } = await import('@/lib/exchanges/kis-auth');
-      const token = await getKisToken();
+      const { getCredential } = await import('@/lib/credentials');
+      const [token, appkey, appsecret] = await Promise.all([
+        getKisToken(),
+        getCredential('KIS_APP_KEY'),
+        getCredential('KIS_APP_SECRET'),
+      ]);
       const headers: Record<string, string> = {
         'Content-Type': 'application/json; charset=utf-8',
         Authorization:  `Bearer ${token}`,
-        appkey:         process.env.KIS_APP_KEY    ?? '',
-        appsecret:      process.env.KIS_APP_SECRET ?? '',
+        appkey,
+        appsecret,
         tr_id:          'CTPF1604R',
         custtype:       'P',
       };

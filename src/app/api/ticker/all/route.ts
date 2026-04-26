@@ -2,6 +2,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { getKisTickers } from '@/lib/exchanges/kis';
 import { getKisToken } from '@/lib/exchanges/kis-auth';
+import { getCredential } from '@/lib/credentials';
 import { getStaticOverseasUniverse } from '@/lib/strategy/universe-overseas-static';
 
 /** KIS search-info로 국내 종목명 단건 조회 (실패 시 null) */
@@ -11,11 +12,15 @@ async function fetchDomesticName(symbol: string, token: string): Promise<string 
     const base = isMock
       ? 'https://openapivts.koreainvestment.com:29443'
       : 'https://openapi.koreainvestment.com:9443';
+    const [appkey, appsecret] = await Promise.all([
+      getCredential('KIS_APP_KEY'),
+      getCredential('KIS_APP_SECRET'),
+    ]);
     const headers: Record<string, string> = {
       'Content-Type': 'application/json; charset=utf-8',
       Authorization:  `Bearer ${token}`,
-      appkey:         process.env.KIS_APP_KEY    ?? '',
-      appsecret:      process.env.KIS_APP_SECRET ?? '',
+      appkey,
+      appsecret,
       tr_id:          'CTPF1604R',
       custtype:       'P',
     };

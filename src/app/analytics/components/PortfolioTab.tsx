@@ -75,7 +75,8 @@ export function PortfolioTab() {
   }, [data]);
 
   const displayName = (sym: string): string => {
-    if (sym === 'KRW' || sym === 'USD') return sym;
+    if (sym === 'KRW') return '원화(KRW)';
+    if (sym === 'USD') return '달러(USD)';
     const name = meta[sym];
     const short = formatSymbolShort(sym);
     if (name && name !== sym && name !== short) return `${name} (${short})`;

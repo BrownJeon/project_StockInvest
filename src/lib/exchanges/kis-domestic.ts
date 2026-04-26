@@ -3,22 +3,27 @@
  * 기존 kis.ts 본문을 그대로 이동. 호출처는 kis.ts Facade를 거침.
  */
 import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
+import { getCredential } from '@/lib/credentials';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
 
 const isMock = () => String(process.env.KIS_MOCK ?? 'true').toLowerCase() === 'true';
 // 시세·잔고·주문은 환경별 BASE 사용. 단, 시총 랭킹은 실전 도메인만 지원하므로 PROD_BASE 별도.
 const BASE = (): string => kisBaseUrl();
 
-function accountNo()      { return process.env.KIS_ACCOUNT_NO      ?? ''; }
-function accountProduct() { return process.env.KIS_ACCOUNT_PRODUCT ?? '01'; }
+async function accountNo()      { return (await getCredential('KIS_ACCOUNT_NO'))      || ''; }
+async function accountProduct() { return (await getCredential('KIS_ACCOUNT_PRODUCT')) || '01'; }
 
 async function kisHeaders(trId: string, extra?: Record<string, string>): Promise<Record<string, string>> {
-  const token = await getKisToken();
+  const [token, appkey, appsecret] = await Promise.all([
+    getKisToken(),
+    getCredential('KIS_APP_KEY'),
+    getCredential('KIS_APP_SECRET'),
+  ]);
   return {
     'Content-Type': 'application/json; charset=utf-8',
     Authorization:  `Bearer ${token}`,
-    appkey:          process.env.KIS_APP_KEY    ?? '',
-    appsecret:       process.env.KIS_APP_SECRET ?? '',
+    appkey,
+    appsecret,
     tr_id:           trId,
     custtype:        'P',
     ...extra,
@@ -128,11 +133,12 @@ export async function getBalances(): Promise<Balance[]> {
   let attempt = 0;
   let res: Response;
   let body = '';
+  const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
   // 토큰 만료(EGW00123) 시 1회 자동 재발급 + 재시도
   while (true) {
     const headers = await kisHeaders(trId);
     const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-balance`
-      + `?CANO=${accountNo()}&ACNT_PRDT_CD=${accountProduct()}`
+      + `?CANO=${cano}&ACNT_PRDT_CD=${acntPrdt}`
       + `&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01&FUND_STTL_ICLD_YN=N`
       + `&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=`;
     res = await fetch(url, { headers });
@@ -157,12 +163,24 @@ export async function getBalances(): Promise<Balance[]> {
   const balances: Balance[] = [];
   const summary = data.output2?.[0];
   if (summary) {
-    balances.push({ currency: 'KRW', free: Number(summary.dnca_tot_amt ?? 0), locked: 0 });
+    // prvs_rcdl_excc_amt(D+2 가수도정산금액) = 결제 완료 후 확정 예수금 → 진짜 사용 가능 cash
+    // dnca_tot_amt(예수금총금액)은 매수 체결됐지만 결제 전인 금액도 포함 → free에 부적합
+    // 차액(체결 후 결제 대기 중) = locked로 분리
+    const total   = Number(summary.dnca_tot_amt ?? 0);
+    const settled = Number(summary.prvs_rcdl_excc_amt ?? total);
+    const locked  = Math.max(0, total - settled);
+    balances.push({ currency: 'KRW', free: Math.max(0, settled), locked });
   }
-  for (const item of (data.output1 ?? [])) {
+  for (const item of (data.output1 ?? []) as Record<string, string>[]) {
     const qty = Number(item.hldg_qty ?? 0);
     if (qty <= 0) continue;
-    balances.push({ currency: item.pdno as string, free: qty, locked: 0 });
+    const avg = Number(item.pchs_avg_pric ?? 0);
+    balances.push({
+      currency: item.pdno,
+      free: qty,
+      locked: 0,
+      avgPrice: avg > 0 ? avg : undefined,
+    });
   }
   return balances;
 }
@@ -178,10 +196,12 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
   const quantity = req.quantity ?? (price > 0 && req.amountKRW ? Math.floor(req.amountKRW / price) : 0);
   if (quantity <= 0) return { ok: false, error: 'quantity 계산 실패' };
 
-  const headers = await kisHeaders(trId);
+  const [headers, cano, acntPrdt] = await Promise.all([
+    kisHeaders(trId), accountNo(), accountProduct(),
+  ]);
   const body = {
-    CANO:         accountNo(),
-    ACNT_PRDT_CD: accountProduct(),
+    CANO:         cano,
+    ACNT_PRDT_CD: acntPrdt,
     PDNO:         req.symbol,
     ORD_DVSN:     req.type === 'market' ? '01' : '00',
     ORD_QTY:      String(quantity),
@@ -198,10 +218,12 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
 
 export async function cancelOrder(req: CancelRequest): Promise<OrderResult> {
   const trId = isMock() ? 'VTTC0803U' : 'TTTC0803U';
-  const headers = await kisHeaders(trId);
+  const [headers, cano, acntPrdt] = await Promise.all([
+    kisHeaders(trId), accountNo(), accountProduct(),
+  ]);
   const body = {
-    CANO:         accountNo(),
-    ACNT_PRDT_CD: accountProduct(),
+    CANO:         cano,
+    ACNT_PRDT_CD: acntPrdt,
     KRX_FWDG_ORD_ORGNO: '',
     ORGN_ODNO:    req.exchangeOrderId,
     ORD_DVSN:     '00',

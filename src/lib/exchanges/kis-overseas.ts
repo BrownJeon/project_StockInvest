@@ -13,22 +13,27 @@
  * 주문 통화는 USD. 호출자(safety/dry-run)에서 KRW 환산 한도 검증 수행.
  */
 import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
+import { getCredential } from '@/lib/credentials';
 import { parseOverseas, formatOverseas, toOvrsExcgCd, type OverseasExchange } from './kis-symbols';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
 
 const isMock = () => String(process.env.KIS_MOCK ?? 'true').toLowerCase() === 'true';
 const BASE = (): string => kisBaseUrl();
 
-function accountNo()      { return process.env.KIS_ACCOUNT_NO      ?? ''; }
-function accountProduct() { return process.env.KIS_ACCOUNT_PRODUCT ?? '01'; }
+async function accountNo()      { return (await getCredential('KIS_ACCOUNT_NO'))      || ''; }
+async function accountProduct() { return (await getCredential('KIS_ACCOUNT_PRODUCT')) || '01'; }
 
 async function kisHeaders(trId: string, extra?: Record<string, string>): Promise<Record<string, string>> {
-  const token = await getKisToken();
+  const [token, appkey, appsecret] = await Promise.all([
+    getKisToken(),
+    getCredential('KIS_APP_KEY'),
+    getCredential('KIS_APP_SECRET'),
+  ]);
   return {
     'Content-Type': 'application/json; charset=utf-8',
     Authorization:  `Bearer ${token}`,
-    appkey:          process.env.KIS_APP_KEY    ?? '',
-    appsecret:       process.env.KIS_APP_SECRET ?? '',
+    appkey,
+    appsecret,
     tr_id:           trId,
     custtype:        'P',
     ...extra,
@@ -108,9 +113,10 @@ async function getDailyCandles(symbol: string, count: number): Promise<Candle[]>
 async function fetchOverseasUsdCash(): Promise<number> {
   const trId = isMock() ? 'VTTS3007R' : 'TTTS3007R';
   const defaultExcd = (process.env.KIS_OVERSEAS_DEFAULT_EXCHANGE ?? 'NAS') as OverseasExchange;
+  const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
   const params = new URLSearchParams({
-    CANO:         accountNo(),
-    ACNT_PRDT_CD: accountProduct(),
+    CANO:         cano,
+    ACNT_PRDT_CD: acntPrdt,
     OVRS_EXCG_CD: toOvrsExcgCd(defaultExcd),
     OVRS_ORD_UNPR: '0',
     ITEM_CD:      '',
@@ -131,9 +137,10 @@ export async function getBalances(): Promise<Balance[]> {
   // TR ID — 모의: VTTS3012R, 실전: TTTS3012R (해외주식 잔고)
   const trId = isMock() ? 'VTTS3012R' : 'TTTS3012R';
   const defaultExcd = (process.env.KIS_OVERSEAS_DEFAULT_EXCHANGE ?? 'NAS') as OverseasExchange;
+  const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
   const params = new URLSearchParams({
-    CANO:           accountNo(),
-    ACNT_PRDT_CD:   accountProduct(),
+    CANO:           cano,
+    ACNT_PRDT_CD:   acntPrdt,
     OVRS_EXCG_CD:   toOvrsExcgCd(defaultExcd),
     TR_CRCY_CD:     'USD',
     CTX_AREA_FK200: '',
@@ -191,10 +198,12 @@ export async function getBalances(): Promise<Balance[]> {
     if (!ticker) continue;
     const excd = String(item.ovrs_excg_cd ?? 'NASD');
     const myExcd: OverseasExchange = excd.startsWith('NAS') ? 'NAS' : excd.startsWith('NYS') ? 'NYS' : 'AMS';
+    const avg = Number(item.pchs_avg_pric ?? 0);  // USD 단가
     balances.push({
       currency: formatOverseas(myExcd, ticker),  // 'NAS:AAPL' 형태로 normalize
       free:     qty,
       locked:   0,
+      avgPrice: avg > 0 ? avg : undefined,
     });
   }
   return balances;
@@ -213,10 +222,10 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
   const quantity = req.quantity ?? 0;
   if (quantity <= 0) return { ok: false, error: 'quantity 계산 실패 (해외는 USD 가격·수량 필수)' };
 
-  const headers = await kisHeaders(trId);
+  const [headers, cano, acntPrdt] = await Promise.all([kisHeaders(trId), accountNo(), accountProduct()]);
   const body = {
-    CANO:         accountNo(),
-    ACNT_PRDT_CD: accountProduct(),
+    CANO:         cano,
+    ACNT_PRDT_CD: acntPrdt,
     OVRS_EXCG_CD: toOvrsExcgCd(excd),
     PDNO:         ticker,
     ORD_QTY:      String(quantity),
@@ -237,10 +246,10 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
 
 export async function cancelOrder(req: CancelRequest): Promise<OrderResult> {
   const trId = isMock() ? 'VTTT1004U' : 'TTTT1004U'; // 해외 주문 정정·취소
-  const headers = await kisHeaders(trId);
+  const [headers, cano, acntPrdt] = await Promise.all([kisHeaders(trId), accountNo(), accountProduct()]);
   const body = {
-    CANO:         accountNo(),
-    ACNT_PRDT_CD: accountProduct(),
+    CANO:         cano,
+    ACNT_PRDT_CD: acntPrdt,
     OVRS_EXCG_CD: 'NASD',  // 호출자가 모를 수 있어 기본 NASD. 실 운용 시 req에 excd 추가 권장.
     PDNO:         '',
     ORGN_ODNO:    req.exchangeOrderId,
@@ -273,9 +282,10 @@ export async function getKisOverseasTickers(symbols: string[]): Promise<Ticker[]
 export async function getActiveOrders(): Promise<{ orderId: string; symbol: string }[]> {
   const trId = isMock() ? 'VTTS3018R' : 'TTTS3018R';
   const defaultExcd = (process.env.KIS_OVERSEAS_DEFAULT_EXCHANGE ?? 'NAS') as OverseasExchange;
+  const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
   const params = new URLSearchParams({
-    CANO:           accountNo(),
-    ACNT_PRDT_CD:   accountProduct(),
+    CANO:           cano,
+    ACNT_PRDT_CD:   acntPrdt,
     OVRS_EXCG_CD:   toOvrsExcgCd(defaultExcd),
     SORT_SQN:       'DS',
     CTX_AREA_FK200: '',

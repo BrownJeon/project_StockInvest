@@ -39,11 +39,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const body = await req.json().catch(() => ({})) as { force?: boolean };
+  const force = body.force === true;
+
   try {
-    const skipCheck = await shouldSkipFetch();
-    if (skipCheck.skip) {
-      console.log(`[cron/portfolio-snapshot] skipped — markets closed, last snapshot ${skipCheck.lastSnapshotAt?.toISOString()}`);
-      return NextResponse.json({ ok: true, skipped: 'markets_closed', lastSnapshotAt: skipCheck.lastSnapshotAt?.toISOString() });
+    if (!force) {
+      const skipCheck = await shouldSkipFetch();
+      if (skipCheck.skip) {
+        console.log(`[cron/portfolio-snapshot] skipped — markets closed, last snapshot ${skipCheck.lastSnapshotAt?.toISOString()}`);
+        return NextResponse.json({ ok: true, skipped: 'markets_closed', lastSnapshotAt: skipCheck.lastSnapshotAt?.toISOString() });
+      }
     }
 
     const balances = await kis.getBalances();
@@ -53,11 +58,14 @@ export async function POST(req: NextRequest) {
     const usdBalance      = balances.find(b => b.currency === 'USD');
     const stockHoldings   = balances.filter(b => b.currency !== 'KRW' && b.currency !== 'USD');
 
-    let totalKRW = Number(krwBalance?.free ?? 0) + Number(krwBalance?.locked ?? 0);
-    const positions: Array<{ currency: string; qty: number; price: number; value_krw: number }> = [];
+    // KRW free = D+2 확정 예수금(즉시 사용 가능), locked = 결제 대기 중. 자산 평가는 free만 포함.
+    const krwFree   = Number(krwBalance?.free ?? 0);
+    const krwLocked = Number(krwBalance?.locked ?? 0);
+    let totalKRW = krwFree;
+    const positions: Array<{ currency: string; qty: number; price: number; value_krw: number; locked?: number }> = [];
 
-    if (krwBalance && totalKRW > 0) {
-      positions.push({ currency: 'KRW', qty: totalKRW, price: 1, value_krw: totalKRW });
+    if (krwBalance && (krwFree > 0 || krwLocked > 0)) {
+      positions.push({ currency: 'KRW', qty: krwFree, price: 1, value_krw: krwFree, locked: krwLocked });
     }
 
     // USD 예수금은 환율 환산

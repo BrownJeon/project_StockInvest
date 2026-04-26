@@ -121,12 +121,14 @@ export async function checkVolatilityGuard(
 
 /**
  * 현재 포트폴리오 스냅샷을 DB에 저장.
+ * total_krw=0(KIS 미연동 등 부트스트랩 노이즈)은 저장하지 않음 — 수익률 베이스라인 오염 방지.
  */
 export async function savePortfolioSnapshot(
   totalKRW: number,
   positions: unknown,
   source: 'hourly' | 'trade' | 'manual' = 'hourly',
 ): Promise<void> {
+  if (!(totalKRW > 0)) return;
   const pool = getPool();
   await pool.query(
     `INSERT INTO portfolio_snapshots (ts, total_krw, positions, source) VALUES (NOW(), ?, ?, ?)`,

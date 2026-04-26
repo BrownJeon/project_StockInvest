@@ -1,4 +1,4 @@
-export type LlmProvider = 'claude' | 'ollama';
+export type LlmProvider = 'claude' | 'home-m4-api';
 
 export interface LlmCallOptions {
   /** 호출 타임아웃 (ms). 기본 90000, 배치는 180000 권장 */
@@ -14,7 +14,10 @@ export interface LlmCaller {
 
 export interface LlmProviderConfig {
   provider: LlmProvider;
-  ollamaBaseUrl?: string;
-  ollamaModel?: string;
-  ollamaTemperature?: number;
+  /** home-m4-api 베이스 URL (예: http://192.168.219.163:8000) */
+  homeM4ApiBase?: string;
+  /** home-m4-api 모델 (Ollama 모델명, 예: llama3 / llama3.3 / glm-4.7-flash) */
+  homeM4ApiModel?: string;
+  /** home-m4-api temperature */
+  homeM4ApiTemperature?: number;
 }

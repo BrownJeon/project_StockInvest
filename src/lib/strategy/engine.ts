@@ -13,6 +13,7 @@ import {
   buildMarketSummary,
   getRecentTrades,
   type AiEvEstimate,
+  type BatchDecision,
   type BatchSymbolInput,
   type MarketContext,
   type MarketSummary,
@@ -20,7 +21,9 @@ import {
   type SkipCategory,
 } from '@/lib/strategy/ai-filter';
 import { prefilterCandidate } from '@/lib/strategy/ai-prefilter';
-import { buildRegimeBucket, lookupRecentSkip } from '@/lib/strategy/ai-dedup';
+import { buildRegimeBucket, lookupRecentSkip, getRegimePerformance } from '@/lib/strategy/ai-dedup';
+import { fetchMacroIndicators } from '@/lib/strategy/macro';
+import { marketSessionInfo } from '@/lib/strategy/market-hours';
 import { refreshUniverse, getUniverseSymbols } from '@/lib/strategy/universe';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 import type { StrategyMeta } from './rules/types';
@@ -59,18 +62,22 @@ type ActiveStrategy = { id: string; meta: StrategyMeta };
 type Candidate = SignalInput & { strategyId: string };
 
 
-async function getHeldAmounts(market: Market): Promise<Map<string, number>> {
+interface HeldEntry {
+  qty: number;
+  avgPrice?: number;
+}
+
+async function getHeldAmounts(market: Market): Promise<Map<string, HeldEntry>> {
   try {
     const balances = await kis.getBalances();
-    const map = new Map<string, number>();
+    const map = new Map<string, HeldEntry>();
     for (const b of balances) {
       if (b.currency === 'KRW' || b.currency === 'USD') continue;
       const qty = Number(b.free) + Number(b.locked);
       if (qty <= 0) continue;
-      // currency 자체가 심볼 (국내: 6자리 숫자, 해외: 'NAS:AAPL')
       const symbolMarket = getMarketFromSymbol(b.currency);
       if (symbolMarket !== market) continue;
-      map.set(b.currency, qty);
+      map.set(b.currency, { qty, avgPrice: b.avgPrice });
     }
     return map;
   } catch {
@@ -81,7 +88,7 @@ async function getHeldAmounts(market: Market): Promise<Map<string, number>> {
 /** 거래대금 TOP 20 + 보유 종목 합산 (시장별) */
 async function getEvalSymbols(
   market: Market,
-  heldAmounts: Map<string, number>,
+  heldAmounts: Map<string, HeldEntry>,
 ): Promise<string[]> {
   const set = new Set<string>();
   const [trend, meanRev, breakout] = await Promise.all([
@@ -102,6 +109,7 @@ interface CollectedContext {
   aiCandles: Candle[];
   recentTrades: RecentTrade[];
   heldQty?: number;
+  heldAvgPrice?: number;
   rawCandidateCount: number;
   error?: string;
 }
@@ -116,7 +124,7 @@ interface CollectedContext {
 async function collectCandidates(
   symbol: string,
   strategies: ActiveStrategy[],
-  heldAmounts: Map<string, number>,
+  heldAmounts: Map<string, HeldEntry>,
   amountKRW: number,
   style: StyleConfig,
 ): Promise<CollectedContext | null> {
@@ -176,7 +184,8 @@ async function collectCandidates(
       if (sig.side === 'buy' && hasRecentSell) continue;
 
       if (sig.side === 'sell') {
-        const heldQty = heldAmounts.get(symbol)!;
+        const entry = heldAmounts.get(symbol)!;
+        const heldQty = entry.qty;
         const heldValue = Math.round(heldQty * (ticker.price ?? 0));
         if (heldValue < sig.amountKRW) continue;
         candidates.push({ ...sig, strategyId: id, quantity: heldQty, amountKRW: heldValue });
@@ -186,10 +195,13 @@ async function collectCandidates(
     }
   }
 
+  const heldEntry = heldAmounts.get(symbol);
+
   if (candidates.length === 0) {
     return {
       symbol, ticker, candidates: [], summary: null, aiCandles: [],
-      recentTrades: [], heldQty: heldAmounts.get(symbol), rawCandidateCount: 0,
+      recentTrades: [], heldQty: heldEntry?.qty, heldAvgPrice: heldEntry?.avgPrice,
+      rawCandidateCount: 0,
     };
   }
 
@@ -199,7 +211,8 @@ async function collectCandidates(
 
   return {
     symbol, ticker, candidates, summary, aiCandles, recentTrades,
-    heldQty: heldAmounts.get(symbol), rawCandidateCount: candidates.length,
+    heldQty: heldEntry?.qty, heldAvgPrice: heldEntry?.avgPrice,
+    rawCandidateCount: candidates.length,
   };
 }
 
@@ -247,7 +260,7 @@ async function insertSkipAuditPool(
 async function applyFilters(
   ctx: CollectedContext,
   analystStyle: AnalystStyle,
-  heldAmounts: Map<string, number>,
+  heldAmounts: Map<string, HeldEntry>,
 ): Promise<{ needsAi: Candidate[]; regimeBucket: string | null }> {
   const pool = getPool();
   const { symbol, candidates, summary, aiCandles, ticker } = ctx;
@@ -316,8 +329,8 @@ async function applyFilters(
   return { needsAi, regimeBucket };
 }
 
-/** 최근 3시간 거시 지수 맥락 + universe 평균 지표를 수집한다. (코스피·SP500 등 거시 지수 조회 미구현 — null 유지) */
-async function buildMarketContext(contexts: CollectedContext[]): Promise<MarketContext> {
+/** 최근 3시간 거시 지수 맥락 + universe 평균 지표 + 시장 세션 phase + 거시 지수(KOSPI/SP500/USD-KRW) */
+async function buildMarketContext(contexts: CollectedContext[], market: Market): Promise<MarketContext> {
   const pool = getPool();
 
   const btc3hChangePct: number | null = null;
@@ -350,13 +363,27 @@ async function buildMarketContext(contexts: CollectedContext[]): Promise<MarketC
     // ignore
   }
 
-  return { btc3hChangePct, btc3hVolRatio, avgVolumeRatio, highVolCount, recentExecutedBuys, recentExecutedSells };
+  // 시장 세션 phase + 마감까지 남은 분
+  const session = marketSessionInfo(market);
+
+  // 거시 지표 (KOSPI / SP500 / USD-KRW) — 5분 캐시, 실패 시 null
+  let macro = { kospiChangePct: null as number | null, sp500ChangePct: null as number | null, usdKrwChangePct: null as number | null };
+  try { macro = await fetchMacroIndicators(); } catch { /* keep nulls */ }
+
+  return {
+    btc3hChangePct, btc3hVolRatio, avgVolumeRatio, highVolCount,
+    recentExecutedBuys, recentExecutedSells,
+    sessionPhase: session.phase, minutesToClose: session.minutesToClose,
+    kospiChangePct: macro.kospiChangePct,
+    sp500ChangePct: macro.sp500ChangePct,
+    usdKrwChangePct: macro.usdKrwChangePct,
+  };
 }
 
 /** 배치 AI 결과를 각 context에 적용 — createSignal 또는 ai_skipped insert. */
 async function applyBatchDecisions(
   needsAiMap: Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>,
-  batchDecisions: Array<{ symbol: string; selectedIndex: number; confidence: number; reasoning: string; warnings: string[]; skipCategory?: SkipCategory; ev?: AiEvEstimate }>,
+  batchDecisions: BatchDecision[],
   results: Map<string, EvalResult>,
 ): Promise<void> {
   const pool = getPool();
@@ -365,7 +392,7 @@ async function applyBatchDecisions(
     if (!entry) continue;
     const { ctx, needsAi, regimeBucket } = entry;
 
-    if (d.selectedIndex === -1 || d.skipCategory === 'ai_failed') {
+    if (d.selectedIndices.length === 0 || d.skipCategory === 'ai_failed') {
       for (const sig of needsAi) {
         await insertSkipAuditPool(pool, sig, d.symbol, ctx.ticker.price, {
           reasoning: `[${d.skipCategory ?? 'ai_rejected'}:${d.confidence}%] ${d.reasoning}`,
@@ -385,28 +412,57 @@ async function applyBatchDecisions(
       continue;
     }
 
-    const selected = needsAi[d.selectedIndex];
-    const enriched: Candidate = {
-      ...selected,
-      reasoning: [
-        selected.reasoning,
-        `[AI ${d.confidence}%] ${d.reasoning}`,
-        ...(d.warnings.length ? [`경고: ${d.warnings.join(' / ')}`] : []),
-      ].filter(Boolean).join('\n'),
-      indicators: {
-        ...(selected.indicators as object ?? {}),
-        ai: { confidence: d.confidence, warnings: d.warnings, selectedFrom: needsAi.length, ev: d.ev, regimeBucket: regimeBucket ?? undefined },
-      },
-    };
+    // 다중 승인: selectedIndices에 포함된 인덱스는 createSignal, 그 외는 ai_skipped audit
+    const selectedSet = new Set(d.selectedIndices);
+    let createdCount = 0;
+    let firstSelectedSide: 'buy' | 'sell' | undefined;
+    let firstSelectedStrategy: string | undefined;
+    for (let i = 0; i < needsAi.length; i++) {
+      const cand = needsAi[i];
+      if (selectedSet.has(i)) {
+        const pickedRank = d.selectedIndices.indexOf(i);  // 0-based EV 순위
+        const enriched: Candidate = {
+          ...cand,
+          reasoning: [
+            cand.reasoning,
+            `[AI ${d.confidence}%${d.selectedIndices.length > 1 ? ` · ${pickedRank + 1}/${d.selectedIndices.length}` : ''}] ${d.reasoning}`,
+            ...(d.warnings.length ? [`경고: ${d.warnings.join(' / ')}`] : []),
+          ].filter(Boolean).join('\n'),
+          indicators: {
+            ...(cand.indicators as object ?? {}),
+            ai: {
+              confidence: d.confidence, warnings: d.warnings,
+              selectedFrom: needsAi.length, ev: d.ev,
+              regimeBucket: regimeBucket ?? undefined,
+              pickedRank, picksTotal: d.selectedIndices.length,
+            },
+          },
+        };
+        const res = await createSignal(enriched);
+        if (res.ok) {
+          createdCount++;
+          if (firstSelectedSide === undefined) firstSelectedSide = cand.side;
+          if (firstSelectedStrategy === undefined) firstSelectedStrategy = cand.strategyId;
+        }
+      } else {
+        await insertSkipAuditPool(pool, cand, d.symbol, ctx.ticker.price, {
+          reasoning: `[${d.skipCategory ?? 'ai_rejected'}:${d.confidence}%] ${d.reasoning}`,
+          category: d.skipCategory ?? 'ai_rejected',
+          confidence: d.confidence,
+          warnings: d.warnings,
+          ev: d.ev,
+          regimeBucket: regimeBucket ?? undefined,
+        });
+      }
+    }
 
-    const res = await createSignal(enriched);
     results.set(d.symbol, {
       symbol: d.symbol,
-      signalsCreated: res.ok ? 1 : 0,
-      selectedStrategy: selected.strategyId,
+      signalsCreated: createdCount,
+      selectedStrategy: firstSelectedStrategy,
       candidateCount: needsAi.length,
       rawCandidates: ctx.rawCandidateCount,
-      side: selected.side,
+      side: firstSelectedSide,
     });
   }
 }
@@ -416,7 +472,7 @@ async function fallbackPerSymbol(
   needsAiMap: Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>,
   style: StyleConfig,
   analystStyle: AnalystStyle,
-  heldAmounts: Map<string, number>,
+  heldAmounts: Map<string, HeldEntry>,
   results: Map<string, EvalResult>,
   reason: string,
   market: Market,
@@ -433,7 +489,7 @@ async function fallbackPerSymbol(
       fallbackCount++;
       const aiResult = await aiSelectSignal(symbol, needsAi, ctx.aiCandles, ctx.ticker, style, analystStyle, market);
 
-      if (aiResult.selectedIndex === -1) {
+      if (aiResult.selectedIndices.length === 0) {
         for (const sig of needsAi) {
           await insertSkipAuditPool(pool, sig, symbol, ctx.ticker.price, {
             reasoning: `[${aiResult.skipCategory ?? 'ai_rejected'}:${aiResult.confidence}%] ${aiResult.reasoning}`,
@@ -446,23 +502,51 @@ async function fallbackPerSymbol(
         }
         results.set(symbol, { symbol, signalsCreated: 0, candidateCount: needsAi.length, rawCandidates: ctx.rawCandidateCount });
       } else {
-        const selected = needsAi[aiResult.selectedIndex];
-        const enriched: Candidate = {
-          ...selected,
-          reasoning: [
-            selected.reasoning,
-            `[AI ${aiResult.confidence}%] ${aiResult.reasoning}`,
-            ...(aiResult.warnings.length ? [`경고: ${aiResult.warnings.join(' / ')}`] : []),
-          ].filter(Boolean).join('\n'),
-          indicators: {
-            ...(selected.indicators as object ?? {}),
-            ai: { confidence: aiResult.confidence, warnings: aiResult.warnings, selectedFrom: needsAi.length, ev: aiResult.ev, regimeBucket: regimeBucket ?? undefined },
-          },
-        };
-        const res = await createSignal(enriched);
+        const selectedSet = new Set(aiResult.selectedIndices);
+        let createdCount = 0;
+        let firstSide: 'buy' | 'sell' | undefined;
+        let firstStrategy: string | undefined;
+        for (let i = 0; i < needsAi.length; i++) {
+          const cand = needsAi[i];
+          if (selectedSet.has(i)) {
+            const pickedRank = aiResult.selectedIndices.indexOf(i);
+            const enriched: Candidate = {
+              ...cand,
+              reasoning: [
+                cand.reasoning,
+                `[AI ${aiResult.confidence}%${aiResult.selectedIndices.length > 1 ? ` · ${pickedRank + 1}/${aiResult.selectedIndices.length}` : ''}] ${aiResult.reasoning}`,
+                ...(aiResult.warnings.length ? [`경고: ${aiResult.warnings.join(' / ')}`] : []),
+              ].filter(Boolean).join('\n'),
+              indicators: {
+                ...(cand.indicators as object ?? {}),
+                ai: {
+                  confidence: aiResult.confidence, warnings: aiResult.warnings,
+                  selectedFrom: needsAi.length, ev: aiResult.ev,
+                  regimeBucket: regimeBucket ?? undefined,
+                  pickedRank, picksTotal: aiResult.selectedIndices.length,
+                },
+              },
+            };
+            const res = await createSignal(enriched);
+            if (res.ok) {
+              createdCount++;
+              if (firstSide === undefined) firstSide = cand.side;
+              if (firstStrategy === undefined) firstStrategy = cand.strategyId;
+            }
+          } else {
+            await insertSkipAuditPool(pool, cand, symbol, ctx.ticker.price, {
+              reasoning: `[${aiResult.skipCategory ?? 'ai_rejected'}:${aiResult.confidence}%] ${aiResult.reasoning}`,
+              category: aiResult.skipCategory ?? 'ai_rejected',
+              confidence: aiResult.confidence,
+              warnings: aiResult.warnings,
+              ev: aiResult.ev,
+              regimeBucket: regimeBucket ?? undefined,
+            });
+          }
+        }
         results.set(symbol, {
-          symbol, signalsCreated: res.ok ? 1 : 0, selectedStrategy: selected.strategyId,
-          candidateCount: needsAi.length, rawCandidates: ctx.rawCandidateCount, side: selected.side,
+          symbol, signalsCreated: createdCount, selectedStrategy: firstStrategy,
+          candidateCount: needsAi.length, rawCandidates: ctx.rawCandidateCount, side: firstSide,
         });
       }
     } else {
@@ -562,17 +646,21 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
     const batchInputs: BatchSymbolInput[] = [];
     for (const [, entry] of needsAiMap) {
       if (!entry.ctx.summary) continue; // summary 없으면 배치 입력 불가 → fallback 경로로
+      // regime 누적 성과 조회 (5건 미만이면 null — 프롬프트 미주입)
+      const regimeStats = entry.regimeBucket ? await getRegimePerformance(entry.regimeBucket, 30) : null;
       batchInputs.push({
         symbol: entry.ctx.symbol,
         candidates: entry.needsAi,
         summary: entry.ctx.summary,
         recentTrades: entry.ctx.recentTrades,
         heldQty: entry.ctx.heldQty,
+        heldAvgPrice: entry.ctx.heldAvgPrice,
+        regimeStats,
       });
     }
 
     if (batchInputs.length > 0) {
-      const marketContext = await buildMarketContext(contexts);
+      const marketContext = await buildMarketContext(contexts, market);
       const batchResult = await aiSelectSignalBatch(batchInputs, style, analystStyle, marketContext, market);
 
       if (batchResult.error || batchResult.decisions.length === 0) {

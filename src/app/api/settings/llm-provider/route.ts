@@ -6,13 +6,14 @@ import type { LlmProvider } from '@/lib/llm/types';
 
 export const dynamic = 'force-dynamic';
 
-const VALID_PROVIDERS: LlmProvider[] = ['claude', 'ollama'];
+const VALID_PROVIDERS: LlmProvider[] = ['claude', 'home-m4-api'];
 
 interface UpsertBody {
   provider?: LlmProvider;
-  ollamaBaseUrl?: string;
-  ollamaModel?: string;
-  ollamaTemperature?: number;
+  // home-m4-api (AI_API_KEY는 보안상 .env 전용 — DB/UI 미저장)
+  homeM4ApiBase?: string;
+  homeM4ApiModel?: string;
+  homeM4ApiTemperature?: number;
 }
 
 async function upsert(key: string, value: unknown): Promise<void> {
@@ -40,24 +41,26 @@ async function readSystemConfig(key: string): Promise<unknown | null> {
 export async function GET() {
   const cfg = await getProviderConfig();
   const dbProvider     = await readSystemConfig('llm_provider');
-  const dbOllamaUrl    = await readSystemConfig('ollama_base_url');
-  const dbOllamaModel  = await readSystemConfig('ollama_model');
-  const dbOllamaTemp   = await readSystemConfig('ollama_temperature');
+  const dbM4Base       = await readSystemConfig('home_m4_api_base');
+  const dbM4Model      = await readSystemConfig('home_m4_api_model');
+  const dbM4Temp       = await readSystemConfig('home_m4_api_temperature');
 
   return NextResponse.json({
     ok: true,
     active: cfg,
     overrides: {
-      llm_provider:       dbProvider,
-      ollama_base_url:    dbOllamaUrl,
-      ollama_model:       dbOllamaModel,
-      ollama_temperature: dbOllamaTemp,
+      llm_provider:           dbProvider,
+      home_m4_api_base:       dbM4Base,
+      home_m4_api_model:      dbM4Model,
+      home_m4_api_temperature: dbM4Temp,
     },
     env: {
-      LLM_PROVIDER:       process.env.LLM_PROVIDER ?? null,
-      OLLAMA_BASE_URL:    process.env.OLLAMA_BASE_URL ?? null,
-      OLLAMA_MODEL:       process.env.OLLAMA_MODEL ?? null,
-      OLLAMA_TEMPERATURE: process.env.OLLAMA_TEMPERATURE ?? null,
+      LLM_PROVIDER:        process.env.LLM_PROVIDER ?? null,
+      AI_API_BASE:         process.env.AI_API_BASE ?? null,
+      AI_API_MODEL:        process.env.AI_API_MODEL ?? null,
+      AI_API_TEMPERATURE:  process.env.AI_API_TEMPERATURE ?? null,
+      // AI_API_KEY는 보안상 응답에서 제외 (UI에 키 노출 방지)
+      AI_API_KEY_set:      process.env.AI_API_KEY ? 'yes' : 'no',
     },
   });
 }
@@ -71,22 +74,24 @@ export async function POST(req: NextRequest) {
       }
       await upsert('llm_provider', body.provider);
     }
-    if (body.ollamaBaseUrl !== undefined) {
-      const url = String(body.ollamaBaseUrl).trim();
+
+    // home-m4-api 필드
+    if (body.homeM4ApiBase !== undefined) {
+      const url = String(body.homeM4ApiBase).trim();
       if (url && !/^https?:\/\//.test(url)) {
-        return NextResponse.json({ ok: false, error: 'ollamaBaseUrl must start with http:// or https://' }, { status: 400 });
+        return NextResponse.json({ ok: false, error: 'homeM4ApiBase must start with http:// or https://' }, { status: 400 });
       }
-      await upsert('ollama_base_url', url);
+      await upsert('home_m4_api_base', url);
     }
-    if (body.ollamaModel !== undefined) {
-      await upsert('ollama_model', String(body.ollamaModel).trim());
+    if (body.homeM4ApiModel !== undefined) {
+      await upsert('home_m4_api_model', String(body.homeM4ApiModel).trim());
     }
-    if (body.ollamaTemperature !== undefined) {
-      const t = Number(body.ollamaTemperature);
+    if (body.homeM4ApiTemperature !== undefined) {
+      const t = Number(body.homeM4ApiTemperature);
       if (!Number.isFinite(t) || t < 0 || t > 2) {
-        return NextResponse.json({ ok: false, error: 'ollamaTemperature must be 0~2' }, { status: 400 });
+        return NextResponse.json({ ok: false, error: 'homeM4ApiTemperature must be 0~2' }, { status: 400 });
       }
-      await upsert('ollama_temperature', t);
+      await upsert('home_m4_api_temperature', t);
     }
 
     const cfg = await getProviderConfig();

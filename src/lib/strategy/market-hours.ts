@@ -125,6 +125,31 @@ export function clearHolidayCache(): void {
 }
 
 /**
+ * 시장 세션 phase + 마감까지 남은 분 (장 폐장 시 phase='closed', minutesToClose=null).
+ * - 한국장: 09:00~10:00 '개장후', 10:00~14:30 '본장', 14:30~15:30 '마감직전'
+ * - 미국장: 09:30~10:30 '개장후', 10:30~15:00 '본장', 15:00~16:00 '마감직전'
+ */
+export function marketSessionInfo(market: Market, now = new Date()): { phase: string; minutesToClose: number | null } {
+  const tz = market === 'domestic' ? 'Asia/Seoul' : 'America/New_York';
+  const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+  const minutes = local.getHours() * 60 + local.getMinutes();
+
+  if (market === 'domestic') {
+    const open = 9 * 60, close = 15 * 60 + 30;
+    if (minutes < open || minutes >= close) return { phase: 'closed', minutesToClose: null };
+    const mtc = close - minutes;
+    const phase = minutes < 10 * 60 ? '개장후' : minutes < 14 * 60 + 30 ? '본장' : '마감직전';
+    return { phase, minutesToClose: mtc };
+  }
+  // overseas (US)
+  const open = 9 * 60 + 30, close = 16 * 60;
+  if (minutes < open || minutes >= close) return { phase: 'closed', minutesToClose: null };
+  const mtc = close - minutes;
+  const phase = minutes < 10 * 60 + 30 ? '개장후' : minutes < 15 * 60 ? '본장' : '마감직전';
+  return { phase, minutesToClose: mtc };
+}
+
+/**
  * 시장별 다음 개장 시각 (UTC ms). 가장 가까운 평일 09:00 KST(국내) 또는 09:30 ET(해외).
  * 공휴일은 단순화를 위해 무시 (주말+다음 날 공휴일이면 약간 오차).
  */

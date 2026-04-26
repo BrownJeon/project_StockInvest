@@ -1,3 +1,5 @@
+import { getCredential } from '@/lib/credentials';
+
 export type AlertLevel = 'critical' | 'warning' | 'info';
 
 const LEVEL_META: Record<AlertLevel, { emoji: string; color: string }> = {
@@ -15,7 +17,7 @@ export async function sendSlackAlert(
   title: string,
   body: string,
 ): Promise<void> {
-  const url = process.env.SLACK_WEBHOOK_URL;
+  const url = await getCredential('SLACK_WEBHOOK_URL');
   if (!url) return;
 
   const { emoji, color } = LEVEL_META[level];
@@ -38,16 +40,24 @@ export async function sendSlackAlert(
     ],
   };
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      console.error(`[slack] webhook failed: ${res.status}`);
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  };
+  for (let i = 0; i < 2; i++) {
+    try {
+      const res = await fetch(url, init);
+      if (!res.ok) console.error(`[slack] webhook failed: ${res.status}`);
+      return;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (i === 0 && /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|aborted|UND_ERR/i.test(msg)) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      console.error('[slack] fetch error:', e);
+      return;
     }
-  } catch (e) {
-    console.error('[slack] fetch error:', e);
   }
 }

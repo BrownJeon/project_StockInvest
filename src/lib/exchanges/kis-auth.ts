@@ -1,4 +1,5 @@
 import { getPool } from '@/lib/db';
+import { getCredential } from '@/lib/credentials';
 import type { RowDataPacket } from 'mysql2';
 
 /**
@@ -28,8 +29,10 @@ interface TokenCache {
  * 호출해 캐시 무효화 후 재발급할 수 있도록 export.
  */
 export async function getKisToken(): Promise<string> {
-  const appKey    = process.env.KIS_APP_KEY    ?? '';
-  const appSecret = process.env.KIS_APP_SECRET ?? '';
+  const [appKey, appSecret] = await Promise.all([
+    getCredential('KIS_APP_KEY'),
+    getCredential('KIS_APP_SECRET'),
+  ]);
   if (!appKey || !appSecret) throw new Error('KIS_APP_KEY / KIS_APP_SECRET not set');
 
   // DB 캐시 조회
@@ -95,8 +98,10 @@ export async function invalidateKisToken(): Promise<string> {
     const pool = getPool();
     await pool.query("DELETE FROM system_config WHERE `key` = 'kis_access_token'");
   } catch { /* swallow */ }
-  const appKey    = process.env.KIS_APP_KEY    ?? '';
-  const appSecret = process.env.KIS_APP_SECRET ?? '';
+  const [appKey, appSecret] = await Promise.all([
+    getCredential('KIS_APP_KEY'),
+    getCredential('KIS_APP_SECRET'),
+  ]);
   if (!appKey || !appSecret) throw new Error('KIS_APP_KEY / KIS_APP_SECRET not set');
   return await issueAndStore(appKey, appSecret);
 }

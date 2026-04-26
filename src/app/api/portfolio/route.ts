@@ -73,9 +73,11 @@ export async function GET() {
     const holdings: HoldingView[] = await Promise.all(balances.map(async (b): Promise<HoldingView> => {
       const qty = b.free + b.locked;
       if (b.currency === 'KRW') {
+        // 자산평가는 D+2 확정 예수금(free)만. 결제 대기(locked)는 미포함.
+        const value = b.free;
         return {
-          currency: 'KRW', symbol: null, qty,
-          price: 1, value_krw: qty, open24h_krw: qty,
+          currency: 'KRW', symbol: null, qty: b.free,
+          price: 1, value_krw: value, open24h_krw: value,
           change_24h_pct: 0, is_cash: true,
         };
       }

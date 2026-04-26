@@ -54,6 +54,8 @@ export interface Balance {
   currency: string;
   free: number;
   locked: number;
+  /** 매입평단가 (원/주, 보유 종목만 채워짐). KIS pchs_avg_pric. */
+  avgPrice?: number;
 }
 
 export interface Candle {

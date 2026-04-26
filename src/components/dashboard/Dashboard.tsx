@@ -80,10 +80,11 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
   const [listTab, setListTab] = useState<'hold' | 'watch'>('hold');
   const [holdMarket, setHoldMarket] = useState<'all' | 'domestic' | 'overseas'>('all');
   const [holdPage, setHoldPage]   = useState(0);
+  const [holdSort, setHoldSort]   = useState<'desc' | 'asc'>('desc');
   const [watchPage, setWatchPage] = useState(0);
   const PAGE_SIZE = 7;
   // 필터/탭 변경 시 첫 페이지로 리셋
-  useEffect(() => { setHoldPage(0); }, [holdMarket, listTab]);
+  useEffect(() => { setHoldPage(0); }, [holdMarket, listTab, holdSort]);
   useEffect(() => { setWatchPage(0); }, [listTab]);
   const [todaySignalCount, setTodaySignalCount] = useState<number>(0);
   const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
@@ -322,21 +323,42 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
             const all = portfolio.holdings;
             const domCount = all.filter(h => holdingMarket(h) === 'domestic').length;
             const ovsCount = all.filter(h => holdingMarket(h) === 'overseas').length;
-            const filtered = holdMarket === 'all'
+            const baseFiltered = holdMarket === 'all'
               ? all
               : all.filter(h => holdingMarket(h) === holdMarket || h.is_cash);
+            // 금액(value_krw) 정렬 — 현금 항목은 정렬 무관하게 항상 최상단
+            const filtered = [...baseFiltered].sort((a, b) => {
+              if (a.is_cash !== b.is_cash) return a.is_cash ? -1 : 1;
+              if (a.is_cash && b.is_cash) return 0;
+              const va = a.value_krw ?? 0;
+              const vb = b.value_krw ?? 0;
+              return holdSort === 'desc' ? vb - va : va - vb;
+            });
             const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
             const safePage   = Math.min(holdPage, totalPages - 1);
             const pageItems  = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
             return (
               <>
                 <div style={{
-                  display: 'flex', gap: 6, padding: '8px 12px',
+                  display: 'flex', gap: 6, padding: '8px 12px', alignItems: 'center',
                   background: 'var(--bg2)', borderBottom: '1px solid var(--border)',
                 }}>
                   <FilterChip label={`전체 ${domCount + ovsCount}`} active={holdMarket === 'all'}      onClick={() => setHoldMarket('all')} />
                   <FilterChip label={`🇰🇷 ${domCount}`}              active={holdMarket === 'domestic'} onClick={() => setHoldMarket('domestic')} />
                   <FilterChip label={`🇺🇸 ${ovsCount}`}              active={holdMarket === 'overseas'} onClick={() => setHoldMarket('overseas')} />
+                  <button
+                    onClick={() => setHoldSort(s => s === 'desc' ? 'asc' : 'desc')}
+                    title={holdSort === 'desc' ? '금액 내림차순 (높은순)' : '금액 오름차순 (낮은순)'}
+                    style={{
+                      marginLeft: 'auto',
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 14,
+                      background: 'var(--bg3)', border: '1px solid var(--border2)',
+                      color: 'var(--text)', cursor: 'pointer',
+                    }}
+                  >
+                    금액 {holdSort === 'desc' ? '↓' : '↑'}
+                  </button>
                 </div>
                 {filtered.length
                   ? (
@@ -813,7 +835,9 @@ function HoldingRow({
   onSelect: () => void;
   displayName?: string | null;
 }) {
-  const title = h.is_cash ? (h.currency === 'USD' ? 'USD' : 'KRW') : (displayName ?? h.symbol ?? h.currency);
+  const title = h.is_cash
+    ? (h.currency === 'USD' ? '달러(USD)' : '원화(KRW)')
+    : (displayName ?? h.symbol ?? h.currency);
   const badge = h.is_cash
     ? null
     : isWhitelisted

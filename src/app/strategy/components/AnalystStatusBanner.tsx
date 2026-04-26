@@ -64,15 +64,13 @@ export function AnalystStatusBanner(_props: Props = {}) {
     metaText = relTime ? `분석가가 비활성 상태입니다 · 마지막 시그널: ${relTime}` : '분석가가 비활성 상태입니다';
   }
 
-  // 배경/보더 — 실거래 ON 시 보더만 빨강 강조
+  // 배경/보더 — 운영 상태(분석가 ON/OFF, Kill)에 따라
   const bgColor = isKill ? '#2a0a0a' : isActive ? '#0a1a0a' : '#1a1500';
   const borderColor = isKill
     ? '#ef444466'
-    : isLive && !isKill
-      ? '#ef444499'    // 실거래 ON → 빨강 보더로 강조
-      : isActive
-        ? '#22c55e44'
-        : '#f59e0b44';
+    : isActive
+      ? '#22c55e44'
+      : '#f59e0b44';
 
   return (
     <div style={{
@@ -101,12 +99,12 @@ export function AnalystStatusBanner(_props: Props = {}) {
               <StatusChip
                 label="분석가"
                 value={safety.analystEnabled ? 'ON' : 'OFF'}
-                tone={safety.analystEnabled ? 'ok' : 'muted'}
+                tone={safety.analystEnabled ? 'ok' : 'danger'}
               />
               <StatusChip
                 label="실거래"
                 value={isLive ? 'ON' : 'OFF'}
-                tone={isLive ? 'danger' : 'ok'}
+                tone={isLive ? 'ok' : 'danger'}
               />
             </>
           )}
@@ -138,9 +136,9 @@ export function AnalystStatusBanner(_props: Props = {}) {
           marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)',
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
         }}>
-          <span style={{ fontSize: 11, color: isLive ? '#ef4444' : 'var(--accent)', fontWeight: isLive ? 600 : 400 }}>
+          <span style={{ fontSize: 11, color: isLive ? 'var(--ok)' : '#ef4444', fontWeight: isLive ? 400 : 600 }}>
             {isLive
-              ? '🔴 실거래 모드 — KIS API에 실제 주문이 송신됩니다'
+              ? '🟢 실거래 모드 — KIS API에 실제 주문이 송신됩니다'
               : '⚠️ 모의 주문 모드 — 실제 주문이 전송되지 않습니다'}
           </span>
           <Link href="/settings" style={{ fontSize: 11, color: 'var(--muted)', textDecoration: 'none' }}>

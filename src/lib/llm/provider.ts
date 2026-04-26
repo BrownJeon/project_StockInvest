@@ -1,10 +1,10 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { ClaudeCliCaller } from './claude-cli';
-import { OllamaCaller } from './ollama';
+import { HomeM4ApiCaller } from './home-m4-api';
 import type { LlmCaller, LlmProvider, LlmProviderConfig } from './types';
 
-const VALID_PROVIDERS: LlmProvider[] = ['claude', 'ollama'];
+const VALID_PROVIDERS: LlmProvider[] = ['claude', 'home-m4-api'];
 
 // claude CLI 전용 직렬화 큐 (subprocess 세션 충돌 방지)
 let cliQueue: Promise<unknown> = Promise.resolve();
@@ -43,31 +43,38 @@ export async function getActiveProvider(): Promise<LlmProvider> {
 /** 현재 provider 설정 전체 조회 (UI 표시용 + caller 빌드용). */
 export async function getProviderConfig(): Promise<LlmProviderConfig> {
   const provider = await getActiveProvider();
-  const ollamaBaseUrl =
-    (await readSystemConfig('ollama_base_url')) ??
-    process.env.OLLAMA_BASE_URL ??
-    'http://localhost:11434';
-  const ollamaModel =
-    (await readSystemConfig('ollama_model')) ??
-    process.env.OLLAMA_MODEL ??
-    'llama3.1:8b';
-  const tempRaw =
-    (await readSystemConfig('ollama_temperature')) ??
-    process.env.OLLAMA_TEMPERATURE ??
+
+  // home-m4-api 설정
+  const homeM4ApiBase =
+    (await readSystemConfig('home_m4_api_base')) ??
+    process.env.AI_API_BASE ??
+    'http://192.168.219.163:8000';
+  const homeM4ApiModel =
+    (await readSystemConfig('home_m4_api_model')) ??
+    process.env.AI_API_MODEL ??
+    'llama3';
+  const m4TempRaw =
+    (await readSystemConfig('home_m4_api_temperature')) ??
+    process.env.AI_API_TEMPERATURE ??
     '0.3';
-  const ollamaTemperature = Number.isFinite(Number(tempRaw)) ? Number(tempRaw) : 0.3;
-  return { provider, ollamaBaseUrl, ollamaModel, ollamaTemperature };
+  const homeM4ApiTemperature = Number.isFinite(Number(m4TempRaw)) ? Number(m4TempRaw) : 0.3;
+
+  return {
+    provider,
+    homeM4ApiBase, homeM4ApiModel, homeM4ApiTemperature,
+  };
 }
 
 async function buildCaller(): Promise<{ provider: LlmProvider; caller: LlmCaller }> {
   const cfg = await getProviderConfig();
-  if (cfg.provider === 'ollama') {
+  if (cfg.provider === 'home-m4-api') {
     return {
-      provider: 'ollama',
-      caller: new OllamaCaller(
-        cfg.ollamaBaseUrl ?? 'http://localhost:11434',
-        cfg.ollamaModel ?? 'llama3.1:8b',
-        cfg.ollamaTemperature ?? 0.3,
+      provider: 'home-m4-api',
+      caller: new HomeM4ApiCaller(
+        cfg.homeM4ApiBase ?? 'http://192.168.219.163:8000',
+        process.env.AI_API_KEY ?? '',
+        cfg.homeM4ApiModel ?? 'llama3',
+        cfg.homeM4ApiTemperature ?? 0.3,
       ),
     };
   }
@@ -83,7 +90,7 @@ export async function runLlmOnce(prompt: string, timeoutMs = 90000): Promise<str
 /**
  * 안정 호출 — provider별 재시도 정책 + claude일 때 큐 직렬화.
  * - claude: "Execution error" 발생 시 3회 재시도 + cliQueue 직렬화 (subprocess 충돌 방지)
- * - ollama: HTTP 5xx / abort / 네트워크 에러 시 3회 재시도, 동시성 풀림
+ * - home-m4-api: HTTP 5xx / abort / 네트워크 에러 시 3회 재시도, 동시성 풀림
  */
 export async function runLlm(prompt: string, timeoutMs = 90000): Promise<string> {
   const { provider, caller } = await buildCaller();
@@ -99,7 +106,7 @@ export async function runLlm(prompt: string, timeoutMs = 90000): Promise<string>
         const retriable =
           provider === 'claude'
             ? msg.includes('Execution error')
-            : /HTTP 5\d\d|timeout|aborted|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed/i.test(msg);
+            : /HTTP 5\d\d|HTTP 429|timeout|aborted|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed/i.test(msg);
         if (tries < 2 && retriable) {
           await new Promise(r => setTimeout(r, 300 + tries * 500));
           continue;
@@ -117,6 +124,6 @@ export async function runLlm(prompt: string, timeoutMs = 90000): Promise<string>
     cliQueue = next.catch(() => {});
     return next;
   }
-  // ollama는 HTTP — 동시성 허용
+  // home-m4-api는 HTTP — 동시성 허용
   return attempt();
 }

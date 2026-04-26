@@ -10,9 +10,10 @@ const PERIOD_DAYS: Record<string, number> = { '1d': 1, '7d': 7, '30d': 30 };
 type SnapRow = RowDataPacket & { ts: string; total_krw: number; positions: string };
 
 async function getFirstSnap(pool: ReturnType<typeof import('@/lib/db')['getPool']>, days: number): Promise<SnapRow | null> {
+  // total_krw=0 부트스트랩 스냅샷은 베이스라인에서 제외 (KIS 미연동 시점 노이즈)
   const cutoff = new Date(Date.now() - days * 86_400_000);
   const [rows] = await pool.query<SnapRow[]>(
-    'SELECT ts, total_krw, positions FROM portfolio_snapshots WHERE ts >= ? ORDER BY ts ASC LIMIT 1',
+    'SELECT ts, total_krw, positions FROM portfolio_snapshots WHERE ts >= ? AND total_krw > 0 ORDER BY ts ASC LIMIT 1',
     [cutoff],
   );
   return rows[0] ?? null;

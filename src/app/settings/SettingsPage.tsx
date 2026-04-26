@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fmtNum } from '@/lib/format';
 import { LlmProviderSection } from './LlmProviderSection';
+import { ExchangeAccountSection } from './ExchangeAccountSection';
+import { NotifyChannelSection } from './NotifyChannelSection';
 
 interface StrategyItem {
   id: string;
@@ -450,21 +452,17 @@ export function SettingsPage() {
       <SectionHeader title="AI 제공자 (LLM)" />
       <LlmProviderSection />
 
-      {/* Exchange — KIS */}
+      {/* 거래소 계정 (KIS — 등록·수정 통합) */}
       <SectionHeader title="거래소 계정" />
-      <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>한국투자증권 (KIS)</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>국내 · 해외 주식 실매매</div>
-          </div>
-          <StatusBadge ok={exchanges?.kis.configured ?? false} labelOk={exchanges?.kis.mock ? '모의투자' : '실전투자'} labelNo="미설정" />
-        </div>
-      </div>
+      <ExchangeAccountSection />
+
+      {/* 알람 (채널 선택 + 연동 정보) */}
+      <SectionHeader title="알람" />
+      <NotifyChannelSection />
 
       <div style={{ background: 'var(--bg2)', borderRadius: 12, padding: 14, border: '1px solid var(--border)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
-        DRY_RUN / KILL_SWITCH / 주문 한도는 DB에 저장되어 서버 재시작 없이 즉시 반영됩니다.
-        거래소 API 키는 .env에서 관리 (변경 시 재시작 필요).
+        실거래 여부 / KILL_SWITCH / 주문 한도는 DB에 저장되어 서버 재시작 없이 즉시 반영됩니다.
+        거래소 API 키·알람 자격은 위 카드에서 등록·수정 시 평문으로 DB에 저장되며 즉시 반영됩니다.
       </div>
 
       <div style={{ height: 16 }} />
