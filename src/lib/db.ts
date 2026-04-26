@@ -1,0 +1,592 @@
+import mysql from 'mysql2/promise';
+
+let pool: mysql.Pool | null = null;
+let setupPromise: Promise<void> | null = null;
+
+function createPool(): mysql.Pool {
+  return mysql.createPool({
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT ?? 3306),
+    user: process.env.DB_USER,
+    password: process.env.DB_PWD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000,
+    // DB 서버가 Asia/Seoul(KST) 기준으로 운영되므로 mysql2 timezone을 KST로 맞춤.
+    // mysql2가 DATETIME 값을 KST로 해석해 올바른 UTC Date 객체를 생성함.
+    timezone: '+09:00',
+  });
+}
+
+export function getPool(): mysql.Pool {
+  if (!pool) {
+    pool = createPool();
+    ensureSetup().catch((e) => console.error('[db] setup failed:', e));
+  }
+  return pool;
+}
+
+export async function withRetry<T>(fn: () => Promise<T>, attempts = 3, baseDelayMs = 200): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (i === attempts - 1) break;
+      await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** i));
+    }
+  }
+  throw lastErr;
+}
+
+export async function ping(): Promise<boolean> {
+  try {
+    const p = getPool();
+    await withRetry(() => p.query('SELECT 1'));
+    return true;
+  } catch (e) {
+    console.error('[db] ping failed:', e);
+    return false;
+  }
+}
+
+export function ensureSetup(): Promise<void> {
+  if (!setupPromise) setupPromise = setupDB();
+  return setupPromise;
+}
+
+async function setupDB(): Promise<void> {
+  const p = pool ?? (pool = createPool());
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      exchange VARCHAR(16) NOT NULL,
+      label VARCHAR(64) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_exchange_label (exchange, label)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS holdings (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      account_id INT NOT NULL,
+      currency VARCHAR(16) NOT NULL,
+      balance DECIMAL(36,18) NOT NULL DEFAULT 0,
+      locked DECIMAL(36,18) NOT NULL DEFAULT 0,
+      avg_buy_price DECIMAL(36,8) NULL,
+      snapshot_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_account_snapshot (account_id, snapshot_at DESC),
+      CONSTRAINT fk_holdings_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await p.query(
+    `INSERT IGNORE INTO accounts (exchange, label) VALUES ('kis', 'default')`,
+  );
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      ts DATETIME NOT NULL,
+      total_krw BIGINT NOT NULL,
+      positions JSON NOT NULL,
+      source VARCHAR(20) NOT NULL DEFAULT 'hourly',
+      INDEX idx_ts (ts DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      account_id INT NOT NULL,
+      client_order_id VARCHAR(64) NOT NULL,
+      exchange_order_id VARCHAR(64) NULL,
+      asset_class VARCHAR(16) NOT NULL DEFAULT 'stock',
+      symbol VARCHAR(32) NOT NULL,
+      side ENUM('buy','sell') NOT NULL,
+      type ENUM('limit','market') NOT NULL,
+      price DECIMAL(36,8) NULL,
+      quantity DECIMAL(36,18) NULL,
+      amount_krw DECIMAL(18,2) NULL,
+      status ENUM('pending','accepted','partially_filled','filled','cancelled','rejected','failed','dry_run','blocked') NOT NULL DEFAULT 'pending',
+      blocked_by VARCHAR(32) NULL,
+      source ENUM('manual','signal','auto') NOT NULL DEFAULT 'manual',
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_client_order_id (client_order_id),
+      INDEX idx_account_created (account_id, created_at DESC),
+      INDEX idx_symbol_status (symbol, status),
+      CONSTRAINT fk_orders_account FOREIGN KEY (account_id) REFERENCES accounts(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS executions (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      order_id BIGINT NOT NULL,
+      price DECIMAL(36,8) NOT NULL,
+      quantity DECIMAL(36,18) NOT NULL,
+      fee DECIMAL(36,8) NOT NULL DEFAULT 0,
+      executed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_order (order_id, executed_at DESC),
+      CONSTRAINT fk_exec_order FOREIGN KEY (order_id) REFERENCES orders(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS trade_logs (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      order_id BIGINT NULL,
+      event VARCHAR(32) NOT NULL,
+      payload JSON NOT NULL,
+      occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_occurred (occurred_at DESC),
+      INDEX idx_order_event (order_id, event),
+      CONSTRAINT fk_log_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS strategies (
+      id                   VARCHAR(64) PRIMARY KEY,
+      name                 VARCHAR(64)  NOT NULL,
+      description          VARCHAR(255) NOT NULL DEFAULT '',
+      tags                 JSON,
+      enabled              TINYINT(1)   NOT NULL DEFAULT 0,
+      backtest_interval_h  FLOAT        NOT NULL DEFAULT 6,
+      last_backtest_at     DATETIME     NULL,
+      next_backtest_at     DATETIME     NULL,
+      backtest_running     TINYINT(1)   NOT NULL DEFAULT 0,
+      last_backtest_result JSON         NULL,
+      stats_cache          JSON         NULL,
+      created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // Migrate backtest_interval_h from INT to FLOAT to support sub-hour intervals (e.g. 1 min = 1/60 h)
+  await p.query(`
+    ALTER TABLE strategies MODIFY COLUMN backtest_interval_h FLOAT NOT NULL DEFAULT 6
+  `).catch(() => { /* already FLOAT or alter failed — non-fatal */ });
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS system_config (
+      \`key\`     VARCHAR(64) PRIMARY KEY,
+      value      JSON        NOT NULL,
+      updated_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  const strategySeed = [
+    {
+      id: 'rsi-oversold-v1', name: 'RSI 역추세',
+      description: 'RSI(14) 과매도 반등 매수 / 과매수 청산 — 국내·해외주식 30분봉',
+      tags: JSON.stringify(['RSI · MA20', '30m', '국내·해외 universe']),
+      enabled: 1, backtest_interval_h: 6,
+      last_backtest_at: new Date(Date.now() - 6 * 3600000),
+      next_backtest_at: new Date(Date.now() + 6 * 3600000),
+      last_backtest_result: JSON.stringify({ sharpe: 1.24, mdd: -8.2, winRate: 61.3, period: '90일' }),
+      stats_cache: JSON.stringify({ return7d: 8.3, winRate: 64, signalCount: 11 }),
+    },
+    {
+      id: 'ma-cross-v1', name: 'MA 골든크로스',
+      description: 'MA5 > MA20 돌파 시 매수, 데드크로스 청산 — 1h봉 추세 추종',
+      tags: JSON.stringify(['MA5 · MA20', '1h', '국내·해외 universe']),
+      enabled: 1, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: JSON.stringify({ sharpe: 0.87, mdd: -11.5, winRate: 55.0, period: '90일' }),
+      stats_cache: JSON.stringify({ return7d: 3.1, winRate: 58, signalCount: 4 }),
+    },
+    {
+      id: 'bb-breakout-v1', name: '볼린저 돌파',
+      description: '밴드 상단 돌파 시 추세 추종 — 국내·해외주식 30분봉',
+      tags: JSON.stringify(['BB(20,2)', '30m', '국내·해외 universe']),
+      enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: new Date(Date.now() - 3 * 86400000), next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'rsi-macd-reversal-v1', name: 'RSI+MACD 반전',
+      description: 'RSI 상승 전환 + MACD 히스토그램 반등 + 양봉 — 모멘텀 반전 (공격적투자 전용)',
+      tags: JSON.stringify(['RSI · MACD', '30m', 'aggressive']),
+      enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'bb-squeeze-expansion-v1', name: '볼린저 Squeeze 확장',
+      description: '5봉 squeeze(width ≤ ATR×1.5) 직후 상단/하단 돌파 + 거래량 — 저변동→고변동 전환',
+      tags: JSON.stringify(['BB · ATR · Volume', '30m', 'breakout']),
+      enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'rsi-divergence-v1', name: 'RSI 다이버전스',
+      description: '가격 신저가/신고가 ↔ RSI 미동행 + 반전 봉 — 추세 약화 조기 포착 (공격적투자 전용)',
+      tags: JSON.stringify(['RSI Divergence', '30m', 'aggressive']),
+      enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'triple-confirmation-v1', name: '3중 확인',
+      description: 'RSI<35 + MACD bullish cross + 거래량 ×1.5 + 양봉 — 강한 합의 진입 (공격적투자 전용)',
+      tags: JSON.stringify(['RSI · MACD · Volume', '30m', 'aggressive']),
+      enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+  ];
+
+  // 크립토 잔재 시드를 주식 기준으로 일괄 갱신 (사용자가 수정한 description은 보존: WHERE에서 옛 문구 정확 일치 시에만 갱신)
+  const legacyMigrations: { id: string; oldDesc: string; oldTags: string }[] = [
+    { id: 'rsi-oversold-v1', oldDesc: 'RSI(14) 과매도 반등 매수 / 과매수 청산',
+      oldTags: JSON.stringify(['RSI · MA20', '1h', 'KRW-BTC']) },
+    { id: 'ma-cross-v1', oldDesc: 'MA5 > MA20 돌파 시 매수, 데드크로스 청산',
+      oldTags: JSON.stringify(['MA5 · MA20', '4h', 'KRW-BTC · KRW-ETH']) },
+    { id: 'bb-breakout-v1', oldDesc: '밴드 상단 돌파 시 추세 추종',
+      oldTags: JSON.stringify(['BB(20,2)', '1h', 'KRW-ETH']) },
+  ];
+
+  for (const s of strategySeed) {
+    await p.query(
+      `INSERT IGNORE INTO strategies
+       (id, name, description, tags, enabled, backtest_interval_h,
+        last_backtest_at, next_backtest_at, last_backtest_result, stats_cache)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [s.id, s.name, s.description, s.tags, s.enabled, s.backtest_interval_h,
+       s.last_backtest_at, s.next_backtest_at, s.last_backtest_result, s.stats_cache],
+    );
+  }
+
+  for (const m of legacyMigrations) {
+    const fresh = strategySeed.find(s => s.id === m.id);
+    if (!fresh) continue;
+    // description이 옛 값과 정확히 일치할 때만 갱신 (사용자 수정 description은 보존)
+    await p.query(
+      'UPDATE strategies SET description = ?, tags = ? WHERE id = ? AND description = ?',
+      [fresh.description, fresh.tags, m.id, m.oldDesc],
+    ).catch(() => { /* non-fatal */ });
+  }
+
+  for (const [key, val] of [
+    ['backtest_period_days',   '90'],
+    ['backtest_fee_pct',       '0.05'],
+    ['backtest_slip_pct',      '0.10'],
+    ['backtest_incl_inactive', 'false'],
+  ] as [string, string][]) {
+    await p.query('INSERT IGNORE INTO system_config (`key`, value) VALUES (?,?)', [key, val]);
+  }
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS signals (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      strategy_id VARCHAR(64) NULL,
+      symbol VARCHAR(32) NOT NULL,
+      side ENUM('buy','sell') NOT NULL,
+      order_type ENUM('limit','market') NOT NULL,
+      price DECIMAL(36,8) NULL,
+      quantity DECIMAL(36,18) NULL,
+      amount_krw DECIMAL(18,2) NOT NULL,
+      reasoning TEXT NULL,
+      indicators JSON NULL,
+      status ENUM('pending','approved','rejected','auto_submitted','expired','superseded') NOT NULL DEFAULT 'pending',
+      expires_at DATETIME NULL,
+      consumed_order_id BIGINT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_signals_status (status, created_at DESC),
+      INDEX idx_signals_symbol (symbol, created_at DESC),
+      INDEX idx_signals_consumed (consumed_order_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ai_skipped 상태 추가 (기존 DB에도 적용, 중복 실행 무해)
+  try {
+    await p.query(`
+      ALTER TABLE signals MODIFY COLUMN status
+        ENUM('pending','approved','rejected','auto_submitted','expired','superseded','ai_skipped')
+        NOT NULL DEFAULT 'pending'
+    `);
+  } catch { /* 이미 존재하는 경우 무시 */ }
+
+  // AI 스킵 시점의 시세 기록 + 후속 변화율 추적 컬럼 (signal-followup cron 용)
+  for (const col of [
+    ['price_at_skip',    'DECIMAL(36,8) NULL'],
+    ['price_1h_after',   'DECIMAL(36,8) NULL'],
+    ['price_change_pct', 'DECIMAL(10,4) NULL'],
+  ] as const) {
+    try {
+      await p.query(`ALTER TABLE signals ADD COLUMN ${col[0]} ${col[1]}`);
+    } catch { /* 이미 존재하는 경우 무시 */ }
+  }
+
+  // 듀얼 시장 (국내/해외) 컬럼 — signals/orders/symbol_universe
+  for (const tbl of ['signals', 'orders', 'symbol_universe'] as const) {
+    try {
+      await p.query(
+        `ALTER TABLE ${tbl} ADD COLUMN market ENUM('domestic','overseas') NOT NULL DEFAULT 'domestic'`,
+      );
+    } catch { /* 이미 존재하는 경우 무시 */ }
+  }
+  try {
+    await p.query(`CREATE INDEX idx_signals_market ON signals (market, created_at DESC)`);
+  } catch { /* 이미 존재 */ }
+  try {
+    await p.query(`CREATE INDEX idx_orders_market ON orders (market, created_at DESC)`);
+  } catch { /* 이미 존재 */ }
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS symbol_universe (
+      id           BIGINT PRIMARY KEY AUTO_INCREMENT,
+      refreshed_at DATETIME NOT NULL,
+      profile      VARCHAR(20) NOT NULL,
+      symbol       VARCHAR(32) NOT NULL,
+      rank_pos     INT NOT NULL,
+      score        DECIMAL(10,6) NOT NULL,
+      vol_rank     INT NOT NULL,
+      atr_pct      DECIMAL(8,4) NULL,
+      score_detail JSON NULL,
+      INDEX idx_universe_refresh (refreshed_at DESC, profile)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 시장별 공휴일 (KR + US)
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS market_holidays (
+      market       ENUM('domestic','overseas') NOT NULL,
+      holiday_date DATE NOT NULL,
+      name         VARCHAR(64) NULL,
+      half_day     TINYINT(1) NOT NULL DEFAULT 0,
+      PRIMARY KEY (market, holiday_date)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 환율 (USD/KRW) 캐시
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS fx_rates (
+      pair        VARCHAR(8) PRIMARY KEY,
+      rate        DECIMAL(10,4) NOT NULL,
+      fetched_at  DATETIME NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 종목 메타 캐시 — 검색용(코드 ↔ 이름)
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS stock_meta (
+      symbol      VARCHAR(32) PRIMARY KEY,
+      name        VARCHAR(128) NOT NULL,
+      market      ENUM('domestic','overseas') NOT NULL DEFAULT 'domestic',
+      updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_meta_market (market)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 공휴일 시드 — 2025~2027 KR + US (NYSE) 정적. INSERT IGNORE로 중복 무해.
+  const HOLIDAY_SEED: Array<[string, string, string, number?]> = [
+    // ── 2025 KR ────────────────────────────────────────────────
+    ['domestic', '2025-01-01', '신정'],
+    ['domestic', '2025-01-28', '설날'], ['domestic', '2025-01-29', '설날'], ['domestic', '2025-01-30', '설날'],
+    ['domestic', '2025-03-01', '삼일절'],
+    ['domestic', '2025-05-05', '어린이날'],
+    ['domestic', '2025-05-06', '대체공휴일'],
+    ['domestic', '2025-06-06', '현충일'],
+    ['domestic', '2025-08-15', '광복절'],
+    ['domestic', '2025-10-03', '개천절'],
+    ['domestic', '2025-10-06', '추석'], ['domestic', '2025-10-07', '추석'], ['domestic', '2025-10-08', '추석'],
+    ['domestic', '2025-10-09', '한글날'],
+    ['domestic', '2025-12-25', '성탄절'],
+    // ── 2026 KR ────────────────────────────────────────────────
+    ['domestic', '2026-01-01', '신정'],
+    ['domestic', '2026-02-16', '설날'], ['domestic', '2026-02-17', '설날'], ['domestic', '2026-02-18', '설날'],
+    ['domestic', '2026-03-01', '삼일절'],
+    ['domestic', '2026-05-05', '어린이날'],
+    ['domestic', '2026-05-25', '석가탄신일'],
+    ['domestic', '2026-06-06', '현충일'],
+    ['domestic', '2026-08-15', '광복절'],
+    ['domestic', '2026-09-24', '추석'], ['domestic', '2026-09-25', '추석'], ['domestic', '2026-09-26', '추석'],
+    ['domestic', '2026-10-03', '개천절'],
+    ['domestic', '2026-10-09', '한글날'],
+    ['domestic', '2026-12-25', '성탄절'],
+    // ── 2027 KR ────────────────────────────────────────────────
+    ['domestic', '2027-01-01', '신정'],
+    ['domestic', '2027-02-06', '설날'], ['domestic', '2027-02-07', '설날'], ['domestic', '2027-02-08', '설날'],
+    ['domestic', '2027-03-01', '삼일절'],
+    ['domestic', '2027-05-05', '어린이날'],
+    ['domestic', '2027-05-13', '석가탄신일'],
+    ['domestic', '2027-06-06', '현충일'],
+    ['domestic', '2027-08-15', '광복절'],
+    ['domestic', '2027-09-14', '추석'], ['domestic', '2027-09-15', '추석'], ['domestic', '2027-09-16', '추석'],
+    ['domestic', '2027-10-03', '개천절'],
+    ['domestic', '2027-10-09', '한글날'],
+    ['domestic', '2027-12-25', '성탄절'],
+    // ── 2025 US (NYSE) ─────────────────────────────────────────
+    ['overseas', '2025-01-01', "New Year's Day"],
+    ['overseas', '2025-01-20', 'MLK Day'],
+    ['overseas', '2025-02-17', "Presidents' Day"],
+    ['overseas', '2025-04-18', 'Good Friday'],
+    ['overseas', '2025-05-26', 'Memorial Day'],
+    ['overseas', '2025-06-19', 'Juneteenth'],
+    ['overseas', '2025-07-03', 'Independence Day Eve', 1],
+    ['overseas', '2025-07-04', 'Independence Day'],
+    ['overseas', '2025-09-01', 'Labor Day'],
+    ['overseas', '2025-11-27', 'Thanksgiving'],
+    ['overseas', '2025-11-28', 'Day after Thanksgiving', 1],
+    ['overseas', '2025-12-24', 'Christmas Eve', 1],
+    ['overseas', '2025-12-25', 'Christmas'],
+    // ── 2026 US (NYSE) ─────────────────────────────────────────
+    ['overseas', '2026-01-01', "New Year's Day"],
+    ['overseas', '2026-01-19', 'MLK Day'],
+    ['overseas', '2026-02-16', "Presidents' Day"],
+    ['overseas', '2026-04-03', 'Good Friday'],
+    ['overseas', '2026-05-25', 'Memorial Day'],
+    ['overseas', '2026-06-19', 'Juneteenth'],
+    ['overseas', '2026-07-03', 'Independence Day (observed)'],
+    ['overseas', '2026-09-07', 'Labor Day'],
+    ['overseas', '2026-11-26', 'Thanksgiving'],
+    ['overseas', '2026-11-27', 'Day after Thanksgiving', 1],
+    ['overseas', '2026-12-24', 'Christmas Eve', 1],
+    ['overseas', '2026-12-25', 'Christmas'],
+    // ── 2027 US (NYSE) ─────────────────────────────────────────
+    ['overseas', '2027-01-01', "New Year's Day"],
+    ['overseas', '2027-01-18', 'MLK Day'],
+    ['overseas', '2027-02-15', "Presidents' Day"],
+    ['overseas', '2027-03-26', 'Good Friday'],
+    ['overseas', '2027-05-31', 'Memorial Day'],
+    ['overseas', '2027-06-18', 'Juneteenth (observed)'],
+    ['overseas', '2027-07-05', 'Independence Day (observed)'],
+    ['overseas', '2027-09-06', 'Labor Day'],
+    ['overseas', '2027-11-25', 'Thanksgiving'],
+    ['overseas', '2027-11-26', 'Day after Thanksgiving', 1],
+    ['overseas', '2027-12-23', 'Christmas Eve', 1],
+    ['overseas', '2027-12-24', 'Christmas (observed)'],
+    // ── 2028 KR ────────────────────────────────────────────────
+    ['domestic', '2028-01-01', '신정'],
+    ['domestic', '2028-01-26', '설날'], ['domestic', '2028-01-27', '설날'], ['domestic', '2028-01-28', '설날'],
+    ['domestic', '2028-03-01', '삼일절'],
+    ['domestic', '2028-04-12', '국회의원선거'],
+    ['domestic', '2028-05-02', '석가탄신일'],
+    ['domestic', '2028-05-05', '어린이날'],
+    ['domestic', '2028-06-06', '현충일'],
+    ['domestic', '2028-08-15', '광복절'],
+    ['domestic', '2028-10-03', '개천절'],
+    ['domestic', '2028-10-03', '추석'], ['domestic', '2028-10-04', '추석'], ['domestic', '2028-10-05', '추석'],
+    ['domestic', '2028-10-09', '한글날'],
+    ['domestic', '2028-12-25', '성탄절'],
+    // ── 2029 KR ────────────────────────────────────────────────
+    ['domestic', '2029-01-01', '신정'],
+    ['domestic', '2029-02-12', '설날'], ['domestic', '2029-02-13', '설날'], ['domestic', '2029-02-14', '설날'],
+    ['domestic', '2029-03-01', '삼일절'],
+    ['domestic', '2029-05-05', '어린이날'],
+    ['domestic', '2029-05-21', '석가탄신일'],
+    ['domestic', '2029-06-06', '현충일'],
+    ['domestic', '2029-08-15', '광복절'],
+    ['domestic', '2029-09-21', '추석'], ['domestic', '2029-09-22', '추석'], ['domestic', '2029-09-23', '추석'],
+    ['domestic', '2029-10-03', '개천절'],
+    ['domestic', '2029-10-09', '한글날'],
+    ['domestic', '2029-12-25', '성탄절'],
+    // ── 2030 KR ────────────────────────────────────────────────
+    ['domestic', '2030-01-01', '신정'],
+    ['domestic', '2030-02-02', '설날'], ['domestic', '2030-02-03', '설날'], ['domestic', '2030-02-04', '설날'],
+    ['domestic', '2030-03-01', '삼일절'],
+    ['domestic', '2030-05-05', '어린이날'],
+    ['domestic', '2030-05-09', '석가탄신일'],
+    ['domestic', '2030-06-06', '현충일'],
+    ['domestic', '2030-08-15', '광복절'],
+    ['domestic', '2030-09-11', '추석'], ['domestic', '2030-09-12', '추석'], ['domestic', '2030-09-13', '추석'],
+    ['domestic', '2030-10-03', '개천절'],
+    ['domestic', '2030-10-09', '한글날'],
+    ['domestic', '2030-12-25', '성탄절'],
+    // ── 2028 US (NYSE) ─────────────────────────────────────────
+    ['overseas', '2028-01-17', 'MLK Day'],
+    ['overseas', '2028-02-21', "Presidents' Day"],
+    ['overseas', '2028-04-14', 'Good Friday'],
+    ['overseas', '2028-05-29', 'Memorial Day'],
+    ['overseas', '2028-06-19', 'Juneteenth'],
+    ['overseas', '2028-07-03', 'Independence Day Eve', 1],
+    ['overseas', '2028-07-04', 'Independence Day'],
+    ['overseas', '2028-09-04', 'Labor Day'],
+    ['overseas', '2028-11-23', 'Thanksgiving'],
+    ['overseas', '2028-11-24', 'Day after Thanksgiving', 1],
+    ['overseas', '2028-12-25', 'Christmas'],
+    // ── 2029 US (NYSE) ─────────────────────────────────────────
+    ['overseas', '2029-01-01', "New Year's Day"],
+    ['overseas', '2029-01-15', 'MLK Day'],
+    ['overseas', '2029-02-19', "Presidents' Day"],
+    ['overseas', '2029-03-30', 'Good Friday'],
+    ['overseas', '2029-05-28', 'Memorial Day'],
+    ['overseas', '2029-06-19', 'Juneteenth'],
+    ['overseas', '2029-07-03', 'Independence Day Eve', 1],
+    ['overseas', '2029-07-04', 'Independence Day'],
+    ['overseas', '2029-09-03', 'Labor Day'],
+    ['overseas', '2029-11-22', 'Thanksgiving'],
+    ['overseas', '2029-11-23', 'Day after Thanksgiving', 1],
+    ['overseas', '2029-12-24', 'Christmas Eve', 1],
+    ['overseas', '2029-12-25', 'Christmas'],
+    // ── 2030 US (NYSE) ─────────────────────────────────────────
+    ['overseas', '2030-01-01', "New Year's Day"],
+    ['overseas', '2030-01-21', 'MLK Day'],
+    ['overseas', '2030-02-18', "Presidents' Day"],
+    ['overseas', '2030-04-19', 'Good Friday'],
+    ['overseas', '2030-05-27', 'Memorial Day'],
+    ['overseas', '2030-06-19', 'Juneteenth'],
+    ['overseas', '2030-07-03', 'Independence Day Eve', 1],
+    ['overseas', '2030-07-04', 'Independence Day'],
+    ['overseas', '2030-09-02', 'Labor Day'],
+    ['overseas', '2030-11-28', 'Thanksgiving'],
+    ['overseas', '2030-11-29', 'Day after Thanksgiving', 1],
+    ['overseas', '2030-12-24', 'Christmas Eve', 1],
+    ['overseas', '2030-12-25', 'Christmas'],
+  ];
+  for (const row of HOLIDAY_SEED) {
+    const [market, date, name, halfDay] = row;
+    try {
+      await p.query(
+        `INSERT IGNORE INTO market_holidays (market, holiday_date, name, half_day) VALUES (?, ?, ?, ?)`,
+        [market, date, name, halfDay ?? 0],
+      );
+    } catch { /* ignore */ }
+  }
+
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS backtests (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      strategy_id VARCHAR(64) NOT NULL,
+      symbol VARCHAR(32) NOT NULL,
+      interval_str VARCHAR(8) NOT NULL DEFAULT '1h',
+      period_days INT NOT NULL,
+      fee_pct DECIMAL(5,4) NOT NULL DEFAULT 0.0500,
+      slip_pct DECIMAL(5,4) NOT NULL DEFAULT 0.1000,
+      initial_krw BIGINT NOT NULL DEFAULT 1000000,
+      status ENUM('running','done','failed') NOT NULL DEFAULT 'running',
+      result JSON NULL,
+      error TEXT NULL,
+      started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      finished_at DATETIME NULL,
+      INDEX idx_bt_strategy (strategy_id, started_at DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
+
+export async function getAccountId(exchange: string, label = 'default'): Promise<number> {
+  const p = getPool();
+  const [rows] = await p.query<mysql.RowDataPacket[]>(
+    'SELECT id FROM accounts WHERE exchange=? AND label=? LIMIT 1',
+    [exchange, label],
+  );
+  const row = rows[0];
+  if (!row) throw new Error(`account not found: ${exchange}/${label}`);
+  return Number(row.id);
+}

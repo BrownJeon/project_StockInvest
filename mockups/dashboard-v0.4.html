@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#0f1115" />
+<title>TradingInvest 대시보드 v0.4 (하단 5-탭 + 주문 바로가기)</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg:#0f1115; --bg2:#171a21; --bg3:#1f2430; --bg4:#262b36;
+    --border:#262b36; --border2:#323848;
+    --text:#e6e8ee; --muted:#8b93a7;
+    --up:#ef4444; --down:#3b82f6;
+    --accent:#f59e0b;
+    --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin:0; padding:0; background:var(--bg); color:var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size:14px; -webkit-text-size-adjust:100%; overscroll-behavior-y: contain; }
+  button { font:inherit; color:inherit; background:none; border:0; cursor:pointer; }
+  .num { font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+
+  .app {
+    display:grid;
+    grid-template-rows: auto auto auto auto auto auto 1fr auto auto;
+    min-height:100dvh;
+    padding-top: var(--safe-top);
+    padding-bottom: calc(var(--safe-bottom) + var(--nav-h));
+  }
+
+  /* 상단 요약 */
+  .top {
+    background:var(--bg2); border-bottom:1px solid var(--border);
+    padding:12px 16px; display:grid; grid-template-columns: 1fr auto; gap:4px 12px; align-items:center;
+  }
+  .top .brand { font-size:12px; color:var(--muted); letter-spacing:.5px; grid-column:1/3; }
+  .top .brand .dot { color: var(--accent); }
+  .top .total { font-size:22px; font-weight:700; }
+  .top .sub { display:flex; gap:10px; font-size:12px; color:var(--muted); grid-column:1/2; }
+  .top .sub .chg { font-weight:600; font-size:13px; }
+  .top .refresh {
+    grid-row:2/4; grid-column:2/3;
+    width:44px; height:44px; border-radius:12px;
+    background:var(--bg3); border:1px solid var(--border2);
+    display:flex; align-items:center; justify-content:center; font-size:18px;
+  }
+  .top .refresh:active { background:var(--bg4); }
+
+  /* 심볼 chip */
+  .chips {
+    display:flex; gap:6px; padding:10px 12px; overflow-x:auto;
+    background:var(--bg2); border-bottom:1px solid var(--border);
+    scrollbar-width:none;
+  }
+  .chips::-webkit-scrollbar { display:none; }
+  .chip {
+    flex:0 0 auto; padding:8px 14px; border-radius:999px;
+    background:var(--bg3); border:1px solid var(--border2);
+    font-size:13px; font-weight:600; white-space:nowrap; min-height:36px;
+  }
+  .chip.active { background:#2b3244; border-color:#3d4458; color:#fff; }
+  .chip .badge { font-size:10px; margin-left:6px; padding:1px 6px; border-radius:8px; background:rgba(0,0,0,.35); color:#22c55e; }
+  .chip.view .badge { color: var(--muted); }
+
+  /* 인터벌 바 */
+  .iv-bar { display:flex; align-items:center; gap:10px; padding:10px 16px; background:var(--bg2); }
+  .iv-bar .sym-now { font-size:15px; font-weight:700; }
+  .iv-bar .price-now { margin-left:auto; font-size:15px; font-weight:700; }
+  .ivs { display:flex; gap:4px; background:var(--bg3); padding:3px; border-radius:10px; }
+  .iv { padding:8px 14px; border-radius:8px; color:var(--muted); font-size:13px; min-width:44px; text-align:center; }
+  .iv.active { background:#2b3244; color:#fff; }
+
+  /* 차트 */
+  .chart-wrap { background:var(--bg); border-bottom:1px solid var(--border); }
+  .chart { height: 36vh; min-height: 220px; max-height: 400px; }
+
+  /* KPI + 주문 바로가기 */
+  .kpis {
+    display:grid; grid-template-columns: repeat(3, 1fr); gap:2px;
+    background:var(--border); border-bottom:1px solid var(--border);
+  }
+  .kpi { background:var(--bg2); padding:10px 12px; }
+  .kpi .label { font-size:11px; color:var(--muted); }
+  .kpi .value { font-size:14px; font-weight:600; margin-top:2px; }
+
+  .order-cta {
+    display:grid; grid-template-columns: 1fr 1fr; gap:2px;
+    background:var(--border); border-bottom:1px solid var(--border);
+  }
+  .cta {
+    display:flex; align-items:center; justify-content:center; gap:6px;
+    padding:14px; min-height:56px; font-weight:700; font-size:15px;
+  }
+  .cta.buy  { background:#2a1515; color:#fca5a5; }
+  .cta.buy:active  { background:#3a1d1d; }
+  .cta.sell { background:#121c33; color:#93c5fd; }
+  .cta.sell:active { background:#1a2744; }
+  .cta.disabled { background:var(--bg3); color:var(--muted); pointer-events:none; }
+  .cta .hint { font-size:11px; font-weight:500; opacity:.7; margin-left:2px; }
+
+  /* 탭 */
+  .tabs { display:flex; background:var(--bg2); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:5; }
+  .tab { flex:1; padding:14px 0; text-align:center; font-size:14px; font-weight:600; color:var(--muted); border-bottom:2px solid transparent; }
+  .tab.active { color:var(--text); border-bottom-color: var(--accent); }
+  .tab .cnt { font-size:11px; color:var(--muted); margin-left:6px; }
+
+  .list { background:var(--bg); overflow-y:auto; }
+  .row {
+    display:grid; grid-template-columns: 1fr auto; gap:4px 12px;
+    padding:14px 16px; border-bottom:1px solid #20242f;
+    min-height:64px; align-items:center;
+  }
+  .row:active { background:#1a1f2b; }
+  .row.active { background:#22293a; }
+  .row .sym { display:flex; align-items:center; gap:6px; font-weight:700; font-size:14px; }
+  .row .qty { color:var(--muted); font-size:11px; margin-top:2px; }
+  .row .price { text-align:right; font-size:14px; font-weight:600; }
+  .row .pnl { text-align:right; font-size:12px; margin-top:2px; font-weight:600; }
+  .badge { font-size:10px; padding:2px 6px; border-radius:10px; }
+  .badge.trade { background:#133b2b; color:#22c55e; }
+  .badge.view  { background:#2b2f38; color:#8b93a7; }
+
+  .search-wrap { padding:10px 12px; background:var(--bg2); border-bottom:1px solid var(--border); }
+  .search { width:100%; background:var(--bg3); color:var(--text); border:1px solid var(--border2); padding:10px 12px; border-radius:10px; font-size:14px; }
+
+  /* safety 토글 */
+  .safety-toggle {
+    display:flex; align-items:center; gap:10px;
+    width:100%; min-height:44px; padding:10px 16px;
+    background:var(--bg2); border-top:1px solid var(--border);
+    text-align:left;
+  }
+  .safety-toggle:active { background:var(--bg3); }
+  .sdot { width:10px; height:10px; border-radius:50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(34,197,94,.15); flex:0 0 auto; }
+  .sdot.warn   { background: var(--warn);   box-shadow: 0 0 0 3px rgba(245,158,11,.15); }
+  .sdot.danger { background: var(--danger); box-shadow: 0 0 0 3px rgba(239,68,68,.15); }
+  .safety-label { font-size:13px; font-weight:700; }
+  .safety-summary { font-size:12px; color:var(--muted); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; flex:1; min-width:0; }
+  .chev { font-size:12px; color:var(--muted); transition: transform .2s ease; }
+  .safety-toggle.open .chev { transform: rotate(180deg); }
+
+  .safety-panel { background:var(--bg2); max-height:0; overflow:hidden; transition: max-height .25s ease; }
+  .safety-panel.open { max-height: 160px; }
+  .safety-list { display:flex; gap:6px; padding:10px 12px; overflow-x:auto; scrollbar-width:none; }
+  .safety-list::-webkit-scrollbar { display:none; }
+  .sb { flex:0 0 auto; padding:6px 10px; border-radius:999px; background:var(--bg3); border:1px solid var(--border); font-size:11px; white-space:nowrap; }
+  .sb b { font-weight:700; margin-right:4px; color:#cbd5e1; }
+  .sb.ok { border-color:#14532d; color:#86efac; }
+
+  /* ── 하단 5-탭 고정 바 ── */
+  .bottom-nav {
+    position:fixed; left:0; right:0; bottom:0;
+    height: calc(var(--nav-h) + var(--safe-bottom));
+    padding-bottom: var(--safe-bottom);
+    background:var(--bg2); border-top:1px solid var(--border);
+    display:grid; grid-template-columns: repeat(5, 1fr); z-index: 20;
+  }
+  .nav-btn {
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:2px; color:var(--muted); font-size:10px; font-weight:600;
+    min-height:56px;
+  }
+  .nav-btn .ic { font-size:22px; line-height:1; }
+  .nav-btn.active { color:var(--accent); }
+  .nav-btn.active .ic { transform: translateY(-1px); }
+
+  /* 데스크탑 폴백 */
+  @media (min-width: 900px) {
+    .app { grid-template-columns: 1.2fr 1fr; }
+    .top, .chips { grid-column: 1 / 3; }
+    .iv-bar, .chart-wrap, .kpis, .order-cta { grid-column: 1 / 2; }
+    .chart { height: 50vh; }
+    .tabs, .search-wrap, .list { grid-column: 2 / 3; }
+    .safety-toggle, .safety-panel { grid-column: 1 / 3; }
+    .bottom-nav { max-width: 720px; left:50%; transform: translateX(-50%); border-radius: 16px 16px 0 0; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="top">
+    <div class="brand">Trading<span class="dot">·</span>Invest — swing · crypto</div>
+    <div class="total num" id="topTotal">7,842,150 <span style="font-size:12px;color:var(--muted);font-weight:500;">KRW</span></div>
+    <div class="sub">
+      <span class="chg up num" id="topChange">+3.21% (24h)</span>
+      <span>· 현금 <span id="topCash" class="num">18.4%</span></span>
+    </div>
+    <button class="refresh" onclick="render()" aria-label="새로고침">↻</button>
+  </div>
+
+  <div class="chips" id="chips"></div>
+
+  <div class="iv-bar">
+    <div class="sym-now" id="chSym">KRW-BTC</div>
+    <div class="ivs" id="intervals">
+      <div class="iv" data-iv="1h">1h</div>
+      <div class="iv active" data-iv="4h">4h</div>
+      <div class="iv" data-iv="1d">1d</div>
+    </div>
+    <div class="price-now num" id="chPrice">96,840,000</div>
+  </div>
+
+  <div class="chart-wrap"><div class="chart" id="chart"></div></div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="label">24h 고</div><div class="value num" id="chHigh">98,120,000</div></div>
+    <div class="kpi"><div class="label">24h 저</div><div class="value num" id="chLow">94,560,000</div></div>
+    <div class="kpi"><div class="label">24h 거래량</div><div class="value num" id="chVol">1,284 BTC</div></div>
+  </div>
+
+  <!-- 주문 바로가기 -->
+  <div class="order-cta">
+    <button class="cta buy" id="btnBuy" onclick="goOrder('buy')">매수 <span class="hint" id="btnBuyHint">KRW-BTC</span></button>
+    <button class="cta sell" id="btnSell" onclick="goOrder('sell')">매도 <span class="hint" id="btnSellHint">KRW-BTC</span></button>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="hold">보유 <span class="cnt" id="cntHold">5</span></div>
+    <div class="tab" data-tab="watch">관심 <span class="cnt" id="cntWatch">30</span></div>
+  </div>
+
+  <div class="search-wrap" id="searchWrap" style="display:none;">
+    <input class="search" id="searchBox" placeholder="심볼 검색 (예: BTC, SOL)" oninput="renderList()" />
+  </div>
+
+  <div class="list" id="list"></div>
+
+  <button class="safety-toggle" id="safetyToggle" aria-expanded="false" onclick="toggleSafety()">
+    <span class="sdot" id="safetyDot"></span>
+    <span class="safety-label">Safety</span>
+    <span class="safety-summary" id="safetySummary">정상 · DRY_RUN ON · KILL OFF · WL 2</span>
+    <span class="chev">▲</span>
+  </button>
+  <div class="safety-panel" id="safetyPanel">
+    <div class="safety-list">
+      <span class="sb ok"><b>DRY_RUN</b>ON</span>
+      <span class="sb ok"><b>KILL</b>OFF</span>
+      <span class="sb"><b>ORDER_MAX</b>10,000</span>
+      <span class="sb"><b>DAILY_MAX</b>50,000</span>
+      <span class="sb"><b>WL</b>BTC, ETH</span>
+      <span class="sb"><b>VOL_GUARD</b>-2/-4/-7</span>
+      <span class="sb"><b>PROFILE</b>crypto auto</span>
+    </div>
+  </div>
+</div>
+
+<!-- 하단 5-탭 -->
+<nav class="bottom-nav" aria-label="primary navigation">
+  <button class="nav-btn active" onclick="alert('현재 화면: 대시보드')">
+    <span class="ic">🏠</span><span>대시보드</span>
+  </button>
+  <button class="nav-btn" onclick="alert('주문 탭 — Phase 3 구현 예정')">
+    <span class="ic">📝</span><span>주문</span>
+  </button>
+  <button class="nav-btn" onclick="alert('전략 탭 — Phase 5 구현 예정')">
+    <span class="ic">🎯</span><span>전략</span>
+  </button>
+  <button class="nav-btn" onclick="alert('분석 탭 — Phase 6 구현 예정')">
+    <span class="ic">📈</span><span>분석</span>
+  </button>
+  <button class="nav-btn" onclick="alert('설정 탭 — Phase 2/3에서 점진 구현')">
+    <span class="ic">⚙️</span><span>설정</span>
+  </button>
+</nav>
+
+<script>
+  /* 더미 데이터 */
+  const HOLDINGS = [
+    { sym: 'KRW',     qty: 1_442_000, avg: null,       price: 1,          prevValue: 1_442_000 },
+    { sym: 'KRW-BTC', qty: 0.0510,    avg: 94_000_000, price: 96_840_000, prevValue: 0.0510 * 93_800_000 },
+    { sym: 'KRW-ETH', qty: 0.420,     avg: 4_180_000,  price: 4_520_000,  prevValue: 0.420 * 4_405_000 },
+    { sym: 'KRW-SOL', qty: 6.7,       avg: 288_000,    price: 281_500,    prevValue: 6.7 * 291_000 },
+    { sym: 'KRW-XRP', qty: 1_240,     avg: 920,        price: 942,        prevValue: 1_240 * 935 },
+  ];
+  const WHITELIST = new Set(['KRW-BTC','KRW-ETH']);
+  const WATCH = [
+    'KRW-BTC','KRW-ETH','KRW-XRP','KRW-SOL','KRW-ADA','KRW-DOGE','KRW-DOT','KRW-AVAX','KRW-LINK','KRW-MATIC',
+    'KRW-UNI','KRW-ATOM','KRW-ETC','KRW-BCH','KRW-LTC','KRW-TRX','KRW-NEAR','KRW-ALGO','KRW-APT','KRW-OP',
+    'KRW-ARB','KRW-FIL','KRW-SAND','KRW-MANA','KRW-AAVE','KRW-CRV','KRW-COMP','KRW-GRT','KRW-ENS','KRW-EOS',
+  ].map((s) => ({ sym: s, price: Math.round(Math.random() * 200000 + 800), change24h: (Math.random() - 0.5) * 0.1 }));
+
+  const SAFETY = { dryRun: true, killSwitch: false, whitelist: 2 };
+
+  const fmt = (n, d=0) => n.toLocaleString('ko-KR', { maximumFractionDigits:d, minimumFractionDigits:d });
+  const pnlClass = (v) => v >= 0 ? 'up' : 'down';
+  const pnlText  = (v) => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+
+  let activeSym = 'KRW-BTC';
+  let activeIv  = '4h';
+  let activeTab = 'hold';
+  let safetyOpen = false;
+
+  function renderTop() {
+    let total = 0, prev = 0;
+    for (const h of HOLDINGS) { total += h.qty * h.price; prev += h.prevValue; }
+    const ch = ((total - prev) / prev) * 100;
+    document.getElementById('topTotal').innerHTML = fmt(total) + ' <span style="font-size:12px;color:var(--muted);font-weight:500;">KRW</span>';
+    const el = document.getElementById('topChange');
+    el.textContent = (ch>=0?'+':'') + ch.toFixed(2) + '% (24h)';
+    el.className = 'chg num ' + pnlClass(ch);
+    document.getElementById('topCash').textContent = ((HOLDINGS[0].qty / total) * 100).toFixed(1) + '%';
+    document.getElementById('cntHold').textContent = HOLDINGS.length;
+    document.getElementById('cntWatch').textContent = WATCH.length;
+  }
+
+  function renderChips() {
+    const chips = document.getElementById('chips');
+    const set = new Set(HOLDINGS.map(h=>h.sym).filter(s=>s!=='KRW'));
+    WATCH.slice(0, 8).forEach(w => set.add(w.sym));
+    const list = [...set];
+    chips.innerHTML = list.map(s => {
+      const cls = s === activeSym ? 'active' : '';
+      const view = !WHITELIST.has(s) ? ' view' : '';
+      const badge = WHITELIST.has(s) ? '<span class="badge">매매</span>' : '<span class="badge" style="color:var(--muted)">조회</span>';
+      return `<button class="chip ${cls}${view}" onclick="selectSym('${s}')">${s.replace('KRW-','')} ${badge}</button>`;
+    }).join('');
+  }
+
+  function renderKPI() {
+    const seed = activeSym.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+    const price = 1000 + (seed * 12345) % 100_000_000;
+    document.getElementById('chSym').textContent = activeSym;
+    document.getElementById('chPrice').textContent = fmt(Math.round(price));
+    document.getElementById('chHigh').textContent = fmt(Math.round(price * 1.014));
+    document.getElementById('chLow').textContent = fmt(Math.round(price * 0.977));
+    document.getElementById('chVol').textContent = fmt(Math.round(Math.random()*2000)) + ' ' + activeSym.split('-')[1];
+  }
+
+  function renderOrderCTA() {
+    const sym = activeSym;
+    const allowed = WHITELIST.has(sym);
+    document.getElementById('btnBuyHint').textContent = sym;
+    document.getElementById('btnSellHint').textContent = sym;
+    const bb = document.getElementById('btnBuy');
+    const bs = document.getElementById('btnSell');
+    bb.classList.toggle('disabled', !allowed);
+    bs.classList.toggle('disabled', !allowed);
+    if (!allowed) {
+      bb.innerHTML = `매수 <span class="hint">조회 전용 심볼</span>`;
+      bs.innerHTML = `매도 <span class="hint">조회 전용 심볼</span>`;
+    } else {
+      bb.innerHTML = `매수 <span class="hint" id="btnBuyHint">${sym}</span>`;
+      bs.innerHTML = `매도 <span class="hint" id="btnSellHint">${sym}</span>`;
+    }
+  }
+
+  function goOrder(side) {
+    // 실 구현: router.push(`/order?symbol=${activeSym}&side=${side}`)
+    alert(`주문 탭으로 이동\nsymbol=${activeSym}\nside=${side}\n(Phase 3에서 실 라우팅 구현)`);
+  }
+
+  function renderList() {
+    const list = document.getElementById('list');
+    const sw = document.getElementById('searchWrap');
+    if (activeTab === 'hold') {
+      sw.style.display = 'none';
+      list.innerHTML = HOLDINGS.map((h) => {
+        const value = h.qty * h.price;
+        const pnl = h.avg ? ((h.price - h.avg) / h.avg) * 100 : null;
+        const tradeBadge = h.sym === 'KRW' ? ''
+          : WHITELIST.has(h.sym) ? '<span class="badge trade">매매</span>' : '<span class="badge view">조회</span>';
+        return `
+        <div class="row ${h.sym === activeSym ? 'active' : ''}" onclick="selectSym('${h.sym}')">
+          <div>
+            <div class="sym">${h.sym} ${tradeBadge}</div>
+            <div class="qty num">${h.avg ? fmt(h.qty, 4) + ' · 평단 ' + fmt(h.avg) : fmt(h.qty)}</div>
+          </div>
+          <div>
+            <div class="price num">${fmt(value)}</div>
+            ${pnl === null ? '' : `<div class="pnl num ${pnlClass(pnl)}">${pnlText(pnl)}</div>`}
+          </div>
+        </div>`;
+      }).join('');
+    } else {
+      sw.style.display = '';
+      const q = (document.getElementById('searchBox').value || '').trim().toUpperCase();
+      const items = WATCH.filter(w => !q || w.sym.includes(q));
+      list.innerHTML = items.map((w) => {
+        const badge = WHITELIST.has(w.sym) ? '<span class="badge trade">매매</span>' : '<span class="badge view">조회</span>';
+        return `
+        <div class="row ${w.sym === activeSym ? 'active' : ''}" onclick="selectSym('${w.sym}')">
+          <div><div class="sym">${w.sym} ${badge}</div></div>
+          <div>
+            <div class="price num">${fmt(w.price)}</div>
+            <div class="pnl num ${pnlClass(w.change24h*100)}">${pnlText(w.change24h*100)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  function renderSafety() {
+    const warnings = [];
+    if (!SAFETY.dryRun) warnings.push('DRY_RUN OFF');
+    if (SAFETY.killSwitch) warnings.push('KILL ON');
+    const dot = document.getElementById('safetyDot');
+    const sum = document.getElementById('safetySummary');
+    if (warnings.length === 0) {
+      dot.className = 'sdot';
+      sum.textContent = `정상 · DRY_RUN ON · KILL OFF · WL ${SAFETY.whitelist}`;
+    } else {
+      dot.className = warnings.length >= 2 ? 'sdot danger' : 'sdot warn';
+      sum.textContent = warnings.join(' · ');
+    }
+  }
+
+  function toggleSafety() {
+    safetyOpen = !safetyOpen;
+    document.getElementById('safetyToggle').classList.toggle('open', safetyOpen);
+    document.getElementById('safetyToggle').setAttribute('aria-expanded', String(safetyOpen));
+    document.getElementById('safetyPanel').classList.toggle('open', safetyOpen);
+  }
+
+  function selectSym(s) { activeSym = s; renderChips(); renderKPI(); renderOrderCTA(); renderList(); drawChart(); }
+
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); activeTab = t.dataset.tab; renderList();
+  }));
+  document.getElementById('intervals').addEventListener('click', (e) => {
+    const t = e.target.closest('.iv'); if (!t) return;
+    document.querySelectorAll('.iv').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active'); activeIv = t.dataset.iv; drawChart();
+  });
+
+  let chart, series;
+  function initChart() {
+    const el = document.getElementById('chart');
+    chart = LightweightCharts.createChart(el, {
+      layout: { background: { color:'#0f1115' }, textColor:'#e6e8ee' },
+      grid:   { vertLines: { color:'#1a1f2b' }, horzLines: { color:'#1a1f2b' } },
+      rightPriceScale: { borderColor:'#262b36' },
+      timeScale: { borderColor:'#262b36', timeVisible:true },
+      crosshair: { mode: 1 },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: false } },
+    });
+    series = chart.addCandlestickSeries({
+      upColor:'#ef4444', downColor:'#3b82f6',
+      borderUpColor:'#ef4444', borderDownColor:'#3b82f6',
+      wickUpColor:'#ef4444',   wickDownColor:'#3b82f6',
+    });
+    new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth, height: el.clientHeight })).observe(el);
+  }
+  function genCandles(n, base) {
+    const out = []; let t = Math.floor(Date.now()/1000) - n * 3600; let p = base;
+    for (let i=0; i<n; i++) {
+      const o = p;
+      const c = o * (1 + (Math.random() - 0.5) * 0.04);
+      const h = Math.max(o,c) * (1 + Math.random()*0.012);
+      const l = Math.min(o,c) * (1 - Math.random()*0.012);
+      out.push({ time: t, open:o, high:h, low:l, close:c });
+      p = c; t += 3600;
+    }
+    return out;
+  }
+  function drawChart() {
+    const seed = activeSym.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+    const base = 1000 + (seed * 12345) % 100_000_000;
+    const n = activeIv === '1h' ? 120 : activeIv === '4h' ? 100 : 90;
+    series.setData(genCandles(n, base));
+    chart.timeScale().fitContent();
+  }
+
+  function render() { renderTop(); renderChips(); renderKPI(); renderOrderCTA(); renderList(); renderSafety(); drawChart(); }
+  initChart();
+  render();
+</script>
+</body>
+</html>

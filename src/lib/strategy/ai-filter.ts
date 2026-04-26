@@ -1,0 +1,764 @@
+import { spawn } from 'node:child_process';
+import type { RowDataPacket } from 'mysql2';
+import { getPool } from '@/lib/db';
+import type { Candle, Ticker } from '@/lib/exchanges/types';
+import type { SignalInput } from '@/lib/signals/router';
+import type { StyleConfig, AnalystStyle } from './style';
+import { rsiLast } from './indicators/rsi';
+import { emaLast } from './indicators/ema';
+import { macdLast } from './indicators/macd';
+import { bollingerLast } from './indicators/bollinger';
+import { atrLast } from './indicators/atr';
+
+export type SkipCategory =
+  | 'ai_failed'
+  | 'ai_low_confidence'
+  | 'ai_rejected'
+  | 'rule_prefilter'
+  | 'dedup_reuse';
+
+export interface AiEvEstimate {
+  pWin: number;
+  rWin: number;
+  rLoss: number;
+  evPct: number;
+}
+
+export interface AiSelectResult {
+  /** 선택된 후보 인덱스. -1이면 전체 스킵 */
+  selectedIndex: number;
+  confidence: number;
+  reasoning: string;
+  warnings: string[];
+  skipCategory?: SkipCategory;
+  ev?: AiEvEstimate;
+}
+
+export interface MarketSummary {
+  currentPrice: number;
+  priceChange5: number;
+  volumeRatio: number;
+  rsi14: number | null;
+  ema20: number | null;
+  ema60: number | null;
+  macd: number | null;
+  macdSignal: number | null;
+  macdHistogram: number | null;
+  bbUpper: number | null;
+  bbMiddle: number | null;
+  bbLower: number | null;
+  atr14: number | null;
+  high24h: number | undefined;
+  low24h: number | undefined;
+  recentCandles: Array<{ ts: string; o: number; h: number; l: number; c: number; v: number }>;
+}
+
+export function buildMarketSummary(candles: Candle[], ticker: Ticker): MarketSummary {
+  const closes  = candles.map(c => c.close);
+  const volumes = candles.map(c => c.volume);
+  const n = candles.length - 1;
+
+  const priceChange5 = candles.length >= 6
+    ? ((closes[n] - closes[n - 5]) / closes[n - 5]) * 100 : 0;
+  const vol20Avg = volumes.slice(-20).reduce((s, v) => s + v, 0) / Math.min(20, volumes.length);
+
+  const macdPt = macdLast(closes);
+  const bbPt   = bollingerLast(closes);
+
+  return {
+    currentPrice:  ticker.price,
+    priceChange5:  Math.round(priceChange5 * 100) / 100,
+    volumeRatio:   Math.round((volumes[n] / (vol20Avg || 1)) * 100) / 100,
+    rsi14:         rsiLast(closes, 14),
+    ema20:         emaLast(closes, 20),
+    ema60:         emaLast(closes, 60),
+    macd:          macdPt.macd,
+    macdSignal:    macdPt.signal,
+    macdHistogram: macdPt.histogram,
+    bbUpper:       bbPt.upper,
+    bbMiddle:      bbPt.middle,
+    bbLower:       bbPt.lower,
+    atr14:         atrLast(candles, 14),
+    high24h:       ticker.high24h,
+    low24h:        ticker.low24h,
+    recentCandles: candles.slice(-5).map(c => ({
+      ts: new Date(c.ts).toISOString().slice(0, 16).replace('T', ' '),
+      o: c.open, h: c.high, l: c.low, c: c.close,
+      v: Math.round(c.volume * 100) / 100,
+    })),
+  };
+}
+
+export type Candidate = SignalInput & { strategyId: string };
+
+export interface RecentTrade {
+  side: string;
+  price: number;
+  executedAt: string;
+}
+
+const STYLE_LABEL: Record<string, string> = {
+  aggressive: '공격적',
+  neutral:    '중립적',
+  stable:     '안정적',
+};
+
+/** symbol_universe 랭킹 top 10 이내 종목을 대형주로 분류. 시장별로 latest refreshed_at을 분리 조회. */
+async function classifySymbol(symbol: string): Promise<{ isMajor: boolean; symbolClass: string }> {
+  try {
+    const { getMarketFromSymbol } = await import('@/lib/exchanges/kis-symbols');
+    const market = getMarketFromSymbol(symbol);
+    const pool = getPool();
+    const [latest] = await pool.query<RowDataPacket[]>(
+      'SELECT refreshed_at FROM symbol_universe WHERE market = ? ORDER BY refreshed_at DESC LIMIT 1',
+      [market],
+    );
+    if (latest.length === 0) return { isMajor: false, symbolClass: '중소형주' };
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT rank_pos FROM symbol_universe
+       WHERE symbol = ? AND market = ? AND refreshed_at = ?
+       ORDER BY rank_pos ASC LIMIT 1`,
+      [symbol, market, latest[0].refreshed_at],
+    );
+    const isMajor = rows.length > 0 && Number(rows[0].rank_pos) <= 10;
+    return { isMajor, symbolClass: isMajor ? '대형주' : '중소형주' };
+  } catch {
+    return { isMajor: false, symbolClass: '중소형주' };
+  }
+}
+
+async function buildSelectPrompt(
+  symbol: string,
+  summary: MarketSummary,
+  candidates: Candidate[],
+  recentTrades: RecentTrade[] = [],
+  style?: StyleConfig,
+  styleName = '중립적',
+  analystStyleKey: import('./style').AnalystStyle = 'neutral',
+  market: import('@/lib/exchanges/kis-symbols').Market = 'domestic',
+): Promise<string> {
+  const fmt = (v: number | null | undefined, d = 0) => v == null ? 'N/A' : v.toFixed(d);
+
+  const candidateList = candidates
+    .map((c, i) =>
+      `[${i}] 전략: ${c.strategyId} | 방향: ${c.side === 'buy' ? '매수(BUY)' : '매도(SELL)'} | 금액: ₩${Math.round(c.amountKRW).toLocaleString('ko-KR')}\n    근거: ${c.reasoning ?? '없음'}`,
+    )
+    .join('\n\n');
+
+  const recentTradesSection = recentTrades.length > 0
+    ? `\n## 최근 거래 이력 (최근 2시간)\n${recentTrades.map(t => `  ${t.executedAt} | ${t.side === 'buy' ? '매수' : '매도'} @ ${t.price.toLocaleString('ko-KR')}원`).join('\n')}\n`
+    : '';
+
+  const minProfit  = style ? (style.minProfitMargin * 100).toFixed(2) : '0.25';
+  const minConfStr = style ? `${style.minAiConfidence}%` : '55%';
+  const atrStopMult = style?.atrStopMult ?? 1.5;
+  const minRWin     = style?.minRWinPct  ?? 1.0;
+
+  // 심볼 분류 (주식: symbol_universe rank_pos ≤ 10 이면 대형주)
+  const { isMajor, symbolClass } = await classifySymbol(symbol);
+
+  // 실제 지표 기반 시장 상태 (타임존·지역 무관)
+  const volRatio = summary.volumeRatio;
+  const liquidityLevel =
+    volRatio >= 1.5 ? `활발 (${volRatio}x)` :
+    volRatio >= 0.7 ? `보통 (${volRatio}x)` :
+    volRatio >= 0.4 ? `희박 (${volRatio}x)` :
+                      `매우 희박 (${volRatio}x)`;
+
+  const atrPct = summary.atr14 != null && summary.currentPrice > 0
+    ? (summary.atr14 / summary.currentPrice) * 100 : null;
+  const volatilityLevel = atrPct == null ? 'N/A'
+    : atrPct >= 5  ? `고변동 (ATR ${atrPct.toFixed(1)}%)`
+    : atrPct >= 2  ? `중변동 (ATR ${atrPct.toFixed(1)}%)`
+    :                `저변동 (ATR ${atrPct.toFixed(1)}%)`;
+
+  const trendCtx =
+    summary.ema20 != null && summary.ema60 != null
+      ? summary.ema20 > summary.ema60 * 1.002 ? '단기 상승 추세 (EMA20 > EMA60)'
+      : summary.ema20 < summary.ema60 * 0.998 ? '단기 하락 추세 (EMA20 < EMA60)'
+      :                                          '횡보 (EMA20 ≈ EMA60)'
+      : '추세 판단 불가';
+
+  // 중소형주 저유동성 시 volumeRatio 판단 기준 완화 안내
+  const liquidityNote = !isMajor && volRatio < 0.7
+    ? `\n- ⚠️ 중소형주는 구조적으로 거래량이 적습니다. volumeRatio < 0.7이어도 신호를 무효화하지 말고, 다른 지표(RSI·MACD·EMA)를 우선 판단하세요.`
+    : '';
+
+  const isAggressive = analystStyleKey === 'aggressive';
+
+  const fewShotAggressive = `
+## Few-shot 예시 (공격적 관점)
+
+예시 1 — 승인 케이스:
+  후보: [0] rsi-macd-reversal | BUY | 근거: RSI 38, MACD 히스토그램 -0.5 → -0.2 전환, 현재봉 양봉
+  시장: EMA20 < EMA60 (하락추세), volumeRatio 0.5, ATR 2.5%
+  분석: 반전 초기 신호. ATR 2.5% 기준 R_win≈+1.2% 도달 가능, R_loss≈-1.0%, P_win≈0.55
+       EV = 0.55×1.2 − 0.45×1.0 − 0.43(왕복 수수료+거래세) = -0.22% (경계)
+  → {"selectedIndex":0,"confidence":48,"ev":{"pWin":0.55,"rWin":1.2,"rLoss":-1.0,"evPct":-0.22},"reasoning":"RSI+MACD 반전 초기, EV 경계","warnings":["추세 역행 진입 → 빠른 청산 전제"]}
+
+예시 2 — 거절 케이스:
+  후보: [0] bb-breakout | BUY | 근거: 상단 돌파
+  시장: RSI 72 (과열), volumeRatio 0.3 (유동성 부족), ATR 4%
+  분석: 과열 + 저유동성 + 고변동. R_loss 과대(-4%) 가능, P_win≈0.4
+       EV = 0.4×0.8 − 0.6×4.0 − 0.43 = -2.51%
+  → {"selectedIndex":-1,"confidence":70,"ev":{"pWin":0.4,"rWin":0.8,"rLoss":-4.0,"evPct":-2.51},"reasoning":"과열+저유동성+고변동 EV 크게 음수","warnings":["RSI 과열","저유동성","고ATR"]}
+`;
+
+  const judgmentCriteria = isAggressive
+    ? `## 평가 방식 (EV 기반 — hard-block 금지)
+각 후보에 대해 다음 숫자를 추정:
+  P_win : 30m~2h 안에 목표(R_win) 도달 확률 (0.0 ~ 1.0)
+  R_win : 도달 시 수익률 % (권장 최소 ${minRWin}% 이상)
+  R_loss: 손절 시 손실률 % (보통 -ATR × ${atrStopMult})
+  EV    = P_win × R_win − (1 − P_win) × |R_loss| − 0.43(왕복 수수료+거래세)
+
+판정:
+- EV > +0.1% AND confidence ≥ 45 → 해당 후보 승인 (selectedIndex)
+- EV ≤ 0 OR confidence < 45 → 해당 후보 스킵
+- 여러 후보 중 EV 가장 큰 것 선택. 모두 음수면 selectedIndex=-1
+
+**중요: hard-block 없음**. 수수료·추세 역행·저유동성·고변동은 P_win/R_win/R_loss 숫자를 조정하는 변수일 뿐, 단독 차단 기준이 아님.
+
+## 공격적 성향 원칙
+1. "애매하면 진입해본다" — EV 근거를 숫자로 제시.
+2. 추세 역행 반전 허용: R_loss를 작게 잡고(ATR×1.0) 빠른 청산 전제 → 진입 가능.
+3. 중소형주 저유동성은 R_win 하향 조정으로 흡수. volumeRatio 0.3 이하는 P_win에 -0.1.
+4. 거래정지·관리종목 패턴(거래량 0 + 비정상 가격): 즉시 selectedIndex=-1.
+${fewShotAggressive}`
+    : `## 판단 기준
+1. 수수료 수익성: 예상 순수익 ≥ ${minProfit}% 권장 (수수료+거래세 0.43% 고려, 단 복합 지표가 강하면 경계 케이스 승인 가능)
+2. 추세 일치성: 시그널 방향이 현재 추세(EMA 방향)와 부합하는가?
+3. 거래량 신뢰도: 대형주는 volumeRatio ≥ 0.7, 중소형주는 ≥ 0.4 기준 적용
+4. 복합 지표 일치: RSI, MACD, EMA가 시그널 방향을 지지하는가?
+5. 변동성 위험: ATR이 고변동(≥3%)이고 추세 불분명이면 신뢰도 낮게 평가
+6. 거래정지·관리종목 패턴: 거래량 급감 + 이상 가격 감지 시 즉시 스킵`;
+
+  const outputSpec = isAggressive
+    ? `{"selectedIndex":-1,"confidence":0,"reasoning":"EV 계산 과정 포함","ev":{"pWin":0.0,"rWin":0.0,"rLoss":0.0,"evPct":0.0},"warnings":[]}`
+    : `{"selectedIndex":-1,"confidence":0,"reasoning":"판단 근거 (한국어)","warnings":[]}`;
+
+  const traderTitle = market === 'overseas' ? '미국주식 퀀트 트레이더' : '국내주식 퀀트 트레이더';
+  const feeNotice = market === 'overseas'
+    ? '- KIS 미국주식 수수료: 매수 0.25% + 매도 0.25% = 왕복 약 **0.50%** (거래세 없음, SEC fee 0.0022% 별도)'
+    : '- KIS 수수료: 매수 0.015% + 매도 0.015% + 거래세 0.20% = 왕복 약 **0.43%**';
+
+  return `당신은 ${traderTitle}입니다. 종목 ${symbol}에 대해 여러 전략이 매매 후보 시그널을 생성했습니다.
+시장 데이터를 분석하여 가장 적합한 시그널 하나를 선택하거나, 모두 부적합하면 스킵하세요.
+
+## 투자 성향: ${styleName} (신뢰도 ${minConfStr} 이상일 때만 선택)
+
+## 현재 시장 상태 (실시간 지표 기반)
+- 심볼 분류: ${symbolClass}
+- 유동성: ${liquidityLevel}
+- 변동성: ${volatilityLevel}
+- 추세: ${trendCtx}${liquidityNote}
+
+## 수수료 정보 (필수 고려)
+${feeNotice}
+- 공격 모드 최소 참고 목표: ${minProfit}% (EV 계산의 floor 가이드 — hard block 아님)
+${recentTradesSection}
+## 현재 시세
+- 현재가: ${summary.currentPrice.toLocaleString('ko-KR')}원
+- 당일 고가: ${fmt(summary.high24h)}원 / 저가: ${fmt(summary.low24h)}원
+- 최근 5봉 가격변화: ${summary.priceChange5 > 0 ? '+' : ''}${summary.priceChange5}%
+
+## 기술 지표 (30분봉)
+- RSI(14): ${fmt(summary.rsi14, 1)}
+- EMA(20): ${fmt(summary.ema20)}원 / EMA(60): ${fmt(summary.ema60)}원
+- MACD: ${fmt(summary.macd, 2)} / Signal: ${fmt(summary.macdSignal, 2)} / Histogram: ${fmt(summary.macdHistogram, 2)}
+- 볼린저밴드: Upper=${fmt(summary.bbUpper)} Middle=${fmt(summary.bbMiddle)} Lower=${fmt(summary.bbLower)}
+- ATR(14): ${fmt(summary.atr14, 0)}원
+- 거래량 비율: ${summary.volumeRatio}x (1.0=평균)
+
+## 최근 5봉 캔들
+${summary.recentCandles.map(c => `  ${c.ts} | O:${c.o} H:${c.h} L:${c.l} C:${c.c} V:${c.v}`).join('\n')}
+
+## 후보 시그널 (${candidates.length}개)
+${candidateList}
+
+${judgmentCriteria}
+
+selectedIndex에 선택할 시그널 번호(0~${candidates.length - 1})를 입력하거나, 모두 부적합하면 -1을 입력하세요.
+반드시 JSON 형식으로만 응답하세요:
+${outputSpec}`;
+}
+
+/**
+ * Claude CLI subprocess 실행.
+ *
+ * 과거 이슈 + 해결책:
+ *  - `--tools ''`, `--system-prompt`, `--no-session-persistence`은 현재 CLI 버전에서 "Execution error" 유발 → 사용 금지
+ *  - `--output-format json`은 effortLevel null 버그 → 사용 금지
+ *  - 부모 프로세스에 `CLAUDECODE=1` 있으면 중첩 실행 감지로 SIGTERM(exit 143) → env에서 제거 필수
+ *  - `ANTHROPIC_API_KEY`에 크레딧 소진 키가 있으면 hang → 제거하고 ~/.claude 구독 인증 fallback
+ *  - **동시 호출 시 100% "Execution error" 자종료** → `cliQueue`로 직렬화
+ *  - **순차 호출도 ~30% 간헐 "Execution error"** → 2회까지 재시도
+ *  - cwd=/tmp : 프로젝트 CLAUDE.md 컨텍스트 격리
+ *  - 정상 작동 조합: `claude -p <prompt> --permission-mode bypassPermissions --model sonnet`
+ */
+
+// CLI 호출 직렬화 큐 (동시성 1 — 세션 파일 충돌 방지)
+let cliQueue: Promise<unknown> = Promise.resolve();
+
+async function runClaude(prompt: string, timeoutMs = 90000): Promise<string> {
+  // 2회 재시도 (총 3회 시도) — 간헐 "Execution error" 대응
+  const attempt = async (): Promise<string> => {
+    for (let tries = 0; tries < 3; tries++) {
+      try {
+        return await runClaudeOnce(prompt, timeoutMs);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (tries < 2 && msg.includes('Execution error')) {
+          await new Promise(r => setTimeout(r, 300 + tries * 500));
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw new Error('unreachable');
+  };
+
+  // 직렬화: 이전 호출 완료까지 대기
+  const prev = cliQueue;
+  const next = prev.then(() => attempt(), () => attempt());
+  cliQueue = next.catch(() => {});
+  return next;
+}
+
+function runClaudeOnce(prompt: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    // 부모가 Claude Code 세션일 때 claude CLI가 중첩 실행 감지 → SIGTERM(exit 143) 자종료.
+    // 관련 감지 env 전부 제거해야 정상 동작.
+    const cleanEnv: NodeJS.ProcessEnv = { ...process.env };
+    for (const k of [
+      'CLAUDECODE',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING',
+      'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS',
+      'CLAUDE_CODE_EXECPATH',
+      'CLAUDE_AGENT_SDK_VERSION',
+      'VSCODE_IPC_HOOK_CLI',
+      'VSCODE_CLI_REQUIRE_TOKEN',
+      'VSCODE_HANDLES_UNCAUGHT_ERRORS',
+      'VSCODE_HANDLES_SIGPIPE',
+      'VSCODE_ESM_ENTRYPOINT',
+      'VSCODE_L10N_BUNDLE_LOCATION',
+      'VSCODE_NLS_CONFIG',
+      'VSCODE_AGENT_FOLDER',
+      'VSCODE_CWD',
+      'ELECTRON_RUN_AS_NODE',
+      // 크레딧 소진된 API key가 설정되어 있으면 CLI가 그 키로 호출하다 hang → exit 143.
+      // 제거하면 ~/.claude 구독 인증으로 fallback되어 정상 작동.
+      'ANTHROPIC_API_KEY',
+    ]) delete cleanEnv[k];
+
+    const proc = spawn('claude', [
+      '--print', prompt,
+      '--permission-mode', 'bypassPermissions',
+      '--model', 'sonnet',
+    ], {
+      timeout: timeoutMs,
+      cwd: '/tmp',
+      env: cleanEnv,
+      // stdin을 ignore로 차단 — PM2에서 부모 pipe가 열려있으면 CLI가 입력 대기로 hang.
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    proc.stderr.on('data', (d: Buffer) => { err += d.toString(); });
+    proc.on('error', (e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') reject(new Error('claude CLI not found in PATH'));
+      else reject(e);
+    });
+    proc.on('close', (code: number | null) => {
+      if (code !== 0 && code !== null) return reject(new Error(err.trim() || `claude exit ${code}`));
+      const trimmed = out.trim();
+      if (trimmed === 'Execution error' || trimmed.startsWith('Execution error\n')) {
+        return reject(new Error(`claude Execution error: ${err.trim() || 'no stderr'}`));
+      }
+      resolve(trimmed);
+    });
+  });
+}
+
+function parseResult(raw: string): AiSelectResult {
+  let parsed: Record<string, unknown> | null = null;
+
+  try {
+    const cleaned = raw.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
+    const start = cleaned.indexOf('{');
+    const end   = cleaned.lastIndexOf('}');
+    if (start === -1 || end === -1) throw new Error('JSON not found in response');
+    parsed = JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+  } catch (e) {
+    throw new Error(`JSON not found in response: ${e instanceof Error ? e.message : e}`);
+  }
+
+  if (!parsed) throw new Error('JSON not found in response');
+
+  const rawConf = typeof parsed.confidence === 'number' ? parsed.confidence : 50;
+  // Claude가 0~1 스케일로 반환하는 경우 100 스케일로 변환
+  const confidence = rawConf <= 1 ? Math.round(rawConf * 100) : rawConf;
+
+  let ev: AiEvEstimate | undefined;
+  if (parsed.ev && typeof parsed.ev === 'object') {
+    const e = parsed.ev as Record<string, unknown>;
+    ev = {
+      pWin:  Number(e.pWin  ?? 0),
+      rWin:  Number(e.rWin  ?? 0),
+      rLoss: Number(e.rLoss ?? 0),
+      evPct: Number(e.evPct ?? 0),
+    };
+  }
+
+  return {
+    selectedIndex: typeof parsed.selectedIndex === 'number' ? parsed.selectedIndex : -1,
+    confidence,
+    reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
+    warnings:  Array.isArray(parsed.warnings) ? parsed.warnings as string[] : [],
+    ev,
+  };
+}
+
+/**
+ * 종목의 후보 시그널 목록을 AI에게 제시해 최적 전략을 선택하게 한다.
+ * 실패 시 fallback: 후보가 1개면 index=0 실행, 여러 개면 첫 번째 선택.
+ */
+export async function getRecentTrades(symbol: string): Promise<RecentTrade[]> {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT side, price, created_at FROM signals
+       WHERE symbol = ? AND status IN ('executed','accepted')
+         AND created_at > DATE_SUB(NOW(), INTERVAL 2 HOUR)
+       ORDER BY created_at DESC LIMIT 5`,
+      [symbol],
+    );
+    return rows.map(r => ({
+      side: r.side as string,
+      price: Number(r.price),
+      executedAt: new Date(r.created_at as string).toISOString().slice(0, 16).replace('T', ' '),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export interface BatchSymbolInput {
+  symbol: string;
+  candidates: Candidate[];
+  summary: MarketSummary;
+  recentTrades: RecentTrade[];
+  heldQty?: number;
+}
+
+export interface BatchDecision {
+  symbol: string;
+  selectedIndex: number;
+  confidence: number;
+  reasoning: string;
+  warnings: string[];
+  skipCategory?: SkipCategory;
+  ev?: AiEvEstimate;
+}
+
+export interface BatchResult {
+  decisions: BatchDecision[];
+  error?: string;
+  marketView?: string;
+}
+
+export interface MarketContext {
+  btc3hChangePct?: number | null;
+  btc3hVolRatio?: number | null;
+  recentExecutedBuys?: number;
+  recentExecutedSells?: number;
+  avgVolumeRatio?: number | null;
+  highVolCount?: number;
+}
+
+function buildSymbolBlock(idx: number, input: BatchSymbolInput, isMajor: boolean): string {
+  const fmt = (v: number | null | undefined, d = 0) => v == null ? 'N/A' : v.toFixed(d);
+  const s = input.summary;
+  const atrPct = s.atr14 != null && s.currentPrice > 0 ? ((s.atr14 / s.currentPrice) * 100) : null;
+  const volTxt =
+    s.volumeRatio >= 1.5 ? `활발(${s.volumeRatio}x)` :
+    s.volumeRatio >= 0.7 ? `보통(${s.volumeRatio}x)` :
+                           `희박(${s.volumeRatio}x)`;
+  const atrTxt = atrPct == null ? 'N/A' :
+    atrPct >= 3 ? `고(ATR ${atrPct.toFixed(1)}%)` :
+    atrPct >= 1 ? `중(ATR ${atrPct.toFixed(1)}%)` :
+                  `저(ATR ${atrPct.toFixed(1)}%)`;
+  const trendTxt =
+    s.ema20 != null && s.ema60 != null
+      ? s.ema20 > s.ema60 * 1.002 ? '상승' : s.ema20 < s.ema60 * 0.998 ? '하락' : '횡보'
+      : 'N/A';
+  const held = input.heldQty && input.heldQty > 0 ? `보유 ${input.heldQty}` : '미보유';
+
+  const candidateList = input.candidates.map((c, i) =>
+    `    [${i}] ${c.strategyId} | ${c.side === 'buy' ? 'BUY' : 'SELL'} | ₩${Math.round(c.amountKRW).toLocaleString('ko-KR')} | ${c.reasoning ?? ''}`,
+  ).join('\n');
+
+  const ohlcv = s.recentCandles.slice(-5).map(c =>
+    `O${c.o}/H${c.h}/L${c.l}/C${c.c}/V${c.v}`,
+  ).join(' · ');
+
+  const tradesTxt = input.recentTrades.length > 0
+    ? input.recentTrades.map(t => `${t.executedAt} ${t.side === 'buy' ? '매수' : '매도'}@${t.price.toLocaleString('ko-KR')}`).join(', ')
+    : '없음';
+
+  return `### [${idx}] ${input.symbol} (${isMajor ? '대형주' : '중소형주'} / ${held})
+- 시장: 유동성 ${volTxt} | 변동성 ${atrTxt} | 추세 ${trendTxt} | 5봉변화 ${s.priceChange5 > 0 ? '+' : ''}${s.priceChange5}%
+- 시세: ${s.currentPrice.toLocaleString('ko-KR')}원 (당일 ${fmt(s.high24h)}~${fmt(s.low24h)})
+- 지표: RSI ${fmt(s.rsi14, 1)} | EMA20=${fmt(s.ema20)} EMA60=${fmt(s.ema60)} | MACD ${fmt(s.macd, 1)}/${fmt(s.macdSignal, 1)}/${fmt(s.macdHistogram, 1)} | BB ${fmt(s.bbUpper)}/${fmt(s.bbMiddle)}/${fmt(s.bbLower)}
+- 5봉: ${ohlcv}
+- 최근 2h: ${tradesTxt}
+- 후보 (${input.candidates.length}개):
+${candidateList}`;
+}
+
+async function buildBatchPrompt(
+  inputs: BatchSymbolInput[],
+  style: StyleConfig | undefined,
+  analystStyle: AnalystStyle,
+  marketContext: MarketContext,
+  market: import('@/lib/exchanges/kis-symbols').Market = 'domestic',
+): Promise<string> {
+  const styleName = STYLE_LABEL[analystStyle] ?? '중립적';
+  const minProfit = style ? (style.minProfitMargin * 100).toFixed(2) : '0.25';
+  const minConfStr = style ? `${style.minAiConfidence}%` : '55%';
+  const atrStopMult = style?.atrStopMult ?? 1.5;
+  const minRWin = style?.minRWinPct ?? 1.0;
+  const isAggressive = analystStyle === 'aggressive';
+
+  const judgmentCriteria = isAggressive
+    ? `## 평가 방식 (EV 기반 — hard-block 금지)
+각 후보에 대해 다음 숫자 추정:
+  P_win  : 30m~2h 내 목표(R_win) 도달 확률 (0.0~1.0)
+  R_win  : 도달 시 수익률 % (최소 ${minRWin}% 권장)
+  R_loss : 손절 손실률 % (보통 -ATR × ${atrStopMult})
+  EV     = P_win × R_win − (1 − P_win) × |R_loss| − 0.43 (왕복 수수료+거래세)
+판정:
+- EV > +0.1% AND confidence ≥ 45 → selectedIndex = 해당 후보
+- EV ≤ 0 OR confidence < 45 → selectedIndex = -1
+- 여러 후보 중 EV 가장 큰 것 선택. 모두 음수면 selectedIndex=-1
+
+**중요: hard-block 없음**. 수수료·추세 역행·저유동성·고변동은 숫자 조정 변수일 뿐, 단독 차단 기준 아님.
+거래정지·관리종목 패턴 (거래량 0 + 비정상 가격) 은 즉시 selectedIndex=-1.`
+    : `## 판단 기준
+1. 수수료 수익성: 예상 순수익 ≥ ${minProfit}% 권장 (수수료+거래세 0.43% 반영, 복합 지표 강하면 경계 케이스 승인 가능)
+2. 추세 일치성: 시그널 방향이 현재 추세(EMA) 와 부합?
+3. 거래량 신뢰도: 대형주 volumeRatio ≥ 0.7, 중소형주 ≥ 0.4
+4. 복합 지표 일치: RSI/MACD/EMA 가 시그널 방향 지지?
+5. 변동성 위험: ATR ≥ 3% + 추세 불분명 → 신뢰도 낮게
+6. 거래정지·관리종목 패턴 (거래량 급감+이상 가격) → 즉시 스킵`;
+
+  const marketView = `- Universe 평균 거래량비: ${marketContext.avgVolumeRatio != null ? `${marketContext.avgVolumeRatio.toFixed(2)}x` : 'N/A'} | 고변동(ATR≥3%) 종목 수: ${marketContext.highVolCount ?? 0}
+- 최근 3h 체결: 매수 ${marketContext.recentExecutedBuys ?? 0}건, 매도 ${marketContext.recentExecutedSells ?? 0}건`;
+
+  // symbol_universe rank 기반 대형주 분류 (batch 입력 전체 선행 조회)
+  const majorMap = new Map<string, boolean>();
+  await Promise.all(inputs.map(async i => {
+    const { isMajor } = await classifySymbol(i.symbol);
+    majorMap.set(i.symbol, isMajor);
+  }));
+
+  const symbolBlocks = inputs.map((input, idx) => buildSymbolBlock(idx, input, majorMap.get(input.symbol) ?? false)).join('\n\n');
+
+  const evField = isAggressive ? `"ev":{"pWin":0.0,"rWin":0.0,"rLoss":0.0,"evPct":0.0},` : '';
+
+  const traderTitle = market === 'overseas' ? '미국주식 퀀트 트레이더' : '국내주식 퀀트 트레이더';
+
+  return `당신은 ${traderTitle}입니다. 아래 ${inputs.length}개 종목 각각에 대해 매매 후보 시그널이 생성되었습니다.
+**각 종목을 독립적으로 평가**하여 최적 시그널 하나를 선택하거나 모두 부적합하면 스킵하세요.
+
+## 투자 성향: ${styleName} (신뢰도 ${minConfStr} 이상일 때만 선택)
+
+## 시장 거시 맥락 (최근 3시간)
+${marketView}
+
+## 수수료
+- ${market === 'overseas' ? 'KIS 미국주식 왕복 ~0.50% (거래세 없음)' : 'KIS 국내주식 왕복 수수료+거래세 0.43%'} | 최소 참고 목표 ${minProfit}%
+
+${judgmentCriteria}
+
+## 종목별 데이터
+${symbolBlocks}
+
+## 응답 형식
+반드시 아래 JSON 형식으로만 응답. 각 종목에 대해 독립적으로 판단:
+\`\`\`json
+{
+  "marketView": "시장 전반 한 줄 코멘트",
+  "decisions": [
+    { "symbol": "KRW-XXX", "selectedIndex": 0, "confidence": 62, "reasoning": "한국어 근거", ${evField}"warnings": [] }
+  ]
+}
+\`\`\`
+- selectedIndex: 각 종목 후보 배열의 인덱스 (0-based) 또는 모두 부적합 시 -1
+- decisions 배열은 제공된 ${inputs.length}개 종목 **모두** 포함
+- 심볼 누락 금지`;
+}
+
+function parseBatchResult(raw: string, inputs: BatchSymbolInput[]): BatchResult {
+  let parsed: { marketView?: string; decisions?: unknown[] };
+  try {
+    const cleaned = raw.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start === -1 || end === -1) throw new Error('JSON not found');
+    parsed = JSON.parse(cleaned.slice(start, end + 1));
+  } catch (e) {
+    return { decisions: [], error: `parse failed: ${e instanceof Error ? e.message : e}` };
+  }
+
+  const rawDecisions = Array.isArray(parsed.decisions) ? parsed.decisions : [];
+  const bySymbol = new Map<string, BatchDecision>();
+
+  for (const d of rawDecisions) {
+    if (!d || typeof d !== 'object') continue;
+    const obj = d as Record<string, unknown>;
+    const symbol = typeof obj.symbol === 'string' ? obj.symbol : null;
+    if (!symbol) continue;
+
+    const input = inputs.find(i => i.symbol === symbol);
+    if (!input) continue;
+
+    const rawConf = typeof obj.confidence === 'number' ? obj.confidence : 50;
+    const confidence = rawConf <= 1 ? Math.round(rawConf * 100) : rawConf;
+
+    let selectedIndex = typeof obj.selectedIndex === 'number' ? obj.selectedIndex : -1;
+    if (selectedIndex >= input.candidates.length) selectedIndex = -1;
+
+    let ev: AiEvEstimate | undefined;
+    if (obj.ev && typeof obj.ev === 'object') {
+      const e = obj.ev as Record<string, unknown>;
+      ev = {
+        pWin: Number(e.pWin ?? 0),
+        rWin: Number(e.rWin ?? 0),
+        rLoss: Number(e.rLoss ?? 0),
+        evPct: Number(e.evPct ?? 0),
+      };
+    }
+
+    bySymbol.set(symbol, {
+      symbol,
+      selectedIndex,
+      confidence,
+      reasoning: typeof obj.reasoning === 'string' ? obj.reasoning : '',
+      warnings: Array.isArray(obj.warnings) ? (obj.warnings as string[]) : [],
+      ev,
+    });
+  }
+
+  const decisions: BatchDecision[] = [];
+  for (const input of inputs) {
+    const d = bySymbol.get(input.symbol);
+    if (d) {
+      decisions.push(d);
+    } else {
+      decisions.push({
+        symbol: input.symbol,
+        selectedIndex: -1,
+        confidence: 0,
+        reasoning: 'AI 배치 응답에 누락됨',
+        warnings: ['missing in batch response'],
+        skipCategory: 'ai_failed',
+      });
+    }
+  }
+
+  return { decisions, marketView: typeof parsed.marketView === 'string' ? parsed.marketView : undefined };
+}
+
+const BATCH_TIMEOUT_MS = 180000;
+
+/**
+ * 여러 종목의 후보를 **단일 CLI 호출**에 배열로 묶어 제출하고 심볼별 결정을 받는다.
+ * 실패 시 error 필드에 메시지, decisions는 빈 배열.
+ */
+export async function aiSelectSignalBatch(
+  inputs: BatchSymbolInput[],
+  style: StyleConfig | undefined,
+  analystStyle: AnalystStyle,
+  marketContext: MarketContext,
+  market: import('@/lib/exchanges/kis-symbols').Market = 'domestic',
+): Promise<BatchResult> {
+  if (inputs.length === 0) return { decisions: [] };
+
+  const prompt = await buildBatchPrompt(inputs, style, analystStyle, marketContext, market);
+
+  try {
+    const raw = await runClaude(prompt, BATCH_TIMEOUT_MS);
+    const result = parseBatchResult(raw, inputs);
+    const minConfidence = style?.minAiConfidence ?? 55;
+    const styleName = STYLE_LABEL[analystStyle] ?? '중립적';
+
+    // 성향별 신뢰도 필터 + skipCategory 분류
+    for (const d of result.decisions) {
+      if (d.skipCategory === 'ai_failed') continue;
+      if (d.selectedIndex !== -1 && d.confidence < minConfidence) {
+        d.warnings.push(`신뢰도 ${d.confidence}% < 최소 ${minConfidence}% (${styleName})`);
+        d.selectedIndex = -1;
+        d.skipCategory = 'ai_low_confidence';
+      } else if (d.selectedIndex === -1 && !d.skipCategory) {
+        d.skipCategory = 'ai_rejected';
+      }
+    }
+
+    console.log(`[ai-batch] 1 call, ${inputs.length} symbols → ${result.decisions.filter(d => d.selectedIndex >= 0).length} selected / ${result.decisions.filter(d => d.selectedIndex === -1).length} skipped${result.marketView ? ` | marketView: ${result.marketView.slice(0, 80)}` : ''}`);
+    return result;
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    console.error('[ai-batch] 배치 실패:', errMsg);
+    return { decisions: [], error: errMsg };
+  }
+}
+
+export async function aiSelectSignal(
+  symbol: string,
+  candidates: Candidate[],
+  candles: Candle[],
+  ticker: Ticker,
+  style?: StyleConfig,
+  analystStyle: AnalystStyle = 'neutral',
+  market: import('@/lib/exchanges/kis-symbols').Market = 'domestic',
+): Promise<AiSelectResult> {
+  const summary    = buildMarketSummary(candles, ticker);
+  const recentTrades = await getRecentTrades(symbol);
+  const styleName  = STYLE_LABEL[analystStyle] ?? '중립적';
+  const prompt     = await buildSelectPrompt(symbol, summary, candidates, recentTrades, style, styleName, analystStyle, market);
+  const minConfidence = style?.minAiConfidence ?? 55;
+
+  try {
+    const raw    = await runClaude(prompt);
+    const result = parseResult(raw);
+    // 범위 초과 인덱스 보정
+    if (result.selectedIndex >= candidates.length) result.selectedIndex = -1;
+    // 성향별 AI 신뢰도 최소값 미달 시 스킵
+    if (result.selectedIndex !== -1 && result.confidence < minConfidence) {
+      console.log(`[ai-filter] ${symbol} → confidence ${result.confidence}% < ${minConfidence}% (${styleName}) → skip`);
+      result.selectedIndex = -1;
+      result.skipCategory = 'ai_low_confidence';
+      result.warnings.push(`신뢰도 ${result.confidence}% < 최소 ${minConfidence}% (${styleName})`);
+    }
+    // Claude가 직접 거절한 경우 (selectedIndex=-1이고 카테고리 미설정)
+    if (result.selectedIndex === -1 && !result.skipCategory) {
+      result.skipCategory = 'ai_rejected';
+    }
+    console.log(`[ai-filter] ${symbol} → idx=${result.selectedIndex} cat=${result.skipCategory ?? 'selected'} (${result.confidence}%) ${result.reasoning.slice(0, 80)}`);
+    return result;
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : String(e);
+    console.error('[ai-filter] AI 분석 실패 — 스킵:', errMsg);
+    return {
+      selectedIndex: -1,
+      confidence:    0,
+      reasoning:     `AI 분석 실패 — ${errMsg}`,
+      warnings:      [`AI filter error: ${errMsg}`],
+      skipCategory:  'ai_failed',
+    };
+  }
+}

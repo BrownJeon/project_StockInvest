@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>전략 탭 목업 v0.2</title>
+<style>
+  :root {
+    --up: #ef4444; --dn: #3b82f6; --bg: #0f0f0f; --card: #1a1a1a;
+    --border: #2a2a2a; --text: #f0f0f0; --sub: #888;
+    --accent: #f59e0b; --green: #22c55e; --tab-h: 58px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system,'Segoe UI',sans-serif;
+    font-size: 14px; max-width: 412px; margin: 0 auto; min-height: 100dvh;
+    padding-bottom: calc(var(--tab-h) + env(safe-area-inset-bottom)); }
+
+  .topbar { display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px 10px; position: sticky; top: 0; background: var(--bg); z-index: 10;
+    border-bottom: 1px solid var(--border); }
+  .topbar-title { font-size: 17px; font-weight: 700; }
+  .icon-btn { width: 36px; height: 36px; border: none; background: var(--card);
+    border-radius: 8px; color: var(--text); font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; }
+
+  .subnav { display: flex; gap: 8px; padding: 10px 16px;
+    overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--border); }
+  .subnav::-webkit-scrollbar { display: none; }
+  .chip { flex-shrink: 0; padding: 6px 14px; border-radius: 20px; font-size: 13px;
+    font-weight: 500; cursor: pointer; border: 1px solid var(--border);
+    background: transparent; color: var(--sub); }
+  .chip.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+  .scroll { overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .panel { display: none; }
+  .panel.active { display: flex; flex-direction: column; }
+
+  /* ── STRATEGY CARD ── */
+  .s-card { background: var(--card); border-radius: 12px; padding: 14px;
+    border: 1px solid var(--border); }
+  .s-card-head { display: flex; align-items: flex-start; justify-content: space-between; }
+  .s-card-name { font-size: 15px; font-weight: 700; }
+  .s-card-desc { font-size: 12px; color: var(--sub); margin-top: 2px; }
+  .s-card-tags { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: #1f2937; color: #9ca3af; border: 1px solid #374151; }
+
+  .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; margin-left: 12px; }
+  .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .toggle-track { position: absolute; inset: 0; background: #333; border-radius: 12px; transition: background .2s; }
+  .toggle input:checked ~ .toggle-track { background: var(--green); }
+  .toggle-knob { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+    background: #fff; border-radius: 50%; transition: transform .2s; }
+  .toggle input:checked ~ .toggle-knob { transform: translateX(20px); }
+
+  .s-card-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .stat { text-align: center; }
+  .stat-val { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-lbl { font-size: 11px; color: var(--sub); margin-top: 2px; }
+
+  /* ── BACKTEST STATUS BAR ── */
+  .bt-bar { display: flex; align-items: center; justify-content: space-between;
+    margin-top: 12px; padding: 10px 12px; background: #111; border-radius: 8px;
+    border: 1px solid var(--border); }
+  .bt-bar-left { }
+  .bt-bar-label { font-size: 11px; color: var(--sub); display: flex; align-items: center; gap: 4px; }
+  .bt-bar-time { font-size: 12px; font-weight: 600; margin-top: 2px; }
+  .bt-bar-right { text-align: right; }
+  .bt-next { font-size: 11px; color: var(--sub); }
+  .bt-next-val { font-size: 12px; font-weight: 600; color: var(--accent); margin-top: 2px; }
+  .bt-running { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--accent); }
+  .spinner { width: 12px; height: 12px; border: 2px solid #333; border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .bt-result { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; }
+  .bt-kv { }
+  .bt-k { color: var(--sub); font-size: 11px; }
+  .bt-v { font-weight: 600; margin-top: 1px; font-variant-numeric: tabular-nums; }
+
+  .s-card-footer { display: flex; margin-top: 12px; }
+  .btn-detail { flex: 1; height: 36px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    border: none; cursor: pointer; background: #252525; color: var(--text); }
+
+  /* ── SIGNAL FEED ── */
+  .feed-filter { display: flex; gap: 6px; padding: 10px 16px;
+    overflow-x: auto; scrollbar-width: none; background: var(--bg);
+    border-bottom: 1px solid var(--border); position: sticky; top: 57px; z-index: 9; }
+  .feed-filter::-webkit-scrollbar { display: none; }
+  .fchip { flex-shrink: 0; padding: 4px 10px; border-radius: 12px; font-size: 12px;
+    cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--sub); }
+  .fchip.on { border-color: var(--accent); color: var(--accent); background: rgba(245,158,11,.1); }
+
+  .signal-item { background: var(--card); border-radius: 12px; padding: 14px;
+    border: 1px solid var(--border); }
+  .sig-head { display: flex; align-items: center; justify-content: space-between; }
+  .sig-badge { display: flex; align-items: center; gap: 6px; }
+  .side-chip { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 6px; }
+  .side-buy  { background: rgba(239,68,68,.18); color: var(--up); }
+  .side-sell { background: rgba(59,130,246,.18); color: var(--dn); }
+  .sig-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+  .s-pending  { background: rgba(245,158,11,.18); color: var(--accent); }
+  .s-auto     { background: rgba(34,197,94,.18);  color: var(--green); }
+  .s-approved { background: rgba(99,102,241,.18); color: #818cf8; }
+  .s-rejected { background: #1f1f1f; color: var(--sub); }
+  .s-expired  { background: #1a1a1a; color: #555; }
+  .sig-symbol { font-size: 15px; font-weight: 700; margin-top: 6px; }
+  .sig-strategy { font-size: 12px; color: var(--sub); margin-top: 2px; }
+  .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .sig-k { font-size: 11px; color: var(--sub); }
+  .sig-v { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .sig-reasoning { font-size: 12px; color: #aaa; margin-top: 10px; line-height: 1.5; }
+  .sig-footer { display: flex; align-items: center; justify-content: space-between;
+    margin-top: 8px; }
+  .sig-link { font-size: 11px; color: #818cf8; }
+  .sig-time { font-size: 11px; color: var(--sub); }
+
+  .approval-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .btn-approve { height: 44px; border-radius: 8px; font-size: 14px; font-weight: 700;
+    border: none; cursor: pointer; background: var(--up); color: #fff; }
+  .btn-reject  { height: 44px; border-radius: 8px; font-size: 14px; font-weight: 700;
+    border: none; cursor: pointer; background: #252525; color: var(--sub); }
+
+  /* ── APPROVAL QUEUE ── */
+  .approval-item { background: var(--card); border-radius: 12px; padding: 14px;
+    border: 1px solid #f59e0b44; }
+  .approval-alert { font-size: 12px; color: var(--accent);
+    display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+  .queue-empty { text-align: center; padding: 48px 16px; color: var(--sub); }
+  .queue-empty-icon { font-size: 36px; margin-bottom: 8px; }
+
+  /* ── SETTINGS PANEL (지표 라이브러리 대신 설정 미리보기) ── */
+  .settings-section { background: var(--card); border-radius: 12px;
+    border: 1px solid var(--border); overflow: hidden; }
+  .settings-row { display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-label { font-size: 14px; }
+  .settings-sub { font-size: 12px; color: var(--sub); margin-top: 2px; }
+  .settings-val { font-size: 14px; font-weight: 600; color: var(--accent);
+    display: flex; align-items: center; gap: 6px; }
+  .chevron { color: var(--sub); font-size: 12px; }
+  .section-header { display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0 4px; }
+  .section-title { font-size: 13px; font-weight: 700; color: var(--sub);
+    text-transform: uppercase; letter-spacing: .5px; }
+  .section-count { font-size: 12px; color: var(--sub); }
+
+  .up { color: var(--up); } .dn { color: var(--dn); } .na { color: var(--sub); }
+
+  .fab { position: fixed; right: 16px;
+    bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 12px);
+    width: 52px; height: 52px; border-radius: 26px; background: var(--accent);
+    border: none; color: #000; font-size: 24px; cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,.5);
+    display: flex; align-items: center; justify-content: center; }
+
+  .bottomtabs { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 100%; max-width: 412px; height: var(--tab-h); background: #111;
+    border-top: 1px solid var(--border); display: flex;
+    padding-bottom: env(safe-area-inset-bottom); z-index: 20; }
+  .tab { flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 3px; cursor: pointer; color: var(--sub); font-size: 10px; }
+  .tab.active { color: var(--accent); }
+  .tab-icon { font-size: 20px; line-height: 1; }
+</style>
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="topbar-title">🎯 전략</div>
+  <div style="display:flex;gap:8px">
+    <button class="icon-btn" title="분석가 실행 (수동 트리거)">▶</button>
+    <button class="icon-btn" title="필터">⚙</button>
+  </div>
+</div>
+
+<!-- SUB NAV -->
+<div class="subnav">
+  <button class="chip active" onclick="showPanel('list', this)">전략 목록</button>
+  <button class="chip" onclick="showPanel('signals', this)">시그널 피드</button>
+  <button class="chip" onclick="showPanel('approvals', this)">승인 대기 <span id="badge" style="background:var(--accent);color:#000;border-radius:8px;padding:0 5px;font-size:11px;margin-left:2px">2</span></button>
+  <button class="chip" onclick="showPanel('bt-settings', this)">백테스트 설정</button>
+</div>
+
+
+<!-- ===== PANEL: 전략 목록 ===== -->
+<div id="panel-list" class="panel active scroll">
+  <div class="section-header">
+    <span class="section-title">활성 전략</span>
+    <span class="section-count">2 / 3</span>
+  </div>
+
+  <!-- 전략 1 — 마지막 백테스트 정상 -->
+  <div class="s-card">
+    <div class="s-card-head">
+      <div style="flex:1">
+        <div class="s-card-name">RSI 역추세</div>
+        <div class="s-card-desc">RSI(14) 과매도 반등 매수 / 과매수 청산</div>
+        <div class="s-card-tags">
+          <span class="tag">RSI · MA20</span><span class="tag">1h</span><span class="tag">KRW-BTC</span>
+        </div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" checked>
+        <div class="toggle-track"></div><div class="toggle-knob"></div>
+      </label>
+    </div>
+
+    <div class="s-card-stats">
+      <div class="stat"><div class="stat-val up">+8.3%</div><div class="stat-lbl">7일 수익</div></div>
+      <div class="stat"><div class="stat-val">64%</div><div class="stat-lbl">승률</div></div>
+      <div class="stat"><div class="stat-val">11건</div><div class="stat-lbl">시그널</div></div>
+    </div>
+
+    <!-- 백테스트 상태 바 -->
+    <div class="bt-bar">
+      <div class="bt-bar-left">
+        <div class="bt-bar-label">🔄 백테스트 (매 6시간)</div>
+        <div class="bt-bar-time">마지막: 오늘 06:00</div>
+      </div>
+      <div class="bt-bar-right">
+        <div class="bt-next">다음 실행</div>
+        <div class="bt-next-val">12:00 (5h 후)</div>
+      </div>
+    </div>
+    <div class="bt-result">
+      <div class="bt-kv"><div class="bt-k">샤프</div><div class="bt-v up">1.24</div></div>
+      <div class="bt-kv"><div class="bt-k">MDD</div><div class="bt-v dn">-8.2%</div></div>
+      <div class="bt-kv"><div class="bt-k">승률</div><div class="bt-v">61.3%</div></div>
+      <div class="bt-kv"><div class="bt-k">기간</div><div class="bt-v na">90일</div></div>
+    </div>
+
+    <div class="s-card-footer">
+      <button class="btn-detail">전략 상세 →</button>
+    </div>
+  </div>
+
+  <!-- 전략 2 — 백테스트 실행 중 -->
+  <div class="s-card">
+    <div class="s-card-head">
+      <div style="flex:1">
+        <div class="s-card-name">MA 골든크로스</div>
+        <div class="s-card-desc">MA5 > MA20 돌파 시 매수, 데드크로스 청산</div>
+        <div class="s-card-tags">
+          <span class="tag">MA5 · MA20</span><span class="tag">4h</span><span class="tag">KRW-BTC · KRW-ETH</span>
+        </div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" checked>
+        <div class="toggle-track"></div><div class="toggle-knob"></div>
+      </label>
+    </div>
+
+    <div class="s-card-stats">
+      <div class="stat"><div class="stat-val up">+3.1%</div><div class="stat-lbl">7일 수익</div></div>
+      <div class="stat"><div class="stat-val">58%</div><div class="stat-lbl">승률</div></div>
+      <div class="stat"><div class="stat-val">4건</div><div class="stat-lbl">시그널</div></div>
+    </div>
+
+    <!-- 백테스트 실행 중 -->
+    <div class="bt-bar">
+      <div class="bt-bar-left">
+        <div class="bt-bar-label">🔄 백테스트 (매 6시간)</div>
+        <div class="bt-running" style="margin-top:4px"><div class="spinner"></div>실행 중…</div>
+      </div>
+      <div class="bt-bar-right">
+        <div class="bt-next" style="color:var(--accent)">약 2분 소요</div>
+      </div>
+    </div>
+    <div class="bt-result" style="opacity:.4">
+      <div class="bt-kv"><div class="bt-k">샤프</div><div class="bt-v">0.87</div></div>
+      <div class="bt-kv"><div class="bt-k">MDD</div><div class="bt-v">-11.5%</div></div>
+      <div class="bt-kv"><div class="bt-k">승률</div><div class="bt-v">55.0%</div></div>
+      <div class="bt-kv"><div class="bt-k">기간</div><div class="bt-v na">90일</div></div>
+    </div>
+
+    <div class="s-card-footer">
+      <button class="btn-detail">전략 상세 →</button>
+    </div>
+  </div>
+
+  <!-- 비활성 전략 -->
+  <div class="section-header" style="margin-top:4px">
+    <span class="section-title">비활성</span>
+  </div>
+
+  <div class="s-card" style="opacity:.55">
+    <div class="s-card-head">
+      <div style="flex:1">
+        <div class="s-card-name">볼린저 돌파</div>
+        <div class="s-card-desc">밴드 상단 돌파 시 추세 추종</div>
+        <div class="s-card-tags">
+          <span class="tag">BB(20,2)</span><span class="tag">1h</span><span class="tag">KRW-ETH</span>
+        </div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox">
+        <div class="toggle-track"></div><div class="toggle-knob"></div>
+      </label>
+    </div>
+    <!-- 비활성: 백테스트 중단 표시 -->
+    <div class="bt-bar" style="margin-top:12px">
+      <div class="bt-bar-left">
+        <div class="bt-bar-label" style="color:#555">🔄 백테스트</div>
+        <div class="bt-bar-time" style="color:#555">일시 중단 (전략 OFF)</div>
+      </div>
+      <div class="bt-bar-right">
+        <div class="bt-next" style="color:#555">마지막: 3일 전</div>
+      </div>
+    </div>
+    <div class="s-card-footer">
+      <button class="btn-detail">전략 상세 →</button>
+    </div>
+  </div>
+
+  <div style="height:16px"></div>
+</div>
+
+
+<!-- ===== PANEL: 시그널 피드 ===== -->
+<!-- 상태 필터 (sticky) -->
+<div id="feed-filter" class="feed-filter" style="display:none">
+  <button class="fchip on" onclick="filterFeed('all',this)">전체</button>
+  <button class="fchip" onclick="filterFeed('pending',this)">대기</button>
+  <button class="fchip" onclick="filterFeed('auto',this)">자동제출</button>
+  <button class="fchip" onclick="filterFeed('approved',this)">승인됨</button>
+  <button class="fchip" onclick="filterFeed('rejected',this)">거부됨</button>
+  <button class="fchip" onclick="filterFeed('expired',this)">만료됨</button>
+</div>
+<div id="panel-signals" class="panel scroll" style="padding-top:6px">
+
+  <!-- 1) 승인 대기 — 상단 고정 영역 -->
+  <div style="background:#1a1500;border-radius:10px;padding:8px 10px;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--accent);border:1px solid #f59e0b33">
+    ⏱ 승인 대기 2건 — 최장 만료까지 <strong>23분</strong>
+  </div>
+
+  <!-- pending signal -->
+  <div class="signal-item" style="border-color:#f59e0b55">
+    <div class="sig-head">
+      <div class="sig-badge">
+        <span class="side-chip side-buy">매수</span>
+        <span class="sig-status s-pending">승인 대기</span>
+      </div>
+      <span style="font-size:11px;color:var(--accent)">만료 23분</span>
+    </div>
+    <div class="sig-symbol">KRW-ETH</div>
+    <div class="sig-strategy">RSI 역추세 · 1h</div>
+    <div class="sig-grid">
+      <div class="sig-kv"><div class="sig-k">금액</div><div class="sig-v">₩30,000</div></div>
+      <div class="sig-kv"><div class="sig-k">진입가 (지정가)</div><div class="sig-v">5,148,000</div></div>
+      <div class="sig-kv"><div class="sig-k">RSI(14)</div><div class="sig-v dn">28.9</div></div>
+      <div class="sig-kv"><div class="sig-k">현재가 / MA20</div><div class="sig-v dn">-2.3%</div></div>
+    </div>
+    <div class="sig-reasoning">RSI 28.9 과매도 + MA20 하방. 반등 시나리오.</div>
+    <div class="approval-btns"><button class="btn-approve">✓ 승인</button><button class="btn-reject">✗ 거부</button></div>
+  </div>
+
+  <div style="height:1px;background:var(--border);margin:2px 0"></div>
+
+  <!-- auto_submitted -->
+  <div class="signal-item">
+    <div class="sig-head">
+      <div class="sig-badge">
+        <span class="side-chip side-buy">매수</span>
+        <span class="sig-status s-auto">자동 제출</span>
+      </div>
+      <span style="font-size:11px;color:var(--sub)">5분 전</span>
+    </div>
+    <div class="sig-symbol">KRW-BTC</div>
+    <div class="sig-strategy">RSI 역추세 · 1h</div>
+    <div class="sig-grid">
+      <div class="sig-kv"><div class="sig-k">금액</div><div class="sig-v">₩2,500</div></div>
+      <div class="sig-kv"><div class="sig-k">진입가</div><div class="sig-v">148,320,000</div></div>
+      <div class="sig-kv"><div class="sig-k">RSI(14)</div><div class="sig-v dn">27.3</div></div>
+      <div class="sig-kv"><div class="sig-k">MA20 대비</div><div class="sig-v dn">-1.8%</div></div>
+    </div>
+    <div class="sig-reasoning">RSI 27.3 과매도 진입. 소액 자동 제출 (₩2,500 ≤ 임계값).</div>
+    <div class="sig-footer">
+      <span class="sig-link">주문 #1042 →</span>
+      <span class="sig-time">오늘 11:04</span>
+    </div>
+  </div>
+
+  <!-- approved -->
+  <div class="signal-item" style="opacity:.75">
+    <div class="sig-head">
+      <div class="sig-badge">
+        <span class="side-chip side-sell">매도</span>
+        <span class="sig-status s-approved">승인됨</span>
+      </div>
+      <span style="font-size:11px;color:var(--sub)">1시간 전</span>
+    </div>
+    <div class="sig-symbol">KRW-BTC</div>
+    <div class="sig-strategy">RSI 역추세 · 1h</div>
+    <div class="sig-grid">
+      <div class="sig-kv"><div class="sig-k">금액</div><div class="sig-v">₩15,000</div></div>
+      <div class="sig-kv"><div class="sig-k">가격</div><div class="sig-v">149,800,000</div></div>
+      <div class="sig-kv"><div class="sig-k">RSI(14)</div><div class="sig-v up">71.2</div></div>
+      <div class="sig-kv"><div class="sig-k">체결 손익</div><div class="sig-v up">+0.98%</div></div>
+    </div>
+    <div class="sig-footer">
+      <span class="sig-link">주문 #1041 →</span>
+      <span class="sig-time">오늘 10:00</span>
+    </div>
+  </div>
+
+  <!-- rejected -->
+  <div class="signal-item" style="opacity:.5">
+    <div class="sig-head">
+      <div class="sig-badge">
+        <span class="side-chip side-buy">매수</span>
+        <span class="sig-status s-rejected">거부됨</span>
+      </div>
+      <span style="font-size:11px;color:var(--sub)">3시간 전</span>
+    </div>
+    <div class="sig-symbol">KRW-ETH</div>
+    <div class="sig-strategy">MA 골든크로스 · 4h</div>
+    <div class="sig-grid">
+      <div class="sig-kv"><div class="sig-k">금액</div><div class="sig-v">₩50,000</div></div>
+      <div class="sig-kv"><div class="sig-k">가격</div><div class="sig-v">5,095,000</div></div>
+    </div>
+    <div class="sig-footer">
+      <span></span><span class="sig-time">오늘 08:12</span>
+    </div>
+  </div>
+
+  <!-- expired -->
+  <div class="signal-item" style="opacity:.4">
+    <div class="sig-head">
+      <div class="sig-badge">
+        <span class="side-chip side-buy">매수</span>
+        <span class="sig-status s-expired">만료됨</span>
+      </div>
+      <span style="font-size:11px;color:var(--sub)">5시간 전</span>
+    </div>
+    <div class="sig-symbol">KRW-BTC</div>
+    <div class="sig-strategy">MA 골든크로스 · 4h</div>
+    <div class="sig-grid">
+      <div class="sig-kv"><div class="sig-k">금액</div><div class="sig-v">₩30,000</div></div>
+      <div class="sig-kv"><div class="sig-k">TTL</div><div class="sig-v">30분 초과</div></div>
+    </div>
+    <div class="sig-footer">
+      <span></span><span class="sig-time">오늘 06:30</span>
+    </div>
+  </div>
+
+  <div style="height:16px"></div>
+</div>
+
+
+<!-- ===== PANEL: 승인 대기 큐 ===== -->
+<div id="panel-approvals" class="panel scroll">
+  <div class="section-header">
+    <span class="section-title">승인 대기</span>
+    <span class="section-count" id="q-count">2건 남음</span>
+  </div>
+
+  <div class="approval-item">
+    <div class="approval-alert">⏱ 23분 후 만료</div>
+    <div class="sig-head">
+      <div class="sig-badge">
+        <span class="side-chip side-buy">매수</span>
+        <span style="font-size:14px;font-weight:700;margin-left:6px">KRW-ETH</span>
+      </div>
+      <span style="font-size:12px;color:var(--sub)">RSI 역추세</span>
+    </div>
+    <div class="sig-grid" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+      <div class="sig-kv"><div class="sig-k">주문 금액</div><div class="sig-v" style="font-size:16px">₩30,000</div></div>
+      <div class="sig-kv"><div class="sig-k">진입가 (지정가)</div><div class="sig-v">5,148,000</div></div>
+      <div class="sig-kv"><div class="sig-k">RSI(14)</div><div class="sig-v dn">28.9</div></div>
+      <div class="sig-kv"><div class="sig-k">현재가 / MA20</div><div class="sig-v dn">-2.3%</div></div>
+    </div>
+    <div class="sig-reasoning">RSI 28.9 과매도. 현재가 MA20(5,268,000) 하방. 반등 시나리오 — 목표 +3%, 손절 -2%.</div>
+    <div class="approval-btns">
+      <button class="btn-approve" onclick="handleApproval(this)">✓ 승인</button>
+      <button class="btn-reject"  onclick="handleApproval(this)">✗ 거부</button>
+    </div>
+  </div>
+
+  <div class="approval-item">
+    <div class="approval-alert">⏱ 17분 후 만료</div>
+    <div class="sig-head">
+      <div class="sig-badge">
+        <span class="side-chip side-sell">매도</span>
+        <span style="font-size:14px;font-weight:700;margin-left:6px">KRW-BTC</span>
+      </div>
+      <span style="font-size:12px;color:var(--sub)">MA 골든크로스</span>
+    </div>
+    <div class="sig-grid" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+      <div class="sig-kv"><div class="sig-k">주문 금액</div><div class="sig-v" style="font-size:16px">₩20,000</div></div>
+      <div class="sig-kv"><div class="sig-k">매도가 (시장가)</div><div class="sig-v">148,400,000</div></div>
+      <div class="sig-kv"><div class="sig-k">MA5 < MA20</div><div class="sig-v dn">데드크로스</div></div>
+      <div class="sig-kv"><div class="sig-k">보유 손익</div><div class="sig-v up">+1.2%</div></div>
+    </div>
+    <div class="sig-reasoning">MA5(148,100,000)가 MA20(148,600,000) 하향 이탈. 데드크로스. 현재 보유분 일부 청산.</div>
+    <div class="approval-btns">
+      <button class="btn-approve" onclick="handleApproval(this)">✓ 승인</button>
+      <button class="btn-reject"  onclick="handleApproval(this)">✗ 거부</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ===== PANEL: 백테스트 설정 ===== -->
+<div id="panel-bt-settings" class="panel scroll">
+  <div class="section-header">
+    <span class="section-title">백테스트 스케줄</span>
+  </div>
+
+  <div class="settings-section">
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">실행 주기</div>
+        <div class="settings-sub">활성 전략에만 적용</div>
+      </div>
+      <div class="settings-val">6시간 <span class="chevron">›</span></div>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">백테스트 기간</div>
+        <div class="settings-sub">과거 캔들 데이터 범위</div>
+      </div>
+      <div class="settings-val">90일 <span class="chevron">›</span></div>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">수수료 가정</div>
+        <div class="settings-sub">실 수수료와 가능한 일치시킬 것</div>
+      </div>
+      <div class="settings-val">0.05% <span class="chevron">›</span></div>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">슬리피지 가정</div>
+      </div>
+      <div class="settings-val">0.10% <span class="chevron">›</span></div>
+    </div>
+    <div class="settings-row">
+      <div>
+        <div class="settings-label">비활성 전략 포함</div>
+        <div class="settings-sub">OFF 전략도 주기 백테스트 여부</div>
+      </div>
+      <label class="toggle" style="margin-left:0">
+        <input type="checkbox">
+        <div class="toggle-track"></div><div class="toggle-knob"></div>
+      </label>
+    </div>
+  </div>
+
+  <div class="section-header" style="margin-top:12px">
+    <span class="section-title">주기 옵션 안내</span>
+  </div>
+  <div style="background:var(--card);border-radius:12px;padding:14px;border:1px solid var(--border);font-size:13px;color:#aaa;line-height:1.7">
+    <div>• <strong style="color:var(--text)">1시간</strong> — 단기 전략(RSI 1h), 코인 시장 변동 빠를 때 권장</div>
+    <div>• <strong style="color:var(--text)">6시간</strong> — 기본값. 대부분 스윙 전략에 적합</div>
+    <div>• <strong style="color:var(--text)">12시간</strong> — 일봉 전략(MA 4h·1d), DB 부하 절감</div>
+    <div>• <strong style="color:var(--text)">24시간</strong> — 장기 포지션 전략. 매일 새벽 3시 고정 실행</div>
+    <div style="margin-top:8px;font-size:12px;color:#555">백테스트는 과거 데이터 기반 — 라이브 성과와 괴리 ±10% 내 유지 목표. 초과 시 전략 파라미터 재검토 권장.</div>
+  </div>
+
+  <div class="section-header" style="margin-top:12px">
+    <span class="section-title">마지막 실행 결과</span>
+  </div>
+  <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);overflow:hidden">
+    <div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+      <span style="font-size:13px;font-weight:600">RSI 역추세</span>
+      <span style="font-size:12px;color:var(--sub)">오늘 06:00 · 38초</span>
+    </div>
+    <div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:13px;font-weight:600">MA 골든크로스</span>
+      <span style="font-size:12px;color:var(--accent)">실행 중…</span>
+    </div>
+  </div>
+
+  <div style="height:16px"></div>
+</div>
+
+<!-- FAB -->
+<button class="fab" id="fab-add" title="새 전략 추가">＋</button>
+
+<!-- BOTTOM TABS -->
+<nav class="bottomtabs">
+  <div class="tab"><span class="tab-icon">🏠</span>대시보드</div>
+  <div class="tab"><span class="tab-icon">📝</span>주문</div>
+  <div class="tab active"><span class="tab-icon">🎯</span>전략</div>
+  <div class="tab"><span class="tab-icon">📈</span>분석</div>
+  <div class="tab"><span class="tab-icon">⚙️</span>설정</div>
+</nav>
+
+<script>
+function showPanel(id, chip) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  document.getElementById('panel-' + id).classList.add('active');
+  chip.classList.add('active');
+  document.getElementById('fab-add').style.display = id === 'list' ? 'flex' : 'none';
+  // 시그널 피드 필터 표시/숨김
+  const ff = document.getElementById('feed-filter');
+  ff.style.display = id === 'signals' ? 'flex' : 'none';
+}
+
+function filterFeed(status, chip) {
+  document.querySelectorAll('.fchip').forEach(c => c.classList.remove('on'));
+  chip.classList.add('on');
+}
+
+function handleApproval(btn) {
+  const item = btn.closest('.approval-item');
+  item.style.transition = 'opacity .3s, max-height .3s';
+  item.style.opacity = '0';
+  setTimeout(() => {
+    item.remove();
+    const cnt = document.querySelectorAll('.approval-item').length;
+    document.getElementById('badge').textContent = cnt;
+    document.getElementById('q-count').textContent = cnt + '건 남음';
+    if (cnt === 0) {
+      document.getElementById('panel-approvals').insertAdjacentHTML('beforeend',
+        '<div class="queue-empty"><div class="queue-empty-icon">✅</div><div style="color:var(--sub);font-size:14px">승인 대기 없음</div></div>');
+    }
+  }, 300);
+}
+</script>
+</body>
+</html>

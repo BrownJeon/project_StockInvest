@@ -1,0 +1,74 @@
+import type { RowDataPacket } from 'mysql2';
+import { getPool } from '@/lib/db';
+import type { OrderSide, OrderType } from '@/lib/exchanges/types';
+
+export type SignalStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'auto_submitted'
+  | 'expired'
+  | 'superseded';
+
+export interface SignalInput {
+  strategyId?: string;
+  symbol: string;
+  side: OrderSide;
+  orderType: OrderType;
+  price?: number;
+  quantity?: number;
+  amountKRW: number;
+  reasoning?: string;
+  indicators?: unknown;
+  expiresAt?: Date | string | null;
+}
+
+export interface RouterConfig {
+  defaultTtlMin: number;
+}
+
+export interface RoutingDecision {
+  route: 'auto_submit' | 'pending_approval';
+  expiresAt: Date;
+}
+
+export async function getRouterConfig(): Promise<RouterConfig> {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
+      'SELECT value FROM system_config WHERE `key` = ? LIMIT 1', ['safety_signal_default_ttl_min'],
+    );
+    if (rows.length > 0) {
+      const ttl = Number(JSON.parse(rows[0].value));
+      if (Number.isFinite(ttl) && ttl > 0) return { defaultTtlMin: ttl };
+    }
+  } catch { /* fall through */ }
+  const ttl = Number(process.env.SIGNAL_DEFAULT_TTL_MIN ?? 30);
+  return { defaultTtlMin: Number.isFinite(ttl) && ttl > 0 ? ttl : 30 };
+}
+
+export async function isAnalystEnabled(): Promise<boolean> {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
+      'SELECT value FROM system_config WHERE `key` = ? LIMIT 1', ['strategy_analyst_enabled'],
+    );
+    if (rows.length > 0) return JSON.parse(rows[0].value) === true;
+  } catch { /* fall through */ }
+  return String(process.env.ANALYST_ENABLED ?? 'false').toLowerCase() === 'true';
+}
+
+/** 분석가 시그널은 항상 자동 제출. 제한은 일일 누적 한도(DAILY_ORDER_MAX_KRW)로만 통제. */
+export function routeSignal(input: SignalInput, cfg: RouterConfig, now: Date = new Date()): RoutingDecision {
+  const expiresAt = resolveExpiry(input.expiresAt, cfg.defaultTtlMin, now);
+  return { route: 'auto_submit', expiresAt };
+}
+
+function resolveExpiry(raw: Date | string | null | undefined, defaultTtlMin: number, now: Date): Date {
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) return raw;
+  if (typeof raw === 'string' && raw.length > 0) {
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date(now.getTime() + defaultTtlMin * 60_000);
+}

@@ -1,0 +1,42 @@
+:root {
+  --bg: #0f1115;
+  --bg2: #171a21;
+  --bg3: #1f2430;
+  --bg4: #262b36;
+  --border: #262b36;
+  --border2: #323848;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --up: #ef4444;    /* 한국 관습: 상승 빨강 */
+  --down: #3b82f6;  /* 한국 관습: 하락 파랑 */
+  --accent: #f59e0b;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-h: 60px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html {
+  overflow-x: clip; /* 수평 페이지 오버플로우 차단 — sticky 포지셔닝 유지됨 */
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+  font-size: 14px;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: contain;
+}
+/* 가로 폭만 viewport에 제한, 세로 스크롤은 막지 않음 */
+body { width: 100%; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+.num { font-variant-numeric: tabular-nums; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+@keyframes ti-spin { to { transform: rotate(360deg); } }
