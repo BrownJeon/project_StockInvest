@@ -269,6 +269,7 @@ export function SettingsPage() {
           placeholder="예: 005930"
           chipColor="rgba(239,68,68,.15)"
           chipBorder="rgba(239,68,68,.3)"
+          marketFilter="domestic"
         />
 
         <SymbolEditor
@@ -278,6 +279,7 @@ export function SettingsPage() {
           placeholder="예: NAS:AAPL"
           chipColor="rgba(239,68,68,.15)"
           chipBorder="rgba(239,68,68,.3)"
+          marketFilter="overseas"
         />
       </div>
 
@@ -513,38 +515,51 @@ function MinutesInput({ value, onChange }: { value: number; onChange: (v: number
   );
 }
 
-function SymbolEditor({ symbols, onChange, label = '차단 심볼', placeholder = '예: 005930', chipColor = 'rgba(34,197,94,.15)', chipBorder = 'rgba(34,197,94,.3)' }: { symbols: string[]; onChange: (v: string[]) => void; label?: string; placeholder?: string; chipColor?: string; chipBorder?: string }) {
+function SymbolEditor({ symbols, onChange, label = '차단 심볼', chipColor = 'rgba(34,197,94,.15)', chipBorder = 'rgba(34,197,94,.3)', marketFilter }: { symbols: string[]; onChange: (v: string[]) => void; label?: string; placeholder?: string; chipColor?: string; chipBorder?: string; marketFilter?: 'domestic' | 'overseas' }) {
   const [available, setAvailable]     = useState<string[]>([]);
+  const [meta, setMeta]               = useState<Record<string, string>>({});
   const [loadingList, setLoadingList] = useState(false);
-  const [open, setOpen]               = useState(false);
+  const [query, setQuery]             = useState('');
+  const [focused, setFocused]         = useState(false);
   const [dropStyle, setDropStyle]     = useState<React.CSSProperties>({});
-  const btnRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const openDropdown = () => {
-    if (available.length === 0 && !loadingList) {
-      setLoadingList(true);
-      fetch('/api/ticker/all')
-        .then(r => r.json())
-        .then(d => { if (d.ok) setAvailable(d.symbols); })
-        .finally(() => setLoadingList(false));
-    }
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setDropStyle({
-        position: 'fixed',
-        top: rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
-        zIndex: 9999,
-        background: 'var(--bg2)',
-        border: '1px solid var(--border)',
-        borderRadius: 10,
-        maxHeight: Math.min(260, window.innerHeight - rect.bottom - 16),
-        overflowY: 'auto',
-        boxShadow: '0 4px 20px rgba(0,0,0,.5)',
-      });
-    }
-    setOpen(v => !v);
+  useEffect(() => {
+    setLoadingList(true);
+    fetch('/api/ticker/all')
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          setAvailable(d.symbols ?? []);
+          setMeta(d.meta ?? {});
+        }
+      })
+      .finally(() => setLoadingList(false));
+  }, []);
+
+  const display = (sym: string): string => {
+    const name = meta[sym];
+    const short = sym.includes(':') ? sym.slice(sym.indexOf(':') + 1) : sym;
+    if (name && name !== sym && name !== short) return `${name} (${short})`;
+    return short;
+  };
+
+  const positionDropdown = () => {
+    if (!inputRef.current) return;
+    const rect = inputRef.current.getBoundingClientRect();
+    setDropStyle({
+      position: 'fixed',
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: rect.width,
+      zIndex: 9999,
+      background: 'var(--bg2)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      maxHeight: Math.min(260, window.innerHeight - rect.bottom - 16),
+      overflowY: 'auto',
+      boxShadow: '0 4px 20px rgba(0,0,0,.5)',
+    });
   };
 
   const toggle = (sym: string) => {
@@ -552,7 +567,18 @@ function SymbolEditor({ symbols, onChange, label = '차단 심볼', placeholder 
     else onChange([...symbols, sym]);
   };
 
-  const unselected = available.filter(s => !symbols.includes(s));
+  const q = query.trim().toLowerCase();
+  const isOverseas = (s: string) => s.includes(':');
+  const marketScoped = available.filter(s =>
+    marketFilter === 'overseas' ? isOverseas(s) :
+    marketFilter === 'domestic' ? !isOverseas(s) : true
+  );
+  const unselected = marketScoped.filter(s => !symbols.includes(s));
+  const filtered = q
+    ? unselected.filter(s => s.toLowerCase().includes(q) || (meta[s] ?? '').toLowerCase().includes(q))
+    : unselected;
+  const visible = filtered.slice(0, 50);
+  const open = focused;
 
   return (
     <div style={{ padding: '12px 16px' }}>
@@ -569,7 +595,7 @@ function SymbolEditor({ symbols, onChange, label = '차단 심볼', placeholder 
             fontSize: 12, padding: '3px 10px', borderRadius: 10,
             background: chipColor, border: `1px solid ${chipBorder}`, color: 'var(--text)',
           }}>
-            {s}
+            {display(s)}
             <button
               onClick={() => toggle(s)}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, lineHeight: 1, padding: 0 }}
@@ -578,48 +604,48 @@ function SymbolEditor({ symbols, onChange, label = '차단 심볼', placeholder 
         ))}
       </div>
 
-      {/* Dropdown trigger */}
-      <button
-        ref={btnRef}
-        onClick={openDropdown}
+      {/* Search input */}
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        onFocus={() => { positionDropdown(); setFocused(true); }}
+        onBlur={() => setTimeout(() => setFocused(false), 150)}
+        placeholder={loadingList ? '종목 목록 불러오는 중…' : '종목명 또는 코드로 검색'}
         style={{
-          width: '100%', textAlign: 'left', fontSize: 13, padding: '7px 12px',
+          width: '100%', fontSize: 13, padding: '7px 12px',
           background: 'var(--bg3)', border: '1px solid var(--border2)',
-          borderRadius: 8, color: loadingList ? 'var(--muted)' : 'var(--text)',
-          cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          borderRadius: 8, color: 'var(--text)', outline: 'none',
         }}
-      >
-        <span>{loadingList ? '종목 목록 불러오는 중…' : '종목 선택 +'}</span>
-        <span style={{ color: 'var(--muted)', fontSize: 12 }}>{open ? '▲' : '▼'}</span>
-      </button>
+      />
 
-      {/* Dropdown — rendered at fixed viewport position to escape overflow:hidden */}
       {open && !loadingList && (
-        <>
-          {/* Backdrop to close on outside click */}
-          <div
-            style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
-            onClick={() => setOpen(false)}
-          />
-          <div style={dropStyle}>
-            {unselected.length === 0 && (
-              <div style={{ padding: '12px 16px', fontSize: 13, color: 'var(--muted)' }}>추가할 심볼 없음</div>
-            )}
-            {unselected.map(s => (
-              <button
-                key={s}
-                onClick={() => { toggle(s); setOpen(false); }}
-                style={{
-                  width: '100%', textAlign: 'left', padding: '10px 16px', fontSize: 13,
-                  background: 'none', border: 'none', borderBottom: '1px solid var(--border)',
-                  color: 'var(--text)', cursor: 'pointer',
-                }}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        </>
+        <div style={dropStyle}>
+          {visible.length === 0 && (
+            <div style={{ padding: '12px 16px', fontSize: 13, color: 'var(--muted)' }}>
+              {q ? '일치하는 종목 없음' : '추가할 종목 없음'}
+            </div>
+          )}
+          {visible.map(s => (
+            <button
+              key={s}
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { toggle(s); setQuery(''); }}
+              style={{
+                width: '100%', textAlign: 'left', padding: '10px 16px', fontSize: 13,
+                background: 'none', border: 'none', borderBottom: '1px solid var(--border)',
+                color: 'var(--text)', cursor: 'pointer',
+              }}
+            >
+              {display(s)}
+            </button>
+          ))}
+          {filtered.length > visible.length && (
+            <div style={{ padding: '8px 16px', fontSize: 11, color: 'var(--muted)', textAlign: 'center' }}>
+              {filtered.length - visible.length}개 더 — 검색어를 좁혀주세요
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

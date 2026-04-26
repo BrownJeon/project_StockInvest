@@ -190,6 +190,13 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
 
   if (analyses.length === 0) return { refreshed: false };
 
+  // 적응형 interval — 분석 시점의 ATR%를 symbol_volatility에 upsert
+  // analyses[i].atrPct는 ratio(0~1) → ×100으로 percent 변환 후 저장
+  try {
+    const { upsertSymbolVolatility } = await import('./adaptive-interval');
+    await Promise.all(analyses.map(a => upsertSymbolVolatility(a.symbol, a.atrPct * 100, 14, '30m')));
+  } catch { /* 비차단 */ }
+
   const volumes = analyses.map(a => Math.log(a.quoteVolume + 1));
   const normVolumes = normalize(volumes);
 

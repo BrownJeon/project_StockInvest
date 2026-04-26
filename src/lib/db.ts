@@ -363,6 +363,19 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // 종목별 변동성 → 적응형 interval 추천
+  // ATR(14) / 종가 × 100 → atr_pct
+  // suggested_interval: 변동성 bucket 기준 (>=3% → 30m, 1~3% → 1h, <1% → 1d)
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS symbol_volatility (
+      symbol             VARCHAR(32) PRIMARY KEY,
+      atr_pct            DECIMAL(8,4) NOT NULL,
+      suggested_interval VARCHAR(8)   NOT NULL,
+      sample_count       INT          NOT NULL DEFAULT 0,
+      refreshed_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // 시장별 공휴일 (KR + US)
   await p.query(`
     CREATE TABLE IF NOT EXISTS market_holidays (

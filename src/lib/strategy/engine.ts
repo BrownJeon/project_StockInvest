@@ -132,6 +132,15 @@ async function collectCandidates(
 
   const pool = getPool();
   const candleCache = new Map<string, Candle[]>();
+  const { pickAdaptiveInterval } = await import('./adaptive-interval');
+  const intervalCache = new Map<string, string>();
+  // baseInterval → 종목 변동성에 따른 adaptive interval로 매핑
+  const resolveInterval = async (baseInterval: string): Promise<string> => {
+    if (intervalCache.has(baseInterval)) return intervalCache.get(baseInterval)!;
+    const adaptive = await pickAdaptiveInterval(symbol, baseInterval);
+    intervalCache.set(baseInterval, adaptive);
+    return adaptive;
+  };
   const getCandlesFor = async (interval: string, minCandles: number): Promise<Candle[] | null> => {
     if (!candleCache.has(interval)) {
       try {
@@ -155,7 +164,8 @@ async function collectCandidates(
   const candidates: Candidate[] = [];
 
   for (const { id, meta } of strategies) {
-    const candles = await getCandlesFor(meta.interval, meta.minCandles);
+    const effectiveInterval = await resolveInterval(meta.interval);
+    const candles = await getCandlesFor(effectiveInterval, meta.minCandles);
     if (!candles || candles.length < meta.minCandles) continue;
 
     const rawSignals = meta.fn({ strategyId: id, symbol, candles, ticker, amountKRW, style });

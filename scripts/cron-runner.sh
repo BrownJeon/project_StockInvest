@@ -7,6 +7,7 @@
 #  - signal-followup   : 15분 — 발화한 시그널 후속 추적 (price_1h_after 채우기)
 #  - signal-expiry     : 30분 — TTL 초과 시그널 만료 처리
 #  - portfolio-snapshot: 60분 — 포트폴리오 스냅샷 + 변동폭 가드
+#  - sync-stock-meta   : 매일 17:00 KST — KIS KOSPI/KOSDAQ 마스터 → stock_meta 현행화
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -38,6 +39,9 @@ call() {
 # 시작 시 한 번 실행 (선택)
 echo "[cron-runner] started, base=$BASE_URL"
 
+META_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/sync-stock-meta-last-date"
+mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
+
 # 분 단위 카운터 (동기 호출이라 60초 슬립으로 간략)
 i=0
 while true; do
@@ -56,6 +60,14 @@ while true; do
   # 매 60분: portfolio-snapshot
   if [ $((i % 60)) -eq 0 ]; then
     call /api/cron/portfolio-snapshot "portfolio-snapshot"
+  fi
+  # 매일 17:00 KST: sync-stock-meta (하루 1회만)
+  HH=$(date '+%H')
+  TODAY=$(date '+%Y-%m-%d')
+  LAST_META=$(cat "$META_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "17" ] && [ "$LAST_META" != "$TODAY" ]; then
+    call /api/cron/sync-stock-meta "sync-stock-meta"
+    echo "$TODAY" > "$META_LAST_RUN_FILE"
   fi
   i=$(( (i + 1) % 1440 ))   # 24h 사이클
   sleep 60
