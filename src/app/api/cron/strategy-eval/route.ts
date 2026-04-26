@@ -26,8 +26,13 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
 
     const result = await runAll({ force });
-    // 'all_markets_closed' / 'analyst_disabled'는 정상 정보성 플래그 — 실제 에러와 분리해 로그
-    const INFO_FLAGS = new Set(['all_markets_closed', 'analyst_disabled']);
+    // 정보성 플래그 — 실제 에러와 분리해 로그
+    const INFO_FLAGS = new Set([
+      'all_markets_closed',
+      'domestic_market_closed',
+      'overseas_market_closed',
+      'analyst_disabled',
+    ]);
     const infoFlags = result.errors.filter(e => INFO_FLAGS.has(e));
     const realErrors = result.errors.filter(e => !INFO_FLAGS.has(e));
     if (result.ran === 0 && realErrors.length === 0 && infoFlags.length > 0) {

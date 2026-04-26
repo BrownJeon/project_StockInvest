@@ -2,6 +2,8 @@ import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { isAnalystEnabled } from '@/lib/signals/router';
 import { createSignal } from '@/lib/signals/service';
+import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
+import { isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +30,15 @@ export async function POST(req: Request) {
       return Response.json(
         { ok: false, error: 'symbol/side/orderType/amountKRW required' },
         { status: 400 },
+      );
+    }
+    // 시장별 개장 가드 — 폐장 시 시그널 생성 차단
+    const symMarket = getMarketFromSymbol(body.symbol);
+    const open = symMarket === 'overseas' ? await isOverseasOpen() : await isDomesticOpen();
+    if (!open) {
+      return Response.json(
+        { ok: false, error: `${symMarket}_market_closed` },
+        { status: 409 },
       );
     }
     const result = await createSignal({

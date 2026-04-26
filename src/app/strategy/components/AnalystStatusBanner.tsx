@@ -1,6 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { formatRelativeTime } from '@/lib/time';
 
 interface Safety {
   analystEnabled: boolean;
@@ -15,16 +17,15 @@ interface MarketsStatus {
 }
 
 interface Props {
+  /** 후방 호환용 — 본 배너에서는 직접적 변경이 없으므로 호출되지 않음 */
   onStatusChange?: () => void;
 }
 
-import { formatRelativeTime } from '@/lib/time';
-
-export function AnalystStatusBanner({ onStatusChange }: Props) {
+export function AnalystStatusBanner(_props: Props = {}) {
+  void _props;
   const [safety, setSafety]       = useState<Safety | null>(null);
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [markets, setMarkets]     = useState<MarketsStatus | null>(null);
-  const [busy, setBusy]           = useState<'kill' | 'analyst' | null>(null);
 
   useEffect(() => {
     fetch('/api/settings/safety')
@@ -42,91 +43,77 @@ export function AnalystStatusBanner({ onStatusChange }: Props) {
     return () => clearInterval(id);
   }, []);
 
-  const patchSafety = async (key: 'kill' | 'analyst', val: boolean) => {
-    setBusy(key);
-    const body = key === 'kill' ? { killSwitch: val } : { analystEnabled: val };
-    await fetch('/api/settings/safety', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    setSafety(s => s ? { ...s, ...(key === 'kill' ? { killSwitch: val } : { analystEnabled: val }) } : s);
-    setBusy(null);
-    onStatusChange?.();
-  };
-
   if (!safety) return null;
 
   const isKill   = safety.killSwitch;
   const isActive = safety.analystEnabled && !isKill;
+  const isLive   = !safety.dryRun;   // 실거래 ON 여부 (DRY_RUN의 반전)
   const relTime  = lastRunAt ? formatRelativeTime(lastRunAt) : null;
 
-  const bgColor     = isKill ? '#2a0a0a' : isActive ? '#0a1a0a' : '#1a1500';
-  const borderColor = isKill ? '#ef444444' : isActive ? '#22c55e44' : '#f59e0b44';
+  // 메인 라벨 + 아이콘
+  const mainIcon  = isKill ? '🚨' : isActive ? '🟢' : '⏸';
+  const mainLabel = isKill ? '긴급 정지 중' : isActive ? '분석가 운영 중' : '분석가 일시 중지';
+
+  // 메타 (보조) 텍스트
+  let metaText = '';
+  if (isKill) {
+    metaText = '모든 주문 송신이 차단됩니다';
+  } else if (isActive) {
+    metaText = relTime ? `마지막 시그널: ${relTime}` : '시그널 대기 중';
+  } else {
+    metaText = relTime ? `분석가가 비활성 상태입니다 · 마지막 시그널: ${relTime}` : '분석가가 비활성 상태입니다';
+  }
+
+  // 배경/보더 — 실거래 ON 시 보더만 빨강 강조
+  const bgColor = isKill ? '#2a0a0a' : isActive ? '#0a1a0a' : '#1a1500';
+  const borderColor = isKill
+    ? '#ef444466'
+    : isLive && !isKill
+      ? '#ef444499'    // 실거래 ON → 빨강 보더로 강조
+      : isActive
+        ? '#22c55e44'
+        : '#f59e0b44';
 
   return (
     <div style={{
       margin: '12px 16px 0', padding: '14px', borderRadius: 12,
       background: bgColor, border: `1px solid ${borderColor}`,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        {/* Status text */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <span style={{ fontSize: 20, flexShrink: 0 }}>
-            {isKill ? '🚨' : isActive ? '🟢' : '⏸'}
-          </span>
+      {/* 상단: 메인 라벨 + 상태 칩들 */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        {/* 좌측: 아이콘 + 라벨 + 메타 */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0, flex: 1 }}>
+          <span style={{ fontSize: 20, flexShrink: 0, lineHeight: '20px' }}>{mainIcon}</span>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              {isKill ? '긴급 정지 중' : isActive ? '분석가 운영 중' : '일시 중지'}
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{mainLabel}</div>
+            <div style={{ fontSize: 11, color: isKill ? '#ef4444' : 'var(--muted)', marginTop: 2 }}>
+              {metaText}
             </div>
-            {!isKill && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-                {isActive ? '자동 매매 중' : '분석가가 비활성 상태입니다'}
-                {relTime ? ` · 마지막 시그널: ${relTime}` : ''}
-              </div>
-            )}
-            {isKill && (
-              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
-                모든 주문 송신이 차단됩니다
-              </div>
-            )}
           </div>
         </div>
 
-        {/* Control buttons */}
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          {!isKill && (
-            <button
-              onClick={() => patchSafety('analyst', !safety.analystEnabled)}
-              disabled={busy === 'analyst'}
-              aria-label={safety.analystEnabled ? '분석가 일시 중지' : '분석가 활성화'}
-              style={{
-                padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
-                background: safety.analystEnabled ? 'var(--bg3)' : 'rgba(34,197,94,.18)',
-                color: safety.analystEnabled ? 'var(--muted)' : 'var(--ok)',
-                opacity: busy === 'analyst' ? 0.5 : 1,
-              }}
-            >
-              {busy === 'analyst' ? '…' : safety.analystEnabled ? 'OFF' : 'ON'}
-            </button>
+        {/* 우측: 상태 칩 */}
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {isKill ? (
+            <StatusChip label="긴급 정지" value="ON" tone="danger" />
+          ) : (
+            <>
+              <StatusChip
+                label="분석가"
+                value={safety.analystEnabled ? 'ON' : 'OFF'}
+                tone={safety.analystEnabled ? 'ok' : 'muted'}
+              />
+              <StatusChip
+                label="실거래"
+                value={isLive ? 'ON' : 'OFF'}
+                tone={isLive ? 'danger' : 'ok'}
+              />
+            </>
           )}
-          <button
-            onClick={() => patchSafety('kill', !isKill)}
-            disabled={busy === 'kill'}
-            aria-label={isKill ? '긴급 정지 해제' : '긴급 정지 활성화'}
-            style={{
-              padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
-              background: isKill ? 'rgba(239,68,68,.3)' : 'var(--bg3)',
-              color: isKill ? '#ef4444' : 'var(--muted)',
-              border: isKill ? '1px solid #ef444466' : '1px solid transparent',
-              opacity: busy === 'kill' ? 0.5 : 1,
-            }}
-          >
-            {busy === 'kill' ? '…' : isKill ? '정지 해제' : '긴급 정지'}
-          </button>
         </div>
       </div>
 
+      {/* 시장 개장/마감 정보 (Kill 아닐 때) */}
       {markets && !isKill && (
         <div style={{
           marginTop: 8, fontSize: 11, color: 'var(--muted)',
@@ -145,14 +132,51 @@ export function AnalystStatusBanner({ onStatusChange }: Props) {
         </div>
       )}
 
-      {safety.dryRun && !isKill && (
+      {/* 하단: 모드 안내 + 설정 링크 */}
+      {!isKill && (
         <div style={{
-          marginTop: 8, fontSize: 11, color: 'var(--accent)',
-          borderTop: '1px solid var(--border)', paddingTop: 8,
+          marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap',
         }}>
-          ⚠️ DRY RUN 모드 — 실제 주문이 전송되지 않습니다
+          <span style={{ fontSize: 11, color: isLive ? '#ef4444' : 'var(--accent)', fontWeight: isLive ? 600 : 400 }}>
+            {isLive
+              ? '🔴 실거래 모드 — KIS API에 실제 주문이 송신됩니다'
+              : '⚠️ 모의 주문 모드 — 실제 주문이 전송되지 않습니다'}
+          </span>
+          <Link href="/settings" style={{ fontSize: 11, color: 'var(--muted)', textDecoration: 'none' }}>
+            설정에서 변경 →
+          </Link>
+        </div>
+      )}
+      {isKill && (
+        <div style={{
+          marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)',
+          display: 'flex', justifyContent: 'flex-end',
+        }}>
+          <Link href="/settings" style={{ fontSize: 11, color: 'var(--muted)', textDecoration: 'none' }}>
+            설정에서 변경 →
+          </Link>
         </div>
       )}
     </div>
+  );
+}
+
+function StatusChip({ label, value, tone }: { label: string; value: string; tone: 'ok' | 'danger' | 'muted' }) {
+  const colorMap = {
+    ok:     { bg: 'rgba(34,197,94,.18)',  fg: 'var(--ok)',    border: 'rgba(34,197,94,.4)'  },
+    danger: { bg: 'rgba(239,68,68,.20)',  fg: '#ef4444',      border: 'rgba(239,68,68,.5)'  },
+    muted:  { bg: 'var(--bg3)',            fg: 'var(--muted)', border: 'var(--border)'      },
+  } as const;
+  const c = colorMap[tone];
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+      background: c.bg, color: c.fg, border: `1px solid ${c.border}`,
+    }}>
+      <span style={{ opacity: 0.8 }}>{label}</span>
+      <span>{value}</span>
+    </span>
   );
 }

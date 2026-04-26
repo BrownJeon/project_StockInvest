@@ -3,6 +3,7 @@ import { simpleRsiMomentum } from '@/lib/analyst/rules';
 import { getRouterConfig, isAnalystEnabled } from '@/lib/signals/router';
 import { getEffectiveOrderMax } from '@/lib/safety/order-limits';
 import { createSignal } from '@/lib/signals/service';
+import { isDomesticOpen } from '@/lib/strategy/market-hours';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +13,9 @@ export async function POST() {
   try {
     if (!(await isAnalystEnabled())) {
       return Response.json({ ok: false, error: 'ANALYST_ENABLED=false' }, { status: 403 });
+    }
+    if (!(await isDomesticOpen())) {
+      return Response.json({ ok: false, error: 'domestic_market_closed' }, { status: 409 });
     }
     const symbols = DEFAULT_SYMBOLS;
 

@@ -2,7 +2,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
 import { getMarketFromSymbol, type Market } from '@/lib/exchanges/kis-symbols';
-import { getCurrentMarket } from '@/lib/strategy/market-hours';
+import { getCurrentMarket, isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 import { createSignal } from '@/lib/signals/service';
 import { isAnalystEnabled } from '@/lib/signals/router';
 import type { SignalInput } from '@/lib/signals/router';
@@ -484,6 +484,11 @@ async function fallbackPerSymbol(
 
 /** 시장별 평가 실행 (단일 시장). runAll에서 라우팅. */
 async function runMarket(market: Market, opts: { force?: boolean } = {}): Promise<RunAllResult> {
+  // 시장별 개장시간 가드 — 닫혀있으면 실가격이 정지된 상태라 시그널 무의미. force도 우회 불가.
+  const open = market === 'domestic' ? await isDomesticOpen() : await isOverseasOpen();
+  if (!open) {
+    return { ran: 0, skipped: 0, skippedStrategyIds: [], results: [], errors: [`${market}_market_closed`], universeRefreshed: false };
+  }
   if (!(await isAnalystEnabled())) {
     return { ran: 0, skipped: 0, skippedStrategyIds: [], results: [], errors: ['analyst_disabled'], universeRefreshed: false };
   }
@@ -620,8 +625,9 @@ function mergeRunResults(...rs: RunAllResult[]): RunAllResult {
 /**
  * 활성 전략 평가 — 시장(국내/해외) 자동 라우팅.
  *  - 기본: 현재 열려있는 시장 1곳에서만 실행. 모두 닫혀있으면 'all_markets_closed'.
- *  - opts.force: 양 시장 모두 강제 실행 후 결과 머지.
- *  - opts.market: 특정 시장만 강제.
+ *  - opts.force: 양 시장 시도하지만 닫혀있는 시장은 runMarket 단계에서 거부.
+ *  - opts.market: 특정 시장 시도하지만 닫혀있으면 거부.
+ *  - **runMarket 자체에 isDomesticOpen/isOverseasOpen 가드 내장** — 어떤 진입점이든 시장 폐장 시 신호 발화 차단.
  */
 export async function runAll(opts: { force?: boolean; market?: Market } = {}): Promise<RunAllResult> {
   if (opts.market) {
