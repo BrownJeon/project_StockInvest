@@ -8,6 +8,7 @@
 #  - signal-expiry     : 30분 — TTL 초과 시그널 만료 처리
 #  - portfolio-snapshot: 60분 — 포트폴리오 스냅샷 + 변동폭 가드
 #  - sync-stock-meta   : 매일 17:00 KST — KIS KOSPI/KOSDAQ 마스터 → stock_meta 현행화
+#  - export-llm-trainset: 매일 03:00 KST — signals+followup → LoRA 학습 JSONL 생성·전송
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -40,6 +41,7 @@ call() {
 echo "[cron-runner] started, base=$BASE_URL"
 
 META_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/sync-stock-meta-last-date"
+TRAINSET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/export-llm-trainset-last-date"
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
 # 분 단위 카운터 (동기 호출이라 60초 슬립으로 간략)
@@ -68,6 +70,20 @@ while true; do
   if [ "$HH" = "17" ] && [ "$LAST_META" != "$TODAY" ]; then
     call /api/cron/sync-stock-meta "sync-stock-meta"
     echo "$TODAY" > "$META_LAST_RUN_FILE"
+  fi
+  # 매일 03:00 KST: LoRA 학습 데이터셋 export (하루 1회만)
+  LAST_TRAINSET=$(cat "$TRAINSET_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "03" ] && [ "$LAST_TRAINSET" != "$TODAY" ]; then
+    ts=$(date '+%F %T')
+    echo "[$ts] export-llm-trainset start"
+    if "$PROJECT_DIR/scripts/export-llm-trainset.sh" >> "${HOME}/.node-local/stockinvest/logs/export-trainset.log" 2>&1; then
+      ts=$(date '+%F %T')
+      echo "[$ts] export-llm-trainset OK"
+      echo "$TODAY" > "$TRAINSET_LAST_RUN_FILE"
+    else
+      ts=$(date '+%F %T')
+      echo "[$ts] export-llm-trainset FAILED — see logs/export-trainset.log"
+    fi
   fi
   i=$(( (i + 1) % 1440 ))   # 24h 사이클
   sleep 60

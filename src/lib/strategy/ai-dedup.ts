@@ -134,7 +134,7 @@ interface RegimeStatRow extends RowDataPacket {
 
 /**
  * 동일 regime bucket에서 과거 N일간 누적 성과 조회.
- *  - 분모: signal_followup이 채워진 자동승인 시그널 수
+ *  - 분모: signals.price_1h_after가 채워진 자동승인 시그널 수 (followup은 signals 컬럼)
  *  - wins: price_1h_after가 진입가보다 매수면 +, 매도면 -로 유리한 방향 변화 한 건
  *  - avg_ev: indicators.ai.ev.evPct 평균
  * 응답 5건 미만이면 통계적 유의미 부족 → null 반환.
@@ -151,19 +151,18 @@ export async function getRegimePerformance(
          COUNT(*) AS cnt,
          SUM(
            CASE
-             WHEN sf.price_1h_after IS NULL THEN 0
-             WHEN s.side = 'buy'  AND sf.price_1h_after > s.price THEN 1
-             WHEN s.side = 'sell' AND sf.price_1h_after < s.price THEN 1
+             WHEN s.price_1h_after IS NULL THEN 0
+             WHEN s.side = 'buy'  AND s.price_1h_after > s.price THEN 1
+             WHEN s.side = 'sell' AND s.price_1h_after < s.price THEN 1
              ELSE 0
            END
          ) AS wins,
          AVG(CAST(JSON_EXTRACT(s.indicators, '$.ai.ev.evPct') AS DECIMAL(8,4))) AS avg_ev
        FROM signals s
-       LEFT JOIN signal_followup sf ON sf.signal_id = s.id
        WHERE s.status IN ('auto_submitted','approved','executed','accepted')
          AND s.created_at > DATE_SUB(NOW(), INTERVAL ? DAY)
          AND JSON_EXTRACT(s.indicators, '$.ai.regimeBucket') = ?
-         AND sf.price_1h_after IS NOT NULL`,
+         AND s.price_1h_after IS NOT NULL`,
       [days, regimeBucket],
     );
     const r = rows[0];
