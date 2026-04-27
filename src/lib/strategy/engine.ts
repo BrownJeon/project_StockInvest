@@ -25,6 +25,7 @@ import { buildRegimeBucket, lookupRecentSkip, getRegimePerformance } from '@/lib
 import { fetchMacroIndicators } from '@/lib/strategy/macro';
 import { marketSessionInfo } from '@/lib/strategy/market-hours';
 import { refreshUniverse, getUniverseSymbols } from '@/lib/strategy/universe';
+import { checkPortfolioStability } from '@/lib/strategy/portfolio-stability';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 import type { StrategyMeta } from './rules/types';
 import { STRATEGY_REGISTRY } from './rules';
@@ -85,16 +86,17 @@ async function getHeldAmounts(market: Market): Promise<Map<string, HeldEntry>> {
   }
 }
 
-/** 거래대금 TOP 20 + 보유 종목 합산 (시장별) */
+/** 거래대금 TOP 20 + 보유 종목 합산 (시장별, 투자성향 universeSource 기반 tier 필터) */
 async function getEvalSymbols(
   market: Market,
   heldAmounts: Map<string, HeldEntry>,
+  universeSource: 'volume-top' | 'kospi200' | 'kospi100' = 'volume-top',
 ): Promise<string[]> {
   const set = new Set<string>();
   const [trend, meanRev, breakout] = await Promise.all([
-    getUniverseSymbols('trend', 5, market),
-    getUniverseSymbols('mean-rev', 5, market),
-    getUniverseSymbols('breakout', 5, market),
+    getUniverseSymbols('trend',    5, market, universeSource),
+    getUniverseSymbols('mean-rev', 5, market, universeSource),
+    getUniverseSymbols('breakout', 5, market, universeSource),
   ]);
   for (const s of [...trend, ...meanRev, ...breakout]) set.add(s);
   for (const s of heldAmounts.keys()) set.add(s);
@@ -256,10 +258,12 @@ async function insertSkipAuditPool(
   );
 }
 
-/** context에 prefilter + dedup을 적용해 AI 호출 필요 후보를 추려낸다. */
+/** context에 prefilter + portfolio guard + dedup을 적용해 AI 호출 필요 후보를 추려낸다. */
 async function applyFilters(
   ctx: CollectedContext,
   analystStyle: AnalystStyle,
+  style: StyleConfig,
+  market: Market,
   heldAmounts: Map<string, HeldEntry>,
 ): Promise<{ needsAi: Candidate[]; regimeBucket: string | null }> {
   const pool = getPool();
@@ -289,6 +293,36 @@ async function applyFilters(
       console.log(`[prefilter] ${symbol} → ${skipped.length}/${candidates.length} skipped (${skipped.map(p => p.reason.split(':')[0]).join(',')})`);
     }
     survived = passed;
+  }
+
+  if (survived.length === 0) return { needsAi: [], regimeBucket: null };
+
+  // 1.5) portfolio stability 가드 — buy 시그널만 검사 (sell·해외는 자동 pass).
+  //   stableCoreRatioMin 위반 + maxPositionsPerSymbol 한도 초과 → 거절. AI 호출 비용 절약.
+  if (market === 'domestic') {
+    const guarded: Candidate[] = [];
+    let guardSkips = 0;
+    for (const cand of survived) {
+      if (cand.side !== 'buy') { guarded.push(cand); continue; }
+      const decision = await checkPortfolioStability({
+        symbol, side: cand.side, amountKRW: cand.amountKRW,
+        market, style, heldAmounts,
+      });
+      if (decision.verdict === 'skip') {
+        guardSkips++;
+        await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
+          reasoning: `[portfolio_guard:${decision.reason}] ${decision.detail ?? ''}`,
+          category: 'portfolio_guard',
+          confidence: 0,
+        });
+      } else {
+        guarded.push(cand);
+      }
+    }
+    if (guardSkips > 0) {
+      console.log(`[portfolio_guard] ${symbol} → ${guardSkips}/${survived.length} skipped`);
+    }
+    survived = guarded;
   }
 
   if (survived.length === 0) return { needsAi: [], regimeBucket: null };
@@ -578,12 +612,16 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
 
   const pool = getPool();
-  const [rows] = await pool.query<StrategyRow[]>(
-    `SELECT id, enabled, backtest_interval_h, next_backtest_at FROM strategies WHERE enabled = 1`,
-  );
-
   const analystStyle = await getAnalystStyle();
   const style = getStyleConfig(analystStyle);
+
+  // 현재 투자 성향이 applicable_styles에 포함된 전략만 평가 — FIND_IN_SET으로 SET 컬럼 검사
+  const [rows] = await pool.query<StrategyRow[]>(
+    `SELECT id, enabled, backtest_interval_h, next_backtest_at
+     FROM strategies
+     WHERE enabled = 1 AND FIND_IN_SET(?, applicable_styles) > 0`,
+    [analystStyle],
+  );
 
   const { refreshed: universeRefreshed } = await refreshUniverse(market, opts.force);
 
@@ -607,7 +645,9 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
 
   const heldAmounts = await getHeldAmounts(market);
   const activeStrategies: ActiveStrategy[] = dueStrategies.map(s => ({ id: s.id, meta: s.meta }));
-  const symbols = await getEvalSymbols(market, heldAmounts);
+  // 해외 시장은 universeSource 'volume-top' 고정 (KOSPI 분류 미적용). 국내만 style 분기.
+  const universeSrc = market === 'domestic' ? (style.universeSource ?? 'volume-top') : 'volume-top';
+  const symbols = await getEvalSymbols(market, heldAmounts, universeSrc);
   const defaultAmountKRW = await getEffectiveOrderMax('kis', market);
 
   const errors: string[] = [];
@@ -633,7 +673,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // 2단계: 각 context에 prefilter + dedup 적용, AI 필요한 후보만 수집
   const needsAiMap = new Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>();
   for (const ctx of contexts) {
-    const { needsAi, regimeBucket } = await applyFilters(ctx, analystStyle, heldAmounts);
+    const { needsAi, regimeBucket } = await applyFilters(ctx, analystStyle, style, market, heldAmounts);
     if (needsAi.length === 0) {
       results.set(ctx.symbol, { symbol: ctx.symbol, signalsCreated: 0, candidateCount: 0, rawCandidates: ctx.rawCandidateCount });
       continue;

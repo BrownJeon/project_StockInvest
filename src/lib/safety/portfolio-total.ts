@@ -1,34 +1,42 @@
 /**
- * 포트폴리오 총 평가액 (KRW 환산) 조회.
+ * 포트폴리오 평가액 (KRW 환산) 조회.
  *
- * 우선순위:
- *  1) 단순 합산 — kis.getBalances() 응답을 기반으로 KRW 예수금 + 종목 평가금액 합
- *  2) 실패 시 0 (호출자가 폴백)
+ * 시장별 분리 합산:
+ *  - domestic: KRW 예수금 + 국내 종목(currency에 ':' 미포함) 평가금액
+ *  - overseas: USD 예수금(× FX) + 해외 종목(currency 'EXCHG:SYMBOL' 형식) 평가금액(× FX)
  *
- * pct 기반 주문 한도 계산용. 짧은 in-memory 캐시(60초)로 중복 호출 방지.
+ * 정책 (2026-04-27): 1회/일일 주문 한도 pct는 **해당 시장 평가액 × pct**로 산정.
+ * 시장 합산 의미가 모호한 단순 합계는 부차적 용도(전체 portfolio summary 등)로만 노출.
+ *
+ * 짧은 in-memory 캐시(60초)로 중복 호출 방지. balances + tickers fetch는 단일 패스.
  */
 import { kis } from '@/lib/exchanges/kis';
 import { usdToKrw } from '@/lib/exchanges/fx';
+import type { Market } from '@/lib/exchanges/kis-symbols';
 
-interface Cache { value: number; fetchedAt: number }
+export interface MarketTotals {
+  domestic: number;
+  overseas: number;
+  total:    number;
+}
+
+interface Cache extends MarketTotals { fetchedAt: number }
 const TTL_MS = 60_000;
 let cache: Cache | null = null;
 
-export async function getPortfolioTotalKRW(forceFresh = false): Promise<number> {
-  if (!forceFresh && cache && Date.now() - cache.fetchedAt < TTL_MS) return cache.value;
-
+async function fetchTotals(): Promise<MarketTotals> {
   try {
     const balances = await kis.getBalances();
-    let totalKRW = 0;
-    let totalUSD = 0;
+    let domesticKRW = 0;
+    let overseasUSD = 0;
 
     for (const b of balances) {
       const qty = Number(b.free) + Number(b.locked);
       if (qty <= 0) continue;
       if (b.currency === 'KRW') {
-        totalKRW += qty;
+        domesticKRW += qty;
       } else if (b.currency === 'USD') {
-        totalUSD += qty;
+        overseasUSD += qty;
       } else {
         // 종목 보유분: 현재가 × qty 평가
         try {
@@ -36,24 +44,55 @@ export async function getPortfolioTotalKRW(forceFresh = false): Promise<number> 
           const price = Number(ticker.price);
           if (Number.isFinite(price) && price > 0) {
             const amount = price * qty;
-            // 해외 심볼이면 USD 가격 → KRW 환산 누적
-            if (b.currency.includes(':')) totalUSD += amount;
-            else totalKRW += amount;
+            // 해외 심볼(EXCHG:SYMBOL 형식)이면 USD 누적, 그 외는 국내 KRW
+            if (b.currency.includes(':')) overseasUSD += amount;
+            else                          domesticKRW += amount;
           }
         } catch { /* 한 종목 실패는 무시 */ }
       }
     }
 
-    if (totalUSD > 0) {
-      try { totalKRW += await usdToKrw(totalUSD); }
-      catch { /* fx 실패 시 USD 부분 제외 */ }
+    let overseasKRW = 0;
+    if (overseasUSD > 0) {
+      try { overseasKRW = await usdToKrw(overseasUSD); }
+      catch { overseasKRW = 0; /* fx 실패 시 USD 부분 제외 */ }
     }
 
-    cache = { value: totalKRW, fetchedAt: Date.now() };
-    return totalKRW;
+    return {
+      domestic: domesticKRW,
+      overseas: overseasKRW,
+      total:    domesticKRW + overseasKRW,
+    };
   } catch {
-    return cache?.value ?? 0;
+    return { domestic: 0, overseas: 0, total: 0 };
   }
+}
+
+/**
+ * 시장별 + 합계 평가액(KRW). 60초 캐시.
+ * 호출 실패 시 직전 캐시 또는 0/0/0 반환.
+ */
+export async function getPortfolioTotalsKRW(forceFresh = false): Promise<MarketTotals> {
+  if (!forceFresh && cache && Date.now() - cache.fetchedAt < TTL_MS) {
+    return { domestic: cache.domestic, overseas: cache.overseas, total: cache.total };
+  }
+  const totals = await fetchTotals();
+  // fetch 실패(전 항목 0)면 직전 캐시 유지
+  if (totals.total === 0 && cache) return { domestic: cache.domestic, overseas: cache.overseas, total: cache.total };
+  cache = { ...totals, fetchedAt: Date.now() };
+  return totals;
+}
+
+/** 시장별 평가액(KRW). pct 기반 한도 계산용. */
+export async function getPortfolioTotalByMarketKRW(market: Market, forceFresh = false): Promise<number> {
+  const t = await getPortfolioTotalsKRW(forceFresh);
+  return market === 'overseas' ? t.overseas : t.domestic;
+}
+
+/** @deprecated 시장별 분리 한도로 정책 변경 (2026-04-27) — getPortfolioTotalByMarketKRW 사용. 합계 표시용으로만 유지. */
+export async function getPortfolioTotalKRW(forceFresh = false): Promise<number> {
+  const { total } = await getPortfolioTotalsKRW(forceFresh);
+  return total;
 }
 
 /** 테스트/진단용 캐시 무효화 */

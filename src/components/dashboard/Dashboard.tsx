@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { CandleChart } from '@/components/CandleChart';
 import { PnlChip } from '@/components/PnlChip';
-import { SafetyBar } from '@/components/SafetyBar';
 import { fmtNum, fmtPnl, pnlColor } from '@/lib/format';
 import { formatRelativeTime, formatDateTimeKST, kstTodayStart } from '@/lib/time';
 import { formatSymbolShort, symbolUnit } from '@/lib/symbols';
@@ -559,7 +558,6 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
         </div>
       </div>
 
-      <SafetyBar />
     </main>
   );
 }
@@ -612,20 +610,59 @@ function AutoTradingStatusCard({ portfolio, strategies, orders, todaySignalCount
 }
 
 function ActiveStrategiesSection({ strategies }: { strategies: StrategyRow[] }) {
+  const [expanded, setExpanded] = useState(false);
   const active = strategies.filter(s => s.enabled);
+  const totalCount = strategies.length;
+  const signalSum = active.reduce((sum, s) => sum + (s.stats.signalCount ?? 0), 0);
+  const avgReturn = active.length > 0
+    ? active.reduce((sum, s) => sum + (s.stats.return7d ?? 0), 0) / active.length
+    : 0;
+
   return (
     <section style={sx.card}>
-      <div style={sx.cardHeader}>
-        <span style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '.6px', textTransform: 'uppercase' }}>
-          운용 전략
-        </span>
-        <Link href="/strategy" style={{ fontSize: 11, color: 'var(--muted)' }}>전략 관리 →</Link>
+      <div
+        onClick={() => active.length > 0 && setExpanded(v => !v)}
+        style={{
+          ...sx.cardHeader,
+          cursor: active.length > 0 ? 'pointer' : 'default',
+          userSelect: 'none' as const,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0, flexWrap: 'wrap' as const }}>
+          <span style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '.6px', textTransform: 'uppercase' }}>
+            운용 전략 {active.length}/{totalCount}
+          </span>
+          {active.length > 0 && (
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+              · 시그널 {signalSum}건 · 평균{' '}
+              <span className="num" style={{ color: pnlColor(avgReturn), fontWeight: 600 }}>
+                {avgReturn >= 0 ? '+' : ''}{avgReturn.toFixed(1)}%
+              </span>
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <Link
+            href="/strategy"
+            onClick={e => e.stopPropagation()}
+            style={{ fontSize: 11, color: 'var(--muted)' }}
+          >
+            관리 →
+          </Link>
+          {active.length > 0 && (
+            <span style={{
+              fontSize: 14, color: 'var(--muted)',
+              transition: 'transform .15s', display: 'inline-block',
+              transform: expanded ? 'rotate(180deg)' : 'rotate(0)',
+            }}>▾</span>
+          )}
+        </div>
       </div>
       {active.length === 0 ? (
         <div style={{ padding: '14px 16px', fontSize: 12, color: 'var(--muted)', textAlign: 'center' }}>
           운용 중인 전략 없음 · 전략 탭에서 활성화
         </div>
-      ) : (
+      ) : expanded && (
         active.map(s => <ActiveStrategyItem key={s.id} strategy={s} />)
       )}
     </section>

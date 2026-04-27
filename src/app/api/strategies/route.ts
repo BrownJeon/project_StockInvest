@@ -25,6 +25,10 @@ export async function GET() {
       name:        r.name,
       description: r.description,
       tags:        typeof r.tags === 'string' ? JSON.parse(r.tags) : (r.tags ?? []),
+      // SET 컬럼은 mysql2가 콤마 구분 문자열로 반환 → split. 빈 토큰 제거.
+      applicable_styles: typeof r.applicable_styles === 'string'
+        ? r.applicable_styles.split(',').filter(Boolean)
+        : [],
       enabled:     Boolean(r.enabled),
       backtest_interval_h: r.backtest_interval_h,
       last_backtest_at:    r.last_backtest_at ?? null,
@@ -43,7 +47,19 @@ export async function GET() {
       })(),
     }));
 
-    return NextResponse.json({ ok: true, strategies });
+    // 현재 분석가 성향 동봉 — 프런트가 별도 fetch 없이 카드 강조 분기 가능
+    const [styleRows] = await pool.query<RowDataPacket[]>(
+      "SELECT value FROM system_config WHERE `key` = 'analyst_style' LIMIT 1",
+    );
+    const rawStyle = styleRows[0]?.value;
+    const analystStyle: 'aggressive' | 'neutral' | 'stable' = (() => {
+      try {
+        const v = typeof rawStyle === 'string' ? JSON.parse(rawStyle) : rawStyle;
+        return v === 'aggressive' || v === 'stable' ? v : 'neutral';
+      } catch { return 'neutral'; }
+    })();
+
+    return NextResponse.json({ ok: true, strategies, analystStyle });
   } catch (e) {
     console.error('[GET /api/strategies]', e);
     return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });

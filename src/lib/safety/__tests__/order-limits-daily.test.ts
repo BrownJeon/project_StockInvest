@@ -46,7 +46,9 @@ describe('checkDailyMax', () => {
     const [sql, params] = query.mock.calls[0];
     expect(String(sql)).toMatch(/SUM\(amount_krw\)/);
     expect(String(sql)).toMatch(/status NOT IN/);
+    expect(String(sql)).toMatch(/market = \?/);
     expect(params[0]).toBeInstanceOf(Date);
+    expect(params[1]).toMatch(/^(domestic|overseas)$/);
   });
 
   test('누적 40,000 + 이번 10,000 = 50,000 (한도와 같음) → ok', async () => {
@@ -60,7 +62,7 @@ describe('checkDailyMax', () => {
     const r = await checkDailyMax(base, 50_000);
     expect(r.ok).toBe(false);
     expect(r.reason).toBe('daily_limit');
-    expect(r.detail).toBe('45000+10000 > 50000');
+    expect(r.detail).toMatch(/^(domestic|overseas) 45000\+10000 > 50000$/);
   });
 
   test('DB 에러 → 보수적으로 거부', async () => {

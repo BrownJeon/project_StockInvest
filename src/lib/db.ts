@@ -175,6 +175,16 @@ async function setupDB(): Promise<void> {
     ALTER TABLE strategies MODIFY COLUMN backtest_interval_h FLOAT NOT NULL DEFAULT 6
   `).catch(() => { /* already FLOAT or alter failed — non-fatal */ });
 
+  // applicable_styles: 전략별 적용 가능한 투자 성향 (SET — 다중 선택 가능)
+  // engine.ts에서 현재 analystStyle이 set에 포함된 전략만 후보 평가
+  // 기본값 'aggressive,neutral,stable' (모두 허용 — 기존 전략 영향 없음)
+  await p.query(`
+    ALTER TABLE strategies
+      ADD COLUMN applicable_styles SET('aggressive','neutral','stable')
+        NOT NULL DEFAULT 'aggressive,neutral,stable'
+        AFTER tags
+  `).catch(() => { /* already exists */ });
+
   await p.query(`
     CREATE TABLE IF NOT EXISTS system_config (
       \`key\`     VARCHAR(64) PRIMARY KEY,
@@ -188,6 +198,7 @@ async function setupDB(): Promise<void> {
       id: 'rsi-oversold-v1', name: 'RSI 역추세',
       description: 'RSI(14) 과매도 반등 매수 / 과매수 청산 — 국내·해외주식 30분봉',
       tags: JSON.stringify(['RSI · MA20', '30m', '국내·해외 universe']),
+      applicable_styles: 'aggressive,neutral',
       enabled: 1, backtest_interval_h: 6,
       last_backtest_at: new Date(Date.now() - 6 * 3600000),
       next_backtest_at: new Date(Date.now() + 6 * 3600000),
@@ -198,6 +209,7 @@ async function setupDB(): Promise<void> {
       id: 'ma-cross-v1', name: 'MA 골든크로스',
       description: 'MA5 > MA20 돌파 시 매수, 데드크로스 청산 — 1h봉 추세 추종',
       tags: JSON.stringify(['MA5 · MA20', '1h', '국내·해외 universe']),
+      applicable_styles: 'neutral,stable',
       enabled: 1, backtest_interval_h: 6,
       last_backtest_at: null, next_backtest_at: null,
       last_backtest_result: JSON.stringify({ sharpe: 0.87, mdd: -11.5, winRate: 55.0, period: '90일' }),
@@ -207,6 +219,7 @@ async function setupDB(): Promise<void> {
       id: 'bb-breakout-v1', name: '볼린저 돌파',
       description: '밴드 상단 돌파 시 추세 추종 — 국내·해외주식 30분봉',
       tags: JSON.stringify(['BB(20,2)', '30m', '국내·해외 universe']),
+      applicable_styles: 'aggressive,neutral',
       enabled: 0, backtest_interval_h: 6,
       last_backtest_at: new Date(Date.now() - 3 * 86400000), next_backtest_at: null,
       last_backtest_result: null,
@@ -216,6 +229,7 @@ async function setupDB(): Promise<void> {
       id: 'rsi-macd-reversal-v1', name: 'RSI+MACD 반전',
       description: 'RSI 상승 전환 + MACD 히스토그램 반등 + 양봉 — 모멘텀 반전 (공격적투자 전용)',
       tags: JSON.stringify(['RSI · MACD', '30m', 'aggressive']),
+      applicable_styles: 'aggressive',
       enabled: 0, backtest_interval_h: 6,
       last_backtest_at: null, next_backtest_at: null,
       last_backtest_result: null,
@@ -225,6 +239,7 @@ async function setupDB(): Promise<void> {
       id: 'bb-squeeze-expansion-v1', name: '볼린저 Squeeze 확장',
       description: '5봉 squeeze(width ≤ ATR×1.5) 직후 상단/하단 돌파 + 거래량 — 저변동→고변동 전환',
       tags: JSON.stringify(['BB · ATR · Volume', '30m', 'breakout']),
+      applicable_styles: 'aggressive,neutral',
       enabled: 0, backtest_interval_h: 6,
       last_backtest_at: null, next_backtest_at: null,
       last_backtest_result: null,
@@ -232,8 +247,9 @@ async function setupDB(): Promise<void> {
     },
     {
       id: 'rsi-divergence-v1', name: 'RSI 다이버전스',
-      description: '가격 신저가/신고가 ↔ RSI 미동행 + 반전 봉 — 추세 약화 조기 포착 (공격적투자 전용)',
-      tags: JSON.stringify(['RSI Divergence', '30m', 'aggressive']),
+      description: '가격 신저가/신고가 ↔ RSI 미동행 + 반전 봉 — 추세 약화 조기 포착',
+      tags: JSON.stringify(['RSI Divergence', '30m', '전 성향']),
+      applicable_styles: 'aggressive,neutral,stable',
       enabled: 0, backtest_interval_h: 6,
       last_backtest_at: null, next_backtest_at: null,
       last_backtest_result: null,
@@ -243,7 +259,48 @@ async function setupDB(): Promise<void> {
       id: 'triple-confirmation-v1', name: '3중 확인',
       description: 'RSI<35 + MACD bullish cross + 거래량 ×1.5 + 양봉 — 강한 합의 진입 (공격적투자 전용)',
       tags: JSON.stringify(['RSI · MACD · Volume', '30m', 'aggressive']),
+      applicable_styles: 'aggressive',
       enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'volume-spike-breakout-v1', name: '거래량 폭발 돌파',
+      description: '거래량 ×3 + 신고가 돌파 + ATR 이격 — 단발 급등 추격 매수 (공격적투자 전용)',
+      tags: JSON.stringify(['Volume · Price · ATR', '30m', 'aggressive']),
+      applicable_styles: 'aggressive',
+      enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'pullback-trend-v1', name: '추세 눌림목',
+      description: '종가 > MA20 우상향 + RSI 40~50 눌림 후 반등 + 양봉 — 추세 진행 중 풀백 매수',
+      tags: JSON.stringify(['MA · RSI · 양봉', '30m', '전 성향']),
+      applicable_styles: 'aggressive,neutral,stable',
+      enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'weekly-trend-follow-v1', name: '주봉 추세 추종',
+      description: '일봉 MA60 > MA200 + 종가 > MA60 + RSI(14) < 60 — 장기 추세 진행 중 매수 (중립·안정)',
+      tags: JSON.stringify(['MA60 · MA200 · RSI', '1d', 'neutral·stable']),
+      applicable_styles: 'neutral,stable',
+      enabled: 0, backtest_interval_h: 24,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'dividend-quality-buyback-v1', name: '품질주(저변동·우량) 매수',
+      description: '일봉 종가 > MA200 + MA60 > MA200 + ATR% < 1.5% + RSI 40~65 + 유동성 — 안정 우량주 진입 (배당·자사주 프록시)',
+      tags: JSON.stringify(['MA60 · MA200 · ATR · RSI', '1d', 'stable·neutral']),
+      applicable_styles: 'neutral,stable',
+      enabled: 0, backtest_interval_h: 24,
       last_backtest_at: null, next_backtest_at: null,
       last_backtest_result: null,
       stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
@@ -263,12 +320,18 @@ async function setupDB(): Promise<void> {
   for (const s of strategySeed) {
     await p.query(
       `INSERT IGNORE INTO strategies
-       (id, name, description, tags, enabled, backtest_interval_h,
+       (id, name, description, tags, applicable_styles, enabled, backtest_interval_h,
         last_backtest_at, next_backtest_at, last_backtest_result, stats_cache)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [s.id, s.name, s.description, s.tags, s.enabled, s.backtest_interval_h,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [s.id, s.name, s.description, s.tags, s.applicable_styles, s.enabled, s.backtest_interval_h,
        s.last_backtest_at, s.next_backtest_at, s.last_backtest_result, s.stats_cache],
     );
+    // applicable_styles는 신규 컬럼이라 기존 행은 default('aggressive,neutral,stable') 상태 →
+    // strategySeed의 매핑값으로 한 번 동기화 (사용자가 직접 수정한 enabled·description은 건드리지 않음)
+    await p.query(
+      'UPDATE strategies SET applicable_styles = ? WHERE id = ?',
+      [s.applicable_styles, s.id],
+    ).catch(() => { /* non-fatal */ });
   }
 
   for (const m of legacyMigrations) {
@@ -362,6 +425,19 @@ async function setupDB(): Promise<void> {
       INDEX idx_universe_refresh (refreshed_at DESC, profile)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+
+  // tier 컬럼 추가 — 'core'(시총 상위 100) / 'satellite'(101~200) / 'speculative'(거래대금 보강)
+  // universeSource(style.ts)가 kospi100/kospi200/volume-top일 때 필터에 사용
+  try {
+    await p.query(`
+      ALTER TABLE symbol_universe
+        ADD COLUMN tier ENUM('core','satellite','speculative') NOT NULL DEFAULT 'speculative'
+        AFTER atr_pct
+    `);
+  } catch { /* already exists */ }
+  try {
+    await p.query(`CREATE INDEX idx_universe_tier ON symbol_universe (tier)`);
+  } catch { /* already exists */ }
 
   // 종목별 변동성 → 적응형 interval 추천
   // ATR(14) / 종가 × 100 → atr_pct

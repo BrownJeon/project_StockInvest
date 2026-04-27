@@ -91,10 +91,13 @@ function StatusBadge({ ok, labelOk, labelNo }: { ok: boolean; labelOk: string; l
 
 type AnalystStyle = 'aggressive' | 'neutral' | 'stable';
 
-const STYLE_INFO: Record<AnalystStyle, { icon: string; label: string; rsi: string; cooldown: string; minProfit: string; coins: string }> = {
-  aggressive: { icon: '🔥', label: '공격적', rsi: 'RSI < 40 / > 60', cooldown: '15분',  minProfit: '0.15%', coins: '5억↑ top 40' },
-  neutral:    { icon: '⚖️', label: '중립적', rsi: 'RSI < 35 / > 65', cooldown: '30분',  minProfit: '0.25%', coins: '10억↑ top 30' },
-  stable:     { icon: '🛡️', label: '안정적', rsi: 'RSI < 28 / > 72', cooldown: '60분',  minProfit: '0.40%', coins: '30억↑ top 15' },
+const STYLE_INFO: Record<AnalystStyle, {
+  icon: string; label: string;
+  holding: string; target: string; universe: string;
+}> = {
+  aggressive: { icon: '🔥', label: '공격적', holding: '1~4일',    target: '+2%',  universe: '거래대금' },
+  neutral:    { icon: '⚖️', label: '중립적', holding: '2주~1달',  target: '+5%',  universe: 'KOSPI 200' },
+  stable:     { icon: '🛡️', label: '안정적', holding: '3~6개월',  target: '+10%', universe: 'KOSPI 100' },
 };
 
 export function SettingsPage() {
@@ -367,11 +370,9 @@ export function SettingsPage() {
             >
               <div style={{ fontSize: 22, marginBottom: 4 }}>{info.icon}</div>
               <div style={{ fontSize: 13, fontWeight: 700, color: active ? 'var(--accent)' : 'var(--text)', marginBottom: 6 }}>{info.label}</div>
-              <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.7 }}>
-                <div>{info.rsi}</div>
-                <div>쿨다운 {info.cooldown}</div>
-                <div>최소익 {info.minProfit}</div>
-                <div style={{ marginTop: 2, fontSize: 9 }}>{info.coins}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.7 }}>
+                <div style={{ fontWeight: 600, color: active ? 'var(--accent)' : 'var(--text)' }}>{info.holding} · {info.target}</div>
+                <div style={{ fontSize: 10 }}>{info.universe}</div>
               </div>
             </button>
           );

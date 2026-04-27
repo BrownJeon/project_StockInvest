@@ -9,6 +9,8 @@ jest.mock('@/lib/db', () => ({
 
 jest.mock('@/lib/safety/portfolio-total', () => ({
   getPortfolioTotalKRW: jest.fn().mockResolvedValue(1_000_000),
+  getPortfolioTotalByMarketKRW: jest.fn().mockResolvedValue(1_000_000),
+  getPortfolioTotalsKRW: jest.fn().mockResolvedValue({ domestic: 1_000_000, overseas: 0, total: 1_000_000 }),
 }));
 
 interface CapturedUpdate {

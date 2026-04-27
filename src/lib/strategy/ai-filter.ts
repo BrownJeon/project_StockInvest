@@ -15,7 +15,8 @@ export type SkipCategory =
   | 'ai_low_confidence'
   | 'ai_rejected'
   | 'rule_prefilter'
-  | 'dedup_reuse';
+  | 'dedup_reuse'
+  | 'portfolio_guard';
 
 export interface AiEvEstimate {
   pWin: number;
@@ -26,6 +27,16 @@ export interface AiEvEstimate {
 
 /** 종목당 동시 승인 가능한 최대 시그널 수 — EV 큰 순으로 잘림 */
 export const MAX_PICKS_PER_SYMBOL = 3;
+
+/**
+ * 활성 전략 의도 — LLM이 시장 국면별로 적합성 판단하도록 한 줄씩 명시.
+ * 룰을 사전에 끄지 않고 LLM이 P_win 추정에 자연스럽게 반영하게 함.
+ */
+const STRATEGY_INTENT = `## 활성 전략 의도 (시장 국면별 적합성)
+- rsi-oversold-v1, rsi-macd-reversal-v1, rsi-divergence-v1, triple-confirmation-v1: 박스권/하락 후 반등 — RSI 과매도 진입 (강한 추세장에선 P_win 낮게)
+- ma-cross-v1, pullback-trend-v1: 명확한 추세 진행 중 진입 시점 — 횡보장에선 P_win 낮게
+- bb-breakout-v1, bb-squeeze-expansion-v1, volume-spike-breakout-v1: 변동성 확장·돌파 모멘텀 — 추격 매수는 고점 매수 위험 → 거시 지표 양호할 때만 P_win 상향
+→ 시장 국면(거시 지표·regime bucket·세션 phase)에 맞지 않는 전략의 후보는 P_win을 낮게 추정해 자동 거절되도록 평가하세요.`;
 
 export interface AiSelectResult {
   /** 선택된 후보 인덱스 배열. EV 큰 순서, 빈 배열 = 전체 스킵, 최대 MAX_PICKS_PER_SYMBOL */
@@ -249,10 +260,28 @@ ${fewShotAggressive}`
     ? '- KIS 미국주식 수수료: 매수 0.25% + 매도 0.25% = 왕복 약 **0.50%** (거래세 없음, SEC fee 0.0022% 별도)'
     : '- KIS 수수료: 매수 0.015% + 매도 0.015% + 거래세 0.20% = 왕복 약 **0.43%**';
 
+  const holdMin   = style?.holdingPeriodDays?.min ?? 1;
+  const holdMax   = style?.holdingPeriodDays?.max ?? 7;
+  const targetPct = style?.targetProfitPct ?? 2.0;
+  const universeSrc = style?.universeSource ?? 'volume-top';
+  const stableCoreMin = style?.stableCoreRatioMin ?? 0.20;
+  const maxPos = style?.maxPositionsPerSymbol ?? 3;
+
   return `당신은 ${traderTitle}입니다. 종목 ${symbol}에 대해 여러 전략이 매매 후보 시그널을 생성했습니다.
 시장 데이터를 분석하여 가장 적합한 시그널 하나를 선택하거나, 모두 부적합하면 스킵하세요.
 
 ## 투자 성향: ${styleName} (신뢰도 ${minConfStr} 이상일 때만 선택)
+
+## 투자 성향 상세
+- 보유 기간 가이드: ${holdMin}~${holdMax}일
+- 평균 목표 수익률: ${targetPct}% (R_win 최소 ${minRWin}% 권장)
+- 재매수 쿨다운: ${style?.rebuyCooldownMin ?? 30}분
+- 종목당 최대 동시 진입: ${maxPos}건
+- 포트폴리오 안정 코어 비율: ≥ ${(stableCoreMin * 100).toFixed(0)}% (KOSPI 100 종목)
+- universe 종목 풀: ${universeSrc}
+
+→ EV 추정 시 R_win은 보유 기간 ${holdMin}~${holdMax}일 내 도달 가능 수준으로 평가하세요.
+→ 단기 변동(30분~수시간) 기준이 아닌, 위 보유 기간 척도로 P_win·R_win 산출.
 
 ## 현재 시장 상태 (실시간 지표 기반)
 - 심볼 분류: ${symbolClass}
@@ -282,6 +311,8 @@ ${summary.recentCandles.map(c => `  ${c.ts} | O:${c.o} H:${c.h} L:${c.l} C:${c.c
 
 ## 후보 시그널 (${candidates.length}개)
 ${candidateList}
+
+${STRATEGY_INTENT}
 
 ${judgmentCriteria}
 
@@ -646,17 +677,36 @@ async function buildBatchPrompt(
   const evField = isAggressive ? `"ev":{"pWin":0.0,"rWin":0.0,"rLoss":0.0,"evPct":0.0},` : '';
 
   const traderTitle = market === 'overseas' ? '미국주식 퀀트 트레이더' : '국내주식 퀀트 트레이더';
+  const holdMin = style?.holdingPeriodDays?.min ?? 1;
+  const holdMax = style?.holdingPeriodDays?.max ?? 7;
+  const targetPct = style?.targetProfitPct ?? 2.0;
+  const universeSrc = style?.universeSource ?? 'volume-top';
+  const stableCoreMin = style?.stableCoreRatioMin ?? 0.20;
+  const maxPos = style?.maxPositionsPerSymbol ?? 3;
 
   return `당신은 ${traderTitle}입니다. 아래 ${inputs.length}개 종목 각각에 대해 매매 후보 시그널이 생성되었습니다.
 **각 종목을 독립적으로 평가**하여 EV>0.1% 통과한 후보를 EV 큰 순으로 **최대 ${MAX_PICKS_PER_SYMBOL}개까지** 승인하거나, 모두 부적합하면 스킵하세요.
 
 ## 투자 성향: ${styleName} (신뢰도 ${minConfStr} 이상일 때만 선택)
 
+## 투자 성향 상세
+- 보유 기간 가이드: ${holdMin}~${holdMax}일
+- 평균 목표 수익률: ${targetPct}% (R_win 최소 ${minRWin}% 권장)
+- 재매수 쿨다운: ${style?.rebuyCooldownMin ?? 30}분
+- 종목당 최대 동시 진입: ${maxPos}건
+- 포트폴리오 안정 코어 비율: ≥ ${(stableCoreMin * 100).toFixed(0)}% (KOSPI 100 종목)
+- universe 종목 풀: ${universeSrc}
+
+→ EV 추정 시 R_win은 보유 기간 ${holdMin}~${holdMax}일 내 도달 가능 수준으로 평가하세요.
+→ 단기 변동(30분~수시간) 기준이 아닌, 위 보유 기간 척도로 P_win·R_win 산출.
+
 ## 시장 거시 맥락 (최근 3시간)
 ${marketView}
 
 ## 수수료
 - ${market === 'overseas' ? 'KIS 미국주식 왕복 ~0.50% (거래세 없음)' : 'KIS 국내주식 왕복 수수료+거래세 0.43%'} | 최소 참고 목표 ${minProfit}%
+
+${STRATEGY_INTENT}
 
 ${judgmentCriteria}
 

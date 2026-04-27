@@ -9,9 +9,13 @@ import { rsiLast } from '@/lib/strategy/indicators/rsi';
 import { bollinger } from '@/lib/strategy/indicators/bollinger';
 
 export type StrategyProfile = 'trend' | 'mean-rev' | 'breakout';
+export type UniverseTier = 'core' | 'satellite' | 'speculative';
 
 const UNIVERSE_TOP_N = 20;
 const UNIVERSE_TTL_MS = 15 * 60 * 1000;
+/** KOSPI 100/200 근사 — KIS 시총 랭킹 기준 */
+const TIER_CORE_LIMIT      = 100;  // 시총 상위 1~100 = core (KOSPI 100 근사)
+const TIER_SATELLITE_LIMIT = 200;  // 시총 상위 101~200 = satellite (KOSPI 200 근사)
 
 /** 동적 조회 실패 시 폴백 목록 */
 const KOSPI_TOP = [
@@ -146,9 +150,12 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
   }
 
   // 시장별 종목 후보 구성
+  // tierMap: 시총 랭킹 기반 종목별 tier 분류 (KOSPI 100/200 근사). 거래대금 상위 fallback은 'speculative'.
+  const tierMap = new Map<string, UniverseTier>();
   let top20: Array<{ symbol: string; quoteVolume24h: number }>;
   if (market === 'domestic') {
-    const ranked = await fetchMarketCapRanking(50);
+    // 시총 상위 200까지 fetch — core(1~100) / satellite(101~200) tier 분류용
+    const ranked = await fetchMarketCapRanking(TIER_SATELLITE_LIMIT);
     if (ranked.length > 0) {
       // stock_meta에 종목명 upsert (검색·표시용)
       try {
@@ -161,6 +168,13 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
           );
         }
       } catch { /* meta upsert 실패는 universe에 영향 없음 */ }
+      // 시총 순으로 tier 부여 (ranked는 이미 시총 내림차순 가정 — 안전을 위해 재정렬)
+      const byMarketCap = [...ranked].sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
+      byMarketCap.forEach((r, idx) => {
+        if (idx < TIER_CORE_LIMIT)            tierMap.set(r.symbol, 'core');
+        else if (idx < TIER_SATELLITE_LIMIT)  tierMap.set(r.symbol, 'satellite');
+      });
+      // top20은 거래대금 상위 — universe 평가용 (현행 동등)
       top20 = ranked
         .sort((a, b) => b.quoteVolume - a.quoteVolume)
         .slice(0, UNIVERSE_TOP_N)
@@ -217,10 +231,11 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
 
     for (let i = 0; i < scored.length; i++) {
       const s = scored[i];
+      const tier = tierMap.get(s.symbol) ?? 'speculative';
       await pool.query(
-        `INSERT INTO symbol_universe (refreshed_at, profile, symbol, rank_pos, score, vol_rank, atr_pct, score_detail, market)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [now, profile, s.symbol, i + 1, s.score.toFixed(6), s.volRank, s.atrPct.toFixed(4), JSON.stringify(s.detail), market],
+        `INSERT INTO symbol_universe (refreshed_at, profile, symbol, rank_pos, score, vol_rank, atr_pct, tier, score_detail, market)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [now, profile, s.symbol, i + 1, s.score.toFixed(6), s.volRank, s.atrPct.toFixed(4), tier, JSON.stringify(s.detail), market],
       );
     }
   }
@@ -235,8 +250,18 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
 /**
  * 최신 universe에서 프로파일별 상위 N개 심볼 반환.
  * DB가 비어있거나 TTL 초과 시 빈 배열 반환 (fallback은 호출부 책임).
+ *
+ * universeSource:
+ *  - 'kospi100'   → tier=core 만 (시총 상위 100)
+ *  - 'kospi200'   → tier IN (core, satellite) (시총 상위 200)
+ *  - 'volume-top' → 모든 tier 허용 (현행 거래대금 상위 — 기본값)
  */
-export async function getUniverseSymbols(profile: StrategyProfile, topN = 5, market: Market = 'domestic'): Promise<string[]> {
+export async function getUniverseSymbols(
+  profile: StrategyProfile,
+  topN = 5,
+  market: Market = 'domestic',
+  universeSource: 'volume-top' | 'kospi200' | 'kospi100' = 'volume-top',
+): Promise<string[]> {
   const pool = getPool();
   const [latest] = await pool.query<RowDataPacket[]>(
     'SELECT refreshed_at FROM symbol_universe WHERE market = ? ORDER BY refreshed_at DESC LIMIT 1',
@@ -247,9 +272,15 @@ export async function getUniverseSymbols(profile: StrategyProfile, topN = 5, mar
   const age = Date.now() - new Date(latest[0].refreshed_at as string).getTime();
   if (age > UNIVERSE_TTL_MS * 2) return [];
 
+  // tier 필터 — universeSource에 따라 분기
+  const tierFilter =
+    universeSource === 'kospi100' ? `AND tier = 'core'` :
+    universeSource === 'kospi200' ? `AND tier IN ('core','satellite')` :
+                                     '';  // volume-top: 모든 tier
+
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT symbol FROM symbol_universe
-     WHERE profile = ? AND refreshed_at = ? AND market = ?
+     WHERE profile = ? AND refreshed_at = ? AND market = ? ${tierFilter}
      ORDER BY rank_pos ASC LIMIT ?`,
     [profile, latest[0].refreshed_at, market, topN],
   );

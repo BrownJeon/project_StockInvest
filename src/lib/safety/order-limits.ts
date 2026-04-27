@@ -77,12 +77,12 @@ export async function checkSymbolBlacklist(symbol: string, _exchange?: ExchangeI
 export const checkSymbolWhitelist = checkSymbolBlacklist;
 
 /**
- * 1회 주문 최대 KRW = 포트폴리오 평가총액 × pct%.
+ * 1회 주문 최대 KRW = **해당 시장(국내/해외)** 평가액 × pct%.
  * 우선순위: DB `safety_order_max_pct` → env `ORDER_MAX_PCT` → 0(=무제한).
- * pct가 0이거나 포트폴리오 총액이 0이면 Infinity 반환.
+ * pct가 0이거나 해당 시장 평가액이 0이면 Infinity 반환.
  *
- * 정책 (2026-04-26): 시장 무관 단일 pct 한도만 사용.
- * 매개변수 `exchange`/`market`은 호출부 호환성을 위해 유지(무시됨).
+ * 정책 (2026-04-27): 시장별 분리 한도. 국내 주문은 국내 평가액 기준, 해외 주문은 해외 평가액 기준.
+ * 시장 무관 합산 한도는 폐기 — 한쪽 시장 비중이 작아도 다른 쪽 합계로 한도가 부풀려지는 문제 방지.
  */
 async function readPctOverride(key: string, envKey: string): Promise<number> {
   try {
@@ -98,24 +98,24 @@ async function readPctOverride(key: string, envKey: string): Promise<number> {
   return Number(process.env[envKey] ?? 0);
 }
 
-export async function getEffectiveOrderMax(_exchange?: ExchangeId, _market: Market = 'domestic'): Promise<number> {
+export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
   const pct = await readPctOverride('safety_order_max_pct', 'ORDER_MAX_PCT');
   if (!(pct > 0)) return Infinity;
-  const { getPortfolioTotalKRW } = await import('@/lib/safety/portfolio-total');
-  const total = await getPortfolioTotalKRW();
+  const { getPortfolioTotalByMarketKRW } = await import('@/lib/safety/portfolio-total');
+  const total = await getPortfolioTotalByMarketKRW(market);
   if (!(total > 0)) return Infinity;
   return total * (pct / 100);
 }
 
 /**
- * 일일 누적 최대 KRW = 포트폴리오 평가총액 × pct%.
+ * 일일 누적 최대 KRW = **해당 시장** 평가액 × pct%.
  * 우선순위: DB `safety_daily_order_max_pct` → env `DAILY_ORDER_MAX_PCT` → 0(=무제한).
  */
-export async function getEffectiveDailyMax(_exchange?: ExchangeId, _market: Market = 'domestic'): Promise<number> {
+export async function getEffectiveDailyMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
   const pct = await readPctOverride('safety_daily_order_max_pct', 'DAILY_ORDER_MAX_PCT');
   if (!(pct > 0)) return Infinity;
-  const { getPortfolioTotalKRW } = await import('@/lib/safety/portfolio-total');
-  const total = await getPortfolioTotalKRW();
+  const { getPortfolioTotalByMarketKRW } = await import('@/lib/safety/portfolio-total');
+  const total = await getPortfolioTotalByMarketKRW(market);
   if (!(total > 0)) return Infinity;
   return total * (pct / 100);
 }
@@ -143,8 +143,10 @@ export function checkOrderMax(req: OrderRequest, effectiveMax: number): LimitChe
 }
 
 /**
- * 일일 누적 주문 한도 체크. 오늘 00:00 KST 이후의 non-blocked 주문 amount_krw 합산.
+ * 일일 누적 주문 한도 체크. 오늘 00:00 KST 이후의 **해당 시장** non-blocked 주문 amount_krw 합산.
  * 이번 주문을 포함했을 때 한도 초과 여부를 반환.
+ *
+ * 정책 (2026-04-27): 시장별 누적 분리 — orders.market 필터로 국내/해외 별도 카운트.
  */
 export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number): Promise<LimitCheck> {
   if (effectiveDailyMax === Infinity) return { ok: true }; // unlimited
@@ -154,17 +156,18 @@ export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number
   try {
     const pool = getPool();
     const start = kstTodayStart();
-    // 단일 한도 — 시장 무관 전체 누적 (정책 변경 2026-04-26)
+    const market = inferMarket(req);
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT COALESCE(SUM(amount_krw), 0) AS sum_krw
        FROM orders
        WHERE created_at >= ?
+         AND market = ?
          AND status NOT IN ('rejected','failed','blocked')`,
-      [start],
+      [start, market],
     );
     const already = Number(rows[0]?.sum_krw ?? 0);
     if (already + amount > effectiveDailyMax) {
-      return { ok: false, reason: 'daily_limit', detail: `${already}+${amount} > ${effectiveDailyMax}` };
+      return { ok: false, reason: 'daily_limit', detail: `${market} ${already}+${amount} > ${effectiveDailyMax}` };
     }
     return { ok: true };
   } catch (e) {
