@@ -38,14 +38,14 @@ async function computeMarketBalances(): Promise<{ domestic: MarketBalance; overs
       const price = Number(tmap.get(b.currency)?.price ?? 0);
       return s + qty * price;
     }, 0);
-    const ovsHoldingsUSD = ovsHoldings.reduce((s, b) => {
+    // kis-overseas.getTicker가 USD→KRW 환산 후 반환 (2026-04-28) — ticker.price는 이미 KRW
+    const ovsHoldingsKRW = ovsHoldings.reduce((s, b) => {
       const qty = b.free + b.locked;
       const price = Number(tmap.get(b.currency)?.price ?? 0);
       return s + qty * price;
     }, 0);
 
     const usdCashKRW = usdCash > 0 ? await usdToKrw(usdCash).catch(() => 0) : 0;
-    const ovsHoldingsKRW = ovsHoldingsUSD > 0 ? await usdToKrw(ovsHoldingsUSD).catch(() => 0) : 0;
 
     return {
       domestic: {

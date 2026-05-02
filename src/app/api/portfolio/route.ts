@@ -3,7 +3,6 @@ import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
 import type { Ticker } from '@/lib/exchanges/types';
 import { kstTodayStart } from '@/lib/time';
-import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import { usdToKrw } from '@/lib/exchanges/fx';
 
 export const dynamic = 'force-dynamic';
@@ -92,11 +91,9 @@ export async function GET() {
       const t = tickerMap.get(b.currency);
       const price = t?.price ?? 0;
       const open = t?.open24h ?? price;
-      const isOverseas = getMarketFromSymbol(b.currency) === 'overseas';
-      // 해외 종목은 USD 가격 → KRW 환산
-      const fxMul = isOverseas && usdKrwRate > 0 ? usdKrwRate : 1;
-      const value_krw = qty * price * fxMul;
-      const open24h_krw = qty * open * fxMul;
+      // kis-overseas.getTicker가 USD→KRW 환산 후 반환 (2026-04-28) — 추가 fxMul 불필요
+      const value_krw = qty * price;
+      const open24h_krw = qty * open;
       const change_24h_pct = open > 0 ? ((price - open) / open) * 100 : null;
       return {
         currency: b.currency, symbol: b.currency, qty,

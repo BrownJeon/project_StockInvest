@@ -298,11 +298,136 @@ export async function getKisTickers(symbols: string[]): Promise<Ticker[]> {
   return results.flatMap(r => r.status === 'fulfilled' ? [r.value] : []);
 }
 
+/**
+ * 국내 미체결 주문 조회 — TTTC8036R(실전)/VTTC8036R(모의) inquire-psbl-rvsecncl.
+ * order-sync에서 active 주문 매칭에 사용.
+ *
+ * 응답 필드: odno(주문번호), pdno(종목코드), rmn_qty(잔여수량), ord_qty(주문수량).
+ * rmn_qty가 0보다 큰 행만 반환 (전부 체결되거나 취소된 건 제외).
+ */
 export async function getActiveOrders(): Promise<{ orderId: string; symbol: string }[]> {
-  return [];
+  const trId = isMock() ? 'VTTC8036R' : 'TTTC8036R';
+  const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
+  const params = new URLSearchParams({
+    CANO:           cano,
+    ACNT_PRDT_CD:   acntPrdt,
+    INQR_DVSN_1:    '0',
+    INQR_DVSN_2:    '0',
+    CTX_AREA_FK100: '',
+    CTX_AREA_NK100: '',
+  });
+  try {
+    const headers = await kisHeaders(trId);
+    const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl?${params}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (process.env.KIS_DOMESTIC_DEBUG === '1') {
+      console.log('[kis-domestic getActiveOrders raw] rt_cd=', data.rt_cd,
+        'output[0]=', JSON.stringify(data.output?.[0] ?? null));
+    }
+    if (data.rt_cd !== '0' || !Array.isArray(data.output)) return [];
+    return (data.output as Record<string, string>[])
+      .filter(o => Number(o.rmn_qty ?? o.ord_qty ?? 0) > 0)
+      .map(o => ({
+        orderId: String(o.odno),
+        symbol:  String(o.pdno ?? ''),
+      }))
+      .filter(o => o.orderId && o.symbol);
+  } catch (e) {
+    console.error('[kis-domestic getActiveOrders]', e);
+    return [];
+  }
 }
+
+/**
+ * 국내 일별 주문체결 조회 — TTTC8001R(실전)/VTTC8001R(모의) inquire-daily-ccld.
+ * order-sync에서 체결된 주문 매칭에 사용.
+ *
+ * 응답 필드:
+ *  - odno: 주문번호 (cancel·정정 시 새 odno 발급되지만 원 odno는 orgn_odno에 보존)
+ *  - sll_buy_dvsn_cd: '01'=매도, '02'=매수
+ *  - tot_ccld_qty: 총 체결수량
+ *  - avg_prvs: 체결 평균가 (없으면 ord_unpr 사용)
+ *  - ord_dt: YYYYMMDD, ord_tmd: HHMMSS
+ *
+ * tot_ccld_qty가 0보다 큰 (실제 체결분이 있는) 행만 반환.
+ * KIS는 PDNO 필터를 지원하므로 symbol 인자로 종목별 필터링.
+ */
 export async function getCompletedOrders(
-  _symbol: string, _from: number, _to: number, _limit: number,
+  symbol: string, fromTs: number, toTs: number, _limit: number,
 ): Promise<{ orderId: string; side: string; price: number; qty: number; ts: number }[]> {
-  return [];
+  const trId = isMock() ? 'VTTC8001R' : 'TTTC8001R';
+  const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
+  const fmtDate = (ts: number): string => {
+    const d = new Date(ts);
+    const kst = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+    const y = kst.getFullYear();
+    const m = String(kst.getMonth() + 1).padStart(2, '0');
+    const day = String(kst.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  };
+  const params = new URLSearchParams({
+    CANO:               cano,
+    ACNT_PRDT_CD:       acntPrdt,
+    INQR_STRT_DT:       fmtDate(fromTs),
+    INQR_END_DT:        fmtDate(toTs),
+    SLL_BUY_DVSN_CD:    '00',  // 전체
+    INQR_DVSN:          '00',  // 역순
+    PDNO:               symbol,
+    CCLD_DVSN:          '01',  // 체결만
+    ORD_GNO_BRNO:       '',
+    ODNO:               '',
+    INQR_DVSN_3:        '00',
+    INQR_DVSN_1:        '',
+    CTX_AREA_FK100:     '',
+    CTX_AREA_NK100:     '',
+  });
+  let attempt = 0;
+  while (true) {
+    const headers = await kisHeaders(trId);
+    try {
+      const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-daily-ccld?${params}`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
+          console.warn('[kis-domestic getCompletedOrders] token expired, re-issuing');
+          await invalidateKisToken();
+          attempt++;
+          continue;
+        }
+        return [];
+      }
+      const data = await res.json();
+      if (process.env.KIS_DOMESTIC_DEBUG === '1') {
+        console.log('[kis-domestic getCompletedOrders raw] rt_cd=', data.rt_cd,
+          'symbol=', symbol, 'output1[0]=', JSON.stringify(data.output1?.[0] ?? null));
+      }
+      // KIS는 output1(주문체결 목록) + output2(요약) 구조
+      const rows: Record<string, string>[] = data.output1 ?? data.output ?? [];
+      if (!Array.isArray(rows)) return [];
+      return rows
+        .filter(o => Number(o.tot_ccld_qty ?? 0) > 0)
+        .map(o => {
+          const dt = String(o.ord_dt ?? '');
+          const tm = String(o.ord_tmd ?? '000000').padStart(6, '0');
+          let ts = 0;
+          if (dt.length === 8) {
+            ts = new Date(`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${tm.slice(0,2)}:${tm.slice(2,4)}:${tm.slice(4,6)}+09:00`).getTime();
+          }
+          return {
+            orderId: String(o.odno ?? ''),
+            side:    o.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+            price:   Number(o.avg_prvs ?? o.ord_unpr ?? 0),
+            qty:     Number(o.tot_ccld_qty ?? 0),
+            ts,
+          };
+        })
+        .filter(o => o.orderId);
+    } catch (e) {
+      console.error('[kis-domestic getCompletedOrders]', e);
+      return [];
+    }
+  }
 }

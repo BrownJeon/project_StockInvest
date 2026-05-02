@@ -1,10 +1,14 @@
 export type LlmProvider = 'claude' | 'home-m4-api';
 
+export type ClaudeModel = 'sonnet' | 'opus' | 'haiku';
+
 export interface LlmCallOptions {
   /** 호출 타임아웃 (ms). 기본 90000, 배치는 180000 권장 */
   timeoutMs?: number;
   /** JSON 응답 강제 (지원하는 provider에서만 효과). 기본 'json' */
   responseFormat?: 'json' | 'text';
+  /** Claude provider 전용: 모델 동적 선택 (sonnet|opus|haiku). 미지정 시 기본 sonnet. home-m4-api는 무시 */
+  model?: ClaudeModel | string;
 }
 
 export interface LlmCaller {

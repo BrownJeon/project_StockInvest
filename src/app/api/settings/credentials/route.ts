@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCredentialState, setCredential, deleteCredentialOverride } from '@/lib/credentials';
+import { getCredentialState, getCredential, setCredential, deleteCredentialOverride } from '@/lib/credentials';
+
+/** 비밀이 아니라서 평문 노출 가능한 키 (UI 표시용 raw 값 포함) */
+const NON_SECRET_KEYS: ReadonlySet<string> = new Set(['NOTIFY_PROJECT_TAG']);
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +17,7 @@ const KEYS = [
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_CHAT_ID',
   'SLACK_WEBHOOK_URL',
+  'NOTIFY_PROJECT_TAG',
 ] as const;
 
 type CredKey = typeof KEYS[number];
@@ -23,7 +27,13 @@ const SENTINEL_RESET = '__reset__';
 export async function GET() {
   const result: Record<string, unknown> = {};
   for (const k of KEYS) {
-    result[k] = await getCredentialState(k);
+    const state = await getCredentialState(k);
+    if (NON_SECRET_KEYS.has(k)) {
+      const raw = await getCredential(k);
+      result[k] = { ...state, raw };
+    } else {
+      result[k] = state;
+    }
   }
   return NextResponse.json({ ok: true, credentials: result });
 }

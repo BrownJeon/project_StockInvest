@@ -28,7 +28,8 @@ async function fetchTotals(): Promise<MarketTotals> {
   try {
     const balances = await kis.getBalances();
     let domesticKRW = 0;
-    let overseasUSD = 0;
+    let overseasKRW = 0;
+    let cashUSD = 0;  // USD 예수금만 별도 환산 — 해외 종목 ticker.price는 이미 KRW로 환산됨 (kis-overseas.ts 2026-04-28 fix)
 
     for (const b of balances) {
       const qty = Number(b.free) + Number(b.locked);
@@ -36,26 +37,24 @@ async function fetchTotals(): Promise<MarketTotals> {
       if (b.currency === 'KRW') {
         domesticKRW += qty;
       } else if (b.currency === 'USD') {
-        overseasUSD += qty;
+        cashUSD += qty;
       } else {
-        // 종목 보유분: 현재가 × qty 평가
+        // 종목 보유분: 현재가 × qty 평가 (해외는 ticker.price가 이미 KRW 환산됨)
         try {
           const ticker = await kis.getTicker(b.currency);
           const price = Number(ticker.price);
           if (Number.isFinite(price) && price > 0) {
             const amount = price * qty;
-            // 해외 심볼(EXCHG:SYMBOL 형식)이면 USD 누적, 그 외는 국내 KRW
-            if (b.currency.includes(':')) overseasUSD += amount;
+            if (b.currency.includes(':')) overseasKRW += amount;
             else                          domesticKRW += amount;
           }
         } catch { /* 한 종목 실패는 무시 */ }
       }
     }
 
-    let overseasKRW = 0;
-    if (overseasUSD > 0) {
-      try { overseasKRW = await usdToKrw(overseasUSD); }
-      catch { overseasKRW = 0; /* fx 실패 시 USD 부분 제외 */ }
+    if (cashUSD > 0) {
+      try { overseasKRW += await usdToKrw(cashUSD); }
+      catch { /* fx 실패 시 cashUSD는 누락 */ }
     }
 
     return {

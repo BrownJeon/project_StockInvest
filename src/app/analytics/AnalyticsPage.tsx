@@ -8,8 +8,9 @@ import { AuditLog }           from './components/AuditLog';
 import { OrderHistoryTab }    from './components/OrderHistoryTab';
 import { VolatilityTab }          from './components/VolatilityTab';
 import { MissedOpportunityTab }  from './components/MissedOpportunityTab';
+import { SignalDiagnosticsTab }  from './components/SignalDiagnosticsTab';
 
-type Tab = 'portfolio' | 'orders' | 'strategy' | 'strategy-history' | 'audit' | 'volatility' | 'missed';
+type Tab = 'portfolio' | 'orders' | 'strategy' | 'strategy-history' | 'audit' | 'volatility' | 'missed' | 'diagnostics';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'portfolio',        label: '포트폴리오' },
@@ -19,6 +20,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'volatility',       label: '변동폭'     },
   { id: 'missed',           label: '놓친 기회'  },
   { id: 'strategy',         label: '전략 성과'  },
+  { id: 'diagnostics',      label: '신호 진단'  },
 ];
 
 export function AnalyticsPage() {
@@ -58,6 +60,7 @@ export function AnalyticsPage() {
         {tab === 'audit'            && <AuditLog />}
         {tab === 'volatility'       && <VolatilityTab />}
         {tab === 'missed'           && <MissedOpportunityTab />}
+        {tab === 'diagnostics'      && <SignalDiagnosticsTab />}
         <div style={{ height: 16 }} />
       </div>
     </div>

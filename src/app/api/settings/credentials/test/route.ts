@@ -75,16 +75,18 @@ async function fetchWithRetry(url: string, init: RequestInit, attempts = 3, back
 
 async function testTelegram(): Promise<TestResult> {
   const startedAt = Date.now();
-  const [token, chatId] = await Promise.all([
+  const [token, chatId, projectTag] = await Promise.all([
     getCredential('TELEGRAM_BOT_TOKEN'),
     getCredential('TELEGRAM_CHAT_ID'),
+    getCredential('NOTIFY_PROJECT_TAG'),
   ]);
   if (!token || !chatId) {
     return { ok: false, target: 'telegram', durationMs: Date.now() - startedAt,
       error: 'Bot Token 또는 Chat ID 가 등록되어 있지 않습니다.', hint: '두 값 모두 등록 후 재시도' };
   }
+  const project = projectTag.trim() || 'StockInvest';
   try {
-    const text = `🔌 <b>연결 테스트</b>\nStockInvest 알람 연동 성공\n🕐 ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} KST`;
+    const text = `<b>[${project}] 🔌 연결 테스트</b>\n알람 연동 성공\n🕐 ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} KST`;
     const res = await fetchWithRetry(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -124,17 +126,21 @@ async function testTelegram(): Promise<TestResult> {
 
 async function testSlack(): Promise<TestResult> {
   const startedAt = Date.now();
-  const url = await getCredential('SLACK_WEBHOOK_URL');
+  const [url, projectTag] = await Promise.all([
+    getCredential('SLACK_WEBHOOK_URL'),
+    getCredential('NOTIFY_PROJECT_TAG'),
+  ]);
   if (!url) {
     return { ok: false, target: 'slack', durationMs: Date.now() - startedAt,
       error: 'Slack Webhook URL 이 등록되어 있지 않습니다.', hint: 'Webhook URL 등록 후 재시도' };
   }
+  const project = projectTag.trim() || 'StockInvest';
   try {
     const payload = {
       attachments: [{
         color: '#22c55e',
         blocks: [
-          { type: 'section', text: { type: 'mrkdwn', text: '*🔌 연결 테스트*\nStockInvest 알람 연동 성공' } },
+          { type: 'section', text: { type: 'mrkdwn', text: `*[${project}] 🔌 연결 테스트*\n알람 연동 성공` } },
           { type: 'context', elements: [{ type: 'mrkdwn', text: `🕐 ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} KST` }] },
         ],
       }],

@@ -1,5 +1,12 @@
 import { spawn } from 'node:child_process';
-import type { LlmCallOptions, LlmCaller } from './types';
+import type { LlmCallOptions, LlmCaller, ClaudeModel } from './types';
+
+const ALLOWED_MODELS: ReadonlyArray<ClaudeModel> = ['sonnet', 'opus', 'haiku'];
+
+function resolveModel(input?: string): ClaudeModel {
+  if (input && (ALLOWED_MODELS as readonly string[]).includes(input)) return input as ClaudeModel;
+  return 'sonnet';
+}
 
 /**
  * Claude CLI subprocess 호출.
@@ -17,6 +24,7 @@ import type { LlmCallOptions, LlmCaller } from './types';
 export class ClaudeCliCaller implements LlmCaller {
   call(prompt: string, opts: LlmCallOptions = {}): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? 90000;
+    const model = resolveModel(opts.model);
     return new Promise((resolve, reject) => {
       // 부모가 Claude Code 세션일 때 claude CLI가 중첩 실행 감지 → SIGTERM(exit 143) 자종료.
       // 관련 감지 env 전부 제거해야 정상 동작.
@@ -46,7 +54,7 @@ export class ClaudeCliCaller implements LlmCaller {
       const proc = spawn('claude', [
         '--print', prompt,
         '--permission-mode', 'bypassPermissions',
-        '--model', 'sonnet',
+        '--model', model,
       ], {
         timeout: timeoutMs,
         cwd: '/tmp',

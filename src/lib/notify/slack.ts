@@ -17,10 +17,14 @@ export async function sendSlackAlert(
   title: string,
   body: string,
 ): Promise<void> {
-  const url = await getCredential('SLACK_WEBHOOK_URL');
+  const [url, projectTag] = await Promise.all([
+    getCredential('SLACK_WEBHOOK_URL'),
+    getCredential('NOTIFY_PROJECT_TAG'),
+  ]);
   if (!url) return;
 
   const { emoji, color } = LEVEL_META[level];
+  const project = projectTag.trim() || 'StockInvest';
 
   const payload = {
     attachments: [
@@ -29,7 +33,7 @@ export async function sendSlackAlert(
         blocks: [
           {
             type: 'section',
-            text: { type: 'mrkdwn', text: `*${emoji} ${title}*\n${body}` },
+            text: { type: 'mrkdwn', text: `*[${project}] ${emoji} ${title}*\n${body}` },
           },
           {
             type: 'context',

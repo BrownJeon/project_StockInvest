@@ -16,14 +16,16 @@ export async function sendTelegramAlert(
   title: string,
   body: string,
 ): Promise<void> {
-  const [token, chatId] = await Promise.all([
+  const [token, chatId, projectTag] = await Promise.all([
     getCredential('TELEGRAM_BOT_TOKEN'),
     getCredential('TELEGRAM_CHAT_ID'),
+    getCredential('NOTIFY_PROJECT_TAG'),
   ]);
   if (!token || !chatId) return;
 
   const emoji = LEVEL_PREFIX[level];
-  const text = `<b>${emoji} ${title}</b>\n${body}\n\n🕐 ${kstNow()} KST`;
+  const project = projectTag.trim() || 'StockInvest';
+  const text = `<b>[${project}] ${emoji} ${title}</b>\n${body}\n\n🕐 ${kstNow()} KST`;
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   const init: RequestInit = {

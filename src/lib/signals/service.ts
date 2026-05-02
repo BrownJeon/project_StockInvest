@@ -11,6 +11,23 @@ import {
   getRouterConfig,
   routeSignal,
 } from './router';
+import { getAnalystStyle, getStyleConfig } from '@/lib/strategy/style';
+
+/** safety_limit_chase_disabled = true 면 chasePct 0 강제 (즉시 무력화 스위치). */
+async function getEffectiveChasePct(stylePct: number): Promise<number> {
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
+      'SELECT value FROM system_config WHERE `key` = ? LIMIT 1',
+      ['safety_limit_chase_disabled'],
+    );
+    if (rows.length > 0) {
+      const val = JSON.parse(rows[0].value);
+      if (val === true || val === 'true') return 0;
+    }
+  } catch { /* ignore */ }
+  return stylePct;
+}
 
 function fmtNum(n: number): string {
   return Math.round(n).toLocaleString('ko-KR');
@@ -49,22 +66,31 @@ export interface CreateSignalResult {
   error?: string;
 }
 
-function buildOrderRequest(input: SignalInput): OrderRequest {
+function buildOrderRequest(input: SignalInput, chasePct = 0): OrderRequest {
   // 시장 추정 (input.symbol 형태로)
   const { getMarketFromSymbol } = require('@/lib/exchanges/kis-symbols') as typeof import('@/lib/exchanges/kis-symbols');
   const market = getMarketFromSymbol(input.symbol);
+
+  // 호가 추격 — limit 주문에 한해 매수는 시장가 위로, 매도는 아래로 양보해 체결률 ↑.
+  // chasePct=0 이면 그대로 (Phase M 이전 동작).
+  let chasedPrice = input.price;
+  if (chasedPrice != null && chasePct > 0 && input.orderType === 'limit') {
+    const factor = input.side === 'buy' ? 1 + chasePct : 1 - chasePct;
+    chasedPrice = chasedPrice * factor;
+  }
+
   let quantity = input.quantity;
   // 지정가 주문에 수량이 없으면 amountKRW / price 로 계산 (소수 8자리, 내림)
   // 해외주식: input.price가 USD라면 amountKRW를 USD로 환산해야 하지만 여기서는 동기 함수라 KRW 가정
-  if (input.orderType === 'limit' && quantity == null && input.price != null && input.price > 0) {
-    quantity = Math.floor((input.amountKRW / input.price) * 1e8) / 1e8;
+  if (input.orderType === 'limit' && quantity == null && chasedPrice != null && chasedPrice > 0) {
+    quantity = Math.floor((input.amountKRW / chasedPrice) * 1e8) / 1e8;
   }
   return {
     exchange: 'kis',
     symbol: input.symbol,
     side: input.side,
     type: input.orderType,
-    price: input.price,
+    price: chasedPrice,
     quantity,
     amountKRW: input.amountKRW,
     market,
@@ -121,7 +147,9 @@ export async function createSignal(
     return { ok: true, signalId, autoSubmitted: false };
   }
 
-  const orderReq = buildOrderRequest(input);
+  const style = getStyleConfig(await getAnalystStyle());
+  const chasePct = await getEffectiveChasePct(style.limitChasePct);
+  const orderReq = buildOrderRequest(input, chasePct);
   const orderResult = await submitOrder(orderReq, kis.createOrder, {
     assetClass: 'stock',
     source: 'auto',
@@ -177,7 +205,9 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
     quantity: row.quantity != null ? Number(row.quantity) : undefined,
     amountKRW: Number(row.amount_krw),
   };
-  const orderReq = buildOrderRequest(input);
+  const style = getStyleConfig(await getAnalystStyle());
+  const chasePct = await getEffectiveChasePct(style.limitChasePct);
+  const orderReq = buildOrderRequest(input, chasePct);
   const orderResult = await submitOrder(orderReq, kis.createOrder, {
     assetClass: 'stock',
     source: 'signal',

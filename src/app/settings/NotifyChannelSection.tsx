@@ -10,6 +10,8 @@ interface CredState {
   source: 'db' | 'env' | 'none';
   dbSet: boolean;
   dbMasked: string;
+  /** 비밀이 아닌 키(NOTIFY_PROJECT_TAG 등) 평문 값 — 일반 자격은 undefined */
+  raw?: string;
 }
 
 interface CredApi { ok: boolean; credentials: Record<string, CredState>; }
@@ -43,6 +45,9 @@ export function NotifyChannelSection() {
   const [channel, setChannel] = useState<Channel>('none');
   const [savedChannel, setSavedChannel] = useState<Channel>('none');
   const [drafts, setDrafts]   = useState<Record<string, string>>({});
+  const [tagDraft, setTagDraft] = useState<string>('');
+  const [tagSaving, setTagSaving] = useState(false);
+  const [tagMsg, setTagMsg] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
@@ -142,9 +147,32 @@ export function NotifyChannelSection() {
     }
   };
 
+  const saveProjectTag = async () => {
+    setTagSaving(true);
+    setTagMsg(null);
+    try {
+      const v = tagDraft.trim();
+      const values: Record<string, string> = { NOTIFY_PROJECT_TAG: v === '' ? '__reset__' : v };
+      const res = await fetch('/api/settings/credentials', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values }),
+      }).then(r => r.json());
+      if (!res.ok) throw new Error(res.errors?.join(', ') ?? res.error ?? 'save failed');
+      setTagMsg('✓ 저장됨 — 60초 내 반영');
+      setTagDraft('');
+      reload();
+      setTimeout(() => setTagMsg(null), 3000);
+    } catch (e) {
+      setTagMsg(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTagSaving(false);
+    }
+  };
+
   if (loading) return <div style={{ padding: 16, color: 'var(--muted)', fontSize: 13 }}>알람 설정 불러오는 중...</div>;
 
   const hasAnyConfigured = ['TELEGRAM_BOT_TOKEN', 'SLACK_WEBHOOK_URL'].some(k => creds[k]?.dbSet);
+  const tagState = creds['NOTIFY_PROJECT_TAG'];
 
   return (
     <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
@@ -159,6 +187,51 @@ export function NotifyChannelSection() {
           background: hasAnyConfigured ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.12)',
           color: hasAnyConfigured ? 'var(--ok)' : 'var(--down)',
         }}>{hasAnyConfigured ? '등록됨' : '미등록'}</span>
+      </div>
+
+      {/* 프로젝트 태그 — 알람 메시지 [Header] 부분 */}
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>🏷️ 프로젝트 태그 (알람 헤더)</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+          현재 헤더: <span style={{ fontFamily: 'monospace', color: 'var(--text)' }}>
+            [{tagState?.raw && tagState.raw.trim() !== '' ? tagState.raw : 'StockInvest'}]
+          </span>
+          {tagState?.source === 'env' && (
+            <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--muted)' }}>(env)</span>
+          )}
+          {tagState?.source === 'db' && (
+            <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--ok)' }}>(DB 저장)</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input
+            type="text"
+            value={tagDraft}
+            onChange={e => setTagDraft(e.target.value)}
+            placeholder={tagState?.dbSet ? '비워두고 저장 시 default 로 reset' : '예: stockinvest-prod'}
+            style={{
+              flex: 1, padding: '6px 10px', borderRadius: 6, fontSize: 13,
+              background: 'var(--bg)', color: 'var(--text)',
+              border: '1px solid var(--border)', outline: 'none',
+            }}
+          />
+          <button
+            onClick={saveProjectTag}
+            disabled={tagSaving}
+            style={{
+              padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+              background: 'var(--accent)', color: '#000',
+              border: 'none', cursor: tagSaving ? 'not-allowed' : 'pointer',
+              opacity: tagSaving ? 0.6 : 1,
+            }}
+          >{tagSaving ? '저장 중...' : '저장'}</button>
+        </div>
+        {tagMsg && (
+          <div style={{ fontSize: 11, color: tagMsg.startsWith('⚠') ? 'var(--down)' : 'var(--ok)' }}>{tagMsg}</div>
+        )}
+        <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+          여러 인스턴스를 동일 텔레그램 chat 에 보낼 때 구분용. 미설정 시 <code>StockInvest</code> 사용.
+        </div>
       </div>
 
       {/* 보기 모드 */}

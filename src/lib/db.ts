@@ -195,15 +195,25 @@ async function setupDB(): Promise<void> {
 
   const strategySeed = [
     {
-      id: 'rsi-oversold-v1', name: 'RSI 역추세',
-      description: 'RSI(14) 과매도 반등 매수 / 과매수 청산 — 국내·해외주식 30분봉',
-      tags: JSON.stringify(['RSI · MA20', '30m', '국내·해외 universe']),
+      id: 'rsi-oversold-v1', name: 'RSI 과매도 반등 매수',
+      description: 'RSI(14) 과매도 반등 매수 전용 — 국내·해외주식 30분봉 (매도는 rsi-overbought-exit-v1로 분리)',
+      tags: JSON.stringify(['RSI · MA20', '30m', '매수 전용', '국내·해외 universe']),
       applicable_styles: 'aggressive,neutral',
       enabled: 1, backtest_interval_h: 6,
       last_backtest_at: new Date(Date.now() - 6 * 3600000),
       next_backtest_at: new Date(Date.now() + 6 * 3600000),
       last_backtest_result: JSON.stringify({ sharpe: 1.24, mdd: -8.2, winRate: 61.3, period: '90일' }),
       stats_cache: JSON.stringify({ return7d: 8.3, winRate: 64, signalCount: 11 }),
+    },
+    {
+      id: 'rsi-overbought-exit-v1', name: 'RSI 과열 청산',
+      description: 'RSI(14) 과열 청산 전용 (보유 차익실현) — RSI > sellT+3 + 거래량 가드, 30분봉',
+      tags: JSON.stringify(['RSI · MA20 · Volume', '30m', '매도 전용', '국내·해외 universe']),
+      applicable_styles: 'aggressive,neutral,stable',
+      enabled: 1, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
     },
     {
       id: 'ma-cross-v1', name: 'MA 골든크로스',
@@ -311,6 +321,8 @@ async function setupDB(): Promise<void> {
   const legacyMigrations: { id: string; oldDesc: string; oldTags: string }[] = [
     { id: 'rsi-oversold-v1', oldDesc: 'RSI(14) 과매도 반등 매수 / 과매수 청산',
       oldTags: JSON.stringify(['RSI · MA20', '1h', 'KRW-BTC']) },
+    { id: 'rsi-oversold-v1', oldDesc: 'RSI(14) 과매도 반등 매수 / 과매수 청산 — 국내·해외주식 30분봉',
+      oldTags: JSON.stringify(['RSI · MA20', '30m', '국내·해외 universe']) },
     { id: 'ma-cross-v1', oldDesc: 'MA5 > MA20 돌파 시 매수, 데드크로스 청산',
       oldTags: JSON.stringify(['MA5 · MA20', '4h', 'KRW-BTC · KRW-ETH']) },
     { id: 'bb-breakout-v1', oldDesc: '밴드 상단 돌파 시 추세 추종',
@@ -386,10 +398,15 @@ async function setupDB(): Promise<void> {
   } catch { /* 이미 존재하는 경우 무시 */ }
 
   // AI 스킵 시점의 시세 기록 + 후속 변화율 추적 컬럼 (signal-followup cron 용)
+  // Phase Q: 4h/24h 장기 추적 컬럼 추가 — fine-tune 학습 라벨 노이즈 감소 목적
   for (const col of [
-    ['price_at_skip',    'DECIMAL(36,8) NULL'],
-    ['price_1h_after',   'DECIMAL(36,8) NULL'],
-    ['price_change_pct', 'DECIMAL(10,4) NULL'],
+    ['price_at_skip',         'DECIMAL(36,8) NULL'],
+    ['price_1h_after',        'DECIMAL(36,8) NULL'],
+    ['price_change_pct',      'DECIMAL(10,4) NULL'],
+    ['price_4h_after',        'DECIMAL(36,8) NULL'],
+    ['price_change_pct_4h',   'DECIMAL(10,4) NULL'],
+    ['price_24h_after',       'DECIMAL(36,8) NULL'],
+    ['price_change_pct_24h',  'DECIMAL(10,4) NULL'],
   ] as const) {
     try {
       await p.query(`ALTER TABLE signals ADD COLUMN ${col[0]} ${col[1]}`);
@@ -480,6 +497,37 @@ async function setupDB(): Promise<void> {
       market      ENUM('domestic','overseas') NOT NULL DEFAULT 'domestic',
       updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_meta_market (market)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ── 분석가 채팅 (Phase H, 2026-04-28) ─────────────────────────────────────
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS chat_threads (
+      id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+      title         VARCHAR(120) NOT NULL DEFAULT '새 대화',
+      symbol        VARCHAR(32) NULL,
+      created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      message_count INT NOT NULL DEFAULT 0,
+      archived      TINYINT(1) NOT NULL DEFAULT 0,
+      INDEX idx_threads_updated (updated_at DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id               BIGINT PRIMARY KEY AUTO_INCREMENT,
+      thread_id        BIGINT NOT NULL,
+      role             ENUM('user','assistant','system') NOT NULL,
+      content          MEDIUMTEXT NOT NULL,
+      draft_prompt     MEDIUMTEXT NULL,
+      draft_prompt_raw MEDIUMTEXT NULL,
+      context_attached JSON NULL,
+      llm_provider     VARCHAR(32) NULL,
+      llm_model        VARCHAR(64) NULL,
+      latency_ms       INT NULL,
+      created_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_msgs_thread (thread_id, id),
+      FOREIGN KEY (thread_id) REFERENCES chat_threads(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 

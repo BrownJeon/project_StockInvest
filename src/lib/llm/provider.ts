@@ -81,25 +81,43 @@ async function buildCaller(): Promise<{ provider: LlmProvider; caller: LlmCaller
   return { provider: 'claude', caller: new ClaudeCliCaller() };
 }
 
+export interface RunLlmOptions {
+  timeoutMs?: number;
+  responseFormat?: 'json' | 'text';
+  /** Claude provider 전용: 모델 동적 선택 (sonnet|opus|haiku). home-m4-api는 무시. */
+  model?: string;
+}
+
 /** 1회 호출 (재시도 없음, 큐 없음). */
-export async function runLlmOnce(prompt: string, timeoutMs = 90000): Promise<string> {
+export async function runLlmOnce(prompt: string, opts: RunLlmOptions | number = {}): Promise<string> {
+  const o = typeof opts === 'number' ? { timeoutMs: opts } : opts;
   const { caller } = await buildCaller();
-  return caller.call(prompt, { timeoutMs, responseFormat: 'json' });
+  return caller.call(prompt, {
+    timeoutMs: o.timeoutMs ?? 90000,
+    responseFormat: o.responseFormat ?? 'json',
+    model: o.model,
+  });
 }
 
 /**
  * 안정 호출 — provider별 재시도 정책 + claude일 때 큐 직렬화.
  * - claude: "Execution error" 발생 시 3회 재시도 + cliQueue 직렬화 (subprocess 충돌 방지)
  * - home-m4-api: HTTP 5xx / abort / 네트워크 에러 시 3회 재시도, 동시성 풀림
+ *
+ * 두 번째 인자: 숫자(legacy timeoutMs) 또는 RunLlmOptions 객체.
  */
-export async function runLlm(prompt: string, timeoutMs = 90000): Promise<string> {
+export async function runLlm(prompt: string, opts: RunLlmOptions | number = {}): Promise<string> {
+  const o = typeof opts === 'number' ? { timeoutMs: opts } : opts;
+  const timeoutMs = o.timeoutMs ?? 90000;
+  const responseFormat = o.responseFormat ?? 'json';
+  const model = o.model;
   const { provider, caller } = await buildCaller();
 
   const attempt = async (): Promise<string> => {
     let lastErr: unknown;
     for (let tries = 0; tries < 3; tries++) {
       try {
-        return await caller.call(prompt, { timeoutMs, responseFormat: 'json' });
+        return await caller.call(prompt, { timeoutMs, responseFormat, model });
       } catch (e) {
         lastErr = e;
         const msg = e instanceof Error ? e.message : String(e);

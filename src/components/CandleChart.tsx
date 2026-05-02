@@ -21,7 +21,13 @@ export function CandleChart({ data, height = 320 }: Props) {
 
   useEffect(() => {
     if (!ref.current) return;
+    // lightweight-charts default width 600px → 모바일 viewport(412px) 초과 → fit-to-page 줌아웃 발생.
+    // 첫 paint부터 부모 clientWidth 사용해 600px default 회피.
+    const initWidth  = ref.current.clientWidth  || 0;
+    const initHeight = ref.current.clientHeight || height;
     const chart = createChart(ref.current, {
+      width:  initWidth,
+      height: initHeight,
       layout: { background: { color: '#0f1115' }, textColor: '#e6e8ee' },
       grid: { vertLines: { color: '#1a1f2b' }, horzLines: { color: '#1a1f2b' } },
       rightPriceScale: { borderColor: '#262b36' },

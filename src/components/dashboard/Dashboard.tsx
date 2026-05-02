@@ -252,7 +252,11 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
   }, []);
 
   return (
-    <main style={{ display: 'grid', gridTemplateRows: 'auto auto auto auto auto auto auto auto auto' }}>
+    <main style={{
+      display: 'grid',
+      gridTemplateColumns: 'minmax(0, 1fr)',
+      gridTemplateRows: 'auto auto auto auto auto auto auto auto auto',
+    }}>
 
       {/* 상단 요약 — 단일 컬럼 흐름 (모바일 412px 최적화) */}
       <div style={sx.top}>
@@ -544,7 +548,7 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
           </div>
         </div>
 
-        <div style={{ background: 'var(--bg)', borderBottom: '1px solid var(--border)', height: '32vh', minHeight: 200, maxHeight: 360 }}>
+        <div style={{ background: 'var(--bg)', borderBottom: '1px solid var(--border)', height: '30dvh', minHeight: 200, maxHeight: 340 }}>
           <CandleChart data={candles} />
         </div>
 
@@ -788,19 +792,19 @@ function RecentExecutionsSection({ orders, symbolMeta }: { orders: OrderRow[]; s
 
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
-    <div style={{ background: 'var(--bg2)', padding: '12px 14px' }}>
-      <div style={{ fontSize: 11, color: 'var(--muted)' }}>{label}</div>
-      <div className="num" style={{ fontSize: 16, fontWeight: 700, marginTop: 4 }}>{value}</div>
-      {sub && <div className="num" style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>{sub}</div>}
+    <div style={{ background: 'var(--bg2)', padding: '10px 12px', minWidth: 0 }}>
+      <div style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+      <div className="num" style={{ fontSize: 17, fontWeight: 700, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+      {sub && <div className="num" style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>}
     </div>
   );
 }
 
 function KpiBox({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ background: 'var(--bg2)', padding: '10px 12px' }}>
-      <div style={{ fontSize: 11, color: 'var(--muted)' }}>{label}</div>
-      <div className="num" style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{value}</div>
+    <div style={{ background: 'var(--bg2)', padding: '10px 10px', minWidth: 0 }}>
+      <div style={{ fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+      <div className="num" style={{ fontSize: 14, fontWeight: 600, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
     </div>
   );
 }
@@ -1016,11 +1020,11 @@ function MarketBadge({ status }: { status: MarketStatus | null }) {
 const sx: Record<string, React.CSSProperties> = {
   top: {
     background: 'var(--bg2)', borderBottom: '1px solid var(--border)',
-    padding: '12px 16px', display: 'flex', flexDirection: 'column',
-    gap: 8, alignItems: 'stretch',
+    padding: '10px 12px', display: 'flex', flexDirection: 'column',
+    gap: 6, alignItems: 'stretch',
   },
   brand: { fontSize: 12, color: 'var(--muted)', letterSpacing: '.5px' },
-  total: { fontSize: 26, fontWeight: 700, lineHeight: 1.1, marginTop: 2 },
+  total: { fontSize: 24, fontWeight: 700, lineHeight: 1.15, marginTop: 2 },
   sub: { display: 'flex', gap: 10, fontSize: 12, color: 'var(--muted)', alignItems: 'center', flexWrap: 'wrap' },
   refresh: {
     width: 36, height: 36, borderRadius: 10,
@@ -1034,7 +1038,9 @@ const sx: Record<string, React.CSSProperties> = {
     padding: '10px 14px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
   },
   cardGrid: {
-    display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1,
+    // S25+ 412px 폭: 4열은 셀당 ~95px로 "포트폴리오 오늘 +X.X%" 잘림.
+    // 2x2 그리드(셀당 ~200px)로 변경해 폰트/sub 라벨 모두 한 줄에 표시.
+    display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1,
     background: 'var(--border)', borderTop: '1px solid var(--border)',
   },
 

@@ -13,6 +13,9 @@ interface PendingOrder extends RowDataPacket {
 /**
  * DB에서 accepted/pending/partially_filled 상태 주문을 조회해
  * KIS API와 대조 후 filled/cancelled로 업데이트한다.
+ *
+ * 2026-04-28: KIS 국내·해외 어댑터의 getActiveOrders/getCompletedOrders 정상 구현됨.
+ * Phase I 완료 — 이전 stub 가드 제거하고 정상 sync 동작.
  */
 export async function syncPendingOrders(): Promise<{ synced: number; errors: string[] }> {
   const pool = getPool();

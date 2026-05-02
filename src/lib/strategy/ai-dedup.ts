@@ -23,17 +23,20 @@ export interface DedupHit {
 
 /**
  * 지표 상태를 이산 버킷으로 환산. 같은 버킷 내에서는 AI 결정이 반복될 것으로 가정하고 캐시 재사용.
- * 5개 지표 조합 (RSI × EMA × vol × ATR × price5) 으로 촘촘하게 구성 — 상태 변화하면 bucket이 바뀌어 hit 안 됨.
+ *
+ * 정책 (2026-04-28): RSI/ATR/Price5 변수 변동성 때문에 5변수 매트릭스의 hit율이 매우 낮음
+ *  → **핵심 3변수만 사용** (RSI · EMA · Volume). ATR%·priceChange5는 RSI/EMA에 강하게 상관 있어 정보 추가량 미미.
+ *  → RSI 5단계 → 3단계로 양자화 단순화 (low/mid/hi).
+ *
+ * 효과: 같은 종목·룰의 11분 간격 반복 발화가 hit으로 잡혀 AI 호출 절감 + 사용자 노이즈 감소.
  */
 export function buildRegimeBucket(summary: MarketSummary): string {
   const rsi = summary.rsi14;
   const rsiBucket =
-    rsi == null ? 'na' :
-    rsi < 30 ? 'os'   :   // oversold
-    rsi < 45 ? 'low'  :
-    rsi < 55 ? 'mid'  :
-    rsi < 70 ? 'hi'   :
-               'ob';     // overbought
+    rsi == null  ? 'na'  :
+    rsi < 40     ? 'low' :   // 매수 영역 (과매도 포함)
+    rsi < 60     ? 'mid' :   // 중립 영역
+                   'hi';     // 매도 영역 (과매수 포함)
 
   const ema20 = summary.ema20;
   const ema60 = summary.ema60;
@@ -49,27 +52,14 @@ export function buildRegimeBucket(summary: MarketSummary): string {
     vr >= 0.7 ? 'mid' :
                 'low';
 
-  const atrPct =
-    summary.atr14 != null && summary.currentPrice > 0
-      ? (summary.atr14 / summary.currentPrice) * 100
-      : null;
-  const atrBucket =
-    atrPct == null ? 'na' :
-    atrPct >= 5 ? 'hi'  :
-    atrPct >= 2 ? 'mid' :
-                  'low';
-
-  const p5 = summary.priceChange5;
-  const p5Bucket =
-    p5 > 3  ? 'up' :
-    p5 < -3 ? 'dn' :
-              'fl';
-
-  return `rsi${rsiBucket}_ema${emaBucket}_vol${volBucket}_atr${atrBucket}_p5${p5Bucket}`;
+  return `rsi${rsiBucket}_ema${emaBucket}_vol${volBucket}`;
 }
 
 function ttlMinutesFor(analystStyle: AnalystStyle): number {
-  return analystStyle === 'aggressive' ? 15 : 30;
+  // 2026-05-01 — VOO/SCHD 등 평균 80분 간격 반복 발화 차단을 위해 TTL 추가 강화 (60→180 / 120→360).
+  // 보유기간 대비 dedup TTL 비율: aggressive 1~4일×5%=3h / neutral·stable 14일+×<3%=6h.
+  if (analystStyle === 'aggressive') return 180;  // 3h
+  return 360;                                       // 6h (neutral/stable 공통)
 }
 
 interface SignalRow extends RowDataPacket {

@@ -19,8 +19,9 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html {
-  overflow-x: clip; /* 수평 페이지 오버플로우 차단 — sticky 포지셔닝 유지됨 */
+html, body {
+  max-width: 100vw;     /* 자식의 intrinsic 폭 초과 시에도 layout viewport 제한 — 모바일 fit-to-page 줌아웃 차단 */
+  overflow-x: clip;     /* 수평 페이지 오버플로우 차단 — sticky 포지셔닝 유지됨 */
 }
 html, body {
   margin: 0;

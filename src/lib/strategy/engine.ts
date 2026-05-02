@@ -95,7 +95,7 @@ async function getEvalSymbols(
   const set = new Set<string>();
   const [trend, meanRev, breakout] = await Promise.all([
     getUniverseSymbols('trend',    5, market, universeSource),
-    getUniverseSymbols('mean-rev', 5, market, universeSource),
+    getUniverseSymbols('mean-rev', 8, market, universeSource),
     getUniverseSymbols('breakout', 5, market, universeSource),
   ]);
   for (const s of [...trend, ...meanRev, ...breakout]) set.add(s);
@@ -171,6 +171,21 @@ async function collectCandidates(
   );
   const hasRecentSell = (recentSellCheck[0] as RowDataPacket[]).length > 0;
 
+  // 24h 내 같은 (strategy, side)로 ai_skipped 이력이 있는 (strategy, side) 집합 — 반복 후행 발화 차단
+  // dedup이 regimeBucket 단위로 작동해도 5분 봉 내 ATR/RSI 미세 변동으로 hit 안 되는 케이스 보강.
+  // 이력 기반 광역 차단 — 룰의 후행 본질을 시간 단위로 막는다.
+  const recentSkipsRows = await pool.query<RowDataPacket[]>(
+    `SELECT DISTINCT strategy_id, side FROM signals
+     WHERE symbol = ? AND status = 'ai_skipped'
+       AND created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+       AND JSON_EXTRACT(indicators, '$.ai.skipCategory') IN ('ai_rejected', 'ai_low_confidence')`,
+    [symbol],
+  );
+  const skippedRecently = new Set<string>();
+  for (const r of recentSkipsRows[0] as RowDataPacket[]) {
+    skippedRecently.add(`${r.strategy_id}:${r.side}`);
+  }
+
   const candidates: Candidate[] = [];
 
   for (const { id, meta } of strategies) {
@@ -184,6 +199,8 @@ async function collectCandidates(
       if (sig.side === 'buy' && heldAmounts.has(symbol)) continue;
       if (sig.side === 'sell' && !heldAmounts.has(symbol)) continue;
       if (sig.side === 'buy' && hasRecentSell) continue;
+      // 24h 광역 차단 — sell도 동일 적용 (이미 +9% 평가익 보유 중인데 5회 매도 시그널 같은 패턴 방지)
+      if (skippedRecently.has(`${id}:${sig.side}`)) continue;
 
       if (sig.side === 'sell') {
         const entry = heldAmounts.get(symbol)!;

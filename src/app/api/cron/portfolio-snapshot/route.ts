@@ -82,17 +82,12 @@ export async function POST(req: NextRequest) {
     }
 
     // 보유 종목 — symbol == currency (국내 6자리 또는 해외 EXCD:TICKER)
-    const { getMarketFromSymbol } = await import('@/lib/exchanges/kis-symbols');
-    const { usdToKrw } = await import('@/lib/exchanges/fx');
+    // kis-overseas.getTicker가 USD→KRW 환산 후 반환하므로 추가 변환 불필요 (2026-04-28).
     for (const b of stockHoldings) {
       try {
         const ticker = await kis.getTicker(b.currency);
         const qty = Number(b.free) + Number(b.locked);
-        let value_krw = qty * ticker.price;
-        // 해외 종목은 USD 가격 → KRW 환산
-        if (getMarketFromSymbol(b.currency) === 'overseas') {
-          value_krw = await usdToKrw(qty * ticker.price);
-        }
+        const value_krw = qty * ticker.price;
         totalKRW += value_krw;
         positions.push({ currency: b.currency, qty, price: ticker.price, value_krw });
       } catch {

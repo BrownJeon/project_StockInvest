@@ -11,7 +11,7 @@ import { bollinger } from '@/lib/strategy/indicators/bollinger';
 export type StrategyProfile = 'trend' | 'mean-rev' | 'breakout';
 export type UniverseTier = 'core' | 'satellite' | 'speculative';
 
-const UNIVERSE_TOP_N = 20;
+const UNIVERSE_TOP_N = 40;
 const UNIVERSE_TTL_MS = 15 * 60 * 1000;
 /** KOSPI 100/200 근사 — KIS 시총 랭킹 기준 */
 const TIER_CORE_LIMIT      = 100;  // 시총 상위 1~100 = core (KOSPI 100 근사)
@@ -119,9 +119,12 @@ function scoreForProfile(a: StockAnalysis, profile: StrategyProfile, volScore: n
       return volScore * 0.2 + trendScore * 0.5 + atrScore * 0.3;
     }
     case 'mean-rev': {
+      // RSI<35 강한 부스트 — 과매도 진입 종목이 풀 상단으로 올라오도록 비선형 가중
+      // RSI 28 → bonus 1.0, RSI 35 → bonus 0, RSI 21 → bonus 2.0(상한 1.0 적용)
+      const oversoldBonus = a.rsi14 < 35 ? Math.min(1, (35 - a.rsi14) / 7) : 0;
       const rsiScore = Math.max(0, (50 - a.rsi14) / 50);
       const atrScore = gaussianScore(a.atrPct, 0.012, 0.008);
-      return volScore * 0.2 + rsiScore * 0.5 + atrScore * 0.3;
+      return volScore * 0.15 + rsiScore * 0.35 + atrScore * 0.20 + oversoldBonus * 0.30;
     }
     case 'breakout': {
       const bbScore = Math.min(1, a.bbWidth / 0.1);
@@ -218,6 +221,8 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
   const now = new Date();
 
   for (const profile of profiles) {
+    // mean-rev는 매수 후보 풀 확대 (과매도 종목 포착률 ↑)
+    const profileTopN = profile === 'mean-rev' ? 8 : 5;
     const scored = analyses
       .map((a, i) => ({
         symbol: a.symbol,
@@ -227,7 +232,7 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
         detail: { atrPct: a.atrPct, ema20: a.ema20, ema50: a.ema50, rsi14: a.rsi14, bbWidth: a.bbWidth, volScore: normVolumes[i] },
       }))
       .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+      .slice(0, profileTopN);
 
     for (let i = 0; i < scored.length; i++) {
       const s = scored[i];

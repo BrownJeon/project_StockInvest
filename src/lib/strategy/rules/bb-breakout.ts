@@ -1,10 +1,15 @@
 import { bollinger } from '../indicators/bollinger';
+import { atr } from '../indicators/atr';
 import type { RuleFunction } from './types';
 
 /**
  * 볼린저 밴드 돌파 전략:
- * - 매수: 이전 바 종가가 upper 밴드 아래, 현재 바 종가가 upper 돌파 (추세 추종)
+ * - 매수: 이전 바 종가가 upper 밴드 아래, 현재 바 종가가 upper 돌파 + 거래량(≥1.2x) + ATR 거리(≤1.5x) 가드
  * - 매도: 종가가 lower 밴드 아래로 하락 (포지션 청산)
+ *
+ * 매수 가드 (Phase O 강화): 가짜 돌파 차단을 위해
+ *   - 거래량 직전 20봉 평균 대비 1.2x 이상
+ *   - 현재가가 middle 대비 1.5×ATR 이내 (추격 매수 패턴 차단)
  */
 export const bbBreakout: RuleFunction = ({ strategyId, symbol, candles, ticker, amountKRW, style: _style }) => {
   if (candles.length < 22) return [];
@@ -24,10 +29,22 @@ export const bbBreakout: RuleFunction = ({ strategyId, symbol, candles, ticker, 
     (closes[n - 1] <= prev.upper && closes[n] > cur.upper) ||
     (prev2 != null && prev2.upper != null && closes[n - 2] <= prev2.upper && closes[n] > cur.upper);
   if (breakoutBuy) {
+    // 거래량 가드 — 직전 20봉 평균 대비 1.2x 이상이어야 진성 돌파로 인정
+    const vol = candles[n].volume ?? 0;
+    const volAvg20 = candles.slice(-20).reduce((s, c) => s + (c.volume ?? 0), 0) / 20;
+    const volRatio = volAvg20 > 0 ? vol / volAvg20 : 1;
+    if (volRatio < 1.2) return [];
+
+    // ATR 거리 가드 — middle 대비 1.5×ATR 초과면 추격 패턴 차단
+    const atrSeries = atr(candles.map(c => ({ high: c.high, low: c.low, close: c.close })), 14);
+    const atrNow = atrSeries[n];
+    const distance = closes[n] - cur.middle;
+    if (atrNow != null && distance > atrNow * 1.5) return [];
+
     return [{
       strategyId, symbol, side: 'buy', orderType: 'limit', price, amountKRW,
-      reasoning: `BB 상단 돌파 price=${closes[n].toFixed(0)} > upper=${cur.upper.toFixed(0)}`,
-      indicators: { upper: cur.upper, middle: cur.middle, lower: cur.lower, price },
+      reasoning: `BB 상단 돌파 price=${closes[n].toFixed(0)} > upper=${cur.upper.toFixed(0)}, vol×${volRatio.toFixed(2)}, dist=${atrNow != null ? (distance / atrNow).toFixed(2) : 'na'}×ATR`,
+      indicators: { upper: cur.upper, middle: cur.middle, lower: cur.lower, price, volRatio, atrDistanceRatio: atrNow != null ? distance / atrNow : null },
     }];
   }
 

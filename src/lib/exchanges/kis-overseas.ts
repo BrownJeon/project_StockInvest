@@ -15,7 +15,23 @@
 import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
 import { parseOverseas, formatOverseas, toOvrsExcgCd, type OverseasExchange } from './kis-symbols';
+import { getUsdKrwRate } from './fx';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
+
+/**
+ * 해외 시세 응답은 USD 원본. 룰·prefilter·indicator 계산은 KRW 가격 가정으로 일관 동작하도록
+ * **fetch 직후 KRW로 환산**해서 반환한다 (2026-04-28 fix). NFLX 92(원) 같은 1만배 괴리 노이즈 제거.
+ *
+ * 주문 단가는 USD가 필요하므로 dry-run.ts·createOrder는 별도 환산 로직(이미 amountKRW 분리)으로 처리.
+ */
+async function fetchUsdKrwRate(): Promise<number> {
+  try {
+    const r = await getUsdKrwRate();
+    return Number.isFinite(r) && r > 0 ? r : 1;
+  } catch {
+    return 1;  // FX 실패 시 환산 미적용 (변경 전 동작)
+  }
+}
 
 const isMock = () => String(process.env.KIS_MOCK ?? 'true').toLowerCase() === 'true';
 const BASE = (): string => kisBaseUrl();
@@ -54,16 +70,17 @@ export async function getTicker(symbol: string): Promise<Ticker> {
   if (process.env.KIS_OVERSEAS_DEBUG === '1') {
     console.log('[kis-overseas getTicker raw]', symbol, JSON.stringify(o));
   }
-  // last/open/high/low는 USD 단위
+  // last/open/high/low/tamt를 KRW로 환산 (가격은 KRW, 거래량 tvol은 주식수 그대로)
+  const fx = await fetchUsdKrwRate();
   return {
     symbol,
-    price:        Number(o.last),
-    timestamp:    Date.now(),
-    open24h:      Number(o.open ?? o.base ?? 0),
-    high24h:      Number(o.high ?? 0),
-    low24h:       Number(o.low ?? 0),
-    volume24h:    Number(o.tvol ?? 0),
-    quoteVolume24h: Number(o.tamt ?? 0),
+    price:          Number(o.last) * fx,
+    timestamp:      Date.now(),
+    open24h:        Number(o.open ?? o.base ?? 0) * fx,
+    high24h:        Number(o.high ?? 0) * fx,
+    low24h:         Number(o.low ?? 0) * fx,
+    volume24h:      Number(o.tvol ?? 0),
+    quoteVolume24h: Number(o.tamt ?? 0) * fx,
   };
 }
 
@@ -95,14 +112,16 @@ async function getDailyCandles(symbol: string, count: number): Promise<Candle[]>
       'keys=', Object.keys(data));
   }
   const rows: Record<string, string>[] = data.output2 ?? [];
+  // 가격을 KRW로 환산 (volume은 주식수라 환산 불필요). ticker.price와 일관성 유지.
+  const fx = await fetchUsdKrwRate();
   return rows
     .filter(r => r.xymd && Number(r.clos) > 0)
     .map(r => ({
       ts:     new Date(`${r.xymd.slice(0,4)}-${r.xymd.slice(4,6)}-${r.xymd.slice(6,8)}T00:00:00Z`).getTime(),
-      open:   Number(r.open),
-      high:   Number(r.high),
-      low:    Number(r.low),
-      close:  Number(r.clos),
+      open:   Number(r.open) * fx,
+      high:   Number(r.high) * fx,
+      low:    Number(r.low)  * fx,
+      close:  Number(r.clos) * fx,
       volume: Number(r.tvol),
     }))
     .sort((a, b) => a.ts - b.ts)
@@ -310,8 +329,88 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
   }
 }
 
+/**
+ * 해외 일별 주문체결 조회 — TTTS3035R(실전)/VTTS3035R(모의) inquire-period-trans.
+ * order-sync에서 체결된 해외 주문 매칭에 사용.
+ *
+ * 응답 필드:
+ *  - odno: 주문번호
+ *  - sll_buy_dvsn_cd: '01'=매도, '02'=매수
+ *  - ft_ccld_qty: 외화 체결수량 (전체 체결)
+ *  - ft_ccld_unpr3: 외화 체결단가
+ *  - dmst_ord_dt: 국내 주문일자, ord_tmd: 주문시각
+ *
+ * 응답이 USD 단위 단가라 점에 유의 (호출처에서 KRW 변환 필요 시 별도 처리).
+ */
 export async function getCompletedOrders(
-  _symbol: string, _from: number, _to: number, _limit: number,
+  symbol: string, fromTs: number, toTs: number, _limit: number,
 ): Promise<{ orderId: string; side: string; price: number; qty: number; ts: number }[]> {
-  return [];
+  const trId = isMock() ? 'VTTS3035R' : 'TTTS3035R';
+  const { excd, ticker } = parseOverseas(symbol);
+  const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
+  const fmtDate = (ts: number): string => {
+    const d = new Date(ts);
+    const kst = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+    const y = kst.getFullYear();
+    const m = String(kst.getMonth() + 1).padStart(2, '0');
+    const day = String(kst.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  };
+  const params = new URLSearchParams({
+    CANO:           cano,
+    ACNT_PRDT_CD:   acntPrdt,
+    OVRS_EXCG_CD:   toOvrsExcgCd(excd),
+    PDNO:           ticker,
+    ORD_STRT_DT:    fmtDate(fromTs),
+    ORD_END_DT:     fmtDate(toTs),
+    SLL_BUY_DVSN:   '00',  // 전체
+    CCLD_NCCS_DVSN: '01',  // 체결만
+    SORT_SQN:       'DS',
+    CTX_AREA_FK200: '',
+    CTX_AREA_NK200: '',
+  });
+  let attempt = 0;
+  while (true) {
+    const headers = await kisHeaders(trId);
+    try {
+      const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-ccnl?${params}`;
+      const res = await fetch(url, { headers });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
+          await invalidateKisToken();
+          attempt++;
+          continue;
+        }
+        return [];
+      }
+      const data = await res.json();
+      if (process.env.KIS_OVERSEAS_DEBUG === '1') {
+        console.log('[kis-overseas getCompletedOrders raw] rt_cd=', data.rt_cd,
+          'symbol=', symbol, 'output[0]=', JSON.stringify(data.output?.[0] ?? null));
+      }
+      if (data.rt_cd !== '0' || !Array.isArray(data.output)) return [];
+      return (data.output as Record<string, string>[])
+        .filter(o => Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0) > 0)
+        .map(o => {
+          const dt = String(o.dmst_ord_dt ?? o.ord_dt ?? '');
+          const tm = String(o.ord_tmd ?? '000000').padStart(6, '0');
+          let ts = 0;
+          if (dt.length === 8) {
+            ts = new Date(`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${tm.slice(0,2)}:${tm.slice(2,4)}:${tm.slice(4,6)}+09:00`).getTime();
+          }
+          return {
+            orderId: String(o.odno ?? ''),
+            side:    o.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+            price:   Number(o.ft_ccld_unpr3 ?? o.ccld_unpr ?? o.ord_unpr ?? 0),
+            qty:     Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0),
+            ts,
+          };
+        })
+        .filter(o => o.orderId);
+    } catch (e) {
+      console.error('[kis-overseas getCompletedOrders]', e);
+      return [];
+    }
+  }
 }

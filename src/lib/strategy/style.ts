@@ -25,6 +25,10 @@ export interface StyleConfig {
   stableCoreRatioMin: number;
   /** 종목당 동시 진입 한도 — Phase B/C에서 가드 적용 */
   maxPositionsPerSymbol: number;
+  /** limit 주문 호가 추격 비율 (시장가 대비 ±%, 0이면 추격 없음).
+   *  buy: price * (1 + limitChasePct), sell: price * (1 - limitChasePct).
+   *  체결률 보장 vs 슬리피지 방지의 trade-off — 단기 회전 ↑일수록 chase ↑. */
+  limitChasePct: number;
 }
 
 export const STYLE_PRESETS: Record<AnalystStyle, StyleConfig> = {
@@ -43,6 +47,7 @@ export const STYLE_PRESETS: Record<AnalystStyle, StyleConfig> = {
     universeSource:    'volume-top',
     stableCoreRatioMin: 0.20,
     maxPositionsPerSymbol: 3,
+    limitChasePct:     0.005,  // 0.5% — 단기 회전 우선, 미체결 최소화
   },
   neutral: {
     // 중단기 2주~1달 보유, KOSPI 200 종목 기반
@@ -59,6 +64,7 @@ export const STYLE_PRESETS: Record<AnalystStyle, StyleConfig> = {
     universeSource:    'kospi200',
     stableCoreRatioMin: 0.40,
     maxPositionsPerSymbol: 2,
+    limitChasePct:     0.003,  // 0.3%
   },
   stable: {
     // 장기 3~6개월 보유, KOSPI 100 안정 코어 위주
@@ -75,6 +81,7 @@ export const STYLE_PRESETS: Record<AnalystStyle, StyleConfig> = {
     universeSource:    'kospi100',
     stableCoreRatioMin: 0.70,
     maxPositionsPerSymbol: 1,
+    limitChasePct:     0.001,  // 0.1% — 슬리피지 최소화 우선
   },
 };
 

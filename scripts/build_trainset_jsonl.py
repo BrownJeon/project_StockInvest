@@ -74,12 +74,58 @@ def build_user_prompt(row: dict[str, str]) -> str:
     )
 
 
+_NULL_VALUES: set[str | None] = {None, "", "NULL", "\\N"}
+
+
+def _safe_int(v: str | None, default: int = 0) -> int:
+    if v in _NULL_VALUES:
+        return default
+    try:
+        return int(v)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(v: str | None, default: float = 0.0) -> float:
+    if v in _NULL_VALUES:
+        return default
+    try:
+        return float(v)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return default
+
+
+def _resolve_best_label(row: dict[str, str]) -> tuple[int, float, str]:
+    """
+    Phase Q: 24h > 4h > 1h 우선순으로 학습 라벨 선택.
+    Returns: (hit_best, pnl_best, label_window)
+        label_window ∈ {'24h','4h','1h','none'}
+
+    hit_*가 NULL이 아니면(채워진 윈도우면) 해당 윈도우 채택.
+    pnl_*가 NULL인 경우(가격 컬럼 데이터 결손)는 0.0으로 간주하되 윈도우 라벨은 유지.
+    """
+    for window, hit_key, pnl_key in (
+        ("24h", "hit_24h", "pnl_24h"),
+        ("4h",  "hit_4h",  "pnl_4h"),
+        ("1h",  "hit_1h",  "pnl_1h"),
+    ):
+        v = row.get(hit_key)
+        if v not in _NULL_VALUES:
+            return (_safe_int(v), _safe_float(row.get(pnl_key)), window)
+    # legacy 폴백 (Phase Q 이전 export 형식 — hit·actual_pnl_pct 단일 컬럼)
+    if row.get("hit") not in _NULL_VALUES:
+        return (_safe_int(row.get("hit")), _safe_float(row.get("actual_pnl_pct")), "1h")
+    return (0, 0.0, "none")
+
+
 def build_assistant_response(row: dict[str, str]) -> str:
     """
     실제 시그널이 발화됐고 사후 결과(hit/miss)가 나왔을 때 LLM이 했어야 할 응답을 합성.
 
     hit=1: 원래 응답 그대로 (positive example)
     hit=0: confidence 다운그레이드 + warnings에 "(사후 라벨: 빗나감 — 신중 권장)" 추가 (corrective example)
+
+    Phase Q: 라벨은 24h > 4h > 1h 우선순으로 선택 — 장기 노이즈 감소.
     """
     indicators = safe_json_loads(row.get("indicators", "{}"))
     ai = indicators.get("ai", {}) if isinstance(indicators, dict) else {}
@@ -91,8 +137,7 @@ def build_assistant_response(row: dict[str, str]) -> str:
         warnings_orig = []
     reasoning = (row.get("reasoning") or "").replace("\n", " ").strip()
 
-    hit = int(row.get("hit", "0") or "0")
-    actual_pnl = float(row.get("actual_pnl_pct", "0") or "0")
+    hit, actual_pnl, _label_window = _resolve_best_label(row)
     is_skipped = (row.get("status") == "ai_skipped") or (ai.get("skipCategory") in (
         "ai_rejected", "ai_low_confidence", "rule_prefilter"))
 
@@ -139,16 +184,51 @@ def build_assistant_response(row: dict[str, str]) -> str:
     return json.dumps(resp, ensure_ascii=False)
 
 
+def _opt_int(row: dict[str, str], key: str) -> int | None:
+    v = row.get(key)
+    if v in _NULL_VALUES:
+        return None
+    try:
+        return int(v)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return None
+
+
+def _opt_float(row: dict[str, str], key: str) -> float | None:
+    v = row.get(key)
+    if v in _NULL_VALUES:
+        return None
+    try:
+        return float(v)  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return None
+
+
 def build_metadata(row: dict[str, str]) -> dict[str, Any]:
     indicators = safe_json_loads(row.get("indicators", "{}"))
     ai = indicators.get("ai", {}) if isinstance(indicators, dict) else {}
+    market = (row.get("market") or "").strip().lower()
+    domain = market if market in ("domestic", "overseas") else "unknown"
+    fee_pct = 0.43 if domain == "domestic" else (0.50 if domain == "overseas" else 0.43)
+    hit_best, pnl_best, label_window = _resolve_best_label(row)
     return {
         "signal_id":      int(row.get("signal_id", 0) or 0),
         "symbol":         row.get("symbol", ""),
+        "domain":         domain,                    # 'domestic' | 'overseas' | 'unknown'
+        "fee_pct":        fee_pct,                   # 도메인별 왕복 수수료
         "regime_bucket":  ai.get("regimeBucket", "unknown") if isinstance(ai, dict) else "unknown",
         "side":           row.get("side", ""),
-        "hit":            int(row.get("hit", "0") or "0"),
-        "actual_pnl_pct": float(row.get("actual_pnl_pct", "0") or "0"),
+        # Phase Q: 윈도우별 hit·pnl + 우선 채택 라벨 — 0이 채워짐을 의미하므로 `or` 사용 X
+        "hit_1h":         _opt_int(row, "hit_1h")   if "hit_1h"   in row else _opt_int(row, "hit"),
+        "hit_4h":         _opt_int(row, "hit_4h"),
+        "hit_24h":        _opt_int(row, "hit_24h"),
+        "pnl_1h":         _opt_float(row, "pnl_1h") if "pnl_1h"   in row else _opt_float(row, "actual_pnl_pct"),
+        "pnl_4h":         _opt_float(row, "pnl_4h"),
+        "pnl_24h":        _opt_float(row, "pnl_24h"),
+        "label_window":   label_window,              # '24h' | '4h' | '1h' | 'none'
+        # Backcompat — fine-tune 코드가 단일 hit/actual_pnl_pct 만 보는 경우 대응
+        "hit":            hit_best,
+        "actual_pnl_pct": pnl_best,
         "status":         row.get("status", ""),
         "date":           (row.get("created_at", "") or "")[:10],
     }

@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   const hours = Math.min(Number(req.nextUrl.searchParams.get('hours') ?? 24), 168);
   const pool  = getPool();
 
-  const [byStrategy, bySymbol, hourly, consecutive, skipCategories] = await Promise.all([
+  const [byStrategy, bySymbol, hourly, consecutive, skipCategories, byReason, repeatFires, bySide] = await Promise.all([
     // 전략별 승인율
     pool.query<RowDataPacket[]>(`
       SELECT
@@ -93,6 +93,70 @@ export async function GET(req: NextRequest) {
       GROUP BY skip_category
       ORDER BY total DESC
     `, [hours]),
+
+    // reasoning 키워드 기반 거절 사유 분류 — 사용자 진단용 ("타이밍 늦음" 같은 직관적 카테고리)
+    pool.query<RowDataPacket[]>(`
+      SELECT
+        CASE
+          WHEN reasoning LIKE '%과열%' OR reasoning LIKE '%급등 후%' OR reasoning LIKE '%고점 추격%' OR reasoning LIKE '%추격 매수%' OR reasoning LIKE '%추격%' THEN 'late_entry'
+          WHEN reasoning LIKE '%유동성%' OR reasoning LIKE '%거래량%희박%' OR reasoning LIKE '%유동성%희박%' THEN 'liquidity'
+          WHEN reasoning LIKE '%하락 추세%' OR reasoning LIKE '%MACD 음수%' OR reasoning LIKE '%추세 역행%' OR reasoning LIKE '%역추세%' THEN 'counter_trend'
+          WHEN reasoning LIKE '%이미 보유%' OR reasoning LIKE '%평가익%' THEN 'already_held'
+          WHEN reasoning LIKE '%마감%' OR reasoning LIKE '%세션%' THEN 'session_close'
+          WHEN reasoning LIKE '%[dedup_reuse]%' THEN 'dedup_reuse'
+          WHEN reasoning LIKE '%[portfolio_guard%]%' THEN 'portfolio_guard'
+          WHEN reasoning LIKE '%[rule_prefilter]%' THEN 'rule_prefilter'
+          ELSE 'other'
+        END AS reason,
+        COUNT(*) AS total
+      FROM signals
+      WHERE status = 'ai_skipped'
+        AND created_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
+      GROUP BY reason
+      ORDER BY total DESC
+    `, [hours]),
+
+    // 반복 발화 — 같은 (symbol, strategy_id, side)로 N회 이상 (2회 이상 = 반복 의심)
+    pool.query<RowDataPacket[]>(`
+      SELECT
+        symbol,
+        strategy_id,
+        side,
+        COUNT(*) AS fire_count,
+        MIN(created_at) AS first_fire,
+        MAX(created_at) AS last_fire,
+        SUM(status = 'ai_skipped') AS skipped_count
+      FROM signals
+      WHERE created_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
+        AND strategy_id IS NOT NULL
+      GROUP BY symbol, strategy_id, side
+      HAVING fire_count >= 2
+      ORDER BY fire_count DESC
+      LIMIT 30
+    `, [hours]),
+
+    // side별(buy/sell) × 거절 사유 분포 — 매수/매도 패턴 분리 진단
+    pool.query<RowDataPacket[]>(`
+      SELECT
+        side,
+        CASE
+          WHEN status != 'ai_skipped' THEN 'approved'
+          WHEN reasoning LIKE '%과열%' OR reasoning LIKE '%급등 후%' OR reasoning LIKE '%고점 추격%' OR reasoning LIKE '%추격 매수%' OR reasoning LIKE '%추격%' THEN 'late_entry'
+          WHEN reasoning LIKE '%유동성%' OR reasoning LIKE '%거래량%희박%' OR reasoning LIKE '%유동성%희박%' THEN 'liquidity'
+          WHEN reasoning LIKE '%하락 추세%' OR reasoning LIKE '%MACD 음수%' OR reasoning LIKE '%추세 역행%' OR reasoning LIKE '%역추세%' OR reasoning LIKE '%하락추세%' OR reasoning LIKE '%EMA20<EMA60%' THEN 'counter_trend'
+          WHEN reasoning LIKE '%이미 보유%' OR reasoning LIKE '%평가익%' THEN 'already_held'
+          WHEN reasoning LIKE '%마감%' OR reasoning LIKE '%세션%' OR reasoning LIKE '%청산 시간%' THEN 'session_close'
+          WHEN reasoning LIKE '%[dedup_reuse]%' THEN 'dedup_reuse'
+          WHEN reasoning LIKE '%[portfolio_guard%]%' THEN 'portfolio_guard'
+          WHEN reasoning LIKE '%[rule_prefilter]%' THEN 'rule_prefilter'
+          ELSE 'other'
+        END AS reason,
+        COUNT(*) AS total
+      FROM signals
+      WHERE created_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
+      GROUP BY side, reason
+      ORDER BY side, total DESC
+    `, [hours]),
   ]);
 
   const strategyRows  = byStrategy[0]     as RowDataPacket[];
@@ -100,6 +164,9 @@ export async function GET(req: NextRequest) {
   const hourlyRows    = hourly[0]         as RowDataPacket[];
   const consecRows    = consecutive[0]    as RowDataPacket[];
   const skipCatRows   = skipCategories[0] as RowDataPacket[];
+  const reasonRows    = byReason[0]       as RowDataPacket[];
+  const repeatRows    = repeatFires[0]    as RowDataPacket[];
+  const sideRows      = bySide[0]         as RowDataPacket[];
 
   const totalAll      = strategyRows.reduce((s, r) => s + Number(r.total), 0);
   const approvedAll   = strategyRows.reduce((s, r) => s + Number(r.approved), 0);
@@ -144,6 +211,27 @@ export async function GET(req: NextRequest) {
     bySkipCategory: skipCatRows.map(r => ({
       category: r.skip_category as string,
       total:    Number(r.total),
+    })),
+    // reasoning 키워드 기반 직관적 거절 사유 분포
+    byReason: reasonRows.map(r => ({
+      reason: r.reason as string,
+      total:  Number(r.total),
+    })),
+    // 같은 (symbol, strategy, side) 반복 발화 — 룰 후행성 또는 dedup miss 진단
+    repeatFires: repeatRows.map(r => ({
+      symbol:        r.symbol,
+      strategyId:    r.strategy_id,
+      side:          r.side,
+      fireCount:     Number(r.fire_count),
+      skippedCount:  Number(r.skipped_count),
+      firstFire:     r.first_fire,
+      lastFire:      r.last_fire,
+    })),
+    // side별(buy/sell) × reason 분포 — 매수/매도 분리 진단용
+    bySide: sideRows.map(r => ({
+      side:   r.side as 'buy' | 'sell',
+      reason: r.reason as string,
+      total:  Number(r.total),
     })),
   });
 }

@@ -100,6 +100,10 @@ function setupMockDB(opts: MockOpts = {}): Captured {
       cap.orderUpdates.push({ id: Number(params[params.length - 1]), status: m?.[1] });
       return [{}];
     }
+    if (/FROM system_config WHERE `key` = \?/i.test(sql)) {
+      // analyst_style / safety_limit_chase_disabled / safety_dry_run 등 — 기본 미설정
+      return [[]];
+    }
     throw new Error(`unexpected SQL: ${sql}`);
   });
 
@@ -230,5 +234,41 @@ describe('signals/service', () => {
     expect(r.ok).toBe(true);
     expect(cap.signalUpdates.some((u) => u.status === 'rejected' && u.id === 7777)).toBe(true);
     expect(cap.tradeLogs.some((l) => l.event === 'signal_rejected')).toBe(true);
+  });
+
+  // Phase M — limit 호가 추격 (체결률 ↑)
+  test('createSignal buy limit → chase 가격 적용 (neutral 기본 0.003)', async () => {
+    const cap = setupMockDB();
+    await createSignal({
+      symbol: '005930', side: 'buy', orderType: 'limit',
+      price: 100_000, amountKRW: 3_000,
+    });
+    // INSERT INTO orders 의 price (params[6]) 가 100_000 * 1.003 = 100_300
+    const orderInsert = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));
+    expect(orderInsert).toBeDefined();
+    expect(Number(orderInsert!.params[6])).toBeCloseTo(100_300, 0);
+  });
+
+  test('createSignal sell limit → chase 가격 하향 적용', async () => {
+    const cap = setupMockDB();
+    await createSignal({
+      symbol: '005930', side: 'sell', orderType: 'limit',
+      price: 100_000, amountKRW: 3_000,
+    });
+    const orderInsert = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));
+    expect(orderInsert).toBeDefined();
+    // 100_000 * 0.997 = 99_700
+    expect(Number(orderInsert!.params[6])).toBeCloseTo(99_700, 0);
+  });
+
+  test('createSignal market 주문 → chase 미적용 (price null)', async () => {
+    const cap = setupMockDB();
+    await createSignal({
+      symbol: '005930', side: 'buy', orderType: 'market',
+      price: undefined, amountKRW: 3_000,
+    });
+    const orderInsert = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));
+    expect(orderInsert).toBeDefined();
+    expect(orderInsert!.params[6]).toBeNull();
   });
 });
