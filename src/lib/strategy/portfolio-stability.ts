@@ -71,19 +71,25 @@ async function buildHoldingValues(
 
 /**
  * 매수 후 가설 포트폴리오의 코어 비율 계산.
- * coreValue / totalValue. holdings 비어있고 신규 buy만 있을 때는 신규 종목 tier로 계산.
+ * coreValue / totalValue.
+ *
+ * Bootstrap 처리: 기존 보유 합(heldSum)이 0이면 (보유 없음 또는 KIS avgPrice 미수신 등 데이터 누락)
+ *   → 신규 매수 자유 통과 (return 1).
+ *   이 처리가 없으면 빈 포트폴리오 + speculative 신규 매수가 영구히 차단되는 데드락 발생.
+ *   doc(파일 상단 미적용 케이스 ②)와 일치.
  */
 function calcCoreRatio(holdings: HoldingValue[], buySymbol: string, buyValue: number, buyTier: HoldingValue['tier']): number {
   let coreSum = 0;
-  let totalSum = 0;
+  let heldSum = 0;
   for (const h of holdings) {
     // 동일 심볼 추가 매수 시 분리하지 않고 신규 발화로만 카운트 (avgPrice 변동 단순화 위해 기존 value 그대로)
     if (h.tier === 'core') coreSum += h.value;
-    totalSum += h.value;
+    heldSum += h.value;
   }
+  // Bootstrap / 데이터 누락 — 기존 보유 합이 0이면 신규 매수 자유 통과
+  if (heldSum <= 0) return 1;
   if (buyTier === 'core') coreSum += buyValue;
-  totalSum += buyValue;
-  if (totalSum <= 0) return 1; // empty portfolio + speculative buy → 분모 0 회피, pass
+  const totalSum = heldSum + buyValue;
   return coreSum / totalSum;
 }
 

@@ -135,6 +135,20 @@ export async function createSignal(
   );
   const signalId = ins.insertId;
 
+  // Phase AB — RAG 인덱싱 (fire-and-forget, 실패 시 main flow 영향 없음)
+  void import('@/lib/rag/signals-upsert').then(m => m.fireAndForgetUpsertSignal({
+    id: signalId,
+    symbol: input.symbol,
+    side: input.side,
+    strategyId: input.strategyId ?? null,
+    market,
+    status: initialStatus,
+    price: input.price ?? null,
+    reasoning: input.reasoning ?? null,
+    indicators: (input.indicators ?? null) as Record<string, unknown> | null,
+    createdAt: new Date().toISOString(),
+  })).catch(() => {/* import 실패 무시 */});
+
   if (decision.route !== 'auto_submit') {
     const ttlMin = decision.expiresAt
       ? Math.round((new Date(decision.expiresAt).getTime() - Date.now()) / 60000)

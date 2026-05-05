@@ -798,11 +798,77 @@ function parseBatchResult(raw: string, inputs: BatchSymbolInput[]): BatchResult 
   return { decisions, marketView: typeof parsed.marketView === 'string' ? parsed.marketView : undefined };
 }
 
-const BATCH_TIMEOUT_MS = 180000;
+// 180s → 300s: Stage 2 Claude CLI subprocess 직렬화 큐 + 재시도 3회 마진 확보.
+// TradingInvest 36h 운영에서 sell ai_failed 338건이 모두 'aborted' (timeout) 였던 사례 반영.
+const BATCH_TIMEOUT_MS = 300000;
+
+/**
+ * Stage 1 결정으로부터 BatchDecision 생성 (Hybrid 모드 전용).
+ * - pass     : 첫 번째 후보(EV 큰 순) 1개 선택 + reasoning에 stage1 reasoning 보존
+ * - reject   : 빈 selectedIndices + skipCategory='ai_rejected'
+ * - escalate : 사용 안 함 (escalate는 Stage 2로 가므로 호출되지 않음)
+ *
+ * Stage 1 신뢰도(0.0~1.0)는 BatchDecision.confidence(0~100)로 환산.
+ */
+function buildBatchDecisionFromStage1(
+  input: BatchSymbolInput,
+  d: import('./ai-filter-stage1').Stage1Decision | undefined,
+): BatchDecision {
+  const confidencePct = Math.round((d?.confidence ?? 0.5) * 100);
+  if (!d || d.verdict === 'reject') {
+    return {
+      symbol: input.symbol,
+      selectedIndices: [],
+      confidence: confidencePct,
+      reasoning: d?.reasoning ?? 'stage1 reject',
+      warnings: [],
+      skipCategory: 'ai_rejected',
+    };
+  }
+  // pass — 후보 중 첫 번째 1개만 채택 (EV 추정은 stage1 값 사용)
+  const evPct = d.evEstimatePct;
+  return {
+    symbol: input.symbol,
+    selectedIndices: input.candidates.length > 0 ? [0] : [],
+    confidence: confidencePct,
+    reasoning: `[stage1] ${d.reasoning}`,
+    warnings: [],
+    ev: { pWin: 0.55, rWin: Math.max(0.5, evPct + 1), rLoss: -1, evPct },
+  };
+}
+
+/**
+ * Stage 1 (pass/reject) 결정 + Stage 2 (Claude) 결정을 단일 BatchResult로 병합.
+ * 입력 inputs 순서대로 decisions 배치.
+ */
+function mergeStage1AndStage2(
+  allInputs: BatchSymbolInput[],
+  stage1: import('./ai-filter-stage1').Stage1Decision[],
+  stage2: BatchResult,
+): BatchResult {
+  const stage2Map = new Map(stage2.decisions.map(d => [d.symbol, d]));
+  const stage1Map = new Map(stage1.map(d => [d.symbol, d]));
+
+  const decisions: BatchDecision[] = allInputs.map(input => {
+    const s2 = stage2Map.get(input.symbol);
+    if (s2) return s2;       // Claude가 결정한 항목
+    const s1 = stage1Map.get(input.symbol);
+    return buildBatchDecisionFromStage1(input, s1);
+  });
+
+  return {
+    decisions,
+    marketView: stage2.marketView,
+    error: stage2.error,
+  };
+}
 
 /**
  * 여러 종목의 후보를 **단일 CLI 호출**에 배열로 묶어 제출하고 심볼별 결정을 받는다.
  * 실패 시 error 필드에 메시지, decisions는 빈 배열.
+ *
+ * Hybrid 모드(provider==='hybrid'): 함수 진입부에서 Stage 1(M4 도메인 모델) 광역 스크리닝 →
+ * pass/reject 즉시 결정, escalate만 Stage 2(Claude)로 전송. Stage 1 실패 시 legacy로 fallback.
  */
 export async function aiSelectSignalBatch(
   inputs: BatchSymbolInput[],
@@ -813,11 +879,66 @@ export async function aiSelectSignalBatch(
 ): Promise<BatchResult> {
   if (inputs.length === 0) return { decisions: [] };
 
-  const prompt = await buildBatchPrompt(inputs, style, analystStyle, marketContext, market);
+  // === Hybrid 모드 인터셉트 — Stage 1 광역 스크리닝 ===
+  // provider==='hybrid' 일 때만 동작. Stage 1 실패 시 legacy single-stage로 즉시 fallback.
+  let escalateInputs: BatchSymbolInput[] = inputs;
+  let stage1Decisions: import('./ai-filter-stage1').Stage1Decision[] = [];
+  try {
+    const { getActiveProvider } = await import('@/lib/llm/provider');
+    const provider = await getActiveProvider();
+    if (provider === 'hybrid') {
+      const { runStage1Screen } = await import('./ai-filter-stage1');
+      try {
+        const stage1 = await runStage1Screen(inputs, market);
+        stage1Decisions = stage1.decisions;
+
+        // 'volatile_high' regime이거나 보유 종목이면 Stage 1 결과 무시하고 Claude로 escalate (안전성)
+        const forceEscalateSymbols = new Set(
+          inputs
+            .filter(i => (i.heldQty ?? 0) > 0)
+            .map(i => i.symbol),
+        );
+
+        // pass/reject는 Stage 1 결정 채택, escalate만 Stage 2(Claude)로
+        escalateInputs = inputs.filter(i => {
+          if (forceEscalateSymbols.has(i.symbol)) return true;
+          const d = stage1.decisions.find(s => s.symbol === i.symbol);
+          return !d || d.verdict === 'escalate';
+        });
+
+        // 모두 pass/reject 처리됐으면 Stage 2 호출 자체 스킵
+        if (escalateInputs.length === 0) {
+          const decisions: BatchDecision[] = inputs.map(input => {
+            const d = stage1.decisions.find(s => s.symbol === input.symbol);
+            return buildBatchDecisionFromStage1(input, d);
+          });
+          console.log(`[ai-batch:hybrid] all ${inputs.length} symbols decided at stage1 — Claude skipped`);
+          return { decisions };
+        }
+        console.log(`[ai-batch:hybrid] stage1: ${inputs.length} → escalate ${escalateInputs.length} to Claude`);
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        console.warn(`[ai-batch:hybrid] stage1 실패 — legacy single-stage로 fallback: ${errMsg}`);
+        escalateInputs = inputs;
+        stage1Decisions = [];
+      }
+    }
+  } catch (e) {
+    // provider 모듈 import 실패 — 안전하게 legacy 동작
+    console.warn(`[ai-batch:hybrid] provider 조회 실패 — legacy: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  const prompt = await buildBatchPrompt(escalateInputs, style, analystStyle, marketContext, market);
 
   try {
     const raw = await runClaude(prompt, BATCH_TIMEOUT_MS);
-    const result = parseBatchResult(raw, inputs);
+    const stage2Result = parseBatchResult(raw, escalateInputs);
+
+    // Stage 1 채택 결과를 stage2Result.decisions에 병합 (escalate가 아닌 pass/reject만)
+    const result: BatchResult =
+      stage1Decisions.length > 0 && escalateInputs.length < inputs.length
+        ? mergeStage1AndStage2(inputs, stage1Decisions, stage2Result)
+        : stage2Result;
     const minConfidence = style?.minAiConfidence ?? 55;
     const styleName = STYLE_LABEL[analystStyle] ?? '중립적';
 
@@ -861,7 +982,8 @@ export async function aiSelectSignal(
   const minConfidence = style?.minAiConfidence ?? 55;
 
   try {
-    const raw    = await runClaude(prompt);
+    // 단건 호출(주로 보유 종목 청산 fallback)도 BATCH와 동일 timeout — Claude CLI subprocess 큐 영향
+    const raw    = await runClaude(prompt, BATCH_TIMEOUT_MS);
     const result = parseResult(raw);
     // 범위 초과 인덱스 보정 (parseSelectedIndices에서 일부 처리되지만 candidates.length 모르고 호출되는 경로 대비)
     result.selectedIndices = result.selectedIndices.filter(i => i >= 0 && i < candidates.length);

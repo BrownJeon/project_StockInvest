@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-type Provider = 'claude' | 'home-m4-api';
+type Provider = 'claude' | 'home-m4-api' | 'hybrid';
 
 interface ApiResponse {
   ok: boolean;
@@ -11,6 +11,12 @@ interface ApiResponse {
     homeM4ApiBase?: string;
     homeM4ApiModel?: string;
     homeM4ApiTemperature?: number;
+    stage1Model?: string;
+    stage1TimeoutMs?: number;
+    ragEnabled?: boolean;
+    ragTopKSignals?: number;
+    ragTopKNews?: number;
+    ragLookbackDays?: number;
   };
   overrides?: Record<string, unknown>;
   env?: Record<string, string | null>;
@@ -19,11 +25,13 @@ interface ApiResponse {
 const LABEL: Record<Provider, string> = {
   claude:        'Claude CLI',
   'home-m4-api': '로컬 LLM (home-m4-api)',
+  hybrid:        '🔀 Hybrid (M4 + Claude) [권장]',
 };
 
 const DESC: Record<Provider, string> = {
   claude:        '~/.claude 구독 인증으로 호출. 추가 비용 없음.',
   'home-m4-api': '자체 운영 Mac M4 API 허브 호출 (POST /v1/chat). 인증키는 .env(AI_API_KEY) 전용.',
+  hybrid:        'Stage 1(M4 Ollama)이 광역 스크리닝 → 회색 영역만 Stage 2(Claude)로 escalate. 평균 80%+ Claude 호출 절감.',
 };
 
 interface TestResult {
@@ -45,6 +53,13 @@ export function LlmProviderSection() {
   const [m4Model, setM4Model] = useState('llama3');
   const [m4Temp, setM4Temp]   = useState('0.3');
   const [apiKeySet, setApiKeySet] = useState<boolean>(false);
+  // Hybrid + RAG (Phase AB)
+  const [stage1Model, setStage1Model] = useState('glm-4.7-flash');
+  const [stage1Timeout, setStage1Timeout] = useState('30000');
+  const [ragEnabled, setRagEnabled] = useState<boolean>(true);
+  const [ragTopKSignals, setRagTopKSignals] = useState('5');
+  const [ragTopKNews, setRagTopKNews] = useState('3');
+  const [ragLookback, setRagLookback] = useState('7');
 
   const [activeProvider, setActiveProvider] = useState<Provider>('claude');
   const [msg, setMsg] = useState<string | null>(null);
@@ -62,6 +77,13 @@ export function LlmProviderSection() {
         if (d.active.homeM4ApiModel)            setM4Model(d.active.homeM4ApiModel);
         if (d.active.homeM4ApiTemperature != null) setM4Temp(String(d.active.homeM4ApiTemperature));
         setApiKeySet(d.env?.AI_API_KEY_set === 'yes');
+        // Phase AB
+        if (d.active.stage1Model)        setStage1Model(d.active.stage1Model);
+        if (d.active.stage1TimeoutMs != null) setStage1Timeout(String(d.active.stage1TimeoutMs));
+        if (d.active.ragEnabled != null) setRagEnabled(!!d.active.ragEnabled);
+        if (d.active.ragTopKSignals != null) setRagTopKSignals(String(d.active.ragTopKSignals));
+        if (d.active.ragTopKNews != null)    setRagTopKNews(String(d.active.ragTopKNews));
+        if (d.active.ragLookbackDays != null) setRagLookback(String(d.active.ragLookbackDays));
       })
       .finally(() => setLoading(false));
   }, []);
@@ -109,6 +131,15 @@ export function LlmProviderSection() {
         const t = Number(m4Temp);
         if (Number.isFinite(t)) body.homeM4ApiTemperature = t;
       }
+      if (provider === 'hybrid') {
+        body.stage1Model = stage1Model.trim() || 'glm-4.7-flash';
+        const t1 = Number(stage1Timeout);
+        if (Number.isFinite(t1)) body.stage1TimeoutMs = t1;
+        body.ragEnabled = ragEnabled;
+        const k1 = Number(ragTopKSignals); if (Number.isFinite(k1)) body.ragTopKSignals = k1;
+        const k2 = Number(ragTopKNews);    if (Number.isFinite(k2)) body.ragTopKNews = k2;
+        const k3 = Number(ragLookback);    if (Number.isFinite(k3)) body.ragLookbackDays = k3;
+      }
       const res = await fetch('/api/settings/llm-provider', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -141,7 +172,7 @@ export function LlmProviderSection() {
 
       {/* 라디오 그룹 */}
       <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {(['claude', 'home-m4-api'] as Provider[]).map(p => (
+        {(['claude', 'home-m4-api', 'hybrid'] as Provider[]).map(p => (
           <label key={p} style={{
             display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px',
             borderRadius: 8, cursor: 'pointer',
@@ -187,6 +218,62 @@ export function LlmProviderSection() {
           </div>
           <TestButton testing={testing} disabled={!m4Base.trim() || !m4Model.trim() || !apiKeySet} onClick={test} />
           <TestResultView result={testResult} />
+        </div>
+      )}
+
+      {/* hybrid 세부 설정 — Phase AB */}
+      {provider === 'hybrid' && (
+        <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Field label="Stage 1 모델 (도메인 통합)" hint="default glm-4.7-flash. 도메인 fine-tune 후 stockinvest-* 로 변경.">
+            <input value={stage1Model} onChange={e => setStage1Model(e.target.value)} placeholder="glm-4.7-flash" style={inputStyle} />
+          </Field>
+          <Field label="Stage 1 Timeout (ms)" hint="5000~120000">
+            <input type="number" value={stage1Timeout} onChange={e => setStage1Timeout(e.target.value)} style={{ ...inputStyle, width: 120 }} />
+          </Field>
+
+          <div style={{ marginTop: 6, padding: '10px 12px', borderRadius: 8, background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input type="checkbox" checked={ragEnabled} onChange={e => setRagEnabled(e.target.checked)} style={{ cursor: 'pointer' }} />
+              <span style={{ fontSize: 13, fontWeight: 600 }}>📚 RAG 활성 (과거 시그널·뉴스·매크로 컨텍스트 자동 첨부)</span>
+            </label>
+            {ragEnabled && (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <Field label="top_k 과거시그널" hint="0~20">
+                  <input type="number" value={ragTopKSignals} onChange={e => setRagTopKSignals(e.target.value)} style={{ ...inputStyle, width: 80 }} />
+                </Field>
+                <Field label="top_k 뉴스" hint="0~20">
+                  <input type="number" value={ragTopKNews} onChange={e => setRagTopKNews(e.target.value)} style={{ ...inputStyle, width: 80 }} />
+                </Field>
+                <Field label="lookback days" hint="1~90">
+                  <input type="number" value={ragLookback} onChange={e => setRagLookback(e.target.value)} style={{ ...inputStyle, width: 80 }} />
+                </Field>
+              </div>
+            )}
+          </div>
+
+          <div style={{
+            padding: '8px 10px', borderRadius: 6, fontSize: 11,
+            background: 'rgba(245,158,11,.08)',
+            color: 'var(--muted)',
+            border: '1px solid rgba(245,158,11,.3)',
+          }}>
+            <div style={{ marginBottom: 4 }}>
+              <strong>Stage 1 → Stage 2 임계값 (read-only):</strong>
+            </div>
+            <div>· pass     : EV ≥ +0.5% AND confidence ≥ 70%</div>
+            <div>· reject   : EV ≤ -0.3% OR confidence &lt; 40%</div>
+            <div>· escalate : 그 외 (Claude Sonnet 최종 결정)</div>
+          </div>
+          <div style={{
+            padding: '8px 10px', borderRadius: 6, fontSize: 11,
+            background: apiKeySet ? 'rgba(34,197,94,.1)' : 'rgba(239,68,68,.1)',
+            color: apiKeySet ? 'var(--ok)' : 'var(--down)',
+            border: `1px solid ${apiKeySet ? 'rgba(34,197,94,.3)' : 'rgba(239,68,68,.3)'}`,
+          }}>
+            {apiKeySet
+              ? '🔑 AI_API_KEY .env에 설정됨 (Stage 1 + RAG 호출에 사용)'
+              : '⚠ AI_API_KEY 가 .env에 없습니다 — Stage 1·RAG 호출 실패'}
+          </div>
         </div>
       )}
 

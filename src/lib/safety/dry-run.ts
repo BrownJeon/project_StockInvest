@@ -118,10 +118,14 @@ export async function submitOrder(
     }
   }
 
-  const daily = await checkDailyMax(reqWithKrw, effDailyMax);
-  if (!daily.ok) {
-    await markBlocked(orderId, daily.reason ?? 'daily_limit', daily.detail);
-    return { ok: false, orderId, clientOrderId, blockedBy: daily.reason, error: daily.detail };
+  // sell은 포지션 청산이므로 일일 누적 한도도 제외 — 1회 한도·변동성 가드와 동일 원칙.
+  // 이전: sell이 daily_limit에 걸려 청산 차단됨 (변동장 손절 불가 위험). 정책 일관성 회복.
+  if (req.side !== 'sell') {
+    const daily = await checkDailyMax(reqWithKrw, effDailyMax);
+    if (!daily.ok) {
+      await markBlocked(orderId, daily.reason ?? 'daily_limit', daily.detail);
+      return { ok: false, orderId, clientOrderId, blockedBy: daily.reason, error: daily.detail };
+    }
   }
 
   // 6b. 변동폭 가드 — 매도는 하락 시 청산 목적이므로 제외

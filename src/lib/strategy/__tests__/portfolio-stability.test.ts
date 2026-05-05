@@ -79,12 +79,24 @@ describe('checkPortfolioStability', () => {
     expect(r.reason).toBe('max_positions_exceeded');
   });
 
-  test('stableCoreRatioMin 위반 → skip (안정 모드, speculative 매수)', async () => {
-    // 안정 모드: 코어 70% 요구. 빈 포트폴리오에 speculative 매수 → 코어 0% < 70%
+  test('빈 포트폴리오 부트스트랩 → pass (안정 모드, speculative 매수)', async () => {
+    // 빈 포트폴리오에서는 신규 매수가 어느 tier든 자유 통과 (bootstrap).
+    // 데드락 회피: 코어 보유 0이면 speculative도 차단되어 시드 확보 불가능했던 버그 수정.
     setupPool({ tiers: { '263750': 'speculative' } });
     const r = await checkPortfolioStability({
       symbol: '263750', side: 'buy', amountKRW: 1_000_000, market: 'domestic',
       style: STYLE_STABLE, heldAmounts: new Map(),
+    });
+    expect(r.verdict).toBe('pass');
+  });
+
+  test('기존 보유에 core 0% 이고 speculative만 있는 경우 → skip (안정 모드)', async () => {
+    // 기존 보유 1M (모두 speculative), 신규 speculative 매수 → ratio = 0/2M = 0 < 0.7 → skip
+    setupPool({ tiers: { '247540': 'speculative', '263750': 'speculative' } });
+    const heldAmounts = new Map([['247540', { qty: 10, avgPrice: 100_000 }]]); // 1M speculative
+    const r = await checkPortfolioStability({
+      symbol: '263750', side: 'buy', amountKRW: 1_000_000, market: 'domestic',
+      style: STYLE_STABLE, heldAmounts,
     });
     expect(r.verdict).toBe('skip');
     expect(r.reason).toBe('core_ratio_below_min');
@@ -112,13 +124,13 @@ describe('checkPortfolioStability', () => {
     expect(r.verdict).toBe('pass');
   });
 
-  test('공격 모드 — coreRatioMin 0.20 — speculative 단독 매수도 통과', async () => {
-    // ratio 0/1 = 0 < 0.20 → skip; 빈 포트폴리오에서는 공격 모드도 거절
+  test('공격 모드 — 빈 포트폴리오 부트스트랩 → pass (speculative 단독 매수)', async () => {
+    // 부트스트랩 정책: 빈 포트폴리오에서는 모든 tier 통과 (안정/공격 모드 동일 정책)
     setupPool({ tiers: { '263750': 'speculative' } });
     const r = await checkPortfolioStability({
       symbol: '263750', side: 'buy', amountKRW: 1_000_000, market: 'domestic',
       style: STYLE_AGGRESSIVE, heldAmounts: new Map(),
     });
-    expect(r.verdict).toBe('skip');
+    expect(r.verdict).toBe('pass');
   });
 });

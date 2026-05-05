@@ -680,7 +680,10 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       results.set(symbol, { symbol, signalsCreated: 0, error: ctx.error });
       continue;
     }
-    if (ctx.candidates.length === 0) {
+    // candidate 0건이라도 보유 종목이면 시나리오 청산(트레일링/시간만료/손절)을 위해 contexts에 포함.
+    // 미보유 + candidate 0건만 즉시 종료. (TradingInvest fix와 동일 — 매도 시그널 누락 방지)
+    const isHeld = !!ctx.heldQty && ctx.heldQty > 0;
+    if (ctx.candidates.length === 0 && !isHeld) {
       results.set(symbol, { symbol, signalsCreated: 0, rawCandidates: 0 });
       continue;
     }

@@ -67,7 +67,7 @@ export async function GET(req: Request) {
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT id, account_id, client_order_id, exchange_order_id, asset_class,
               symbol, side, type, price, quantity, amount_krw,
-              status, blocked_by, source, created_at, updated_at
+              status, blocked_by, source, market, created_at, updated_at
        FROM orders
        ${whereSql}
        ORDER BY created_at DESC
