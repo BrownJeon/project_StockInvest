@@ -300,8 +300,11 @@ async function applyFilters(
       }
     }
     for (const { cand, reason } of skipped) {
+      const [reasonKey, ...detailParts] = reason.split(':');
+      const detail = detailParts.join(':').trim();
+      const { formatPrefilterReason } = await import('./skip-reason-formatter');
       await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
-        reasoning: `[rule_prefilter] ${reason}`,
+        reasoning: formatPrefilterReason(reasonKey.trim(), detail, cand.side),
         category: 'rule_prefilter',
         confidence: 0,
       });
@@ -327,8 +330,13 @@ async function applyFilters(
       });
       if (decision.verdict === 'skip') {
         guardSkips++;
+        const reasonKor = decision.reason === 'core_ratio_below_min'
+          ? '코어(KOSPI 100) 비율 미달'
+          : decision.reason === 'max_positions_exceeded'
+            ? '24h 종목당 매수 한도 초과'
+            : (decision.reason ?? '안전성 가드');
         await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
-          reasoning: `[portfolio_guard:${decision.reason}] ${decision.detail ?? ''}`,
+          reasoning: `[매수 포트폴리오 안전 가드] ${reasonKor} — ${decision.detail ?? ''}`.trim(),
           category: 'portfolio_guard',
           confidence: 0,
         });
@@ -361,8 +369,9 @@ async function applyFilters(
     );
     if (hit.hit && hit.prev) {
       dedupHits++;
+      const sideKor = cand.side === 'sell' ? '매도' : '매수';
       await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
-        reasoning: `[dedup_reuse] ${hit.prev.reasoning.slice(0, 200)}`,
+        reasoning: `[${sideKor} 중복 제거] 같은 시장 상태에서 최근 같은 결정 반복 — 재평가 생략 | 이전 사유: "${hit.prev.reasoning.slice(0, 150)}"`,
         category: 'dedup_reuse',
         confidence: hit.prev.confidence,
         warnings: hit.prev.warnings,
@@ -436,8 +445,12 @@ async function applyBatchDecisions(
   needsAiMap: Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>,
   batchDecisions: BatchDecision[],
   results: Map<string, EvalResult>,
+  style: StyleConfig,
+  analystStyle: AnalystStyle,
 ): Promise<void> {
   const pool = getPool();
+  const { formatSkipReason } = await import('./skip-reason-formatter');
+  const styleNameMap: Record<string, string> = { aggressive: '공격적', neutral: '중립적', stable: '안정적' };
   for (const d of batchDecisions) {
     const entry = needsAiMap.get(d.symbol);
     if (!entry) continue;
@@ -446,7 +459,14 @@ async function applyBatchDecisions(
     if (d.selectedIndices.length === 0 || d.skipCategory === 'ai_failed') {
       for (const sig of needsAi) {
         await insertSkipAuditPool(pool, sig, d.symbol, ctx.ticker.price, {
-          reasoning: `[${d.skipCategory ?? 'ai_rejected'}:${d.confidence}%] ${d.reasoning}`,
+          reasoning: formatSkipReason({
+            category: d.skipCategory ?? 'ai_rejected',
+            side: sig.side,
+            confidence: d.confidence,
+            rawReasoning: d.reasoning,
+            minConfidence: style.minAiConfidence,
+            styleName: styleNameMap[analystStyle] ?? analystStyle,
+          }),
           category: d.skipCategory ?? 'ai_rejected',
           confidence: d.confidence,
           warnings: d.warnings,
@@ -497,7 +517,14 @@ async function applyBatchDecisions(
         }
       } else {
         await insertSkipAuditPool(pool, cand, d.symbol, ctx.ticker.price, {
-          reasoning: `[${d.skipCategory ?? 'ai_rejected'}:${d.confidence}%] ${d.reasoning}`,
+          reasoning: (await import('./skip-reason-formatter')).formatSkipReason({
+            category: d.skipCategory ?? 'ai_rejected',
+            side: cand.side,
+            confidence: d.confidence,
+            rawReasoning: d.reasoning,
+            minConfidence: style.minAiConfidence,
+            styleName: ({aggressive:'공격적',neutral:'중립적',stable:'안정적'} as any)[analystStyle] ?? analystStyle,
+          }),
           category: d.skipCategory ?? 'ai_rejected',
           confidence: d.confidence,
           warnings: d.warnings,
@@ -543,7 +570,14 @@ async function fallbackPerSymbol(
       if (aiResult.selectedIndices.length === 0) {
         for (const sig of needsAi) {
           await insertSkipAuditPool(pool, sig, symbol, ctx.ticker.price, {
-            reasoning: `[${aiResult.skipCategory ?? 'ai_rejected'}:${aiResult.confidence}%] ${aiResult.reasoning}`,
+            reasoning: (await import('./skip-reason-formatter')).formatSkipReason({
+            category: aiResult.skipCategory ?? 'ai_rejected',
+            side: sig.side,
+            confidence: aiResult.confidence,
+            rawReasoning: aiResult.reasoning,
+            minConfidence: style.minAiConfidence,
+            styleName: ({aggressive:'공격적',neutral:'중립적',stable:'안정적'} as any)[analystStyle] ?? analystStyle,
+          }),
             category: aiResult.skipCategory ?? 'ai_rejected',
             confidence: aiResult.confidence,
             warnings: aiResult.warnings,
@@ -586,7 +620,14 @@ async function fallbackPerSymbol(
             }
           } else {
             await insertSkipAuditPool(pool, cand, symbol, ctx.ticker.price, {
-              reasoning: `[${aiResult.skipCategory ?? 'ai_rejected'}:${aiResult.confidence}%] ${aiResult.reasoning}`,
+              reasoning: (await import('./skip-reason-formatter')).formatSkipReason({
+            category: aiResult.skipCategory ?? 'ai_rejected',
+            side: cand.side,
+            confidence: aiResult.confidence,
+            rawReasoning: aiResult.reasoning,
+            minConfidence: style.minAiConfidence,
+            styleName: ({aggressive:'공격적',neutral:'중립적',stable:'안정적'} as any)[analystStyle] ?? analystStyle,
+          }),
               category: aiResult.skipCategory ?? 'ai_rejected',
               confidence: aiResult.confidence,
               warnings: aiResult.warnings,
@@ -604,7 +645,7 @@ async function fallbackPerSymbol(
       skippedCount++;
       for (const sig of needsAi) {
         await insertSkipAuditPool(pool, sig, symbol, ctx.ticker.price, {
-          reasoning: `[ai_failed] 배치 실패 + 비보유 → 다음 tick 재시도. ${reason}`,
+          reasoning: `[${sig.side === 'sell' ? '매도' : '매수'} AI 호출 실패] AI 응답을 받지 못해 다음 평가 주기에 재시도 — ${reason}`,
           category: 'ai_failed',
           confidence: 0,
           regimeBucket: regimeBucket ?? undefined,
@@ -726,7 +767,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       if (batchResult.error || batchResult.decisions.length === 0) {
         await fallbackPerSymbol(needsAiMap, style, analystStyle, heldAmounts, results, batchResult.error ?? 'empty decisions', market);
       } else {
-        await applyBatchDecisions(needsAiMap, batchResult.decisions, results);
+        await applyBatchDecisions(needsAiMap, batchResult.decisions, results, style, analystStyle);
       }
     }
   }

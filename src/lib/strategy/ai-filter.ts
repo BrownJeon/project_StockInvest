@@ -319,7 +319,11 @@ ${judgmentCriteria}
 selectedIndices 배열에 EV>0.1% 통과한 후보 인덱스를 EV 큰 순서로 **최대 ${MAX_PICKS_PER_SYMBOL}개**까지 입력하세요(0~${candidates.length - 1}).
 모두 부적합하면 빈 배열 [].
 반드시 JSON 형식으로만 응답하세요:
-${outputSpec}`;
+${outputSpec}
+
+## 언어 규칙 (필수)
+- "reasoning", "warnings" 모든 텍스트는 **반드시 한국어로만** 작성
+- 영어/중국어(中文)/일본어 사용 금지 — 위반 시 응답 무효`;
 }
 
 /**
@@ -717,15 +721,20 @@ ${symbolBlocks}
 반드시 아래 JSON 형식으로만 응답. 각 종목에 대해 독립적으로 판단:
 \`\`\`json
 {
-  "marketView": "시장 전반 한 줄 코멘트",
+  "marketView": "시장 전반 한 줄 코멘트 (반드시 한국어)",
   "decisions": [
-    { "symbol": "KRW-XXX", "selectedIndices": [0], "confidence": 62, "reasoning": "한국어 근거", ${evField}"warnings": [] }
+    { "symbol": "KRW-XXX", "selectedIndices": [0], "confidence": 62, "reasoning": "반드시 한국어로만 작성", ${evField}"warnings": [] }
   ]
 }
 \`\`\`
 - selectedIndices: 각 종목 후보 배열의 인덱스 0~N-1 중 EV 큰 순 최대 ${MAX_PICKS_PER_SYMBOL}개. 모두 부적합 시 빈 배열 []
 - decisions 배열은 제공된 ${inputs.length}개 종목 **모두** 포함
-- 심볼 누락 금지`;
+- 심볼 누락 금지
+
+## 언어 규칙 (필수)
+- "marketView", "reasoning", "warnings" 모든 텍스트는 **반드시 한국어로만** 작성
+- 영어/중국어(中文)/일본어 사용 금지 — 위반 시 응답 무효
+- 예시: "RSI 과열 + 거래량 부족 → 매수 보류", "MA 데드크로스 + 음봉 확정 → 청산 권고"`;
 }
 
 function parseBatchResult(raw: string, inputs: BatchSymbolInput[]): BatchResult {
