@@ -25,7 +25,7 @@ export async function GET() {
   }
   // home-m4-api: 설정에 정의된 모델 1개 고정
   const cfg = await getProviderConfig();
-  const modelId = cfg.homeM4ApiModel ?? 'llama3';
+  const modelId = cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct';
   return NextResponse.json({
     ok: true,
     provider,

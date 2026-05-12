@@ -18,6 +18,7 @@ import { runLlmOnce, getProviderConfig } from '@/lib/llm/provider';
 import type { Market } from '@/lib/exchanges/kis-symbols';
 import { retrieveRagContext } from '@/lib/rag/retrieval';
 import { formatRagSection } from '@/lib/rag/format';
+import { fetchMarketContext } from './market-context-client';
 
 export type Stage1Verdict = 'pass' | 'reject' | 'escalate';
 
@@ -68,15 +69,35 @@ function buildSymbolBlocks(inputs: BatchSymbolInput[]): string {
 }
 
 /**
- * Stage 1 query 텍스트 — RAG 검색용 자유문 (~500자).
- * 시그널 batch 전체 요약: 심볼·핵심 지표 결합.
+ * Stage 1 query 텍스트 — RAG 검색용 자유문.
+ *
+ * D-10: 종목 수에 따라 분기.
+ *  - 종목 ≤3: 기존처럼 한 query 결합 (임베딩 1회로 충분)
+ *  - 종목 >3: 종목별 query 로 분리 호출 (다종목 결합은 임베딩 의미 분산 → hits 품질 저하).
+ *    news/macro 는 종목 무관해서 결합 query 결과 재사용해도 OK 지만, signals 는 종목별로 따로 검색해야 의미.
  */
+const PER_SYMBOL_QUERY_THRESHOLD = 3;
+
+function buildSingleSymbolQuery(i: BatchSymbolInput): string {
+  const s = i.summary;
+  const side = i.candidates[0]?.side ?? 'buy';
+  return `${i.symbol} ${side} rsi=${s.rsi14 ?? 'N/A'} chg5=${s.priceChange5}% volRatio=${s.volumeRatio ?? 'N/A'}`;
+}
+
 function buildRagQueryText(inputs: BatchSymbolInput[]): string {
-  return inputs.map(i => {
-    const s = i.summary;
-    const side = i.candidates[0]?.side ?? 'buy';
-    return `${i.symbol} ${side} rsi=${s.rsi14 ?? 'N/A'} chg5=${s.priceChange5}% volRatio=${s.volumeRatio ?? 'N/A'}`;
-  }).join('; ');
+  return inputs.map(buildSingleSymbolQuery).join('; ');
+}
+
+/** D-10: signals hits 머지 — id 중복 제거, score desc 정렬. */
+function mergeKbHits<T extends { id: string; score: number }>(arrs: T[][], maxKeep: number): T[] {
+  const seen = new Map<string, T>();
+  for (const arr of arrs) {
+    for (const h of arr) {
+      const ex = seen.get(h.id);
+      if (!ex || h.score > ex.score) seen.set(h.id, h);
+    }
+  }
+  return Array.from(seen.values()).sort((a, b) => b.score - a.score).slice(0, maxKeep);
 }
 
 async function buildStage1Prompt(inputs: BatchSymbolInput[], market: Market): Promise<string> {
@@ -88,18 +109,63 @@ async function buildStage1Prompt(inputs: BatchSymbolInput[], market: Market): Pr
   try {
     const cfg = await getProviderConfig();
     if (cfg.ragEnabled !== false) {
-      const queryText = buildRagQueryText(inputs);
-      const rag = await retrieveRagContext(queryText, market === 'overseas' ? 'overseas' : 'domestic', {
-        topKSignals: cfg.ragTopKSignals,
-        topKNews:    cfg.ragTopKNews,
-        lookbackDays: cfg.ragLookbackDays,
-      });
+      const ragMarket = market === 'overseas' ? 'overseas' : 'domestic';
+      let rag;
+      // D-10: 종목 수에 따라 query 분기
+      if (inputs.length > PER_SYMBOL_QUERY_THRESHOLD) {
+        // 종목별 병렬 호출 (캐시 D-4 가 macro/news 중복 흡수)
+        const perSymbolTopK = Math.max(2, Math.ceil((cfg.ragTopKSignals ?? 5) / inputs.length));
+        const perSymbolResults = await Promise.all(
+          inputs.map(i => retrieveRagContext(buildSingleSymbolQuery(i), ragMarket, {
+            topKSignals: perSymbolTopK,
+            topKNews:    cfg.ragTopKNews,
+            lookbackDays: cfg.ragLookbackDays,
+          })),
+        );
+        // signals 는 종목별 결과 머지 (id 중복 제거), news/macro 는 첫 결과만 (모두 동일 — 캐시 적중)
+        const merged = perSymbolResults[0] ?? { pastSignals: [], recentNews: [], macroContext: [], totalChars: 0, elapsedMs: 0, errors: [] };
+        const allSignals = perSymbolResults.flatMap(r => r.pastSignals);
+        merged.pastSignals = mergeKbHits(perSymbolResults.map(r => r.pastSignals), cfg.ragTopKSignals ?? 5);
+        merged.totalChars = merged.pastSignals.reduce((s, h) => s + h.text.length, 0)
+                          + merged.recentNews.reduce((s, h) => s + h.text.length, 0)
+                          + merged.macroContext.reduce((s, h) => s + h.text.length, 0);
+        merged.errors = perSymbolResults.flatMap(r => r.errors);
+        rag = merged;
+        console.log(`[ai-stage1] RAG per-symbol mode (${inputs.length} symbols, perSymbolTopK=${perSymbolTopK}, signals merged from ${allSignals.length} → ${merged.pastSignals.length})`);
+      } else {
+        // 결합 query (≤3 종목)
+        const queryText = buildRagQueryText(inputs);
+        rag = await retrieveRagContext(queryText, ragMarket, {
+          topKSignals: cfg.ragTopKSignals,
+          topKNews:    cfg.ragTopKNews,
+          lookbackDays: cfg.ragLookbackDays,
+        });
+      }
       if (rag.totalChars > 0) {
         ragSection = formatRagSection(rag);
       }
     }
   } catch (e) {
     console.warn(`[ai-stage1] RAG retrieval skipped: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 시장 컨텍스트 주입 (실패해도 분석 계속)
+  let marketContextSection = '';
+  try {
+    const cfg2 = await getProviderConfig();
+    if (cfg2.ragEnabled !== false) {
+      const ragMarket = market === 'overseas' ? 'overseas' : 'domestic';
+      const mc = await fetchMarketContext(ragMarket);
+      if (mc) {
+        const lines = [`## 시장 컨텍스트 (AI 요약)`, `감성: ${mc.sentiment}`];
+        if (mc.key_themes.length) lines.push(`주요 테마: ${mc.key_themes.join(', ')}`);
+        if (mc.risks.length) lines.push(`리스크: ${mc.risks.join(', ')}`);
+        if (mc.summary) lines.push(mc.summary);
+        marketContextSection = lines.join('\n');
+      }
+    }
+  } catch (e) {
+    console.warn(`[ai-stage1] market-context skip: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   return [
@@ -116,6 +182,7 @@ async function buildStage1Prompt(inputs: BatchSymbolInput[], market: Market): Pr
     `Example: "RSI 과열 + 거래량 부족", "MA 데드크로스 + 음봉 확정", "추세 약함 — 진입 보류".`,
     ``,
     ragSection,
+    marketContextSection,
     ``,
     `Output ONLY a JSON object (no markdown, no extra text):`,
     `{`,

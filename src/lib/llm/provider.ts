@@ -52,7 +52,7 @@ export async function getProviderConfig(): Promise<LlmProviderConfig> {
   const homeM4ApiModel =
     (await readSystemConfig('home_m4_api_model')) ??
     process.env.AI_API_MODEL ??
-    'llama3';
+    'qwen2.5:14b-instruct';
   const m4TempRaw =
     (await readSystemConfig('home_m4_api_temperature')) ??
     process.env.AI_API_TEMPERATURE ??
@@ -65,7 +65,7 @@ export async function getProviderConfig(): Promise<LlmProviderConfig> {
     (await readSystemConfig('stage1_model')) ??
     (await readSystemConfig('stage1_model_domestic')) ??
     process.env.STAGE1_MODEL ??
-    'glm-4.7-flash';
+    'qwen2.5:14b-instruct';
   const stage1TimeoutRaw =
     (await readSystemConfig('stage1_timeout_ms')) ??
     process.env.STAGE1_TIMEOUT_MS ??
@@ -102,7 +102,7 @@ async function buildCaller(opts?: { stage?: 1 | 2; domain?: 'domestic' | 'overse
         caller: new HomeM4ApiCaller(
           cfg.homeM4ApiBase ?? 'http://192.168.219.163:8000',
           process.env.AI_API_KEY ?? '',
-          cfg.stage1Model ?? 'glm-4.7-flash',
+          cfg.stage1Model ?? 'qwen2.5:14b-instruct',
           cfg.homeM4ApiTemperature ?? 0.3,
         ),
       };
@@ -117,7 +117,7 @@ async function buildCaller(opts?: { stage?: 1 | 2; domain?: 'domestic' | 'overse
       caller: new HomeM4ApiCaller(
         cfg.homeM4ApiBase ?? 'http://192.168.219.163:8000',
         process.env.AI_API_KEY ?? '',
-        cfg.homeM4ApiModel ?? 'llama3',
+        cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct',
         cfg.homeM4ApiTemperature ?? 0.3,
       ),
     };

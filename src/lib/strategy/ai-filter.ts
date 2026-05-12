@@ -9,6 +9,7 @@ import { emaLast } from './indicators/ema';
 import { macdLast } from './indicators/macd';
 import { bollingerLast } from './indicators/bollinger';
 import { atrLast } from './indicators/atr';
+import { computeVolumeProfile, volumeProfilePositionLabel } from './indicators/volume-profile';
 
 export type SkipCategory =
   | 'ai_failed'
@@ -16,7 +17,8 @@ export type SkipCategory =
   | 'ai_rejected'
   | 'rule_prefilter'
   | 'dedup_reuse'
-  | 'portfolio_guard';
+  | 'portfolio_guard'
+  | 'market_state_neutral';
 
 export interface AiEvEstimate {
   pWin: number;
@@ -65,6 +67,10 @@ export interface MarketSummary {
   high24h: number | undefined;
   low24h: number | undefined;
   recentCandles: Array<{ ts: string; o: number; h: number; l: number; c: number; v: number }>;
+  /** 매물대 (Volume Profile) — 지지/저항 레벨 */
+  poc: number | null;
+  vah: number | null;
+  val: number | null;
 }
 
 export function buildMarketSummary(candles: Candle[], ticker: Ticker): MarketSummary {
@@ -95,6 +101,10 @@ export function buildMarketSummary(candles: Candle[], ticker: Ticker): MarketSum
     atr14:         atrLast(candles, 14),
     high24h:       ticker.high24h,
     low24h:        ticker.low24h,
+    ...(() => {
+      const vp = computeVolumeProfile(candles, 50);
+      return { poc: vp?.poc ?? null, vah: vp?.vah ?? null, val: vp?.val ?? null };
+    })(),
     recentCandles: candles.slice(-5).map(c => ({
       ts: new Date(c.ts).toISOString().slice(0, 16).replace('T', ' '),
       o: c.open, h: c.high, l: c.low, c: c.close,
@@ -148,7 +158,7 @@ async function buildSelectPrompt(
   recentTrades: RecentTrade[] = [],
   style?: StyleConfig,
   styleName = '중립적',
-  analystStyleKey: import('./style').AnalystStyle = 'neutral',
+  analystStyleKey: import('./style').AnalystStyle = 'aggressive',
   market: import('@/lib/exchanges/kis-symbols').Market = 'domestic',
 ): Promise<string> {
   const fmt = (v: number | null | undefined, d = 0) => v == null ? 'N/A' : v.toFixed(d);
@@ -297,7 +307,12 @@ ${recentTradesSection}
 - 현재가: ${summary.currentPrice.toLocaleString('ko-KR')}원
 - 당일 고가: ${fmt(summary.high24h)}원 / 저가: ${fmt(summary.low24h)}원
 - 최근 5봉 가격변화: ${summary.priceChange5 > 0 ? '+' : ''}${summary.priceChange5}%
-
+${summary.poc != null ? `
+## 매물대 (Volume Profile — 최근 30시간)
+- POC(핵심 매물): ${Math.round(summary.poc).toLocaleString('ko-KR')}원
+- VAH(저항선): ${Math.round(summary.vah!).toLocaleString('ko-KR')}원 / VAL(지지선): ${Math.round(summary.val!).toLocaleString('ko-KR')}원
+- 현재가 위치: ${volumeProfilePositionLabel(summary.currentPrice, { poc: summary.poc, vah: summary.vah!, val: summary.val! })}
+` : ''}
 ## 기술 지표 (30분봉)
 - RSI(14): ${fmt(summary.rsi14, 1)}
 - EMA(20): ${fmt(summary.ema20)}원 / EMA(60): ${fmt(summary.ema60)}원
@@ -608,10 +623,14 @@ function buildSymbolBlock(idx: number, input: BatchSymbolInput, isMajor: boolean
     ? input.recentTrades.map(t => `${t.executedAt} ${t.side === 'buy' ? '매수' : '매도'}@${t.price.toLocaleString('ko-KR')}`).join(', ')
     : '없음';
 
+  const vpLine = s.poc != null
+    ? `\n- 매물대: POC ${Math.round(s.poc).toLocaleString('ko-KR')} | VAH ${Math.round(s.vah!).toLocaleString('ko-KR')} | VAL ${Math.round(s.val!).toLocaleString('ko-KR')} → ${volumeProfilePositionLabel(s.currentPrice, { poc: s.poc, vah: s.vah!, val: s.val! })}`
+    : '';
+
   return `### [${idx}] ${input.symbol} (${isMajor ? '대형주' : '중소형주'} / ${held})
 - 시장: 유동성 ${volTxt} | 변동성 ${atrTxt} | 추세 ${trendTxt} | 5봉변화 ${s.priceChange5 > 0 ? '+' : ''}${s.priceChange5}%
 - 시세: ${s.currentPrice.toLocaleString('ko-KR')}원 (당일 ${fmt(s.high24h)}~${fmt(s.low24h)})
-- 지표: RSI ${fmt(s.rsi14, 1)} | EMA20=${fmt(s.ema20)} EMA60=${fmt(s.ema60)} | MACD ${fmt(s.macd, 1)}/${fmt(s.macdSignal, 1)}/${fmt(s.macdHistogram, 1)} | BB ${fmt(s.bbUpper)}/${fmt(s.bbMiddle)}/${fmt(s.bbLower)}
+- 지표: RSI ${fmt(s.rsi14, 1)} | EMA20=${fmt(s.ema20)} EMA60=${fmt(s.ema60)} | MACD ${fmt(s.macd, 1)}/${fmt(s.macdSignal, 1)}/${fmt(s.macdHistogram, 1)} | BB ${fmt(s.bbUpper)}/${fmt(s.bbMiddle)}/${fmt(s.bbLower)}${vpLine}
 - 5봉: ${ohlcv}
 - 최근 2h: ${tradesTxt}${regimeLine}
 - 후보 (${input.candidates.length}개):
@@ -981,7 +1000,7 @@ export async function aiSelectSignal(
   candles: Candle[],
   ticker: Ticker,
   style?: StyleConfig,
-  analystStyle: AnalystStyle = 'neutral',
+  analystStyle: AnalystStyle = 'aggressive',
   market: import('@/lib/exchanges/kis-symbols').Market = 'domestic',
 ): Promise<AiSelectResult> {
   const summary    = buildMarketSummary(candles, ticker);

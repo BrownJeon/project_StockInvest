@@ -67,10 +67,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     typeof m === 'string' && (m === 'sonnet' || m === 'opus' || m === 'haiku');
   const draftModel = provider === 'claude'
     ? (isAllowed(body.modelOverride) ? body.modelOverride : 'haiku')
-    : (cfg.homeM4ApiModel ?? 'llama3');
+    : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
 
   const analystStyle = await getAnalystStyle();
-  const style = getStyleConfig(analystStyle);
+  const style = await getStyleConfig();
   const drafterSystem = buildDrafterSystemPrompt({ analystStyle, style, attachedSummary, recentMessages });
   const drafterUser = buildDrafterUserMessage(userContent, attachedSummary);
 

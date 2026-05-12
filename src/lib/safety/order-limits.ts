@@ -84,7 +84,8 @@ export const checkSymbolWhitelist = checkSymbolBlacklist;
  * 정책 (2026-04-27): 시장별 분리 한도. 국내 주문은 국내 평가액 기준, 해외 주문은 해외 평가액 기준.
  * 시장 무관 합산 한도는 폐기 — 한쪽 시장 비중이 작아도 다른 쪽 합계로 한도가 부풀려지는 문제 방지.
  */
-async function readPctOverride(key: string, envKey: string): Promise<number> {
+async function readPctOverride(key: string, _envKey: string): Promise<number> {
+  // 정책: 한도는 무조건 설정 메뉴(DB) 값만 기준. .env fallback 제거.
   try {
     const pool = getPool();
     const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
@@ -94,8 +95,8 @@ async function readPctOverride(key: string, envKey: string): Promise<number> {
       const v = Number(JSON.parse(rows[0].value));
       if (Number.isFinite(v)) return v;
     }
-  } catch { /* fall through */ }
-  return Number(process.env[envKey] ?? 0);
+  } catch { /* fall through to safe default */ }
+  return 0;  // DB 키 부재 → 0 (= 비활성, getEffectiveOrderMax/DailyMax 가 Infinity 반환)
 }
 
 export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
@@ -157,12 +158,16 @@ export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number
     const pool = getPool();
     const start = kstTodayStart();
     const market = inferMarket(req);
+    // 일일 한도 = 매수 capital deployment. 매도는 자본 회수 (checkOrderMax 와 일관).
+    // cancelled = 자본 환불 → 한도에서 제외 (자동 취소가 한도 점유 못 하도록).
+    // pending = submitOrder INSERT 직후 자기 자신 self-double-count 방지.
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT COALESCE(SUM(amount_krw), 0) AS sum_krw
        FROM orders
        WHERE created_at >= ?
          AND market = ?
-         AND status NOT IN ('rejected','failed','blocked')`,
+         AND side = 'buy'
+         AND status NOT IN ('rejected','failed','blocked','cancelled','pending')`,
       [start, market],
     );
     const already = Number(rows[0]?.sum_krw ?? 0);

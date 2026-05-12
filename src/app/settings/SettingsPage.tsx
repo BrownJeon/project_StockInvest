@@ -27,6 +27,20 @@ interface SafetyData {
   volGuardPanicPct: number;
 }
 
+interface NotifySignalData {
+  autoSubmit: boolean;
+  pending: boolean;
+}
+
+interface ReportData {
+  enabled: boolean;
+  channel: 'slack' | 'telegram' | 'both' | 'none';
+  mode: 'rolling' | 'fixed';
+  intervalMin: number;
+  anchorKst: string | null;
+  lastSentAt: string | null;
+}
+
 interface ExchangeData {
   kis: { configured: boolean; mock: boolean; overseasEnabled: boolean };
 }
@@ -89,22 +103,12 @@ function StatusBadge({ ok, labelOk, labelNo }: { ok: boolean; labelOk: string; l
   );
 }
 
-type AnalystStyle = 'aggressive' | 'neutral' | 'stable';
-
-const STYLE_INFO: Record<AnalystStyle, {
-  icon: string; label: string;
-  holding: string; target: string; universe: string;
-}> = {
-  aggressive: { icon: '🔥', label: '공격적', holding: '1~4일',    target: '+2%',  universe: '거래대금' },
-  neutral:    { icon: '⚖️', label: '중립적', holding: '2주~1달',  target: '+5%',  universe: 'KOSPI 200' },
-  stable:     { icon: '🛡️', label: '안정적', holding: '3~6개월',  target: '+10%', universe: 'KOSPI 100' },
-};
-
 export function SettingsPage() {
   const [safety, setSafety]               = useState<SafetyData | null>(null);
+  const [notifySignal, setNotifySignal]   = useState<NotifySignalData>({ autoSubmit: true, pending: true });
+  const [report, setReport]               = useState<ReportData | null>(null);
   const [exchanges, setExchanges]         = useState<ExchangeData | null>(null);
   const [strategies, setStrategies]       = useState<StrategyItem[]>([]);
-  const [analystStyle, setAnalystStyle]   = useState<AnalystStyle>('neutral');
   const [loading, setLoading]             = useState(true);
   const [saveState, setSaveState]         = useState<SaveState>('idle');
   const [isDirty, setIsDirty]             = useState(false);
@@ -114,10 +118,14 @@ export function SettingsPage() {
       fetch('/api/settings/safety').then(r => r.json()),
       fetch('/api/settings/strategies').then(r => r.json()),
     ]).then(([safetyData, stratData]) => {
-      if (safetyData.ok) { setSafety(safetyData.safety); setExchanges(safetyData.exchanges); }
+      if (safetyData.ok) {
+        setSafety(safetyData.safety);
+        setExchanges(safetyData.exchanges);
+        if (safetyData.notifySignal) setNotifySignal(safetyData.notifySignal as NotifySignalData);
+        if (safetyData.report) setReport(safetyData.report as ReportData);
+      }
       if (stratData.ok) {
         setStrategies(stratData.strategies);
-        if (stratData.analystStyle) setAnalystStyle(stratData.analystStyle as AnalystStyle);
       }
     }).finally(() => setLoading(false));
   }, []);
@@ -132,6 +140,11 @@ export function SettingsPage() {
     setIsDirty(true);
   };
 
+  const updateReport = (delta: Partial<ReportData>) => {
+    setReport(prev => prev ? { ...prev, ...delta } : prev);
+    setIsDirty(true);
+  };
+
   const handleSave = useCallback(async () => {
     if (!safety) return;
     setSaveState('saving');
@@ -140,12 +153,18 @@ export function SettingsPage() {
         fetch('/api/settings/safety', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(safety),
-        }),
-        fetch('/api/settings/strategies', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ analystStyle }),
+          body: JSON.stringify({
+            ...safety,
+            notifySignalAutoSubmit: notifySignal.autoSubmit,
+            notifySignalPending:    notifySignal.pending,
+            ...(report ? {
+              reportEnabled:     report.enabled,
+              reportChannel:     report.channel,
+              reportMode:        report.mode,
+              reportIntervalMin: report.intervalMin,
+              reportAnchorKst:   report.anchorKst,
+            } : {}),
+          }),
         }),
         ...strategies.map(s =>
           fetch('/api/settings/strategies', {
@@ -161,7 +180,7 @@ export function SettingsPage() {
     } catch {
       setSaveState('idle');
     }
-  }, [safety, strategies, analystStyle]);
+  }, [safety, notifySignal, report, strategies]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted)' }}>불러오는 중…</div>;
 
@@ -351,34 +370,6 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {/* Analyst Style */}
-      <SectionHeader title="투자 성향" />
-      <div style={{ display: 'flex', gap: 8 }}>
-        {(Object.keys(STYLE_INFO) as AnalystStyle[]).map(key => {
-          const info = STYLE_INFO[key];
-          const active = analystStyle === key;
-          return (
-            <button
-              key={key}
-              onClick={() => { setAnalystStyle(key); setIsDirty(true); }}
-              style={{
-                flex: 1, padding: '12px 8px', borderRadius: 12, cursor: 'pointer',
-                border: `2px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-                background: active ? 'rgba(251,191,36,.1)' : 'var(--bg2)',
-                textAlign: 'center', transition: 'all .15s',
-              }}
-            >
-              <div style={{ fontSize: 22, marginBottom: 4 }}>{info.icon}</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: active ? 'var(--accent)' : 'var(--text)', marginBottom: 6 }}>{info.label}</div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.7 }}>
-                <div style={{ fontWeight: 600, color: active ? 'var(--accent)' : 'var(--text)' }}>{info.holding} · {info.target}</div>
-                <div style={{ fontSize: 10 }}>{info.universe}</div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
       {/* Strategy settings */}
       <SectionHeader title="전략 설정" />
       <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
@@ -460,6 +451,114 @@ export function SettingsPage() {
       {/* 알람 (채널 선택 + 연동 정보) */}
       <SectionHeader title="알람" />
       <NotifyChannelSection />
+
+      {/* 시그널 알람 on/off */}
+      <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div>
+            <div style={{ fontSize: 14 }}>자동 제출 알람</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>시그널 자동 주문 체결 시 알람 발송</div>
+          </div>
+          <Toggle checked={notifySignal.autoSubmit} onChange={v => { setNotifySignal(s => ({ ...s, autoSubmit: v })); setIsDirty(true); }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+          <div>
+            <div style={{ fontSize: 14 }}>승인 요청 알람</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>수동 승인 필요 시그널 발생 시 알람 발송</div>
+          </div>
+          <Toggle checked={notifySignal.pending} onChange={v => { setNotifySignal(s => ({ ...s, pending: v })); setIsDirty(true); }} />
+        </div>
+      </div>
+
+      {/* 정기 거래 리포트 */}
+      {report && (
+        <>
+          <SectionHeader title="정기 거래 리포트" />
+          <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <div style={{ fontSize: 14 }}>리포트 수신 활성화</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>분석 기간 거래·잔액 변동 자동 발송</div>
+              </div>
+              <Toggle checked={report.enabled} onChange={v => updateReport({ enabled: v })} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 14 }}>수신 채널</div>
+              <select
+                value={report.channel}
+                onChange={e => updateReport({ channel: e.target.value as ReportData['channel'] })}
+                style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 14 }}
+              >
+                <option value="slack">Slack</option>
+                <option value="telegram">Telegram</option>
+                <option value="both">둘 다</option>
+                <option value="none">없음</option>
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 14 }}>발송 방식</div>
+              <div style={{ display: 'flex', gap: 4, background: 'var(--bg3)', borderRadius: 8, padding: 2 }}>
+                {(['rolling', 'fixed'] as const).map(m => {
+                  const active = report.mode === m;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => updateReport({ mode: m })}
+                      style={{
+                        fontSize: 13, padding: '4px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                        background: active ? 'var(--accent)' : 'transparent',
+                        color: active ? '#fff' : 'var(--text)',
+                        fontWeight: active ? 700 : 400,
+                      }}
+                    >
+                      {m === 'rolling' ? '주기' : '고정'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {report.mode === 'rolling' ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+                <div style={{ fontSize: 14 }}>발송 간격</div>
+                <select
+                  value={report.intervalMin}
+                  onChange={e => updateReport({ intervalMin: Number(e.target.value) })}
+                  style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 14 }}
+                >
+                  <option value={60}>1시간</option>
+                  <option value={180}>3시간</option>
+                  <option value={360}>6시간</option>
+                  <option value={720}>12시간</option>
+                  <option value={1440}>24시간</option>
+                </select>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+                <div>
+                  <div style={{ fontSize: 14 }}>고정 발송 시각 <span style={{ color: 'var(--down)' }}>*</span></div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>KST HH:MM — 콤마로 여러 시각 (예: 08:00, 17:00)</div>
+                </div>
+                <input
+                  type="text"
+                  value={report.anchorKst ?? ''}
+                  placeholder="08:00, 17:00"
+                  onChange={e => updateReport({ anchorKst: e.target.value })}
+                  onBlur={e => {
+                    const v = e.target.value.trim();
+                    updateReport({ anchorKst: v || '08:00' });
+                  }}
+                  style={{
+                    background: 'var(--bg3)',
+                    border: `1px solid ${report.anchorKst?.trim() ? 'var(--border)' : 'var(--down)'}`,
+                    borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 14, width: 160, textAlign: 'right',
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       <div style={{ background: 'var(--bg2)', borderRadius: 12, padding: 14, border: '1px solid var(--border)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
         실거래 여부 / KILL_SWITCH / 주문 한도는 DB에 저장되어 서버 재시작 없이 즉시 반영됩니다.

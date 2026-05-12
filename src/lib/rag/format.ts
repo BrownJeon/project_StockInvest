@@ -10,6 +10,36 @@ import type { KbHit } from './m4-kb';
 const MAX_REASONING_CHARS = 200;
 const MAX_NEWS_CHARS = 240;
 
+/**
+ * D-7: KbHit 최소 schema 검증.
+ * 적재 시점과 검색 시점의 스키마가 다를 경우(컬렉션 모델 교체·재인덱싱 누락 등) 깨진 데이터를 LLM 에 주입하면 환각 유발.
+ * 다음 조건 미충족 hit 는 형식이 깨진 것으로 간주, 제외:
+ *   - id 가 string
+ *   - score 가 finite number, 0~1 범위 (cosine similarity 기준; 음수도 허용은 하지만 0 이상만 통과)
+ *   - text 가 비어있지 않은 string
+ *   - metadata 가 plain object (또는 null/undefined)
+ */
+export function isValidKbHit(h: unknown): h is KbHit {
+  if (!h || typeof h !== 'object') return false;
+  const x = h as Record<string, unknown>;
+  if (typeof x.id !== 'string') return false;
+  if (typeof x.score !== 'number' || !Number.isFinite(x.score) || x.score < 0) return false;
+  if (typeof x.text !== 'string' || x.text.trim() === '') return false;
+  if (x.metadata != null && (typeof x.metadata !== 'object' || Array.isArray(x.metadata))) return false;
+  return true;
+}
+
+/** 잘못된 hit 만 걸러내고 갯수만 호출자에게 반환. 로깅은 호출자가 결정. */
+export function filterValidHits(hits: KbHit[]): { valid: KbHit[]; invalidCount: number } {
+  const valid: KbHit[] = [];
+  let invalidCount = 0;
+  for (const h of hits) {
+    if (isValidKbHit(h)) valid.push(h);
+    else invalidCount++;
+  }
+  return { valid, invalidCount };
+}
+
 function fmtMeta(h: KbHit, keys: string[]): string {
   const parts: string[] = [];
   for (const k of keys) {
@@ -22,6 +52,33 @@ function fmtMeta(h: KbHit, keys: string[]): string {
 function truncate(text: string, max: number): string {
   if (!text) return '';
   return text.length > max ? text.slice(0, max - 1).trimEnd() + '…' : text;
+}
+
+/**
+ * D-6: 임베딩 텍스트에 잠재 PII/민감정보 마스킹.
+ *
+ * Reasoning 텍스트가 LLM 가공이라 사용자 식별자·내부 코드명·API 키 등이 우발적으로 박힐 수 있음.
+ * KB 에 영구 저장되므로 적재 전 차단 필수. 보수적으로 다음 패턴만 마스킹 (overblock 보다 underblock 위험 우선):
+ *   - 이메일
+ *   - 전화번호 (한국 010-XXXX-XXXX, 011~019 포함)
+ *   - 카드번호 형태 (4-4-4-4 숫자)
+ *   - JWT/Bearer 토큰
+ *   - mk_ 또는 sk_ prefix API 키 (32자 이상 영숫자)
+ *   - AWS_ACCESS_KEY 형태 (AKIA + 16자 대문자/숫자)
+ *
+ * 마스킹 후 길이가 max 초과면 truncate.
+ */
+export function redactReasoning(text: string | null | undefined, max = MAX_REASONING_CHARS): string {
+  if (!text) return '';
+  let out = text
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[EMAIL]')
+    .replace(/01[016789][- ]?\d{3,4}[- ]?\d{4}/g, '[PHONE]')
+    .replace(/\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g, '[CARD]')
+    .replace(/\bBearer\s+[A-Za-z0-9._\-]{20,}/gi, 'Bearer [TOKEN]')
+    .replace(/\beyJ[A-Za-z0-9._\-]{20,}/g, '[JWT]')
+    .replace(/\b(mk|sk)_[A-Za-z0-9_\-]{20,}/g, '[API_KEY]')
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[AWS_KEY]');
+  return truncate(out, max);
 }
 
 function formatPastSignal(h: KbHit): string {
@@ -113,10 +170,12 @@ export function buildSignalText(s: SignalForEmbedding): string {
   const ind = (s.indicators ?? {}) as Record<string, unknown>;
   const ai  = (ind.ai ?? {}) as Record<string, unknown>;
 
+  // D-6: reasoning 은 redact + truncate (200자)
+  const reasoningSafe = s.reasoning ? redactReasoning(s.reasoning) : '';
   const lines = [
     `[${ts}] ${s.symbol} ${s.side} strategy=${s.strategyId ?? 'unknown'}`,
     `price=${s.price ?? 'N/A'} rsi14=${ind.rsi14 ?? 'N/A'} macdHist=${ind.macdHistogram ?? 'N/A'} volRatio=${ind.volumeRatio ?? 'N/A'}`,
-    s.reasoning ? `근거: ${s.reasoning}` : '',
+    reasoningSafe ? `근거: ${reasoningSafe}` : '',
     `AI: confidence=${ai.confidence ?? 'N/A'} ev=${ai.ev ?? 'N/A'} regime=${ai.regimeBucket ?? 'N/A'} skipCategory=${ai.skipCategory ?? 'N/A'}`,
     `시장: ${s.market ?? 'N/A'} status: ${s.status ?? 'N/A'}`,
   ];

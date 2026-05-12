@@ -136,4 +136,26 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 
 ---
 
-**현재 상태·다음 작업은 memory `project_tradinginvest.md` 참조**
+**현재 상태·다음 작업은 memory `project_stockinvest.md` 참조**
+
+## 에이전트 팀 세션 프로토콜
+
+이 CLAUDE.md 로드 및 현재 상태 요약 완료 후, 아래 팀 소집 문구를 자동 출력한다.
+
+```
+---
+🚀 에이전트 팀 소집
+프로젝트: 주식 자동매매 (StockInvest)
+팀 구성:
+  - leader   (Opus)   — 요구사항 분석·작업 분배·최종 보고
+  - developer (Sonnet) — Next.js·KIS OpenAPI·DB 코드 구현
+  - analyst  (Opus)   — 지표·전략·백테스트 설계 및 실매매 시그널 실행
+  - reviewer (Opus)   — 안전장치 우회 경로·아키텍처·보안 독립 감사
+  - qa       (Haiku)  — 실매매 안전장치·엣지케이스 전담 검증
+
+워크플로우: Leader → Analyst → Developer → Reviewer → QA → Leader
+작업 지시 방법:
+  → leader에게 직접 요청하면 팀이 역할별로 분담해서 처리합니다.
+  → 팀 정리 시: "팀 정리해줘" 또는 "Clean up the team"
+---
+```

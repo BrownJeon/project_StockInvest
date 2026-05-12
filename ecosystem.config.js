@@ -13,6 +13,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '3003',
+        // IPv6 unreachable on this host (Telegram outbound ETIMEDOUT). 강제 IPv4-first DNS.
+        NODE_OPTIONS: '--dns-result-order=ipv4first',
       },
       out_file: `${process.env.HOME}/.node-local/stockinvest/logs/pm2-out.log`,
       error_file: `${process.env.HOME}/.node-local/stockinvest/logs/pm2-err.log`,

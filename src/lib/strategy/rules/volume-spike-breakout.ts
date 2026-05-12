@@ -31,6 +31,14 @@ export const volumeSpikeBreakout: RuleFunction = ({ strategyId, symbol, candles,
   const cur  = candles[n];
   const prev = candles[n - 1];
 
+  // 모멘텀 추격 가드 — 직전 5봉 누적 상승률 ≥ momentumChaseMaxPct% 면 skip
+  // (이미 충분히 상승한 후 진입은 평균 단가가 고점 → Dead Zone 직행)
+  if (n >= 5) {
+    const start = candles[n - 5];
+    const cumRisePct = start && start.close > 0 ? ((cur.close - start.close) / start.close) * 100 : 0;
+    if (cumRisePct >= style.momentumChaseMaxPct) return [];
+  }
+
   // 양봉 + 거래량 폭발
   if (cur.close <= cur.open) return [];
   const window = candles.slice(n - LOOKBACK, n);  // 직전 20봉 (current 제외)

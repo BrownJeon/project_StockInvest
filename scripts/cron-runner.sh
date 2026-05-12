@@ -7,6 +7,7 @@
 #  - signal-followup   : 15분 — 발화한 시그널 후속 추적 (price_1h_after 채우기)
 #  - signal-expiry     : 30분 — TTL 초과 시그널 만료 처리
 #  - portfolio-snapshot: 60분 — 포트폴리오 스냅샷 + 변동폭 가드
+#  - trade-report      : 5분 — 거래 리포트 anchor·interval 검증 후 Slack/Telegram 발송 (라우트 내부 자체 판단)
 #  - sync-stock-meta   : 매일 17:00 KST — KIS KOSPI/KOSDAQ 마스터 → stock_meta 현행화
 #  - export-llm-trainset: 매일 03:00 KST — signals+followup → LoRA 학습 JSONL 생성·전송
 
@@ -62,6 +63,11 @@ while true; do
   # 매 60분: portfolio-snapshot
   if [ $((i % 60)) -eq 0 ]; then
     call /api/cron/portfolio-snapshot "portfolio-snapshot"
+  fi
+  # 매 5분: trade-report — 라우트 내부에서 anchor·interval 검증 후 발송 여부 자체 판단.
+  # anchor 시각(예: 05:00,08:00) 기준 ±5분 정확도 (cron 호출 주기). 미해당 분은 즉시 skipped.
+  if [ $((i % 5)) -eq 0 ]; then
+    call /api/cron/trade-report "trade-report"
   fi
   # 매일 17:00 KST: sync-stock-meta (하루 1회만)
   HH=$(date '+%H')

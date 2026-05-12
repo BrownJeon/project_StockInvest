@@ -4,6 +4,7 @@ import { kis } from '@/lib/exchanges/kis';
 import type { Ticker } from '@/lib/exchanges/types';
 import { kstTodayStart } from '@/lib/time';
 import { usdToKrw } from '@/lib/exchanges/fx';
+import { savePortfolioSnapshot } from '@/lib/safety/volatility-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,14 +21,11 @@ interface HoldingView {
 
 async function saveSnapshot(totalKRW: number, holdings: HoldingView[]): Promise<void> {
   try {
-    const pool = getPool();
+    // sanity guard 가 있는 통합 저장 함수 사용 — outlier(USD raw 환율 미적용 등) 자동 차단
     const positions = holdings.map((h) => ({
       currency: h.currency, qty: h.qty, price: h.price, value_krw: h.value_krw,
     }));
-    await pool.query(
-      'INSERT INTO portfolio_snapshots (ts, total_krw, positions, source) VALUES (?, ?, ?, ?)',
-      [new Date(), Math.round(totalKRW), JSON.stringify(positions), 'dashboard'],
-    );
+    await savePortfolioSnapshot(totalKRW, positions, 'dashboard');
   } catch (e) {
     console.error('[portfolio] snapshot save failed:', e);
   }

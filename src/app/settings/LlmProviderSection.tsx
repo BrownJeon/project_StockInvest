@@ -50,11 +50,11 @@ export function LlmProviderSection() {
   const [provider, setProvider] = useState<Provider>('claude');
   // home-m4-api
   const [m4Base, setM4Base]   = useState('http://192.168.219.163:8000');
-  const [m4Model, setM4Model] = useState('llama3');
+  const [m4Model, setM4Model] = useState('qwen2.5:14b-instruct');
   const [m4Temp, setM4Temp]   = useState('0.3');
   const [apiKeySet, setApiKeySet] = useState<boolean>(false);
   // Hybrid + RAG (Phase AB)
-  const [stage1Model, setStage1Model] = useState('glm-4.7-flash');
+  const [stage1Model, setStage1Model] = useState('qwen2.5:14b-instruct');
   const [stage1Timeout, setStage1Timeout] = useState('30000');
   const [ragEnabled, setRagEnabled] = useState<boolean>(true);
   const [ragTopKSignals, setRagTopKSignals] = useState('5');
@@ -132,7 +132,7 @@ export function LlmProviderSection() {
         if (Number.isFinite(t)) body.homeM4ApiTemperature = t;
       }
       if (provider === 'hybrid') {
-        body.stage1Model = stage1Model.trim() || 'glm-4.7-flash';
+        body.stage1Model = stage1Model.trim() || 'qwen2.5:14b-instruct';
         const t1 = Number(stage1Timeout);
         if (Number.isFinite(t1)) body.stage1TimeoutMs = t1;
         body.ragEnabled = ragEnabled;
@@ -200,8 +200,8 @@ export function LlmProviderSection() {
           <Field label="API Base URL" hint="예: http://192.168.219.163:8000 (.env AI_API_BASE 가 초기값)">
             <input value={m4Base} onChange={e => setM4Base(e.target.value)} placeholder="http://host:port" style={inputStyle} />
           </Field>
-          <Field label="모델명" hint="예: llama3 · llama3.3 · glm-4.7-flash (.env AI_API_MODEL 이 초기값)">
-            <input value={m4Model} onChange={e => setM4Model(e.target.value)} placeholder="llama3" style={inputStyle} />
+          <Field label="모델명" hint="예: qwen2.5:14b-instruct · llama3.3 · glm-4.7-flash (.env AI_API_MODEL 이 초기값)">
+            <input value={m4Model} onChange={e => setM4Model(e.target.value)} placeholder="qwen2.5:14b-instruct" style={inputStyle} />
           </Field>
           <Field label="Temperature" hint="0.0 ~ 2.0 (낮을수록 일관성 ↑)">
             <input type="number" step="0.1" min="0" max="2" value={m4Temp} onChange={e => setM4Temp(e.target.value)} style={{ ...inputStyle, width: 100 }} />
@@ -225,7 +225,7 @@ export function LlmProviderSection() {
       {provider === 'hybrid' && (
         <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <Field label="Stage 1 모델 (도메인 통합)" hint="default glm-4.7-flash. 도메인 fine-tune 후 stockinvest-* 로 변경.">
-            <input value={stage1Model} onChange={e => setStage1Model(e.target.value)} placeholder="glm-4.7-flash" style={inputStyle} />
+            <input value={stage1Model} onChange={e => setStage1Model(e.target.value)} placeholder="qwen2.5:14b-instruct" style={inputStyle} />
           </Field>
           <Field label="Stage 1 Timeout (ms)" hint="5000~120000">
             <input type="number" value={stage1Timeout} onChange={e => setStage1Timeout(e.target.value)} style={{ ...inputStyle, width: 120 }} />

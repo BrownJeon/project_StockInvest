@@ -112,7 +112,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   let draftPromptRaw: string | null = null;
 
   const analystStyle = await getAnalystStyle();
-  const style = getStyleConfig(analystStyle);
+  const style = await getStyleConfig();
   const provider = await getActiveProvider();
   const cfg = await getProviderConfig();
 
@@ -121,13 +121,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     typeof m === 'string' && (m === 'sonnet' || m === 'opus' || m === 'haiku');
   const finalModel = provider === 'claude'
     ? (isAllowedClaudeModel(body.modelOverride) ? body.modelOverride : 'sonnet')
-    : (cfg.homeM4ApiModel ?? 'llama3');
+    : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
 
   if (!draftPrompt) {
     // skipDraftStage 또는 누락 — 서버에서 즉석 정제
     const drafterSystem = buildDrafterSystemPrompt({ analystStyle, style, attachedSummary, recentMessages });
     const drafterUser = buildDrafterUserMessage(userContent, attachedSummary);
-    const drafterModel = provider === 'claude' ? 'haiku' : (cfg.homeM4ApiModel ?? 'llama3');
+    const drafterModel = provider === 'claude' ? 'haiku' : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
     draftPromptRaw = await runLlm(`${drafterSystem}\n\n${drafterUser}`, {
       timeoutMs: 60_000,
       responseFormat: 'text',

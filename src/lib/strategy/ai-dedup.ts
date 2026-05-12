@@ -1,6 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
-import type { AnalystStyle } from './style';
+
 import type { AiEvEstimate, MarketSummary, SkipCategory } from './ai-filter';
 
 export interface DedupKey {
@@ -55,12 +55,6 @@ export function buildRegimeBucket(summary: MarketSummary): string {
   return `rsi${rsiBucket}_ema${emaBucket}_vol${volBucket}`;
 }
 
-function ttlMinutesFor(analystStyle: AnalystStyle): number {
-  // 2026-05-01 — VOO/SCHD 등 평균 80분 간격 반복 발화 차단을 위해 TTL 추가 강화 (60→180 / 120→360).
-  // 보유기간 대비 dedup TTL 비율: aggressive 1~4일×5%=3h / neutral·stable 14일+×<3%=6h.
-  if (analystStyle === 'aggressive') return 180;  // 3h
-  return 360;                                       // 6h (neutral/stable 공통)
-}
 
 interface SignalRow extends RowDataPacket {
   reasoning: string;
@@ -73,9 +67,8 @@ interface SignalRow extends RowDataPacket {
  */
 export async function lookupRecentSkip(
   key: DedupKey,
-  analystStyle: AnalystStyle,
 ): Promise<DedupHit> {
-  const ttl = ttlMinutesFor(analystStyle);
+  const ttl = 60; // 단일 성향 — 고정 60분
   const pool = getPool();
 
   try {

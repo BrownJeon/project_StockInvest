@@ -11,6 +11,7 @@ import { volumeSpikeBreakout } from './volume-spike-breakout';
 import { pullbackTrend }       from './pullback-trend';
 import { weeklyTrendFollow }   from './weekly-trend-follow';
 import { dividendQualityBuyback } from './dividend-quality-buyback';
+import { priceBreakout }          from './price-breakout';
 
 export const STRATEGY_REGISTRY: Record<string, StrategyMeta> = {
   'rsi-oversold-v1':         { fn: rsiOversold,         interval: '30m', minCandles: 30,  profile: 'mean-rev', topN: 3 },
@@ -25,4 +26,5 @@ export const STRATEGY_REGISTRY: Record<string, StrategyMeta> = {
   'pullback-trend-v1':       { fn: pullbackTrend,       interval: '30m', minCandles: 30,  profile: 'trend',    topN: 3 },
   'weekly-trend-follow-v1':  { fn: weeklyTrendFollow,   interval: '1d',  minCandles: 210, profile: 'trend',    topN: 5 },
   'dividend-quality-buyback-v1': { fn: dividendQualityBuyback, interval: '1d', minCandles: 210, profile: 'trend', topN: 5 },
+  'price-breakout-v1':          { fn: priceBreakout,           interval: '30m', minCandles: 5,  profile: 'breakout', topN: 3 },
 };

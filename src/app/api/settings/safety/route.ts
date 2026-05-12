@@ -8,7 +8,7 @@ async function getOverrides(): Promise<Record<string, unknown>> {
   try {
     const pool = getPool();
     const [rows] = await pool.query<(RowDataPacket & { key: string; value: string })[]>(
-      "SELECT `key`, value FROM system_config WHERE `key` LIKE 'safety_%' OR `key` LIKE 'strategy_%' OR `key` LIKE 'vol_guard_%'",
+      "SELECT `key`, value FROM system_config WHERE `key` LIKE 'safety_%' OR `key` LIKE 'strategy_%' OR `key` LIKE 'vol_guard_%' OR `key` LIKE 'report_trade_%' OR `key` LIKE 'notify_signal_%'",
     );
     return Object.fromEntries(rows.map(r => [r.key, JSON.parse(r.value)]));
   } catch {
@@ -44,8 +44,9 @@ export async function GET() {
 
   const dryRun           = overrides['safety_dry_run']           !== undefined ? Boolean(overrides['safety_dry_run'])           : (process.env.DRY_RUN !== 'false');
   const killSwitch       = overrides['safety_kill_switch']       !== undefined ? Boolean(overrides['safety_kill_switch'])       : (process.env.KILL_SWITCH === 'true');
-  const orderMaxPct      = overrides['safety_order_max_pct']     !== undefined ? Number(overrides['safety_order_max_pct'])      : Number(process.env.ORDER_MAX_PCT ?? 0);
-  const dailyOrderMaxPct = overrides['safety_daily_order_max_pct'] !== undefined ? Number(overrides['safety_daily_order_max_pct']) : Number(process.env.DAILY_ORDER_MAX_PCT ?? 0);
+  // 정책: 한도는 무조건 설정 메뉴(DB) 값만 기준. .env fallback 제거.
+  const orderMaxPct      = overrides['safety_order_max_pct']     !== undefined ? Number(overrides['safety_order_max_pct'])      : 0;
+  const dailyOrderMaxPct = overrides['safety_daily_order_max_pct'] !== undefined ? Number(overrides['safety_daily_order_max_pct']) : 0;
   const universeEnabled          = overrides['strategy_universe_enabled']           !== undefined ? Boolean(overrides['strategy_universe_enabled'])           : (process.env.UNIVERSE_ENABLED === 'true');
   const analystEnabled           = overrides['strategy_analyst_enabled']            !== undefined ? Boolean(overrides['strategy_analyst_enabled'])            : (process.env.ANALYST_ENABLED === 'true');
   const blockedSymbols   = overrides['safety_blocked_symbols'] !== undefined
@@ -54,6 +55,10 @@ export async function GET() {
   const blockedSymbolsOverseas = overrides['safety_blocked_symbols_overseas'] !== undefined
     ? (overrides['safety_blocked_symbols_overseas'] as string[])
     : (process.env.BLOCKED_SYMBOLS_OVERSEAS ?? '').split(',').map(s => s.trim()).filter(Boolean);
+
+  // 시그널 알람 on/off (기본 true — 없으면 알람 발송)
+  const notifySignalAutoSubmit = overrides['notify_signal_auto_submit'] !== undefined ? Boolean(overrides['notify_signal_auto_submit']) : true;
+  const notifySignalPending    = overrides['notify_signal_pending']     !== undefined ? Boolean(overrides['notify_signal_pending'])     : true;
 
   const volGuardEnabled   = overrides['vol_guard_enabled']    !== undefined ? Boolean(overrides['vol_guard_enabled'])    : (process.env.VOL_GUARD_ENABLED === 'true');
   const volGuardWindowMin = overrides['vol_guard_window_min'] !== undefined ? Number(overrides['vol_guard_window_min'])  : Number(process.env.VOL_GUARD_WINDOW_MIN ?? 60);
@@ -80,6 +85,18 @@ export async function GET() {
       volGuardBlockPct,
       volGuardPanicPct,
     },
+    notifySignal: {
+      autoSubmit: notifySignalAutoSubmit,
+      pending:    notifySignalPending,
+    },
+    report: {
+      enabled:     overrides['report_trade_enabled']      !== undefined ? Boolean(overrides['report_trade_enabled'])    : false,
+      channel:     overrides['report_trade_channel']      !== undefined ? String(overrides['report_trade_channel'])     : 'slack',
+      mode:        overrides['report_trade_mode']         !== undefined ? String(overrides['report_trade_mode'])        : 'rolling',
+      intervalMin: overrides['report_trade_interval_min'] !== undefined ? Number(overrides['report_trade_interval_min']): 180,
+      anchorKst:   overrides['report_trade_anchor_kst']   !== undefined ? (overrides['report_trade_anchor_kst'] as string | null) : null,
+      lastSentAt:  overrides['report_trade_last_sent_at'] !== undefined ? (overrides['report_trade_last_sent_at'] as string | null) : null,
+    },
     exchanges: {
       kis: {
         configured: !!(process.env.KIS_APP_KEY && process.env.KIS_APP_SECRET && process.env.KIS_ACCOUNT_NO),
@@ -104,6 +121,13 @@ const ALLOWED_PATCH_KEYS: Record<string, string> = {
   volGuardWarnPct:         'vol_guard_warn_pct',
   volGuardBlockPct:        'vol_guard_block_pct',
   volGuardPanicPct:        'vol_guard_panic_pct',
+  reportEnabled:           'report_trade_enabled',
+  reportChannel:           'report_trade_channel',
+  reportMode:              'report_trade_mode',
+  reportIntervalMin:       'report_trade_interval_min',
+  reportAnchorKst:         'report_trade_anchor_kst',
+  notifySignalAutoSubmit:  'notify_signal_auto_submit',
+  notifySignalPending:     'notify_signal_pending',
 };
 
 // 시장별·KRW 고정 한도 키는 정책 변경(2026-04-26)으로 폐기. 한도는 단일 pct만 사용.

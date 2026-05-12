@@ -292,6 +292,49 @@ export async function getUniverseSymbols(
   return rows.map(r => r.symbol as string);
 }
 
+/**
+ * 항상 분석 대상에 포함할 종목 리스트 (모멘텀 누락 방지).
+ *
+ * 우선순위:
+ *   1) DB system_config.universe_always_include (JSON array)
+ *   2) env UNIVERSE_ALWAYS_INCLUDE (콤마 구분)
+ *   3) KOSPI 시총 상위 hard-coded (KOSPI_TOP / KOSDAQ_TOP) — fallback
+ *
+ * 결함 배경: 005930 같은 안정 대형주가 strategy profile score 기반 top N 산정에서 밀려
+ * universe에서 누락되는 현상 (11% 급등에도 분석 안 됨). always-include로 시총 핵심 종목은
+ * score와 무관하게 매 cron 분석 대상에 영구 포함.
+ */
+export async function getAlwaysIncludeSymbols(market: Market = 'domestic'): Promise<string[]> {
+  // 국내 시장만 (해외는 universe-overseas-static 별도 처리)
+  if (market !== 'domestic') return [];
+
+  const pool = getPool();
+  // 1) DB override
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT value FROM system_config WHERE \`key\` = 'universe_always_include' LIMIT 1`,
+    );
+    if (rows.length > 0) {
+      const raw = rows[0].value as string;
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.every(s => typeof s === 'string')) {
+          return parsed.map(s => s.trim()).filter(Boolean);
+        }
+      } catch { /* fall through to env */ }
+    }
+  } catch { /* DB 미가용 — env 폴백 */ }
+
+  // 2) env override
+  const envVal = process.env.UNIVERSE_ALWAYS_INCLUDE;
+  if (envVal && envVal.trim()) {
+    return envVal.split(',').map(s => s.trim()).filter(Boolean);
+  }
+
+  // 3) hard-coded fallback — KOSPI 시총 상위 10종목 (안정 대형주, 변동 빈도 낮음)
+  return KOSPI_TOP.slice(0, 10);
+}
+
 /** 현재 universe에서 모든 프로파일의 선별 종목 조회 (UI/로그용) */
 export async function getUniverseSnapshot(): Promise<Record<StrategyProfile, UniverseEntry[]>> {
   const pool = getPool();

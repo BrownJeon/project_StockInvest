@@ -121,14 +121,64 @@ export async function checkVolatilityGuard(
 
 /**
  * 현재 포트폴리오 스냅샷을 DB에 저장.
- * total_krw=0(KIS 미연동 등 부트스트랩 노이즈)은 저장하지 않음 — 수익률 베이스라인 오염 방지.
+ *
+ * Sanity guard:
+ *  - total_krw <= 0 (KIS 미연동/부트스트랩) → skip
+ *  - 절대 상한 1억원(SANITY_MAX_KRW): KIS 환율 적용 결함으로 USD raw 가격이 KRW 환산되지 않은 채
+ *    재차 환율 곱해져 ~1500배 부풀려진 값 INSERT 방지 (2026-04-28 사례 16건 발생).
+ *  - 직전 24h 정상값(median) 대비 5배 초과 또는 1/5 미만 → skip + 경고 로그.
+ *    급격한 입출금이 아닌 한 단일 cron tick에 5배 변동은 비정상.
+ *
+ * 한도를 넘으면 INSERT 차단 + 경고 로그. 예외 throw 하지 않음 (cron 실패 회피).
  */
+const SANITY_MAX_KRW = 100_000_000;       // 1억원 절대 상한
+const SANITY_MIN_KRW = 1_000;             // 1000원 절대 하한 (오타·1원짜리 노이즈 차단)
+const SANITY_RATIO   = 5;                 // 직전 24h median 대비 ±5배 허용
+
+async function getRecentMedianKRW(): Promise<number | null> {
+  const pool = getPool();
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT total_krw FROM portfolio_snapshots
+        WHERE ts >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+          AND total_krw > 0
+        ORDER BY total_krw ASC`,
+    );
+    if (rows.length === 0) return null;
+    const mid = Math.floor(rows.length / 2);
+    return Number(rows[mid].total_krw);
+  } catch {
+    return null;
+  }
+}
+
 export async function savePortfolioSnapshot(
   totalKRW: number,
   positions: unknown,
-  source: 'hourly' | 'trade' | 'manual' = 'hourly',
+  source: 'hourly' | 'trade' | 'manual' | 'dashboard' = 'hourly',
 ): Promise<void> {
   if (!(totalKRW > 0)) return;
+
+  // 1. 절대 한도 — 1억원 초과 또는 1000원 미만은 결함 가능성 매우 높음
+  if (totalKRW > SANITY_MAX_KRW || totalKRW < SANITY_MIN_KRW) {
+    console.error(
+      `[portfolio-snapshot] sanity reject: total=${Math.round(totalKRW)} KRW out of [${SANITY_MIN_KRW}, ${SANITY_MAX_KRW}] — INSERT skipped (source=${source})`,
+    );
+    return;
+  }
+
+  // 2. 직전 24h median 대비 ±5배 — outlier 차단
+  const median = await getRecentMedianKRW();
+  if (median != null && median > 0) {
+    const ratio = totalKRW / median;
+    if (ratio > SANITY_RATIO || ratio < 1 / SANITY_RATIO) {
+      console.error(
+        `[portfolio-snapshot] sanity reject: total=${Math.round(totalKRW)} vs 24h median=${Math.round(median)} ratio=${ratio.toFixed(2)}x — INSERT skipped (source=${source})`,
+      );
+      return;
+    }
+  }
+
   const pool = getPool();
   await pool.query(
     `INSERT INTO portfolio_snapshots (ts, total_krw, positions, source) VALUES (NOW(), ?, ?, ?)`,

@@ -114,6 +114,19 @@ export async function POST(req: NextRequest) {
   const batchCount = Math.ceil(plannedCount / BATCH_SIZE);
 
   if (dryRun) {
+    // D-9: dryRun 강화 — 첫 1건 실제 upsert 시도해서 임베딩·네트워크·권한 신뢰도 측정
+    let smoke: { ok: boolean; status?: number; elapsedMs?: number; error?: string } = { ok: false };
+    if (signals.length > 0) {
+      const sampleStart = Date.now();
+      try {
+        const client = await getKbClient();
+        await client.ensureCollection(SIGNALS_COLLECTION);   // env (M4_DEFAULT_EMBED_MODEL) 또는 bge-m3
+        const r = await upsertSignalsBatch([signals[0]]);
+        smoke = { ok: r.upserted > 0, elapsedMs: Date.now() - sampleStart };
+      } catch (e) {
+        smoke = { ok: false, elapsedMs: Date.now() - sampleStart, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
     return NextResponse.json({
       ok: true,
       mode: 'dryRun',
@@ -123,6 +136,7 @@ export async function POST(req: NextRequest) {
       estimatedSeconds: Math.round(batchCount * 1.5),
       detectedColumns: Array.from(cols).sort(),
       sample: signals.slice(0, 2),
+      smoke,   // D-9: 첫 1건 실 upsert 결과 — 운영자가 backfill 시작 전 신뢰도 측정
     });
   }
 
@@ -130,7 +144,7 @@ export async function POST(req: NextRequest) {
   let collectionEnsured = false;
   try {
     const client = await getKbClient();
-    await client.ensureCollection(SIGNALS_COLLECTION, 'bge-m3');
+    await client.ensureCollection(SIGNALS_COLLECTION);   // D-8: env 또는 bge-m3 default
     collectionEnsured = true;
   } catch (e) {
     console.warn(`[rag-backfill] ensureCollection failed (continuing): ${e instanceof Error ? e.message : String(e)}`);

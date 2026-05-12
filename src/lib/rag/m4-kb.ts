@@ -103,8 +103,13 @@ export class M4KbClient {
     }
   }
 
-  /** Collection이 없으면 생성 (X-Admin-Token). 이미 존재하면 무동작. */
-  async ensureCollection(name: string, model = 'bge-m3'): Promise<void> {
+  /**
+   * Collection이 없으면 생성 (X-Admin-Token). 이미 존재하면 무동작.
+   * D-8: model 미지정 시 M4_DEFAULT_EMBED_MODEL env 우선, 미설정 시 'bge-m3'.
+   * home-m4-api 게이트웨이의 default 와 일치성 유지.
+   */
+  async ensureCollection(name: string, model?: string): Promise<void> {
+    const effectiveModel = model || process.env.M4_DEFAULT_EMBED_MODEL || 'bge-m3';
     if (!this.adminToken) throw new Error('X-Admin-Token not configured');
     const url = `${this.base}/v1/kb/collections`;
     const ctrl = new AbortController();
@@ -113,7 +118,7 @@ export class M4KbClient {
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Admin-Token': this.adminToken },
-        body: JSON.stringify({ name, model }),
+        body: JSON.stringify({ name, model: effectiveModel }),
         signal: ctrl.signal,
         cache: 'no-store',
       });

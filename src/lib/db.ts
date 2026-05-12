@@ -697,6 +697,23 @@ async function setupDB(): Promise<void> {
     } catch { /* ignore */ }
   }
 
+  // ─── position_state — exit-engine 트레일링 peak·진입가 추적 ─────────
+  // 보유 종목당 1행. 청산 후 row 삭제. 재시작 후에도 트레일링 high 보존.
+  // (avg_entry_price 는 KIS 잔고에서도 조회되지만 trailing peak 추적엔 자체 저장 필요)
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS position_state (
+      symbol         VARCHAR(32) NOT NULL,
+      market         ENUM('domestic','overseas') NOT NULL,
+      entry_price    DECIMAL(36,8) NOT NULL,
+      peak_price     DECIMAL(36,8) NOT NULL,
+      qty            DECIMAL(36,18) NULL,
+      first_seen_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (symbol, market),
+      INDEX idx_position_state_market (market, updated_at DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   await p.query(`
     CREATE TABLE IF NOT EXISTS backtests (
       id BIGINT PRIMARY KEY AUTO_INCREMENT,

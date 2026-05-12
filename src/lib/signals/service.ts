@@ -33,6 +33,33 @@ function fmtNum(n: number): string {
   return Math.round(n).toLocaleString('ko-KR');
 }
 
+// ─── 시그널 알람 on/off 캐시 (30초 TTL) ──────────────────────────────────────
+type NotifyFlagCache = { autoSubmit: boolean; pending: boolean; ts: number };
+let notifyFlagCache: NotifyFlagCache | null = null;
+const NOTIFY_FLAG_TTL_MS = 30_000;
+
+async function getSignalNotifyFlags(): Promise<{ autoSubmit: boolean; pending: boolean }> {
+  if (notifyFlagCache && Date.now() - notifyFlagCache.ts < NOTIFY_FLAG_TTL_MS) {
+    return { autoSubmit: notifyFlagCache.autoSubmit, pending: notifyFlagCache.pending };
+  }
+  let autoSubmit = true, pending = true;
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<(RowDataPacket & { key: string; value: string })[]>(
+      "SELECT `key`, value FROM system_config WHERE `key` IN ('notify_signal_auto_submit','notify_signal_pending')",
+    );
+    for (const r of rows) {
+      try {
+        const v = JSON.parse(r.value);
+        if (r.key === 'notify_signal_auto_submit') autoSubmit = Boolean(v);
+        if (r.key === 'notify_signal_pending')     pending    = Boolean(v);
+      } catch { /* ignore */ }
+    }
+  } catch { /* DB 실패 시 기본 true 유지 */ }
+  notifyFlagCache = { autoSubmit, pending, ts: Date.now() };
+  return { autoSubmit, pending };
+}
+
 export interface SignalRow {
   id: number;
   strategy_id: string | null;
@@ -136,6 +163,7 @@ export async function createSignal(
   const signalId = ins.insertId;
 
   // Phase AB — RAG 인덱싱 (fire-and-forget, 실패 시 main flow 영향 없음)
+  // D-12: dynamic import 실패 silently 무시 X — warn 로그로 진단 가능하게
   void import('@/lib/rag/signals-upsert').then(m => m.fireAndForgetUpsertSignal({
     id: signalId,
     symbol: input.symbol,
@@ -147,21 +175,26 @@ export async function createSignal(
     reasoning: input.reasoning ?? null,
     indicators: (input.indicators ?? null) as Record<string, unknown> | null,
     createdAt: new Date().toISOString(),
-  })).catch(() => {/* import 실패 무시 */});
+  })).catch(e => {
+    console.warn(`[rag-upsert] dynamic import @/lib/rag/signals-upsert failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
 
   if (decision.route !== 'auto_submit') {
     const ttlMin = decision.expiresAt
       ? Math.round((new Date(decision.expiresAt).getTime() - Date.now()) / 60000)
       : 30;
-    sendAlert(
-      'info',
-      `📩 승인 요청: ${input.symbol}`,
-      `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · TTL ${ttlMin}분`,
-    );
+    const flags = await getSignalNotifyFlags();
+    if (flags.pending) {
+      sendAlert(
+        'info',
+        `📩 승인 요청: ${input.symbol}`,
+        `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · TTL ${ttlMin}분`,
+      );
+    }
     return { ok: true, signalId, autoSubmitted: false };
   }
 
-  const style = getStyleConfig(await getAnalystStyle());
+  const style = await getStyleConfig();
   const chasePct = await getEffectiveChasePct(style.limitChasePct);
   const orderReq = buildOrderRequest(input, chasePct);
   const orderResult = await submitOrder(orderReq, kis.createOrder, {
@@ -171,11 +204,14 @@ export async function createSignal(
   if (orderResult.orderId) {
     await pool.query(`UPDATE signals SET consumed_order_id=? WHERE id=?`, [orderResult.orderId, signalId]);
   }
-  sendAlert(
-    'info',
-    `✅ 자동 제출: ${input.symbol}`,
-    `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · 주문 #${orderResult.orderId ?? '-'}`,
-  );
+  const flags2 = await getSignalNotifyFlags();
+  if (flags2.autoSubmit) {
+    sendAlert(
+      'info',
+      `✅ 자동 제출: ${input.symbol}`,
+      `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · 주문 #${orderResult.orderId ?? '-'}`,
+    );
+  }
   return {
     ok: true,
     signalId,
@@ -219,7 +255,7 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
     quantity: row.quantity != null ? Number(row.quantity) : undefined,
     amountKRW: Number(row.amount_krw),
   };
-  const style = getStyleConfig(await getAnalystStyle());
+  const style = await getStyleConfig();
   const chasePct = await getEffectiveChasePct(style.limitChasePct);
   const orderReq = buildOrderRequest(input, chasePct);
   const orderResult = await submitOrder(orderReq, kis.createOrder, {

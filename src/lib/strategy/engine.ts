@@ -24,12 +24,15 @@ import { prefilterCandidate } from '@/lib/strategy/ai-prefilter';
 import { buildRegimeBucket, lookupRecentSkip, getRegimePerformance } from '@/lib/strategy/ai-dedup';
 import { fetchMacroIndicators } from '@/lib/strategy/macro';
 import { marketSessionInfo } from '@/lib/strategy/market-hours';
-import { refreshUniverse, getUniverseSymbols } from '@/lib/strategy/universe';
+import { refreshUniverse, getUniverseSymbols, getAlwaysIncludeSymbols } from '@/lib/strategy/universe';
 import { checkPortfolioStability } from '@/lib/strategy/portfolio-stability';
+import { evaluateExit, isLateSessionBuyBlockKST, EXIT_STRATEGY_ID } from '@/lib/strategy/exit-engine';
+import { upsertPositionState, reconcilePositionState, loadPositionState } from '@/lib/strategy/position-state';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 import type { StrategyMeta } from './rules/types';
 import { STRATEGY_REGISTRY } from './rules';
 import { getAnalystStyle, getStyleConfig } from './style';
+import { classifyMarketState, getRulesForState, ALWAYS_ACTIVE_RULES } from './market-state';
 import type { AnalystStyle, StyleConfig } from './style';
 
 interface StrategyRow extends RowDataPacket {
@@ -86,19 +89,27 @@ async function getHeldAmounts(market: Market): Promise<Map<string, HeldEntry>> {
   }
 }
 
-/** 거래대금 TOP 20 + 보유 종목 합산 (시장별, 투자성향 universeSource 기반 tier 필터) */
+/**
+ * cron 한 틱에서 분석 대상 종목 리스트 빌드 (시장별, 투자성향 universeSource 기반 tier 필터).
+ *
+ * 합산: strategy profile별 top N + 보유 종목 + always-include 핵심 시총 상위.
+ * 정책 (2026-05-05): topN 5/8/5 → 15/20/15 상향 + always-include 도입.
+ *   사유: 005930 같은 시총 1위 종목이 score 기반 top 5/8/5에서 밀려 누락된 사례 발견 (11% 급등 미감지).
+ *   상향 + always-include로 안정 대형주 영구 포함 + 모멘텀 종목 누락 폭 축소.
+ */
 async function getEvalSymbols(
   market: Market,
   heldAmounts: Map<string, HeldEntry>,
   universeSource: 'volume-top' | 'kospi200' | 'kospi100' = 'volume-top',
 ): Promise<string[]> {
   const set = new Set<string>();
-  const [trend, meanRev, breakout] = await Promise.all([
-    getUniverseSymbols('trend',    5, market, universeSource),
-    getUniverseSymbols('mean-rev', 8, market, universeSource),
-    getUniverseSymbols('breakout', 5, market, universeSource),
+  const [trend, meanRev, breakout, alwaysInclude] = await Promise.all([
+    getUniverseSymbols('trend',    15, market, universeSource),
+    getUniverseSymbols('mean-rev', 20, market, universeSource),
+    getUniverseSymbols('breakout', 15, market, universeSource),
+    getAlwaysIncludeSymbols(market),
   ]);
-  for (const s of [...trend, ...meanRev, ...breakout]) set.add(s);
+  for (const s of [...trend, ...meanRev, ...breakout, ...alwaysInclude]) set.add(s);
   for (const s of heldAmounts.keys()) set.add(s);
   return [...set];
 }
@@ -186,9 +197,24 @@ async function collectCandidates(
     skippedRecently.add(`${r.strategy_id}:${r.side}`);
   }
 
+  // ─── 시장 상태 분류 — 30m 캔들로 지표 계산 후 활성 룰 결정 ───
+  const preCandles = await getCandlesFor('30m', 30);
+  const preSummary = preCandles && preCandles.length >= 20
+    ? buildMarketSummary(preCandles, ticker) : null;
+  const marketState = preSummary ? classifyMarketState(preSummary) : null;
+  const stateRuleIds = marketState ? new Set(getRulesForState(marketState)) : null;
+
+  if (marketState === 'neutral') {
+    console.log(`[market-state] ${symbol} → neutral: 관망 (1d 룰은 계속 실행)`);
+  } else if (marketState) {
+    console.log(`[market-state] ${symbol} → ${marketState}: 활성 룰 [${[...(stateRuleIds ?? [])].join(', ')}]`);
+  }
+
   const candidates: Candidate[] = [];
 
   for (const { id, meta } of strategies) {
+    // 1d 룰 및 ALWAYS_ACTIVE 룰은 시장 상태와 무관하게 항상 실행
+    if (stateRuleIds !== null && !ALWAYS_ACTIVE_RULES.has(id) && !stateRuleIds.has(id)) continue;
     const effectiveInterval = await resolveInterval(meta.interval);
     const candles = await getCandlesFor(effectiveInterval, meta.minCandles);
     if (!candles || candles.length < meta.minCandles) continue;
@@ -275,6 +301,89 @@ async function insertSkipAuditPool(
   );
 }
 
+/**
+ * 보유 포지션 통합 청산 — exit-engine으로 hard_stop / target_profit / trailing_stop / eod_loss_cut 발화.
+ * AI 필터 우회 (긴급도 + 룰 명확성). 발화 시 createSignal → submitOrder 정상 경로.
+ *
+ * 안전:
+ *  - 보유 종목만 순회 (미보유 시 sell 시그널 부적합)
+ *  - reconcile 후 미보유 row 자동 정리
+ *  - 동일 심볼+exit_kind에 대한 5분 쿨다운 (createSignal 중복 방지)
+ */
+async function runExitEngine(
+  market: Market,
+  heldAmounts: Map<string, HeldEntry>,
+  style: StyleConfig,
+): Promise<number> {
+  const heldSymbols = [...heldAmounts.keys()];
+  // reconcile은 항상 실행 (미보유 row 정리)
+  try {
+    await reconcilePositionState(market, heldSymbols);
+  } catch (e) {
+    console.warn(`[exit-engine:${market}] reconcile 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (heldSymbols.length === 0) return 0;
+
+  const pool = getPool();
+  let created = 0;
+
+  for (const symbol of heldSymbols) {
+    const entry = heldAmounts.get(symbol);
+    if (!entry || entry.qty <= 0) continue;
+    if (!entry.avgPrice || entry.avgPrice <= 0) {
+      // avgPrice 없으면 trailing 계산 불가 → skip (KIS 잔고 응답 결손)
+      continue;
+    }
+
+    let ticker: Ticker;
+    try {
+      ticker = await kis.getTicker(symbol);
+    } catch (e) {
+      console.warn(`[exit-engine] ticker 조회 실패 ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+    if (!ticker.price || ticker.price <= 0) continue;
+
+    // peak 갱신 (state upsert) — peak는 GREATEST(prev, current)로 자동 보존
+    try {
+      await upsertPositionState(symbol, market, ticker.price, entry.avgPrice, entry.qty);
+    } catch (e) {
+      console.warn(`[exit-engine] state upsert 실패 ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
+      continue;
+    }
+
+    const state = await loadPositionState(symbol, market);
+    if (!state) continue;
+
+    const exitSig = evaluateExit({ symbol, market, ticker, state, style });
+    if (!exitSig) continue;
+
+    // 동일 심볼+exit_kind에 대한 5분 쿨다운 — createSignal 중복 방지
+    // (cron이 1분 tick이라 같은 청산 룰이 5번 연속 발화되면 중복 주문 우려)
+    const [recent] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM signals
+        WHERE symbol=? AND strategy_id=? AND side='sell'
+          AND status IN ('auto_submitted','approved','executed','accepted','pending')
+          AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+          AND JSON_EXTRACT(indicators, '$.exit_kind') = ?
+        LIMIT 1`,
+      [symbol, EXIT_STRATEGY_ID, exitSig.exitKind],
+    );
+    if ((recent as RowDataPacket[]).length > 0) {
+      continue; // 쿨다운 중
+    }
+
+    const res = await createSignal(exitSig);
+    if (res.ok) {
+      created++;
+      console.log(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 발화 (signalId=${res.signalId})`);
+    } else {
+      console.warn(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 실패: ${res.error}`);
+    }
+  }
+  return created;
+}
+
 /** context에 prefilter + portfolio guard + dedup을 적용해 AI 호출 필요 후보를 추려낸다. */
 async function applyFilters(
   ctx: CollectedContext,
@@ -316,6 +425,30 @@ async function applyFilters(
   }
 
   if (survived.length === 0) return { needsAi: [], regimeBucket: null };
+
+  // 1.4) 장마감 N분 전 신규 매수 차단 (국내장만, 기본 30분 → KST 15:00~15:30 buy skip)
+  // 사유: 시간외 거래 없음 → 마감 직전 매수는 익일 갭다운 위험에 무방비 노출.
+  // sell은 차단하지 않음 (청산은 시간 무관 허용).
+  if (market === 'domestic' && isLateSessionBuyBlockKST(new Date(), style.lateSessionBuyBlockMin)) {
+    const lateBlocked: Candidate[] = [];
+    const passed: Candidate[] = [];
+    for (const cand of survived) {
+      if (cand.side === 'buy') lateBlocked.push(cand);
+      else passed.push(cand);
+    }
+    for (const cand of lateBlocked) {
+      await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
+        reasoning: `[매수 차단 — 장마감 임박] KST 15:30 폐장까지 ${style.lateSessionBuyBlockMin}분 이내 신규 매수 금지 (시간외 거래 없음 → 익일 갭다운 위험 회피)`,
+        category: 'rule_prefilter',
+        confidence: 0,
+      });
+    }
+    if (lateBlocked.length > 0) {
+      console.log(`[late-session-block] ${symbol} → ${lateBlocked.length} buy skipped`);
+    }
+    survived = passed;
+    if (survived.length === 0) return { needsAi: [], regimeBucket: null };
+  }
 
   // 1.5) portfolio stability 가드 — buy 시그널만 검사 (sell·해외는 자동 pass).
   //   stableCoreRatioMin 위반 + maxPositionsPerSymbol 한도 초과 → 거절. AI 호출 비용 절약.
@@ -365,7 +498,7 @@ async function applyFilters(
   for (const cand of survived) {
     const hit = await lookupRecentSkip(
       { symbol, strategyId: cand.strategyId, side: cand.side, regime: regimeBucket },
-      analystStyle,
+
     );
     if (hit.hit && hit.prev) {
       dedupHits++;
@@ -671,7 +804,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
 
   const pool = getPool();
   const analystStyle = await getAnalystStyle();
-  const style = getStyleConfig(analystStyle);
+  const style = await getStyleConfig();
 
   // 현재 투자 성향이 applicable_styles에 포함된 전략만 평가 — FIND_IN_SET으로 SET 컬럼 검사
   const [rows] = await pool.query<StrategyRow[]>(
@@ -702,11 +835,26 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
 
   const heldAmounts = await getHeldAmounts(market);
+
+  // ─── Exit Engine — 보유 포지션 통합 청산 시그널 (AI 필터 우회) ───────────
+  // 1. position_state reconcile (미보유 row 일괄 정리)
+  // 2. 보유 종목별 ticker 조회 + state upsert (peak 갱신) + evaluateExit 평가
+  // 3. 청산 시그널 발화 시 createSignal → submitOrder 정상 경로
+  // 안전장치(DRY_RUN/KILL_SWITCH/order_limits/blacklist)는 모두 통과한다.
+  const exitSignalsCreated = await runExitEngine(market, heldAmounts, style);
+  if (exitSignalsCreated > 0) {
+    console.log(`[exit-engine:${market}] ${exitSignalsCreated} 청산 시그널 발화`);
+  }
+
   const activeStrategies: ActiveStrategy[] = dueStrategies.map(s => ({ id: s.id, meta: s.meta }));
   // 해외 시장은 universeSource 'volume-top' 고정 (KOSPI 분류 미적용). 국내만 style 분기.
-  const universeSrc = market === 'domestic' ? (style.universeSource ?? 'volume-top') : 'volume-top';
+  const universeSrc = market === 'domestic' ? 'volume-top' : 'volume-top'; // 단일성향: 기본값 고정
   const symbols = await getEvalSymbols(market, heldAmounts, universeSrc);
-  const defaultAmountKRW = await getEffectiveOrderMax('kis', market);
+  // 수수료(왕복 0.43% 한국 주식 — 단방향 0.215%) + micro 변동 buffer = 0.5%
+  // effectiveMax 그대로 쓰면 micro 초과로 order_limit 차단 빈발. 0.995 곱으로 사전 차감.
+  const FEE_BUFFER_PCT = 0.005;
+  const rawMax = await getEffectiveOrderMax('kis', market);
+  const defaultAmountKRW = rawMax === Infinity ? Infinity : Math.floor(rawMax * (1 - FEE_BUFFER_PCT));
 
   const errors: string[] = [];
   const results = new Map<string, EvalResult>();

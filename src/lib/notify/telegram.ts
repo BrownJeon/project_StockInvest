@@ -1,5 +1,9 @@
+import { Agent } from 'undici';
 import type { AlertLevel } from './slack';
 import { getCredential } from '@/lib/credentials';
+
+// IPv6 outbound 가 unreachable 인 호스트에서 ETIMEDOUT 방지 — IPv4 강제.
+const ipv4Dispatcher = new Agent({ connect: { family: 4 } });
 
 const LEVEL_PREFIX: Record<AlertLevel, string> = {
   critical: '🚨',
@@ -28,10 +32,11 @@ export async function sendTelegramAlert(
   const text = `<b>[${project}] ${emoji} ${title}</b>\n${body}\n\n🕐 ${kstNow()} KST`;
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
-  const init: RequestInit = {
+  const init: RequestInit & { dispatcher?: unknown } = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, parse_mode: 'HTML', text }),
+    dispatcher: ipv4Dispatcher,
   };
   for (let i = 0; i < 2; i++) {
     try {
@@ -44,7 +49,9 @@ export async function sendTelegramAlert(
         await new Promise(r => setTimeout(r, 500));
         continue;
       }
-      console.error('[telegram] fetch error:', e);
+      const cause = (e as { cause?: { errors?: unknown[]; code?: string; message?: string } }).cause;
+      const errors = cause?.errors ? cause.errors.map(x => String(x)) : [];
+      console.error('[telegram] fetch error:', msg, '| cause:', cause?.code ?? cause?.message ?? cause, '| errors:', errors);
       return;
     }
   }
