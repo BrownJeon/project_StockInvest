@@ -96,10 +96,7 @@ async function getDailyCandles(symbol: string, count: number): Promise<Candle[]>
     .slice(-count);
 }
 
-async function getMinuteCandles(symbol: string, fidPeriod: string, count: number): Promise<Candle[]> {
-  const now = new Date();
-  const kst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
-  const timeStr = `${String(kst.getHours()).padStart(2,'0')}${String(kst.getMinutes()).padStart(2,'0')}${String(kst.getSeconds()).padStart(2,'0')}`;
+async function fetchMinutePage(symbol: string, fidPeriod: string, timeStr: string): Promise<Record<string, string>[]> {
   const headers = await kisHeaders('FHKST03010200');
   const url = `${BASE()}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice`
     + `?FID_ETC_CLS_CODE=&FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=${symbol}`
@@ -108,23 +105,49 @@ async function getMinuteCandles(symbol: string, fidPeriod: string, count: number
   const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`KIS getMinuteCandles ${symbol}: ${res.status}`);
   const data = await res.json();
-  const rows: Record<string, string>[] = data.output2 ?? [];
-  return rows
-    .filter(r => r.stck_bsop_date && Number(r.stck_clpr) > 0)
-    .map(r => {
-      const d = r.stck_bsop_date;
-      const t = r.stck_cntg_hour ?? '000000';
-      return {
-        ts:     new Date(`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}+09:00`).getTime(),
-        open:   Number(r.stck_oprc),
-        high:   Number(r.stck_hgpr),
-        low:    Number(r.stck_lwpr),
-        close:  Number(r.stck_clpr),
-        volume: Number(r.cntg_vol),
-      };
-    })
-    .sort((a, b) => a.ts - b.ts)
-    .slice(-count);
+  return (data.output2 ?? []) as Record<string, string>[];
+}
+
+function parseMinuteRow(r: Record<string, string>): Candle {
+  const d = r.stck_bsop_date;
+  const t = r.stck_cntg_hour ?? '000000';
+  return {
+    ts:     new Date(`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${t.slice(0,2)}:${t.slice(2,4)}:${t.slice(4,6)}+09:00`).getTime(),
+    open:   Number(r.stck_oprc),
+    high:   Number(r.stck_hgpr),
+    low:    Number(r.stck_lwpr),
+    close:  Number(r.stck_clpr),
+    volume: Number(r.cntg_vol),
+  };
+}
+
+/**
+ * KIS 분봉 조회 — 한 번에 최대 ~30봉만 반환하므로, count 충족까지 이전 시간으로 페이지네이션.
+ * 장 중 유동성 낮은 종목이나 장 시작 직후에도 충분한 봉 수를 확보하기 위해 최대 3회 요청.
+ */
+async function getMinuteCandles(symbol: string, fidPeriod: string, count: number): Promise<Candle[]> {
+  const periodMin = Number(fidPeriod); // 30m → 30
+  const allRows: Record<string, string>[] = [];
+  const now = new Date();
+  let pivot = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const timeStr = `${String(pivot.getHours()).padStart(2,'0')}${String(pivot.getMinutes()).padStart(2,'0')}${String(pivot.getSeconds()).padStart(2,'0')}`;
+    const rows = await fetchMinutePage(symbol, fidPeriod, timeStr);
+    const valid = rows.filter(r => r.stck_bsop_date && Number(r.stck_clpr) > 0);
+    allRows.push(...valid);
+
+    const parsed = allRows.map(parseMinuteRow).sort((a, b) => a.ts - b.ts);
+    const unique = parsed.filter((c, i, arr) => i === 0 || c.ts !== arr[i - 1].ts);
+    if (unique.length >= count) return unique.slice(-count);
+
+    // 봉 수 부족 — pivot을 (count × periodMin)분 앞으로 당겨 재요청
+    pivot = new Date(pivot.getTime() - count * periodMin * 60 * 1000);
+  }
+
+  const parsed = allRows.map(parseMinuteRow).sort((a, b) => a.ts - b.ts);
+  const unique = parsed.filter((c, i, arr) => i === 0 || c.ts !== arr[i - 1].ts);
+  return unique.slice(-count);
 }
 
 // ── 잔고 조회 ────────────────────────────────────────────────────────────────

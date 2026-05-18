@@ -57,6 +57,22 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
   if (!Number.isFinite(price) || price <= 0) return null;
   if (!Number.isFinite(entry) || entry <= 0) return null;
 
+  // ─── 단위(unit) sanity check ─────────────────────────────────────
+  // price와 entry는 동일 통화·단위여야 한다. 과거 회귀 사례:
+  //  2026-05-13 사고 — overseas 잔고 avgPrice가 USD raw 였고 ticker.price는 KRW 환산이라
+  //  pnlPct ≈ +106,677% 로 계산되어 target_profit 11건 오발화. Kill Switch가 우연히 차단.
+  // 정상 보유 종목의 price/entry 비율은 통상 [0.5, 2.0]. 안전 마진을 두고 [0.3, 3.0]
+  // 초과 시 단위 불일치로 간주하고 시그널을 즉시 거부한다 (오발화 < 미발화가 안전).
+  const ratio = price / entry;
+  if (ratio < 0.3 || ratio > 3.0) {
+    console.warn(
+      `[exit-engine:unit-mismatch] ${symbol} (${market}) price/entry ratio=${ratio.toFixed(4)} ` +
+      `out of [0.3, 3.0] — likely USD/KRW unit mismatch. price=${price} entry=${entry}. ` +
+      `Skipping exit signal to prevent false target_profit/hard_stop fire.`,
+    );
+    return null;
+  }
+
   const pnlPct = (price - entry) / entry * 100;
 
   // ─── 1) EOD 손실 청산 (국내장만) ─────────────────────────────────

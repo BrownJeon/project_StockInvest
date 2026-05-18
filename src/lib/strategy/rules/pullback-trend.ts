@@ -1,4 +1,5 @@
 import { smaLast } from '../indicators/sma';
+import { emaLast } from '../indicators/ema';
 import { rsi } from '../indicators/rsi';
 import type { RuleFunction } from './types';
 
@@ -7,18 +8,20 @@ import type { RuleFunction } from './types';
  *  - 매수 트리거 (모두 충족):
  *      1) 종가 > MA20  (상승 추세 진행 중)
  *      2) MA20 우상향  (현재 MA20 > 5봉 전 MA20)
- *      3) 직전 N봉(3) 동안 RSI가 40~50 영역을 한 번 이상 터치 (눌림 발생)
- *      4) 현재봉이 양봉 + RSI 반등 (cur > prev)
+ *      3) EMA20 > EMA60 (중기 상승 추세 확인 — 하락추세 눌림목 오진 방지)
+ *      4) 직전 N봉(3) 동안 RSI가 42~48 영역을 한 번 이상 터치 (눌림 발생)
+ *      5) 현재봉이 양봉 + RSI 반등 (cur > prev)
  *  - 매도 트리거 없음 — 다른 룰(bb-breakout 청산·rsi-oversold 매도 등)에 위임
  *
  * 의도: SK하이닉스·삼성전자처럼 **명확한 상승 추세 진행 중인 종목의 깊은 눌림목** 진입.
  *  - 추격 매수와 달리 "상승 후 일시 약세" 시점이라 RR 비율 우수
  *  - 손절: ATR×1.0 (style.atrStopMult)
+ * 개선 (2026-05-14): 38.1% 적중률 → EMA 추세 조건 추가 + RSI 구간 40~50→42~48 정밀화
  */
 const TREND_LOOKBACK = 5;     // MA20 우상향 판정 윈도우
 const PULLBACK_LOOKBACK = 3;  // RSI 눌림 발생 윈도우
-const RSI_PULLBACK_MIN = 40;
-const RSI_PULLBACK_MAX = 50;
+const RSI_PULLBACK_MIN = 42;  // 40→42: 충분히 눌린 시점만 포착
+const RSI_PULLBACK_MAX = 48;  // 50→48: 반등 직전 확신 강화
 
 export const pullbackTrend: RuleFunction = ({ strategyId, symbol, candles, ticker, amountKRW, style }) => {
   if (candles.length < 30) return [];
@@ -41,7 +44,12 @@ export const pullbackTrend: RuleFunction = ({ strategyId, symbol, candles, ticke
   const ma20Prev = smaLast(closes.slice(0, closes.length - TREND_LOOKBACK), 20);
   if (ma20Prev == null || ma20 <= ma20Prev) return [];
 
-  // (3) 직전 N봉 동안 RSI 40~50 영역 터치 (눌림목)
+  // (3) EMA20 > EMA60 — 중기 상승 추세 확인 (하락추세 눌림목 오진 방지)
+  const ema20 = emaLast(closes, 20);
+  const ema60 = emaLast(closes, 60);
+  if (ema20 == null || ema60 == null || ema20 <= ema60) return [];
+
+  // (4) 직전 N봉 동안 RSI 42~48 영역 터치 (눌림목)
   const rsiSeries = rsi(closes, 14);
   const recentRsi = rsiSeries.slice(n - PULLBACK_LOOKBACK, n + 1);
   const touchedPullback = recentRsi.some(
@@ -57,10 +65,12 @@ export const pullbackTrend: RuleFunction = ({ strategyId, symbol, candles, ticke
   const price = ticker.price;
   return [{
     strategyId, symbol, side: 'buy', orderType: 'limit', price, amountKRW,
-    reasoning: `pullback-trend: close ${cur.close.toFixed(0)} > MA20(${ma20.toFixed(0)}) 우상향(${ma20Prev.toFixed(0)}→${ma20.toFixed(0)}) + 최근 ${PULLBACK_LOOKBACK}봉 RSI ${RSI_PULLBACK_MIN}~${RSI_PULLBACK_MAX} 눌림 + RSI 반등(${prevRsi.toFixed(1)}→${curRsi.toFixed(1)}) + 양봉`,
+    reasoning: `pullback-trend: close ${cur.close.toFixed(0)} > MA20(${ma20.toFixed(0)}) 우상향 + EMA20(${ema20.toFixed(0)})>EMA60(${ema60.toFixed(0)}) 상승추세 + 최근 ${PULLBACK_LOOKBACK}봉 RSI ${RSI_PULLBACK_MIN}~${RSI_PULLBACK_MAX} 눌림 + RSI 반등(${prevRsi.toFixed(1)}→${curRsi.toFixed(1)}) + 양봉`,
     indicators: {
       ma20,
       ma20Prev,
+      ema20,
+      ema60,
       curRsi,
       prevRsi,
       open:  cur.open,

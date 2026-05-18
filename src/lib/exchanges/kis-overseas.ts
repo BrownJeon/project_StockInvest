@@ -57,13 +57,52 @@ async function kisHeaders(trId: string, extra?: Record<string, string>): Promise
 }
 
 // ── 시세 조회 ────────────────────────────────────────────────────────────────
+/**
+ * KIS overseas getTicker — 단발 5xx/429/네트워크 hiccup으로 strategy-eval errors가
+ * 5분마다 1~6건씩 누적되는 사례(2026-05-16 분석)를 완화하기 위해 timeout+1회 retry 적용.
+ * 비교: getBalances 는 이미 retry 루프가 있으나 getTicker 는 단순 fetch였음.
+ *
+ * 정책:
+ *  - 타임아웃 5s (AbortController). KIS 정상 응답은 <500ms.
+ *  - retry는 단 1회. 5xx/429/AbortError/network error 만 재시도, 4xx(인증·심볼) 즉시 throw.
+ *  - retry 백오프 300ms — strategy-eval cron 5분 주기 안에서 안전 마진 충분.
+ */
 export async function getTicker(symbol: string): Promise<Ticker> {
   const { excd, ticker } = parseOverseas(symbol);
   const headers = await kisHeaders('HHDFS00000300');
   const params = new URLSearchParams({ AUTH: '', EXCD: excd, SYMB: ticker });
   const url = `${BASE()}/uapi/overseas-price/v1/quotations/price?${params}`;
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`KIS overseas getTicker ${symbol}: ${res.status}`);
+
+  const MAX_ATTEMPTS = 2;
+  const TIMEOUT_MS = 5_000;
+  let res: Response | undefined;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    try {
+      res = await fetch(url, { headers, signal: ctrl.signal });
+    } catch (e) {
+      lastErr = e;
+      clearTimeout(timer);
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, 300));
+        continue;
+      }
+      throw new Error(`KIS overseas getTicker ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    clearTimeout(timer);
+    // 5xx/429만 재시도, 그 외 4xx는 즉시 throw (인증·심볼 에러는 retry로 해결 불가)
+    if (res.ok) break;
+    if ((res.status >= 500 || res.status === 429) && attempt < MAX_ATTEMPTS) {
+      await new Promise(r => setTimeout(r, 300));
+      continue;
+    }
+    throw new Error(`KIS overseas getTicker ${symbol}: ${res.status}`);
+  }
+  if (!res || !res.ok) {
+    throw new Error(`KIS overseas getTicker ${symbol}: retries exhausted ${lastErr ?? ''}`);
+  }
   const data = await res.json();
   const o = data.output;
   if (!o) throw new Error(`KIS overseas getTicker no output: ${JSON.stringify(data)}`);
@@ -210,6 +249,8 @@ export async function getBalances(): Promise<Balance[]> {
     balances.push({ currency: 'USD', free: usdAmount, locked: 0 });
   }
   // 보유 주식 (output1) — pdno = 영문 티커
+  // avgPrice(pchs_avg_pric)는 USD 단가이므로 ticker.price와 단위를 맞추기 위해 KRW 환산 필요.
+  const balFx = await fetchUsdKrwRate().catch(() => 1);
   for (const item of (data.output1 ?? [])) {
     const qty = Number(item.ovrs_cblc_qty ?? item.hldg_qty ?? 0);
     if (qty <= 0) continue;
@@ -217,12 +258,13 @@ export async function getBalances(): Promise<Balance[]> {
     if (!ticker) continue;
     const excd = String(item.ovrs_excg_cd ?? 'NASD');
     const myExcd: OverseasExchange = excd.startsWith('NAS') ? 'NAS' : excd.startsWith('NYS') ? 'NYS' : 'AMS';
-    const avg = Number(item.pchs_avg_pric ?? 0);  // USD 단가
+    const avgUsd = Number(item.pchs_avg_pric ?? 0);  // USD 단가
+    const avgKrw = avgUsd > 0 ? avgUsd * balFx : 0;  // KRW 환산 (ticker.price와 단위 일치)
     balances.push({
       currency: formatOverseas(myExcd, ticker),  // 'NAS:AAPL' 형태로 normalize
       free:     qty,
       locked:   0,
-      avgPrice: avg > 0 ? avg : undefined,
+      avgPrice: avgKrw > 0 ? avgKrw : undefined,
     });
   }
   return balances;
@@ -237,9 +279,21 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
     ? (isBuy ? 'VTTT1002U' : 'VTTT1006U')
     : (isBuy ? 'TTTT1002U' : 'TTTT1006U');
 
-  const price    = req.price ?? 0;
+  const krwPrice = req.price ?? 0;
   const quantity = req.quantity ?? 0;
   if (quantity <= 0) return { ok: false, error: 'quantity 계산 실패 (해외는 USD 가격·수량 필수)' };
+
+  // KIS 해외 주문은 지정가(ORD_DVSN='00')만 지원 — '01'은 장전시간외(오류 유발).
+  // 가격은 USD 단가: ticker.price가 KRW로 환산되어 있으므로 FX로 역산.
+  const fx = await fetchUsdKrwRate().catch(() => 1400);
+  const usdPrice = krwPrice > 0 ? krwPrice / fx : 0;
+  // market 주문은 매도 -0.5% / 매수 +0.5% 공격적 호가로 즉시 체결 유도.
+  const adjPrice = usdPrice > 0
+    ? (req.type === 'market'
+        ? (isBuy ? usdPrice * 1.005 : usdPrice * 0.995)
+        : usdPrice)
+    : 0;
+  if (adjPrice <= 0) return { ok: false, error: 'USD 가격 계산 실패 (FX 환산 오류)' };
 
   const [headers, cano, acntPrdt] = await Promise.all([kisHeaders(trId), accountNo(), accountProduct()]);
   const body = {
@@ -247,10 +301,10 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
     ACNT_PRDT_CD: acntPrdt,
     OVRS_EXCG_CD: toOvrsExcgCd(excd),
     PDNO:         ticker,
-    ORD_QTY:      String(quantity),
-    OVRS_ORD_UNPR: req.type === 'market' ? '0' : price.toFixed(4),
+    ORD_QTY:      String(Math.floor(quantity)), // KIS 해외는 정수 수량
+    OVRS_ORD_UNPR: adjPrice >= 1 ? adjPrice.toFixed(2) : adjPrice.toFixed(4),
     ORD_SVR_DVSN_CD: '0',
-    ORD_DVSN:     req.type === 'market' ? '01' : '00',
+    ORD_DVSN:     '00', // 지정가 고정 (KIS 해외 시장가 미지원)
     CTAC_TLNO:    '',
     MGCO_APTM_ODNO: '',
   };

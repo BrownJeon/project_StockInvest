@@ -36,6 +36,8 @@ export interface StyleConfig {
   limitChasePct: number;
   trailingActivatePct: number;
   trailingDrawdownPct: number;
+  /** 트레일링 최소 하락폭 하한 (%). trailingDrawdownPct의 동적 조정 최솟값. SI 신규. */
+  trailingDrawdownPct_min: number;
   /** 하드 손절 임계값 (%). avgEntry × (1 - hardStopPct/100) 도달 시 시장가 매도. SI 신규. */
   hardStopPct: number;
   /** 장마감 직전 손절 임계값 (%). KST 15:20~15:29 구간 -eodLossCutPct% 이상 손실 시 시장가 매도. SI 신규. */
@@ -48,13 +50,13 @@ export interface StyleConfig {
 
 /** 단일 기본 설정 — 기존 aggressive 기준으로 통합 (SI 고유 필드 포함) */
 export const DEFAULT_STYLE_CONFIG: StyleConfig = {
-  rsiBuyThreshold:     45,
+  rsiBuyThreshold:     35,   // 45→35: 주식 변동성 낮음 — 더 과매도 구간에서만 진입
   rsiSellThreshold:    55,
   rsiSellPriceMult:    1.00,
   minProfitMargin:     0.003,
   rebuyCooldownMin:    5,
   minAiConfidence:     35,
-  minSellAiConfidence: 30,
+  minSellAiConfidence: 35,   // 30→35: 손실 중 매도 통과율 강화 (매도 기회 놓치지 않도록)
   atrStopMult:         2.0,
   minRWinPct:          0.7,
   universeSource:      'volume-top',
@@ -63,10 +65,11 @@ export const DEFAULT_STYLE_CONFIG: StyleConfig = {
   holdingPeriodHours:  { min: 1, max: 48 },
   holdingPeriodDays:   { min: 1, max: 10 },  // SI 주식: 1~10일
   stableCoreRatioMin:  0.20,                  // SI: 코어 비율 20%
-  targetProfitPct:     1.5,
+  targetProfitPct:     2.5,   // 1.5→2.5: 손익비 2:1 이상 확보 (수수료 0.43% 왕복 감안)
   limitChasePct:       0.005,
   trailingActivatePct: 2.5,
   trailingDrawdownPct: 1.5,
+  trailingDrawdownPct_min: 1.5,  // SI 신규: 트레일링 최소 하락폭 하한
   // SI 신규 — DEFAULT는 보수적 값. 실제 운영값은 system_config style_default_* 로 override.
   // (백테스트 미완료 파라미터는 사용자 가이드대로 코드 default 변경 없이 DB로만 적용)
   hardStopPct:           1.5,
@@ -83,7 +86,7 @@ const NUMERIC_FIELDS: Array<keyof StyleConfig> = [
   'atrStopMult', 'minRWinPct',
   'btcEthCoreRatioMin', 'maxPositionsPerSymbol',
   'targetProfitPct', 'limitChasePct',
-  'trailingActivatePct', 'trailingDrawdownPct',
+  'trailingActivatePct', 'trailingDrawdownPct', 'trailingDrawdownPct_min',
   'hardStopPct', 'eodLossCutPct', 'lateSessionBuyBlockMin', 'momentumChaseMaxPct',
 ];
 
@@ -92,7 +95,8 @@ const FIELD_RANGES: Partial<Record<keyof StyleConfig, [number, number]>> = {
   minSellAiConfidence:  [0,  100],
   atrStopMult:          [0.5, 10],
   trailingActivatePct:  [0.5, 20],
-  trailingDrawdownPct:  [0.2, 15],
+  trailingDrawdownPct:      [0.2, 15],
+  trailingDrawdownPct_min:  [0.2, 15],
   rebuyCooldownMin:     [1,   1440],
   btcEthCoreRatioMin:   [0,   1],
   maxPositionsPerSymbol:[1,   20],

@@ -1,6 +1,37 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 
+export interface BuyCandidate {
+  symbol: string;
+  rsi: number | null;
+  aiConf: number | null;
+  evPct: number | null;
+  status: 'watchlist' | 'ai_pass' | 'ai_rejected' | 'blocked';
+  skipReason: string | null;
+}
+
+export interface HoldingStatus {
+  symbol: string;
+  profitPct: number;
+  entryKRW: number;
+  currentKRW: number;
+  qty: number;
+}
+
+export interface SellPnl {
+  symbol: string;
+  exitKind: string;
+  pnlPct: number;
+  pnlKRW: number;     // (current_price - entry_price) × qty
+  sellAmountKRW: number;
+}
+
+export interface SignalCandidates {
+  buyWatchlist: BuyCandidate[];
+  holdings: HoldingStatus[];
+  sellPnl: SellPnl[];
+}
+
 /**
  * 정기 거래 리포트 빌더 — 분석 기간(rangeStart~rangeEnd) 의 거래·잔액 변동을 집계해
  * Slack/Telegram 발송용 mrkdwn 메시지를 생성한다.
@@ -231,7 +262,7 @@ function fmtKstDate(d: Date): string {
     .replace(/\. /g, '-').replace('.', '');
 }
 
-export function formatReportMessage(rep: TradeReport, totalKRW: number, baselineKRW: number | null): string {
+export function formatReportMessage(rep: TradeReport, totalKRW: number, baselineKRW: number | null, candidates?: SignalCandidates): string {
   const hours = Math.round((rep.rangeEnd.getTime() - rep.rangeStart.getTime()) / 3600_000);
   const lines: string[] = [];
   lines.push(`*📊 거래 리포트 (${hours}h)*`);
@@ -249,27 +280,70 @@ export function formatReportMessage(rep: TradeReport, totalKRW: number, baseline
   lines.push('*거래 요약*');
   lines.push(`• 매수 ${rep.buys}건 / ${fmtKRWPlain(rep.buysAmountKRW)}`);
   lines.push(`• 매도 ${rep.sells}건 / ${fmtKRWPlain(rep.sellsAmountKRW)}`);
-  lines.push(`• 헤더 P&L (단순 합산): ${fmtKRW(rep.headerPnlKRW)}  ⚠ 미체결 매수 영향 가능`);
-  lines.push(`• 실현 P&L (LIFO 페어): ${fmtKRW(rep.lifoPnlKRW)} (수수료 차감)`);
-  if (rep.perSymbol.length > 0) {
+
+  // 매도 손익 — exit-engine indicators(entry_price/pnl_pct) 기준 실손익
+  const sellPnlList = candidates?.sellPnl ?? [];
+  if (sellPnlList.length > 0) {
+    const totalPnl = sellPnlList.reduce((s, p) => s + p.pnlKRW, 0);
+    const exitLabel: Record<string, string> = {
+      hard_stop:     '손절',
+      trailing_stop: '트레일',
+      target_profit: '익절',
+      eod_loss_cut:  '마감손절',
+      ai_sell:       'AI매도',
+    };
     lines.push('');
-    lines.push(`*매도 발생 종목 손익 (${rep.perSymbol.length}건)*`);
-    for (const p of rep.perSymbol.slice(0, 10)) {
-      const icon = p.realizedKRW > 0 ? '🔴' : (p.realizedKRW < 0 ? '🔵' : '⚪');
-      lines.push(`${icon} ${p.symbol} ${fmtKRW(p.realizedKRW)} (매도 ${p.sellCount}건)`);
+    lines.push(`*📉 매도 손익 (총 ${fmtKRW(totalPnl)})*`);
+    for (const p of sellPnlList) {
+      const icon = p.pnlKRW >= 0 ? '🔴' : '🔵';
+      const sign = p.pnlPct >= 0 ? '+' : '';
+      const kind = exitLabel[p.exitKind] ?? p.exitKind;
+      lines.push(`${icon} ${p.symbol} ${fmtKRW(p.pnlKRW)} (${sign}${p.pnlPct.toFixed(2)}%) [${kind}]`);
     }
-    if (rep.perSymbol.length > 10) {
-      lines.push(`  …외 ${rep.perSymbol.length - 10}종목`);
-    }
+  } else if (rep.sells > 0) {
+    lines.push(`• 실현 손익: ${fmtKRW(rep.lifoPnlKRW)}`);
   } else {
     lines.push('');
-    lines.push('*매도 발생 종목 없음 — 실현 손익 산정 대상 없음*');
+    lines.push('*매도 없음*');
   }
   if (rep.churnSymbols.length > 0) {
     lines.push('');
     lines.push('*경고*');
     lines.push(`• 회전매매: ${rep.churnSymbols.join(', ')} (사이클 ≥ ${FEE_THRESHOLD_CYCLES})`);
   }
+
+  // ── 보유 현황 ──
+  if (candidates?.holdings && candidates.holdings.length > 0) {
+    lines.push('');
+    lines.push('*📦 현재 보유*');
+    for (const h of candidates.holdings) {
+      const sign = h.profitPct >= 0 ? '+' : '';
+      const icon = h.profitPct >= 2.5 ? '🔴' : h.profitPct <= -1.5 ? '🔵' : '⚪';
+      const warn = h.profitPct <= -1.5 ? ' ← 손절 임박' : h.profitPct >= 2.5 ? ' ← 익절 임박' : '';
+      lines.push(`${icon} ${h.symbol} ${sign}${h.profitPct.toFixed(2)}% (${h.qty}주)${warn}`);
+    }
+  }
+
+  // ── 매수 후보 ──
+  if (candidates?.buyWatchlist && candidates.buyWatchlist.length > 0) {
+    lines.push('');
+    lines.push('*👀 매수 후보 모니터링*');
+    const statusLabel: Record<string, string> = {
+      watchlist:   '대기중',
+      ai_pass:     '✅ AI승인',
+      ai_rejected: '❌ AI거절',
+      blocked:     '차단',
+    };
+    for (const c of candidates.buyWatchlist) {
+      const rsiStr = c.rsi != null ? `RSI ${c.rsi.toFixed(1)}` : 'RSI -';
+      const evStr  = c.evPct != null ? ` EV ${c.evPct > 0 ? '+' : ''}${c.evPct.toFixed(2)}%` : '';
+      const confStr = c.aiConf != null && c.aiConf > 0 ? ` AI${c.aiConf}%` : '';
+      const label  = statusLabel[c.status] ?? c.status;
+      const rsiBadge = c.rsi != null && c.rsi < 30 ? '🔥' : c.rsi != null && c.rsi < 35 ? '⚡' : '•';
+      lines.push(`${rsiBadge} ${c.symbol} ${rsiStr}${confStr}${evStr} [${label}]`);
+    }
+  }
+
   return lines.join('\n');
 }
 
@@ -332,4 +406,100 @@ export async function fetchPortfolioBaselineKRW(rangeStart: Date): Promise<numbe
   } catch {
     return null;
   }
+}
+
+// ─── 매수 후보 + 보유 현황 조회 ─────────────────────────────────────────────
+
+export async function fetchSignalCandidates(): Promise<SignalCandidates> {
+  const pool = getPool();
+
+  // 최근 4시간 내 buy 시그널 발화 종목 (최신 1건/종목)
+  const [buyRows] = await pool.query<RowDataPacket[]>(`
+    SELECT s1.symbol, s1.market,
+      JSON_EXTRACT(s1.indicators, '$.rsi14')              AS rsi,
+      JSON_EXTRACT(s1.indicators, '$.ai.confidence')      AS ai_conf,
+      JSON_EXTRACT(s1.indicators, '$.ai.ev.evPct')        AS ev_pct,
+      JSON_UNQUOTE(JSON_EXTRACT(s1.indicators, '$.ai.skipCategory')) AS skip_reason,
+      s1.status
+    FROM signals s1
+    INNER JOIN (
+      SELECT symbol, MAX(created_at) AS latest
+      FROM signals
+      WHERE side = 'buy' AND created_at > DATE_SUB(NOW(), INTERVAL 4 HOUR)
+      GROUP BY symbol
+    ) s2 ON s1.symbol = s2.symbol AND s1.created_at = s2.latest
+    WHERE s1.side = 'buy'
+    ORDER BY CAST(JSON_EXTRACT(s1.indicators, '$.rsi14') AS DECIMAL(6,2)) ASC
+    LIMIT 15
+  `);
+
+  const buyWatchlist: BuyCandidate[] = buyRows.map(r => {
+    const st = String(r.status ?? '');
+    const skip = r.skip_reason ? String(r.skip_reason) : null;
+    let status: BuyCandidate['status'] = 'blocked';
+    if (st === 'auto_submitted' || st === 'approved') status = 'ai_pass';
+    else if (skip === 'ai_rejected') status = 'ai_rejected';
+    else if (skip === 'rule_prefilter' || skip === 'strong_counter_trend') status = 'watchlist';
+    return {
+      symbol:     String(r.symbol),
+      rsi:        r.rsi != null ? Number(r.rsi) : null,
+      aiConf:     r.ai_conf != null ? Number(r.ai_conf) : null,
+      evPct:      r.ev_pct != null ? Number(r.ev_pct) : null,
+      status,
+      skipReason: skip,
+    };
+  });
+
+  // 현재 보유 포지션 (position_state)
+  const [posRows] = await pool.query<RowDataPacket[]>(`
+    SELECT symbol, market, entry_price, peak_price, qty,
+      ROUND((peak_price - entry_price) / entry_price * 100, 2) AS profit_pct
+    FROM position_state
+    ORDER BY ROUND((peak_price - entry_price) / entry_price * 100, 2) DESC
+  `);
+
+  const holdings: HoldingStatus[] = posRows.map(r => ({
+    symbol:     String(r.symbol),
+    profitPct:  Number(r.profit_pct ?? 0),
+    entryKRW:   Number(r.entry_price ?? 0),
+    currentKRW: Number(r.peak_price ?? 0),
+    qty:        Number(r.qty ?? 0),
+  }));
+
+  // 최근 25시간 매도 시그널에서 실제 손익 (exit-engine indicators 기준)
+  const [sellRows] = await pool.query<RowDataPacket[]>(`
+    SELECT s.symbol,
+      JSON_UNQUOTE(JSON_EXTRACT(s.indicators, '$.exit_kind'))   AS exit_kind,
+      CAST(JSON_EXTRACT(s.indicators, '$.pnl_pct')     AS DECIMAL(10,4)) AS pnl_pct,
+      CAST(JSON_EXTRACT(s.indicators, '$.entry_price') AS DECIMAL(20,4)) AS entry_price,
+      CAST(JSON_EXTRACT(s.indicators, '$.current_price') AS DECIMAL(20,4)) AS current_price,
+      o.amount_krw AS sell_amount_krw,
+      o.quantity
+    FROM signals s
+    LEFT JOIN orders o ON o.id = s.consumed_order_id
+    WHERE s.side = 'sell'
+      AND s.status = 'auto_submitted'
+      AND JSON_EXTRACT(s.indicators, '$.pnl_pct') IS NOT NULL
+      AND s.created_at > DATE_SUB(NOW(), INTERVAL 25 HOUR)
+    ORDER BY s.created_at DESC
+  `);
+
+  const sellPnl: SellPnl[] = sellRows.map(r => {
+    const pnlPct   = Number(r.pnl_pct ?? 0);
+    const entry    = Number(r.entry_price ?? 0);
+    const qty      = Number(r.quantity ?? 0);
+    const sellAmt  = Number(r.sell_amount_krw ?? 0);
+    // 실제 손익 = (현재가 - 매입가) × 수량 = 매도금액 - 매입원가
+    const costBasis = entry * qty;
+    const pnlKRW   = costBasis > 0 ? sellAmt - costBasis : pnlPct / 100 * sellAmt;
+    return {
+      symbol:        String(r.symbol),
+      exitKind:      String(r.exit_kind ?? ''),
+      pnlPct,
+      pnlKRW,
+      sellAmountKRW: sellAmt,
+    };
+  });
+
+  return { buyWatchlist, holdings, sellPnl };
 }

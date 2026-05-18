@@ -842,25 +842,30 @@ function buildBatchDecisionFromStage1(
   input: BatchSymbolInput,
   d: import('./ai-filter-stage1').Stage1Decision | undefined,
 ): BatchDecision {
-  const confidencePct = Math.round((d?.confidence ?? 0.5) * 100);
+  const rawConfidencePct = Math.round((d?.confidence ?? 0.5) * 100);
   if (!d || d.verdict === 'reject') {
     return {
       symbol: input.symbol,
       selectedIndices: [],
-      confidence: confidencePct,
+      // Stage1 단독 통과 confidence 상한 50% — Stage1은 광역 스크리닝이므로 과신 방지
+      confidence: Math.min(rawConfidencePct, 50),
       reasoning: d?.reasoning ?? 'stage1 reject',
       warnings: [],
       skipCategory: 'ai_rejected',
     };
   }
   // pass — 후보 중 첫 번째 1개만 채택 (EV 추정은 stage1 값 사용)
+  // Stage1 단독 통과 confidence 상한 50% (stage1_only 플래그 로깅)
+  const cappedConfidence = Math.min(rawConfidencePct, 50);
   const evPct = d.evEstimatePct;
   return {
     symbol: input.symbol,
     selectedIndices: input.candidates.length > 0 ? [0] : [],
-    confidence: confidencePct,
-    reasoning: `[stage1] ${d.reasoning}`,
-    warnings: [],
+    confidence: cappedConfidence,
+    reasoning: `[stage1_only] ${d.reasoning}`,
+    warnings: cappedConfidence < rawConfidencePct
+      ? [`stage1 신뢰도 ${rawConfidencePct}% → 상한 50% 적용 (Stage2 미검증)`]
+      : [],
     ev: { pWin: 0.55, rWin: Math.max(0.5, evPct + 1), rLoss: -1, evPct },
   };
 }
@@ -920,10 +925,16 @@ export async function aiSelectSignalBatch(
         const stage1 = await runStage1Screen(inputs, market);
         stage1Decisions = stage1.decisions;
 
-        // 'volatile_high' regime이거나 보유 종목이면 Stage 1 결과 무시하고 Claude로 escalate (안전성)
+        // 보유 종목 또는 신규 매수 후보(비보유)는 Stage 1 결과 무시하고 Claude로 강제 escalate.
+        // 사유: 보유 종목은 청산 결정이 중요 → Stage1 단독 판단 위험.
+        //       비보유 신규 매수는 Stage1 광역 스크리닝으로만 통과 시 손실 위험 → Stage2 검증 필수.
         const forceEscalateSymbols = new Set(
           inputs
-            .filter(i => (i.heldQty ?? 0) > 0)
+            .filter(i => {
+              const isHeld = (i.heldQty ?? 0) > 0;
+              const hasNewBuy = i.candidates.some(c => c.side === 'buy') && !isHeld;
+              return isHeld || hasNewBuy;
+            })
             .map(i => i.symbol),
         );
 

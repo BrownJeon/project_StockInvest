@@ -1,19 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runAll } from '@/lib/strategy/engine';
 import { syncPendingOrders } from '@/lib/safety/order-sync';
+import { checkCronAuth } from '@/lib/cron-auth';
 
 export const dynamic = 'force-dynamic';
 
-const CRON_SECRET = process.env.CRON_SECRET;
-
 export async function POST(req: NextRequest) {
-  // Optional secret header to prevent unauthorized triggers
-  if (CRON_SECRET) {
-    const auth = req.headers.get('x-cron-secret');
-    if (auth !== CRON_SECRET) {
-      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    }
-  }
+  const authErr = checkCronAuth(req);
+  if (authErr) return authErr;
 
   const body = await req.json().catch(() => ({})) as { force?: boolean };
   const force = body.force === true;

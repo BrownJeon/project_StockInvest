@@ -4,13 +4,13 @@ import { getPool } from '@/lib/db';
 import { getPortfolioTotalKRW } from '@/lib/safety/portfolio-total';
 import { sendSlackAlert } from '@/lib/notify/slack';
 import { sendTelegramAlert } from '@/lib/notify/telegram';
-import { buildTradeReport, formatReportMessage, fetchPortfolioBaselineKRW } from '@/lib/reports/trade-report';
+import { buildTradeReport, formatReportMessage, fetchPortfolioBaselineKRW, fetchSignalCandidates } from '@/lib/reports/trade-report';
 import { parseAnchorList, shouldFireAtAnchorList } from '@/lib/reports/anchor';
 import { isTradingDay } from '@/lib/reports/trading-day';
 
 export const dynamic = 'force-dynamic';
 
-const CRON_SECRET = process.env.CRON_SECRET;
+import { checkCronAuth } from '@/lib/cron-auth';
 
 type ReportChannel = 'slack' | 'telegram' | 'both' | 'none';
 type ReportMode = 'rolling' | 'fixed';
@@ -55,12 +55,8 @@ async function setLastSent(now: Date): Promise<void> {
 }
 
 export async function POST(req: NextRequest) {
-  if (CRON_SECRET) {
-    const auth = req.headers.get('x-cron-secret');
-    if (auth !== CRON_SECRET) {
-      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    }
-  }
+  const authErr = checkCronAuth(req);
+  if (authErr) return authErr;
 
   const force = req.nextUrl.searchParams.get('force') === '1';
 
@@ -98,13 +94,14 @@ export async function POST(req: NextRequest) {
     const rangeStart = last ?? new Date(now.getTime() - intervalMs);
     const rangeEnd = now;
 
-    const [totalKRW, baselineKRW] = await Promise.all([
+    const [totalKRW, baselineKRW, candidates] = await Promise.all([
       getPortfolioTotalKRW(true).catch(() => 0),
       fetchPortfolioBaselineKRW(rangeStart),
+      fetchSignalCandidates().catch(() => ({ buyWatchlist: [], holdings: [], sellPnl: [] })),
     ]);
 
     const report = await buildTradeReport({ rangeStart, rangeEnd, totalKRW, baselineKRW });
-    const body = formatReportMessage(report, totalKRW, baselineKRW);
+    const body = formatReportMessage(report, totalKRW, baselineKRW, candidates);
     const hours = Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 3600_000);
     const title = `거래 리포트 (${hours}h)`;
 

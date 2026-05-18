@@ -8,7 +8,7 @@ import { getCurrentMarket } from '@/lib/strategy/market-hours';
 
 export const dynamic = 'force-dynamic';
 
-const CRON_SECRET = process.env.CRON_SECRET;
+import { checkCronAuth } from '@/lib/cron-auth';
 const RECENT_SNAPSHOT_MS = 90 * 60 * 1000; // 90분 — 시간당 cron이라 1.5배 여유
 
 // 양시장 마감 + 최근 스냅샷 존재 시 KIS 호출 생략 (price 변동 없음)
@@ -32,12 +32,8 @@ async function shouldSkipFetch(): Promise<{ skip: boolean; lastSnapshotAt?: Date
 }
 
 export async function POST(req: NextRequest) {
-  if (CRON_SECRET) {
-    const auth = req.headers.get('x-cron-secret');
-    if (auth !== CRON_SECRET) {
-      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    }
-  }
+  const authErr = checkCronAuth(req);
+  if (authErr) return authErr;
 
   const body = await req.json().catch(() => ({})) as { force?: boolean };
   const force = body.force === true;
@@ -83,16 +79,27 @@ export async function POST(req: NextRequest) {
 
     // 보유 종목 — symbol == currency (국내 6자리 또는 해외 EXCD:TICKER)
     // kis-overseas.getTicker가 USD→KRW 환산 후 반환하므로 추가 변환 불필요 (2026-04-28).
+    // 시세 조회 실패 시 avgPrice(KRW 환산값)를 fallback으로 사용 — 제외하면 총액이 급락해 오탐 발생.
     for (const b of stockHoldings) {
+      const qty = Number(b.free) + Number(b.locked);
+      if (qty <= 0) continue;
+      let price = 0;
       try {
         const ticker = await kis.getTicker(b.currency);
-        const qty = Number(b.free) + Number(b.locked);
-        const value_krw = qty * ticker.price;
-        totalKRW += value_krw;
-        positions.push({ currency: b.currency, qty, price: ticker.price, value_krw });
+        price = ticker.price;
       } catch {
-        // 시세 조회 실패 시 해당 자산 제외
+        // 시세 조회 실패 → avgPrice(KRW) fallback. 없으면 해당 종목 제외.
+        if (b.avgPrice && b.avgPrice > 0) {
+          price = b.avgPrice;
+          console.warn(`[portfolio-snapshot] ticker 실패 ${b.currency} — avgPrice fallback ${price.toFixed(0)}KRW`);
+        } else {
+          console.warn(`[portfolio-snapshot] ticker 실패 ${b.currency} — avgPrice 없음, 제외`);
+          continue;
+        }
       }
+      const value_krw = qty * price;
+      totalKRW += value_krw;
+      positions.push({ currency: b.currency, qty, price, value_krw });
     }
 
     await savePortfolioSnapshot(totalKRW, positions, 'hourly');

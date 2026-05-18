@@ -58,10 +58,19 @@ export async function isAnalystEnabled(): Promise<boolean> {
   return String(process.env.ANALYST_ENABLED ?? 'false').toLowerCase() === 'true';
 }
 
-/** 분석가 시그널은 항상 자동 제출. 제한은 일일 누적 한도(DAILY_ORDER_MAX_KRW)로만 통제. */
-export function routeSignal(input: SignalInput, cfg: RouterConfig, now: Date = new Date()): RoutingDecision {
+/**
+ * ANALYST_ENABLED=true → auto_submit (AI 분석가가 시그널 선별·승인)
+ * ANALYST_ENABLED=false → pending_approval (사람이 직접 검토·승인 필요)
+ */
+export function routeSignal(
+  input: SignalInput,
+  cfg: RouterConfig,
+  analystEnabled: boolean,
+  now: Date = new Date(),
+): RoutingDecision {
   const expiresAt = resolveExpiry(input.expiresAt, cfg.defaultTtlMin, now);
-  return { route: 'auto_submit', expiresAt };
+  const route = analystEnabled ? 'auto_submit' : 'pending_approval';
+  return { route, expiresAt };
 }
 
 function resolveExpiry(raw: Date | string | null | undefined, defaultTtlMin: number, now: Date): Date {

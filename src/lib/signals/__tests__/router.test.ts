@@ -14,20 +14,25 @@ const baseInput: SignalInput = {
 };
 
 describe('routeSignal', () => {
-  test('항상 auto_submit 반환', () => {
-    const r = routeSignal(baseInput, { defaultTtlMin: 30 });
+  test('analystEnabled=true → auto_submit', () => {
+    const r = routeSignal(baseInput, { defaultTtlMin: 30 }, true);
     expect(r.route).toBe('auto_submit');
+  });
+
+  test('analystEnabled=false → pending_approval', () => {
+    const r = routeSignal(baseInput, { defaultTtlMin: 30 }, false);
+    expect(r.route).toBe('pending_approval');
   });
 
   test('expiresAt 미지정 시 now + defaultTtlMin 적용', () => {
     const now = new Date('2026-04-19T10:00:00Z');
-    const r = routeSignal(baseInput, { defaultTtlMin: 30 }, now);
+    const r = routeSignal(baseInput, { defaultTtlMin: 30 }, true, now);
     expect(r.expiresAt.getTime()).toBe(now.getTime() + 30 * 60_000);
   });
 
   test('expiresAt(ISO 문자열) 지정 시 그대로 사용', () => {
     const target = '2026-04-20T00:00:00Z';
-    const r = routeSignal({ ...baseInput, expiresAt: target }, { defaultTtlMin: 30 });
+    const r = routeSignal({ ...baseInput, expiresAt: target }, { defaultTtlMin: 30 }, true);
     expect(r.expiresAt.toISOString()).toBe(new Date(target).toISOString());
   });
 });

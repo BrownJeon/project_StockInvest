@@ -131,7 +131,8 @@ describe('signals/service', () => {
     jest.clearAllMocks();
   });
 
-  test('createSignal amount ≤ 임계값 → auto_submitted + submitOrder 호출 + consumed_order_id 업데이트', async () => {
+  test('createSignal ANALYST_ENABLED=true → auto_submitted + submitOrder 호출 + consumed_order_id 업데이트', async () => {
+    process.env.ANALYST_ENABLED = 'true';
     const cap = setupMockDB();
     const r = await createSignal({
       symbol: 'KRW-BTC',
@@ -149,7 +150,26 @@ describe('signals/service', () => {
     expect(cap.signalUpdates.some((u) => u.consumedOrderId === r.orderId)).toBe(true);
   });
 
-  test('createSignal 일반 금액 → auto_submitted (routeSignal 항상 자동 제출)', async () => {
+  test('createSignal ANALYST_ENABLED=false → pending (수동 검토 대기, 주문 미생성)', async () => {
+    process.env.ANALYST_ENABLED = 'false';
+    const cap = setupMockDB();
+    const r = await createSignal({
+      symbol: 'KRW-BTC',
+      side: 'buy',
+      orderType: 'limit',
+      price: 90_000_000,
+      quantity: 0.000_1,
+      amountKRW: 9_000,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.autoSubmitted).toBe(false);
+    expect(r.orderId).toBeUndefined();
+    expect(cap.signalInserts[0].status).toBe('pending');
+    expect(cap.orderInserts).toHaveLength(0);
+  });
+
+  test('createSignal ANALYST_ENABLED=true 일반 금액 → auto_submitted', async () => {
+    process.env.ANALYST_ENABLED = 'true';
     const cap = setupMockDB();
     const r = await createSignal({
       symbol: 'KRW-BTC',
@@ -237,19 +257,21 @@ describe('signals/service', () => {
   });
 
   // Phase M — limit 호가 추격 (체결률 ↑)
-  test('createSignal buy limit → chase 가격 적용 (neutral 기본 0.003)', async () => {
+  test('createSignal buy limit → chase 가격 적용 (limitChasePct=0.005)', async () => {
+    process.env.ANALYST_ENABLED = 'true';
     const cap = setupMockDB();
     await createSignal({
       symbol: '005930', side: 'buy', orderType: 'limit',
       price: 100_000, amountKRW: 3_000,
     });
-    // INSERT INTO orders 의 price (params[6]) 가 100_000 * 1.003 = 100_300
+    // INSERT INTO orders 의 price (params[6]) 가 100_000 * 1.005 = 100_500
     const orderInsert = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));
     expect(orderInsert).toBeDefined();
-    expect(Number(orderInsert!.params[6])).toBeCloseTo(100_300, 0);
+    expect(Number(orderInsert!.params[6])).toBeCloseTo(100_500, 0);
   });
 
   test('createSignal sell limit → chase 가격 하향 적용', async () => {
+    process.env.ANALYST_ENABLED = 'true';
     const cap = setupMockDB();
     await createSignal({
       symbol: '005930', side: 'sell', orderType: 'limit',
@@ -257,11 +279,12 @@ describe('signals/service', () => {
     });
     const orderInsert = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));
     expect(orderInsert).toBeDefined();
-    // 100_000 * 0.997 = 99_700
-    expect(Number(orderInsert!.params[6])).toBeCloseTo(99_700, 0);
+    // 100_000 * 0.995 = 99_500
+    expect(Number(orderInsert!.params[6])).toBeCloseTo(99_500, 0);
   });
 
   test('createSignal market 주문 → chase 미적용 (price null)', async () => {
+    process.env.ANALYST_ENABLED = 'true';
     const cap = setupMockDB();
     await createSignal({
       symbol: '005930', side: 'buy', orderType: 'market',

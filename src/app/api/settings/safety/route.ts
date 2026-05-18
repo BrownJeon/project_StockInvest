@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
+import { isDryRun } from '@/lib/safety/dry-run';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +43,8 @@ export async function GET() {
   const overrides = await getOverrides();
   const pool = getPool();
 
-  const dryRun           = overrides['safety_dry_run']           !== undefined ? Boolean(overrides['safety_dry_run'])           : (process.env.DRY_RUN !== 'false');
+  // isDryRun() 가 DB override → env 폴백 순서로 SSOT 처리함 (직접 env 비교 제거)
+  const dryRun           = await isDryRun();
   const killSwitch       = overrides['safety_kill_switch']       !== undefined ? Boolean(overrides['safety_kill_switch'])       : (process.env.KILL_SWITCH === 'true');
   // 정책: 한도는 무조건 설정 메뉴(DB) 값만 기준. .env fallback 제거.
   const orderMaxPct      = overrides['safety_order_max_pct']     !== undefined ? Number(overrides['safety_order_max_pct'])      : 0;

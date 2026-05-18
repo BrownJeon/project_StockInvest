@@ -197,5 +197,74 @@ describe('exit-engine', () => {
       expect(sig).not.toBeNull();
       expect(sig!.exitKind).toBe('eod_loss_cut');
     });
+
+    // ─── 단위 불일치(USD/KRW) sanity check 회귀 테스트 ─────────────────
+    // 2026-05-13 사고 회귀 방지: overseas avgPrice가 USD raw, ticker.price가 KRW 환산이면
+    // pnlPct가 +100,000%대로 폭주해 target_profit이 잘못 발화됨. ratio 가드가 차단해야 한다.
+    describe('단위(unit) sanity check — 2026-05-13 회귀 방지', () => {
+      it('USD/KRW 단위 불일치 (price/entry ratio > 3.0) → null + 경고 로그', () => {
+        // BBY 사고 재현: entry=79.79 USD, price=85193 KRW (ratio ≈ 1068)
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const sig = evaluateExit({
+          symbol: 'NYS:BBY', market: 'overseas',
+          ticker: ticker(85_193),
+          state: { ...state(79.79), market: 'overseas', symbol: 'NYS:BBY', peakPrice: 86_421 },
+          style: STYLE, now: NOON_KST,
+        });
+        expect(sig).toBeNull();
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('[exit-engine:unit-mismatch]'),
+        );
+        warnSpy.mockRestore();
+      });
+
+      it('price/entry ratio < 0.3 (역방향 단위 불일치) → null', () => {
+        // entry=KRW(100000), price=USD(70) 같은 역방향 케이스
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const sig = evaluateExit({
+          symbol: 'NAS:AAPL', market: 'overseas',
+          ticker: ticker(70),
+          state: { ...state(100_000), market: 'overseas', symbol: 'NAS:AAPL' },
+          style: STYLE, now: NOON_KST,
+        });
+        expect(sig).toBeNull();
+        expect(warnSpy).toHaveBeenCalled();
+        warnSpy.mockRestore();
+      });
+
+      it('정상 비율 (ratio ∈ [0.5, 2.0]) → 시그널 정상 생성', () => {
+        // entry=100000, price=98500 → ratio=0.985 (정상 보유 종목 비율) → hard_stop 발화
+        const sig = evaluateExit({
+          symbol: '005930', market: 'domestic',
+          ticker: ticker(98_500), state: state(100_000),
+          style: STYLE, now: NOON_KST,
+        });
+        expect(sig).not.toBeNull();
+        expect(sig!.exitKind).toBe('hard_stop');
+      });
+
+      it('정상 비율 (ratio ≈ 1.015 익절 임계 직상) → target_profit 발화', () => {
+        // entry=100000, price=101500 → ratio=1.015 (정상 익절) → target_profit
+        const sig = evaluateExit({
+          symbol: '005930', market: 'domestic',
+          ticker: ticker(101_500), state: state(100_000),
+          style: STYLE, now: NOON_KST,
+        });
+        expect(sig).not.toBeNull();
+        expect(sig!.exitKind).toBe('target_profit');
+      });
+
+      it('경계값 ratio=3.0 정확히 → 발화 허용 (가드는 > 3.0만 차단)', () => {
+        // entry=100, price=300 → ratio=3.0 정확. 가드는 ratio>3.0만 차단하므로 통과.
+        // 통과 후 pnlPct=+200% → target_profit으로 발화 (정상 동작).
+        const sig = evaluateExit({
+          symbol: '005930', market: 'domestic',
+          ticker: ticker(300), state: state(100),
+          style: STYLE, now: NOON_KST,
+        });
+        expect(sig).not.toBeNull();
+        expect(sig!.exitKind).toBe('target_profit');
+      });
+    });
   });
 });

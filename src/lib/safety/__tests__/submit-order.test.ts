@@ -39,6 +39,8 @@ interface Captured {
 interface MockOpts {
   filledAutoOn?: boolean;
   dailySum?: number;
+  orderMaxPct?: number;   // DB safety_order_max_pct override (default: 1%)
+  dailyMaxPct?: number;   // DB safety_daily_order_max_pct override (default: 5%)
 }
 
 function setupMockDB(opts: MockOpts = {}): Captured {
@@ -67,6 +69,13 @@ function setupMockDB(opts: MockOpts = {}): Captured {
     }
     if (/SUM\(amount_krw\)/i.test(sql)) {
       return [[{ sum_krw: opts.dailySum ?? 0 }]];
+    }
+    // system_config: 한도 DB override — order-limits.ts는 `key` 컬럼으로 WHERE 파라미터 바인딩
+    if (/FROM system_config/i.test(sql)) {
+      const keyParam = String(params[0] ?? '');
+      if (keyParam === 'safety_order_max_pct') return [[{ value: String(opts.orderMaxPct ?? 1) }]];
+      if (keyParam === 'safety_daily_order_max_pct') return [[{ value: String(opts.dailyMaxPct ?? 5) }]];
+      return [[]]; // 기타 config 키는 미설정
     }
     if (/UPDATE orders/i.test(sql)) {
       const update: CapturedUpdate = { raw: { sql, params } };

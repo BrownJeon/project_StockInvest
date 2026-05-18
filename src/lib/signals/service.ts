@@ -9,6 +9,7 @@ import {
   type RouterConfig,
   type SignalInput,
   getRouterConfig,
+  isAnalystEnabled,
   routeSignal,
 } from './router';
 import { getAnalystStyle, getStyleConfig } from '@/lib/strategy/style';
@@ -129,13 +130,18 @@ export async function createSignal(
   input: SignalInput,
   cfg?: RouterConfig,
 ): Promise<CreateSignalResult> {
-  if (!cfg) cfg = await getRouterConfig();
+  const [resolvedCfg, analystEnabled] = await Promise.all([
+    cfg ?? getRouterConfig(),
+    isAnalystEnabled(),
+  ]);
+  cfg = resolvedCfg;
+
   const sym = await checkSymbolBlacklist(input.symbol);
   if (!sym.ok) {
     return { ok: false, signalId: 0, autoSubmitted: false, error: sym.detail ?? 'symbol_not_allowed' };
   }
 
-  const decision = routeSignal(input, cfg);
+  const decision = routeSignal(input, cfg, analystEnabled);
   const initialStatus = decision.route === 'auto_submit' ? 'auto_submitted' : 'pending';
   const pool = getPool();
   const { getMarketFromSymbol } = await import('@/lib/exchanges/kis-symbols');

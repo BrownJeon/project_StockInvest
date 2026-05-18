@@ -93,13 +93,17 @@ function calcCoreRatio(holdings: HoldingValue[], buySymbol: string, buyValue: nu
   return coreSum / totalSum;
 }
 
-/** 같은 심볼로 최근 24h 내 EXECUTED/ACCEPTED/AUTO_SUBMITTED buy 시그널 카운트. */
+/**
+ * 같은 심볼로 최근 24h 내 실제 체결/진행 중인 buy 주문 카운트.
+ * signals.auto_submitted 기준이면 dry_run·blocked 주문도 포함되어 실거래 없이
+ * 한도에 도달하는 버그 발생 → orders 테이블 실주문 기준으로 변경.
+ */
 async function countRecentBuysForSymbol(symbol: string): Promise<number> {
   const pool = getPool();
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT COUNT(*) AS n FROM signals
+    `SELECT COUNT(*) AS n FROM orders
      WHERE symbol = ? AND side = 'buy'
-       AND status IN ('executed','accepted','auto_submitted','approved')
+       AND status IN ('filled','accepted','partially_filled')
        AND created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)`,
     [symbol],
   );

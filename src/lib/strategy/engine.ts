@@ -34,6 +34,7 @@ import { STRATEGY_REGISTRY } from './rules';
 import { getAnalystStyle, getStyleConfig } from './style';
 import { classifyMarketState, getRulesForState, ALWAYS_ACTIVE_RULES } from './market-state';
 import type { AnalystStyle, StyleConfig } from './style';
+import { sendAlert } from '@/lib/notify';
 
 interface StrategyRow extends RowDataPacket {
   id: string;
@@ -221,8 +222,27 @@ async function collectCandidates(
 
     const rawSignals = meta.fn({ strategyId: id, symbol, candles, ticker, amountKRW, style });
 
+    // -0.3% 이하 손실 중인 보유 포지션은 추가매수 차단 (물타기 손실 누적 방지).
+    // portfolio-stability.ts의 maxPositionsPerSymbol은 24h 누적 매수 횟수 제한이며,
+    // 이 로직은 미실현 손실 기준의 즉시 차단으로 별개 레이어다.
+    // 주식 호가 스프레드 노이즈(-0.1~0.3%) 감안해 -0.5%로 설정 (코인 -0.3%보다 완화)
+    const LOSS_BLOCK_PCT = -0.5;
     for (const sig of rawSignals) {
-      if (sig.side === 'buy' && heldAmounts.has(symbol)) continue;
+      if (sig.side === 'buy' && heldAmounts.has(symbol)) {
+        const heldEntry = heldAmounts.get(symbol)!;
+        if (heldEntry.avgPrice && heldEntry.avgPrice > 0) {
+          const currentPrice = ticker.price ?? 0;
+          const lossPct = ((currentPrice - heldEntry.avgPrice) / heldEntry.avgPrice) * 100;
+          if (lossPct <= LOSS_BLOCK_PCT) {
+            console.log(`[losing-position-block] ${symbol} → buy skipped (loss=${lossPct.toFixed(2)}%)`);
+            continue;
+          }
+          // 손실이 LOSS_BLOCK_PCT 초과(수익 중)이면 추가매수 허용 — 아래 로직으로 계속
+        } else {
+          // avgPrice 없으면 경고만 — 차단하지 않음 (KIS 잔고 응답 결손 시 정상 운영 보호)
+          console.warn(`[losing-position-block] ${symbol} → avgPrice unavailable, buy allowed`);
+        }
+      }
       if (sig.side === 'sell' && !heldAmounts.has(symbol)) continue;
       if (sig.side === 'buy' && hasRecentSell) continue;
       // 24h 광역 차단 — sell도 동일 적용 (이미 +9% 평가익 보유 중인데 5회 매도 시그널 같은 패턴 방지)
@@ -859,6 +879,35 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   const errors: string[] = [];
   const results = new Map<string, EvalResult>();
 
+  // ─── Regime Gate — 거시 지수 하드 게이트 ──────────────────────────────────
+  // KOSPI 또는 S&P500 전일 대비 -1.5% 이하 하락 시 신규 매수 전면 차단.
+  // 주식은 코인(-2%)보다 낮은 임계(-1.5%)로 더 민감하게 반응 (변동성이 작음).
+  // 보유 종목 손절·매도는 계속 진행 (exit-engine은 이미 완료된 상태).
+  // macro API 실패 시 게이트 미발동 — 가용성 우선.
+  let regimeGateBlocked = false;
+  try {
+    const macro = await fetchMacroIndicators();
+    const bearConditions = [
+      macro.kospiChangePct != null && macro.kospiChangePct <= -1.5,
+      macro.sp500ChangePct != null && macro.sp500ChangePct <= -1.5,
+    ].filter(Boolean).length;
+
+    // KOSPI와 S&P500 모두 -1.5% 이하일 때만 차단 (OR은 S&P500 단독 야간 급락에 KOSPI 정상일 때도 발동하는 오발동 위험)
+    if (bearConditions >= 2) {
+      const kospiStr = macro.kospiChangePct != null ? `${macro.kospiChangePct.toFixed(2)}%` : 'N/A';
+      const sp500Str = macro.sp500ChangePct != null ? `${macro.sp500ChangePct.toFixed(2)}%` : 'N/A';
+      console.log(`[regime-gate] BLOCKED: kospi=${kospiStr} sp500=${sp500Str} — 신규 매수 차단`);
+      sendAlert(
+        'warning',
+        '거시 지수 하락 — 신규 매수 차단',
+        `KOSPI: ${kospiStr} / S&P500: ${sp500Str}\n전일 대비 -1.5% 이하 하락 감지. 보유 종목 매도·손절은 계속 진행.`,
+      );
+      regimeGateBlocked = true;
+    }
+  } catch (e) {
+    console.warn(`[regime-gate] macro 조회 실패 — 게이트 미발동 (매수 허용): ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   // 1단계: 모든 심볼의 후보 수집 (AI 호출 없음)
   const contexts: CollectedContext[] = [];
   for (const symbol of symbols) {
@@ -867,6 +916,9 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
     if (ctx.error) {
       errors.push(`${symbol}: ${ctx.error}`);
       results.set(symbol, { symbol, signalsCreated: 0, error: ctx.error });
+      // 운영 진단용 — errors 카운트만 표시되면 어떤 종목·어떤 단계에서 실패했는지 추적 불가.
+      // ctx.error 포맷은 `ticker:Error: ...`. 동일 종목이 반복 실패하면 패턴 분석 가능.
+      console.warn(`[strategy-eval:ctx-error] symbol=${symbol} reason=${ctx.error}`);
       continue;
     }
     // candidate 0건이라도 보유 종목이면 시나리오 청산(트레일링/시간만료/손절)을 위해 contexts에 포함.
@@ -880,8 +932,14 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
 
   // 2단계: 각 context에 prefilter + dedup 적용, AI 필요한 후보만 수집
+  // regime gate 발동 시 buy 후보를 사전 제거 (sell·보유 종목 매도는 유지)
   const needsAiMap = new Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>();
   for (const ctx of contexts) {
+    if (regimeGateBlocked && ctx.candidates.some(c => c.side === 'buy')) {
+      // buy 후보만 제거 — sell은 통과
+      ctx.candidates = ctx.candidates.filter(c => c.side !== 'buy');
+      if (ctx.candidates.length === 0 && !(ctx.heldQty && ctx.heldQty > 0)) continue;
+    }
     const { needsAi, regimeBucket } = await applyFilters(ctx, analystStyle, style, market, heldAmounts);
     if (needsAi.length === 0) {
       results.set(ctx.symbol, { symbol: ctx.symbol, signalsCreated: 0, candidateCount: 0, rawCandidates: ctx.rawCandidateCount });

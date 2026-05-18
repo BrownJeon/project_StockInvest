@@ -140,6 +140,16 @@ export function SettingsPage() {
     setIsDirty(true);
   };
 
+  const autoSave = useCallback(async (delta: Partial<SafetyData>) => {
+    try {
+      await fetch('/api/settings/safety', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(delta),
+      });
+    } catch { /* non-fatal */ }
+  }, []);
+
   const updateReport = (delta: Partial<ReportData>) => {
     setReport(prev => prev ? { ...prev, ...delta } : prev);
     setIsDirty(true);
@@ -233,7 +243,7 @@ export function SettingsPage() {
             </span>
             <Toggle
               checked={!(safety?.dryRun ?? true)}
-              onChange={v => update({ dryRun: !v })}
+              onChange={v => { update({ dryRun: !v }); autoSave({ dryRun: !v }); }}
             />
           </div>
         </div>
@@ -252,7 +262,7 @@ export function SettingsPage() {
             </span>
             <Toggle
               checked={safety?.killSwitch ?? false}
-              onChange={v => update({ killSwitch: v })}
+              onChange={v => { update({ killSwitch: v }); autoSave({ killSwitch: v }); }}
               danger
             />
           </div>

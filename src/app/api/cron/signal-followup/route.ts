@@ -7,7 +7,7 @@ import type { SignalForEmbedding } from '@/lib/rag/format';
 
 export const dynamic = 'force-dynamic';
 
-const CRON_SECRET = process.env.CRON_SECRET;
+import { checkCronAuth } from '@/lib/cron-auth';
 
 interface SkippedRow extends RowDataPacket {
   id: number;
@@ -101,12 +101,8 @@ const WINDOWS: ReadonlyArray<{
 ];
 
 export async function POST(req: NextRequest) {
-  if (CRON_SECRET) {
-    const auth = req.headers.get('x-cron-secret');
-    if (auth !== CRON_SECRET) {
-      return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    }
-  }
+  const authErr = checkCronAuth(req);
+  if (authErr) return authErr;
 
   try {
     const pool = getPool();
