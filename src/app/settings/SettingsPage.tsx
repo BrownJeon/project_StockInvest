@@ -112,12 +112,15 @@ export function SettingsPage() {
   const [loading, setLoading]             = useState(true);
   const [saveState, setSaveState]         = useState<SaveState>('idle');
   const [isDirty, setIsDirty]             = useState(false);
+  const [hybridMode, setHybridMode]       = useState<boolean>(false);
+  const [hybridSaving, setHybridSaving]   = useState(false);
 
   useEffect(() => {
     Promise.all([
       fetch('/api/settings/safety').then(r => r.json()),
       fetch('/api/settings/strategies').then(r => r.json()),
-    ]).then(([safetyData, stratData]) => {
+      fetch('/api/settings/hybrid').then(r => r.json()).catch(() => null),
+    ]).then(([safetyData, stratData, hybridData]) => {
       if (safetyData.ok) {
         setSafety(safetyData.safety);
         setExchanges(safetyData.exchanges);
@@ -127,7 +130,24 @@ export function SettingsPage() {
       if (stratData.ok) {
         setStrategies(stratData.strategies);
       }
+      if (hybridData?.ok) {
+        setHybridMode(hybridData.enabled ?? false);
+      }
     }).finally(() => setLoading(false));
+  }, []);
+
+  const toggleHybridMode = useCallback(async (enabled: boolean) => {
+    setHybridMode(enabled);
+    setHybridSaving(true);
+    try {
+      await fetch('/api/settings/hybrid', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+    } catch { /* non-fatal */ } finally {
+      setHybridSaving(false);
+    }
   }, []);
 
   const patchStrategy = useCallback((id: string, delta: { backtestIntervalM?: number; enabled?: boolean }) => {
@@ -225,6 +245,34 @@ export function SettingsPage() {
         </div>
       )}
 
+      {/* 하이브리드 매매 모드 */}
+      <SectionHeader title="하이브리드 매매 모드" />
+      <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px' }}>
+          <div>
+            <div style={{ fontSize: 14 }}>하이브리드 모드</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+              {hybridMode
+                ? 'ON — AI 시그널 승인 후 진입 구간 도달 시 자동 체결'
+                : 'OFF — 기존 즉시 승인 방식'}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+              활성화 시 추천(💡) 탭에서 수치 편집 후 진입 감시 가능
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            {hybridSaving && <span style={{ fontSize: 11, color: 'var(--muted)' }}>저장 중...</span>}
+            <span style={{ fontSize: 12, fontWeight: 600, color: hybridMode ? '#818cf8' : 'var(--muted)' }}>
+              {hybridMode ? 'ON' : 'OFF'}
+            </span>
+            <Toggle
+              checked={hybridMode}
+              onChange={toggleHybridMode}
+            />
+          </div>
+        </div>
+      </div>
+
       {/* Safety — global */}
       <SectionHeader title="안전장치 (공통)" />
       <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
@@ -296,20 +344,29 @@ export function SettingsPage() {
           />
         </div>
 
+      </div>
+
+      {/* 거래 보호 — 종목별 거래 차단 */}
+      <SectionHeader title="거래 보호" />
+      <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
+            등록된 종목은 매수·매도 시그널 생성 단계에서 즉시 차단됩니다. AI 분석·주문 전송 모두 수행하지 않습니다.
+          </div>
+        </div>
         <SymbolEditor
           symbols={safety?.blockedSymbols ?? []}
           onChange={v => update({ blockedSymbols: v })}
-          label="국내 차단 심볼 (블랙리스트)"
-          placeholder="예: 005930"
+          label="국내 거래 차단 종목"
+          placeholder="예: 005930 (삼성전자)"
           chipColor="rgba(239,68,68,.15)"
           chipBorder="rgba(239,68,68,.3)"
           marketFilter="domestic"
         />
-
         <SymbolEditor
           symbols={safety?.blockedSymbolsOverseas ?? []}
           onChange={v => update({ blockedSymbolsOverseas: v })}
-          label="해외 차단 심볼 (블랙리스트)"
+          label="해외 거래 차단 종목"
           placeholder="예: NAS:AAPL"
           chipColor="rgba(239,68,68,.15)"
           chipBorder="rgba(239,68,68,.3)"

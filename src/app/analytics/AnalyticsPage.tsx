@@ -9,18 +9,20 @@ import { OrderHistoryTab }    from './components/OrderHistoryTab';
 import { VolatilityTab }          from './components/VolatilityTab';
 import { MissedOpportunityTab }  from './components/MissedOpportunityTab';
 import { SignalDiagnosticsTab }  from './components/SignalDiagnosticsTab';
+import { MyDecisionTab }         from './components/MyDecisionTab';
 
-type Tab = 'portfolio' | 'orders' | 'strategy' | 'strategy-history' | 'audit' | 'volatility' | 'missed' | 'diagnostics';
+type Tab = 'portfolio' | 'orders' | 'strategy' | 'strategy-history' | 'audit' | 'volatility' | 'missed' | 'diagnostics' | 'my-decisions';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'portfolio',        label: '포트폴리오' },
-  { id: 'strategy-history', label: '분석 이력'  },
-  { id: 'orders',           label: '거래 이력'  },
-  { id: 'audit',            label: '거래 로그'  },
-  { id: 'volatility',       label: '변동폭'     },
+  { id: 'my-decisions',     label: '내 결정'    },
   { id: 'missed',           label: '놓친 기회'  },
+  { id: 'orders',           label: '거래 이력'  },
+  { id: 'volatility',       label: '변동폭'     },
   { id: 'strategy',         label: '전략 성과'  },
+  { id: 'strategy-history', label: '분석 이력'  },
   { id: 'diagnostics',      label: '신호 진단'  },
+  { id: 'audit',            label: '거래 로그'  },
 ];
 
 export function AnalyticsPage() {
@@ -61,6 +63,7 @@ export function AnalyticsPage() {
         {tab === 'volatility'       && <VolatilityTab />}
         {tab === 'missed'           && <MissedOpportunityTab />}
         {tab === 'diagnostics'      && <SignalDiagnosticsTab />}
+        {tab === 'my-decisions'     && <MyDecisionTab />}
         <div style={{ height: 16 }} />
       </div>
     </div>

@@ -4,11 +4,11 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 const TABS = [
-  { href: '/',          label: '대시보드', icon: '🏠', emphasize: false },
-  { href: '/strategy',  label: '전략',     icon: '🎯', emphasize: false },
-  { href: '/ai',        label: '채팅',     icon: '🤖', emphasize: true  },
-  { href: '/analytics', label: '분석',     icon: '📈', emphasize: false },
-  { href: '/settings',  label: '설정',     icon: '⚙️', emphasize: false },
+  { href: '/',           label: '대시보드', icon: '🏠', emphasize: false },
+  { href: '/recommend',  label: '추천',     icon: '💡', emphasize: true  },
+  { href: '/ai',         label: '채팅',     icon: '🤖', emphasize: false },
+  { href: '/analytics',  label: '분석',     icon: '📈', emphasize: false },
+  { href: '/settings',   label: '설정',     icon: '⚙️', emphasize: false },
 ] as const;
 
 export function BottomTabs() {

@@ -56,6 +56,10 @@ M4_ADMIN="${M4_ADMIN_TOKEN:-${M4_ADMIN_TOKEN_ENV:-}}"
 # 분 단위 카운터 (동기 호출이라 60초 슬립으로 간략)
 i=0
 while true; do
+  # 매 1분: entry-watcher — 진입 구간 도달 시 자동 주문 실행
+  call /api/cron/entry-watcher "entry-watcher"
+  # 매 1분: holding-checker — 보유기간 초과 텔레그램 알림
+  call /api/cron/holding-checker "holding-checker"
   # 매 5분: strategy-eval
   if [ $((i % 5)) -eq 0 ]; then
     call /api/cron/strategy-eval "strategy-eval"

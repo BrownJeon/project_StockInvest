@@ -22,7 +22,7 @@ import type { SignalInput } from '@/lib/signals/router';
 import type { Ticker } from '@/lib/exchanges/types';
 import type { Market } from '@/lib/exchanges/kis-symbols';
 import type { StyleConfig } from './style';
-import type { PositionState } from './position-state';
+import type { PositionState, ScenarioExitParams } from './position-state';
 
 export type ExitKind = 'hard_stop' | 'target_profit' | 'trailing_stop' | 'eod_loss_cut';
 
@@ -43,9 +43,13 @@ interface ExitEvalInput {
  *
  * 우선순위 (가장 강한 신호부터 — 첫 매칭만 발화하여 중복 청산 시그널 방지):
  *   1. EOD 손실 청산 (시간 + 손실 임계 이중 충족)
- *   2. 하드 손절 (가장 빈번한 자금 보호 발화)
- *   3. 하드 익절
- *   4. 트레일링 스탑
+ *   2. 하드 손절 — 시나리오 있으면 stopHi, 없으면 style.hardStopPct
+ *   3. 시나리오 손절 (stopLo) — 시나리오 진입 포지션 전용
+ *   4. 시나리오 익절 하드 캡 (targetHi) — 갭 상승 대비
+ *   5. 목표 익절 — 시나리오 있으면 targetLo, 없으면 style.targetProfitPct
+ *   6. 트레일링 스탑
+ *
+ * 사용자 시나리오 포지션: state.scenarioExit가 있으면 그 값을 우선 적용.
  */
 export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId: string; exitKind: ExitKind }) | null {
   const { symbol, market, ticker, state, style, now = new Date() } = input;
@@ -53,6 +57,7 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
   const entry = state.entryPrice;
   const peak  = state.peakPrice;
   const qty   = state.qty;
+  const sc: ScenarioExitParams | null = state.scenarioExit ?? null;
 
   if (!Number.isFinite(price) || price <= 0) return null;
   if (!Number.isFinite(entry) || entry <= 0) return null;
@@ -77,8 +82,6 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
 
   // ─── 1) EOD 손실 청산 (국내장만) ─────────────────────────────────
   // KST 15:20~15:29 + 손실 ≥ eodLossCutPct → market sell.
-  // KIS 동시호가는 15:20 시작 — auction_phase 거부 가능. submitOrder의 categorize에 의해
-  // trade_logs 보존 (조회 가능). 거부 시 다음 cron 틱에서 재시도.
   if (market === 'domestic' && isEodWindowKST(now) && pnlPct <= -style.eodLossCutPct) {
     return buildSellSignal({
       symbol, ticker, qty, exitKind: 'eod_loss_cut', entry, price, pnlPct, peak,
@@ -88,24 +91,46 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
   }
 
   // ─── 2) 하드 손절 ────────────────────────────────────────────────
-  if (pnlPct <= -style.hardStopPct) {
+  // 시나리오 있으면 stopHi(갭 하락 캡), 없으면 style.hardStopPct
+  const hardStopThreshold = sc ? sc.stopHi : style.hardStopPct;
+  if (pnlPct <= -hardStopThreshold) {
     return buildSellSignal({
       symbol, ticker, qty, exitKind: 'hard_stop', entry, price, pnlPct, peak,
       reasonHead: '[하드 손절]',
-      detail: `손실 ${pnlPct.toFixed(2)}% ≤ -${style.hardStopPct}% → 시장가 청산 (자금 보호)`,
+      detail: `손실 ${pnlPct.toFixed(2)}% ≤ -${hardStopThreshold}% → 시장가 청산 (자금 보호)`,
     });
   }
 
-  // ─── 3) 하드 익절 ────────────────────────────────────────────────
-  if (pnlPct >= style.targetProfitPct) {
+  // ─── 3) 시나리오 손절 (stopLo) — 시나리오 포지션 전용 ────────────
+  if (sc && pnlPct <= -sc.stopLo) {
+    return buildSellSignal({
+      symbol, ticker, qty, exitKind: 'hard_stop', entry, price, pnlPct, peak,
+      reasonHead: '[시나리오 손절]',
+      detail: `손실 ${pnlPct.toFixed(2)}% ≤ -${sc.stopLo}% (시나리오 손절 범위 진입) → 시장가 청산`,
+    });
+  }
+
+  // ─── 4) 시나리오 익절 하드 캡 (targetHi) — 갭 상승 시 ────────────
+  if (sc && pnlPct >= sc.targetHi) {
+    return buildSellSignal({
+      symbol, ticker, qty, exitKind: 'target_profit', entry, price, pnlPct, peak,
+      reasonHead: '[시나리오 익절 캡]',
+      detail: `평가익 ${pnlPct.toFixed(2)}% ≥ +${sc.targetHi}% (하드 캡) → 시장가 익절`,
+    });
+  }
+
+  // ─── 5) 목표 익절 ────────────────────────────────────────────────
+  // 시나리오 있으면 targetLo, 없으면 style.targetProfitPct
+  const targetThreshold = sc ? sc.targetLo : style.targetProfitPct;
+  if (pnlPct >= targetThreshold) {
     return buildSellSignal({
       symbol, ticker, qty, exitKind: 'target_profit', entry, price, pnlPct, peak,
       reasonHead: '[목표 익절]',
-      detail: `평가익 ${pnlPct.toFixed(2)}% ≥ +${style.targetProfitPct}% → 시장가 익절`,
+      detail: `평가익 ${pnlPct.toFixed(2)}% ≥ +${targetThreshold}% → 시장가 익절`,
     });
   }
 
-  // ─── 4) 트레일링 스탑 ─────────────────────────────────────────────
+  // ─── 6) 트레일링 스탑 ─────────────────────────────────────────────
   // 활성: 보유 후 peak가 entry 대비 trailingActivatePct% 이상 상승했어야 함
   // 풀백: 현재가가 peak 대비 trailingDrawdownPct% 이상 하락
   const peakGainPct = (peak - entry) / entry * 100;

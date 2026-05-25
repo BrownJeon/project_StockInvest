@@ -1,6 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { Paginator } from './Paginator';
+
+const PAGE_SIZE = 7;
 import { fmtNum } from '@/lib/format';
 import { formatTimeKST } from '@/lib/time';
 import { OrderDetail, SOURCE_META } from '@/components/OrderDetail';
@@ -68,6 +71,7 @@ export function OrderHistoryTab() {
   const [loading, setLoading]       = useState(true);
   const [filter, setFilter]         = useState<FilterKey>('all');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [page, setPage]             = useState(0);
   const { displaySymbol, marketFlag } = useSymbolMeta();
 
   const fetchData = useCallback(async () => {
@@ -112,7 +116,11 @@ export function OrderHistoryTab() {
     return o.status === filter;
   });
 
-  const groups = groupByDate(filtered);
+  useEffect(() => { setPage(0); }, [filter]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const groups = groupByDate(paged);
 
   return (
     <>
@@ -248,6 +256,8 @@ export function OrderHistoryTab() {
           </div>
         </div>
       ))}
+
+      <Paginator page={page} totalPages={totalPages} onPage={setPage} />
 
       <div style={{ height: 16 }} />
 

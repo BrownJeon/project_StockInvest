@@ -191,15 +191,16 @@ async function fetchOverseasUsdCash(): Promise<number> {
 }
 
 // ── 잔고 조회 ────────────────────────────────────────────────────────────────
-export async function getBalances(): Promise<Balance[]> {
-  // TR ID — 모의: VTTS3012R, 실전: TTTS3012R (해외주식 잔고)
-  const trId = isMock() ? 'VTTS3012R' : 'TTTS3012R';
-  const defaultExcd = (process.env.KIS_OVERSEAS_DEFAULT_EXCHANGE ?? 'NAS') as OverseasExchange;
-  const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
+async function fetchBalancesForExchange(
+  excd: OverseasExchange,
+  cano: string,
+  acntPrdt: string,
+  trId: string,
+): Promise<{ usdAmount: number; items: Record<string, string>[] }> {
   const params = new URLSearchParams({
     CANO:           cano,
     ACNT_PRDT_CD:   acntPrdt,
-    OVRS_EXCG_CD:   toOvrsExcgCd(defaultExcd),
+    OVRS_EXCG_CD:   toOvrsExcgCd(excd),
     TR_CRCY_CD:     'USD',
     CTX_AREA_FK200: '',
     CTX_AREA_NK200: '',
@@ -209,65 +210,90 @@ export async function getBalances(): Promise<Balance[]> {
   let body = '';
   while (true) {
     const headers = await kisHeaders(trId);
+    if (process.env.KIS_OVERSEAS_DEBUG === '1') {
+      console.log(`[kis-overseas getBalances(${excd})] attempt=${attempt} token_prefix=${String(headers.Authorization ?? '').slice(7, 19)}`);
+    }
     const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-balance?${params}`;
     res = await fetch(url, { headers });
     if (res.ok) break;
     body = await res.text().catch(() => '');
     if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-      console.warn('[kis-overseas] token expired, re-issuing');
       await invalidateKisToken();
       attempt++;
       continue;
     }
-    throw new Error(`KIS overseas getBalances: ${res.status} body=${body.slice(0, 300)}`);
+    throw new Error(`KIS overseas getBalances(${excd}): ${res.status} body=${body.slice(0, 200)}`);
   }
   const data = await res.json();
   if (process.env.KIS_OVERSEAS_DEBUG === '1') {
-    console.log('[kis-overseas getBalances raw] rt_cd=', data.rt_cd,
-      'msg=', data.msg1,
-      'output1[0]=', JSON.stringify(data.output1?.[0] ?? null),
-      'output2=', JSON.stringify(data.output2));
+    const allItems: Record<string, string>[] = data.output1 ?? [];
+    console.log(`[kis-overseas getBalances(${excd}) raw] rt_cd=`, data.rt_cd, 'msg=', data.msg1, 'total_items=', allItems.length);
+    allItems.forEach((item: Record<string, string>, idx: number) => {
+      const { ovrs_pdno, ovrs_cblc_qty, ord_psbl_qty, ovrs_excg_cd, loan_type_cd, prdt_type_cd, cano, acnt_prdt_cd } = item;
+      console.log(`  [${excd}][${idx}] cano=${cano}-${acnt_prdt_cd} pdno=${ovrs_pdno} excg=${ovrs_excg_cd} cblc_qty=${ovrs_cblc_qty} ord_psbl_qty=${ord_psbl_qty} loan_type=${loan_type_cd} prdt_type=${prdt_type_cd}`);
+    });
   }
-
-  const balances: Balance[] = [];
-  // 예수금 (USD) — output2 종합 정보. KIS 해외 잔고 응답은 environment·계좌 종류에 따라
-  // 필드명이 일관적이지 않음. 1) summary 탐색 → 2) 매수가능금액 별도 조회 폴백.
   const summary = Array.isArray(data.output2) ? data.output2[0] : data.output2;
   let usdAmount = 0;
   if (summary) {
-    const usdRaw =
-      summary.frcr_dncl_amt1 ??     // 외화예수금
-      summary.frcr_dncl_amt ??       // (변형)
-      summary.dnca_tot_amt ??        // 일부 응답에서 USD로 직접
-      0;
+    const usdRaw = summary.frcr_dncl_amt1 ?? summary.frcr_dncl_amt ?? summary.dnca_tot_amt ?? 0;
     usdAmount = Number(usdRaw);
   }
-  if (!Number.isFinite(usdAmount) || usdAmount === 0) {
-    usdAmount = await fetchOverseasUsdCash().catch(() => 0);
+  return { usdAmount, items: data.output1 ?? [] };
+}
+
+/**
+ * 해외주식 잔고 조회.
+ * TTTS3012R (OVRS_EXCG_CD=NASD) 는 NYSE·AMEX 보유 종목까지 모두 반환한다 (KIS 동작 확인됨).
+ * NYSE·AMEX exchange code 로 별도 쿼리를 보내면 KIS 가 "토큰 만료" 오류를 반환하므로
+ * NASD 단일 조회로만 전체 해외 보유 포지션을 가져온다.
+ */
+export async function getBalances(): Promise<Balance[]> {
+  const trId = isMock() ? 'VTTS3012R' : 'TTTS3012R';
+  const [cano, acntPrdt, balFx] = await Promise.all([
+    accountNo(),
+    accountProduct(),
+    fetchUsdKrwRate().catch(() => 1),
+  ]);
+
+  const result = await fetchBalancesForExchange('NAS', cano, acntPrdt, trId);
+  const balances: Balance[] = [];
+
+  if (result.usdAmount > 0) {
+    balances.push({ currency: 'USD', free: result.usdAmount, locked: 0 });
+  } else {
+    const fallback = await fetchOverseasUsdCash().catch(() => 0);
+    if (fallback > 0) balances.push({ currency: 'USD', free: fallback, locked: 0 });
   }
-  if (Number.isFinite(usdAmount) && usdAmount > 0) {
-    balances.push({ currency: 'USD', free: usdAmount, locked: 0 });
-  }
-  // 보유 주식 (output1) — pdno = 영문 티커
-  // avgPrice(pchs_avg_pric)는 USD 단가이므로 ticker.price와 단위를 맞추기 위해 KRW 환산 필요.
-  const balFx = await fetchUsdKrwRate().catch(() => 1);
-  for (const item of (data.output1 ?? [])) {
+
+  for (const item of result.items) {
     const qty = Number(item.ovrs_cblc_qty ?? item.hldg_qty ?? 0);
     if (qty <= 0) continue;
     const ticker = String(item.ovrs_pdno ?? item.pdno ?? '').toUpperCase();
     if (!ticker) continue;
     const excd = String(item.ovrs_excg_cd ?? 'NASD');
     const myExcd: OverseasExchange = excd.startsWith('NAS') ? 'NAS' : excd.startsWith('NYS') ? 'NYS' : 'AMS';
-    const avgUsd = Number(item.pchs_avg_pric ?? 0);  // USD 단가
-    const avgKrw = avgUsd > 0 ? avgUsd * balFx : 0;  // KRW 환산 (ticker.price와 단위 일치)
+    const avgUsd = Number(item.pchs_avg_pric ?? 0);
+    const avgKrw = avgUsd > 0 ? avgUsd * balFx : 0;
     balances.push({
-      currency: formatOverseas(myExcd, ticker),  // 'NAS:AAPL' 형태로 normalize
+      currency: formatOverseas(myExcd, ticker),
       free:     qty,
       locked:   0,
       avgPrice: avgKrw > 0 ? avgKrw : undefined,
     });
   }
+
   return balances;
+}
+
+// ── 해외주식 호가단위 — $1 기준 ───────────────────────────────────────────────
+/** $1 이상: $1 단위, $1 미만(저가주): $0.0001 단위로 반올림 */
+function roundToTickOverseas(usdPrice: number): string {
+  if (usdPrice >= 1) {
+    return String(Math.round(usdPrice));
+  }
+  const rounded = Math.round(usdPrice * 10000) / 10000;
+  return rounded.toFixed(4);
 }
 
 // ── 주문 ─────────────────────────────────────────────────────────────────────
@@ -302,7 +328,7 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
     OVRS_EXCG_CD: toOvrsExcgCd(excd),
     PDNO:         ticker,
     ORD_QTY:      String(Math.floor(quantity)), // KIS 해외는 정수 수량
-    OVRS_ORD_UNPR: adjPrice >= 1 ? adjPrice.toFixed(2) : adjPrice.toFixed(4),
+    OVRS_ORD_UNPR: roundToTickOverseas(adjPrice),
     ORD_SVR_DVSN_CD: '0',
     ORD_DVSN:     '00', // 지정가 고정 (KIS 해외 시장가 미지원)
     CTAC_TLNO:    '',

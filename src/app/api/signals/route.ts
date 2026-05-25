@@ -86,6 +86,8 @@ export async function GET(req: Request) {
         where.push(`status IN (${statuses.map(() => '?').join(',')})`);
         params.push(...statuses);
       }
+      // 만료 시각이 지난 시그널은 cron 처리 여부와 무관하게 제외
+      where.push('(expires_at IS NULL OR expires_at >= NOW())');
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 

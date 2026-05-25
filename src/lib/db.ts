@@ -428,6 +428,19 @@ async function setupDB(): Promise<void> {
     await p.query(`CREATE INDEX idx_orders_market ON orders (market, created_at DESC)`);
   } catch { /* 이미 존재 */ }
 
+  // 사용자 시나리오 진입 감시 관련 status + 컬럼 추가
+  try {
+    await p.query(`
+      ALTER TABLE signals MODIFY COLUMN status
+        ENUM('pending','approved','rejected','auto_submitted','expired','superseded',
+             'ai_skipped','approved_pending_entry','executing')
+        NOT NULL DEFAULT 'pending'
+    `);
+  } catch { /* 이미 존재 */ }
+  try {
+    await p.query(`ALTER TABLE signals ADD COLUMN scenario_source VARCHAR(32) NULL`);
+  } catch { /* 이미 존재 */ }
+
   await p.query(`
     CREATE TABLE IF NOT EXISTS symbol_universe (
       id           BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -702,17 +715,24 @@ async function setupDB(): Promise<void> {
   // (avg_entry_price 는 KIS 잔고에서도 조회되지만 trailing peak 추적엔 자체 저장 필요)
   await p.query(`
     CREATE TABLE IF NOT EXISTS position_state (
-      symbol         VARCHAR(32) NOT NULL,
-      market         ENUM('domestic','overseas') NOT NULL,
-      entry_price    DECIMAL(36,8) NOT NULL,
-      peak_price     DECIMAL(36,8) NOT NULL,
-      qty            DECIMAL(36,18) NULL,
-      first_seen_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      symbol           VARCHAR(32) NOT NULL,
+      market           ENUM('domestic','overseas') NOT NULL,
+      entry_price      DECIMAL(36,8) NOT NULL,
+      peak_price       DECIMAL(36,8) NOT NULL,
+      qty              DECIMAL(36,18) NULL,
+      scenario_exit    JSON NULL,
+      holding_deadline DATETIME NULL,
+      first_seen_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (symbol, market),
-      INDEX idx_position_state_market (market, updated_at DESC)
+      INDEX idx_position_state_market (market, updated_at DESC),
+      INDEX idx_position_state_deadline (holding_deadline)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // 기존 테이블에 신규 컬럼 추가 (idempotent)
+  await p.query(`ALTER TABLE position_state ADD COLUMN IF NOT EXISTS scenario_exit JSON NULL`).catch(() => {});
+  await p.query(`ALTER TABLE position_state ADD COLUMN IF NOT EXISTS holding_deadline DATETIME NULL`).catch(() => {});
+  await p.query(`ALTER TABLE position_state ADD INDEX IF NOT EXISTS idx_position_state_deadline (holding_deadline)`).catch(() => {});
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS backtests (

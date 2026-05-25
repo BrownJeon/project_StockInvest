@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { fmtNum } from '@/lib/format';
+import { Paginator } from './Paginator';
+
+const PAGE_SIZE = 7;
 
 interface TradeLog {
   id: number;
@@ -99,8 +102,10 @@ export function AuditLog() {
   const [logs, setLogs]       = useState<TradeLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter]   = useState<FilterKey>('all');
+  const [page, setPage]       = useState(0);
 
   useEffect(() => {
+    setPage(0);
     setLoading(true);
     const event = FILTER_EVENTS[filter];
     const url = event ? `/api/orders/logs?limit=100&event=${event}` : '/api/orders/logs?limit=100';
@@ -133,19 +138,23 @@ export function AuditLog() {
       {!loading && logs.length === 0 && (
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>이벤트 없음</div>
       )}
-      {!loading && logs.length > 0 && (
-        <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
-          {logs.map((log, i) => {
-            const meta    = EVENT_META[log.event];
-            const summary = summarize(log.event, log.payload);
-            return (
-              <div
-                key={log.id}
-                style={{
-                  padding: '10px 16px', display: 'flex', alignItems: 'flex-start', gap: 10,
-                  borderBottom: i < logs.length - 1 ? '1px solid var(--border)' : 'none',
-                }}
-              >
+      {!loading && logs.length > 0 && (() => {
+        const totalPages = Math.ceil(logs.length / PAGE_SIZE);
+        const paged = logs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+        return (
+          <>
+            <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+              {paged.map((log, i) => {
+                const meta    = EVENT_META[log.event];
+                const summary = summarize(log.event, log.payload);
+                return (
+                  <div
+                    key={log.id}
+                    style={{
+                      padding: '10px 16px', display: 'flex', alignItems: 'flex-start', gap: 10,
+                      borderBottom: i < paged.length - 1 ? '1px solid var(--border)' : 'none',
+                    }}
+                  >
                 <span style={{ fontSize: 16, lineHeight: '20px', flexShrink: 0 }}>
                   {meta?.icon ?? '•'}
                 </span>
@@ -161,10 +170,13 @@ export function AuditLog() {
                   )}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+                  );
+                })}
+            </div>
+            <Paginator page={page} totalPages={totalPages} onPage={setPage} />
+          </>
+        );
+      })()}
     </div>
   );
 }

@@ -48,6 +48,17 @@ export async function GET(req: NextRequest) {
     try { return JSON.parse(latest.positions) as unknown[]; } catch { return []; }
   })() : [];
 
+  const periodMs: Record<string, number> = { '1d': 86_400_000, '7d': 7 * 86_400_000, '30d': 30 * 86_400_000 };
+  const since = new Date(Date.now() - (periodMs[period] ?? periodMs['7d']));
+  const [snapRows] = await pool.query<RowDataPacket[]>(
+    'SELECT ts, total_krw FROM portfolio_snapshots WHERE ts >= ? AND total_krw > 0 ORDER BY ts ASC LIMIT 100',
+    [since],
+  );
+  const snapshots = (snapRows as { ts: Date | string; total_krw: number }[]).map(r => ({
+    ts: r.ts instanceof Date ? r.ts.toISOString() : String(r.ts),
+    totalKRW: r.total_krw,
+  }));
+
   return NextResponse.json({
     ok: true,
     latest: latest ? { ts: latest.ts, totalKRW: latest.total_krw, positions } : null,
@@ -55,5 +66,6 @@ export async function GET(req: NextRequest) {
     period,
     periodReturns,
     volGuard: { ok: volGuard.ok, level: volGuard.level ?? 'ok', changePct: volGuard.changePct },
+    snapshots,
   });
 }

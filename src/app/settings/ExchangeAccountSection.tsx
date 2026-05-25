@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useToast } from '@/components/ui/Toast';
 
 interface CredState {
   masked: string;
@@ -43,7 +44,7 @@ export function ExchangeAccountSection() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving]   = useState(false);
-  const [msg, setMsg]         = useState<string | null>(null);
+  const toast = useToast();
   const [testing, setTesting]       = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
@@ -77,8 +78,8 @@ export function ExchangeAccountSection() {
   const allRegistered = FIELDS.every(f => creds[f.key]?.dbSet);
   const someRegistered = FIELDS.some(f => creds[f.key]?.dbSet);
 
-  const startEdit = () => { setEditing(true); setDrafts({}); setMsg(null); };
-  const cancel    = () => { setEditing(false); setDrafts({}); setMsg(null); };
+  const startEdit = () => { setEditing(true); setDrafts({}); };
+  const cancel    = () => { setEditing(false); setDrafts({}); };
 
   const setDraft = (k: string, v: string) => setDrafts(prev => ({ ...prev, [k]: v }));
 
@@ -91,16 +92,15 @@ export function ExchangeAccountSection() {
     if (!allRegistered) {
       const missing = FIELDS.filter(f => !values[f.key]);
       if (missing.length > 0) {
-        setMsg(`⚠ 필수 항목 누락: ${missing.map(m => m.label).join(', ')}`);
+        toast.show(`필수 항목 누락: ${missing.map(m => m.label).join(', ')}`, 'error');
         return;
       }
     }
     if (Object.keys(values).length === 0) {
-      setMsg('변경된 값이 없습니다');
+      toast.show('변경된 값이 없습니다', 'warning');
       return;
     }
     setSaving(true);
-    setMsg(null);
     try {
       const res = await fetch('/api/settings/credentials', {
         method: 'POST',
@@ -109,13 +109,12 @@ export function ExchangeAccountSection() {
       });
       const j = await res.json();
       if (!j.ok) throw new Error(j.errors?.join(', ') ?? j.error ?? 'failed');
-      setMsg('✓ 저장됨 — 60초 내 반영');
+      toast.show('저장됨 — 60초 내 반영', 'success');
       setEditing(false);
       setDrafts({});
       reload();
-      setTimeout(() => setMsg(null), 3000);
     } catch (e) {
-      setMsg(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+      toast.show(e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setSaving(false);
     }
@@ -219,8 +218,8 @@ export function ExchangeAccountSection() {
             );
           })}
           <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ fontSize: 12, color: msg?.startsWith('⚠') ? 'var(--down)' : 'var(--muted)', flex: 1 }}>
-              {msg ?? '평문으로 DB에 저장됩니다'}
+            <span style={{ fontSize: 12, color: 'var(--muted)', flex: 1 }}>
+              평문으로 DB에 저장됩니다
             </span>
             <button
               onClick={cancel}
@@ -245,11 +244,6 @@ export function ExchangeAccountSection() {
         </>
       )}
 
-      {!editing && msg && (
-        <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 12, color: msg.startsWith('⚠') ? 'var(--down)' : 'var(--ok)' }}>
-          {msg}
-        </div>
-      )}
     </div>
   );
 }

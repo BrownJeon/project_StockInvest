@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
+import { Paginator } from './Paginator';
 
 interface ReasonRow   { reason: string; total: number }
 interface SideReasonRow { side: 'buy' | 'sell'; reason: string; total: number }
@@ -58,14 +59,18 @@ export function SignalDiagnosticsTab() {
   const [side, setSide] = useState<SideFilter>('all');
   const [data, setData]   = useState<ApiResp | null>(null);
   const [loading, setLoading] = useState(true);
+  const [repeatPage, setRepeatPage] = useState(0);
 
   useEffect(() => {
+    setRepeatPage(0);
     setLoading(true);
     fetch(`/api/analytics/signal-quality?hours=${hours}`)
       .then(r => r.json())
       .then((d: ApiResp) => { if (d.ok) setData(d); })
       .finally(() => setLoading(false));
   }, [hours]);
+
+  useEffect(() => { setRepeatPage(0); }, [side]);
 
   // side 필터 적용한 reason 집계 (승인 제외, 거절만 — 기존 byReason 호환)
   const filteredReasons = useMemo<ReasonRow[]>(() => {
@@ -198,7 +203,7 @@ export function SignalDiagnosticsTab() {
           <div style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', padding: 12 }}>반복 발화 없음 ✓</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {filteredRepeatFires.slice(0, 12).map((r, i) => {
+            {filteredRepeatFires.slice(repeatPage * 7, (repeatPage + 1) * 7).map((r, i) => {
               const isAllSkipped = r.skippedCount >= r.fireCount;
               const sideLabel = r.side === 'buy' ? '매수' : '매도';
               const sideColor = r.side === 'buy' ? 'var(--up)' : 'var(--down)';
@@ -220,6 +225,7 @@ export function SignalDiagnosticsTab() {
                 </div>
               );
             })}
+            <Paginator page={repeatPage} totalPages={Math.ceil(filteredRepeatFires.length / 7)} onPage={setRepeatPage} />
           </div>
         )}
         {filteredRepeatFires.filter(r => r.skippedCount >= r.fireCount && r.fireCount >= 3).length > 0 && (

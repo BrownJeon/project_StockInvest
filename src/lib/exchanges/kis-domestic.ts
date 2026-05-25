@@ -63,10 +63,14 @@ export async function getCandles(symbol: string, interval: string, count: number
   }
   const fid = MINUTE_MAP[interval];
   if (!fid) throw new Error(`KIS unsupported interval: ${interval}`);
-  // KIS 분봉 API는 장 시간 외에는 빈 응답 (주말·야간) — 일봉으로 자동 폴백해 차트 끊김 방지
-  const minute = await getMinuteCandles(symbol, fid, count);
-  if (minute.length > 0) return minute;
-  console.log(`[kis-domestic] minute API empty for ${symbol} ${interval}, falling back to daily`);
+  // KIS 분봉 API는 장 시간 외(주말·야간)에 빈 응답이거나 500 — 일봉으로 자동 폴백
+  try {
+    const minute = await getMinuteCandles(symbol, fid, count);
+    if (minute.length > 0) return minute;
+  } catch {
+    // 장 외 시간 500 등 — 일봉 폴백
+  }
+  console.log(`[kis-domestic] minute API unavailable for ${symbol} ${interval}, falling back to daily`);
   return getDailyCandles(symbol, count);
 }
 
@@ -177,10 +181,11 @@ export async function getBalances(): Promise<Balance[]> {
   }
   const data = await res.json();
   if (process.env.KIS_OVERSEAS_DEBUG === '1') {
-    console.log('[kis-domestic getBalances raw] rt_cd=', data.rt_cd,
-      'msg=', data.msg1,
-      'output1[0]=', JSON.stringify(data.output1?.[0] ?? null),
-      'output2[0]=', JSON.stringify(data.output2?.[0] ?? null));
+    console.log('[kis-domestic getBalances raw] rt_cd=', data.rt_cd, 'msg=', data.msg1);
+    (data.output1 ?? []).forEach((item: Record<string, string>, idx: number) => {
+      console.log(`  [domestic][${idx}] pdno=${item.pdno} hldg_qty=${item.hldg_qty} loan_type=${item.loan_type_cd ?? item.bfdy_buy_qty}`);
+    });
+    console.log('  [domestic summary] cano=', cano, 'acntPrdt=', acntPrdt, 'dnca_tot_amt=', data.output2?.[0]?.dnca_tot_amt);
   }
 
   const balances: Balance[] = [];
@@ -208,6 +213,23 @@ export async function getBalances(): Promise<Balance[]> {
   return balances;
 }
 
+// ── 호가단위 (KOSPI/KOSDAQ 공통, 2024년 기준) ─────────────────────────────────
+function tickSize(price: number): number {
+  if (price < 2000)    return 1;
+  if (price < 5000)    return 5;
+  if (price < 20000)   return 10;
+  if (price < 50000)   return 50;
+  if (price < 200000)  return 100;
+  if (price < 500000)  return 500;
+  return 1000;
+}
+
+/** 지정가 주문 가격을 호가단위에 맞게 반올림 */
+function roundToTick(price: number): number {
+  const tick = tickSize(price);
+  return Math.round(price / tick) * tick;
+}
+
 // ── 주문 ─────────────────────────────────────────────────────────────────────
 export async function createOrder(req: OrderRequest): Promise<OrderResult> {
   const isBuy  = req.side === 'buy';
@@ -228,7 +250,7 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
     PDNO:         req.symbol,
     ORD_DVSN:     req.type === 'market' ? '01' : '00',
     ORD_QTY:      String(quantity),
-    ORD_UNPR:     req.type === 'market' ? '0' : String(Math.round(price)),
+    ORD_UNPR:     req.type === 'market' ? '0' : String(roundToTick(price)),
   };
   const res = await fetch(`${BASE()}/uapi/domestic-stock/v1/trading/order-cash`, {
     method: 'POST', headers, body: JSON.stringify(body),

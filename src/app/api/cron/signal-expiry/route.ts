@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
 
     const [rows] = await pool.query<ExpiredRow[]>(
       `SELECT id, symbol, side FROM signals
-       WHERE status = 'pending'
+       WHERE status IN ('pending', 'pending_approval')
          AND expires_at IS NOT NULL
          AND expires_at < NOW()`,
     );

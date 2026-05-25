@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { formatRelativeTime } from '@/lib/time';
+import { Paginator } from './Paginator';
+
+const PAGE_SIZE = 7;
 
 type Period = '1d' | '7d' | '30d';
 
@@ -122,8 +125,10 @@ export function StrategyTab() {
   const [strategies, setStrategies] = useState<StrategyItem[]>([]);
   const [loading, setLoading]       = useState(true);
   const [period, setPeriod]         = useState<Period>('7d');
+  const [page, setPage]             = useState(0);
 
   useEffect(() => {
+    setPage(0);
     setLoading(true);
     fetch(`/api/analytics/strategies?period=${period}`)
       .then(r => r.json())
@@ -155,7 +160,16 @@ export function StrategyTab() {
       {!loading && strategies.length === 0 && (
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>등록된 전략 없음</div>
       )}
-      {!loading && strategies.map(s => <StrategyCard key={s.id} s={s} period={period} />)}
+      {!loading && (() => {
+        const totalPages = Math.ceil(strategies.length / PAGE_SIZE);
+        const paged = strategies.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+        return (
+          <>
+            {paged.map(s => <StrategyCard key={s.id} s={s} period={period} />)}
+            <Paginator page={page} totalPages={totalPages} onPage={setPage} />
+          </>
+        );
+      })()}
     </div>
   );
 }

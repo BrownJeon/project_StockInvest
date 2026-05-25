@@ -81,7 +81,7 @@ NAS MariaDB에 `tradinginvest` DB를 생성해 사용한다. 테이블 생성은
 | amount_krw | DECIMAL(18,2) | 라우팅 기준값(자동/승인) |
 | reasoning | TEXT NULL | 분석가 자연어 근거 |
 | indicators | JSON NULL | RSI·MA·가격 스냅샷 |
-| status | ENUM | `pending` / `approved` / `rejected` / `auto_submitted` / `expired` / `superseded` |
+| status | ENUM | `pending` / `pending_approval` / `approved` / `rejected` / `auto_submitted` / `expired` / `superseded` / `ai_skipped` / `approved_pending_entry` / `executing` |
 | expires_at | DATETIME NULL | TTL (기본 `SIGNAL_DEFAULT_TTL_MIN`) |
 | consumed_order_id | BIGINT NULL | 승인·자동 제출 시 orders.id (FK 아님) |
 | created_at | DATETIME | |

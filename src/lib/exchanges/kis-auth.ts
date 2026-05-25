@@ -24,6 +24,12 @@ interface TokenCache {
 }
 
 /**
+ * 동시 다중 호출이 각자 토큰을 발급하면 KIS의 "1분 내 재발급 불가" 제한에 걸린다.
+ * refreshInFlight 로 중복 발급 요청을 단일 Promise 로 합친다.
+ */
+let refreshInFlight: Promise<string> | null = null;
+
+/**
  * KIS 토큰. 동일 KIS_APP_KEY를 다른 프로세스(TradingInvest 등)에서 새로 발급하면
  * 기존 토큰이 무효화되므로 EGW00123 또는 401 응답 시 호출자가 invalidateKisToken()을
  * 호출해 캐시 무효화 후 재발급할 수 있도록 export.
@@ -92,16 +98,22 @@ async function issueAndStore(appKey: string, appSecret: string): Promise<string>
   throw lastErr ?? new Error('KIS token issue failed');
 }
 
-/** 외부에서 토큰을 강제 무효화하고 재발급 받음. EGW00123(만료) 응답 시 호출. */
+/** 외부에서 토큰을 강제 무효화하고 재발급 받음. EGW00123(만료) 응답 시 호출.
+ *  병렬로 여러 호출이 동시에 진입해도 in-flight 중이면 동일 Promise 를 반환해
+ *  KIS 1분당 1회 재발급 제한에 걸리지 않도록 한다. */
 export async function invalidateKisToken(): Promise<string> {
-  try {
-    const pool = getPool();
-    await pool.query("DELETE FROM system_config WHERE `key` = 'kis_access_token'");
-  } catch { /* swallow */ }
-  const [appKey, appSecret] = await Promise.all([
-    getCredential('KIS_APP_KEY'),
-    getCredential('KIS_APP_SECRET'),
-  ]);
-  if (!appKey || !appSecret) throw new Error('KIS_APP_KEY / KIS_APP_SECRET not set');
-  return await issueAndStore(appKey, appSecret);
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const pool = getPool();
+      await pool.query("DELETE FROM system_config WHERE `key` = 'kis_access_token'");
+    } catch { /* swallow */ }
+    const [appKey, appSecret] = await Promise.all([
+      getCredential('KIS_APP_KEY'),
+      getCredential('KIS_APP_SECRET'),
+    ]);
+    if (!appKey || !appSecret) throw new Error('KIS_APP_KEY / KIS_APP_SECRET not set');
+    return await issueAndStore(appKey, appSecret);
+  })().finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
 }

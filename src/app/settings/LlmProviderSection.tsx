@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useToast } from '@/components/ui/Toast';
 
 type Provider = 'claude' | 'home-m4-api' | 'hybrid';
 
@@ -62,7 +63,7 @@ export function LlmProviderSection() {
   const [ragLookback, setRagLookback] = useState('7');
 
   const [activeProvider, setActiveProvider] = useState<Provider>('claude');
-  const [msg, setMsg] = useState<string | null>(null);
+  const toast = useToast();
   const [testing, setTesting]       = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
 
@@ -122,7 +123,6 @@ export function LlmProviderSection() {
 
   const save = async () => {
     setSaving(true);
-    setMsg(null);
     try {
       const body: Record<string, unknown> = { provider };
       if (provider === 'home-m4-api') {
@@ -148,10 +148,9 @@ export function LlmProviderSection() {
       const json = await res.json() as ApiResponse & { error?: string };
       if (!json.ok) throw new Error(json.error ?? 'save failed');
       setActiveProvider(json.active.provider);
-      setMsg('✓ 저장됨 — 다음 cron tick부터 적용');
-      setTimeout(() => setMsg(null), 3000);
+      toast.show('저장됨 — 다음 cron tick부터 적용', 'success');
     } catch (e) {
-      setMsg(`⚠ 저장 실패: ${e instanceof Error ? e.message : String(e)}`);
+      toast.show(`저장 실패: ${e instanceof Error ? e.message : String(e)}`, 'error');
     } finally {
       setSaving(false);
     }
@@ -279,8 +278,8 @@ export function LlmProviderSection() {
 
       {/* 저장 버튼 + 메시지 */}
       <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <div style={{ fontSize: 12, color: msg?.startsWith('⚠') ? 'var(--down)' : msg ? 'var(--ok)' : 'var(--muted)', minHeight: 16, flex: 1 }}>
-          {msg ?? (isDirty ? '변경사항 있음 — 저장하면 다음 cron tick부터 적용' : '')}
+        <div style={{ fontSize: 12, color: 'var(--muted)', minHeight: 16, flex: 1 }}>
+          {isDirty ? '변경사항 있음 — 저장하면 다음 cron tick부터 적용' : ''}
         </div>
         <button
           onClick={save}

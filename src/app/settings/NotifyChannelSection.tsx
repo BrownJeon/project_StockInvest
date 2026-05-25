@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useToast } from '@/components/ui/Toast';
 
 type Channel = 'none' | 'telegram' | 'slack' | 'both';
 
@@ -47,11 +48,10 @@ export function NotifyChannelSection() {
   const [drafts, setDrafts]   = useState<Record<string, string>>({});
   const [tagDraft, setTagDraft] = useState<string>('');
   const [tagSaving, setTagSaving] = useState(false);
-  const [tagMsg, setTagMsg] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
-  const [msg, setMsg]         = useState<string | null>(null);
+  const toast = useToast();
   const [testing, setTesting]       = useState<'telegram' | 'slack' | null>(null);
   const [testResults, setTestResults] = useState<Partial<Record<'telegram' | 'slack', TestResult>>>({});
 
@@ -86,8 +86,8 @@ export function NotifyChannelSection() {
   };
   useEffect(() => { reload(); }, []);
 
-  const startEdit = () => { setEditing(true); setDrafts({}); setMsg(null); };
-  const cancel    = () => { setEditing(false); setDrafts({}); setChannel(savedChannel); setMsg(null); };
+  const startEdit = () => { setEditing(true); setDrafts({}); };
+  const cancel    = () => { setEditing(false); setDrafts({}); setChannel(savedChannel); };
 
   const setDraft = (k: string, v: string) => setDrafts(prev => ({ ...prev, [k]: v }));
 
@@ -100,7 +100,6 @@ export function NotifyChannelSection() {
 
   const save = async () => {
     setSaving(true);
-    setMsg(null);
     try {
       // 1) 채널 저장
       const chRes = await fetch('/api/settings/notify-channel', {
@@ -121,7 +120,7 @@ export function NotifyChannelSection() {
         if (!anyDbSet) {
           const missing = activeFields.filter(f => !values[f.key]);
           if (missing.length > 0) {
-            setMsg(`⚠ 필수 항목 누락: ${missing.map(m => m.label).join(', ')}`);
+            toast.show(`필수 항목 누락: ${missing.map(m => m.label).join(', ')}`, 'error');
             setSaving(false);
             return;
           }
@@ -135,13 +134,12 @@ export function NotifyChannelSection() {
         }
       }
 
-      setMsg('✓ 저장됨 — 30초 내 반영');
+      toast.show('저장됨 — 30초 내 반영', 'success');
       setEditing(false);
       setDrafts({});
       reload();
-      setTimeout(() => setMsg(null), 3000);
     } catch (e) {
-      setMsg(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+      toast.show(e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setSaving(false);
     }
@@ -149,7 +147,6 @@ export function NotifyChannelSection() {
 
   const saveProjectTag = async () => {
     setTagSaving(true);
-    setTagMsg(null);
     try {
       const v = tagDraft.trim();
       const values: Record<string, string> = { NOTIFY_PROJECT_TAG: v === '' ? '__reset__' : v };
@@ -158,12 +155,11 @@ export function NotifyChannelSection() {
         body: JSON.stringify({ values }),
       }).then(r => r.json());
       if (!res.ok) throw new Error(res.errors?.join(', ') ?? res.error ?? 'save failed');
-      setTagMsg('✓ 저장됨 — 60초 내 반영');
+      toast.show('저장됨 — 60초 내 반영', 'success');
       setTagDraft('');
       reload();
-      setTimeout(() => setTagMsg(null), 3000);
     } catch (e) {
-      setTagMsg(`⚠ ${e instanceof Error ? e.message : String(e)}`);
+      toast.show(e instanceof Error ? e.message : String(e), 'error');
     } finally {
       setTagSaving(false);
     }
@@ -226,9 +222,6 @@ export function NotifyChannelSection() {
             }}
           >{tagSaving ? '저장 중...' : '저장'}</button>
         </div>
-        {tagMsg && (
-          <div style={{ fontSize: 11, color: tagMsg.startsWith('⚠') ? 'var(--down)' : 'var(--ok)' }}>{tagMsg}</div>
-        )}
         <div style={{ fontSize: 11, color: 'var(--muted)' }}>
           여러 인스턴스를 동일 텔레그램 chat 에 보낼 때 구분용. 미설정 시 <code>StockInvest</code> 사용.
         </div>
@@ -296,11 +289,6 @@ export function NotifyChannelSection() {
               }}
             >{savedChannel === 'none' ? '등록' : '수정'}</button>
           </div>
-          {msg && (
-            <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)', fontSize: 12, color: msg.startsWith('⚠') ? 'var(--down)' : 'var(--ok)' }}>
-              {msg}
-            </div>
-          )}
         </>
       )}
 
@@ -362,8 +350,8 @@ export function NotifyChannelSection() {
           })}
 
           <div style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderTop: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 12, color: msg?.startsWith('⚠') ? 'var(--down)' : 'var(--muted)', flex: 1 }}>
-              {msg ?? '평문으로 DB에 저장됩니다'}
+            <span style={{ fontSize: 12, color: 'var(--muted)', flex: 1 }}>
+              평문으로 DB에 저장됩니다
             </span>
             <button
               onClick={cancel}

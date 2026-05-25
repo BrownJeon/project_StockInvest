@@ -23,6 +23,7 @@ interface PortfolioData {
   period: string;
   periodReturns: Record<string, number | null>;
   volGuard: { ok: boolean; level: string; changePct?: number };
+  snapshots?: Array<{ ts: string; totalKRW: number }>;
 }
 
 const VOL_GUARD_COLOR: Record<string, string> = {
@@ -43,6 +44,43 @@ function fmtPct(v: number | null) {
 }
 
 import { formatRelativeTime as relTime } from '@/lib/time';
+
+function SnapshotChart({ snapshots }: { snapshots: Array<{ ts: string; totalKRW: number }> }) {
+  if (snapshots.length < 2) return null;
+
+  const W = 340, H = 80, PAD = { top: 8, bottom: 20, left: 8, right: 8 };
+  const xs = snapshots.map(s => new Date(s.ts).getTime());
+  const ys = snapshots.map(s => s.totalKRW);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const yRange = yMax - yMin || 1;
+
+  const toX = (t: number) => PAD.left + ((t - xMin) / (xMax - xMin)) * (W - PAD.left - PAD.right);
+  const toY = (v: number) => PAD.top + (1 - (v - yMin) / yRange) * (H - PAD.top - PAD.bottom);
+
+  const points = snapshots
+    .map(s => `${toX(new Date(s.ts).getTime()).toFixed(1)},${toY(s.totalKRW).toFixed(1)}`)
+    .join(' ');
+
+  const startVal = ys[0], endVal = ys[ys.length - 1];
+  const isUp = endVal >= startVal;
+  const lineColor = isUp ? 'var(--up)' : 'var(--down)';
+
+  return (
+    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', marginTop: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
+        자산 추이
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: 'visible' }}>
+        <polyline points={points} fill="none" stroke={lineColor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+        <span>{new Date(xs[0]).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })}</span>
+        <span>{new Date(xs[xs.length - 1]).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })}</span>
+      </div>
+    </div>
+  );
+}
 
 export function PortfolioTab() {
   const [data, setData]           = useState<PortfolioData | null>(null);
@@ -153,6 +191,9 @@ export function PortfolioTab() {
         ))}
       </div>
 
+      {/* 자산 추이 차트 */}
+      <SnapshotChart snapshots={data.snapshots ?? []} />
+
       {/* 자산 구성 */}
       {latest.positions.length > 0 && (() => {
         const held = latest.positions.filter(p => (p.value_krw ?? 0) > 0);
@@ -187,7 +228,7 @@ export function PortfolioTab() {
                     {marketFlag(pos.currency)}{displayName(pos.currency)}
                   </span>
                   {pos.qty != null && pos.currency !== 'KRW' && pos.currency !== 'USD' && (
-                    <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 6 }}>{pos.qty}{symbolUnit(pos.currency)}</span>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 6 }}>{Math.floor(pos.qty)}{symbolUnit(pos.currency)}</span>
                   )}
                 </div>
                 <div style={{ textAlign: 'right' }}>

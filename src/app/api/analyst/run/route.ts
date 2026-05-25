@@ -7,14 +7,17 @@ import { isDomesticOpen } from '@/lib/strategy/market-hours';
 
 export const dynamic = 'force-dynamic';
 
-const DEFAULT_SYMBOLS = ['005930', '000660'];
+const DEFAULT_SYMBOLS = ['005930', '000660', '035420', '035720', '051910', '000270', '005380', '066570', '373220', '207940'];
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    if (!(await isAnalystEnabled())) {
+    const { searchParams } = new URL(req.url);
+    const force = searchParams.get('force') === 'true';
+
+    if (!force && !(await isAnalystEnabled())) {
       return Response.json({ ok: false, error: 'ANALYST_ENABLED=false' }, { status: 403 });
     }
-    if (!(await isDomesticOpen())) {
+    if (!force && !(await isDomesticOpen())) {
       return Response.json({ ok: false, error: 'domestic_market_closed' }, { status: 409 });
     }
     const symbols = DEFAULT_SYMBOLS;

@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import type { MissedSignal } from '@/app/api/signals/missed/route';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
+import { Paginator } from './Paginator';
+
+const PAGE_SIZE = 7;
 
 function changeBadge(pct: number | null) {
   if (pct == null) return <span style={{ color: 'var(--muted)', fontSize: 12 }}>추적 중…</span>;
@@ -32,6 +35,8 @@ export function MissedOpportunityTab() {
   const [data, setData] = useState<MissedSignal[]>([]);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(7);
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'ai_skipped' | 'user_rejected'>('all');
+  const [page, setPage] = useState(0);
   const { displaySymbol, marketFlag } = useSymbolMeta();
 
   useEffect(() => {
@@ -48,15 +53,24 @@ export function MissedOpportunityTab() {
     total: data.length,
     missedBuy: data.filter(d => d.side === 'buy' && (d.priceChangePct ?? 0) >= 3).length,
     correctSkip: data.filter(d => d.side === 'buy' && (d.priceChangePct ?? 0) <= -3).length,
+    userRejectedMissed: data.filter(d => d.source === 'user_rejected' && (d.priceChangePct ?? 0) >= 3).length,
   };
+
+  const filteredData = sourceFilter !== 'all' ? data.filter(d => d.source === sourceFilter) : data;
+
+  useEffect(() => { setPage(0); }, [days, sourceFilter]);
+
+  const totalPages = Math.ceil(filteredData.length / PAGE_SIZE);
+  const paged = filteredData.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div>
       {/* 요약 바 */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
-        <Chip label="전체 스킵" value={summary.total} />
+        <Chip label="전체" value={summary.total} />
         <Chip label="놓친 기회 (+3%↑)" value={summary.missedBuy} color="var(--up)" />
         <Chip label="올바른 스킵 (-3%↓)" value={summary.correctSkip} color="var(--down)" />
+        <Chip label="내 거절 기회" value={summary.userRejectedMissed} color="var(--up)" />
         {/* 기간 필터 */}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           {[1, 3, 7, 14].map(d => (
@@ -76,13 +90,27 @@ export function MissedOpportunityTab() {
         </div>
       </div>
 
+      {/* 출처 필터 */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        {(['all', 'ai_skipped', 'user_rejected'] as const).map(f => (
+          <button key={f} onClick={() => setSourceFilter(f)} style={{
+            padding: '4px 12px', borderRadius: 16, fontSize: 12, fontWeight: 600,
+            background: sourceFilter === f ? 'var(--accent)' : 'var(--bg3)',
+            color: sourceFilter === f ? '#000' : 'var(--muted)',
+            border: 'none', cursor: 'pointer',
+          }}>
+            {f === 'all' ? '전체' : f === 'ai_skipped' ? 'AI 스킵' : '내 거절'}
+          </button>
+        ))}
+      </div>
+
       {loading && <p style={{ color: 'var(--muted)', fontSize: 13 }}>불러오는 중…</p>}
 
-      {!loading && data.length === 0 && (
-        <p style={{ color: 'var(--muted)', fontSize: 13 }}>최근 {days}일간 스킵된 시그널이 없습니다.</p>
+      {!loading && filteredData.length === 0 && (
+        <p style={{ color: 'var(--muted)', fontSize: 13 }}>최근 {days}일간 해당하는 시그널이 없습니다.</p>
       )}
 
-      {!loading && data.map(sig => (
+      {!loading && paged.map(sig => (
         <div key={sig.id} style={{
           background: 'var(--bg2)', borderRadius: 10, padding: '12px 14px',
           marginBottom: 10, borderLeft: `3px solid ${
@@ -104,6 +132,11 @@ export function MissedOpportunityTab() {
                 {sig.side === 'buy' ? '매수' : '매도'}
               </span>
               <span style={{ fontSize: 11, color: 'var(--muted)' }}>{sig.strategyId}</span>
+              {sig.source === 'user_rejected' && (
+                <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 8, background: 'var(--bg3)', color: 'var(--muted)' }}>
+                  내 거절
+                </span>
+              )}
             </div>
             {changeBadge(sig.priceChangePct)}
           </div>
@@ -132,6 +165,7 @@ export function MissedOpportunityTab() {
           </div>
         </div>
       ))}
+      {!loading && <Paginator page={page} totalPages={totalPages} onPage={setPage} />}
     </div>
   );
 }

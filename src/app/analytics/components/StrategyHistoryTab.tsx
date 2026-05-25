@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import { formatRelativeTime } from '@/lib/time';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
+import { Paginator } from './Paginator';
+
+const PAGE_SIZE = 7;
 
 type Period = '1d' | '7d' | '30d';
 const PERIOD_LABEL: Record<Period, string> = { '1d': '1일', '7d': '7일', '30d': '30일' };
@@ -153,6 +156,7 @@ export function StrategyHistoryTab() {
   const [loading, setLoading]     = useState(true);
   const [expanded, setExpanded]   = useState<Set<number>>(new Set());
   const [filterSide, setFilter]   = useState<'all' | 'buy' | 'sell'>('all');
+  const [page, setPage]           = useState(0);
   const { displaySymbol, marketFlag } = useSymbolMeta();
 
   useEffect(() => {
@@ -173,7 +177,11 @@ export function StrategyHistoryTab() {
     });
   };
 
+  useEffect(() => { setPage(0); }, [period, filterSide]);
+
   const filtered = filterSide === 'all' ? signals : signals.filter(s => s.side === filterSide);
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   const counts = {
     total:   signals.length,
@@ -246,7 +254,7 @@ export function StrategyHistoryTab() {
           {PERIOD_LABEL[period]} 내 시그널 없음
         </div>
       )}
-      {!loading && filtered.map(sig => (
+      {!loading && paged.map(sig => (
         <SignalCard
           key={sig.id}
           sig={sig}
@@ -256,6 +264,7 @@ export function StrategyHistoryTab() {
           marketFlag={marketFlag}
         />
       ))}
+      {!loading && <Paginator page={page} totalPages={totalPages} onPage={setPage} />}
     </div>
   );
 }

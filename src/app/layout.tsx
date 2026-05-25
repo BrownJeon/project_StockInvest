@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import './globals.css';
 import { BottomTabs } from '@/components/BottomTabs';
+import { ToastProvider } from '@/components/ui/Toast';
 
 export const metadata: Metadata = {
   title: '주식 자동매매',
@@ -19,10 +20,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ko">
       <body>
-        <div style={{ minHeight: '100dvh', paddingBottom: 'calc(var(--nav-h) + var(--safe-bottom))' }}>
-          {children}
-        </div>
-        <BottomTabs />
+        <ToastProvider>
+          <div style={{ minHeight: '100dvh', paddingBottom: 'calc(var(--nav-h) + var(--safe-bottom))' }}>
+            {children}
+          </div>
+          <BottomTabs />
+        </ToastProvider>
       </body>
     </html>
   );

@@ -35,6 +35,11 @@ describe('routeSignal', () => {
     const r = routeSignal({ ...baseInput, expiresAt: target }, { defaultTtlMin: 30 }, true);
     expect(r.expiresAt.toISOString()).toBe(new Date(target).toISOString());
   });
+
+  test('hybridModeEnabled=true 이면 analystEnabled 무관하게 pending_approval', () => {
+    const r = routeSignal(baseInput, { defaultTtlMin: 30, hybridModeEnabled: true }, true);
+    expect(r.route).toBe('pending_approval');
+  });
 });
 
 describe('getRouterConfig', () => {
@@ -43,12 +48,20 @@ describe('getRouterConfig', () => {
 
   test('환경변수 읽어오기', async () => {
     process.env.SIGNAL_DEFAULT_TTL_MIN = '15';
-    expect(await getRouterConfig()).toEqual({ defaultTtlMin: 15 });
+    const cfg = await getRouterConfig();
+    expect(cfg.defaultTtlMin).toBe(15);
   });
 
   test('잘못된 값은 기본값 30', async () => {
     process.env.SIGNAL_DEFAULT_TTL_MIN = '-10';
-    expect(await getRouterConfig()).toEqual({ defaultTtlMin: 30 });
+    const cfg = await getRouterConfig();
+    expect(cfg.defaultTtlMin).toBe(30);
+  });
+
+  test('HYBRID_MODE_ENABLED=true 이면 hybridModeEnabled=true', async () => {
+    process.env.HYBRID_MODE_ENABLED = 'true';
+    const cfg = await getRouterConfig();
+    expect(cfg.hybridModeEnabled).toBe(true);
   });
 });
 

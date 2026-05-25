@@ -17,12 +17,21 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import type { Market } from '@/lib/exchanges/kis-symbols';
 
+export interface ScenarioExitParams {
+  targetLo: number;
+  targetHi: number;
+  stopLo: number;
+  stopHi: number;
+}
+
 export interface PositionState {
   symbol: string;
   market: Market;
   entryPrice: number;
   peakPrice: number;
   qty: number | null;
+  scenarioExit: ScenarioExitParams | null;
+  holdingDeadline: Date | null;
   firstSeenAt: Date;
   updatedAt: Date;
 }
@@ -33,17 +42,29 @@ interface PositionRow extends RowDataPacket {
   entry_price: string | number;
   peak_price: string | number;
   qty: string | number | null;
+  scenario_exit: string | null;
+  holding_deadline: Date | null;
   first_seen_at: Date;
   updated_at: Date;
 }
 
 function rowToState(r: PositionRow): PositionState {
+  let scenarioExit: ScenarioExitParams | null = null;
+  if (r.scenario_exit) {
+    try {
+      scenarioExit = typeof r.scenario_exit === 'string'
+        ? JSON.parse(r.scenario_exit)
+        : r.scenario_exit;
+    } catch { /* ignore */ }
+  }
   return {
     symbol: r.symbol,
     market: r.market,
     entryPrice: Number(r.entry_price),
     peakPrice: Number(r.peak_price),
     qty: r.qty == null ? null : Number(r.qty),
+    scenarioExit,
+    holdingDeadline: r.holding_deadline ?? null,
     firstSeenAt: r.first_seen_at,
     updatedAt: r.updated_at,
   };
@@ -52,12 +73,31 @@ function rowToState(r: PositionRow): PositionState {
 export async function loadPositionState(symbol: string, market: Market): Promise<PositionState | null> {
   const pool = getPool();
   const [rows] = await pool.query<PositionRow[]>(
-    `SELECT symbol, market, entry_price, peak_price, qty, first_seen_at, updated_at
+    `SELECT symbol, market, entry_price, peak_price, qty,
+            scenario_exit, holding_deadline, first_seen_at, updated_at
        FROM position_state WHERE symbol=? AND market=? LIMIT 1`,
     [symbol, market],
   );
   if (rows.length === 0) return null;
   return rowToState(rows[0]);
+}
+
+/** 사용자 시나리오 진입 확정 시 호출 — scenario_exit·holding_deadline 1회 기록. */
+export async function setPositionScenarioExit(
+  symbol: string,
+  market: Market,
+  scenarioExit: ScenarioExitParams,
+  holdingDeadline: Date | null,
+): Promise<void> {
+  const pool = getPool();
+  await pool.query<ResultSetHeader>(
+    `INSERT INTO position_state (symbol, market, entry_price, peak_price, qty, scenario_exit, holding_deadline)
+     VALUES (?, ?, 0, 0, NULL, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       scenario_exit    = VALUES(scenario_exit),
+       holding_deadline = VALUES(holding_deadline)`,
+    [symbol, market, JSON.stringify(scenarioExit), holdingDeadline ?? null],
+  );
 }
 
 /**

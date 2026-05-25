@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { CandleChart } from '@/components/CandleChart';
 import { PnlChip } from '@/components/PnlChip';
+import { TradingBoard } from '@/components/TradingBoard';
 import { fmtNum, fmtPnl, pnlColor } from '@/lib/format';
 import { formatRelativeTime, formatDateTimeKST, kstTodayStart } from '@/lib/time';
 import { formatSymbolShort, symbolUnit } from '@/lib/symbols';
@@ -85,7 +86,8 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
   // 필터/탭 변경 시 첫 페이지로 리셋
   useEffect(() => { setHoldPage(0); }, [holdMarket, listTab, holdSort]);
   useEffect(() => { setWatchPage(0); }, [listTab]);
-  const [todaySignalCount, setTodaySignalCount] = useState<number>(0);
+  const [pendingCount, setPendingCount] = useState<number>(0);
+  const [watchingCount, setWatchingCount] = useState<number>(0);
   const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
   const [, forceTick] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
@@ -163,13 +165,16 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/signals?limit=200').then(r => r.json()).then(j => {
-      if (!alive || !j.ok) return;
-      const todayKey = new Date().toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' });
-      const count = (j.data as { created_at: string }[]).filter(s =>
-        new Date(s.created_at).toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }) === todayKey
-      ).length;
-      setTodaySignalCount(count);
+    fetch('/api/signals?status=pending_approval&limit=100').then(r => r.json()).then(j => {
+      if (alive && j.ok) setPendingCount((j.data as unknown[]).length);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [reloadKey]);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/signals?status=approved_pending_entry&limit=100').then(r => r.json()).then(j => {
+      if (alive && j.ok) setWatchingCount((j.data as unknown[]).length);
     }).catch(() => {});
     return () => { alive = false; };
   }, [reloadKey]);
@@ -303,8 +308,43 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
         </div>
       </div>
 
+      {/* 승인 대기 배너 */}
+      {pendingCount > 0 && (
+        <Link href="/recommend" style={{ textDecoration: 'none', display: 'block' }}>
+          <div style={{
+            padding: '10px 16px',
+            background: 'rgba(245,158,11,.12)',
+            borderBottom: '1px solid rgba(245,158,11,.3)',
+            display: 'flex', alignItems: 'center', gap: 8,
+            cursor: 'pointer',
+          }}>
+            <span style={{ fontSize: 14 }}>⚡</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#f59e0b', flex: 1 }}>
+              승인 대기 {pendingCount}건 — 검토가 필요합니다
+            </span>
+            <span style={{ fontSize: 12, color: '#f59e0b' }}>→</span>
+          </div>
+        </Link>
+      )}
+
       {/* 자동매매 상태 카드 */}
-      <AutoTradingStatusCard portfolio={portfolio} strategies={strategies} orders={orders} todaySignalCount={todaySignalCount} />
+      <AutoTradingStatusCard portfolio={portfolio} orders={orders} pendingCount={pendingCount} watchingCount={watchingCount} />
+
+      {/* 트레이딩 보드: 진행중 포지션 + 진입 감시 */}
+      <section style={{ background: 'var(--bg2)', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ padding: '10px 14px 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '.6px', textTransform: 'uppercase' as const }}>
+            트레이딩 보드
+            <span style={{ fontSize: 11, fontWeight: 400, letterSpacing: 0, marginLeft: 6, opacity: 0.7, textTransform: 'none' as const }}>
+              승인 대기 → 진입 감시 → 포지션
+            </span>
+          </span>
+          <Link href="/recommend" style={{ fontSize: 11, color: 'var(--muted)', textDecoration: 'none' }}>
+            추천 →
+          </Link>
+        </div>
+        <TradingBoard reloadKey={reloadKey} />
+      </section>
 
       {/* 운용 전략 */}
       <ActiveStrategiesSection strategies={strategies} />
@@ -572,11 +612,11 @@ function todayStart() {
   return kstTodayStart().getTime();
 }
 
-function AutoTradingStatusCard({ portfolio, strategies, orders, todaySignalCount }: {
+function AutoTradingStatusCard({ portfolio, orders, pendingCount, watchingCount }: {
   portfolio: PortfolioData | null;
-  strategies: StrategyRow[];
   orders: OrderRow[];
-  todaySignalCount: number;
+  pendingCount: number;
+  watchingCount: number;
 }) {
   const todayPct = portfolio?.today_change_pct;
   const todayKrw = portfolio?.today_change_krw;
@@ -590,7 +630,6 @@ function AutoTradingStatusCard({ portfolio, strategies, orders, todaySignalCount
     ? `${todayKrw >= 0 ? '+' : ''}${fmtNum(Math.round(todayKrw))} KRW`
     : '오늘 첫 접속';
 
-  const activeCount   = strategies.filter(s => s.enabled).length;
   const ts            = todayStart();
   const todayExecuted = orders.filter(o =>
     EXECUTED_STATUSES.includes(o.status) && new Date(o.created_at).getTime() >= ts,
@@ -600,12 +639,12 @@ function AutoTradingStatusCard({ portfolio, strategies, orders, todaySignalCount
     <section style={sx.card}>
       <div style={sx.cardHeader}>
         <span style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '.6px', textTransform: 'uppercase' }}>
-          자동매매 상태
+          투자 현황
         </span>
       </div>
       <div style={sx.cardGrid}>
-        <Stat label="활성 전략" value={String(activeCount)} />
-        <Stat label="오늘 시그널" value={String(todaySignalCount)} />
+        <Stat label="승인 대기" value={<span style={{ color: pendingCount > 0 ? '#f59e0b' : 'var(--text)' }}>{pendingCount}</span>} />
+        <Stat label="진입 감시 중" value={String(watchingCount)} />
         <Stat label="오늘 체결" value={String(todayExecuted)} />
         <Stat label="포트폴리오 오늘" value={todayValue} sub={todaySub} />
       </div>
@@ -910,7 +949,7 @@ function HoldingRow({
         <div className="num" style={{ color: 'var(--muted)', fontSize: 11, marginTop: 2 }}>
           {h.is_cash
             ? fmtNum(h.qty) + ' ' + (h.currency === 'USD' ? 'USD' : 'KRW')
-            : fmtNum(h.qty, h.currency.includes(':') ? 4 : 0) + symbolUnit(h.currency)}
+            : fmtNum(Math.floor(h.qty), 0) + symbolUnit(h.currency)}
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>

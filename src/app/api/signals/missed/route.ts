@@ -15,6 +15,7 @@ export interface MissedSignal {
   price1hAfter: number | null;
   priceChangePct: number | null;
   createdAt: string;
+  source: 'ai_skipped' | 'user_rejected';
 }
 
 interface SignalRow extends RowDataPacket {
@@ -28,6 +29,7 @@ interface SignalRow extends RowDataPacket {
   price_1h_after: string | null;
   price_change_pct: string | null;
   created_at: Date;
+  status: string;
 }
 
 function extractConfidence(indicators: string | null): number | null {
@@ -48,9 +50,9 @@ export async function GET(req: NextRequest) {
     const pool = getPool();
     const [rows] = await pool.query<SignalRow[]>(
       `SELECT id, symbol, side, strategy_id, reasoning, indicators,
-              price_at_skip, price_1h_after, price_change_pct, created_at
+              price_at_skip, price_1h_after, price_change_pct, created_at, status
        FROM signals
-       WHERE status = 'ai_skipped'
+       WHERE status IN ('ai_skipped', 'rejected')
          AND created_at > DATE_SUB(NOW(), INTERVAL ? DAY)
        ORDER BY created_at DESC
        LIMIT 200`,
@@ -68,6 +70,7 @@ export async function GET(req: NextRequest) {
       price1hAfter: r.price_1h_after != null ? Number(r.price_1h_after) : null,
       priceChangePct: r.price_change_pct != null ? Number(r.price_change_pct) : null,
       createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+      source: (r.status === 'ai_skipped' ? 'ai_skipped' : 'user_rejected') as 'ai_skipped' | 'user_rejected',
     }));
 
     return NextResponse.json({ ok: true, data, days });

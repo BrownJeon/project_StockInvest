@@ -12,6 +12,7 @@ import {
   isAnalystEnabled,
   routeSignal,
 } from './router';
+import { buildScenarioFromAiResult } from './scenario-builder';
 import { getAnalystStyle, getStyleConfig } from '@/lib/strategy/style';
 
 /** safety_limit_chase_disabled = true 면 chasePct 0 강제 (즉시 무력화 스위치). */
@@ -74,9 +75,12 @@ export interface SignalRow {
   indicators: unknown;
   status:
     | 'pending'
+    | 'pending_approval'
     | 'approved'
+    | 'approved_pending_entry'
     | 'rejected'
     | 'auto_submitted'
+    | 'executing'
     | 'expired'
     | 'superseded';
   expires_at: Date | null;
@@ -141,8 +145,34 @@ export async function createSignal(
     return { ok: false, signalId: 0, autoSubmitted: false, error: sym.detail ?? 'symbol_not_allowed' };
   }
 
-  const decision = routeSignal(input, cfg, analystEnabled);
-  const initialStatus = decision.route === 'auto_submit' ? 'auto_submitted' : 'pending';
+  // 하이브리드 모드: hybridModeEnabled가 true면 pending_approval 강제
+  const hybridModeEnabled = (resolvedCfg as RouterConfig & { hybridModeEnabled?: boolean }).hybridModeEnabled ?? false;
+  const decision = routeSignal(input, { ...cfg, hybridModeEnabled }, analystEnabled);
+
+  // AI 결과가 있으면 scenario 카드 생성 후 indicators에 merge
+  let enrichedIndicators = input.indicators;
+  if (input.indicators != null && typeof input.indicators === 'object') {
+    const aiData = (input.indicators as Record<string, unknown>)['ai'];
+    if (aiData != null && typeof aiData === 'object' && input.price != null) {
+      const scenario = buildScenarioFromAiResult(
+        aiData as Record<string, unknown>,
+        input.price,
+      );
+      if (scenario !== null) {
+        enrichedIndicators = {
+          ...(input.indicators as Record<string, unknown>),
+          ai: {
+            ...(aiData as Record<string, unknown>),
+            scenario,
+          },
+        };
+      }
+    }
+  }
+  // 하이브리드 모드에서는 pending_approval 상태로 저장 (기존 pending과 구분)
+  const initialStatus = decision.route === 'auto_submit'
+    ? 'auto_submitted'
+    : hybridModeEnabled ? 'pending_approval' : 'pending';
   const pool = getPool();
   const { getMarketFromSymbol } = await import('@/lib/exchanges/kis-symbols');
   const market = getMarketFromSymbol(input.symbol);
@@ -160,7 +190,7 @@ export async function createSignal(
       input.quantity ?? null,
       input.amountKRW,
       input.reasoning ?? null,
-      input.indicators != null ? JSON.stringify(input.indicators) : null,
+      enrichedIndicators != null ? JSON.stringify(enrichedIndicators) : null,
       initialStatus,
       decision.expiresAt,
       market,
@@ -179,7 +209,7 @@ export async function createSignal(
     status: initialStatus,
     price: input.price ?? null,
     reasoning: input.reasoning ?? null,
-    indicators: (input.indicators ?? null) as Record<string, unknown> | null,
+    indicators: (enrichedIndicators ?? null) as Record<string, unknown> | null,
     createdAt: new Date().toISOString(),
   })).catch(e => {
     console.warn(`[rag-upsert] dynamic import @/lib/rag/signals-upsert failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -278,6 +308,65 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
     autoSubmitted: false,
     orderId: orderResult.orderId,
     orderResult,
+  };
+}
+
+/**
+ * 하이브리드 모드 승인 — 즉시 주문하지 않고 진입 감시 상태로만 전환.
+ * entry-watcher cron이 price_zone 도달 시 자동 주문 실행.
+ *
+ * @param id         시그널 ID
+ * @param editedScenario  body에서 전달된 시나리오 수정값 (optional) — indicators.ai.scenario에 병합
+ */
+export async function approveSignalHybrid(
+  id: number,
+  editedScenario?: Partial<import('./scenario-builder').ScenarioCard>,
+): Promise<{ ok: boolean; status?: string; message?: string; error?: string }> {
+  const pool = getPool();
+  const row = await getSignalById(id);
+  if (!row) return { ok: false, error: 'not_found' };
+
+  // pending 또는 pending_approval 상태에서만 승인 가능
+  if (row.status !== 'pending' && row.status !== 'pending_approval') {
+    return { ok: false, error: `invalid_status:${row.status}` };
+  }
+  if (row.expires_at && new Date(row.expires_at) < new Date()) {
+    await pool.query(`UPDATE signals SET status='expired', updated_at=NOW() WHERE id=?`, [id]);
+    return { ok: false, error: 'signal_expired' };
+  }
+
+  // editedScenario가 있으면 indicators.ai.scenario에 merge
+  if (editedScenario != null) {
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = typeof row.indicators === 'string'
+        ? JSON.parse(row.indicators)
+        : (row.indicators as Record<string, unknown> ?? {});
+    } catch { /* indicators가 파싱 불가면 빈 객체로 시작 */ }
+
+    const existingAi = (parsed['ai'] as Record<string, unknown> | undefined) ?? {};
+    const existingScenario = (existingAi['scenario'] as Record<string, unknown> | undefined) ?? {};
+    const mergedScenario = { ...existingScenario, ...editedScenario };
+
+    const mergedIndicators = {
+      ...parsed,
+      ai: { ...existingAi, scenario: mergedScenario },
+    };
+    await pool.query(
+      `UPDATE signals SET indicators=?, status='approved_pending_entry', updated_at=NOW() WHERE id=?`,
+      [JSON.stringify(mergedIndicators), id],
+    );
+  } else {
+    await pool.query(
+      `UPDATE signals SET status='approved_pending_entry', updated_at=NOW() WHERE id=?`,
+      [id],
+    );
+  }
+
+  return {
+    ok: true,
+    status: 'approved_pending_entry',
+    message: '진입 감시가 시작됐습니다',
   };
 }
 
