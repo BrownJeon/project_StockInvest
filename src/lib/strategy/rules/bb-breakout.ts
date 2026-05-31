@@ -29,17 +29,11 @@ export const bbBreakout: RuleFunction = ({ strategyId, symbol, candles, ticker, 
     (closes[n - 1] <= prev.upper && closes[n] > cur.upper) ||
     (prev2 != null && prev2.upper != null && closes[n - 2] <= prev2.upper && closes[n] > cur.upper);
   if (breakoutBuy) {
-    // 모멘텀 추격 가드 — 직전 5봉 누적 상승률 ≥ momentumChaseMaxPct% 면 매수 skip
-    if (n >= 5) {
-      const start = candles[n - 5];
-      const cumRisePct = start && start.close > 0 ? ((closes[n] - start.close) / start.close) * 100 : 0;
-      if (cumRisePct >= style.momentumChaseMaxPct) return [];
-    }
-    // 거래량 가드 — 직전 20봉 평균 대비 1.2x 이상이어야 진성 돌파로 인정
+    // 거래량 가드 — 직전 20봉 평균 대비 1.0x 이상 (정상 거래량 수준 유지만 확인)
     const vol = candles[n].volume ?? 0;
     const volAvg20 = candles.slice(-20).reduce((s, c) => s + (c.volume ?? 0), 0) / 20;
     const volRatio = volAvg20 > 0 ? vol / volAvg20 : 1;
-    if (volRatio < 1.2) return [];
+    if (volRatio < 1.0) return [];
 
     // ATR 거리 가드 — middle 대비 1.5×ATR 초과면 추격 패턴 차단
     const atrSeries = atr(candles.map(c => ({ high: c.high, low: c.low, close: c.close })), 14);

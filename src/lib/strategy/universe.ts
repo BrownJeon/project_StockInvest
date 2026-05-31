@@ -11,13 +11,13 @@ import { bollinger } from '@/lib/strategy/indicators/bollinger';
 export type StrategyProfile = 'trend' | 'mean-rev' | 'breakout';
 export type UniverseTier = 'core' | 'satellite' | 'speculative';
 
-const UNIVERSE_TOP_N = 40;
+const UNIVERSE_TOP_N = 150;
 const UNIVERSE_TTL_MS = 15 * 60 * 1000;
 /** KOSPI 100/200 근사 — KIS 시총 랭킹 기준 */
 const TIER_CORE_LIMIT      = 100;  // 시총 상위 1~100 = core (KOSPI 100 근사)
 const TIER_SATELLITE_LIMIT = 200;  // 시총 상위 101~200 = satellite (KOSPI 200 근사)
 
-/** 동적 조회 실패 시 폴백 목록 */
+/** 동적 조회 실패 시 폴백 목록 — always-include 기본값으로도 사용 */
 const KOSPI_TOP = [
   '005930', // 삼성전자
   '000660', // SK하이닉스
@@ -39,6 +39,21 @@ const KOSPI_TOP = [
   '030200', // KT
   '003550', // LG
   '051910', // LG화학
+  '042660', // 한화오션
+  '272210', // 한화시스템
+  '009830', // 한화솔루션
+  '012450', // 한화에어로스페이스
+  '000880', // 한화
+  '010140', // 삼성중공업
+  '009540', // HD한국조선해양
+  '042670', // 두산밥캣
+  '034020', // 두산에너빌리티
+  '011200', // HMM
+  '086280', // 현대글로비스
+  '307950', // 현대오토에버
+  '373220', // LG에너지솔루션
+  '006400', // 삼성SDI
+  '247540', // 에코프로비엠
 ];
 
 const KOSDAQ_TOP = [
@@ -222,7 +237,7 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
 
   for (const profile of profiles) {
     // mean-rev는 매수 후보 풀 확대 (과매도 종목 포착률 ↑)
-    const profileTopN = profile === 'mean-rev' ? 8 : 5;
+    const profileTopN = profile === 'mean-rev' ? 40 : 30;
     const scored = analyses
       .map((a, i) => ({
         symbol: a.symbol,
@@ -331,8 +346,8 @@ export async function getAlwaysIncludeSymbols(market: Market = 'domestic'): Prom
     return envVal.split(',').map(s => s.trim()).filter(Boolean);
   }
 
-  // 3) hard-coded fallback — KOSPI 시총 상위 10종목 (안정 대형주, 변동 빈도 낮음)
-  return KOSPI_TOP.slice(0, 10);
+  // 3) hard-coded fallback — KOSPI 주요 종목 전체 (한화·방산·조선·에너지 포함)
+  return KOSPI_TOP;
 }
 
 /** 현재 universe에서 모든 프로파일의 선별 종목 조회 (UI/로그용) */

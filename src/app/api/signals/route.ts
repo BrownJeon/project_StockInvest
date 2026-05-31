@@ -70,10 +70,13 @@ export async function GET(req: Request) {
     const since  = url.searchParams.get('since'); // ISO datetime or epoch ms
     const consumedOrderId = url.searchParams.get('consumedOrderId');
 
+    const scenarioSource = url.searchParams.get('scenarioSource');
+
     const where: string[] = [];
     const params: unknown[] = [];
     if (symbol) { where.push('symbol = ?'); params.push(symbol); }
     if (consumedOrderId) { where.push('consumed_order_id = ?'); params.push(Number(consumedOrderId)); }
+    if (scenarioSource) { where.push('scenario_source = ?'); params.push(scenarioSource); }
     if (since) {
       const d = new Date(isNaN(Number(since)) ? since : Number(since));
       if (!isNaN(d.getTime())) { where.push('created_at >= ?'); params.push(d); }
@@ -94,8 +97,8 @@ export async function GET(req: Request) {
     const pool = getPool();
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT id, strategy_id, symbol, side, order_type, price, quantity, amount_krw,
-              reasoning, indicators, status, expires_at, consumed_order_id,
-              created_at, updated_at
+              reasoning, indicators, status, expires_at, valid_from, scenario_source,
+              consumed_order_id, created_at, updated_at
        FROM signals
        ${whereSql}
        ORDER BY created_at DESC, id DESC

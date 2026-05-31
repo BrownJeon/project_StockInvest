@@ -1,14 +1,98 @@
 /**
  * POST /api/signals/custom
  * 사용자가 직접 입력한 시나리오 수치에 대해 AI 분석 결과를 반환 (DB 저장 없음).
+ * 설정된 LLM provider(로컬 LLM / Claude CLI)로 지표 분석을 보완.
  *
  * Body: { symbol, direction, currentPrice?, entryZonePct?, splits?, holdingDeadline }
- * 반환: { grade, ev, pWin, rr, buyRationale, risks, aiSuggestedScenario }
+ * 반환: { grade, ev, pWin, rr, buyRationale, risks, aiSuggestedScenario, llmEnhanced }
  */
 import { kis } from '@/lib/exchanges/kis';
 import { rsi, macd, bollinger, atr } from '@/lib/strategy/indicators';
 import { gradeFromEv } from '@/lib/signals/scenario-builder';
+import { runLlm, getActiveProvider } from '@/lib/llm/provider';
 import type { Candle } from '@/lib/exchanges/types';
+
+interface LlmAnalysis {
+  why_now: string;
+  risk_factors: string[];
+  grade?: string;
+  entry_comment?: string;
+}
+
+async function enhanceWithLlm(params: {
+  symbol: string;
+  direction: 'buy' | 'sell';
+  currentPrice: number;
+  rsiLast: number;
+  macdSignalDiff: number;
+  bbWidth: number;
+  atrLast: number;
+  ev: number;
+  pWin: number;
+  holdingDeadline: string;
+  market: string;
+}): Promise<LlmAnalysis | null> {
+  try {
+    const { symbol, direction, currentPrice, rsiLast, macdSignalDiff, bbWidth, atrLast, ev, pWin, holdingDeadline, market } = params;
+    const dir = direction === 'buy' ? '매수(BUY)' : '매도(SELL)';
+    const mkt = market === 'overseas' ? '미국주식' : '국내주식';
+    const atrPct = currentPrice > 0 ? ((atrLast / currentPrice) * 100).toFixed(2) : '—';
+
+    const prompt = `당신은 ${mkt} 퀀트 트레이더입니다. 아래 종목의 기술 지표를 분석하고 JSON으로만 응답하세요.
+
+## 종목 정보
+- 종목코드: ${symbol}
+- 방향: ${dir}
+- 현재가: ${currentPrice > 0 ? `₩${Math.round(currentPrice).toLocaleString('ko-KR')}` : '미상'}
+- 보유 마감기한: ${holdingDeadline}
+
+## 기술 지표 (일봉 기준)
+- RSI(14): ${rsiLast.toFixed(1)}
+- MACD-Signal 차이: ${macdSignalDiff.toFixed(4)} (양수=정배열, 음수=역배열)
+- 볼린저 밴드 폭: ${bbWidth.toFixed(2)}% (6% 초과 시 고변동성)
+- ATR(14): ${atrPct}% (현재가 대비)
+
+## 규칙 기반 예비 평가
+- EV 점수: ${(ev * 100).toFixed(0)}%
+- P(win) 추정: ${(pWin * 100).toFixed(0)}%
+
+## 응답 형식 (JSON만, 다른 텍스트 금지)
+{
+  "why_now": "지금 이 ${dir} 시나리오가 타당한 이유 또는 부적합한 이유 (2~4문장, 한국어)",
+  "risk_factors": ["리스크1", "리스크2"],
+  "grade": "A|B+|B|C 중 하나",
+  "entry_comment": "진입 시 주의사항 또는 조언 (1문장, 한국어)"
+}
+
+## 언어 규칙
+- 모든 텍스트는 반드시 한국어로만 작성
+- JSON 외 텍스트(json 마크다운 포함) 출력 금지`;
+
+    const raw = await runLlm(prompt, { timeoutMs: 60000, responseFormat: 'json' });
+
+    // JSON 파싱 — 마크다운 펜스 제거 후 추출
+    const cleaned = raw.replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start === -1 || end === -1) return null;
+
+    const parsed = JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+
+    const validGrades = ['A', 'B+', 'B', 'C'];
+    return {
+      why_now: typeof parsed.why_now === 'string' ? parsed.why_now : '',
+      risk_factors: Array.isArray(parsed.risk_factors)
+        ? (parsed.risk_factors as unknown[]).filter((r): r is string => typeof r === 'string')
+        : [],
+      grade: typeof parsed.grade === 'string' && validGrades.includes(parsed.grade)
+        ? parsed.grade : undefined,
+      entry_comment: typeof parsed.entry_comment === 'string' ? parsed.entry_comment : undefined,
+    };
+  } catch (e) {
+    console.warn('[api/signals/custom] LLM enhance failed (fallback to rule-based):', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -106,10 +190,33 @@ export async function POST(req: Request) {
       ? Math.round(currentPrice * (atrLast / (currentPrice || 1)) * 0.5)
       : Math.round(currentPrice * 0.003);
 
+    // 규칙 기반 기본값
+    const ruleRiskFactors = [
+      rsiLast > 70 ? '과매수 구간 (RSI > 70)' : null,
+      bbWidth > 6 ? '볼린저 밴드 확장 — 변동성 주의' : null,
+      rr < 1.5 ? `R/R ${rr.toFixed(2)} — 목표 대비 손절 비율 낮음` : null,
+    ].filter(Boolean) as string[];
+
+    const ruleTrigger = `RSI ${rsiLast.toFixed(0)} · MACD ${macdSignalDiff >= 0 ? '양수' : '음수'} · 현재가 기준 진입`;
+    const ruleWhyNow = `RSI ${rsiLast.toFixed(0)}, MACD ${macdSignalDiff >= 0 ? '정배열' : '역배열'}, R/R ${rr.toFixed(2)} 기준 EV ${(ev * 100).toFixed(0)}%`;
+
+    // LLM provider 설정 확인 후 보완 호출
+    const provider = await getActiveProvider();
+    const llmResult = provider
+      ? await enhanceWithLlm({ symbol, direction, currentPrice, rsiLast, macdSignalDiff, bbWidth, atrLast, ev, pWin, holdingDeadline, market })
+      : null;
+
+    const finalGrade = llmResult?.grade ?? grade;
+    const finalRiskFactors = llmResult?.risk_factors?.length ? llmResult.risk_factors : ruleRiskFactors;
+    const finalWhyNow = llmResult?.why_now || ruleWhyNow;
+    const finalTrigger = llmResult?.entry_comment
+      ? `${ruleTrigger} · ${llmResult.entry_comment}`
+      : ruleTrigger;
+
     const aiSuggestedScenario = {
-      grade,
+      grade: finalGrade,
       entry: {
-        trigger: `RSI ${rsiLast.toFixed(0)} · MACD ${macdSignalDiff >= 0 ? '양수' : '음수'} · 현재가 기준 진입`,
+        trigger: finalTrigger,
         price_zone: `${Math.round(currentPrice - aiDelta)}~${Math.round(currentPrice + aiDelta)}`,
       },
       exit: {
@@ -117,12 +224,8 @@ export async function POST(req: Request) {
         holding_deadline: holdingDeadline,
         holding_days: holdingDeadline,
       },
-      risk_factors: [
-        rsiLast > 70 ? '과매수 구간 (RSI > 70)' : null,
-        bbWidth > 6 ? '볼린저 밴드 확장 — 변동성 주의' : null,
-        rr < 1.5 ? `R/R ${rr.toFixed(2)} — 목표 대비 손절 비율 낮음` : null,
-      ].filter(Boolean) as string[],
-      why_now: `RSI ${rsiLast.toFixed(0)}, MACD ${macdSignalDiff >= 0 ? '정배열' : '역배열'}, R/R ${rr.toFixed(2)} 기준 EV ${(ev * 100).toFixed(0)}%`,
+      risk_factors: finalRiskFactors,
+      why_now: finalWhyNow,
       context: `P(win) 추정 ${(pWin * 100).toFixed(0)}% · R/R ${rr.toFixed(2)}`,
       ev,
     };
@@ -133,8 +236,8 @@ export async function POST(req: Request) {
       currentPrice > 0 ? `현재가: ₩${Math.round(currentPrice).toLocaleString('ko-KR')}` : null,
     ].filter(Boolean) as string[];
 
-    const risks = aiSuggestedScenario.risk_factors.length > 0
-      ? aiSuggestedScenario.risk_factors
+    const risks = finalRiskFactors.length > 0
+      ? finalRiskFactors
       : ['리스크 요인 없음 (지표 정상 범위)'];
 
     // defaultStopPct 사용 (린터 경고 방지)
@@ -143,7 +246,7 @@ export async function POST(req: Request) {
     return Response.json({
       ok: true,
       market,
-      grade,
+      grade: finalGrade,
       ev,
       pWin: Math.round(pWin * 1000) / 1000,
       rr: Math.round(rr * 100) / 100,
@@ -152,6 +255,8 @@ export async function POST(req: Request) {
       aiSuggestedScenario,
       currentPrice,
       priceUnit,
+      llmEnhanced: llmResult !== null,
+      llmProvider: provider,
     });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

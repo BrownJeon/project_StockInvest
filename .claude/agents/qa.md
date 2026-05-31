@@ -51,6 +51,14 @@ developer가 세팅한 테스트 환경을 실행하고 결과를 검증한다.
 - 안전장치 체크리스트를 생략하고 일반 체크리스트만으로 통과 처리하는 행위
 - developer가 제공하지 않은 실매매 명령을 직접 실행하는 행위
 - 테스트 결과를 추측으로 기재하는 행위(반드시 실제 실행 후 응답 기록)
+
+## 통신 규약
+
+> 📄 공통 프로토콜: [`../../docs/agent-communication-protocol.md`](../../docs/agent-communication-protocol.md)
+
+Reviewer → QA: 구현 완료 + high_risk_areas 수신
+QA → Leader: Pass 시 최종 검증 완료 보고
+QA(Fail) → Developer: 버그 리포트 전달 (재현·기대·실제 3종)
 </operation_contract>
 
 ## 테스트 환경 수신 및 실행 절차

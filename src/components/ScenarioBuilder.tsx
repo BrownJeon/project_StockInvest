@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useFxRate } from '@/lib/hooks/useFxRate';
+import { fmtMarketPrice } from '@/lib/format';
 
 export interface SliceInput {
   zoneLo: string;     // buy: pct 기준 계산된 KRW / sell: 절대 KRW 입력
@@ -76,9 +78,7 @@ function roundToTick(price: number): number {
   return Math.round(price / tick) * tick;
 }
 
-function fmtPrice(price: number): string {
-  return `₩${Math.round(price).toLocaleString('ko-KR')}`;
-}
+// fmtPrice는 ScenarioBuilder 내부에서 market/fxRate 바인딩 후 사용
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -245,7 +245,12 @@ function SymbolSearchInput({
 }
 
 export function ScenarioBuilder({ initialValues, onAnalyze, loading = false }: Props) {
+  const fxRate = useFxRate();
   const [market, setMarket] = useState<'domestic' | 'overseas'>(initialValues?.market ?? 'domestic');
+  const fmtPrice = useMemo(
+    () => (price: number) => fmtMarketPrice(price, market, fxRate),
+    [market, fxRate],
+  );
   const [symbol, setSymbol] = useState(initialValues?.symbol ?? '');
   const [symbolName, setSymbolName] = useState(initialValues?.symbolName ?? '');
   const [direction, setDirection] = useState<'buy' | 'sell'>(initialValues?.direction ?? 'buy');

@@ -85,6 +85,15 @@ export function buildMarketSummary(candles: Candle[], ticker: Ticker): MarketSum
   const macdPt = macdLast(closes);
   const bbPt   = bollingerLast(closes);
 
+  // KIS 해외 API는 high24h/low24h를 0으로 반환 — 최근 48봉(30m × 48 = 24h)에서 파생.
+  // 국내 티커도 0이면 동일하게 폴백 적용.
+  const CANDLES_PER_24H = 48;
+  const recent24 = candles.slice(-CANDLES_PER_24H);
+  const derived24hHigh = recent24.length > 0 ? Math.max(...recent24.map(c => c.high)) : 0;
+  const derived24hLow  = recent24.length > 0 ? Math.min(...recent24.map(c => c.low))  : 0;
+  const high24h = (ticker.high24h != null && ticker.high24h > 0) ? ticker.high24h : derived24hHigh;
+  const low24h  = (ticker.low24h  != null && ticker.low24h  > 0) ? ticker.low24h  : derived24hLow;
+
   return {
     currentPrice:  ticker.price,
     priceChange5:  Math.round(priceChange5 * 100) / 100,
@@ -99,8 +108,8 @@ export function buildMarketSummary(candles: Candle[], ticker: Ticker): MarketSum
     bbMiddle:      bbPt.middle,
     bbLower:       bbPt.lower,
     atr14:         atrLast(candles, 14),
-    high24h:       ticker.high24h,
-    low24h:        ticker.low24h,
+    high24h,
+    low24h,
     ...(() => {
       const vp = computeVolumeProfile(candles, 50);
       return { poc: vp?.poc ?? null, vah: vp?.vah ?? null, val: vp?.val ?? null };

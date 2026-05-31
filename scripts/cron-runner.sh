@@ -10,6 +10,8 @@
 #  - trade-report      : 5분 — 거래 리포트 anchor·interval 검증 후 Slack/Telegram 발송 (라우트 내부 자체 판단)
 #  - sync-stock-meta   : 매일 17:00 KST — KIS KOSPI/KOSDAQ 마스터 → stock_meta 현행화
 #  - news-fetch        : 매일 06:00 KST — M4 KB news.kr_market + news.us_market RSS 갱신
+#  - post-market-domestic: 매일 16:00 KST — 국내장 마감 후 익일 시나리오 분석
+#  - post-market-overseas: 매일 08:00 KST — 해외장 마감 후 익일 시나리오 분석
 #  - export-llm-trainset: 매일 03:00 KST — signals+followup → LoRA 학습 JSONL 생성·전송
 
 set -u
@@ -45,6 +47,8 @@ echo "[cron-runner] started, base=$BASE_URL"
 META_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/sync-stock-meta-last-date"
 TRAINSET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/export-llm-trainset-last-date"
 NEWS_FETCH_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-last-date"
+POST_MARKET_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-domestic-last-date"
+POST_MARKET_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-last-date"
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
 # M4 뉴스 fetch 설정 (.env에서 로드)
@@ -88,6 +92,18 @@ while true; do
   if [ "$HH" = "17" ] && [ "$LAST_META" != "$TODAY" ]; then
     call /api/cron/sync-stock-meta "sync-stock-meta"
     echo "$TODAY" > "$META_LAST_RUN_FILE"
+  fi
+  # 매일 08:00 KST: 해외장 마감 후 익일 시나리오 분석 (미국 16:00 ET 마감 → KST 다음날 06:00, 데이터 반영 대기 후 08:00)
+  LAST_POST_OVS=$(cat "$POST_MARKET_OVERSEAS_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "08" ] && [ "$LAST_POST_OVS" != "$TODAY" ]; then
+    call "/api/cron/post-market-analysis?market=overseas" "post-market-overseas"
+    echo "$TODAY" > "$POST_MARKET_OVERSEAS_LAST_RUN_FILE"
+  fi
+  # 매일 16:00 KST: 국내장 마감 후 익일 시나리오 분석 (15:30 마감 → 30분 데이터 반영 대기)
+  LAST_POST_DOM=$(cat "$POST_MARKET_DOMESTIC_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "16" ] && [ "$LAST_POST_DOM" != "$TODAY" ]; then
+    call "/api/cron/post-market-analysis?market=domestic" "post-market-domestic"
+    echo "$TODAY" > "$POST_MARKET_DOMESTIC_LAST_RUN_FILE"
   fi
   # 매일 06:00 KST: M4 KB 뉴스 fetch (하루 1회만) — news.kr_market + news.us_market 갱신
   LAST_NEWS=$(cat "$NEWS_FETCH_LAST_RUN_FILE" 2>/dev/null || echo "")

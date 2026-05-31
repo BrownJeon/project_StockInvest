@@ -5,6 +5,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useToast } from '@/components/ui/Toast';
 import type { SignalWithScenario } from './ScenarioCard';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
+import { useFxRate } from '@/lib/hooks/useFxRate';
+import { fmtMarketPrice } from '@/lib/format';
 
 interface Props {
   signalId: number;
@@ -35,9 +37,7 @@ function roundToTick(price: number): number {
 function pctToKrw(cp: number, pct: number): number {
   return roundToTick(cp * (1 + pct / 100));
 }
-function fmtPrice(price: number): string {
-  return `₩${Math.round(price).toLocaleString('ko-KR')}`;
-}
+// fmtPrice는 컴포넌트 내부에서 market/fxRate 바인딩 후 사용
 
 function initSlices(direction: 'buy' | 'sell', splits: number, cp: number | null): SliceInput[] {
   return Array.from({ length: splits }, (_, i) => {
@@ -68,6 +68,9 @@ export function ScenarioDetail({ signalId }: Props) {
   const router = useRouter();
   const toast = useToast();
   const { displaySymbol, marketFlag } = useSymbolMeta();
+  const fxRate = useFxRate();
+  // 로드된 signal의 market 기준으로 가격 포맷 — signal이 없으면 domestic 기본
+  const fmtPrice = (price: number) => fmtMarketPrice(price, signal?.market ?? 'domestic', fxRate);
 
   const [signal, setSignal] = useState<SignalWithScenario | null>(null);
   const [loading, setLoading] = useState(true);

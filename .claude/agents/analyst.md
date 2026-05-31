@@ -50,6 +50,14 @@ model: opus
 - 상장폐지 의심 종목에 대한 매수 시그널을 생성하는 행위
 - 코드를 직접 작성하는 행위(수식·의사코드·테스트 데이터만 제공)
 - Stage 진입 조건 미충족 상태에서 리더 승인 없이 다음 단계 전환을 권고하는 행위
+
+## 통신 규약
+
+> 📄 공통 프로토콜: [`../../docs/agent-communication-protocol.md`](../../docs/agent-communication-protocol.md)
+
+Leader → Analyst → Leader (전략 사양 전달)
+Analyst → Developer (Leader 중재): 의사코드·수식·예제 데이터 직접 인계
+Analyst → Reviewer: 검증용 입력·기대 출력 샘플 포함 인계
 </operation_contract>
 
 ---

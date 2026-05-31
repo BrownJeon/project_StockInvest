@@ -315,6 +315,37 @@ async function setupDB(): Promise<void> {
       last_backtest_result: null,
       stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
     },
+    // 장 마감 후 익일 시나리오 전략 (post-market-engine 사용)
+    {
+      id: 'eod-high-close-v1', name: '당일 고점 마감',
+      description: '당일 종가가 고저 범위 상위 30% + 거래량 1.5x + RSI 50~75 — 익일 갭업·모멘텀 지속 기대',
+      tags: JSON.stringify(['종가위치 · 거래량 · RSI', '1d', '장마감후 시나리오']),
+      applicable_styles: 'aggressive,neutral',
+      enabled: 1, backtest_interval_h: 24,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'inside-bar-v1', name: '인사이드 바',
+      description: '전일봉 내에서 완전히 형성된 봉 + 거래량 감소 — 에너지 응축 후 방향성 돌파 기대',
+      tags: JSON.stringify(['캔들 패턴 · 거래량', '1d', '장마감후 시나리오']),
+      applicable_styles: 'neutral,stable',
+      enabled: 1, backtest_interval_h: 24,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
+    {
+      id: 'oversold-bounce-daily-v1', name: '일봉 과매도 반등',
+      description: 'RSI(14) < 30 + 당일 양봉 반전 + MA20 지지 — 단기 과매도 후 기술적 반등 기대',
+      tags: JSON.stringify(['RSI · MA20 · 양봉', '1d', '장마감후 시나리오']),
+      applicable_styles: 'aggressive,neutral',
+      enabled: 1, backtest_interval_h: 24,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
   ];
 
   // 크립토 잔재 시드를 주식 기준으로 일괄 갱신 (사용자가 수정한 description은 보존: WHERE에서 옛 문구 정확 일치 시에만 갱신)
@@ -439,6 +470,14 @@ async function setupDB(): Promise<void> {
   } catch { /* 이미 존재 */ }
   try {
     await p.query(`ALTER TABLE signals ADD COLUMN scenario_source VARCHAR(32) NULL`);
+  } catch { /* 이미 존재 */ }
+
+  // Phase AC: 장 마감 후 익일 시나리오 사전 등록용 — valid_from 시점 이전엔 entry-watcher가 무시
+  try {
+    await p.query(`ALTER TABLE signals ADD COLUMN valid_from DATETIME NULL AFTER expires_at`);
+  } catch { /* 이미 존재 */ }
+  try {
+    await p.query(`CREATE INDEX idx_signals_valid_from ON signals (valid_from, status)`);
   } catch { /* 이미 존재 */ }
 
   await p.query(`

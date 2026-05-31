@@ -105,9 +105,9 @@ async function getEvalSymbols(
 ): Promise<string[]> {
   const set = new Set<string>();
   const [trend, meanRev, breakout, alwaysInclude] = await Promise.all([
-    getUniverseSymbols('trend',    15, market, universeSource),
-    getUniverseSymbols('mean-rev', 20, market, universeSource),
-    getUniverseSymbols('breakout', 15, market, universeSource),
+    getUniverseSymbols('trend',    30, market, universeSource),
+    getUniverseSymbols('mean-rev', 40, market, universeSource),
+    getUniverseSymbols('breakout', 30, market, universeSource),
     getAlwaysIncludeSymbols(market),
   ]);
   for (const s of [...trend, ...meanRev, ...breakout, ...alwaysInclude]) set.add(s);
@@ -383,7 +383,7 @@ async function runExitEngine(
     const [recent] = await pool.query<RowDataPacket[]>(
       `SELECT id FROM signals
         WHERE symbol=? AND strategy_id=? AND side='sell'
-          AND status IN ('auto_submitted','approved','executed','accepted','pending')
+          AND status IN ('auto_submitted','approved','executed','accepted','pending','pending_approval')
           AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
           AND JSON_EXTRACT(indicators, '$.exit_kind') = ?
         LIMIT 1`,

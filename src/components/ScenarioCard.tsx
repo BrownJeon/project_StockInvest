@@ -24,6 +24,7 @@ export interface SignalWithScenario {
     };
   } | null;
   reasoning?: string | null;
+  market?: 'domestic' | 'overseas';
   /** 사용자 생성 시나리오 여부 */
   scenario_source?: 'ai' | 'user';
   displayName?: string;

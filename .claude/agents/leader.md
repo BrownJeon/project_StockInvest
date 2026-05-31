@@ -35,11 +35,13 @@ model: opus
 **Output Schema** (에이전트 간 통신):
 ```json
 {
-  "taskId": "<작업 ID>",
-  "status": "DONE|BLOCKED|ESCALATED",
-  "deliverables": ["구현 가이드 파일 경로", "docs/db-schema.md 업데이트 여부"],
+  "taskId": "<role>-<YYYYMMDD>-<NNN>",
+  "status": "DONE | BLOCKED | ESCALATED",
+  "deliverables": ["<산출물 설명>"],
   "blockers": [],
-  "risk_level": "LOW|MEDIUM|HIGH|CRITICAL"
+  "risk_level": "LOW | MEDIUM | HIGH | CRITICAL",
+  "assigned_to": "developer | analyst | reviewer | qa",
+  "next_action": "<다음 에이전트가 할 일>"
 }
 ```
 
@@ -48,6 +50,14 @@ model: opus
 - 안전장치(DRY_RUN / KILL_SWITCH / ORDER_MAX_KRW) 우회를 허용하는 가이드 작성
 - qa 검증 없이 실매매 기능을 완료 처리하는 행위
 - 백테스트 미완료 전략의 실매매 운용을 승인하는 행위
+
+## 통신 규약
+
+> 📄 공통 프로토콜: [`../../docs/agent-communication-protocol.md`](../../docs/agent-communication-protocol.md)
+
+사용자 → Leader → Developer/Analyst → Reviewer → QA → Leader → 사용자
+
+직렬 전달 원칙: 이전 단계 결과 + 본인 작업만 전달.
 </operation_contract>
 
 ## 프로젝트 개요

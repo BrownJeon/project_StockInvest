@@ -77,12 +77,13 @@ export async function POST(req: NextRequest) {
   const pool = getPool();
   const now = new Date();
 
-  // approved_pending_entry 상태 시그널 전체 조회
+  // approved_pending_entry 상태 시그널 조회 — valid_from 미래인 것은 제외 (익일 시나리오 사전 등록 대응)
   const [rows] = await pool.query<(RowDataPacket & PendingEntryRow)[]>(
     `SELECT id, symbol, side, order_type, price, quantity, amount_krw,
             indicators, expires_at, market
      FROM signals
      WHERE status = 'approved_pending_entry'
+       AND (valid_from IS NULL OR valid_from <= NOW())
      ORDER BY created_at ASC`,
   );
 

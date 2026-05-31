@@ -16,18 +16,11 @@ export const priceBreakout: RuleFunction = ({ strategyId, symbol, candles, ticke
   if (price <= 0) return [];
 
   if (high24h != null && high24h > 0 && price >= high24h * 0.992) {
-    // 모멘텀 추격 가드 — 직전 5봉 누적 상승률 ≥ momentumChaseMaxPct% 면 매수 skip
-    // (24h 고점 돌파 자체가 추격 패턴 — 이미 상승분이 큰 경우 진입 단가 고점화)
-    if (candles.length >= 6) {
-      const n = candles.length - 1;
-      const start = candles[n - 5];
-      const cumRisePct = start && start.close > 0 ? ((candles[n].close - start.close) / start.close) * 100 : 0;
-      if (cumRisePct >= style.momentumChaseMaxPct) return [];
-    }
+    const risePct = ((price - (candles.length >= 6 ? candles[candles.length - 6].close : price)) / (candles.length >= 6 ? candles[candles.length - 6].close : price) * 100);
     return [{
       strategyId, symbol, side: 'buy', orderType: 'limit', price, amountKRW,
-      reasoning: `24h 고점 돌파 근접: price=${price.toLocaleString('ko-KR')} ≥ high24h×0.992=${Math.round(high24h * 0.992).toLocaleString('ko-KR')} → 상방 모멘텀`,
-      indicators: { price, high24h, breakoutPct: ((price - high24h) / high24h * 100).toFixed(2) },
+      reasoning: `24h 고점 돌파: price=${price.toLocaleString('ko-KR')} ≥ high24h×0.992=${Math.round(high24h * 0.992).toLocaleString('ko-KR')} (5봉 상승 ${risePct.toFixed(1)}%) → 상방 모멘텀`,
+      indicators: { price, high24h, breakoutPct: ((price - high24h) / high24h * 100).toFixed(2), rise5Bar: risePct.toFixed(1) },
     }];
   }
 

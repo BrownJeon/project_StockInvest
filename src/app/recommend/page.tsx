@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ScenarioCard, type SignalWithScenario } from '@/components/ScenarioCard';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
+import { useFxRate } from '@/lib/hooks/useFxRate';
+import { fmtMarketPrice } from '@/lib/format';
 
 interface PendingEntrySignal {
   id: number;
@@ -21,6 +23,7 @@ export default function RecommendPage() {
   const [pendingEntry, setPendingEntry] = useState<PendingEntrySignal[]>([]);
   const [loading, setLoading] = useState(true);
   const { displaySymbol, marketFlag } = useSymbolMeta();
+  const fxRate = useFxRate();
 
   const fetchSignals = useCallback(async () => {
     setLoading(true);
@@ -60,8 +63,9 @@ export default function RecommendPage() {
       let text = '—';
       if (typeof zoneStr === 'string' && zoneStr.includes('~')) {
         const [lo, hi] = zoneStr.split('~').map(Number);
-        const loFmt = Number.isFinite(lo) ? `₩${lo.toLocaleString('ko-KR')}` : '?';
-        const hiFmt = Number.isFinite(hi) ? `₩${hi.toLocaleString('ko-KR')}` : '?';
+        const mkt = sig.market ?? 'domestic';
+        const loFmt = Number.isFinite(lo) ? fmtMarketPrice(lo, mkt, fxRate) : '?';
+        const hiFmt = Number.isFinite(hi) ? fmtMarketPrice(hi, mkt, fxRate) : '?';
         text = `${loFmt} ~ ${hiFmt}`;
       }
 

@@ -32,23 +32,33 @@ async function kisHeaders(trId: string, extra?: Record<string, string>): Promise
 
 // ── 시세 조회 ────────────────────────────────────────────────────────────────
 export async function getTicker(symbol: string): Promise<Ticker> {
-  const headers = await kisHeaders('FHKST01010100');
   const url = `${BASE()}/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=${symbol}`;
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`KIS getTicker ${symbol}: ${res.status}`);
-  const data = await res.json();
-  const o = data.output;
-  if (!o) throw new Error(`KIS getTicker no output: ${JSON.stringify(data)}`);
-  return {
-    symbol,
-    price:        Number(o.stck_prpr),
-    timestamp:    Date.now(),
-    open24h:      Number(o.stck_oprc),
-    high24h:      Number(o.stck_hgpr),
-    low24h:       Number(o.stck_lwpr),
-    volume24h:    Number(o.acml_vol),
-    quoteVolume24h: Number(o.acml_tr_pbmn),
-  };
+  // KIS API는 개장 직후나 부하 시 일시적 500을 반환하는 경우가 있음 — 최대 2회 재시도
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const headers = await kisHeaders('FHKST01010100');
+    const res = await fetch(url, { headers });
+    if (res.ok) {
+      const data = await res.json();
+      const o = data.output;
+      if (!o) throw new Error(`KIS getTicker no output: ${JSON.stringify(data)}`);
+      return {
+        symbol,
+        price:        Number(o.stck_prpr),
+        timestamp:    Date.now(),
+        open24h:      Number(o.stck_oprc),
+        high24h:      Number(o.stck_hgpr),
+        low24h:       Number(o.stck_lwpr),
+        volume24h:    Number(o.acml_vol),
+        quoteVolume24h: Number(o.acml_tr_pbmn),
+      };
+    }
+    if (res.status !== 500 || attempt === 2) {
+      throw new Error(`KIS getTicker ${symbol}: ${res.status}`);
+    }
+    // 500 일시 오류 — 300ms 대기 후 재시도
+    await new Promise(r => setTimeout(r, 300));
+  }
+  throw new Error(`KIS getTicker ${symbol}: unreachable`);
 }
 
 // ── 캔들 조회 ────────────────────────────────────────────────────────────────

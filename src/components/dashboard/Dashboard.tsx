@@ -5,9 +5,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { CandleChart } from '@/components/CandleChart';
 import { PnlChip } from '@/components/PnlChip';
 import { TradingBoard } from '@/components/TradingBoard';
-import { fmtNum, fmtPnl, pnlColor } from '@/lib/format';
+import { fmtNum, fmtPnl, pnlColor, fmtMarketPrice } from '@/lib/format';
+import { useFxRate } from '@/lib/hooks/useFxRate';
 import { formatRelativeTime, formatDateTimeKST, kstTodayStart } from '@/lib/time';
 import { formatSymbolShort, symbolUnit } from '@/lib/symbols';
+import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 
 interface Props {
@@ -23,6 +25,18 @@ interface StrategyRow {
   tags: string[];
   enabled: boolean;
   stats: { return7d: number; winRate: number; signalCount: number };
+}
+
+interface TomorrowSignal {
+  id: number;
+  symbol: string;
+  strategy_id: string | null;
+  price: string | null;
+  reasoning: string | null;
+  indicators: Record<string, unknown> | null;
+  valid_from: string | null;
+  expires_at: string | null;
+  status: string;
 }
 
 type OrderStatus = 'pending' | 'accepted' | 'partially_filled' | 'filled' | 'cancelled' | 'rejected' | 'failed' | 'dry_run' | 'blocked';
@@ -69,6 +83,7 @@ interface PortfolioData {
 const REFRESH_MS = 30_000;
 
 export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
+  const fxRate = useFxRate();
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [symbol, setSymbol] = useState<string>(defaultSymbol);
@@ -77,7 +92,8 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [orders, setOrders]         = useState<OrderRow[]>([]);
-  const [listTab, setListTab] = useState<'hold' | 'watch'>('hold');
+  const [listTab, setListTab] = useState<'hold' | 'watch' | 'tomorrow'>('hold');
+  const [tomorrowSignals, setTomorrowSignals] = useState<TomorrowSignal[]>([]);
   const [holdMarket, setHoldMarket] = useState<'all' | 'domestic' | 'overseas'>('all');
   const [holdPage, setHoldPage]   = useState(0);
   const [holdSort, setHoldSort]   = useState<'desc' | 'asc'>('desc');
@@ -176,6 +192,15 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
     fetch('/api/signals?status=approved_pending_entry&limit=100').then(r => r.json()).then(j => {
       if (alive && j.ok) setWatchingCount((j.data as unknown[]).length);
     }).catch(() => {});
+    return () => { alive = false; };
+  }, [reloadKey]);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/signals?scenarioSource=post-market&status=pending&limit=20')
+      .then(r => r.json()).then(j => {
+        if (alive && j.ok) setTomorrowSignals(j.data as TomorrowSignal[]);
+      }).catch(() => {});
     return () => { alive = false; };
   }, [reloadKey]);
 
@@ -352,10 +377,11 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
       {/* 최근 체결 타임라인 */}
       <RecentExecutionsSection orders={orders} symbolMeta={symbolMeta} />
 
-      {/* 보유/관심 탭 */}
+      {/* 보유/관심/내일시나리오 탭 */}
       <div style={sx.tabs}>
         <TabBtn label={`보유 ${portfolio?.holdings.filter((h) => !h.is_cash || h.qty > 0).length ?? '-'}`} active={listTab === 'hold'} onClick={() => setListTab('hold')} />
         <TabBtn label={`관심 ${watchSymbols.length}`} active={listTab === 'watch'} onClick={() => setListTab('watch')} />
+        <TabBtn label={`내일 ${tomorrowSignals.length > 0 ? tomorrowSignals.length : ''}`} active={listTab === 'tomorrow'} onClick={() => setListTab('tomorrow')} />
       </div>
 
       {/* 리스트 */}
@@ -415,6 +441,7 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
                           isWhitelisted={h.symbol ? isWhitelisted(h.symbol) : false}
                           onSelect={() => h.symbol && setSymbol(h.symbol)}
                           displayName={h.symbol ? displaySymbol(h.symbol) : null}
+                          fxRate={fxRate}
                         />
                       ))}
                       <Pager page={safePage} totalPages={totalPages} totalItems={filtered.length} onChange={setHoldPage} />
@@ -511,6 +538,7 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
                       onClick={() => setSymbol(s)}
                       reloadKey={reloadKey}
                       onRemove={() => saveWatchSymbols(watchSymbols.filter(w => w !== s))}
+                      fxRate={fxRate}
                     />
                   ))}
                   {watchSymbols.length > 0 && (
@@ -525,6 +553,13 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
               </div>
             )}
           </>
+        )}
+        {listTab === 'tomorrow' && (
+          <TomorrowScenarioTab
+            signals={tomorrowSignals}
+            symbolMeta={symbolMeta}
+            onSelectSymbol={(s) => setSymbol(s)}
+          />
         )}
       </div>
 
@@ -584,7 +619,7 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
             ))}
           </div>
           <div className="num" style={{ fontSize: 14, fontWeight: 700, flexShrink: 0 }}>
-            {ticker ? fmtNum(ticker.price) : '-'}
+            {ticker ? fmtMarketPrice(ticker.price, getMarketFromSymbol(symbol), fxRate) : '-'}
           </div>
         </div>
 
@@ -593,8 +628,8 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 2, background: 'var(--border)' }}>
-          <KpiBox label="당일 고" value={ticker?.high24h ? fmtNum(ticker.high24h) : '-'} />
-          <KpiBox label="당일 저" value={ticker?.low24h ? fmtNum(ticker.low24h) : '-'} />
+          <KpiBox label="당일 고" value={ticker?.high24h ? fmtMarketPrice(ticker.high24h, getMarketFromSymbol(symbol), fxRate) : '-'} />
+          <KpiBox label="당일 저" value={ticker?.low24h ? fmtMarketPrice(ticker.low24h, getMarketFromSymbol(symbol), fxRate) : '-'} />
           <KpiBox
             label="당일 거래량"
             value={ticker?.volume24h ? fmtNum(ticker.volume24h, 2) + ' ' + symbolUnit(symbol) : '-'}
@@ -906,7 +941,7 @@ function FilterChip({ label, active, onClick }: { label: string; active: boolean
 }
 
 function HoldingRow({
-  h, market, isActive, isWhitelisted, onSelect, displayName,
+  h, market, isActive, isWhitelisted, onSelect, displayName, fxRate,
 }: {
   h: PortfolioHolding;
   market: 'domestic' | 'overseas' | 'cash';
@@ -914,6 +949,7 @@ function HoldingRow({
   isWhitelisted: boolean;
   onSelect: () => void;
   displayName?: string | null;
+  fxRate: number;
 }) {
   const title = h.is_cash
     ? (h.currency === 'USD' ? '달러(USD)' : '원화(KRW)')
@@ -953,15 +989,19 @@ function HoldingRow({
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-        <div className="num" style={{ fontSize: 14, fontWeight: 600 }}>{fmtNum(h.value_krw)}</div>
+        <div className="num" style={{ fontSize: 14, fontWeight: 600 }}>
+          {market === 'overseas'
+            ? `$${(h.value_krw / fxRate).toFixed(2)}`
+            : `₩${fmtNum(h.value_krw)}`}
+        </div>
         {!h.is_cash && h.change_24h_pct !== null && <PnlChip value={h.change_24h_pct} />}
       </div>
     </div>
   );
 }
 
-function WatchRow({ symbol, displayName, active, onClick, reloadKey, onRemove }: {
-  symbol: string; displayName?: string; active: boolean; onClick: () => void; reloadKey: number; onRemove: () => void;
+function WatchRow({ symbol, displayName, active, onClick, reloadKey, onRemove, fxRate }: {
+  symbol: string; displayName?: string; active: boolean; onClick: () => void; reloadKey: number; onRemove: () => void; fxRate: number;
 }) {
   const [tk, setTk] = useState<Ticker | null>(null);
   useEffect(() => {
@@ -988,7 +1028,9 @@ function WatchRow({ symbol, displayName, active, onClick, reloadKey, onRemove }:
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-          <div className="num" style={{ fontSize: 14, fontWeight: 600 }}>{tk ? fmtNum(tk.price) : '-'}</div>
+          <div className="num" style={{ fontSize: 14, fontWeight: 600 }}>
+            {tk ? fmtMarketPrice(tk.price, getMarketFromSymbol(symbol), fxRate) : '-'}
+          </div>
           {change !== null && <PnlChip value={change} />}
         </div>
       </div>
@@ -1052,6 +1094,113 @@ function MarketBadge({ status }: { status: MarketStatus | null }) {
           · {fx.usdKrw.toFixed(2)}
         </span>
       )}
+    </div>
+  );
+}
+
+function TomorrowScenarioTab({
+  signals, symbolMeta, onSelectSymbol,
+}: {
+  signals: TomorrowSignal[];
+  symbolMeta: Record<string, string>;
+  onSelectSymbol: (s: string) => void;
+}) {
+  if (signals.length === 0) {
+    return (
+      <div style={{ padding: 28, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+        <div style={{ fontSize: 20, marginBottom: 8 }}>📭</div>
+        내일 시나리오 시그널이 없습니다.
+        <div style={{ fontSize: 11, marginTop: 6, color: 'var(--muted)' }}>
+          장 마감 후 (KST 16:00) 자동으로 분석됩니다.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {signals.map((sig) => {
+        const meta = symbolMeta[sig.symbol];
+        const displayName = meta && meta !== sig.symbol ? `${meta} (${sig.symbol})` : sig.symbol;
+        const ind = sig.indicators as Record<string, unknown> | null;
+        const ai = ind?.ai as Record<string, unknown> | undefined;
+        const scenario = ai?.scenario as Record<string, unknown> | undefined;
+        const exit = scenario?.exit as Record<string, unknown> | undefined;
+        const entry = scenario?.entry as Record<string, unknown> | undefined;
+        const confidence = typeof ai?.confidence === 'number' ? ai.confidence : null;
+        const grade = scenario?.grade as string | undefined;
+        const pattern = (ind?.pattern as string | undefined) ?? sig.strategy_id ?? '';
+        const patternLabel: Record<string, string> = {
+          'eod-high-close': '고점마감', 'inside-bar': '인사이드바', 'oversold-bounce': '과매도반등',
+        };
+        const pLabel = patternLabel[pattern] ?? pattern;
+
+        const gradeColor = grade === 'A' ? '#22c55e' : grade === 'B+' ? '#f59e0b' : 'var(--muted)';
+
+        return (
+          <div
+            key={sig.id}
+            onClick={() => onSelectSymbol(sig.symbol)}
+            style={{
+              padding: '12px 14px', borderBottom: '1px solid var(--border)',
+              cursor: 'pointer', background: 'var(--bg)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{displayName}</span>
+                <span style={{
+                  marginLeft: 8, fontSize: 11, padding: '2px 7px', borderRadius: 8,
+                  background: 'rgba(99,102,241,.15)', color: '#818cf8',
+                }}>{pLabel}</span>
+              </div>
+              {grade && (
+                <span style={{
+                  fontSize: 13, fontWeight: 700, color: gradeColor,
+                  padding: '2px 8px', borderRadius: 8,
+                  background: `${gradeColor}22`,
+                }}>
+                  {grade} {confidence != null ? `${confidence}%` : ''}
+                </span>
+              )}
+            </div>
+
+            {/* 진입·목표·손절 */}
+            <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>
+              {typeof entry?.price_zone === 'string' && (
+                <span>진입 <strong style={{ color: 'var(--text)' }}>{entry.price_zone}</strong></span>
+              )}
+              {typeof exit?.target_pct === 'number' && (
+                <span>목표 <strong style={{ color: '#22c55e' }}>+{exit.target_pct}%</strong></span>
+              )}
+              {typeof exit?.stop_pct === 'number' && (
+                <span>손절 <strong style={{ color: '#ef4444' }}>-{exit.stop_pct}%</strong></span>
+              )}
+              {typeof exit?.holding_days === 'string' && (
+                <span>보유 {exit.holding_days}</span>
+              )}
+            </div>
+
+            {/* 간단 근거 */}
+            {typeof ai?.reasoning_short === 'string' && (
+              <div style={{
+                marginTop: 6, fontSize: 11, color: 'var(--muted)',
+                lineHeight: 1.5, overflow: 'hidden',
+                display: '-webkit-box', WebkitBoxOrient: 'vertical',
+              } as React.CSSProperties}>
+                {ai.reasoning_short as string}
+              </div>
+            )}
+
+            {/* valid_from */}
+            {sig.valid_from && (
+              <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)' }}>
+                진입 가능: {new Date(sig.valid_from).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} KST
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

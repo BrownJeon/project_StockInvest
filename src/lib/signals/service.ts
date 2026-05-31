@@ -176,6 +176,23 @@ export async function createSignal(
   const pool = getPool();
   const { getMarketFromSymbol } = await import('@/lib/exchanges/kis-symbols');
   const market = getMarketFromSymbol(input.symbol);
+
+  // 동일 심볼+방향의 활성 시그널 중복 방지:
+  // pending / pending_approval 상태의 시그널이 이미 존재하면 생성하지 않는다.
+  // (exit-engine 1분 tick 중복, AI 재평가 중복 모두 차단)
+  if (decision.route !== 'auto_submit') {
+    const [dup] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM signals
+       WHERE symbol = ? AND side = ? AND status IN ('pending', 'pending_approval')
+         AND expires_at > NOW()
+       LIMIT 1`,
+      [input.symbol, input.side],
+    );
+    if ((dup as RowDataPacket[]).length > 0) {
+      const dupId = (dup as RowDataPacket[])[0].id as number;
+      return { ok: false, signalId: dupId, autoSubmitted: false, error: 'duplicate_active_signal' };
+    }
+  }
   const [ins] = await pool.query<ResultSetHeader>(
     `INSERT INTO signals
      (strategy_id, symbol, side, order_type, price, quantity, amount_krw,

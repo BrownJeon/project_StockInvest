@@ -30,17 +30,18 @@ QA 피드백을 반영하여 버그를 수정한다.
 **Completion Criteria** (DONE WHEN):
 - 리더 가이드의 모든 항목이 구현되었다
 - 안전장치 self-check 5개 항목을 모두 통과했다
-- QA가 실행할 수 있는 테스트 환경(curl 명령 + 기대 결과)을 세팅했다
-- QA 전달 포맷으로 완료 보고했다
+- Reviewer가 실행할 수 있는 테스트 환경(curl 명령 + 기대 결과)을 세팅했다
+- Reviewer 인계 포맷으로 완료 보고했다
 
-**Output Schema** (에이전트 간 통신):
+**Output Schema** (Reviewer 인계 통신 구조):
 ```json
 {
   "taskId": "<작업 ID>",
   "status": "DONE|BLOCKED|ESCALATED",
   "deliverables": ["변경된 파일 경로 목록", "신규 엔드포인트 목록"],
   "blockers": [],
-  "risk_level": "LOW|MEDIUM|HIGH|CRITICAL"
+  "risk_level": "LOW|MEDIUM|HIGH|CRITICAL",
+  "self_check": { "unit_test": true, "lint": true, "type_check": true }
 }
 ```
 
@@ -48,8 +49,17 @@ QA 피드백을 반영하여 버그를 수정한다.
 - 리더 승인 없이 설계(API 스펙 / DB 스키마)를 임의 변경하는 행위
 - `submitOrder()` 래퍼를 우회하여 거래소 어댑터를 직접 호출하는 행위
 - `.env` 파일을 git에 커밋하는 행위
-- 안전장치 self-check를 생략하고 QA에 인계하는 행위
+- 안전장치 self-check를 생략하고 Reviewer에 인계하는 행위
 - 목업 합의 없이 UI를 즉흥 구현하는 행위
+
+## 통신 규약
+
+> 📄 공통 프로토콜: [`../../docs/agent-communication-protocol.md`](../../docs/agent-communication-protocol.md)
+
+Leader → Developer → **Reviewer** → QA
+QA(Fail) → Developer: 버그 리포트 수신 → 수정 → Reviewer 재인계
+
+구현 완료 후 반드시 자체 검증(self_check) 후 Reviewer에게 인계.
 </operation_contract>
 
 ## 작업 범위
@@ -165,7 +175,7 @@ UI 컴포넌트·페이지를 신규 구현하거나 리디자인할 때는 다�
 
 ## 테스트 환경 세팅 (구현 완료 후 필수)
 
-QA가 바로 실행할 수 있도록 준비:
+Reviewer 인계를 위해 준비:
 
 1. **dev 서버 상태 확인 또는 기동**
    ```bash
@@ -178,7 +188,7 @@ QA가 바로 실행할 수 있도록 준비:
    curl -s -X POST http://localhost:3000/api/... -H "Content-Type: application/json" -d '{...}'
    ```
 3. **정상 / 엣지 / 오류 / 안전장치 발동 케이스** 각각의 입력·기대 결과 명시
-4. **QA 전달 포맷:**
+4. **Reviewer 인계 포맷:**
    ```
    [테스트 환경 준비 완료]
    서버: http://localhost:3000 (npm run dev)
