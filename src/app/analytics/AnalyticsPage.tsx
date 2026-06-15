@@ -1,28 +1,24 @@
 'use client';
 
 import { useState } from 'react';
-import { PortfolioTab }       from './components/PortfolioTab';
-import { StrategyTab }        from './components/StrategyTab';
-import { StrategyHistoryTab } from './components/StrategyHistoryTab';
-import { AuditLog }           from './components/AuditLog';
-import { OrderHistoryTab }    from './components/OrderHistoryTab';
-import { VolatilityTab }          from './components/VolatilityTab';
+import { PortfolioTab }          from './components/PortfolioTab';
+import { OrderHistoryTab }       from './components/OrderHistoryTab';
 import { MissedOpportunityTab }  from './components/MissedOpportunityTab';
 import { SignalDiagnosticsTab }  from './components/SignalDiagnosticsTab';
-import { MyDecisionTab }         from './components/MyDecisionTab';
+import { TradeJournalTab }       from './components/TradeJournalTab';
+import { TrailingStopTab }       from './components/TrailingStopTab';
+import { LeaderboardTab }        from './components/LeaderboardTab';
 
-type Tab = 'portfolio' | 'orders' | 'strategy' | 'strategy-history' | 'audit' | 'volatility' | 'missed' | 'diagnostics' | 'my-decisions';
+type Tab = 'portfolio' | 'trailing' | 'leaderboard' | 'notes' | 'missed' | 'orders' | 'diagnostics';
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'portfolio',        label: '포트폴리오' },
-  { id: 'my-decisions',     label: '내 결정'    },
-  { id: 'missed',           label: '놓친 기회'  },
-  { id: 'orders',           label: '거래 이력'  },
-  { id: 'volatility',       label: '변동폭'     },
-  { id: 'strategy',         label: '전략 성과'  },
-  { id: 'strategy-history', label: '분석 이력'  },
-  { id: 'diagnostics',      label: '신호 진단'  },
-  { id: 'audit',            label: '거래 로그'  },
+  { id: 'portfolio',   label: '포트폴리오' },
+  { id: 'trailing',    label: '포지션 추적' },
+  { id: 'leaderboard', label: '주도주'      },
+  { id: 'notes',       label: '투자일지'    },
+  { id: 'missed',      label: '놓친 기회'  },
+  { id: 'orders',      label: '거래 이력'  },
+  { id: 'diagnostics', label: '신호 진단'  },
 ];
 
 export function AnalyticsPage() {
@@ -55,15 +51,13 @@ export function AnalyticsPage() {
 
       {/* Content */}
       <div style={{ padding: '12px 16px' }}>
-        {tab === 'portfolio'        && <PortfolioTab />}
-        {tab === 'orders'           && <OrderHistoryTab />}
-        {tab === 'strategy'         && <StrategyTab />}
-        {tab === 'strategy-history' && <StrategyHistoryTab />}
-        {tab === 'audit'            && <AuditLog />}
-        {tab === 'volatility'       && <VolatilityTab />}
-        {tab === 'missed'           && <MissedOpportunityTab />}
-        {tab === 'diagnostics'      && <SignalDiagnosticsTab />}
-        {tab === 'my-decisions'     && <MyDecisionTab />}
+        {tab === 'portfolio'   && <PortfolioTab />}
+        {tab === 'trailing'    && <TrailingStopTab />}
+        {tab === 'leaderboard' && <LeaderboardTab />}
+        {tab === 'notes'       && <TradeJournalTab />}
+        {tab === 'missed'      && <MissedOpportunityTab />}
+        {tab === 'orders'      && <OrderHistoryTab />}
+        {tab === 'diagnostics' && <SignalDiagnosticsTab />}
         <div style={{ height: 16 }} />
       </div>
     </div>

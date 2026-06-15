@@ -1,0 +1,313 @@
+'use client';
+
+import { useEffect, useState, useCallback } from 'react';
+import { formatSymbolShort } from '@/lib/symbols';
+
+interface KeyFactor {
+  label: string;
+  value: string;
+  description: string;
+}
+
+interface Favorite {
+  id: number;
+  symbol: string;
+  name: string | null;
+  memo: string | null;
+  added_at: string;
+  price: number | null;
+  changeRate: number | null;
+  // fundamentals
+  pbr: number | null;
+  per: number | null;
+  eps: number | null;
+  market_cap_bn: number | null;
+  dividend_yield: number | null;
+  roe: number | null;
+  key_factors: KeyFactor[] | null;
+  ai_summary: string | null;
+  data_source: string | null;
+  fundamentals_updated_at: string | null;
+}
+
+interface SearchResult {
+  symbol: string;
+  name: string;
+  market: string;
+}
+
+const krw = (v: number) => v.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
+const pct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+
+export function FavoritesPage() {
+  const [items, setItems] = useState<Favorite[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchQ, setSearchQ] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [expandedSummary, setExpandedSummary] = useState<Set<string>>(new Set());
+  const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/favorites');
+      const json = await res.json() as { ok: boolean; data: Favorite[] };
+      if (json.ok) setItems(json.data);
+      else setError(json.ok ? '' : 'load failed');
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  // 심볼 검색
+  useEffect(() => {
+    if (searchQ.length < 1) { setSearchResults([]); return; }
+    const timer = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const res = await fetch(`/api/symbols/search?q=${encodeURIComponent(searchQ)}`);
+        const json = await res.json() as { ok: boolean; results: SearchResult[] };
+        if (json.ok) setSearchResults(json.results.slice(0, 6));
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQ]);
+
+  async function addFavorite(symbol: string) {
+    await fetch('/api/favorites', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ symbol }),
+    });
+    setSearchQ('');
+    setSearchResults([]);
+    void load();
+  }
+
+  async function removeFavorite(symbol: string) {
+    await fetch(`/api/favorites?symbol=${encodeURIComponent(symbol)}`, { method: 'DELETE' });
+    setItems((prev) => prev.filter((i) => i.symbol !== symbol));
+  }
+
+  async function refreshFundamentals(symbol: string) {
+    setRefreshing((s) => new Set(s).add(symbol));
+    // 캐시 무효화 후 재조회
+    await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
+    await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
+    await load();
+    setRefreshing((s) => { const n = new Set(s); n.delete(symbol); return n; });
+  }
+
+  function toggleSummary(symbol: string) {
+    setExpandedSummary((s) => {
+      const n = new Set(s);
+      if (n.has(symbol)) n.delete(symbol); else n.add(symbol);
+      return n;
+    });
+  }
+
+  if (loading) return <div style={S.center}>로딩 중...</div>;
+  if (error) return <div style={S.center}>{error}</div>;
+
+  return (
+    <div style={S.page}>
+      {/* 검색 추가 바 */}
+      <div style={S.searchWrap}>
+        <input
+          value={searchQ}
+          onChange={(e) => setSearchQ(e.target.value)}
+          placeholder="종목명 또는 코드 검색..."
+          style={S.searchInput}
+        />
+        {searchLoading && <span style={S.searchHint}>검색 중...</span>}
+        {searchResults.length > 0 && (
+          <div style={S.dropdown}>
+            {searchResults.map((r) => (
+              <button key={r.symbol} style={S.dropItem} onClick={() => void addFavorite(r.symbol)}>
+                <span style={S.dropSymbol}>{formatSymbolShort(r.symbol)}</span>
+                <span style={S.dropName}>{r.name}</span>
+                <span style={S.dropMarket}>{r.market === 'overseas' ? '해외' : '국내'}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {items.length === 0 && (
+        <div style={S.empty}>즐겨찾기가 없습니다. 위 검색창에서 종목을 추가해보세요.</div>
+      )}
+
+      {/* 카드 목록 */}
+      <div style={S.list}>
+        {items.map((item) => {
+          const up = (item.changeRate ?? 0) > 0;
+          const down = (item.changeRate ?? 0) < 0;
+          const priceColor = up ? 'var(--red)' : down ? 'var(--blue)' : 'var(--fg)';
+          const isExpanded = expandedSummary.has(item.symbol);
+          const isRefreshing = refreshing.has(item.symbol);
+          const factors: KeyFactor[] = item.key_factors
+            ? (typeof item.key_factors === 'string' ? JSON.parse(item.key_factors) : item.key_factors)
+            : [];
+
+          return (
+            <div key={item.symbol} style={S.card}>
+              {/* 헤더 */}
+              <div style={S.cardHeader}>
+                <div>
+                  <div style={S.cardTitle}>
+                    {item.name ?? formatSymbolShort(item.symbol)}
+                    <span style={S.cardCode}>{formatSymbolShort(item.symbol)}</span>
+                  </div>
+                  {item.price != null && (
+                    <div style={{ ...S.cardPrice, color: priceColor }}>
+                      {krw(item.price)}원
+                      {item.changeRate != null && (
+                        <span style={S.cardChange}>{pct(item.changeRate)}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button style={S.removeBtn} onClick={() => void removeFavorite(item.symbol)}>✕</button>
+              </div>
+
+              {/* 재무 지표 */}
+              <div style={S.metricsRow}>
+                <MetricChip label="PBR" value={item.pbr != null ? item.pbr.toFixed(2) + 'x' : '—'} />
+                <MetricChip label="PER" value={item.per != null ? item.per.toFixed(1) + 'x' : '—'} />
+                <MetricChip label="ROE" value={item.roe != null ? item.roe.toFixed(1) + '%' : '—'} />
+                {item.market_cap_bn != null && (
+                  <MetricChip label="시총" value={item.market_cap_bn >= 10000 ? (item.market_cap_bn / 10000).toFixed(1) + '조' : item.market_cap_bn.toLocaleString() + '억'} />
+                )}
+              </div>
+
+              {/* 핵심 판단 요소 */}
+              {factors.length > 0 && (
+                <div style={S.factorsWrap}>
+                  {factors.map((f, i) => (
+                    <div key={i} style={S.factorChip} title={f.description}>
+                      <span style={S.factorLabel}>{f.label}</span>
+                      {f.value && <span style={S.factorValue}>{f.value}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* AI 가치 요약 */}
+              {item.ai_summary && (
+                <div>
+                  <div
+                    style={{ ...S.aiSummary, WebkitLineClamp: isExpanded ? undefined : 2, display: isExpanded ? 'block' : '-webkit-box' }}
+                  >
+                    {item.ai_summary}
+                  </div>
+                  {item.ai_summary.length > 100 && (
+                    <button style={S.expandBtn} onClick={() => toggleSummary(item.symbol)}>
+                      {isExpanded ? '접기' : '더보기'}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* 하단: 갱신 시각 + 새로고침 */}
+              <div style={S.cardFooter}>
+                {item.fundamentals_updated_at ? (
+                  <span style={S.updatedAt}>
+                    {new Date(item.fundamentals_updated_at).toLocaleDateString('ko-KR')} 기준
+                  </span>
+                ) : (
+                  <span style={S.updatedAt}>재무 데이터 없음</span>
+                )}
+                <button
+                  style={S.refreshBtn}
+                  onClick={() => void refreshFundamentals(item.symbol)}
+                  disabled={isRefreshing}
+                >
+                  {isRefreshing ? '조회 중...' : '재무 갱신'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MetricChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ textAlign: 'center', minWidth: 52 }}>
+      <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)' }}>{value}</div>
+    </div>
+  );
+}
+
+const S: Record<string, React.CSSProperties> = {
+  page: { maxWidth: 480, margin: '0 auto', padding: '12px 16px', paddingBottom: 80 },
+  center: { textAlign: 'center', padding: 40, color: 'var(--muted)' },
+  searchWrap: { position: 'relative', marginBottom: 16 },
+  searchInput: {
+    width: '100%', boxSizing: 'border-box', padding: '10px 14px',
+    background: 'var(--bg2)', border: '1px solid var(--border)',
+    borderRadius: 10, color: 'var(--fg)', fontSize: 14,
+  },
+  searchHint: { position: 'absolute', right: 12, top: 11, fontSize: 11, color: 'var(--muted)' },
+  dropdown: {
+    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20,
+    background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10,
+    marginTop: 4, overflow: 'hidden',
+  },
+  dropItem: {
+    display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+    padding: '10px 14px', background: 'transparent', border: 'none',
+    cursor: 'pointer', textAlign: 'left', color: 'var(--fg)', fontSize: 13,
+    borderBottom: '1px solid var(--border)',
+  },
+  dropSymbol: { fontWeight: 700, color: 'var(--accent)', minWidth: 44, fontSize: 12 },
+  dropName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  dropMarket: { fontSize: 10, color: 'var(--muted)', background: 'var(--bg3)', padding: '2px 6px', borderRadius: 8 },
+  empty: { textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontSize: 13 },
+  list: { display: 'flex', flexDirection: 'column', gap: 12 },
+  card: {
+    background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14,
+    padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10,
+  },
+  cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
+  cardTitle: { fontSize: 15, fontWeight: 700, color: 'var(--fg)', display: 'flex', alignItems: 'center', gap: 6 },
+  cardCode: { fontSize: 11, color: 'var(--muted)', fontWeight: 400 },
+  cardPrice: { fontSize: 18, fontWeight: 700, marginTop: 4 },
+  cardChange: { fontSize: 13, fontWeight: 600, marginLeft: 6 },
+  removeBtn: {
+    background: 'transparent', border: 'none', color: 'var(--muted)',
+    fontSize: 16, cursor: 'pointer', padding: '0 4px', lineHeight: 1,
+  },
+  metricsRow: { display: 'flex', gap: 16, paddingTop: 2 },
+  factorsWrap: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  factorChip: {
+    display: 'flex', flexDirection: 'column', gap: 2,
+    background: 'var(--bg3)', borderRadius: 8, padding: '5px 10px',
+  },
+  factorLabel: { fontSize: 11, color: 'var(--muted)', fontWeight: 600 },
+  factorValue: { fontSize: 12, color: 'var(--accent)', fontWeight: 700 },
+  aiSummary: {
+    fontSize: 12, color: 'var(--muted)', lineHeight: 1.6,
+    WebkitBoxOrient: 'vertical', overflow: 'hidden',
+  },
+  expandBtn: {
+    background: 'transparent', border: 'none', color: 'var(--accent)',
+    fontSize: 11, cursor: 'pointer', padding: '2px 0',
+  },
+  cardFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 },
+  updatedAt: { fontSize: 10, color: 'var(--muted)' },
+  refreshBtn: {
+    background: 'var(--bg3)', border: 'none', borderRadius: 8,
+    color: 'var(--fg)', fontSize: 11, padding: '5px 10px', cursor: 'pointer',
+  },
+};

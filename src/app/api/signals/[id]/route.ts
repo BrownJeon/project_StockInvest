@@ -16,8 +16,8 @@ export async function GET(
     const pool = getPool();
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT id, strategy_id, symbol, side, order_type, price, quantity, amount_krw,
-              reasoning, indicators, status, expires_at, consumed_order_id,
-              scenario_source, created_at, updated_at
+              reasoning, indicators, status, expires_at, valid_from, market,
+              consumed_order_id, scenario_source, created_at, updated_at
        FROM signals
        WHERE id = ?
        LIMIT 1`,

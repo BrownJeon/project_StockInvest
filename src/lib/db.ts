@@ -791,6 +791,76 @@ async function setupDB(): Promise<void> {
       INDEX idx_bt_strategy (strategy_id, started_at DESC)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+
+  // ── 즐겨찾기 종목 (Phase A) ─────────────────────────────────────────────
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS stock_favorites (
+      id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+      symbol      VARCHAR(32) NOT NULL UNIQUE,
+      name        VARCHAR(128),
+      memo        TEXT,
+      sort_order  INT NOT NULL DEFAULT 0,
+      added_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ── 재무·가치 캐시 (Phase A) — 1일 TTL ──────────────────────────────────
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS stock_fundamentals (
+      symbol          VARCHAR(32) PRIMARY KEY,
+      pbr             DECIMAL(10,4),
+      per             DECIMAL(10,4),
+      eps             DECIMAL(18,2),
+      market_cap_bn   DECIMAL(18,2),
+      dividend_yield  DECIMAL(8,4),
+      roe             DECIMAL(8,4),
+      key_factors     JSON,
+      ai_summary      TEXT,
+      data_source     VARCHAR(32),
+      updated_at      DATETIME
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ── 거래 일지 — 종목당 1개 매매 여정 (watching→active→closed) ─────────────
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS trade_journals (
+      id           BIGINT PRIMARY KEY AUTO_INCREMENT,
+      symbol       VARCHAR(32) NOT NULL,
+      name         VARCHAR(128),
+      status       ENUM('watching','active','closed') NOT NULL DEFAULT 'watching',
+      entry_price  DECIMAL(36,8),
+      entry_qty    DECIMAL(36,18),
+      exit_price   DECIMAL(36,8),
+      pnl_pct      DECIMAL(10,4),
+      created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      closed_at    DATETIME,
+      INDEX idx_journals_symbol (symbol, created_at DESC),
+      INDEX idx_journals_status (status, created_at DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ── 거래 일지 단계별 메모 ────────────────────────────────────────────────
+  // phase: analysis(분석) → plan(계획) → entry(매수) → holding(관찰) → exit(매도) → review(회고)
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS trade_journal_entries (
+      id          BIGINT PRIMARY KEY AUTO_INCREMENT,
+      journal_id  BIGINT NOT NULL,
+      phase       ENUM('analysis','plan','entry','holding','exit','review') NOT NULL,
+      content     TEXT NOT NULL,
+      price_at    DECIMAL(36,8),
+      created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_entries_journal (journal_id, created_at ASC),
+      CONSTRAINT fk_journal_entries FOREIGN KEY (journal_id)
+        REFERENCES trade_journals(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ── symbol_universe: RS Rating 컬럼 추가 (Phase D) ──────────────────────
+  await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_rating     TINYINT UNSIGNED`).catch(() => {});
+  await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS near_52w_high BOOLEAN DEFAULT FALSE`).catch(() => {});
+  await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS vol_ratio_20d DECIMAL(8,4)`).catch(() => {});
+  await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_updated_at DATETIME`).catch(() => {});
+  await p.query(`ALTER TABLE symbol_universe ADD INDEX IF NOT EXISTS idx_rs_rating (rs_rating DESC)`).catch(() => {});
 }
 
 export async function getAccountId(exchange: string, label = 'default'): Promise<number> {

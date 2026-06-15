@@ -49,6 +49,7 @@ TRAINSET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/export-llm-trainset-last
 NEWS_FETCH_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-last-date"
 POST_MARKET_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-domestic-last-date"
 POST_MARKET_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-last-date"
+RS_UPDATE_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/rs-update-last-date"
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
 # M4 뉴스 fetch 설정 (.env에서 로드)
@@ -85,13 +86,20 @@ while true; do
   if [ $((i % 5)) -eq 0 ]; then
     call /api/cron/trade-report "trade-report"
   fi
-  # 매일 17:00 KST: sync-stock-meta (하루 1회만)
+  # 매일 17:00 KST: sync-stock-meta + RS Rating 업데이트 (하루 1회씩)
   HH=$(date '+%H')
   TODAY=$(date '+%Y-%m-%d')
   LAST_META=$(cat "$META_LAST_RUN_FILE" 2>/dev/null || echo "")
   if [ "$HH" = "17" ] && [ "$LAST_META" != "$TODAY" ]; then
     call /api/cron/sync-stock-meta "sync-stock-meta"
     echo "$TODAY" > "$META_LAST_RUN_FILE"
+  fi
+  # 매일 17:30 KST: RS Rating 업데이트 (국내 장 마감 후)
+  HH_MM=$(date '+%H:%M')
+  LAST_RS=$(cat "$RS_UPDATE_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH_MM" = "17:30" ] && [ "$LAST_RS" != "$TODAY" ]; then
+    call "/api/cron/rs-update?market=domestic" "rs-update-domestic"
+    echo "$TODAY" > "$RS_UPDATE_LAST_RUN_FILE"
   fi
   # 매일 08:00 KST: 해외장 마감 후 익일 시나리오 분석 (미국 16:00 ET 마감 → KST 다음날 06:00, 데이터 반영 대기 후 08:00)
   LAST_POST_OVS=$(cat "$POST_MARKET_OVERSEAS_LAST_RUN_FILE" 2>/dev/null || echo "")
