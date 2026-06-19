@@ -10,6 +10,8 @@ export interface SignalWithScenario {
   status: string;
   expires_at: string | null;
   created_at: string;
+  quantity?: number | null;
+  amount_krw?: number | null;
   indicators: {
     ai?: {
       scenario?: {
@@ -47,6 +49,16 @@ function minutesUntil(dateStr: string | null): number | null {
   return Math.max(0, Math.floor((new Date(dateStr).getTime() - Date.now()) / 60000));
 }
 
+function fmtQty(qty: number | null | undefined, amountKrw: number | null | undefined): string | null {
+  if (qty != null && qty > 0) {
+    return qty % 1 === 0 ? `${qty}주` : `${qty.toFixed(2)}주`;
+  }
+  if (amountKrw != null && amountKrw > 0) {
+    return `약 ${amountKrw.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}원`;
+  }
+  return null;
+}
+
 export function ScenarioCard({ signal }: Props) {
   const router = useRouter();
   const scenario = signal.indicators?.ai?.scenario;
@@ -55,6 +67,7 @@ export function ScenarioCard({ signal }: Props) {
   const minsLeft = minutesUntil(signal.expires_at);
   const isExpiringSoon = minsLeft !== null && minsLeft <= 60;
   const isUserScenario = signal.scenario_source === 'user';
+  const qtyLabel = fmtQty(signal.quantity, signal.amount_krw);
 
   const targetPct = scenario?.exit.target_pct;
   const targetPctHi = scenario?.exit.target_pct_hi;
@@ -94,6 +107,7 @@ export function ScenarioCard({ signal }: Props) {
             color: signal.side === 'buy' ? 'var(--up)' : 'var(--down)',
           }}>
             {signal.side === 'buy' ? '매수' : '매도'}
+            {qtyLabel && <span style={{ marginLeft: 4, fontWeight: 600 }}>· {qtyLabel}</span>}
           </span>
           {signal.marketFlag && <span aria-hidden style={{ flexShrink: 0 }}>{signal.marketFlag}</span>}
           <span style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

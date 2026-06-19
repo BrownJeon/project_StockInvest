@@ -288,6 +288,7 @@ interface SkipAuditPayload {
   warnings?: string[];
   ev?: AiEvEstimate;
   regimeBucket?: string;
+  prefilterReason?: string;
 }
 
 /** signals 테이블에 ai_skipped 레코드 insert — prefilter/dedup/AI 거절 공용 */
@@ -311,6 +312,7 @@ async function insertSkipAuditPool(
           confidence: payload.confidence,
           warnings: payload.warnings ?? [],
           skipCategory: payload.category,
+          ...(payload.prefilterReason ? { prefilterReason: payload.prefilterReason } : {}),
           ev: payload.ev,
           regimeBucket: payload.regimeBucket,
         },
@@ -435,6 +437,7 @@ async function applyFilters(
       await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
         reasoning: formatPrefilterReason(reasonKey.trim(), detail, cand.side),
         category: 'rule_prefilter',
+        prefilterReason: reasonKey.trim(),
         confidence: 0,
       });
     }
@@ -460,6 +463,7 @@ async function applyFilters(
       await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
         reasoning: `[매수 차단 — 장마감 임박] KST 15:30 폐장까지 ${style.lateSessionBuyBlockMin}분 이내 신규 매수 금지 (시간외 거래 없음 → 익일 갭다운 위험 회피)`,
         category: 'rule_prefilter',
+        prefilterReason: 'late_session_buy_block',
         confidence: 0,
       });
     }

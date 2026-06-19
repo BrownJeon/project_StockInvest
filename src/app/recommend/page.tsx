@@ -15,6 +15,13 @@ interface PendingEntrySignal {
   indicators: unknown;
   expires_at: string;
   created_at: string;
+  quantity?: number | null;
+  amount_krw?: number | null;
+}
+
+interface BlockBanner {
+  reason: string;
+  pct: number;
 }
 
 export default function RecommendPage() {
@@ -22,19 +29,38 @@ export default function RecommendPage() {
   const [signals, setSignals] = useState<SignalWithScenario[]>([]);
   const [pendingEntry, setPendingEntry] = useState<PendingEntrySignal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [blockBanner, setBlockBanner] = useState<BlockBanner | null>(null);
   const { displaySymbol, marketFlag } = useSymbolMeta();
   const fxRate = useFxRate();
 
   const fetchSignals = useCallback(async () => {
     setLoading(true);
     try {
-      const [aiRes, pendingRes] = await Promise.all([
-        fetch('/api/signals?status=pending_approval&limit=100'),
+      const [aiRes, pendingRes, qualityRes] = await Promise.all([
+        fetch('/api/signals?status=pending,pending_approval&limit=100'),
         fetch('/api/signals?status=approved_pending_entry&limit=50'),
+        fetch('/api/analytics/signal-quality?hours=2'),
       ]);
-      const [aiData, pendingData] = await Promise.all([aiRes.json(), pendingRes.json()]);
+      const [aiData, pendingData, qualityData] = await Promise.all([
+        aiRes.json(), pendingRes.json(), qualityRes.json(),
+      ]);
       if (aiData.ok) setSignals((aiData.data ?? []) as SignalWithScenario[]);
       if (pendingData.ok) setPendingEntry((pendingData.data ?? []) as PendingEntrySignal[]);
+
+      // 최근 2시간 rule_prefilter 비율 ≥ 80%이면 배너 표시
+      if (qualityData.ok && qualityData.summary?.total > 0) {
+        const pfReasons = (qualityData.byPrefilterReason ?? []) as { reason: string; total: number }[];
+        const totalSkipped = qualityData.summary.skipped as number;
+        const ctCount = pfReasons.find(r => r.reason === 'strong_counter_trend')?.total ?? 0;
+        const ctPct = totalSkipped > 0 ? Math.round((ctCount / totalSkipped) * 100) : 0;
+        if (ctPct >= 80) {
+          setBlockBanner({ reason: 'strong_counter_trend', pct: ctPct });
+        } else {
+          setBlockBanner(null);
+        }
+      } else {
+        setBlockBanner(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -119,6 +145,27 @@ export default function RecommendPage() {
         >↻</button>
       </div>
 
+      {/* 하락추세 차단 배너 */}
+      {blockBanner && (
+        <div style={{
+          margin: '10px 16px 0',
+          padding: '10px 14px',
+          borderRadius: 12,
+          background: 'rgba(245,158,11,.10)',
+          border: '1px solid rgba(245,158,11,.35)',
+          display: 'flex', alignItems: 'flex-start', gap: 10,
+        }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+          <div style={{ fontSize: 12, color: '#d97706', lineHeight: 1.6 }}>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>강한 하락추세 감지 — 매수 시그널 차단 중</div>
+            <div style={{ color: 'var(--muted)' }}>
+              최근 2시간 신호 중 {blockBanner.pct}%가 하락추세로 차단됨
+              (EMA20 &lt; EMA60). 시장 추세 전환 후 시그널이 재개됩니다.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 목록 */}
       <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {loading && (
@@ -181,6 +228,16 @@ export default function RecommendPage() {
                         color: sig.side === 'buy' ? 'var(--up)' : 'var(--down)',
                       }}>
                         {sig.side === 'buy' ? '매수' : '매도'}
+                        {sig.quantity != null && sig.quantity > 0 && (
+                          <span style={{ marginLeft: 4, fontWeight: 600 }}>
+                            · {sig.quantity % 1 === 0 ? sig.quantity : sig.quantity.toFixed(2)}주
+                          </span>
+                        )}
+                        {(sig.quantity == null || sig.quantity <= 0) && sig.amount_krw != null && sig.amount_krw > 0 && (
+                          <span style={{ marginLeft: 4, fontWeight: 600 }}>
+                            · 약 {sig.amount_krw.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}원
+                          </span>
+                        )}
                       </span>
                       <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'rgba(99,102,241,.15)', color: '#818cf8', fontWeight: 600 }}>
                         감시 중

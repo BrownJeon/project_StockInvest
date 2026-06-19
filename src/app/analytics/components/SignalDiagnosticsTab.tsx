@@ -8,6 +8,7 @@ interface SideReasonRow { side: 'buy' | 'sell'; reason: string; total: number }
 interface RepeatRow   { symbol: string; strategyId: string; side: 'buy' | 'sell'; fireCount: number; skippedCount: number; firstFire: string; lastFire: string }
 interface CategoryRow { category: string; total: number }
 interface Summary     { total: number; approved: number; skipped: number; approvalRate: number; health: 'good' | 'caution' | 'review' }
+interface PrefilterReasonRow { reason: string; total: number }
 
 interface ApiResp {
   ok: boolean;
@@ -17,6 +18,7 @@ interface ApiResp {
   bySkipCategory: CategoryRow[];
   repeatFires: RepeatRow[];
   bySide: SideReasonRow[];
+  byPrefilterReason: PrefilterReasonRow[];
 }
 
 type SideFilter = 'all' | 'buy' | 'sell';
@@ -33,6 +35,15 @@ const REASON_META: Record<string, { label: string; color: string; hint: string }
   portfolio_guard: { label: '🛡️ 안정성 가드',    color: '#0ea5e9', hint: 'core 비율·종목한도 위반' },
   rule_prefilter:  { label: '🚫 사전 필터',       color: '#6b7280', hint: 'AI 호출 전 명백한 거절 패턴' },
   other:           { label: '❓ 기타',           color: '#6b7280', hint: 'AI가 EV<0 등 일반 사유로 거절' },
+};
+
+const PREFILTER_REASON_META: Record<string, { label: string; color: string }> = {
+  strong_counter_trend:   { label: '강한 하락추세 (EMA20 < EMA60-3%)', color: '#ef4444' },
+  rsi_extreme_counter:    { label: '극단 RSI 역행',                     color: '#f97316' },
+  blowoff_top:            { label: '급등 과열 (Blow-off Top)',           color: '#eab308' },
+  liquidity_dead:         { label: '유동성 고갈',                        color: '#3b82f6' },
+  atr_zero:               { label: '변동성 계산 불가',                   color: '#6b7280' },
+  late_session_buy_block: { label: '세션 마감 매수 차단',                color: '#a78bfa' },
 };
 
 function StackedBar({ rows, total }: { rows: ReasonRow[]; total: number }) {
@@ -178,11 +189,30 @@ export function SignalDiagnosticsTab() {
           {filteredReasons.map(r => {
             const meta = REASON_META[r.reason] ?? REASON_META.other;
             const pct = totalSkipped > 0 ? (r.total / totalSkipped) * 100 : 0;
+            const pfRows = r.reason === 'rule_prefilter' ? (data.byPrefilterReason ?? []) : [];
             return (
-              <div key={r.reason} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.color, flexShrink: 0 }} />
-                <span style={{ flex: 1 }}>{meta.label}</span>
-                <span className="num" style={{ color: 'var(--muted)' }}>{r.total}건 · {pct.toFixed(0)}%</span>
+              <div key={r.reason}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.color, flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>{meta.label}</span>
+                  <span className="num" style={{ color: 'var(--muted)' }}>{r.total}건 · {pct.toFixed(0)}%</span>
+                </div>
+                {pfRows.length > 0 && (
+                  <div style={{ marginLeft: 18, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {pfRows.map(pr => {
+                      const pfMeta = PREFILTER_REASON_META[pr.reason] ?? { label: pr.reason, color: '#6b7280' };
+                      const pfPct = r.total > 0 ? Math.round((pr.total / r.total) * 100) : 0;
+                      return (
+                        <div key={pr.reason} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                          <span style={{ color: 'var(--border2)', fontSize: 10, flexShrink: 0 }}>└</span>
+                          <span style={{ width: 6, height: 6, borderRadius: 1, background: pfMeta.color, flexShrink: 0 }} />
+                          <span style={{ flex: 1, color: 'var(--muted)' }}>{pfMeta.label}</span>
+                          <span className="num" style={{ color: 'var(--muted)' }}>{pr.total}건 · {pfPct}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

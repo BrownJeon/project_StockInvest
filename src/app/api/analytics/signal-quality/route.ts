@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   const hours = Math.min(Number(req.nextUrl.searchParams.get('hours') ?? 24), 168);
   const pool  = getPool();
 
-  const [byStrategy, bySymbol, hourly, consecutive, skipCategories, byReason, repeatFires, bySide] = await Promise.all([
+  const [byStrategy, bySymbol, hourly, consecutive, skipCategories, byReason, repeatFires, bySide, byPrefilterReason] = await Promise.all([
     // 전략별 승인율
     pool.query<RowDataPacket[]>(`
       SELECT
@@ -157,16 +157,33 @@ export async function GET(req: NextRequest) {
       GROUP BY side, reason
       ORDER BY side, total DESC
     `, [hours]),
+
+    // rule_prefilter 세부 이유 breakdown
+    pool.query<RowDataPacket[]>(`
+      SELECT
+        COALESCE(
+          JSON_UNQUOTE(JSON_EXTRACT(indicators, '$.ai.prefilterReason')),
+          'unknown'
+        ) AS prefilter_reason,
+        COUNT(*) AS total
+      FROM signals
+      WHERE status = 'ai_skipped'
+        AND JSON_EXTRACT(indicators, '$.ai.skipCategory') = 'rule_prefilter'
+        AND created_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
+      GROUP BY prefilter_reason
+      ORDER BY total DESC
+    `, [hours]),
   ]);
 
-  const strategyRows  = byStrategy[0]     as RowDataPacket[];
-  const symbolRows    = bySymbol[0]       as RowDataPacket[];
-  const hourlyRows    = hourly[0]         as RowDataPacket[];
-  const consecRows    = consecutive[0]    as RowDataPacket[];
-  const skipCatRows   = skipCategories[0] as RowDataPacket[];
-  const reasonRows    = byReason[0]       as RowDataPacket[];
-  const repeatRows    = repeatFires[0]    as RowDataPacket[];
-  const sideRows      = bySide[0]         as RowDataPacket[];
+  const strategyRows       = byStrategy[0]       as RowDataPacket[];
+  const symbolRows         = bySymbol[0]         as RowDataPacket[];
+  const hourlyRows         = hourly[0]           as RowDataPacket[];
+  const consecRows         = consecutive[0]      as RowDataPacket[];
+  const skipCatRows        = skipCategories[0]   as RowDataPacket[];
+  const reasonRows         = byReason[0]         as RowDataPacket[];
+  const repeatRows         = repeatFires[0]      as RowDataPacket[];
+  const sideRows           = bySide[0]           as RowDataPacket[];
+  const prefilterRows      = byPrefilterReason[0] as RowDataPacket[];
 
   const totalAll      = strategyRows.reduce((s, r) => s + Number(r.total), 0);
   const approvedAll   = strategyRows.reduce((s, r) => s + Number(r.approved), 0);
@@ -231,6 +248,11 @@ export async function GET(req: NextRequest) {
     bySide: sideRows.map(r => ({
       side:   r.side as 'buy' | 'sell',
       reason: r.reason as string,
+      total:  Number(r.total),
+    })),
+    // rule_prefilter 세부 이유 breakdown
+    byPrefilterReason: prefilterRows.map(r => ({
+      reason: r.prefilter_reason as string,
       total:  Number(r.total),
     })),
   });
