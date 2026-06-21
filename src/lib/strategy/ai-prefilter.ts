@@ -61,11 +61,11 @@ export function prefilterCandidate(
     }
   }
 
-  // 4) 하락 추세에서 매수 — 3% 이상 명확한 하락추세만 차단.
+  // 4) 하락 추세에서 매수 — 5% 이상 명확한 하락추세만 차단.
   // 예외: RSI 과매도 바닥 확인 후 반등 중이면 진입 허용 (하락장 반등 포착).
   void analystStyle;
   if (side === 'buy' && ema20 != null && ema60 != null) {
-    if (ema20 < ema60 * 0.97) {
+    if (ema20 < ema60 * 0.95) {
       // 하락추세 예외 진입 — 3가지 조건 동시 충족 시 AI 평가 단계로 통과
       const closes  = candles.map(c => c.close);
       const vols    = candles.map(c => c.volume);
@@ -95,7 +95,7 @@ export function prefilterCandidate(
         return { verdict: 'pass' };
       }
 
-      return { verdict: 'skip', reason: 'strong_counter_trend', detail: `EMA20<EMA60*0.97 (3% 이상 하락추세 매수 차단)` };
+      return { verdict: 'skip', reason: 'strong_counter_trend', detail: `EMA20<EMA60*0.95 (5% 이상 하락추세 매수 차단)` };
     }
   }
 

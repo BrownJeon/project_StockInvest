@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { formatSymbolShort } from '@/lib/symbols';
 
 interface KeyFactor {
@@ -9,14 +10,24 @@ interface KeyFactor {
   description: string;
 }
 
+interface LatestSignal {
+  id: number;
+  side: string;
+  status: string;
+  created_at: string;
+}
+
 interface Favorite {
   id: number;
   symbol: string;
   name: string | null;
   memo: string | null;
   added_at: string;
+  market: string;
   price: number | null;
+  priceUsd: number | null;
   changeRate: number | null;
+  latestSignal: LatestSignal | null;
   // fundamentals
   pbr: number | null;
   per: number | null;
@@ -37,9 +48,22 @@ interface SearchResult {
 }
 
 const krw = (v: number) => v.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
+const usd = (v: number) => '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
 
+function getSignalLabel(signal: LatestSignal): { text: string; color: string } {
+  const isPending =
+    signal.status === 'pending' || signal.status === 'pending_approval';
+  const isApproved =
+    signal.status === 'approved' || signal.status === 'approved_pending_entry';
+  const side = signal.side === 'buy' ? '매수' : '매도';
+  if (isPending) return { text: `${side} 대기`, color: '#f59e0b' };
+  if (isApproved) return { text: `${side} 승인`, color: '#22c55e' };
+  return { text: side, color: 'var(--muted)' };
+}
+
 export function FavoritesPage() {
+  const router = useRouter();
   const [items, setItems] = useState<Favorite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +78,7 @@ export function FavoritesPage() {
       const res = await fetch('/api/favorites');
       const json = await res.json() as { ok: boolean; data: Favorite[] };
       if (json.ok) setItems(json.data);
-      else setError(json.ok ? '' : 'load failed');
+      else setError('load failed');
     } catch (e) {
       setError(String(e));
     } finally {
@@ -91,14 +115,15 @@ export function FavoritesPage() {
     void load();
   }
 
-  async function removeFavorite(symbol: string) {
+  async function removeFavorite(symbol: string, name: string | null) {
+    const label = name ?? symbol;
+    if (!confirm(`${label}을(를) 즐겨찾기에서 삭제할까요?`)) return;
     await fetch(`/api/favorites?symbol=${encodeURIComponent(symbol)}`, { method: 'DELETE' });
     setItems((prev) => prev.filter((i) => i.symbol !== symbol));
   }
 
   async function refreshFundamentals(symbol: string) {
     setRefreshing((s) => new Set(s).add(symbol));
-    // 캐시 무효화 후 재조회
     await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
     await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
     await load();
@@ -155,26 +180,39 @@ export function FavoritesPage() {
           const factors: KeyFactor[] = item.key_factors
             ? (typeof item.key_factors === 'string' ? JSON.parse(item.key_factors) : item.key_factors)
             : [];
+          const sigLabel = item.latestSignal ? getSignalLabel(item.latestSignal) : null;
 
           return (
-            <div key={item.symbol} style={S.card}>
+            <div
+              key={item.symbol}
+              style={{ ...S.card, cursor: 'pointer' }}
+              onClick={() => router.push(`/favorites/${encodeURIComponent(item.symbol)}`)}
+            >
               {/* 헤더 */}
               <div style={S.cardHeader}>
                 <div>
                   <div style={S.cardTitle}>
                     {item.name ?? formatSymbolShort(item.symbol)}
                     <span style={S.cardCode}>{formatSymbolShort(item.symbol)}</span>
+                    {/* 시그널 배지 */}
+                    {sigLabel && (
+                      <span style={{ ...S.signalBadge, background: sigLabel.color + '22', color: sigLabel.color }}>
+                        {sigLabel.text}
+                      </span>
+                    )}
                   </div>
                   {item.price != null && (
                     <div style={{ ...S.cardPrice, color: priceColor }}>
-                      {krw(item.price)}원
+                      {item.market === 'overseas' && item.priceUsd != null
+                        ? usd(item.priceUsd)
+                        : krw(item.price) + '원'}
                       {item.changeRate != null && (
                         <span style={S.cardChange}>{pct(item.changeRate)}</span>
                       )}
                     </div>
                   )}
                 </div>
-                <button style={S.removeBtn} onClick={() => void removeFavorite(item.symbol)}>✕</button>
+                <button style={S.removeBtn} onClick={(e) => { e.stopPropagation(); void removeFavorite(item.symbol, item.name); }}>✕</button>
               </div>
 
               {/* 재무 지표 */}
@@ -226,7 +264,7 @@ export function FavoritesPage() {
                 )}
                 <button
                   style={S.refreshBtn}
-                  onClick={() => void refreshFundamentals(item.symbol)}
+                  onClick={(e) => { e.stopPropagation(); void refreshFundamentals(item.symbol); }}
                   disabled={isRefreshing}
                 >
                   {isRefreshing ? '조회 중...' : '재무 갱신'}
@@ -280,13 +318,16 @@ const S: Record<string, React.CSSProperties> = {
     padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10,
   },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
-  cardTitle: { fontSize: 15, fontWeight: 700, color: 'var(--fg)', display: 'flex', alignItems: 'center', gap: 6 },
+  cardTitle: { fontSize: 15, fontWeight: 700, color: 'var(--fg)', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
   cardCode: { fontSize: 11, color: 'var(--muted)', fontWeight: 400 },
   cardPrice: { fontSize: 18, fontWeight: 700, marginTop: 4 },
   cardChange: { fontSize: 13, fontWeight: 600, marginLeft: 6 },
   removeBtn: {
     background: 'transparent', border: 'none', color: 'var(--muted)',
-    fontSize: 16, cursor: 'pointer', padding: '0 4px', lineHeight: 1,
+    fontSize: 16, cursor: 'pointer', padding: '0 4px', lineHeight: 1, flexShrink: 0,
+  },
+  signalBadge: {
+    fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
   },
   metricsRow: { display: 'flex', gap: 16, paddingTop: 2 },
   factorsWrap: { display: 'flex', flexWrap: 'wrap', gap: 6 },

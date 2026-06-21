@@ -48,6 +48,8 @@ export interface Ticker {
   volume24h?: number;
   /** 24h 거래대금 (quote currency 기준, 대개 KRW) */
   quoteVolume24h?: number;
+  /** 해외주식 USD 원가 (kis-overseas만 제공, 환산 전) */
+  priceUsd?: number;
 }
 
 export interface Balance {

@@ -324,6 +324,8 @@ export async function getAlwaysIncludeSymbols(market: Market = 'domestic'): Prom
   if (market !== 'domestic') return [];
 
   const pool = getPool();
+  const result: string[] = [];
+
   // 1) DB override
   try {
     const [rows] = await pool.query<RowDataPacket[]>(
@@ -334,20 +336,32 @@ export async function getAlwaysIncludeSymbols(market: Market = 'domestic'): Prom
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.every(s => typeof s === 'string')) {
-          return parsed.map(s => s.trim()).filter(Boolean);
+          result.push(...parsed.map(s => s.trim()).filter(Boolean));
         }
-      } catch { /* fall through to env */ }
+      } catch { /* ignore */ }
     }
-  } catch { /* DB 미가용 — env 폴백 */ }
+  } catch { /* DB 미가용 */ }
 
   // 2) env override
   const envVal = process.env.UNIVERSE_ALWAYS_INCLUDE;
   if (envVal && envVal.trim()) {
-    return envVal.split(',').map(s => s.trim()).filter(Boolean);
+    result.push(...envVal.split(',').map(s => s.trim()).filter(Boolean));
   }
 
-  // 3) hard-coded fallback — KOSPI 주요 종목 전체 (한화·방산·조선·에너지 포함)
-  return KOSPI_TOP;
+  // 3) 즐겨찾기 종목 자동 편입 (stock_favorites → domestic 종목만)
+  try {
+    const [favRows] = await pool.query<RowDataPacket[]>(`
+      SELECT f.symbol FROM stock_favorites f
+      LEFT JOIN stock_meta m ON m.symbol = f.symbol
+      WHERE m.market = 'domestic' OR m.market IS NULL
+    `);
+    result.push(...favRows.map(r => r.symbol as string));
+  } catch { /* 즐겨찾기 조회 실패 시 무시 */ }
+
+  // 4) 하나도 없으면 hard-coded fallback
+  if (result.length === 0) return KOSPI_TOP;
+
+  return [...new Set(result)];
 }
 
 /** 현재 universe에서 모든 프로파일의 선별 종목 조회 (UI/로그용) */

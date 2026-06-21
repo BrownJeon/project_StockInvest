@@ -10,12 +10,41 @@ export async function GET() {
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT
         f.id, f.symbol, f.name, f.memo, f.sort_order, f.added_at,
+        COALESCE(m.market, 'domestic') AS market,
         fu.pbr, fu.per, fu.eps, fu.market_cap_bn, fu.dividend_yield, fu.roe,
         fu.key_factors, fu.ai_summary, fu.data_source, fu.updated_at AS fundamentals_updated_at
       FROM stock_favorites f
+      LEFT JOIN stock_meta m ON m.symbol = f.symbol
       LEFT JOIN stock_fundamentals fu ON fu.symbol = f.symbol
       ORDER BY f.sort_order ASC, f.added_at DESC
     `);
+
+    // 활성 시그널 조회 (심볼별 최신 1건)
+    const symbols = rows.map(r => r.symbol as string);
+    const signalMap = new Map<string, { id: number; side: string; status: string; created_at: string }>();
+    if (symbols.length > 0) {
+      try {
+        const [sigRows] = await pool.query<RowDataPacket[]>(
+          `SELECT symbol, id, side, status, created_at
+           FROM signals
+           WHERE symbol IN (?)
+             AND status IN ('pending','pending_approval','approved','approved_pending_entry')
+             AND (expires_at IS NULL OR expires_at > NOW())
+           ORDER BY created_at DESC`,
+          [symbols],
+        );
+        for (const s of sigRows) {
+          if (!signalMap.has(s.symbol as string)) {
+            signalMap.set(s.symbol as string, {
+              id: s.id as number,
+              side: s.side as string,
+              status: s.status as string,
+              created_at: s.created_at as string,
+            });
+          }
+        }
+      } catch { /* 시그널 조회 실패 시 무시 */ }
+    }
 
     // 실시간 가격 조회 (병렬)
     const withPrices = await Promise.all(
@@ -28,11 +57,20 @@ export async function GET() {
           return {
             ...row,
             price: ticker.price,
+            priceUsd: ticker.priceUsd ?? null,
             changeRate,
             volume: ticker.volume24h ?? null,
+            latestSignal: signalMap.get(row.symbol as string) ?? null,
           };
         } catch {
-          return { ...row, price: null, changeRate: null, volume: null };
+          return {
+            ...row,
+            price: null,
+            priceUsd: null,
+            changeRate: null,
+            volume: null,
+            latestSignal: signalMap.get(row.symbol as string) ?? null,
+          };
         }
       }),
     );
