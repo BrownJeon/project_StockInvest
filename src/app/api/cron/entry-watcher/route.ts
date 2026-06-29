@@ -19,6 +19,25 @@ import { parsePriceZone } from '@/lib/signals/scenario-builder';
 import { getStyleConfig } from '@/lib/strategy/style';
 import { setPositionScenarioExit } from '@/lib/strategy/position-state';
 import type { ScenarioExitParams } from '@/lib/strategy/position-state';
+import { sendAlert } from '@/lib/notify';
+
+// notify_signal_entry 플래그 캐시 (30초 TTL)
+let entryNotifyCache: { enabled: boolean; ts: number } | null = null;
+async function isEntryNotifyEnabled(): Promise<boolean> {
+  if (entryNotifyCache && Date.now() - entryNotifyCache.ts < 30_000) return entryNotifyCache.enabled;
+  let enabled = true;
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
+      "SELECT value FROM system_config WHERE `key` = 'notify_signal_entry' LIMIT 1",
+    );
+    if (rows.length > 0) { try { enabled = Boolean(JSON.parse(rows[0].value)); } catch { /* ignore */ } }
+  } catch { /* DB 실패 시 기본 true */ }
+  entryNotifyCache = { enabled, ts: Date.now() };
+  return enabled;
+}
+
+function fmtKrw(v: number): string { return Math.round(v).toLocaleString('ko-KR'); }
 
 /** holding_deadline (YYYY-MM-DD) 또는 holding_days 문자열 → Date */
 function resolveHoldingDeadline(exitObj: Record<string, unknown>): Date | null {
@@ -243,6 +262,16 @@ export async function POST(req: NextRequest) {
           `UPDATE signals SET status='executing', consumed_order_id=?, updated_at=NOW() WHERE id=?`,
           [orderResult.orderId ?? null, signalId],
         );
+
+        // 진입 알람 발송 (notify_signal_entry=true 이고 DRY_RUN이 아닌 경우에만)
+        if (!orderResult.dryRun && await isEntryNotifyEnabled()) {
+          const sideLabel = row.side === 'buy' ? '매수' : '매도';
+          sendAlert(
+            'info',
+            `🎯 진입 실행: ${row.symbol}`,
+            `${sideLabel} 진입 구간 도달 → 주문 실행\n현재가: ${fmtKrw(currentPrice)}원 · 구간: ${fmtKrw(zoneLo)}~${fmtKrw(zoneHi)}원\n주문번호: ${orderResult.orderId ?? '-'}`,
+          );
+        }
 
         // 사용자 시나리오 진입: position_state에 scenario_exit·holding_deadline 기록
         if (row.indicators) {

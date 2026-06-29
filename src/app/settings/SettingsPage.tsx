@@ -30,6 +30,8 @@ interface SafetyData {
 interface NotifySignalData {
   autoSubmit: boolean;
   pending: boolean;
+  entry: boolean;
+  manual: boolean;
 }
 
 interface ReportData {
@@ -105,7 +107,7 @@ function StatusBadge({ ok, labelOk, labelNo }: { ok: boolean; labelOk: string; l
 
 export function SettingsPage() {
   const [safety, setSafety]               = useState<SafetyData | null>(null);
-  const [notifySignal, setNotifySignal]   = useState<NotifySignalData>({ autoSubmit: true, pending: true });
+  const [notifySignal, setNotifySignal]   = useState<NotifySignalData>({ autoSubmit: true, pending: true, entry: true, manual: true });
   const [report, setReport]               = useState<ReportData | null>(null);
   const [exchanges, setExchanges]         = useState<ExchangeData | null>(null);
   const [strategies, setStrategies]       = useState<StrategyItem[]>([]);
@@ -187,6 +189,8 @@ export function SettingsPage() {
             ...safety,
             notifySignalAutoSubmit: notifySignal.autoSubmit,
             notifySignalPending:    notifySignal.pending,
+            notifySignalEntry:      notifySignal.entry,
+            notifySignalManual:     notifySignal.manual,
             ...(report ? {
               reportEnabled:     report.enabled,
               reportChannel:     report.channel,
@@ -524,16 +528,30 @@ export function SettingsPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
             <div style={{ fontSize: 14 }}>자동 제출 알람</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>시그널 자동 주문 체결 시 알람 발송</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>전략 엔진이 시그널을 자동 주문 체결 시 발송</div>
           </div>
           <Toggle checked={notifySignal.autoSubmit} onChange={v => { setNotifySignal(s => ({ ...s, autoSubmit: v })); setIsDirty(true); }} />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
             <div style={{ fontSize: 14 }}>승인 요청 알람</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>수동 승인 필요 시그널 발생 시 알람 발송</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>수동 승인 대기 시그널 생성 시 발송</div>
           </div>
           <Toggle checked={notifySignal.pending} onChange={v => { setNotifySignal(s => ({ ...s, pending: v })); setIsDirty(true); }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div>
+            <div style={{ fontSize: 14 }}>진입 감시 발동 알람</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>진입 구간 도달 → 자동 주문 실행 시 발송</div>
+          </div>
+          <Toggle checked={notifySignal.entry} onChange={v => { setNotifySignal(s => ({ ...s, entry: v })); setIsDirty(true); }} />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+          <div>
+            <div style={{ fontSize: 14 }}>수동 시나리오 등록 알람</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>내 시나리오 만들기 등록 완료 시 발송</div>
+          </div>
+          <Toggle checked={notifySignal.manual} onChange={v => { setNotifySignal(s => ({ ...s, manual: v })); setIsDirty(true); }} />
         </div>
       </div>
 

@@ -61,6 +61,8 @@ export async function GET() {
   // 시그널 알람 on/off (기본 true — 없으면 알람 발송)
   const notifySignalAutoSubmit = overrides['notify_signal_auto_submit'] !== undefined ? Boolean(overrides['notify_signal_auto_submit']) : true;
   const notifySignalPending    = overrides['notify_signal_pending']     !== undefined ? Boolean(overrides['notify_signal_pending'])     : true;
+  const notifySignalEntry      = overrides['notify_signal_entry']       !== undefined ? Boolean(overrides['notify_signal_entry'])       : true;
+  const notifySignalManual     = overrides['notify_signal_manual']      !== undefined ? Boolean(overrides['notify_signal_manual'])      : true;
 
   const volGuardEnabled   = overrides['vol_guard_enabled']    !== undefined ? Boolean(overrides['vol_guard_enabled'])    : (process.env.VOL_GUARD_ENABLED === 'true');
   const volGuardWindowMin = overrides['vol_guard_window_min'] !== undefined ? Number(overrides['vol_guard_window_min'])  : Number(process.env.VOL_GUARD_WINDOW_MIN ?? 60);
@@ -90,6 +92,8 @@ export async function GET() {
     notifySignal: {
       autoSubmit: notifySignalAutoSubmit,
       pending:    notifySignalPending,
+      entry:      notifySignalEntry,
+      manual:     notifySignalManual,
     },
     report: {
       enabled:     overrides['report_trade_enabled']      !== undefined ? Boolean(overrides['report_trade_enabled'])    : false,
@@ -130,6 +134,8 @@ const ALLOWED_PATCH_KEYS: Record<string, string> = {
   reportAnchorKst:         'report_trade_anchor_kst',
   notifySignalAutoSubmit:  'notify_signal_auto_submit',
   notifySignalPending:     'notify_signal_pending',
+  notifySignalEntry:       'notify_signal_entry',
+  notifySignalManual:      'notify_signal_manual',
 };
 
 // 시장별·KRW 고정 한도 키는 정책 변경(2026-04-26)으로 폐기. 한도는 단일 pct만 사용.

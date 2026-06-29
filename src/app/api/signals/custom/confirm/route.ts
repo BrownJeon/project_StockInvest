@@ -7,11 +7,24 @@
  * Body: { symbol, direction, scenario, currentPrice?, entryZonePct?, splits?, amountKRW?, holdingQty? }
  * 반환: { ok: true, signalId, signalIds, splitCount, status: 'approved_pending_entry' }
  */
-import type { ResultSetHeader } from 'mysql2';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import type { ScenarioCard } from '@/lib/signals/scenario-builder';
 import { calcSplitSlices } from '@/lib/signals/scenario-builder';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
+import { sendAlert } from '@/lib/notify';
+
+async function isManualNotifyEnabled(pool: ReturnType<typeof import('@/lib/db')['getPool']>): Promise<boolean> {
+  try {
+    const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
+      "SELECT value FROM system_config WHERE `key` = 'notify_signal_manual' LIMIT 1",
+    );
+    if (rows.length > 0) { try { return Boolean(JSON.parse(rows[0].value)); } catch { /* ignore */ } }
+  } catch { /* DB 실패 시 기본 true */ }
+  return true;
+}
+
+function fmtKrw(v: number): string { return Math.round(v).toLocaleString('ko-KR'); }
 
 export const dynamic = 'force-dynamic';
 
@@ -150,6 +163,18 @@ export async function POST(req: Request) {
       await pool.query(
         `UPDATE signals SET status='approved', updated_at=NOW() WHERE id=? AND status IN ('pending','pending_approval')`,
         [body.sourceSignalId],
+      );
+    }
+
+    // 수동 시나리오 등록 알람
+    if (await isManualNotifyEnabled(pool)) {
+      const sideLabel = direction === 'buy' ? '매수' : '매도';
+      const totalAmountKRW = slices.reduce((s, sl) => s + (sl.amountKRW ?? 0), 0);
+      const splitNote = slices.length > 1 ? ` (${slices.length}분할)` : '';
+      sendAlert(
+        'info',
+        `📋 시나리오 등록: ${symbol}`,
+        `${sideLabel} 진입 대기${splitNote}\n구간: ${slices[0].priceZoneStr}${slices.length > 1 ? ' …' : ''} · 예상금액: ₩${fmtKrw(totalAmountKRW)}`,
       );
     }
 
