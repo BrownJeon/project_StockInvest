@@ -320,12 +320,23 @@ export async function getUniverseSymbols(
  * score와 무관하게 매 cron 분석 대상에 영구 포함.
  */
 export async function getAlwaysIncludeSymbols(market: Market = 'domestic'): Promise<string[]> {
-  // 국내 시장만 (해외는 universe-overseas-static 별도 처리)
-  if (market !== 'domestic') return [];
-
   const pool = getPool();
   const result: string[] = [];
 
+  if (market === 'overseas') {
+    // 해외 즐겨찾기 자동 편입 (stock_favorites JOIN stock_meta WHERE market='overseas')
+    try {
+      const [favRows] = await pool.query<RowDataPacket[]>(`
+        SELECT f.symbol FROM stock_favorites f
+        INNER JOIN stock_meta m ON m.symbol = f.symbol
+        WHERE m.market = 'overseas'
+      `);
+      result.push(...favRows.map(r => r.symbol as string));
+    } catch { /* 즐겨찾기 조회 실패 시 무시 */ }
+    return [...new Set(result)];
+  }
+
+  // domestic (기존 로직)
   // 1) DB override
   try {
     const [rows] = await pool.query<RowDataPacket[]>(

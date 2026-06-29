@@ -878,7 +878,12 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // effectiveMax 그대로 쓰면 micro 초과로 order_limit 차단 빈발. 0.995 곱으로 사전 차감.
   const FEE_BUFFER_PCT = 0.005;
   const rawMax = await getEffectiveOrderMax('kis', market);
-  const defaultAmountKRW = rawMax === Infinity ? Infinity : Math.floor(rawMax * (1 - FEE_BUFFER_PCT));
+  // Infinity는 pct 미설정 또는 포트폴리오 조회 실패 시 반환 → MySQL INSERT 오류 방지
+  // ORDER_MAX_KRW env 폴백 (0이면 100,000원 최소 보장)
+  const FALLBACK_AMOUNT_KRW = Math.max(Number(process.env.ORDER_MAX_KRW ?? 0), 100_000);
+  const defaultAmountKRW = rawMax === Infinity
+    ? FALLBACK_AMOUNT_KRW
+    : Math.floor(rawMax * (1 - FEE_BUFFER_PCT));
 
   const errors: string[] = [];
   const results = new Map<string, EvalResult>();

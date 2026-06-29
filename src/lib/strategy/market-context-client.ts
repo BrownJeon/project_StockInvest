@@ -29,6 +29,12 @@ const TIMEOUT_MS = 10_000;
 
 const cache = new Map<ClientMarket, { value: MarketContextResult; ts: number }>();
 
+// 서킷 브레이커: 연속 실패 3회 → 5분간 호출 스킵 (timeout 대기 제거 + 로그 노이즈 감소)
+const CIRCUIT_FAIL_THRESHOLD = 3;
+const CIRCUIT_OPEN_MS = 5 * 60 * 1000;
+let circuitFailCount = 0;
+let circuitOpenUntil = 0;
+
 /**
  * /v1/market-context를 호출하고 결과를 반환한다.
  *
@@ -41,6 +47,9 @@ export async function fetchMarketContext(
 ): Promise<MarketContextResult | null> {
   const base = process.env.AI_API_BASE;
   if (!base) return null;
+
+  // 서킷 브레이커 open 상태이면 즉시 null 반환 (10초 timeout 대기 없이)
+  if (circuitOpenUntil > Date.now()) return null;
 
   const cached = cache.get(market);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.value;
@@ -75,12 +84,21 @@ export async function fetchMarketContext(
       return null;
     }
 
+    // 성공 → 서킷 브레이커 리셋
+    circuitFailCount = 0;
+    circuitOpenUntil = 0;
     cache.set(market, { value: data, ts: Date.now() });
     console.log(
       `[market-context] market=${market} sentiment=${data.sentiment} cached=${data.cached}`,
     );
     return data;
   } catch (e) {
+    // 실패 카운트 증가 — 임계값 초과 시 서킷 오픈
+    circuitFailCount++;
+    if (circuitFailCount >= CIRCUIT_FAIL_THRESHOLD) {
+      circuitOpenUntil = Date.now() + CIRCUIT_OPEN_MS;
+      console.warn(`[market-context] circuit OPEN for 5min (${circuitFailCount} consecutive failures)`);
+    }
     if (e instanceof Error && e.name === 'AbortError') {
       console.error(`[market-context] timeout after ${TIMEOUT_MS}ms market=${market}`);
     } else {

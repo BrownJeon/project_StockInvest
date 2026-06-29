@@ -137,11 +137,35 @@ export class M4KbClient {
 
 let _cachedClient: M4KbClient | null = null;
 
+// KB 서킷 브레이커: 연속 실패 3회 → 5분간 search/upsert 스킵 (retrieveRagContext 호출자가 catch)
+const KB_CIRCUIT_FAIL_THRESHOLD = 3;
+const KB_CIRCUIT_OPEN_MS = 5 * 60 * 1000;
+let _kbCircuitFailCount = 0;
+let _kbCircuitOpenUntil = 0;
+
+export function isKbCircuitOpen(): boolean {
+  return _kbCircuitOpenUntil > Date.now();
+}
+
+export function recordKbSuccess(): void {
+  _kbCircuitFailCount = 0;
+  _kbCircuitOpenUntil = 0;
+}
+
+export function recordKbFailure(label: string): void {
+  _kbCircuitFailCount++;
+  if (_kbCircuitFailCount >= KB_CIRCUIT_FAIL_THRESHOLD) {
+    _kbCircuitOpenUntil = Date.now() + KB_CIRCUIT_OPEN_MS;
+    console.warn(`[m4-kb] circuit OPEN for 5min after ${_kbCircuitFailCount} failures (last: ${label})`);
+  }
+}
+
 /**
  * 환경변수·credentials에서 base+key 조회해 싱글톤 client 반환.
  * AI_API_BASE / AI_API_KEY / ADMIN_TOKEN env (또는 system_config에 저장된 값).
  */
 export async function getKbClient(): Promise<M4KbClient> {
+  if (isKbCircuitOpen()) throw new Error('KB circuit breaker open — M4 unreachable');
   if (_cachedClient) return _cachedClient;
   const base = process.env.AI_API_BASE ?? 'http://192.168.219.163:8000';
   const apiKey = process.env.AI_API_KEY ?? '';

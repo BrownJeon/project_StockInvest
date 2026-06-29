@@ -7,7 +7,7 @@
  *  - 전체 timeout 5초 (Stage 1 30초 budget의 1/6)
  *  - rag_enabled=false 또는 에러 → 빈 컨텍스트 반환 (호출자가 RAG 없이 진행)
  */
-import { getKbClient, type KbHit } from './m4-kb';
+import { getKbClient, recordKbSuccess, recordKbFailure, type KbHit } from './m4-kb';
 import { buildCacheKey, cacheGet, cacheSet } from './cache';
 import { filterValidHits } from './format';
 
@@ -129,7 +129,11 @@ export async function retrieveRagContext(
   try {
     client = await getKbClient();
   } catch (e) {
-    return { ...EMPTY_CONTEXT, errors: [`getKbClient: ${e instanceof Error ? e.message : String(e)}`] };
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes('circuit breaker open')) {
+      recordKbFailure('getKbClient');
+    }
+    return { ...EMPTY_CONTEXT, errors: [msg] };
   }
 
   const signalsCollection = opts.signalsCollection ?? chooseSignalsCollection(market);
@@ -158,6 +162,12 @@ export async function retrieveRagContext(
     const pastSignalsRaw  = settledOr(pastSignalsR,  [] as KbHit[], errors, signalsCollection);
     const recentNewsRaw   = settledOr(recentNewsR,   [] as KbHit[], errors, newsCollection);
     const macroContextRaw = settledOr(macroContextR, [] as KbHit[], errors, 'news.macro');
+
+    // 서킷 브레이커 피드백: 모두 실패하면 failure 기록, 하나라도 성공하면 리셋
+    const allFailed = [pastSignalsR, recentNewsR, macroContextR].every(r => r.status === 'rejected');
+    const anySucceeded = [pastSignalsR, recentNewsR, macroContextR].some(r => r.status === 'fulfilled');
+    if (allFailed) recordKbFailure('all-collections');
+    else if (anySucceeded) recordKbSuccess();
 
     // D-7: schema 검증 — 깨진 hit 제외
     const pastSignalsValid = filterValidHits(pastSignalsRaw);
