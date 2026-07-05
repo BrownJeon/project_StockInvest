@@ -66,6 +66,7 @@ interface PendingEntryRow {
   quantity: string | null;
   amount_krw: string;
   indicators: string | null;
+  reasoning: string | null;
   expires_at: Date | null;
   market: string | null;
 }
@@ -99,7 +100,7 @@ export async function POST(req: NextRequest) {
   // approved_pending_entry 상태 시그널 조회 — valid_from 미래인 것은 제외 (익일 시나리오 사전 등록 대응)
   const [rows] = await pool.query<(RowDataPacket & PendingEntryRow)[]>(
     `SELECT id, symbol, side, order_type, price, quantity, amount_krw,
-            indicators, expires_at, market
+            indicators, reasoning, expires_at, market
      FROM signals
      WHERE status = 'approved_pending_entry'
        AND (valid_from IS NULL OR valid_from <= NOW())
@@ -266,11 +267,19 @@ export async function POST(req: NextRequest) {
         // 진입 알람 발송 (notify_signal_entry=true 이고 DRY_RUN이 아닌 경우에만)
         if (!orderResult.dryRun && await isEntryNotifyEnabled()) {
           const sideLabel = row.side === 'buy' ? '매수' : '매도';
-          sendAlert(
-            'info',
-            `🎯 진입 실행: ${row.symbol}`,
-            `${sideLabel} 진입 구간 도달 → 주문 실행\n현재가: ${fmtKrw(currentPrice)}원 · 구간: ${fmtKrw(zoneLo)}~${fmtKrw(zoneHi)}원\n주문번호: ${orderResult.orderId ?? '-'}`,
-          );
+          const entryReasonLine = (() => {
+            if (!row.reasoning) return undefined;
+            const lines = row.reasoning.split('\n').map(l => l.trim()).filter(Boolean);
+            const aiLine = lines.find(l => l.startsWith('[AI '));
+            return (aiLine ?? lines[0])?.slice(0, 100);
+          })();
+          const entryBodyLines = [
+            `${sideLabel} 진입 구간 도달 → 주문 실행`,
+            `현재가: ${fmtKrw(currentPrice)}원 · 구간: ${fmtKrw(zoneLo)}~${fmtKrw(zoneHi)}원`,
+            `주문번호: ${orderResult.orderId ?? '-'}`,
+            entryReasonLine ? `사유: ${entryReasonLine}` : undefined,
+          ].filter(Boolean);
+          sendAlert('info', `🎯 진입 실행: ${row.symbol}`, entryBodyLines.join('\n'));
         }
 
         // 사용자 시나리오 진입: position_state에 scenario_exit·holding_deadline 기록

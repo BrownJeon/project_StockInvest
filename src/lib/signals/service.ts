@@ -238,11 +238,33 @@ export async function createSignal(
       : 30;
     const flags = await getSignalNotifyFlags();
     if (flags.pending) {
-      sendAlert(
-        'info',
-        `📩 승인 요청: ${input.symbol}`,
+      const exitKind = enrichedIndicators != null && typeof enrichedIndicators === 'object'
+        ? (enrichedIndicators as Record<string, unknown>)['exit_kind'] as string | undefined
+        : undefined;
+      const exitLabel: Record<string, string> = {
+        hard_stop: '🔴 하드 손절 (자금보호)',
+        target_profit: '🟢 목표 익절',
+        trailing_stop: '🟡 트레일링 스탑',
+        eod_loss_cut: '🔴 EOD 손절',
+      };
+      // reasoning 핵심 라인 추출:
+      //  - exit 시그널: 첫 번째 줄 (이미 "[하드 손절] 손실 -X.XX%..." 형태)
+      //  - AI 선택 시그널: "[AI N%]" 포함 줄 우선 (AI 근거가 가장 핵심)
+      //  - 그 외: 첫 번째 비어있지 않은 줄
+      const reasonLine = (() => {
+        if (!input.reasoning) return undefined;
+        const lines = input.reasoning.split('\n').map(l => l.trim()).filter(Boolean);
+        if (!lines.length) return undefined;
+        if (exitKind) return lines[0].slice(0, 100); // exit: 첫 줄이 핵심
+        const aiLine = lines.find(l => l.startsWith('[AI '));
+        return (aiLine ?? lines[0]).slice(0, 100);
+      })();
+      const bodyLines = [
         `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · TTL ${ttlMin}분`,
-      );
+        exitKind && exitLabel[exitKind] ? `유형: ${exitLabel[exitKind]}` : undefined,
+        reasonLine ? `사유: ${reasonLine}` : undefined,
+      ].filter(Boolean);
+      sendAlert('info', `📩 승인 요청: ${input.symbol}`, bodyLines.join('\n'));
     }
     return { ok: true, signalId, autoSubmitted: false };
   }
@@ -259,11 +281,14 @@ export async function createSignal(
   }
   const flags2 = await getSignalNotifyFlags();
   if (flags2.autoSubmit) {
-    sendAlert(
-      'info',
-      `✅ 자동 제출: ${input.symbol}`,
+    const reasonLine2 = input.reasoning
+      ? input.reasoning.split('\n').find(l => l.trim().length > 0)?.trim().slice(0, 100)
+      : undefined;
+    const bodyLines2 = [
       `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · 주문 #${orderResult.orderId ?? '-'}`,
-    );
+      reasonLine2 ? `사유: ${reasonLine2}` : undefined,
+    ].filter(Boolean);
+    sendAlert('info', `✅ 자동 제출: ${input.symbol}`, bodyLines2.join('\n'));
   }
   return {
     ok: true,
@@ -391,7 +416,9 @@ export async function rejectSignal(id: number): Promise<{ ok: boolean; error?: s
   const pool = getPool();
   const row = await getSignalById(id);
   if (!row) return { ok: false, error: 'not_found' };
-  if (row.status !== 'pending') return { ok: false, error: `invalid_status:${row.status}` };
+  if (row.status !== 'pending' && row.status !== 'pending_approval') {
+    return { ok: false, error: `invalid_status:${row.status}` };
+  }
 
   await pool.query(`UPDATE signals SET status='rejected' WHERE id=?`, [id]);
   await pool.query(

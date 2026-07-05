@@ -347,6 +347,18 @@ async function runExitEngine(
   if (heldSymbols.length === 0) return 0;
 
   const pool = getPool();
+
+  // system_config 'exit_hard_stop_enabled' = false 이면 hard_stop 시그널 생성 스킵
+  let hardStopEnabled = true;
+  try {
+    const [cfgRows] = await pool.query<(RowDataPacket & { value: string })[]>(
+      "SELECT value FROM system_config WHERE `key` = 'exit_hard_stop_enabled' LIMIT 1",
+    );
+    if (cfgRows.length > 0) {
+      try { hardStopEnabled = JSON.parse(cfgRows[0].value) !== false; } catch { /* keep true */ }
+    }
+  } catch { /* DB 실패 시 기본 활성 */ }
+
   let created = 0;
 
   for (const symbol of heldSymbols) {
@@ -379,6 +391,12 @@ async function runExitEngine(
 
     const exitSig = evaluateExit({ symbol, market, ticker, state, style });
     if (!exitSig) continue;
+
+    // hard_stop 시그널 생성 비활성화 여부 체크
+    if (exitSig.exitKind === 'hard_stop' && !hardStopEnabled) {
+      console.log(`[exit-engine] ${symbol} hard_stop 스킵 (exit_hard_stop_enabled=false)`);
+      continue;
+    }
 
     // 동일 심볼+exit_kind에 대한 5분 쿨다운 — createSignal 중복 방지
     // (cron이 1분 tick이라 같은 청산 룰이 5번 연속 발화되면 중복 주문 우려)

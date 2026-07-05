@@ -90,6 +90,8 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
     });
   }
 
+  const fmtW = (v: number) => Math.round(v).toLocaleString('ko-KR');
+
   // ─── 2) 하드 손절 ────────────────────────────────────────────────
   // 시나리오 있으면 stopHi(갭 하락 캡), 없으면 style.hardStopPct
   const hardStopThreshold = sc ? sc.stopHi : style.hardStopPct;
@@ -97,7 +99,7 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
     return buildSellSignal({
       symbol, ticker, qty, exitKind: 'hard_stop', entry, price, pnlPct, peak,
       reasonHead: '[하드 손절]',
-      detail: `손실 ${pnlPct.toFixed(2)}% ≤ -${hardStopThreshold}% → 시장가 청산 (자금 보호)`,
+      detail: `손실 ${pnlPct.toFixed(2)}% (매수단가 ₩${fmtW(entry)} → 현재 ₩${fmtW(price)}) ≤ -${hardStopThreshold}% → 자금 보호 청산`,
     });
   }
 
@@ -106,7 +108,7 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
     return buildSellSignal({
       symbol, ticker, qty, exitKind: 'hard_stop', entry, price, pnlPct, peak,
       reasonHead: '[시나리오 손절]',
-      detail: `손실 ${pnlPct.toFixed(2)}% ≤ -${sc.stopLo}% (시나리오 손절 범위 진입) → 시장가 청산`,
+      detail: `손실 ${pnlPct.toFixed(2)}% (매수단가 ₩${fmtW(entry)} → 현재 ₩${fmtW(price)}) ≤ -${sc.stopLo}% (시나리오 손절) → 청산`,
     });
   }
 
@@ -115,7 +117,7 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
     return buildSellSignal({
       symbol, ticker, qty, exitKind: 'target_profit', entry, price, pnlPct, peak,
       reasonHead: '[시나리오 익절 캡]',
-      detail: `평가익 ${pnlPct.toFixed(2)}% ≥ +${sc.targetHi}% (하드 캡) → 시장가 익절`,
+      detail: `평가익 +${pnlPct.toFixed(2)}% (매수단가 ₩${fmtW(entry)} → 현재 ₩${fmtW(price)}) ≥ +${sc.targetHi}% (상한 캡) → 익절`,
     });
   }
 
@@ -126,7 +128,7 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
     return buildSellSignal({
       symbol, ticker, qty, exitKind: 'target_profit', entry, price, pnlPct, peak,
       reasonHead: '[목표 익절]',
-      detail: `평가익 ${pnlPct.toFixed(2)}% ≥ +${targetThreshold}% → 시장가 익절`,
+      detail: `평가익 +${pnlPct.toFixed(2)}% (매수단가 ₩${fmtW(entry)} → 현재 ₩${fmtW(price)}) ≥ +${targetThreshold}% → 익절`,
     });
   }
 
@@ -140,7 +142,7 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
       return buildSellSignal({
         symbol, ticker, qty, exitKind: 'trailing_stop', entry, price, pnlPct, peak,
         reasonHead: '[트레일링 스탑]',
-        detail: `peak ${peak.toFixed(0)} (활성 +${peakGainPct.toFixed(2)}%), 풀백 -${drawdownPct.toFixed(2)}% ≥ ${style.trailingDrawdownPct}% → 시장가 청산 (실현 +${pnlPct.toFixed(2)}%)`,
+        detail: `고점 ₩${fmtW(peak)}에서 -${drawdownPct.toFixed(2)}% 풀백 (활성: +${peakGainPct.toFixed(2)}%) → 실현 ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}% 청산`,
       });
     }
   }
