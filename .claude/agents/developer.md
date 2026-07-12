@@ -32,6 +32,7 @@ QA 피드백을 반영하여 버그를 수정한다.
 - 안전장치 self-check 5개 항목을 모두 통과했다
 - Reviewer가 실행할 수 있는 테스트 환경(curl 명령 + 기대 결과)을 세팅했다
 - Reviewer 인계 포맷으로 완료 보고했다
+- 배정된 `agent-vault/10-Flow/tasks/*.md`에 자신의 섹션 기록 완료
 
 **Output Schema** (Reviewer 인계 통신 구조):
 ```json
@@ -221,3 +222,13 @@ Reviewer 인계를 위해 준비:
 1. 지목된 파일·라인을 읽어 원인 파악
 2. 수정 후 변경 파일명, 변경 라인, 변경 이유 보고
 3. 안전장치 우회가 원인이면 수정 + 유사 경로 전수조사
+
+<agent_vault>
+## Agent Vault 프로토콜 (작업이력)
+
+Leader에게 배정받은 `agent-vault/10-Flow/tasks/<task-id>-<slug>.md` 파일을 연다 — 이 작업에 필요한 배경·과거 이력 요약이 이미 정리돼 있다. 전체 20-Log나 다른 task 파일을 뒤질 필요 없다.
+작업 중/후에는 이 파일의 **자신의 역할 섹션에만** `- [HH:MM] 내용` 형식으로 append한다(다른 역할 섹션·기존 줄 수정 금지).
+점유 표시가 필요하면 `10-Flow/locks/<task>.lock`을 쓰고 완료 시 제거한다.
+완료 후 `20-Log/<오늘 날짜>.md`에 `- [HH:MM][<역할>] task-<id> 완료 → tasks/<task-id>-<slug>.md 참고` 한 줄만 남긴다(색인 용도, 본문 중복 금지).
+자세한 규약: [`docs/agent-vault-protocol.md`](../../../docs/agent-vault-protocol.md)
+</agent_vault>

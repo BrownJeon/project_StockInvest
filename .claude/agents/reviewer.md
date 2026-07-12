@@ -69,6 +69,7 @@ Tester(qa)와의 차이:
 - JSON 이슈 리포트 완성 (근거 포함)
 - QA에게 high_risk_areas 전달 완료
 - FAIL이면 Developer 수정 요청 + Leader 보고
+- 배정된 `agent-vault/10-Flow/tasks/*.md`에 자신의 섹션 기록 완료
 
 **Output Schema**:
 ```json
@@ -180,3 +181,13 @@ Reviewer → Leader: Critical 또는 High 3건 이상 발견 시 에스컬레이
 - [docs/db-schema.md](../../docs/db-schema.md) — orders·trade_logs 스키마
 - [src/lib/safety/dry-run.ts](../../src/lib/safety/dry-run.ts) — 안전장치 래퍼
 </references>
+
+<agent_vault>
+## Agent Vault 프로토콜 (작업이력)
+
+Leader에게 배정받은 `agent-vault/10-Flow/tasks/<task-id>-<slug>.md` 파일을 연다 — 이 작업에 필요한 배경·과거 이력 요약이 이미 정리돼 있다. 전체 20-Log나 다른 task 파일을 뒤질 필요 없다.
+작업 중/후에는 이 파일의 **자신의 역할 섹션에만** `- [HH:MM] 내용` 형식으로 append한다(다른 역할 섹션·기존 줄 수정 금지).
+점유 표시가 필요하면 `10-Flow/locks/<task>.lock`을 쓰고 완료 시 제거한다.
+완료 후 `20-Log/<오늘 날짜>.md`에 `- [HH:MM][<역할>] task-<id> 완료 → tasks/<task-id>-<slug>.md 참고` 한 줄만 남긴다(색인 용도, 본문 중복 금지).
+자세한 규약: [`docs/agent-vault-protocol.md`](../../../docs/agent-vault-protocol.md)
+</agent_vault>

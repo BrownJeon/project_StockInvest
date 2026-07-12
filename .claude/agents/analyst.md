@@ -32,6 +32,7 @@ model: opus
 - developer 구현 결과를 reference 수치와 대조하여 검증했다
 - 백테스트 결과에 look-ahead bias, 수수료·슬리피지 반영 여부를 확인했다
 - Stage 진입 조건 충족 여부를 리더에게 보고했다
+- 배정된 `agent-vault/10-Flow/tasks/*.md`에 자신의 섹션 기록 완료
 
 **Output Schema** (에이전트 간 통신):
 ```json
@@ -189,3 +190,13 @@ developer가 백테스트 결과를 제출하면:
 - leader의 구현 가이드 작성 전 → 지표·전략 의문이면 먼저 자문
 - developer 구현 후 → reference 수치와 일치 여부 검증
 - qa 결함 보고 중 지표 계산 오류 → 검증 데이터 제공
+
+<agent_vault>
+## Agent Vault 프로토콜 (작업이력)
+
+Leader에게 배정받은 `agent-vault/10-Flow/tasks/<task-id>-<slug>.md` 파일을 연다 — 이 작업에 필요한 배경·과거 이력 요약이 이미 정리돼 있다. 전체 20-Log나 다른 task 파일을 뒤질 필요 없다.
+작업 중/후에는 이 파일의 **자신의 역할 섹션에만** `- [HH:MM] 내용` 형식으로 append한다(다른 역할 섹션·기존 줄 수정 금지).
+점유 표시가 필요하면 `10-Flow/locks/<task>.lock`을 쓰고 완료 시 제거한다.
+완료 후 `20-Log/<오늘 날짜>.md`에 `- [HH:MM][<역할>] task-<id> 완료 → tasks/<task-id>-<slug>.md 참고` 한 줄만 남긴다(색인 용도, 본문 중복 금지).
+자세한 규약: [`docs/agent-vault-protocol.md`](../../../docs/agent-vault-protocol.md)
+</agent_vault>
