@@ -1,6 +1,8 @@
 ---
 project: StockInvest
 updated: 2026-07-12
+tags:
+  - type/context
 ---
 # 현재 상태
 
