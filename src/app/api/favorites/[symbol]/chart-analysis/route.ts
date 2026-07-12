@@ -1,4 +1,5 @@
 import { getPool } from '@/lib/db';
+import { runLlm } from '@/lib/llm/provider';
 import type { RowDataPacket } from 'mysql2';
 import type { TechnicalData } from '../technical/route';
 
@@ -33,13 +34,6 @@ export async function GET(
           cached: true,
         });
       }
-    }
-
-    // API 키 확인
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      console.warn('[chart-analysis] ANTHROPIC_API_KEY not set — skipping Claude call');
-      return Response.json({ ok: false, error: 'api_key_missing' });
     }
 
     // 종목명 조회
@@ -89,28 +83,13 @@ export async function GET(
 
 JSON 형식 없이 순수 텍스트로만 답하세요.`;
 
-    // Claude API 호출
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 512,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-
-    if (!res.ok) {
-      console.error('[chart-analysis] Claude API error:', res.status);
-      return Response.json({ ok: false, error: 'claude_api_error' });
+    let aiAnalysis: string;
+    try {
+      aiAnalysis = await runLlm(prompt, { responseFormat: 'text', timeoutMs: 90000 });
+    } catch (e) {
+      console.error('[chart-analysis] LLM error:', e);
+      return Response.json({ ok: false, error: 'llm_error' });
     }
-
-    const data = await res.json() as { content: Array<{ text: string }> };
-    const aiAnalysis = data.content?.[0]?.text ?? '';
 
     if (!aiAnalysis) {
       return Response.json({ ok: false, error: 'claude_empty_response' });

@@ -148,44 +148,61 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
   const [chartAnalysis, setChartAnalysis] = useState<{aiAnalysis: string; updatedAt: string} | null>(null);
   const [loadingItem, setLoadingItem] = useState(true);
   const [loadingTech, setLoadingTech] = useState(true);
+  const [loadingFund, setLoadingFund] = useState(true);
   const [loadingChart, setLoadingChart] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [fundProgress, setFundProgress] = useState<{ step: number; label: string } | null>(null);
 
-  const fetchAll = useCallback(async () => {
-    const [favRes, techRes, fundRes, chartRes] = await Promise.allSettled([
+  // 1단계: 즐겨찾기 목록 + 기술지표 (빠름, 화면 즉시 표시)
+  const fetchCore = useCallback(async () => {
+    const [favRes, techRes] = await Promise.allSettled([
       fetch('/api/favorites').then(r => r.json() as Promise<{ ok: boolean; data: FavoriteItem[] }>),
       fetch(`/api/favorites/${encodeURIComponent(symbol)}/technical`).then(r => r.json() as Promise<{ ok: boolean; data: TechnicalData }>),
-      fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`).then(r => r.json() as Promise<{ ok: boolean; data: FundamentalsData }>),
-      fetch(`/api/favorites/${encodeURIComponent(symbol)}/chart-analysis`).then(r => r.json() as Promise<{ ok: boolean; data: { symbol: string; aiAnalysis: string; updatedAt: string } }>),
     ]);
     if (favRes.status === 'fulfilled' && favRes.value.ok) {
-      const found = favRes.value.data.find(f => f.symbol === symbol) ?? null;
-      setItem(found);
+      setItem(favRes.value.data.find(f => f.symbol === symbol) ?? null);
     }
     setLoadingItem(false);
     if (techRes.status === 'fulfilled' && techRes.value.ok) {
       setTech(techRes.value.data);
     }
     setLoadingTech(false);
+  }, [symbol]);
+
+  // 2단계: 재무지표 + AI 차트 분석 (느림, 화면 뒤에서 로드)
+  const fetchAi = useCallback(async () => {
+    const [fundRes, chartRes] = await Promise.allSettled([
+      fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`).then(r => r.json() as Promise<{ ok: boolean; data: FundamentalsData }>),
+      fetch(`/api/favorites/${encodeURIComponent(symbol)}/chart-analysis`).then(r => r.json() as Promise<{ ok: boolean; data: { symbol: string; aiAnalysis: string; updatedAt: string } }>),
+    ]);
     if (fundRes.status === 'fulfilled' && fundRes.value.ok) {
       setFund(fundRes.value.data);
     }
+    setLoadingFund(false);
     if (chartRes.status === 'fulfilled' && chartRes.value.ok) {
       setChartAnalysis(chartRes.value.data);
     }
     setLoadingChart(false);
   }, [symbol]);
 
-  useEffect(() => { void fetchAll(); }, [fetchAll]);
+  useEffect(() => { void fetchCore(); }, [fetchCore]);
+  useEffect(() => { void fetchAi(); }, [fetchAi]);
 
   async function refreshFundamentals() {
-    setRefreshing(true);
+    setFundProgress({ step: 1, label: '캐시 초기화 중' });
     try {
       await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
-      await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
-      await fetchAll();
+      setFundProgress({ step: 2, label: 'AI 분석 중' });
+      const res = await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
+      const json = await res.json() as { ok: boolean; error?: string };
+      if (!json.ok) {
+        setFundProgress({ step: 2, label: `분석 실패 (${json.error ?? 'unknown'})` });
+        await new Promise(r => setTimeout(r, 2500));
+        return;
+      }
+      setFundProgress({ step: 3, label: '데이터 적용 중' });
+      await fetchAi();
     } finally {
-      setRefreshing(false);
+      setFundProgress(null);
     }
   }
 
@@ -194,7 +211,7 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
     try {
       await fetch(`/api/favorites/${encodeURIComponent(symbol)}/chart-analysis`, { method: 'DELETE' });
       await fetch(`/api/favorites/${encodeURIComponent(symbol)}/chart-analysis`);
-      await fetchAll();
+      await fetchAi();
     } finally {
       setLoadingChart(false);
     }
@@ -531,11 +548,12 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
       {/* 재무 정보 */}
       <div style={S.section}>
         <div style={S.sectionTitle}>재무 지표</div>
+        {loadingFund && <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 8 }}>재무 데이터 로딩 중...</div>}
         <div style={S.metricsGrid}>
-          <MetricBox label="PBR" value={(fund?.pbr ?? item.pbr) != null ? (fund?.pbr ?? item.pbr)!.toFixed(2) + 'x' : '—'} desc="주가순자산비율" />
-          <MetricBox label="PER" value={(fund?.per ?? item.per) != null ? (fund?.per ?? item.per)!.toFixed(1) + 'x' : '—'} desc="주가수익비율" />
-          <MetricBox label="ROE" value={(fund?.roe ?? item.roe) != null ? (fund?.roe ?? item.roe)!.toFixed(1) + '%' : '—'} desc="자기자본이익률" />
-          <MetricBox label="배당" value={(fund?.dividend_yield ?? item.dividend_yield) != null ? (fund?.dividend_yield ?? item.dividend_yield)!.toFixed(2) + '%' : '—'} desc="배당수익률" />
+          <MetricBox label="PBR" value={(fund?.pbr ?? item.pbr) != null ? Number(fund?.pbr ?? item.pbr).toFixed(2) + 'x' : '—'} desc="주가순자산비율" />
+          <MetricBox label="PER" value={(fund?.per ?? item.per) != null ? Number(fund?.per ?? item.per).toFixed(1) + 'x' : '—'} desc="주가수익비율" />
+          <MetricBox label="ROE" value={(fund?.roe ?? item.roe) != null ? Number(fund?.roe ?? item.roe).toFixed(1) + '%' : '—'} desc="자기자본이익률" />
+          <MetricBox label="배당" value={(fund?.dividend_yield ?? item.dividend_yield) != null ? Number(fund?.dividend_yield ?? item.dividend_yield).toFixed(2) + '%' : '—'} desc="배당수익률" />
         </div>
         {(fund?.market_cap_bn ?? item.market_cap_bn) != null && (
           <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>
@@ -568,13 +586,29 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
         )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-          {(fund?.updated_at ?? item.fundamentals_updated_at) ? (
+          {fundProgress ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[1, 2, 3].map(n => (
+                  <span key={n} style={{
+                    display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+                    background: n <= fundProgress.step ? '#f59e0b' : 'var(--bg3)',
+                    transition: 'background 0.3s',
+                  }} />
+                ))}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#f59e0b' }}>{fundProgress.step}/3</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>{fundProgress.label}</span>
+              </div>
+            </div>
+          ) : (fund?.updated_at ?? item.fundamentals_updated_at) ? (
             <span style={{ fontSize: 10, color: 'var(--muted)' }}>
               {new Date((fund?.updated_at ?? item.fundamentals_updated_at)!).toLocaleDateString('ko-KR')} 기준
             </span>
           ) : <span />}
-          <button style={S.refreshBtn} onClick={() => void refreshFundamentals()} disabled={refreshing}>
-            {refreshing ? '조회 중...' : '재무 갱신'}
+          <button style={S.refreshBtn} onClick={() => void refreshFundamentals()} disabled={!!fundProgress}>
+            재무 갱신
           </button>
         </div>
       </div>

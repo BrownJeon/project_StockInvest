@@ -8,6 +8,9 @@ function resolveModel(input?: string): ClaudeModel {
   return 'sonnet';
 }
 
+// 모듈 레벨 전역 큐 — ClaudeCliCaller 인스턴스 수와 무관하게 항상 직렬화
+let globalCliQueue: Promise<unknown> = Promise.resolve();
+
 /**
  * Claude CLI subprocess 호출.
  *
@@ -23,6 +26,14 @@ function resolveModel(input?: string): ClaudeModel {
  */
 export class ClaudeCliCaller implements LlmCaller {
   call(prompt: string, opts: LlmCallOptions = {}): Promise<string> {
+    // 전역 큐에 직렬화 — 동시 호출 시 100% Execution error / exit 143 방지
+    const prev = globalCliQueue;
+    const next = prev.then(() => this._invoke(prompt, opts), () => this._invoke(prompt, opts));
+    globalCliQueue = next.catch(() => {});
+    return next;
+  }
+
+  private _invoke(prompt: string, opts: LlmCallOptions = {}): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? 90000;
     const model = resolveModel(opts.model);
     return new Promise((resolve, reject) => {

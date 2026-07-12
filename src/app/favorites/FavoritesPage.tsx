@@ -73,7 +73,16 @@ export function FavoritesPage() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [expandedSummary, setExpandedSummary] = useState<Set<string>>(new Set());
-  const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
+  const [refreshProgress, setRefreshProgress] = useState<Map<string, { step: number; label: string }>>(new Map());
+
+  function setProgress(symbol: string, info: { step: number; label: string } | null) {
+    setRefreshProgress(prev => {
+      const next = new Map(prev);
+      if (info === null) next.delete(symbol);
+      else next.set(symbol, info);
+      return next;
+    });
+  }
 
   const load = useCallback(async () => {
     try {
@@ -134,13 +143,21 @@ export function FavoritesPage() {
   }
 
   async function refreshFundamentals(symbol: string) {
-    setRefreshing((s) => new Set(s).add(symbol));
+    setProgress(symbol, { step: 1, label: '캐시 초기화 중' });
     try {
       await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
-      await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
+      setProgress(symbol, { step: 2, label: 'AI 분석 중' });
+      const res = await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
+      const json = await res.json() as { ok: boolean; error?: string };
+      if (!json.ok) {
+        setProgress(symbol, { step: 2, label: `분석 실패 (${json.error ?? 'unknown'})` });
+        await new Promise(r => setTimeout(r, 2500));
+        return;
+      }
+      setProgress(symbol, { step: 3, label: '데이터 적용 중' });
       await load();
     } finally {
-      setRefreshing((s) => { const n = new Set(s); n.delete(symbol); return n; });
+      setProgress(symbol, null);
     }
   }
 
@@ -196,7 +213,8 @@ export function FavoritesPage() {
           const down = (item.changeRate ?? 0) < 0;
           const priceColor = up ? 'var(--red)' : down ? 'var(--blue)' : 'var(--fg)';
           const isExpanded = expandedSummary.has(item.symbol);
-          const isRefreshing = refreshing.has(item.symbol);
+          const progress = refreshProgress.get(item.symbol) ?? null;
+          const isRefreshing = progress !== null;
           const factors: KeyFactor[] = item.key_factors
             ? (typeof item.key_factors === 'string' ? JSON.parse(item.key_factors) : item.key_factors)
             : [];
@@ -239,11 +257,11 @@ export function FavoritesPage() {
 
               {/* 재무 지표 */}
               <div style={S.metricsRow}>
-                <MetricChip label="PBR" value={item.pbr != null ? item.pbr.toFixed(2) + 'x' : '—'} />
-                <MetricChip label="PER" value={item.per != null ? item.per.toFixed(1) + 'x' : '—'} />
-                <MetricChip label="ROE" value={item.roe != null ? item.roe.toFixed(1) + '%' : '—'} />
+                <MetricChip label="PBR" value={item.pbr != null ? Number(item.pbr).toFixed(2) + 'x' : '—'} />
+                <MetricChip label="PER" value={item.per != null ? Number(item.per).toFixed(1) + 'x' : '—'} />
+                <MetricChip label="ROE" value={item.roe != null ? Number(item.roe).toFixed(1) + '%' : '—'} />
                 {item.market_cap_bn != null && (
-                  <MetricChip label="시총" value={item.market_cap_bn >= 10000 ? (item.market_cap_bn / 10000).toFixed(1) + '조' : item.market_cap_bn.toLocaleString() + '억'} />
+                  <MetricChip label="시총" value={Number(item.market_cap_bn) >= 10000 ? (Number(item.market_cap_bn) / 10000).toFixed(1) + '조' : Number(item.market_cap_bn).toLocaleString() + '억'} />
                 )}
               </div>
 
@@ -275,9 +293,29 @@ export function FavoritesPage() {
                 </div>
               )}
 
-              {/* 하단: 갱신 시각 + 새로고침 */}
+              {/* 하단: 진행상태(좌) + 갱신 버튼(우) */}
               <div style={S.cardFooter}>
-                {item.fundamentals_updated_at ? (
+                {isRefreshing && progress ? (
+                  <div style={S.progressWrap}>
+                    <div style={S.progressDots}>
+                      {[1, 2, 3].map(n => (
+                        <span
+                          key={n}
+                          style={{
+                            width: 7, height: 7, borderRadius: '50%',
+                            background: n <= progress.step ? '#f59e0b' : 'var(--bg3)',
+                            transition: 'background 0.3s',
+                            flexShrink: 0,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div style={S.progressText}>
+                      <span style={S.progressStep}>{progress.step}/3</span>
+                      <span style={S.progressLabel}>{progress.label}</span>
+                    </div>
+                  </div>
+                ) : item.fundamentals_updated_at ? (
                   <span style={S.updatedAt}>
                     {new Date(item.fundamentals_updated_at).toLocaleDateString('ko-KR')} 기준
                   </span>
@@ -289,7 +327,7 @@ export function FavoritesPage() {
                   onClick={(e) => { e.stopPropagation(); void refreshFundamentals(item.symbol); }}
                   disabled={isRefreshing}
                 >
-                  {isRefreshing ? '조회 중...' : '재무 갱신'}
+                  {isRefreshing ? '...' : '재무 갱신'}
                 </button>
               </div>
             </div>
@@ -372,7 +410,13 @@ const S: Record<string, React.CSSProperties> = {
   refreshBtn: {
     background: 'var(--bg3)', border: 'none', borderRadius: 8,
     color: 'var(--fg)', fontSize: 11, padding: '5px 10px', cursor: 'pointer',
+    flexShrink: 0,
   },
+  progressWrap: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
+  progressDots: { display: 'flex', gap: 4, flexShrink: 0 },
+  progressText: { display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 },
+  progressStep: { fontSize: 10, fontWeight: 700, color: '#f59e0b', flexShrink: 0 },
+  progressLabel: { fontSize: 11, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   lastUpdatedBar: { fontSize: 10, color: 'var(--muted)', textAlign: 'right', marginBottom: 8 },
   priceErrorBadge: { fontSize: 12, color: 'var(--red)', marginTop: 4, fontWeight: 600 },
 };

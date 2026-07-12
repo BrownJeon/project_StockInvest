@@ -1,5 +1,6 @@
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
+import { runLlm } from '@/lib/llm/provider';
 import type { RowDataPacket } from 'mysql2';
 
 export const dynamic = 'force-dynamic';
@@ -25,12 +26,6 @@ interface FundamentalsResult {
 }
 
 async function fetchFromClaude(symbol: string, name: string): Promise<Partial<FundamentalsResult>> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    console.warn('[fundamentals] ANTHROPIC_API_KEY not set — skipping Claude call');
-    return {};
-  }
-
   const prompt = `당신은 주식 투자 분석 전문가입니다.
 
 기업명: ${name} (종목코드: ${symbol})
@@ -56,31 +51,12 @@ async function fetchFromClaude(symbol: string, name: string): Promise<Partial<Fu
 JSON만 반환하고 다른 텍스트는 없이.`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-
-    if (!res.ok) {
-      console.error('[fundamentals] Claude API error:', res.status);
-      return {};
-    }
-
-    const data = await res.json() as { content: Array<{ text: string }> };
-    const text = data.content?.[0]?.text ?? '';
-
-    // JSON 파싱 (마크다운 코드블록 제거)
-    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(jsonStr) as Partial<FundamentalsResult>;
+    const text = await runLlm(prompt, { responseFormat: 'json', timeoutMs: 90000 });
+    // 코드블록 제거 후 첫 번째 { ... } 블록만 추출 (JSON 뒤 추가 텍스트 무시)
+    const stripped = text.replace(/```json?\n?/g, '').replace(/```/g, '');
+    const match = stripped.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('No JSON object found in response');
+    const parsed = JSON.parse(match[0]) as Partial<FundamentalsResult>;
     return parsed;
   } catch (e) {
     console.error('[fundamentals] Claude parse error:', e);
@@ -140,16 +116,20 @@ export async function GET(
       return Response.json({ ok: false, error: 'claude_unavailable' });
     }
 
+    const toNum = (v: unknown): number | null => {
+      const n = Number(v);
+      return v != null && v !== '' && isFinite(n) ? n : null;
+    };
     const fundamentals: FundamentalsResult = {
-      pbr: (aiData.pbr as number) ?? null,
-      per: (aiData.per as number) ?? null,
-      eps: (aiData.eps as number) ?? null,
-      market_cap_bn: (aiData.market_cap_bn as number) ?? null,
-      dividend_yield: (aiData.dividend_yield as number) ?? null,
-      roe: (aiData.roe as number) ?? null,
+      pbr: toNum(aiData.pbr),
+      per: toNum(aiData.per),
+      eps: toNum(aiData.eps),
+      market_cap_bn: toNum(aiData.market_cap_bn),
+      dividend_yield: toNum(aiData.dividend_yield),
+      roe: toNum(aiData.roe),
       key_factors: (aiData.key_factors as KeyFactor[]) ?? [],
       ai_summary: (aiData.ai_summary as string) ?? '',
-      data_source: process.env.ANTHROPIC_API_KEY ? 'claude_ai' : 'unavailable',
+      data_source: 'claude_ai',
     };
 
     // DB 캐시 저장
