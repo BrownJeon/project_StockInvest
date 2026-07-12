@@ -116,7 +116,7 @@ export async function getTicker(symbol: string): Promise<Ticker> {
     price:          Number(o.last) * fx,
     priceUsd:       Number(o.last),
     timestamp:      Date.now(),
-    open24h:        Number(o.open ?? o.base ?? 0) * fx,
+    open24h:        o.open ? Number(o.open) * fx : o.base ? Number(o.base) * fx : undefined,
     high24h:        Number(o.high ?? 0) * fx,
     low24h:         Number(o.low ?? 0) * fx,
     volume24h:      Number(o.tvol ?? 0),

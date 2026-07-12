@@ -51,7 +51,7 @@ export async function GET() {
       rows.map(async (row) => {
         try {
           const ticker = await kis.getTicker(row.symbol as string);
-          const changeRate = ticker.open24h && ticker.open24h > 0
+          const changeRate = ticker.open24h != null && ticker.open24h > 0
             ? ((ticker.price - ticker.open24h) / ticker.open24h) * 100
             : null;
           return {
@@ -69,6 +69,7 @@ export async function GET() {
             priceUsd: null,
             changeRate: null,
             volume: null,
+            priceError: true,
             latestSignal: signalMap.get(row.symbol as string) ?? null,
           };
         }

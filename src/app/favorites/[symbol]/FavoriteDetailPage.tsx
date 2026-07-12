@@ -31,6 +31,19 @@ interface TechnicalData {
   updatedAt: string;
 }
 
+interface FundamentalsData {
+  symbol: string;
+  pbr: number | null;
+  per: number | null;
+  roe: number | null;
+  eps: number | null;
+  market_cap_bn: number | null;
+  dividend_yield: number | null;
+  key_factors: KeyFactor[] | string | null;
+  ai_summary: string | null;
+  updated_at: string | null;
+}
+
 const krw = (v: number) => v.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
 const usd = (v: number) => '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
@@ -131,14 +144,19 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
   const router = useRouter();
   const [item, setItem] = useState<FavoriteItem | null>(null);
   const [tech, setTech] = useState<TechnicalData | null>(null);
+  const [fund, setFund] = useState<FundamentalsData | null>(null);
+  const [chartAnalysis, setChartAnalysis] = useState<{aiAnalysis: string; updatedAt: string} | null>(null);
   const [loadingItem, setLoadingItem] = useState(true);
   const [loadingTech, setLoadingTech] = useState(true);
+  const [loadingChart, setLoadingChart] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchAll = useCallback(async () => {
-    const [favRes, techRes] = await Promise.allSettled([
+    const [favRes, techRes, fundRes, chartRes] = await Promise.allSettled([
       fetch('/api/favorites').then(r => r.json() as Promise<{ ok: boolean; data: FavoriteItem[] }>),
       fetch(`/api/favorites/${encodeURIComponent(symbol)}/technical`).then(r => r.json() as Promise<{ ok: boolean; data: TechnicalData }>),
+      fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`).then(r => r.json() as Promise<{ ok: boolean; data: FundamentalsData }>),
+      fetch(`/api/favorites/${encodeURIComponent(symbol)}/chart-analysis`).then(r => r.json() as Promise<{ ok: boolean; data: { symbol: string; aiAnalysis: string; updatedAt: string } }>),
     ]);
     if (favRes.status === 'fulfilled' && favRes.value.ok) {
       const found = favRes.value.data.find(f => f.symbol === symbol) ?? null;
@@ -149,16 +167,37 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
       setTech(techRes.value.data);
     }
     setLoadingTech(false);
+    if (fundRes.status === 'fulfilled' && fundRes.value.ok) {
+      setFund(fundRes.value.data);
+    }
+    if (chartRes.status === 'fulfilled' && chartRes.value.ok) {
+      setChartAnalysis(chartRes.value.data);
+    }
+    setLoadingChart(false);
   }, [symbol]);
 
   useEffect(() => { void fetchAll(); }, [fetchAll]);
 
   async function refreshFundamentals() {
     setRefreshing(true);
-    await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
-    await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
-    void fetchAll();
-    setRefreshing(false);
+    try {
+      await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
+      await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
+      await fetchAll();
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function refreshChartAnalysis() {
+    setLoadingChart(true);
+    try {
+      await fetch(`/api/favorites/${encodeURIComponent(symbol)}/chart-analysis`, { method: 'DELETE' });
+      await fetch(`/api/favorites/${encodeURIComponent(symbol)}/chart-analysis`);
+      await fetchAll();
+    } finally {
+      setLoadingChart(false);
+    }
   }
 
   if (loadingItem) {
@@ -181,8 +220,9 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
   const down = (item.changeRate ?? 0) < 0;
   const priceColor = up ? '#ef4444' : down ? '#3b82f6' : 'var(--fg)';
 
-  const factors: KeyFactor[] = item.key_factors
-    ? (typeof item.key_factors === 'string' ? JSON.parse(item.key_factors) : item.key_factors)
+  const rawKeyFactors = fund?.key_factors ?? item.key_factors;
+  const factors: KeyFactor[] = rawKeyFactors
+    ? (typeof rawKeyFactors === 'string' ? JSON.parse(rawKeyFactors as string) : rawKeyFactors as KeyFactor[])
     : [];
 
   const stateColor = tech ? (MARKET_STATE_COLOR[tech.marketState] ?? '#6b7280') : '#6b7280';
@@ -461,18 +501,48 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
         </>
       )}
 
+      {/* AI 기술 분석 섹션 */}
+      <div style={{ background: '#1a1a2e', borderRadius: 12, padding: 16, marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#aaa', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>🤖 AI 기술 분석</span>
+          <button
+            onClick={() => void refreshChartAnalysis()}
+            style={{ fontSize: 11, color: '#4a9eff', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px' }}
+          >
+            갱신
+          </button>
+        </div>
+        {loadingChart ? (
+          <span style={{ color: '#666', fontSize: 13 }}>분석 중...</span>
+        ) : chartAnalysis?.aiAnalysis ? (
+          <>
+            <p style={{ fontSize: 13, lineHeight: 1.7, color: '#ddd', margin: 0, whiteSpace: 'pre-wrap' }}>
+              {chartAnalysis.aiAnalysis}
+            </p>
+            <div style={{ fontSize: 11, color: '#555', marginTop: 8 }}>
+              {chartAnalysis.updatedAt ? new Date(chartAnalysis.updatedAt).toLocaleString('ko-KR') : ''} 기준 (30분 캐시)
+            </div>
+          </>
+        ) : (
+          <span style={{ color: '#555', fontSize: 13 }}>분석 데이터 없음 — API 키를 확인하세요</span>
+        )}
+      </div>
+
       {/* 재무 정보 */}
       <div style={S.section}>
         <div style={S.sectionTitle}>재무 지표</div>
         <div style={S.metricsGrid}>
-          <MetricBox label="PBR" value={item.pbr != null ? item.pbr.toFixed(2) + 'x' : '—'} desc="주가순자산비율" />
-          <MetricBox label="PER" value={item.per != null ? item.per.toFixed(1) + 'x' : '—'} desc="주가수익비율" />
-          <MetricBox label="ROE" value={item.roe != null ? item.roe.toFixed(1) + '%' : '—'} desc="자기자본이익률" />
-          <MetricBox label="배당" value={item.dividend_yield != null ? item.dividend_yield.toFixed(2) + '%' : '—'} desc="배당수익률" />
+          <MetricBox label="PBR" value={(fund?.pbr ?? item.pbr) != null ? (fund?.pbr ?? item.pbr)!.toFixed(2) + 'x' : '—'} desc="주가순자산비율" />
+          <MetricBox label="PER" value={(fund?.per ?? item.per) != null ? (fund?.per ?? item.per)!.toFixed(1) + 'x' : '—'} desc="주가수익비율" />
+          <MetricBox label="ROE" value={(fund?.roe ?? item.roe) != null ? (fund?.roe ?? item.roe)!.toFixed(1) + '%' : '—'} desc="자기자본이익률" />
+          <MetricBox label="배당" value={(fund?.dividend_yield ?? item.dividend_yield) != null ? (fund?.dividend_yield ?? item.dividend_yield)!.toFixed(2) + '%' : '—'} desc="배당수익률" />
         </div>
-        {item.market_cap_bn != null && (
+        {(fund?.market_cap_bn ?? item.market_cap_bn) != null && (
           <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>
-            시가총액: {item.market_cap_bn >= 10000 ? (item.market_cap_bn / 10000).toFixed(1) + '조원' : item.market_cap_bn.toLocaleString() + '억원'}
+            {(() => {
+              const mcap = (fund?.market_cap_bn ?? item.market_cap_bn)!;
+              return '시가총액: ' + (mcap >= 10000 ? (mcap / 10000).toFixed(1) + '조원' : mcap.toLocaleString() + '억원');
+            })()}
           </div>
         )}
 
@@ -490,17 +560,17 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
           </div>
         )}
 
-        {item.ai_summary && (
+        {(fund?.ai_summary ?? item.ai_summary) && (
           <div style={{ marginTop: 12 }}>
             <div style={S.subTitle}>AI 종합 분석</div>
-            <div style={S.aiText}>{item.ai_summary}</div>
+            <div style={S.aiText}>{fund?.ai_summary ?? item.ai_summary}</div>
           </div>
         )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
-          {item.fundamentals_updated_at ? (
+          {(fund?.updated_at ?? item.fundamentals_updated_at) ? (
             <span style={{ fontSize: 10, color: 'var(--muted)' }}>
-              {new Date(item.fundamentals_updated_at).toLocaleDateString('ko-KR')} 기준
+              {new Date((fund?.updated_at ?? item.fundamentals_updated_at)!).toLocaleDateString('ko-KR')} 기준
             </span>
           ) : <span />}
           <button style={S.refreshBtn} onClick={() => void refreshFundamentals()} disabled={refreshing}>

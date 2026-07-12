@@ -26,7 +26,10 @@ interface FundamentalsResult {
 
 async function fetchFromClaude(symbol: string, name: string): Promise<Partial<FundamentalsResult>> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return {};
+  if (!apiKey) {
+    console.warn('[fundamentals] ANTHROPIC_API_KEY not set — skipping Claude call');
+    return {};
+  }
 
   const prompt = `당신은 주식 투자 분석 전문가입니다.
 
@@ -104,7 +107,9 @@ export async function GET(
     const cacheRow = cached[0];
     if (cacheRow?.updated_at) {
       const age = Date.now() - new Date(cacheRow.updated_at as string).getTime();
-      if (age < CACHE_TTL_MS) {
+      const isStale = age >= CACHE_TTL_MS;
+      const isEmpty = !cacheRow.pbr && !cacheRow.per && !cacheRow.roe;  // 핵심 필드 모두 null
+      if (!isStale && !isEmpty) {
         return Response.json({ ok: true, data: cacheRow, cached: true });
       }
     }
@@ -125,6 +130,15 @@ export async function GET(
 
     // Claude AI 호출
     const aiData = await fetchFromClaude(symbol, name);
+
+    // Claude 호출 실패 시 빈 객체 반환 — DB에 기존 데이터가 있으면 그대로 반환, 없으면 에러
+    const isAiEmpty = !aiData.pbr && !aiData.per && !aiData.roe;
+    if (isAiEmpty) {
+      if (cacheRow && (cacheRow.pbr || cacheRow.per || cacheRow.roe)) {
+        return Response.json({ ok: true, data: cacheRow, cached: true });
+      }
+      return Response.json({ ok: false, error: 'claude_unavailable' });
+    }
 
     const fundamentals: FundamentalsResult = {
       pbr: (aiData.pbr as number) ?? null,

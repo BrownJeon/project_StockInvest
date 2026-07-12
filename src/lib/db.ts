@@ -821,6 +821,19 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // ── AI 차트 분석 캐시 — 30분 TTL ─────────────────────────────────────────
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS stock_chart_analysis (
+      symbol       VARCHAR(32)  NOT NULL,
+      interval_str VARCHAR(8)   NOT NULL DEFAULT '30m',
+      ai_analysis  TEXT,
+      indicators   JSON,
+      data_source  VARCHAR(32),
+      updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (symbol, interval_str)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // ── 거래 일지 — 종목당 1개 매매 여정 (watching→active→closed) ─────────────
   await p.query(`
     CREATE TABLE IF NOT EXISTS trade_journals (

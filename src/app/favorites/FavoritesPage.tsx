@@ -27,6 +27,7 @@ interface Favorite {
   price: number | null;
   priceUsd: number | null;
   changeRate: number | null;
+  priceError?: boolean;
   latestSignal: LatestSignal | null;
   // fundamentals
   pbr: number | null;
@@ -67,6 +68,7 @@ export function FavoritesPage() {
   const [items, setItems] = useState<Favorite[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -77,8 +79,13 @@ export function FavoritesPage() {
     try {
       const res = await fetch('/api/favorites');
       const json = await res.json() as { ok: boolean; data: Favorite[] };
-      if (json.ok) setItems(json.data);
-      else setError('load failed');
+      if (json.ok) {
+        setItems(json.data);
+        setLastUpdated(new Date());
+        setError(null);
+      } else {
+        setError('load failed');
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -86,7 +93,11 @@ export function FavoritesPage() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    const id = setInterval(() => void load(), 30_000);
+    return () => clearInterval(id);
+  }, [load]);
 
   // 심볼 검색
   useEffect(() => {
@@ -124,10 +135,13 @@ export function FavoritesPage() {
 
   async function refreshFundamentals(symbol: string) {
     setRefreshing((s) => new Set(s).add(symbol));
-    await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
-    await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
-    await load();
-    setRefreshing((s) => { const n = new Set(s); n.delete(symbol); return n; });
+    try {
+      await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
+      await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
+      await load();
+    } finally {
+      setRefreshing((s) => { const n = new Set(s); n.delete(symbol); return n; });
+    }
   }
 
   function toggleSummary(symbol: string) {
@@ -165,6 +179,12 @@ export function FavoritesPage() {
         )}
       </div>
 
+      {lastUpdated && (
+        <div style={S.lastUpdatedBar}>
+          마지막 갱신: {lastUpdated.toLocaleTimeString('ko-KR')}
+        </div>
+      )}
+
       {items.length === 0 && (
         <div style={S.empty}>즐겨찾기가 없습니다. 위 검색창에서 종목을 추가해보세요.</div>
       )}
@@ -201,7 +221,7 @@ export function FavoritesPage() {
                       </span>
                     )}
                   </div>
-                  {item.price != null && (
+                  {item.price != null ? (
                     <div style={{ ...S.cardPrice, color: priceColor }}>
                       {item.market === 'overseas' && item.priceUsd != null
                         ? usd(item.priceUsd)
@@ -210,7 +230,9 @@ export function FavoritesPage() {
                         <span style={S.cardChange}>{pct(item.changeRate)}</span>
                       )}
                     </div>
-                  )}
+                  ) : item.priceError ? (
+                    <div style={S.priceErrorBadge}>● 조회 실패</div>
+                  ) : null}
                 </div>
                 <button style={S.removeBtn} onClick={(e) => { e.stopPropagation(); void removeFavorite(item.symbol, item.name); }}>✕</button>
               </div>
@@ -351,4 +373,6 @@ const S: Record<string, React.CSSProperties> = {
     background: 'var(--bg3)', border: 'none', borderRadius: 8,
     color: 'var(--fg)', fontSize: 11, padding: '5px 10px', cursor: 'pointer',
   },
+  lastUpdatedBar: { fontSize: 10, color: 'var(--muted)', textAlign: 'right', marginBottom: 8 },
+  priceErrorBadge: { fontSize: 12, color: 'var(--red)', marginTop: 4, fontWeight: 600 },
 };
