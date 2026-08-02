@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: 주식 자동매매(StockInvest)의 독립 코드 감사 에이전트. KIS OpenAPI 기반 실매매 코드의 안전장치 우회·아키텍처 붕괴·race condition을 탐지한다. 자금 손실로 직결되는 Critical 이슈 발견 시 즉시 Tester 단계 중단 요청.
-model: opus
+model: sonnet
 ---
 
 # 🔍 Reviewer / Auditor — 주식 자동매매 (StockInvest)

@@ -20,7 +20,7 @@ TradingInvest/
 ├── .claude/
 │   ├── settings.json              # Agent Teams 활성화
 │   ├── settings.local.json
-│   └── agents/                    # leader / developer / qa / analyst (Sonnet)
+│   └── agents/                    # leader(Opus) / developer(Opus) / qa(Haiku) / analyst(Fable)
 ├── docs/
 │   ├── architecture.md
 │   ├── db-schema.md
@@ -74,10 +74,10 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 
 | 역할 | 모델 | 담당 |
 |------|------|------|
-| leader | **Sonnet** | 요구사항 분석·구현 가이드·조율 |
+| leader | **Opus** | 요구사항 분석·구현 가이드·조율 |
 | developer | **Opus** | Next.js·거래소 어댑터·DB 코드 구현 |
 | qa | **Haiku** | **실매매 안전장치 전담 검증** (최우선) |
-| analyst | **Opus** | 지표·전략·백테스트 설계, 수치 검증 |
+| analyst | **Fable** | 지표·전략·백테스트 설계, 수치 검증 |
 
 자세한 역할은 `.claude/agents/*.md` 참고.
 
@@ -148,9 +148,9 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 프로젝트: 주식 자동매매 (StockInvest)
 팀 구성:
   - leader   (Opus)   — 요구사항 분석·작업 분배·최종 보고
-  - developer (Sonnet) — Next.js·KIS OpenAPI·DB 코드 구현
-  - analyst  (Opus)   — 지표·전략·백테스트 설계 및 실매매 시그널 실행
-  - reviewer (Opus)   — 안전장치 우회 경로·아키텍처·보안 독립 감사
+  - developer (Opus)   — Next.js·KIS OpenAPI·DB 코드 구현
+  - analyst  (Fable)  — 지표·전략·백테스트 설계 및 실매매 시그널 실행
+  - reviewer (Sonnet) — 안전장치 우회 경로·아키텍처·보안 독립 감사
   - qa       (Haiku)  — 실매매 안전장치·엣지케이스 전담 검증
 
 워크플로우: Leader → Analyst → Developer → Reviewer → QA → Leader
