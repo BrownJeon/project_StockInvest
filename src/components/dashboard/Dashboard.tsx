@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CandleChart } from '@/components/CandleChart';
 import { PnlChip } from '@/components/PnlChip';
 import { TradingBoard } from '@/components/TradingBoard';
+import { EvalFunnelCard } from '@/components/dashboard/EvalFunnelCard';
 import { fmtNum, fmtPnl, pnlColor, fmtMarketPrice } from '@/lib/format';
 import { useFxRate } from '@/lib/hooks/useFxRate';
 import { formatRelativeTime, formatDateTimeKST, kstTodayStart } from '@/lib/time';
@@ -373,6 +374,9 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
 
       {/* 운용 전략 */}
       <ActiveStrategiesSection strategies={strategies} />
+
+      {/* 오늘의 평가 깔때기 — 시그널이 왜 안 나오는지 진단 (T-002) */}
+      <EvalFunnelCard reloadKey={reloadKey} />
 
       {/* 최근 체결 타임라인 */}
       <RecentExecutionsSection orders={orders} symbolMeta={symbolMeta} />

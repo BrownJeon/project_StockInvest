@@ -1,4 +1,5 @@
-import { computeLifoPnl, buildTradeReport, formatReportMessage, type OrderRow } from '../trade-report';
+import { computeLifoPnl, buildTradeReport, formatReportMessage, formatFunnelSection, type OrderRow } from '../trade-report';
+import type { EvalFunnelSummary } from '@/lib/strategy/eval-funnel-query';
 
 function row(symbol: string, side: 'buy'|'sell', price: number, qty: number, ts: number, fee = 0): OrderRow {
   return { symbol, side, price, quantity: qty, amount_krw: price * qty, fee, ts };
@@ -146,9 +147,33 @@ describe('formatReportMessage', () => {
     expect(msg).toMatch(/\+10\.00%/);
     expect(msg).toMatch(/매수 2건/);
     expect(msg).toMatch(/매도 2건/);
-    expect(msg).toMatch(/매도 발생 종목 손익/);
-    expect(msg).toMatch(/BCH .* \(매도 2건\)/);
+    // candidates(sellPnl) 미전달 + 매도 존재 → LIFO 실현손익 한 줄로 축약된다.
+    expect(msg).toMatch(/• 실현 손익: \+₩7/);
     expect(msg).toMatch(/회전매매: BCH/);
+  });
+
+  test('candidates.sellPnl 전달 시 — 매도 손익 상세 섹션 렌더', async () => {
+    const rangeStart = new Date(T0);
+    const rangeEnd = new Date(T0 + 3*HOUR);
+    const rows: OrderRow[] = [
+      row('BCH', 'buy',  100, 1, T0+1*HOUR),
+      row('BCH', 'sell', 110, 1, T0+2*HOUR),
+    ];
+    const rep = await buildTradeReport({ rangeStart, rangeEnd, totalKRW: 1100, baselineKRW: 1000, rows });
+    const msg = formatReportMessage(rep, 1100, 1000, {
+      buyWatchlist: [],
+      holdings: [],
+      sellPnl: [
+        { symbol: 'BCH', exitKind: 'target_profit', pnlPct: 10, pnlKRW: 10, sellAmountKRW: 110 },
+        { symbol: 'XRP', exitKind: 'hard_stop',     pnlPct: -5, pnlKRW: -5, sellAmountKRW: 95 },
+      ],
+    });
+    expect(msg).toMatch(/📉 매도 손익 \(총 \+₩5\)/);   // 10 + (-5)
+    expect(msg).toMatch(/🔴 BCH \+₩10 \(\+10\.00%\) \[익절\]/);
+    // fmtKRW 는 음수에 U+2212 MINUS SIGN(−)을 쓴다 (ASCII 하이픈 아님)
+    expect(msg).toMatch(/🔵 XRP −₩5 \(-5\.00%\) \[손절\]/);
+    // 상세 섹션이 나오면 축약 줄은 나오지 않는다
+    expect(msg).not.toMatch(/• 실현 손익:/);
   });
 
   test('baseline 없을 때 — 스냅샷 없음 표시', async () => {
@@ -157,6 +182,78 @@ describe('formatReportMessage', () => {
     const rep = await buildTradeReport({ rangeStart, rangeEnd, totalKRW: 1000, baselineKRW: null, rows: [] });
     const msg = formatReportMessage(rep, 1000, null);
     expect(msg).toMatch(/스냅샷 없음/);
-    expect(msg).toMatch(/매도 발생 종목 없음/);
+    expect(msg).toMatch(/\*매도 없음\*/);
+  });
+});
+
+function funnel(overrides: Partial<EvalFunnelSummary> = {}): EvalFunnelSummary {
+  return {
+    market: 'domestic',
+    rangeStart: new Date(T0),
+    rangeEnd: new Date(T0 + 3 * HOUR),
+    runs: 78,
+    fullEvalRuns: 2,
+    symbolsEvaluated: 72,
+    buySignals: 1,
+    sellSignals: 0,
+    steps: [
+      { key: 'evaluated', label: '평가 종목', count: 72, pctOfPrev: null },
+      { key: 'fired', label: '룰 발화', count: 9, pctOfPrev: 12.5 },
+      { key: 'guard', label: '가드 통과', count: 6, pctOfPrev: 66.7 },
+      { key: 'prefilter', label: '프리필터 통과', count: 4, pctOfPrev: 66.7 },
+      { key: 'ai', label: 'AI 통과', count: 1, pctOfPrev: 25 },
+      { key: 'signal', label: '시그널', count: 1, pctOfPrev: 100 },
+    ],
+    bottlenecks: [
+      { gate: 'rule_no_fire', label: '룰 미발화', count: 63 },
+      { gate: 'cooldown_rebuy', label: '재매수 쿨다운', count: 4 },
+      { gate: 'ai_low_confidence', label: 'AI 신뢰도 미달', count: 3 },
+    ],
+    anomalies: [{ label: 'AI 배치 실패', count: 2 }],
+    neutralPct: 41,
+    ...overrides,
+  };
+}
+
+describe('formatFunnelSection', () => {
+  test('T-002 §4 포맷 예시 — 헤더·단계·병목·이상 배너 모두 렌더', () => {
+    const msg = formatFunnelSection(funnel());
+    expect(msg).toMatch(/📊 평가 깔때기 — 국내장/);
+    expect(msg).toMatch(/런 78회\(풀평가 2회\) · 종목 72개 평가/);
+    expect(msg).toMatch(/룰 발화 9 → 가드 통과 6 → 프리필터 통과 4 → AI 통과 1 → ✅ 시그널 1건 \(매수 1\)/);
+    expect(msg).toMatch(/병목: 룰 미발화 63\/72종목 \(88%\) · 2위 재매수 쿨다운 4건 · 3위 AI 신뢰도 미달 3건/);
+    expect(msg).toMatch(/⚠ 이상: AI 배치 실패 2회 · neutral 상태 41% \(30m 룰 전체 비활성\)/);
+  });
+
+  test('풀평가 == 런 총수면 괄호 생략', () => {
+    const msg = formatFunnelSection(funnel({ runs: 2, fullEvalRuns: 2 }));
+    expect(msg).toMatch(/런 2회 · 종목/);
+    expect(msg).not.toMatch(/풀평가/);
+  });
+
+  test('시그널 0건이면 매수/매도 상세 생략', () => {
+    const base = funnel();
+    const msg = formatFunnelSection({
+      ...base,
+      buySignals: 0,
+      sellSignals: 0,
+      steps: base.steps.map(s => s.key === 'signal' ? { ...s, count: 0 } : s),
+    });
+    expect(msg).toMatch(/✅ 시그널 0건$/m);
+  });
+
+  test('이상·neutral 모두 없으면 이상 배너 줄 생략', () => {
+    const msg = formatFunnelSection(funnel({ anomalies: [], neutralPct: 0 }));
+    expect(msg).not.toMatch(/⚠ 이상/);
+  });
+
+  test('formatReportMessage에 funnel 전달 시 섹션 포함, 미전달 시 생략', async () => {
+    const rangeStart = new Date(T0);
+    const rangeEnd = new Date(T0 + HOUR);
+    const rep = await buildTradeReport({ rangeStart, rangeEnd, totalKRW: 1000, baselineKRW: null, rows: [] });
+    const withFunnel = formatReportMessage(rep, 1000, null, undefined, funnel());
+    expect(withFunnel).toMatch(/📊 평가 깔때기 — 국내장/);
+    const withoutFunnel = formatReportMessage(rep, 1000, null);
+    expect(withoutFunnel).not.toMatch(/평가 깔때기/);
   });
 });

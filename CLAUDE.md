@@ -136,7 +136,17 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 
 ---
 
-**현재 상태·다음 작업은 memory `project_stockinvest.md` 참조**
+## 🔴 작업 재개 프로토콜 (최우선)
+
+사용자가 **"이어서 작업해줘"** 또는 이에 준하는 말을 하면, 다른 말을 하기 전에 아래를 먼저 읽는다.
+
+1. [`agent-vault/00-Context/RESUME.md`](./agent-vault/00-Context/RESUME.md) — **재개 진입점.** 현재 상태·다음 할 일·환경 제약이 전부 여기 있다
+2. [`agent-vault/00-Context/ACTIVE.md`](./agent-vault/00-Context/ACTIVE.md) — 상세 현황
+3. [`agent-vault/10-Flow/board.md`](./agent-vault/10-Flow/board.md) — 칸반
+
+그다음 RESUME.md의 "다음 할 일" 1번부터 진행한다. **세션 메모리나 로컬 플랜 파일에 의존하지 말 것** — 작업 환경(PC)이 바뀔 수 있으므로 모든 맥락은 vault 안에 둔다.
+
+**진행 중인 큰 작업**: 프로젝트 재구성 (시그널 미생성·수익 부재 원인 해소). 진단·설계 전문은 [`agent-vault/30-Knowledge/decisions/2026-08-02-restructure-plan.md`](./agent-vault/30-Knowledge/decisions/2026-08-02-restructure-plan.md).
 
 ## 에이전트 팀 세션 프로토콜
 

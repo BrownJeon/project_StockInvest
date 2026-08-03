@@ -24,6 +24,16 @@ export async function POST(req: Request) {
 
     const cfg = await getRouterConfig();
     const baseAmountKRW = await getEffectiveOrderMax('kis');
+    // Phase 0 fail-safe: 0 = 한도 미설정(safety_order_max_pct 부재) 또는 포트폴리오 평가액 조회 실패.
+    // 이전에는 Infinity가 그대로 amountKRW로 흘러 들어갔다. 이제 매수 후보 산정 자체를 스킵한다.
+    if (!Number.isFinite(baseAmountKRW) || baseAmountKRW <= 0) {
+      console.error('[api/analyst/run] 주문 한도 미설정(effectiveOrderMax=0) — 시그널 산정 스킵');
+      return Response.json({
+        ok: false,
+        error: 'order_limit_unconfigured',
+        detail: '주문 한도(safety_order_max_pct)가 설정되지 않았거나 포트폴리오 평가액을 조회할 수 없습니다. 설정 > 안전장치에서 1회 주문 한도(%)를 지정하세요.',
+      }, { status: 409 });
+    }
     const created: unknown[] = [];
     const skipped: Array<{ symbol: string; reason: string }> = [];
 

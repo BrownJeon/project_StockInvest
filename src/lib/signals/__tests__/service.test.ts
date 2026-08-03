@@ -28,6 +28,11 @@ interface MockOpts {
     strategy_id: string | null;
   };
   dailySum?: number;
+  /**
+   * service.ts 의 "동일 심볼+방향 활성 시그널 중복 방지" 조회 결과.
+   * 지정하면 해당 symbol/side 요청에 대해 기존 pending 시그널이 있는 것으로 응답한다.
+   */
+  activeDuplicate?: { id: number; symbol: string; side: 'buy' | 'sell' };
 }
 
 function setupMockDB(opts: MockOpts = {}): Captured {
@@ -65,6 +70,13 @@ function setupMockDB(opts: MockOpts = {}): Captured {
     if (/UPDATE signals SET status='rejected'/i.test(sql)) {
       cap.signalUpdates.push({ id: Number(params[0]), status: 'rejected' });
       return [{}];
+    }
+    // 동일 심볼+방향 활성 시그널 중복 방지 조회 (auto_submit 이 아닌 경로에서만 발생).
+    // 기본값은 "중복 없음" — activeDuplicate 를 지정한 케이스만 기존 시그널을 반환한다.
+    if (/SELECT id FROM signals[\s\S]*status IN \('pending', 'pending_approval'\)/i.test(sql)) {
+      const [sym, side] = params as [string, string];
+      const dup = opts.activeDuplicate;
+      return [dup && dup.symbol === sym && dup.side === side ? [{ id: dup.id }] : []];
     }
     if (/SELECT[\s\S]*FROM signals WHERE id=\?/i.test(sql)) {
       const row = opts.signalRow ?? {
@@ -166,6 +178,39 @@ describe('signals/service', () => {
     expect(r.orderId).toBeUndefined();
     expect(cap.signalInserts[0].status).toBe('pending');
     expect(cap.orderInserts).toHaveLength(0);
+  });
+
+  test('createSignal — 동일 심볼+방향 활성 시그널 존재 시 중복 생성 차단', async () => {
+    process.env.ANALYST_ENABLED = 'false';
+    const cap = setupMockDB({ activeDuplicate: { id: 777, symbol: 'KRW-BTC', side: 'buy' } });
+    const r = await createSignal({
+      symbol: 'KRW-BTC',
+      side: 'buy',
+      orderType: 'limit',
+      price: 90_000_000,
+      quantity: 0.000_1,
+      amountKRW: 9_000,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('duplicate_active_signal');
+    expect(r.signalId).toBe(777);
+    expect(cap.signalInserts).toHaveLength(0);
+    expect(cap.orderInserts).toHaveLength(0);
+  });
+
+  test('createSignal — 방향이 다르면 중복으로 보지 않는다', async () => {
+    process.env.ANALYST_ENABLED = 'false';
+    const cap = setupMockDB({ activeDuplicate: { id: 777, symbol: 'KRW-BTC', side: 'sell' } });
+    const r = await createSignal({
+      symbol: 'KRW-BTC',
+      side: 'buy',
+      orderType: 'limit',
+      price: 90_000_000,
+      quantity: 0.000_1,
+      amountKRW: 9_000,
+    });
+    expect(r.ok).toBe(true);
+    expect(cap.signalInserts).toHaveLength(1);
   });
 
   test('createSignal ANALYST_ENABLED=true 일반 금액 → auto_submitted', async () => {

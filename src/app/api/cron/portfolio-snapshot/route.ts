@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2';
 import { kis } from '@/lib/exchanges/kis';
 import { sendAlert } from '@/lib/notify';
 import { savePortfolioSnapshot, checkVolatilityGuard } from '@/lib/safety/volatility-guard';
+import { checkAndTriggerDrawdownKillSwitch, isKillSwitchActive } from '@/lib/safety/kill-switch';
 import { getPool } from '@/lib/db';
 import { getCurrentMarket } from '@/lib/strategy/market-hours';
 
@@ -104,6 +105,13 @@ export async function POST(req: NextRequest) {
 
     await savePortfolioSnapshot(totalKRW, positions, 'hourly');
 
+    // 24h drawdown 기반 Kill Switch 자동 발동 (Phase 0, 2026-08-02 배선).
+    // 방금 저장한 스냅샷이 '현재 자본'이 되므로 반드시 savePortfolioSnapshot 이후에 호출한다.
+    // 발동 시 kill-switch.ts 내부에서 system_config 영속 저장 + sendAlert('critical') 통지.
+    // 자체적으로 try/catch 하므로 예외가 스냅샷 응답을 깨지 않는다.
+    await checkAndTriggerDrawdownKillSwitch();
+    const killSwitchActive = await isKillSwitchActive();
+
     // 변동폭 가드 체크
     const volCheck = await checkVolatilityGuard();
     let action: string | null = null;
@@ -125,6 +133,7 @@ export async function POST(req: NextRequest) {
       totalKRW: Math.round(totalKRW),
       positions: positions.length,
       volGuard: { level: volCheck.level ?? 'ok', changePct: volCheck.changePct },
+      killSwitch: killSwitchActive,
       action,
     });
   } catch (e) {

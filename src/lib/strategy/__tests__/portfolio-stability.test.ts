@@ -22,7 +22,7 @@ const STYLE_AGGRESSIVE: StyleConfig = { ...STYLE_STABLE, stableCoreRatioMin: 0.2
 interface MockBehavior {
   /** symbol → tier in symbol_universe */
   tiers?: Record<string, 'core' | 'satellite' | 'speculative'>;
-  /** symbol → recent 24h buy count */
+  /** symbol → recent 24h 실주문(orders) buy count */
   recentBuys?: Record<string, number>;
 }
 
@@ -36,12 +36,15 @@ function setupPool(behavior: MockBehavior = {}): void {
       const tier = behavior.tiers?.[sym];
       return tier ? [[{ tier }]] : [[]];
     }
-    if (/COUNT\(\*\)[\s\S]*FROM signals[\s\S]*side = 'buy'/i.test(sql)) {
+    // countRecentBuysForSymbol 은 signals 가 아니라 **orders**(실주문) 기준이다.
+    // signals.auto_submitted 기준이면 dry_run·blocked 주문까지 세어 실거래 없이 한도에
+    // 도달하는 버그가 있어 orders 로 전환됐다 (portfolio-stability.ts 주석 참조).
+    if (/COUNT\(\*\)[\s\S]*FROM orders[\s\S]*side = 'buy'/i.test(sql)) {
       const sym = String(params[0]);
       const n = behavior.recentBuys?.[sym] ?? 0;
       return [[{ n }]];
     }
-    return [[]];
+    throw new Error(`unexpected SQL: ${sql}`);
   });
   (getPool as jest.Mock).mockReturnValue({ query });
 }
@@ -77,6 +80,32 @@ describe('checkPortfolioStability', () => {
     });
     expect(r.verdict).toBe('skip');
     expect(r.reason).toBe('max_positions_exceeded');
+    expect(r.detail).toMatch(/24h 내 005930 buy 1건 ≥ 한도 1/);
+  });
+
+  test('maxPositionsPerSymbol 미만 → 카운트 통과 (공격 모드 한도 3, 실주문 2건)', async () => {
+    setupPool({ recentBuys: { '005930': 2 }, tiers: { '005930': 'core' } });
+    const r = await checkPortfolioStability({
+      symbol: '005930', side: 'buy', amountKRW: 100_000, market: 'domestic',
+      style: STYLE_AGGRESSIVE, heldAmounts: new Map(),
+    });
+    expect(r.verdict).toBe('pass');
+  });
+
+  test('누적 카운트는 signals 가 아니라 orders 실주문 기준 (dry_run·blocked 제외)', async () => {
+    // 회귀 방어: signals.auto_submitted 기준으로 되돌리면 DRY_RUN 만으로 한도가 소진돼
+    // 실거래가 시작되기도 전에 매수가 영구 차단된다.
+    setupPool({ recentBuys: { '005930': 0 } });
+    await checkPortfolioStability({
+      symbol: '005930', side: 'buy', amountKRW: 100_000, market: 'domestic',
+      style: STYLE_STABLE, heldAmounts: new Map(),
+    });
+    const query = (getPool as jest.Mock).mock.results[0].value.query as jest.Mock;
+    const countSql = query.mock.calls.map((c) => String(c[0])).find((s) => /COUNT\(\*\)/i.test(s));
+    expect(countSql).toBeDefined();
+    expect(countSql).toMatch(/FROM orders/i);
+    expect(countSql).not.toMatch(/FROM signals/i);
+    expect(countSql).toMatch(/status IN \('filled','accepted','partially_filled'\)/i);
   });
 
   test('빈 포트폴리오 부트스트랩 → pass (안정 모드, speculative 매수)', async () => {

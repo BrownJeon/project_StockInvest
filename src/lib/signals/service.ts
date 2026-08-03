@@ -89,6 +89,9 @@ export interface SignalRow {
   updated_at: Date;
 }
 
+/** 관측 게이트 분류용 기계 판독 코드. `error`는 사람이 읽는 상세 메시지라 문자열이 가변적이다. */
+export type CreateSignalErrorCode = 'symbol_blacklisted' | 'duplicate_active_signal';
+
 export interface CreateSignalResult {
   ok: boolean;
   signalId: number;
@@ -96,6 +99,7 @@ export interface CreateSignalResult {
   orderId?: number;
   orderResult?: unknown;
   error?: string;
+  errorCode?: CreateSignalErrorCode;
 }
 
 function buildOrderRequest(input: SignalInput, chasePct = 0): OrderRequest {
@@ -142,7 +146,7 @@ export async function createSignal(
 
   const sym = await checkSymbolBlacklist(input.symbol);
   if (!sym.ok) {
-    return { ok: false, signalId: 0, autoSubmitted: false, error: sym.detail ?? 'symbol_not_allowed' };
+    return { ok: false, signalId: 0, autoSubmitted: false, error: sym.detail ?? 'symbol_not_allowed', errorCode: 'symbol_blacklisted' };
   }
 
   // 하이브리드 모드: hybridModeEnabled가 true면 pending_approval 강제
@@ -190,7 +194,7 @@ export async function createSignal(
     );
     if ((dup as RowDataPacket[]).length > 0) {
       const dupId = (dup as RowDataPacket[])[0].id as number;
-      return { ok: false, signalId: dupId, autoSubmitted: false, error: 'duplicate_active_signal' };
+      return { ok: false, signalId: dupId, autoSubmitted: false, error: 'duplicate_active_signal', errorCode: 'duplicate_active_signal' };
     }
   }
   const [ins] = await pool.query<ResultSetHeader>(

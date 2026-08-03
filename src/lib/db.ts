@@ -3,6 +3,24 @@ import mysql from 'mysql2/promise';
 let pool: mysql.Pool | null = null;
 let setupPromise: Promise<void> | null = null;
 
+/**
+ * 코드가 signals.status 로 실제 기록하는 값 목록 (setupDB 사후 검증용).
+ * signals/service.ts · router.ts · engine.ts 에서 INSERT/UPDATE 되는 상태만 나열한다.
+ * ENUM 에 없는 값이 있으면 STRICT 모드에서 INSERT 가 하드 에러 → 시그널 전멸 (T-002 H1 사고).
+ */
+export const REQUIRED_SIGNAL_STATUSES = [
+  'pending',
+  'pending_approval',
+  'approved',
+  'approved_pending_entry',
+  'auto_submitted',
+  'executing',
+  'rejected',
+  'expired',
+  'superseded',
+  'ai_skipped',
+] as const;
+
 function createPool(): mysql.Pool {
   return mysql.createPool({
     host: process.env.DB_HOST,
@@ -57,6 +75,37 @@ export async function ping(): Promise<boolean> {
 export function ensureSetup(): Promise<void> {
   if (!setupPromise) setupPromise = setupDB();
   return setupPromise;
+}
+
+/**
+ * **일회성** 데이터 마이그레이션 실행기.
+ *
+ * `system_config` 에 마커 키가 없을 때만 fn 을 실행하고, 성공 시 마커를 남긴다.
+ * → 부팅마다 사용자 설정을 덮어쓰는 재동기화(예: applicable_styles 강제 UPDATE)와 달리,
+ *   마이그레이션 이후 사용자가 UI 에서 바꾼 값은 영구히 보존된다.
+ * fn 이 실패하면 마커를 남기지 않아 다음 부팅에 재시도된다 (fn 은 idempotent 여야 함).
+ */
+async function runOnceMigration(
+  p: mysql.Pool,
+  markerKey: string,
+  label: string,
+  fn: () => Promise<void>,
+): Promise<void> {
+  try {
+    const [rows] = await p.query<mysql.RowDataPacket[]>(
+      'SELECT `key` FROM system_config WHERE `key` = ? LIMIT 1',
+      [markerKey],
+    );
+    if (rows.length > 0) return;   // 이미 적용됨 — 사용자 설정 존중, 재실행 금지
+    await fn();
+    await p.query(
+      'INSERT IGNORE INTO system_config (`key`, value) VALUES (?, ?)',
+      [markerKey, JSON.stringify(new Date().toISOString())],
+    );
+    console.log(`[db] one-time migration applied: ${label}`);
+  } catch (e) {
+    console.warn(`[db] one-time migration 실패 (${markerKey}): ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 async function setupDB(): Promise<void> {
@@ -315,6 +364,20 @@ async function setupDB(): Promise<void> {
       last_backtest_result: null,
       stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
     },
+    {
+      // T-002 H4 — 기본 **비활성**. 최근 14일 후보의 73%(3,304건)를 이 룰 하나가 생성했고,
+      // 코인 24h 고저 로직이 주식 "당일 고저"로 오작동한 결과다(자체 조건이 사실상 없음).
+      // Phase 2 재설계 요건: "전일 고가 돌파 + 거래량 ≥1.5× + 5봉 누적 상승 < momentumChaseMaxPct"
+      // 를 룰에 흡수하기 전엔 재활성 금지.
+      id: 'price-breakout-v1', name: '당일 고저 돌파',
+      description: '당일 고가 0.8% 근접 돌파 / 저가 근접 이탈 — 노이즈 과다로 기본 비활성 (Phase 2 재설계 대상)',
+      tags: JSON.stringify(['Price · High/Low', '30m', '재설계 대기']),
+      applicable_styles: 'aggressive,neutral',
+      enabled: 0, backtest_interval_h: 6,
+      last_backtest_at: null, next_backtest_at: null,
+      last_backtest_result: null,
+      stats_cache: JSON.stringify({ return7d: 0, winRate: 0, signalCount: 0 }),
+    },
     // 장 마감 후 익일 시나리오 전략 (post-market-engine 사용)
     {
       id: 'eod-high-close-v1', name: '당일 고점 마감',
@@ -387,11 +450,33 @@ async function setupDB(): Promise<void> {
     ).catch(() => { /* non-fatal */ });
   }
 
+  // ── 일회성 마이그레이션 (T-002 H4) ────────────────────────────────────────
+  // 위 applicable_styles 재동기화(무조건 UPDATE)와 달리, **딱 한 번만** 실행되고
+  // 이후 사용자가 UI에서 바꾼 값은 코드가 절대 되돌리지 않는다.
+  // system_config 에 마커 키를 남겨 재실행을 막는다.
+  await runOnceMigration(
+    p,
+    'migration_disable_price_breakout_v1',
+    'price-breakout-v1 기본 비활성 (노이즈 73% 지배 — Phase 2 재설계 전까지)',
+    async () => {
+      await p.query(`UPDATE strategies SET enabled = 0 WHERE id = 'price-breakout-v1' AND enabled = 1`);
+    },
+  );
+
+  // system_config value 는 JSON 문자열로 저장한다 (settings/safety PATCH 가 JSON.stringify 사용).
+  // 숫자는 '5', 불리언은 'true'/'false', 문자열은 '"..."' 형태.
+  //
+  // Phase 0 (2026-08-02): 안전 기본값 시드 추가.
+  // safety_order_max_pct / safety_daily_order_max_pct 가 없으면 getEffectiveOrderMax 가 0을 반환해
+  // 신규 매수가 전면 차단된다(fail-safe). 부팅 시 최소 기본값을 심어 운영 중단을 막는다.
+  // INSERT IGNORE — 사용자가 설정 메뉴에서 지정한 기존 값은 절대 덮어쓰지 않는다.
   for (const [key, val] of [
     ['backtest_period_days',   '90'],
     ['backtest_fee_pct',       '0.05'],
     ['backtest_slip_pct',      '0.10'],
     ['backtest_incl_inactive', 'false'],
+    ['safety_order_max_pct',       '5'],   // 1회 주문 = 해당 시장 평가액의 5%
+    ['safety_daily_order_max_pct', '10'],  // 일일 누적 = 해당 시장 평가액의 10%
   ] as [string, string][]) {
     await p.query('INSERT IGNORE INTO system_config (`key`, value) VALUES (?,?)', [key, val]);
   }
@@ -460,14 +545,42 @@ async function setupDB(): Promise<void> {
   } catch { /* 이미 존재 */ }
 
   // 사용자 시나리오 진입 감시 관련 status + 컬럼 추가
+  //
+  // ⚠️ T-002 H1 (2026-08-02) — `pending_approval` 추가.
+  //   운영 config `hybrid_mode_enabled=true` 이면 service.ts:175 가 status='pending_approval' 로
+  //   INSERT 하는데 이 값이 ENUM 에 없었다. MariaDB `sql_mode=STRICT_TRANS_TABLES` 에서
+  //   ENUM 범위 밖 값은 **하드 에러** → AI 통과 후보·exit 청산 시그널이 전부 INSERT 예외로 사망하고,
+  //   미보호 createSignal 호출 때문에 그 예외가 runMarket 전체를 중단시켰다 (7/19 이후 시그널 0건/일).
+  //
+  //   **합집합 확장만 한다.** 기존 값 제거·재배열 금지 — ENUM 끝에 값을 append 하는 것은
+  //   메타데이터만 바꾸는 인플레이스 ALTER 지만, 값 제거·재배열은 테이블 리빌드 + 기존 row 손상 위험.
   try {
     await p.query(`
       ALTER TABLE signals MODIFY COLUMN status
         ENUM('pending','approved','rejected','auto_submitted','expired','superseded',
-             'ai_skipped','approved_pending_entry','executing')
+             'ai_skipped','approved_pending_entry','executing','pending_approval')
         NOT NULL DEFAULT 'pending'
     `);
   } catch { /* 이미 존재 */ }
+
+  // H1 사후 검증 — ALTER 가 조용히 실패하면 시그널이 다시 전멸한다.
+  // 코드가 쓰는 status 가 ENUM 에 실제로 존재하는지 부팅 시 1회 확인하고, 없으면 크게 경고한다.
+  // (fail-closed 기동 차단은 Phase 2 §4-2 에서 SIGNAL_STATUSES 상수와 함께 도입)
+  try {
+    const [colRows] = await p.query<mysql.RowDataPacket[]>(
+      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'signals' AND COLUMN_NAME = 'status'
+        LIMIT 1`,
+    );
+    const colType = String(colRows[0]?.COLUMN_TYPE ?? '');
+    const missing = REQUIRED_SIGNAL_STATUSES.filter(s => !colType.includes(`'${s}'`));
+    if (colType && missing.length > 0) {
+      console.error(
+        `[db] ⚠️ signals.status ENUM 에 코드가 사용하는 상태가 없습니다: ${missing.join(', ')}. ` +
+        `해당 상태의 시그널 INSERT 는 STRICT 모드에서 전부 실패합니다. 수동 ALTER 필요. (현재: ${colType})`,
+      );
+    }
+  } catch { /* 검증 실패는 비치명 */ }
   try {
     await p.query(`ALTER TABLE signals ADD COLUMN scenario_source VARCHAR(32) NULL`);
   } catch { /* 이미 존재 */ }
@@ -865,6 +978,32 @@ async function setupDB(): Promise<void> {
       INDEX idx_entries_journal (journal_id, created_at ASC),
       CONSTRAINT fk_journal_entries FOREIGN KEY (journal_id)
         REFERENCES trade_journals(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ── eval_funnel — 평가 깔때기 관측 (T-002 Phase 1) ───────────────────────
+  // "왜 시그널이 없는가"를 게이트 단위로 추적한다. 기록 정책 (T-002 §2):
+  //   run 1행/런 + collect 1행/심볼/런 + 실제 죽은 후보의 개별 skip 행 + final 1행/심볼/런.
+  //   (symbol×strategy) 전건 기록은 일 7만행이라 기각 — pass 는 요약, skip 은 심볼 단위 전건.
+  // 보존 30일 롤링 (eval-funnel.ts pruneOldRows 가 배치 삭제).
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS eval_funnel (
+      id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      run_id VARCHAR(40) NOT NULL,
+      ts DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      market ENUM('domestic','overseas') NOT NULL,
+      symbol VARCHAR(32) NULL,
+      strategy_id VARCHAR(64) NULL,
+      side ENUM('buy','sell') NULL,
+      stage TINYINT UNSIGNED NOT NULL,
+      gate VARCHAR(48) NOT NULL,
+      verdict ENUM('pass','skip','error') NOT NULL,
+      reason VARCHAR(64) NULL,
+      detail JSON NULL,
+      INDEX idx_ef_run (run_id),
+      INDEX idx_ef_ts (ts),
+      INDEX idx_ef_gate (gate, ts),
+      INDEX idx_ef_market (market, ts, stage)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 

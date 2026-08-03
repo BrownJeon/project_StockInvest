@@ -1,0 +1,15 @@
+# 개행 정책 — **최소 개입 원칙** (Phase 0, 2026-08-02)
+#
+# 이 리포는 NAS(Linux)에서 실행되고 Windows에서 SMB로 마운트해 편집한다.
+# `* text=auto` 를 걸면 전 파일이 renormalize 대상이 되어 워킹트리 modified 가
+# 30여 개 → 250개 이상으로 폭증하고 커밋이 오염된다. 그래서 전역 규칙은 두지 않는다.
+#
+# 대신 **Linux 런타임이 직접 해석하는 파일만** LF 로 고정한다.
+# (CRLF 가 섞이면 `bad interpreter: /usr/bin/env bash^M` 등으로 실행 자체가 실패)
+
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Gitea Actions 워크플로 — Linux 러너가 파싱
+*.yml  text eol=lf
+*.yaml text eol=lf

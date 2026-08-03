@@ -1,16 +1,63 @@
 ---
 project: StockInvest
-updated: 2026-07-12
+updated: 2026-08-02
 tags:
   - type/context
 ---
 # 현재 상태
 
 ## 지금 상태
-(아직 기록 없음 — Leader가 작업 진행에 따라 갱신한다)
+
+**프로젝트 재구성 진행 중** (사용자 요청: "시그널도 안 나오고 수익도 없어 사용 중단 → 다시 쓸 수 있게 재구성").
+
+원인 분석 완료 — 코드 수준에서 확정:
+- 매수 시그널 1건이 사용자에게 도달하려면 직렬 게이트 ~10개 통과 필요, 그중 3개가 확률 ~0
+  1. `ANALYST_ENABLED=false`가 engine.ts:843에서 엔진 자체를 차단 (router.ts:92의 라우팅 플래그와 이중 의미 — 공식 가이드 1단계 설정이 곧 시그널 0)
+  2. market-state 게이트(RSI<35 선점)와 유일 매수 룰 rsi-oversold-v1(RSI<35 발화)의 **구간 배타** — 활성 창과 발화 창의 교집합이 공집합
+  3. ai-filter.ts:422가 LLM_PROVIDER 무시하고 `claude` CLI 직접 spawn → 실패 시 비보유 종목 전량 ai_failed
+- 수익 부재는 구조적: DRY_RUN=true + `executions` INSERT 코드 전무 → 페이퍼 손익조차 측정 불가
+- 안전장치는 거꾸로 fail-open (한도 미설정 시 Infinity, Kill Switch drawdown dead code, 71라우트 중 61개 무인증)
+
+전체 진단·설계는 플랜 파일 참조: `C:\Users\admin\.claude\plans\majestic-imagining-raccoon.md`
+
+## 재구성 전략
+
+**최소 동작 루프 우선(strangler)** — 검증된 자산(KIS 어댑터, submitOrder 단일 관문, UI 셸, 알림, post-market 시나리오 카드) 보존 + 파손된 시그널 파이프라인만 단순·관측 가능하게 재구축. 매 Phase가 사용자가 눈으로 확인할 결과물을 낸다.
+
+Phase 0(안전 기반) → 1(관측: 깔때기) → 2(시그널 복구: 게이트 9→4, 스위치 의미 분리, 장중 AI 제거) → 3(페이퍼 손익 실측) → 4(백테스트 검증 루프) → 5(DRY_RUN 해제 준비)
+
+## 사용자 확정 결정 (2026-08-02)
+
+1. 해외주식 **보류** (코드 보존·비활성, 국내 루프 완성 후 재개)
+2. 장중 AI **제거** — 장중은 결정론적 룰만, AI는 post-market 시나리오 생성(밤 배치)에만
+3. 부가기능: **RAG 되먹임 유지 + 투자일지 유지** / AI 채팅(/ai)·LoRA export 비활성·삭제
+4. 크리덴셜: DB 평문 유지 + 인증(PIN/PSK)으로 접근 봉쇄
 
 ## 다음 할 일
-(아직 없음)
+
+**2026-08-03 세션에서 [[T-002-phase1-eval-funnel]] 잔여 구현을 전부 완료했다. 재개 시 아래 순서.**
+
+1. **배포 승인** — 오늘 변경분(engine.ts 계측 완성 + 안전 관련 수정 1건, 대시보드 카드, trade-report 요약)이 typecheck·테스트·독립 reviewer 감사를 통과해 워킹트리에 대기 중이다. 사용자 승인 후 커밋·push(=자동배포) + `stockinvest-cron` 수동 재시작. 상세는 [[RESUME]].
+2. 배포 후 장중 실측 — `eval_funnel` final.stage가 정상 기록되는지, 대시보드·리포트가 실데이터로 렌더되는지 확인.
+3. [[T-001-phase0-safety-foundation]] — developer 작업은 완료(next 14.2.35, 테스트 398건 통과). **reviewer 최종 재검증만 남음**(2차 Critical인 CVE-2025-55184 수정분 확인). 그 후 QA.
+4. [[T-003-phase2-pipeline-redesign]] — analyst 사양 완료. Phase 1 관측 데이터 3영업일 확보 후(배포일 기준) developer 착수.
+
+## Phase 0 최종 상태 (developer 완료분)
+
+- 한도 fail-safe 전환(미설정·조회실패 → 0 = 거부), safety 기본값 seed(회당 5%/일일 10%)
+- PIN 인증 미들웨어(Edge HMAC 세션) + /login + 전역 지수 백오프 로그인 잠금
+- Kill Switch drawdown을 portfolio-snapshot cron에 배선
+- `parseBoolFlag` 3분기(unset/parsed/unparsable) — 해석 불가 시 안전 방향 + critical 알림
+- next 14.2.15 → **14.2.35** (CVE-2025-29927 인가우회 + CVE-2025-55184 DoS). lock의 deprecated 필드 소멸로 검증
+- undici 제거(초기 커밋부터 미설치 = 동작한 적 없음), /api/health 금액 비노출, CI에 npm test 게이트
+- 테스트 39 suites / 398건 통과, build·tsc 통과 (Phase 0 시점 기준)
 
 ## 열린 결정
-(아직 없음)
+
+- ~~배포 파이프라인이 이미 red였음~~ → **정정(2026-08-02 pm2 실측)**: `stockinvest`는 **online, next 14.2.15, uptime 4h**로 정상 가동 중이고 cron도 5분마다 정상 동작(`strategy-eval skipped — all_markets_closed`, 장 마감 시간이라 정상). 배포는 red가 아니었다. 단 `undici` 미선언으로 `npm run build`가 실패하는 것은 사실이므로, **마지막 성공 배포 이후 CI가 계속 실패해 왔을 가능성**은 남아 있다(운영 프로세스는 그 이전 빌드로 계속 서빙).
+- **미해결 이상징후 3건 (리눅스에서 확인 필요)**:
+  1. `.next/`가 SMB 마운트(Z:)에서는 `trace` 파일 하나(Apr 22)뿐인데 앱은 정상 서빙 중. `ecosystem.config.js`는 `cwd: __dirname` + distDir 오버라이드 없음 → 같은 `.next`를 읽어야 정상. **실행 중 프로세스가 열린 파일 핸들로 버티고 있고 실제 `.next`는 삭제된 상태일 가능성** → 그렇다면 다음 pm2 restart 때 기동 실패한다.
+  2. **restart 315회** (tradinginvest도 171회). 반복 재시작 원인 불명.
+  3. `AI_API_BASE`(192.168.219.163:8001 = 맥미니 M4 AI 게이트웨이) **연결 실패**가 err.log에 기록됨 → RAG 검색·hybrid stage1 무력화. analyst가 찾은 `claude exit 143` 실패와는 별개 장애.
+- **운영 코드에는 H1 핫픽스가 아직 없다** — 워킹트리에만 있으므로 시그널은 여전히 0건. 배포해야 소생한다.
+- 워킹트리에 커밋되지 않은 변경 다수(원래 30여 개) — Phase 별 검증 완료 후 커밋 전략 결정 필요. **push = Gitea Actions 자동 배포**이므로 신중.

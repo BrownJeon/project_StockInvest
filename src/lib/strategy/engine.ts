@@ -26,7 +26,13 @@ import { fetchMacroIndicators } from '@/lib/strategy/macro';
 import { marketSessionInfo } from '@/lib/strategy/market-hours';
 import { refreshUniverse, getUniverseSymbols, getAlwaysIncludeSymbols } from '@/lib/strategy/universe';
 import { checkPortfolioStability } from '@/lib/strategy/portfolio-stability';
-import { evaluateExit, isLateSessionBuyBlockKST, EXIT_STRATEGY_ID } from '@/lib/strategy/exit-engine';
+import {
+  evaluateExit,
+  isLateSessionBuyBlockKST,
+  EXIT_STRATEGY_ID,
+  EXIT_UNIT_RATIO_MIN,
+  EXIT_UNIT_RATIO_MAX,
+} from '@/lib/strategy/exit-engine';
 import { upsertPositionState, reconcilePositionState, loadPositionState } from '@/lib/strategy/position-state';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 import type { StrategyMeta } from './rules/types';
@@ -35,6 +41,8 @@ import { getAnalystStyle, getStyleConfig } from './style';
 import { classifyMarketState, getRulesForState, ALWAYS_ACTIVE_RULES } from './market-state';
 import type { AnalystStyle, StyleConfig } from './style';
 import { sendAlert } from '@/lib/notify';
+import { EvalFunnelRecorder } from './eval-funnel';
+import type { FunnelGate } from './eval-funnel-labels';
 
 interface StrategyRow extends RowDataPacket {
   id: string;
@@ -66,10 +74,125 @@ export interface RunAllResult {
 type ActiveStrategy = { id: string; meta: StrategyMeta };
 type Candidate = SignalInput & { strategyId: string };
 
+/**
+ * Phase AC(장마감 후 시나리오) 전용 룰 — `post-market-engine.ts`가 별도로 실행하며
+ * intraday `STRATEGY_REGISTRY`에는 의도적으로 없다. `strategies` 테이블을 두 실행기가
+ * 공유하다 보니 intraday 조회에도 걸리는데, 이는 코드-DB 불일치(결함)가 아니라
+ * 실행기 분리에 따른 정상 현상이므로 eval_funnel에는 error가 아닌 skip으로 기록한다.
+ */
+const POST_MARKET_ONLY_STRATEGY_IDS = new Set(['eod-high-close-v1', 'inside-bar-v1', 'oversold-bounce-daily-v1']);
+
 
 interface HeldEntry {
   qty: number;
   avgPrice?: number;
+}
+
+/**
+ * 심볼별 "얼마나 깊이 갔는가" 추적기 — eval_funnel `final` 행(깔때기 SQL의 축)을 만드는 데 쓴다.
+ * 같은 심볼에 후보가 여럿이면 **가장 깊이 간 후보**의 결과를 채택한다.
+ */
+interface SymbolOutcome {
+  /** 이 심볼(의 가장 깊이 간 후보)이 도달한 stage */
+  stage: number;
+  /** 그 stage 에서 후보를 죽인 gate. 통과만 하고 아직 죽지 않았으면 null */
+  gate: FunnelGate | null;
+  rawCandidates: number;
+  signalIds: number[];
+}
+
+function createOutcomeTracker() {
+  const map = new Map<string, SymbolOutcome>();
+  const ensure = (symbol: string): SymbolOutcome => {
+    let cur = map.get(symbol);
+    if (!cur) { cur = { stage: 0, gate: null, rawCandidates: 0, signalIds: [] }; map.set(symbol, cur); }
+    return cur;
+  };
+  return {
+    map,
+    /** stage 까지 **통과**했음 (죽지 않음) — 더 깊은 값일 때만 갱신하고 gate 는 비운다 */
+    advance(symbol: string, stage: number): void {
+      const cur = ensure(symbol);
+      if (stage > cur.stage) { cur.stage = stage; cur.gate = null; }
+    },
+    /** stage 에서 gate 에 의해 **죽었음** — 같은 stage 면 죽인 게이트를 우선 채택 */
+    kill(symbol: string, stage: number, gate: FunnelGate): void {
+      const cur = ensure(symbol);
+      if (stage >= cur.stage) { cur.stage = stage; cur.gate = gate; }
+    },
+    setRaw(symbol: string, rawCandidates: number): void {
+      ensure(symbol).rawCandidates = rawCandidates;
+    },
+    markSignal(symbol: string, signalId: number): void {
+      const cur = ensure(symbol);
+      cur.stage = 99; cur.gate = 'signal_created'; cur.signalIds.push(signalId);
+    },
+  };
+}
+type OutcomeTracker = ReturnType<typeof createOutcomeTracker>;
+
+/** AI 스킵 카테고리 → eval_funnel gate ID */
+function aiGateForSkipCategory(cat: SkipCategory | undefined): FunnelGate {
+  switch (cat) {
+    case 'ai_low_confidence':    return 'ai_low_confidence';
+    case 'ai_failed':            return 'ai_failed_nonheld';
+    case 'dedup_reuse':          return 'dedup_regime';
+    case 'portfolio_guard':      return 'portfolio_guard_other';
+    case 'market_state_neutral': return 'market_state_rule_inactive';
+    case 'rule_prefilter':       return 'prefilter_bypassed_no_summary';
+    case 'ai_rejected':
+    default:                     return 'ai_rejected';
+  }
+}
+
+/**
+ * createSignal **예외 격리** 래퍼 (T-002 H2).
+ *
+ * 이전에는 `signals.status` ENUM 에 `pending_approval` 이 없어 STRICT 모드에서 INSERT 가
+ * 하드 에러를 던졌고, 미보호 호출이라 그 예외가 **runMarket 전체를 중단**시켰다.
+ * 후보 한 건의 실패가 런 전체를 죽이면 안 된다 — 실패는 eval_funnel 에 남기고 다음 후보로 계속한다.
+ *
+ * 절대 throw 하지 않는다.
+ */
+export async function createSignalGuarded(
+  input: Candidate | (SignalInput & { strategyId: string }),
+  rec: EvalFunnelRecorder,
+  outcome?: OutcomeTracker,
+): Promise<{ ok: boolean; signalId?: number; error?: string }> {
+  const base = {
+    symbol: input.symbol,
+    side: input.side as 'buy' | 'sell',
+    strategyId: input.strategyId ?? null,
+  };
+  try {
+    const res = await createSignal(input);
+    if (res.ok) {
+      rec.pass('signal_created', { ...base, detail: { signalId: res.signalId } });
+      outcome?.markSignal(input.symbol, res.signalId);
+      return { ok: true, signalId: res.signalId };
+    }
+    const gate: FunnelGate =
+      res.errorCode === 'duplicate_active_signal' ? 'duplicate_active_signal'
+      : res.errorCode === 'symbol_blacklisted'    ? 'symbol_blacklisted'
+      :                                             'signal_create_failed';
+    rec.record({
+      ...base,
+      gate,
+      verdict: gate === 'signal_create_failed' ? 'error' : 'skip',
+      reason: res.errorCode ?? (res.error ? res.error.slice(0, 64) : null),
+      detail: { error: res.error, dupSignalId: gate === 'duplicate_active_signal' ? res.signalId : undefined },
+    });
+    outcome?.kill(input.symbol, 11, gate);
+    console.warn(`[signal-create] ${input.symbol} ${input.side} 생성 거부: ${res.error}`);
+    return { ok: false, error: res.error };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    // ★ H2 핵심 — 여기서 예외를 삼키지 않으면 런 전체가 죽는다.
+    console.error(`[signal-create] ${input.symbol} ${input.side} 생성 예외 — 런은 계속 진행: ${error}`);
+    rec.error('signal_create_failed', { ...base, reason: 'exception', detail: { error } });
+    outcome?.kill(input.symbol, 11, 'signal_create_failed');
+    return { ok: false, error };
+  }
 }
 
 async function getHeldAmounts(market: Market): Promise<Map<string, HeldEntry>> {
@@ -126,6 +249,10 @@ interface CollectedContext {
   heldAvgPrice?: number;
   rawCandidateCount: number;
   error?: string;
+  /** eval_funnel — 이 심볼이 collect 단계에서 도달한 가장 깊은 stage */
+  outcomeStage: number;
+  /** eval_funnel — 위 stage 에서 이 심볼(의 마지막 후보)을 죽인 gate. 살아서 통과했으면 null */
+  outcomeGate: FunnelGate | null;
 }
 
 /**
@@ -141,14 +268,17 @@ async function collectCandidates(
   heldAmounts: Map<string, HeldEntry>,
   amountKRW: number,
   style: StyleConfig,
+  rec: EvalFunnelRecorder,
 ): Promise<CollectedContext | null> {
   let ticker: Ticker;
   try {
     ticker = await kis.getTicker(symbol);
   } catch (e) {
+    rec.error('ticker_error', { symbol, detail: { error: String(e).slice(0, 300) } });
     return {
       symbol, ticker: {} as Ticker, candidates: [], summary: null, aiCandles: [],
       recentTrades: [], rawCandidateCount: 0, error: `ticker:${e}`,
+      outcomeStage: 1, outcomeGate: 'ticker_error',
     };
   }
 
@@ -163,17 +293,26 @@ async function collectCandidates(
     intervalCache.set(baseInterval, adaptive);
     return adaptive;
   };
+  const candleFetchFailed = new Set<string>();
   const getCandlesFor = async (interval: string, minCandles: number): Promise<Candle[] | null> => {
     if (!candleCache.has(interval)) {
       try {
         const c = await kis.getCandles(symbol, interval, Math.max(minCandles + 10, 60));
         candleCache.set(interval, c);
-      } catch { return null; }
+      } catch (e) {
+        candleFetchFailed.add(interval);
+        void e;
+        return null;
+      }
     }
     return candleCache.get(interval) ?? null;
   };
 
   // 재매수 쿨다운
+  // ⚠️ 관측 메모 (T-002): status IN ('executed','accepted') 는 signals.status ENUM 에 **존재하지 않는 값**이라
+  //    이 쿨다운은 사실상 영구 무효 상태다. Phase 1 에서는 동작을 바꾸지 않고(고치면 매수가 줄어 소생 목표와 충돌)
+  //    eval_funnel `cooldown_rebuy` 게이트 기록으로 "0건"임을 실측한 뒤 Phase 2 §4-3 통합 쿨다운에서 교정한다.
+  //    (exit 쿨다운은 중복 청산 = 안전 이슈라 H3 로 이번에 교정했다.)
   const recentSellCheck = await pool.query<RowDataPacket[]>(
     `SELECT id FROM signals
      WHERE symbol = ? AND side = 'sell' AND status IN ('executed','accepted')
@@ -205,6 +344,38 @@ async function collectCandidates(
   const marketState = preSummary ? classifyMarketState(preSummary) : null;
   const stateRuleIds = marketState ? new Set(getRulesForState(marketState)) : null;
 
+  // ── eval_funnel 계측: collect 행에 stage 2~5 를 압축 기록 ────────────────
+  const rules = {
+    active:              [] as string[],
+    inactive:            [] as string[],   // market_state_rule_inactive
+    candlesFetchFailed:  [] as string[],   // candles_fetch_failed
+    insufficientCandles: [] as Array<{ id: string; interval: string; got: number; need: number }>,
+    noFire:              [] as string[],   // rule_no_fire
+    fired:               [] as string[],
+  };
+  const guardDrops: Record<string, number> = {
+    losing_position_buy_block: 0,
+    sell_not_held: 0,
+    cooldown_rebuy: 0,
+    skip_seal_24h: 0,
+    sell_amount_below_min: 0,
+  };
+  // 이 심볼이 collect 안에서 도달한 가장 깊은 stage (final 행의 축)
+  let outcomeStage = 2;
+  let outcomeGate: FunnelGate | null = null;
+  /** stage 에서 gate 에 의해 죽음 */
+  const kill = (stage: number, gate: FunnelGate) => {
+    if (stage >= outcomeStage) { outcomeStage = stage; outcomeGate = gate; }
+  };
+
+  if (!preSummary) {
+    // 30m 캔들 20봉 미만 → 분류 불가 → fail-open(전 룰 실행). 지금까지 완전 무기록이던 지점.
+    rec.error('market_state_preclassify_failed', {
+      symbol,
+      detail: { candleCount: preCandles?.length ?? 0, failOpen: true },
+    });
+  }
+
   if (marketState === 'neutral') {
     console.log(`[market-state] ${symbol} → neutral: 관망 (1d 룰은 계속 실행)`);
   } else if (marketState) {
@@ -215,12 +386,31 @@ async function collectCandidates(
 
   for (const { id, meta } of strategies) {
     // 1d 룰 및 ALWAYS_ACTIVE 룰은 시장 상태와 무관하게 항상 실행
-    if (stateRuleIds !== null && !ALWAYS_ACTIVE_RULES.has(id) && !stateRuleIds.has(id)) continue;
+    if (stateRuleIds !== null && !ALWAYS_ACTIVE_RULES.has(id) && !stateRuleIds.has(id)) {
+      rules.inactive.push(id);
+      // 다른 활성 룰이 이 심볼에서 더 깊은 stage에 도달하면 아래 kill()이 덮어쓴다 (monotonic).
+      kill(2, 'market_state_rule_inactive');
+      continue;
+    }
+    rules.active.push(id);
     const effectiveInterval = await resolveInterval(meta.interval);
     const candles = await getCandlesFor(effectiveInterval, meta.minCandles);
-    if (!candles || candles.length < meta.minCandles) continue;
+    if (!candles) {
+      rules.candlesFetchFailed.push(id);
+      kill(3, 'candles_fetch_failed');
+      continue;
+    }
+    if (candles.length < meta.minCandles) {
+      rules.insufficientCandles.push({ id, interval: effectiveInterval, got: candles.length, need: meta.minCandles });
+      kill(3, 'insufficient_candles');
+      continue;
+    }
 
     const rawSignals = meta.fn({ strategyId: id, symbol, candles, ticker, amountKRW, style });
+    if (rawSignals.length === 0) rules.noFire.push(id);
+    else rules.fired.push(id);
+    // 룰이 실행된 시점에서 stage 4 도달 — 미발화면 여기가 사망 지점
+    kill(4, 'rule_no_fire');
 
     // -0.3% 이하 손실 중인 보유 포지션은 추가매수 차단 (물타기 손실 누적 방지).
     // portfolio-stability.ts의 maxPositionsPerSymbol은 24h 누적 매수 횟수 제한이며,
@@ -228,6 +418,7 @@ async function collectCandidates(
     // 주식 호가 스프레드 노이즈(-0.1~0.3%) 감안해 -0.5%로 설정 (코인 -0.3%보다 완화)
     const LOSS_BLOCK_PCT = -0.5;
     for (const sig of rawSignals) {
+      const gateBase = { symbol, strategyId: id, side: sig.side as 'buy' | 'sell' };
       if (sig.side === 'buy' && heldAmounts.has(symbol)) {
         const heldEntry = heldAmounts.get(symbol)!;
         if (heldEntry.avgPrice && heldEntry.avgPrice > 0) {
@@ -235,6 +426,12 @@ async function collectCandidates(
           const lossPct = ((currentPrice - heldEntry.avgPrice) / heldEntry.avgPrice) * 100;
           if (lossPct <= LOSS_BLOCK_PCT) {
             console.log(`[losing-position-block] ${symbol} → buy skipped (loss=${lossPct.toFixed(2)}%)`);
+            guardDrops.losing_position_buy_block++;
+            kill(5, 'losing_position_buy_block');
+            rec.skip('losing_position_buy_block', {
+              ...gateBase,
+              detail: { lossPct: Number(lossPct.toFixed(2)), avgPrice: heldEntry.avgPrice, price: currentPrice },
+            });
             continue;
           }
           // 손실이 LOSS_BLOCK_PCT 초과(수익 중)이면 추가매수 허용 — 아래 로직으로 계속
@@ -243,30 +440,68 @@ async function collectCandidates(
           console.warn(`[losing-position-block] ${symbol} → avgPrice unavailable, buy allowed`);
         }
       }
-      if (sig.side === 'sell' && !heldAmounts.has(symbol)) continue;
-      if (sig.side === 'buy' && hasRecentSell) continue;
+      if (sig.side === 'sell' && !heldAmounts.has(symbol)) {
+        guardDrops.sell_not_held++;
+        kill(5, 'sell_not_held');
+        rec.skip('sell_not_held', { ...gateBase, detail: { strategyId: id } });
+        continue;
+      }
+      if (sig.side === 'buy' && hasRecentSell) {
+        guardDrops.cooldown_rebuy++;
+        kill(5, 'cooldown_rebuy');
+        rec.skip('cooldown_rebuy', { ...gateBase, detail: { cooldownMin: style.rebuyCooldownMin } });
+        continue;
+      }
       // 24h 광역 차단 — sell도 동일 적용 (이미 +9% 평가익 보유 중인데 5회 매도 시그널 같은 패턴 방지)
-      if (skippedRecently.has(`${id}:${sig.side}`)) continue;
+      if (skippedRecently.has(`${id}:${sig.side}`)) {
+        guardDrops.skip_seal_24h++;
+        kill(5, 'skip_seal_24h');
+        rec.skip('skip_seal_24h', { ...gateBase, detail: { strategyId: id, side: sig.side } });
+        continue;
+      }
 
       if (sig.side === 'sell') {
         const entry = heldAmounts.get(symbol)!;
         const heldQty = entry.qty;
         const heldValue = Math.round(heldQty * (ticker.price ?? 0));
-        if (heldValue < sig.amountKRW) continue;
+        if (heldValue < sig.amountKRW) {
+          guardDrops.sell_amount_below_min++;
+          kill(5, 'sell_amount_below_min');
+          rec.skip('sell_amount_below_min', { ...gateBase, detail: { heldValue, wanted: sig.amountKRW } });
+          continue;
+        }
         candidates.push({ ...sig, strategyId: id, quantity: heldQty, amountKRW: heldValue });
       } else {
         candidates.push({ ...sig, strategyId: id });
       }
+      // 가드를 통과한 후보 — stage 6 이상으로 진행
+      kill(6, 'regime_gate_macro_bear');
     }
   }
 
   const heldEntry = heldAmounts.get(symbol);
+
+  // collect 행 1건/심볼/런 — stage 2~5 를 JSON 1행에 압축 (T-002 §2)
+  rec.record({
+    gate: 'collect',
+    symbol,
+    verdict: candidates.length > 0 ? 'pass' : 'skip',
+    reason: candidates.length > 0 ? null : outcomeGate,
+    detail: {
+      marketState,
+      rsi14: preSummary?.rsi14 ?? null,
+      rules,
+      guardDrops,
+      rawCandidates: candidates.length,
+    },
+  });
 
   if (candidates.length === 0) {
     return {
       symbol, ticker, candidates: [], summary: null, aiCandles: [],
       recentTrades: [], heldQty: heldEntry?.qty, heldAvgPrice: heldEntry?.avgPrice,
       rawCandidateCount: 0,
+      outcomeStage, outcomeGate,
     };
   }
 
@@ -278,6 +513,7 @@ async function collectCandidates(
     symbol, ticker, candidates, summary, aiCandles, recentTrades,
     heldQty: heldEntry?.qty, heldAvgPrice: heldEntry?.avgPrice,
     rawCandidateCount: candidates.length,
+    outcomeStage, outcomeGate,
   };
 }
 
@@ -336,6 +572,7 @@ async function runExitEngine(
   market: Market,
   heldAmounts: Map<string, HeldEntry>,
   style: StyleConfig,
+  rec: EvalFunnelRecorder,
 ): Promise<number> {
   const heldSymbols = [...heldAmounts.keys()];
   // reconcile은 항상 실행 (미보유 row 정리)
@@ -366,6 +603,7 @@ async function runExitEngine(
     if (!entry || entry.qty <= 0) continue;
     if (!entry.avgPrice || entry.avgPrice <= 0) {
       // avgPrice 없으면 trailing 계산 불가 → skip (KIS 잔고 응답 결손)
+      rec.error('exit_avg_price_missing', { symbol, side: 'sell', detail: { qty: entry.qty } });
       continue;
     }
 
@@ -374,50 +612,91 @@ async function runExitEngine(
       ticker = await kis.getTicker(symbol);
     } catch (e) {
       console.warn(`[exit-engine] ticker 조회 실패 ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
+      rec.error('exit_ticker_error', { symbol, side: 'sell', detail: { error: String(e).slice(0, 300) } });
       continue;
     }
-    if (!ticker.price || ticker.price <= 0) continue;
+    if (!ticker.price || ticker.price <= 0) {
+      rec.error('exit_price_invalid', { symbol, side: 'sell', detail: { price: ticker.price ?? null } });
+      continue;
+    }
 
     // peak 갱신 (state upsert) — peak는 GREATEST(prev, current)로 자동 보존
     try {
       await upsertPositionState(symbol, market, ticker.price, entry.avgPrice, entry.qty);
     } catch (e) {
       console.warn(`[exit-engine] state upsert 실패 ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
+      rec.error('exit_state_upsert_failed', { symbol, side: 'sell', detail: { error: String(e).slice(0, 300) } });
       continue;
     }
 
     const state = await loadPositionState(symbol, market);
-    if (!state) continue;
+    if (!state) {
+      rec.error('exit_state_missing', { symbol, side: 'sell' });
+      continue;
+    }
+
+    // 단위(USD/KRW) 불일치 사전 감지 — evaluateExit 내부와 동일 임계. 무기록 지점이었음.
+    const unitRatio = state.entryPrice > 0 ? ticker.price / state.entryPrice : 0;
+    if (unitRatio < EXIT_UNIT_RATIO_MIN || unitRatio > EXIT_UNIT_RATIO_MAX) {
+      rec.error('exit_unit_mismatch', {
+        symbol, side: 'sell',
+        detail: { ratio: Number(unitRatio.toFixed(4)), price: ticker.price, entry: state.entryPrice },
+      });
+      // evaluateExit 이 동일 조건으로 null 을 반환하므로 아래에서 자연히 exit_no_fire 없이 종료
+    }
 
     const exitSig = evaluateExit({ symbol, market, ticker, state, style });
-    if (!exitSig) continue;
+    if (!exitSig) {
+      if (unitRatio >= EXIT_UNIT_RATIO_MIN && unitRatio <= EXIT_UNIT_RATIO_MAX) {
+        rec.pass('exit_no_fire', {
+          symbol, side: 'sell',
+          detail: { pnlPct: Number((((ticker.price - state.entryPrice) / state.entryPrice) * 100).toFixed(2)) },
+        });
+      }
+      continue;
+    }
 
     // hard_stop 시그널 생성 비활성화 여부 체크
     if (exitSig.exitKind === 'hard_stop' && !hardStopEnabled) {
       console.log(`[exit-engine] ${symbol} hard_stop 스킵 (exit_hard_stop_enabled=false)`);
+      rec.skip('exit_hard_stop_disabled', { symbol, side: 'sell', detail: { exitKind: exitSig.exitKind } });
       continue;
     }
 
     // 동일 심볼+exit_kind에 대한 5분 쿨다운 — createSignal 중복 방지
     // (cron이 1분 tick이라 같은 청산 룰이 5번 연속 발화되면 중복 주문 우려)
+    //
+    // ⚠️ T-002 H3 — 'executed','accepted' 는 signals.status ENUM 에 **존재하지 않는 값**이라
+    //    이 쿨다운은 지금까지 사실상 무효였다(중복 청산 시그널 위험 = 안전 이슈).
+    //    실존 상태값으로 교정: auto_submitted / approved / approved_pending_entry / executing /
+    //    pending / pending_approval.
     const [recent] = await pool.query<RowDataPacket[]>(
       `SELECT id FROM signals
         WHERE symbol=? AND strategy_id=? AND side='sell'
-          AND status IN ('auto_submitted','approved','executed','accepted','pending','pending_approval')
+          AND status IN ('auto_submitted','approved','approved_pending_entry','executing','pending','pending_approval')
           AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
           AND JSON_EXTRACT(indicators, '$.exit_kind') = ?
         LIMIT 1`,
       [symbol, EXIT_STRATEGY_ID, exitSig.exitKind],
     );
     if ((recent as RowDataPacket[]).length > 0) {
+      rec.skip('exit_cooldown_5m', {
+        symbol, side: 'sell',
+        detail: { exitKind: exitSig.exitKind, prevSignalId: (recent as RowDataPacket[])[0].id },
+      });
       continue; // 쿨다운 중
     }
 
-    const res = await createSignal(exitSig);
+    // ★ H2 — createSignal 예외가 런 전체를 죽이던 지점. 반드시 격리한다.
+    const res = await createSignalGuarded(exitSig, rec);
     if (res.ok) {
       created++;
       console.log(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 발화 (signalId=${res.signalId})`);
     } else {
+      rec.error('exit_create_failed', {
+        symbol, side: 'sell',
+        detail: { exitKind: exitSig.exitKind, error: res.error },
+      });
       console.warn(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 실패: ${res.error}`);
     }
   }
@@ -431,12 +710,30 @@ async function applyFilters(
   style: StyleConfig,
   market: Market,
   heldAmounts: Map<string, HeldEntry>,
+  rec: EvalFunnelRecorder,
+  outcome: OutcomeTracker,
 ): Promise<{ needsAi: Candidate[]; regimeBucket: string | null }> {
   const pool = getPool();
   const { symbol, candidates, summary, aiCandles, ticker } = ctx;
 
+  /** prefilter reason → eval_funnel gate ID */
+  const PREFILTER_GATE: Record<string, FunnelGate> = {
+    liquidity_dead:       'prefilter_liquidity_dead',
+    atr_zero:             'prefilter_atr_zero',
+    rsi_extreme_counter:  'prefilter_rsi_extreme_counter',
+    strong_counter_trend: 'prefilter_strong_counter_trend',
+    blowoff_top:          'prefilter_blowoff_top',
+  };
+
   // 1) pre-filter (summary 없으면 skip)
   let survived: Candidate[] = candidates;
+  if (!summary) {
+    // fail-open — 프리필터를 통째로 생략하고 전 후보 통과. 지금까지 무기록이던 지점.
+    rec.error('prefilter_bypassed_no_summary', {
+      symbol,
+      detail: { candidates: candidates.length, failOpen: true },
+    });
+  }
   if (summary) {
     const passed: Candidate[] = [];
     const skipped: Array<{ cand: Candidate; reason: string }> = [];
@@ -452,10 +749,16 @@ async function applyFilters(
       const [reasonKey, ...detailParts] = reason.split(':');
       const detail = detailParts.join(':').trim();
       const { formatPrefilterReason } = await import('./skip-reason-formatter');
+      const key = reasonKey.trim();
+      rec.skip(PREFILTER_GATE[key] ?? 'prefilter_bypassed_no_summary', {
+        symbol, strategyId: cand.strategyId, side: cand.side as 'buy' | 'sell',
+        reason: key, detail: { detail },
+      });
+      outcome.kill(symbol, 7, PREFILTER_GATE[key] ?? 'prefilter_bypassed_no_summary');
       await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
-        reasoning: formatPrefilterReason(reasonKey.trim(), detail, cand.side),
+        reasoning: formatPrefilterReason(key, detail, cand.side),
         category: 'rule_prefilter',
-        prefilterReason: reasonKey.trim(),
+        prefilterReason: key,
         confidence: 0,
       });
     }
@@ -484,6 +787,8 @@ async function applyFilters(
         prefilterReason: 'late_session_buy_block',
         confidence: 0,
       });
+      rec.skip('late_session_buy_block', { symbol, strategyId: cand.strategyId, side: 'buy', detail: { minutesBlock: style.lateSessionBuyBlockMin } });
+      outcome.kill(symbol, 7, 'late_session_buy_block');
     }
     if (lateBlocked.length > 0) {
       console.log(`[late-session-block] ${symbol} → ${lateBlocked.length} buy skipped`);
@@ -515,6 +820,12 @@ async function applyFilters(
           category: 'portfolio_guard',
           confidence: 0,
         });
+        const gate: FunnelGate =
+          decision.reason === 'core_ratio_below_min'   ? 'portfolio_core_ratio'
+          : decision.reason === 'max_positions_exceeded' ? 'portfolio_max_positions'
+          :                                                 'portfolio_guard_other';
+        rec.skip(gate, { symbol, strategyId: cand.strategyId, side: 'buy', detail: { detail: decision.detail } });
+        outcome.kill(symbol, 8, gate);
       } else {
         guarded.push(cand);
       }
@@ -553,6 +864,8 @@ async function applyFilters(
         ev: hit.prev.ev,
         regimeBucket,
       });
+      rec.skip('dedup_regime', { symbol, strategyId: cand.strategyId, side: cand.side as 'buy' | 'sell', detail: { regimeBucket, prevConfidence: hit.prev.confidence } });
+      outcome.kill(symbol, 9, 'dedup_regime');
     } else {
       needsAi.push(cand);
     }
@@ -622,6 +935,8 @@ async function applyBatchDecisions(
   results: Map<string, EvalResult>,
   style: StyleConfig,
   analystStyle: AnalystStyle,
+  rec: EvalFunnelRecorder,
+  outcome: OutcomeTracker,
 ): Promise<void> {
   const pool = getPool();
   const { formatSkipReason } = await import('./skip-reason-formatter');
@@ -632,6 +947,7 @@ async function applyBatchDecisions(
     const { ctx, needsAi, regimeBucket } = entry;
 
     if (d.selectedIndices.length === 0 || d.skipCategory === 'ai_failed') {
+      const gate = aiGateForSkipCategory(d.skipCategory);
       for (const sig of needsAi) {
         await insertSkipAuditPool(pool, sig, d.symbol, ctx.ticker.price, {
           reasoning: formatSkipReason({
@@ -649,6 +965,8 @@ async function applyBatchDecisions(
           regimeBucket: regimeBucket ?? undefined,
         });
       }
+      rec.skip(gate, { symbol: d.symbol, detail: { confidence: d.confidence, skipCategory: d.skipCategory ?? null, candidates: needsAi.length } });
+      outcome.kill(d.symbol, 10, gate);
       results.set(d.symbol, {
         symbol: d.symbol,
         signalsCreated: 0,
@@ -684,7 +1002,7 @@ async function applyBatchDecisions(
             },
           },
         };
-        const res = await createSignal(enriched);
+        const res = await createSignalGuarded(enriched, rec, outcome);
         if (res.ok) {
           createdCount++;
           if (firstSelectedSide === undefined) firstSelectedSide = cand.side;
@@ -706,6 +1024,7 @@ async function applyBatchDecisions(
           ev: d.ev,
           regimeBucket: regimeBucket ?? undefined,
         });
+        outcome.kill(d.symbol, 10, aiGateForSkipCategory(d.skipCategory));
       }
     }
 
@@ -729,6 +1048,8 @@ async function fallbackPerSymbol(
   results: Map<string, EvalResult>,
   reason: string,
   market: Market,
+  rec: EvalFunnelRecorder,
+  outcome: OutcomeTracker,
 ): Promise<void> {
   const pool = getPool();
   let fallbackCount = 0;
@@ -743,6 +1064,7 @@ async function fallbackPerSymbol(
       const aiResult = await aiSelectSignal(symbol, needsAi, ctx.aiCandles, ctx.ticker, style, analystStyle, market);
 
       if (aiResult.selectedIndices.length === 0) {
+        const gate = aiGateForSkipCategory(aiResult.skipCategory);
         for (const sig of needsAi) {
           await insertSkipAuditPool(pool, sig, symbol, ctx.ticker.price, {
             reasoning: (await import('./skip-reason-formatter')).formatSkipReason({
@@ -760,6 +1082,8 @@ async function fallbackPerSymbol(
             regimeBucket: regimeBucket ?? undefined,
           });
         }
+        rec.skip(gate, { symbol, detail: { confidence: aiResult.confidence, skipCategory: aiResult.skipCategory ?? null, candidates: needsAi.length } });
+        outcome.kill(symbol, 10, gate);
         results.set(symbol, { symbol, signalsCreated: 0, candidateCount: needsAi.length, rawCandidates: ctx.rawCandidateCount });
       } else {
         const selectedSet = new Set(aiResult.selectedIndices);
@@ -787,7 +1111,7 @@ async function fallbackPerSymbol(
                 },
               },
             };
-            const res = await createSignal(enriched);
+            const res = await createSignalGuarded(enriched, rec, outcome);
             if (res.ok) {
               createdCount++;
               if (firstSide === undefined) firstSide = cand.side;
@@ -809,6 +1133,7 @@ async function fallbackPerSymbol(
               ev: aiResult.ev,
               regimeBucket: regimeBucket ?? undefined,
             });
+            outcome.kill(symbol, 10, aiGateForSkipCategory(aiResult.skipCategory));
           }
         }
         results.set(symbol, {
@@ -826,6 +1151,8 @@ async function fallbackPerSymbol(
           regimeBucket: regimeBucket ?? undefined,
         });
       }
+      rec.skip('ai_failed_nonheld', { symbol, detail: { reason, candidates: needsAi.length } });
+      outcome.kill(symbol, 10, 'ai_failed_nonheld');
       results.set(symbol, { symbol, signalsCreated: 0, candidateCount: needsAi.length, rawCandidates: ctx.rawCandidateCount });
     }
   }
@@ -840,7 +1167,13 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   if (!open) {
     return { ran: 0, skipped: 0, skippedStrategyIds: [], results: [], errors: [`${market}_market_closed`], universeRefreshed: false };
   }
+  // 장 마감은 정상 상태라 기록하지 않는다 — 장외 5분마다 빈 run 행이 쌓일 뿐이다.
+  const rec = new EvalFunnelRecorder(market);
+  const outcome = createOutcomeTracker();
+
   if (!(await isAnalystEnabled())) {
+    rec.skip('analyst_disabled');
+    await rec.flush();
     return { ran: 0, skipped: 0, skippedStrategyIds: [], results: [], errors: ['analyst_disabled'], universeRefreshed: false };
   }
 
@@ -864,8 +1197,21 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
 
   for (const row of rows) {
     const meta = STRATEGY_REGISTRY[row.id];
-    if (!meta) { skippedStrategyIds.push(row.id); continue; }
+    if (!meta) {
+      if (POST_MARKET_ONLY_STRATEGY_IDS.has(row.id)) {
+        rec.skip('strategy_unregistered', { strategyId: row.id, reason: 'post_market_only' });
+      } else {
+        // DB에 enabled인데 코드 레지스트리에 없다 = 코드-DB 불일치. 정상 skip이 아니라 결함이다.
+        rec.error('strategy_unregistered', { strategyId: row.id });
+      }
+      skippedStrategyIds.push(row.id);
+      continue;
+    }
     if (!opts.force && row.next_backtest_at && row.next_backtest_at > now) {
+      rec.skip('strategy_throttled', {
+        strategyId: row.id,
+        detail: { nextBacktestAt: row.next_backtest_at, intervalH: row.backtest_interval_h },
+      });
       skippedStrategyIds.push(row.id);
       continue;
     }
@@ -873,6 +1219,8 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
 
   if (dueStrategies.length === 0) {
+    rec.skip('no_due_strategies', { detail: { throttledOrUnregistered: skippedStrategyIds } });
+    await rec.flush();
     return { ran: 0, skipped: skippedStrategyIds.length, skippedStrategyIds, results: [], errors: [], universeRefreshed };
   }
 
@@ -883,7 +1231,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // 2. 보유 종목별 ticker 조회 + state upsert (peak 갱신) + evaluateExit 평가
   // 3. 청산 시그널 발화 시 createSignal → submitOrder 정상 경로
   // 안전장치(DRY_RUN/KILL_SWITCH/order_limits/blacklist)는 모두 통과한다.
-  const exitSignalsCreated = await runExitEngine(market, heldAmounts, style);
+  const exitSignalsCreated = await runExitEngine(market, heldAmounts, style, rec);
   if (exitSignalsCreated > 0) {
     console.log(`[exit-engine:${market}] ${exitSignalsCreated} 청산 시그널 발화`);
   }
@@ -896,14 +1244,20 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // effectiveMax 그대로 쓰면 micro 초과로 order_limit 차단 빈발. 0.995 곱으로 사전 차감.
   const FEE_BUFFER_PCT = 0.005;
   const rawMax = await getEffectiveOrderMax('kis', market);
-  // Infinity는 pct 미설정 또는 포트폴리오 조회 실패 시 반환 → MySQL INSERT 오류 방지
-  // ORDER_MAX_KRW env 폴백 (0이면 100,000원 최소 보장)
-  const FALLBACK_AMOUNT_KRW = Math.max(Number(process.env.ORDER_MAX_KRW ?? 0), 100_000);
-  const defaultAmountKRW = rawMax === Infinity
-    ? FALLBACK_AMOUNT_KRW
-    : Math.floor(rawMax * (1 - FEE_BUFFER_PCT));
+  // Phase 0 fail-safe: rawMax 0 = 한도 미설정(DB 키 부재) 또는 포트폴리오 평가액 조회 실패.
+  // 이전에는 Infinity → ORDER_MAX_KRW env 폴백(최소 10만원)으로 매수를 계속 발화했다(fail-open).
+  // 이제는 신규 매수 후보를 전면 스킵한다. 매도·청산(exit-engine, sell 후보)은 그대로 진행.
+  const orderLimitConfigured = Number.isFinite(rawMax) && rawMax > 0;
+  const defaultAmountKRW = orderLimitConfigured ? Math.floor(rawMax * (1 - FEE_BUFFER_PCT)) : 0;
 
   const errors: string[] = [];
+  if (!orderLimitConfigured) {
+    console.error(
+      `[strategy-eval:${market}] 주문 한도 미설정(effectiveOrderMax=0) — 신규 매수 후보 전면 스킵. ` +
+      `설정 > 안전장치에서 safety_order_max_pct 를 설정하거나 포트폴리오 조회 상태를 확인하라. (매도·청산은 계속 진행)`,
+    );
+    errors.push(`${market}_order_limit_unconfigured`);
+  }
   const results = new Map<string, EvalResult>();
 
   // ─── Regime Gate — 거시 지수 하드 게이트 ──────────────────────────────────
@@ -938,8 +1292,12 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // 1단계: 모든 심볼의 후보 수집 (AI 호출 없음)
   const contexts: CollectedContext[] = [];
   for (const symbol of symbols) {
-    const ctx = await collectCandidates(symbol, activeStrategies, heldAmounts, defaultAmountKRW, style);
+    const ctx = await collectCandidates(symbol, activeStrategies, heldAmounts, defaultAmountKRW, style, rec);
     if (!ctx) continue;
+    // collect 단계의 지역 추적 결과를 런 전체 tracker로 승계 (final 행의 축)
+    if (ctx.outcomeGate) outcome.kill(symbol, ctx.outcomeStage, ctx.outcomeGate);
+    else outcome.advance(symbol, ctx.outcomeStage);
+    outcome.setRaw(symbol, ctx.rawCandidateCount);
     if (ctx.error) {
       errors.push(`${symbol}: ${ctx.error}`);
       results.set(symbol, { symbol, signalsCreated: 0, error: ctx.error });
@@ -959,15 +1317,23 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
 
   // 2단계: 각 context에 prefilter + dedup 적용, AI 필요한 후보만 수집
-  // regime gate 발동 시 buy 후보를 사전 제거 (sell·보유 종목 매도는 유지)
+  // regime gate 발동 또는 주문 한도 미설정(fail-safe) 시 buy 후보를 사전 제거 (sell·보유 종목 매도는 유지)
+  const buyBlocked = regimeGateBlocked || !orderLimitConfigured;
   const needsAiMap = new Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>();
   for (const ctx of contexts) {
-    if (regimeGateBlocked && ctx.candidates.some(c => c.side === 'buy')) {
+    if (buyBlocked && ctx.candidates.some(c => c.side === 'buy')) {
       // buy 후보만 제거 — sell은 통과
       ctx.candidates = ctx.candidates.filter(c => c.side !== 'buy');
-      if (ctx.candidates.length === 0 && !(ctx.heldQty && ctx.heldQty > 0)) continue;
+      if (ctx.candidates.length === 0 && !(ctx.heldQty && ctx.heldQty > 0)) {
+        // collectCandidates가 남긴 stage 6 placeholder(regime_gate_macro_bear)를 그대로 물려받으면
+        // 실제 원인이 order_limit_unconfigured(Phase 0 fail-safe)일 때 오분류된다 — 실제 원인으로 교정.
+        const gate: FunnelGate = regimeGateBlocked ? 'regime_gate_macro_bear' : 'order_limit_unconfigured';
+        rec.skip(gate, { symbol: ctx.symbol, side: 'buy' });
+        outcome.kill(ctx.symbol, 6, gate);
+        continue;
+      }
     }
-    const { needsAi, regimeBucket } = await applyFilters(ctx, analystStyle, style, market, heldAmounts);
+    const { needsAi, regimeBucket } = await applyFilters(ctx, analystStyle, style, market, heldAmounts, rec, outcome);
     if (needsAi.length === 0) {
       results.set(ctx.symbol, { symbol: ctx.symbol, signalsCreated: 0, candidateCount: 0, rawCandidates: ctx.rawCandidateCount });
       continue;
@@ -978,8 +1344,17 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // 3단계: 남은 심볼들을 배치 AI 호출로 일괄 처리
   if (needsAiMap.size > 0) {
     const batchInputs: BatchSymbolInput[] = [];
-    for (const [, entry] of needsAiMap) {
-      if (!entry.ctx.summary) continue; // summary 없으면 배치 입력 불가 → fallback 경로로
+    for (const [symbol, entry] of needsAiMap) {
+      if (!entry.ctx.summary) {
+        // summary 없으면 배치 입력 불가 — 지금까지 성공 경로에서 후보가 무기록으로 증발하던 지점 (T-002 ai_input_no_summary).
+        rec.error('ai_input_no_summary', { symbol, detail: { candidates: entry.needsAi.length } });
+        outcome.kill(symbol, 10, 'ai_input_no_summary');
+        results.set(symbol, {
+          symbol, signalsCreated: 0,
+          candidateCount: entry.needsAi.length, rawCandidates: entry.ctx.rawCandidateCount,
+        });
+        continue;
+      }
       // regime 누적 성과 조회 (5건 미만이면 null — 프롬프트 미주입)
       const regimeStats = entry.regimeBucket ? await getRegimePerformance(entry.regimeBucket, 30) : null;
       batchInputs.push({
@@ -998,9 +1373,12 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       const batchResult = await aiSelectSignalBatch(batchInputs, style, analystStyle, marketContext, market);
 
       if (batchResult.error || batchResult.decisions.length === 0) {
-        await fallbackPerSymbol(needsAiMap, style, analystStyle, heldAmounts, results, batchResult.error ?? 'empty decisions', market);
+        if (batchResult.error) {
+          rec.error('ai_batch_failed', { detail: { error: batchResult.error, batchSize: batchInputs.length } });
+        }
+        await fallbackPerSymbol(needsAiMap, style, analystStyle, heldAmounts, results, batchResult.error ?? 'empty decisions', market, rec, outcome);
       } else {
-        await applyBatchDecisions(needsAiMap, batchResult.decisions, results, style, analystStyle);
+        await applyBatchDecisions(needsAiMap, batchResult.decisions, results, style, analystStyle, rec, outcome);
       }
     }
   }
@@ -1029,6 +1407,33 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
     const rate = Math.round((totalApproved / totalRaw) * 100);
     console.log(`[quality:${market}] 후보 ${totalRaw}건 → AI승인 ${totalApproved} / AI스킵 ${totalSkipped} (승인율 ${rate}%)`);
   }
+
+  // 종목별 final 행 — 깔때기의 축. "이 종목이 몇 단계까지 갔고 무엇에 죽었나"를 1행으로 압축한다.
+  // 개별 게이트 skip 행과 별도로 남겨야 단계별 감쇠율을 단일 쿼리로 뽑을 수 있다.
+  for (const [symbol, o] of outcome.map) {
+    rec.record({
+      symbol,
+      gate: 'final',
+      stage: o.stage,
+      verdict: o.gate === 'signal_created' ? 'pass' : 'skip',
+      reason: o.gate,
+      detail: { rawCandidates: o.rawCandidates, signalIds: o.signalIds },
+    });
+  }
+  rec.record({
+    gate: 'run',
+    verdict: 'pass',
+    detail: {
+      symbols: symbols.length,
+      strategies: activeStrategies.length,
+      skippedStrategyIds,
+      exitSignalsCreated,
+      buyBlocked,
+      signalsCreated: totalApproved,
+      errors: errors.length,
+    },
+  });
+  await rec.flush();
 
   return { ran: symbols.length, skipped: skippedStrategyIds.length, skippedStrategyIds, results: resultsArray, errors, universeRefreshed };
 }

@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
+import type { EvalFunnelSummary } from '@/lib/strategy/eval-funnel-query';
 
 export interface BuyCandidate {
   symbol: string;
@@ -262,7 +263,43 @@ function fmtKstDate(d: Date): string {
     .replace(/\. /g, '-').replace('.', '');
 }
 
-export function formatReportMessage(rep: TradeReport, totalKRW: number, baselineKRW: number | null, candidates?: SignalCandidates): string {
+/** T-002 §4 — 평가 깔때기 요약 문단 (국내장). eval_funnel 관측 자체가 실패하면 null 전달 → 섹션 생략. */
+export function formatFunnelSection(funnel: EvalFunnelSummary): string {
+  const lines: string[] = [];
+  lines.push('*📊 평가 깔때기 — 국내장*');
+  lines.push(
+    `런 ${funnel.runs}회${funnel.fullEvalRuns !== funnel.runs ? `(풀평가 ${funnel.fullEvalRuns}회)` : ''} · 종목 ${funnel.symbolsEvaluated}개 평가`,
+  );
+
+  const signalTotal = funnel.buySignals + funnel.sellSignals;
+  const stepLine = funnel.steps
+    .filter(s => s.key !== 'evaluated')
+    .map(s => s.key === 'signal' ? `✅ 시그널 ${s.count}건` : `${s.label} ${s.count}`)
+    .join(' → ');
+  if (stepLine) {
+    const sideDetail = signalTotal > 0
+      ? ` (매수 ${funnel.buySignals}${funnel.sellSignals > 0 ? ` · 매도 ${funnel.sellSignals}` : ''})`
+      : '';
+    lines.push(stepLine + sideDetail);
+  }
+
+  if (funnel.bottlenecks.length > 0 && funnel.symbolsEvaluated > 0) {
+    const parts = funnel.bottlenecks.map((b, i) => i === 0
+      ? `${b.label} ${b.count}/${funnel.symbolsEvaluated}종목 (${Math.round((b.count / funnel.symbolsEvaluated) * 100)}%)`
+      : `${i + 1}위 ${b.label} ${b.count}건`);
+    lines.push(`병목: ${parts.join(' · ')}`);
+  }
+
+  const anomalyParts = funnel.anomalies.map(a => `${a.label} ${a.count}회`);
+  if (funnel.neutralPct != null && funnel.neutralPct > 0) {
+    anomalyParts.push(`neutral 상태 ${funnel.neutralPct}% (30m 룰 전체 비활성)`);
+  }
+  if (anomalyParts.length > 0) lines.push(`⚠ 이상: ${anomalyParts.join(' · ')}`);
+
+  return lines.join('\n');
+}
+
+export function formatReportMessage(rep: TradeReport, totalKRW: number, baselineKRW: number | null, candidates?: SignalCandidates, funnel?: EvalFunnelSummary | null): string {
   const hours = Math.round((rep.rangeEnd.getTime() - rep.rangeStart.getTime()) / 3600_000);
   const lines: string[] = [];
   lines.push(`*📊 거래 리포트 (${hours}h)*`);
@@ -342,6 +379,12 @@ export function formatReportMessage(rep: TradeReport, totalKRW: number, baseline
       const rsiBadge = c.rsi != null && c.rsi < 30 ? '🔥' : c.rsi != null && c.rsi < 35 ? '⚡' : '•';
       lines.push(`${rsiBadge} ${c.symbol} ${rsiStr}${confStr}${evStr} [${label}]`);
     }
+  }
+
+  // ── 평가 깔때기 (T-002) ──
+  if (funnel) {
+    lines.push('');
+    lines.push(formatFunnelSection(funnel));
   }
 
   return lines.join('\n');

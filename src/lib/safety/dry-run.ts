@@ -4,6 +4,7 @@ import { getAccountId, getPool } from '@/lib/db';
 import type { ExchangeId, OrderRequest, OrderResult } from '@/lib/exchanges/types';
 import { sendAlert } from '@/lib/notify';
 import { type AssetClass } from './asset-profile';
+import { parseBoolFlag, shouldReportUnparsable } from './flags';
 import { isKillSwitchActive } from './kill-switch';
 import {
   checkDailyMax,
@@ -16,7 +17,17 @@ import {
 } from './order-limits';
 import { checkVolatilityGuard } from './volatility-guard';
 
-/** DB system_config override takes precedence over env var. */
+/**
+ * DB system_config override takes precedence over env var.
+ *
+ * **fail-safe (Phase 0, 2026-08-02)**: DRY_RUN 은 "실거래 차단" 스위치이므로 애매하면 ON.
+ * 이전에는 `val === true || val === 'true'` 만 인정해서 `1` · `"1"` · `"ON"` 같은 값이
+ * 조용히 false(=실거래)로 해석되는 fail-open 여지가 있었다.
+ *
+ *  - 미설정(DB 키 부재 + env 미설정) → `true` (ON, 안전 기본값)
+ *  - 정상 인식                        → 그 값. 끄려면 명시적 false(false/"false"/0/"off"...)
+ *  - **해석 불가(오타 등)**           → `true` + console.error 경고 (조용히 넘어가지 않는다)
+ */
 export async function isDryRun(): Promise<boolean> {
   try {
     const pool = getPool();
@@ -25,13 +36,35 @@ export async function isDryRun(): Promise<boolean> {
       ['safety_dry_run'],
     );
     if (rows.length > 0) {
-      const val = JSON.parse(rows[0].value);
-      return val === true || val === 'true';
+      const r = parseBoolFlag(JSON.parse(rows[0].value));
+      if (r.state === 'parsed') return r.value;
+      if (r.state === 'unparsable') {
+        if (shouldReportUnparsable('safety_dry_run', r.raw)) {
+          console.error(
+            `[safety] system_config.safety_dry_run 값을 해석할 수 없음(${JSON.stringify(r.raw)}) ` +
+            '→ 안전을 위해 DRY_RUN ON 으로 처리. 설정 > 안전장치에서 값을 바로잡아라.',
+          );
+        }
+        return true;
+      }
+      // unset — env 폴백으로 진행
     }
   } catch {
     // DB unavailable — fall through to env
   }
-  return String(process.env.DRY_RUN ?? 'true').toLowerCase() === 'true';
+
+  const e = parseBoolFlag(process.env.DRY_RUN);
+  if (e.state === 'parsed') return e.value;
+  if (e.state === 'unparsable') {
+    if (shouldReportUnparsable('env.DRY_RUN', e.raw)) {
+      console.error(
+        `[safety] 환경변수 DRY_RUN 값을 해석할 수 없음(${JSON.stringify(e.raw)}) ` +
+        '→ 안전을 위해 DRY_RUN ON 으로 처리.',
+      );
+    }
+    return true;
+  }
+  return true;  // unset — 안전 기본값 ON
 }
 
 interface SubmitOptions {
@@ -141,10 +174,8 @@ export async function submitOrder(
   // 7. DRY_RUN
   if (await isDryRun()) {
     await pool.query(`UPDATE orders SET status='dry_run' WHERE id=?`, [orderId]);
-    await auditLog(orderId, 'dry_run', {
-      effOrderMax: effOrderMax === Infinity ? null : effOrderMax,
-      effDailyMax: effDailyMax === Infinity ? null : effDailyMax,
-    });
+    // Phase 0: effOrderMax/effDailyMax 는 항상 유한값 (미설정 시 0). Infinity 분기 제거.
+    await auditLog(orderId, 'dry_run', { effOrderMax, effDailyMax });
     return { ok: true, orderId, clientOrderId, dryRun: true, blockedBy: 'dry_run' };
   }
 

@@ -20,6 +20,11 @@ jobs:
         working-directory: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest
         run: npm ci --no-audit --no-fund
 
+      # Phase 0: 테스트를 배포 게이트로 승격. 실패 시 build·reload 를 수행하지 않는다.
+      - name: Unit tests (deploy gate)
+        working-directory: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest
+        run: npm test -- --ci
+
       - name: Build (includes typecheck)
         working-directory: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest
         run: npm run build

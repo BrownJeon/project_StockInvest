@@ -77,15 +77,13 @@ export async function checkSymbolBlacklist(symbol: string, _exchange?: ExchangeI
 export const checkSymbolWhitelist = checkSymbolBlacklist;
 
 /**
- * 1회 주문 최대 KRW = **해당 시장(국내/해외)** 평가액 × pct%.
- * 우선순위: DB `safety_order_max_pct` → env `ORDER_MAX_PCT` → 0(=무제한).
- * pct가 0이거나 해당 시장 평가액이 0이면 Infinity 반환.
+ * DB `system_config`에서 한도 pct를 읽는다.
  *
- * 정책 (2026-04-27): 시장별 분리 한도. 국내 주문은 국내 평가액 기준, 해외 주문은 해외 평가액 기준.
- * 시장 무관 합산 한도는 폐기 — 한쪽 시장 비중이 작아도 다른 쪽 합계로 한도가 부풀려지는 문제 방지.
+ * 정책: 한도는 무조건 설정 메뉴(DB) 값만 기준. .env fallback 없음.
+ * **fail-safe (Phase 0, 2026-08-02)**: 키 부재 / 파싱 실패 / DB 조회 실패 모두 0을 반환한다.
+ * 0은 "무제한"이 아니라 "미설정 → 매수 전면 거부"를 의미한다.
  */
 async function readPctOverride(key: string, _envKey: string): Promise<number> {
-  // 정책: 한도는 무조건 설정 메뉴(DB) 값만 기준. .env fallback 제거.
   try {
     const pool = getPool();
     const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
@@ -96,28 +94,62 @@ async function readPctOverride(key: string, _envKey: string): Promise<number> {
       if (Number.isFinite(v)) return v;
     }
   } catch { /* fall through to safe default */ }
-  return 0;  // DB 키 부재 → 0 (= 비활성, getEffectiveOrderMax/DailyMax 가 Infinity 반환)
+  return 0;  // DB 키 부재 → 0 (= 미설정, 호출부가 매수를 전면 거부)
 }
 
+/** DB에 설정된 1회 주문 한도 pct (미설정·조회 실패 시 0). 진단·표시용. */
+export async function getOrderMaxPct(): Promise<number> {
+  return readPctOverride('safety_order_max_pct', 'ORDER_MAX_PCT');
+}
+
+/** DB에 설정된 일일 누적 한도 pct (미설정·조회 실패 시 0). 진단·표시용. */
+export async function getDailyMaxPct(): Promise<number> {
+  return readPctOverride('safety_daily_order_max_pct', 'DAILY_ORDER_MAX_PCT');
+}
+
+/**
+ * 1회 주문 최대 KRW = **해당 시장(국내/해외)** 평가액 × pct%.
+ *
+ * **fail-safe (Phase 0, 2026-08-02)**: pct 미설정(≤0) 또는 해당 시장 평가액 조회 실패(≤0)
+ * 시 **0**을 반환한다. 이전에는 Infinity(=무제한)를 반환해 안전장치가 fail-open이었다.
+ * 0은 곧 "신규 매수 전면 거부" — 호출부는 반드시 0을 매수 스킵으로 처리해야 한다.
+ * (매도/청산은 1회·일일 한도 적용 대상이 아니므로 영향 없음 — dry-run.ts 참조)
+ *
+ * 정책 (2026-04-27): 시장별 분리 한도. 국내 주문은 국내 평가액 기준, 해외 주문은 해외 평가액 기준.
+ * 시장 무관 합산 한도는 폐기 — 한쪽 시장 비중이 작아도 다른 쪽 합계로 한도가 부풀려지는 문제 방지.
+ */
 export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
   const pct = await readPctOverride('safety_order_max_pct', 'ORDER_MAX_PCT');
-  if (!(pct > 0)) return Infinity;
+  if (!(pct > 0)) {
+    console.warn(`[order-limits] safety_order_max_pct 미설정 → 1회 한도 0 (${market} 신규 매수 차단)`);
+    return 0;
+  }
   const { getPortfolioTotalByMarketKRW } = await import('@/lib/safety/portfolio-total');
   const total = await getPortfolioTotalByMarketKRW(market);
-  if (!(total > 0)) return Infinity;
+  if (!(total > 0)) {
+    console.warn(`[order-limits] ${market} 포트폴리오 평가액 조회 실패/0 → 1회 한도 0 (신규 매수 차단)`);
+    return 0;
+  }
   return total * (pct / 100);
 }
 
 /**
  * 일일 누적 최대 KRW = **해당 시장** 평가액 × pct%.
- * 우선순위: DB `safety_daily_order_max_pct` → env `DAILY_ORDER_MAX_PCT` → 0(=무제한).
+ *
+ * **fail-safe (Phase 0, 2026-08-02)**: getEffectiveOrderMax와 동일 — 미설정·조회 실패 시 0.
  */
 export async function getEffectiveDailyMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
   const pct = await readPctOverride('safety_daily_order_max_pct', 'DAILY_ORDER_MAX_PCT');
-  if (!(pct > 0)) return Infinity;
+  if (!(pct > 0)) {
+    console.warn(`[order-limits] safety_daily_order_max_pct 미설정 → 일일 한도 0 (${market} 신규 매수 차단)`);
+    return 0;
+  }
   const { getPortfolioTotalByMarketKRW } = await import('@/lib/safety/portfolio-total');
   const total = await getPortfolioTotalByMarketKRW(market);
-  if (!(total > 0)) return Infinity;
+  if (!(total > 0)) {
+    console.warn(`[order-limits] ${market} 포트폴리오 평가액 조회 실패/0 → 일일 한도 0 (신규 매수 차단)`);
+    return 0;
+  }
   return total * (pct / 100);
 }
 
@@ -133,12 +165,15 @@ export function getEnvDailyMax(_exchange?: ExchangeId): number {
 
 /**
  * 1회 주문 한도 체크.
- * @param effectiveMax  단계별 한도와 ENV ORDER_MAX_KRW 중 작은 값을 호출부에서 계산해 전달
+ * @param effectiveMax  getEffectiveOrderMax() 결과. **0이면 한도 미설정 → 전면 거부** (fail-safe).
+ *                      Infinity(무제한) 경로는 Phase 0에서 제거됨.
  */
 export function checkOrderMax(req: OrderRequest, effectiveMax: number): LimitCheck {
   const amount = resolveOrderAmountKRW(req);
   if (amount <= 0) return { ok: false, reason: 'order_limit', detail: 'amount unresolved' };
-  if (effectiveMax === Infinity) return { ok: true }; // unlimited
+  if (!Number.isFinite(effectiveMax) || effectiveMax <= 0) {
+    return { ok: false, reason: 'order_limit', detail: 'order limit not configured (0) — buy blocked' };
+  }
   if (amount > effectiveMax) return { ok: false, reason: 'order_limit', detail: `${amount} > ${effectiveMax}` };
   return { ok: true };
 }
@@ -150,7 +185,10 @@ export function checkOrderMax(req: OrderRequest, effectiveMax: number): LimitChe
  * 정책 (2026-04-27): 시장별 누적 분리 — orders.market 필터로 국내/해외 별도 카운트.
  */
 export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number): Promise<LimitCheck> {
-  if (effectiveDailyMax === Infinity) return { ok: true }; // unlimited
+  // fail-safe (Phase 0): 한도 미설정(0)·비정상값이면 무제한이 아니라 전면 거부.
+  if (!Number.isFinite(effectiveDailyMax) || effectiveDailyMax <= 0) {
+    return { ok: false, reason: 'daily_limit', detail: 'daily limit not configured (0) — buy blocked' };
+  }
   const amount = await resolveOrderAmountKRWAsync(req);
   if (amount <= 0) return { ok: false, reason: 'daily_limit', detail: 'amount unresolved' };
 

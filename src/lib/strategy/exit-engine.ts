@@ -28,6 +28,13 @@ export type ExitKind = 'hard_stop' | 'target_profit' | 'trailing_stop' | 'eod_lo
 
 export const EXIT_STRATEGY_ID = 'exit-engine-v1';
 
+/**
+ * price/entry 비율 허용 범위 — 이 범위를 벗어나면 USD/KRW 단위 불일치로 간주하고 청산 시그널을 거부한다.
+ * engine.ts 의 eval_funnel `exit_unit_mismatch` 계측도 같은 상수를 참조한다 (단일 소스).
+ */
+export const EXIT_UNIT_RATIO_MIN = 0.3;
+export const EXIT_UNIT_RATIO_MAX = 3.0;
+
 interface ExitEvalInput {
   symbol: string;
   market: Market;
@@ -69,7 +76,7 @@ export function evaluateExit(input: ExitEvalInput): (SignalInput & { strategyId:
   // 정상 보유 종목의 price/entry 비율은 통상 [0.5, 2.0]. 안전 마진을 두고 [0.3, 3.0]
   // 초과 시 단위 불일치로 간주하고 시그널을 즉시 거부한다 (오발화 < 미발화가 안전).
   const ratio = price / entry;
-  if (ratio < 0.3 || ratio > 3.0) {
+  if (ratio < EXIT_UNIT_RATIO_MIN || ratio > EXIT_UNIT_RATIO_MAX) {
     console.warn(
       `[exit-engine:unit-mismatch] ${symbol} (${market}) price/entry ratio=${ratio.toFixed(4)} ` +
       `out of [0.3, 3.0] — likely USD/KRW unit mismatch. price=${price} entry=${entry}. ` +

@@ -5,6 +5,7 @@ import { getPortfolioTotalKRW } from '@/lib/safety/portfolio-total';
 import { sendSlackAlert } from '@/lib/notify/slack';
 import { sendTelegramAlert } from '@/lib/notify/telegram';
 import { buildTradeReport, formatReportMessage, fetchPortfolioBaselineKRW, fetchSignalCandidates } from '@/lib/reports/trade-report';
+import { getEvalFunnelSummary } from '@/lib/strategy/eval-funnel-query';
 import { parseAnchorList, shouldFireAtAnchorList } from '@/lib/reports/anchor';
 import { isTradingDay } from '@/lib/reports/trading-day';
 
@@ -94,14 +95,15 @@ export async function POST(req: NextRequest) {
     const rangeStart = last ?? new Date(now.getTime() - intervalMs);
     const rangeEnd = now;
 
-    const [totalKRW, baselineKRW, candidates] = await Promise.all([
+    const [totalKRW, baselineKRW, candidates, funnel] = await Promise.all([
       getPortfolioTotalKRW(true).catch(() => 0),
       fetchPortfolioBaselineKRW(rangeStart),
       fetchSignalCandidates().catch(() => ({ buyWatchlist: [], holdings: [], sellPnl: [] })),
+      getEvalFunnelSummary('domestic', rangeStart, rangeEnd).catch(() => null),
     ]);
 
     const report = await buildTradeReport({ rangeStart, rangeEnd, totalKRW, baselineKRW });
-    const body = formatReportMessage(report, totalKRW, baselineKRW, candidates);
+    const body = formatReportMessage(report, totalKRW, baselineKRW, candidates, funnel);
     const hours = Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 3600_000);
     const title = `거래 리포트 (${hours}h)`;
 

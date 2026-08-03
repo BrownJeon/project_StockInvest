@@ -11,8 +11,12 @@ const TABS = [
   { href: '/settings',   label: '설정',     icon: '⚙️', emphasize: false },
 ] as const;
 
+/** 하단 탭을 숨길 경로 (로그인 등 인증 전 화면) */
+const HIDDEN_PATHS = ['/login'];
+
 export function BottomTabs() {
   const pathname = usePathname();
+  if (HIDDEN_PATHS.includes(pathname)) return null;
   return (
     <nav aria-label="primary navigation" style={styles.nav}>
       {TABS.map((t) => {
