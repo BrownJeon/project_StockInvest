@@ -13,15 +13,14 @@ aliases:
 > 사용자가 **"이어서 작업해줘"** 라고 하면 이 파일부터 읽고, 아래 "다음 할 일"의 1번부터 진행한다.
 > 다른 PC에서 재개할 수 있으므로 **모든 맥락은 이 vault 안에 있다** (세션 메모리·플랜 파일에 의존하지 말 것).
 
-## 🚨 지금 가장 중요한 것 (2026-08-05)
+## ✅ 2026-08-05 배포 완료 — 운영 안정화됨
 
-**커밋 대기 중인 검증 완료 변경분이 있고, 배포하기 전까지 운영이 불안정하다.**
+**직전까지 있던 "메모리 next14 / 디스크 next15" 불일치는 해소됐다.** 커밋 `12bd061`을 11:08 KST에 배포해 next **15.5.22**로 전환 완료(pm2 version 컬럼 확인). 이제 재시작해도 안전하다.
 
-`node_modules/next`는 15.5.22인데 실행 중 pm2 프로세스는 next 14로 기동돼 있다(2026-08-03 13:10에 node_modules만 교체됨). **메모리14 / 디스크15 불일치가 지속 중**이고, 아직 로드되지 않은 next 내부 모듈을 lazy require 하는 순간 크래시할 수 있다. `autorestart:true` + 누적 재시작 317회라 계획 없는 재시작이 언제든 가능하며, 그 순간 복구 불능이 된다.
-
-→ **해소 방법 = [[T-005-next15-upgrade]] 커밋·배포.** 검증은 전부 끝났고 **사용자 승인만 남았다.**
-→ **배포는 국내장 마감(15:30 KST) 이후에** — 배포 스크립트가 라이브 디렉토리에서 in-place 빌드하고 워커가 1개뿐이라 장중 배포는 짧은 장애가 될 수 있다.
-→ **커밋 시 `agent-vault/` 문서를 반드시 포함** — `git clean -fdx`가 미추적 파일을 지운다.
+- 배포 결과: webhook-deploy `exit=0`(~30초), pm2 재시작 **1회만**(317→318), **에러 로그 증가 0바이트**, health 200 무중단
+- **next 관련 GHSA 취약점 21건 → 0건**
+- [[T-004-phase1-visual-verification]] 렌더 수정 3건도 함께 배포·실환경 검증 완료
+- `stockinvest-cron`은 재시작 불필요했고 실제로 무중단 유지됨(uptime 2D)
 
 ## 한 줄 요약
 
@@ -54,25 +53,21 @@ aliases:
 
 ## 다음 할 일
 
-### 1. 🔴 커밋·배포 승인 (최우선 — 운영 불안정 해소)
+### 1. Phase 2 착수 — [[T-003-phase2-pipeline-redesign]]
 
-[[T-004-phase1-visual-verification]] + [[T-005-next15-upgrade]]가 **둘 다 검증 완료**돼 같은 커밋으로 나갈 준비가 끝났다. 사용자 승인만 있으면 된다.
+관측 3영업일 조건: 2026-08-03(월) 배포 기준 08-04(화)·08-05(수) 확보, **08-06(목) 종료 시 충족.** 게이트 50→26 재편, 스위치 의미 분리, 장중 AI 제거, 룰 파라미터 재도출(RSI 35→38 등).
 
-- **커밋 대상**: 소스·설정 **28건** + `agent-vault/` 문서 8건. `docs/superpowers/specs/2026-08-04-multi-user-kis-accounts-design.md`(미추적, 이번 작업 무관)는 **사용자 확인 필요** — 방치하면 `git clean -fdx`로 삭제된다.
-- **배포 타이밍**: 국내장 마감 **15:30 KST 이후**.
-- **배포 후 필수 확인 3가지**:
-  1. `pm2 logs stockinvest --lines 100` — reload 전후 크래시·재시작 루프 유무
-  2. 대시보드 "오늘의 평가 깔때기" 카드가 **수정본으로** 정상 렌더되는지 (지금 운영 중인 건 수정 전 코드다)
-  3. trade-report 텔레그램 메시지 볼드 정상 여부 (오늘 배달된 건 별표가 그대로였다)
-- **cron 재시작**: 이번 배포엔 **불필요**(`scripts/` 무변경 + cron-runner는 next 무관 순수 curl 루프). 해도 무해.
+### 2. 🔴 남은 사용자 결정 1건 — `safety_daily_order_max_pct = 0`
 
-### 2. Phase 2 착수 — [[T-003-phase2-pipeline-redesign]]
+명시적으로 0이라 Phase 0 fail-safe에 따라 **국내 신규 매수가 전면 차단 중**이다(매도·청산은 무관). 코드는 정상 동작 — 의도한 값(예: 10)을 알려주면 반영. **임의로 채우지 않았다.**
 
-관측 3영업일 조건: 배포일 2026-08-03(월) 기준 08-04(화)·08-05(수)로 **2영업일 확보**. 08-06(목) 종료 시 충족. 게이트 50→26 재편, 스위치 의미 분리, 장중 AI 제거, 룰 파라미터 재도출(RSI 35→38 등).
+### 3. 텔레그램 조용한 실패 (Medium-High, 백로그)
+
+`sendTelegramAlert`가 void 반환이라 전송 실패해도 라우트는 `sent:true` 응답 + `report_trade_last_sent_at` 갱신. **간헐적 ETIMEDOUT이 실재한다** — 08-04 08:03 / 08-04 15:23 / 08-05 11:16 확인(누적 126건). 08-04 08:03 정기 리포트는 실제로 유실됐다. 재시도하면 대개 성공하므로 네트워크 간헐 장애로 보이나, **실패가 사용자에게 안 보이는 것**이 문제. 배달 확인 후 last_sent_at 갱신 또는 dead-man's switch 검토.
 
 ### (낮은 우선순위) `oversold-bounce-daily-v1` strategy_id 드리프트
 
-`post-market-engine.ts`가 시그널 생성 시 `strategy_id`를 `oversold-bounce-v1`로 쓰는데 `strategies.id`는 `oversold-bounce-daily-v1`이라 조인 기반 통계에서 이 전략만 영구 누락된다(pre-existing). Phase 2나 별도 task로.
+`post-market-engine.ts`가 `oversold-bounce-v1`을 쓰는데 `strategies.id`는 `oversold-bounce-daily-v1`이라 조인 기반 통계에서 영구 누락(pre-existing).
 
 ## 반드시 지킬 제약
 
