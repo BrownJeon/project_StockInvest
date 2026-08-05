@@ -5,10 +5,10 @@ export const dynamic = 'force-dynamic';
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const pool = getPool();
-  const id = Number(params.id);
+  const id = Number((await params).id);
   if (!id) return Response.json({ ok: false, error: 'invalid id' }, { status: 400 });
 
   try {
@@ -33,10 +33,10 @@ export async function PATCH(
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const pool = getPool();
-  const id = Number(params.id);
+  const id = Number((await params).id);
   if (!id) return Response.json({ ok: false, error: 'invalid id' }, { status: 400 });
 
   try {

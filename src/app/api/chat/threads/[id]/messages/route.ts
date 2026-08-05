@@ -27,8 +27,8 @@ interface BodyShape {
 }
 
 /** GET — thread 메시지 목록 */
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const threadId = Number(params.id);
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const threadId = Number((await params).id);
   if (!Number.isFinite(threadId) || threadId <= 0) {
     return NextResponse.json({ ok: false, error: 'invalid thread id' }, { status: 400 });
   }
@@ -60,8 +60,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 /** POST — 사용자 정제 프롬프트(또는 원문)로 본 응답 생성 + DB 저장 */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const threadId = Number(params.id);
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const threadId = Number((await params).id);
   if (!Number.isFinite(threadId) || threadId <= 0) {
     return NextResponse.json({ ok: false, error: 'invalid thread id' }, { status: 400 });
   }

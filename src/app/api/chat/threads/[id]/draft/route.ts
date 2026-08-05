@@ -21,8 +21,8 @@ interface BodyShape {
  * 1단계: 사용자 자유 질의 → 정제 프롬프트 + 첨부 컨텍스트 생성 (DB 저장 안 함).
  * 응답을 사용자가 검토·편집 후 POST /messages로 확정 전송.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const threadId = Number(params.id);
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const threadId = Number((await params).id);
   if (!Number.isFinite(threadId) || threadId <= 0) {
     return NextResponse.json({ ok: false, error: 'invalid thread id' }, { status: 400 });
   }

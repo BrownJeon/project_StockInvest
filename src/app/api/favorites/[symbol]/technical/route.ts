@@ -34,9 +34,9 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { symbol: string } },
+  { params }: { params: Promise<{ symbol: string }> },
 ) {
-  const { symbol } = params;
+  const { symbol } = await params;
   if (!symbol) {
     return Response.json({ ok: false, error: 'symbol required' }, { status: 400 });
   }

@@ -3,7 +3,7 @@ import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { getPortfolioTotalKRW } from '@/lib/safety/portfolio-total';
 import { sendSlackAlert } from '@/lib/notify/slack';
-import { sendTelegramAlert } from '@/lib/notify/telegram';
+import { sendTelegramAlert, mrkdwnToTelegramHtml } from '@/lib/notify/telegram';
 import { buildTradeReport, formatReportMessage, fetchPortfolioBaselineKRW, fetchSignalCandidates } from '@/lib/reports/trade-report';
 import { getEvalFunnelSummary } from '@/lib/strategy/eval-funnel-query';
 import { parseAnchorList, shouldFireAtAnchorList } from '@/lib/reports/anchor';
@@ -112,7 +112,9 @@ export async function POST(req: NextRequest) {
       await sendSlackAlert('info', force ? `[테스트] ${title}` : title, body).catch(e => console.error('[trade-report] slack:', e));
     }
     if (sendChannel === 'telegram' || sendChannel === 'both') {
-      await sendTelegramAlert('info', force ? `[테스트] ${title}` : title, body).catch(e => console.error('[trade-report] telegram:', e));
+      // body 는 Slack mrkdwn(`*굵게*`) 포맷이라 텔레그램(parse_mode=HTML)에선 별표가 그대로 노출된다.
+      // Slack 으로 가는 body 는 손대지 않고, 텔레그램 전송분만 HTML 로 변환한다.
+      await sendTelegramAlert('info', force ? `[테스트] ${title}` : title, mrkdwnToTelegramHtml(body)).catch(e => console.error('[trade-report] telegram:', e));
     }
 
     if (!force) await setLastSent(now);

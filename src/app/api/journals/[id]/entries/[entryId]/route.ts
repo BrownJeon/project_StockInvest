@@ -5,11 +5,12 @@ export const dynamic = 'force-dynamic';
 
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string; entryId: string } },
+  { params }: { params: Promise<{ id: string; entryId: string }> },
 ) {
   const pool = getPool();
-  const entryId = Number(params.entryId);
-  const journalId = Number(params.id);
+  const { id, entryId: entryIdParam } = await params;
+  const entryId = Number(entryIdParam);
+  const journalId = Number(id);
   try {
     const body = await req.json() as { content?: string; phase?: string };
     const sets: string[] = [];
@@ -34,11 +35,12 @@ export async function PATCH(
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: { id: string; entryId: string } },
+  { params }: { params: Promise<{ id: string; entryId: string }> },
 ) {
   const pool = getPool();
-  const entryId = Number(params.entryId);
-  const journalId = Number(params.id);
+  const { id, entryId: entryIdParam } = await params;
+  const entryId = Number(entryIdParam);
+  const journalId = Number(id);
   try {
     const [result] = await pool.query<ResultSetHeader>(
       'DELETE FROM trade_journal_entries WHERE id = ? AND journal_id = ?',

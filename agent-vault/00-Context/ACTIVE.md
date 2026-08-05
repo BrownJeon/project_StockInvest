@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-02
+updated: 2026-08-05
 tags:
   - type/context
 ---
@@ -35,12 +35,17 @@ Phase 0(안전 기반) → 1(관측: 깔때기) → 2(시그널 복구: 게이�
 
 ## 다음 할 일
 
-**2026-08-03 세션에서 [[T-002-phase1-eval-funnel]] 잔여 구현을 전부 완료했다. 재개 시 아래 순서.**
+**2026-08-05 세션에서 [[T-004-phase1-visual-verification]](렌더 검증)과 [[T-005-next15-upgrade]](보안 업그레이드) 둘 다 검증 완료. 커밋·배포 승인만 남았다.**
 
-1. **배포 승인** — 오늘 변경분(engine.ts 계측 완성 + 안전 관련 수정 1건, 대시보드 카드, trade-report 요약)이 typecheck·테스트·독립 reviewer 감사를 통과해 워킹트리에 대기 중이다. 사용자 승인 후 커밋·push(=자동배포) + `stockinvest-cron` 수동 재시작. 상세는 [[RESUME]].
-2. 배포 후 장중 실측 — `eval_funnel` final.stage가 정상 기록되는지, 대시보드·리포트가 실데이터로 렌더되는지 확인.
-3. [[T-001-phase0-safety-foundation]] — developer 작업은 완료(next 14.2.35, 테스트 398건 통과). **reviewer 최종 재검증만 남음**(2차 Critical인 CVE-2025-55184 수정분 확인). 그 후 QA.
-4. [[T-003-phase2-pipeline-redesign]] — analyst 사양 완료. Phase 1 관측 데이터 3영업일 확보 후(배포일 기준) developer 착수.
+재개 시 [[RESUME]] 최상단 "🚨 지금 가장 중요한 것"부터 읽을 것 — **운영이 불안정한 상태이고 배포가 그 해소책**이다.
+
+1. **커밋·push 승인** (최우선) — 소스 28건 + agent-vault 8건. 장 마감 15:30 KST 이후 배포.
+2. 배포 후 스팟체크 3종 — pm2 로그 / 깔때기 카드 렌더 / 텔레그램 볼드.
+3. [[T-003-phase2-pipeline-redesign]] — 관측 3영업일은 2026-08-06(목) 종료 시 충족.
+
+## 사용자 결정 필요 — 1건으로 축소 (2026-08-05)
+
+3건 중 2건 해소: 배포 테스트 게이트는 **이미 존재**했고(08-03 추가됨), next CVE는 **승인·검증 완료**. 남은 1건은 `safety_daily_order_max_pct = 0` — 국내 신규 매수가 전면 차단 중이며 의도한 값(예: 10)을 사용자가 알려줘야 한다.
 
 ## Phase 0 최종 상태 (developer 완료분)
 

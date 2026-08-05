@@ -17,9 +17,9 @@ async function isHybridModeEnabled(): Promise<boolean> {
   return String(process.env.HYBRID_MODE_ENABLED ?? 'false').toLowerCase() === 'true';
 }
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const id = Number(params.id);
+    const id = Number((await params).id);
     if (!Number.isFinite(id)) {
       return Response.json({ ok: false, error: 'invalid id' }, { status: 400 });
     }

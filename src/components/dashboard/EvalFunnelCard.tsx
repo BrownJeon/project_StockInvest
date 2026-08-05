@@ -24,8 +24,12 @@ interface EvalFunnelSummary {
   runs: number;
   fullEvalRuns: number;
   symbolsEvaluated: number;
+  /** 평가 트랙 전용 (exit 엔진 발화분 제외) */
   buySignals: number;
+  /** 평가 트랙 전용 (exit 엔진 발화분 제외) */
   sellSignals: number;
+  /** exit 엔진(보유 관리) 청산 시그널 — 깔때기 6단계와 모수가 다른 별도 트랙 */
+  exitSignals: number;
   steps: FunnelStepCount[];
   bottlenecks: FunnelReasonCount[];
   anomalies: FunnelAnomaly[];
@@ -57,7 +61,8 @@ export function EvalFunnelCard({ reloadKey }: { reloadKey: number }) {
   if (error) return null; // 관측 실패는 조용히 숨김 — 매매 화면을 가릴 이유 없음
   if (!data) return null;
 
-  const signalsCreated = data.buySignals + data.sellSignals;
+  const strategySignals = data.buySignals + data.sellSignals;
+  const signalsCreated = strategySignals + data.exitSignals;
   const top = data.bottlenecks[0];
   const evaluated = data.steps.find(s => s.key === 'evaluated')?.count ?? 0;
 
@@ -82,7 +87,7 @@ export function EvalFunnelCard({ reloadKey }: { reloadKey: number }) {
           오늘 시그널{' '}
           <strong style={{ color: signalsCreated > 0 ? 'var(--ok)' : 'var(--text)' }}>{signalsCreated}건</strong>
           {signalsCreated > 0 && (
-            <span style={{ color: 'var(--muted)' }}> (매수 {data.buySignals} · 매도 {data.sellSignals})</span>
+            <span style={{ color: 'var(--muted)' }}> (전략 {strategySignals} · 청산 {data.exitSignals})</span>
           )}
           <span style={{ color: 'var(--muted)' }}> · 런 {data.runs}회{data.fullEvalRuns !== data.runs ? ` (풀평가 ${data.fullEvalRuns}회)` : ''}</span>
         </div>
@@ -115,6 +120,13 @@ export function EvalFunnelCard({ reloadKey }: { reloadKey: number }) {
             ))}
           </div>
 
+          {/* exit 트랙 — 위 6단계와 모수가 달라 사슬에 합산하지 않는다 (T-004) */}
+          {data.exitSignals > 0 && (
+            <div style={{ padding: '0 14px 12px', fontSize: 11, color: 'var(--muted)' }}>
+              청산(보유관리) 매도 {data.exitSignals}건 — 깔때기 별도 트랙
+            </div>
+          )}
+
           {/* 최다 차단 top3 */}
           {data.bottlenecks.length > 0 && (
             <div style={{ padding: '0 14px 12px' }}>
@@ -140,7 +152,11 @@ export function EvalFunnelCard({ reloadKey }: { reloadKey: number }) {
 }
 
 function FunnelStepBar({ step, maxCount }: { step: FunnelStepCount; maxCount: number }) {
-  const widthPct = maxCount > 0 ? Math.max(2, Math.round((step.count / maxCount) * 100)) : 0;
+  // count가 0이면 막대를 아예 그리지 않는다. Math.max(2,…)를 무조건 적용하면
+  // "프리필터 통과 0" 같은 0건 단계도 2% 막대가 남아 잔존 종목이 있는 것처럼 보인다.
+  const widthPct = step.count > 0 && maxCount > 0
+    ? Math.max(2, Math.round((step.count / maxCount) * 100))
+    : 0;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
       <div style={{ width: 68, flexShrink: 0, color: 'var(--muted)' }}>{step.label}</div>

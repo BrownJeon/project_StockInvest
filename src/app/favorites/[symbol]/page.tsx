@@ -1,9 +1,10 @@
 import { FavoriteDetailPage } from './FavoriteDetailPage';
 
 interface Props {
-  params: { symbol: string };
+  params: Promise<{ symbol: string }>;
 }
 
-export default function Page({ params }: Props) {
-  return <FavoriteDetailPage symbol={decodeURIComponent(params.symbol)} />;
+export default async function Page({ params }: Props) {
+  const { symbol } = await params;
+  return <FavoriteDetailPage symbol={decodeURIComponent(symbol)} />;
 }

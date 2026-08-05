@@ -22,6 +22,29 @@ function kstNow(): string {
   return new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
 }
 
+/**
+ * Slack mrkdwn 본문 → Telegram HTML(parse_mode='HTML') 변환.
+ *
+ * `sendTelegramAlert` 는 parse_mode='HTML' 로 보내는데, Slack 과 본문을 공유하는 호출부
+ * (예: trade-report)는 `*굵게*` mrkdwn 을 쓴다. HTML 모드에서 `*` 는 서식이 아니라
+ * 리터럴이라 사용자에게 별표가 그대로 노출되고 굵게 처리도 되지 않는다.
+ *
+ * 1) `&` `<` `>` 를 먼저 엔티티로 이스케이프 — 미이스케이프 시 텔레그램이 400 으로 거절하고
+ *    호출부의 `.catch()` 가 이를 삼켜 조용히 실패한다.
+ * 2) 한 줄 안에서 짝이 맞는 `*…*` 만 `<b>…</b>` 로 변환.
+ *
+ * **전역(sendTelegramAlert 내부) 적용은 하지 않는다** — holding-checker 처럼 본문에 직접
+ * `<b>` 를 넣는 호출부가 있어 일괄 이스케이프하면 그쪽이 깨진다. mrkdwn 본문을 보내는
+ * 호출부에서만 명시적으로 감싼다.
+ */
+export function mrkdwnToTelegramHtml(body: string): string {
+  return body
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
+}
+
 export async function sendTelegramAlert(
   level: AlertLevel,
   title: string,

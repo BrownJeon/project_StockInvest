@@ -5,10 +5,10 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(
   _req: Request,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const pool = getPool();
-  const id = Number(params.id);
+  const id = Number((await params).id);
   try {
     const [[journal]] = await pool.query<RowDataPacket[]>(
       'SELECT * FROM trade_journals WHERE id = ? LIMIT 1',
@@ -31,10 +31,10 @@ export async function GET(
 // 상태·가격 업데이트 (watching→active→closed)
 export async function PATCH(
   req: Request,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const pool = getPool();
-  const id = Number(params.id);
+  const id = Number((await params).id);
   try {
     const body = await req.json() as {
       status?: 'watching' | 'active' | 'closed';
@@ -70,10 +70,10 @@ export async function PATCH(
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const pool = getPool();
-  const id = Number(params.id);
+  const id = Number((await params).id);
   try {
     const [result] = await pool.query<ResultSetHeader>(
       'DELETE FROM trade_journals WHERE id = ?',

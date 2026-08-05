@@ -66,10 +66,10 @@ JSON만 반환하고 다른 텍스트는 없이.`;
 
 export async function GET(
   req: Request,
-  { params }: { params: { symbol: string } },
+  { params }: { params: Promise<{ symbol: string }> },
 ) {
   const pool = getPool();
-  const { symbol } = params;
+  const { symbol } = await params;
 
   if (!symbol) return Response.json({ ok: false, error: 'symbol required' }, { status: 400 });
 
@@ -164,10 +164,10 @@ export async function GET(
 
 export async function DELETE(
   req: Request,
-  { params }: { params: { symbol: string } },
+  { params }: { params: Promise<{ symbol: string }> },
 ) {
   const pool = getPool();
-  const { symbol } = params;
+  const { symbol } = await params;
   try {
     await pool.query('DELETE FROM stock_fundamentals WHERE symbol = ?', [symbol]);
     return Response.json({ ok: true });

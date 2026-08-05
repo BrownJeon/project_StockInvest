@@ -268,19 +268,27 @@ export function formatFunnelSection(funnel: EvalFunnelSummary): string {
   const lines: string[] = [];
   lines.push('*📊 평가 깔때기 — 국내장*');
   lines.push(
-    `런 ${funnel.runs}회${funnel.fullEvalRuns !== funnel.runs ? `(풀평가 ${funnel.fullEvalRuns}회)` : ''} · 종목 ${funnel.symbolsEvaluated}개 평가`,
+    `런 ${funnel.runs}회${funnel.fullEvalRuns !== funnel.runs ? `(풀평가 ${funnel.fullEvalRuns}회)` : ''} · 종목평가 ${funnel.symbolsEvaluated}건`,
   );
 
+  // 사슬·괄호 모두 **평가 트랙 전용**. exit 엔진 청산 시그널을 여기 합산하면
+  // `✅ 시그널 0건 (매도 2)` 같은 자기모순이 생긴다 (T-004 analyst 판정).
   const signalTotal = funnel.buySignals + funnel.sellSignals;
   const stepLine = funnel.steps
     .filter(s => s.key !== 'evaluated')
-    .map(s => s.key === 'signal' ? `✅ 시그널 ${s.count}건` : `${s.label} ${s.count}`)
+    // 터미널에 '건'을 붙이지 않는다 — 사슬의 각 항은 건수가 아니라 symbol×run 이라 단위가 다르다.
+    .map(s => s.key === 'signal' ? `✅ 시그널 ${s.count}` : `${s.label} ${s.count}`)
     .join(' → ');
   if (stepLine) {
     const sideDetail = signalTotal > 0
-      ? ` (매수 ${funnel.buySignals}${funnel.sellSignals > 0 ? ` · 매도 ${funnel.sellSignals}` : ''})`
+      ? ` (매수 ${funnel.buySignals} · 매도 ${funnel.sellSignals})`
       : '';
     lines.push(stepLine + sideDetail);
+  }
+
+  // exit 트랙은 깔때기와 모수가 다르므로 사슬에 넣지 않고 별도 줄로 표기한다.
+  if (funnel.exitSignals > 0) {
+    lines.push(`청산(보유관리) 매도 ${funnel.exitSignals}건`);
   }
 
   if (funnel.bottlenecks.length > 0 && funnel.symbolsEvaluated > 0) {

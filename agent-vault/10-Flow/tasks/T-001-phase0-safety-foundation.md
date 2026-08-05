@@ -2,7 +2,7 @@
 task-id: T-001
 project: StockInvest
 created: 2026-08-02
-status: doing
+status: reviewer-passed-with-followups
 tags:
   - type/task
   - domain/safety
@@ -83,6 +83,28 @@ aliases:
 - [21:40] Reviewer: **재검증 — 판정 여전히 FAIL, 그러나 대부분 해소**. dev-phase0 조치 4건 전부 코드·`git diff`·테스트로 직접 재확인(신뢰 안 하고 재검증): ①Critical(CVE-2025-29927) — package.json/lock 모두 `next@14.2.25`로 정확히 고정 확인(lock diff 15개 항목, next 계열 13 + `@swc/helpers` optional peer 제거 + `brace-expansion` nested 패치만 — 주장과 100% 일치). node_modules 실측은 여전히 14.2.15(Windows/Linux 공유 마운트라 로컬 install 금지 — 타당한 설명, `npm ci`는 lock 기준이라 배포 시 14.2.25 설치됨). ②High(rate limit 스푸핑) — `login-gate.ts` 전역 지수 백오프로 교체 확인, `x-forwarded-for` 참조 완전히 사라짐, 잠금 중 PIN 대조 생략도 `route.ts`에서 확인. ③Medium(health 역산) — 금액·pct 완전 제거, boolean만 노출 확인. ④Medium(isDryRun fail-open) — `flags.ts`/`parseBoolFlag` 신설 확인, `isKillSwitchActive`까지 대칭 수정(단 해석불가 시 kill switch는 false 유지 — 발동 방향 fail-safe 원칙과는 반대 판단이라 Leader 재검토 권장, blocking은 아님). 부수 조치(undici 제거, 실패 테스트 3종)는 `git diff HEAD`로 확인한 결과 **소스는 전부 무변경, 테스트만 갱신** — production 로직 변경 리스크 없음(telegram.ts만 undici 제거로 실질 변경).
   **재검증 중 신규 Critical 발견(dev-phase0가 못 잡음)**: 고정된 `next@14.2.25` 자체가 npm 레지스트리에 `"deprecated": "...security-update-2025-12-11"`로 표시됨(lock diff에 그대로 포함되어 있어 발견) — WebFetch로 원문 확인 결과 **CVE-2025-55184(DoS, High)**: App Router 엔드포인트 아무 곳에나 조작된 요청 1건으로 Node 프로세스가 무한루프에 빠져 전체 요청 처리가 멈춤(14.x 라인 수정판은 14.2.35). 이 앱은 100% App Router이고 ecosystem.config.js에 헬스체크 기반 재시작이 없어(`autorestart`는 크래시에만 반응) 행(hang) 상태에서 kill-switch drawdown 체크·exit-engine cron이 조용히 전부 정지할 수 있음 — 실매매 안전장치 자체가 무력화되는 자금손실 직결 리스크로 판단해 Critical로 분류. (CVE-2025-55183 소스코드 노출은 이 앱이 Server Actions 미사용이라 해당 없음. React2Shell RCE(CVE-2025-66478)는 14.x stable 비영향 확인.) **조치는 `next` 버전을 14.2.25 → 14.2.35 로 한 단계 더 올리는 것뿐**(같은 14.2.x 라인, breaking change 없음). dev-phase0에게 재수정 요청 + main 에스컬레이션 완료.
 
+- [10:15][Reviewer 3차 재검증, 2026-08-03] **판정: PASS (배포 완료·운영 라이브 확인). 단 신규 발견 2건은 별도 사용자 결정 필요 — 이 task 범위 밖으로 분리.**
+
+  **기존 미결 항목 재확인 (전부 해소 확인)**:
+  - `isKillSwitchActive`의 "해석불가 시 fail-open(false)" 우려 — 현재 코드는 이미 `true`(활성/차단) 반환하도록 되어 있음. `isDryRun`과 대칭인 안전 방향 확정, 코드·주석 모두 일치. (2차 리뷰 노트의 "Leader 재검토 권장"은 그 사이에 이미 해소됨.)
+  - 로그인 rate-limit 전역 지수 백오프(`login-gate.ts`) — 설계 그대로 코드에 존재. `ecosystem.config.js`가 `stockinvest`를 `instances: 1`로 고정해 모듈 싱글턴이 실제로 프로세스 전역임을 확인(cluster instances>1로 늘어나면 이 가정이 깨지므로 향후 스케일 변경 시 재검토 필요 — 각주로 남김).
+
+  **운영 서버(2026-08-03 10:00 KST 배포분)에 대한 실측 QA — 전부 통과**:
+  1. 무인증 `/api/orders` → 401
+  2. `/api/health` 무인증 → 200 (safety 블록 포함, 금액 비노출 확인)
+  3. `/api/cron/strategy-eval` 시크릿 없이 → 401, 올바른 `x-cron-secret` → 200
+  4. **`x-middleware-subrequest` 헤더 스푸핑 시도(CVE-2025-29927 정확한 공격 기법) → 여전히 401, 우회 안 됨** — 패치가 실제로 살아있음을 라이브로 확인
+  5. `/login` 무인증 → 200
+  6. 틀린 PIN → 401 JSON(`invalid_pin`), 500 크래시 아님
+  7. 올바른 PIN → 200 + `HttpOnly; SameSite=lax` 세션 쿠키(30일)
+
+  **[신규 발견 A — Critical, 별도 결정 필요] 실제 배포 파이프라인에 테스트 게이트가 없다.** Phase 0 Spec E("`.gitea/workflows/deploy.yml`에 `npm test`를 build 전 게이트로 추가")는 구현됐지만, **그 워크플로 파일은 죽어있다**(러너 미등록, `actions/runners` API가 `total_count:0` 반환 — [[T-002-phase1-eval-funnel]]에서 push 후 실측으로 발견). 실제 배포는 `/home/brownjeon/.local/webhook-deploy/deploy-stockinvest.sh`(Gitea 웹훅 HMAC 서명 검증 → `git reset --hard origin/main` → `git clean -fdx -e .env -e node_modules -e .next` → `npm ci` → `npm run build` → `pm2 reload`)가 수행하며 **이 스크립트에는 `npm test` 호출이 전혀 없다.** 즉 Phase 0가 의도한 "테스트 실패 시 배포 차단" 안전장치는 현재 **전혀 작동하지 않는다.** 이 스크립트는 프로젝트 밖 공용 인프라(webhook-deploy는 TradingInvest·bjj·home-m4-api·climb도 함께 관리)라 StockInvest task 범위에서 임의로 수정하지 않았다 — **사용자 결정 필요**(HOME-SERVER 프로젝트 영역과 겹침).
+    - 부수 위험도 함께 발견: `git clean -fdx`가 워킹트리의 **커밋되지 않은 변경을 전부 삭제**한다. 오늘 세션이 배포 전 커밋을 마친 것은 우연이 아니라 다행이었다 — 앞으로도 이 리포에 미커밋 변경을 오래 남겨두면 안 된다(다른 프로젝트 push가 webhook을 못 건드리므로 교차 오염 위험은 없지만, StockInvest 자체 push 시점에 미커밋 변경이 있으면 그대로 증발한다).
+
+  **[신규 발견 B — High, 별도 결정 필요] 배포된 next@14.2.35 자체가 `npm audit` 기준 21건의 고위험 CVE 범위에 포함된다.** Phase 0가 고친 CVE-2025-29927(미들웨어 우회)·CVE-2025-55184(DoS 행)는 **정확히 해소됨을 라이브로 재확인**했으나(위 QA 4번), 그와 별개로 HTTP 요청 밀수(request smuggling)·캐시 오염·Server Function 엔드포인트 무단 노출 등 다수의 advisory가 `<15.5.16`~`<15.5.21` 범위로 걸려 있어 **14.2.x 라인 자체에는 백포트되지 않는다**(수정판은 15.5.16+ 또는 16.x). 14.x→16.x는 브레이킹 체인지가 있는 메이저 업그레이드라 이번 Phase 0(위생 작업) 범위를 벗어난다 — **범위·일정은 사용자·Leader 결정 필요.** 참고로 이 앱은 App Router 전용·Server Actions 미사용이라 일부 advisory(Server Actions 관련)는 실제 노출 안 될 가능성이 높지만, 개별 advisory별 실제 노출 여부 triage는 하지 않았다(범위 밖).
+
 ## 최종 요약
 
-(작업 완료 후 Leader 작성)
+**Phase 0 안전 기반: 코드 구현·독립 reviewer 3차 검증·운영 라이브 QA 전부 통과.** 원래 스펙 A~H는 전부 의도대로 동작하며, 2026-08-03 10:00 KST 배포로 이미 운영에 반영되어 있다(이 세션에서 Phase 1과 함께 커밋·배포).
+
+재검증 과정에서 이 task의 원 범위를 벗어나는 **인프라 수준의 신규 발견 2건**(실배포 파이프라인 테스트 게이트 부재, next 14.2.x 라인의 잔존 CVE 21건)을 확인했다. 둘 다 심각도는 높지만 StockInvest 코드만으로 해결되지 않거나(전자는 공용 webhook-deploy 스크립트, 후자는 메이저 프레임워크 업그레이드) 즉흥적으로 손대면 위험이 더 큰 사안이라 **이 task를 PASS로 닫고 별도 항목으로 분리**했다. 사용자 결정 대기 — [[board]] Backlog 참조.

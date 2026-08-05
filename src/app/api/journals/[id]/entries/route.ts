@@ -5,10 +5,10 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const pool = getPool();
-  const journalId = Number(params.id);
+  const journalId = Number((await params).id);
   try {
     const body = await req.json() as {
       phase: string;

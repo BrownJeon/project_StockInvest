@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { FUNNEL_STEPS, gateLabelKo, type FunnelMarket } from './eval-funnel-labels';
+import { EXIT_STRATEGY_ID } from './exit-engine';
 
 /**
  * eval_funnel 집계 쿼리 (T-002 §4) — 대시보드 카드 · trade-report 요약이 공유하는 단일 소스.
@@ -33,8 +34,16 @@ export interface EvalFunnelSummary {
   runs: number;
   fullEvalRuns: number;
   symbolsEvaluated: number;
+  /** **평가 트랙 전용** 매수 시그널 건수 (exit 엔진 발화분 제외) */
   buySignals: number;
+  /** **평가 트랙 전용** 매도 시그널 건수 (exit 엔진 발화분 제외) */
   sellSignals: number;
+  /**
+   * exit 엔진(보유 관리) 청산 시그널 건수 — 깔때기 6단계와 **모수가 다른 별도 트랙**.
+   * exit 트랙은 stage 5/7/9/11 게이트를 하나도 통과하지 않고 `final` 행도 쓰지 않으므로
+   * 6단계 터미널에 합산하면 "AI 통과 0 → 시그널 2" 처럼 부분집합 불변식이 깨진다 (T-004 analyst 판정).
+   */
+  exitSignals: number;
   steps: FunnelStepCount[];
   /** 최다 차단 top3 (final, verdict=skip 기준) */
   bottlenecks: FunnelReasonCount[];
@@ -100,19 +109,26 @@ export async function getEvalFunnelSummary(
     prevCount = count;
   }
 
-  // 3) 매수/매도 시그널 건수 — signal_created(pass) 이벤트 기준 (final은 심볼당 1행이라 다중 시그널 심볼을 과소집계함).
+  // 3) 시그널 건수 — signal_created(pass) 이벤트 기준 (final은 심볼당 1행이라 다중 시그널 심볼을 과소집계함).
+  //    **트랙 분리**: exit 엔진(보유 관리) 청산 시그널은 평가 깔때기의 게이트를 하나도 통과하지 않으므로
+  //    buy/sell 과 같은 축에 합산하지 않는다 (T-004 analyst 판정). 판별자는 strategy_id.
+  //    strategy_id 가 NULL 이면 'eval' 로 떨어진다 — 안전한 기본값(실측 NULL 0건).
   const [sideRows] = await pool.query<RowDataPacket[]>(
-    `SELECT side, COUNT(*) AS n
+    `SELECT CASE WHEN strategy_id = ? THEN 'exit' ELSE 'eval' END AS track,
+            side, COUNT(*) AS n
        FROM eval_funnel
       WHERE market = ? AND gate = 'signal_created' AND verdict = 'pass' AND ts BETWEEN ? AND ?
-      GROUP BY side`,
-    params,
+      GROUP BY track, side`,
+    [EXIT_STRATEGY_ID, ...params],
   );
   let buySignals = 0;
   let sellSignals = 0;
+  let exitSignals = 0;
   for (const r of sideRows) {
-    if (r.side === 'buy') buySignals = Number(r.n);
-    else if (r.side === 'sell') sellSignals = Number(r.n);
+    const n = Number(r.n);
+    if (r.track === 'exit') exitSignals += n;
+    else if (r.side === 'buy') buySignals += n;
+    else if (r.side === 'sell') sellSignals += n;
   }
 
   // 4) 최다 차단 top3 — final(verdict=skip) reason 기준.
@@ -179,7 +195,7 @@ export async function getEvalFunnelSummary(
   return {
     market, rangeStart, rangeEnd,
     runs, fullEvalRuns, symbolsEvaluated,
-    buySignals, sellSignals,
+    buySignals, sellSignals, exitSignals,
     steps, bottlenecks, anomalies, neutralPct,
   };
 }

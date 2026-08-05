@@ -252,14 +252,21 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   exit_create_failed: '청산 시그널 생성 실패',
 };
 
-/** 6단계 미니 깔때기 바 정의 (T-002 §4-4). `final` 행의 stage 기준 생존 집계. */
+/**
+ * 6단계 미니 깔때기 바 정의 (T-002 §4-4). `final` 행의 stage 기준 생존 집계.
+ *
+ * 모수는 **평가 트랙 전용**이다 (T-004 analyst 판정). 단위는 건이 아니라 symbol×run —
+ * `종목평가` 라벨을 쓰는 이유(유니버스 실제 종목 수 60~90 와의 혼동 방지)와
+ * 터미널이 `전략시그널` 인 이유(exit 엔진 청산 시그널은 이 사슬의 게이트를 하나도
+ * 통과하지 않아 여기 포함되지 않음)가 모두 이것이다.
+ */
 export const FUNNEL_STEPS: Array<{ key: string; label: string; minStage: number }> = [
-  { key: 'evaluated', label: '평가 종목',    minStage: 0  },
+  { key: 'evaluated', label: '종목평가',     minStage: 0  },
   { key: 'fired',     label: '룰 발화',      minStage: 5  },
   { key: 'guard',     label: '가드 통과',    minStage: 7  },
   { key: 'prefilter', label: '프리필터 통과', minStage: 9  },
   { key: 'ai',        label: 'AI 통과',      minStage: 11 },
-  { key: 'signal',    label: '시그널',       minStage: 99 },
+  { key: 'signal',    label: '전략시그널',    minStage: 99 },
 ];
 
 export function gateLabelKo(gate: string | null | undefined): string {

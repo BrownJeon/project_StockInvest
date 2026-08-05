@@ -196,13 +196,14 @@ function funnel(overrides: Partial<EvalFunnelSummary> = {}): EvalFunnelSummary {
     symbolsEvaluated: 72,
     buySignals: 1,
     sellSignals: 0,
+    exitSignals: 0,
     steps: [
-      { key: 'evaluated', label: '평가 종목', count: 72, pctOfPrev: null },
+      { key: 'evaluated', label: '종목평가', count: 72, pctOfPrev: null },
       { key: 'fired', label: '룰 발화', count: 9, pctOfPrev: 12.5 },
       { key: 'guard', label: '가드 통과', count: 6, pctOfPrev: 66.7 },
       { key: 'prefilter', label: '프리필터 통과', count: 4, pctOfPrev: 66.7 },
       { key: 'ai', label: 'AI 통과', count: 1, pctOfPrev: 25 },
-      { key: 'signal', label: '시그널', count: 1, pctOfPrev: 100 },
+      { key: 'signal', label: '전략시그널', count: 1, pctOfPrev: 100 },
     ],
     bottlenecks: [
       { gate: 'rule_no_fire', label: '룰 미발화', count: 63 },
@@ -219,8 +220,8 @@ describe('formatFunnelSection', () => {
   test('T-002 §4 포맷 예시 — 헤더·단계·병목·이상 배너 모두 렌더', () => {
     const msg = formatFunnelSection(funnel());
     expect(msg).toMatch(/📊 평가 깔때기 — 국내장/);
-    expect(msg).toMatch(/런 78회\(풀평가 2회\) · 종목 72개 평가/);
-    expect(msg).toMatch(/룰 발화 9 → 가드 통과 6 → 프리필터 통과 4 → AI 통과 1 → ✅ 시그널 1건 \(매수 1\)/);
+    expect(msg).toMatch(/런 78회\(풀평가 2회\) · 종목평가 72건/);
+    expect(msg).toMatch(/룰 발화 9 → 가드 통과 6 → 프리필터 통과 4 → AI 통과 1 → ✅ 시그널 1 \(매수 1 · 매도 0\)/);
     expect(msg).toMatch(/병목: 룰 미발화 63\/72종목 \(88%\) · 2위 재매수 쿨다운 4건 · 3위 AI 신뢰도 미달 3건/);
     expect(msg).toMatch(/⚠ 이상: AI 배치 실패 2회 · neutral 상태 41% \(30m 룰 전체 비활성\)/);
   });
@@ -239,7 +240,37 @@ describe('formatFunnelSection', () => {
       sellSignals: 0,
       steps: base.steps.map(s => s.key === 'signal' ? { ...s, count: 0 } : s),
     });
-    expect(msg).toMatch(/✅ 시그널 0건$/m);
+    expect(msg).toMatch(/✅ 시그널 0$/m);
+  });
+
+  // ── T-004: exit 트랙 분리 ────────────────────────────────────────────────
+  test('exit 청산 시그널은 사슬 터미널에 합산되지 않고 별도 줄로 표기된다', () => {
+    const base = funnel();
+    const msg = formatFunnelSection({
+      ...base,
+      buySignals: 0,
+      sellSignals: 0,
+      exitSignals: 2,
+      steps: base.steps.map(s => (s.key === 'signal' ? { ...s, count: 0 } : s)),
+    });
+    // 터미널은 평가 트랙 0 그대로 — exit 2건이 새어 들어오면 안 된다
+    expect(msg).toMatch(/✅ 시그널 0$/m);
+    expect(msg).toMatch(/^청산\(보유관리\) 매도 2건$/m);
+    // 회귀 방지: 이것이 T-004 이전의 자기모순 출력이었다
+    expect(msg).not.toMatch(/✅ 시그널 0건 \(매수 0 · 매도 2\)/);
+  });
+
+  test('exitSignals 0이면 청산 줄 자체가 없다', () => {
+    const msg = formatFunnelSection(funnel({ exitSignals: 0 }));
+    expect(msg).not.toMatch(/청산\(보유관리\)/);
+  });
+
+  test('평가 트랙과 exit 트랙이 동시에 있으면 둘 다 각자 자리에 표기된다', () => {
+    const base = funnel();
+    const msg = formatFunnelSection({ ...base, buySignals: 1, sellSignals: 2, exitSignals: 3 });
+    // 괄호는 평가 트랙만 (1 · 2) — exit 3은 절대 섞이지 않는다
+    expect(msg).toMatch(/✅ 시그널 1 \(매수 1 · 매도 2\)/);
+    expect(msg).toMatch(/^청산\(보유관리\) 매도 3건$/m);
   });
 
   test('이상·neutral 모두 없으면 이상 배너 줄 생략', () => {

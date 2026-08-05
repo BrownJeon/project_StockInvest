@@ -9,10 +9,10 @@ const CACHE_TTL_MS = 30 * 60 * 1000; // 30분
 
 export async function GET(
   _req: Request,
-  { params }: { params: { symbol: string } },
+  { params }: { params: Promise<{ symbol: string }> },
 ) {
   const pool = getPool();
-  const { symbol } = params;
+  const { symbol } = await params;
 
   if (!symbol) return Response.json({ ok: false, error: 'symbol required' }, { status: 400 });
 
@@ -120,10 +120,10 @@ JSON 형식 없이 순수 텍스트로만 답하세요.`;
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: { symbol: string } },
+  { params }: { params: Promise<{ symbol: string }> },
 ) {
   const pool = getPool();
-  const { symbol } = params;
+  const { symbol } = await params;
   try {
     await pool.query('DELETE FROM stock_chart_analysis WHERE symbol = ?', [symbol]);
     return Response.json({ ok: true });

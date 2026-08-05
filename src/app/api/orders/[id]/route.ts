@@ -4,9 +4,9 @@ import { kis } from '@/lib/exchanges/kis';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const id = Number(params.id);
+    const id = Number((await params).id);
     if (!Number.isFinite(id)) return Response.json({ ok: false, error: 'invalid id' }, { status: 400 });
 
     const pool = getPool();
@@ -31,9 +31,9 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   }
 }
 
-export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const id = Number(params.id);
+    const id = Number((await params).id);
     if (!Number.isFinite(id)) return Response.json({ ok: false, error: 'invalid id' }, { status: 400 });
 
     const pool = getPool();
