@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fmtNum } from '@/lib/format';
+import { requestJson, type RequestFailure } from '@/lib/http';
 import { LlmProviderSection } from './LlmProviderSection';
 import { ExchangeAccountSection } from './ExchangeAccountSection';
 import { NotifyChannelSection } from './NotifyChannelSection';
@@ -47,7 +48,58 @@ interface ExchangeData {
   kis: { configured: boolean; mock: boolean; overseasEnabled: boolean };
 }
 
-type SaveState = 'idle' | 'saving' | 'saved';
+type SaveState = 'idle' | 'saving' | 'saved' | 'error';
+
+type SaveFailure = RequestFailure;
+
+/**
+ * 설정 저장 요청 1건.
+ *
+ * 기존 `handleSave` 는 fetch 의 네트워크 예외만 잡고 **HTTP 4xx/5xx 를 성공으로 취급**해
+ * 거부된 저장에도 "저장됨 ✓" 를 표시했다. `/api/settings/strategies` 는 이미
+ * `backtestIntervalM` 범위 위반을 400 으로 거절하고 있었으므로 이는 잠재 결함이 아니라
+ * 실제로 살아있던 false-success 다.
+ *
+ * 판정은 `requestJson`(res.ok + 본문 ok 둘 다 검사)에 위임하고, 여기서는
+ * 저장 호출부가 쓰기 좋은 형태(실패면 사유, 성공이면 null)로만 바꾼다.
+ */
+/**
+ * 낙관적 토글(DRY_RUN·KILL_SWITCH) 저장 실패 후 화면에 적용할 상태.
+ *
+ * 되돌리는 값의 우선순위 — 서버 재조회 값이 있으면 **그것이 진실이다**.
+ * 네트워크 오류였다면 요청이 실제로는 서버에 닿아 적용됐을 수도 있어,
+ * 직전 값으로 되돌리는 것이 오히려 거짓이 될 수 있다.
+ * 재조회까지 실패했을 때만 낙관적 변경을 직전 값으로 복원한다.
+ *
+ * 되돌리는 **범위는 이번 토글이 건드린 키뿐**이다. 서버 전체 객체로 덮으면 같은 폼의
+ * 다른 미저장 편집(주문 한도 %·vol guard 임계·차단 종목 등 10여 개 필드)이 경고 없이
+ * 사라진다. 화면이 거짓을 말하진 않지만, 모바일 네트워크가 한 번 끊기는 것만으로
+ * 사용자 입력이 날아가는 별개의 사고다. 미저장 편집이 있는 필드는 사용자의 값을
+ * 그대로 두는 것이 맞다 — 그것이 "미저장 편집"의 의미다.
+ */
+export function revertSafetyState(
+  current: SafetyData | null,
+  previous: Partial<SafetyData>,
+  serverSafety?: SafetyData | null,
+): SafetyData | null {
+  // 로컬 상태가 없으면(초기 로드 실패) 보존할 편집분도 없다 — 서버 값을 그대로 채택.
+  if (!current) return serverSafety ?? null;
+
+  const restored: Partial<SafetyData> = {};
+  for (const key of Object.keys(previous) as (keyof SafetyData)[]) {
+    (restored as Record<string, unknown>)[key] = serverSafety ? serverSafety[key] : previous[key];
+  }
+  return { ...current, ...restored };
+}
+
+export async function patchSetting(url: string, body: unknown): Promise<SaveFailure | null> {
+  const r = await requestJson(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return r.ok ? null : r.failure;
+}
 
 function Toggle({ checked, onChange, danger }: { checked: boolean; onChange: (v: boolean) => void; danger?: boolean }) {
   return (
@@ -113,6 +165,7 @@ export function SettingsPage() {
   const [strategies, setStrategies]       = useState<StrategyItem[]>([]);
   const [loading, setLoading]             = useState(true);
   const [saveState, setSaveState]         = useState<SaveState>('idle');
+  const [saveError, setSaveError]         = useState<string | null>(null);
   const [isDirty, setIsDirty]             = useState(false);
   const [hybridMode, setHybridMode]       = useState<boolean>(false);
   const [hybridSaving, setHybridSaving]   = useState(false);
@@ -162,14 +215,37 @@ export function SettingsPage() {
     setIsDirty(true);
   };
 
-  const autoSave = useCallback(async (delta: Partial<SafetyData>) => {
-    try {
-      await fetch('/api/settings/safety', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(delta),
-      });
-    } catch { /* non-fatal */ }
+  /**
+   * DRY_RUN·KILL_SWITCH 즉시 저장 — **낙관적 UI** 라 실패 처리가 특히 중요하다.
+   *
+   * 기존 구현은 응답을 전혀 보지 않고 실패를 삼켰다. 그래서 사용자가 KILL_SWITCH 를 켜고
+   * 요청이 실패해도 토글은 켜진 채로 남아, **매매가 멈춘 줄 알고 자리를 뜨는** 상태가 됐다.
+   * 실거래 시스템에서 이건 "리포트가 전송을 거짓 보고"보다 위험하다.
+   *
+   * 따라서 알리는 것만으로 끝내지 않고 **컨트롤을 서버 실제 상태로 되돌린다**:
+   *  1순위 재조회(GET) — 네트워크 오류였다면 요청이 서버에 닿았을 수도 있어 실제 값 확인이 유일한 정답
+   *  2순위 직전 값 복원 — 재조회마저 실패했을 때의 폴백
+   */
+  const autoSave = useCallback(async (
+    delta: Partial<SafetyData>,
+    previous: Partial<SafetyData>,
+    label: string,
+  ) => {
+    const failure = await patchSetting('/api/settings/safety', delta);
+    if (!failure) return;
+
+    const reread = await requestJson<{ safety?: SafetyData }>('/api/settings/safety', { cache: 'no-store' });
+    const serverSafety = reread.ok ? (reread.data?.safety ?? null) : null;
+    const fromServer = serverSafety !== null;
+    setSafety(current => revertSafetyState(current, previous, serverSafety));
+
+    setSaveError(
+      `${label} 전환이 저장되지 않았습니다 — ${failure.message} ` +
+      (fromServer
+        ? `${label} 은 서버의 실제 상태로 되돌렸습니다 (다른 미저장 편집은 그대로 둡니다).`
+        : `${label} 을 직전 값으로 되돌렸습니다 — 서버 상태를 확인하지 못했으니 새로고침으로 확인하세요.`),
+    );
+    setSaveState('error');
   }, []);
 
   const updateReport = (delta: Partial<ReportData>) => {
@@ -180,39 +256,48 @@ export function SettingsPage() {
   const handleSave = useCallback(async () => {
     if (!safety) return;
     setSaveState('saving');
+    setSaveError(null);
     try {
-      await Promise.all([
-        fetch('/api/settings/safety', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...safety,
-            notifySignalAutoSubmit: notifySignal.autoSubmit,
-            notifySignalPending:    notifySignal.pending,
-            notifySignalEntry:      notifySignal.entry,
-            notifySignalManual:     notifySignal.manual,
-            ...(report ? {
-              reportEnabled:     report.enabled,
-              reportChannel:     report.channel,
-              reportMode:        report.mode,
-              reportIntervalMin: report.intervalMin,
-              reportAnchorKst:   report.anchorKst,
-            } : {}),
-          }),
+      const results = await Promise.all([
+        patchSetting('/api/settings/safety', {
+          ...safety,
+          notifySignalAutoSubmit: notifySignal.autoSubmit,
+          notifySignalPending:    notifySignal.pending,
+          notifySignalEntry:      notifySignal.entry,
+          notifySignalManual:     notifySignal.manual,
+          ...(report ? {
+            reportEnabled:     report.enabled,
+            reportChannel:     report.channel,
+            reportMode:        report.mode,
+            reportIntervalMin: report.intervalMin,
+            reportAnchorKst:   report.anchorKst,
+          } : {}),
         }),
         ...strategies.map(s =>
-          fetch('/api/settings/strategies', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: s.id, enabled: s.enabled, backtestIntervalM: s.backtestIntervalM }),
+          patchSetting('/api/settings/strategies', {
+            id: s.id, enabled: s.enabled, backtestIntervalM: s.backtestIntervalM,
           })
         ),
       ]);
+
+      const failures = results.filter((r): r is SaveFailure => r !== null);
+      if (failures.length > 0) {
+        // 거부 사유(사용자가 고칠 수 있는 정보)를 네트워크 오류보다 우선 노출한다.
+        const primary = failures.find(f => f.kind === 'rejected') ?? failures[0];
+        const extra = failures.length > 1 ? ` (외 ${failures.length - 1}건 실패)` : '';
+        setSaveError(primary.message + extra);
+        setSaveState('error');
+        return;   // isDirty 유지 — 저장 버튼이 남아 바로 재시도할 수 있다
+      }
+
       setSaveState('saved');
       setIsDirty(false);
       setTimeout(() => setSaveState('idle'), 2000);
-    } catch {
-      setSaveState('idle');
+    } catch (e) {
+      // patchSetting 은 던지지 않지만, 예기치 못한 예외로 '저장 중…'에 갇혀
+      // 버튼이 영구 비활성되는 것을 막는다.
+      setSaveError(e instanceof Error ? e.message : String(e));
+      setSaveState('error');
     }
   }, [safety, notifySignal, report, strategies]);
 
@@ -225,25 +310,37 @@ export function SettingsPage() {
       {(isDirty || saveState !== 'idle') && (
         <div style={{
           position: 'sticky', top: 0, zIndex: 20,
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
           padding: '10px 14px', borderRadius: 10, marginBottom: 4,
-          background: isDirty ? 'rgba(251,191,36,.12)' : 'rgba(34,197,94,.1)',
-          border: `1px solid ${isDirty ? 'rgba(251,191,36,.4)' : 'rgba(34,197,94,.3)'}`,
+          background: saveState === 'error' ? 'rgba(239,68,68,.12)' : isDirty ? 'rgba(251,191,36,.12)' : 'rgba(34,197,94,.1)',
+          border: `1px solid ${saveState === 'error' ? 'rgba(239,68,68,.45)' : isDirty ? 'rgba(251,191,36,.4)' : 'rgba(34,197,94,.3)'}`,
         }}>
-          <span style={{ fontSize: 12, color: isDirty ? 'var(--accent)' : 'var(--ok)', fontWeight: 600 }}>
-            {saveState === 'saving' ? '저장 중…' : saveState === 'saved' ? '저장됨 ✓' : '변경 사항 있음'}
+          {/* 저장 실패는 사용자가 값을 고쳐야 풀리므로 자동 소멸하는 토스트가 아니라
+              재시도 버튼 옆 sticky 바에 계속 남긴다 (minWidth:0 — 긴 사유도 줄바꿈으로 수용) */}
+          <span
+            role={saveState === 'error' ? 'alert' : undefined}
+            style={{
+              fontSize: 12, fontWeight: 600, minWidth: 0, flex: 1, wordBreak: 'break-word',
+              color: saveState === 'error' ? '#ef4444' : isDirty ? 'var(--accent)' : 'var(--ok)',
+            }}
+          >
+            {saveState === 'saving' ? '저장 중…'
+              : saveState === 'saved' ? '저장됨 ✓'
+              : saveState === 'error' ? `저장 실패 — ${saveError ?? '알 수 없는 오류'}`
+              : '변경 사항 있음'}
           </span>
           {isDirty && (
             <button
               onClick={handleSave}
               disabled={saveState === 'saving'}
               style={{
+                flexShrink: 0,
                 padding: '6px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700,
                 background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer',
                 opacity: saveState === 'saving' ? 0.6 : 1,
               }}
             >
-              저장
+              {saveState === 'error' ? '다시 시도' : '저장'}
             </button>
           )}
         </div>
@@ -317,7 +414,11 @@ export function SettingsPage() {
             </span>
             <Toggle
               checked={!(safety?.dryRun ?? true)}
-              onChange={v => { update({ dryRun: !v }); autoSave({ dryRun: !v }); }}
+              onChange={v => {
+                const prev = safety?.dryRun ?? true;
+                update({ dryRun: !v });
+                autoSave({ dryRun: !v }, { dryRun: prev }, 'DRY_RUN');
+              }}
             />
           </div>
         </div>
@@ -336,7 +437,11 @@ export function SettingsPage() {
             </span>
             <Toggle
               checked={safety?.killSwitch ?? false}
-              onChange={v => { update({ killSwitch: v }); autoSave({ killSwitch: v }); }}
+              onChange={v => {
+                const prev = safety?.killSwitch ?? false;
+                update({ killSwitch: v });
+                autoSave({ killSwitch: v }, { killSwitch: prev }, 'KILL_SWITCH');
+              }}
               danger
             />
           </div>

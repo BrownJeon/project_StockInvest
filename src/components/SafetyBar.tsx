@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { fmtNum } from '@/lib/format';
+import { requestJson } from '@/lib/http';
 
 interface HealthResponse {
   ok: boolean;
@@ -15,7 +16,23 @@ interface HealthResponse {
   };
 }
 
-type EmergencyState = 'idle' | 'confirm' | 'running' | 'done';
+type EmergencyState = 'idle' | 'confirm' | 'running' | 'done' | 'failed';
+
+/**
+ * 비상 청산 **성공 응답**의 의미 분류.
+ *
+ * `cancelled:0 · failed:0` 은 "취소할 주문이 없었다"는 뜻이지 작업 완료가 아니다.
+ * 기존 UI 는 이걸 "✓ 취소 완료 — 0건 성공" 으로 표시했고, 요청 실패까지 같은 문구로
+ * 흘러들어 **정반대 의미 세 가지가 한 화면**이 됐다. 여기서 셋을 분리한다.
+ * (요청 자체의 실패는 이 함수에 오지 않는다 — `emState='failed'` 로 따로 간다)
+ */
+export type CancelAllOutcome = 'nothing_to_cancel' | 'partial' | 'success';
+
+export function classifyCancelAll(r: { cancelled: number; failed: number }): CancelAllOutcome {
+  if (r.cancelled === 0 && r.failed === 0) return 'nothing_to_cancel';
+  if (r.failed > 0) return 'partial';
+  return 'success';
+}
 
 export function SafetyBar() {
   const [health, setHealth]       = useState<HealthResponse | null>(null);
@@ -23,6 +40,7 @@ export function SafetyBar() {
   const [error, setError]         = useState<string | null>(null);
   const [emState, setEmState]     = useState<EmergencyState>('idle');
   const [emResult, setEmResult]   = useState<{ cancelled: number; failed: number } | null>(null);
+  const [emError, setEmError]     = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -49,16 +67,31 @@ export function SafetyBar() {
       : warnings.join(' · ');
   }
 
+  /**
+   * 비상 청산(전 주문 취소).
+   *
+   * 기존 구현은 `res.ok` 도 본문 `ok` 도 보지 않아, 실패 응답이 `{cancelled:0, failed:0}`
+   * 으로 읽히며 **"✓ 취소 완료 — 0건 성공"** 으로 표시됐다. 즉 "요청이 실패했다"와
+   * "취소할 주문이 없다"가 화면상 구분되지 않았고, 둘은 정반대 의미다.
+   * 비상 정지 컨트롤에서 이 혼동은 그 자체로 위험하므로 상태를 분리한다.
+   */
   const handleEmergency = async () => {
     setEmState('running');
-    try {
-      const res  = await fetch('/api/safety/cancel-all', { method: 'POST' });
-      const data = await res.json();
-      setEmResult({ cancelled: data.cancelled ?? 0, failed: data.failed ?? 0 });
-      setEmState('done');
-    } catch {
-      setEmState('idle');
+    setEmError(null);
+    const r = await requestJson<{ cancelled?: number; failed?: number }>(
+      '/api/safety/cancel-all', { method: 'POST' },
+    );
+    if (!r.ok) {
+      setEmResult(null);          // 실패 시 완료 요약을 절대 남기지 않는다
+      setEmError(r.failure.message);
+      setEmState('failed');
+      return;
     }
+    setEmResult({
+      cancelled: Number(r.data?.cancelled ?? 0),
+      failed:    Number(r.data?.failed ?? 0),
+    });
+    setEmState('done');
   };
 
   return (
@@ -157,15 +190,45 @@ export function SafetyBar() {
             </span>
           )}
 
-          {emState === 'done' && emResult && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 13, color: emResult.failed > 0 ? 'var(--accent)' : 'var(--ok)' }}>
-                ✓ 취소 완료 — {emResult.cancelled}건 성공
-                {emResult.failed > 0 && ` · ${emResult.failed}건 실패`}
+          {/* 요청 자체가 실패 — 완료 요약 대신 경보. 자동 소멸하지 않는다 */}
+          {emState === 'failed' && (
+            <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' as const }}>
+              <span style={{ fontSize: 13, color: '#ef4444', fontWeight: 600, minWidth: 0, wordBreak: 'break-word' }}>
+                🚨 비상 청산 실패 — {emError ?? '알 수 없는 오류'} · 주문이 취소되지 않았을 수 있습니다. 주문 화면에서 직접 확인하세요.
               </span>
               <button
+                onClick={handleEmergency}
+                style={{
+                  flexShrink: 0, padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                  background: '#ef4444', color: '#fff',
+                }}
+              >다시 시도</button>
+              <button
+                onClick={() => { setEmState('idle'); setEmError(null); }}
+                style={{ flexShrink: 0, fontSize: 11, color: 'var(--muted)', padding: '3px 8px', borderRadius: 6, background: 'var(--bg3)' }}
+              >닫기</button>
+            </div>
+          )}
+
+          {emState === 'done' && emResult && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {/* 취소 0건·실패 0건은 "할 일이 없었다"는 뜻이지 작업 완료가 아니다 — ✓ 를 붙이지 않는다 */}
+              {classifyCancelAll(emResult) === 'nothing_to_cancel' ? (
+                <span style={{ fontSize: 13, color: 'var(--muted)' }}>
+                  취소할 진행 주문이 없었습니다
+                </span>
+              ) : classifyCancelAll(emResult) === 'partial' ? (
+                <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}>
+                  ⚠ 일부 실패 — {emResult.cancelled}건 취소 · {emResult.failed}건 실패 (주문 화면에서 확인하세요)
+                </span>
+              ) : (
+                <span style={{ fontSize: 13, color: 'var(--ok)' }}>
+                  ✓ 취소 완료 — {emResult.cancelled}건
+                </span>
+              )}
+              <button
                 onClick={() => { setEmState('idle'); setEmResult(null); }}
-                style={{ fontSize: 11, color: 'var(--muted)', padding: '3px 8px', borderRadius: 6, background: 'var(--bg3)' }}
+                style={{ flexShrink: 0, fontSize: 11, color: 'var(--muted)', padding: '3px 8px', borderRadius: 6, background: 'var(--bg3)' }}
               >닫기</button>
             </div>
           )}

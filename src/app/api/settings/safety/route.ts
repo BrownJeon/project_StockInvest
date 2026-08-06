@@ -149,9 +149,34 @@ const RETIRED_KEYS = [
   'safety_daily_order_max_domestic_pct', 'safety_daily_order_max_overseas_pct',
 ];
 
+/**
+ * 값의 도메인이 고정된 필드 — 저장 전 검증.
+ *
+ * UI `<select>` 는 4개 값으로 제한하지만 PATCH 는 아무 문자열이나 받아 그대로 저장했다.
+ * `report_trade_channel` 이 이 목록 밖의 값이 되면 /api/cron/trade-report 가 전송 대상
+ * 채널 0개 상태로 빠져 **아무것도 안 보내고 정상 종료**한다 — 흔적 없는 리포트 유실.
+ * 라우트 쪽에도 방어 게이트를 뒀지만, 애초에 손상된 값이 써지지 못하게 여기서 막는다.
+ */
+const PATCH_ENUMS: Record<string, readonly string[]> = {
+  reportChannel: ['slack', 'telegram', 'both', 'none'],
+  reportMode:    ['rolling', 'fixed'],
+};
+
 export async function PATCH(req: NextRequest) {
   const body = await req.json() as Record<string, unknown>;
   const pool = getPool();
+
+  // 검증을 전량 선행한다 — 중간에 거절하면 앞 필드만 저장된 부분 반영 상태가 남는다.
+  const invalid = Object.entries(PATCH_ENUMS)
+    .filter(([field]) => field in body)
+    .filter(([field, allowed]) => !allowed.includes(String(body[field])))
+    .map(([field, allowed]) => `${field}=${JSON.stringify(body[field])} (허용: ${allowed.join('|')})`);
+  if (invalid.length > 0) {
+    return NextResponse.json(
+      { ok: false, error: `잘못된 설정 값 — ${invalid.join(', ')}` },
+      { status: 400 },
+    );
+  }
 
   for (const [field, dbKey] of Object.entries(ALLOWED_PATCH_KEYS)) {
     if (field in body) {

@@ -1,5 +1,9 @@
 import type { AlertLevel } from './slack';
 import { getCredential } from '@/lib/credentials';
+import {
+  type NotifyResult, NOTIFY_OK, NOTIFY_SKIPPED, notifyFailed,
+  isTransientNetworkError, redactSecrets, readBodySnippet, causeCodeOf,
+} from './result';
 
 // IPv6 outbound 가 unreachable 인 호스트에서 ETIMEDOUT 방지 — IPv4 우선 해석.
 //
@@ -45,17 +49,27 @@ export function mrkdwnToTelegramHtml(body: string): string {
     .replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
 }
 
+/**
+ * 텔레그램 sendMessage. **예외를 던지지 않고** 결과를 반환한다.
+ *  - `{ ok: true }`                 전달 성공
+ *  - `{ ok: false, skipped: true }` 토큰/채팅ID 미설정 — 재시도해도 동일
+ *  - `{ ok: false, error }`         실제 전송 실패 (재시도 가치 있음)
+ *
+ * 반환 타입을 `void` 에서 바꾼 이유: 2026-08-04 08:03 정기 리포트가 ETIMEDOUT 으로
+ * 유실됐는데 호출부가 이를 알 방법이 없어 `sent:true` 로 응답하고 last_sent_at 까지
+ * 갱신됐다. 던지지 않고 반환하는 이유는 기존 fire-and-forget 호출부의 동작 보존.
+ */
 export async function sendTelegramAlert(
   level: AlertLevel,
   title: string,
   body: string,
-): Promise<void> {
+): Promise<NotifyResult> {
   const [token, chatId, projectTag] = await Promise.all([
     getCredential('TELEGRAM_BOT_TOKEN'),
     getCredential('TELEGRAM_CHAT_ID'),
     getCredential('NOTIFY_PROJECT_TAG'),
   ]);
-  if (!token || !chatId) return;
+  if (!token || !chatId) return NOTIFY_SKIPPED;
 
   const emoji = LEVEL_PREFIX[level];
   const project = projectTag.trim() || 'StockInvest';
@@ -70,18 +84,29 @@ export async function sendTelegramAlert(
   for (let i = 0; i < 2; i++) {
     try {
       const res = await fetch(url, init);
-      if (!res.ok) console.error(`[telegram] sendMessage failed: ${res.status}`);
-      return;
+      if (!res.ok) {
+        // 400(파싱 실패·본문 초과) / 401(토큰 폐기) 등은 재시도해도 동일 — 즉시 실패 반환.
+        // 본문에 담긴 description 은 진단에 결정적이므로 함께 남긴다(비밀값 없음).
+        const snippet = redactSecrets(await readBodySnippet(res), token);
+        const reason = `HTTP ${res.status}${snippet ? ` ${snippet}` : ''}`;
+        console.error(`[telegram] sendMessage failed: ${reason}`);
+        return notifyFailed(reason);
+      }
+      return NOTIFY_OK;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (i === 0 && /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|aborted|UND_ERR/i.test(msg)) {
+      const msg = redactSecrets(e instanceof Error ? e.message : String(e), token);
+      if (i === 0 && isTransientNetworkError(msg)) {
         await new Promise(r => setTimeout(r, 500));
         continue;
       }
-      const cause = (e as { cause?: { errors?: unknown[]; code?: string; message?: string } }).cause;
-      const errors = cause?.errors ? cause.errors.map(x => String(x)) : [];
-      console.error('[telegram] fetch error:', msg, '| cause:', cause?.code ?? cause?.message ?? cause, '| errors:', errors);
-      return;
+      const cause = (e as { cause?: { errors?: unknown[] } }).cause;
+      const errors = cause?.errors ? cause.errors.map(x => redactSecrets(String(x), token)) : [];
+      const code = redactSecrets(causeCodeOf(e), token);
+      console.error('[telegram] fetch error:', msg, '| cause:', code, '| errors:', errors);
+      const detail = [code, ...errors].filter(Boolean).join(' / ');
+      return notifyFailed(detail ? `${msg} (${detail})` : msg);
     }
   }
+  /* istanbul ignore next — 위 루프는 모든 경로에서 return 한다. 타입 완결용. */
+  return notifyFailed('retry_exhausted');
 }
