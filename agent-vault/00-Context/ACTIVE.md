@@ -35,14 +35,12 @@ Phase 0(안전 기반) → 1(관측: 깔때기) → 2(시그널 복구: 게이�
 
 ## 다음 할 일
 
-**2026-08-06: [[T-006-phase2-implementation]] Phase 2 구현·검증 전항 완료. 커밋·배포 승인만 남았다.**
+**2026-08-06: [[T-006-phase2-implementation]] Phase 2 배포 완료(`c064e83`).** market-state 데드락 해소를 실데이터로 확인. 남은 건 관측.
 
-재개 시 [[RESUME]] 최상단부터 읽을 것.
-
-1. **Phase 2 커밋·배포 승인** (47파일 미커밋, agent-vault 포함 필수, 장 마감 후 권장)
-2. 배포 후 **3영업일 관측** → Step 5 진입 게이트 판정
-3. **auto 모드 활성화 전 승인 3건** — 실자금 자율성 증가 항목
-4. Step 5 진입 시 DRY_RUN/KILL_SWITCH 관측 방식 결정
+1. **Step 5 관측** — 2026-08-07부터 3영업일, §6 사후 기준 4개 확인
+2. 🔴 `weekly-trend-follow-v1` 발화 불가(1d 210봉 필요 vs KIS 100봉 반환) 대응
+3. 🔴 auto 모드 활성화 전 승인 3건 (현재 `autopilot_mode=assist`)
+4. Step 5 진입 시 DRY_RUN/KILL_SWITCH 관측 모드 결정
 
 ## Phase 0 최종 상태 (developer 완료분)
 

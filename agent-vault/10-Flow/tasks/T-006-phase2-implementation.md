@@ -904,3 +904,82 @@ QA 판정 **✅ 검증 통과** (A~H 8개 항목 전부). 다만 QA 보고서가
 1. **배포 승인** — 47파일 미커밋. `agent-vault/` 문서 포함 필수(`git clean -fdx`가 미추적 파일을 지운다).
 2. **auto 모드 활성화 전 승인 3건** — (a) `hard_stop`/`eod_loss_cut` 무승인 자동제출 (b) 비강제 청산의 금액상한 의미 (c) auto 모드가 `duplicate_active_signal`을 건너뛰는 문제. 셋 다 실자금 자율성 증가 항목이라 명시 승인 없이 켜지 않는다.
 3. **현재 `safety_kill_switch=true`** — 이 상태에서는 어떤 주문도 나가지 않는다. Step 5 진입 시 `DRY_RUN`/`KILL_SWITCH` 중 어느 쪽으로 관측할지 결정 필요.
+
+## ✅ 배포 완료 + 실기동 검증 (2026-08-06 11:34~11:40 KST)
+
+사용자가 장중 즉시 배포를 명시 선택(리스크 고지 후). `safety_kill_switch=true`라 실주문 노출 0.
+
+| 항목 | 결과 |
+|---|---|
+| 커밋 | `c064e83` — 소스·설정 45 + agent-vault 5 = **50파일** |
+| push | `359cb7b..c064e83` (11:34:55) |
+| webhook-deploy | `started 11:35 → finished exit=0` |
+| pm2 재시작 | 319 → **320회 1회만**. 재시작 루프 없음 |
+| health | reload 순간 1회 `000` 후 **200 안정** |
+| **에러 로그 증가** | **0바이트** |
+
+### 부팅 시 DB 마이그레이션 — 전건 적용 확인
+
+```
+11:35:30 [db] one-time migration applied: Phase 2 D3 기본 활성 룰 5종 적용
+11:35:31 [db] one-time migration applied: backtest_interval_h 5분→6h 리셋
+11:35:33 [db] one-time migration applied: 백테스트 비용 모델 교정
+```
+
+| 대상 | 실측 결과 |
+|---|---|
+| `signals.status` ENUM | **13개** — 기존 10개 순서 보존 + `detected`·`awaiting_approval`·`skipped` 추가 ✅ |
+| `cooldowns` 테이블 | 생성됨 ✅ |
+| 마이그레이션 마커 | 3종 전부 기록 ✅ |
+| **`autopilot_mode`** | **`"assist"`** ✅ — 레거시(analyst=T, hybrid=T)에서 clamp 정상 동작 |
+| `engine_enabled` | `true` ✅ |
+| strategies | **활성 8종**(장중 5 + post-market 3) / 비활성 8종 ✅ 설계와 정확히 일치 |
+| `backtest_interval_h` | 장중 5종 **6**, post-market 3종 **24 보존** ✅ |
+| 비용 모델 | `backtest_fee_pct=0.09`, `backtest_slip_pct=0.15` ✅ |
+| **안전 설정** | `safety_dry_run=false`, `safety_kill_switch=true`, order_max 6, daily 10 — **전부 미변경** ✅ |
+
+### 🟢 핵심 수술 효과 — market-state 데드락 해소, 실데이터로 확인
+
+배포 후 첫 런(11:39:03) `collect` 행 실측:
+
+```json
+symbol 196170: {"marketState":"breakout_watch","interval":"1h","rsi14":63.2,
+                "rules":{"active":["bb-squeeze-expansion-v1","pullback-trend-v1",
+                                   "rsi-overbought-exit-v1","rsi-oversold-v1",
+                                   "weekly-trend-follow-v1"], ...}}
+symbol 005930: {"marketState":"trend_following","interval":"1h","rsi14":43.1,
+                "rules":{"active":[...동일한 5종...], ...}}
+```
+
+**결정적 증거**: 두 종목의 `marketState`가 **서로 다른데(`breakout_watch` vs `trend_following`) `rules.active`가 동일한 5종**이다. 구 코드에서는 상태별로 활성 룰 집합이 달라졌고(neutral이면 30m 룰 전멸), 그것이 데드락의 메커니즘이었다. **이제 market-state는 라벨로만 기록되고 룰 활성화에 관여하지 않는다 — 데드락은 구조적으로 소멸했다.** ✅
+
+- `interval: "1h"` 단일축 확인 ✅
+- **구 게이트 전부 소멸 확인**: `ai_*` · `prefilter_strong_counter_trend` · `strategy_throttled` · `skip_seal_24h` · `dedup_regime` **전부 0건** ✅
+- run 행: `symbols:25, strategies:5, skippedStrategyIds:[post-market 3종], errors:0` ✅
+- market_state 라벨 분포: `trend_following` 11 · `breakout_watch` 9 · `null` 5(분류 불가 = 라벨 null, fail-open 설계대로)
+
+### 🔴 신규 발견 — `weekly-trend-follow-v1`은 **현재 절대 발화할 수 없다**
+
+첫 런 실측에서 드러남:
+
+```
+insufficientCandles: [{"id":"weekly-trend-follow-v1","interval":"1d","got":100,"need":210}]
+candles_fetch_failed: 8건 — 전부 interval "1d"
+```
+
+**KIS가 일봉을 100봉만 반환하는데 이 룰은 210봉을 요구한다.** 즉 기본 활성 5종 중 하나가 **구조적으로 발화 불가**다 — market-state 데드락과 **같은 클래스의 결함**(조건이 영원히 충족되지 않는 룰).
+
+**왜 지금 드러났나**: 이 룰은 이전엔 `FIND_IN_SET`(applicable_styles=`neutral,stable` vs 하드코딩된 style=`aggressive`)으로 **차단돼 있어 평가조차 되지 않았다.** Phase 2가 FIND_IN_SET을 제거하고 기본 활성으로 올리면서 **비로소 평가 경로에 올라왔고, 그 즉시 불가능함이 관측됐다.** 관측 계층이 제 역할을 한 사례.
+
+**영향**: 실질 장중 활성 룰은 **5종이 아니라 4종**(bb-squeeze-expansion · pullback-trend · rsi-overbought-exit · rsi-oversold). analyst가 이 룰에 기대한 "주 2~5건"은 **0건**이 된다.
+
+**심각도**: 배포 차단 사유 아님 — 발화하지 않을 뿐 잘못된 시그널을 만들지 않는다(fail-safe 방향). 다만 **§6-1 소생 기준(일 1~10건) 달성 여력이 그만큼 줄어든다.**
+
+**대응 선택지** (사용자/analyst 판단 필요):
+1. KIS 일봉 조회 봉수를 210+ 로 늘릴 수 있는지 확인(API 파라미터/페이징)
+2. 룰의 `need`를 실제 확보 가능한 봉수(100)에 맞춰 재설계 — MA200 요구를 MA60 등으로 완화하면 룰의 의미가 바뀌므로 analyst 재설계 필요
+3. 기본 비활성으로 되돌리고 장중 활성 4종으로 운영
+
+### 첫 런 깔때기 결과 (해석 주의)
+
+25종목 전부 `stage 4 rule_no_fire`, 시그널 0건. **이것을 실패로 읽으면 안 된다** — §6-1 기준은 **일 단위 집계(3영업일)** 이지 런 단위가 아니다. 실측 RSI(63.2 / 43.1)는 `rsiBuyThreshold=38` 미만이 아니므로 **정직한 미발화**다. 구 코드에서는 RSI 43.1이 `oversold_bounce` 활성창에 들어가고도 룰 발화창(RSI<35)과 교집합이 없어 영원히 못 쐈다 — **지금은 같은 값이 단순히 "38 미만 아님"으로 정직하게 판정된다.** 메커니즘이 달라졌다.
