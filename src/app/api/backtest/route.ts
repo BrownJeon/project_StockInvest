@@ -36,8 +36,8 @@ export async function POST(req: NextRequest) {
   const strategyId = String(body.strategy_id ?? '');
   const symbol     = String(body.symbol ?? '');
   const periodDays = Number(body.period_days ?? 90);
-  const feePct     = Number(body.fee_pct ?? 0.05);
-  const slipPct    = Number(body.slip_pct ?? 0.10);
+  const feePct     = Number(body.fee_pct ?? 0.09);   // §3 교정: 왕복 0.18%의 편도
+  const slipPct    = Number(body.slip_pct ?? 0.15);  // §3 교정: 대형주 지정가 슬리피지
   const initialKRW = Number(body.initial_krw ?? 1_000_000);
 
   if (!strategyId) return NextResponse.json({ ok: false, error: 'strategy_id required' }, { status: 400 });

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatSymbolShort } from '@/lib/symbols';
+import { isAwaitingApproval } from '@/lib/signals/statuses';
 
 interface KeyFactor {
   label: string;
@@ -53,8 +54,7 @@ const usd = (v: number) => '$' + v.toLocaleString('en-US', { minimumFractionDigi
 const pct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
 
 function getSignalLabel(signal: LatestSignal): { text: string; color: string } {
-  const isPending =
-    signal.status === 'pending' || signal.status === 'pending_approval';
+  const isPending = isAwaitingApproval(signal.status) || signal.status === 'detected';
   const isApproved =
     signal.status === 'approved' || signal.status === 'approved_pending_entry';
   const side = signal.side === 'buy' ? '매수' : '매도';

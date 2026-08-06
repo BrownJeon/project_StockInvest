@@ -249,19 +249,41 @@ export function SettingsPage() {
         </div>
       )}
 
-      {/* 하이브리드 매매 모드 */}
-      <SectionHeader title="하이브리드 매매 모드" />
+      {/* 승인 방식 — 두 상태 모두 "사람 승인 후 주문"이다 (자율성과 무관) */}
+      <SectionHeader title="승인 방식" />
       <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden', marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px' }}>
           <div>
-            <div style={{ fontSize: 14 }}>하이브리드 모드</div>
+            <div style={{ fontSize: 14 }}>승인 후 진입 감시 (하이브리드)</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
               {hybridMode
-                ? 'ON — AI 시그널 승인 후 진입 구간 도달 시 자동 체결'
-                : 'OFF — 기존 즉시 승인 방식'}
+                ? 'ON — 승인하면 즉시 주문하지 않고, 지정한 진입 구간에 도달할 때 체결'
+                : 'OFF — 승인하면 즉시 주문'}
             </div>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              활성화 시 추천(💡) 탭에서 수치 편집 후 진입 감시 가능
+              ON 시 추천(💡) 탭에서 진입가·수량을 편집한 뒤 감시를 시작할 수 있습니다.
+            </div>
+            {/*
+              이 스위치가 자동매매 스위치로 오인되면 안 된다.
+              ⚠️ 단, "모든 주문에 승인이 필요하다"고 쓰면 **거짓**이다 — routeSignal 은
+                 hard_stop·eod_loss_cut 청산을 모드와 무관하게 무조건 자동 제출한다.
+                 UI 의 거짓 안전 보장은 모호한 문구보다 나쁘므로 예외를 눈에 띄게 명시한다.
+            */}
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+              ℹ️ 이 설정은 <b>승인한 주문을 언제 넣을지</b>만 정합니다. 어느 쪽이든{' '}
+              <b>신규 진입(매수) 주문은 사람이 승인해야 나갑니다.</b> 승인 없이 신규 진입을
+              자동 주문하는 동작은 이 스위치로는 절대 켜지지 않고, 별도의 자동조종 설정
+              (<code>autopilot_mode</code>)에서만 켤 수 있습니다.
+            </div>
+            <div style={{
+              fontSize: 11, color: '#f59e0b', marginTop: 6, lineHeight: 1.5,
+              background: 'rgba(245,158,11,.10)', border: '1px solid rgba(245,158,11,.35)',
+              borderRadius: 8, padding: '8px 10px',
+            }}>
+              ⚠️ <b>예외 — 보유 종목 보호 청산은 승인 없이 즉시 주문됩니다.</b><br />
+              하드 손절과 장마감 손실 차단 매도는 <b>이 설정·자동조종 모드와 무관하게</b> 자동
+              제출됩니다. 손실이 커지는 것을 막는 기능이라 사람의 응답을 기다리지 않습니다.
+              (목표 익절·트레일링 스탑 매도는 일반 승인 경로를 따릅니다.)
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>

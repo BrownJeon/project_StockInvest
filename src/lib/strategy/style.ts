@@ -46,6 +46,37 @@ export interface StyleConfig {
   lateSessionBuyBlockMin: number;
   /** 모멘텀 추격 가드 — 직전 5봉 누적 상승률 %. 초과 시 추격 룰(volume-spike/price-breakout) 발화 차단. SI 신규. */
   momentumChaseMaxPct: number;
+
+  // ── 비용 모델 (T-003 §3, Phase 2 Step 4) ────────────────────────────────
+  // 구조: 하드코딩 0.43%(코인원 0.2%×2 이식 잔재)를 **명시 비용 / 슬리피지로 분리**한다.
+  // 하나로 뭉쳐 두면 "수수료가 비싼 건지 체결이 나쁜 건지"를 사후에 구분할 수 없고,
+  // 증권사 요율 변경과 체결 품질 변화를 따로 조정할 수도 없다.
+  /**
+   * 명시 왕복 비용 % — 위탁수수료(0.0140527%×2 ≈ 0.028%) + 매도 제세금 0.15% ≈ **0.18%**.
+   * 실계좌 요율이 다르면 DB override 로 조정한다.
+   */
+  feePct: number;
+  /** 왕복 슬리피지·스프레드 % — 대형주 지정가 기준 0.10~0.20%, 기본 0.15%. */
+  slippagePct: number;
+
+  // ── 룰 파라미터 (백테스트 미완료 → 코드 default 유지, 운영값은 DB override) ──
+  /** pullback-trend RSI 눌림 창 하단 */
+  pullbackRsiMin: number;
+  /** pullback-trend RSI 눌림 창 상단 */
+  pullbackRsiMax: number;
+  /** bb-squeeze-expansion 상단 돌파 시 요구 거래량비 하한 */
+  bbSqueezeVolRatioMin: number;
+}
+
+/**
+ * 실효 왕복 비용 % (명시 + 슬리피지).
+ *
+ * **EV 하한 (§3)**: `p×T − (1−p)×S − C > 0`. C=0.33%, hardStop S=1.5% 기준
+ * 목표익 T=2.5% 이면 승률 p ≥ 46.3% 가 필요하고, p=50% 를 가정해도 **T ≥ 1.85%** 다.
+ * → `targetProfitPct` 를 1.85% 밑으로 낮추는 튜닝은 비용 구조상 금지선이다.
+ */
+export function roundTripCostPct(style: Pick<StyleConfig, 'feePct' | 'slippagePct'>): number {
+  return style.feePct + style.slippagePct;
 }
 
 /** 단일 기본 설정 — 기존 aggressive 기준으로 통합 (SI 고유 필드 포함) */
@@ -76,6 +107,16 @@ export const DEFAULT_STYLE_CONFIG: StyleConfig = {
   eodLossCutPct:         1.5,
   lateSessionBuyBlockMin: 30,
   momentumChaseMaxPct:    5.0,
+  // 비용 모델 — 실측 근거(§3): 위탁수수료 0.0140527%×2 + 매도 제세금 0.15% ≈ 0.178%
+  feePct:                0.18,
+  slippagePct:           0.15,
+  // 룰 파라미터 — **코드 default 는 현행 값 그대로 둔다.**
+  // 백테스트로 검증되지 않은 파라미터는 코드 default 를 바꾸지 않고 DB override 로만 적용한다는
+  // 기존 가이드를 따른다. 운영 적용값(40 / 50 / 1.2)은 db.ts 의 style_default_* 시드에 있고,
+  // 롤백은 그 키를 지우기만 하면 된다.
+  pullbackRsiMin:        42,
+  pullbackRsiMax:        48,
+  bbSqueezeVolRatioMin:  0.7,
 };
 
 /** number 타입 StyleConfig 필드 목록 — override 허용. */
@@ -88,6 +129,8 @@ const NUMERIC_FIELDS: Array<keyof StyleConfig> = [
   'targetProfitPct', 'limitChasePct',
   'trailingActivatePct', 'trailingDrawdownPct', 'trailingDrawdownPct_min',
   'hardStopPct', 'eodLossCutPct', 'lateSessionBuyBlockMin', 'momentumChaseMaxPct',
+  'feePct', 'slippagePct',
+  'pullbackRsiMin', 'pullbackRsiMax', 'bbSqueezeVolRatioMin',
 ];
 
 const FIELD_RANGES: Partial<Record<keyof StyleConfig, [number, number]>> = {
@@ -104,6 +147,12 @@ const FIELD_RANGES: Partial<Record<keyof StyleConfig, [number, number]>> = {
   eodLossCutPct:        [0.3, 10],
   lateSessionBuyBlockMin: [0,  120],
   momentumChaseMaxPct:  [1,   30],
+  // 비용은 0 이 될 수 없다 — 0 을 허용하면 EV 계산이 무료 거래를 가정하게 된다.
+  feePct:               [0.01, 2],
+  slippagePct:          [0.01, 2],
+  pullbackRsiMin:       [20,  60],
+  pullbackRsiMax:       [25,  70],
+  bbSqueezeVolRatioMin: [0.1,  5],
 };
 
 function inRange(field: keyof StyleConfig, val: number): boolean {
@@ -158,13 +207,36 @@ export async function getStyleConfig(): Promise<StyleConfig> {
       base.holdingPeriodHours = { ...base.holdingPeriodHours, max: maxRaw };
     }
   } catch { /* fallback to code default */ }
+
+  // override 로 눌림 창이 뒤집히면(min ≥ max) 룰이 조용히 영구 미발화가 된다 —
+  // market-state 데드락과 같은 종류의 사고다. 둘 다 코드 default 로 되돌린다.
+  if (base.pullbackRsiMin >= base.pullbackRsiMax) {
+    console.warn(
+      `[style] pullbackRsiMin(${base.pullbackRsiMin}) ≥ pullbackRsiMax(${base.pullbackRsiMax}) — ` +
+      `창이 공집합이라 코드 기본값으로 되돌립니다.`,
+    );
+    base.pullbackRsiMin = DEFAULT_STYLE_CONFIG.pullbackRsiMin;
+    base.pullbackRsiMax = DEFAULT_STYLE_CONFIG.pullbackRsiMax;
+  }
   return base;
 }
 
-// ─── 하위 호환 (deprecated) — 호출부 마이그레이션 전 임시 유지 ─────────────
-/** @deprecated 투자성향 단일화 — getStyleConfig() 로 교체됨 */
+// ─── 하위 호환 (deprecated) ───────────────────────────────────────────────
+/**
+ * @deprecated 투자성향 단일화(2026-05-09) — 파라미터는 `getStyleConfig()` 가 진실이다.
+ * 이 타입은 이제 **LLM 프롬프트 문구용 라벨**로만 남아 있다 (chat / post-market AI).
+ */
 export type AnalystStyle = 'aggressive';
 /** @deprecated 투자성향 단일화 — getStyleConfig() 로 교체됨 */
 export const STYLE_PRESETS: Record<string, StyleConfig> = { aggressive: DEFAULT_STYLE_CONFIG };
-/** @deprecated 투자성향 단일화 — getStyleConfig() 로 교체됨 */
-export async function getAnalystStyle(): Promise<AnalystStyle> { return 'aggressive'; }
+
+/**
+ * LLM 프롬프트에 표기할 성향 라벨.
+ *
+ * ⚠️ D3 (T-003) — 구 `getAnalystStyle()` 은 **항상 'aggressive' 를 반환하는 async 함수**였는데,
+ *    엔진이 그 값을 `FIND_IN_SET(style, applicable_styles)` 에 넣어 **룰 선별에 썼다.**
+ *    그래서 ma-cross·weekly-trend-follow·dividend-quality·inside-bar 4종이 영구 제외됐다
+ *    (사망 원인 #3). 이제 룰 선별은 오직 `strategies.enabled` 가 정하며, 이 라벨은
+ *    프롬프트 문구 외에는 **어떤 실행 경로에도 관여하지 않는다.**
+ */
+export const ANALYST_STYLE_LABEL: AnalystStyle = 'aggressive';

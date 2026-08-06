@@ -1,6 +1,6 @@
 import { kis } from '@/lib/exchanges/kis';
 import { simpleRsiMomentum } from '@/lib/analyst/rules';
-import { getRouterConfig, isAnalystEnabled } from '@/lib/signals/router';
+import { getRouterConfig, isEngineEnabled } from '@/lib/signals/router';
 import { getEffectiveOrderMax } from '@/lib/safety/order-limits';
 import { createSignal } from '@/lib/signals/service';
 import { isDomesticOpen } from '@/lib/strategy/market-hours';
@@ -14,8 +14,8 @@ export async function POST(req: Request) {
     const { searchParams } = new URL(req.url);
     const force = searchParams.get('force') === 'true';
 
-    if (!force && !(await isAnalystEnabled())) {
-      return Response.json({ ok: false, error: 'ANALYST_ENABLED=false' }, { status: 403 });
+    if (!force && !(await isEngineEnabled())) {
+      return Response.json({ ok: false, error: 'engine_disabled' }, { status: 403 });
     }
     if (!force && !(await isDomesticOpen())) {
       return Response.json({ ok: false, error: 'domestic_market_closed' }, { status: 409 });
@@ -52,8 +52,16 @@ export async function POST(req: Request) {
           continue;
         }
         for (const s of signals) {
-          const r = await createSignal(s, cfg);
-          created.push({ symbol, signalId: r.signalId, autoSubmitted: r.autoSubmitted, orderId: r.orderId });
+          // T-003 §1 `signal_create_failed` — createSignal 예외가 나머지 후보까지 죽이면 안 된다.
+          // (구 코드는 심볼 단위 catch 뿐이라 같은 심볼의 후속 시그널이 통째로 유실됐다)
+          try {
+            const r = await createSignal(s, cfg);
+            created.push({ symbol, signalId: r.signalId, autoSubmitted: r.autoSubmitted, orderId: r.orderId });
+          } catch (e) {
+            const err = e instanceof Error ? e.message : String(e);
+            console.error(`[api/analyst/run] signal_create_failed ${symbol} ${s.side}: ${err}`);
+            skipped.push({ symbol, reason: `signal_create_failed: ${err}` });
+          }
         }
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);

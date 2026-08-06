@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-05
+updated: 2026-08-06
 tags:
   - type/context
 aliases:
@@ -13,14 +13,16 @@ aliases:
 > 사용자가 **"이어서 작업해줘"** 라고 하면 이 파일부터 읽고, 아래 "다음 할 일"의 1번부터 진행한다.
 > 다른 PC에서 재개할 수 있으므로 **모든 맥락은 이 vault 안에 있다** (세션 메모리·플랜 파일에 의존하지 말 것).
 
-## ✅ 2026-08-05 배포 완료 — 운영 안정화됨
+## ▶ 지금 상태 (2026-08-06) — Phase 2 구현 완료, 배포 승인 대기
 
-**직전까지 있던 "메모리 next14 / 디스크 next15" 불일치는 해소됐다.** 커밋 `12bd061`을 11:08 KST에 배포해 next **15.5.22**로 전환 완료(pm2 version 컬럼 확인). 이제 재시작해도 안전하다.
+**[[T-006-phase2-implementation]] Phase 2(시그널 파이프라인 재설계) 구현·검증이 전부 끝났고 커밋·배포만 남았다.** 워킹트리 **47파일 미커밋**.
 
-- 배포 결과: webhook-deploy `exit=0`(~30초), pm2 재시작 **1회만**(317→318), **에러 로그 증가 0바이트**, health 200 무중단
-- **next 관련 GHSA 취약점 21건 → 0건**
-- [[T-004-phase1-visual-verification]] 렌더 수정 3건도 함께 배포·실환경 검증 완료
-- `stockinvest-cron`은 재시작 불필요했고 실제로 무중단 유지됨(uptime 2D)
+- 착수 실측: 깔때기 종료행의 **95%가 `rule_no_fire`**, 시그널 **0건** → market-state 데드락이 최상류 병목임을 숫자로 확정
+- 수술: market-state **게이트→라벨 강등**, 장중 AI 제거, 게이트 4단계 재편, 쿨다운 통합, 1h 단일축, 활성룰 14→8종
+- **독립 감사 4회 전부 PASS + QA 통과.** 테스트 40 suites/413 → **46 suites/523**
+- 도중 HIGH 1건 발견·수정: **"하이브리드 모드" 토글이 무표시 auto 모드 진입 문**이었음
+- ⚠️ **이 검증은 "배포 안전성"까지다.** 시그널 소생 여부는 배포 후 **3영업일 관측**으로만 확인되며 그것이 Step 5 진입 조건
+- 이전 배포(2026-08-05 `12bd061`·`359cb7b`)로 next 15.5.22 전환 완료 — 메모리/디스크 불일치는 해소된 상태
 
 ## 한 줄 요약
 
@@ -53,21 +55,26 @@ aliases:
 
 ## 다음 할 일
 
-### 1. Phase 2 착수 — [[T-003-phase2-pipeline-redesign]]
+### 1. 🔴 Phase 2 커밋·배포 승인 (최우선)
 
-관측 3영업일 조건: 2026-08-03(월) 배포 기준 08-04(화)·08-05(수) 확보, **08-06(목) 종료 시 충족.** 게이트 50→26 재편, 스위치 의미 분리, 장중 AI 제거, 룰 파라미터 재도출(RSI 35→38 등).
+- **47파일 미커밋.** `agent-vault/` 문서를 **반드시 함께 커밋** — `git clean -fdx`가 미추적 파일을 삭제한다.
+- 배포 스크립트가 라이브 디렉토리에서 in-place 빌드 + `instances=1`이므로 **장 마감(15:30 KST) 이후 권장**(지난 배포는 ~30초에 무사통과했으나 구조적 위험은 그대로).
+- **배포 후 3영업일 관측** → [[T-003-phase2-pipeline-redesign]] §6의 사후 기준 4개(소생·감쇠분산·중복스팸·런성능) 확인. 이것이 **Step 5 진입 게이트**.
 
-### 2. 🔴 남은 사용자 결정 1건 — `safety_daily_order_max_pct = 0`
+### 2. 🔴 auto 모드 활성화 전 사용자 승인 3건
 
-명시적으로 0이라 Phase 0 fail-safe에 따라 **국내 신규 매수가 전면 차단 중**이다(매도·청산은 무관). 코드는 정상 동작 — 의도한 값(예: 10)을 알려주면 반영. **임의로 채우지 않았다.**
+(a) `hard_stop`/`eod_loss_cut` 무승인 자동제출 (b) 비강제 청산의 금액상한 의미 (c) auto 모드가 `duplicate_active_signal`을 건너뜀. **셋 다 실자금 자율성 증가 — 명시 승인 없이 켜지 않는다.**
 
-### 3. 텔레그램 조용한 실패 (Medium-High, 백로그)
+### 3. Step 5 진입 시 결정 필요
 
-`sendTelegramAlert`가 void 반환이라 전송 실패해도 라우트는 `sent:true` 응답 + `report_trade_last_sent_at` 갱신. **간헐적 ETIMEDOUT이 실재한다** — 08-04 08:03 / 08-04 15:23 / 08-05 11:16 확인(누적 126건). 08-04 08:03 정기 리포트는 실제로 유실됐다. 재시도하면 대개 성공하므로 네트워크 간헐 장애로 보이나, **실패가 사용자에게 안 보이는 것**이 문제. 배달 확인 후 last_sent_at 갱신 또는 dead-man's switch 검토.
+현재 `safety_dry_run=false` + `safety_kill_switch=true`(주문 전면 차단 중). 사양 Step 5는 "DRY_RUN=true 관측"을 전제하는데 실제 상태가 다르다 — **어느 쪽으로 관측할지 사용자 결정 필요.**
 
-### (낮은 우선순위) `oversold-bounce-daily-v1` strategy_id 드리프트
+### (백로그) 이번 세션에서 새로 등록된 것
 
-`post-market-engine.ts`가 `oversold-bounce-v1`을 쓰는데 `strategies.id`는 `oversold-bounce-daily-v1`이라 조인 기반 통계에서 영구 누락(pre-existing).
+- **테스트 코드가 타입검사를 전혀 받지 않음** — `tsconfig`가 테스트를 제외하고 jest는 비-타입체크 트랜스파일러 사용. "typecheck+test 통과"의 보증 범위가 좁다
+- post-market 룰은 UI에서 꺼도 계속 실행됨(`post-market-engine`이 `strategies.enabled`를 안 봄) — D3 "UI가 진실" 원칙의 사각지대
+- `eval_funnel_daily` 롤업 미구현 → eval_funnel 무제한 증가(일 ~8k행)
+- 텔레그램 조용한 실패 / 마이그레이션 트랜잭션 규율 / rebuy 쿨다운 체결훅 부재
 
 ## 반드시 지킬 제약
 

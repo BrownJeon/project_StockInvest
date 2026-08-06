@@ -8,12 +8,18 @@ import { checkSymbolBlacklist } from '@/lib/safety/order-limits';
 import {
   type RouterConfig,
   type SignalInput,
+  getEngineSwitches,
   getRouterConfig,
-  isAnalystEnabled,
   routeSignal,
 } from './router';
+import {
+  AWAITING_APPROVAL_STATUSES,
+  type SignalStatus,
+  isAwaitingApproval,
+  sqlStatusList,
+} from './statuses';
 import { buildScenarioFromAiResult } from './scenario-builder';
-import { getAnalystStyle, getStyleConfig } from '@/lib/strategy/style';
+import { getStyleConfig } from '@/lib/strategy/style';
 
 /** safety_limit_chase_disabled = true 면 chasePct 0 강제 (즉시 무력화 스위치). */
 async function getEffectiveChasePct(stylePct: number): Promise<number> {
@@ -73,16 +79,7 @@ export interface SignalRow {
   amount_krw: string;
   reasoning: string | null;
   indicators: unknown;
-  status:
-    | 'pending'
-    | 'pending_approval'
-    | 'approved'
-    | 'approved_pending_entry'
-    | 'rejected'
-    | 'auto_submitted'
-    | 'executing'
-    | 'expired'
-    | 'superseded';
+  status: SignalStatus;
   expires_at: Date | null;
   consumed_order_id: number | null;
   created_at: Date;
@@ -138,9 +135,9 @@ export async function createSignal(
   input: SignalInput,
   cfg?: RouterConfig,
 ): Promise<CreateSignalResult> {
-  const [resolvedCfg, analystEnabled] = await Promise.all([
+  const [resolvedCfg, switches] = await Promise.all([
     cfg ?? getRouterConfig(),
-    isAnalystEnabled(),
+    getEngineSwitches(),
   ]);
   cfg = resolvedCfg;
 
@@ -149,9 +146,9 @@ export async function createSignal(
     return { ok: false, signalId: 0, autoSubmitted: false, error: sym.detail ?? 'symbol_not_allowed', errorCode: 'symbol_blacklisted' };
   }
 
-  // 하이브리드 모드: hybridModeEnabled가 true면 pending_approval 강제
-  const hybridModeEnabled = (resolvedCfg as RouterConfig & { hybridModeEnabled?: boolean }).hybridModeEnabled ?? false;
-  const decision = routeSignal(input, { ...cfg, hybridModeEnabled }, analystEnabled);
+  // T-003 §4-1 전이표 — ENGINE_ENABLED × AUTOPILOT_MODE 가 status·주문 경로를 결정한다.
+  // (구 hybrid_mode_enabled 는 getEngineSwitches 안에서 autopilot_mode 로 이관·폴백된다)
+  const decision = routeSignal(input, cfg, switches);
 
   // AI 결과가 있으면 scenario 카드 생성 후 indicators에 merge
   let enrichedIndicators = input.indicators;
@@ -173,21 +170,25 @@ export async function createSignal(
       }
     }
   }
-  // 하이브리드 모드에서는 pending_approval 상태로 저장 (기존 pending과 구분)
-  const initialStatus = decision.route === 'auto_submit'
-    ? 'auto_submitted'
-    : hybridModeEnabled ? 'pending_approval' : 'pending';
+  const initialStatus = decision.status;
+  if (decision.demoted) {
+    console.log(
+      `[signal-route] ${input.symbol} ${input.side} auto→assist 격하: ` +
+      `금액 ${Math.round(input.amountKRW)} > SIGNAL_AUTO_SUBMIT_MAX_KRW`,
+    );
+  }
   const pool = getPool();
   const { getMarketFromSymbol } = await import('@/lib/exchanges/kis-symbols');
   const market = getMarketFromSymbol(input.symbol);
 
   // 동일 심볼+방향의 활성 시그널 중복 방지:
-  // pending / pending_approval 상태의 시그널이 이미 존재하면 생성하지 않는다.
-  // (exit-engine 1분 tick 중복, AI 재평가 중복 모두 차단)
+  // 승인 대기 상태(신규 awaiting_approval + 구 pending/pending_approval)와 manual 모드의
+  // 관측 기록(detected)이 이미 있으면 생성하지 않는다.
+  // (exit-engine tick 중복, 룰 재발화 중복 모두 차단)
   if (decision.route !== 'auto_submit') {
     const [dup] = await pool.query<RowDataPacket[]>(
       `SELECT id FROM signals
-       WHERE symbol = ? AND side = ? AND status IN ('pending', 'pending_approval')
+       WHERE symbol = ? AND side = ? AND status IN (${sqlStatusList([...AWAITING_APPROVAL_STATUSES, 'detected'])})
          AND expires_at > NOW()
        LIMIT 1`,
       [input.symbol, input.side],
@@ -319,7 +320,9 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
   const pool = getPool();
   const row = await getSignalById(id);
   if (!row) return { ok: false, signalId: id, autoSubmitted: false, error: 'not_found' };
-  if (row.status !== 'pending') {
+  // 신규 awaiting_approval + 구 pending / pending_approval 을 모두 승인 가능으로 본다.
+  // `detected`(manual 모드 관측 기록)는 주문 경로가 없는 상태라 의도적으로 제외한다 (§4-1).
+  if (!isAwaitingApproval(row.status)) {
     return { ok: false, signalId: id, autoSubmitted: false, error: `invalid_status:${row.status}` };
   }
   if (row.expires_at && new Date(row.expires_at) < new Date()) {
@@ -372,8 +375,8 @@ export async function approveSignalHybrid(
   const row = await getSignalById(id);
   if (!row) return { ok: false, error: 'not_found' };
 
-  // pending 또는 pending_approval 상태에서만 승인 가능
-  if (row.status !== 'pending' && row.status !== 'pending_approval') {
+  // 승인 대기 상태(awaiting_approval / 구 pending / 구 pending_approval)에서만 승인 가능
+  if (!isAwaitingApproval(row.status)) {
     return { ok: false, error: `invalid_status:${row.status}` };
   }
   if (row.expires_at && new Date(row.expires_at) < new Date()) {
@@ -420,7 +423,8 @@ export async function rejectSignal(id: number): Promise<{ ok: boolean; error?: s
   const pool = getPool();
   const row = await getSignalById(id);
   if (!row) return { ok: false, error: 'not_found' };
-  if (row.status !== 'pending' && row.status !== 'pending_approval') {
+  // manual 모드의 `detected` 도 사람이 "관심 없음"으로 정리할 수 있어야 하므로 거부는 허용한다.
+  if (!isAwaitingApproval(row.status) && row.status !== 'detected') {
     return { ok: false, error: `invalid_status:${row.status}` };
   }
 
@@ -428,6 +432,22 @@ export async function rejectSignal(id: number): Promise<{ ok: boolean; error?: s
   await pool.query(
     `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
     [null, 'signal_rejected', JSON.stringify({ signalId: id, symbol: row.symbol, side: row.side })],
+  );
+
+  // T-003 §4-3 — 사람이 거부한 후보는 4시간 동안 다시 들이밀지 않는다.
+  // (구 `skip_seal_24h` 봉인의 자리를 대신한다. 그건 AI 반복 거절 이력에 묶여 있었고
+  //  AI 제거로 근거가 소멸했다 — 이제 근거는 "사람이 아니라고 했다"는 명시적 신호다.)
+  // 쿨다운 기록 실패가 거부 자체를 되돌려선 안 되므로 setCooldown 은 throw 하지 않는다.
+  const { setCooldown, COOLDOWN_TTL_MIN } = await import('@/lib/strategy/cooldowns');
+  await setCooldown(
+    {
+      scope: 'entry',
+      symbol: row.symbol,
+      strategyId: row.strategy_id,
+      side: row.side,
+    },
+    COOLDOWN_TTL_MIN.entryRejected,
+    'human_rejected',
   );
   return { ok: true };
 }

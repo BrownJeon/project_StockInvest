@@ -157,13 +157,14 @@ export async function getEvalFunnelSummary(
   const aiBatchFailedCount = Number(aiBatchFailedRows[0]?.n ?? 0);
   if (aiBatchFailedCount > 0) anomalies.push({ label: 'AI 배치 실패', count: aiBatchFailedCount });
 
+  // 구 analyst_disabled + 신규 engine_disabled 를 함께 센다 (Phase 2 D2 이후 기록은 engine_disabled).
   const [analystDisabledRows] = await pool.query<RowDataPacket[]>(
     `SELECT COUNT(*) AS n FROM eval_funnel
-      WHERE market = ? AND gate = 'analyst_disabled' AND ts BETWEEN ? AND ?`,
+      WHERE market = ? AND gate IN ('analyst_disabled','engine_disabled') AND ts BETWEEN ? AND ?`,
     params,
   );
   const analystDisabledCount = Number(analystDisabledRows[0]?.n ?? 0);
-  if (analystDisabledCount > 0) anomalies.push({ label: '자동분석 꺼짐', count: analystDisabledCount });
+  if (analystDisabledCount > 0) anomalies.push({ label: '엔진 중지 (신규 진입 없음)', count: analystDisabledCount });
 
   const [errorGateRows] = await pool.query<RowDataPacket[]>(
     `SELECT gate, COUNT(*) AS n FROM eval_funnel

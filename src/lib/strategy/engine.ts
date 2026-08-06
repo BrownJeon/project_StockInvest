@@ -4,32 +4,30 @@ import { kis } from '@/lib/exchanges/kis';
 import { getMarketFromSymbol, type Market } from '@/lib/exchanges/kis-symbols';
 import { getCurrentMarket, isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 import { createSignal } from '@/lib/signals/service';
-import { isAnalystEnabled } from '@/lib/signals/router';
-import type { SignalInput } from '@/lib/signals/router';
+import { getEngineSwitches } from '@/lib/signals/router';
+import type { AutopilotMode, SignalInput } from '@/lib/signals/router';
 import { getEffectiveOrderMax } from '@/lib/safety/order-limits';
+// ⚠️ D4 — 장중 AI 완전 제거 (T-003 §1). `ai-filter` 에서 가져오는 것은 **순수 지표 계산기**
+//    `buildMarketSummary` 와 그 타입뿐이다. AI 호출 함수(aiSelectSignal·aiSelectSignalBatch)와
+//    `claude` CLI spawn 경로는 이 파일에서 완전히 사라졌다.
+//    (ai-filter.ts 자체를 순수 모듈과 AI 모듈로 쪼개는 정리는 별도 backlog)
 import {
-  aiSelectSignal,
-  aiSelectSignalBatch,
   buildMarketSummary,
-  getRecentTrades,
-  type AiEvEstimate,
-  type BatchDecision,
-  type BatchSymbolInput,
-  type MarketContext,
   type MarketSummary,
-  type RecentTrade,
-  type SkipCategory,
 } from '@/lib/strategy/ai-filter';
 import { prefilterCandidate } from '@/lib/strategy/ai-prefilter';
-import { buildRegimeBucket, lookupRecentSkip, getRegimePerformance } from '@/lib/strategy/ai-dedup';
+import {
+  COOLDOWN_TTL_MIN,
+  type CooldownSet,
+  loadActiveCooldowns,
+  setCooldown,
+} from '@/lib/strategy/cooldowns';
 import { fetchMacroIndicators } from '@/lib/strategy/macro';
-import { marketSessionInfo } from '@/lib/strategy/market-hours';
 import { refreshUniverse, getUniverseSymbols, getAlwaysIncludeSymbols } from '@/lib/strategy/universe';
 import { checkPortfolioStability } from '@/lib/strategy/portfolio-stability';
 import {
   evaluateExit,
   isLateSessionBuyBlockKST,
-  EXIT_STRATEGY_ID,
   EXIT_UNIT_RATIO_MIN,
   EXIT_UNIT_RATIO_MAX,
 } from '@/lib/strategy/exit-engine';
@@ -37,9 +35,11 @@ import { upsertPositionState, reconcilePositionState, loadPositionState } from '
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 import type { StrategyMeta } from './rules/types';
 import { STRATEGY_REGISTRY } from './rules';
-import { getAnalystStyle, getStyleConfig } from './style';
-import { classifyMarketState, getRulesForState, ALWAYS_ACTIVE_RULES } from './market-state';
-import type { AnalystStyle, StyleConfig } from './style';
+import { getStyleConfig, roundTripCostPct } from './style';
+// D1 핵심 — market-state 는 **게이트가 아니라 라벨**이다. getRulesForState / STATE_RULES 는
+// 삭제됐다(활성창 ∩ 발화창 = ∅ 데드락이 stage 4 에서 후보의 95% 를 죽이던 원인).
+import { classifyMarketState, type MarketStateCategory } from './market-state';
+import type { StyleConfig } from './style';
 import { sendAlert } from '@/lib/notify';
 import { EvalFunnelRecorder } from './eval-funnel';
 import type { FunnelGate } from './eval-funnel-labels';
@@ -131,18 +131,23 @@ function createOutcomeTracker() {
 }
 type OutcomeTracker = ReturnType<typeof createOutcomeTracker>;
 
-/** AI 스킵 카테고리 → eval_funnel gate ID */
-function aiGateForSkipCategory(cat: SkipCategory | undefined): FunnelGate {
-  switch (cat) {
-    case 'ai_low_confidence':    return 'ai_low_confidence';
-    case 'ai_failed':            return 'ai_failed_nonheld';
-    case 'dedup_reuse':          return 'dedup_regime';
-    case 'portfolio_guard':      return 'portfolio_guard_other';
-    case 'market_state_neutral': return 'market_state_rule_inactive';
-    case 'rule_prefilter':       return 'prefilter_bypassed_no_summary';
-    case 'ai_rejected':
-    default:                     return 'ai_rejected';
-  }
+/**
+ * 장중 룰의 **단일 시간축** (T-003 §2).
+ *
+ * 구조: 게이트는 raw 30m, 룰은 adaptive 1h 승격, AI 프롬프트는 30m 표기 — 3중 축 불일치였다.
+ * `rsi-oversold` 의 유일한 발화 경로가 이 불일치(23/90 종목만 1h 승격)였다는 사실 자체가
+ * 위험의 증명이다. 레짐에 따라 룰의 의미가 바뀌면 백테스트가 불가능하고, 백테스트가
+ * 불가능한 룰은 운용할 수 없다.
+ *
+ * 그래서 장중은 1h 하나로 고정하고 `adaptive-interval` 은 엔진 경로에서 분리한다
+ * (모듈 자체는 universe 스코어링 입력으로 보존).
+ * market-state 라벨 · 룰 지표 · 승인 카드가 **전부 이 축의 같은 summary 객체**에서 나온다.
+ */
+const INTRADAY_INTERVAL = '1h';
+
+/** 룰이 선언한 interval 을 엔진 실행 축으로 정규화한다. 1d 룰만 1d, 나머지는 전부 1h. */
+export function resolveEngineInterval(declared: string): string {
+  return declared === '1d' ? '1d' : INTRADAY_INTERVAL;
 }
 
 /**
@@ -242,9 +247,12 @@ interface CollectedContext {
   symbol: string;
   ticker: Ticker;
   candidates: Candidate[];
+  /** ② 에서 산출한 **1h 단일 축** summary. 룰 지표·market-state 라벨·프리필터가 전부 이걸 쓴다. */
   summary: MarketSummary | null;
-  aiCandles: Candle[];
-  recentTrades: RecentTrade[];
+  /** summary 를 만든 1h 캔들 (프리필터 유동성 판정에 재사용) */
+  summaryCandles: Candle[];
+  /** D1 — 게이트가 아니라 **라벨**. 승인 카드·indicators·eval_funnel 에 기록만 한다. */
+  marketState: MarketStateCategory | null;
   heldQty?: number;
   heldAvgPrice?: number;
   rawCandidateCount: number;
@@ -256,11 +264,14 @@ interface CollectedContext {
 }
 
 /**
- * 단일 종목의 후보 수집 (AI 호출 없음):
- *  1. 티커·캔들 fetch
- *  2. 활성 전략 실행 → 후보 시그널 수집
- *  3. 포지션 가드·매도 수량 보정·재매수 쿨다운 적용
- *  4. MarketSummary + RecentTrades 준비
+ * ② 룰 발화 + ③ 억제 — 단일 종목의 후보 수집 (T-003 §1).
+ *
+ * ② (fail-open 성격): 티커·캔들 확보 → 결정론 룰 조건. 캔들 실패는 **해당 룰만** skip + error
+ *    기록이고 런은 계속된다.
+ * ③ (fail-open): 포지션 가드 · 통합 쿨다운 · 매도 수량 정합. 조회 실패는 통과 + error 기록 —
+ *    스팸의 최종 방어선은 ④ 의 `duplicate_active_signal` 과 승인 절차다.
+ *
+ * **AI 호출 없음** (D4). **market-state 게이팅 없음** (D1 — 라벨만 부착).
  */
 async function collectCandidates(
   symbol: string,
@@ -269,6 +280,7 @@ async function collectCandidates(
   amountKRW: number,
   style: StyleConfig,
   rec: EvalFunnelRecorder,
+  cooldowns: CooldownSet,
 ): Promise<CollectedContext | null> {
   let ticker: Ticker;
   try {
@@ -276,31 +288,19 @@ async function collectCandidates(
   } catch (e) {
     rec.error('ticker_error', { symbol, detail: { error: String(e).slice(0, 300) } });
     return {
-      symbol, ticker: {} as Ticker, candidates: [], summary: null, aiCandles: [],
-      recentTrades: [], rawCandidateCount: 0, error: `ticker:${e}`,
+      symbol, ticker: {} as Ticker, candidates: [], summary: null, summaryCandles: [],
+      marketState: null, rawCandidateCount: 0, error: `ticker:${e}`,
       outcomeStage: 1, outcomeGate: 'ticker_error',
     };
   }
 
-  const pool = getPool();
   const candleCache = new Map<string, Candle[]>();
-  const { pickAdaptiveInterval } = await import('./adaptive-interval');
-  const intervalCache = new Map<string, string>();
-  // baseInterval → 종목 변동성에 따른 adaptive interval로 매핑
-  const resolveInterval = async (baseInterval: string): Promise<string> => {
-    if (intervalCache.has(baseInterval)) return intervalCache.get(baseInterval)!;
-    const adaptive = await pickAdaptiveInterval(symbol, baseInterval);
-    intervalCache.set(baseInterval, adaptive);
-    return adaptive;
-  };
-  const candleFetchFailed = new Set<string>();
   const getCandlesFor = async (interval: string, minCandles: number): Promise<Candle[] | null> => {
     if (!candleCache.has(interval)) {
       try {
         const c = await kis.getCandles(symbol, interval, Math.max(minCandles + 10, 60));
         candleCache.set(interval, c);
       } catch (e) {
-        candleFetchFailed.add(interval);
         void e;
         return null;
       }
@@ -308,46 +308,16 @@ async function collectCandidates(
     return candleCache.get(interval) ?? null;
   };
 
-  // 재매수 쿨다운
-  // ⚠️ 관측 메모 (T-002): status IN ('executed','accepted') 는 signals.status ENUM 에 **존재하지 않는 값**이라
-  //    이 쿨다운은 사실상 영구 무효 상태다. Phase 1 에서는 동작을 바꾸지 않고(고치면 매수가 줄어 소생 목표와 충돌)
-  //    eval_funnel `cooldown_rebuy` 게이트 기록으로 "0건"임을 실측한 뒤 Phase 2 §4-3 통합 쿨다운에서 교정한다.
-  //    (exit 쿨다운은 중복 청산 = 안전 이슈라 H3 로 이번에 교정했다.)
-  const recentSellCheck = await pool.query<RowDataPacket[]>(
-    `SELECT id FROM signals
-     WHERE symbol = ? AND side = 'sell' AND status IN ('executed','accepted')
-       AND created_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)
-     LIMIT 1`,
-    [symbol, style.rebuyCooldownMin],
-  );
-  const hasRecentSell = (recentSellCheck[0] as RowDataPacket[]).length > 0;
-
-  // 24h 내 같은 (strategy, side)로 ai_skipped 이력이 있는 (strategy, side) 집합 — 반복 후행 발화 차단
-  // dedup이 regimeBucket 단위로 작동해도 5분 봉 내 ATR/RSI 미세 변동으로 hit 안 되는 케이스 보강.
-  // 이력 기반 광역 차단 — 룰의 후행 본질을 시간 단위로 막는다.
-  const recentSkipsRows = await pool.query<RowDataPacket[]>(
-    `SELECT DISTINCT strategy_id, side FROM signals
-     WHERE symbol = ? AND status = 'ai_skipped'
-       AND created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)
-       AND JSON_EXTRACT(indicators, '$.ai.skipCategory') IN ('ai_rejected', 'ai_low_confidence')`,
-    [symbol],
-  );
-  const skippedRecently = new Set<string>();
-  for (const r of recentSkipsRows[0] as RowDataPacket[]) {
-    skippedRecently.add(`${r.strategy_id}:${r.side}`);
-  }
-
-  // ─── 시장 상태 분류 — 30m 캔들로 지표 계산 후 활성 룰 결정 ───
-  const preCandles = await getCandlesFor('30m', 30);
-  const preSummary = preCandles && preCandles.length >= 20
-    ? buildMarketSummary(preCandles, ticker) : null;
-  const marketState = preSummary ? classifyMarketState(preSummary) : null;
-  const stateRuleIds = marketState ? new Set(getRulesForState(marketState)) : null;
+  // ─── ② 단일 축(1h) summary — 룰 지표·market-state 라벨·프리필터의 **공통 원천** ───
+  const summaryCandles = await getCandlesFor(INTRADAY_INTERVAL, 30) ?? [];
+  const summary = summaryCandles.length >= 20 ? buildMarketSummary(summaryCandles, ticker) : null;
+  // D1 — 분류는 유지하되 **게이트가 아니라 라벨**. 분류 불가면 라벨 null 일 뿐 아무것도 막지 않는다
+  // (그래서 `market_state_preclassify_failed` fail-open 분기 자체가 사라졌다).
+  const marketState = summary ? classifyMarketState(summary) : null;
 
   // ── eval_funnel 계측: collect 행에 stage 2~5 를 압축 기록 ────────────────
   const rules = {
     active:              [] as string[],
-    inactive:            [] as string[],   // market_state_rule_inactive
     candlesFetchFailed:  [] as string[],   // candles_fetch_failed
     insufficientCandles: [] as Array<{ id: string; interval: string; got: number; need: number }>,
     noFire:              [] as string[],   // rule_no_fire
@@ -357,7 +327,7 @@ async function collectCandidates(
     losing_position_buy_block: 0,
     sell_not_held: 0,
     cooldown_rebuy: 0,
-    skip_seal_24h: 0,
+    cooldown_entry: 0,
     sell_amount_below_min: 0,
   };
   // 이 심볼이 collect 안에서 도달한 가장 깊은 stage (final 행의 축)
@@ -368,36 +338,25 @@ async function collectCandidates(
     if (stage >= outcomeStage) { outcomeStage = stage; outcomeGate = gate; }
   };
 
-  if (!preSummary) {
-    // 30m 캔들 20봉 미만 → 분류 불가 → fail-open(전 룰 실행). 지금까지 완전 무기록이던 지점.
-    rec.error('market_state_preclassify_failed', {
-      symbol,
-      detail: { candleCount: preCandles?.length ?? 0, failOpen: true },
-    });
+  // ③ 쿨다운 조회 실패는 fail-open + error 기록 (심볼당 1회만 남긴다 — 런당 수천 행 방지)
+  if (cooldowns.loadError) {
+    rec.error('cooldown_lookup_error', { symbol, detail: { error: cooldowns.loadError, failOpen: true } });
   }
-
-  if (marketState === 'neutral') {
-    console.log(`[market-state] ${symbol} → neutral: 관망 (1d 룰은 계속 실행)`);
-  } else if (marketState) {
-    console.log(`[market-state] ${symbol} → ${marketState}: 활성 룰 [${[...(stateRuleIds ?? [])].join(', ')}]`);
-  }
+  const rebuyBlocked = cooldowns.isActive({ scope: 'rebuy', symbol });
 
   const candidates: Candidate[] = [];
 
   for (const { id, meta } of strategies) {
-    // 1d 룰 및 ALWAYS_ACTIVE 룰은 시장 상태와 무관하게 항상 실행
-    if (stateRuleIds !== null && !ALWAYS_ACTIVE_RULES.has(id) && !stateRuleIds.has(id)) {
-      rules.inactive.push(id);
-      // 다른 활성 룰이 이 심볼에서 더 깊은 stage에 도달하면 아래 kill()이 덮어쓴다 (monotonic).
-      kill(2, 'market_state_rule_inactive');
-      continue;
-    }
+    // D1 — 모든 활성 룰을 무조건 실행한다. 상태별 활성 룰 선별(STATE_RULES)은 삭제됐다:
+    // `rsi-oversold` 의 활성창(RSI∈[35,38))과 발화창(RSI<35)의 교집합이 공집합이라
+    // 룰이 구조적으로 발화 불가능했고, 그것이 stage 4 에서 후보 95% 가 죽던 최상류 병목이었다.
     rules.active.push(id);
-    const effectiveInterval = await resolveInterval(meta.interval);
+    const effectiveInterval = resolveEngineInterval(meta.interval);
     const candles = await getCandlesFor(effectiveInterval, meta.minCandles);
     if (!candles) {
       rules.candlesFetchFailed.push(id);
       kill(3, 'candles_fetch_failed');
+      rec.error('candles_fetch_failed', { symbol, strategyId: id, detail: { interval: effectiveInterval } });
       continue;
     }
     if (candles.length < meta.minCandles) {
@@ -446,17 +405,24 @@ async function collectCandidates(
         rec.skip('sell_not_held', { ...gateBase, detail: { strategyId: id } });
         continue;
       }
-      if (sig.side === 'buy' && hasRecentSell) {
+      // ③ 통합 쿨다운 — rebuy (symbol). 매도 직후 재매수는 거래세 왕복 낭비다.
+      if (sig.side === 'buy' && rebuyBlocked) {
         guardDrops.cooldown_rebuy++;
         kill(5, 'cooldown_rebuy');
-        rec.skip('cooldown_rebuy', { ...gateBase, detail: { cooldownMin: style.rebuyCooldownMin } });
+        rec.skip('cooldown_rebuy', {
+          ...gateBase,
+          detail: { until: cooldowns.until({ scope: 'rebuy', symbol }), ttlMin: COOLDOWN_TTL_MIN.rebuy },
+        });
         continue;
       }
-      // 24h 광역 차단 — sell도 동일 적용 (이미 +9% 평가익 보유 중인데 5회 매도 시그널 같은 패턴 방지)
-      if (skippedRecently.has(`${id}:${sig.side}`)) {
-        guardDrops.skip_seal_24h++;
-        kill(5, 'skip_seal_24h');
-        rec.skip('skip_seal_24h', { ...gateBase, detail: { strategyId: id, side: sig.side } });
+      // ③ 통합 쿨다운 — entry (symbol, strategy, side).
+      // 구 ai-dedup 60분 + 24h skip 봉인을 대체한다. regime 버킷은 키에서 제외 —
+      // 버킷 경계 진동(RSI 39.9↔40.1)으로 쿨다운이 우회되던 결함을 없앤다.
+      const entryKey = { scope: 'entry' as const, symbol, strategyId: id, side: sig.side as 'buy' | 'sell' };
+      if (cooldowns.isActive(entryKey)) {
+        guardDrops.cooldown_entry++;
+        kill(5, 'cooldown_entry');
+        rec.skip('cooldown_entry', { ...gateBase, detail: { until: cooldowns.until(entryKey) } });
         continue;
       }
 
@@ -470,9 +436,15 @@ async function collectCandidates(
           rec.skip('sell_amount_below_min', { ...gateBase, detail: { heldValue, wanted: sig.amountKRW } });
           continue;
         }
-        candidates.push({ ...sig, strategyId: id, quantity: heldQty, amountKRW: heldValue });
+        candidates.push({
+          ...sig, strategyId: id, quantity: heldQty, amountKRW: heldValue,
+          indicators: withEngineLabels(sig.indicators, effectiveInterval, marketState),
+        });
       } else {
-        candidates.push({ ...sig, strategyId: id });
+        candidates.push({
+          ...sig, strategyId: id,
+          indicators: withEngineLabels(sig.indicators, effectiveInterval, marketState),
+        });
       }
       // 가드를 통과한 후보 — stage 6 이상으로 진행
       kill(6, 'regime_gate_macro_bear');
@@ -488,46 +460,55 @@ async function collectCandidates(
     verdict: candidates.length > 0 ? 'pass' : 'skip',
     reason: candidates.length > 0 ? null : outcomeGate,
     detail: {
-      marketState,
-      rsi14: preSummary?.rsi14 ?? null,
+      marketState,                 // D1 — 라벨. 국면별 룰 성과 사후 분석(레짐 학습 루프)의 축
+      interval: INTRADAY_INTERVAL,
+      rsi14: summary?.rsi14 ?? null,
       rules,
       guardDrops,
       rawCandidates: candidates.length,
     },
   });
 
-  if (candidates.length === 0) {
-    return {
-      symbol, ticker, candidates: [], summary: null, aiCandles: [],
-      recentTrades: [], heldQty: heldEntry?.qty, heldAvgPrice: heldEntry?.avgPrice,
-      rawCandidateCount: 0,
-      outcomeStage, outcomeGate,
-    };
-  }
-
-  const aiCandles = await getCandlesFor('30m', 30) ?? [];
-  const summary = aiCandles.length > 0 ? buildMarketSummary(aiCandles, ticker) : null;
-  const recentTrades = await getRecentTrades(symbol);
-
   return {
-    symbol, ticker, candidates, summary, aiCandles, recentTrades,
+    symbol, ticker, candidates, summary, summaryCandles, marketState,
     heldQty: heldEntry?.qty, heldAvgPrice: heldEntry?.avgPrice,
     rawCandidateCount: candidates.length,
     outcomeStage, outcomeGate,
   };
 }
 
+/**
+ * 후보 indicators 에 엔진 라벨을 덧붙인다 — 승인 카드·사후 분석의 원천.
+ *  - `interval`: 이 후보가 어느 시간축에서 나왔는가 (§6-4 검증 기준: 전부 '1h' 또는 '1d')
+ *  - `market_state`: D1 로 게이트에서 강등된 국면 라벨 (사람 판단 보조)
+ */
+function withEngineLabels(
+  indicators: unknown,
+  interval: string,
+  marketState: MarketStateCategory | null,
+): Record<string, unknown> {
+  const base = (indicators != null && typeof indicators === 'object')
+    ? { ...(indicators as Record<string, unknown>) }
+    : {};
+  base.interval = interval;
+  base.market_state = marketState;
+  return base;
+}
+
 interface SkipAuditPayload {
   reasoning: string;
-  category: SkipCategory;
+  /**
+   * 스킵 사유 분류. AI 제거 후에도 **`ai_skipped` 상태 값과 카테고리 어휘는 그대로 둔다** —
+   * analytics·RAG 백필 쿼리 다수가 `status='ai_skipped'` 와 `$.ai.skipCategory` 에 묶여 있고,
+   * 기존 13,811행이 그 어휘로 쌓여 있다 (Leader 승인: 이관하지 않는다).
+   */
+  category: 'rule_prefilter' | 'portfolio_guard';
   confidence: number;
   warnings?: string[];
-  ev?: AiEvEstimate;
-  regimeBucket?: string;
   prefilterReason?: string;
 }
 
-/** signals 테이블에 ai_skipped 레코드 insert — prefilter/dedup/AI 거절 공용 */
+/** signals 테이블에 감사 레코드 insert — 프리필터·포트폴리오 가드 공용 */
 async function insertSkipAuditPool(
   pool: ReturnType<typeof getPool>,
   cand: Candidate,
@@ -549,8 +530,6 @@ async function insertSkipAuditPool(
           warnings: payload.warnings ?? [],
           skipCategory: payload.category,
           ...(payload.prefilterReason ? { prefilterReason: payload.prefilterReason } : {}),
-          ev: payload.ev,
-          regimeBucket: payload.regimeBucket,
         },
       }),
       priceAtSkip,
@@ -566,13 +545,17 @@ async function insertSkipAuditPool(
  * 안전:
  *  - 보유 종목만 순회 (미보유 시 sell 시그널 부적합)
  *  - reconcile 후 미보유 row 자동 정리
- *  - 동일 심볼+exit_kind에 대한 5분 쿨다운 (createSignal 중복 방지)
+ *  - 동일 심볼+exit_kind 통합 쿨다운 15분 (§4-3 scope='exit')
+ *
+ * ⚠️ **이 함수는 시장이 열려 있는 한 무조건 실행된다.** 엔진 스위치·활성 전략 수·평가 주기와
+ *    무관하다 — 보유 종목 보호는 신규 진입 로직의 하위 기능이 아니다 (Leader 결정 ①).
  */
 async function runExitEngine(
   market: Market,
   heldAmounts: Map<string, HeldEntry>,
   style: StyleConfig,
   rec: EvalFunnelRecorder,
+  cooldowns: CooldownSet,
 ): Promise<number> {
   const heldSymbols = [...heldAmounts.keys()];
   // reconcile은 항상 실행 (미보유 row 정리)
@@ -663,26 +646,18 @@ async function runExitEngine(
       continue;
     }
 
-    // 동일 심볼+exit_kind에 대한 5분 쿨다운 — createSignal 중복 방지
-    // (cron이 1분 tick이라 같은 청산 룰이 5번 연속 발화되면 중복 주문 우려)
+    // ③ 통합 쿨다운 — exit (symbol, exit_kind) 15분.
     //
-    // ⚠️ T-002 H3 — 'executed','accepted' 는 signals.status ENUM 에 **존재하지 않는 값**이라
-    //    이 쿨다운은 지금까지 사실상 무효였다(중복 청산 시그널 위험 = 안전 이슈).
-    //    실존 상태값으로 교정: auto_submitted / approved / approved_pending_entry / executing /
-    //    pending / pending_approval.
-    const [recent] = await pool.query<RowDataPacket[]>(
-      `SELECT id FROM signals
-        WHERE symbol=? AND strategy_id=? AND side='sell'
-          AND status IN ('auto_submitted','approved','approved_pending_entry','executing','pending','pending_approval')
-          AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
-          AND JSON_EXTRACT(indicators, '$.exit_kind') = ?
-        LIMIT 1`,
-      [symbol, EXIT_STRATEGY_ID, exitSig.exitKind],
-    );
-    if ((recent as RowDataPacket[]).length > 0) {
-      rec.skip('exit_cooldown_5m', {
+    // ⚠️ 이 자리는 원래 signals.status 를 조회했고, 그 목록에 실존하지 않는 값
+    //    ('executed','accepted')이 있어 쿨다운이 **영구 무효**였다(T-002 H3 — 중복 청산 위험).
+    //    상태 테이블 의존을 끊어 상태 어휘가 바뀌어도 쿨다운이 조용히 죽지 않게 한다.
+    //    1차 방어선은 여전히 ④ 의 `duplicate_active_signal`(동일 심볼+방향 활성 시그널)이고,
+    //    이건 같은 청산 종류의 재발화를 막는 2차 방어선이다.
+    const exitKey = { scope: 'exit' as const, symbol, exitKind: exitSig.exitKind };
+    if (cooldowns.isActive(exitKey)) {
+      rec.skip('cooldown_exit', {
         symbol, side: 'sell',
-        detail: { exitKind: exitSig.exitKind, prevSignalId: (recent as RowDataPacket[])[0].id },
+        detail: { exitKind: exitSig.exitKind, until: cooldowns.until(exitKey), ttlMin: COOLDOWN_TTL_MIN.exit },
       });
       continue; // 쿨다운 중
     }
@@ -691,6 +666,9 @@ async function runExitEngine(
     const res = await createSignalGuarded(exitSig, rec);
     if (res.ok) {
       created++;
+      // 쿨다운은 **생성 성공 시에만** 건다 — 실패한 시도로 다음 tick 의 재시도를 막으면
+      // 손절이 통째로 유실된다.
+      await setCooldown(exitKey, COOLDOWN_TTL_MIN.exit, `exit:${exitSig.exitKind}`);
       console.log(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 발화 (signalId=${res.signalId})`);
     } else {
       rec.error('exit_create_failed', {
@@ -703,42 +681,45 @@ async function runExitEngine(
   return created;
 }
 
-/** context에 prefilter + portfolio guard + dedup을 적용해 AI 호출 필요 후보를 추려낸다. */
+/**
+ * ④ 안전·집행 (T-003 §1) — fail-closed 가 기본이되 게이트별 방향을 지킨다.
+ *
+ *  fail-closed (통과시키면 돈이 나감): 블랙리스트 · 주문한도 · 유동성고갈 · createSignal 검증
+ *  fail-open  (차단하면 기회 상실): macro 게이트 · 프리필터 — 기록 남기고 통과
+ *
+ * assist 모드에서는 `portfolio_core_ratio` 를 **경고 라벨로 강등**한다 (사람이 보는 자리이므로).
+ * auto 모드에서만 하드 게이트로 유지한다.
+ */
 async function applyFilters(
   ctx: CollectedContext,
-  analystStyle: AnalystStyle,
   style: StyleConfig,
   market: Market,
   heldAmounts: Map<string, HeldEntry>,
   rec: EvalFunnelRecorder,
   outcome: OutcomeTracker,
-): Promise<{ needsAi: Candidate[]; regimeBucket: string | null }> {
+  autopilotMode: AutopilotMode,
+): Promise<Candidate[]> {
   const pool = getPool();
-  const { symbol, candidates, summary, aiCandles, ticker } = ctx;
+  const { symbol, candidates, summary, summaryCandles, ticker } = ctx;
 
   /** prefilter reason → eval_funnel gate ID */
   const PREFILTER_GATE: Record<string, FunnelGate> = {
     liquidity_dead:       'prefilter_liquidity_dead',
     atr_zero:             'prefilter_atr_zero',
     rsi_extreme_counter:  'prefilter_rsi_extreme_counter',
-    strong_counter_trend: 'prefilter_strong_counter_trend',
     blowoff_top:          'prefilter_blowoff_top',
   };
 
-  // 1) pre-filter (summary 없으면 skip)
+  // 1) pre-filter.
+  // summary 는 ② 에서 룰과 같은 1h 축으로 항상 산출되므로 "summary 없어서 프리필터 생략"
+  // (`prefilter_bypassed_no_summary`) 분기가 소멸했다 — 캔들 자체가 없으면 룰도 발화 못 해
+  // 여기 도달하지 않는다.
   let survived: Candidate[] = candidates;
-  if (!summary) {
-    // fail-open — 프리필터를 통째로 생략하고 전 후보 통과. 지금까지 무기록이던 지점.
-    rec.error('prefilter_bypassed_no_summary', {
-      symbol,
-      detail: { candidates: candidates.length, failOpen: true },
-    });
-  }
   if (summary) {
     const passed: Candidate[] = [];
     const skipped: Array<{ cand: Candidate; reason: string }> = [];
     for (const cand of candidates) {
-      const decision = prefilterCandidate(cand, summary, aiCandles, analystStyle);
+      const decision = prefilterCandidate(cand, summary, summaryCandles);
       if (decision.verdict === 'skip') {
         skipped.push({ cand, reason: `${decision.reason}: ${decision.detail ?? ''}`.trim() });
       } else {
@@ -750,11 +731,12 @@ async function applyFilters(
       const detail = detailParts.join(':').trim();
       const { formatPrefilterReason } = await import('./skip-reason-formatter');
       const key = reasonKey.trim();
-      rec.skip(PREFILTER_GATE[key] ?? 'prefilter_bypassed_no_summary', {
+      const gate = PREFILTER_GATE[key] ?? 'prefilter_liquidity_dead';
+      rec.skip(gate, {
         symbol, strategyId: cand.strategyId, side: cand.side as 'buy' | 'sell',
         reason: key, detail: { detail },
       });
-      outcome.kill(symbol, 7, PREFILTER_GATE[key] ?? 'prefilter_bypassed_no_summary');
+      outcome.kill(symbol, 7, gate);
       await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
         reasoning: formatPrefilterReason(key, detail, cand.side),
         category: 'rule_prefilter',
@@ -768,7 +750,7 @@ async function applyFilters(
     survived = passed;
   }
 
-  if (survived.length === 0) return { needsAi: [], regimeBucket: null };
+  if (survived.length === 0) return [];
 
   // 1.4) 장마감 N분 전 신규 매수 차단 (국내장만, 기본 30분 → KST 15:00~15:30 buy skip)
   // 사유: 시간외 거래 없음 → 마감 직전 매수는 익일 갭다운 위험에 무방비 노출.
@@ -794,11 +776,10 @@ async function applyFilters(
       console.log(`[late-session-block] ${symbol} → ${lateBlocked.length} buy skipped`);
     }
     survived = passed;
-    if (survived.length === 0) return { needsAi: [], regimeBucket: null };
+    if (survived.length === 0) return [];
   }
 
   // 1.5) portfolio stability 가드 — buy 시그널만 검사 (sell·해외는 자동 pass).
-  //   stableCoreRatioMin 위반 + maxPositionsPerSymbol 한도 초과 → 거절. AI 호출 비용 절약.
   if (market === 'domestic') {
     const guarded: Candidate[] = [];
     let guardSkips = 0;
@@ -809,21 +790,45 @@ async function applyFilters(
         market, style, heldAmounts,
       });
       if (decision.verdict === 'skip') {
-        guardSkips++;
         const reasonKor = decision.reason === 'core_ratio_below_min'
           ? '코어(KOSPI 100) 비율 미달'
           : decision.reason === 'max_positions_exceeded'
             ? '24h 종목당 매수 한도 초과'
             : (decision.reason ?? '안전성 가드');
+        const gate: FunnelGate =
+          decision.reason === 'core_ratio_below_min'   ? 'portfolio_core_ratio'
+          : decision.reason === 'max_positions_exceeded' ? 'portfolio_max_positions'
+          :                                                 'portfolio_guard_other';
+
+        // §1 — `portfolio_core_ratio` 는 **assist/manual 에선 경고 라벨로 강등**한다.
+        // 사람이 승인 카드를 보는 자리이므로 하드 차단 대신 경고를 붙여 통과시키고,
+        // 사람이 없는 auto 모드에서만 하드 게이트로 남긴다.
+        // (max_positions·기타 가드는 물타기 상한이라 모드와 무관하게 하드 유지)
+        if (gate === 'portfolio_core_ratio' && autopilotMode !== 'auto') {
+          rec.pass('portfolio_core_ratio', {
+            symbol, strategyId: cand.strategyId, side: 'buy',
+            reason: 'label_only',
+            detail: { detail: decision.detail, autopilotMode, demotedToLabel: true },
+          });
+          guarded.push({
+            ...cand,
+            indicators: {
+              ...(cand.indicators as Record<string, unknown> ?? {}),
+              warnings: [
+                ...(((cand.indicators as Record<string, unknown> | undefined)?.warnings as string[] | undefined) ?? []),
+                `코어 비율 경고: ${decision.detail ?? reasonKor}`,
+              ],
+            },
+          });
+          continue;
+        }
+
+        guardSkips++;
         await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
           reasoning: `[매수 포트폴리오 안전 가드] ${reasonKor} — ${decision.detail ?? ''}`.trim(),
           category: 'portfolio_guard',
           confidence: 0,
         });
-        const gate: FunnelGate =
-          decision.reason === 'core_ratio_below_min'   ? 'portfolio_core_ratio'
-          : decision.reason === 'max_positions_exceeded' ? 'portfolio_max_positions'
-          :                                                 'portfolio_guard_other';
         rec.skip(gate, { symbol, strategyId: cand.strategyId, side: 'buy', detail: { detail: decision.detail } });
         outcome.kill(symbol, 8, gate);
       } else {
@@ -836,329 +841,21 @@ async function applyFilters(
     survived = guarded;
   }
 
-  if (survived.length === 0) return { needsAi: [], regimeBucket: null };
-
-  // 2) dedup (보유 심볼 제외)
-  const regimeBucket = summary ? buildRegimeBucket(summary) : null;
-  const isHeld = heldAmounts.has(symbol);
-
-  if (!regimeBucket || isHeld) {
-    return { needsAi: survived, regimeBucket };
-  }
-
-  const needsAi: Candidate[] = [];
-  let dedupHits = 0;
-  for (const cand of survived) {
-    const hit = await lookupRecentSkip(
-      { symbol, strategyId: cand.strategyId, side: cand.side, regime: regimeBucket },
-
-    );
-    if (hit.hit && hit.prev) {
-      dedupHits++;
-      const sideKor = cand.side === 'sell' ? '매도' : '매수';
-      await insertSkipAuditPool(pool, cand, symbol, ticker.price, {
-        reasoning: `[${sideKor} 중복 제거] 같은 시장 상태에서 최근 같은 결정 반복 — 재평가 생략 | 이전 사유: "${hit.prev.reasoning.slice(0, 150)}"`,
-        category: 'dedup_reuse',
-        confidence: hit.prev.confidence,
-        warnings: hit.prev.warnings,
-        ev: hit.prev.ev,
-        regimeBucket,
-      });
-      rec.skip('dedup_regime', { symbol, strategyId: cand.strategyId, side: cand.side as 'buy' | 'sell', detail: { regimeBucket, prevConfidence: hit.prev.confidence } });
-      outcome.kill(symbol, 9, 'dedup_regime');
-    } else {
-      needsAi.push(cand);
-    }
-  }
-  if (dedupHits > 0) {
-    console.log(`[dedup] ${symbol} → ${dedupHits}/${survived.length} hits (bucket=${regimeBucket})`);
-  }
-
-  return { needsAi, regimeBucket };
+  // ③ dedup(regime 버킷) 은 §4-3 통합 쿨다운(scope='entry')으로 대체돼 여기서 사라졌다.
+  //   버킷 경계 진동으로 우회되던 결함 + AI 스킵 이력 의존이 함께 제거된다.
+  return survived;
 }
 
-/** 최근 3시간 거시 지수 맥락 + universe 평균 지표 + 시장 세션 phase + 거시 지수(KOSPI/SP500/USD-KRW) */
-async function buildMarketContext(contexts: CollectedContext[], market: Market): Promise<MarketContext> {
-  const pool = getPool();
-
-  const btc3hChangePct: number | null = null;
-  const btc3hVolRatio: number | null = null;
-
-  // Universe 평균 volumeRatio, 고변동 종목 수 (현재 수집된 context 기반)
-  const validSummaries = contexts.map(c => c.summary).filter((s): s is MarketSummary => !!s);
-  const avgVolumeRatio = validSummaries.length > 0
-    ? validSummaries.reduce((s, v) => s + v.volumeRatio, 0) / validSummaries.length
-    : null;
-  const highVolCount = validSummaries.filter(s =>
-    s.atr14 != null && s.currentPrice > 0 && (s.atr14 / s.currentPrice) * 100 >= 3,
-  ).length;
-
-  // 최근 3h 체결 건수 (전체 universe)
-  let recentExecutedBuys = 0;
-  let recentExecutedSells = 0;
-  try {
-    const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT side, COUNT(*) AS n FROM signals
-       WHERE status IN ('executed','accepted')
-         AND created_at > DATE_SUB(NOW(), INTERVAL 3 HOUR)
-       GROUP BY side`,
-    );
-    for (const r of rows) {
-      if (r.side === 'buy') recentExecutedBuys = Number(r.n);
-      else if (r.side === 'sell') recentExecutedSells = Number(r.n);
-    }
-  } catch {
-    // ignore
-  }
-
-  // 시장 세션 phase + 마감까지 남은 분
-  const session = marketSessionInfo(market);
-
-  // 거시 지표 (KOSPI / SP500 / USD-KRW) — 5분 캐시, 실패 시 null
-  let macro = { kospiChangePct: null as number | null, sp500ChangePct: null as number | null, usdKrwChangePct: null as number | null };
-  try { macro = await fetchMacroIndicators(); } catch { /* keep nulls */ }
-
-  return {
-    btc3hChangePct, btc3hVolRatio, avgVolumeRatio, highVolCount,
-    recentExecutedBuys, recentExecutedSells,
-    sessionPhase: session.phase, minutesToClose: session.minutesToClose,
-    kospiChangePct: macro.kospiChangePct,
-    sp500ChangePct: macro.sp500ChangePct,
-    usdKrwChangePct: macro.usdKrwChangePct,
-  };
-}
-
-/** 배치 AI 결과를 각 context에 적용 — createSignal 또는 ai_skipped insert. */
-async function applyBatchDecisions(
-  needsAiMap: Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>,
-  batchDecisions: BatchDecision[],
-  results: Map<string, EvalResult>,
-  style: StyleConfig,
-  analystStyle: AnalystStyle,
-  rec: EvalFunnelRecorder,
-  outcome: OutcomeTracker,
-): Promise<void> {
-  const pool = getPool();
-  const { formatSkipReason } = await import('./skip-reason-formatter');
-  const styleNameMap: Record<string, string> = { aggressive: '공격적', neutral: '중립적', stable: '안정적' };
-  for (const d of batchDecisions) {
-    const entry = needsAiMap.get(d.symbol);
-    if (!entry) continue;
-    const { ctx, needsAi, regimeBucket } = entry;
-
-    if (d.selectedIndices.length === 0 || d.skipCategory === 'ai_failed') {
-      const gate = aiGateForSkipCategory(d.skipCategory);
-      for (const sig of needsAi) {
-        await insertSkipAuditPool(pool, sig, d.symbol, ctx.ticker.price, {
-          reasoning: formatSkipReason({
-            category: d.skipCategory ?? 'ai_rejected',
-            side: sig.side,
-            confidence: d.confidence,
-            rawReasoning: d.reasoning,
-            minConfidence: style.minAiConfidence,
-            styleName: styleNameMap[analystStyle] ?? analystStyle,
-          }),
-          category: d.skipCategory ?? 'ai_rejected',
-          confidence: d.confidence,
-          warnings: d.warnings,
-          ev: d.ev,
-          regimeBucket: regimeBucket ?? undefined,
-        });
-      }
-      rec.skip(gate, { symbol: d.symbol, detail: { confidence: d.confidence, skipCategory: d.skipCategory ?? null, candidates: needsAi.length } });
-      outcome.kill(d.symbol, 10, gate);
-      results.set(d.symbol, {
-        symbol: d.symbol,
-        signalsCreated: 0,
-        candidateCount: needsAi.length,
-        rawCandidates: ctx.rawCandidateCount,
-      });
-      continue;
-    }
-
-    // 다중 승인: selectedIndices에 포함된 인덱스는 createSignal, 그 외는 ai_skipped audit
-    const selectedSet = new Set(d.selectedIndices);
-    let createdCount = 0;
-    let firstSelectedSide: 'buy' | 'sell' | undefined;
-    let firstSelectedStrategy: string | undefined;
-    for (let i = 0; i < needsAi.length; i++) {
-      const cand = needsAi[i];
-      if (selectedSet.has(i)) {
-        const pickedRank = d.selectedIndices.indexOf(i);  // 0-based EV 순위
-        const enriched: Candidate = {
-          ...cand,
-          reasoning: [
-            cand.reasoning,
-            `[AI ${d.confidence}%${d.selectedIndices.length > 1 ? ` · ${pickedRank + 1}/${d.selectedIndices.length}` : ''}] ${d.reasoning}`,
-            ...(d.warnings.length ? [`경고: ${d.warnings.join(' / ')}`] : []),
-          ].filter(Boolean).join('\n'),
-          indicators: {
-            ...(cand.indicators as object ?? {}),
-            ai: {
-              confidence: d.confidence, warnings: d.warnings,
-              selectedFrom: needsAi.length, ev: d.ev,
-              regimeBucket: regimeBucket ?? undefined,
-              pickedRank, picksTotal: d.selectedIndices.length,
-            },
-          },
-        };
-        const res = await createSignalGuarded(enriched, rec, outcome);
-        if (res.ok) {
-          createdCount++;
-          if (firstSelectedSide === undefined) firstSelectedSide = cand.side;
-          if (firstSelectedStrategy === undefined) firstSelectedStrategy = cand.strategyId;
-        }
-      } else {
-        await insertSkipAuditPool(pool, cand, d.symbol, ctx.ticker.price, {
-          reasoning: (await import('./skip-reason-formatter')).formatSkipReason({
-            category: d.skipCategory ?? 'ai_rejected',
-            side: cand.side,
-            confidence: d.confidence,
-            rawReasoning: d.reasoning,
-            minConfidence: style.minAiConfidence,
-            styleName: ({aggressive:'공격적',neutral:'중립적',stable:'안정적'} as any)[analystStyle] ?? analystStyle,
-          }),
-          category: d.skipCategory ?? 'ai_rejected',
-          confidence: d.confidence,
-          warnings: d.warnings,
-          ev: d.ev,
-          regimeBucket: regimeBucket ?? undefined,
-        });
-        outcome.kill(d.symbol, 10, aiGateForSkipCategory(d.skipCategory));
-      }
-    }
-
-    results.set(d.symbol, {
-      symbol: d.symbol,
-      signalsCreated: createdCount,
-      selectedStrategy: firstSelectedStrategy,
-      candidateCount: needsAi.length,
-      rawCandidates: ctx.rawCandidateCount,
-      side: firstSelectedSide,
-    });
-  }
-}
-
-/** 배치 실패 시 보유 심볼만 per-symbol fallback. 비보유는 ai_failed 스킵. */
-async function fallbackPerSymbol(
-  needsAiMap: Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>,
-  style: StyleConfig,
-  analystStyle: AnalystStyle,
-  heldAmounts: Map<string, HeldEntry>,
-  results: Map<string, EvalResult>,
-  reason: string,
-  market: Market,
-  rec: EvalFunnelRecorder,
-  outcome: OutcomeTracker,
-): Promise<void> {
-  const pool = getPool();
-  let fallbackCount = 0;
-  let skippedCount = 0;
-
-  for (const [symbol, entry] of needsAiMap) {
-    const { ctx, needsAi, regimeBucket } = entry;
-    const isHeld = heldAmounts.has(symbol);
-
-    if (isHeld) {
-      fallbackCount++;
-      const aiResult = await aiSelectSignal(symbol, needsAi, ctx.aiCandles, ctx.ticker, style, analystStyle, market);
-
-      if (aiResult.selectedIndices.length === 0) {
-        const gate = aiGateForSkipCategory(aiResult.skipCategory);
-        for (const sig of needsAi) {
-          await insertSkipAuditPool(pool, sig, symbol, ctx.ticker.price, {
-            reasoning: (await import('./skip-reason-formatter')).formatSkipReason({
-            category: aiResult.skipCategory ?? 'ai_rejected',
-            side: sig.side,
-            confidence: aiResult.confidence,
-            rawReasoning: aiResult.reasoning,
-            minConfidence: style.minAiConfidence,
-            styleName: ({aggressive:'공격적',neutral:'중립적',stable:'안정적'} as any)[analystStyle] ?? analystStyle,
-          }),
-            category: aiResult.skipCategory ?? 'ai_rejected',
-            confidence: aiResult.confidence,
-            warnings: aiResult.warnings,
-            ev: aiResult.ev,
-            regimeBucket: regimeBucket ?? undefined,
-          });
-        }
-        rec.skip(gate, { symbol, detail: { confidence: aiResult.confidence, skipCategory: aiResult.skipCategory ?? null, candidates: needsAi.length } });
-        outcome.kill(symbol, 10, gate);
-        results.set(symbol, { symbol, signalsCreated: 0, candidateCount: needsAi.length, rawCandidates: ctx.rawCandidateCount });
-      } else {
-        const selectedSet = new Set(aiResult.selectedIndices);
-        let createdCount = 0;
-        let firstSide: 'buy' | 'sell' | undefined;
-        let firstStrategy: string | undefined;
-        for (let i = 0; i < needsAi.length; i++) {
-          const cand = needsAi[i];
-          if (selectedSet.has(i)) {
-            const pickedRank = aiResult.selectedIndices.indexOf(i);
-            const enriched: Candidate = {
-              ...cand,
-              reasoning: [
-                cand.reasoning,
-                `[AI ${aiResult.confidence}%${aiResult.selectedIndices.length > 1 ? ` · ${pickedRank + 1}/${aiResult.selectedIndices.length}` : ''}] ${aiResult.reasoning}`,
-                ...(aiResult.warnings.length ? [`경고: ${aiResult.warnings.join(' / ')}`] : []),
-              ].filter(Boolean).join('\n'),
-              indicators: {
-                ...(cand.indicators as object ?? {}),
-                ai: {
-                  confidence: aiResult.confidence, warnings: aiResult.warnings,
-                  selectedFrom: needsAi.length, ev: aiResult.ev,
-                  regimeBucket: regimeBucket ?? undefined,
-                  pickedRank, picksTotal: aiResult.selectedIndices.length,
-                },
-              },
-            };
-            const res = await createSignalGuarded(enriched, rec, outcome);
-            if (res.ok) {
-              createdCount++;
-              if (firstSide === undefined) firstSide = cand.side;
-              if (firstStrategy === undefined) firstStrategy = cand.strategyId;
-            }
-          } else {
-            await insertSkipAuditPool(pool, cand, symbol, ctx.ticker.price, {
-              reasoning: (await import('./skip-reason-formatter')).formatSkipReason({
-            category: aiResult.skipCategory ?? 'ai_rejected',
-            side: cand.side,
-            confidence: aiResult.confidence,
-            rawReasoning: aiResult.reasoning,
-            minConfidence: style.minAiConfidence,
-            styleName: ({aggressive:'공격적',neutral:'중립적',stable:'안정적'} as any)[analystStyle] ?? analystStyle,
-          }),
-              category: aiResult.skipCategory ?? 'ai_rejected',
-              confidence: aiResult.confidence,
-              warnings: aiResult.warnings,
-              ev: aiResult.ev,
-              regimeBucket: regimeBucket ?? undefined,
-            });
-            outcome.kill(symbol, 10, aiGateForSkipCategory(aiResult.skipCategory));
-          }
-        }
-        results.set(symbol, {
-          symbol, signalsCreated: createdCount, selectedStrategy: firstStrategy,
-          candidateCount: needsAi.length, rawCandidates: ctx.rawCandidateCount, side: firstSide,
-        });
-      }
-    } else {
-      skippedCount++;
-      for (const sig of needsAi) {
-        await insertSkipAuditPool(pool, sig, symbol, ctx.ticker.price, {
-          reasoning: `[${sig.side === 'sell' ? '매도' : '매수'} AI 호출 실패] AI 응답을 받지 못해 다음 평가 주기에 재시도 — ${reason}`,
-          category: 'ai_failed',
-          confidence: 0,
-          regimeBucket: regimeBucket ?? undefined,
-        });
-      }
-      rec.skip('ai_failed_nonheld', { symbol, detail: { reason, candidates: needsAi.length } });
-      outcome.kill(symbol, 10, 'ai_failed_nonheld');
-      results.set(symbol, { symbol, signalsCreated: 0, candidateCount: needsAi.length, rawCandidates: ctx.rawCandidateCount });
-    }
-  }
-
-  console.log(`[ai-batch] fallback: ${fallbackCount} held per-symbol, ${skippedCount} non-held skipped (${reason})`);
-}
+// ─── D4: 장중 AI 완전 제거 (T-003 §1·§4) ────────────────────────────────
+//
+//   여기 있던 buildMarketContext / applyBatchDecisions / fallbackPerSymbol 이 삭제됐다.
+//   근거: `claude` CLI 직접 spawn 이 매수 경로의 **하드 게이트**였고 실측 실패 사유 상위가
+//   "claude exit 143"(89건)·"claude exit 1"(22건)이었다. 외부 프로세스의 가용성이
+//   매매 가능 여부를 결정하는 구조 자체가 결함이다.
+//
+//   AI 의 질적 거절을 대체하는 것: (a) assist 모드의 사람 승인, (b) 승인 카드의 market-state
+//   라벨·post-market 시나리오, (c) 룰 자체 조건 강화, (d) auto 모드의 소액 한도.
+//   post-market(밤 배치) AI 시나리오 생성은 이 제거 범위 밖이며 그대로 유지된다.
 
 /** 시장별 평가 실행 (단일 시장). runAll에서 라우팅. */
 async function runMarket(market: Market, opts: { force?: boolean } = {}): Promise<RunAllResult> {
@@ -1171,28 +868,73 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   const rec = new EvalFunnelRecorder(market);
   const outcome = createOutcomeTracker();
 
-  if (!(await isAnalystEnabled())) {
-    rec.skip('analyst_disabled');
-    await rec.flush();
-    return { ran: 0, skipped: 0, skippedStrategyIds: [], results: [], errors: ['analyst_disabled'], universeRefreshed: false };
-  }
-
   const pool = getPool();
-  const analystStyle = await getAnalystStyle();
   const style = await getStyleConfig();
 
-  // 현재 투자 성향이 applicable_styles에 포함된 전략만 평가 — FIND_IN_SET으로 SET 컬럼 검사
+  // ─── ① 실행 자격 — ENGINE_ENABLED (T-003 §4-1, Leader 결정 ①) ────────────
+  //
+  // `ENGINE_ENABLED=false` 는 **신규 진입 생성만** 멈춘다. 보유 종목 청산(손절·트레일링)은
+  // 기회 포착이 아니라 리스크 관리이므로 계속 돈다 — 엔진을 껐다고 이미 산 종목의 손절까지
+  // 멈추면 켜둔 것보다 위험하다. "전부 멈춤"은 KILL_SWITCH 가 담당한다.
+  // 구 `ANALYST_ENABLED` 가 엔진 마스터와 라우팅 정책을 겸직하던 이중 의미를 여기서 끊는다.
+  const switches = await getEngineSwitches();
+  const cooldowns = await loadActiveCooldowns();
+
+  // ─── Exit Engine — 보유 포지션 청산 (①~④ 사슬과 **병렬 트랙**) ────────────
+  //
+  // ⚠️ 위치가 중요하다. 여기는 "시장이 열려 있다"만 확인된 지점이고, 아래 어떤 게이트보다도
+  //    앞선다. 엔진 스위치·활성 전략 수·평가 주기가 보유 종목 보호를 좌우해선 안 된다.
+  //    (구 코드는 `dueStrategies.length === 0` 조기 return 뒤에 있어서, 전 전략이 throttle 된
+  //     tick 에서는 손절·트레일링이 통째로 실행되지 않는 구멍이 있었다.)
+  // 1. position_state reconcile (미보유 row 일괄 정리)
+  // 2. 보유 종목별 ticker 조회 + state upsert (peak 갱신) + evaluateExit 평가
+  // 3. 청산 시그널 발화 시 createSignal → submitOrder 정상 경로
+  // 안전장치(DRY_RUN/KILL_SWITCH/order_limits/blacklist)는 모두 통과한다.
+  const heldAmounts = await getHeldAmounts(market);
+  const exitSignalsCreated = await runExitEngine(market, heldAmounts, style, rec, cooldowns);
+  if (exitSignalsCreated > 0) {
+    console.log(`[exit-engine:${market}] ${exitSignalsCreated} 청산 시그널 발화`);
+  }
+
+  if (!switches.engineEnabled) {
+    rec.skip('engine_disabled', {
+      detail: { autopilotMode: switches.autopilotMode, source: switches.source, heldSymbols: heldAmounts.size },
+    });
+    rec.record({
+      gate: 'run',
+      // verdict='skip' — 런은 돌았지만 **전체 평가는 아니다**. eval-funnel-query 의
+      // fullEvalRuns(gate='run' AND verdict='pass')를 부풀리지 않으려면 pass 여선 안 된다.
+      verdict: 'skip',
+      reason: 'engine_disabled',
+      detail: {
+        engineEnabled: false,
+        exitOnly: true,
+        heldSymbols: heldAmounts.size,
+        exitSignalsCreated,
+      },
+    });
+    await rec.flush();
+    return {
+      ran: 0, skipped: 0, skippedStrategyIds: [], results: [],
+      errors: ['engine_disabled'], universeRefreshed: false,
+    };
+  }
+
+  // ⛔ D3 — `FIND_IN_SET(analystStyle, applicable_styles)` 제거.
+  //    성향 단일화(2026-05-09) 후에도 `getAnalystStyle()` 이 항상 'aggressive' 를 반환했고,
+  //    그 값이 SET 컬럼 검사에 들어가 ma-cross·weekly-trend-follow·dividend-quality·inside-bar
+  //    4종이 **UI 에서 켜져 있어도 영구 제외**됐다 (사망 원인 #3).
+  //    이제 **`strategies.enabled` 가 단일 진실**이다 — UI 토글이 곧 실행 여부다.
+  //    `applicable_styles` 컬럼은 화면 표시용으로 남지만 실행 경로는 더 이상 읽지 않는다.
   const [rows] = await pool.query<StrategyRow[]>(
     `SELECT id, enabled, backtest_interval_h, next_backtest_at
      FROM strategies
-     WHERE enabled = 1 AND FIND_IN_SET(?, applicable_styles) > 0`,
-    [analystStyle],
+     WHERE enabled = 1`,
   );
 
   const { refreshed: universeRefreshed } = await refreshUniverse(market, opts.force);
 
-  const now = new Date();
-  const dueStrategies: Array<ActiveStrategy & { row: StrategyRow }> = [];
+  const activeStrategies: ActiveStrategy[] = [];
   const skippedStrategyIds: string[] = [];
 
   for (const row of rows) {
@@ -1207,42 +949,38 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       skippedStrategyIds.push(row.id);
       continue;
     }
-    if (!opts.force && row.next_backtest_at && row.next_backtest_at > now) {
-      rec.skip('strategy_throttled', {
-        strategyId: row.id,
-        detail: { nextBacktestAt: row.next_backtest_at, intervalH: row.backtest_interval_h },
-      });
-      skippedStrategyIds.push(row.id);
-      continue;
-    }
-    dueStrategies.push({ id: row.id, meta, row });
+    // ⛔ `strategy_throttled` 삭제 (§1) — `next_backtest_at` 이 평가 주기를 6h(운영값 5분)로
+    //    조이던 겸직을 끊는다. 룰은 결정론이고 반복 발화는 ③ entry 쿨다운(봉 단위)이 막으므로
+    //    매 tick 전 활성 전략을 평가해도 과평가 부작용이 없다.
+    //    `next_backtest_at`/`backtest_interval_h` 는 이제 백테스트 스케줄 전용이다.
+    activeStrategies.push({ id: row.id, meta });
   }
 
-  if (dueStrategies.length === 0) {
-    rec.skip('no_due_strategies', { detail: { throttledOrUnregistered: skippedStrategyIds } });
+  // ⛔ `no_due_strategies` 게이트 삭제 (§1) — 별도 skip 행 대신 run 행에 기록한다.
+  //    이 시점에 이미 exit-engine 은 실행된 뒤다.
+  if (activeStrategies.length === 0) {
+    rec.record({
+      gate: 'run',
+      verdict: 'skip',
+      reason: 'no_active_strategies',
+      detail: { unregistered: skippedStrategyIds, exitSignalsCreated, heldSymbols: heldAmounts.size },
+    });
     await rec.flush();
     return { ran: 0, skipped: skippedStrategyIds.length, skippedStrategyIds, results: [], errors: [], universeRefreshed };
   }
 
-  const heldAmounts = await getHeldAmounts(market);
-
-  // ─── Exit Engine — 보유 포지션 통합 청산 시그널 (AI 필터 우회) ───────────
-  // 1. position_state reconcile (미보유 row 일괄 정리)
-  // 2. 보유 종목별 ticker 조회 + state upsert (peak 갱신) + evaluateExit 평가
-  // 3. 청산 시그널 발화 시 createSignal → submitOrder 정상 경로
-  // 안전장치(DRY_RUN/KILL_SWITCH/order_limits/blacklist)는 모두 통과한다.
-  const exitSignalsCreated = await runExitEngine(market, heldAmounts, style, rec);
-  if (exitSignalsCreated > 0) {
-    console.log(`[exit-engine:${market}] ${exitSignalsCreated} 청산 시그널 발화`);
-  }
-
-  const activeStrategies: ActiveStrategy[] = dueStrategies.map(s => ({ id: s.id, meta: s.meta }));
   // 해외 시장은 universeSource 'volume-top' 고정 (KOSPI 분류 미적용). 국내만 style 분기.
   const universeSrc = market === 'domestic' ? 'volume-top' : 'volume-top'; // 단일성향: 기본값 고정
   const symbols = await getEvalSymbols(market, heldAmounts, universeSrc);
-  // 수수료(왕복 0.43% 한국 주식 — 단방향 0.215%) + micro 변동 buffer = 0.5%
-  // effectiveMax 그대로 쓰면 micro 초과로 order_limit 차단 빈발. 0.995 곱으로 사전 차감.
-  const FEE_BUFFER_PCT = 0.005;
+  // 주문 금액 buffer = 실효 왕복 비용 + micro 변동 여유.
+  //
+  // 구 하드코딩 0.5% 는 "왕복 0.43%(코인원 0.2%×2 이식 잔재) + micro 0.07%" 였다.
+  // 비용 항만 실측값(§3: feePct 0.18% + slippagePct 0.15% = 0.33%)으로 교체하고,
+  // ⚠️ **micro 여유분은 유지한다** — 이 buffer 의 나머지 절반은 시그널 산출 시점과 주문 송신
+  //    시점 사이의 가격 변동을 흡수하는 용도라 0 으로 만들면 order_limit 거부가 빈발한다.
+  //    (비용 재도출이 의도치 않게 주문 실패율을 올리는 부작용을 막는다)
+  const MICRO_VARIATION_BUFFER_PCT = 0.0007;
+  const FEE_BUFFER_PCT = roundTripCostPct(style) / 100 + MICRO_VARIATION_BUFFER_PCT;
   const rawMax = await getEffectiveOrderMax('kis', market);
   // Phase 0 fail-safe: rawMax 0 = 한도 미설정(DB 키 부재) 또는 포트폴리오 평가액 조회 실패.
   // 이전에는 Infinity → ORDER_MAX_KRW env 폴백(최소 10만원)으로 매수를 계속 발화했다(fail-open).
@@ -1286,13 +1024,18 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       regimeGateBlocked = true;
     }
   } catch (e) {
-    console.warn(`[regime-gate] macro 조회 실패 — 게이트 미발동 (매수 허용): ${e instanceof Error ? e.message : String(e)}`);
+    const error = e instanceof Error ? e.message : String(e);
+    console.warn(`[regime-gate] macro 조회 실패 — 게이트 미발동 (매수 허용): ${error}`);
+    // §1 — macro 는 **fail-open 유지 + error 기록**. 억제 필터지 자금 안전장치가 아니라서
+    // fail-closed 로 하면 외부 API 장애가 매수를 전면 차단한다(제품 사망 재발 패턴).
+    // 다만 무기록으로 넘어가면 "왜 매수가 걸러지지 않았나"를 사후에 못 본다.
+    rec.error('regime_gate_macro_error', { detail: { error: error.slice(0, 300), failOpen: true } });
   }
 
-  // 1단계: 모든 심볼의 후보 수집 (AI 호출 없음)
+  // ─── ② 룰 발화 + ③ 억제 — 심볼별 후보 수집 (AI 호출 없음) ────────────────
   const contexts: CollectedContext[] = [];
   for (const symbol of symbols) {
-    const ctx = await collectCandidates(symbol, activeStrategies, heldAmounts, defaultAmountKRW, style, rec);
+    const ctx = await collectCandidates(symbol, activeStrategies, heldAmounts, defaultAmountKRW, style, rec, cooldowns);
     if (!ctx) continue;
     // collect 단계의 지역 추적 결과를 런 전체 tracker로 승계 (final 행의 축)
     if (ctx.outcomeGate) outcome.kill(symbol, ctx.outcomeStage, ctx.outcomeGate);
@@ -1316,10 +1059,9 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
     contexts.push(ctx);
   }
 
-  // 2단계: 각 context에 prefilter + dedup 적용, AI 필요한 후보만 수집
+  // ─── ④ 안전·집행 — 프리필터·장마감·포트폴리오 가드 통과분을 즉시 시그널로 만든다 ──
   // regime gate 발동 또는 주문 한도 미설정(fail-safe) 시 buy 후보를 사전 제거 (sell·보유 종목 매도는 유지)
   const buyBlocked = regimeGateBlocked || !orderLimitConfigured;
-  const needsAiMap = new Map<string, { ctx: CollectedContext; needsAi: Candidate[]; regimeBucket: string | null }>();
   for (const ctx of contexts) {
     if (buyBlocked && ctx.candidates.some(c => c.side === 'buy')) {
       // buy 후보만 제거 — sell은 통과
@@ -1333,64 +1075,47 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
         continue;
       }
     }
-    const { needsAi, regimeBucket } = await applyFilters(ctx, analystStyle, style, market, heldAmounts, rec, outcome);
-    if (needsAi.length === 0) {
+    const survived = await applyFilters(
+      ctx, style, market, heldAmounts, rec, outcome, switches.autopilotMode,
+    );
+    if (survived.length === 0) {
       results.set(ctx.symbol, { symbol: ctx.symbol, signalsCreated: 0, candidateCount: 0, rawCandidates: ctx.rawCandidateCount });
       continue;
     }
-    needsAiMap.set(ctx.symbol, { ctx, needsAi, regimeBucket });
-  }
-
-  // 3단계: 남은 심볼들을 배치 AI 호출로 일괄 처리
-  if (needsAiMap.size > 0) {
-    const batchInputs: BatchSymbolInput[] = [];
-    for (const [symbol, entry] of needsAiMap) {
-      if (!entry.ctx.summary) {
-        // summary 없으면 배치 입력 불가 — 지금까지 성공 경로에서 후보가 무기록으로 증발하던 지점 (T-002 ai_input_no_summary).
-        rec.error('ai_input_no_summary', { symbol, detail: { candidates: entry.needsAi.length } });
-        outcome.kill(symbol, 10, 'ai_input_no_summary');
-        results.set(symbol, {
-          symbol, signalsCreated: 0,
-          candidateCount: entry.needsAi.length, rawCandidates: entry.ctx.rawCandidateCount,
-        });
-        continue;
-      }
-      // regime 누적 성과 조회 (5건 미만이면 null — 프롬프트 미주입)
-      const regimeStats = entry.regimeBucket ? await getRegimePerformance(entry.regimeBucket, 30) : null;
-      batchInputs.push({
-        symbol: entry.ctx.symbol,
-        candidates: entry.needsAi,
-        summary: entry.ctx.summary,
-        recentTrades: entry.ctx.recentTrades,
-        heldQty: entry.ctx.heldQty,
-        heldAvgPrice: entry.ctx.heldAvgPrice,
-        regimeStats,
-      });
-    }
-
-    if (batchInputs.length > 0) {
-      const marketContext = await buildMarketContext(contexts, market);
-      const batchResult = await aiSelectSignalBatch(batchInputs, style, analystStyle, marketContext, market);
-
-      if (batchResult.error || batchResult.decisions.length === 0) {
-        if (batchResult.error) {
-          rec.error('ai_batch_failed', { detail: { error: batchResult.error, batchSize: batchInputs.length } });
-        }
-        await fallbackPerSymbol(needsAiMap, style, analystStyle, heldAmounts, results, batchResult.error ?? 'empty decisions', market, rec, outcome);
-      } else {
-        await applyBatchDecisions(needsAiMap, batchResult.decisions, results, style, analystStyle, rec, outcome);
+    // ④ 통과 = 시그널 생성. AI 관문이 사라져 여기가 곧 터미널이다.
+    outcome.advance(ctx.symbol, 11);
+    let createdCount = 0;
+    for (const cand of survived) {
+      // createSignalGuarded 가 blacklist / duplicate_active_signal / 생성 실패를 전부
+      // eval_funnel 에 기록한다 (무기록 게이트 금지 — §1).
+      const res = await createSignalGuarded(cand, rec, outcome);
+      if (!res.ok) continue;
+      createdCount++;
+      // ③ entry 쿨다운 — 같은 (symbol, strategy, side)의 반복 발화를 봉 주기×2 동안 막는다.
+      await setCooldown(
+        { scope: 'entry', symbol: ctx.symbol, strategyId: cand.strategyId, side: cand.side as 'buy' | 'sell' },
+        COOLDOWN_TTL_MIN.entry,
+        'signal_created',
+      );
+      // ③ rebuy 쿨다운 — 매도 시그널 직후 같은 종목 재매수 차단.
+      // ⚠️ 사양은 "매도 **체결** 시"라고 쓰지만 체결 이벤트 훅이 아직 없어 **시그널 생성 시점**에 건다.
+      //    (보수적 방향 — 체결보다 이른 시점이라 차단 구간이 조금 더 길다)
+      if (cand.side === 'sell') {
+        await setCooldown({ scope: 'rebuy', symbol: ctx.symbol }, COOLDOWN_TTL_MIN.rebuy, 'sell_signal');
       }
     }
+    results.set(ctx.symbol, {
+      symbol: ctx.symbol,
+      signalsCreated: createdCount,
+      selectedStrategy: survived[0]?.strategyId,
+      side: survived[0]?.side as 'buy' | 'sell' | undefined,
+      candidateCount: survived.length,
+      rawCandidates: ctx.rawCandidateCount,
+    });
   }
 
-  // 실행된 전략들의 next_backtest_at 업데이트
-  for (const { id, row } of dueStrategies) {
-    const nextRun = new Date(now.getTime() + row.backtest_interval_h * 3600_000);
-    await pool.query(
-      `UPDATE strategies SET last_backtest_at=?, next_backtest_at=? WHERE id=?`,
-      [now, nextRun, id],
-    );
-  }
+  // ⛔ `next_backtest_at` 재기록 삭제 (§4-4) — 평가 주기와의 겸직을 끊었으므로 평가 경로가
+  //    이 컬럼을 더 이상 쓰지도, 갱신하지도 않는다. 백테스트 스케줄러 전용 컬럼으로 복원.
 
   // 결과 배열화 (symbols 순서 유지)
   const resultsArray: EvalResult[] = [];

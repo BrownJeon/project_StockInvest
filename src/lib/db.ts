@@ -1,25 +1,34 @@
 import mysql from 'mysql2/promise';
+import { inferAutopilotModeFromLegacy } from '@/lib/signals/autopilot';
+import { DEFAULT_ACTIVE_RULES, DEFAULT_INACTIVE_RULES } from '@/lib/strategy/rules/defaults';
+import {
+  SIGNAL_STATUSES,
+  SchemaVerificationError,
+  assertSignalStatusEnum,
+  buildSignalStatusEnumDDL,
+  findMissingSignalStatuses,
+  isSchemaFatalError,
+} from '@/lib/signals/statuses';
 
 let pool: mysql.Pool | null = null;
 let setupPromise: Promise<void> | null = null;
 
 /**
- * 코드가 signals.status 로 실제 기록하는 값 목록 (setupDB 사후 검증용).
- * signals/service.ts · router.ts · engine.ts 에서 INSERT/UPDATE 되는 상태만 나열한다.
- * ENUM 에 없는 값이 있으면 STRICT 모드에서 INSERT 가 하드 에러 → 시그널 전멸 (T-002 H1 사고).
+ * 코드-DB 스키마 불일치처럼 **회복 불가능한** 부팅 오류. 설정되면 getPool() 이 계속 throw 해
+ * 이 프로세스의 모든 DB 접근(=주문·시그널·조회 전부)이 차단된다 — fail-closed.
  */
-export const REQUIRED_SIGNAL_STATUSES = [
-  'pending',
-  'pending_approval',
-  'approved',
-  'approved_pending_entry',
-  'auto_submitted',
-  'executing',
-  'rejected',
-  'expired',
-  'superseded',
-  'ai_skipped',
-] as const;
+let setupFatalError: Error | null = null;
+
+/**
+ * 코드가 signals.status 로 기록하는 값 목록.
+ * @deprecated `@/lib/signals/statuses` 의 `SIGNAL_STATUSES` 를 직접 쓴다. (하위 호환용 별칭)
+ */
+export const REQUIRED_SIGNAL_STATUSES = SIGNAL_STATUSES;
+
+/** 부팅 시 signals.status ENUM 자동 확장(ALTER)을 끈다. QA 의 fail-closed 검증용 스위치. */
+function isSignalStatusAutoAlterEnabled(): boolean {
+  return String(process.env.SIGNAL_STATUS_ENUM_AUTO_ALTER ?? 'true').toLowerCase() !== 'false';
+}
 
 function createPool(): mysql.Pool {
   return mysql.createPool({
@@ -40,6 +49,8 @@ function createPool(): mysql.Pool {
 }
 
 export function getPool(): mysql.Pool {
+  // fail-closed — 스키마 불일치 상태로는 단 한 건도 쓰지 않는다 (T-003 §4-2).
+  if (setupFatalError) throw setupFatalError;
   if (!pool) {
     pool = createPool();
     ensureSetup().catch((e) => console.error('[db] setup failed:', e));
@@ -72,9 +83,49 @@ export async function ping(): Promise<boolean> {
   }
 }
 
+/**
+ * 치명 상황 알림 — `sendAlert` 는 다른 안전 이벤트와 동일한 경로다.
+ * db.ts ← notify ← db.ts 정적 순환을 피하려고 동적 import 를 쓰고, 알림 실패는 삼킨다
+ * (알림이 안 나가는 것보다 기동 차단 자체가 더 중요한 방어선이다).
+ */
+function notifyCritical(title: string, body: string): void {
+  void import('@/lib/notify')
+    .then(m => m.sendAlert('critical', title, body))
+    .catch(() => { /* 알림 실패는 무시 */ });
+}
+
 export function ensureSetup(): Promise<void> {
-  if (!setupPromise) setupPromise = setupDB();
+  if (!setupPromise) {
+    setupPromise = setupDB().catch((e) => {
+      if (isSchemaFatalError(e)) {
+        setupFatalError = e as Error;
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(
+          '\n' +
+          '████████████████████████████████████████████████████████████████\n' +
+          '█ [db] FATAL — 스키마 검증 실패. DB 접근을 전면 차단합니다.      █\n' +
+          '████████████████████████████████████████████████████████████████\n' +
+          `${msg}\n` +
+          '조치: src/lib/signals/statuses.ts 의 SIGNAL_STATUSES 로 ENUM 을 확장하는 ALTER 가\n' +
+          '      부팅 시 자동 실행된다. 그래도 남아 있다면 DDL·INFORMATION_SCHEMA 권한과\n' +
+          '      테이블 락을 확인하라.\n' +
+          '      (SIGNAL_STATUS_ENUM_AUTO_ALTER=false 로 자동 ALTER 를 끈 상태인지도 확인)\n',
+        );
+        // reviewer #3 — 다른 안전 이벤트와 동일하게 알린다. 이 상태는 조용히 지나가면 안 된다.
+        notifyCritical(
+          '🚨 스키마 검증 실패 — DB 접근 차단 (주문·시그널 전면 중단)',
+          `${msg}\n\n/api/health 의 schemaFatal=true 이며 ok=false 로 응답합니다.`,
+        );
+      }
+      throw e;
+    });
+  }
   return setupPromise;
+}
+
+/** 부팅 검증 실패로 DB 접근이 차단된 상태인가 (health 엔드포인트 진단용). */
+export function getSetupFatalError(): Error | null {
+  return setupFatalError;
 }
 
 /**
@@ -432,12 +483,14 @@ async function setupDB(): Promise<void> {
       [s.id, s.name, s.description, s.tags, s.applicable_styles, s.enabled, s.backtest_interval_h,
        s.last_backtest_at, s.next_backtest_at, s.last_backtest_result, s.stats_cache],
     );
-    // applicable_styles는 신규 컬럼이라 기존 행은 default('aggressive,neutral,stable') 상태 →
-    // strategySeed의 매핑값으로 한 번 동기화 (사용자가 직접 수정한 enabled·description은 건드리지 않음)
-    await p.query(
-      'UPDATE strategies SET applicable_styles = ? WHERE id = ?',
-      [s.applicable_styles, s.id],
-    ).catch(() => { /* non-fatal */ });
+    // ⛔ D3 — 여기 있던 `UPDATE strategies SET applicable_styles = ?` **부팅 재동기화를 삭제했다.**
+    //
+    //    이 무조건 UPDATE 가 D3 가 지목한 안티패턴의 원본이다: 부팅마다 코드 값이 DB 를 덮어써
+    //    사용자가 UI 에서 바꾼 설정이 재시작 한 번에 되돌아갔다. 게다가 엔진이 이 컬럼을
+    //    FIND_IN_SET 으로 룰 선별에 썼기 때문에, 되돌아간 값이 곧 "룰이 조용히 꺼짐"이었다.
+    //
+    //    이제 실행 경로는 `applicable_styles` 를 읽지 않고(engine.ts 는 `enabled` 만 본다),
+    //    컬럼은 화면 표시용으로만 남는다. **코드가 이 컬럼을 다시 쓰는 일은 없다.**
   }
 
   for (const m of legacyMigrations) {
@@ -463,6 +516,59 @@ async function setupDB(): Promise<void> {
     },
   );
 
+  // ── Phase 2 Step 4 (D3) — 기본 활성 룰 5종 적용 ────────────────────────────
+  //
+  // **왜 INSERT IGNORE 시드로는 안 되는가**: `strategies` 행이 이미 전부 존재하므로
+  // INSERT IGNORE 는 아무 일도 하지 않는다. 운영 DB 는 16종 중 15종이 enabled=1 이라
+  // 그대로 두면 게이트 체인 재편(Step 3)과 함께 15개 룰이 동시에 발화한다.
+  //
+  // **왜 부팅 재동기화로는 안 되는가**: 그게 바로 위에서 제거한 안티패턴이다.
+  //
+  // → `runOnceMigration` 마커 패턴. **딱 한 번** 실행되고, 이후 `strategies.enabled` 의
+  //   주인은 영구히 UI 다. 코드가 다시 되돌리는 일은 없다.
+  //
+  // 선별 기준 (§3): 서로 다른 국면 커버(과매도 반등 / 상승추세 눌림 / 횡보→확장 / 장기추세 /
+  // 보유 청산) + 자체 조건 완결성 + 반자동 승인 리듬 적합성. 예상 일 3~9건 후보.
+  await runOnceMigration(
+    p,
+    'migration_phase2_default_active_rules',
+    'Phase 2 D3 기본 활성 룰 5종 적용 (이후 strategies.enabled 는 UI 소유)',
+    async () => {
+      await p.query(
+        `UPDATE strategies SET enabled = 1
+          WHERE id IN (${DEFAULT_ACTIVE_RULES.map(() => '?').join(',')}) AND enabled = 0`,
+        [...DEFAULT_ACTIVE_RULES],
+      );
+      await p.query(
+        `UPDATE strategies SET enabled = 0
+          WHERE id IN (${DEFAULT_INACTIVE_RULES.map(() => '?').join(',')}) AND enabled = 1`,
+        [...DEFAULT_INACTIVE_RULES],
+      );
+    },
+  );
+
+  // ── Phase 2 Step 4 (Leader 결정 ②) — backtest_interval_h 정상화 ────────────
+  //
+  // 운영값 0.0833333h(5분)은 백테스트 주기로 무의미하다. Phase 2 에서 `next_backtest_at` 이
+  // 평가 경로에서 완전히 분리됐으므로(§4-4) 이 컬럼은 백테스트 스케줄 의미만 남는다.
+  //
+  // 범위를 **좁게** 잡는다:
+  //   - `< 1` 인 행만 6 으로. FLOAT 등가 비교(= 0.0833333)는 부동소수 오차로 불안정해 부등호를 쓴다.
+  //   - 24 인 행(일봉 전략: eod-high-close·inside-bar·oversold-bounce-daily)은 정당한 값 → **미변경**
+  //   - `next_backtest_at` 은 NULL 로 초기화 (백테스트 스케줄러가 재계산)
+  //   - **`enabled` 은 절대 건드리지 않는다** — UI 가 진실이다
+  await runOnceMigration(
+    p,
+    'migration_phase2_backtest_interval_reset',
+    'backtest_interval_h 5분(0.0833) → 6h 리셋 (24h 행·enabled 는 미변경)',
+    async () => {
+      await p.query(
+        `UPDATE strategies SET backtest_interval_h = 6, next_backtest_at = NULL
+          WHERE backtest_interval_h < 1`,
+      );
+    },
+  );
+
   // system_config value 는 JSON 문자열로 저장한다 (settings/safety PATCH 가 JSON.stringify 사용).
   // 숫자는 '5', 불리언은 'true'/'false', 문자열은 '"..."' 형태.
   //
@@ -472,13 +578,99 @@ async function setupDB(): Promise<void> {
   // INSERT IGNORE — 사용자가 설정 메뉴에서 지정한 기존 값은 절대 덮어쓰지 않는다.
   for (const [key, val] of [
     ['backtest_period_days',   '90'],
-    ['backtest_fee_pct',       '0.05'],
-    ['backtest_slip_pct',      '0.10'],
+    // 비용 모델 교정 (§3) — 구 0.05%/편도는 **과소**였다(명시 왕복 0.178%).
+    // 비대칭(매수 0.014% / 매도 0.164%)이 더 정확하지만 백테스터가 편도 단일값만 받으므로
+    // 왕복 0.18% 의 절반인 0.09%/편도를 쓴다.
+    ['backtest_fee_pct',       '0.09'],
+    ['backtest_slip_pct',      '0.15'],
     ['backtest_incl_inactive', 'false'],
     ['safety_order_max_pct',       '5'],   // 1회 주문 = 해당 시장 평가액의 5%
     ['safety_daily_order_max_pct', '10'],  // 일일 누적 = 해당 시장 평가액의 10%
   ] as [string, string][]) {
     await p.query('INSERT IGNORE INTO system_config (`key`, value) VALUES (?,?)', [key, val]);
+  }
+
+  // ── Phase 2 Step 4 (§3) — 룰·비용 파라미터 DB override 시드 ────────────────
+  //
+  // 백테스트로 검증되지 않은 파라미터는 **코드 default 를 바꾸지 않고 DB 로만** 적용한다
+  // (기존 가이드). 롤백은 해당 키를 지우면 코드 default 로 즉시 복귀한다.
+  // INSERT IGNORE — 운영자가 이미 정한 값은 어떤 경우에도 덮어쓰지 않는다.
+  for (const [key, val] of [
+    // rsiBuyThreshold 35 → 38. KOSPI 대형주 15종 일봉 2년(n=7,290) 실측:
+    //   P(RSI<35)=5.8% (개별 종목 연 ~14거래일 — 희귀 이벤트) / P(RSI<38)=10.9% (빈도 1.9배)
+    //   40(P=15.6%)은 "과매도"라 부르기 어려운 구간까지 진입해 질이 떨어져 기각.
+    ['style_default_rsiBuyThreshold', '38'],
+    // pullback-trend 눌림 창 42~48 → 40~50 원복 (장중 AI 관문 소멸에 따른 빈도 회복)
+    ['style_default_pullbackRsiMin',  '40'],
+    ['style_default_pullbackRsiMax',  '50'],
+    // bb-squeeze 거래량비 0.7 → 1.2 강화 (AI 부재 보상 — 가짜 돌파 필터)
+    ['style_default_bbSqueezeVolRatioMin', '1.2'],
+    // 왕복 비용 분리 — 명시 0.18% + 슬리피지 0.15% (구 하드코딩 0.43% 는 2.4배 과대)
+    ['style_default_feePct',      '0.18'],
+    ['style_default_slippagePct', '0.15'],
+  ] as [string, string][]) {
+    await p.query('INSERT IGNORE INTO system_config (`key`, value) VALUES (?,?)', [key, val]);
+  }
+
+  // 백테스트 비용 키는 Phase 0 에서 이미 시드돼 있어 INSERT IGNORE 로는 교정되지 않는다.
+  // → 일회성 마이그레이션으로 **구 기본값과 정확히 일치할 때만** 교정한다.
+  //   (운영자가 손대 값이 다르면 그 값이 진실이므로 건드리지 않는다 — legacyMigrations 와 동일 원칙)
+  await runOnceMigration(
+    p,
+    'migration_phase2_backtest_cost_model',
+    '백테스트 비용 모델 교정 (fee 0.05→0.09 / slip 0.10→0.15, 구 기본값 일치 시에만)',
+    async () => {
+      await p.query(
+        "UPDATE system_config SET value='0.09' WHERE `key`='backtest_fee_pct'  AND value IN ('0.05','0.0500')",
+      );
+      await p.query(
+        "UPDATE system_config SET value='0.15' WHERE `key`='backtest_slip_pct' AND value IN ('0.10','0.1000')",
+      );
+    },
+  );
+
+  // ── Phase 2 D2 (T-003 §4-1) — 엔진 스위치 이관 ──────────────────────────
+  // 구 2×2(strategy_analyst_enabled × hybrid_mode_enabled) → engine_enabled + autopilot_mode.
+  //
+  //   analyst=F,hybrid=F → assist  /  analyst=T,hybrid=F → auto  /  hybrid=T → assist
+  //   engine_enabled 는 구 strategy_analyst_enabled 값을 그대로 이관 (키가 없으면 false = 보수적)
+  //
+  // ⚠️ **INSERT IGNORE 만 쓴다.** 이미 값이 있으면 그것은 운영자가 UI 에서 정한 값이므로 절대
+  //    덮어쓰지 않는다 — applicable_styles 부팅 재동기화가 사용자 토글을 무효화했던 전례(D3)를
+  //    다시 만들지 않기 위함이다.
+  // ⚠️ **구 키는 지우지 않는다.** 롤백 시 구 코드가 그대로 읽어야 한다.
+  try {
+    const [legacyRows] = await p.query<mysql.RowDataPacket[]>(
+      "SELECT `key`, value FROM system_config WHERE `key` IN ('strategy_analyst_enabled','hybrid_mode_enabled')",
+    );
+    const legacy = new Map<string, unknown>();
+    for (const r of legacyRows) {
+      try { legacy.set(String(r.key), JSON.parse(String(r.value))); } catch { /* 파싱 불가 값은 무시 */ }
+    }
+    const analystOn = legacy.get('strategy_analyst_enabled') === true;
+    const hybridOn = legacy.get('hybrid_mode_enabled') === true;
+    // 🚨 부팅 시드도 **추론 상한(assist)** 을 적용한다 (T-006 reviewer HIGH).
+    //
+    //    사양 §4-1 표를 그대로 쓰면 `analyst=T, hybrid=F` 첫 부팅이 `auto` 를 시드한다.
+    //    "과거에 실제로 auto 였다"는 점에서 표 자체는 옳지만, 그 결과 **아무도 명시적으로
+    //    동의하지 않은 무인 주문 송신 상태로 기동**하게 된다.
+    //
+    //    부팅과 런타임에 서로 다른 매핑을 두면 같은 구 설정이 경로에 따라 다른 모드를 낳는
+    //    (이번 재설계가 제거하려는) 이중 의미가 다시 생긴다. 그래서 양쪽 모두 상한을 적용해
+    //    **불변식 하나**로 만든다: `auto` 는 오직 `autopilot_mode` 직접 기입으로만 존재한다.
+    //
+    //    운영값은 hybrid=true → 'assist' 라 이 클램프의 영향을 받지 않는다.
+    //    영향받는 조합(analyst=T, hybrid=F)에서도 방향은 auto→assist, 즉 사람 승인이 늘어나는
+    //    안전한 쪽뿐이다.
+    const autopilotMode = inferAutopilotModeFromLegacy(analystOn, hybridOn);
+    for (const [key, val] of [
+      ['engine_enabled', JSON.stringify(analystOn)],
+      ['autopilot_mode', JSON.stringify(autopilotMode)],
+    ] as [string, string][]) {
+      await p.query('INSERT IGNORE INTO system_config (`key`, value) VALUES (?,?)', [key, val]);
+    }
+  } catch (e) {
+    console.warn(`[db] engine_enabled/autopilot_mode 시드 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   await p.query(`
@@ -493,7 +685,7 @@ async function setupDB(): Promise<void> {
       amount_krw DECIMAL(18,2) NOT NULL,
       reasoning TEXT NULL,
       indicators JSON NULL,
-      status ENUM('pending','approved','rejected','auto_submitted','expired','superseded') NOT NULL DEFAULT 'pending',
+      status ${buildSignalStatusEnumDDL()} NOT NULL DEFAULT 'pending',
       expires_at DATETIME NULL,
       consumed_order_id BIGINT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -503,15 +695,6 @@ async function setupDB(): Promise<void> {
       INDEX idx_signals_consumed (consumed_order_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-
-  // ai_skipped 상태 추가 (기존 DB에도 적용, 중복 실행 무해)
-  try {
-    await p.query(`
-      ALTER TABLE signals MODIFY COLUMN status
-        ENUM('pending','approved','rejected','auto_submitted','expired','superseded','ai_skipped')
-        NOT NULL DEFAULT 'pending'
-    `);
-  } catch { /* 이미 존재하는 경우 무시 */ }
 
   // AI 스킵 시점의 시세 기록 + 후속 변화율 추적 컬럼 (signal-followup cron 용)
   // Phase Q: 4h/24h 장기 추적 컬럼 추가 — fine-tune 학습 라벨 노이즈 감소 목적
@@ -544,43 +727,88 @@ async function setupDB(): Promise<void> {
     await p.query(`CREATE INDEX idx_orders_market ON orders (market, created_at DESC)`);
   } catch { /* 이미 존재 */ }
 
-  // 사용자 시나리오 진입 감시 관련 status + 컬럼 추가
+  // ── signals.status ENUM — 코드 상수(SIGNAL_STATUSES)가 유일한 진실 ─────────
   //
-  // ⚠️ T-002 H1 (2026-08-02) — `pending_approval` 추가.
-  //   운영 config `hybrid_mode_enabled=true` 이면 service.ts:175 가 status='pending_approval' 로
-  //   INSERT 하는데 이 값이 ENUM 에 없었다. MariaDB `sql_mode=STRICT_TRANS_TABLES` 에서
-  //   ENUM 범위 밖 값은 **하드 에러** → AI 통과 후보·exit 청산 시그널이 전부 INSERT 예외로 사망하고,
-  //   미보호 createSignal 호출 때문에 그 예외가 runMarket 전체를 중단시켰다 (7/19 이후 시그널 0건/일).
+  // ⚠️ T-002 H1 (2026-08-02) 사고: 운영 config `hybrid_mode_enabled=true` 이면 service.ts 가
+  //   status='pending_approval' 로 INSERT 하는데 이 값이 ENUM 에 없었다. MariaDB
+  //   `sql_mode=STRICT_TRANS_TABLES` 에서 ENUM 범위 밖 값은 **하드 에러** → AI 통과 후보·exit 청산
+  //   시그널이 전부 INSERT 예외로 사망하고, 미보호 createSignal 호출 때문에 그 예외가 runMarket
+  //   전체를 중단시켰다 (7/19 이후 시그널 0건/일). 근본 원인은 "코드 목록"과 "DB 목록"이 따로 있었던 것.
+  //
+  //   → T-003 §4-2 구조적 재발 방지:
+  //     (1) DDL 을 코드 상수에서 **생성**한다 (두 목록이 갈라질 수 없다)
+  //     (2) 부팅 시 INFORMATION_SCHEMA 와 대조해 코드 상태가 없으면 **기동을 중단**한다 (fail-closed)
   //
   //   **합집합 확장만 한다.** 기존 값 제거·재배열 금지 — ENUM 끝에 값을 append 하는 것은
   //   메타데이터만 바꾸는 인플레이스 ALTER 지만, 값 제거·재배열은 테이블 리빌드 + 기존 row 손상 위험.
-  try {
-    await p.query(`
-      ALTER TABLE signals MODIFY COLUMN status
-        ENUM('pending','approved','rejected','auto_submitted','expired','superseded',
-             'ai_skipped','approved_pending_entry','executing','pending_approval')
-        NOT NULL DEFAULT 'pending'
-    `);
-  } catch { /* 이미 존재 */ }
-
-  // H1 사후 검증 — ALTER 가 조용히 실패하면 시그널이 다시 전멸한다.
-  // 코드가 쓰는 status 가 ENUM 에 실제로 존재하는지 부팅 시 1회 확인하고, 없으면 크게 경고한다.
-  // (fail-closed 기동 차단은 Phase 2 §4-2 에서 SIGNAL_STATUSES 상수와 함께 도입)
-  try {
-    const [colRows] = await p.query<mysql.RowDataPacket[]>(
-      `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'signals' AND COLUMN_NAME = 'status'
-        LIMIT 1`,
-    );
-    const colType = String(colRows[0]?.COLUMN_TYPE ?? '');
-    const missing = REQUIRED_SIGNAL_STATUSES.filter(s => !colType.includes(`'${s}'`));
-    if (colType && missing.length > 0) {
-      console.error(
-        `[db] ⚠️ signals.status ENUM 에 코드가 사용하는 상태가 없습니다: ${missing.join(', ')}. ` +
-        `해당 상태의 시그널 INSERT 는 STRICT 모드에서 전부 실패합니다. 수동 ALTER 필요. (현재: ${colType})`,
+  //   그래서 ALTER 는 "빠진 값이 있을 때만" 실행한다 (부팅마다 운영 테이블을 건드리지 않는다).
+  //
+  // ⚠️ 검증기 자신의 실패는 **조용하면 안 된다** (reviewer #2). INFORMATION_SCHEMA 권한 문제로
+  //   메타데이터 조회만 막히고 일반 쿼리는 되는 상황이 실재하는데, 그때 검증이 자기 자신을
+  //   조용히 건너뛰면 가드는 장식품이 되고 원래 사고(무증상 전멸)가 그대로 재현된다.
+  //   → 조회 실패는 throw 해서 `assertSignalStatusEnum` 과 같은 fail-closed 경로를 타게 한다.
+  const readSignalStatusColumnType = async (): Promise<string> => {
+    try {
+      const [colRows] = await p.query<mysql.RowDataPacket[]>(
+        `SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'signals' AND COLUMN_NAME = 'status'
+          LIMIT 1`,
+      );
+      return String(colRows[0]?.COLUMN_TYPE ?? '');
+    } catch (e) {
+      throw new SchemaVerificationError(
+        `signals.status COLUMN_TYPE 조회 실패 — ENUM 검증을 수행할 수 없습니다. ` +
+        `INFORMATION_SCHEMA 조회 권한을 확인하라. (${e instanceof Error ? e.message : String(e)})`,
+        e,
       );
     }
-  } catch { /* 검증 실패는 비치명 */ }
+  };
+
+  let statusColType = await readSignalStatusColumnType();
+  if (findMissingSignalStatuses(statusColType).length > 0) {
+    if (isSignalStatusAutoAlterEnabled()) {
+      // ⚠️ ALTER 알고리즘을 **명시적으로 고정한다** (reviewer #1).
+      //    지정하지 않으면 서버가 조용히 COPY 로 폴백해 13,811행 운영 테이블을 배포 도중
+      //    락 걸 수 있다. 값 append 는 메타데이터만 바꾸므로 INSTANT 로 끝나야 정상이다.
+      //    INSTANT 가 거부되면 **LOCK=NONE 을 유지한 INPLACE 로만** 재시도하고, 그 사실을
+      //    크게 로그·알림으로 남긴다. 알고리즘 미지정(=COPY 가능) 형태로는 절대 재시도하지 않는다.
+      const ddl = `ALTER TABLE signals MODIFY COLUMN status ${buildSignalStatusEnumDDL()} NOT NULL DEFAULT 'pending'`;
+      try {
+        await p.query(`${ddl}, ALGORITHM=INSTANT, LOCK=NONE`);
+      } catch (instantErr) {
+        const msg = instantErr instanceof Error ? instantErr.message : String(instantErr);
+        console.error(
+          `[db] ⚠️ signals.status ENUM 확장이 ALGORITHM=INSTANT 로 수행되지 않았습니다: ${msg}\n` +
+          `      LOCK=NONE 을 유지한 INPLACE 로 재시도합니다 (테이블 COPY·락은 여전히 허용하지 않음).`,
+        );
+        notifyCritical(
+          'signals.status ENUM 확장 — INSTANT 불가',
+          `ALGORITHM=INSTANT 가 거부돼 INPLACE(LOCK=NONE) 로 재시도합니다.\n사유: ${msg}`,
+        );
+        try {
+          await p.query(`${ddl}, ALGORITHM=INPLACE, LOCK=NONE`);
+        } catch (inplaceErr) {
+          // ⚠️ reviewer MEDIUM #2 — 재시도까지 실패하면(락 타임아웃 등) 원시 예외에는
+          //    `isSchemaFatal` 마커가 없어 setupFatalError·notifyCritical·/api/health red 가
+          //    **전부 우회**된다. 읽기 경로에 적용한 "검증기 자신의 실패도 조용하면 안 된다"는
+          //    원칙을 실행 경로에도 똑같이 적용해 동일한 fail-closed 경로로 수렴시킨다.
+          throw new SchemaVerificationError(
+            `signals.status ENUM 확장 ALTER 실패 — INSTANT/INPLACE 모두 거부됐습니다. ` +
+            `코드가 사용하는 상태를 INSERT 할 수 없으므로 기동을 중단합니다. ` +
+            `(INSTANT: ${msg} / INPLACE: ${inplaceErr instanceof Error ? inplaceErr.message : String(inplaceErr)})`,
+            inplaceErr,
+          );
+        }
+      }
+      statusColType = await readSignalStatusColumnType();
+    } else {
+      console.warn('[db] SIGNAL_STATUS_ENUM_AUTO_ALTER=false — ENUM 자동 확장을 건너뜁니다.');
+    }
+  }
+  // fail-closed 검증. 여기서 throw 하면 ensureSetup 이 setupFatalError 를 세우고
+  // 이후 모든 getPool() 이 throw 한다 (= 이 프로세스는 아무것도 쓰지 못한다).
+  assertSignalStatusEnum(statusColType);
+
   try {
     await p.query(`ALTER TABLE signals ADD COLUMN scenario_source VARCHAR(32) NULL`);
   } catch { /* 이미 존재 */ }
@@ -893,8 +1121,8 @@ async function setupDB(): Promise<void> {
       symbol VARCHAR(32) NOT NULL,
       interval_str VARCHAR(8) NOT NULL DEFAULT '1h',
       period_days INT NOT NULL,
-      fee_pct DECIMAL(5,4) NOT NULL DEFAULT 0.0500,
-      slip_pct DECIMAL(5,4) NOT NULL DEFAULT 0.1000,
+      fee_pct DECIMAL(5,4) NOT NULL DEFAULT 0.0900,
+      slip_pct DECIMAL(5,4) NOT NULL DEFAULT 0.1500,
       initial_krw BIGINT NOT NULL DEFAULT 1000000,
       status ENUM('running','done','failed') NOT NULL DEFAULT 'running',
       result JSON NULL,
@@ -1004,6 +1232,42 @@ async function setupDB(): Promise<void> {
       INDEX idx_ef_ts (ts),
       INDEX idx_ef_gate (gate, ts),
       INDEX idx_ef_market (market, ts, stage)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // ── cooldowns — 통합 쿨다운 (T-003 §4-3, Phase 2 Step 1) ─────────────────
+  // 현행 3중 쿨다운(ai-dedup 60분 / cooldown_rebuy 5분 / exit 5분)을 한 테이블로 통합한다.
+  // **signals 상태에 의존하던 쿨다운 쿼리가 사망 원인 중 하나였으므로**(T-002 H3 — 실존하지 않는
+  // 'executed','accepted' 를 조회해 exit 쿨다운이 영구 무효 = 중복 청산 위험) 상태 테이블에서 분리한다.
+  //
+  //   scope=entry : (symbol, strategy_id, side)  TTL 봉주기×2=2h, 사람 reject 시 4h
+  //   scope=rebuy : (symbol)                     TTL 30분 (매도 체결 직후 재매수 = 거래세 왕복 낭비)
+  //   scope=exit  : (symbol, exit_kind)          TTL 15분 (활성 sell 시그널 체크가 1차, 쿨다운은 2차)
+  //
+  // ⚠️ NULL 금지 — **MySQL/MariaDB 의 UNIQUE 인덱스는 NULL 을 서로 다른 값으로 취급**한다.
+  //    사양 문안대로 strategy_id/side 를 NULL 허용으로 두면 scope='rebuy' 처럼 해당 키가 없는
+  //    행에서 UNIQUE 가 전혀 걸리지 않아 (symbol 당 1행이어야 할 것이) 무한 증식하고,
+  //    `INSERT ... ON DUPLICATE KEY UPDATE until=?` 가 매번 새 행을 만들어 **쿨다운 갱신·해제가
+  //    불가능**해진다. 그래서 세 키 컬럼을 NOT NULL DEFAULT '' 로 두고 "해당 없음"을 빈 문자열
+  //    센티넬로 표현한다. 의도한 dedup 의미(scope+키 조합당 정확히 1행)가 이때만 성립한다.
+  //
+  // ⚠️ exit_kind 컬럼은 사양 §4-3 의 DDL 문안에는 없지만 같은 절의 키 정의표가 exit 키를
+  //    (symbol, exit_kind) 로 규정한다 — DDL 문안 쪽이 누락으로 판단해 컬럼을 추가했다.
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS cooldowns (
+      id          BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      scope       ENUM('entry','rebuy','exit') NOT NULL,
+      symbol      VARCHAR(32) NOT NULL,
+      strategy_id VARCHAR(64) NOT NULL DEFAULT '',
+      side        VARCHAR(8)  NOT NULL DEFAULT '',
+      exit_kind   VARCHAR(24) NOT NULL DEFAULT '',
+      until       DATETIME    NOT NULL,
+      reason      VARCHAR(64) NULL,
+      created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_cooldown (scope, symbol, strategy_id, side, exit_kind),
+      INDEX idx_cooldown_lookup (scope, symbol, until),
+      INDEX idx_cooldown_until (until)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 

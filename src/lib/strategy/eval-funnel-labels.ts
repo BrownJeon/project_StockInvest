@@ -37,6 +37,8 @@ export const FUNNEL_GATES = [
   'market_closed',
   'analyst_disabled',
   'strategy_unregistered',
+  /** Phase 2 D2 — `analyst_disabled` 를 대체하는 엔진 마스터 스위치(ENGINE_ENABLED=false). */
+  'engine_disabled',
   'strategy_throttled',
   'no_due_strategies',
   // ─── stage 1 — 심볼·티커 ──────────────────────────────────────────
@@ -73,8 +75,16 @@ export const FUNNEL_GATES = [
   'portfolio_core_ratio',
   'portfolio_guard_other',
   // ─── stage 9 — dedup ──────────────────────────────────────────────
+  // Phase 2 §4-3 이후 신규 기록 없음 (통합 쿨다운으로 대체). 과거 행 조회용으로 보존.
   'dedup_regime',
   'dedup_lookup_error',
+  // ─── stage 5 — 통합 쿨다운 (Phase 2 §4-3) ─────────────────────────
+  /** entry 쿨다운 — (symbol, strategy, side) 2h / 사람 거부 시 4h */
+  'cooldown_entry',
+  /** exit 쿨다운 — (symbol, exit_kind) 15분 */
+  'cooldown_exit',
+  /** 쿨다운 조회 실패 — fail-open + error 기록 */
+  'cooldown_lookup_error',
   // ─── stage 10 — AI 관문 ───────────────────────────────────────────
   'ai_input_no_summary',
   'ai_stage1_reject',
@@ -114,6 +124,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
 
   market_closed: 0,
   analyst_disabled: 0,
+  engine_disabled: 0,
   strategy_unregistered: 0,
   strategy_throttled: 0,
   no_due_strategies: 0,
@@ -153,6 +164,10 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   dedup_regime: 9,
   dedup_lookup_error: 9,
 
+  cooldown_entry: 5,
+  cooldown_exit: 25,
+  cooldown_lookup_error: 5,
+
   ai_input_no_summary: 10,
   ai_stage1_reject: 10,
   ai_batch_failed: 10,
@@ -187,6 +202,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
 
   market_closed: '시장 폐장',
   analyst_disabled: '자동분석 꺼짐',
+  engine_disabled: '엔진 중지 (신규 진입만 중단 — 보유 청산 보호는 계속)',
   strategy_unregistered: '전략 미등록',
   strategy_throttled: '전략 평가 주기 미도래',
   no_due_strategies: '평가할 전략 없음',
@@ -225,6 +241,10 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
 
   dedup_regime: '중복 평가 생략',
   dedup_lookup_error: '중복 조회 실패',
+
+  cooldown_entry: '진입 쿨다운',
+  cooldown_exit: '청산 쿨다운',
+  cooldown_lookup_error: '쿨다운 조회 실패',
 
   ai_input_no_summary: 'AI 입력 누락',
   ai_stage1_reject: 'AI 1차 거절',
@@ -265,7 +285,9 @@ export const FUNNEL_STEPS: Array<{ key: string; label: string; minStage: number 
   { key: 'fired',     label: '룰 발화',      minStage: 5  },
   { key: 'guard',     label: '가드 통과',    minStage: 7  },
   { key: 'prefilter', label: '프리필터 통과', minStage: 9  },
-  { key: 'ai',        label: 'AI 통과',      minStage: 11 },
+  // Phase 2 D4 로 장중 AI 가 제거돼 stage 10 은 더 이상 발생하지 않는다.
+  // key 는 UI·쿼리 호환을 위해 유지하고 라벨만 실제 의미로 바꾼다 (④ 안전·집행 통과분).
+  { key: 'ai',        label: '안전게이트 통과', minStage: 11 },
   { key: 'signal',    label: '전략시그널',    minStage: 99 },
 ];
 

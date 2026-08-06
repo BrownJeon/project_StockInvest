@@ -1,4 +1,4 @@
-import { ping } from '@/lib/db';
+import { ensureSetup, getSetupFatalError, ping } from '@/lib/db';
 import { isAuthConfigured } from '@/lib/auth/session';
 import { isDryRun } from '@/lib/safety/dry-run';
 import { isKillSwitchActive } from '@/lib/safety/kill-switch';
@@ -8,7 +8,7 @@ import {
   getEffectiveOrderMax,
   getOrderMaxPct,
 } from '@/lib/safety/order-limits';
-import { getRouterConfig, isAnalystEnabled } from '@/lib/signals/router';
+import { getEngineSwitches, getRouterConfig } from '@/lib/signals/router';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,12 +21,15 @@ export const dynamic = 'force-dynamic';
  *  - 대신 "설정됨/미설정" boolean 과 종합 green/red 만 노출한다.
  */
 export async function GET() {
-  const [dbOk, signalCfg, analystOn, dryRun, killSwitch,
+  // 부팅 검증(signals.status ENUM 대조)이 끝난 뒤 판정해야 schemaFatal 이 첫 호출부터 보인다.
+  await ensureSetup().catch(() => { /* 실패 사유는 getSetupFatalError 로 읽는다 */ });
+
+  const [dbOk, signalCfg, switches, dryRun, killSwitch,
     orderMaxPct, dailyMaxPct,
     orderMaxDom, orderMaxOvs, dailyMaxDom, dailyMaxOvs] = await Promise.all([
     ping(),
     getRouterConfig(),
-    isAnalystEnabled(),
+    getEngineSwitches(),
     isDryRun(),
     isKillSwitchActive(),
     getOrderMaxPct().catch(() => 0),
@@ -51,16 +54,22 @@ export async function GET() {
 
   // green/red 종합 판정. 값이 아니라 "구성 결함"만 본다.
   // dryRun/killSwitch 는 안전 방향의 상태이므로 red 사유로 삼지 않는다.
+  // 코드-DB 스키마 불일치로 부팅 검증이 실패하면 이 프로세스는 아무것도 쓰지 못한다 (fail-closed).
+  const schemaFatal = getSetupFatalError() != null;
   const reasons: string[] = [];
+  if (schemaFatal)           reasons.push('schema_verification_failed');
   if (!limitsConfigured)     reasons.push('order_limits_unconfigured');
   if (!authConfigured)       reasons.push('auth_pin_unconfigured');
   if (!cronSecretConfigured) reasons.push('cron_secret_unconfigured');
   if (!dbOk)                 reasons.push('db_unreachable');
   const safetyStatus: 'green' | 'red' = reasons.length === 0 ? 'green' : 'red';
 
+  // ⚠️ `ok` 는 스키마 치명 상태를 반드시 반영해야 한다 (reviewer #3).
+  //    HTTP 200 + ok:true 만 보는 단순 모니터가 "DB 계층이 죽은 앱"을 정상으로 읽으면 안 된다.
   return Response.json({
-    ok: true,
+    ok: !schemaFatal,
     db: dbOk,
+    schemaFatal,
     safetyStatus,
     safetyReasons: reasons,
     safety: {
@@ -73,8 +82,14 @@ export async function GET() {
     },
     signal: {
       defaultTtlMin: signalCfg.defaultTtlMin,
-      analystEnabled: analystOn,
+      /** @deprecated engine.enabled 로 대체 — 기존 모니터 호환용으로 유지 */
+      analystEnabled: switches.engineEnabled,
+    },
+    engine: {
+      enabled: switches.engineEnabled,
+      autopilotMode: switches.autopilotMode,
+      switchSource: switches.source,
     },
     time: new Date().toISOString(),
-  });
+  }, { status: schemaFatal ? 503 : 200 });
 }

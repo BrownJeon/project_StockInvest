@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { checkCronAuth } from '@/lib/cron-auth';
+import { EXPIRABLE_STATUSES, sqlStatusList } from '@/lib/signals/statuses';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,8 +20,9 @@ export async function POST(req: NextRequest) {
     const pool = getPool();
 
     const [rows] = await pool.query<ExpiredRow[]>(
+      // 신규 awaiting_approval·detected + 구 pending/pending_approval 전부 TTL 만료 대상 (§4-1)
       `SELECT id, symbol, side FROM signals
-       WHERE status IN ('pending', 'pending_approval')
+       WHERE status IN (${sqlStatusList(EXPIRABLE_STATUSES)})
          AND expires_at IS NOT NULL
          AND expires_at < NOW()`,
     );

@@ -73,7 +73,8 @@ function setupMockDB(opts: MockOpts = {}): Captured {
     }
     // 동일 심볼+방향 활성 시그널 중복 방지 조회 (auto_submit 이 아닌 경로에서만 발생).
     // 기본값은 "중복 없음" — activeDuplicate 를 지정한 케이스만 기존 시그널을 반환한다.
-    if (/SELECT id FROM signals[\s\S]*status IN \('pending', 'pending_approval'\)/i.test(sql)) {
+    // 상태 목록은 코드 상수(AWAITING_APPROVAL_STATUSES)에서 생성되므로 SQL 리터럴로 매칭하지 않는다.
+    if (/SELECT id FROM signals[\s\S]*WHERE symbol = \? AND side = \?/i.test(sql)) {
       const [sym, side] = params as [string, string];
       const dup = opts.activeDuplicate;
       return [dup && dup.symbol === sym && dup.side === side ? [{ id: dup.id }] : []];
@@ -143,8 +144,11 @@ describe('signals/service', () => {
     jest.clearAllMocks();
   });
 
-  test('createSignal ANALYST_ENABLED=true → auto_submitted + submitOrder 호출 + consumed_order_id 업데이트', async () => {
+  // ⚠️ auto 는 `AUTOPILOT_MODE` 를 **명시적으로** 지정했을 때만 도달한다 (T-006 reviewer HIGH).
+  //    구 ANALYST_ENABLED=true 만으로는 더 이상 auto 가 되지 않는다 — assist 상한.
+  test('createSignal AUTOPILOT_MODE=auto → auto_submitted + submitOrder 호출 + consumed_order_id 업데이트', async () => {
     process.env.ANALYST_ENABLED = 'true';
+    process.env.AUTOPILOT_MODE = 'auto';
     const cap = setupMockDB();
     const r = await createSignal({
       symbol: 'KRW-BTC',
@@ -162,7 +166,7 @@ describe('signals/service', () => {
     expect(cap.signalUpdates.some((u) => u.consumedOrderId === r.orderId)).toBe(true);
   });
 
-  test('createSignal ANALYST_ENABLED=false → pending (수동 검토 대기, 주문 미생성)', async () => {
+  test('createSignal 엔진 on + assist → awaiting_approval (사람 승인 대기, 주문 미생성)', async () => {
     process.env.ANALYST_ENABLED = 'false';
     const cap = setupMockDB();
     const r = await createSignal({
@@ -176,7 +180,7 @@ describe('signals/service', () => {
     expect(r.ok).toBe(true);
     expect(r.autoSubmitted).toBe(false);
     expect(r.orderId).toBeUndefined();
-    expect(cap.signalInserts[0].status).toBe('pending');
+    expect(cap.signalInserts[0].status).toBe('awaiting_approval');
     expect(cap.orderInserts).toHaveLength(0);
   });
 
@@ -213,8 +217,10 @@ describe('signals/service', () => {
     expect(cap.signalInserts).toHaveLength(1);
   });
 
-  test('createSignal ANALYST_ENABLED=true 일반 금액 → auto_submitted', async () => {
+  // T-003 §4-1 — auto 모드에서 SIGNAL_AUTO_SUBMIT_MAX_KRW(5,000) 초과분은 assist 로 격하된다.
+  test('createSignal auto 모드 + 자동제출 한도 초과 → awaiting_approval 격하 (주문 미생성)', async () => {
     process.env.ANALYST_ENABLED = 'true';
+    process.env.AUTOPILOT_MODE = 'auto';
     const cap = setupMockDB();
     const r = await createSignal({
       symbol: 'KRW-BTC',
@@ -225,8 +231,62 @@ describe('signals/service', () => {
       amountKRW: 9_000,
     });
     expect(r.ok).toBe(true);
+    expect(r.autoSubmitted).toBe(false);
+    expect(cap.signalInserts[0].status).toBe('awaiting_approval');
+    expect(cap.orderInserts).toHaveLength(0);
+  });
+
+  // T-003 §4-1 — hard_stop 청산은 모드와 무관하게 즉시 자동 제출된다 (손실 확대 방지).
+  test('createSignal assist 모드 + hard_stop 청산 → auto_submitted + 주문 생성', async () => {
+    process.env.ANALYST_ENABLED = 'false';   // assist
+    const cap = setupMockDB();
+    const r = await createSignal({
+      symbol: 'KRW-BTC',
+      side: 'sell',
+      orderType: 'market',
+      amountKRW: 3_000,
+      indicators: { exit_kind: 'hard_stop' },
+    });
+    expect(r.ok).toBe(true);
     expect(r.autoSubmitted).toBe(true);
     expect(cap.signalInserts[0].status).toBe('auto_submitted');
+    expect(cap.orderInserts).toHaveLength(1);
+  });
+
+  // T-003 §4-1 — manual 모드는 관측 기록만 남기고 주문 경로가 없다.
+  test('createSignal manual 모드 → detected (주문 미생성)', async () => {
+    process.env.AUTOPILOT_MODE = 'manual';
+    process.env.ANALYST_ENABLED = 'true';
+    const cap = setupMockDB();
+    const r = await createSignal({
+      symbol: 'KRW-BTC',
+      side: 'buy',
+      orderType: 'limit',
+      price: 90_000_000,
+      amountKRW: 3_000,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.autoSubmitted).toBe(false);
+    expect(cap.signalInserts[0].status).toBe('detected');
+    expect(cap.orderInserts).toHaveLength(0);
+  });
+
+  // 🚨 회귀 — 구 스위치만으로는 자동 주문이 나가지 않는다.
+  test('createSignal ANALYST_ENABLED=true 만으로는 자동 제출되지 않는다 (assist 상한)', async () => {
+    process.env.ANALYST_ENABLED = 'true';
+    delete process.env.AUTOPILOT_MODE;
+    const cap = setupMockDB();
+    const r = await createSignal({
+      symbol: 'KRW-BTC',
+      side: 'buy',
+      orderType: 'limit',
+      price: 90_000_000,
+      amountKRW: 3_000,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.autoSubmitted).toBe(false);
+    expect(cap.signalInserts[0].status).toBe('awaiting_approval');
+    expect(cap.orderInserts).toHaveLength(0);
   });
 
   test('createSignal 블랙리스트 등록 심볼 → ok:false + INSERT 없음', async () => {
@@ -262,7 +322,26 @@ describe('signals/service', () => {
     expect(cap.signalUpdates.some((u) => u.status === 'approved')).toBe(true);
   });
 
-  test('approveSignal pending이 아니면 거부', async () => {
+  test('approveSignal 신규 awaiting_approval 도 승인 가능', async () => {
+    const cap = setupMockDB({
+      signalRow: {
+        id: 4321,
+        status: 'awaiting_approval',
+        symbol: 'KRW-BTC',
+        side: 'buy',
+        order_type: 'limit',
+        price: '90000000',
+        quantity: '0.0001',
+        amount_krw: '9000',
+        strategy_id: 'test',
+      },
+    });
+    const r = await approveSignal(4321);
+    expect(r.ok).toBe(true);
+    expect(cap.orderInserts).toHaveLength(1);
+  });
+
+  test('approveSignal 승인 대기 상태가 아니면 거부', async () => {
     setupMockDB({
       signalRow: {
         id: 1234,
@@ -304,6 +383,7 @@ describe('signals/service', () => {
   // Phase M — limit 호가 추격 (체결률 ↑)
   test('createSignal buy limit → chase 가격 적용 (limitChasePct=0.005)', async () => {
     process.env.ANALYST_ENABLED = 'true';
+    process.env.AUTOPILOT_MODE = 'auto';   // 주문 생성 경로를 타려면 명시적 auto 가 필요하다
     const cap = setupMockDB();
     await createSignal({
       symbol: '005930', side: 'buy', orderType: 'limit',
@@ -317,6 +397,7 @@ describe('signals/service', () => {
 
   test('createSignal sell limit → chase 가격 하향 적용', async () => {
     process.env.ANALYST_ENABLED = 'true';
+    process.env.AUTOPILOT_MODE = 'auto';   // 주문 생성 경로를 타려면 명시적 auto 가 필요하다
     const cap = setupMockDB();
     await createSignal({
       symbol: '005930', side: 'sell', orderType: 'limit',
@@ -330,6 +411,7 @@ describe('signals/service', () => {
 
   test('createSignal market 주문 → chase 미적용 (price null)', async () => {
     process.env.ANALYST_ENABLED = 'true';
+    process.env.AUTOPILOT_MODE = 'auto';   // 주문 생성 경로를 타려면 명시적 auto 가 필요하다
     const cap = setupMockDB();
     await createSignal({
       symbol: '005930', side: 'buy', orderType: 'market',

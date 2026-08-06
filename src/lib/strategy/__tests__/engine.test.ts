@@ -14,7 +14,8 @@ jest.mock('@/lib/signals/service', () => ({
   createSignal: jest.fn(),
 }));
 
-import { createSignalGuarded } from '../engine';
+import { createSignalGuarded, resolveEngineInterval } from '../engine';
+import { STRATEGY_REGISTRY } from '../rules';
 import { createSignal } from '@/lib/signals/service';
 import { EvalFunnelRecorder } from '../eval-funnel';
 import type { SignalInput } from '@/lib/signals/router';
@@ -122,5 +123,62 @@ describe('createSignalGuarded (T-002 H2)', () => {
     expect(res).toEqual({ ok: true, signalId: 7 });
     expect(rec.peek()[0]).toMatchObject({ gate: 'signal_created', verdict: 'pass' });
     expect(markSignal).toHaveBeenCalledWith('005930', 7);
+  });
+});
+
+/**
+ * Phase 2 D1 — 시간축 단일화 (T-003 §2, §6-4 검증 기준).
+ *
+ * 3중 축 불일치(게이트 30m / 룰 adaptive 1h / AI 프롬프트 30m)가 rsi-oversold 의 유일한
+ * 발화 경로였고, 레짐에 따라 룰의 의미가 바뀌어 백테스트가 불가능했다.
+ */
+describe('resolveEngineInterval — 장중 1h 단일축', () => {
+  it('1d 룰만 1d 를 유지한다', () => {
+    expect(resolveEngineInterval('1d')).toBe('1d');
+  });
+
+  it('30m·1h·15m 등 장중 표기는 전부 1h 로 정규화된다 (adaptive-interval 폐기)', () => {
+    for (const declared of ['30m', '1h', '15m', '5m']) {
+      expect(resolveEngineInterval(declared)).toBe('1h');
+    }
+  });
+
+  it('STRATEGY_REGISTRY 의 선언 interval 도 1h 또는 1d 뿐이다 (백테스트 축 일치)', () => {
+    const declared = new Set(Object.values(STRATEGY_REGISTRY).map(m => m.interval));
+    expect([...declared].sort()).toEqual(['1d', '1h']);
+  });
+
+  it('엔진 실행 축은 선언값과 무관하게 1h/1d 로 강제된다', () => {
+    for (const meta of Object.values(STRATEGY_REGISTRY)) {
+      expect(['1h', '1d']).toContain(resolveEngineInterval(meta.interval));
+    }
+  });
+});
+
+/**
+ * Phase 2 D1 — market-state 는 게이트가 아니라 라벨이다.
+ * 게이팅 API(STATE_RULES·getRulesForState·ALWAYS_ACTIVE_RULES)가 살아 있으면
+ * 누군가 다시 배선할 수 있으므로, 모듈에서 사라졌다는 사실 자체를 테스트로 고정한다.
+ */
+describe('market-state 라벨 강등 (D1)', () => {
+  it('룰 게이팅 API 가 모듈에서 제거됐다', () => {
+    const mod = require('../market-state') as Record<string, unknown>;
+    expect(mod.getRulesForState).toBeUndefined();
+    expect(mod.ALWAYS_ACTIVE_RULES).toBeUndefined();
+    expect(mod.STATE_RULES).toBeUndefined();
+  });
+
+  it('분류기는 남아 있고 라벨을 반환한다', () => {
+    const { classifyMarketState, MARKET_STATE_LABEL_KO } = require('../market-state');
+    expect(typeof classifyMarketState).toBe('function');
+    expect(MARKET_STATE_LABEL_KO.oversold_bounce).toBeTruthy();
+  });
+
+  it('데드락 재현 — RSI 34 는 divergence_signal 로 분류되지만 이제 아무 룰도 막지 않는다', () => {
+    const { classifyMarketState } = require('../market-state');
+    const s = { rsi14: 34, ema20: 100, ema60: 100, currentPrice: 100, volumeRatio: 1, priceChange5: 0,
+                bbUpper: 110, bbLower: 90, high24h: 105, low24h: 95, val: null, vah: null } as never;
+    // 구 구조에서는 이 분류 때문에 rsi-oversold-v1(활성 조건: oversold_bounce)이 배제됐다.
+    expect(classifyMarketState(s)).toBe('divergence_signal');
   });
 });

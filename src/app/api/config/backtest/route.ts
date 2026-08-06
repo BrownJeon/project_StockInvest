@@ -23,8 +23,8 @@ export async function GET() {
       ok: true,
       config: {
         periodDays:   Number(map['backtest_period_days']   ?? 90),
-        feePct:       Number(map['backtest_fee_pct']       ?? 0.05),
-        slipPct:      Number(map['backtest_slip_pct']      ?? 0.10),
+        feePct:       Number(map['backtest_fee_pct']       ?? 0.09),
+        slipPct:      Number(map['backtest_slip_pct']      ?? 0.15),
         inclInactive: Boolean(map['backtest_incl_inactive'] ?? false),
       },
     });

@@ -1,13 +1,28 @@
 import type { MarketSummary } from './ai-filter';
 
 /**
- * 종목 상태 분류기 (Market State Classifier) — StockInvest(KIS 주식) 버전.
+ * 종목 국면 분류기 (Market State Classifier) — StockInvest(KIS 주식) 버전.
  *
- * TradingInvest(코인) 버전과 동일한 구조. SI 전용 차이점:
- *  - volume_momentum → volume-spike-breakout-v1 (이미 구현된 SI 룰 활용)
- *  - 1d 기반 룰 (weekly-trend-follow, dividend-quality-buyback) 은 시장 상태와 무관하게
- *    engine.ts 에서 별도 항상 실행 (interval === '1d' 분기)
- *  - overbought_exit 은 보유 종목에서만 의미 → engine 에서 매도 후보 별도 처리
+ * ⚠️ **Phase 2 D1 (T-003 §2): 이 분류는 더 이상 게이트가 아니라 라벨이다.**
+ *
+ * 구 구조는 `STATE_RULES` 로 "이 국면에서 실행할 룰"을 선별했고, 그 결과
+ * `rsi-oversold-v1` 은 **구조적으로 발화 불가능**했다:
+ *   - 활성 창: classifyMarketState 가 RSI<35 를 `divergence_signal` 로 선점하므로
+ *     `oversold_bounce` 는 RSI ∈ [35, 38) 에서만 성립
+ *   - 발화 창: 룰 조건은 RSI < rsiBuyThreshold(=35)
+ *   → **활성 창 ∩ 발화 창 = ∅**
+ * 실측에서도 `rule_no_fire` 가 stage 'final' 의 95%(10,720건)를 차지해 이 데드락이
+ * 최상류 병목임이 확인됐다. 그래서 게이팅(`STATE_RULES`·`getRulesForState`·
+ * `ALWAYS_ACTIVE_RULES`)을 **삭제**하고 분류는 라벨로만 남긴다.
+ *
+ * 라벨의 용도 4가지 (§2):
+ *   1. 승인 카드 "종목 국면" 표시 — 사람 판단 보조
+ *   2. post-market AI 프롬프트 컨텍스트
+ *   3. eval_funnel 라벨 → 국면별 룰 성과 사후 분석 (레짐 학습 루프 유지)
+ *   4. 향후 포지션 사이징 힌트
+ *
+ * 룰의 실행 여부는 이제 오직 `strategies.enabled` 가 정한다.
+ * 입력 summary 는 **룰과 동일한 1h 축**이어야 한다 (단일 소스 원칙).
  */
 
 export type MarketStateCategory =
@@ -18,20 +33,9 @@ export type MarketStateCategory =
   | 'trend_following'
   | 'neutral';
 
-/** 각 카테고리에 활성화할 30m 기반 룰 ID 목록 */
-const STATE_RULES: Record<MarketStateCategory, string[]> = {
-  divergence_signal: ['rsi-divergence-v1',    'triple-confirmation-v1'],
-  oversold_bounce:   ['rsi-oversold-v1',       'rsi-macd-reversal-v1'],
-  volume_momentum:   ['volume-spike-breakout-v1'],
-  breakout_watch:    ['bb-breakout-v1',         'bb-squeeze-expansion-v1', 'price-breakout-v1'],
-  trend_following:   ['ma-cross-v1',            'pullback-trend-v1'],
-  neutral:           [],
-};
-
 /**
- * MarketSummary 지표를 기반으로 종목 상태 분류 (우선순위 순).
- * 1d 룰 (weekly-trend-follow, dividend-quality-buyback) 과
- * rsi-overbought-exit 은 이 함수 범위 밖 — engine.ts 에서 별도 처리.
+ * MarketSummary 지표를 기반으로 종목 국면 분류 (우선순위 순).
+ * **아무것도 차단하지 않는다** — 반환값은 기록·표시용 라벨이다.
  */
 export function classifyMarketState(s: MarketSummary): MarketStateCategory {
   // 1순위: 다이버전스 신호 (RSI 극단)
@@ -72,14 +76,12 @@ export function classifyMarketState(s: MarketSummary): MarketStateCategory {
   return 'neutral';
 }
 
-/** 종목 상태에 맞는 30m 전략 룰 ID 목록 반환. neutral 이면 빈 배열. */
-export function getRulesForState(state: MarketStateCategory): string[] {
-  return STATE_RULES[state];
-}
-
-/** 1d 기반 룰 — 시장 상태와 무관하게 항상 실행 대상 */
-export const ALWAYS_ACTIVE_RULES = new Set([
-  'weekly-trend-follow-v1',
-  'dividend-quality-buyback-v1',
-  'rsi-overbought-exit-v1',  // 보유 종목 매도 전용 — 항상 포함
-]);
+/** 사용자 화면용 한글 라벨 — 승인 카드의 "종목 국면" 표기. */
+export const MARKET_STATE_LABEL_KO: Record<MarketStateCategory, string> = {
+  divergence_signal: '다이버전스',
+  oversold_bounce:   '과매도 반등',
+  volume_momentum:   '거래량 모멘텀',
+  breakout_watch:    '돌파 대기',
+  trend_following:   '추세 진행',
+  neutral:           '중립',
+};

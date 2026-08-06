@@ -1,6 +1,7 @@
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { AWAITING_APPROVAL_STATUSES, sqlStatusList } from '@/lib/signals/statuses';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,7 @@ export async function GET() {
           `SELECT symbol, id, side, status, created_at
            FROM signals
            WHERE symbol IN (?)
-             AND status IN ('pending','pending_approval','approved','approved_pending_entry')
+             AND status IN (${sqlStatusList([...AWAITING_APPROVAL_STATUSES, 'detected', 'approved', 'approved_pending_entry'])})
              AND (expires_at IS NULL OR expires_at > NOW())
            ORDER BY created_at DESC`,
           [symbols],

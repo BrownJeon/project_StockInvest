@@ -37,7 +37,8 @@ export default function RecommendPage() {
     setLoading(true);
     try {
       const [aiRes, pendingRes, qualityRes] = await Promise.all([
-        fetch('/api/signals?status=pending,pending_approval&limit=100'),
+        // 구 pending/pending_approval + 신규 awaiting_approval/detected 를 모두 조회 (T-003 §4-2 호환)
+        fetch('/api/signals?status=awaiting_approval,pending,pending_approval,detected&limit=100'),
         fetch('/api/signals?status=approved_pending_entry&limit=50'),
         fetch('/api/analytics/signal-quality?hours=2'),
       ]);

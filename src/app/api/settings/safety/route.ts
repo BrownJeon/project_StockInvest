@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { isDryRun } from '@/lib/safety/dry-run';
+import { syncEngineSwitchesFromLegacy } from '@/lib/signals/router';
 
 export const dynamic = 'force-dynamic';
 
@@ -160,6 +161,12 @@ export async function PATCH(req: NextRequest) {
         [dbKey, JSON.stringify(val)],
       );
     }
+  }
+
+  // 엔진 마스터 스위치를 바꿨으면 신규 키(engine_enabled·autopilot_mode)도 같은 의미로 맞춘다.
+  // 안 하면 UI 토글이 파이프라인에 반영되지 않는 무반응 스위치가 된다 (T-003 D2).
+  if ('analystEnabled' in body) {
+    await syncEngineSwitchesFromLegacy();
   }
 
   // 폐기된 시장별·pct 키가 DB에 남아있으면 일괄 삭제 (idempotent)

@@ -26,6 +26,8 @@ export async function POST(req: NextRequest) {
       'domestic_market_closed',
       'overseas_market_closed',
       'analyst_disabled',
+      // Phase 2 D2 — 엔진 중지는 정상 운영 상태다 (exit 트랙은 계속 돈다). 에러로 세지 않는다.
+      'engine_disabled',
     ]);
     const infoFlags = result.errors.filter(e => INFO_FLAGS.has(e));
     const realErrors = result.errors.filter(e => !INFO_FLAGS.has(e));

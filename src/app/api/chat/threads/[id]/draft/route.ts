@@ -5,7 +5,7 @@ import { runLlm, getActiveProvider, getProviderConfig } from '@/lib/llm/provider
 import { resolveSymbolsInText } from '@/lib/chat/symbol-resolver';
 import { buildSymbolContexts, formatSymbolContextsAsText } from '@/lib/chat/context-builder';
 import { buildDrafterSystemPrompt, buildDrafterUserMessage } from '@/lib/chat/system-prompt';
-import { getAnalystStyle, getStyleConfig } from '@/lib/strategy/style';
+import { ANALYST_STYLE_LABEL, getStyleConfig } from '@/lib/strategy/style';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ? (isAllowed(body.modelOverride) ? body.modelOverride : 'haiku')
     : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
 
-  const analystStyle = await getAnalystStyle();
+  const analystStyle = ANALYST_STYLE_LABEL;   // 프롬프트 표기용 라벨 (룰 선별과 무관 — D3)
   const style = await getStyleConfig();
   const drafterSystem = buildDrafterSystemPrompt({ analystStyle, style, attachedSummary, recentMessages });
   const drafterUser = buildDrafterUserMessage(userContent, attachedSummary);

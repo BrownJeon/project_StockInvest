@@ -13,6 +13,7 @@ import type { ScenarioCard } from '@/lib/signals/scenario-builder';
 import { calcSplitSlices } from '@/lib/signals/scenario-builder';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import { sendAlert } from '@/lib/notify';
+import { AWAITING_APPROVAL_STATUSES, sqlStatusList } from '@/lib/signals/statuses';
 
 async function isManualNotifyEnabled(pool: ReturnType<typeof import('@/lib/db')['getPool']>): Promise<boolean> {
   try {
@@ -161,7 +162,8 @@ export async function POST(req: Request) {
     // 원본 AI 시그널이 있으면 approved로 마킹 (소비됨)
     if (body.sourceSignalId) {
       await pool.query(
-        `UPDATE signals SET status='approved', updated_at=NOW() WHERE id=? AND status IN ('pending','pending_approval')`,
+        `UPDATE signals SET status='approved', updated_at=NOW()
+          WHERE id=? AND status IN (${sqlStatusList([...AWAITING_APPROVAL_STATUSES, 'detected'])})`,
         [body.sourceSignalId],
       );
     }

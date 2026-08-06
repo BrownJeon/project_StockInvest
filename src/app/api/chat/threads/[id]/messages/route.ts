@@ -11,7 +11,7 @@ import {
   buildDrafterSystemPrompt,
   buildDrafterUserMessage,
 } from '@/lib/chat/system-prompt';
-import { getAnalystStyle, getStyleConfig } from '@/lib/strategy/style';
+import { ANALYST_STYLE_LABEL, getStyleConfig } from '@/lib/strategy/style';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let draftPrompt = (body.draftPrompt ?? '').trim();
   let draftPromptRaw: string | null = null;
 
-  const analystStyle = await getAnalystStyle();
+  const analystStyle = ANALYST_STYLE_LABEL;   // 프롬프트 표기용 라벨 (룰 선별과 무관 — D3)
   const style = await getStyleConfig();
   const provider = await getActiveProvider();
   const cfg = await getProviderConfig();

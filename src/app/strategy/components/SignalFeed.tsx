@@ -5,8 +5,10 @@ import { fmtNum } from '@/lib/format';
 import { kstTodayStart } from '@/lib/time';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
 
-export type SignalStatus =
-  | 'pending' | 'approved' | 'rejected' | 'auto_submitted' | 'expired' | 'superseded';
+// signals.status 의 진실은 `@/lib/signals/statuses` (순수 모듈이라 클라이언트에서도 안전).
+// 화면에서 임의 유니온을 따로 들고 있으면 새 상태가 추가될 때 조용히 '알 수 없음'이 된다.
+export type { SignalStatus } from '@/lib/signals/statuses';
+import type { SignalStatus } from '@/lib/signals/statuses';
 
 export interface Signal {
   id: number;
@@ -26,12 +28,20 @@ export interface Signal {
 }
 
 export const STATUS_META: Record<SignalStatus, { text: string; color: string; bg: string }> = {
-  pending:        { text: '승인 대기', color: 'var(--accent)',  bg: 'rgba(245,158,11,.18)' },
-  auto_submitted: { text: '자동 제출', color: 'var(--ok)',      bg: 'rgba(34,197,94,.18)'  },
-  approved:       { text: '승인됨',    color: '#818cf8',        bg: 'rgba(99,102,241,.18)' },
-  rejected:       { text: '거부됨',    color: 'var(--muted)',   bg: 'var(--bg3)'           },
-  expired:        { text: '만료됨',    color: '#555',           bg: 'var(--bg)'            },
-  superseded:     { text: '대체됨',    color: '#555',           bg: 'var(--bg)'            },
+  // ── 승인 대기 (신규 awaiting_approval + 구 pending / pending_approval) ──
+  awaiting_approval:      { text: '승인 대기', color: 'var(--accent)',  bg: 'rgba(245,158,11,.18)' },
+  pending:                { text: '승인 대기', color: 'var(--accent)',  bg: 'rgba(245,158,11,.18)' },
+  pending_approval:       { text: '승인 대기', color: 'var(--accent)',  bg: 'rgba(245,158,11,.18)' },
+  detected:               { text: '관측됨',    color: '#94a3b8',        bg: 'rgba(148,163,184,.18)' },
+  auto_submitted:         { text: '자동 제출', color: 'var(--ok)',      bg: 'rgba(34,197,94,.18)'  },
+  approved:               { text: '승인됨',    color: '#818cf8',        bg: 'rgba(99,102,241,.18)' },
+  approved_pending_entry: { text: '진입 감시', color: '#38bdf8',        bg: 'rgba(56,189,248,.18)' },
+  executing:              { text: '체결 대기', color: '#38bdf8',        bg: 'rgba(56,189,248,.18)' },
+  rejected:               { text: '거부됨',    color: 'var(--muted)',   bg: 'var(--bg3)'           },
+  expired:                { text: '만료됨',    color: '#555',           bg: 'var(--bg)'            },
+  superseded:             { text: '대체됨',    color: '#555',           bg: 'var(--bg)'            },
+  skipped:                { text: '스킵됨',    color: '#555',           bg: 'var(--bg)'            },
+  ai_skipped:             { text: '스킵됨',    color: '#555',           bg: 'var(--bg)'            },
 };
 
 import { formatTimeKST } from '@/lib/time';

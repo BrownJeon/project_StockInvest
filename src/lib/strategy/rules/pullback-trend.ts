@@ -20,13 +20,22 @@ import type { RuleFunction } from './types';
  */
 const TREND_LOOKBACK = 5;     // MA20 우상향 판정 윈도우
 const PULLBACK_LOOKBACK = 3;  // RSI 눌림 발생 윈도우
-const RSI_PULLBACK_MIN = 42;  // 40→42: 충분히 눌린 시점만 포착
-const RSI_PULLBACK_MAX = 48;  // 50→48: 반등 직전 확신 강화
+
+/**
+ * RSI 눌림 창은 `style.pullbackRsiMin/Max` 로 주입된다 (T-003 §3, Phase 2 Step 4).
+ * 코드 기본 42~48 은 유지하고, 운영값 40~50 은 DB override(`style_default_pullbackRsi*`)로 적용.
+ * 근거: 장중 AI 관문이 사라져 질적 거절이 없어진 만큼 **빈도를 원복**해야 후보가 확보된다.
+ */
 
 export const pullbackTrend: RuleFunction = ({ strategyId, symbol, candles, ticker, amountKRW, style }) => {
   if (candles.length < 30) return [];
-  // 공격적투자 전용
-  if (style.rsiSellPriceMult > 1.0) return [];
+  // ⛔ 사문 가드 제거 (T-003 §3) — `style.rsiSellPriceMult > 1.0` 은 3-프리셋 시절
+  //    "공격적투자 전용" 표식이었다. 2026-05-09 성향 단일화로 이 값은 항상 1.00 이라
+  //    조건이 영구 거짓이 됐고, 반대로 누군가 DB 로 이 값을 건드리면 룰이 통째로
+  //    조용히 죽는 함정으로만 남았다. 룰 활성 여부는 `strategies.enabled` 가 정한다.
+
+  const RSI_PULLBACK_MIN = style.pullbackRsiMin;
+  const RSI_PULLBACK_MAX = style.pullbackRsiMax;
 
   const n = candles.length - 1;
   const cur  = candles[n];

@@ -1,6 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
-import { isAnalystEnabled } from '@/lib/signals/router';
+import { isEngineEnabled } from '@/lib/signals/router';
 import { createSignal } from '@/lib/signals/service';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import { isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
@@ -22,8 +22,8 @@ interface CreateBody {
 
 export async function POST(req: Request) {
   try {
-    if (!(await isAnalystEnabled())) {
-      return Response.json({ ok: false, error: 'ANALYST_ENABLED=false' }, { status: 403 });
+    if (!(await isEngineEnabled())) {
+      return Response.json({ ok: false, error: 'engine_disabled' }, { status: 403 });
     }
     const body = (await req.json()) as CreateBody;
     if (!body.symbol || !body.side || !body.orderType || !body.amountKRW) {
@@ -41,18 +41,27 @@ export async function POST(req: Request) {
         { status: 409 },
       );
     }
-    const result = await createSignal({
-      strategyId: body.strategyId,
-      symbol: body.symbol,
-      side: body.side,
-      orderType: body.orderType,
-      price: body.price,
-      quantity: body.quantity,
-      amountKRW: body.amountKRW,
-      reasoning: body.reasoning,
-      indicators: body.indicators,
-      expiresAt: body.expiresAt,
-    });
+    // T-003 §1 `signal_create_failed` — createSignal 예외를 이 지점에서 분류해 응답한다.
+    // (바깥 catch 로 흘려보내면 스키마 오류와 요청 파싱 오류가 같은 500 으로 뭉개진다)
+    let result;
+    try {
+      result = await createSignal({
+        strategyId: body.strategyId,
+        symbol: body.symbol,
+        side: body.side,
+        orderType: body.orderType,
+        price: body.price,
+        quantity: body.quantity,
+        amountKRW: body.amountKRW,
+        reasoning: body.reasoning,
+        indicators: body.indicators,
+        expiresAt: body.expiresAt,
+      });
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      console.error(`[api/signals POST] signal_create_failed ${body.symbol} ${body.side}: ${err}`);
+      return Response.json({ ok: false, error: 'signal_create_failed', detail: err }, { status: 500 });
+    }
     return Response.json({ ok: result.ok, data: result }, { status: result.ok ? 200 : 400 });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

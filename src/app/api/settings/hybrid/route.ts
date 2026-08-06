@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
+import { syncEngineSwitchesFromLegacy } from '@/lib/signals/router';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,8 +39,10 @@ export async function PATCH(req: NextRequest) {
       'INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
       ['hybrid_mode_enabled', JSON.stringify(body.enabled)],
     );
+    // 신규 스위치(autopilot_mode)를 같은 의미로 맞춘다 — 안 하면 UI 토글이 무반응이 된다.
+    const switches = await syncEngineSwitchesFromLegacy();
 
-    return NextResponse.json({ ok: true, enabled: body.enabled });
+    return NextResponse.json({ ok: true, enabled: body.enabled, autopilotMode: switches?.autopilotMode });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     console.error('[api/settings/hybrid PATCH]', error);

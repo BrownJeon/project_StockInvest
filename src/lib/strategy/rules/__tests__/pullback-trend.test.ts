@@ -2,6 +2,9 @@ import { pullbackTrend } from '../pullback-trend';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 import type { StyleConfig } from '@/lib/strategy/style';
 
+// 룰이 실제로 읽는 필드만 채운 부분 스타일 (테스트 파일은 tsconfig exclude 대상).
+// ⚠️ pullbackRsiMin/Max 는 **반드시** 채운다 — 없으면 비교가 undefined 가 되어
+//    "조건 불충족"으로 조용히 통과해 테스트가 엉뚱한 이유로 초록이 된다.
 const STYLE_AGGRESSIVE: StyleConfig = {
   rsiBuyThreshold:  45,
   rsiSellThreshold: 55,
@@ -11,7 +14,12 @@ const STYLE_AGGRESSIVE: StyleConfig = {
   minAiConfidence:  45,
   atrStopMult:      1.0,
   minRWinPct:       0.7,
-};
+  pullbackRsiMin:   42,
+  pullbackRsiMax:   48,
+} as unknown as StyleConfig;
+/** 운영 override 값 (DB style_default_pullbackRsi*) — 창을 40~50 으로 넓힌 설정 */
+const STYLE_WIDE_WINDOW: StyleConfig = { ...STYLE_AGGRESSIVE, pullbackRsiMin: 40, pullbackRsiMax: 50 };
+/** 구 "비공격 모드" 표식. 가드 제거 후에는 룰 발화에 아무 영향이 없어야 한다. */
 const STYLE_NEUTRAL: StyleConfig = { ...STYLE_AGGRESSIVE, rsiSellPriceMult: 1.01 };
 
 const TICKER: Ticker = { symbol: '005930', price: 70000, timestamp: 0 };
@@ -83,11 +91,38 @@ describe('pullbackTrend', () => {
     })).toEqual([]);
   });
 
-  test('미발화 — 비공격 모드', () => {
+  // ⛔ T-003 §3 — `rsiSellPriceMult > 1.0` 사문 가드 제거.
+  // 성향 단일화로 이 값은 항상 1.00 이라 조건이 영구 거짓이었고, 반대로 DB 로 값을 건드리면
+  // 룰이 통째로 조용히 죽는 함정으로만 남아 있었다. 이제 발화 여부와 무관해야 한다.
+  test('rsiSellPriceMult 는 더 이상 발화를 좌우하지 않는다 (사문 가드 제거)', () => {
     const candles = buildPullbackPattern();
-    expect(pullbackTrend({
+    const aggressive = pullbackTrend({
+      strategyId: 'p', symbol: 's', candles, ticker: TICKER, amountKRW: 1, style: STYLE_AGGRESSIVE,
+    });
+    const neutral = pullbackTrend({
       strategyId: 'p', symbol: 's', candles, ticker: TICKER, amountKRW: 1, style: STYLE_NEUTRAL,
+    });
+    expect(neutral).toEqual(aggressive);
+  });
+
+  // §3 — 눌림 창은 style 주입값을 쓴다 (코드 상수 하드코딩 아님).
+  test('RSI 눌림 창이 style 에서 주입된다 — 창이 공집합이면 발화하지 않는다', () => {
+    const candles = buildPullbackPattern();
+    const impossible: StyleConfig = { ...STYLE_AGGRESSIVE, pullbackRsiMin: 99, pullbackRsiMax: 99.5 };
+    expect(pullbackTrend({
+      strategyId: 'p', symbol: 's', candles, ticker: TICKER, amountKRW: 1, style: impossible,
     })).toEqual([]);
+  });
+
+  test('넓힌 창(40~50)은 좁은 창(42~48)의 발화를 잃지 않는다 (빈도 회복 방향)', () => {
+    const candles = buildPullbackPattern();
+    const narrow = pullbackTrend({
+      strategyId: 'p', symbol: 's', candles, ticker: TICKER, amountKRW: 1, style: STYLE_AGGRESSIVE,
+    });
+    const wide = pullbackTrend({
+      strategyId: 'p', symbol: 's', candles, ticker: TICKER, amountKRW: 1, style: STYLE_WIDE_WINDOW,
+    });
+    expect(wide.length).toBeGreaterThanOrEqual(narrow.length);
   });
 
   test('미발화 — 캔들 부족 (< 30)', () => {

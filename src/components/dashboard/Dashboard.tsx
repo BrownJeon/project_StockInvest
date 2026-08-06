@@ -182,7 +182,8 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/signals?status=pending_approval&limit=100').then(r => r.json()).then(j => {
+    // 구 pending_approval + 신규 awaiting_approval 를 함께 센다 (T-003 §4-2 호환)
+    fetch('/api/signals?status=awaiting_approval,pending_approval&limit=100').then(r => r.json()).then(j => {
       if (alive && j.ok) setPendingCount((j.data as unknown[]).length);
     }).catch(() => {});
     return () => { alive = false; };
