@@ -500,3 +500,25 @@ QA 보고서는 item D를 PASS로 적었으나 근거로 제시한 것은 `login
 1. **`file:` 경로 깊이** — `../../`는 2단계 프로젝트 기준. 1단계는 `../`
 2. **`require.resolve` 상위 디렉토리 함정** — 결과 경로까지 확인할 것. 로컬 성공 → `npm ci` 후 실패라는 최악의 형태
 3. **`shared/` 미버전관리 + 독립 체크아웃 빌드 불가**
+- [14:40] 🔴 운영 배포 d2b2f25 의 DDL 1건 실패 수정. 원인: `CREATE UNIQUE INDEX ... ALGORITHM=INPLACE, LOCK=NONE` — **쉼표로 잇는 ALGORITHM/LOCK 은 ALTER TABLE 전용 문법**이라 CREATE INDEX 에서는 파싱 실패(ERROR 1064). 같은 부팅의 ALTER TABLE 문장들은 전부 성공한 것이 반증.
+  - 수정: `ALTER TABLE users ADD UNIQUE KEY uq_users_oauth (oauth_provider, oauth_id), ALGORITHM=INPLACE, LOCK=NONE` (성공이 검증된 형태). 존재 확인·비차단(never throw to boot) 유지.
+  - `alterPinned()` 에 알고리즘 목록 파라미터 추가. 인덱스는 `['INPLACE']` 만 — ADD INDEX 에 INSTANT 는 **존재하지 않아**(MariaDB: "not supported. Reason: ADD INDEX") 시도하면 부팅 로그에 확정적 거짓 경보만 남는다. 이 로그의 신호 품질이 이번 버그를 잡은 수단이므로 오염시키지 않는다.
+  - **검증 방법**: 운영(10.11.11)과 동일 계열 `mariadb:10.11` 일회용 docker 컨테이너에서 실제 실행 — ①배포된 문장으로 운영과 **동일한 ERROR 1064 near ' LOCK=NONE' 재현** ②수정 문장 성공 + 인덱스 2컬럼 생성 확인 ③INSTANT 거부 확인 ④NULL,NULL 행 3개 공존(이메일 전용 계정 무영향) ⑤중복 신원 INSERT 가 `ER_DUP_ENTRY ... 'uq_users_oauth'` 로 거부(=`isDuplicateOAuthError` 매칭 문자열 확인) ⑥존재 확인 쿼리가 1 반환 → 2회차 부팅 스킵. 컨테이너 제거 완료, 운영 DB 는 SELECT 만(인덱스 여전히 PRIMARY·uq_users_email, 0행).
+  - typecheck 통과 / **64 suites · 775 tests 전부 통과**(기준선 동일, DDL 변경이라 테스트 표면 변화 없음).
+
+## Reviewer 재검증 — DDL 핫픽스 (2026-08-08, 델타 한정)
+
+**판정: PASS.** 범위: `src/lib/db.ts`의 `uq_users_oauth` 인덱스 DDL 수정 1건만(`git diff --stat HEAD` 로 db.ts·agent-vault 문서 외 변경 없음 확인 — `src/lib/safety/*`·`src/app/api/auth/*`·`src/lib/auth/*` 전부 미변경, T-009 인증 표면 그대로).
+
+- **①문법**: `mariadb:10.11.18` 일회용 컨테이너에서 독립 재현 — 원 문장(`CREATE UNIQUE INDEX ... ALGORITHM=INPLACE, LOCK=NONE`)이 운영과 **문자 그대로 동일한 `ERROR 1064 ... near ' LOCK=NONE'`** 재현, 수정 문장(`ALTER TABLE users ADD UNIQUE KEY uq_users_oauth (...), ALGORITHM=INPLACE, LOCK=NONE`)은 성공 + `SHOW INDEX`로 2컬럼 복합 인덱스 확인. `alterPinned()`가 런타임에 실제로 조립하는 문자열(`${ddl}, ALGORITHM=${algo}, LOCK=NONE`)을 그대로 실행해 검증 — 손으로 옮겨 적은 문자열이 아님.
+- **②멱등·비차단**: `INFORMATION_SCHEMA.STATISTICS` 존재확인 가드 확인(같은 ALTER 재실행 시 `ERROR 1061 Duplicate key name`이 뜬다는 것도 독립 재현 — 가드가 왜 필요한지 실증). 인덱스 생성 실패 경로는 `throw` 없이 `console.error`로만 처리되고 `setupDB()` 전체 흐름을 막지 않음(코드 추적으로 확인, ENUM 검증의 fail-closed 경로와 분리되어 있음).
+- **③변경 스코프**: `alterPinned()` 시그니처에 `algorithms` 파라미터 추가는 순수 상위호환 — 컬럼 3곳(`oauth_provider`/`oauth_id`/`password_hash`)은 인자 생략으로 기존 `['INSTANT','INPLACE']` 그대로, 인덱스 1곳만 `['INPLACE']` 명시. diff로 재확인.
+- **④에러 매칭**: 컨테이너에서 중복 신원 INSERT 재현 → `ERROR 1062 Duplicate entry 'google-g-123' for key 'uq_users_oauth'`. `isDuplicateOAuthError()`(`src/lib/auth/users.ts:324`)의 `code==='ER_DUP_ENTRY' && message.includes('uq_users_oauth')`와 정확히 매칭(테이블명 접두사가 붙는 MariaDB 버전이어도 부분일치라 안전).
+- **⑤영향 범위**: 위 git diff 결과대로 db.ts 단독 변경 확인.
+- **⑥인덱스 정의**: `(oauth_provider, oauth_id)` 복합, 컨테이너에서 NULL,NULL 행 3개 공존 확인(MariaDB UNIQUE는 NULL을 중복으로 안 봄) + 동일 신원 2번째 INSERT 거부 확인 — 설계 의도대로 동작.
+
+**INSTANT-스킵 편차**: 동의. 컨테이너에서 `ALGORITHM=INSTANT`를 ADD INDEX에 시도해 `ERROR 1846 ... Reason: ADD INDEX. Try ALGORITHM=NOCOPY`를 직접 재현 — MariaDB가 이 알고리즘 조합을 구조적으로 거부하므로 시도해도 항상 실패하는 로그 한 줄만 남긴다. 스킵이 맞다.
+
+`npm run typecheck`(clean) · `npm test`(64 suites / 775 tests, 전부 통과) 독립 재실행 확인. NFS `build`/`install`/`pm2`/git 쓰기/운영 DB 쓰기 미수행. 검증용 컨테이너(`reviewer-oauth-verify`)는 확인 직후 제거 완료.
+- [15:03] Reviewer 지적(선반영) 반영: `uq_users_oauth` 인덱스 생성 실패 분기에 `notifyCritical()` 추가 — 형제 분기(`password_hash`)와 대칭. 근거: 로그만 남기면 부팅 로그를 보는 사람이 있어야만 발견되는데(이번 문법 오류가 실제로 그렇게 잡혔다 — 운), 빠지는 것이 **인증 경로의 데이터 무결성 가드**라 알림 대상이 맞다. catch 구조는 그대로 두고 호출 1건만 추가. typecheck 통과 / **64 suites · 775 tests 전부 통과**(기준선 동일).
+- [15:04] 검증용 `mariadb:10.11` 이미지(326MB) 제거 완료 — mariadb 계열 이미지·컨테이너 잔여 0. 기존 dangling 이미지(2024-10 생성)는 내 작업과 무관하므로 손대지 않음.

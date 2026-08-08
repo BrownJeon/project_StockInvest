@@ -1384,27 +1384,40 @@ async function readUsersColumnMeta(p: mysql.Pool): Promise<UsersColumnMeta> {
 
 /**
  * ALTER 를 **알고리즘을 고정한 채로만** 실행한다.
- * INSTANT → (거부되면) INPLACE·LOCK=NONE 순서. 알고리즘 미지정(=COPY 허용) 형태로는 재시도하지 않는다.
- * 두 번 다 실패하면 false 를 돌려주고 호출부가 크게 알린다 — throw 하지 않는다.
+ * 기본 INSTANT → (거부되면) INPLACE·LOCK=NONE 순서. 알고리즘 미지정(=COPY 허용) 형태로는 재시도하지 않는다.
+ * 전부 실패하면 false 를 돌려주고 호출부가 크게 알린다 — throw 하지 않는다.
+ *
+ * ⚠️ 이 함수에 넘기는 `ddl` 은 반드시 **`ALTER TABLE ...` 형태**여야 한다.
+ *    `ALGORITHM=`/`LOCK=` 을 쉼표로 잇는 문법은 ALTER TABLE 전용이고,
+ *    `CREATE INDEX` 에 붙이면 MariaDB 문법 오류가 난다(2026-08-08 운영 배포 d2b2f25 실패 사례).
+ *
+ * @param algorithms 시도할 알고리즘 순서. 작업 종류에 따라 INSTANT 자체가 존재하지 않는
+ *                   경우가 있어(예: ADD INDEX) 호출부가 좁힐 수 있게 열어 둔다.
  */
-async function alterPinned(p: mysql.Pool, label: string, ddl: string): Promise<boolean> {
-  try {
-    await p.query(`${ddl}, ALGORITHM=INSTANT, LOCK=NONE`);
-    return true;
-  } catch (instantErr) {
-    const msg = instantErr instanceof Error ? instantErr.message : String(instantErr);
-    console.warn(
-      `[db] ${label}: ALGORITHM=INSTANT 거부 — LOCK=NONE 을 유지한 INPLACE 로 재시도합니다. (${msg})`,
-    );
+async function alterPinned(
+  p: mysql.Pool,
+  label: string,
+  ddl: string,
+  algorithms: readonly ('INSTANT' | 'INPLACE')[] = ['INSTANT', 'INPLACE'],
+): Promise<boolean> {
+  let lastMsg = '';
+  for (let i = 0; i < algorithms.length; i++) {
+    const algo = algorithms[i];
     try {
-      await p.query(`${ddl}, ALGORITHM=INPLACE, LOCK=NONE`);
+      await p.query(`${ddl}, ALGORITHM=${algo}, LOCK=NONE`);
       return true;
-    } catch (inplaceErr) {
-      const msg2 = inplaceErr instanceof Error ? inplaceErr.message : String(inplaceErr);
-      console.error(`[db] ❌ ${label}: INSTANT/INPLACE 모두 실패했습니다. (INPLACE: ${msg2})`);
-      return false;
+    } catch (e) {
+      lastMsg = e instanceof Error ? e.message : String(e);
+      const next = algorithms[i + 1];
+      if (next) {
+        console.warn(
+          `[db] ${label}: ALGORITHM=${algo} 거부 — LOCK=NONE 을 유지한 ${next} 로 재시도합니다. (${lastMsg})`,
+        );
+      }
     }
   }
+  console.error(`[db] ❌ ${label}: ${algorithms.join('/')} 모두 실패했습니다. (${lastMsg})`);
+  return false;
 }
 
 /**
@@ -1439,8 +1452,19 @@ async function ensureUsersOAuthColumns(p: mysql.Pool): Promise<void> {
   // (provider, id) 가 둘 다 NULL 인 행 = 이메일 전용 계정은 UNIQUE 제약에 걸리지 않는다
   // — MySQL/MariaDB 의 UNIQUE 인덱스는 NULL 을 중복으로 보지 않는다.
   //
-  // 컬럼 ALTER 와 같은 원칙으로 **없을 때만** 만들고, 알고리즘도 고정한다
-  // (인덱스 생성에 INSTANT 는 없으므로 INPLACE·LOCK=NONE 이 최선이다).
+  // 컬럼 ALTER 와 같은 원칙으로 **없을 때만** 만들고, 알고리즘도 고정한다.
+  //
+  // ⚠️ 2026-08-08 운영 배포(d2b2f25)에서 이 문장만 실패했다. 원래는
+  //      CREATE UNIQUE INDEX ... ON users (...) ALGORITHM=INPLACE, LOCK=NONE
+  //    이었는데, **쉼표로 잇는 ALGORITHM/LOCK 은 ALTER TABLE 전용 문법**이라
+  //    CREATE INDEX 에서는 파싱 자체가 실패한다 (ERROR 1064 near ' LOCK=NONE').
+  //    같은 부팅에서 ALTER TABLE 형태의 다른 문장들은 모두 성공했다는 점이 근거다.
+  //    → 성공이 검증된 ALTER TABLE 형태로 표현한다.
+  //
+  //    알고리즘은 INPLACE 부터 시도한다. ADD INDEX 에는 INSTANT 가 아예 존재하지 않아
+  //    (MariaDB: "ALGORITHM=INSTANT is not supported. Reason: ADD INDEX")
+  //    시도해봐야 부팅 로그에 **확정적인 거짓 경보**만 남는다. 이 로그의 신호 품질이
+  //    바로 위 문법 오류를 잡아낸 수단이므로 일부러 오염시키지 않는다.
   try {
     const [idx] = await p.query<mysql.RowDataPacket[]>(
       `SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
@@ -1448,16 +1472,30 @@ async function ensureUsersOAuthColumns(p: mysql.Pool): Promise<void> {
         LIMIT 1`,
     );
     if (idx.length === 0) {
-      await p.query(
-        'CREATE UNIQUE INDEX uq_users_oauth ON users (oauth_provider, oauth_id) ALGORITHM=INPLACE, LOCK=NONE',
+      const ok = await alterPinned(
+        p,
+        'users.uq_users_oauth 유니크 인덱스 생성',
+        'ALTER TABLE users ADD UNIQUE KEY uq_users_oauth (oauth_provider, oauth_id)',
+        ['INPLACE'],
       );
+      if (!ok) {
+        throw new Error('ALTER TABLE ... ADD UNIQUE KEY 가 INPLACE/LOCK=NONE 으로 수행되지 않았습니다');
+      }
     }
   } catch (e) {
     // 인덱스가 없어도 앱은 동작한다(중복 신원은 애플리케이션 레벨에서도 걸러진다).
     // 다만 마지막 방어선이 빠진 상태이므로 조용히 넘기지 않는다.
+    //
+    // 로그만 남기면 부팅 로그를 들여다보는 사람이 있어야만 발견된다(2026-08-08 문법 오류가
+    // 그렇게 잡혔다 — 운이 좋았던 것이다). 인증 경로의 데이터 무결성 가드가 빠진 상태이므로
+    // password_hash 실패 분기와 동일하게 알림까지 보낸다.
     console.error(
       `[db] uq_users_oauth 인덱스를 만들지 못했습니다 — 같은 소셜 신원의 중복 계정을 DB 가 막지 못합니다. ` +
       `(${e instanceof Error ? e.message : String(e)})`,
+    );
+    notifyCritical(
+      'uq_users_oauth 인덱스 생성 실패',
+      '같은 소셜 신원의 중복 계정을 DB 가 막지 못합니다. OAuth 활성화 전에 반드시 해결해야 합니다.',
     );
   }
 
