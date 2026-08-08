@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AuthShell, authStyles } from '@/components/auth/AuthShell';
+import { OAuthButtons } from '@/components/auth/OAuthButtons';
 
 export default function SignupPage() {
   const [email, setEmail] = useState('');
@@ -72,6 +73,9 @@ export default function SignupPage() {
 
   return (
     <AuthShell title="주식 자동매매" subtitle="이메일로 계정 만들기">
+      {/* 로그인 화면과 동일한 버튼. 소셜로 처음 가입할 때도 초대코드 화면을 한 번 거친다. */}
+      <OAuthButtons />
+
       <form onSubmit={onSubmit}>
         <div style={authStyles.field}>
           <label htmlFor="email" style={authStyles.label}>이메일</label>

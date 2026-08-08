@@ -1304,6 +1304,23 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // ── users: OAuth 컬럼 + password_hash nullable 전환 (T-009, 2026-08-08) ───
+  //
+  // 컬럼 이름은 **bjj-trainning 네이밍**(`oauth_provider` / `oauth_id`)을 따른다.
+  // TheRoute 의 `sns_*` 는 따르지 않는다 — 워크스페이스 OAuth 가이드 템플릿이 전자다.
+  //
+  // ⚠️ 신규 테이블 생성이 아니라 **운영 테이블에 대한 ALTER** 다. 현재 users 는 0행이지만
+  //    "0행이니까 괜찮다"에 기대지 않고, Phase 2 의 signals.status ENUM 확장과 **동일하게**
+  //    ALGORITHM/LOCK 을 명시적으로 고정한다. 지정하지 않으면 서버가 조용히 COPY 로
+  //    폴백해 배포 도중 테이블을 락 걸 수 있다.
+  //
+  //    다만 실패 시 동작은 ENUM 과 다르게 **기동을 중단하지 않는다.**
+  //    ENUM 은 실패하면 시그널이 전멸(= 매매 정지)하는데 증상이 없어서 fail-closed 가 맞았다.
+  //    여기는 실패해도 손상되는 것이 **로그인 기능 하나**뿐이고, 아래 준비 상태 플래그가
+  //    OAuth 가입 경로에서 즉시 명확한 오류를 내보낸다. 로그인 기능 때문에 실매매
+  //    프로세스를 통째로 세우는 것은 비례가 맞지 않는다.
+  await ensureUsersOAuthColumns(p);
+
   // 회원별 안전장치. system_config 과 동일한 key-value 규약(value 는 JSON 문자열)이되
   // user_id 로 스코핑된다. 가입 시 4개 키(dry_run/kill_switch/order_max_pct/daily_order_max_pct)를
   // 트랜잭션 안에서 반드시 시드한다 — 미시드 상태를 만들지 않는다(users.ts createUser).
@@ -1325,6 +1342,152 @@ async function setupDB(): Promise<void> {
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS vol_ratio_20d DECIMAL(8,4)`).catch(() => {});
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_updated_at DATETIME`).catch(() => {});
   await p.query(`ALTER TABLE symbol_universe ADD INDEX IF NOT EXISTS idx_rs_rating (rs_rating DESC)`).catch(() => {});
+}
+
+// ── T-009 OAuth 스키마 ───────────────────────────────────────────────────────
+
+/**
+ * `users.password_hash` 가 NULL 을 받을 수 있는 상태인가.
+ *
+ * OAuth 전용 계정은 비밀번호가 **없다**. 컬럼이 NOT NULL 로 남아 있으면
+ * `sql_mode=STRICT_TRANS_TABLES` 에서 INSERT 가 하드 에러로 죽는다.
+ * 그 상태를 500 "알 수 없는 오류"로 흘리지 않고, 가입 라우트가 원인을 그대로 말하게 한다.
+ *
+ * `null` = 아직 확인 전(부팅 DDL 미실행).
+ */
+let oauthSchemaReady: boolean | null = null;
+
+/** OAuth 전용 계정 생성이 가능한 스키마 상태인지. `null` 이면 아직 확인 전. */
+export function isOAuthSchemaReady(): boolean | null {
+  return oauthSchemaReady;
+}
+
+interface UsersColumnMeta {
+  present: Set<string>;
+  passwordHashNullable: boolean;
+}
+
+async function readUsersColumnMeta(p: mysql.Pool): Promise<UsersColumnMeta> {
+  const [rows] = await p.query<mysql.RowDataPacket[]>(
+    `SELECT COLUMN_NAME, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'`,
+  );
+  const present = new Set<string>();
+  let passwordHashNullable = false;
+  for (const r of rows) {
+    const name = String(r.COLUMN_NAME);
+    present.add(name);
+    if (name === 'password_hash') passwordHashNullable = String(r.IS_NULLABLE).toUpperCase() === 'YES';
+  }
+  return { present, passwordHashNullable };
+}
+
+/**
+ * ALTER 를 **알고리즘을 고정한 채로만** 실행한다.
+ * INSTANT → (거부되면) INPLACE·LOCK=NONE 순서. 알고리즘 미지정(=COPY 허용) 형태로는 재시도하지 않는다.
+ * 두 번 다 실패하면 false 를 돌려주고 호출부가 크게 알린다 — throw 하지 않는다.
+ */
+async function alterPinned(p: mysql.Pool, label: string, ddl: string): Promise<boolean> {
+  try {
+    await p.query(`${ddl}, ALGORITHM=INSTANT, LOCK=NONE`);
+    return true;
+  } catch (instantErr) {
+    const msg = instantErr instanceof Error ? instantErr.message : String(instantErr);
+    console.warn(
+      `[db] ${label}: ALGORITHM=INSTANT 거부 — LOCK=NONE 을 유지한 INPLACE 로 재시도합니다. (${msg})`,
+    );
+    try {
+      await p.query(`${ddl}, ALGORITHM=INPLACE, LOCK=NONE`);
+      return true;
+    } catch (inplaceErr) {
+      const msg2 = inplaceErr instanceof Error ? inplaceErr.message : String(inplaceErr);
+      console.error(`[db] ❌ ${label}: INSTANT/INPLACE 모두 실패했습니다. (INPLACE: ${msg2})`);
+      return false;
+    }
+  }
+}
+
+/**
+ * users 에 OAuth 컬럼을 더하고 password_hash 를 nullable 로 바꾼다 (멱등).
+ *
+ * **필요할 때만 ALTER 한다** — INFORMATION_SCHEMA 로 현재 상태를 먼저 읽고 빠진 것만 고친다.
+ * 부팅마다 운영 테이블에 ALTER 를 던지지 않기 위함이다(Phase 2 ENUM 확장과 같은 원칙).
+ */
+async function ensureUsersOAuthColumns(p: mysql.Pool): Promise<void> {
+  let meta: UsersColumnMeta;
+  try {
+    meta = await readUsersColumnMeta(p);
+  } catch (e) {
+    // 메타데이터를 못 읽으면 무엇을 고쳐야 할지 알 수 없다. 조용히 넘어가면
+    // OAuth 가입이 원인 불명 500 으로 죽으므로 상태를 "준비 안 됨"으로 확정한다.
+    oauthSchemaReady = false;
+    console.error(
+      `[db] users 컬럼 메타데이터 조회 실패 — OAuth 스키마 상태를 확인할 수 없습니다. ` +
+      `(${e instanceof Error ? e.message : String(e)})`,
+    );
+    return;
+  }
+
+  if (!meta.present.has('oauth_provider')) {
+    await alterPinned(p, 'users.oauth_provider 추가', 'ALTER TABLE users ADD COLUMN oauth_provider VARCHAR(50) NULL');
+  }
+  if (!meta.present.has('oauth_id')) {
+    await alterPinned(p, 'users.oauth_id 추가', 'ALTER TABLE users ADD COLUMN oauth_id VARCHAR(255) NULL');
+  }
+
+  // 같은 소셜 신원이 서로 다른 두 계정에 붙는 것을 DB 차원에서 막는다.
+  // (provider, id) 가 둘 다 NULL 인 행 = 이메일 전용 계정은 UNIQUE 제약에 걸리지 않는다
+  // — MySQL/MariaDB 의 UNIQUE 인덱스는 NULL 을 중복으로 보지 않는다.
+  //
+  // 컬럼 ALTER 와 같은 원칙으로 **없을 때만** 만들고, 알고리즘도 고정한다
+  // (인덱스 생성에 INSTANT 는 없으므로 INPLACE·LOCK=NONE 이 최선이다).
+  try {
+    const [idx] = await p.query<mysql.RowDataPacket[]>(
+      `SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND INDEX_NAME = 'uq_users_oauth'
+        LIMIT 1`,
+    );
+    if (idx.length === 0) {
+      await p.query(
+        'CREATE UNIQUE INDEX uq_users_oauth ON users (oauth_provider, oauth_id) ALGORITHM=INPLACE, LOCK=NONE',
+      );
+    }
+  } catch (e) {
+    // 인덱스가 없어도 앱은 동작한다(중복 신원은 애플리케이션 레벨에서도 걸러진다).
+    // 다만 마지막 방어선이 빠진 상태이므로 조용히 넘기지 않는다.
+    console.error(
+      `[db] uq_users_oauth 인덱스를 만들지 못했습니다 — 같은 소셜 신원의 중복 계정을 DB 가 막지 못합니다. ` +
+      `(${e instanceof Error ? e.message : String(e)})`,
+    );
+  }
+
+  if (meta.passwordHashNullable) {
+    oauthSchemaReady = true;
+    return;
+  }
+
+  const ok = await alterPinned(
+    p,
+    'users.password_hash NOT NULL → NULL',
+    'ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL',
+  );
+  // 실제로 바뀌었는지 재확인한다 — ALTER 가 성공을 반환해도 상태를 눈으로 확인하고 기록한다.
+  try {
+    oauthSchemaReady = (await readUsersColumnMeta(p)).passwordHashNullable;
+  } catch {
+    oauthSchemaReady = ok;
+  }
+
+  if (oauthSchemaReady !== true) {
+    console.error(
+      '[db] ❌ users.password_hash 가 여전히 NOT NULL 입니다 — OAuth 전용 계정을 만들 수 없습니다.\n' +
+      '      소셜 로그인의 "신규 가입"만 막히고 기존 이메일 로그인·매매 기능은 정상 동작합니다.',
+    );
+    notifyCritical(
+      'OAuth 스키마 전환 실패',
+      'users.password_hash 를 nullable 로 바꾸지 못했습니다. 소셜 로그인 신규 가입이 차단됩니다.',
+    );
+  }
 }
 
 export async function getAccountId(exchange: string, label = 'default'): Promise<number> {

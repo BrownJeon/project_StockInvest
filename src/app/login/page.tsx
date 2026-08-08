@@ -10,15 +10,36 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AuthShell, authStyles } from '@/components/auth/AuthShell';
+import { OAuthButtons } from '@/components/auth/OAuthButtons';
+
+/**
+ * 콜백이 실패했을 때 붙여 보내는 고정 코드 → 사용자 문구.
+ * 콜백은 제공자 원문 오류를 URL 에 싣지 않는다(내부 오류 문구 노출 방지) — 코드만 온다.
+ */
+const OAUTH_ERROR_TEXT: Record<string, string> = {
+  cancelled: '소셜 로그인을 취소했습니다.',
+  invalid_state: '로그인 요청이 만료되었거나 올바르지 않습니다. 다시 시도해 주세요.',
+  not_configured: '서버에 소셜 로그인 설정이 없습니다. 관리자에게 문의하세요.',
+  failed: '소셜 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.',
+};
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [nextPath, setNextPath] = useState<string | undefined>(undefined);
   const emailRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { emailRef.current?.focus(); }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setOauthError(params.get('oauth_error'));
+    const n = params.get('next');
+    setNextPath(n && n.startsWith('/') && !n.startsWith('//') ? n : undefined);
+  }, []);
 
   const canSubmit = email.trim().length > 0 && password.length > 0 && !busy;
 
@@ -38,6 +59,9 @@ export default function LoginPage() {
         setPassword('');
         if (res.status === 429) setError(data.detail ?? '시도가 많습니다. 잠시 후 다시 시도하세요');
         else if (res.status === 503) setError(data.detail ?? '서버 인증 설정(AUTH_SESSION_SECRET)이 없습니다');
+        // OAuth 전용 계정 — 비밀번호가 없으므로 어느 쪽으로 로그인해야 하는지 알려준다.
+        // 이 문구가 없으면 사용자는 비밀번호를 계속 틀리다 계정이 잠긴다.
+        else if (data.error === 'oauth_account' && data.detail) setError(data.detail);
         else setError('이메일 또는 비밀번호가 올바르지 않습니다');
         setBusy(false);
         return;
@@ -55,6 +79,23 @@ export default function LoginPage() {
 
   return (
     <AuthShell title="주식 자동매매" subtitle="계속하려면 로그인하세요">
+      {/* 이메일 검증이 안 된 소셜 계정 — 기존 계정에 잘못 붙는 것을 막은 경우.
+          일반 실패와 시각적으로 확실히 구분한다(목업 3번 red note). */}
+      {oauthError === 'email_unverified' && (
+        <div role="alert" style={authStyles.noteDanger}>
+          <b style={{ color: '#fca5a5' }}>이 소셜 계정의 이메일이 확인되지 않았습니다.</b><br />
+          Google/GitHub에서 이메일 인증을 마친 뒤 다시 시도해 주세요.
+          기존 계정에 잘못 연결되는 것을 막기 위한 조치입니다.
+        </div>
+      )}
+      {oauthError !== null && oauthError !== 'email_unverified' && (
+        <div role="alert" style={authStyles.note}>
+          {OAUTH_ERROR_TEXT[oauthError] ?? OAUTH_ERROR_TEXT.failed}
+        </div>
+      )}
+
+      <OAuthButtons nextPath={nextPath} />
+
       <form onSubmit={onSubmit}>
         <div style={authStyles.field}>
           <label htmlFor="email" style={authStyles.label}>이메일</label>

@@ -143,7 +143,16 @@ export function validatePct(raw: unknown): { ok: true; value: number } | { ok: f
 export interface UserRecord {
   id: number;
   email: string;
-  passwordHash: string;
+  /**
+   * `null` = **OAuth 전용 계정**(비밀번호 없음, T-009).
+   * 비교 전에 반드시 null 을 확인한다 — `verifyPassword` 는 null 을 false 로 처리하지만,
+   * "비밀번호가 틀렸다"와 "비밀번호가 아예 없다"는 사용자에게 다른 안내가 나가야 한다.
+   */
+  passwordHash: string | null;
+  /** 연결된 소셜 프로바이더 (`google` | `github`) — 미연결이면 null */
+  oauthProvider: string | null;
+  /** 프로바이더 내 사용자 고유 id — 미연결이면 null */
+  oauthId: string | null;
   kisAppKeyEnc: string | null;
   kisAppSecretEnc: string | null;
   kisAccountNoEnc: string | null;
@@ -156,7 +165,9 @@ export interface UserRecord {
 interface UserRow extends RowDataPacket {
   id: number;
   email: string;
-  password_hash: string;
+  password_hash: string | null;
+  oauth_provider: string | null;
+  oauth_id: string | null;
   kis_app_key_enc: string | null;
   kis_app_secret_enc: string | null;
   kis_account_no_enc: string | null;
@@ -167,14 +178,23 @@ interface UserRow extends RowDataPacket {
 }
 
 const USER_COLUMNS =
-  'id, email, password_hash, kis_app_key_enc, kis_app_secret_enc, kis_account_no_enc, ' +
+  'id, email, password_hash, oauth_provider, oauth_id, ' +
+  'kis_app_key_enc, kis_app_secret_enc, kis_account_no_enc, ' +
   'kis_account_product, kis_mock, kis_connected_at, created_at';
 
 function toRecord(row: UserRow): UserRecord {
   return {
     id: Number(row.id),
     email: String(row.email),
-    passwordHash: String(row.password_hash),
+    // 빈 문자열도 null 로 수렴시킨다 — "값이 있다"로 오인되면 OAuth 계정에
+    // 비밀번호 로그인 안내 대신 일반 실패 문구가 나가게 된다.
+    passwordHash: typeof row.password_hash === 'string' && row.password_hash.length > 0
+      ? row.password_hash
+      : null,
+    oauthProvider: typeof row.oauth_provider === 'string' && row.oauth_provider.length > 0
+      ? row.oauth_provider
+      : null,
+    oauthId: typeof row.oauth_id === 'string' && row.oauth_id.length > 0 ? row.oauth_id : null,
     kisAppKeyEnc: row.kis_app_key_enc,
     kisAppSecretEnc: row.kis_app_secret_enc,
     kisAccountNoEnc: row.kis_account_no_enc,
@@ -211,14 +231,14 @@ export function isDuplicateEmailError(e: unknown): boolean {
  * 설계문서 §user_settings: "미시드 상태를 절대 만들지 않는다".
  * 중간 실패로 설정 없는 회원이 생기면 이후 한도 조회가 0(거부)으로 떨어진다.
  */
-export async function createUser(email: string, passwordHash: string): Promise<number> {
+async function insertUserWithSettings(
+  sql: string,
+  params: unknown[],
+): Promise<number> {
   const conn: PoolConnection = await getPool().getConnection();
   try {
     await conn.beginTransaction();
-    const [res] = await conn.query<ResultSetHeader>(
-      'INSERT INTO users (email, password_hash) VALUES (?, ?)',
-      [email, passwordHash],
-    );
+    const [res] = await conn.query<ResultSetHeader>(sql, params);
     const userId = Number(res.insertId);
     for (const [key, value] of defaultSettingRows()) {
       await conn.query(
@@ -234,6 +254,77 @@ export async function createUser(email: string, passwordHash: string): Promise<n
   } finally {
     conn.release();
   }
+}
+
+export async function createUser(email: string, passwordHash: string): Promise<number> {
+  return insertUserWithSettings(
+    'INSERT INTO users (email, password_hash) VALUES (?, ?)',
+    [email, passwordHash],
+  );
+}
+
+// ─── OAuth (T-009, 2026-08-08) ───────────────────────────────────────────────
+
+/**
+ * 소셜 신원으로 회원 조회. **로그인 판정의 1순위 경로**다
+ * (이메일 매칭보다 먼저 — 이미 묶인 신원은 이메일 검증 여부를 다시 따질 필요가 없다).
+ */
+export async function findUserByOAuth(provider: string, oauthId: string): Promise<UserRecord | null> {
+  const [rows] = await getPool().query<UserRow[]>(
+    `SELECT ${USER_COLUMNS} FROM users WHERE oauth_provider = ? AND oauth_id = ? LIMIT 1`,
+    [provider, oauthId],
+  );
+  return rows.length > 0 ? toRecord(rows[0]) : null;
+}
+
+/**
+ * 기존(이메일 가입) 계정에 소셜 신원을 연결한다.
+ *
+ * `WHERE ... AND oauth_provider IS NULL` 가드가 핵심이다 — 판정(SELECT)과 이 UPDATE 사이에
+ * 다른 요청이 먼저 연결했더라도 **덮어쓰지 않는다.** 덮어쓰면 먼저 연결된 소셜 계정이
+ * 조용히 로그인 불가가 된다.
+ *
+ * `email_verified` 도 함께 1 로 올린다 — 제공자가 검증을 단언한 이메일만 이 경로에 들어온다.
+ *
+ * @returns 실제로 연결됐으면 true (0행이면 이미 다른 신원에 묶여 있던 것)
+ */
+export async function linkOAuthToUser(
+  userId: number,
+  provider: string,
+  oauthId: string,
+): Promise<boolean> {
+  const [res] = await getPool().query<ResultSetHeader>(
+    `UPDATE users
+        SET oauth_provider = ?, oauth_id = ?, email_verified = 1
+      WHERE id = ? AND oauth_provider IS NULL`,
+    [provider, oauthId, userId],
+  );
+  return res.affectedRows > 0;
+}
+
+/**
+ * OAuth 전용 회원 생성 — `password_hash` 는 **NULL**.
+ *
+ * ⚠️ 이 함수는 초대코드 검증을 하지 않는다. 호출 전에 `evaluateOAuthCompletion` 이
+ *    통과했어야 한다(라우트가 그 구조를 강제한다). 여기서 다시 검사하면 검사 지점이
+ *    둘로 갈라져 어느 쪽이 진짜인지 흐려진다.
+ */
+export async function createOAuthUser(args: {
+  email: string;
+  provider: string;
+  oauthId: string;
+}): Promise<number> {
+  return insertUserWithSettings(
+    'INSERT INTO users (email, password_hash, oauth_provider, oauth_id, email_verified) VALUES (?, NULL, ?, ?, 1)',
+    [args.email, args.provider, args.oauthId],
+  );
+}
+
+/** 소셜 신원 UNIQUE(uq_users_oauth) 위반 판정 — 동시 가입 경합 시 발생. */
+export function isDuplicateOAuthError(e: unknown): boolean {
+  if (typeof e !== 'object' || e === null) return false;
+  const err = e as { code?: string; message?: string };
+  return err.code === 'ER_DUP_ENTRY' && String(err.message ?? '').includes('uq_users_oauth');
 }
 
 export async function updatePasswordHash(userId: number, passwordHash: string): Promise<void> {

@@ -70,7 +70,32 @@ export async function POST(req: NextRequest) {
     const user = email.length > 0 ? await findUserByEmail(email) : null;
 
     // 미가입이어도 동일한 KDF 비용을 치른다 — 응답 시간으로 가입 여부가 새지 않게.
+    // OAuth 전용 계정(passwordHash === null)도 여기서 더미 해시로 **같은 비용**을 치른다.
     const passwordOk = await verifyPassword(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
+
+    // ── OAuth 전용 계정에 비밀번호로 로그인 시도 (T-009, bjj-trainning 패턴) ──
+    //
+    // ⚠️ 이 분기는 T-008 의 이메일 열거 방지 원칙(#1 "실패 사유를 구분하지 않는다")에 대한
+    //    **의도적 예외**다. 비밀번호가 없는 계정에 일반 실패 문구를 주면 사용자는
+    //    비밀번호를 영원히 다시 입력하며 계정이 잠길 때까지 헤맨다 — 안내가 없으면
+    //    사실상 로그인 불가 상태다(비밀번호 재설정 경로도 없다).
+    //
+    //    누출 범위는 **OAuth 로 가입한 계정의 존재 여부**로 한정된다:
+    //      - 비밀번호가 있는 계정은 기존과 완전히 동일하게 GENERIC_FAIL 로 떨어진다
+    //      - KDF 비용을 먼저 치른 뒤 판정하므로 응답 시간으로는 여전히 구분되지 않는다
+    //    그래도 열거 표면이 넓어지는 것은 사실이므로 reviewer 판단이 필요하다(보고서에 기재).
+    if (user && user.passwordHash === null) {
+      const label = user.oauthProvider === 'github' ? 'GitHub' : 'Google';
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'oauth_account',
+          provider: user.oauthProvider,
+          detail: `${label}로 가입된 계정입니다. 아래 ${label}로 계속하기를 눌러 로그인하세요.`,
+        },
+        { status: 401 },
+      );
+    }
 
     if (!user || !passwordOk) {
       const fail = registerLoginFailure(email);

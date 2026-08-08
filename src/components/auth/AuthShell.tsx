@@ -60,6 +60,24 @@ export const authStyles: Record<string, CSSProperties> = {
     borderRadius: 8, padding: '11px 12px', fontSize: 12, color: 'var(--muted)',
     lineHeight: 1.55, margin: '14px 0 4px',
   },
+  /** 경고용 note (T-009 목업 `.note.red`) — 미검증 이메일 거부처럼 반드시 읽혀야 하는 안내. */
+  noteDanger: {
+    background: '#2a1416', border: '1px solid #4a2226', borderLeft: '3px solid var(--danger)',
+    borderRadius: 8, padding: '11px 12px', fontSize: 12, color: 'var(--muted)',
+    lineHeight: 1.55, margin: '0 0 16px',
+  },
+  /** 초대코드 화면의 "인증 완료" 칩 (T-009 목업 `.prov`) */
+  provider: {
+    display: 'flex', alignItems: 'center', gap: 9,
+    background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8,
+    padding: '10px 12px', fontSize: 13, marginBottom: 14,
+  },
+  /** 보조 버튼 (목업 `.btn.ghost`) */
+  submitGhost: {
+    minHeight: 48, borderRadius: 10, background: 'transparent',
+    border: '1px solid var(--border2)', color: 'var(--text)',
+    fontSize: 15, fontWeight: 600, width: '100%', marginTop: 4,
+  },
   alt: { textAlign: 'center', fontSize: 12.5, color: 'var(--muted)', marginTop: 16, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 },
   altLink: { color: 'var(--accent)', borderBottom: '1px solid var(--accent)', paddingBottom: 1, fontWeight: 600 },
 };

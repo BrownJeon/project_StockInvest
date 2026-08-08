@@ -20,8 +20,19 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { SESSION_COOKIE, getSessionSecret, verifySession } from '@/lib/auth/session';
+import { OAUTH_PUBLIC_PATHS } from '@/lib/auth/oauth/names';
 
-/** 인증 없이 통과시키는 정확 경로 */
+/**
+ * 인증 없이 통과시키는 정확 경로.
+ *
+ * T-009: 소셜 로그인 경로가 추가됐다. 전부 **로그인 전** 상태에서 호출되므로 공개여야 한다.
+ *   - `/api/auth/{google,github}` · `.../callback` : 리다이렉트 진입점과 제공자 콜백
+ *   - `/api/auth/oauth-providers`                  : 노출할 버튼 목록 (로그인 화면이 호출)
+ *   - `/api/auth/oauth-pending` · `oauth-complete`  : 초대코드 화면과 그 제출
+ *   - `/oauth/invite`                              : 초대코드 화면 자체
+ * `/api/auth/` 를 prefix 로 통째로 열지 않는다 — 앞으로 추가될 인증 라우트가 실수로
+ * 함께 열리는 것을 막기 위해 경로를 하나씩 명시한다.
+ */
 const PUBLIC_EXACT = new Set<string>([
   '/api/health',
   '/login',
@@ -29,6 +40,11 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/login',
   '/api/auth/signup',
   '/api/auth/logout',
+  ...OAUTH_PUBLIC_PATHS,
+  '/api/auth/oauth-providers',
+  '/api/auth/oauth-pending',
+  '/api/auth/oauth-complete',
+  '/oauth/invite',
   '/favicon.ico',
   '/robots.txt',
   '/manifest.json',
