@@ -1,12 +1,15 @@
 /**
- * HMAC 서명 세션 토큰 — Edge Runtime 호환 (Phase 0, 2026-08-02).
+ * HMAC 서명 세션 토큰 — Edge Runtime 호환 (Phase 0, 2026-08-02 / T-008 멀티테넌트 전환 2026-08-07).
  *
- * `src/middleware.ts`는 Next.js 14 App Router에서 **Edge Runtime**으로 실행되므로
- * `node:crypto` / `mysql2` 등 Node 전용 모듈을 쓸 수 없다.
- * 여기서는 Web Crypto(`crypto.subtle`)와 `btoa`/`atob`만 사용한다.
+ * `src/middleware.ts`는 **Edge Runtime**으로 실행되므로 `node:crypto` / `mysql2` 등
+ * Node 전용 모듈을 쓸 수 없다. 여기서는 Web Crypto(`crypto.subtle`)와 `btoa`/`atob`만 사용한다.
  *
  * 토큰 포맷: `v1.<payload(base64url JSON)>.<signature(base64url HMAC-SHA256)>`
- * 서명 키 = `AUTH_PIN` 환경변수. PIN이 바뀌면 기존 세션은 자동 무효화된다.
+ *
+ * T-008 변경:
+ *   - payload `sub`: 고정 문자열 `'owner'` → **회원 id(양의 정수)**
+ *   - 서명 키: `AUTH_PIN` → **`AUTH_SESSION_SECRET`** (PIN 이 서명 키를 겸하던 문제 해소)
+ *   두 변경 모두 기존 쿠키를 무효화한다 — 배포 후 전원 재로그인(설계문서 §세션의 예정 동작).
  */
 
 /** 세션 쿠키 이름 */
@@ -22,14 +25,14 @@ export interface SessionPayload {
   iat: number;
   /** 만료 시각 (epoch ms) */
   exp: number;
-  /** 주체 — 단일 사용자 앱이므로 고정값 'owner' */
-  sub: string;
+  /** 주체 — 회원 `users.id` (양의 정수) */
+  sub: number;
 }
 
 export type VerifyFailReason =
-  | 'no_secret'      // AUTH_PIN 미설정
+  | 'no_secret'      // AUTH_SESSION_SECRET 미설정
   | 'missing'        // 쿠키 없음
-  | 'malformed'      // 포맷/파싱 오류
+  | 'malformed'      // 포맷/파싱 오류 (sub 타입 오류 포함)
   | 'bad_signature'  // 서명 불일치
   | 'expired';       // 만료
 
@@ -77,28 +80,26 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
-/** 문자열 상수시간 비교 (PIN 대조용). 길이 정보는 누출되나 값은 조기 반환하지 않는다. */
-export function safeEqualStr(a: string, b: string): boolean {
-  const enc = new TextEncoder();
-  return bytesEqual(enc.encode(a), enc.encode(b));
-}
-
 // ─── 서명 / 검증 ────────────────────────────────────────────────────────────
 
 /**
  * 세션 토큰 서명.
- * @param secret   서명 키 (= AUTH_PIN)
- * @param nowMs    발급 기준 시각 (테스트 주입용)
- * @param maxAgeSec 유효기간(초)
+ * @param secret   서명 키 (= AUTH_SESSION_SECRET)
+ * @param userId   회원 id (양의 정수)
+ * @param opts     nowMs / maxAgeSec 는 테스트 주입용
  */
 export async function signSession(
   secret: string,
+  userId: number,
   opts: { nowMs?: number; maxAgeSec?: number } = {},
 ): Promise<string> {
   if (!secret) throw new Error('signSession: secret required');
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    throw new Error('signSession: userId must be a positive integer');
+  }
   const now = opts.nowMs ?? Date.now();
   const maxAge = opts.maxAgeSec ?? SESSION_MAX_AGE_SEC;
-  const payload: SessionPayload = { iat: now, exp: now + maxAge * 1000, sub: 'owner' };
+  const payload: SessionPayload = { iat: now, exp: now + maxAge * 1000, sub: userId };
   const body = b64urlEncode(new TextEncoder().encode(JSON.stringify(payload)));
   const signed = `${TOKEN_VERSION}.${body}`;
   const sig = b64urlEncode(await hmacSha256(secret, signed));
@@ -106,8 +107,11 @@ export async function signSession(
 }
 
 /**
- * 세션 토큰 검증. 서명 → 만료 순으로 확인한다.
+ * 세션 토큰 검증. 서명 → payload 형식 → 만료 순으로 확인한다.
  * secret이 비어 있으면 `no_secret` (fail-closed — 호출부는 통과시키면 안 된다).
+ *
+ * ⚠️ `sub` 는 **양의 정수만** 허용한다. 서명이 맞아도 형식이 어긋나면 거부한다
+ *    (`"1 OR 1=1"`·`true`·부동소수 같은 타입 혼동 값이 회원 id 자리로 흘러드는 것을 차단).
  */
 export async function verifySession(
   token: string | null | undefined,
@@ -142,23 +146,26 @@ export async function verifySession(
   if (!payload || typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
     return { ok: false, reason: 'malformed' };
   }
+  if (typeof payload.sub !== 'number' || !Number.isSafeInteger(payload.sub) || payload.sub <= 0) {
+    return { ok: false, reason: 'malformed' };
+  }
   if (nowMs >= payload.exp) return { ok: false, reason: 'expired' };
 
   return { ok: true, payload };
 }
 
 /**
- * AUTH_PIN 조회. 공백만 있거나 미설정이면 undefined.
+ * 세션 서명 키 조회. 공백만 있거나 미설정이면 undefined.
  * 모듈 top-level이 아니라 호출 시점에 읽는다 — Edge 샌드박스는 요청 시 실제 process.env를 복사한다.
  */
-export function getAuthPin(): string | undefined {
-  const v = process.env.AUTH_PIN;
+export function getSessionSecret(): string | undefined {
+  const v = process.env.AUTH_SESSION_SECRET;
   if (typeof v !== 'string') return undefined;
   const t = v.trim();
   return t.length > 0 ? t : undefined;
 }
 
-/** AUTH_PIN 설정 여부 (값은 노출하지 않는다). */
+/** 세션 서명 키 설정 여부 (값은 노출하지 않는다). */
 export function isAuthConfigured(): boolean {
-  return getAuthPin() !== undefined;
+  return getSessionSecret() !== undefined;
 }

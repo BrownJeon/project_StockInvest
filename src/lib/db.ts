@@ -1271,6 +1271,54 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // ── users / user_settings — 멀티테넌트 전환 Step 1 (T-008, 2026-08-07) ────
+  //
+  // 설계문서: docs/superpowers/specs/2026-08-04-multi-user-kis-accounts-design.md
+  // **이 단계에서는 스키마만 만든다.** 매매 엔진·cron·안전장치는 여전히 전역
+  // `.env`/`system_config` 로 동작하며 이 테이블을 읽지 않는다(Step 2·4에서 배선).
+  // 기존 테이블은 하나도 건드리지 않는다 — 신규 테이블 추가뿐이다.
+  //
+  // ⚠️ 설계문서와 다른 점 — KIS 컬럼 3개가 **NULL 허용**이다.
+  //    문서는 가입 시 KIS 키를 함께 받는 전제로 NOT NULL 을 명시했지만, 사용자 결정(Q1)으로
+  //    가입은 이메일+비밀번호만 받고 KIS 연결은 프로필의 별도 흐름으로 분리됐다.
+  //    따라서 "KIS 미연결 회원"이 정상 상태로 존재한다 — 그것을 스키마가 표현해야 한다.
+  //    (NOT NULL 로 두면 빈 문자열 같은 가짜 값을 넣게 되고, 그러면 "연결됨"과 구분이 사라진다)
+  //    `kis_connected_at` 은 문서에 없는 추가 컬럼 — 마지막 검증 성공 시각을 화면에 보여준다.
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      email VARCHAR(255) NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,          -- scrypt$<saltHex>$<hashHex>
+      kis_app_key_enc TEXT NULL,                    -- AES-256-GCM (미연결이면 NULL)
+      kis_app_secret_enc TEXT NULL,                 -- AES-256-GCM (미연결이면 NULL)
+      kis_account_no_enc TEXT NULL,                 -- AES-256-GCM (미연결이면 NULL)
+      kis_account_product VARCHAR(4) NOT NULL DEFAULT '01',
+      kis_mock TINYINT(1) NOT NULL DEFAULT 0,       -- 0=실전투자(기본), 1=모의투자 — 사용자 결정 Q2
+      kis_connected_at DATETIME NULL,               -- 마지막 KIS 검증 성공 시각
+      kis_access_token TEXT NULL,                   -- 회원별 토큰 캐시 (평문 — 만료 짧아 기존 관례와 동일)
+      kis_access_token_expires_at DATETIME NULL,
+      email_verified TINYINT(1) NOT NULL DEFAULT 0, -- 향후 이메일 인증용, 현재 미사용
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_users_email (email)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // 회원별 안전장치. system_config 과 동일한 key-value 규약(value 는 JSON 문자열)이되
+  // user_id 로 스코핑된다. 가입 시 4개 키(dry_run/kill_switch/order_max_pct/daily_order_max_pct)를
+  // 트랜잭션 안에서 반드시 시드한다 — 미시드 상태를 만들지 않는다(users.ts createUser).
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS user_settings (
+      id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+      user_id INT UNSIGNED NOT NULL,
+      \`key\` VARCHAR(64) NOT NULL,
+      value TEXT NOT NULL,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_user_key (user_id, \`key\`),
+      CONSTRAINT fk_user_settings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // ── symbol_universe: RS Rating 컬럼 추가 (Phase D) ──────────────────────
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_rating     TINYINT UNSIGNED`).catch(() => {});
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS near_52w_high BOOLEAN DEFAULT FALSE`).catch(() => {});

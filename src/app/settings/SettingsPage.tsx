@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { fmtNum } from '@/lib/format';
 import { requestJson, type RequestFailure } from '@/lib/http';
 import { LlmProviderSection } from './LlmProviderSection';
@@ -345,6 +346,26 @@ export function SettingsPage() {
           )}
         </div>
       )}
+
+      {/* 내 계정 — 회원별 화면(T-008). 이 페이지의 안전장치는 **서버 공용** 값이고,
+          /profile 의 안전장치는 회원별 값이다(Step 4 전까지 엔진 미배선). */}
+      <SectionHeader title="내 계정" />
+      <Link
+        href="/profile"
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+          minHeight: 56, padding: '12px 16px', marginBottom: 16,
+          background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)',
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14 }}>내 계정 · 증권계좌 연결</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+            비밀번호 변경 · KIS 키 연결 · 회원별 매매 설정
+          </div>
+        </div>
+        <span style={{ fontSize: 18, color: 'var(--muted)' }} aria-hidden>›</span>
+      </Link>
 
       {/* 승인 방식 — 두 상태 모두 "사람 승인 후 주문"이다 (자율성과 무관) */}
       <SectionHeader title="승인 방식" />

@@ -8,21 +8,26 @@
  *            서명 검증은 Web Crypto 기반 `@/lib/auth/session`만 사용하고, 상태는 환경변수만 읽는다.
  *
  * 규칙:
- *  1) 무인증 통과   : /api/health, /login, /api/auth/login, /api/auth/logout, /_next/*, 정적 자산
+ *  1) 무인증 통과   : /api/health, /login, /signup, /api/auth/*(login·signup·logout), /_next/*, 정적 자산
  *  2) /api/cron/*   : `x-cron-secret` 헤더 == `CRON_SECRET` (미설정 시 전면 거부 — fail-closed)
  *                     라우트 내부 checkCronAuth 는 그대로 유지 (이중 방어)
  *  3) 그 외 전부    : HMAC 서명 세션 쿠키 검증. 실패 시 API는 401 JSON, 페이지는 /login 리다이렉트
- *  4) AUTH_PIN 미설정 : 보호 라우트 전부 503 (fail-closed). health/login 은 예외.
+ *  4) AUTH_SESSION_SECRET 미설정 : 보호 라우트 전부 503 (fail-closed). health/login/signup 은 예외.
+ *
+ * T-008(2026-08-07): 세션 서명 키가 `AUTH_PIN` → `AUTH_SESSION_SECRET` 으로 바뀌었고
+ * 회원가입 경로(`/signup`, `/api/auth/signup`)가 공개 경로에 추가됐다.
  */
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { SESSION_COOKIE, getAuthPin, verifySession } from '@/lib/auth/session';
+import { SESSION_COOKIE, getSessionSecret, verifySession } from '@/lib/auth/session';
 
 /** 인증 없이 통과시키는 정확 경로 */
 const PUBLIC_EXACT = new Set<string>([
   '/api/health',
   '/login',
+  '/signup',
   '/api/auth/login',
+  '/api/auth/signup',
   '/api/auth/logout',
   '/favicon.ico',
   '/robots.txt',
@@ -47,16 +52,16 @@ function jsonError(status: number, error: string, detail?: string): NextResponse
   return NextResponse.json({ ok: false, error, ...(detail ? { detail } : {}) }, { status });
 }
 
-/** AUTH_PIN 미설정 안내 (페이지용 최소 HTML) */
+/** AUTH_SESSION_SECRET 미설정 안내 (페이지용 최소 HTML) */
 function authNotConfiguredPage(): NextResponse {
   const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>설정 필요</title></head>
 <body style="margin:0;background:#0f1115;color:#e6e8ee;font-family:ui-sans-serif,system-ui,-apple-system,'Noto Sans KR',sans-serif">
 <div style="max-width:412px;margin:0 auto;padding:24px 16px">
-<h1 style="font-size:18px;margin:0 0 12px">AUTH_PIN 설정 필요</h1>
+<h1 style="font-size:18px;margin:0 0 12px">AUTH_SESSION_SECRET 설정 필요</h1>
 <p style="font-size:14px;line-height:1.6;color:#8b93a7;margin:0">
-서버 <code>.env</code> 에 <code>AUTH_PIN</code> 을 설정한 뒤 앱을 재시작하세요.
+서버 <code>.env</code> 에 <code>AUTH_SESSION_SECRET</code> 을 설정한 뒤 앱을 재시작하세요.
 설정 전까지 모든 보호 라우트는 차단됩니다 (fail-closed).
 </p></div></body></html>`;
   return new NextResponse(html, {
@@ -83,17 +88,17 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // 4) AUTH_PIN 미설정 → 전면 차단
-  const pin = getAuthPin();
-  if (!pin) {
+  // 4) AUTH_SESSION_SECRET 미설정 → 전면 차단
+  const secret = getSessionSecret();
+  if (!secret) {
     return isApi
-      ? jsonError(503, 'auth_not_configured', 'AUTH_PIN 설정 필요 — 서버 .env에 AUTH_PIN을 지정하고 재시작하세요')
+      ? jsonError(503, 'auth_not_configured', 'AUTH_SESSION_SECRET 설정 필요 — 서버 .env에 지정하고 재시작하세요')
       : authNotConfiguredPage();
   }
 
   // 3) 세션 쿠키 검증
   const token = req.cookies.get(SESSION_COOKIE)?.value;
-  const result = await verifySession(token, pin);
+  const result = await verifySession(token, secret);
   if (result.ok) return NextResponse.next();
 
   if (isApi) {

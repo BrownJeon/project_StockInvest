@@ -11,8 +11,8 @@ const TABS = [
   { href: '/settings',   label: '설정',     icon: '⚙️', emphasize: false },
 ] as const;
 
-/** 하단 탭을 숨길 경로 (로그인 등 인증 전 화면) */
-const HIDDEN_PATHS = ['/login'];
+/** 하단 탭을 숨길 경로 (로그인·회원가입 등 인증 전 화면) */
+const HIDDEN_PATHS = ['/login', '/signup'];
 
 export function BottomTabs() {
   const pathname = usePathname();
