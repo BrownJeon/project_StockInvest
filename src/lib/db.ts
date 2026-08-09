@@ -1365,6 +1365,25 @@ async function setupDB(): Promise<void> {
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_updated_at DATETIME`).catch(() => {});
   await p.query(`ALTER TABLE symbol_universe ADD INDEX IF NOT EXISTS idx_rs_rating (rs_rating DESC)`).catch(() => {});
 
+  // ── T-012 (2026-08-09) — `price=0` 오염 스냅샷 12행 정리 ───────────────────
+  //
+  // `portfolio_snapshots.total_krw` 는 킬스위치 24h 기준선·변동성 가드·주문한도(pct)의
+  // 입력값이다. 보유 종목이 0원으로 평가된 12행은 총액을 -5.4% ~ -73.7% 과소 기록하고 있어,
+  // 현재값으로 쓰이면 킬스위치를 오발동시키고 기준선으로 쓰이면 실제 폭락을 은폐한다.
+  // 대상 id 는 모듈에 명시돼 있고, 삭제 전 원본을 system_config 에 보관한다.
+  // (재발 방지는 volatility-guard 의 `validateSnapshotPositions` 가 담당한다.)
+  try {
+    const cleanup = await import('@/lib/safety/snapshot-cleanup');
+    await runOnceMigration(
+      p,
+      cleanup.ZERO_PRICE_SNAPSHOT_MARKER,
+      'T-012 price=0 오염 스냅샷 12행 아카이브 후 삭제',
+      () => cleanup.purgeZeroPriceSnapshots({ db: p }),
+    );
+  } catch (e) {
+    console.warn(`[db] T-012 스냅샷 정리 모듈 로드 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   // ── T-011 (2026-08-09) — 기존 서버 계좌를 **소유자 계정 1개**로 1회 이관 ────
   //
   // 왜 프로필 UI 버튼이 아닌가: "서버 계좌 가져오기" 버튼은 멀티테넌트에서 **미래의 어떤

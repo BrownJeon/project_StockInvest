@@ -62,7 +62,13 @@ async function fetchTotals(): Promise<MarketTotals> {
       overseas: overseasKRW,
       total:    domesticKRW + overseasKRW,
     };
-  } catch {
+  } catch (e) {
+    // T-012: `kis.getBalances()` 는 한 시장이라도 실패하면 던진다(BalancesIncompleteError).
+    // 여기서 0/0/0 을 돌려주면 `getPortfolioTotalsKRW` 가 **직전 캐시로 폴백**하거나(캐시 있음)
+    // pct 한도를 0 으로 만들어 신규 주문을 막는다(캐시 없음) — 둘 다 "낮은 총액을 진짜처럼
+    // 쓰는 것"보다 안전한 방향이다. 단, 조용히 넘어가면 안 되므로 반드시 남긴다.
+    console.error('[portfolio-total] 잔고 조회 실패 — 평가액 산출 포기(직전 캐시 또는 0 반환):',
+      e instanceof Error ? e.message : String(e));
     return { domestic: 0, overseas: 0, total: 0 };
   }
 }

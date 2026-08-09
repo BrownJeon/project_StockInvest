@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
-import { kis } from '@/lib/exchanges/kis';
+import { kis, BalancesIncompleteError } from '@/lib/exchanges/kis';
 import { sendAlert } from '@/lib/notify';
-import { savePortfolioSnapshot, checkVolatilityGuard } from '@/lib/safety/volatility-guard';
+import { sendAlertThrottled } from '@/lib/notify/throttle';
+import {
+  savePortfolioSnapshot, checkVolatilityGuard, reportSnapshotBlindness,
+  type SnapshotPosition,
+} from '@/lib/safety/volatility-guard';
 import { checkAndTriggerDrawdownKillSwitch, isKillSwitchActive } from '@/lib/safety/kill-switch';
 import { getPool } from '@/lib/db';
 import { getCurrentMarket } from '@/lib/strategy/market-hours';
@@ -11,6 +15,17 @@ export const dynamic = 'force-dynamic';
 
 import { checkCronAuth } from '@/lib/cron-auth';
 const RECENT_SNAPSHOT_MS = 90 * 60 * 1000; // 90분 — 시간당 cron이라 1.5배 여유
+
+/** 잔고 부분 실패 알림 — 30분 스로틀. 건너뛰기가 조용하면 스냅샷 기아가 보이지 않는다. */
+function notifyBalancesIncomplete(detail: string): void {
+  sendAlertThrottled(
+    'snapshot:balances_incomplete',
+    'warning',
+    '포트폴리오 스냅샷 건너뜀 — 잔고 부분 실패',
+    `${detail}\n낮은 총액을 기록하면 킬스위치 24h 기준선이 오염되므로 이번 회차는 기록하지 않았습니다. `
+    + '다음 주기에 자동 복구되며, 반복되면 KIS 레이트리밋(EGW00201) 상태를 확인하세요.',
+  );
+}
 
 // 양시장 마감 + 최근 스냅샷 존재 시 KIS 호출 생략 (price 변동 없음)
 async function shouldSkipFetch(): Promise<{ skip: boolean; lastSnapshotAt?: Date }> {
@@ -48,6 +63,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // T-012: 한 시장이라도 조회 실패면 던진다. 아래 catch 에서 스냅샷을 **건너뛴다**.
+    // (기록을 남기지 않는 쪽이, 낮은 총액을 남기는 쪽보다 안전하다 — 근거는 catch 주석)
     const balances = await kis.getBalances();
 
     // KRW/USD 예수금과 보유 종목(국내 6자리 / 해외 EXCD:TICKER) 분리
@@ -59,7 +76,7 @@ export async function POST(req: NextRequest) {
     const krwFree   = Number(krwBalance?.free ?? 0);
     const krwLocked = Number(krwBalance?.locked ?? 0);
     let totalKRW = krwFree;
-    const positions: Array<{ currency: string; qty: number; price: number; value_krw: number; locked?: number }> = [];
+    const positions: SnapshotPosition[] = [];
 
     if (krwBalance && (krwFree > 0 || krwLocked > 0)) {
       positions.push({ currency: 'KRW', qty: krwFree, price: 1, value_krw: krwFree, locked: krwLocked });
@@ -87,7 +104,12 @@ export async function POST(req: NextRequest) {
       let price = 0;
       try {
         const ticker = await kis.getTicker(b.currency);
-        price = ticker.price;
+        price = Number(ticker.price);
+        // 조회가 "성공"했는데 값이 0/NaN 인 경우도 실패로 다룬다 (T-012).
+        // 0원 단가를 그대로 쓰면 그 종목이 총액에서 조용히 사라져 안전장치 기준값이 오염되고,
+        // savePortfolioSnapshot 이 스냅샷 전체를 거부한다. 바로 옆에 avgPrice 폴백이 있는데
+        // 그걸 못 쓰고 tick 을 통째로 버리는 것은 손해다.
+        if (!Number.isFinite(price) || price <= 0) throw new Error(`ticker price=${ticker.price}`);
       } catch {
         // 시세 조회 실패 → avgPrice(KRW) fallback. 없으면 해당 종목 제외.
         if (b.avgPrice && b.avgPrice > 0) {
@@ -137,6 +159,41 @@ export async function POST(req: NextRequest) {
       action,
     });
   } catch (e) {
+    /**
+     * 잔고 부분 실패 — 스냅샷을 **건너뛴다**(기록하지 않는다).
+     *
+     * ## 왜 "직전 값을 복사해 기록"이 아니라 "건너뛰기"인가
+     *
+     * 직전 총액을 새 타임스탬프로 다시 넣는 것은 **없는 관측을 지어내는 것**이다.
+     * "T 시각에 포트폴리오가 그대로였다"는 사실을 우리는 모르는데, 킬스위치는 그 행을
+     * 현재값으로 읽는다 — 실제 폭락 중이라면 그 위조 행이 폭락을 **은폐**한다.
+     * 오염된 값을 못 넣게 만드는 작업에서 값을 지어내는 것은 자기모순이다.
+     *
+     * ## 건너뛰기의 비용은 실측상 작다
+     *
+     * 킬스위치 drawdown 은 24h 전 **±60분(1380~1500분) 창**에서 기준선을 찾고, 없으면
+     * 검사를 건너뛴다(오발동이 아니라 미검사 — 페일오픈). 스냅샷 간격 실측 중앙값은 71분,
+     * 부분 실패는 다음 tick(60~90분 뒤)에 거의 항상 복구된다(직후 tick 정상 복귀 확인).
+     * 즉 2시간 창에 행이 없을 확률은 매우 낮고, 있어도 결과는 "그 회차 미검사"다.
+     *
+     * 대신 조용히 넘어가지 않도록 사유별 30분 스로틀 알림을 보낸다.
+     */
+    if (e instanceof BalancesIncompleteError) {
+      const markets = e.failed.map(f => f.market).join(', ');
+      console.error(`[cron/portfolio-snapshot] 잔고 부분 실패(${markets}) — 스냅샷 건너뜀: ${e.message}`);
+      notifyBalancesIncomplete(e.message);
+      // 건너뛰기도 sanity 거부와 똑같은 "실명"이다. 원인이 달라도 킬스위치가 낡은 값을
+      // 현재값으로 읽는 결과는 같으므로, 같은 감시기로 시간을 재고 승격 경보한다.
+      const freshness = await reportSnapshotBlindness(`balances_incomplete(${markets})`, 'hourly')
+        .catch(() => null);
+      return NextResponse.json({
+        ok: true,
+        skipped: 'balances_incomplete',
+        failedMarkets: e.failed.map(f => f.market),
+        snapshotAgeMin: freshness?.ageMs != null ? Math.round(freshness.ageMs / 60_000) : null,
+        blindness: freshness?.level ?? 'unknown',
+      });
+    }
     const error = e instanceof Error ? e.message : String(e);
     console.error('[cron/portfolio-snapshot]', error);
     return NextResponse.json({ ok: false, error }, { status: 500 });

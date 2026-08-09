@@ -1,6 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
-import { kis } from '@/lib/exchanges/kis';
+import { kis, getBalancesDetailed } from '@/lib/exchanges/kis';
 import { getMarketFromSymbol, type Market } from '@/lib/exchanges/kis-symbols';
 import { getCurrentMarket, isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 import { createSignal } from '@/lib/signals/service';
@@ -41,6 +41,7 @@ import { getStyleConfig, roundTripCostPct } from './style';
 import { classifyMarketState, type MarketStateCategory } from './market-state';
 import type { StyleConfig } from './style';
 import { sendAlert } from '@/lib/notify';
+import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { EvalFunnelRecorder } from './eval-funnel';
 import type { FunnelGate } from './eval-funnel-labels';
 
@@ -200,22 +201,58 @@ export async function createSignalGuarded(
   }
 }
 
+/**
+ * 이 시장의 보유 수량 맵.
+ *
+ * **`getBalancesDetailed()` 를 쓰는 이유**: `kis.getBalances()` 는 T-012 이후 한 시장이라도
+ * 실패하면 던진다. 그 계약을 여기에 그대로 적용하면 *해외* 조회 실패가 *국내* 보유까지
+ * 지우는 회귀가 된다 — 이 함수는 자기 시장 하나만 알면 되므로 시장별 결과를 직접 본다.
+ *
+ * ⚠️ **알려진 위험 (범위 밖 — 별도 승인 필요)**: 자기 시장 조회가 실패하면 여전히 빈 맵을
+ * 돌려주고, 호출부는 그것을 "보유 없음"으로 해석한다. 그 결과 `runExitEngine` 이 보유 종목의
+ * 손절·익절 신호를 만들지 않고(engine:894), 매도 신호도 `!heldAmounts.has(symbol)` 로
+ * 거부된다(engine:402). 즉 조회 실패가 **포지션에서 빠져나가는 경로를 막는다.**
+ * 원래는 "보유 없음"이 아니라 "모름"으로 구분해 그 시장 평가를 건너뛰어야 하지만, 라이브
+ * 매매 엔진의 제어 흐름 변경이라 T-012 범위에 넣지 않았다. 최소한 **조용하지는 않게** 한다.
+ */
 async function getHeldAmounts(market: Market): Promise<Map<string, HeldEntry>> {
+  const map = new Map<string, HeldEntry>();
   try {
-    const balances = await kis.getBalances();
-    const map = new Map<string, HeldEntry>();
-    for (const b of balances) {
+    const r = await getBalancesDetailed();
+    const mine = r.failed.find(f => f.market === market);
+    if (mine) {
+      // 이 시장 잔고를 모른다 — 아래 빈 맵은 "보유 없음"이 아니라 "모름"이다.
+      console.error(
+        `[engine] ${market} 잔고 조회 실패 — 보유 종목을 알 수 없어 이번 틱의 청산 신호·매도 승인이 `
+        + `모두 건너뛰어진다: ${mine.error}`,
+      );
+      notifyHeldAmountsFailure(market, mine.error);
+      return map;
+    }
+    for (const b of r.balances) {
       if (b.currency === 'KRW' || b.currency === 'USD') continue;
       const qty = Number(b.free) + Number(b.locked);
       if (qty <= 0) continue;
-      const symbolMarket = getMarketFromSymbol(b.currency);
-      if (symbolMarket !== market) continue;
+      if (getMarketFromSymbol(b.currency) !== market) continue;
       map.set(b.currency, { qty, avgPrice: b.avgPrice });
     }
     return map;
-  } catch {
-    return new Map();
+  } catch (e) {
+    console.error(`[engine] ${market} 잔고 조회 예외 — 보유 종목 미확인 상태로 진행: ${e instanceof Error ? e.message : String(e)}`);
+    notifyHeldAmountsFailure(market, e instanceof Error ? e.message : String(e));
+    return map;
   }
+}
+
+/** 시장별 30분 스로틀 — 5분 주기 cron 이 알림을 폭주시키지 않도록. */
+function notifyHeldAmountsFailure(market: Market, error: string): void {
+  sendAlertThrottled(
+    `engine:held_amounts_failed:${market}`,
+    'warning',
+    `${market} 잔고 조회 실패 — 청산 신호 생략`,
+    `보유 종목을 확인할 수 없어 이번 평가 틱에서 손절·익절 신호가 만들어지지 않았고 매도 신호도 거부됩니다.\n`
+    + `사유: ${error}\n반복되면 KIS 레이트리밋(EGW00201)·토큰 상태를 확인하세요.`,
+  );
 }
 
 /**

@@ -283,3 +283,36 @@ developer·reviewer·QA 셋 다 독립적으로 수행: `throw e` 복원 → **4
 ### ⚠️ 사용자 재고지 — 표시일 뿐 매매에 영향 없음
 
 Step 2·4 미구현이므로 **매매 엔진은 여전히 `.env`/전역 `system_config` 경로로 동작한다.** 프로필이 "연결됨"으로 보여도 실거래 로직은 바뀌지 않는다. T-008 배너가 이를 계속 표시한다(무변경 확인).
+
+## 부수 조사 종결 — 보유종목 손실률 (2026-08-09)
+
+### 결론: **손실은 실제였다.** entry_price 버그 없음 — 조사 종결.
+
+사용자가 실제 KIS 평균매입단가를 확인한 결과 **시스템 기록과 일치**. `-30.17%`(005930)·`-46.19%`(000660)는 정확한 값이었고, 금요일 EOD 손절은 **정당한 발동**이었다(KILL_SWITCH 가 차단).
+
+### 🔴 Leader 오판 기록 — 정정 경위
+
+Leader 가 처음에 **"손실은 거의 확실히 데이터 오류"** 라고 보고했다. **틀렸다.**
+
+근거로 삼은 전제: *"`peak_price` 는 진입 후 최고가이므로 `entry_price` 보다 작을 수 없다. 4개 포지션 전부 `peak < entry` 이니 계통 오류다."*
+
+**이 전제가 거짓이었다.** `position-state.ts:117-125` 실측:
+
+```sql
+INSERT INTO position_state (symbol, market, entry_price, peak_price, qty)
+VALUES (?, ?, ?, ?, ?)          -- [symbol, market, avgPrice, currentPrice, qty]
+ON DUPLICATE KEY UPDATE
+  entry_price = VALUES(entry_price),
+  peak_price  = GREATEST(peak_price, VALUES(peak_price)),
+```
+
+- `peak_price` 는 INSERT 시 **`currentPrice`(엔진이 처음 본 시점의 시세)** 로 초기화된다 — 진입가가 아니다
+- `entry_price` 는 KIS `pchs_avg_pric`(실제 평균매입단가)이고 **매 동기화마다 갱신**되어 자기교정된다
+
+따라서 **"엔진이 추적을 시작하기 전에 이미 하락한 포지션"은 `peak < entry` 가 정상 상태**다. `first_seen_at` 이 08-05~08-07 인데 그 이전에 매수·하락했으므로 4개 전부 그 형태인 것이 당연하다. "계통 오류"가 아니라 "4개 다 물려 있음"이었다.
+
+### 무엇이 잘못이었나
+
+**코드를 열어놓고도 읽지 않고, `peak_price` 가 *마땅히* 무엇이어야 하는지에 대한 가정으로 추론했다.** 이번 주 내내 다른 역할들에게서 잡아낸 것과 정확히 같은 실패 방식이고, 하필 **실자금 손실을 "가짜"라고 안심시키는 방향**으로 틀렸다 — 가장 나쁜 오답 방향이다.
+
+> **교훈**: 필드의 의미는 스키마·주석·이름이 아니라 **쓰기 지점(write site)** 이 정한다. `peak_price` 라는 이름과 "트레일링 peak 추적" 주석이 있었지만, 실제 초기화는 다른 값이었다.

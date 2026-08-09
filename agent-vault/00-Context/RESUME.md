@@ -87,6 +87,8 @@ KIS가 일봉을 **100봉**만 반환하는데 이 룰은 **210봉**을 요구�
 
 ## 반드시 지킬 제약
 
+- 🔴 **복호화된 비밀정보를 디스크에 파일로 쓰지 않는다 (절대).** KIS 키·`AUTH_SESSION_SECRET`·`CREDENTIALS_ENCRYPTION_KEY`·`SMTP_PASS`·초대코드 등. 검증이 필요하면 **한 프로세스 안 메모리 비교 · 해시(SHA-256) 비교 · 마스킹 값 · 존재여부** 만 쓴다. 특히 **Bash 호출을 여러 번으로 쪼개면 값을 넘기려 임시파일에 손이 가므로, 비밀정보를 다루는 작업은 한 스크립트로 합칠 것.** `rm` 으로 지울 생각이면 애초에 쓰지 말아야 한다 — 삭제는 노출을 되돌리지 못한다. (2026-08-09 Leader 위반 사례: `/tmp` 에 664 평문 기록 → [[no-plaintext-secrets-on-disk]])
+
 - **git commit/push 금지** — push가 곧 운영 배포다(webhook-deploy, 위 참조). 커밋은 사용자 승인 후.
 - **커밋은 리눅스 호스트에서** — Windows SMB 마운트 작업 시 파일 권한 비트가 다수 파일에서 바뀐 것으로 잡힌다. `git -c core.fileMode=false status`로 실변경만 확인.
 - **`npm install`을 Windows에서 실행 금지** — node_modules가 리눅스 바이너리 트리라 SWC 바이너리 교체로 운영이 깨진다. 패키지 변경 시 `npm install --package-lock-only --save-exact`로 lock만 갱신.
