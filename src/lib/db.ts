@@ -1380,6 +1380,14 @@ async function setupDB(): Promise<void> {
       'T-012 price=0 오염 스냅샷 12행 아카이브 후 삭제',
       () => cleanup.purgeZeroPriceSnapshots({ db: p }),
     );
+    // 2회차 — 1차 목록 측정(16:1x) 이후 수정 배포(18:06) 전까지 새로 쌓인 잔여 4행.
+    // 승인·감사된 12행 목록을 사후에 넓히지 않고 **별도 마커**로 분리 실행한다.
+    await runOnceMigration(
+      p,
+      cleanup.ZERO_PRICE_SNAPSHOT_MARKER_R2,
+      'T-012 2회차 — 잔여 price=0 오염 스냅샷 4행(3708·3732·3733·3739) 아카이브 후 삭제',
+      () => cleanup.purgeZeroPriceSnapshotsRound2({ db: p }),
+    );
   } catch (e) {
     console.warn(`[db] T-012 스냅샷 정리 모듈 로드 실패: ${e instanceof Error ? e.message : String(e)}`);
   }

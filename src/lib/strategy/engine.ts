@@ -202,33 +202,48 @@ export async function createSignalGuarded(
 }
 
 /**
+ * 보유 조회 결과 — **"보유 없음"과 "모름"을 타입으로 강제 구분한다.**
+ *
+ * 예전에는 조회 실패도 빈 `Map` 을 돌려줬다. 호출부는 그 둘을 구분할 방법이 없었고,
+ * 결과적으로 *조회 실패* 가 *보유 없음* 으로 읽혀 다음이 조용히 벌어졌다:
+ *
+ *  1. `runExitEngine` 이 손절·트레일링 신호를 **한 건도 만들지 않는다** (보호할 게 없다고 판단).
+ *  2. 매도 신호가 `!heldAmounts.has(symbol)` 로 **거부**된다 (`sell_not_held`).
+ *  3. 🔴 가장 나쁜 것 — `reconcilePositionState(market, [])` 가
+ *     `DELETE FROM position_state WHERE market=?` 로 그 시장의 **트레일링 peak 상태를 전부
+ *     지운다**. 즉 잔고 조회가 한 번 실패하면 고점 추적이 초기화돼, 복구된 뒤에도 트레일링
+ *     손절이 잘못된 기준으로 계산된다.
+ *
+ * 셋 다 "포지션에서 빠져나가는 경로"를 막는 방향이라 fail-open 이다. 유니온 타입으로 바꿔
+ * 호출부가 `known` 을 검사하지 않으면 컴파일이 안 되게 한다.
+ */
+export type HeldAmountsResult =
+  | { known: true;  amounts: Map<string, HeldEntry> }
+  | { known: false; reason: string };
+
+/**
  * 이 시장의 보유 수량 맵.
  *
  * **`getBalancesDetailed()` 를 쓰는 이유**: `kis.getBalances()` 는 T-012 이후 한 시장이라도
  * 실패하면 던진다. 그 계약을 여기에 그대로 적용하면 *해외* 조회 실패가 *국내* 보유까지
  * 지우는 회귀가 된다 — 이 함수는 자기 시장 하나만 알면 되므로 시장별 결과를 직접 본다.
  *
- * ⚠️ **알려진 위험 (범위 밖 — 별도 승인 필요)**: 자기 시장 조회가 실패하면 여전히 빈 맵을
- * 돌려주고, 호출부는 그것을 "보유 없음"으로 해석한다. 그 결과 `runExitEngine` 이 보유 종목의
- * 손절·익절 신호를 만들지 않고(engine:894), 매도 신호도 `!heldAmounts.has(symbol)` 로
- * 거부된다(engine:402). 즉 조회 실패가 **포지션에서 빠져나가는 경로를 막는다.**
- * 원래는 "보유 없음"이 아니라 "모름"으로 구분해 그 시장 평가를 건너뛰어야 하지만, 라이브
- * 매매 엔진의 제어 흐름 변경이라 T-012 범위에 넣지 않았다. 최소한 **조용하지는 않게** 한다.
+ * 자기 시장이 실패하면 `{ known: false }` 를 돌려준다. **빈 맵을 돌려주지 않는다.**
  */
-async function getHeldAmounts(market: Market): Promise<Map<string, HeldEntry>> {
-  const map = new Map<string, HeldEntry>();
+async function getHeldAmounts(market: Market): Promise<HeldAmountsResult> {
   try {
     const r = await getBalancesDetailed();
     const mine = r.failed.find(f => f.market === market);
-    if (mine) {
-      // 이 시장 잔고를 모른다 — 아래 빈 맵은 "보유 없음"이 아니라 "모름"이다.
-      console.error(
-        `[engine] ${market} 잔고 조회 실패 — 보유 종목을 알 수 없어 이번 틱의 청산 신호·매도 승인이 `
-        + `모두 건너뛰어진다: ${mine.error}`,
-      );
-      notifyHeldAmountsFailure(market, mine.error);
-      return map;
+    if (mine) return { known: false, reason: mine.error };
+    /**
+     * 이 시장이 `failed` 에도 `ok` 에도 없다 = 조회를 **시도조차 하지 않았다**
+     * (`KIS_OVERSEAS_ENABLED=false` 이면 overseas 는 task 에서 빠진다).
+     * 이때도 "보유 없음"이 아니라 "모름"이다 — 시도하지 않은 것을 0으로 읽으면 안 된다.
+     */
+    if (!r.ok.includes(market)) {
+      return { known: false, reason: `${market} 잔고를 조회하지 않았음 (시장 비활성화 설정 확인)` };
     }
+    const map = new Map<string, HeldEntry>();
     for (const b of r.balances) {
       if (b.currency === 'KRW' || b.currency === 'USD') continue;
       const qty = Number(b.free) + Number(b.locked);
@@ -236,23 +251,71 @@ async function getHeldAmounts(market: Market): Promise<Map<string, HeldEntry>> {
       if (getMarketFromSymbol(b.currency) !== market) continue;
       map.set(b.currency, { qty, avgPrice: b.avgPrice });
     }
-    return map;
+    return { known: true, amounts: map };
   } catch (e) {
-    console.error(`[engine] ${market} 잔고 조회 예외 — 보유 종목 미확인 상태로 진행: ${e instanceof Error ? e.message : String(e)}`);
-    notifyHeldAmountsFailure(market, e instanceof Error ? e.message : String(e));
-    return map;
+    return { known: false, reason: e instanceof Error ? e.message : String(e) };
   }
 }
 
-/** 시장별 30분 스로틀 — 5분 주기 cron 이 알림을 폭주시키지 않도록. */
-function notifyHeldAmountsFailure(market: Market, error: string): void {
-  sendAlertThrottled(
-    `engine:held_amounts_failed:${market}`,
-    'warning',
-    `${market} 잔고 조회 실패 — 청산 신호 생략`,
-    `보유 종목을 확인할 수 없어 이번 평가 틱에서 손절·익절 신호가 만들어지지 않았고 매도 신호도 거부됩니다.\n`
-    + `사유: ${error}\n반복되면 KIS 레이트리밋(EGW00201)·토큰 상태를 확인하세요.`,
+/**
+ * 시장별 "모름" 이 언제부터 계속되고 있는지. 성공하면 지운다.
+ *
+ * 한 번의 레이트리밋 블립(실측상 수천 건 발생)마다 critical 을 쏘면 경보 피로로 진짜 신호를
+ * 놓친다. 반대로 계속 warning 이면 **몇 시간째 청산이 멈춰 있는 상태**가 묻힌다.
+ * → 첫 발생은 warning(30분 스로틀), 같은 시장이 연속으로 `HELD_UNKNOWN_ESCALATE_MS` 이상
+ *   모름 상태면 critical 로 승격한다.
+ */
+const heldUnknownSince = new Map<Market, number>();
+const HELD_UNKNOWN_ESCALATE_MS = 30 * 60 * 1000;
+
+/** 테스트/진단용 — 승격 타이머 초기화. */
+export function resetHeldUnknownState(): void {
+  heldUnknownSince.clear();
+}
+
+/**
+ * 보유 미확인 상태를 **소리나게** 만든다 (T-007 원칙 — 조용한 실패 금지).
+ * 로그는 매번, 텔레그램은 스로틀. 지속되면 critical 로 승격.
+ */
+function notifyHeldAmountsUnknown(market: Market, error: string, nowMs = Date.now()): void {
+  const since = heldUnknownSince.get(market) ?? nowMs;
+  if (!heldUnknownSince.has(market)) heldUnknownSince.set(market, nowMs);
+  const blindMs = nowMs - since;
+
+  console.error(
+    `[engine] ${market} 잔고 조회 실패 — 보유 종목을 알 수 없어 이번 틱의 청산 평가·매도 승인·`
+    + `position_state 정리를 모두 건너뛴다 (${Math.round(blindMs / 60_000)}분째): ${error}`,
   );
+
+  const escalated = blindMs >= HELD_UNKNOWN_ESCALATE_MS;
+  sendAlertThrottled(
+    escalated ? `engine:held_unknown_critical:${market}` : `engine:held_unknown:${market}`,
+    escalated ? 'critical' : 'warning',
+    escalated
+      ? `🚨 ${market} 보유 종목을 ${Math.round(blindMs / 60_000)}분째 확인하지 못했습니다`
+      : `${market} 잔고 조회 실패 — 청산 평가 생략`,
+    `보유 종목을 확인할 수 없어 손절·익절 신호가 만들어지지 않고 매도 신호도 거부됩니다.\n`
+    + `보유 목록을 모르는 상태에서 position_state(트레일링 고점)를 정리하면 고점이 지워지므로 `
+    + `그 정리도 건너뜁니다.\n`
+    + `사유: ${error}\n`
+    + '반복되면 KIS 레이트리밋(EGW00201)·토큰 상태를 확인하세요.',
+    escalated ? 60 * 60 * 1000 : undefined,
+  );
+}
+
+/** 보유 조회가 성공했을 때 — 승격 타이머를 지우고, 승격 상태였다면 회복을 알린다. */
+function noteHeldAmountsKnown(market: Market): void {
+  const since = heldUnknownSince.get(market);
+  if (since == null) return;
+  heldUnknownSince.delete(market);
+  const blindMin = Math.round((Date.now() - since) / 60_000);
+  if (Date.now() - since >= HELD_UNKNOWN_ESCALATE_MS) {
+    sendAlert(
+      'info',
+      `✅ ${market} 보유 종목 조회 정상화`,
+      `${blindMin}분간의 미확인 상태가 해소됐습니다. 청산 평가가 재개됩니다.`,
+    );
+  }
 }
 
 /**
@@ -589,13 +652,33 @@ async function insertSkipAuditPool(
  */
 async function runExitEngine(
   market: Market,
-  heldAmounts: Map<string, HeldEntry>,
+  held: HeldAmountsResult,
   style: StyleConfig,
   rec: EvalFunnelRecorder,
   cooldowns: CooldownSet,
 ): Promise<number> {
+  /**
+   * 🔴 **보유를 모르면 아무것도 하지 않는다.**
+   *
+   * 특히 `reconcilePositionState` 보다 **먼저** 빠져나가야 한다 — 빈 목록으로 reconcile 하면
+   * `DELETE FROM position_state WHERE market=?` 가 그 시장의 트레일링 고점을 전부 지운다.
+   * 조회 실패 한 번으로 고점 이력이 사라지면, 잔고가 복구된 뒤에도 트레일링 손절이 잘못된
+   * 기준(재진입 시점 가격)으로 계산된다. "모름"은 "정리해도 된다"가 절대 아니다.
+   */
+  if (!held.known) {
+    notifyHeldAmountsUnknown(market, held.reason);
+    rec.error('balances_unknown', {
+      side: 'sell',
+      reason: 'balances_unknown',
+      detail: { market, error: held.reason.slice(0, 300), skipped: ['exit_eval', 'position_state_reconcile'] },
+    });
+    return 0;
+  }
+  noteHeldAmountsKnown(market);
+
+  const heldAmounts = held.amounts;
   const heldSymbols = [...heldAmounts.keys()];
-  // reconcile은 항상 실행 (미보유 row 정리)
+  // reconcile은 항상 실행 (미보유 row 정리) — 단 보유 목록을 **아는** 경우에만.
   try {
     await reconcilePositionState(market, heldSymbols);
   } catch (e) {
@@ -927,11 +1010,37 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // 2. 보유 종목별 ticker 조회 + state upsert (peak 갱신) + evaluateExit 평가
   // 3. 청산 시그널 발화 시 createSignal → submitOrder 정상 경로
   // 안전장치(DRY_RUN/KILL_SWITCH/order_limits/blacklist)는 모두 통과한다.
-  const heldAmounts = await getHeldAmounts(market);
-  const exitSignalsCreated = await runExitEngine(market, heldAmounts, style, rec, cooldowns);
+  const held = await getHeldAmounts(market);
+  const exitSignalsCreated = await runExitEngine(market, held, style, rec, cooldowns);
   if (exitSignalsCreated > 0) {
     console.log(`[exit-engine:${market}] ${exitSignalsCreated} 청산 시그널 발화`);
   }
+
+  /**
+   * 🔴 보유를 모르면 **이 틱 전체를 중단한다** (신규 진입 평가도 하지 않는다).
+   *
+   * 청산만 건너뛰고 진입 평가를 계속하면 더 나쁜 조합이 된다:
+   *  - `heldAmounts.has(symbol)` 기반 게이트가 전부 "미보유"로 판정돼
+   *    `losing_position_buy_block`(손실 중 추가매수 차단)·종목당 한도가 무력화된다
+   *    → **이미 들고 있는 종목을 모른 채 더 사는** 경로가 열린다.
+   *  - 반대로 매도 신호는 `sell_not_held` 로 전부 거부된다.
+   * 즉 "모름" 상태에서 진입만 도는 것은 한쪽 방향으로만 열린 문이다. 아무것도 안 하는 쪽이
+   * 안전하다 — cron 은 5분마다 다시 돌고, 복구되면 그 틱에서 정상 평가된다.
+   */
+  if (!held.known) {
+    rec.record({
+      gate: 'run',
+      verdict: 'skip',
+      reason: 'balances_unknown',
+      detail: { error: held.reason.slice(0, 300), exitEvaluated: false },
+    });
+    await rec.flush();
+    return {
+      ran: 0, skipped: 0, skippedStrategyIds: [], results: [],
+      errors: ['balances_unknown'], universeRefreshed: false,
+    };
+  }
+  const heldAmounts = held.amounts;
 
   if (!switches.engineEnabled) {
     rec.skip('engine_disabled', {

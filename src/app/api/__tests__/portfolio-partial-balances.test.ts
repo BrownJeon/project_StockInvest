@@ -190,3 +190,48 @@ describe('api/portfolio — 시세 실패를 0원으로 표시하지 않는다',
     expect(savePortfolioSnapshot).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 읽기 경로는 안전장치 입력 테이블에 쓰지 않는다.
+ *
+ * 대시보드는 30초마다 이 라우트를 폴링한다. 여기서 스냅샷을 쓰면 (a) 킬스위치 기준선의 표본
+ * 밀도가 브라우저 탭 상태에 좌우되고, (b) cron 의 `shouldSkipFetch()`(마지막 스냅샷 90분 이내면
+ * 건너뜀)가 계속 발동해 **정규 기록자인 hourly cron 을 밀어낸다.**
+ * 실측: 대시보드를 켜둔 24시간 동안 dashboard 749행 / hourly 9행(평소 14~17행).
+ */
+describe('api/portfolio — 읽기 경로는 스냅샷을 쓰지 않는다', () => {
+  const BAL_OK = [
+    { currency: 'KRW',    free: 78_218, locked: 0 },
+    { currency: '005930', free: 30, locked: 0, avgPrice: 69_300 },
+  ];
+
+  test('🔴 정상 응답에서도 savePortfolioSnapshot 을 호출하지 않는다', async () => {
+    getBalances.mockResolvedValue(BAL_OK);
+    getTicker.mockResolvedValue({ price: 69_300, open24h: 69_300 });
+    const res = await portfolioGET();
+    expect(res.status).toBe(200);
+    expect(savePortfolioSnapshot).not.toHaveBeenCalled();
+  });
+
+  test('🔴 portfolio_snapshots 에 INSERT 가 발생하지 않는다', async () => {
+    getBalances.mockResolvedValue(BAL_OK);
+    getTicker.mockResolvedValue({ price: 69_300, open24h: 69_300 });
+    await portfolioGET();
+    const writes = poolQuery.mock.calls.filter(c =>
+      /INSERT|UPDATE|DELETE|REPLACE/i.test(String(c[0])));
+    expect(writes).toHaveLength(0);
+  });
+
+  test('오늘 시작값 조회(fetchTodayOpenKRW)는 그대로 동작한다', async () => {
+    getBalances.mockResolvedValue(BAL_OK);
+    getTicker.mockResolvedValue({ price: 69_300, open24h: 69_300 });
+    poolQuery.mockResolvedValue([[{ total_krw: 2_000_000 }]]);
+    const body = await (await portfolioGET()).json() as {
+      data: { today_open_krw: number; today_change_krw: number };
+    };
+    expect(body.data.today_open_krw).toBe(2_000_000);
+    expect(body.data.today_change_krw).toBe(78_218 + 30 * 69_300 - 2_000_000);
+    // 조회는 SELECT 하나뿐이다
+    expect(poolQuery.mock.calls.every(c => /^\s*SELECT/i.test(String(c[0])))).toBe(true);
+  });
+});

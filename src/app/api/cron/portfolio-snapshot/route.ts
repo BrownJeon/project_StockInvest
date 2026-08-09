@@ -131,7 +131,8 @@ export async function POST(req: NextRequest) {
     // 방금 저장한 스냅샷이 '현재 자본'이 되므로 반드시 savePortfolioSnapshot 이후에 호출한다.
     // 발동 시 kill-switch.ts 내부에서 system_config 영속 저장 + sendAlert('critical') 통지.
     // 자체적으로 try/catch 하므로 예외가 스냅샷 응답을 깨지 않는다.
-    await checkAndTriggerDrawdownKillSwitch();
+    // 반환값을 응답에 싣는다 — "검사를 못 했다"가 로그에만 남으면 조용한 무력화와 구분되지 않는다.
+    const drawdown = await checkAndTriggerDrawdownKillSwitch();
     const killSwitchActive = await isKillSwitchActive();
 
     // 변동폭 가드 체크
@@ -156,6 +157,7 @@ export async function POST(req: NextRequest) {
       positions: positions.length,
       volGuard: { level: volCheck.level ?? 'ok', changePct: volCheck.changePct },
       killSwitch: killSwitchActive,
+      drawdown,
       action,
     });
   } catch (e) {

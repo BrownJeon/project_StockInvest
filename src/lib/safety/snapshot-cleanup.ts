@@ -1,5 +1,12 @@
 /**
- * T-012 — `price=0` 오염 스냅샷 12행 정리 (1회성 부팅 마이그레이션).
+ * T-012 — `price=0` 오염 스냅샷 정리 (1회성 부팅 마이그레이션).
+ *
+ * **2회차(round 2)가 있는 이유**: 1회차 목록(12행)은 2026-08-09 16:1x 측정 시점의 스냅샷이다.
+ * 그 뒤로도 `/api/portfolio` 의 `?? 0` 버그가 18:06 배포 전까지 라이브였기 때문에 오염 행이
+ * 계속 늘었다. 잔여 4행(3708·3732·3733·3739)은 **승인된 12행 목록을 넓히지 않고** 별도 마커의
+ * 2차 마이그레이션으로 정리한다 — 이미 승인·감사된 목록을 사후에 바꾸면 "승인된 것"과 "실행된
+ * 것"이 달라지기 때문이다. 로직은 1회차와 완전히 동일하며(아래 `purgeByIds`), 마커·아카이브
+ * 키만 다르다.
  *
  * ## 왜 "플래그"가 아니라 "삭제"인가
  *
@@ -44,6 +51,35 @@ export const ZERO_PRICE_SNAPSHOT_ARCHIVE = 'archive_t012_zero_price_snapshots';
 export const ZERO_PRICE_SNAPSHOT_IDS = [
   1077, 1149, 1186, 1224, 1276, 1287, 1313, 1425, 3558, 3591, 3599, 3628,
 ] as const;
+
+// ─── 2회차 (round 2) — 1차 측정 이후 배포 전까지 새로 쌓인 잔여 4행 ─────────────
+
+/** `system_config` 마커 키 — 1회차와 **반드시 달라야** 한다(같으면 둘 중 하나만 실행된다). */
+export const ZERO_PRICE_SNAPSHOT_MARKER_R2 = 'migration_t012b_remaining_zero_price_snapshots';
+
+/**
+ * 2회차 아카이브 키. 1회차와 **분리**한다 — 두 마이그레이션은 마커가 달라 서로 다른 부팅에서
+ * 실행될 수 있고, 감사 시 "어느 승인 건으로 지운 행인지"가 키만 보고 구분돼야 한다.
+ */
+export const ZERO_PRICE_SNAPSHOT_ARCHIVE_R2 = 'archive_t012b_remaining_zero_price_snapshots';
+
+/**
+ * 2회차 삭제 대상 — 2026-08-09 전체 이력 재조회로 확인된 잔여 4행. **이 4개뿐이다.**
+ *
+ * 전부 `source='dashboard'`, 16:58~17:14 KST 기록(18:06 수정 배포 이전).
+ * 각 행마다 `Σvalue_krw == total_krw` 가 성립 = 0원으로 읽힌 종목이 총액에서 그대로 빠졌다.
+ *
+ * | id   | 0원 종목      | total_krw  | 중앙값 대비 |
+ * |------|---------------|------------|-------------|
+ * | 3708 | `NYS:ORCL` ×6 | 17,126,702 | -6.8%       |
+ * | 3732 | `NAS:SNPS` ×23|  4,828,256 | **-73.7%**  |
+ * | 3733 | `NYS:ORCL` ×6 | 17,126,702 | -6.8%       |
+ * | 3739 | `NYS:ORCL` ×6 | 17,126,702 | -6.8%       |
+ *
+ * 운영 DB 전수 재검증(2026-08-09, SELECT only): 전체 3,595행 중 `qty>0 && price<=0` 인 행은
+ * 1회차 12행 + 이 4행 = **정확히 16행**이며 그 밖에는 없다.
+ */
+export const ZERO_PRICE_SNAPSHOT_IDS_R2 = [3708, 3732, 3733, 3739] as const;
 
 /** 조건 미충족 — 실패가 아니다. 마커를 남기지 않는다. */
 export interface MigrationSkipped { skipped: string }
@@ -93,16 +129,73 @@ export interface CleanupDeps {
   logger?: Pick<Console, 'log' | 'warn'>;
 }
 
+/** 한 회차의 정의 — 대상 id·아카이브 키·로그 태그만 다르고 절차는 완전히 동일하다. */
+interface PurgeSpec {
+  /** 로그 접두사 (`t012` / `t012b`) */
+  tag:        string;
+  ids:        readonly number[];
+  archiveKey: string;
+  reason:     string;
+}
+
+const SPEC_R1: PurgeSpec = {
+  tag:        't012',
+  ids:        ZERO_PRICE_SNAPSHOT_IDS,
+  archiveKey: ZERO_PRICE_SNAPSHOT_ARCHIVE,
+  reason:     'T-012 price=0 오염 스냅샷 (보유 종목이 0원으로 평가되어 총액이 과소 기록됨)',
+};
+
+const SPEC_R2: PurgeSpec = {
+  tag:        't012b',
+  ids:        ZERO_PRICE_SNAPSHOT_IDS_R2,
+  archiveKey: ZERO_PRICE_SNAPSHOT_ARCHIVE_R2,
+  reason:
+    'T-012 2회차 — 1차 측정 이후 배포 전까지 추가로 쌓인 price=0 오염 스냅샷 '
+    + '(보유 종목이 0원으로 평가되어 총액이 과소 기록됨)',
+};
+
 /**
- * 오염 스냅샷 아카이브 후 삭제. `runOnceMigration` 에서 1회만 실행된다.
+ * 오염 스냅샷 아카이브 후 삭제 — **1회차(승인된 12행)**.
+ * `runOnceMigration` 에서 1회만 실행된다.
  * 예외는 호출부(`runOnceMigration`)가 삼키고 마커를 남기지 않으므로 다음 부팅에 재시도된다.
  */
 export async function purgeZeroPriceSnapshots(
   deps: CleanupDeps,
 ): Promise<void | MigrationSkipped> {
+  return purgeByIds(deps, SPEC_R1);
+}
+
+/**
+ * 오염 스냅샷 아카이브 후 삭제 — **2회차(잔여 4행)**.
+ *
+ * 1회차와 절차·안전장치가 완전히 동일하고 마커·아카이브 키·대상 id 만 다르다.
+ * 두 목록은 서로 겹치지 않는다(아래 불변식 검사로 강제).
+ */
+export async function purgeZeroPriceSnapshotsRound2(
+  deps: CleanupDeps,
+): Promise<void | MigrationSkipped> {
+  return purgeByIds(deps, SPEC_R2);
+}
+
+/**
+ * 두 회차의 id 목록은 **절대 겹치면 안 된다.** 겹치면 2회차 SELECT 가 이미 삭제된 행을 찾지
+ * 못해 조용히 `skipped` 되거나, 최악의 경우 같은 행을 두 아카이브에 중복 기록한다.
+ * 상수 편집 실수를 부팅 전에 잡기 위해 모듈 로드 시점에 확인한다.
+ */
+const OVERLAP = ZERO_PRICE_SNAPSHOT_IDS_R2.filter(
+  (id) => (ZERO_PRICE_SNAPSHOT_IDS as readonly number[]).includes(id),
+);
+if (OVERLAP.length > 0) {
+  throw new Error(`[t012] 삭제 대상 id 가 1·2회차에 중복 등록됨: ${OVERLAP.join(', ')}`);
+}
+
+async function purgeByIds(
+  deps: CleanupDeps,
+  spec: PurgeSpec,
+): Promise<void | MigrationSkipped> {
   const { db } = deps;
   const log = deps.logger ?? console;
-  const ids = [...ZERO_PRICE_SNAPSHOT_IDS];
+  const ids = [...spec.ids];
 
   const [rows] = await db.query(
     `SELECT id, ts, total_krw, positions, source FROM portfolio_snapshots
@@ -117,7 +210,7 @@ export async function purgeZeroPriceSnapshots(
   const verified: SnapshotRow[] = [];
   for (const r of rows) {
     if (hasZeroPricedHolding(r.positions)) verified.push(r);
-    else log.warn(`[t012] id=${r.id} 는 0원 보유가 없어 삭제 대상에서 제외 (총액=${r.total_krw})`);
+    else log.warn(`[${spec.tag}] id=${r.id} 는 0원 보유가 없어 삭제 대상에서 제외 (총액=${r.total_krw})`);
   }
 
   if (verified.length === 0) {
@@ -134,7 +227,7 @@ export async function purgeZeroPriceSnapshots(
    */
   const [prevRows] = await db.query(
     'SELECT value FROM system_config WHERE `key` = ? LIMIT 1',
-    [ZERO_PRICE_SNAPSHOT_ARCHIVE],
+    [spec.archiveKey],
   ) as [{ value?: string }[], unknown];
 
   const merged = new Map<number, ArchivedRow>();
@@ -160,10 +253,10 @@ export async function purgeZeroPriceSnapshots(
   await db.query(
     'INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
     [
-      ZERO_PRICE_SNAPSHOT_ARCHIVE,
+      spec.archiveKey,
       JSON.stringify({
         archivedAt: new Date().toISOString(),
-        reason: 'T-012 price=0 오염 스냅샷 (보유 종목이 0원으로 평가되어 총액이 과소 기록됨)',
+        reason: spec.reason,
         rows: [...merged.values()].sort((a, b) => a.id - b.id),
       }),
     ],
@@ -177,12 +270,12 @@ export async function purgeZeroPriceSnapshots(
       [r.id, Number(r.total_krw)],
     ) as [{ affectedRows?: number }, unknown];
     if (Number(res?.affectedRows ?? 0) > 0) deleted.push(r.id);
-    else log.warn(`[t012] id=${r.id} DELETE 0행 — total_krw 가 조회 시점과 달라졌을 수 있음(미삭제)`);
+    else log.warn(`[${spec.tag}] id=${r.id} DELETE 0행 — total_krw 가 조회 시점과 달라졌을 수 있음(미삭제)`);
   }
 
   log.log(
-    `[t012] price=0 오염 스냅샷 ${deleted.length}/${verified.length}행 삭제 `
-    + `(원본 ${merged.size}행은 system_config.${ZERO_PRICE_SNAPSHOT_ARCHIVE} 에 보관): `
+    `[${spec.tag}] price=0 오염 스냅샷 ${deleted.length}/${verified.length}행 삭제 `
+    + `(원본 ${merged.size}행은 system_config.${spec.archiveKey} 에 보관): `
     + deleted.join(', '),
   );
 }

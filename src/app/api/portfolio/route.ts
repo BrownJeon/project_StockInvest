@@ -4,7 +4,6 @@ import { kis, BalancesIncompleteError } from '@/lib/exchanges/kis';
 import type { Ticker } from '@/lib/exchanges/types';
 import { kstTodayStart } from '@/lib/time';
 import { usdToKrw } from '@/lib/exchanges/fx';
-import { savePortfolioSnapshot } from '@/lib/safety/volatility-guard';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,17 +28,27 @@ interface HoldingView {
   price_source: PriceSource;
 }
 
-async function saveSnapshot(totalKRW: number, holdings: HoldingView[]): Promise<void> {
-  try {
-    // sanity guard 가 있는 통합 저장 함수 사용 — outlier(USD raw 환율 미적용 등) 자동 차단
-    const positions = holdings.map((h) => ({
-      currency: h.currency, qty: h.qty, price: h.price, value_krw: h.value_krw,
-    }));
-    await savePortfolioSnapshot(totalKRW, positions, 'dashboard');
-  } catch (e) {
-    console.error('[portfolio] snapshot save failed:', e);
-  }
-}
+/**
+ * ⚠️ **이 라우트는 `portfolio_snapshots` 에 쓰지 않는다 (T-012, 2026-08-09).**
+ *
+ * 예전에는 GET 마다 `savePortfolioSnapshot(..., 'dashboard')` 를 호출했다. 대시보드는 열려
+ * 있는 동안 30초마다 폴링하므로(`Dashboard.tsx` REFRESH_MS=30_000), **읽기 요청이 안전장치
+ * 입력 테이블을 채우는** 구조였다. 그 결과:
+ *
+ *  - `portfolio_snapshots` 는 킬스위치 24h 기준선·변동성 가드 baseline·주문한도 pct 의
+ *    입력값인데, 그 표본 밀도가 **브라우저 탭이 열려 있었는지**에 좌우됐다. 실측상
+ *    대시보드 행은 대부분의 날 0~10건이다가 탭을 켜둔 하루에만 749건으로 폭증한다
+ *    (2026-08-09 24시간: dashboard 749 / hourly 9).
+ *  - 더 나쁜 부작용: cron 의 `shouldSkipFetch()` 는 "마지막 스냅샷이 90분 이내면 건너뛴다".
+ *    대시보드가 30초마다 행을 남기면 **정규 기록자인 hourly cron 이 계속 건너뛰어진다.**
+ *    실측 — 평소 hourly 는 하루 14~17행인데 대시보드를 켜둔 날은 8~9행으로 줄었다.
+ *    즉 읽기 경로의 쓰기는 표본을 늘린 게 아니라 **정규 표본을 밀어냈다.**
+ *  - 오염 스냅샷 16행이 **전부** `source='dashboard'` 인 것도 같은 뿌리다 — cron 경로에는
+ *    평단가 폴백이 있었지만 이 라우트에는 없었다.
+ *
+ * → 기록자는 `/api/cron/portfolio-snapshot`(`source='hourly'`) **하나뿐**이다.
+ *   읽기 경로는 읽기만 한다. 새 소비자가 생겨도 이 라우트에 쓰기를 되살리지 말 것.
+ */
 
 async function fetchTodayOpenKRW(): Promise<number | null> {
   try {
@@ -166,11 +175,8 @@ export async function GET() {
     const cash_krw = holdings.filter((h) => h.is_cash).reduce((s, h) => s + h.value_krw, 0);
     const cash_pct = total_krw > 0 ? (cash_krw / total_krw) * 100 : 0;
 
-    // 오늘 00:00 KST 기준 시작값 조회 + 현재 값 스냅샷 저장 (병렬)
-    const [today_open_krw] = await Promise.all([
-      fetchTodayOpenKRW(),
-      saveSnapshot(total_krw, holdings),
-    ]);
+    // 오늘 00:00 KST 기준 시작값 조회 (읽기 전용 — 저장은 hourly cron 담당)
+    const today_open_krw = await fetchTodayOpenKRW();
     const today_change_krw = today_open_krw != null ? total_krw - today_open_krw : null;
     const today_change_pct =
       today_open_krw != null && today_open_krw > 0

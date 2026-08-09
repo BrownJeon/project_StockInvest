@@ -94,6 +94,26 @@ export async function getCurrentMarket(now = new Date()): Promise<Market | null>
   return null;
 }
 
+/**
+ * 지금 열려 있는 세션이 **시작된 지 몇 분 됐는가**. 둘 다 닫혀 있으면 null.
+ *
+ * 용도: "데이터가 흘러야 하는데 안 흐른다"를 판정할 때, 폐장 중에 누적된 나이를 개장 직후
+ * 경보 사유로 쓰지 않기 위해서다. 예를 들어 마지막 스냅샷이 2시간 전(폐장 중 정상 간격)인데
+ * 09:00 에 장이 열리면, 그 순간의 "2시간 미갱신"은 결함이 아니라 정상이다. 호출부는
+ * `min(실제 나이, 개장 후 경과)` 로 **개장 중에 실제로 비어 있던 시간**만 센다.
+ *
+ * 공휴일·주말은 `getCurrentMarket()` 이 이미 걸러낸다(국내/해외 각각의 캘린더).
+ */
+export async function minutesSinceSessionOpen(now = new Date()): Promise<number | null> {
+  const market = await getCurrentMarket(now);
+  if (market === null) return null;
+  const tz = market === 'domestic' ? 'Asia/Seoul' : 'America/New_York';
+  const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+  const minutes = local.getHours() * 60 + local.getMinutes();
+  const openAt = market === 'domestic' ? 9 * 60 : 9 * 60 + 30;
+  return Math.max(0, minutes - openAt);
+}
+
 /** Sync 버전 (호환용). 공휴일은 무시하므로 가능한 async 버전 사용 권장. */
 export function isMarketOpen(): boolean {
   const kst = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));

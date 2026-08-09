@@ -41,6 +41,11 @@ export const FUNNEL_GATES = [
   'engine_disabled',
   'strategy_throttled',
   'no_due_strategies',
+  /**
+   * T-012 — 증권사 잔고 조회 실패로 **보유 종목을 알 수 없어** 이 틱을 통째로 건너뜀.
+   * "보유 없음"이 아니라 "모름"이다. 청산 평가·position_state 정리·진입 평가가 모두 생략된다.
+   */
+  'balances_unknown',
   // ─── stage 1 — 심볼·티커 ──────────────────────────────────────────
   'ticker_error',
   // ─── stage 2 — 시장상태 ───────────────────────────────────────────
@@ -128,6 +133,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   strategy_unregistered: 0,
   strategy_throttled: 0,
   no_due_strategies: 0,
+  balances_unknown: 0,
 
   ticker_error: 1,
 
@@ -206,6 +212,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   strategy_unregistered: '전략 미등록',
   strategy_throttled: '전략 평가 주기 미도래',
   no_due_strategies: '평가할 전략 없음',
+  balances_unknown: '잔고 조회 실패 — 보유 미확인 (평가 전체 생략)',
 
   ticker_error: '시세 조회 실패',
 

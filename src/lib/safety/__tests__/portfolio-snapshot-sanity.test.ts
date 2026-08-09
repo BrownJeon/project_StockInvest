@@ -13,6 +13,16 @@ jest.mock('@/lib/notify', () => ({ sendAlert: (...a: unknown[]) => sendAlert(...
 const query = jest.fn();
 jest.mock('@/lib/db', () => ({ getPool: () => ({ query: (...a: unknown[]) => query(...a) }) }));
 
+/**
+ * 거래 세션 — 실명 임계가 세션에 따라 달라지므로(장중 90분/3시간, 폐장 6/12시간) 테스트가
+ * 실제 벽시계에 의존하지 않도록 고정한다. 기본값은 "장이 열린 지 10시간" = 장중 임계.
+ * `minutesSinceSessionOpen()` 은 null 이면 폐장이다.
+ */
+let sinceSessionOpen: number | null = 600;
+jest.mock('@/lib/strategy/market-hours', () => ({
+  minutesSinceSessionOpen: async () => sinceSessionOpen,
+}));
+
 import {
   savePortfolioSnapshot,
   validateSnapshotPositions,
@@ -75,6 +85,7 @@ const inserts = (): unknown[][] =>
 
 beforeEach(() => {
   jest.clearAllMocks();
+  sinceSessionOpen = 600;          // 기본: 장중 (개장 10시간 경과)
   resetSnapshotRejectThrottle();
   clearZeroPriceAllowlistCache();
   jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -457,6 +468,81 @@ describe('무한 실명 방지 — 관측 공백 승격 경보', () => {
     mockDb({ median: HEALTHY_TOTAL, prev: null, latestTs: ago(250) });
     await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard');
     await new Promise(r => setImmediate(r));   // rejectSnapshot 내부 void promise 소진
+    expect(sendAlert.mock.calls.filter(c => c[0] === 'critical')).toHaveLength(1);
+  });
+});
+
+/**
+ * 거래 세션 인식 (2026-08-09).
+ *
+ * 고정 임계(90분/3시간)는 **매일 밤·주말·공휴일마다** 경보를 낸다 — 그 시간대에 스냅샷이
+ * 안 늘어나는 것은 정상이기 때문이다. 경보 피로는 진짜 한 건을 묻어버리므로 안전장치를
+ * 약화시킨다. 포트폴리오가 KRX(005930·000660)와 미국 종목(NAS:SNPS·NYS:ORCL)을 함께 들고
+ * 있으므로 "장중"은 KRX 시간만이 아니다 — `minutesSinceSessionOpen()` 이 두 세션을 모두 본다.
+ */
+describe('실명 임계 — 거래 세션 인식', () => {
+  const ago = (min: number) => new Date(Date.now() - min * 60_000);
+
+  test('폐장 중에는 장중 임계(90분)로 경보하지 않는다', async () => {
+    sinceSessionOpen = null;                 // 전 시장 폐장
+    mockDb({ latestTs: ago(95) });
+    const f = await checkSnapshotFreshness();
+    expect(f.session).toBe('closed');
+    expect(f.level).toBe('ok');              // 장중이면 warn 이었을 나이
+  });
+
+  test('폐장 중에도 6시간 넘게 비면 warn — 감시를 끄는 것이 아니라 넓히는 것', async () => {
+    sinceSessionOpen = null;
+    mockDb({ latestTs: ago(7 * 60) });
+    expect((await checkSnapshotFreshness()).level).toBe('warn');
+  });
+
+  test('🔴 폐장 중 12시간 넘게 비면 critical — 다음 개장을 관측 없이 맞는다', async () => {
+    sinceSessionOpen = null;
+    mockDb({ latestTs: ago(13 * 60) });
+    expect((await checkSnapshotFreshness()).level).toBe('critical');
+  });
+
+  test('🔴 개장 직후에는 폐장 중 쌓인 나이로 경보하지 않는다 (개장 10분, 스냅샷 3시간 전)', async () => {
+    sinceSessionOpen = 10;
+    mockDb({ latestTs: ago(180) });
+    const f = await checkSnapshotFreshness();
+    expect(f.session).toBe('open');
+    expect(f.ageMs).toBeGreaterThanOrEqual(180 * 60_000);   // 실제 나이는 그대로 보고된다
+    expect(f.effectiveAgeMs).toBe(10 * 60_000);             // 경보는 개장 후 구간만 본다
+    expect(f.level).toBe('ok');
+  });
+
+  test('장이 열린 지 90분이 지나도록 갱신이 없으면 warn', async () => {
+    sinceSessionOpen = 100;
+    mockDb({ latestTs: ago(180) });
+    expect((await checkSnapshotFreshness()).level).toBe('warn');
+  });
+
+  test('🔴 장중 3시간 공백은 여전히 critical (임계를 느슨하게 만든 것이 아니다)', async () => {
+    sinceSessionOpen = 400;
+    mockDb({ latestTs: ago(200) });
+    const f = await checkSnapshotFreshness();
+    expect(f.session).toBe('open');
+    expect(f.level).toBe('critical');
+  });
+
+  test('🔴 개장 여부 판정 실패는 폐장이 아니라 장중(엄격)으로 취급한다', async () => {
+    const spy = jest.spyOn(
+      require('@/lib/strategy/market-hours') as { minutesSinceSessionOpen: () => Promise<number | null> },
+      'minutesSinceSessionOpen',
+    ).mockRejectedValue(new Error('holiday db down'));
+    mockDb({ latestTs: ago(200) });
+    const f = await checkSnapshotFreshness();
+    expect(f.session).toBe('unknown');
+    expect(f.level).toBe('critical');        // 조용해지는 쪽으로 폴백하지 않는다
+    spy.mockRestore();
+  });
+
+  test('폐장 중 critical 재알림 간격이 더 길다 (주말 내내 반복되지 않음)', async () => {
+    sinceSessionOpen = null;
+    mockDb({ latestTs: ago(13 * 60) });
+    for (let i = 0; i < 4; i++) await reportSnapshotBlindness('blocked', 'hourly');
     expect(sendAlert.mock.calls.filter(c => c[0] === 'critical')).toHaveLength(1);
   });
 });

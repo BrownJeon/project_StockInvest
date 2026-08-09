@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled, resetAlertThrottle } from '@/lib/notify/throttle';
+import { minutesSinceSessionOpen } from '@/lib/strategy/market-hours';
 
 async function getVolGuardEnabled(): Promise<boolean> {
   try {
@@ -236,12 +237,33 @@ const VANISH_DROP_RATIO = 0.7;
 /** 현금 항목 — 출금은 정상적으로 총액을 줄이므로 "소실 종목" 판정에서 제외한다. */
 const CASH_CURRENCIES = new Set(['KRW', 'USD']);
 
-/** 마지막 성공 스냅샷이 이보다 오래되면 경고 — cron 1주기(90분)를 통째로 놓쳤다는 뜻. */
+// ─── 실명 임계 — **거래 세션 인식** (2026-08-09) ──────────────────────────────
+//
+// 왜 세션을 보는가: 고정 임계(90분 warn / 3시간 critical / 2시간 재알림)는 **매일 밤·주말·
+// 공휴일마다** 경보를 보낸다. 스냅샷이 안 늘어나는 것이 그 시간대에는 **정상**이기 때문이다.
+// 경보 피로는 안전장치를 약화시킨다 — 매일 오는 알림 속에서 진짜 한 건을 놓친다.
+//
+// ⚠️ 이 포트폴리오는 KRX 종목(005930·000660)과 **미국 종목(NAS:SNPS·NYS:ORCL)을 함께**
+//    들고 있다. 따라서 "장중"은 KRX 09:00~15:30 KST 만이 아니다. 두 세션 중 **하나라도**
+//    열려 있으면 데이터가 흘러야 한다 — `getCurrentMarket()` 이 정확히 그 판정이며,
+//    시장별 공휴일 캘린더(`market_holidays`)와 US DST 를 이미 반영한다.
+//
+// 폐장 중이라고 감시를 끄지는 않는다. cron 은 폐장 중에도 계속 돌고(`shouldSkipFetch` 가
+// 마지막 스냅샷 90분 이내일 때만 건너뛰므로 실효 간격 약 2시간), 무엇보다 **다음 개장을
+// 낡은 기준선으로 맞는 것**이 위험하다. 임계만 넉넉하게 둔다.
+
+/** 장중: cron 1주기(60분)를 통째로 놓친 수준. */
 const BLIND_WARN_MS     = 90 * 60 * 1000;
-/** 이보다 오래되면 critical — 킬스위치 기준선 조회창(폭 2시간)이 통째로 빌 수 있다. */
+/** 장중: 킬스위치 기준선 조회창(폭 2시간)이 통째로 빌 수 있는 수준 → critical. */
 const BLIND_CRITICAL_MS = 3 * 60 * 60 * 1000;
-/** critical 재알림 간격. 6시간 실명에 알림 3건 수준으로 억제한다. */
+/** 폐장 중: 실효 간격 약 2시간의 3배. 밤새 한 번 놓친 정도로는 울리지 않는다. */
+const BLIND_WARN_CLOSED_MS     = 6 * 60 * 60 * 1000;
+/** 폐장 중: 이 정도면 다음 개장을 관측 없이 맞는다 → critical. */
+const BLIND_CRITICAL_CLOSED_MS = 12 * 60 * 60 * 1000;
+/** critical 재알림 간격(장중). 6시간 실명에 알림 3건 수준으로 억제한다. */
 const BLIND_REALERT_MS  = 2 * 60 * 60 * 1000;
+/** critical 재알림 간격(폐장 중). 주말 내내 반복되지 않도록 더 길게. */
+const BLIND_REALERT_CLOSED_MS = 6 * 60 * 60 * 1000;
 
 /**
  * **0원을 정상으로 인정할 심볼** — 거래정지·상장폐지처럼 단가가 진짜로 0인 경우의 탈출구.
@@ -459,9 +481,22 @@ async function getPrevSnapshot(): Promise<PrevSnapshot | null> {
 export interface SnapshotFreshness {
   /** 마지막으로 성공한 스냅샷 시각. 한 건도 없으면 null. */
   latestTs: Date | null;
-  /** 그 이후 경과 시간(ms). 스냅샷이 없으면 null. */
+  /** 그 이후 경과 시간(ms). 스냅샷이 없으면 null. **데이터 신뢰 판단은 이 값으로 한다.** */
   ageMs:    number | null;
   level:    'ok' | 'warn' | 'critical' | 'unknown';
+  /**
+   * 지금 데이터가 흘러야 하는 시간대인가.
+   *  - `open`    : KRX 또는 US 정규장 중 하나 이상 개장
+   *  - `closed`  : 둘 다 폐장 (주말·공휴일 포함)
+   *  - `unknown` : 개장 여부 판정 실패 → **엄격한(장중) 임계**를 적용한다
+   */
+  session:  'open' | 'closed' | 'unknown';
+  /**
+   * 경보 판정에 실제로 쓰인 나이. 장중이면 `min(ageMs, 개장 후 경과)` 다 —
+   * 폐장 중에 쌓인 나이를 개장 직후에 경보 사유로 쓰지 않기 위한 값이다.
+   * ⚠️ 이 값은 **경보용**이다. "이 숫자를 믿어도 되는가" 판단에는 `ageMs` 를 써야 한다.
+   */
+  effectiveAgeMs: number | null;
 }
 
 /**
@@ -478,14 +513,40 @@ export async function checkSnapshotFreshness(nowMs: number = Date.now()): Promis
       'SELECT MAX(ts) AS latest FROM portfolio_snapshots',
     );
     const raw = rows[0]?.latest;
-    if (!raw) return { latestTs: null, ageMs: null, level: 'unknown' };
+    if (!raw) {
+      return { latestTs: null, ageMs: null, level: 'unknown', session: 'unknown', effectiveAgeMs: null };
+    }
     const latestTs = new Date(raw as string | Date);
     const ageMs = nowMs - latestTs.getTime();
+
+    /**
+     * 개장 후 경과 분. null 이면 폐장, 판정 실패면 `undefined` 로 구분한다.
+     * 판정에 실패했을 때 "폐장"으로 보면 **경보를 조용하게 만드는 방향**이라 위험하다 —
+     * 모르면 장중(엄격)으로 취급한다.
+     */
+    let sinceOpenMin: number | null | undefined;
+    try {
+      sinceOpenMin = await minutesSinceSessionOpen(new Date(nowMs));
+    } catch {
+      sinceOpenMin = undefined;
+    }
+
+    const session: SnapshotFreshness['session'] =
+      sinceOpenMin === undefined ? 'unknown' : sinceOpenMin === null ? 'closed' : 'open';
+
+    // 폐장 중에는 실제 나이를, 장중에는 "개장 후 실제로 비어 있던 시간"을 본다.
+    const effectiveAgeMs = session === 'open'
+      ? Math.min(ageMs, (sinceOpenMin as number) * 60_000)
+      : ageMs;
+
+    const warnMs     = session === 'closed' ? BLIND_WARN_CLOSED_MS     : BLIND_WARN_MS;
+    const criticalMs = session === 'closed' ? BLIND_CRITICAL_CLOSED_MS : BLIND_CRITICAL_MS;
+
     const level: SnapshotFreshness['level'] =
-      ageMs >= BLIND_CRITICAL_MS ? 'critical' : ageMs >= BLIND_WARN_MS ? 'warn' : 'ok';
-    return { latestTs, ageMs, level };
+      effectiveAgeMs >= criticalMs ? 'critical' : effectiveAgeMs >= warnMs ? 'warn' : 'ok';
+    return { latestTs, ageMs, level, session, effectiveAgeMs };
   } catch {
-    return { latestTs: null, ageMs: null, level: 'unknown' };
+    return { latestTs: null, ageMs: null, level: 'unknown', session: 'unknown', effectiveAgeMs: null };
   }
 }
 
@@ -509,14 +570,17 @@ export async function reportSnapshotBlindness(blocking: string, source: string):
   if (f.ageMs == null) return f;
   const mins = Math.round(f.ageMs / 60_000);
 
+  const realertMs = f.session === 'closed' ? BLIND_REALERT_CLOSED_MS : BLIND_REALERT_MS;
+
   if (f.level === 'critical') {
     const now = Date.now();
-    if (blindCriticalAt == null || now - blindCriticalAt >= BLIND_REALERT_MS) {
+    if (blindCriticalAt == null || now - blindCriticalAt >= realertMs) {
       blindCriticalAt = now;
       sendAlert(
         'critical',
         `🚨 포트폴리오를 ${Math.floor(mins / 60)}시간 ${mins % 60}분째 관측하지 못했습니다`,
         `마지막 정상 스냅샷: ${f.latestTs?.toISOString() ?? '없음'}\n`
+        + `시장 상태: ${f.session === 'closed' ? '전 시장 폐장 중' : f.session === 'open' ? '장중' : '개장 여부 판정 실패'}\n`
         + `현재 저장을 막는 사유: ${blocking} (source=${source})\n\n`
         + '이 값은 킬스위치 24h drawdown 기준선입니다. 관측이 멈춘 동안에는 실제 급락을 '
         + '감지하지 못할 수 있습니다.\n'
