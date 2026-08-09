@@ -129,18 +129,36 @@ export function getSetupFatalError(): Error | null {
 }
 
 /**
+ * `fn` 이 이 형태를 반환하면 **조건 미충족(=아무 일도 하지 않았음)** 으로 보고, 마커를 남기지
+ * 않는다. 실패와 구분되는 제3의 결과다 — 조건이 갖춰지면 다음 부팅에 다시 평가된다.
+ * (T-011 처럼 "발동 가드를 모두 만족할 때만 1회 실행"하는 마이그레이션을 위해 추가.
+ *  `void` 를 반환하는 기존 마이그레이션들의 동작은 그대로다.)
+ */
+interface MigrationSkipResult {
+  skipped: string;
+}
+
+/**
  * **일회성** 데이터 마이그레이션 실행기.
  *
  * `system_config` 에 마커 키가 없을 때만 fn 을 실행하고, 성공 시 마커를 남긴다.
  * → 부팅마다 사용자 설정을 덮어쓰는 재동기화(예: applicable_styles 강제 UPDATE)와 달리,
  *   마이그레이션 이후 사용자가 UI 에서 바꾼 값은 영구히 보존된다.
  * fn 이 실패하면 마커를 남기지 않아 다음 부팅에 재시도된다 (fn 은 idempotent 여야 함).
+ * fn 이 `{ skipped }` 를 반환해도 마커를 남기지 않는다 (조건 미충족 — 실패가 아니다).
+ *
+ * ⚠️ **아래 catch 의 `e.message` 는 스크러빙되지 않는다.** 범용 러너라 어떤 값이 비밀인지
+ *    알 방법이 없기 때문이다. 따라서 **비밀을 다루는 fn 은 원본 예외를 그대로 던지면 안 되고**,
+ *    고정 문구의 새 Error 로 바꿔 던져야 한다(`owner-kis-migration.ts` 가 그 예).
+ *
+ * export 인 이유: 이 "fn 의 예외가 여기 로그로 새는가"를 테스트가 실제 경로로 검증하기 위해서다
+ * (`owner-kis-migration.test.ts`). 부팅 외의 호출부는 없다.
  */
-async function runOnceMigration(
+export async function runOnceMigration(
   p: mysql.Pool,
   markerKey: string,
   label: string,
-  fn: () => Promise<void>,
+  fn: () => Promise<void | MigrationSkipResult>,
 ): Promise<void> {
   try {
     const [rows] = await p.query<mysql.RowDataPacket[]>(
@@ -148,7 +166,11 @@ async function runOnceMigration(
       [markerKey],
     );
     if (rows.length > 0) return;   // 이미 적용됨 — 사용자 설정 존중, 재실행 금지
-    await fn();
+    const outcome = await fn();
+    if (outcome && typeof outcome.skipped === 'string') {
+      console.log(`[db] one-time migration skipped: ${label} — ${outcome.skipped}`);
+      return;                      // 마커 없음 — 조건이 갖춰지면 다음 부팅에 재평가
+    }
     await p.query(
       'INSERT IGNORE INTO system_config (`key`, value) VALUES (?, ?)',
       [markerKey, JSON.stringify(new Date().toISOString())],
@@ -1342,6 +1364,31 @@ async function setupDB(): Promise<void> {
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS vol_ratio_20d DECIMAL(8,4)`).catch(() => {});
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_updated_at DATETIME`).catch(() => {});
   await p.query(`ALTER TABLE symbol_universe ADD INDEX IF NOT EXISTS idx_rs_rating (rs_rating DESC)`).catch(() => {});
+
+  // ── T-011 (2026-08-09) — 기존 서버 계좌를 **소유자 계정 1개**로 1회 이관 ────
+  //
+  // 왜 프로필 UI 버튼이 아닌가: "서버 계좌 가져오기" 버튼은 멀티테넌트에서 **미래의 어떤
+  // 회원이든 눌러 소유자의 증권 자격증명을 자기 계정으로 받아가는 경로**가 된다. 재사용
+  // 가능한 기능 대신, 조건을 만족할 때 딱 한 번 실행되고 스스로 소멸하는 부팅 코드로 둔다.
+  //
+  // ⚠️ 이 마이그레이션은 부팅 경로에 **KIS 네트워크 호출**을 넣는다. 그래서
+  //    (a) 모든 DDL 이 끝난 **맨 마지막**에 두고,
+  //    (b) 모듈 안에서 20초 타임아웃을 걸며,
+  //    (c) runOnceMigration 의 기존 성질대로 실패해도 부팅을 막지 않는다.
+  //
+  // 정적 import 는 db → owner-kis-migration → users/credentials → db 순환을 만든다.
+  // notifyCritical 과 같은 이유로 동적 import 를 쓴다(마커 키의 단일 출처도 모듈 쪽이다).
+  try {
+    const owner = await import('@/lib/auth/owner-kis-migration');
+    await runOnceMigration(
+      p,
+      owner.OWNER_KIS_MIGRATION_MARKER,
+      '소유자 계정 이관 (KIS 자격증명·system_config 안전설정 → users/user_settings, 단독 계정 1개일 때만)',
+      () => owner.migrateOwnerKisAccount({ db: p }),
+    );
+  } catch (e) {
+    console.warn(`[db] T-011 소유자 계정 이관 모듈 로드 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 // ── T-009 OAuth 스키마 ───────────────────────────────────────────────────────

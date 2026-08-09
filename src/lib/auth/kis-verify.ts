@@ -54,8 +54,13 @@ export function maskAccountNo(accountNo: string): string {
   return `${v.slice(0, 2)}${'*'.repeat(v.length - 4)}${v.slice(-2)}`;
 }
 
-/** App Key/Secret 이 응답·로그 문자열에 섞여 나가지 않게 마지막에 한 번 더 훑는다. */
-function scrub(message: string, secrets: string[]): string {
+/**
+ * App Key/Secret 이 응답·로그 문자열에 섞여 나가지 않게 마지막에 한 번 더 훑는다.
+ *
+ * export 인 이유: T-011 부팅 이관(`owner-kis-migration.ts`)이 **잡은 예외의 메시지**를 로그로
+ * 내보내기 전에 같은 필터를 통과시킨다. 스크러버가 두 벌이 되면 한쪽만 갱신되는 날이 온다.
+ */
+export function scrub(message: string, secrets: string[]): string {
   let out = message;
   for (const s of secrets) {
     if (s && s.length >= 6 && out.includes(s)) out = out.split(s).join('***');

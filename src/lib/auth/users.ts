@@ -10,6 +10,17 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { getPool } from '@/lib/db';
 
+/**
+ * `pool.query` 만 쓰는 최소 실행기.
+ *
+ * 기본값은 언제나 전역 pool 이라 기존 호출부는 달라지지 않는다. 주입 지점을 열어 두는 이유는
+ * 부팅 마이그레이션(T-011)처럼 `getPool()` 을 직접 잡기 곤란한 경로와, 그 경로의 단위 테스트가
+ * **같은 저장 함수를 그대로 재사용**할 수 있게 하기 위해서다(저장 SQL 을 복제하지 않는다).
+ */
+export interface SqlExecutor {
+  query(sql: string, params?: unknown[]): Promise<unknown>;
+}
+
 // ─── 이메일 정규화 ───────────────────────────────────────────────────────────
 
 /** 로그인·가입·시도제한이 모두 같은 키를 쓰도록 하나의 정규화 함수를 공유한다. */
@@ -346,8 +357,12 @@ export interface KisCredentialUpdate {
  * (검증 우회 경로를 만들지 않기 위해 이 함수는 검증을 신뢰하고 저장만 한다).
  * 인자는 전부 **암호문**이다 — 평문을 받지 않는다.
  */
-export async function saveKisCredentials(userId: number, u: KisCredentialUpdate): Promise<void> {
-  await getPool().query(
+export async function saveKisCredentials(
+  userId: number,
+  u: KisCredentialUpdate,
+  db: SqlExecutor = getPool(),
+): Promise<void> {
+  await db.query(
     `UPDATE users
         SET kis_app_key_enc = ?, kis_app_secret_enc = ?, kis_account_no_enc = ?,
             kis_account_product = ?, kis_mock = ?, kis_connected_at = NOW(),
@@ -406,12 +421,15 @@ export async function getUserSettings(userId: number): Promise<UserSettings> {
 }
 
 /** 회원 설정 부분 저장. 전달된 필드만 UPSERT 한다. */
-export async function saveUserSettings(userId: number, patch: Partial<UserSettings>): Promise<void> {
-  const pool = getPool();
+export async function saveUserSettings(
+  userId: number,
+  patch: Partial<UserSettings>,
+  db: SqlExecutor = getPool(),
+): Promise<void> {
   for (const [field, value] of Object.entries(patch) as [keyof UserSettings, unknown][]) {
     const key = SETTING_KEY_BY_FIELD[field];
     if (!key || value === undefined) continue;
-    await pool.query(
+    await db.query(
       'INSERT INTO user_settings (user_id, `key`, value) VALUES (?, ?, ?) ' +
       'ON DUPLICATE KEY UPDATE value = VALUES(value)',
       [userId, key, JSON.stringify(value)],
