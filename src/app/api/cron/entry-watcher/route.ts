@@ -19,7 +19,7 @@ import { parsePriceZone } from '@/lib/signals/scenario-builder';
 import { getStyleConfig } from '@/lib/strategy/style';
 import { setPositionScenarioExit } from '@/lib/strategy/position-state';
 import type { ScenarioExitParams } from '@/lib/strategy/position-state';
-import { sendAlert } from '@/lib/notify';
+import { getSymbolLabel, sendAlert } from '@/lib/notify';
 
 // notify_signal_entry 플래그 캐시 (30초 TTL)
 let entryNotifyCache: { enabled: boolean; ts: number } | null = null;
@@ -279,7 +279,7 @@ export async function POST(req: NextRequest) {
             `주문번호: ${orderResult.orderId ?? '-'}`,
             entryReasonLine ? `사유: ${entryReasonLine}` : undefined,
           ].filter(Boolean);
-          sendAlert('info', `🎯 진입 실행: ${row.symbol}`, entryBodyLines.join('\n'));
+          sendAlert('info', `🎯 진입 실행: ${await getSymbolLabel(row.symbol)}`, entryBodyLines.join('\n'));
         }
 
         // 사용자 시나리오 진입: position_state에 scenario_exit·holding_deadline 기록

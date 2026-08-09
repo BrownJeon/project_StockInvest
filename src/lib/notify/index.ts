@@ -1,5 +1,6 @@
 export type { AlertLevel } from './slack';
 export type { NotifyResult } from './result';
+export { getSymbolLabel } from './symbol-name';
 import type { AlertLevel } from './slack';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';

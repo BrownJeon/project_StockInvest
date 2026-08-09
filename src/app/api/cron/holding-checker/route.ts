@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { checkCronAuth } from '@/lib/cron-auth';
-import { sendAlert } from '@/lib/notify';
+import { getSymbolLabel, sendAlert } from '@/lib/notify';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,12 +47,13 @@ export async function POST(req: NextRequest) {
     const entryPrice = Number(row.entry_price);
     const deadline = new Date(row.holding_deadline).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
 
-    // 텔레그램 알림
+    // 텔레그램 알림 (종목코드 대신 stock_meta 캐시의 종목명 — 미등록이면 코드 폴백)
     try {
+      const label = await getSymbolLabel(symbol);
       sendAlert(
         'warning',
-        `보유기간 초과 — ${symbol}`,
-        `${market} 종목 <b>${symbol}</b>의 보유기간이 초과되었습니다.\n` +
+        `보유기간 초과 — ${label}`,
+        `${market} 종목 <b>${label}</b>의 보유기간이 초과되었습니다.\n` +
         `진입가: ${entryPrice.toLocaleString('ko-KR')}\n` +
         `예정 만료: ${deadline} KST\n` +
         `포지션 검토 후 청산 여부를 결정하세요.`,

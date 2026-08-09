@@ -2,7 +2,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
 import type { OrderRequest } from '@/lib/exchanges/types';
-import { sendAlert } from '@/lib/notify';
+import { getSymbolLabel, sendAlert } from '@/lib/notify';
 import { submitOrder } from '@/lib/safety/dry-run';
 import { checkSymbolBlacklist } from '@/lib/safety/order-limits';
 import {
@@ -269,7 +269,7 @@ export async function createSignal(
         exitKind && exitLabel[exitKind] ? `유형: ${exitLabel[exitKind]}` : undefined,
         reasonLine ? `사유: ${reasonLine}` : undefined,
       ].filter(Boolean);
-      sendAlert('info', `📩 승인 요청: ${input.symbol}`, bodyLines.join('\n'));
+      sendAlert('info', `📩 승인 요청: ${await getSymbolLabel(input.symbol)}`, bodyLines.join('\n'));
     }
     return { ok: true, signalId, autoSubmitted: false };
   }
@@ -293,7 +293,7 @@ export async function createSignal(
       `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · 주문 #${orderResult.orderId ?? '-'}`,
       reasonLine2 ? `사유: ${reasonLine2}` : undefined,
     ].filter(Boolean);
-    sendAlert('info', `✅ 자동 제출: ${input.symbol}`, bodyLines2.join('\n'));
+    sendAlert('info', `✅ 자동 제출: ${await getSymbolLabel(input.symbol)}`, bodyLines2.join('\n'));
   }
   return {
     ok: true,

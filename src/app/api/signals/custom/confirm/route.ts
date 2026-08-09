@@ -12,7 +12,7 @@ import { getPool } from '@/lib/db';
 import type { ScenarioCard } from '@/lib/signals/scenario-builder';
 import { calcSplitSlices } from '@/lib/signals/scenario-builder';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
-import { sendAlert } from '@/lib/notify';
+import { getSymbolLabel, sendAlert } from '@/lib/notify';
 import { AWAITING_APPROVAL_STATUSES, sqlStatusList } from '@/lib/signals/statuses';
 
 async function isManualNotifyEnabled(pool: ReturnType<typeof import('@/lib/db')['getPool']>): Promise<boolean> {
@@ -175,7 +175,7 @@ export async function POST(req: Request) {
       const splitNote = slices.length > 1 ? ` (${slices.length}분할)` : '';
       sendAlert(
         'info',
-        `📋 시나리오 등록: ${symbol}`,
+        `📋 시나리오 등록: ${await getSymbolLabel(symbol)}`,
         `${sideLabel} 진입 대기${splitNote}\n구간: ${slices[0].priceZoneStr}${slices.length > 1 ? ' …' : ''} · 예상금액: ₩${fmtKrw(totalAmountKRW)}`,
       );
     }
