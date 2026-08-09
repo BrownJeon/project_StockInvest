@@ -11,8 +11,15 @@ const TABS = [
   { href: '/settings',   label: '설정',     icon: '⚙️', emphasize: false },
 ] as const;
 
-/** 하단 탭을 숨길 경로 (로그인·회원가입 등 인증 전 화면) */
-const HIDDEN_PATHS = ['/login', '/signup'];
+/**
+ * 하단 탭을 숨길 경로 (로그인·회원가입 등 인증 전 화면).
+ *
+ * 인증 전 화면에서 탭이 보이면 눌러도 전부 /login 으로 튕긴다 — 막다른 길이다.
+ *
+ * ⚠️ 정확히 일치하는 경로만 숨긴다. 새 인증 전 화면을 추가하면 **여기에도 등록**해야 한다.
+ *    (T-010 에서 `/signup/request` 와, 누락돼 있던 `/oauth/invite`(T-009)를 함께 등록했다.)
+ */
+const HIDDEN_PATHS = ['/login', '/signup', '/signup/request', '/oauth/invite'];
 
 export function BottomTabs() {
   const pathname = usePathname();

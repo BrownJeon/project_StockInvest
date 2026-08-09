@@ -1,5 +1,6 @@
 import type { AlertLevel } from './slack';
 import { getCredential } from '@/lib/credentials';
+import { escapeAlertText } from './escape';
 import {
   type NotifyResult, NOTIFY_OK, NOTIFY_SKIPPED, notifyFailed,
   isTransientNetworkError, redactSecrets, readBodySnippet, causeCodeOf,
@@ -40,12 +41,14 @@ function kstNow(): string {
  * **전역(sendTelegramAlert 내부) 적용은 하지 않는다** — holding-checker 처럼 본문에 직접
  * `<b>` 를 넣는 호출부가 있어 일괄 이스케이프하면 그쪽이 깨진다. mrkdwn 본문을 보내는
  * 호출부에서만 명시적으로 감싼다.
+ *
+ * T-010(2026-08-09): 1)의 엔티티 이스케이프는 `notify/escape.ts` 의 `escapeAlertText` 로
+ * **추출**됐다(동작 동일). 슬랙 mrkdwn 도 같은 세 글자를 escape 해야 해서, `dispatchAlert`
+ * 로 두 채널에 같은 본문을 보내는 호출부가 그 함수를 재사용한다 — 구현은 하나로 유지한다.
  */
 export function mrkdwnToTelegramHtml(body: string): string {
-  return body
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  // 순서 주의: 이스케이프가 먼저다. 뒤집으면 아래에서 만든 <b> 까지 이스케이프된다.
+  return escapeAlertText(body)
     .replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
 }
 

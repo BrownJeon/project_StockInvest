@@ -32,13 +32,19 @@ import { OAUTH_PUBLIC_PATHS } from '@/lib/auth/oauth/names';
  *   - `/oauth/invite`                              : 초대코드 화면 자체
  * `/api/auth/` 를 prefix 로 통째로 열지 않는다 — 앞으로 추가될 인증 라우트가 실수로
  * 함께 열리는 것을 막기 위해 경로를 하나씩 명시한다.
+ *
+ * T-010: 가입 요청 경로가 추가됐다. 초대코드가 **없는** 외부인이 쓰는 화면이므로 공개여야 한다.
+ *   - `/signup/request`             : 가입 요청 폼
+ *   - `/api/auth/signup-request`    : 폼 제출(POST) + 기능 활성 여부 조회(GET)
  */
 const PUBLIC_EXACT = new Set<string>([
   '/api/health',
   '/login',
   '/signup',
+  '/signup/request',
   '/api/auth/login',
   '/api/auth/signup',
+  '/api/auth/signup-request',
   '/api/auth/logout',
   ...OAUTH_PUBLIC_PATHS,
   '/api/auth/oauth-providers',

@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AuthShell, authStyles } from '@/components/auth/AuthShell';
 import { OAuthButtons } from '@/components/auth/OAuthButtons';
+import { SignupRequestLink } from '@/components/auth/SignupRequestLink';
 
 export default function SignupPage() {
   const [email, setEmail] = useState('');
@@ -161,6 +162,9 @@ export default function SignupPage() {
         <span>이미 계정이 있나요?</span>
         <Link href="/login" style={authStyles.altLink}>로그인</Link>
       </div>
+
+      {/* T-010 — 초대코드가 없는 사람의 탈출구. SMTP 미설정이면 렌더되지 않는다(서버 판정). */}
+      <SignupRequestLink />
     </AuthShell>
   );
 }

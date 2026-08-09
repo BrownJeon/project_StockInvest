@@ -10,15 +10,18 @@ export function AuthShell({
   title,
   subtitle,
   children,
+  /** 카드 상단 이모지. 기본은 앱 로고(📈). T-010 가입 요청 화면은 목업대로 ✉️ 를 쓴다. */
+  logo = '📈',
 }: {
   title: string;
   subtitle: string;
   children: ReactNode;
+  logo?: string;
 }) {
   return (
     <main style={authStyles.wrap}>
       <div style={authStyles.card}>
-        <div style={authStyles.logo} aria-hidden>📈</div>
+        <div style={authStyles.logo} aria-hidden>{logo}</div>
         <h1 style={authStyles.title}>{title}</h1>
         <p style={authStyles.sub}>{subtitle}</p>
         {children}
@@ -49,7 +52,19 @@ export const authStyles: Record<string, CSSProperties> = {
     background: 'var(--bg3)', color: 'var(--text)',
     padding: '0 14px', fontSize: 16, width: '100%', outlineColor: 'var(--accent)',
   },
+  /** 여러 줄 입력 (T-010 목업 `.inp.ta`) — 세로 리사이즈만 허용해 412px 폭을 깨지 않는다. */
+  textarea: {
+    minHeight: 84, borderRadius: 10, border: '1px solid var(--border2)',
+    background: 'var(--bg3)', color: 'var(--text)',
+    padding: '11px 14px', fontSize: 16, width: '100%', outlineColor: 'var(--accent)',
+    resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5,
+  },
   hint: { fontSize: 11, color: 'var(--muted)', marginTop: 5 },
+  /** 성공 화면 블록 (T-010 목업 `.big-ok`) */
+  bigResult: { textAlign: 'center', padding: '26px 0 8px' },
+  bigResultIcon: { fontSize: 40, lineHeight: 1 },
+  bigResultTitle: { fontSize: 17, fontWeight: 700, margin: '10px 0 6px' },
+  bigResultBody: { fontSize: 12.5, color: 'var(--muted)', margin: 0, lineHeight: 1.6 },
   error: { minHeight: 18, fontSize: 12, color: 'var(--danger)', margin: '6px 0 4px', wordBreak: 'break-word' },
   submit: {
     minHeight: 48, borderRadius: 10, background: 'var(--accent)', color: '#221a05',

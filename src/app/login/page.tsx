@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AuthShell, authStyles } from '@/components/auth/AuthShell';
 import { OAuthButtons } from '@/components/auth/OAuthButtons';
+import { SignupRequestLink } from '@/components/auth/SignupRequestLink';
 
 /**
  * 콜백이 실패했을 때 붙여 보내는 고정 코드 → 사용자 문구.
@@ -140,6 +141,9 @@ export default function LoginPage() {
         <span>처음이신가요?</span>
         <Link href="/signup" style={authStyles.altLink}>회원가입</Link>
       </div>
+
+      {/* T-010 — SMTP 미설정이면 렌더되지 않는다(서버 판정). */}
+      <SignupRequestLink />
 
       <p style={{ ...authStyles.hint, textAlign: 'center', marginTop: 4 }}>
         세션은 30일간 유지됩니다. 비밀번호를 잊으면 서버 관리자가 직접 재설정해야 합니다.
