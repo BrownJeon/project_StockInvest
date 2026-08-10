@@ -115,6 +115,12 @@ export const FUNNEL_GATES = [
   'exit_hard_stop_disabled',
   'exit_cooldown_5m',
   'exit_create_failed',
+  /**
+   * T-015 — 자동 청산 **마스터 스위치 OFF**(`system_config.exit_engine_enabled ≠ true`)로
+   * 청산 시그널 생성이 차단됨. 발화 조건은 **충족했다** — 껐기 때문에 주문이 안 나간 것이다.
+   * `exit_hard_stop_disabled`(hard_stop 만 개별 차단)보다 상위 게이트다.
+   */
+  'exit_engine_disabled',
 ] as const;
 
 export type FunnelGate = (typeof FUNNEL_GATES)[number];
@@ -196,6 +202,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   exit_unit_mismatch: 24,
   exit_no_fire: 24,
   exit_hard_stop_disabled: 25,
+  exit_engine_disabled: 25,
   exit_cooldown_5m: 25,
   exit_create_failed: 29,
 };
@@ -275,6 +282,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   exit_unit_mismatch: '청산: 단위 불일치',
   exit_no_fire: '청산 조건 미충족',
   exit_hard_stop_disabled: '청산: 하드손절 비활성',
+  exit_engine_disabled: '🔕 자동 청산 엔진 OFF — 발화 조건 충족했으나 주문 안 함',
   exit_cooldown_5m: '청산 쿨다운',
   exit_create_failed: '청산 시그널 생성 실패',
 };

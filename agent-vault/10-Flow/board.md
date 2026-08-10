@@ -73,14 +73,15 @@ tags:
 
 ## Doing
 
-
 ## Review
+
+- [[T-016-recommend-build-page-invalid-id]] — **구현·독립감사·QA(코드 레벨) 전부 완료, 브라우저 실사용 확인 + 커밋·배포 승인 대기(2026-08-09)**. "추천 → 내 시나리오 만들기" 클릭 시 "invalid id" 실패(사용자 신고, 빈번 발생) — 근본 원인은 `/recommend/build` 페이지 파일 부재로 Next.js가 동적 라우트 `[id]`로 오인 매칭(`Number("build")=NaN`). `ScenarioBuilder`/`ScenarioAnalysis`/백엔드 API 2종은 이미 완성돼 있었고 페이지 배선만 누락 — `src/app/recommend/build/page.tsx` 신설로 해결. reviewer가 부수적으로 `.gitignore`의 비앵커링 `build/` 규칙(다음 배포 `git clean -fdx`에서 이 수정 자체가 삭제될 위험)을 발견해 `/build/`로 앵커링 수정 완료. typecheck 0에러·test 80/1161 PASS. 로그인 세션 없는 환경 한계로 브라우저 클릭 재현만 미완 — 사용자 확인 후 커밋(이번 작업분만 선별, T-015 미커밋 변경과 분리)·배포 진행 예정
 
 - [[T-007-telegram-silent-failure]] — **구현·검증 완료, 커밋·배포 승인 대기(2026-08-06)**. 알림 전송 결과 반환, 안전 치명 알림 실패 로깅, `last_sent_at` 조건부 갱신, 설정 저장/킬스위치 토글/비상취소의 거짓 성공 제거, 토큰 리댁션. developer 5라운드 · reviewer 3회 감사 최종 PASS. 46/523 → **53 suites/620 tests**
 
 ## Done
 
-- [[T-014-favorites-ai-refresh-failure]] — **인프라 장애 조치 완료(2026-08-09, 코드 변경 없음)**. 즐겨찾기 "재무 갱신" AI 분석실패 신고 → 원인은 StockInvest 코드가 아니라 맥미니 M4 AI 게이트웨이(`192.168.219.163:8001`, home-m4-api 프로젝트 소유)가 **최소 3주간 다운**돼 있던 것(`fetch failed`). GUI 로그인 세션 없어 LaunchAgent 자동재시작 불가 상태였음. SSH로 수동 기동 후 실제 호출 경로로 복구 검증 완료. **임시조치** — 영구 수정(자동로그인/LaunchDaemon 전환, sudo 필요)은 사용자 확인 대기
+- [[T-014-favorites-ai-refresh-failure]] — **인프라 장애 영구 해결(2026-08-10, 코드 변경 없음)**. 즐겨찾기 "재무 갱신" AI 분석실패 신고 → 원인은 StockInvest 코드가 아니라 맥미니 M4 AI 게이트웨이(`192.168.219.163:8001`, home-m4-api 프로젝트 소유)가 **최소 3주간 다운**돼 있던 것. 근본원인은 두 겹 — ① GUI 세션 없어 LaunchAgent 자동재시작 불가 ② (신규 발견) **세션 없는 프로세스(launchd/cron 전부)는 이 NFS 경로를 읽기·쓰기 모두 EPERM** — LaunchDaemon 전환 3라운드 실패 후 원인 재규명. **최종: 실행 사본을 로컬 디스크로 옮기고(`~/home-m4-api-run`) cron 워치독으로 전환**, 2 cron 주기 플래핑 없이 안정 확인. home-m4-api 프로젝트에 크로스노트 남김(소스/실행사본 분리 구조 변화)
 - [[T-013-telegram-stock-name]] — **완료·배포됨(2026-08-09, `3f1513c`)**. 텔레그램 시그널 알림 5종(승인요청·자동제출·시나리오등록·보유기간초과·진입실행) 종목코드→한글 종목명 표기. `getSymbolLabel` 헬퍼 신설(stock_meta 캐시만 조회, 라이브 폴백 없음, DB실패시 코드 폴백). 안전장치 무변경. developer→reviewer(PASS)→QA(통과) 전부 완료, 74 suites/1032 tests(신규 8건 포함) 통과. 배포 exit=0, 헬스체크 정상. 같은 워킹트리의 T-011/T-012 미완성 변경은 stash로 보호 후 배포, 배포 완료 후 복원
 - [[T-008-multiuser-auth-step1]] — **완료·배포됨(2026-08-08, `cb64fcd`)**. PIN 인증 → 이메일 회원가입·로그인 전환(멀티테넌트 5단계 중 Step 1). `users`/`user_settings` 신설, 세션 `AUTH_SESSION_SECRET` 분리, login-gate 이메일별 전환, scrypt+AES-256-GCM(신규 의존성 0). 사용자 결정으로 가입 시 KIS 미수집 → **`SIGNUP_INVITE_CODE` 신설**(인터넷 공개 앱이라 필수). reviewer 보안감사+재검증+QA 전부 PASS, 53/620 → **59 suites/703**. 배포 후 DDL·middleware·거부경로 실측 확인
 - [[T-007-telegram-silent-failure]] — **완료·배포됨(2026-08-06, `5f51763`)**. 알림 전송 결과 반환, 안전 치명 알림 실패 로깅, 설정저장·킬스위치토글·비상취소의 거짓 성공 제거, 토큰 리댁션

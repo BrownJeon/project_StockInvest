@@ -6,7 +6,7 @@ node_modules/
 # Next.js
 .next/
 out/
-build/
+/build/
 
 # Env — 절대 커밋 금지
 .env

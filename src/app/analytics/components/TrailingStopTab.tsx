@@ -33,6 +33,15 @@ export function TrailingStopTab() {
   const [positions, setPositions] = useState<PositionStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 🔕 T-015 — 자동 청산이 꺼져 있는가.
+   *
+   * 이 화면은 종목마다 **"손절가"** 를 숫자로 보여준다. 엔진이 꺼진 상태에서 그 숫자를 그대로
+   * 두면 화면이 "이 가격에서 지켜준다"고 약속하는 셈이 된다. 실제로는 아무 주문도 나가지
+   * 않는다 — 이 배너와 라벨 변경이 그 거짓말을 막는다.
+   * `null`(조회 전·실패)은 OFF 로 단정하지 않는다 — 반대 방향 거짓말을 만들지 않기 위해서다.
+   */
+  const [exitEngineEnabled, setExitEngineEnabled] = useState<boolean | null>(null);
 
   useEffect(() => {
     fetch('/api/positions/status')
@@ -43,7 +52,17 @@ export function TrailingStopTab() {
       })
       .catch((e: unknown) => setError(String(e)))
       .finally(() => setLoading(false));
+    fetch('/api/settings/safety')
+      .then((r) => r.json())
+      .then((d: { ok: boolean; safety?: { exitEngineEnabled?: boolean } }) => {
+        if (d.ok && typeof d.safety?.exitEngineEnabled === 'boolean') {
+          setExitEngineEnabled(d.safety.exitEngineEnabled);
+        }
+      })
+      .catch(() => { /* 상태 미확인 — 단정하지 않는다 */ });
   }, []);
+
+  const exitOff = exitEngineEnabled === false;
 
   if (loading) return <div style={S.center}>포지션 조회 중...</div>;
   if (error) return <div style={S.center}>{error}</div>;
@@ -54,13 +73,28 @@ export function TrailingStopTab() {
 
   return (
     <div style={S.wrap}>
-      <div style={S.hint}>트레일링 스탑 활성화 기준: 진입 대비 +2.5% / 손절 조건: peak 대비 -1.5%</div>
+      {exitOff && (
+        <div style={{
+          padding: '10px 12px', borderRadius: 8, marginBottom: 8,
+          background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)',
+          fontSize: 12, color: '#fca5a5', lineHeight: 1.6,
+        }}>
+          🔕 <b>자동 청산 엔진이 꺼져 있습니다 — 아래 &quot;손절가&quot;에 도달해도 주문이 나가지 않습니다.</b><br />
+          트레일링 스탑·하드 손절·장마감 손실 차단·목표 익절 모두 비활성입니다. 아래 숫자는
+          <b> 참고용 관측값</b>이며, 청산은 직접 주문해야 합니다. (설정 &gt; 안전장치 &gt; 자동 청산 엔진)
+        </div>
+      )}
+      <div style={S.hint}>
+        {exitOff
+          ? '⚠️ 계산 기준(참고용): 활성화 진입 대비 +2.5% / 손절 peak 대비 -1.5% — 현재 자동 실행되지 않음'
+          : '트레일링 스탑 활성화 기준: 진입 대비 +2.5% / 손절 조건: peak 대비 -1.5%'}
+      </div>
 
       {domestic.length > 0 && (
         <section>
           <div style={S.sectionHeader}>🇰🇷 국내주식</div>
           <div style={S.list}>
-            {domestic.map((p) => <PositionCard key={p.symbol} p={p} />)}
+            {domestic.map((p) => <PositionCard key={p.symbol} p={p} exitOff={exitOff} />)}
           </div>
         </section>
       )}
@@ -72,7 +106,7 @@ export function TrailingStopTab() {
             <div style={S.fxWarn}>환율 정보 없음 — KRW로 표시</div>
           )}
           <div style={S.list}>
-            {overseas.map((p) => <PositionCard key={p.symbol} p={p} />)}
+            {overseas.map((p) => <PositionCard key={p.symbol} p={p} exitOff={exitOff} />)}
           </div>
         </section>
       )}
@@ -80,10 +114,13 @@ export function TrailingStopTab() {
   );
 }
 
-function PositionCard({ p }: { p: PositionStatus }) {
+function PositionCard({ p, exitOff }: { p: PositionStatus; exitOff: boolean }) {
   const pnlColor = (p.pnlPct ?? 0) > 0 ? 'var(--red)' : (p.pnlPct ?? 0) < 0 ? 'var(--blue)' : 'var(--fg)';
-  const statusLabel = p.danger ? '위험' : p.trailingActive ? '활성' : '대기';
-  const statusColor = p.danger ? '#dc2626' : p.trailingActive ? '#16a34a' : '#6b7280';
+  // 🔕 엔진이 꺼져 있으면 "활성/위험"은 **실행 상태가 아니라 계산 상태**다. 라벨이 그 차이를 말한다.
+  const statusLabel = exitOff
+    ? (p.danger ? '조건 충족(미실행)' : p.trailingActive ? '활성(미실행)' : '대기')
+    : (p.danger ? '위험' : p.trailingActive ? '활성' : '대기');
+  const statusColor = exitOff ? '#6b7280' : p.danger ? '#dc2626' : p.trailingActive ? '#16a34a' : '#6b7280';
   const fmt = (v: number) => formatPrice(v, p.usdRate);
 
   return (
@@ -120,7 +157,11 @@ function PositionCard({ p }: { p: PositionStatus }) {
         <StatCell label="진입가" value={fmt(p.entryPrice)} />
         <StatCell label="최고가" value={fmt(p.peakPrice)} highlight={p.trailingActive} />
         {p.stopPrice != null && (
-          <StatCell label="손절가" value={fmt(p.stopPrice)} danger />
+          <StatCell
+            label={exitOff ? '손절가(미실행)' : '손절가'}
+            value={fmt(p.stopPrice)}
+            danger={!exitOff}
+          />
         )}
         <StatCell label="Peak 수익" value={pct(p.peakGainPct)} />
         {p.drawdownFromPeak != null && (

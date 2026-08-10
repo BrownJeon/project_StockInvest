@@ -3,6 +3,7 @@ import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { isDryRun } from '@/lib/safety/dry-run';
 import { syncEngineSwitchesFromLegacy } from '@/lib/signals/router';
+import { readExitEngineSwitch, describeExitEngineSwitch } from '@/lib/strategy/exit-switch';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,11 +74,27 @@ export async function GET() {
 
   await seedIfEmpty(pool, { dryRun, killSwitch, orderMaxPct, dailyOrderMaxPct, blockedSymbols });
 
+  /**
+   * 🔕 자동 청산 마스터 스위치 — **엔진이 쓰는 것과 똑같은 판독기**로 읽는다.
+   *
+   * `overrides` 를 통해 원시 값을 따로 해석하지 않는 이유: 그러면 화면이 "키가 없으니 기본
+   * 활성이겠지" 같은 자기만의 추정을 하게 되고, 그 추정이 엔진과 어긋나는 순간 화면이
+   * **손절이 지켜주고 있다고 거짓말**한다. 판독 로직은 단 하나여야 한다.
+   */
+  const exitSwitch = await readExitEngineSwitch();
+
   return NextResponse.json({
     ok: true,
     safety: {
       dryRun,
       killSwitch,
+      /** 자동 청산(하드손절·EOD손절·트레일링·목표익절) 전체 on/off */
+      exitEngineEnabled: exitSwitch.enabled,
+      /** 마스터가 ON 일 때의 하위 hard_stop 스위치 (읽기 전용 표기) */
+      exitHardStopEnabled: exitSwitch.hardStopEnabled,
+      /** config / absent / unparsable / db_error — 화면이 사유를 그대로 보여줄 수 있게 */
+      exitSwitchSource: exitSwitch.source,
+      exitSwitchSummary: describeExitEngineSwitch(exitSwitch),
       orderMaxPct,
       dailyOrderMaxPct,
       universeEnabled,
@@ -117,6 +134,11 @@ export async function GET() {
 const ALLOWED_PATCH_KEYS: Record<string, string> = {
   dryRun:                  'safety_dry_run',
   killSwitch:              'safety_kill_switch',
+  // 🔕 T-015 — 자동 청산 마스터. 되돌릴 수 있어야 스위치다. 다만 **명시적 opt-in** 이라
+  //    `true` 로 기입될 때만 자동 매도가 살아난다 (판독은 exit-switch.ts 가 단독 담당).
+  //    `exit_hard_stop_enabled`(하위 스위치)는 의도적으로 PATCH 대상에서 제외 — 이번 작업의
+  //    범위가 아니고, 값 변경 권한을 넓히지 않는다.
+  exitEngineEnabled:       'exit_engine_enabled',
   orderMaxPct:             'safety_order_max_pct',
   dailyOrderMaxPct:        'safety_daily_order_max_pct',
   universeEnabled:         'strategy_universe_enabled',
@@ -162,6 +184,15 @@ const PATCH_ENUMS: Record<string, readonly string[]> = {
   reportMode:    ['rolling', 'fixed'],
 };
 
+/**
+ * 반드시 순수 불리언으로만 저장되어야 하는 필드.
+ *
+ * `exit_engine_enabled` 는 "자동 매도를 할 것인가"를 결정한다. `"true"`(문자열)이나 `1` 이
+ * 들어가도 판독기(`exit-switch.ts`)가 안전하게 해석하긴 하지만, **자금 스위치의 저장 값이
+ * 무엇인지 눈으로 확인 불가능해지는 상태를 애초에 만들지 않는다.**
+ */
+const PATCH_STRICT_BOOLEANS = ['exitEngineEnabled'] as const;
+
 export async function PATCH(req: NextRequest) {
   const body = await req.json() as Record<string, unknown>;
   const pool = getPool();
@@ -171,6 +202,11 @@ export async function PATCH(req: NextRequest) {
     .filter(([field]) => field in body)
     .filter(([field, allowed]) => !allowed.includes(String(body[field])))
     .map(([field, allowed]) => `${field}=${JSON.stringify(body[field])} (허용: ${allowed.join('|')})`);
+  for (const field of PATCH_STRICT_BOOLEANS) {
+    if (field in body && typeof body[field] !== 'boolean') {
+      invalid.push(`${field}=${JSON.stringify(body[field])} (허용: true|false)`);
+    }
+  }
   if (invalid.length > 0) {
     return NextResponse.json(
       { ok: false, error: `잘못된 설정 값 — ${invalid.join(', ')}` },
@@ -186,6 +222,15 @@ export async function PATCH(req: NextRequest) {
         [dbKey, JSON.stringify(val)],
       );
     }
+  }
+
+  // 🔕 자동 청산 스위치 변경은 자금이 오가는 결정이라 서버 로그에 반드시 남긴다.
+  if ('exitEngineEnabled' in body) {
+    const on = body['exitEngineEnabled'] === true;
+    console.warn(
+      `[settings:safety] 자동 청산 엔진 ${on ? 'ON — 하드손절·EOD손절·트레일링·목표익절 자동 매도가 다시 활성화됨' : 'OFF — 자동 매도 주문 전면 중단'}`
+      + ' (system_config.exit_engine_enabled)',
+    );
   }
 
   // 엔진 마스터 스위치를 바꿨으면 신규 키(engine_enabled·autopilot_mode)도 같은 의미로 맞춘다.

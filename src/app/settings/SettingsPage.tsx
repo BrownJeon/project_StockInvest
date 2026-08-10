@@ -17,6 +17,13 @@ interface StrategyItem {
 
 interface SafetyData {
   dryRun: boolean; killSwitch: boolean;
+  /** 자동 청산(하드손절·EOD손절·트레일링·목표익절) 마스터 스위치 */
+  exitEngineEnabled: boolean;
+  /** 마스터 ON 일 때의 하위 hard_stop 스위치 (읽기 전용) */
+  exitHardStopEnabled: boolean;
+  /** 값을 어디서 읽었는가 — config / absent / unparsable / db_error */
+  exitSwitchSource: 'config' | 'absent' | 'unparsable' | 'db_error';
+  exitSwitchSummary: string;
   orderMaxPct: number; dailyOrderMaxPct: number;
   universeEnabled: boolean;
   analystEnabled: boolean;
@@ -393,16 +400,33 @@ export function SettingsPage() {
               자동 주문하는 동작은 이 스위치로는 절대 켜지지 않고, 별도의 자동조종 설정
               (<code>autopilot_mode</code>)에서만 켤 수 있습니다.
             </div>
-            <div style={{
-              fontSize: 11, color: '#f59e0b', marginTop: 6, lineHeight: 1.5,
-              background: 'rgba(245,158,11,.10)', border: '1px solid rgba(245,158,11,.35)',
-              borderRadius: 8, padding: '8px 10px',
-            }}>
-              ⚠️ <b>예외 — 보유 종목 보호 청산은 승인 없이 즉시 주문됩니다.</b><br />
-              하드 손절과 장마감 손실 차단 매도는 <b>이 설정·자동조종 모드와 무관하게</b> 자동
-              제출됩니다. 손실이 커지는 것을 막는 기능이라 사람의 응답을 기다리지 않습니다.
-              (목표 익절·트레일링 스탑 매도는 일반 승인 경로를 따릅니다.)
-            </div>
+            {/*
+              🔕 T-015 — 이 안내는 **자동 청산 엔진이 켜져 있을 때만 참**이다.
+                 꺼진 상태에서 "손절은 승인 없이 즉시 나갑니다"를 계속 보여주면 UI 가
+                 사용자에게 있지도 않은 보호막을 약속하게 된다. 상태에 따라 문구를 바꾼다.
+            */}
+            {safety && !safety.exitEngineEnabled ? (
+              <div style={{
+                fontSize: 11, color: '#fca5a5', marginTop: 6, lineHeight: 1.5,
+                background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)',
+                borderRadius: 8, padding: '8px 10px',
+              }}>
+                🔕 <b>현재 자동 청산 엔진이 꺼져 있습니다 — 손절도 자동으로 나가지 않습니다.</b><br />
+                하드 손절·장마감 손실 차단·트레일링 스탑·목표 익절 <b>네 가지 모두</b> 주문이
+                만들어지지 않습니다. 아래 <b>안전장치 (공통) &gt; 자동 청산 엔진</b>에서 다시 켤 수 있습니다.
+              </div>
+            ) : (
+              <div style={{
+                fontSize: 11, color: '#f59e0b', marginTop: 6, lineHeight: 1.5,
+                background: 'rgba(245,158,11,.10)', border: '1px solid rgba(245,158,11,.35)',
+                borderRadius: 8, padding: '8px 10px',
+              }}>
+                ⚠️ <b>예외 — 보유 종목 보호 청산은 승인 없이 즉시 주문됩니다.</b><br />
+                하드 손절과 장마감 손실 차단 매도는 <b>이 설정·자동조종 모드와 무관하게</b> 자동
+                제출됩니다. 손실이 커지는 것을 막는 기능이라 사람의 응답을 기다리지 않습니다.
+                (목표 익절·트레일링 스탑 매도는 일반 승인 경로를 따릅니다.)
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             {hybridSaving && <span style={{ fontSize: 11, color: 'var(--muted)' }}>저장 중...</span>}
@@ -466,6 +490,60 @@ export function SettingsPage() {
               danger
             />
           </div>
+        </div>
+
+        {/* 🔕 자동 청산 엔진 마스터 스위치 (T-015) —
+            OFF 상태를 오해할 수 없게 만드는 것이 이 블록의 전부다. */}
+        <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 14 }}>자동 청산 엔진</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                {safety?.exitEngineEnabled
+                  ? `ON — 하드손절·EOD손절·트레일링스탑·목표익절 자동 매도 동작 중${safety?.exitHardStopEnabled === false ? ' (하드손절만 개별 OFF)' : ''}`
+                  : 'OFF — 자동 손절·익절 매도 주문을 내지 않습니다'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: safety?.exitEngineEnabled ? 'var(--ok)' : '#ef4444' }}>
+                {safety?.exitEngineEnabled ? 'ON' : 'OFF'}
+              </span>
+              <Toggle
+                checked={safety?.exitEngineEnabled ?? false}
+                onChange={v => {
+                  const prev = safety?.exitEngineEnabled ?? false;
+                  update({ exitEngineEnabled: v });
+                  autoSave({ exitEngineEnabled: v }, { exitEngineEnabled: prev }, '자동 청산 엔진');
+                }}
+              />
+            </div>
+          </div>
+
+          {/* OFF 이면 사실을 크게 말한다 — "손절이 지켜주고 있다"는 오해가 유일한 치명적 실패다 */}
+          {safety && !safety.exitEngineEnabled && (
+            <div style={{
+              marginTop: 10, padding: '10px 12px', borderRadius: 8,
+              background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)',
+              fontSize: 12, color: '#fca5a5', lineHeight: 1.7,
+            }}>
+              🔕 <b>손절이 자동으로 걸리지 않습니다.</b><br />
+              보유 종목이 얼마나 떨어져도 시스템은 <b>스스로 팔지 않습니다.</b> 하드 손절,
+              장마감 손실 차단, 트레일링 스탑, 목표 익절 <b>네 가지 모두</b> 시그널조차 만들지
+              않습니다. 청산이 필요하면 <b>직접 주문</b>하세요.<br />
+              <span style={{ color: 'var(--muted)' }}>
+                진입가·고점(peak) 추적은 계속되므로 다시 켜면 올바른 트레일링 기준으로 재개됩니다.
+                매수 시그널과 승인 대기 큐는 영향받지 않습니다.
+              </span>
+              {safety.exitSwitchSource !== 'config' && (
+                <>
+                  <br />
+                  <span style={{ color: '#fbbf24' }}>
+                    ⚠️ 설정 값을 정상적으로 읽지 못해 안전 방향(OFF)으로 처리했습니다 — {safety.exitSwitchSummary}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 1회 주문 최대 */}

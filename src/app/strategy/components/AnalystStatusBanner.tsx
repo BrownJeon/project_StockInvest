@@ -8,6 +8,8 @@ interface Safety {
   analystEnabled: boolean;
   killSwitch: boolean;
   dryRun: boolean;
+  /** 자동 청산(하드손절·EOD손절·트레일링·목표익절) 마스터 스위치 — T-015 */
+  exitEngineEnabled?: boolean;
 }
 
 interface MarketsStatus {
@@ -47,6 +49,14 @@ export function AnalystStatusBanner(_props: Props = {}) {
 
   const isKill   = safety.killSwitch;
   const isActive = safety.analystEnabled && !isKill;
+  /**
+   * 🔕 T-015 — 자동 청산이 꺼져 있는가.
+   *
+   * `undefined`(구 응답 캐시·배포 과도기)는 **꺼진 것으로 취급하지 않는다** — 여기서 잘못
+   * "OFF" 를 띄우면 켜져 있는데 꺼졌다고 말하는 반대 방향 거짓말이 된다. 설정 화면이
+   * 서버 판독 결과를 그대로 보여주는 단일 진실이고, 이 배너는 그 요약이다.
+   */
+  const isExitOff = safety.exitEngineEnabled === false;
   const isLive   = !safety.dryRun;   // 실거래 ON 여부 (DRY_RUN의 반전)
   const relTime  = lastRunAt ? formatRelativeTime(lastRunAt) : null;
 
@@ -108,8 +118,23 @@ export function AnalystStatusBanner(_props: Props = {}) {
               />
             </>
           )}
+          {/* 🔕 긴급 정지 중에도 함께 띄운다 — 킬스위치를 내렸을 때 무엇이 남는지가 중요하다 */}
+          {isExitOff && <StatusChip label="자동청산" value="OFF" tone="danger" />}
         </div>
       </div>
+
+      {/* 🔕 자동 청산 OFF — 보유 종목 화면 바로 위에서 사실을 말한다 */}
+      {isExitOff && (
+        <div style={{
+          marginTop: 10, padding: '8px 10px', borderRadius: 8,
+          background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)',
+          fontSize: 11, color: '#fca5a5', lineHeight: 1.6,
+        }}>
+          🔕 <b>자동 청산 엔진 OFF — 손절이 자동으로 걸리지 않습니다.</b> 하드 손절·장마감 손실
+          차단·트레일링 스탑·목표 익절 모두 주문을 내지 않습니다. 청산은 직접 주문하세요.{' '}
+          <Link href="/settings" style={{ color: '#fca5a5', textDecoration: 'underline' }}>설정에서 켜기 →</Link>
+        </div>
+      )}
 
       {/* 시장 개장/마감 정보 (Kill 아닐 때) */}
       {markets && !isKill && (

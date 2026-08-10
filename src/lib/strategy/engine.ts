@@ -32,6 +32,12 @@ import {
   EXIT_UNIT_RATIO_MAX,
 } from '@/lib/strategy/exit-engine';
 import { upsertPositionState, reconcilePositionState, loadPositionState } from '@/lib/strategy/position-state';
+import {
+  readExitEngineSwitch,
+  describeExitEngineSwitch,
+  EXIT_ENGINE_ENABLED_KEY,
+  type ExitSwitchSource,
+} from '@/lib/strategy/exit-switch';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 import type { StrategyMeta } from './rules/types';
 import { STRATEGY_REGISTRY } from './rules';
@@ -87,6 +93,22 @@ const POST_MARKET_ONLY_STRATEGY_IDS = new Set(['eod-high-close-v1', 'inside-bar-
 interface HeldEntry {
   qty: number;
   avgPrice?: number;
+}
+
+/**
+ * exit-engine 한 틱의 결과. 예전엔 생성 건수(number)만 돌려줬는데, T-015 이후로는
+ * **"자동 청산이 켜져 있었는가 / 몇 건이 꺼져 있어서 막혔는가"** 가 생성 건수만큼 중요하다.
+ * `created=0` 이 "조건 미충족"인지 "꺼져 있어서 안 함"인지 구분되지 않으면 관측이 거짓말을 한다.
+ */
+interface ExitEngineRunResult {
+  /** 실제 생성된 청산 시그널 수 */
+  created: number;
+  /** 이번 틱에 자동 청산이 활성이었는가 (마스터 스위치) */
+  enabled: boolean;
+  /** 발화 조건은 충족했으나 마스터 OFF 로 **차단된** 청산 수 */
+  blocked: number;
+  /** 스위치 판독 출처 — config / absent / unparsable / db_error */
+  switchSource: ExitSwitchSource;
 }
 
 /**
@@ -649,6 +671,11 @@ async function insertSkipAuditPool(
  *
  * ⚠️ **이 함수는 시장이 열려 있는 한 무조건 실행된다.** 엔진 스위치·활성 전략 수·평가 주기와
  *    무관하다 — 보유 종목 보호는 신규 진입 로직의 하위 기능이 아니다 (Leader 결정 ①).
+ *
+ * 🔕 **T-015 — 마스터 스위치**: `system_config.exit_engine_enabled` 가 `true` 가 아니면
+ *    네 종류 청산 시그널을 **한 건도 만들지 않는다**(=주문도 나가지 않는다).
+ *    다만 `reconcilePositionState` 와 `upsertPositionState`(진입가·고점 추적)는 **그대로
+ *    돈다** — 나중에 다시 켰을 때 트레일링 기준선이 리셋되어 있으면 안 되기 때문이다.
  */
 async function runExitEngine(
   market: Market,
@@ -656,7 +683,16 @@ async function runExitEngine(
   style: StyleConfig,
   rec: EvalFunnelRecorder,
   cooldowns: CooldownSet,
-): Promise<number> {
+): Promise<ExitEngineRunResult> {
+  // ─── 0) 마스터 스위치 판독 ────────────────────────────────────────────────
+  // held.known 검사보다 **앞에서** 읽는다 — 잔고를 모르는 틱에서도 "자동 청산이 꺼져 있다"는
+  // 사실은 똑같이 참이고, 운영자가 로그·run 행에서 그 상태를 놓치면 안 되기 때문이다.
+  // 이 호출은 절대 throw 하지 않으며, 어떤 실패도 `enabled=false`(fail-closed)로 수렴한다.
+  const exitSwitch = await readExitEngineSwitch();
+  const empty: ExitEngineRunResult = {
+    created: 0, enabled: exitSwitch.enabled, blocked: 0, switchSource: exitSwitch.source,
+  };
+
   /**
    * 🔴 **보유를 모르면 아무것도 하지 않는다.**
    *
@@ -672,7 +708,7 @@ async function runExitEngine(
       reason: 'balances_unknown',
       detail: { market, error: held.reason.slice(0, 300), skipped: ['exit_eval', 'position_state_reconcile'] },
     });
-    return 0;
+    return empty;
   }
   noteHeldAmountsKnown(market);
 
@@ -684,22 +720,22 @@ async function runExitEngine(
   } catch (e) {
     console.warn(`[exit-engine:${market}] reconcile 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (heldSymbols.length === 0) return 0;
+  if (heldSymbols.length === 0) return empty;
 
-  const pool = getPool();
+  const hardStopEnabled = exitSwitch.hardStopEnabled;
 
-  // system_config 'exit_hard_stop_enabled' = false 이면 hard_stop 시그널 생성 스킵
-  let hardStopEnabled = true;
-  try {
-    const [cfgRows] = await pool.query<(RowDataPacket & { value: string })[]>(
-      "SELECT value FROM system_config WHERE `key` = 'exit_hard_stop_enabled' LIMIT 1",
+  // 🔕 마스터 OFF — **매 틱 소리내어 말한다.** 조용한 플래그는 "손절이 지켜주고 있다"는
+  //    오해를 낳고, 그 오해가 이 스위치의 유일한 실패 모드다.
+  if (!exitSwitch.enabled) {
+    console.warn(
+      `[exit-engine:${market}] 🔕 ${describeExitEngineSwitch(exitSwitch)} | ` +
+      `보유 ${heldSymbols.length}종목의 진입가·고점(peak) 추적은 계속됩니다. ` +
+      `다시 켜려면 설정 > 안전장치의 "자동 청산 엔진" 토글 또는 system_config.${EXIT_ENGINE_ENABLED_KEY}=true.`,
     );
-    if (cfgRows.length > 0) {
-      try { hardStopEnabled = JSON.parse(cfgRows[0].value) !== false; } catch { /* keep true */ }
-    }
-  } catch { /* DB 실패 시 기본 활성 */ }
+  }
 
   let created = 0;
+  let blocked = 0;
 
   for (const symbol of heldSymbols) {
     const entry = heldAmounts.get(symbol);
@@ -759,6 +795,29 @@ async function runExitEngine(
       continue;
     }
 
+    // 🔕 T-015 마스터 스위치 — **네 종류 전부** 여기서 끊는다.
+    //
+    // 위치가 중요하다. `evaluateExit`(순수 함수, 부작용 없음) **뒤**이고
+    // `createSignalGuarded`(→ createSignal → submitOrder) **앞**이다. 그래서:
+    //   - 주문 경로는 확실히 차단된다 (이 심볼의 유일한 청산 시그널 생산자가 아래 한 줄이다)
+    //   - "껐지만 무엇이 발화했을 뻔했는가"는 eval_funnel 에 그대로 남는다 (깜깜이 방지)
+    //   - 위쪽 upsertPositionState(고점 갱신)는 이미 실행된 뒤다 (추적 유지)
+    // 쿨다운도 걸지 않는다 — 차단은 "시도했다"가 아니므로 재켜짐 시 즉시 정상 평가돼야 한다.
+    if (!exitSwitch.enabled) {
+      blocked++;
+      const pnlPct = Number((((ticker.price - state.entryPrice) / state.entryPrice) * 100).toFixed(2));
+      console.warn(
+        `[exit-engine] 🔕 ${symbol} ${exitSig.exitKind} 발화 조건 충족 (평가손익 ${pnlPct}%) — ` +
+        `자동 청산 엔진 OFF 이므로 시그널·주문을 만들지 않습니다 (${EXIT_ENGINE_ENABLED_KEY}=${exitSwitch.enabled}, source=${exitSwitch.source})`,
+      );
+      rec.skip('exit_engine_disabled', {
+        symbol, side: 'sell',
+        reason: exitSwitch.source,
+        detail: { exitKind: exitSig.exitKind, pnlPct, wouldHaveFired: true },
+      });
+      continue;
+    }
+
     // hard_stop 시그널 생성 비활성화 여부 체크
     if (exitSig.exitKind === 'hard_stop' && !hardStopEnabled) {
       console.log(`[exit-engine] ${symbol} hard_stop 스킵 (exit_hard_stop_enabled=false)`);
@@ -798,7 +857,24 @@ async function runExitEngine(
       console.warn(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 실패: ${res.error}`);
     }
   }
-  return created;
+
+  // 🔕 실제로 **막힌 청산이 있었던** 틱만 알린다. 조건이 하나도 발화하지 않았다면
+  //    알릴 것도 없다 — 경보 피로를 만들지 않으면서 "손절이 안 나갔다"는 사실은 반드시 전한다.
+  if (!exitSwitch.enabled && blocked > 0) {
+    sendAlertThrottled(
+      `exit-engine:disabled:${market}`,
+      'warning',
+      `🔕 자동 청산 OFF — 청산 조건 ${blocked}건이 주문 없이 지나갔습니다 (${market})`,
+      `${describeExitEngineSwitch(exitSwitch)}\n\n`
+      + `이번 평가에서 손절·익절·트레일링 조건을 충족한 보유 종목이 ${blocked}건 있었지만 `
+      + '자동 매도 주문은 나가지 않았습니다. **현재 이 시스템은 손실을 자동으로 끊지 않습니다.**\n'
+      + '청산이 필요하면 직접 주문하세요.\n'
+      + `(진입가·고점 추적은 계속되므로 다시 켜면 정상 기준으로 재개됩니다 — 설정 > 안전장치 "자동 청산 엔진")`,
+      12 * 60 * 60 * 1000,
+    );
+  }
+
+  return { created, enabled: exitSwitch.enabled, blocked, switchSource: exitSwitch.source };
 }
 
 /**
@@ -1010,8 +1086,18 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // 2. 보유 종목별 ticker 조회 + state upsert (peak 갱신) + evaluateExit 평가
   // 3. 청산 시그널 발화 시 createSignal → submitOrder 정상 경로
   // 안전장치(DRY_RUN/KILL_SWITCH/order_limits/blacklist)는 모두 통과한다.
+  // 🔕 T-015 — `exit_engine_enabled ≠ true` 면 2~3 은 하지 않는다. 1(reconcile)과
+  //    2 의 state upsert(고점 추적)는 그대로 돈다.
   const held = await getHeldAmounts(market);
-  const exitSignalsCreated = await runExitEngine(market, held, style, rec, cooldowns);
+  const exitRun = await runExitEngine(market, held, style, rec, cooldowns);
+  const exitSignalsCreated = exitRun.created;
+  /** run 행 detail 공통 — "청산이 왜 0건인가"를 항상 설명 가능하게 남긴다. */
+  const exitTrack = {
+    exitSignalsCreated,
+    exitEngineEnabled: exitRun.enabled,
+    exitBlockedByDisable: exitRun.blocked,
+    exitSwitchSource: exitRun.switchSource,
+  };
   if (exitSignalsCreated > 0) {
     console.log(`[exit-engine:${market}] ${exitSignalsCreated} 청산 시그널 발화`);
   }
@@ -1032,7 +1118,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       gate: 'run',
       verdict: 'skip',
       reason: 'balances_unknown',
-      detail: { error: held.reason.slice(0, 300), exitEvaluated: false },
+      detail: { error: held.reason.slice(0, 300), exitEvaluated: false, ...exitTrack },
     });
     await rec.flush();
     return {
@@ -1054,9 +1140,10 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       reason: 'engine_disabled',
       detail: {
         engineEnabled: false,
-        exitOnly: true,
+        // 🔕 T-015 — 자동 청산까지 꺼져 있으면 이 틱은 "청산 전용"이 아니라 **관측 전용**이다.
+        exitOnly: exitRun.enabled,
         heldSymbols: heldAmounts.size,
-        exitSignalsCreated,
+        ...exitTrack,
       },
     });
     await rec.flush();
@@ -1109,7 +1196,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       gate: 'run',
       verdict: 'skip',
       reason: 'no_active_strategies',
-      detail: { unregistered: skippedStrategyIds, exitSignalsCreated, heldSymbols: heldAmounts.size },
+      detail: { unregistered: skippedStrategyIds, heldSymbols: heldAmounts.size, ...exitTrack },
     });
     await rec.flush();
     return { ran: 0, skipped: skippedStrategyIds.length, skippedStrategyIds, results: [], errors: [], universeRefreshed };
@@ -1298,7 +1385,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       symbols: symbols.length,
       strategies: activeStrategies.length,
       skippedStrategyIds,
-      exitSignalsCreated,
+      ...exitTrack,
       buyBlocked,
       signalsCreated: totalApproved,
       errors: errors.length,

@@ -695,6 +695,49 @@ async function setupDB(): Promise<void> {
     console.warn(`[db] engine_enabled/autopilot_mode 시드 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // ── T-015 (2026-08-09) — 자동 청산 엔진 마스터 스위치 ────────────────────
+  //
+  // `exit_engine_enabled` 가 `true` 가 아니면 exit-engine 이 hard_stop·eod_loss_cut·
+  // trailing_stop·target_profit **네 종류 모두** 시그널을 만들지 않는다(주문도 없다).
+  // 사용자 결정: 시스템의 자동 매도를 중단한다 → 초기값 `false`.
+  //
+  // ⚠️ **INSERT IGNORE.** 나중에 운영자가 UI 에서 다시 켠 값을 부팅이 되돌리면
+  //    그것이야말로 이 스위치가 막으려는 종류의 사고다 (D3 전례와 동일 원칙).
+  // ⚠️ 코드 기본값도 **비활성**이라(`strategy/exit-switch.ts`) 이 시드가 실패하거나 키가
+  //    지워져도 자동 매도가 저절로 살아나지 않는다. 시드는 UI 표기·명시성을 위한 것이다.
+  try {
+    await p.query(
+      'INSERT IGNORE INTO system_config (`key`, value) VALUES (?,?)',
+      ['exit_engine_enabled', 'false'],
+    );
+  } catch (e) {
+    console.warn(`[db] exit_engine_enabled 시드 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 부팅 배너 — **꺼져 있으면 조용히 지나가지 않는다.**
+  // 이 상태에서 사용자가 "손절이 나를 지켜준다"고 믿는 것이 유일한 치명적 실패 모드다.
+  try {
+    const { readExitEngineSwitch, describeExitEngineSwitch } = await import('@/lib/strategy/exit-switch');
+    const sw = await readExitEngineSwitch();
+    if (!sw.enabled) {
+      console.warn(
+        '\n' +
+        '════════════════════════════════════════════════════════════════\n' +
+        '🔕 [boot] 자동 청산 엔진 OFF — 자동 손절·익절 주문이 나가지 않습니다\n' +
+        '════════════════════════════════════════════════════════════════\n' +
+        `${describeExitEngineSwitch(sw)}\n` +
+        '차단 대상: hard_stop · eod_loss_cut · trailing_stop · target_profit\n' +
+        '계속 동작: position_state 진입가·고점(peak) 추적, 미보유 row reconcile\n' +
+        '영향 없음: 매수 시그널 생성 및 승인 대기 큐\n' +
+        '다시 켜기: 설정 > 안전장치 > "자동 청산 엔진" 또는 system_config.exit_engine_enabled=true\n',
+      );
+    } else {
+      console.log(`[boot] ${describeExitEngineSwitch(sw)}`);
+    }
+  } catch (e) {
+    console.warn(`[db] 자동 청산 스위치 상태 확인 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   await p.query(`
     CREATE TABLE IF NOT EXISTS signals (
       id BIGINT PRIMARY KEY AUTO_INCREMENT,
