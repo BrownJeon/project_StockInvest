@@ -4,6 +4,8 @@
  */
 import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
+import { kisFetch, isKisRateLimited } from './kis-http';
+import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
 
 const isMock = () => String(process.env.KIS_MOCK ?? 'true').toLowerCase() === 'true';
@@ -36,7 +38,7 @@ export async function getTicker(symbol: string): Promise<Ticker> {
   // KIS API는 개장 직후나 부하 시 일시적 500을 반환하는 경우가 있음 — 최대 2회 재시도
   for (let attempt = 0; attempt < 3; attempt++) {
     const headers = await kisHeaders('FHKST01010100');
-    const res = await fetch(url, { headers });
+    const res = await kisFetch(url, { headers }, { label: 'domestic getTicker' });
     if (res.ok) {
       const data = await res.json();
       const o = data.output;
@@ -51,6 +53,21 @@ export async function getTicker(symbol: string): Promise<Ticker> {
         volume24h:    Number(o.acml_vol),
         quoteVolume24h: Number(o.acml_tr_pbmn),
       };
+    }
+    /**
+     * 🔴 T-017 — **여기가 재시도 증폭의 진원지였다.**
+     *
+     * KIS 레이트리밋(`EGW00201`/`EGW00215`)은 **HTTP 500** 으로 온다. 아래 조건은
+     * `status === 500` 만 보고 300ms 뒤 재시도했으므로, 레이트리밋을 맞을 때마다 곧바로
+     * 한 번 더 때려서 과부하를 스스로 키웠다.
+     *
+     * 이제 레이트리밋은 `kisFetch` 안에서 이미 백오프 + 재대기열로 소진된 상태다.
+     * 여기서 또 재시도하면 그 증폭이 그대로 부활하므로 **즉시 던진다.**
+     * 진짜 일시적 5xx(레이트리밋 아님)만 종전대로 재시도한다.
+     */
+    const rateLimited = isKisRateLimited(res);
+    if (rateLimited) {
+      throw new Error(`KIS getTicker ${symbol}: ${res.status} (레이트리밋 — 백오프 재시도 소진)`);
     }
     if (res.status !== 500 || attempt === 2) {
       throw new Error(`KIS getTicker ${symbol}: ${res.status}`);
@@ -92,7 +109,7 @@ async function getDailyCandles(symbol: string, count: number): Promise<Candle[]>
     + `?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=${symbol}`
     + `&FID_INPUT_DATE_1=${fromDate}&FID_INPUT_DATE_2=${today}`
     + `&FID_PERIOD_DIV_CODE=D&FID_ORG_ADJ_PRC=0`;
-  const res = await fetch(url, { headers });
+  const res = await kisFetch(url, { headers }, { label: 'domestic getDailyCandles' });
   if (!res.ok) throw new Error(`KIS getDailyCandles ${symbol}: ${res.status}`);
   const data = await res.json();
   const rows: Record<string, string>[] = data.output2 ?? [];
@@ -116,7 +133,7 @@ async function fetchMinutePage(symbol: string, fidPeriod: string, timeStr: strin
     + `?FID_ETC_CLS_CODE=&FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=${symbol}`
     + `&FID_INPUT_HOUR_1=${timeStr}&FID_PW_DATA_INCU_YN=Y`
     + `&FID_PERIOD_DIV_CODE=${fidPeriod}`;
-  const res = await fetch(url, { headers });
+  const res = await kisFetch(url, { headers }, { label: 'domestic getMinuteCandles' });
   if (!res.ok) throw new Error(`KIS getMinuteCandles ${symbol}: ${res.status}`);
   const data = await res.json();
   return (data.output2 ?? []) as Record<string, string>[];
@@ -178,7 +195,7 @@ export async function getBalances(): Promise<Balance[]> {
       + `?CANO=${cano}&ACNT_PRDT_CD=${acntPrdt}`
       + `&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01&FUND_STTL_ICLD_YN=N`
       + `&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=`;
-    res = await fetch(url, { headers });
+    res = await kisFetch(url, { headers }, { label: 'domestic getBalances' });
     if (res.ok) break;
     body = await res.text().catch(() => '');
     if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
@@ -262,9 +279,12 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
     ORD_QTY:      String(quantity),
     ORD_UNPR:     req.type === 'market' ? '0' : String(roundToTick(price)),
   };
-  const res = await fetch(`${BASE()}/uapi/domestic-stock/v1/trading/order-cash`, {
+  // 💰 T-017 — 주문 송신은 **무조건 `critical`**. 주변 실행 컨텍스트가 `bulk` 여도
+  //    (예: strategy-eval 틱 안에서 청산 주문이 나가는 경우) 여기서 명시로 덮어쓴다.
+  //    150건짜리 universe 스캔 뒤에 실주문이 줄 서는 상황을 구조적으로 불가능하게 만든다.
+  const res = await kisFetch(`${BASE()}/uapi/domestic-stock/v1/trading/order-cash`, {
     method: 'POST', headers, body: JSON.stringify(body),
-  });
+  }, { priority: 'critical', label: 'domestic createOrder' });
   if (!res.ok) return { ok: false, error: `KIS order HTTP ${res.status}` };
   const data = await res.json();
   if (data.rt_cd !== '0') return { ok: false, error: data.msg1 as string };
@@ -287,9 +307,10 @@ export async function cancelOrder(req: CancelRequest): Promise<OrderResult> {
     ORD_UNPR:     '0',
     QTY_ALL_ORD_YN: 'Y',
   };
-  const res = await fetch(`${BASE()}/uapi/domestic-stock/v1/trading/order-rvsecncl`, {
+  // 💰 T-017 — 주문 취소도 자금 경로다. `critical` 명시.
+  const res = await kisFetch(`${BASE()}/uapi/domestic-stock/v1/trading/order-rvsecncl`, {
     method: 'POST', headers, body: JSON.stringify(body),
-  });
+  }, { priority: 'critical', label: 'domestic cancelOrder' });
   if (!res.ok) return { ok: false, error: `KIS cancel HTTP ${res.status}` };
   const data = await res.json();
   if (data.rt_cd !== '0') return { ok: false, error: data.msg1 as string };
@@ -322,7 +343,7 @@ async function fetchMarketCapPage(market: 'J' | 'Q', inputIscd: string): Promise
     FID_TRGT_EXLS_CLS_CODE:  '0000000000',
   });
   const url = `${PROD_BASE}/uapi/domestic-stock/v1/ranking/market-cap?${params}`;
-  const res = await fetch(url, { headers });
+  const res = await kisFetch(url, { headers }, { label: 'domestic marketCapRanking' });
   if (!res.ok) return [];
   const data = await res.json();
   if (data.rt_cd !== '0' || !Array.isArray(data.output)) return [];
@@ -348,8 +369,13 @@ export async function fetchMarketCapRanking(limit = 50): Promise<Array<{
     .slice(0, limit);
 }
 
+/**
+ * 일괄 시세. T-017 — `Promise.allSettled(symbols.map(...))` 는 심볼 수만큼(최대 150건)을
+ * 한꺼번에 대기열에 밀어 넣어 그 한 번의 호출이 lane 을 독차지했다. 동시성을 제한해
+ * 대기열을 얕게 유지한다 (유량 자체는 스로틀이 결정한다).
+ */
 export async function getKisTickers(symbols: string[]): Promise<Ticker[]> {
-  const results = await Promise.allSettled(symbols.map(s => getTicker(s)));
+  const results = await mapWithLimit(symbols, DEFAULT_FANOUT_CONCURRENCY, s => getTicker(s));
   return results.flatMap(r => r.status === 'fulfilled' ? [r.value] : []);
 }
 
@@ -374,7 +400,7 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
   try {
     const headers = await kisHeaders(trId);
     const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl?${params}`;
-    const res = await fetch(url, { headers });
+    const res = await kisFetch(url, { headers }, { label: 'domestic getActiveOrders' });
     if (!res.ok) return [];
     const data = await res.json();
     if (process.env.KIS_DOMESTIC_DEBUG === '1') {
@@ -443,7 +469,7 @@ export async function getCompletedOrders(
     const headers = await kisHeaders(trId);
     try {
       const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-daily-ccld?${params}`;
-      const res = await fetch(url, { headers });
+      const res = await kisFetch(url, { headers }, { label: 'domestic getCompletedOrders' });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
+import { withKisPriority } from '@/lib/exchanges/kis-throttle';
 import { fireAndForgetUpsertSignal } from '@/lib/rag/signals-upsert';
 import type { SignalForEmbedding } from '@/lib/rag/format';
 
@@ -130,14 +131,18 @@ export async function POST(req: NextRequest) {
 
       // ticker fetch — 같은 cron tick 내에서 캐시 공유 (3 윈도우 공통)
       const symbolsNeeded = new Set(rows.map(r => r.symbol).filter(s => !priceCache.has(s)));
-      for (const symbol of symbolsNeeded) {
-        try {
-          const ticker = await kis.getTicker(symbol);
-          priceCache.set(symbol, ticker.price);
-        } catch {
-          // 시세 조회 실패 — 해당 심볼 건너뜀
+      // T-017 — 15분마다 최대 50종목 × 3윈도우. 사후 라벨링이라 지연에 무감하므로 `bulk` lane.
+      //   (순차 루프는 그대로 — 대기열을 채우지 않는다.)
+      await withKisPriority('bulk', async () => {
+        for (const symbol of symbolsNeeded) {
+          try {
+            const ticker = await kis.getTicker(symbol);
+            priceCache.set(symbol, ticker.price);
+          } catch {
+            // 시세 조회 실패 — 해당 심볼 건너뜀
+          }
         }
-      }
+      });
 
       for (const row of rows) {
         const currentPrice = priceCache.get(row.symbol);

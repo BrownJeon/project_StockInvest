@@ -14,6 +14,8 @@
  */
 import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
+import { kisFetch, isKisRateLimited } from './kis-http';
+import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
 import { parseOverseas, formatOverseas, toOvrsExcgCd, type OverseasExchange } from './kis-symbols';
 import { getUsdKrwRate } from './fx';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
@@ -63,9 +65,17 @@ async function kisHeaders(trId: string, extra?: Record<string, string>): Promise
  * 비교: getBalances 는 이미 retry 루프가 있으나 getTicker 는 단순 fetch였음.
  *
  * 정책:
- *  - 타임아웃 5s (AbortController). KIS 정상 응답은 <500ms.
+ *  - 타임아웃 5s. KIS 정상 응답은 <500ms.
  *  - retry는 단 1회. 5xx/429/AbortError/network error 만 재시도, 4xx(인증·심볼) 즉시 throw.
  *  - retry 백오프 300ms — strategy-eval cron 5분 주기 안에서 안전 마진 충분.
+ *
+ * 🔴 T-017 두 가지 변경:
+ *  1. 타임아웃을 `AbortController` 직접 관리에서 `kisFetch({ timeoutMs })` 로 옮겼다.
+ *     **스로틀 대기 시간이 타임아웃을 잡아먹지 않게** 하기 위함이다 — 타이머를 대기열에
+ *     서기 전에 걸면 "5초 타임아웃"이 "대기+통신 합쳐 5초"가 돼, 스로틀이 만든 대기가
+ *     그대로 새로운 실패 모드가 된다. `kisFetch` 는 토큰을 받은 **뒤에** 타이머를 건다.
+ *  2. 레이트리밋(EGW00201/EGW00215)은 `res.status >= 500` 재시도 분기를 타지 않는다.
+ *     `kisFetch` 가 이미 백오프 재시도를 소진했고, 여기서 또 때리면 증폭이 부활한다.
  */
 export async function getTicker(symbol: string): Promise<Ticker> {
   const { excd, ticker } = parseOverseas(symbol);
@@ -78,22 +88,21 @@ export async function getTicker(symbol: string): Promise<Ticker> {
   let res: Response | undefined;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     try {
-      res = await fetch(url, { headers, signal: ctrl.signal });
+      res = await kisFetch(url, { headers }, { timeoutMs: TIMEOUT_MS, label: 'overseas getTicker' });
     } catch (e) {
       lastErr = e;
-      clearTimeout(timer);
       if (attempt < MAX_ATTEMPTS) {
         await new Promise(r => setTimeout(r, 300));
         continue;
       }
       throw new Error(`KIS overseas getTicker ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
     }
-    clearTimeout(timer);
     // 5xx/429만 재시도, 그 외 4xx는 즉시 throw (인증·심볼 에러는 retry로 해결 불가)
     if (res.ok) break;
+    if (isKisRateLimited(res)) {
+      throw new Error(`KIS overseas getTicker ${symbol}: ${res.status} (레이트리밋 — 백오프 재시도 소진)`);
+    }
     if ((res.status >= 500 || res.status === 429) && attempt < MAX_ATTEMPTS) {
       await new Promise(r => setTimeout(r, 300));
       continue;
@@ -143,7 +152,7 @@ async function getDailyCandles(symbol: string, count: number): Promise<Candle[]>
     MODP:  '1',  // 1=수정주가
   });
   const url = `${BASE()}/uapi/overseas-price/v1/quotations/dailyprice?${params}`;
-  const res = await fetch(url, { headers });
+  const res = await kisFetch(url, { headers }, { label: 'overseas getDailyCandles' });
   if (!res.ok) throw new Error(`KIS overseas getDailyCandles ${symbol}: ${res.status}`);
   const data = await res.json();
   if (process.env.KIS_OVERSEAS_DEBUG === '1') {
@@ -181,7 +190,7 @@ async function fetchOverseasUsdCash(): Promise<number> {
     ITEM_CD:      '',
   });
   const headers = await kisHeaders(trId);
-  const res = await fetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-psamount?${params}`, { headers });
+  const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-psamount?${params}`, { headers }, { label: 'overseas usdCash' });
   if (!res.ok) return 0;
   const data = await res.json();
   if (data.rt_cd !== '0') return 0;
@@ -215,7 +224,7 @@ async function fetchBalancesForExchange(
       console.log(`[kis-overseas getBalances(${excd})] attempt=${attempt} token_prefix=${String(headers.Authorization ?? '').slice(7, 19)}`);
     }
     const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-balance?${params}`;
-    res = await fetch(url, { headers });
+    res = await kisFetch(url, { headers }, { label: 'overseas getBalances' });
     if (res.ok) break;
     body = await res.text().catch(() => '');
     if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
@@ -335,9 +344,10 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
     CTAC_TLNO:    '',
     MGCO_APTM_ODNO: '',
   };
-  const res = await fetch(`${BASE()}/uapi/overseas-stock/v1/trading/order`, {
+  // 💰 T-017 — 주문 송신은 **무조건 `critical`** (국내 어댑터와 동일 원칙).
+  const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/order`, {
     method: 'POST', headers, body: JSON.stringify(body),
-  });
+  }, { priority: 'critical', label: 'overseas createOrder' });
   if (!res.ok) return { ok: false, error: `KIS overseas order HTTP ${res.status}` };
   const data = await res.json();
   if (data.rt_cd !== '0') return { ok: false, error: data.msg1 as string };
@@ -360,9 +370,10 @@ export async function cancelOrder(req: CancelRequest): Promise<OrderResult> {
     MGCO_APTM_ODNO: '',
     ORD_SVR_DVSN_CD: '0',
   };
-  const res = await fetch(`${BASE()}/uapi/overseas-stock/v1/trading/order-rvsecncl`, {
+  // 💰 T-017 — 주문 취소도 자금 경로다. `critical` 명시.
+  const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/order-rvsecncl`, {
     method: 'POST', headers, body: JSON.stringify(body),
-  });
+  }, { priority: 'critical', label: 'overseas cancelOrder' });
   if (!res.ok) return { ok: false, error: `KIS overseas cancel HTTP ${res.status}` };
   const data = await res.json();
   if (data.rt_cd !== '0') return { ok: false, error: data.msg1 as string };
@@ -370,8 +381,9 @@ export async function cancelOrder(req: CancelRequest): Promise<OrderResult> {
 }
 
 // 일괄 시세 (universe 분석용)
+/** T-017 — 동시성 제한. 근거는 `kis-domestic.getKisTickers` 주석 참조. */
 export async function getKisOverseasTickers(symbols: string[]): Promise<Ticker[]> {
-  const results = await Promise.allSettled(symbols.map(s => getTicker(s)));
+  const results = await mapWithLimit(symbols, DEFAULT_FANOUT_CONCURRENCY, s => getTicker(s));
   return results.flatMap(r => r.status === 'fulfilled' ? [r.value] : []);
 }
 
@@ -393,7 +405,7 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
   });
   try {
     const headers = await kisHeaders(trId);
-    const res = await fetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-nccs?${params}`, { headers });
+    const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-nccs?${params}`, { headers }, { label: 'overseas getActiveOrders' });
     if (!res.ok) return [];
     const data = await res.json();
     if (data.rt_cd !== '0' || !Array.isArray(data.output)) return [];
@@ -455,7 +467,7 @@ export async function getCompletedOrders(
     const headers = await kisHeaders(trId);
     try {
       const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-ccnl?${params}`;
-      const res = await fetch(url, { headers });
+      const res = await kisFetch(url, { headers }, { label: 'overseas getCompletedOrders' });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {

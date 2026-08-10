@@ -74,6 +74,7 @@ export async function GET(req: NextRequest) {
       const { getKisToken } = await import('@/lib/exchanges/kis-auth');
       const { getCredential } = await import('@/lib/credentials');
       const { kisBaseUrl } = await import('@/lib/exchanges/kis-auth');
+      const { kisFetch } = await import('@/lib/exchanges/kis-http');
       const [token, appkey, appsecret] = await Promise.all([
         getKisToken(),
         getCredential('KIS_APP_KEY'),
@@ -87,9 +88,13 @@ export async function GET(req: NextRequest) {
         custtype: 'P',
       };
       const params = new URLSearchParams({ PRDT_TYPE_CD: '300', PDNO: padded });
-      const res = await fetch(
+      // T-017 — 단일 관문 합류. 4초 타임아웃은 `AbortSignal.timeout`(생성 시점부터 계측)
+      //   대신 `timeoutMs` 로 넘긴다 — kisFetch 는 **유량 토큰을 받은 뒤**부터 재므로
+      //   스로틀 대기가 타임아웃을 잡아먹지 않는다.
+      const res = await kisFetch(
         `${kisBaseUrl()}/uapi/domestic-stock/v1/quotations/search-info?${params}`,
-        { headers, signal: AbortSignal.timeout(4000) },
+        { headers },
+        { timeoutMs: 4000, label: 'search-info(search)' },
       );
       if (res.ok) {
         const data = await res.json();

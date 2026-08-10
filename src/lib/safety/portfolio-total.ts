@@ -24,6 +24,26 @@ interface Cache extends MarketTotals { fetchedAt: number }
 const TTL_MS = 60_000;
 let cache: Cache | null = null;
 
+/**
+ * 🔁 **in-flight 중복 제거** (T-017).
+ *
+ * 이 함수 1회 = KIS 잔고 2~3건 + 보유 종목 수만큼의 시세. 그런데 캐시가 비어 있는 순간
+ * **여러 호출부가 동시에 들어온다**:
+ *  - `/api/health` 는 무인증이며 `getEffectiveOrderMax(domestic/overseas)` +
+ *    `getEffectiveDailyMax(domestic/overseas)` **4개를 `Promise.all` 로** 부른다.
+ *    넷 다 여기로 수렴하므로 콜드 캐시 한 번에 잔고·시세 팬아웃이 **4배**로 터졌다.
+ *  - `submitOrder` 도 한도 2건을 `Promise.all` 로 부른다(같은 구조).
+ *
+ * TTL 캐시는 "이미 끝난 조회"만 막고 "지금 진행 중인 조회"는 못 막는다. 진행 중인 Promise 를
+ * 공유해 **동시 호출 N건을 KIS 왕복 1회로** 합친다. 이미 `kis-auth.ts` 의 `refreshInFlight`
+ * 가 토큰 재발급에 쓰던 것과 같은 패턴이다.
+ *
+ * ⚠️ 결과는 공유하되 **실패도 공유한다.** 한 호출이 실패하면 같은 창의 호출 전부가 같은
+ *    실패를 본다 — 이는 의도된 것이다. `fetchTotals` 는 던지지 않고 0/0/0 을 돌려주며,
+ *    그 값의 해석(직전 캐시 폴백)은 아래 `getPortfolioTotalsKRW` 가 종전과 동일하게 한다.
+ */
+let inFlight: Promise<MarketTotals> | null = null;
+
 async function fetchTotals(): Promise<MarketTotals> {
   try {
     const balances = await kis.getBalances();
@@ -48,7 +68,17 @@ async function fetchTotals(): Promise<MarketTotals> {
             if (b.currency.includes(':')) overseasKRW += amount;
             else                          domesticKRW += amount;
           }
-        } catch { /* 한 종목 실패는 무시 */ }
+        } catch (e) {
+          /**
+           * 한 종목 실패는 종전대로 무시한다(그 종목이 총액에서 빠진다).
+           * 다만 T-017 이후 **스로틀 대기열 초과·레이트리밋도 이 경로로 들어올 수 있으므로**
+           * 조용히 넘기지 않는다 — 이 총액은 주문 한도(pct)와 킬스위치 기준선의 입력이라,
+           * 원인 모를 과소평가가 남으면 안 된다. (루프는 순차라 대기열을 채우지 않으므로
+           * 여기서 초과가 나면 다른 경로가 lane 을 채웠다는 신호다.)
+           */
+          console.warn(`[portfolio-total] ${b.currency} 시세 조회 실패 — 이 종목은 총액에서 제외:`,
+            e instanceof Error ? e.message : String(e));
+        }
       }
     }
 
@@ -73,15 +103,23 @@ async function fetchTotals(): Promise<MarketTotals> {
   }
 }
 
+/** 진행 중인 조회가 있으면 그것을 공유하고, 없으면 새로 시작한다. */
+function fetchTotalsDeduped(): Promise<MarketTotals> {
+  if (inFlight) return inFlight;
+  inFlight = fetchTotals().finally(() => { inFlight = null; });
+  return inFlight;
+}
+
 /**
- * 시장별 + 합계 평가액(KRW). 60초 캐시.
+ * 시장별 + 합계 평가액(KRW). 60초 캐시 + in-flight 중복 제거.
  * 호출 실패 시 직전 캐시 또는 0/0/0 반환.
  */
 export async function getPortfolioTotalsKRW(forceFresh = false): Promise<MarketTotals> {
   if (!forceFresh && cache && Date.now() - cache.fetchedAt < TTL_MS) {
     return { domestic: cache.domestic, overseas: cache.overseas, total: cache.total };
   }
-  const totals = await fetchTotals();
+  // forceFresh 여도 **동시** 호출끼리는 합친다 — "지금 막 시작한 조회"보다 더 신선한 값은 없다.
+  const totals = await fetchTotalsDeduped();
   // fetch 실패(전 항목 0)면 직전 캐시 유지
   if (totals.total === 0 && cache) return { domestic: cache.domestic, overseas: cache.overseas, total: cache.total };
   cache = { ...totals, fetchedAt: Date.now() };
@@ -103,4 +141,10 @@ export async function getPortfolioTotalKRW(forceFresh = false): Promise<number> 
 /** 테스트/진단용 캐시 무효화 */
 export function clearPortfolioTotalCache(): void {
   cache = null;
+  inFlight = null;
+}
+
+/** 진단·테스트용 — 지금 조회가 진행 중인가. */
+export function isPortfolioTotalFetchInFlight(): boolean {
+  return inFlight !== null;
 }

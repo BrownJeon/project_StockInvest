@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { kis, BalancesIncompleteError } from '@/lib/exchanges/kis';
+import { withKisPriority, mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
 import type { Ticker } from '@/lib/exchanges/types';
 import { kstTodayStart } from '@/lib/time';
 import { usdToKrw } from '@/lib/exchanges/fx';
@@ -74,8 +75,20 @@ export async function GET() {
 
     // 보유 종목 (현금 KRW/USD 제외) — symbol == currency (국내 6자리 또는 해외 EXCD:TICKER)
     const stockHoldings = balances.filter((b) => b.currency !== 'KRW' && b.currency !== 'USD' && (b.free + b.locked) > 0);
-    const tickerResults = await Promise.allSettled(
-      stockHoldings.map((b) => kis.getTicker(b.currency)),
+    /**
+     * T-017 — 보유 종목 16~20건의 시세를 **한꺼번에** 발사하던 자리다. 대시보드가 30초마다
+     * 폴링하므로 이 버스트가 레이트리밋의 주요 공급원이었다(오늘 `[api/portfolio] 잔고 부분
+     * 실패` 209건).
+     *
+     *  - `bulk` lane: 화면 표시용이라 지연돼도 무해하고, 실주문·entry-watcher 뒤로 물러나야 한다.
+     *  - 동시성 제한: 스로틀이 유량은 잡지만, 20건을 한 번에 밀어 넣으면 이 한 요청이
+     *    lane 을 독차지한다. 대기열을 얕게 유지한다.
+     *
+     * ⚠️ 위 `kis.getBalances()` 는 `bulk` 로 내리지 않았다 — 잔고는 화면의 뼈대이고
+     *    T-014 의 부분실패 판정(`BalancesIncompleteError`)이 걸린 경로다.
+     */
+    const tickerResults = await withKisPriority('bulk', () =>
+      mapWithLimit(stockHoldings, DEFAULT_FANOUT_CONCURRENCY, (b) => kis.getTicker(b.currency)),
     );
     const tickerMap = new Map<string, Ticker>();
     tickerResults.forEach((r, i) => {

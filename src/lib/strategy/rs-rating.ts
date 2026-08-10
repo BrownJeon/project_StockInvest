@@ -1,5 +1,6 @@
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
+import { withKisPriority } from '@/lib/exchanges/kis-throttle';
 import type { RowDataPacket } from 'mysql2';
 
 export interface RsResult {
@@ -68,7 +69,15 @@ async function computeOne(symbol: string): Promise<{
   }
 }
 
-export async function updateRsRatings(market: 'domestic' | 'overseas' = 'domestic'): Promise<number> {
+/**
+ * T-017 — 최대 250종목 × 1년치 일봉. 전형적인 배치라 `bulk` lane 에서 돌린다.
+ * (이미 순차 + 100ms 간격이라 자체 유량은 낮지만, 다른 요청보다 뒤로 물러나게 한다.)
+ */
+export function updateRsRatings(market: 'domestic' | 'overseas' = 'domestic'): Promise<number> {
+  return withKisPriority('bulk', () => updateRsRatingsImpl(market));
+}
+
+async function updateRsRatingsImpl(market: 'domestic' | 'overseas'): Promise<number> {
   const pool = getPool();
 
   // 최신 universe 배치에서 중복 제거된 심볼 목록 조회

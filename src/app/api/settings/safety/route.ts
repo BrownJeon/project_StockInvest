@@ -4,6 +4,9 @@ import { getPool } from '@/lib/db';
 import { isDryRun } from '@/lib/safety/dry-run';
 import { syncEngineSwitchesFromLegacy } from '@/lib/signals/router';
 import { readExitEngineSwitch, describeExitEngineSwitch } from '@/lib/strategy/exit-switch';
+import {
+  KIS_RATE_LIMIT_KEY, DEFAULT_RATE_PER_SEC, clampRatePerSec, describeKisThrottle,
+} from '@/lib/exchanges/kis-throttle';
 
 export const dynamic = 'force-dynamic';
 
@@ -83,6 +86,23 @@ export async function GET() {
    */
   const exitSwitch = await readExitEngineSwitch();
 
+  /**
+   * T-017 — KIS 요청 유량. `getOverrides()` 의 LIKE 패턴(safety_%/strategy_%/…) 밖의 키라
+   * 별도로 읽는다. **재배포 없이 조정**하기 위한 값이며 KIS 공표 한도가 아니다.
+   */
+  let kisRateLimitPerSec = DEFAULT_RATE_PER_SEC;
+  try {
+    const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
+      'SELECT value FROM system_config WHERE `key` = ? LIMIT 1', [KIS_RATE_LIMIT_KEY],
+    );
+    if (rows.length > 0) {
+      let decoded: unknown = String(rows[0].value);
+      try { decoded = JSON.parse(String(rows[0].value)); } catch { /* 비 JSON 원문 */ }
+      const n = Number(decoded);
+      if (Number.isFinite(n) && n > 0) kisRateLimitPerSec = clampRatePerSec(n);
+    }
+  } catch { /* 조회 실패 시 코드 기본값 표시 */ }
+
   return NextResponse.json({
     ok: true,
     safety: {
@@ -106,6 +126,9 @@ export async function GET() {
       volGuardWarnPct,
       volGuardBlockPct,
       volGuardPanicPct,
+      /** KIS 초당 요청 상한 — **검증되지 않은 추정치**. 조정 후 EGW00201 발생량을 보고 단계적으로 올린다. */
+      kisRateLimitPerSec,
+      kisRateLimitSummary: describeKisThrottle(),
     },
     notifySignal: {
       autoSubmit: notifySignalAutoSubmit,
@@ -150,6 +173,8 @@ const ALLOWED_PATCH_KEYS: Record<string, string> = {
   volGuardWarnPct:         'vol_guard_warn_pct',
   volGuardBlockPct:        'vol_guard_block_pct',
   volGuardPanicPct:        'vol_guard_panic_pct',
+  // T-017 — 재배포 없이 KIS 유량을 조정하는 유일한 지원 경로 (수기 DB 수정 대신 이 API 사용).
+  kisRateLimitPerSec:      'kis_rate_limit_per_sec',
   reportEnabled:           'report_trade_enabled',
   reportChannel:           'report_trade_channel',
   reportMode:              'report_trade_mode',
@@ -193,6 +218,17 @@ const PATCH_ENUMS: Record<string, readonly string[]> = {
  */
 const PATCH_STRICT_BOOLEANS = ['exitEngineEnabled'] as const;
 
+/**
+ * 수치 도메인이 고정된 필드 — 저장 전 검증.
+ *
+ * `kisRateLimitPerSec` 는 오타 하나로 시스템을 멈추거나(`0`) 레이트리밋을 다시 유발할
+ * 수(`500`) 있다. 판독기(`kis-throttle.clampRatePerSec`)가 방어하긴 하지만, **저장된 값과
+ * 실제 동작이 달라지는 상태**를 애초에 만들지 않는다.
+ */
+const PATCH_NUMBER_RANGES: Record<string, { min: number; max: number }> = {
+  kisRateLimitPerSec: { min: 0.2, max: 50 },
+};
+
 export async function PATCH(req: NextRequest) {
   const body = await req.json() as Record<string, unknown>;
   const pool = getPool();
@@ -205,6 +241,13 @@ export async function PATCH(req: NextRequest) {
   for (const field of PATCH_STRICT_BOOLEANS) {
     if (field in body && typeof body[field] !== 'boolean') {
       invalid.push(`${field}=${JSON.stringify(body[field])} (허용: true|false)`);
+    }
+  }
+  for (const [field, range] of Object.entries(PATCH_NUMBER_RANGES)) {
+    if (!(field in body)) continue;
+    const n = Number(body[field]);
+    if (typeof body[field] !== 'number' || !Number.isFinite(n) || n < range.min || n > range.max) {
+      invalid.push(`${field}=${JSON.stringify(body[field])} (허용: ${range.min}~${range.max} 사이 숫자)`);
     }
   }
   if (invalid.length > 0) {
@@ -230,6 +273,16 @@ export async function PATCH(req: NextRequest) {
     console.warn(
       `[settings:safety] 자동 청산 엔진 ${on ? 'ON — 하드손절·EOD손절·트레일링·목표익절 자동 매도가 다시 활성화됨' : 'OFF — 자동 매도 주문 전면 중단'}`
       + ' (system_config.exit_engine_enabled)',
+    );
+  }
+
+  // T-017 — 유량 변경은 KIS 호출 실패율에 직결되므로 서버 로그에 남긴다.
+  //   실제 반영은 kis-throttle 이 최대 15초 주기로 재조회하며 자동으로 이뤄진다(재배포 불필요).
+  if ('kisRateLimitPerSec' in body) {
+    console.warn(
+      `[settings:safety] KIS 요청 유량 → ${Number(body['kisRateLimitPerSec'])} req/s `
+      + `(system_config.${'kis_rate_limit_per_sec'}) — 최대 15초 내 반영. `
+      + '※ 공표 한도가 아닌 추정치이므로 상향 후 EGW00201/EGW00215 발생량을 확인할 것.',
     );
   }
 

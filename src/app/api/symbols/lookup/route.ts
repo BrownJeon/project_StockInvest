@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
   if (market === 'domestic') {
     try {
       const { getKisToken } = await import('@/lib/exchanges/kis-auth');
+      const { kisFetch } = await import('@/lib/exchanges/kis-http');
       const { getCredential } = await import('@/lib/credentials');
       const [token, appkey, appsecret] = await Promise.all([
         getKisToken(),
@@ -56,7 +57,8 @@ export async function GET(req: NextRequest) {
       const base = isMock
         ? 'https://openapivts.koreainvestment.com:29443'
         : 'https://openapi.koreainvestment.com:9443';
-      const res = await fetch(`${base}/uapi/domestic-stock/v1/quotations/search-info?${params}`, { headers });
+      // T-017 — 어댑터를 우회해 KIS 를 직접 부르던 자리. 단일 관문(kisFetch)으로 합류시킨다.
+      const res = await kisFetch(`${base}/uapi/domestic-stock/v1/quotations/search-info?${params}`, { headers }, { label: 'search-info(lookup)' });
       if (res.ok) {
         const data = await res.json();
         const name: string = data?.output?.prdt_abrv_name ?? data?.output?.prdt_name ?? '';

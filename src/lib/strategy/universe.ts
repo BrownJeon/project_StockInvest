@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { fetchMarketCapRanking, getKisTickers, getKisOverseasTickers, kis } from '@/lib/exchanges/kis';
+import { withKisPriority, mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
 import type { Market } from '@/lib/exchanges/kis-symbols';
 import { getStaticOverseasUniverse } from '@/lib/strategy/universe-overseas-static';
 import { atrLast } from '@/lib/strategy/indicators/atr';
@@ -153,7 +154,18 @@ function scoreForProfile(a: StockAnalysis, profile: StrategyProfile, volScore: n
  * 거래대금 상위 20개 종목을 분석하고 프로파일별 상위 5개를 DB에 저장.
  * universe 테이블의 refreshed_at이 15분 이내면 스킵 (force=true로 강제 갱신 가능).
  */
-export async function refreshUniverse(market: Market = 'domestic', force = false): Promise<{ refreshed: boolean }> {
+export function refreshUniverse(market: Market = 'domestic', force = false): Promise<{ refreshed: boolean }> {
+  /**
+   * T-017 — universe 갱신 전체를 `bulk` lane 에서 돌린다.
+   *
+   * 이 함수는 KIS 호출량이 가장 큰 단일 경로다: 시총 랭킹 2건 + 상위 `UNIVERSE_TOP_N`(=150)
+   * 종목의 일봉. 지연돼도 무해한 배치이므로, 이 스캔이 `entry-watcher` 의 단건 시세나
+   * 실주문 앞에 서지 않도록 가장 낮은 lane 에 둔다.
+   */
+  return withKisPriority('bulk', () => refreshUniverseImpl(market, force));
+}
+
+async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ refreshed: boolean }> {
   const pool = getPool();
 
   if (!force) {
@@ -216,9 +228,17 @@ export async function refreshUniverse(market: Market = 'domestic', force = false
 
   if (top20.length === 0) return { refreshed: false };
 
-  const analyses = (await Promise.all(
-    top20.map(t => analyzeSymbol(t.symbol, t.quoteVolume24h ?? 0)),
-  )).filter((a): a is StockAnalysis => a !== null);
+  /**
+   * T-017 — 기존 `Promise.all(top20.map(...))` 은 최대 150건을 **동시에** 발사했다.
+   * 유량은 스로틀이 잡지만, 그 150건이 한 번에 대기열로 들어가면 이 한 호출이 lane 을
+   * 독차지해 뒤따르는 요청이 대기열 초과로 거절된다. 동시성을 제한해 대기열을 얕게 유지한다.
+   * (`analyzeSymbol` 은 자체적으로 실패를 null 로 흡수하므로 결과 의미는 종전과 동일하다.)
+   */
+  const settled = await mapWithLimit(top20, DEFAULT_FANOUT_CONCURRENCY,
+    t => analyzeSymbol(t.symbol, t.quoteVolume24h ?? 0));
+  const analyses = settled
+    .map(r => (r.status === 'fulfilled' ? r.value : null))
+    .filter((a): a is StockAnalysis => a !== null);
 
   if (analyses.length === 0) return { refreshed: false };
 

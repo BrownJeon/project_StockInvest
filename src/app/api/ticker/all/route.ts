@@ -2,6 +2,8 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { getKisTickers } from '@/lib/exchanges/kis';
 import { getKisToken } from '@/lib/exchanges/kis-auth';
+import { kisFetch } from '@/lib/exchanges/kis-http';
+import { withKisPriority, mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
 import { getCredential } from '@/lib/credentials';
 import { getStaticOverseasUniverse } from '@/lib/strategy/universe-overseas-static';
 
@@ -25,7 +27,8 @@ async function fetchDomesticName(symbol: string, token: string): Promise<string 
       custtype:       'P',
     };
     const params = new URLSearchParams({ PRDT_TYPE_CD: '300', PDNO: symbol });
-    const res = await fetch(`${base}/uapi/domestic-stock/v1/quotations/search-info?${params}`, { headers });
+    // T-017 — 어댑터를 우회해 KIS 를 직접 부르던 자리. 단일 관문(kisFetch)으로 합류시킨다.
+    const res = await kisFetch(`${base}/uapi/domestic-stock/v1/quotations/search-info?${params}`, { headers }, { label: 'search-info(ticker/all)' });
     if (!res.ok) return null;
     const data = await res.json();
     const name: string = data?.output?.prdt_abrv_name ?? data?.output?.prdt_name ?? '';
@@ -71,10 +74,13 @@ export async function GET() {
     if (missing.length > 0) {
       try {
         const token = await getKisToken();
-        const fetched = await Promise.allSettled(missing.map(async s => {
-          const name = await fetchDomesticName(s, token);
-          return { symbol: s, name };
-        }));
+        // T-017 — 이름 보강은 배치 성격이므로 `bulk` lane + 동시성 제한.
+        //   기존엔 누락 종목 수만큼(수십 건) 한꺼번에 발사했다.
+        const fetched = await withKisPriority('bulk', () =>
+          mapWithLimit(missing, DEFAULT_FANOUT_CONCURRENCY, async s => {
+            const name = await fetchDomesticName(s, token);
+            return { symbol: s, name };
+          }));
         for (const r of fetched) {
           if (r.status !== 'fulfilled' || !r.value.name) continue;
           meta[r.value.symbol] = r.value.name;

@@ -1,5 +1,6 @@
 import { getPool } from '@/lib/db';
 import { getCredential } from '@/lib/credentials';
+import { kisFetch } from './kis-http';
 import type { RowDataPacket } from 'mysql2';
 
 /**
@@ -63,11 +64,21 @@ async function issueAndStore(appKey: string, appSecret: string): Promise<string>
   // KIS는 1분 내 동일 앱키 재발급을 거부 — 충돌 시 약간 대기 후 재시도
   let lastErr: unknown = null;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(`${kisBaseUrl()}/oauth2/tokenP`, {
+    /**
+     * T-017 — 유량 스로틀 `critical` lane.
+     *
+     * 토큰이 없으면 **다른 모든 KIS 호출이 여기서 막힌다.** 대량 스캔 뒤에 줄 서면 안 된다.
+     *
+     * ⚠️ `tokenP` 자체의 "앱키당 1분에 1회" 제한(`EGW00133`)은 이 스로틀과 **다른 층위**다.
+     *    그 제한은 아래 `1분당 1회` 분기와 상위의 `refreshInFlight` 단일화로 이미 다뤄지고
+     *    있고, 스로틀은 초당 유량만 본다. `EGW00133` 은 `kis-http` 의 레이트리밋 패턴
+     *    (`EGW00201`/`EGW00215`)에 **일부러 포함하지 않았으므로** 이중으로 백오프되지 않는다.
+     */
+    const res = await kisFetch(`${kisBaseUrl()}/oauth2/tokenP`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'client_credentials', appkey: appKey, appsecret: appSecret }),
-    });
+    }, { priority: 'critical', label: 'tokenP' });
     if (res.ok) {
       const data = await res.json();
       if (!data.access_token) throw new Error(`KIS token missing: ${JSON.stringify(data)}`);

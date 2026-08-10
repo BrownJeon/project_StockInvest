@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getAccountId, getPool } from '@/lib/db';
 import type { ExchangeId, OrderRequest, OrderResult } from '@/lib/exchanges/types';
+import { withKisPriority } from '@/lib/exchanges/kis-throttle';
 import { sendAlert } from '@/lib/notify';
 import { type AssetClass } from './asset-profile';
 import { parseBoolFlag, shouldReportUnparsable } from './flags';
@@ -86,7 +87,29 @@ interface SubmitOptions {
  *  8. 실 송신 → status=accepted (상세 상태는 거래소 응답에 따라 후속 업데이트)
  * 각 단계에서 발생 이벤트는 trade_logs에 기록.
  */
+/**
+ * 💰 T-017 — **주문 제출 전 구간을 KIS 유량 `critical` lane 으로 실행한다.**
+ *
+ * 왜 `realSubmit` 만이 아니라 함수 전체인가: 주문이 나가기까지 KIS 를 두 번 탄다.
+ *   ① 5~6단계 한도 산정 — `getEffectiveOrderMax/DailyMax` → `portfolio-total` → **잔고+시세 조회**
+ *   ② 8단계 실 송신 — `realSubmit` (= `kis.createOrder`)
+ * ①이 대량 스캔 뒤에 줄 서면 주문 자체가 그만큼 늦어진다. 즉 **주문을 게이팅하는 잔고 조회도
+ * 주문의 일부**이므로 같은 lane 에 둔다. 실행 컨텍스트(`AsyncLocalStorage`)로 전달되므로
+ * 중간 계층에 인자를 뚫지 않아도 하위 KIS 호출 전부가 자동으로 상속받는다.
+ *
+ * 면제(exempt)가 아니라 **최우선 순위**를 준 이유: 면제는 유량 상한 자체를 벗어나는 것이라
+ * 레이트리밋을 다시 유발할 수 있다. 주문은 빈도가 낮아(하루 수십 건) 우선순위만으로도
+ * 사실상 즉시 통과하며, 그러면서도 전체 유량 상한은 지켜진다.
+ */
 export async function submitOrder(
+  req: OrderRequest,
+  realSubmit: (req: OrderRequest) => Promise<OrderResult>,
+  options: SubmitOptions = {},
+): Promise<OrderResult & { orderId?: number; clientOrderId?: string }> {
+  return withKisPriority('critical', () => submitOrderInner(req, realSubmit, options));
+}
+
+async function submitOrderInner(
   req: OrderRequest,
   realSubmit: (req: OrderRequest) => Promise<OrderResult>,
   options: SubmitOptions = {},

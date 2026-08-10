@@ -714,6 +714,29 @@ async function setupDB(): Promise<void> {
     console.warn(`[db] exit_engine_enabled 시드 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // ── T-017 (2026-08-10) — KIS 요청 유량(초당) ───────────────────────────
+  //
+  // `EGW00201`/`EGW00215`("초당 거래건수 초과")가 상시 발생해 잔고·시세 조회가 간헐 실패하고,
+  // 그 부분 실패가 스냅샷·주문한도까지 오염시켜 왔다(T-012 참조). 유량 스로틀의 기준값을
+  // 재배포 없이 조정할 수 있도록 키를 심는다.
+  //
+  // ⚠️ **초기값 5 는 KIS 가 공표한 한도가 아니라 검증되지 않은 추정치다.**
+  //    근거·조정 방법은 `src/lib/exchanges/kis-throttle.ts` 의 DEFAULT_RATE_PER_SEC 주석 참조.
+  // ⚠️ **INSERT IGNORE.** 운영자가 올려 둔 값을 부팅이 되돌리면 안 된다 (D3·T-015 동일 원칙).
+  try {
+    await p.query(
+      'INSERT IGNORE INTO system_config (`key`, value) VALUES (?,?)',
+      ['kis_rate_limit_per_sec', '5'],
+    );
+  } catch (e) {
+    console.warn(`[db] kis_rate_limit_per_sec 시드 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  try {
+    const { describeKisThrottle } = await import('@/lib/exchanges/kis-throttle');
+    console.log(`[boot] ${describeKisThrottle()}`);
+  } catch { /* 진단 로그일 뿐 — 실패해도 부팅을 막지 않는다 */ }
+
   // 부팅 배너 — **꺼져 있으면 조용히 지나가지 않는다.**
   // 이 상태에서 사용자가 "손절이 나를 지켜준다"고 믿는 것이 유일한 치명적 실패 모드다.
   try {
