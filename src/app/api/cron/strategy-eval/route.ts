@@ -13,11 +13,29 @@ export async function POST(req: NextRequest) {
   const force = body.force === true;
 
   try {
-    // 주문 상태 동기화 (비차단 — 실패해도 전략 평가는 진행)
-    syncPendingOrders().then(r => {
-      if (r.synced > 0 || r.errors.length > 0)
-        console.log(`[order-sync] synced=${r.synced} errors=${r.errors.length}`);
-    }).catch(() => {});
+    /**
+     * 주문 상태 동기화 (비차단 — 실패해도 전략 평가는 진행).
+     *
+     * 🔴 T-018 — **이 fire-and-forget 결과는 아무 데도 저장되지 않는다.** 예전 코드는
+     * `synced>0 || errors.length>0` 일 때만 한 줄 찍고 `.catch(() => {})` 로 예외까지
+     * 통째로 버렸다. 즉 "주문 상태를 확인하지 못했다"는 사실이 도달할 곳이 없었다.
+     *
+     * 그래서 `syncPendingOrders` 는 판정 보류를 **자기 안에서** 로그(`ORDER_SYNC_UNRECONCILED`)와
+     * 스로틀 알림으로 내보낸다 — 여기서 반환값을 버려도 신호는 살아남는다. 아래 로그는
+     * 그 위에 얹는 요약이고, `complete=false` 를 조건에 넣어 **"판정 못 함"이 "할 일 없음"과
+     * 같은 침묵이 되지 않게** 한다.
+     */
+    void syncPendingOrders().then(r => {
+      if (r.synced > 0 || r.errors.length > 0 || !r.complete) {
+        console.log(
+          `[order-sync] synced=${r.synced} errors=${r.errors.length} complete=${r.complete}`
+          + (r.skipped > 0 ? ` unreconciled=${r.skipped} stale=${r.staleCount}` : ''),
+        );
+      }
+    }).catch(e => {
+      // 동기화 자체가 던졌다(예: DB 조회 실패). 조용히 버리면 T-018 이 없앤 침묵이 부활한다.
+      console.error('[order-sync] 실행 실패 —', e instanceof Error ? e.message : String(e));
+    });
 
     /**
      * 🔴 T-017 reviewer HIGH-1 — **여기를 `withKisPriority('bulk')` 로 감싸면 안 된다.**

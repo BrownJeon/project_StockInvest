@@ -4,8 +4,9 @@
  */
 import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
-import { kisFetch, isKisRateLimited } from './kis-http';
+import { kisFetch, isKisRateLimited, kisBodyText } from './kis-http';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
+import { submittedQuantity } from './order-quantity';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
 
 const isMock = () => String(process.env.KIS_MOCK ?? 'true').toLowerCase() === 'true';
@@ -276,7 +277,9 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
     ACNT_PRDT_CD: acntPrdt,
     PDNO:         req.symbol,
     ORD_DVSN:     req.type === 'market' ? '01' : '00',
-    ORD_QTY:      String(quantity),
+    // 국내는 가공 없이 통과 — 기존 동작 그대로다. `submittedQuantity` 를 경유시키는 이유는
+    // "DB 수량 ≠ 송신 수량"을 판정하는 코드가 시장별 규칙을 **다시 유도하지 않게** 하기 위함.
+    ORD_QTY:      String(submittedQuantity('domestic', quantity)),
     ORD_UNPR:     req.type === 'market' ? '0' : String(roundToTick(price)),
   };
   // 💰 T-017 — 주문 송신은 **무조건 `critical`**. 주변 실행 컨텍스트가 `bulk` 여도
@@ -385,6 +388,17 @@ export async function getKisTickers(symbols: string[]): Promise<Ticker[]> {
  *
  * 응답 필드: odno(주문번호), pdno(종목코드), rmn_qty(잔여수량), ord_qty(주문수량).
  * rmn_qty가 0보다 큰 행만 반환 (전부 체결되거나 취소된 건 제외).
+ *
+ * ## 🔴 실패를 빈 배열로 바꾸지 않는다 (T-018)
+ *
+ * 이 함수의 반환값은 `order-sync` 에서 **"미체결 목록에 없다 → 취소된 주문이다"** 라는
+ * 부재 추론의 근거로 쓰인다. 따라서 조회 실패를 `[]` 로 퇴화시키면 그 추론이
+ * **살아 있는 지정가 주문 전부를 `cancelled` 로 마킹**한다. 예전 코드는 세 자리에서
+ * 이걸 삼켰다 — `!res.ok`(레이트리밋 HTTP 500 이 여기 떨어진다), `rt_cd !== '0'`,
+ * 그리고 catch. 지금은 셋 다 던진다.
+ *
+ * `rt_cd !== '0'` 은 HTTP 200 이어도 **API 레벨 에러**다. "주문 0건"과 같은 값으로
+ * 뭉개면 안 된다 ([[T-012]]·[[T-014]] 와 같은 결함 유형).
  */
 export async function getActiveOrders(): Promise<{ orderId: string; symbol: string }[]> {
   const trId = isMock() ? 'VTTC8036R' : 'TTTC8036R';
@@ -397,28 +411,45 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
     CTX_AREA_FK100: '',
     CTX_AREA_NK100: '',
   });
-  try {
-    const headers = await kisHeaders(trId);
-    const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl?${params}`;
-    const res = await kisFetch(url, { headers }, { label: 'domestic getActiveOrders' });
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (process.env.KIS_DOMESTIC_DEBUG === '1') {
-      console.log('[kis-domestic getActiveOrders raw] rt_cd=', data.rt_cd,
-        'output[0]=', JSON.stringify(data.output?.[0] ?? null));
-    }
-    if (data.rt_cd !== '0' || !Array.isArray(data.output)) return [];
-    return (data.output as Record<string, string>[])
-      .filter(o => Number(o.rmn_qty ?? o.ord_qty ?? 0) > 0)
-      .map(o => ({
-        orderId: String(o.odno),
-        symbol:  String(o.pdno ?? ''),
-      }))
-      .filter(o => o.orderId && o.symbol);
-  } catch (e) {
-    console.error('[kis-domestic getActiveOrders]', e);
+  const headers = await kisHeaders(trId);
+  const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl?${params}`;
+  const res = await kisFetch(url, { headers }, { label: 'domestic getActiveOrders' });
+  if (!res.ok) {
+    const body = kisBodyText(res) ?? await res.text().catch(() => '');
+    throw new Error(
+      `KIS getActiveOrders: ${res.status} body=${body.slice(0, 300)}`
+      + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+    );
+  }
+  const data = await res.json();
+  if (process.env.KIS_DOMESTIC_DEBUG === '1') {
+    console.log('[kis-domestic getActiveOrders raw] rt_cd=', data.rt_cd,
+      'output[0]=', JSON.stringify(data.output?.[0] ?? null));
+  }
+  if (data.rt_cd !== '0') {
+    throw new Error(
+      `KIS getActiveOrders: rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+      + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
+    );
+  }
+  const rows = data.output;
+  // rt_cd='0' 은 API 가 명시적으로 "성공"이라고 말한 것이다. 그 상태에서 배열이 아예 없는 것은
+  // KIS 가 빈 결과를 그렇게 표현하는 경우가 있어 **0건으로 읽는다** (경고는 남긴다).
+  if (rows == null) {
+    console.warn('[kis-domestic getActiveOrders] rt_cd=0 인데 output 이 없다 — 미체결 0건으로 간주');
     return [];
   }
+  // 반대로 "있는데 배열이 아니다"는 우리가 해석할 수 없는 형태다. 0건과 구분이 불가능하므로 던진다.
+  if (!Array.isArray(rows)) {
+    throw new Error(`KIS getActiveOrders: output 형식 이상 (${typeof rows}) — 0건과 구분할 수 없어 실패로 처리`);
+  }
+  return (rows as Record<string, string>[])
+    .filter(o => Number(o.rmn_qty ?? o.ord_qty ?? 0) > 0)
+    .map(o => ({
+      orderId: String(o.odno),
+      symbol:  String(o.pdno ?? ''),
+    }))
+    .filter(o => o.orderId && o.symbol);
 }
 
 /**
@@ -434,6 +465,11 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
  *
  * tot_ccld_qty가 0보다 큰 (실제 체결분이 있는) 행만 반환.
  * KIS는 PDNO 필터를 지원하므로 symbol 인자로 종목별 필터링.
+ *
+ * ## 🔴 실패를 빈 배열로 바꾸지 않는다 (T-018)
+ *
+ * `getActiveOrders` 와 같은 이유다 — `order-sync` 는 "체결 목록에도 없다"를 취소 판정의
+ * 나머지 절반으로 쓴다. 조회 실패가 `[]` 가 되면 그 절반이 무너진다.
  */
 export async function getCompletedOrders(
   symbol: string, fromTs: number, toTs: number, _limit: number,
@@ -465,50 +501,58 @@ export async function getCompletedOrders(
     CTX_AREA_NK100:     '',
   });
   let attempt = 0;
-  while (true) {
+  for (;;) {
     const headers = await kisHeaders(trId);
-    try {
-      const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-daily-ccld?${params}`;
-      const res = await kisFetch(url, { headers }, { label: 'domestic getCompletedOrders' });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-          console.warn('[kis-domestic getCompletedOrders] token expired, re-issuing');
-          await invalidateKisToken();
-          attempt++;
-          continue;
-        }
-        return [];
+    const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-daily-ccld?${params}`;
+    const res = await kisFetch(url, { headers }, { label: 'domestic getCompletedOrders' });
+    if (!res.ok) {
+      const body = kisBodyText(res) ?? await res.text().catch(() => '');
+      if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
+        console.warn('[kis-domestic getCompletedOrders] token expired, re-issuing');
+        await invalidateKisToken();
+        attempt++;
+        continue;
       }
-      const data = await res.json();
-      if (process.env.KIS_DOMESTIC_DEBUG === '1') {
-        console.log('[kis-domestic getCompletedOrders raw] rt_cd=', data.rt_cd,
-          'symbol=', symbol, 'output1[0]=', JSON.stringify(data.output1?.[0] ?? null));
-      }
-      // KIS는 output1(주문체결 목록) + output2(요약) 구조
-      const rows: Record<string, string>[] = data.output1 ?? data.output ?? [];
-      if (!Array.isArray(rows)) return [];
-      return rows
-        .filter(o => Number(o.tot_ccld_qty ?? 0) > 0)
-        .map(o => {
-          const dt = String(o.ord_dt ?? '');
-          const tm = String(o.ord_tmd ?? '000000').padStart(6, '0');
-          let ts = 0;
-          if (dt.length === 8) {
-            ts = new Date(`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${tm.slice(0,2)}:${tm.slice(2,4)}:${tm.slice(4,6)}+09:00`).getTime();
-          }
-          return {
-            orderId: String(o.odno ?? ''),
-            side:    o.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
-            price:   Number(o.avg_prvs ?? o.ord_unpr ?? 0),
-            qty:     Number(o.tot_ccld_qty ?? 0),
-            ts,
-          };
-        })
-        .filter(o => o.orderId);
-    } catch (e) {
-      console.error('[kis-domestic getCompletedOrders]', e);
-      return [];
+      throw new Error(
+        `KIS getCompletedOrders ${symbol}: ${res.status} body=${body.slice(0, 300)}`
+        + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+      );
     }
+    const data = await res.json();
+    if (process.env.KIS_DOMESTIC_DEBUG === '1') {
+      console.log('[kis-domestic getCompletedOrders raw] rt_cd=', data.rt_cd,
+        'symbol=', symbol, 'output1[0]=', JSON.stringify(data.output1?.[0] ?? null));
+    }
+    // HTTP 200 이어도 rt_cd 가 '0' 이 아니면 API 레벨 에러다 — "체결 0건"과 뭉개지 않는다.
+    if (data.rt_cd !== '0') {
+      throw new Error(
+        `KIS getCompletedOrders ${symbol}: rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+        + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
+      );
+    }
+    // KIS는 output1(주문체결 목록) + output2(요약) 구조
+    const rows = data.output1 ?? data.output;
+    if (rows == null) return [];   // rt_cd='0' + 목록 없음 = 체결 0건
+    if (!Array.isArray(rows)) {
+      throw new Error(`KIS getCompletedOrders ${symbol}: output 형식 이상 (${typeof rows}) — 0건과 구분 불가`);
+    }
+    return (rows as Record<string, string>[])
+      .filter(o => Number(o.tot_ccld_qty ?? 0) > 0)
+      .map(o => {
+        const dt = String(o.ord_dt ?? '');
+        const tm = String(o.ord_tmd ?? '000000').padStart(6, '0');
+        let ts = 0;
+        if (dt.length === 8) {
+          ts = new Date(`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${tm.slice(0,2)}:${tm.slice(2,4)}:${tm.slice(4,6)}+09:00`).getTime();
+        }
+        return {
+          orderId: String(o.odno ?? ''),
+          side:    o.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+          price:   Number(o.avg_prvs ?? o.ord_unpr ?? 0),
+          qty:     Number(o.tot_ccld_qty ?? 0),
+          ts,
+        };
+      })
+      .filter(o => o.orderId);
   }
 }

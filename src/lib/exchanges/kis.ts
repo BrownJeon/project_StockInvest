@@ -144,21 +144,102 @@ export { fetchMarketCapRanking, getKisTickers } from './kis-domestic';
 export { getKisOverseasTickers } from './kis-overseas';
 
 /**
- * 양시장 미체결 주문 통합 조회.
- * 환경변수 `KIS_OVERSEAS_ENABLED=false` 시 도메스틱만.
+ * 미체결 주문 조회 결과 — {@link BalancesResult} 와 **의도적으로 같은 모양**이다 (T-018).
+ *
+ * ## 왜 필요한가
+ *
+ * `order-sync` 는 "미체결 목록에 없다 + 체결 목록에도 없다 → 취소된 주문" 이라는
+ * **부재 추론**으로 DB 에 `cancelled` 를 쓴다. 그래서 이 함수가 실패를 빈 배열로 바꾸면
+ * 그 추론이 **브로커에 살아 있는 지정가 주문 전부를 `cancelled` 로 마킹**한다. 결과는
+ * 중복 진입(포지션이 없다고 오인)과 청산 추적 유실이다.
+ *
+ * 예전 구조는 실패를 **다섯 겹**으로 삼켰다 — 어댑터 3겹(`!res.ok`, `rt_cd!=='0'`, catch)
+ * × 2시장, Facade 의 `.catch(()=>[])`, 그리고 `order-sync` 자신의 catch. 그 결과
+ * `order-sync` 에 이미 있던 fail-closed 조기 반환은 **도달 불가능한 죽은 코드**였다.
+ *
+ * 모양을 [[T-014]] 의 `BalancesResult` 와 맞춘 이유: 이 코드베이스에는 이미 "시장별
+ * 부분 실패를 보존해 넘기는" 확립된 계약이 있다. 새 모양을 발명하면 읽는 사람이 두 규약을
+ * 익혀야 하고, 어느 쪽이 안전 기본값인지 헷갈린다. **일관성이 우아함보다 중요하다.**
+ */
+export interface ActiveOrdersResult {
+  orders:   { orderId: string; symbol: string }[];
+  /** 조회에 성공한 시장 */
+  ok:       Market[];
+  /** 조회에 실패한 시장과 사유 */
+  failed:   { market: Market; error: string }[];
+  /** 활성화된 모든 시장이 성공 = 이 목록의 "부재"를 근거로 판단해도 된다 */
+  complete: boolean;
+}
+
+/**
+ * 미체결 조회 부분 실패. `getActiveOrders()` 가 던진다.
+ *
+ * `BalancesIncompleteError` 와 같은 이유로 **던지는 쪽을 기본값**으로 둔다 — 잘린 목록을
+ * 실수로 받아 부재 추론에 쓰는 새 호출부가 생기지 않게. 부분 결과가 정말 필요하면
+ * `getActiveOrdersDetailed()` 로 **이름을 지정해 옵트인**해야 한다.
+ */
+export class ActiveOrdersIncompleteError extends Error {
+  readonly failed: { market: Market; error: string }[];
+  readonly okMarkets: Market[];
+  constructor(failed: { market: Market; error: string }[], okMarkets: Market[]) {
+    super(
+      `KIS 미체결 주문 조회 부분 실패 — 실패 시장: ${failed.map(f => `${f.market}(${f.error})`).join(', ')}`
+      + `${okMarkets.length ? ` / 성공: ${okMarkets.join(', ')}` : ''}`,
+    );
+    this.name = 'ActiveOrdersIncompleteError';
+    this.failed = failed;
+    this.okMarkets = okMarkets;
+  }
+}
+
+/**
+ * 시장별 성공/실패를 **보존한 채** 미체결 주문을 반환한다.
+ *
+ * `KIS_OVERSEAS_ENABLED=false` 면 국내만 조회하고 `ok=['domestic']` 이 된다.
+ * (예전 코드는 이 분기에서 Facade catch 없이 곧장 위임했지만, 어댑터 자체가 삼켰기 때문에
+ * 어차피 던질 수 없었다 — 그 비대칭도 여기서 사라진다.)
+ */
+export async function getActiveOrdersDetailed(): Promise<ActiveOrdersResult> {
+  const enableOverseas = String(process.env.KIS_OVERSEAS_ENABLED ?? 'true').toLowerCase() === 'true';
+
+  const tasks: { market: Market; run: () => Promise<{ orderId: string; symbol: string }[]> }[] = [
+    { market: 'domestic', run: () => dom.getActiveOrders() },
+  ];
+  if (enableOverseas) tasks.push({ market: 'overseas', run: () => ovs.getActiveOrders() });
+
+  const settled = await Promise.all(tasks.map(async (t) => {
+    try {
+      return { market: t.market, orders: await t.run(), error: null as string | null };
+    } catch (e) {
+      const error = errMsg(e);
+      console.error(`[kis] ${t.market} active orders failed:`, error);
+      return { market: t.market, orders: [] as { orderId: string; symbol: string }[], error };
+    }
+  }));
+
+  const failed = settled.filter(s => s.error !== null).map(s => ({ market: s.market, error: s.error! }));
+  return {
+    orders:   settled.flatMap(s => s.orders),
+    ok:       settled.filter(s => s.error === null).map(s => s.market),
+    failed,
+    complete: failed.length === 0,
+  };
+}
+
+/**
+ * 양시장 미체결 주문 통합 조회. **활성 시장 중 하나라도 실패하면 던진다.**
  */
 export async function getActiveOrders(): Promise<{ orderId: string; symbol: string }[]> {
-  const enableOverseas = String(process.env.KIS_OVERSEAS_ENABLED ?? 'true').toLowerCase() === 'true';
-  if (!enableOverseas) return dom.getActiveOrders();
-  const [d, o] = await Promise.all([
-    dom.getActiveOrders().catch(e => { console.error('[kis] domestic active orders failed:', e); return []; }),
-    ovs.getActiveOrders().catch(e => { console.error('[kis] overseas active orders failed:', e); return []; }),
-  ]);
-  return [...d, ...o];
+  const r = await getActiveOrdersDetailed();
+  if (!r.complete) throw new ActiveOrdersIncompleteError(r.failed, r.ok);
+  return r.orders;
 }
 
 /**
  * 체결 완료 주문 조회. 심볼로 시장 판정 후 해당 어댑터에 위임.
+ *
+ * 호출 하나가 시장 하나만 보므로 부분 실패라는 개념이 없다 — 어댑터가 던지면 그대로 던진다
+ * (T-018 이전에는 어댑터가 `[]` 로 삼켰다).
  */
 export async function getCompletedOrders(
   symbol: string,
@@ -168,3 +249,6 @@ export async function getCompletedOrders(
 ): Promise<{ orderId: string; side: string; price: number; qty: number; ts: number }[]> {
   return routeBySymbol(symbol).getCompletedOrders(symbol, fromTs, toTs, limit);
 }
+
+/** 해외 미체결 조회가 실제로 덮는 거래소 — 근거는 `kis-overseas.activeOrderExchanges` 주석. */
+export { activeOrderExchanges as overseasActiveOrderExchanges } from './kis-overseas';

@@ -24,7 +24,12 @@ jest.mock('@/lib/strategy/engine', () => ({
   runAll: (...a: unknown[]) => runAllMock(...a),
 }));
 jest.mock('@/lib/safety/order-sync', () => ({
-  syncPendingOrders: jest.fn(async () => ({ synced: 0, errors: [] })),
+  // T-018 이후 계약: 판정 보류를 표현하는 필드들이 함께 온다.
+  syncPendingOrders: jest.fn(async () => ({
+    synced: 0, errors: [], skipped: 0, complete: true,
+    marketsOk: ['domestic', 'overseas'], marketsFailed: [], unreconciled: [],
+    staleCount: 0, oldestUnreconciledMs: 0,
+  })),
 }));
 jest.mock('@/lib/cron-auth', () => ({
   checkCronAuth: jest.fn(() => null),

@@ -14,9 +14,10 @@
  */
 import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
-import { kisFetch, isKisRateLimited } from './kis-http';
+import { kisFetch, isKisRateLimited, kisBodyText } from './kis-http';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
 import { parseOverseas, formatOverseas, toOvrsExcgCd, type OverseasExchange } from './kis-symbols';
+import { submittedQuantity } from './order-quantity';
 import { getUsdKrwRate } from './fx';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
 
@@ -337,7 +338,9 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
     ACNT_PRDT_CD: acntPrdt,
     OVRS_EXCG_CD: toOvrsExcgCd(excd),
     PDNO:         ticker,
-    ORD_QTY:      String(Math.floor(quantity)), // KIS 해외는 정수 수량
+    // KIS 해외는 정수 수량. **자르는 규칙은 `submittedQuantity` 하나뿐이다** —
+    // `order-sync` 의 완결 판정이 같은 함수를 쓰므로 두 경로가 갈라질 수 없다 (T-018 H-4).
+    ORD_QTY:      String(submittedQuantity('overseas', quantity)),
     OVRS_ORD_UNPR: roundToTickOverseas(adjPrice),
     ORD_SVR_DVSN_CD: '0',
     ORD_DVSN:     '00', // 지정가 고정 (KIS 해외 시장가 미지원)
@@ -388,12 +391,41 @@ export async function getKisOverseasTickers(symbols: string[]): Promise<Ticker[]
 }
 
 /**
+ * 이 계좌의 해외 미체결 조회가 **실제로 덮는 거래소**.
+ *
+ * KIS 의 `inquire-nccs` 는 `OVRS_EXCG_CD` 를 필수로 받으므로 한 번의 호출이 한 거래소만 본다.
+ * `getActiveOrders()` 는 `KIS_OVERSEAS_DEFAULT_EXCHANGE`(기본 `NAS`) 하나만 조회한다.
+ *
+ * ## 🔴 이 목록이 왜 export 되어야 하는가 (T-018)
+ *
+ * 덮지 못하는 거래소(`NYS`·`AMS`)의 주문은 **성공한 조회 결과에도 원래부터 없다.** 그런데
+ * `order-sync` 의 취소 판정은 "미체결 목록에 없다"를 근거로 삼는다. 즉 커버리지 밖 종목
+ * (실제 보유 예: `NYS:ORCL`)은 조회가 완벽하게 성공해도 **무조건 `cancelled` 로 오판**된다.
+ * 조회 실패를 삼키는 것과 결과가 같은, 같은 계열의 부재 추론 오류다.
+ *
+ * 그래서 커버리지를 **데이터로 노출**해 소비자가 "이 심볼은 애초에 판정 근거가 없다"를
+ * 알 수 있게 한다. 조회 호출 수를 늘리지 않으면서 오판만 제거하는 선택이다
+ * (거래소 3곳 팬아웃은 방금 배포한 [[T-017]] 유량 제어와 정면으로 부딪히므로 하지 않는다).
+ */
+export function activeOrderExchanges(): OverseasExchange[] {
+  return [(process.env.KIS_OVERSEAS_DEFAULT_EXCHANGE ?? 'NAS') as OverseasExchange];
+}
+
+/**
  * 해외 미체결 주문 조회 — TTTS3018R(실전)/VTTS3018R(모의).
  * order-sync에서 cancel-all 또는 미체결 모니터링에 사용.
+ *
+ * ## 🔴 실패를 빈 배열로 바꾸지 않는다 (T-018)
+ *
+ * 예전 코드는 `!res.ok` / `rt_cd !== '0'` / `catch {}` 세 자리에서 실패를 `[]` 로 삼켰고,
+ * 특히 catch 는 **로그조차 남기지 않았다**. 이 반환값은 `order-sync` 의 취소 판정 근거이므로
+ * 빈 배열은 "살아 있는 주문 전부를 취소로 마킹"으로 직결된다. 지금은 전부 던진다.
+ *
+ * 커버리지 한계는 {@link activeOrderExchanges} 주석 참조.
  */
 export async function getActiveOrders(): Promise<{ orderId: string; symbol: string }[]> {
   const trId = isMock() ? 'VTTS3018R' : 'TTTS3018R';
-  const defaultExcd = (process.env.KIS_OVERSEAS_DEFAULT_EXCHANGE ?? 'NAS') as OverseasExchange;
+  const defaultExcd = activeOrderExchanges()[0];
   const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
   const params = new URLSearchParams({
     CANO:           cano,
@@ -403,23 +435,38 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
     CTX_AREA_FK200: '',
     CTX_AREA_NK200: '',
   });
-  try {
-    const headers = await kisHeaders(trId);
-    const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-nccs?${params}`, { headers }, { label: 'overseas getActiveOrders' });
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (data.rt_cd !== '0' || !Array.isArray(data.output)) return [];
-    return (data.output as Record<string, string>[])
-      .filter(o => Number(o.nccs_qty ?? o.ord_qty ?? 0) > 0)
-      .map(o => {
-        const ticker = String(o.pdno ?? '').toUpperCase();
-        const excdRaw = String(o.ovrs_excg_cd ?? 'NASD');
-        const myExcd: OverseasExchange = excdRaw.startsWith('NAS') ? 'NAS' : excdRaw.startsWith('NYS') ? 'NYS' : 'AMS';
-        return { orderId: String(o.odno), symbol: formatOverseas(myExcd, ticker) };
-      });
-  } catch {
+  const headers = await kisHeaders(trId);
+  const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-nccs?${params}`, { headers }, { label: 'overseas getActiveOrders' });
+  if (!res.ok) {
+    const body = kisBodyText(res) ?? await res.text().catch(() => '');
+    throw new Error(
+      `KIS overseas getActiveOrders(${defaultExcd}): ${res.status} body=${body.slice(0, 300)}`
+      + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+    );
+  }
+  const data = await res.json();
+  if (data.rt_cd !== '0') {
+    throw new Error(
+      `KIS overseas getActiveOrders(${defaultExcd}): rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+      + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
+    );
+  }
+  const rows = data.output;
+  if (rows == null) {
+    console.warn('[kis-overseas getActiveOrders] rt_cd=0 인데 output 이 없다 — 미체결 0건으로 간주');
     return [];
   }
+  if (!Array.isArray(rows)) {
+    throw new Error(`KIS overseas getActiveOrders(${defaultExcd}): output 형식 이상 (${typeof rows}) — 0건과 구분 불가`);
+  }
+  return (rows as Record<string, string>[])
+    .filter(o => Number(o.nccs_qty ?? o.ord_qty ?? 0) > 0)
+    .map(o => {
+      const ticker = String(o.pdno ?? '').toUpperCase();
+      const excdRaw = String(o.ovrs_excg_cd ?? 'NASD');
+      const myExcd: OverseasExchange = excdRaw.startsWith('NAS') ? 'NAS' : excdRaw.startsWith('NYS') ? 'NYS' : 'AMS';
+      return { orderId: String(o.odno), symbol: formatOverseas(myExcd, ticker) };
+    });
 }
 
 /**
@@ -434,6 +481,11 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
  *  - dmst_ord_dt: 국내 주문일자, ord_tmd: 주문시각
  *
  * 응답이 USD 단위 단가라 점에 유의 (호출처에서 KRW 변환 필요 시 별도 처리).
+ *
+ * ## 🔴 실패를 빈 배열로 바꾸지 않는다 (T-018)
+ *
+ * `getActiveOrders` 와 같은 이유. 이쪽은 심볼 하나를 그 심볼의 거래소로 조회하므로
+ * 커버리지 문제는 없고, 실패만 전파하면 된다.
  */
 export async function getCompletedOrders(
   symbol: string, fromTs: number, toTs: number, _limit: number,
@@ -463,47 +515,56 @@ export async function getCompletedOrders(
     CTX_AREA_NK200: '',
   });
   let attempt = 0;
-  while (true) {
+  for (;;) {
     const headers = await kisHeaders(trId);
-    try {
-      const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-ccnl?${params}`;
-      const res = await kisFetch(url, { headers }, { label: 'overseas getCompletedOrders' });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-          await invalidateKisToken();
-          attempt++;
-          continue;
-        }
-        return [];
+    const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-ccnl?${params}`;
+    const res = await kisFetch(url, { headers }, { label: 'overseas getCompletedOrders' });
+    if (!res.ok) {
+      const body = kisBodyText(res) ?? await res.text().catch(() => '');
+      if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
+        console.warn('[kis-overseas getCompletedOrders] token expired, re-issuing');
+        await invalidateKisToken();
+        attempt++;
+        continue;
       }
-      const data = await res.json();
-      if (process.env.KIS_OVERSEAS_DEBUG === '1') {
-        console.log('[kis-overseas getCompletedOrders raw] rt_cd=', data.rt_cd,
-          'symbol=', symbol, 'output[0]=', JSON.stringify(data.output?.[0] ?? null));
-      }
-      if (data.rt_cd !== '0' || !Array.isArray(data.output)) return [];
-      return (data.output as Record<string, string>[])
-        .filter(o => Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0) > 0)
-        .map(o => {
-          const dt = String(o.dmst_ord_dt ?? o.ord_dt ?? '');
-          const tm = String(o.ord_tmd ?? '000000').padStart(6, '0');
-          let ts = 0;
-          if (dt.length === 8) {
-            ts = new Date(`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${tm.slice(0,2)}:${tm.slice(2,4)}:${tm.slice(4,6)}+09:00`).getTime();
-          }
-          return {
-            orderId: String(o.odno ?? ''),
-            side:    o.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
-            price:   Number(o.ft_ccld_unpr3 ?? o.ccld_unpr ?? o.ord_unpr ?? 0),
-            qty:     Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0),
-            ts,
-          };
-        })
-        .filter(o => o.orderId);
-    } catch (e) {
-      console.error('[kis-overseas getCompletedOrders]', e);
-      return [];
+      throw new Error(
+        `KIS overseas getCompletedOrders ${symbol}: ${res.status} body=${body.slice(0, 300)}`
+        + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+      );
     }
+    const data = await res.json();
+    if (process.env.KIS_OVERSEAS_DEBUG === '1') {
+      console.log('[kis-overseas getCompletedOrders raw] rt_cd=', data.rt_cd,
+        'symbol=', symbol, 'output[0]=', JSON.stringify(data.output?.[0] ?? null));
+    }
+    if (data.rt_cd !== '0') {
+      throw new Error(
+        `KIS overseas getCompletedOrders ${symbol}: rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+        + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
+      );
+    }
+    const rows = data.output;
+    if (rows == null) return [];   // rt_cd='0' + 목록 없음 = 체결 0건
+    if (!Array.isArray(rows)) {
+      throw new Error(`KIS overseas getCompletedOrders ${symbol}: output 형식 이상 (${typeof rows}) — 0건과 구분 불가`);
+    }
+    return (rows as Record<string, string>[])
+      .filter(o => Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0) > 0)
+      .map(o => {
+        const dt = String(o.dmst_ord_dt ?? o.ord_dt ?? '');
+        const tm = String(o.ord_tmd ?? '000000').padStart(6, '0');
+        let ts = 0;
+        if (dt.length === 8) {
+          ts = new Date(`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${tm.slice(0,2)}:${tm.slice(2,4)}:${tm.slice(4,6)}+09:00`).getTime();
+        }
+        return {
+          orderId: String(o.odno ?? ''),
+          side:    o.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+          price:   Number(o.ft_ccld_unpr3 ?? o.ccld_unpr ?? o.ord_unpr ?? 0),
+          qty:     Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0),
+          ts,
+        };
+      })
+      .filter(o => o.orderId);
   }
 }
