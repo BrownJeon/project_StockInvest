@@ -13,14 +13,16 @@ tags:
 ### 오늘 배포됨
 
 - [[T-017-kis-rate-limit-throttle]] (`bbe074b`) · [[T-018-order-sync-fail-closed]] (`3d4197e`) — 같은 push 로 배포. pm2 기동 `04:39:08 UTC`, 헬스체크 그린.
+- [[T-019-partial-fill-false-filled]] · [[T-020-fractional-order-quantity-sizing]] (`d67dceb`) — 사용자 승인 후 커밋·푸시·배포 완료(2026-08-11 08:33:37 UTC). pm2 재기동(restarts 341), 헬스체크 그린(`dryRun:false` `killSwitch:false` `engine.enabled:true` `safetyStatus:green`).
+  - T-019: 부분체결이 `filled` 로 오기록되어 손익 장부가 틀어지던 문제. `executions` 에 실제 체결 수량 기록 시작(역사상 0행이던 표에 처음으로)
+  - T-020: 소수점 주문 수량이 전송 직전 절삭돼 조용히 축소집행되던 문제. 사이징 시점 정수화 + 0주 스킵의 관측 가능한 흔적
+  - 둘 다 developer(Opus) → reviewer(Sonnet, 2라운드 **PASS**) → QA(**검증 통과**) 순환 완료. 93 suites / 1411 tests, typecheck exit 0.
 
-### 오늘 작업 완료·**커밋 승인 대기** (미커밋)
+### 배포 후 관측 권고 (신규)
 
-- [[T-019-partial-fill-false-filled]] — 부분체결이 `filled` 로 오기록되어 손익 장부가 틀어지던 문제. `executions` 에 실제 체결 수량 기록(역사상 0행이던 표에 처음으로)
-- [[T-020-fractional-order-quantity-sizing]] — 소수점 주문 수량이 전송 직전 절삭돼 조용히 축소집행되던 문제. 사이징 시점 정수화 + 0주 스킵의 관측 가능한 흔적
-
-둘 다 developer(Opus) → reviewer(Sonnet, 2라운드 **PASS**) → QA(**검증 통과**) 순환 완료. **93 suites / 1411 tests**, typecheck exit 0.
-⚠️ **미커밋 상태다.** `deploy-stockinvest.sh` 의 `git clean -fdx` 가 미추적 파일을 지우므로, 다음 배포 전에 커밋 여부를 반드시 결정해야 한다.
+- `sizing_below_min_qty` 발생 건수 — 상시 스킵되면 주문금액 정책(현재 포트폴리오 6%) 조정 신호
+- 매도/청산 스킵 알림 — 뜨면 실제 포지션 미청산 상태이니 확인 필요
+- `ORDER_SYNC_EXEC_DUPLICATE` 경보 — 1건이라도 관측되면 즉시 에스컬레이션([[T-019-partial-fill-false-filled]] 백로그 참조)
 
 ### 현재 노출도 (후속 판단 기준선, 2026-08-11 실측)
 

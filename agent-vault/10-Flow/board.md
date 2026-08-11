@@ -70,7 +70,8 @@ tags:
   `portfolio-total.ts` 의 in-flight 중복제거가 **먼저 시작된 요청의 레인을 그대로 상속**시킨다. 주문 경로가 이미 진행 중인 `bulk` 요청에 편승하면 critical 레인의 우선순위를 잃는다. **거부가 아니라 지연**이라 심각도는 MEDIUM.
   **수정 위치·방향**: `portfolio-total.ts` — 중복제거 시 대기자 중 최고 우선순위로 레인을 승격하거나, critical 호출자는 중복제거를 우회. 근거: [[T-017-kis-rate-limit-throttle]] reviewer 감사.
 
-- 🔴🔴 **[백로그 최우선 — T-017 델타감사 F-4 로 우선순위 상향] `order-sync.ts` 의 `getActiveOrders` 실패가 이중으로 삼켜져 살아있는 주문이 `cancelled` 로 오기록된다**
+- ✅ **[해결됨 — 2026-08-11, [[T-018-order-sync-fail-closed]]] `order-sync.ts` 의 `getActiveOrders` 실패가 이중으로 삼켜져 살아있는 주문이 `cancelled` 로 오기록된다**
+  → T-018 이 정확히 이 결함(여섯 겹 실패 삼킴)을 fail-closed 로 전환하며 해소했다. 실측(2026-08-11): `kis-domestic.ts`/`kis-overseas.ts`/`kis.ts` 어디에도 아래에 서술된 `.catch(()=>[])` 패턴이 더 이상 없다(주석도 "기존엔 삼켰다"로 과거형 전환됨). **이 항목은 board.md 정리 누락으로 T-018 배포 이후에도 남아 있던 잔재였다.** 원문은 이력 보존용으로만 아래에 남긴다.
   ⚠️ **정정**: T-017 스로틀은 이 버그를 **만들지 않았고, 트리거 빈도를 오히려 줄인다**(레이트리밋 실패 자체가 줄어들므로). 위에 적었던 "T-017 이 새 트리거를 추가한다"는 표현은 과장이었다 — 새 에러 2종이 이 경로로 흐를 수는 있으나 순증가는 아니다. 그럼에도 **이 버그 자체의 심각도가 높아** 백로그 최우선으로 올린다: 거래소에 살아있는 실주문을 DB 가 `cancelled` 로 오기록하면 중복 주문·미청산 포지션으로 직결된다.
   기존 버그이며 T-014 와 **같은 유형**(실패를 빈 결과로 둔갑). 조회가 실패하면 "활성 주문 없음"으로 읽혀 실제로 거래소에 살아있는 지정가 주문이 DB 에서 `cancelled` 처리될 수 있다.
   **T-017 이 새 트리거를 만든다**: `KisThrottleQueueFullError`·`KisThrottleTimeoutError` 가 이 경로에서도 발생할 수 있다. 스로틀 배포 후 발생 확률이 올라간다.
@@ -151,11 +152,6 @@ tags:
 
 ## Review
 
-- [[T-019-partial-fill-false-filled]] — 🔴🔴 **구현·독립감사 2라운드(PASS)·QA(검증 통과) 전부 완료, 커밋·배포 승인 대기(2026-08-11)**. 부분체결 주문이 잔량 소멸만으로 `filled` 로 오기록되어 손익 장부가 조용히 틀어지던 문제. 이제 **체결 수량 증거**를 확인해 판정하고, 실제 체결 수량을 **`executions` 에 기록**(역사상 0행이던 표에 처음으로)해 `trade-report` 가 참값을 집게 했다. 금액도 체결 비율만큼 축소해 한 행 안의 수량·금액 모순 제거. 로그 토큰 3종 + `trade_logs` 감사기록 + `OrderSyncResult.partialSettlements[]` + 매수/매도 분리 알림(장마감 잔량취소가 **정상**임을 전제한 문구). `market` 주문은 의도적으로 무검증(잔량 확인 수단이 구조적으로 없음). 88/1341 → **93 suites / 1411 tests**
-
-- [[T-020-fractional-order-quantity-sizing]] — 🔴 **구현·독립감사 2라운드(PASS)·QA(검증 통과) 전부 완료, 커밋·배포 승인 대기(2026-08-11)**. **선행 재현 확인 결과: 재현된다** — 소수점 주문이 05-16 이후 멎은 것은 사이징이 고쳐져서가 아니라 **해외 주문 흐름 자체가 멎어 있었기 때문**(06월 이후 해외 주문 0건)이고, 소수를 만드는 코드도 그 입력(수량 NULL 지정가 시그널 — 08월 해외 36 · 국내 62건)도 그대로였다. **국내도 같은 위험**임을 신규 발견(일일 한도 0→10% 개방으로 국내 신규매수 경로가 막 살아남). 조치: `sizeOrderQuantity()` 신설로 **사이징 시점에 정수 확정**(두 지점 모두), 0주면 주문 스킵하되 `errorCode:'quantity_below_min'` + **신규 eval_funnel 게이트** + `trade_logs` + grep 토큰 + entry-watcher outcome 으로 **집계 가능하게** 흔적을 남김. 매도 스킵만 알림(포지션 미청산이므로). `amount_krw` 는 재계산하지 않음(안전 한도가 느슨해지므로). 감사 중 **청산 경로의 거짓 경보 이중기록**(HIGH-1)을 발견해 특례가 아닌 **일반 규칙**(`recordedVerdict`)으로 해소
-
-
 - [[T-016-recommend-build-page-invalid-id]] — **커밋은 됐으나(`c0324d6`, T-015 와 함께) 브라우저 실사용 확인 여부는 미상(2026-08-11 기준)**. "추천 → 내 시나리오 만들기" 클릭 시 "invalid id" 실패 — 근본 원인은 `/recommend/build` 페이지 파일 부재로 Next.js 가 동적 라우트 `[id]` 로 오인 매칭(`Number("build")=NaN`). `src/app/recommend/build/page.tsx` 신설로 해결. reviewer 가 부수적으로 `.gitignore` 의 비앵커링 `build/` 규칙을 `/build/` 로 앵커링 수정. typecheck 0에러 · test 80/1161 PASS.
   ⚠️ **남은 것은 사용자가 실제 브라우저에서 클릭해 성공하는지 확인하는 일 하나뿐이다.** 코드는 이미 운영에 배포되어 있다. 확인되면 Done 으로 옮긴다.
 
@@ -163,8 +159,12 @@ tags:
 
 ## Done
 
+- [[T-019-partial-fill-false-filled]] — 🔴🔴 **구현·독립감사 2라운드(PASS)·QA(검증 통과)·커밋·배포 전부 완료(2026-08-11, `d67dceb`)**. 부분체결 주문이 잔량 소멸만으로 `filled` 로 오기록되어 손익 장부가 조용히 틀어지던 문제. 이제 **체결 수량 증거**를 확인해 판정하고, 실제 체결 수량을 **`executions` 에 기록**(역사상 0행이던 표에 처음으로)해 `trade-report` 가 참값을 집게 했다. 금액도 체결 비율만큼 축소해 한 행 안의 수량·금액 모순 제거. 로그 토큰 3종 + `trade_logs` 감사기록 + `OrderSyncResult.partialSettlements[]` + 매수/매도 분리 알림(장마감 잔량취소가 **정상**임을 전제한 문구). `market` 주문은 의도적으로 무검증(잔량 확인 수단이 구조적으로 없음). 88/1341 → 93 suites / 1411 tests. T-020 과 같은 push 로 배포, pm2 재기동(restarts 341) · 헬스체크 그린 확인(2026-08-11 08:33:37 UTC).
+
+- [[T-020-fractional-order-quantity-sizing]] — 🔴 **구현·독립감사 2라운드(PASS)·QA(검증 통과)·커밋·배포 전부 완료(2026-08-11, `d67dceb`)**. **선행 재현 확인 결과: 재현된다** — 소수점 주문이 05-16 이후 멎은 것은 사이징이 고쳐져서가 아니라 **해외 주문 흐름 자체가 멎어 있었기 때문**(06월 이후 해외 주문 0건)이고, 소수를 만드는 코드도 그 입력(수량 NULL 지정가 시그널 — 08월 해외 36 · 국내 62건)도 그대로였다. **국내도 같은 위험**임을 신규 발견(일일 한도 0→10% 개방으로 국내 신규매수 경로가 막 살아남). 조치: `sizeOrderQuantity()` 신설로 **사이징 시점에 정수 확정**(두 지점 모두), 0주면 주문 스킵하되 `errorCode:'quantity_below_min'` + **신규 eval_funnel 게이트** + `trade_logs` + grep 토큰 + entry-watcher outcome 으로 **집계 가능하게** 흔적을 남김. 매도 스킵만 알림(포지션 미청산이므로). `amount_krw` 는 재계산하지 않음(안전 한도가 느슨해지므로). 감사 중 **청산 경로의 거짓 경보 이중기록**(HIGH-1)을 발견해 특례가 아닌 **일반 규칙**(`recordedVerdict`)으로 해소. **배포 후 관측 권고**: `sizing_below_min_qty` 발생 건수 — 상시 스킵되면 주문금액 정책(현재 포트폴리오 6%) 조정 신호.
+
 - [[T-018-order-sync-fail-closed]] — **구현·독립감사 3라운드·QA·커밋·배포 전부 완료(2026-08-11, `3d4197e`)**. 조회 실패가 여섯 겹으로 삼켜져 **브로커에 살아 있는 지정가 주문이 DB 에서 `cancelled` 로 오기록**되던 문제를 fail-closed 로 전환. 시장별 완결성 판정 · 취소 유예 120초(`too_fresh`) · 부분체결 판정 · 미판정 추적과 스로틀 알림(`order-sync:stale` 30분 critical / `order-sync:coverage` 6시간 warning) · `ActiveOrdersIncompleteError` 계약 신설. 88 suites / **1341 tests** 통과. `bbe074b`(T-017)와 같은 push 로 배포, pm2 기동 `04:39:08 UTC`, 헬스체크 그린(`dryRun:false` `killSwitch:false` `engine.enabled:true`).
-  ⚠️ **이 감사에서 파생된 후속 결함 2건이 남아 있다** → [[T-019-partial-fill-false-filled]] · [[T-020-fractional-order-quantity-sizing]]
+  ⚠️ 이 감사에서 파생된 후속 결함 2건([[T-019-partial-fill-false-filled]] · [[T-020-fractional-order-quantity-sizing]])도 모두 위에서 완료됨.
 
 - [[T-017-kis-rate-limit-throttle]] — **완료·배포됨(2026-08-11, `bbe074b`)**. KIS `EGW00201`/`EGW00215`(초당 거래건수 초과)가 상시 발생하던 것을 모든 KIS 호출을 **단일 관문(`kisFetch`)** 으로 모아 우선순위 레인(critical/normal/bulk)으로 페이싱해 해소. 주문 송신은 무조건 `critical`. `kis_rate_limit_per_sec`(현재 5)로 재배포 없이 조정 가능. 델타감사에서 F-1·F-3·(d) 및 크론 루프 구조 문제를 백로그로 분리
 
