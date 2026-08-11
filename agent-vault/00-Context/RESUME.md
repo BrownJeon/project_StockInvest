@@ -35,13 +35,20 @@ pm2 `stockinvest` online, 기동 `2026-08-11 04:39:08 UTC`, 헬스체크 그린.
 
 ### ⚠️ 미커밋 작업물이 있다 — 승인 대기
 
-[[T-019-partial-fill-false-filled]] · [[T-020-fractional-order-quantity-sizing]] 두 건이 **구현·독립감사 2라운드 PASS·QA 검증통과** 까지 끝났으나 **커밋하지 않았다**(실거래 자금 영향 변경이라 사용자 승인 필수).
+**정정(2026-08-11 저녁)**: [[T-019-partial-fill-false-filled]] · [[T-020-fractional-order-quantity-sizing]] 는 **승인 후 `d67dceb` 로 커밋·배포 완료**됐다(08:33 UTC). 아래 경고는 이제 **[[T-021-recommend-detail-client-crash]]** 에 적용된다.
 
-🔴 **`deploy-stockinvest.sh` 의 `git clean -fdx` 가 미추적 파일을 삭제한다.** 다음 배포가 일어나기 전에 커밋 여부를 반드시 결정해야 하며, 그 전에 다른 이유로 push 가 발생하면 **이 작업물이 증발한다.**
+현재 미커밋: **T-021**(추천 상세 클릭 크래시 수정) — 구현·독립감사 PASS·QA 2라운드 완료, 순수 UI 변경.
+미추적 신규 파일 3개: `src/app/error.tsx` · `src/components/scenario-view-model.ts` · `src/components/__tests__/scenario-view-model.test.ts` (+ task 파일).
+
+🔴 **`deploy-stockinvest.sh` 의 `git clean -fdx` 가 미추적 파일을 삭제한다.** 다른 이유로 push 가 먼저 발생하면 **이 작업물이 증발한다.**
 
 ### 다음 할 일 (2026-08-11 기준)
 
-1. **T-019 · T-020 커밋·배포 승인 결정** ← 최우선
+0. 🔴 **[[T-021-recommend-detail-client-crash]] 커밋·배포 승인 결정** ← **최우선(신규, 미커밋)**
+   추천 시그널 클릭 시 "Application error" 크래시 수정. 구현·감사(PASS)·QA 2라운드 완료, HEAD 는 여전히 `8d68a0c`.
+   순수 UI 방어 코드 + `src/app/error.tsx` 신설. 주문·자금·안전장치 무변경. 94 suites/1444 tests PASS.
+   ⚠️ **신규 파일 3개가 미추적 상태** — `git clean -fdx` 하는 배포가 먼저 일어나면 증발한다.
+1. ~~T-019 · T-020 커밋·배포 승인 결정~~ → ✅ **해소됨** — 승인 후 `d67dceb` 로 커밋·배포 완료(08-11 08:33 UTC)
 2. [[T-016-recommend-build-page-invalid-id]] — 코드는 이미 배포됨(`c0324d6`). **브라우저에서 "추천 → 내 시나리오 만들기" 클릭이 실제로 되는지 확인만 남음**
 3. board.md Backlog 최상단의 T-018 파생 잔여건 — `getActiveOrders` 페이지네이션 미처리(🔴, 동시 미체결 주문이 늘면 즉시 승격) / 구조적 hold 의 30분 critical 무한반복(알림 정책 별도 설계)
 4. 신규 백로그 4건(T-019/T-020 파생) — 시장가 부분체결 미검증 / `executions` 동시성 + 건별 다행 설계 / `POST /api/orders` 수량 무방어 / 보류 사유 라벨 부정확

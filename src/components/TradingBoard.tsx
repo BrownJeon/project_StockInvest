@@ -82,7 +82,8 @@ function PositionCard({ holding, displayName }: { holding: PortfolioHolding; dis
 
 function WatchCard({ signal, displayName }: { signal: SignalWithScenario; displayName: string }) {
   const sc = signal.indicators?.ai?.scenario;
-  const priceZone = sc?.entry.price_zone ?? '-';
+  // `entry` 객체 자체가 없는 저장 JSON 이 존재한다 (T-021) — 옵셔널 체이닝 필수.
+  const priceZone = sc?.entry?.price_zone ?? '-';
   const grade = sc?.grade ?? '?';
 
   const GRADE_COLOR: Record<string, string> = {

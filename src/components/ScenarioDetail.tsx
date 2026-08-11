@@ -4,6 +4,9 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
 import { useToast } from '@/components/ui/Toast';
 import type { SignalWithScenario } from './ScenarioCard';
+import {
+  aiEvalItems, hasAiEval, riskFactors, entryZoneDisplay, buildConfirmScenario,
+} from './scenario-view-model';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
 import { useFxRate } from '@/lib/hooks/useFxRate';
 import { fmtMarketPrice } from '@/lib/format';
@@ -279,7 +282,9 @@ export function ScenarioDetail({ signalId }: Props) {
           symbol: signal.symbol,
           direction: signal.side,
           currentPrice: currentPrice ?? 0,
-          scenario: sc ?? { entry: { trigger: '', price_zone: '0~0' }, exit: { trailing_activate_pct: 0, holding_days: '3일' }, risk_factors: [], why_now: '', context: '', ev: 0, grade: 'C' },
+          // 부분 결측 시나리오도 그대로 실어보내되, 서버가 요구하는 구조만 병합으로 보장한다.
+          // (없는 평가치를 0·'C' 로 지어내 DB 에 저장하지 않는다 — scenario-view-model 주석 참고)
+          scenario: buildConfirmScenario(sc),
           manualSlices: result.slices
             .filter(s => Number(s.qty) > 0)
             .map(s => ({ zoneLo: Number(s.zoneLo), zoneHi: Number(s.zoneHi), qty: Number(s.qty) })),
@@ -320,8 +325,13 @@ export function ScenarioDetail({ signalId }: Props) {
   }
 
   const sc = signal.indicators?.ai?.scenario;
-  const grade = sc?.grade ?? 'C';
-  const gs = GRADE_STYLE[grade] ?? GRADE_STYLE['C'];
+  // DB JSON 은 필드 존재를 보장하지 않는다 — 표시 판정을 순수 함수에 위임한다(T-021).
+  const evalItems  = aiEvalItems(sc);
+  const risks      = riskFactors(sc);
+  const aiEntryZone = entryZoneDisplay(sc);
+  // 등급이 없으면 'C' 로 지어내지 않는다(배지 미표시). gs 는 색상 폴백 용도로만 'C' 사용.
+  const grade = evalItems.grade;
+  const gs = GRADE_STYLE[grade ?? 'C'] ?? GRADE_STYLE['C'];
 
   const inputStyle: React.CSSProperties = {
     flex: 1, padding: '9px 10px', borderRadius: 8, fontSize: 13,
@@ -352,12 +362,14 @@ export function ScenarioDetail({ signalId }: Props) {
           <span style={{ fontSize: 17, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {displaySymbol(signal.symbol)}
           </span>
-          <span style={{
-            fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 8, flexShrink: 0,
-            background: gs.bg, color: gs.color, border: `1px solid ${gs.border}`,
-          }}>
-            {grade}
-          </span>
+          {grade && (
+            <span style={{
+              fontSize: 12, fontWeight: 700, padding: '2px 8px', borderRadius: 8, flexShrink: 0,
+              background: gs.bg, color: gs.color, border: `1px solid ${gs.border}`,
+            }}>
+              {grade}
+            </span>
+          )}
         </div>
       </div>
 
@@ -375,31 +387,36 @@ export function ScenarioDetail({ signalId }: Props) {
           </span>
         </div>
 
-        {/* AI 평가 */}
-        {sc && (
+        {/* AI 평가 — 표시할 항목이 하나도 없으면 빈 껍데기 섹션을 남기지 않는다 */}
+        {hasAiEval(evalItems) && (
           <section style={sx.section}>
             <div style={sx.sectionLabel}>AI 평가</div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <div style={{ ...sx.kpiBox, background: gs.bg, border: `1px solid ${gs.border}` }}>
-                <div style={{ fontSize: 11, color: gs.color, fontWeight: 700 }}>등급</div>
-                <div className="num" style={{ fontSize: 22, fontWeight: 700, color: gs.color }}>{grade}</div>
-              </div>
-              <div style={sx.kpiBox}>
-                <div style={sx.kpiLabel}>EV</div>
-                <div className="num" style={{ fontSize: 20, fontWeight: 700, color: 'var(--accent)' }}>
-                  {(sc.ev * 100).toFixed(0)}%
-                </div>
-              </div>
-              {sc.exit.target_pct != null && (
-                <div style={sx.kpiBox}>
-                  <div style={sx.kpiLabel}>목표</div>
-                  <div className="num" style={{ fontSize: 16, fontWeight: 700, color: 'var(--up)' }}>+{sc.exit.target_pct}%</div>
+              {grade && (
+                <div style={{ ...sx.kpiBox, background: gs.bg, border: `1px solid ${gs.border}` }}>
+                  <div style={{ fontSize: 11, color: gs.color, fontWeight: 700 }}>등급</div>
+                  <div className="num" style={{ fontSize: 22, fontWeight: 700, color: gs.color }}>{grade}</div>
                 </div>
               )}
-              {sc.exit.stop_pct != null && (
+              {/* EV 결측·비유한이면 박스 자체를 렌더하지 않는다 — 과거 `NaN%` 노출 지점 */}
+              {evalItems.evPct !== null && (
+                <div style={sx.kpiBox}>
+                  <div style={sx.kpiLabel}>EV</div>
+                  <div className="num" style={{ fontSize: 20, fontWeight: 700, color: 'var(--accent)' }}>
+                    {evalItems.evPct}%
+                  </div>
+                </div>
+              )}
+              {evalItems.targetPct !== null && (
+                <div style={sx.kpiBox}>
+                  <div style={sx.kpiLabel}>목표</div>
+                  <div className="num" style={{ fontSize: 16, fontWeight: 700, color: 'var(--up)' }}>+{evalItems.targetPct}%</div>
+                </div>
+              )}
+              {evalItems.stopPct !== null && (
                 <div style={sx.kpiBox}>
                   <div style={sx.kpiLabel}>손절</div>
-                  <div className="num" style={{ fontSize: 16, fontWeight: 700, color: 'var(--down)' }}>{sc.exit.stop_pct}%</div>
+                  <div className="num" style={{ fontSize: 16, fontWeight: 700, color: 'var(--down)' }}>{evalItems.stopPct}%</div>
                 </div>
               )}
             </div>
@@ -414,12 +431,12 @@ export function ScenarioDetail({ signalId }: Props) {
           </section>
         )}
 
-        {/* 리스크 요인 */}
-        {sc && sc.risk_factors.length > 0 && (
+        {/* 리스크 요인 — 결측이면 섹션 미표시 (🔴 T-021 크래시 지점) */}
+        {risks.length > 0 && (
           <section style={sx.section}>
             <div style={sx.sectionLabel}>리스크 요인</div>
             <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {sc.risk_factors.map((r, i) => (
+              {risks.map((r, i) => (
                 <li key={i} style={{ fontSize: 13, color: '#f59e0b', lineHeight: 1.5 }}>{r}</li>
               ))}
             </ul>
@@ -444,10 +461,10 @@ export function ScenarioDetail({ signalId }: Props) {
           </section>
         )}
 
-        {/* AI 진입 구간 참고 */}
-        {sc?.entry.price_zone && sc.entry.price_zone !== '0~0' && (
+        {/* AI 진입 구간 참고 — entry 객체 자체가 없어도 안전 */}
+        {aiEntryZone && (
           <div style={{ fontSize: 12, color: 'var(--muted)', padding: '6px 10px', borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
-            AI 권장 진입 구간: <span className="num" style={{ color: 'var(--accent)', fontWeight: 700 }}>{sc.entry.price_zone}</span>
+            AI 권장 진입 구간: <span className="num" style={{ color: 'var(--accent)', fontWeight: 700 }}>{aiEntryZone}</span>
           </div>
         )}
 

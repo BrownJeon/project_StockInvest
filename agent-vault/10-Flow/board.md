@@ -8,6 +8,16 @@ tags:
 
 ## Backlog
 
+- **[신규, T-021 파생, Low] 트레일링 활성화 표시가 실제 발화 기준과 다르다 + 기준값이 세 곳에 흩어져 있다**
+  `ScenarioAnalysis.tsx:209` 가 `+{ai.exit.trailing_activate_pct ?? 0}%` 로 렌더해 값이 없으면 **"+0%"** 라고 말하는데, **실제 발화 기준은 그 값이 아니다.**
+  ✅ **먼저, 안심할 근거**(T-021 Developer 조사, 코드 확인됨): `entry-watcher/route.ts:317-322` 가 `position_state.scenario_exit` 에 넣는 건 `targetLo/targetHi/stopLo/stopHi` **4개뿐**이고 `ScenarioExitParams` 에 트레일링 필드가 아예 없다. 실제 발화는 `exit-engine.ts:146` 의 **전역 `style.trailingActivatePct`(기본 2.5)** 가 담당한다. → **시나리오 JSON 에 이 필드가 없어도 트레일링은 정상 동작한다. 조용히 꺼지는 매매 로직 공백은 없다.**
+  ❗ **남은 문제**: ① 화면은 "+0%" 라 하고 실제는 2.5% — **표시와 실동작 불일치**(운영자가 트레일링이 꺼진 줄 알 소지) ② 기준값이 **세 곳에 흩어짐** — 시나리오 JSON / 전역 `style` / `positions/status/route.ts:7` 하드코딩 `2.5`. **단일 출처로 모으면서 함께 정리할 것.**
+  상세: [[T-021-recommend-detail-client-crash]] §6.1
+
+- **[신규, T-021 파생, Low] `ScenarioAnalysis.tsx` 가 API 응답을 생산자 타입으로 신뢰한다**
+  `scenario-builder` 의 **생산자 타입 `ScenarioCard`(전 필드 required)** 로 분석 API 응답을 받아 `ai.exit.trailing_activate_pct` 같은 무가드 접근이 남아 있다. T-021 이 없앤 것과 **같은 클래스**지만, 이 경로("추천 → 내 시나리오 만들기")는 DB 에 쌓인 임의 JSON 이 아니라 **같은 요청 안에서 서버가 방금 만들어 돌려준 값**이라 신뢰 근거가 다르고 크래시 신고도 없어 범위에서 뺐다.
+  **승격 조건**: 분석 API 가 부분 응답을 낼 수 있게 바뀌거나, 이 화면에서 크래시가 관측되면 즉시. 상세: [[T-021-recommend-detail-client-crash]] §6.2
+
 - 🔴🔴 **[신규, T-018 감사 H-5 — 해외주문량 재개 *전에* 처리할 것] `settledStatus` 가 체결수량 증거를 무시하고 부재만으로 `filled` 를 쓴다 → 손익 계산까지 왜곡**
   → **2026-08-11 착수: [[T-019-partial-fill-false-filled]]** (아래 원문은 근거로 보존)
   "조회 신뢰가능" 분기에서 미체결 목록에 없다는 이유만으로 `filled` 를 기록한다. **하필 H-4(B) 가 "정상"이라고 분류한 바로 그 이벤트**(장마감 시 미체결 잔량 자동취소)에서, 부분체결된 매도주문이 **"완전 청산"으로 오기록**된다.
@@ -151,6 +161,15 @@ tags:
 ## Doing
 
 ## Review
+
+- 🔴 [[T-021-recommend-detail-client-crash]] — **구현·독립감사(PASS)·QA 2라운드 전부 완료. 커밋 안 함 — 사용자 승인 대기(2026-08-11).**
+  추천 목록에서 시그널을 클릭하면 화면 전체가 `Application error: a client-side exception has occurred` 로 바뀌던 문제.
+  원인은 **소비자 타입이 DB JSON 을 신뢰해 required 로 선언**한 것 — post-market 엔진이 `risk_factors`·`why_now`·`context`·`ev` 를 채우지 않고 INSERT 하는데 `ScenarioDetail.tsx:418` 이 `sc.risk_factors.length` 를 무가드로 읽었다. **타입이 거짓말을 해서 컴파일러가 못 잡았다.**
+  **만성 문제였다** — 06월 중순~08-11 거의 매일 결측 시그널이 생성됐고, 과거 것들은 `expired` 라 클릭이 안 됐을 뿐이다(신고 시점 pending 노출은 17211 1건).
+  **수정**: 소비자 타입 `StoredScenario`(전 필드 옵셔널) + 표시 판정 순수 함수를 `scenario-view-model.ts` 로 분리. 타입을 정직하게 만들자 **컴파일러가 같은 클래스 무가드 지점 15곳을 스스로 찾아냈고 전부 방어**(`ScenarioDetail` 8 · `ScenarioCard` 6 · **`TradingBoard` 1 — 진단에 없던 4번째 파일, developer 전수 grep 으로 발견**). 결측 항목은 빈값·`—` 대신 **미표시**. **EV 가 `NaN%` 로 표시되던 거짓 수치도 제거.** 생산자 타입(`scenario-builder.ts` `ScenarioCard`)은 **무변경**(느슨해지면 생산자 결함을 컴파일러가 못 잡으므로).
+  **`post-market-engine.ts` 는 의도적으로 무변경** — `ev` 를 LLM 자기신고 confidence 에서 유도하는 건 *측정한 적 없는 숫자를 측정값처럼* 보이게 하는 일이라 T-007·T-012·T-014·T-018 내내 없애온 문제의 재발. 과거 데이터는 소급 수정되지 않으므로 **UI 가 결측을 견디는 게 근본 해법**.
+  **`src/app/error.tsx` 신설** — 이 앱에 렌더 예외 경계가 **하나도 없었다**. digest 만 노출(스택·`error.message` 미노출), `console.error` 만, 외부 전송 없음. `global-error.tsx` 는 만들지 않음.
+  typecheck 0에러 · **94 suites / 1444 tests PASS**(회귀 테스트 33건 신규, RTL 부재로 표시 판정을 순수 함수로 추출해 검증). reviewer **PASS**(Critical 0 / High 0 / Low 1 — `grade` 옵셔널화 자율확장, **Leader 승인**). 주문·자금·안전장치 파일 **전부 무변경**.
 
 - [[T-016-recommend-build-page-invalid-id]] — **커밋은 됐으나(`c0324d6`, T-015 와 함께) 브라우저 실사용 확인 여부는 미상(2026-08-11 기준)**. "추천 → 내 시나리오 만들기" 클릭 시 "invalid id" 실패 — 근본 원인은 `/recommend/build` 페이지 파일 부재로 Next.js 가 동적 라우트 `[id]` 로 오인 매칭(`Number("build")=NaN`). `src/app/recommend/build/page.tsx` 신설로 해결. reviewer 가 부수적으로 `.gitignore` 의 비앵커링 `build/` 규칙을 `/build/` 로 앵커링 수정. typecheck 0에러 · test 80/1161 PASS.
   ⚠️ **남은 것은 사용자가 실제 브라우저에서 클릭해 성공하는지 확인하는 일 하나뿐이다.** 코드는 이미 운영에 배포되어 있다. 확인되면 Done 으로 옮긴다.

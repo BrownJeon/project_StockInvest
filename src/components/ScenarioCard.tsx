@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import type { ScenarioGrade } from '@/lib/signals/scenario-builder';
+import { cardSummary, type StoredScenario } from './scenario-view-model';
 
 export interface SignalWithScenario {
   id: number;
@@ -14,15 +14,12 @@ export interface SignalWithScenario {
   amount_krw?: number | null;
   indicators: {
     ai?: {
-      scenario?: {
-        grade: ScenarioGrade;
-        entry: { trigger: string; price_zone: string; condition?: string };
-        exit: { target_pct: number; target_pct_hi?: number; stop_pct: number; stop_pct_hi?: number; trailing_activate_pct: number; holding_days: string };
-        risk_factors: string[];
-        why_now: string;
-        context: string;
-        ev: number;
-      };
+      /**
+       * DB 에 저장된 시나리오 JSON. **전 필드 옵셔널** — post-market 엔진 경로는
+       * grade/entry/exit 만 채우고 나머지를 넣지 않는다(T-021). 타입 정의는
+       * `./scenario-view-model` 참고.
+       */
+      scenario?: StoredScenario;
     };
   } | null;
   reasoning?: string | null;
@@ -62,20 +59,14 @@ function fmtQty(qty: number | null | undefined, amountKrw: number | null | undef
 export function ScenarioCard({ signal }: Props) {
   const router = useRouter();
   const scenario = signal.indicators?.ai?.scenario;
-  const grade = scenario?.grade;
+  // 결측 필드는 전부 null 로 정규화 — `exit`/`entry` 객체 자체가 없어도 여기서 죽지 않는다.
+  const { grade, targetPct, targetPctHi, stopPct, stopPctHi, trigger, holdingDays, riskFactors } =
+    cardSummary(scenario);
   const gs = GRADE_STYLE[grade ?? 'C'] ?? GRADE_STYLE['C'];
   const minsLeft = minutesUntil(signal.expires_at);
   const isExpiringSoon = minsLeft !== null && minsLeft <= 60;
   const isUserScenario = signal.scenario_source === 'user';
   const qtyLabel = fmtQty(signal.quantity, signal.amount_krw);
-
-  const targetPct = scenario?.exit.target_pct;
-  const targetPctHi = scenario?.exit.target_pct_hi;
-  const stopPct = scenario?.exit.stop_pct;
-  const stopPctHi = scenario?.exit.stop_pct_hi;
-  const trigger = scenario?.entry.trigger;
-  const holdingDays = scenario?.exit.holding_days;
-  const riskFactors = scenario?.risk_factors ?? [];
 
   return (
     <div

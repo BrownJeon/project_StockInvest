@@ -18,6 +18,20 @@ tags:
   - T-020: 소수점 주문 수량이 전송 직전 절삭돼 조용히 축소집행되던 문제. 사이징 시점 정수화 + 0주 스킵의 관측 가능한 흔적
   - 둘 다 developer(Opus) → reviewer(Sonnet, 2라운드 **PASS**) → QA(**검증 통과**) 순환 완료. 93 suites / 1411 tests, typecheck exit 0.
 
+### 🔴 미커밋 작업물 — 승인 대기: [[T-021-recommend-detail-client-crash]]
+
+사용자 신고 "추천 목록에서 시그널 클릭 시 **Application error: a client-side exception has occurred**".
+**구현·독립감사(PASS)·QA 2라운드 전부 완료, 커밋 안 함.** HEAD 는 여전히 `8d68a0c`.
+
+- **원인**: 소비자 타입이 DB JSON 을 신뢰해 required 로 선언 → `ScenarioDetail.tsx:418` `sc.risk_factors.length` 무가드. **post-market 엔진이 `risk_factors`·`why_now`·`context`·`ev` 를 채우지 않고 INSERT** 하는데 **타입이 거짓말을 해서 컴파일러가 못 잡았다.**
+- **만성 문제**: 06월 중순~08-11 거의 매일 발생. 과거 것들은 `expired` 라 클릭이 안 됐을 뿐이고, 신고 시점 pending 노출은 1건(17211).
+- **수정**: `scenario-view-model.ts` 신설(소비자 타입 `StoredScenario` 전 필드 옵셔널 + 표시 판정 순수 함수). 타입을 정직하게 만드니 **컴파일러가 같은 클래스 15곳을 스스로 찾아 전부 방어**(`TradingBoard.tsx` 는 진단에 없던 4번째 파일). `NaN%` EV 거짓 수치 제거. **`src/app/error.tsx` 신설** — 이 앱에 렌더 예외 경계가 하나도 없었다.
+- **`post-market-engine.ts` 무변경(의도적)** — 근거 없는 값을 지어내지 않는다. 특히 `ev` 를 LLM confidence 에서 유도하는 건 "거짓 데이터" 문제의 재발.
+- 94 suites / **1444 tests** · typecheck 0에러 · reviewer PASS(Critical 0/High 0) · **주문·자금·안전장치 파일 전부 무변경(순수 UI)**.
+- 파생 백로그 2건(트레일링 표시/실동작 불일치 + 기준값 3곳 분산, `ScenarioAnalysis` 생산자 타입 신뢰) → board.md Backlog.
+
+> 🔴 `deploy-stockinvest.sh` 의 `git clean -fdx` 가 **미추적 파일을 삭제**한다. 신규 파일 3개(`src/app/error.tsx`, `src/components/scenario-view-model.ts`, `src/components/__tests__/scenario-view-model.test.ts`)와 이 task 파일이 여기 해당한다 — **다른 이유로 push 가 먼저 일어나면 증발한다.**
+
 ### 배포 후 관측 권고 (신규)
 
 - `sizing_below_min_qty` 발생 건수 — 상시 스킵되면 주문금액 정책(현재 포트폴리오 6%) 조정 신호
