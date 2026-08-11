@@ -120,9 +120,67 @@ describe('createSignalGuarded (T-002 H2)', () => {
 
     const res = await createSignalGuarded(candidate(), rec, { markSignal } as any);
 
-    expect(res).toEqual({ ok: true, signalId: 7 });
+    // T-020 R2 — 반환 계약에 `recordedGate`/`recordedVerdict` 가 추가됐다(아래 describe 참조).
+    // 정확 일치(`toEqual`) 대신 부분 일치로 두되, 새 필드도 함께 단언해 커버리지를 넓힌다.
+    expect(res).toMatchObject({
+      ok: true, signalId: 7, recordedGate: 'signal_created', recordedVerdict: 'pass',
+    });
     expect(rec.peek()[0]).toMatchObject({ gate: 'signal_created', verdict: 'pass' });
     expect(markSignal).toHaveBeenCalledWith('005930', 7);
+  });
+});
+
+/**
+ * T-020 라운드 2 (reviewer HIGH-1) — **호출부가 "이미 기록됐다"를 알 수 있어야 한다.**
+ *
+ * `createSignalGuarded` 는 모든 결과를 자기가 `eval_funnel` 에 기록한다. 그런데 그 사실이
+ * 반환값에 없어서, exit-engine 호출부는 `!ok` 이기만 하면 `exit_create_failed`(verdict=`error`)를
+ * 한 번 더 썼다 — 정책 스킵까지 "청산 시그널 생성 실패"로 리포트에 올라갔다.
+ * 여기서는 **반환 계약**만 고정한다. 실제 청산 경로에서의 효과는
+ * `engine-exit-create-outcome.test.ts` 가 `runAll` 로 검증한다.
+ */
+describe('createSignalGuarded — 기록한 판정을 호출부에 알린다 (T-020 R2)', () => {
+  afterEach(() => { jest.resetAllMocks(); });
+
+  const cases = [
+    ['quantity_below_min',      'quantity_below_min',      'skip'],
+    ['duplicate_active_signal', 'duplicate_active_signal', 'skip'],
+    ['symbol_blacklisted',      'symbol_blacklisted',      'skip'],
+  ] as const;
+
+  it.each(cases)('errorCode=%s → recordedGate=%s / recordedVerdict=%s', async (code, gate, verdict) => {
+    mockedCreateSignal.mockResolvedValue({
+      ok: false, signalId: 1, autoSubmitted: false, error: String(code), errorCode: code,
+    });
+    const rec = recorder();
+
+    const res = await createSignalGuarded(candidate(), rec);
+
+    expect(res).toMatchObject({ ok: false, errorCode: code, recordedGate: gate, recordedVerdict: verdict });
+    // 기록은 정확히 1행 — 호출부가 이 값을 보고 추가 기록을 하지 않기 때문에 성립한다
+    expect(rec.peek()).toHaveLength(1);
+    expect(rec.peek()[0]).toMatchObject({ gate, verdict });
+  });
+
+  it('🔴 errorCode 없는 일반 실패는 verdict=error 로 알려 호출부가 자기 트랙에 남길 수 있게 한다', async () => {
+    mockedCreateSignal.mockResolvedValue({
+      ok: false, signalId: 0, autoSubmitted: false, error: '한도 초과',
+    });
+    const rec = recorder();
+
+    const res = await createSignalGuarded(candidate(), rec);
+
+    expect(res).toMatchObject({ recordedGate: 'signal_create_failed', recordedVerdict: 'error' });
+    expect(res.errorCode).toBeUndefined();
+  });
+
+  it('🔴 예외 경로도 verdict=error 다 (진짜 실패가 조용해지지 않는다)', async () => {
+    mockedCreateSignal.mockRejectedValue(new Error('ER_LOCK_DEADLOCK'));
+    const rec = recorder();
+
+    const res = await createSignalGuarded(candidate(), rec);
+
+    expect(res).toMatchObject({ ok: false, recordedGate: 'signal_create_failed', recordedVerdict: 'error' });
   });
 });
 

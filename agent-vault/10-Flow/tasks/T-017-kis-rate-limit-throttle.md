@@ -2,8 +2,10 @@
 task-id: T-017
 project: StockInvest
 created: 2026-08-10
-updated: 2026-08-10
-status: review
+updated: 2026-08-11
+status: done
+deployed: 2026-08-11
+commit: bbe074b
 tags:
   - type/task
   - domain/exchanges

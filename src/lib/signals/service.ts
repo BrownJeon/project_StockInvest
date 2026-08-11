@@ -1,8 +1,11 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
+import type { Market } from '@/lib/exchanges/kis-symbols';
+import { submittedQuantity } from '@/lib/exchanges/order-quantity';
 import type { OrderRequest } from '@/lib/exchanges/types';
 import { getSymbolLabel, sendAlert } from '@/lib/notify';
+import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { submitOrder } from '@/lib/safety/dry-run';
 import { checkSymbolBlacklist } from '@/lib/safety/order-limits';
 import {
@@ -87,7 +90,11 @@ export interface SignalRow {
 }
 
 /** 관측 게이트 분류용 기계 판독 코드. `error`는 사람이 읽는 상세 메시지라 문자열이 가변적이다. */
-export type CreateSignalErrorCode = 'symbol_blacklisted' | 'duplicate_active_signal';
+export type CreateSignalErrorCode =
+  | 'symbol_blacklisted'
+  | 'duplicate_active_signal'
+  /** T-020 — 사이징 결과가 1주 미만이라 주문이 성립하지 않는다 */
+  | 'quantity_below_min';
 
 export interface CreateSignalResult {
   ok: boolean;
@@ -99,7 +106,93 @@ export interface CreateSignalResult {
   errorCode?: CreateSignalErrorCode;
 }
 
-function buildOrderRequest(input: SignalInput, chasePct = 0): OrderRequest {
+/**
+ * 사이징 결과 (T-020).
+ *
+ * `quantity` 의 세 값이 **서로 다른 의미**다 — 뭉개면 "0주 주문"과 "수량 미지정"을
+ * 구분할 수 없어진다:
+ *
+ * | 값 | 의미 |
+ * |---|---|
+ * | `undefined` | 여기서 수량을 확정하지 않는다. 어댑터가 금액에서 파생한다(이미 정수) |
+ * | `0` | **주문이 성립하지 않는다** — 1주도 살 수 없다. 송신하면 안 된다 |
+ * | `> 0` | 브로커에 그대로 나갈 정수 주식 수 |
+ */
+export interface SizedQuantity {
+  quantity: number | undefined;
+  /** 정수화 이전 값. 로그·집계에서 "얼마가 잘렸는가"를 설명하는 데 쓴다 */
+  raw: number | undefined;
+}
+
+/**
+ * 주식 주문 수량을 **정수 주식 수**로 확정한다 (T-020).
+ *
+ * ## 왜 사이징 시점인가
+ *
+ * 예전에는 `Math.floor((amountKRW / price) * 1e8) / 1e8` — **소수점 8자리로 내림**,
+ * 즉 소수를 *만드는* 코드였다(암호화폐 자매 프로젝트에서 온 관례로 보인다). 그 소수는
+ * `orders.quantity` 에 그대로 저장되고, 전송 직전 `submittedQuantity` 가 해외만 `Math.floor`
+ * 로 잘랐다. 결과는 두 갈래 손해였다:
+ *
+ *  - **1주 미만**(실측 79건 중 11건) → 잘라서 0주. 브로커에 `ORD_QTY: "0"` 이 나간다.
+ *  - **나머지** → 평균 16.8%·최대 49.9% 의 자본이 **조용히** 미투입. DB 에는 원래 소수가
+ *    남아 있어 사후에도 그 사실을 알 수 없다.
+ *
+ * 국내도 안전하지 않다. `submittedQuantity('domestic', …)` 는 가공 없이 통과시키는데
+ * (T-018 이 "현행 송신 동작을 정확히 반영만 한다"고 의도적으로 그렇게 뒀다) 국내 KIS 는
+ * 정수 주식 수만 받는다 — 이 코드베이스 자신도 `kis-domestic.ts` 폴백에서
+ * `Math.floor(amountKRW / price)` 를 쓴다. 즉 국내 지정가 신규 매수는 **전송돼서 거절**된다.
+ * "조용한 축소집행"이 아니라 "시끄러운 실패"라 성격은 다르지만 주문이 안 나가는 건 같다.
+ *
+ * → 주식은 국내·해외 모두 **정수 주식 수**로만 거래된다. 그러니 가장자리에서 자를 게 아니라
+ *   **처음부터 정수를 만든다.** 그러면 `orders.quantity`(요청)와 송신 수량이 같아지고,
+ *   "0.7주는 어디로 갔는가"라는 질문 자체가 사라진다.
+ *
+ * ## 왜 `order-quantity.ts` 를 고치지 않았나
+ *
+ * `submittedQuantity()` 는 **"브로커가 실제로 받는 수량"** 이라는 의미로 [[T-019]] 의
+ * 체결 완결성 판정이 함께 쓰는 함수다. 그 의미를 바꾸면 두 작업의 결론이 서로 흔들린다.
+ * 대신 여기서 먼저 정수를 만들고 **그 결과를 `submittedQuantity` 에 한 번 더 통과**시킨다.
+ * 오늘은 국내·해외 모두 항등이지만, 송신 규칙이 언젠가 달라지면 사이징이 자동으로 따라가고
+ * 두 값이 갈라질 수 있는 구조 자체가 생기지 않는다 (T-018 H-4 의 요점).
+ */
+export function sizeOrderQuantity(args: {
+  market: Market;
+  orderType: 'limit' | 'market';
+  /** 시그널이 이미 들고 있는 수량 (exit-engine 의 보유수량 등) */
+  requestedQuantity?: number | null;
+  amountKRW: number;
+  /** 호가 추격까지 반영된 최종 지정가 */
+  price?: number | null;
+}): SizedQuantity {
+  const { market, orderType, requestedQuantity, amountKRW, price } = args;
+
+  // ① 요청에 수량이 이미 있으면 그것을 정수화한다.
+  //    (exit-engine 의 `heldQty` 등 — 브로커 잔고에서 온 값이라 보통 이미 정수지만,
+  //     "주문서의 수량 = 송신 수량"이라는 불변식은 출처와 무관하게 성립해야 한다.)
+  if (requestedQuantity != null && Number.isFinite(requestedQuantity)) {
+    return { quantity: toWholeShares(market, requestedQuantity), raw: requestedQuantity };
+  }
+
+  // ② 지정가 + 수량 미지정 → 금액/가격으로 산출.
+  //    해외주식: input.price 가 USD 라면 amountKRW 를 USD 로 환산해야 하지만 여기서는
+  //    동기 함수라 KRW 가정 (기존 동작 그대로 — 이번 변경 대상이 아니다).
+  if (orderType === 'limit' && price != null && Number.isFinite(price) && price > 0) {
+    const raw = amountKRW / price;
+    return { quantity: toWholeShares(market, raw), raw };
+  }
+
+  // ③ 시장가 등 — 여기서 확정하지 않는다. 어댑터가 금액에서 파생하며 그 경로는 이미
+  //    `Math.floor(amountKRW / price)` 라 정수다.
+  return { quantity: undefined, raw: undefined };
+}
+
+function toWholeShares(market: Market, raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return submittedQuantity(market, Math.floor(raw));
+}
+
+function buildOrderRequest(input: SignalInput, chasePct = 0): { req: OrderRequest; sized: SizedQuantity } {
   // 시장 추정 (input.symbol 형태로)
   const { getMarketFromSymbol } = require('@/lib/exchanges/kis-symbols') as typeof import('@/lib/exchanges/kis-symbols');
   const market = getMarketFromSymbol(input.symbol);
@@ -112,23 +205,96 @@ function buildOrderRequest(input: SignalInput, chasePct = 0): OrderRequest {
     chasedPrice = chasedPrice * factor;
   }
 
-  let quantity = input.quantity;
-  // 지정가 주문에 수량이 없으면 amountKRW / price 로 계산 (소수 8자리, 내림)
-  // 해외주식: input.price가 USD라면 amountKRW를 USD로 환산해야 하지만 여기서는 동기 함수라 KRW 가정
-  if (input.orderType === 'limit' && quantity == null && chasedPrice != null && chasedPrice > 0) {
-    quantity = Math.floor((input.amountKRW / chasedPrice) * 1e8) / 1e8;
-  }
-  return {
-    exchange: 'kis',
-    symbol: input.symbol,
-    side: input.side,
-    type: input.orderType,
-    price: chasedPrice,
-    quantity,
-    amountKRW: input.amountKRW,
+  const sized = sizeOrderQuantity({
     market,
-    currency: market === 'overseas' ? 'USD' : 'KRW',
+    orderType: input.orderType,
+    requestedQuantity: input.quantity,
+    amountKRW: input.amountKRW,
+    price: chasedPrice,
+  });
+
+  return {
+    req: {
+      exchange: 'kis',
+      symbol: input.symbol,
+      side: input.side,
+      type: input.orderType,
+      price: chasedPrice,
+      quantity: sized.quantity,
+      // `amountKRW` 는 **재계산하지 않는다.** 안전 한도(`checkOrderMax`/`checkDailyMax`)가
+      // 이 값을 쓰므로 정수화 뒤의 (더 작은) 실집행액으로 낮추면 한도가 느슨해진다.
+      // 기록의 정합성보다 한도의 보수성이 우선이다 (T-020 D-1 판단 기준 ②).
+      amountKRW: input.amountKRW,
+      market,
+      currency: market === 'overseas' ? 'USD' : 'KRW',
+    },
+    sized,
   };
+}
+
+/**
+ * 1주 미만이라 주문을 내지 못했다는 사실을 **기계 판독 가능하게** 남긴다 (T-020 D-2).
+ *
+ * 흔적 없는 스킵은 이 프로젝트가 T-007·T-012·T-014·T-018 내내 없애 온 바로 그 침묵이다.
+ * 세 곳에 동시에 남긴다:
+ *  - grep 토큰 `SIZING_BELOW_MIN_QTY` (로그)
+ *  - `trade_logs` 감사 기록 (CLAUDE.md 실매매 원칙 3항)
+ *  - 호출부가 돌려주는 `errorCode` → `eval_funnel` 의 `quantity_below_min` 게이트
+ *
+ * 알림은 **매도만** 보낸다. 매수 스킵은 "자본이 투입되지 않았다"로 끝나지만, 매도 스킵은
+ * **포지션이 닫히지 않았다** — 손절이었다면 보호가 아예 걸리지 않은 상태다. 매수까지 울리면
+ * (소액 계좌 × 고가 종목에서 자주 발생할 수 있어) 알림이 흔해져 정작 매도 경고가 묻힌다.
+ */
+export function describeBelowMinQty(
+  symbol: string, side: 'buy' | 'sell', amountKRW: number, price: number | null | undefined, raw: number | undefined,
+): string {
+  const rawStr = raw != null && Number.isFinite(raw) ? raw.toFixed(6) : '?';
+  return `1주 미만 — 금액 ₩${fmtNum(amountKRW)} / 가격 ${price != null ? fmtNum(price) : '?'} = ${rawStr}주 (${symbol} ${side})`;
+}
+
+export async function recordBelowMinQty(args: {
+  /** 어느 경로에서 스킵됐는가 — 로그·감사 기록의 grep 축 (`signal-sizing`/`signal-approve`/`entry-watcher`) */
+  where: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  amountKRW: number;
+  price: number | null | undefined;
+  raw: number | undefined;
+  signalId: number | null;
+}): Promise<string> {
+  const detail = describeBelowMinQty(args.symbol, args.side, args.amountKRW, args.price, args.raw);
+  console.warn(`[${args.where}] SIZING_BELOW_MIN_QTY signal=${args.signalId ?? '-'} ${detail}`);
+  try {
+    const pool = getPool();
+    await pool.query(
+      // 기존 감사 기록 관례(`rejectSignal`·`dry-run.auditLog`)와 같은 파라미터 형태를 쓴다.
+      `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
+      [null, 'sizing_below_min_qty', JSON.stringify({
+        where: args.where,
+        signalId: args.signalId,
+        symbol: args.symbol,
+        side: args.side,
+        amountKRW: args.amountKRW,
+        price: args.price ?? null,
+        rawQuantity: args.raw ?? null,
+      })],
+    );
+  } catch (e) {
+    console.error('[signal-sizing] trade_logs 기록 실패:', e instanceof Error ? e.message : String(e));
+  }
+  if (args.side === 'sell') {
+    // 같은 종목이 매 틱 재시도될 수 있으므로 종목 단위로 창을 잡는다 (기본 30분보다 길게).
+    sendAlertThrottled(
+      `sizing-below-min:${args.symbol}`,
+      'warning',
+      `청산 주문을 내지 못했습니다: ${args.symbol}`,
+      `${detail}\n`
+      + '매도 금액이 1주 값에 못 미쳐 주문을 내지 않았습니다. **포지션이 그대로 남아 있습니다** — '
+      + '손절·청산 목적이었다면 수동으로 확인하세요.',
+      6 * 60 * 60_000,
+    );
+  }
+  return detail;
 }
 
 export async function createSignal(
@@ -276,7 +442,29 @@ export async function createSignal(
 
   const style = await getStyleConfig();
   const chasePct = await getEffectiveChasePct(style.limitChasePct);
-  const orderReq = buildOrderRequest(input, chasePct);
+  const { req: orderReq, sized } = buildOrderRequest(input, chasePct);
+
+  // 🔴 T-020 — 1주도 살 수 없으면 주문을 내지 않는다. **다만 절대 조용히 넘기지 않는다.**
+  //
+  // 안전 레이어(`submitOrder`)에서 막지 않는 이유: 그건 사이징 결함을 안전장치로 덮는 것이고,
+  // 그러면 "왜 주문이 없는가"가 다시 설명 불가능해진다. 스킵의 이유는 스킵이 결정된 자리에서
+  // 말해야 한다.
+  if (sized.quantity === 0) {
+    const detail = await recordBelowMinQty({
+      where: 'signal-sizing', symbol: input.symbol, side: input.side,
+      amountKRW: input.amountKRW, price: orderReq.price, raw: sized.raw, signalId,
+    });
+    // 시그널 상태가 `auto_submitted` 로 남으면 "주문을 냈다"는 거짓말이 된다.
+    // 게이트 감사 상태(`skipped`)로 정정한다 — 활성 시그널에서도 빠지므로 다음 틱에
+    // 조건이 유지되면 다시 평가된다(가격이 내리면 1주가 성립할 수 있다).
+    await pool.query(`UPDATE signals SET status='skipped', updated_at=NOW() WHERE id=?`, [signalId])
+      .catch(e => console.error(`[signal-sizing] status 정정 실패 signal=${signalId}:`, e));
+    return {
+      ok: false, signalId, autoSubmitted: false,
+      error: `quantity_below_min: ${detail}`, errorCode: 'quantity_below_min',
+    };
+  }
+
   const orderResult = await submitOrder(orderReq, kis.createOrder, {
     assetClass: 'stock',
     source: 'auto',
@@ -342,7 +530,23 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
   };
   const style = await getStyleConfig();
   const chasePct = await getEffectiveChasePct(style.limitChasePct);
-  const orderReq = buildOrderRequest(input, chasePct);
+  const { req: orderReq, sized } = buildOrderRequest(input, chasePct);
+
+  // 🔴 T-020 — 승인해도 1주가 안 되면 주문이 성립하지 않는다.
+  // 시그널 상태는 **그대로 둔다**: 사람이 다시 판단할 수 있어야 하고(금액을 올리거나 포기),
+  // TTL 이 지나면 자연히 `expired` 가 된다. `approved` 로 바꾸면 "승인해서 주문했다"는
+  // 거짓 기록이 남고, `rejected` 로 바꾸면 사람이 거부한 것으로 오독된다.
+  if (sized.quantity === 0) {
+    const detail = await recordBelowMinQty({
+      where: 'signal-approve', symbol: row.symbol, side: row.side,
+      amountKRW: input.amountKRW, price: orderReq.price, raw: sized.raw, signalId: id,
+    });
+    return {
+      ok: false, signalId: id, autoSubmitted: false,
+      error: `quantity_below_min: ${detail}`, errorCode: 'quantity_below_min',
+    };
+  }
+
   const orderResult = await submitOrder(orderReq, kis.createOrder, {
     assetClass: 'stock',
     source: 'signal',

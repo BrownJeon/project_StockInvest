@@ -154,8 +154,11 @@ describe('signals/service', () => {
       symbol: 'KRW-BTC',
       side: 'buy',
       orderType: 'limit',
-      price: 90_000_000,
-      quantity: 0.000_033,
+      // T-020 — 주식은 정수 주식 수로만 거래된다. 원래 이 fixture 는 소수 수량
+      // (0.000033)이었는데 그건 자매 프로젝트(암호화폐)의 관례이고, 이제 사이징이
+      // 1주 미만을 주문 불성립으로 거부하므로 주식 현실에 맞는 값으로 바꾼다.
+      price: 1_000,
+      quantity: 3,
       amountKRW: 3_000,
     });
     expect(r.ok).toBe(true);
@@ -310,8 +313,9 @@ describe('signals/service', () => {
         symbol: 'KRW-BTC',
         side: 'buy',
         order_type: 'limit',
-        price: '90000000',
-        quantity: '0.0001',
+        // T-020 — 소수 수량 fixture(0.0001)는 이제 "1주 미만 = 주문 불성립"으로 거부된다.
+        price: '9000',
+        quantity: '1',
         amount_krw: '9000',
         strategy_id: 'test',
       },
@@ -330,8 +334,8 @@ describe('signals/service', () => {
         symbol: 'KRW-BTC',
         side: 'buy',
         order_type: 'limit',
-        price: '90000000',
-        quantity: '0.0001',
+        price: '9000',
+        quantity: '1',
         amount_krw: '9000',
         strategy_id: 'test',
       },
@@ -387,12 +391,17 @@ describe('signals/service', () => {
     const cap = setupMockDB();
     await createSignal({
       symbol: '005930', side: 'buy', orderType: 'limit',
-      price: 100_000, amountKRW: 3_000,
+      // T-020 — 원래 price=100,000 / amount=3,000 이라 사이징이 0.03주였다. 이제 그건
+      // 주문 불성립으로 스킵되므로(주식은 1주 단위) 최소 1주가 성립하는 값으로 바꾼다.
+      // 이 테스트의 의도(호가 추격이 가격에 적용되는가)는 그대로다.
+      price: 1_000, amountKRW: 3_000,
     });
-    // INSERT INTO orders 의 price (params[6]) 가 100_000 * 1.005 = 100_500
+    // INSERT INTO orders 의 price (params[6]) 가 1_000 * 1.005 = 1_005
     const orderInsert = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));
     expect(orderInsert).toBeDefined();
-    expect(Number(orderInsert!.params[6])).toBeCloseTo(100_500, 0);
+    expect(Number(orderInsert!.params[6])).toBeCloseTo(1_005, 0);
+    // 수량은 floor(3000 / 1005) = 2주 — 소수가 아니다
+    expect(Number(orderInsert!.params[7])).toBe(2);
   });
 
   test('createSignal sell limit → chase 가격 하향 적용', async () => {
@@ -401,12 +410,13 @@ describe('signals/service', () => {
     const cap = setupMockDB();
     await createSignal({
       symbol: '005930', side: 'sell', orderType: 'limit',
-      price: 100_000, amountKRW: 3_000,
+      price: 1_000, amountKRW: 3_000,
     });
     const orderInsert = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));
     expect(orderInsert).toBeDefined();
-    // 100_000 * 0.995 = 99_500
-    expect(Number(orderInsert!.params[6])).toBeCloseTo(99_500, 0);
+    // 1_000 * 0.995 = 995
+    expect(Number(orderInsert!.params[6])).toBeCloseTo(995, 0);
+    expect(Number(orderInsert!.params[7])).toBe(3);   // floor(3000 / 995)
   });
 
   test('createSignal market 주문 → chase 미적용 (price null)', async () => {

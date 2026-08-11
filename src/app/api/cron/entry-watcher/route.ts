@@ -16,6 +16,7 @@ import { kis } from '@/lib/exchanges/kis';
 import { submitOrder } from '@/lib/safety/dry-run';
 import { isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 import { parsePriceZone } from '@/lib/signals/scenario-builder';
+import { recordBelowMinQty, sizeOrderQuantity } from '@/lib/signals/service';
 import { getStyleConfig } from '@/lib/strategy/style';
 import { setPositionScenarioExit } from '@/lib/strategy/position-state';
 import type { ScenarioExitParams } from '@/lib/strategy/position-state';
@@ -74,7 +75,10 @@ interface PendingEntryRow {
 interface WatchResult {
   signalId: number;
   symbol: string;
-  outcome: 'submitted' | 'expired' | 'out_of_zone' | 'no_zone' | 'price_fetch_failed' | 'order_failed' | 'blocked_by_prior_split';
+  outcome: 'submitted' | 'expired' | 'out_of_zone' | 'no_zone' | 'price_fetch_failed' | 'order_failed'
+    | 'blocked_by_prior_split'
+    /** T-020 — 사이징 결과가 1주 미만이라 주문을 내지 않았다 (실패가 아니라 정책 스킵) */
+    | 'quantity_below_min';
   detail?: string;
 }
 
@@ -233,12 +237,31 @@ export async function POST(req: NextRequest) {
       chasedPrice = basePrice * factor;
     }
 
-    let quantity: number | undefined = row.quantity != null ? Number(row.quantity) : undefined;
-    if (row.order_type === 'limit' && quantity == null && chasedPrice != null && chasedPrice > 0) {
-      quantity = Math.floor((Number(row.amount_krw) / chasedPrice) * 1e8) / 1e8;
-    }
-
     const market = sigMarket;
+
+    // 🔴 T-020 — 사이징은 `signals/service.ts` 의 `sizeOrderQuantity` **하나**를 쓴다.
+    // 여기와 `buildOrderRequest` 두 곳에서 각자 계산하던 것이 결함의 구조였다 —
+    // 한쪽만 고치면 다른 경로로 계속 소수점 수량이 만들어진다(T-018 reviewer 지적).
+    const sized = sizeOrderQuantity({
+      market,
+      orderType: row.order_type,
+      requestedQuantity: row.quantity != null ? Number(row.quantity) : undefined,
+      amountKRW: Number(row.amount_krw),
+      price: chasedPrice,
+    });
+    const quantity = sized.quantity;
+
+    // 1주도 살 수 없으면 주문을 내지 않는다 — 집계 가능한 outcome 으로 남긴다.
+    // 시그널 상태는 그대로 둔다: 이 라우트는 **감시자**라 가격이 움직이면 다음 틱에
+    // 성립할 수 있고, 끝내 성립하지 않으면 `expires_at` 으로 만료된다.
+    if (quantity === 0) {
+      const detail = await recordBelowMinQty({
+        where: 'entry-watcher', signalId, symbol: row.symbol, side: row.side,
+        amountKRW: Number(row.amount_krw), price: chasedPrice, raw: sized.raw,
+      });
+      results.push({ signalId, symbol: row.symbol, outcome: 'quantity_below_min', detail });
+      continue;
+    }
 
     const orderReq = {
       exchange: 'kis' as const,
@@ -330,9 +353,13 @@ export async function POST(req: NextRequest) {
   const submitted = results.filter(r => r.outcome === 'submitted').length;
   const expired   = results.filter(r => r.outcome === 'expired').length;
   const blocked   = results.filter(r => r.outcome === 'blocked_by_prior_split').length;
+  // T-020 — 1주 미만 스킵을 회차 요약에 싣는다. 개별 로그(`SIZING_BELOW_MIN_QTY`)만 있으면
+  // "이번 틱에 몇 건이 그렇게 빠졌는가"를 세려면 로그 전체를 훑어야 한다.
+  const belowMin  = results.filter(r => r.outcome === 'quantity_below_min').length;
   console.log(
     `[cron/entry-watcher] total=${rows.length} submitted=${submitted} expired=${expired} ` +
-    `out_of_zone=${results.filter(r => r.outcome === 'out_of_zone').length} blocked_prior=${blocked}`,
+    `out_of_zone=${results.filter(r => r.outcome === 'out_of_zone').length} blocked_prior=${blocked}` +
+    (belowMin > 0 ? ` below_min_qty=${belowMin}` : ''),
   );
 
   return NextResponse.json({ ok: true, processed: rows.length, results });

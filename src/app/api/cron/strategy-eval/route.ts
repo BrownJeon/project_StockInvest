@@ -26,10 +26,17 @@ export async function POST(req: NextRequest) {
      * 같은 침묵이 되지 않게** 한다.
      */
     void syncPendingOrders().then(r => {
-      if (r.synced > 0 || r.errors.length > 0 || !r.complete) {
+      if (r.synced > 0 || r.errors.length > 0 || !r.complete || r.partialSettlements.length > 0) {
         console.log(
           `[order-sync] synced=${r.synced} errors=${r.errors.length} complete=${r.complete}`
-          + (r.skipped > 0 ? ` unreconciled=${r.skipped} stale=${r.staleCount}` : ''),
+          + (r.skipped > 0 ? ` unreconciled=${r.skipped} stale=${r.staleCount}` : '')
+          // T-019 — 부분체결 종결은 **판정 실패가 아니다**. complete 를 깎지 않으므로
+          // 이 요약에 따로 실어야 회차 로그만 봐도 "일부만 체결된 채 끝난 주문"이 보인다.
+          + (r.partialSettlements.length > 0
+            ? ` partialSettled=${r.partialSettlements.length}`
+              + `/unrecorded=${r.partialSettlements.filter(p => !p.executionRecorded).length}`
+            : '')
+          + (r.completenessUnverified > 0 ? ` fillUnverified=${r.completenessUnverified}` : ''),
         );
       }
     }).catch(e => {

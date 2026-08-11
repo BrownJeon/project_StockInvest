@@ -1,7 +1,8 @@
 ---
 task_id: T-016
 title: "추천 → 내 시나리오 만들기 'invalid id' — /recommend/build 페이지 누락"
-status: review
+status: committed-browser-unverified
+commit: c0324d6
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-005-next15-upgrade]
 tags:

@@ -142,6 +142,21 @@ interface FetchOptions {
 /**
  * orders + executions 에서 시간 ASC OrderRow 들을 fetch.
  * `prefetchDays` 만큼 rangeStart 이전 데이터도 포함해 LIFO stack 정확성 확보.
+ *
+ * ## 🔴 T-019 — `amount_krw` 는 **체결 비율만큼** 축소한다
+ *
+ * `quantity` 는 원래부터 `COALESCE(e.quantity, o.quantity)` 라 체결 기록이 있으면 참값을
+ * 집는다. 그런데 `amount_krw` 는 `orders.amount_krw`(=**주문 금액**)를 그대로 썼다.
+ * 부분체결로 종결된 주문에서는 이 둘이 서로 모순된다 — 수량은 3주인데 금액은 10주치다.
+ * `buysAmountKRW`/`sellsAmountKRW` 와 `headerPnlKRW`(= sells − buys)가 그 금액을 쓰고,
+ * `computeLifoPnl` 도 `price` 가 없을 때 `amount_krw` 로 폴백하므로 오차가 손익까지 간다.
+ *
+ * → 체결 기록이 있으면 `amount_krw × (체결수량 / 주문수량)` 으로 실제 집행액에 맞춘다.
+ * 통화 중립이라 해외(USD 단가) 주문에도 안전하다 — `e.price × e.quantity` 로 다시 계산하면
+ * USD 값이 KRW 컬럼에 들어가므로 그 방법은 쓸 수 없다.
+ *
+ * 체결 기록이 없는 주문(=현재 운영 DB 전량, `executions` 0행)은 `ELSE` 로 떨어져
+ * **기존과 완전히 동일**하다. 즉 과거 데이터와의 혼재가 리포트를 바꾸지 않는다.
  */
 export async function fetchOrderRows(opts: FetchOptions): Promise<OrderRow[]> {
   const pool = getPool();
@@ -157,7 +172,10 @@ export async function fetchOrderRows(opts: FetchOptions): Promise<OrderRow[]> {
             o.side   AS side,
             CAST(COALESCE(e.price,    o.price)    AS DECIMAL(36,8))  AS price,
             CAST(COALESCE(e.quantity, o.quantity) AS DECIMAL(36,18)) AS quantity,
-            CAST(COALESCE(o.amount_krw, 0)        AS DECIMAL(18,2))  AS amount_krw,
+            CAST(CASE WHEN e.quantity IS NOT NULL AND o.quantity IS NOT NULL AND o.quantity > 0
+                      THEN COALESCE(o.amount_krw, 0) * (e.quantity / o.quantity)
+                      ELSE COALESCE(o.amount_krw, 0)
+                 END                              AS DECIMAL(18,2))  AS amount_krw,
             CAST(COALESCE(SUM(e.fee), 0)          AS DECIMAL(36,8))  AS fee,
             COALESCE(MAX(e.executed_at), o.updated_at, o.created_at) AS ts
        FROM orders o

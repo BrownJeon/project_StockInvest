@@ -29,6 +29,8 @@ jest.mock('@/lib/safety/order-sync', () => ({
     synced: 0, errors: [], skipped: 0, complete: true,
     marketsOk: ['domestic', 'overseas'], marketsFailed: [], unreconciled: [],
     staleCount: 0, oldestUnreconciledMs: 0,
+    // T-019 이후 계약: 부분체결 종결은 판정 실패와 **다른 목록**으로 온다.
+    partialSettlements: [], completenessUnverified: 0,
   })),
 }));
 jest.mock('@/lib/cron-auth', () => ({

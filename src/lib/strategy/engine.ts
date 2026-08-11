@@ -3,7 +3,7 @@ import { getPool } from '@/lib/db';
 import { kis, getBalancesDetailed } from '@/lib/exchanges/kis';
 import { getMarketFromSymbol, type Market } from '@/lib/exchanges/kis-symbols';
 import { getCurrentMarket, isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
-import { createSignal } from '@/lib/signals/service';
+import { createSignal, type CreateSignalErrorCode } from '@/lib/signals/service';
 import { getEngineSwitches } from '@/lib/signals/router';
 import type { AutopilotMode, SignalInput } from '@/lib/signals/router';
 import { getEffectiveOrderMax } from '@/lib/safety/order-limits';
@@ -49,7 +49,7 @@ import type { StyleConfig } from './style';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { EvalFunnelRecorder } from './eval-funnel';
-import type { FunnelGate } from './eval-funnel-labels';
+import type { FunnelGate, FunnelVerdict } from './eval-funnel-labels';
 
 interface StrategyRow extends RowDataPacket {
   id: string;
@@ -174,11 +174,48 @@ export function resolveEngineInterval(declared: string): string {
 }
 
 /**
+ * `createSignalGuarded` 의 반환 계약.
+ *
+ * 🔴 T-020 라운드 2 — `recordedVerdict` 가 핵심이다. **이 함수는 모든 결과(성공·정책 스킵·
+ * 실패·예외)를 이미 `eval_funnel` 에 기록한다.** 그런데 호출부가 그 사실을 알 방법이 없어서
+ * exit-engine 루프는 `!ok` 이기만 하면 `exit_create_failed`(verdict=`error`)를 **한 번 더**
+ * 썼다. 같은 사건이 두 행이 되고, 그중 하나가 정기 리포트의 "⚠ 이상" 절에 "청산 시그널
+ * 생성 실패"로 올라간다 — 1주 미만이라 정책대로 스킵한 정상 상황까지.
+ *
+ * 그러면 운영자는 그 라벨이 대체로 무해하다는 것을 학습하고 **무시하기 시작한다.** 그런데
+ * 같은 라벨에 진짜 청산 실패(DB 장애·예외)도 찍힌다 — 가짜가 진짜를 묻는다. `order-sync` 가
+ * 알림 키를 나눠 "한쪽이 다른 쪽을 억누르지 않게" 한 원칙(T-018 H-4(B))이 이 지점만 빠져
+ * 있었다. 호출부가 **이미 기록된 판정의 성격**을 볼 수 있게 해서 일반적으로 막는다.
+ */
+export interface GuardedSignalResult {
+  ok: boolean;
+  signalId?: number;
+  error?: string;
+  /** `createSignal` 이 준 기계 판독 코드. 예외 경로에서는 undefined */
+  errorCode?: CreateSignalErrorCode;
+  /** 이 함수가 `eval_funnel` 에 **이미 기록한** 게이트 */
+  recordedGate?: FunnelGate;
+  /**
+   * 그 기록의 verdict. 호출부는 이 값 하나로 판단한다 —
+   * `'skip'` = 정책 판단(정상)이므로 **추가 기록 금지**,
+   * `'error'` = 진짜 실패이므로 자기 트랙(예: exit)의 게이트로 한 번 더 남겨도 된다.
+   *
+   * 게이트 이름을 나열해 분기하지 **않는** 이유: 새 게이트가 추가될 때마다 호출부를 같이
+   * 고쳐야 하는 구조가 되면 이 결함이 그대로 재발한다. verdict 는 그 판단을 이미 담고 있다.
+   */
+  recordedVerdict?: FunnelVerdict;
+}
+
+/**
  * createSignal **예외 격리** 래퍼 (T-002 H2).
  *
  * 이전에는 `signals.status` ENUM 에 `pending_approval` 이 없어 STRICT 모드에서 INSERT 가
  * 하드 에러를 던졌고, 미보호 호출이라 그 예외가 **runMarket 전체를 중단**시켰다.
  * 후보 한 건의 실패가 런 전체를 죽이면 안 된다 — 실패는 eval_funnel 에 남기고 다음 후보로 계속한다.
+ *
+ * **기록 책임은 전적으로 이 함수에 있다** — 호출부는 결과를 다시 기록하지 않는다
+ * (진입 경로가 이미 그 패턴이다). 예외적으로 자기 트랙 게이트를 덧붙여야 한다면
+ * {@link GuardedSignalResult.recordedVerdict} 를 보고 판단하라.
  *
  * 절대 throw 하지 않는다.
  */
@@ -186,7 +223,7 @@ export async function createSignalGuarded(
   input: Candidate | (SignalInput & { strategyId: string }),
   rec: EvalFunnelRecorder,
   outcome?: OutcomeTracker,
-): Promise<{ ok: boolean; signalId?: number; error?: string }> {
+): Promise<GuardedSignalResult> {
   const base = {
     symbol: input.symbol,
     side: input.side as 'buy' | 'sell',
@@ -197,29 +234,33 @@ export async function createSignalGuarded(
     if (res.ok) {
       rec.pass('signal_created', { ...base, detail: { signalId: res.signalId } });
       outcome?.markSignal(input.symbol, res.signalId);
-      return { ok: true, signalId: res.signalId };
+      return { ok: true, signalId: res.signalId, recordedGate: 'signal_created', recordedVerdict: 'pass' };
     }
     const gate: FunnelGate =
       res.errorCode === 'duplicate_active_signal' ? 'duplicate_active_signal'
       : res.errorCode === 'symbol_blacklisted'    ? 'symbol_blacklisted'
+      // T-020 — 1주 미만 스킵은 **실패가 아니라 정책 스킵**이다. `signal_create_failed`
+      // 로 뭉개면 verdict 가 'error' 가 되어 "엔진이 고장났다"로 읽힌다.
+      : res.errorCode === 'quantity_below_min'    ? 'quantity_below_min'
       :                                             'signal_create_failed';
+    const verdict: FunnelVerdict = gate === 'signal_create_failed' ? 'error' : 'skip';
     rec.record({
       ...base,
       gate,
-      verdict: gate === 'signal_create_failed' ? 'error' : 'skip',
+      verdict,
       reason: res.errorCode ?? (res.error ? res.error.slice(0, 64) : null),
       detail: { error: res.error, dupSignalId: gate === 'duplicate_active_signal' ? res.signalId : undefined },
     });
     outcome?.kill(input.symbol, 11, gate);
     console.warn(`[signal-create] ${input.symbol} ${input.side} 생성 거부: ${res.error}`);
-    return { ok: false, error: res.error };
+    return { ok: false, error: res.error, errorCode: res.errorCode, recordedGate: gate, recordedVerdict: verdict };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     // ★ H2 핵심 — 여기서 예외를 삼키지 않으면 런 전체가 죽는다.
     console.error(`[signal-create] ${input.symbol} ${input.side} 생성 예외 — 런은 계속 진행: ${error}`);
     rec.error('signal_create_failed', { ...base, reason: 'exception', detail: { error } });
     outcome?.kill(input.symbol, 11, 'signal_create_failed');
-    return { ok: false, error };
+    return { ok: false, error, recordedGate: 'signal_create_failed', recordedVerdict: 'error' };
   }
 }
 
@@ -849,7 +890,28 @@ async function runExitEngine(
       // 손절이 통째로 유실된다.
       await setCooldown(exitKey, COOLDOWN_TTL_MIN.exit, `exit:${exitSig.exitKind}`);
       console.log(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 발화 (signalId=${res.signalId})`);
+    } else if (res.recordedVerdict === 'skip') {
+      // 🔴 T-020 라운드 2 — **정책 스킵은 여기서 다시 기록하지 않는다.**
+      //
+      // `createSignalGuarded` 가 이미 게이트별로(`quantity_below_min`·`symbol_blacklisted`·
+      // `duplicate_active_signal` …) `verdict='skip'` 행을 남겼다. 여기서 무조건
+      // `exit_create_failed`(verdict=`error`)를 덧쓰면 같은 사건이 두 행이 되고, 그중 하나가
+      // 정기 리포트의 "⚠ 이상" 절에 **"청산 시그널 생성 실패"** 로 올라간다.
+      //
+      // hard_stop·eod_loss_cut 은 모드 무관 강제 auto_submit 이라 반드시 이 경로를 탄다.
+      // 즉 손절이 1주 미만이라 정책대로 스킵될 때마다 거짓 경보가 함께 찍히고, 운영자는 곧
+      // 그 라벨을 무시하도록 길들여진다 — 그러면 **진짜** 청산 실패가 그 안에 묻힌다.
+      //
+      // 게이트 이름을 나열해 특례를 파지 않고 `recordedVerdict` 로 가르는 이유: 새 스킵
+      // 게이트가 추가될 때마다 여기를 같이 고쳐야 하는 구조면 같은 결함이 그대로 재발한다.
+      // 진입(매수) 경로는 원래 호출부가 추가 기록을 하지 않는다 — 그 패턴에 맞춘 것이다.
+      console.log(
+        `[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 스킵(${res.recordedGate}): ${res.error}`,
+      );
     } else {
+      // 진짜 실패·예외 — exit 트랙(stage 29) 게이트로 한 번 더 남긴다.
+      // `createSignalGuarded` 의 기록은 stage 11(진입 축)이라, 이걸 없애면 청산 실패가
+      // exit 트랙에서 사라진다. 그건 반대 방향의 침묵이다.
       rec.error('exit_create_failed', {
         symbol, side: 'sell',
         detail: { exitKind: exitSig.exitKind, error: res.error },

@@ -102,6 +102,13 @@ export const FUNNEL_GATES = [
   'symbol_blacklisted',
   'duplicate_active_signal',
   'signal_create_failed',
+  /**
+   * T-020 — 사이징 결과가 **1주 미만**이라 주문을 내지 않았다.
+   * 실패(`signal_create_failed`)가 아니라 **정책 스킵**이다: 주식은 정수 주식 수로만
+   * 거래되므로 1주를 못 사는 금액은 애초에 주문이 성립하지 않는다. `sell_amount_below_min`
+   * (stage 5, 매도 전용)의 진입판 대응물.
+   */
+  'quantity_below_min',
   // ─── stage 99 — 터미널 성공 ───────────────────────────────────────
   'signal_created',
   // ─── stage 21~29 — exit-engine 병렬 트랙 ──────────────────────────
@@ -191,6 +198,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   symbol_blacklisted: 11,
   duplicate_active_signal: 11,
   signal_create_failed: 11,
+  quantity_below_min: 11,
 
   signal_created: 99,
 
@@ -271,6 +279,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   symbol_blacklisted: '거래 금지 종목',
   duplicate_active_signal: '활성 시그널 중복',
   signal_create_failed: '시그널 생성 실패',
+  quantity_below_min: '주문 수량 1주 미만 (금액 부족)',
 
   signal_created: '시그널 생성',
 

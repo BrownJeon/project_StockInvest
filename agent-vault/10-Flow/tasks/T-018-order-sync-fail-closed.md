@@ -4,7 +4,9 @@ project: StockInvest
 created: 2026-08-11
 updated: 2026-08-11
 review-round: 3
-status: review
+status: done
+deployed: 2026-08-11
+commit: 3d4197e
 tags:
   - type/task
   - domain/safety
@@ -549,6 +551,37 @@ Ran all test suites.
 | **유예 시간 조정 가능** | 동 §⑧ — `system_config` / env / 하한 클램프 / `clampGraceSec` 단위테스트 |
 | **양쪽 목록에 있으면 `partially_filled`** | 동 §⑨ (+ `filled` 로 기록되지 않는 회귀) |
 | **`partially_filled` → 이후 회차에 `filled`** | 동 §⑨ (재기록 억제 · 잔량 소멸 후 마무리) |
+
+---
+
+## ✅ 배포 완료 (2026-08-11)
+
+작업 당시에는 "미커밋 상태로 승인 대기"였으나, 사용자 승인 후 커밋·배포까지 완료됐다.
+
+| 항목 | 실측 |
+|---|---|
+| 커밋 | **`3d4197e`** — "T-018 살아있는 주문이 `cancelled` 로 오기록되던 문제 — 조회 실패를 \"주문 없음\"으로 둔갑시키지 않는다" |
+| 함께 배포된 커밋 | `bbe074b` ([[T-017-kis-rate-limit-throttle|T-017]] KIS 레이트리밋 스로틀) — 같은 push 에 실림 |
+| 원격 | `origin/main` 푸시 완료 → webhook-deploy 자동 배포 |
+| pm2 | `stockinvest` **online**, 프로세스 기동 `2026-08-11 04:39:08 UTC` (배포 시각 04:39:40 UTC 와 일치), 누적 재시작 340 |
+| 헬스체크 | 그린 — `dryRun: false` / `killSwitch: false` / `engine.enabled: true` |
+| 워킹트리 | 깨끗함 (`git status` 무출력) — 이 task 의 변경은 전부 커밋에 반영됨 |
+
+즉 이 문서가 "승인 대기"라고 적어 둔 상태는 **더 이상 유효하지 않다.** T-018 의 fail-closed
+판정 로직은 **실계좌·실거래 상태로 운영 중**이다.
+
+### 배포 직후 실측 노출도 (후속 판단의 기준선)
+
+| 항목 | 값 |
+|---|---|
+| `syncPendingOrders` 대상 주문(`pending`/`accepted`/`partially_filled` + `exchange_order_id`) | **0건** |
+| 역대 `partially_filled` | **0건** |
+| `executions` 테이블 | **0행** (역사상 한 번도 기록된 적 없음) |
+| 2026-06-01 이후 해외 주문 | **0건** |
+
+→ T-018 이 심은 판정 로직은 아직 실전 데이터를 만난 적이 없다. 후속 결함
+[[T-019-partial-fill-false-filled]]·[[T-020-fractional-order-quantity-sizing]] 의 "현재 노출 0"
+근거가 바로 이 수치들이다.
 
 ---
 

@@ -11,10 +11,30 @@ interface PendingOrder extends RowDataPacket {
   id: number;
   exchange_order_id: string | null;
   symbol: string;
+  /** T-019 — 부분체결 종결 알림의 긴급도가 매수/매도에서 다르다 (매도 잔량 = 미청산 포지션) */
+  side: string | null;
   type: string;
   status: string;
+  /** T-019 — 체결가를 브로커 응답에서 얻지 못했을 때의 폴백(지정가) */
+  price: string | number | null;
   quantity: string | number | null;
   created_at: Date;
+}
+
+/**
+ * 체결 목록에서 얻은 **양성 증거** 한 건.
+ *
+ * 수량만 쓰던 것을 가격·시각까지 함께 들고 다니게 바꾼 이유는 T-019 다 —
+ * 부분체결로 종결된 주문의 **실제 체결 수량을 `executions` 에 남겨야** 하는데,
+ * `executions.price` 가 `NOT NULL` 이라 수량만으로는 행을 만들 수 없다.
+ */
+interface FillEvidence {
+  /** 확인된 체결 수량. **합이 아니라 최대값** (아래 §체결 수량 집계 참조) */
+  qty: number;
+  /** 그 수량을 보고한 행의 체결 단가. 0·비유한이면 "모름" */
+  price: number;
+  /** 그 행의 체결 시각(epoch ms). 0·비유한이면 "모름" */
+  ts: number;
 }
 
 /** 판정을 보류한 이유. 서로 다른 대응이 필요하므로 뭉개지 않는다. */
@@ -56,6 +76,35 @@ export interface UnreconciledOrder {
   unreconciledForMs: number;
 }
 
+/**
+ * **부분체결 상태로 종결된** 주문 (T-019).
+ *
+ * `unreconciled` 와 의미가 겹치지 않는다 — 저건 "판정하지 못했다"이고 이건
+ * **"판정했고, 결과가 '일부만 체결된 채 끝났다'"** 다. 판정 실패가 아니므로 `complete` 를
+ * 깎지 않고 정체 시계에도 올리지 않는다. 대신 별도 목록·로그·감사기록으로 드러낸다.
+ */
+export interface PartialSettlement {
+  /** orders.id */
+  id: number;
+  exchangeOrderId: string;
+  symbol: string;
+  market: Market;
+  side: string | null;
+  /** 브로커가 **실제로 받은** 주문 수량 (`submittedQuantity` 기준) */
+  orderedQty: number;
+  /** 확인된 체결 수량 */
+  filledQty: number;
+  /**
+   * 실제 체결 수량을 `executions` 에 기록했는가.
+   *
+   * `false` 면 손익 리포트(`trade-report`)가 **여전히 주문 수량을 체결 수량으로 계산**한다 —
+   * 즉 이 결함이 그 주문에 대해서는 남아 있다는 뜻이므로 반드시 보여야 한다.
+   */
+  executionRecorded: boolean;
+  /** 기록하지 못했거나 건너뛴 이유 (기록했으면 undefined) */
+  note?: string;
+}
+
 export interface OrderSyncResult {
   /** 상태를 실제로 갱신한 주문 수 */
   synced: number;
@@ -80,6 +129,16 @@ export interface OrderSyncResult {
   staleCount: number;
   /** 가장 오래 보류된 주문의 경과 시간(ms). 없으면 0 */
   oldestUnreconciledMs: number;
+  /** T-019 — **부분체결로 종결된** 주문들 (판정 실패가 아니다) */
+  partialSettlements: PartialSettlement[];
+  /**
+   * T-019 — 체결 완결성을 **수량으로 검증하지 못한** 채 `filled` 로 쓴 주문 수.
+   *
+   * 체결 목록에 있는데 수량이 파싱되지 않았거나(`filledQty` 없음) `orders.quantity` 가
+   * NULL 인 경우다. 수량으로 반박할 근거가 없으므로 기존 동작(`filled`)을 유지하지만,
+   * **그 사실이 조용해지면 안 되므로** 집계로 남긴다.
+   */
+  completenessUnverified: number;
 }
 
 /**
@@ -153,7 +212,8 @@ export interface OrderSyncResult {
  * | 상황 | 판정 | 이유 |
  * |---|---|---|
  * | 미체결 목록 신뢰 가능 + 그 안에 **있다** | `partially_filled` | 잔량이 아직 작동 중 |
- * | 미체결 목록 신뢰 가능 + 그 안에 **없다** | `filled` | 신뢰할 수 있는 부재 |
+ * | 미체결 목록 신뢰 가능 + 그 안에 **없다** + 체결수량 ≥ 송신수량 | `filled` | 종결 + **전량** |
+ * | 미체결 목록 신뢰 가능 + 그 안에 **없다** + 체결수량 < 송신수량 | `filled` **＋ `executions` 기록** | 종결이지만 **전량이 아니다** (아래 §부분체결 종결) |
  * | 미체결 목록 신뢰 불가 + 체결수량 ≥ 주문수량 | `filled` | **수량이라는 양성 증거** — 부재 추론이 필요 없다 |
  * | 미체결 목록 신뢰 불가 + 그 외 | `partially_filled` | 완결을 단정하지 않는다. 비종결 상태라 다음 회차에 스스로 교정된다 |
  * | `market` 주문 | `filled` | 미체결 목록에 **원래** 나타나지 않으므로 그 부재는 아무 정보도 아니다 |
@@ -161,6 +221,37 @@ export interface OrderSyncResult {
  * `filled` 를 잘못 쓰면 "포지션이 닫혔다"고 알리는 것이라 중복 진입으로 이어진다.
  * `partially_filled` 를 잘못 쓰면 다음 회차에 교정된다. **오류의 비용이 비대칭**이므로
  * 불확실할 때는 `partially_filled` 쪽으로 기운다.
+ *
+ * ## 🔴 T-019 §부분체결 종결 — "목록에서 사라졌다"는 "전량 체결됐다"가 아니다
+ *
+ * 위 두 번째 줄은 원래 **수량을 보지 않고** `filled` 로 단정했다. 그 명제가 참이려면
+ * "미체결 목록에서 사라지는 유일한 이유가 전량 체결"이어야 하는데 **그렇지 않다** —
+ * 장 마감 시 브로커가 미체결 잔량을 자동 취소하는 것은 오류가 아니라 정상 동작이다.
+ *
+ * | 시각 | 사건 | 미체결 목록 | 체결 목록 |
+ * |---|---|---|---|
+ * | 14:00 | 매도 지정가 10주 접수 | 있음(10주) | 없음 |
+ * | 15:10 | 3주 체결 | 있음(잔량 7주) | 있음(3주) |
+ * | 15:30 | **장 마감 — 브로커가 잔량 7주 자동 취소** | **없음** | 있음(3주) |
+ *
+ * 예전 규칙은 여기서 "10주 매도 완전 체결"을 DB 에 썼다. 실제로는 3주만 팔렸다. 그리고
+ * `trade-report` 는 `COALESCE(e.quantity, o.quantity)` 로 손익을 계산하는데 `executions`
+ * 가 0행이라 **항상 주문 수량**으로 떨어진다 → 매도 수익이 10주치로 잡히고, LIFO 재고
+ * 스택에서 10주가 빠져 **이후 모든 매도의 원가가 오염**된다. 1회성 오차가 아니라 누적이다.
+ *
+ * 그래서 두 가지를 함께 한다:
+ *
+ *  1. **판정** — 체결 수량이 송신 수량(`submittedQuantity`)에 미치지 못하면 "전량 체결"로
+ *     단정하지 않는다. 비교 기준을 `orders.quantity`(요청 원본)가 아니라 송신 수량으로
+ *     두는 이유는 T-018 H-4 와 같다: 브로커는 자기가 **받은** 수량 이상을 채울 수 없다.
+ *  2. **기록** — 실제 체결 수량을 `executions` 에 남긴다. 그러면 `trade-report` 의
+ *     `COALESCE` 가 자동으로 참값을 집어 손익 왜곡의 **근본 원인이 사라진다.**
+ *
+ * 상태는 그래도 `filled` 다. `partially_filled` 은 이 함수의 조회 대상(=**비종결 상태**)이라,
+ * 잔량이 이미 사라진 주문을 거기 두면 5분마다 영원히 KIS 를 조회한다 — T-018 H-4(B) 가
+ * 없앤 덫을 다른 입구로 재현하는 것이다. `partially_filled` 은 **잔량이 아직 살아 있을 때**만
+ * 의미가 있다. 즉 "전량 체결"의 의미를 `filled` 에서 떼어내고, 수량의 진실은 `executions`
+ * 가 들고 있게 하는 것이 이 설계의 요점이다.
  *
  * ## 완결성은 **시장 단위**다 — 왜 전부를 막지 않는가
  *
@@ -187,7 +278,7 @@ export interface OrderSyncResult {
 export async function syncPendingOrders(): Promise<OrderSyncResult> {
   const pool = getPool();
   const [rows] = await pool.query<PendingOrder[]>(
-    `SELECT id, exchange_order_id, symbol, type, status, quantity, created_at
+    `SELECT id, exchange_order_id, symbol, side, type, status, price, quantity, created_at
      FROM orders
      WHERE status IN ('pending','accepted','partially_filled')
        AND exchange_order_id IS NOT NULL`,
@@ -202,8 +293,10 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
   const now = Date.now();
   const graceMs = await cancelGraceMs(pool);
   let synced = 0;
+  let completenessUnverified = 0;
   const errors: string[] = [];
   const unreconciled: UnreconciledOrder[] = [];
+  const partialSettlements: PartialSettlement[] = [];
   const pendingIds = new Set(rows.map(r => r.id));
 
   // ── ① 미체결 주문 목록 (limit/stop_limit만 여기 있음) ─────────────────────
@@ -244,14 +337,18 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
 
     let completedOrderIds = new Set<string>();
     /**
-     * 주문번호 → 체결 수량. **합이 아니라 최대값**을 쓴다.
+     * 주문번호 → 체결 증거. 수량은 **합이 아니라 최대값**을 쓴다.
      *
      * KIS 국내(`tot_ccld_qty`)는 주문당 **누적** 수량이라 여러 행을 더하면 중복 계산이 되고,
      * 그러면 실제로는 부분체결인 주문을 `filled` 로 단정하게 된다. 최대값은 두 표현(누적/개별)
      * 모두에서 **과대평가하지 않는** 값이라, 틀리더라도 항상 보수적인 쪽(`partially_filled`)으로
      * 틀린다.
+     *
+     * T-019 — 가격·시각은 **최대 수량을 보고한 그 행**의 값을 따라간다. 누적 표현에서는
+     * 그 행이 가장 최신 누적이고 `avg_prvs`(평균 체결단가)를 담고 있어, 부분체결을
+     * `executions` 에 남길 때 쓸 값으로 가장 적합하다.
      */
-    const filledQty = new Map<string, number>();
+    const fills = new Map<string, FillEvidence>();
     let completedOk = true;
     let completedErr = '';
     try {
@@ -259,7 +356,11 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
       completedOrderIds = new Set(completed.map(o => o.orderId));
       for (const c of completed) {
         const q = Number(c.qty);
-        if (Number.isFinite(q)) filledQty.set(c.orderId, Math.max(filledQty.get(c.orderId) ?? 0, q));
+        if (!Number.isFinite(q)) continue;
+        const prev = fills.get(c.orderId);
+        if (prev === undefined || q > prev.qty) {
+          fills.set(c.orderId, { qty: q, price: numOrZero(c.price), ts: numOrZero(c.ts) });
+        }
       }
     } catch (e) {
       completedOk = false;
@@ -285,12 +386,52 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
         // ── 증거 양성: 체결 조회가 성공했고 그 안에 있다 ─────────────────────
         // 최소한 일부는 체결됐다. 전량인지 잔량이 남았는지는 §부분체결 규칙으로 가른다.
         if (completedOk && completedOrderIds.has(eid)) {
-          const next = settledStatus(order, market, eid, filledQty.get(eid), activeReliable, activeOrderIds);
+          const decision = settleDecision(order, market, eid, fills.get(eid), activeReliable, activeOrderIds);
+          const next = decision.status;
+
+          // ── 🔴 T-019 §부분체결 종결 — 상태를 쓰기 **전에** 체결 수량을 남긴다 ─────
+          //
+          // 순서가 반대면 안 된다. `filled` 로 쓰는 순간 이 주문은 다음 회차 조회 대상
+          // (`status IN ('pending','accepted','partially_filled')`)에서 사라지므로, 그 사이에
+          // 프로세스가 죽으면 **실제 체결 수량을 복원할 방법이 영원히 없다**. 반대로
+          // executions 를 먼저 쓰고 죽으면 다음 회차가 같은 결론에 다시 도달하고, 아래
+          // 멱등 가드가 중복 INSERT 를 막는다.
+          const rec = decision.partial
+            ? await recordSettledFill(pool, order, decision.partial)
+            : null;
+          if (decision.unverified !== undefined) {
+            completenessUnverified++;
+            // 알림까지 올리지는 않는다 — 조치할 대상이 없고 빈도도 낮다. 다만 grep 가능한
+            // 토큰으로 반드시 남긴다: "수량으로 반박하지 못한 채 filled 를 썼다"는 사실이
+            // 조용해지면 이 작업이 없앤 침묵이 다른 이름으로 돌아온다.
+            console.warn(
+              `[order-sync] ⚠️ ORDER_SYNC_FILL_UNVERIFIED id=${order.id} ${order.symbol}(${market}) `
+              + `eid=${eid} reason=${decision.unverified} — 완결을 수량으로 검증하지 못한 채 filled 로 기록`,
+            );
+          }
+
           // 이미 그 상태면 쓰지 않는다 — `partially_filled` 는 비종결 상태라 다음 회차에도
           // 다시 여기 오므로, 무조건 쓰면 매 회차 UPDATE 가 나가고 `synced` 가 부풀려진다.
           if (next !== order.status) {
             await pool.query(SET_STATUS_SQL[next], [order.id]);
             synced++;
+          }
+          // 결과 목록·감사기록은 **상태 전이가 실제로 성립한 뒤**에 남긴다. 위 UPDATE 가
+          // 던지면 아래 per-order catch 가 이 주문을 미판정으로 처리하고, 다음 회차가 같은
+          // 결론에 다시 도달한다 — 그때는 멱등 가드 덕에 executions 가 늘지 않는다.
+          if (decision.partial && rec !== null) {
+            partialSettlements.push({
+              id: order.id,
+              exchangeOrderId: eid,
+              symbol: order.symbol,
+              market,
+              side: order.side ?? null,
+              orderedQty: decision.partial.orderedQty,
+              filledQty: decision.partial.filledQty,
+              executionRecorded: rec.recorded,
+              note: rec.note,
+            });
+            await auditPartialSettlement(pool, order, market, eid, decision.partial, errors);
           }
           // ── 🔴 H-4(B) — 확인 불가능한 부분체결이 조용히 갇히지 않게 ──────────
           // `partially_filled` 는 비종결 상태다. 잔량이 아직 작동 중인지 확인할 방법이
@@ -395,9 +536,12 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
     unreconciled,
     staleCount,
     oldestUnreconciledMs,
+    partialSettlements,
+    completenessUnverified,
   };
 
   reportUnreconciled(result);
+  reportPartialSettlements(result);
   return result;
 }
 
@@ -500,41 +644,262 @@ const SET_STATUS_SQL = {
 } as const;
 
 /**
- * 체결 목록에 나타난 주문의 최종 상태. 규칙표는 함수 상단 §부분체결 참조.
- *
- * 핵심: **"일부 체결됐다"는 존재로 증명되지만 "전량 체결됐다"는 잔량의 부재로만 증명된다.**
- * 그래서 잔량 판단의 근거가 없으면 `filled` 로 단정하지 않는다.
+ * 부동소수 비교 허용오차. `trade-report.ts` 가 LIFO 재고 차감에 이미 `1e-12` 를 쓰고 있어
+ * 같은 관례를 따른다 — 수량 비교의 기준이 모듈마다 다르면 "리포트는 전량인데 동기화는
+ * 부분체결"처럼 서로 모순되는 판정이 나온다.
  */
-function settledStatus(
+const QTY_EPSILON = 1e-12;
+
+/** 부분체결로 **종결**됐다는 판정에 딸린 증거. */
+interface PartialFill {
+  /** 브로커가 실제로 받은 수량 */
+  orderedQty: number;
+  /** 확인된 체결 수량 (`orderedQty` 보다 작다) */
+  filledQty: number;
+  /** 체결 단가. 0 이면 브로커 응답에서 얻지 못함 */
+  price: number;
+  /** 체결 시각(epoch ms). 0 이면 모름 */
+  ts: number;
+}
+
+interface SettleDecision {
+  status: 'filled' | 'partially_filled';
+  /** 있으면 "종결됐지만 전량이 아니다" — `executions` 에 실제 수량을 남겨야 한다 */
+  partial?: PartialFill;
+  /** 완결을 **수량으로 검증하지 못한** 채 `filled` 를 쓴 경우의 사유 */
+  unverified?: 'fill_qty_unknown' | 'ordered_qty_unknown';
+}
+
+/**
+ * 체결 목록에 나타난 주문의 최종 판정. 규칙표는 함수 상단 §부분체결 / §부분체결 종결 참조.
+ *
+ * 핵심: **"일부 체결됐다"는 존재로 증명되고, "끝났다"는 잔량의 부재로 증명되며,
+ * "전량 체결됐다"는 수량으로만 증명된다.** 이 셋은 서로 다른 명제다 — 예전 코드는
+ * 두 번째에서 세 번째를 곧바로 유도했고 그것이 T-019 의 결함이다.
+ */
+function settleDecision(
   order: PendingOrder,
   market: Market,
   eid: string,
-  filledQty: number | undefined,
+  fill: FillEvidence | undefined,
   activeReliable: boolean,
   activeOrderIds: Set<string>,
-): 'filled' | 'partially_filled' {
-  // market 주문은 미체결 목록에 원래 나타나지 않는다 — 그 부재는 아무 정보도 아니므로
-  // 부분체결 추론의 근거가 될 수 없다. 기존 동작(체결 목록에 있으면 filled)을 유지한다.
-  if (order.type === 'market') return 'filled';
-
-  if (activeReliable) {
-    // 두 목록에 동시에 있다 = 일부 체결 + 잔량이 아직 브로커에서 작동 중
-    return activeOrderIds.has(eid) ? 'partially_filled' : 'filled';
-  }
-
-  // 미체결 목록을 신뢰할 수 없다(조회 실패 또는 커버리지 밖).
-  // 다만 **체결 수량**은 부재 추론 없이 완결을 직접 증명할 수 있는 양성 증거다.
-  // 이 경로가 없으면 커버리지 밖(NYS/AMS) 주문이 영원히 `partially_filled` 로 남는다.
+): SettleDecision {
+  // 🔴 D-4 — market 주문은 여기서 **수량 검증을 하지 않는다.**
   //
+  // 이 함수가 "부분체결로 종결됐다"고 말할 수 있는 근거는 오직 "잔량이 신뢰할 수 있는
+  // 미체결 목록에서 사라졌다"이다. market 주문은 그 목록에 **원래** 나타나지 않으므로
+  // 그 근거를 얻을 방법이 구조적으로 없다. 그런데도 수량만 보고 종결시키면, 5분 주기
+  // 동기화가 **체결 진행 중인 스냅샷**을 잡았을 때 그 중간값이 `executions` 에 영구히
+  // 박히고 상태는 종결된다 — 드문 과대계상을 없애려다 매 회차의 과소계상을 만드는 셈이다.
+  // 시장가 부분체결은 실재하지만, 그것은 잔량 확인 수단이 생긴 뒤에 다뤄야 한다.
+  if (order.type === 'market') return { status: 'filled' };
+
   // 🔴 H-4 — 비교 대상은 `orders.quantity` 가 **아니라** 브로커가 실제로 받은 수량이다.
   // DB 는 자르지 않은 원본(예: 1.7)을 갖고 있고 해외 주문은 잘린 값(1)으로 나간다.
   // 원본과 비교하면 부등식이 영원히 성립하지 않아 완전 체결된 주문이 갇힌다.
   // 자르는 규칙은 송신 경로와 **같은 함수**를 쓴다 — 재유도하면 버그가 자리만 옮긴다.
   const ordered = submittedQuantity(market, Number(order.quantity));
-  if (ordered > 0 && filledQty !== undefined && filledQty >= ordered) {
-    return 'filled';
+
+  if (activeReliable) {
+    // 두 목록에 동시에 있다 = 일부 체결 + 잔량이 아직 브로커에서 작동 중
+    if (activeOrderIds.has(eid)) return { status: 'partially_filled' };
+
+    // 여기부터 "잔량이 신뢰할 수 있는 목록에서 사라졌다" = **종결**이다.
+    // 남은 질문은 하나뿐: 전량이었나?
+    if (fill === undefined || !(fill.qty > 0)) {
+      // 수량으로 반박할 근거가 없다 → 기존 동작(`filled`) 유지. 다만 조용히 넘기지 않는다.
+      return { status: 'filled', unverified: 'fill_qty_unknown' };
+    }
+    if (!(ordered > 0)) {
+      // `orders.quantity` 가 NULL/0 — 비교의 오른쪽이 없다. 마찬가지로 유지 + 흔적.
+      return { status: 'filled', unverified: 'ordered_qty_unknown' };
+    }
+    if (fill.qty < ordered - QTY_EPSILON) {
+      return {
+        status: 'filled',
+        partial: { orderedQty: ordered, filledQty: fill.qty, price: fill.price, ts: fill.ts },
+      };
+    }
+    return { status: 'filled' };
   }
-  return 'partially_filled';
+
+  // 미체결 목록을 신뢰할 수 없다(조회 실패 또는 커버리지 밖).
+  // 다만 **체결 수량**은 부재 추론 없이 완결을 직접 증명할 수 있는 양성 증거다.
+  // 이 경로가 없으면 커버리지 밖(NYS/AMS) 주문이 영원히 `partially_filled` 로 남는다.
+  // 반대로 수량이 모자랄 때는 "끝났다"는 근거가 없으므로 **종결시키지 않는다** —
+  // 비종결 상태로 두면 다음 회차에 스스로 교정된다 (T-018 §부분체결 그대로).
+  if (ordered > 0 && fill !== undefined && fill.qty >= ordered) {
+    return { status: 'filled' };
+  }
+  return { status: 'partially_filled' };
+}
+
+// ── 부분체결 종결의 기록 (T-019 D-2 (a) / D-3) ───────────────────────────────
+
+/**
+ * 실제 체결 수량을 `executions` 에 남긴다 — 손익 왜곡의 **근본 원인 제거**.
+ *
+ * `trade-report.fetchOrderRows` 는 `COALESCE(e.quantity, o.quantity)` 로 수량을 집으므로,
+ * 이 행 하나가 있으면 리포트가 자동으로 참값을 쓴다.
+ *
+ * ## 지켜야 하는 제약 (task 파일 D-2 (a) 및 reviewer 지적)
+ *
+ *  1. **주문당 행은 정확히 하나.** `fetchOrderRows` 는 `GROUP BY o.id` 아래에서
+ *     `e.price`/`e.quantity` 를 **비집계로** 뽑는다 — 주문당 행이 여럿이면 임의 행이
+ *     선택된다. 그래서 개별 체결이 아니라 **누적 체결 1행**을 쓴다. 이렇게 하면 임의
+ *     선택이 일어나도 항상 같은(참) 값이 나온다.
+ *  2. **멱등(순차).** 이미 행이 있으면 쓰지 않는다. 재실행·재배포에도 행이 늘지 않는다.
+ *
+ *     ⚠️ **진짜 동시 실행에 대해서는 원자적이지 않다** (reviewer MEDIUM-1). SELECT→INSERT
+ *     사이에 다른 프로세스가 끼어들면 두 행이 생길 수 있다. 이 한계를 **없애지 않고
+ *     남겨 둔 이유**는 아래 §동시성 참조 — 대신 {@link detectDuplicateExecutions} 가
+ *     사후에 **탐지**해 로그로 드러낸다. 조용히 넘기지는 않는다.
+ *  3. **`NOT NULL` 컬럼 값.**
+ *     - `quantity` — 확인된 체결 수량. 이 함수가 불리는 조건 자체가 "수량을 안다"이다.
+ *     - `price` — 브로커가 준 체결 단가. 없으면 주문의 지정가로 폴백한다. 둘 다 없으면
+ *       **행을 쓰지 않는다**: `e.price` 에 0 을 박으면 `COALESCE(e.price, o.price)` 가
+ *       0 을 집어 `computeLifoPnl` 의 "가격 없으면 `amount_krw/quantity`" 폴백까지
+ *       무력화된다 — 안 쓰는 것보다 나쁘다.
+ *     - `fee` — **0**. 수수료를 모르는데 추정치를 넣으면 손익이 조용히 틀어진다. 0 은
+ *       `executions` 가 아예 없던 현재 동작(`COALESCE(SUM(e.fee),0)`)과 정확히 같다.
+ *  4. **`executed_at`** — 브로커가 준 체결 시각. 없으면 DB 기본값(NOW()). LIFO 는
+ *     `ts ASC` 로 정렬하므로 실제 체결 시각을 쓰는 쪽이 재고 순서에 더 정확하다.
+ *
+ * ## §동시성 — 왜 원자성을 강제하지 않았나 (reviewer MEDIUM-1 / Leader 판단 반영)
+ *
+ * 검토한 선택지와 기각 사유:
+ *
+ * | 안 | 판단 |
+ * |---|---|
+ * | `UNIQUE KEY (order_id)` | **Leader 가 금지.** "주문당 1행"을 스키마에 못 박으면 장래에 **실제 체결 건별로 여러 행**을 남기는 자연스러운 설계가 영구히 봉쇄된다. 지금의 누적 1행은 편의적 선택이지 최종 형태가 아니다 |
+ * | `INSERT … SELECT … WHERE NOT EXISTS` | 기각. UNIQUE 인덱스가 없으면 두 트랜잭션이 모두 "없음"을 보고 각자 INSERT 할 수 있다. 갭 락으로 막히는지는 격리수준·binlog 형식에 좌우돼 **여기서 원자성을 보장한다고 쓸 수 없다.** 보장 못 하는 것을 보장한다고 적는 것 자체가 이 프로젝트가 없애 온 침묵이다 |
+ * | `SELECT … FOR UPDATE` (orders 행) | 기각. 5분 주기 cron 이 **주문 경로가 쓰는 `orders` 행에 배타 락**을 잡는다. `submitOrder` 의 상태 UPDATE 와 경합할 수 있고, 막으려는 사고(노출도 낮음)보다 만드는 위험이 크다 |
+ * | `GET_LOCK()` 명명 락 | 기각. 커넥션 스코프 락인데 풀에서 획득·해제 커넥션이 같다는 보장이 없다. 전용 커넥션을 잡아야 하고, 누수되면 **이후 회차가 통째로 막힌다** — 중복 행 하나보다 나쁜 실패 모드다 |
+ *
+ * → **현행(SELECT-then-INSERT) 유지 + 사후 탐지.** 근거:
+ *
+ *  - **노출 조건이 좁다.** `cron-runner.sh` 는 curl 을 순차 blocking 호출하는 단일 루프라
+ *    정상 운영에서 겹치지 않는다. 겹치려면 (a) 수동 강제 트리거가 cron 과 우연히 동시 실행,
+ *    또는 (b) pm2 재배포 중 이전 요청이 아직 처리 중 — 둘 다 드물다.
+ *  - **터져도 피해가 작다.** 두 행의 값은 같은 주문·비슷한 시점의 브로커 응답이라 통상 동일하고,
+ *    `fee=0` 이라 `SUM(e.fee)` 중복 합산이 0 이다. 이론적 잔여 위험은 두 프로세스가 서로 다른
+ *    시점에 `getCompletedOrders` 를 호출해 그 사이 추가 체결이 반영된 경우뿐이다.
+ *  - **터진 것을 알 수 있다.** 아래 탐지기가 `ORDER_SYNC_EXEC_DUPLICATE` 로 남긴다.
+ *
+ * **승격 트리거**: `ORDER_SYNC_EXEC_DUPLICATE` 가 **한 번이라도** 로그에 나타나면 이 판단의
+ * 전제(노출도 낮음)가 깨진 것이다. 그때는 `executions` 스키마를 "체결 건별 다행"으로
+ * 확정하고 `(order_id, executed_at, price, quantity)` 자연키 기준의 중복 제거로 넘어가야 한다.
+ */
+async function recordSettledFill(
+  pool: ReturnType<typeof getPool>,
+  order: PendingOrder,
+  partial: PartialFill,
+): Promise<{ recorded: boolean; note?: string }> {
+  const orderPrice = numOrZero(order.price);
+  const price = partial.price > 0 ? partial.price : orderPrice;
+  if (!(price > 0)) {
+    return {
+      recorded: false,
+      note: '체결가·지정가를 모두 알 수 없어 executions 에 기록하지 못했다 — 이 주문의 손익은 여전히 주문 수량 기준이다',
+    };
+  }
+
+  const [existing] = await pool.query<RowDataPacket[]>(
+    'SELECT id FROM executions WHERE order_id = ? LIMIT 1',
+    [order.id],
+  );
+  if (Array.isArray(existing) && existing.length > 0) {
+    // 이미 체결 기록이 있다 — 두 번째 행을 넣으면 `GROUP BY o.id` 의 임의 선택이
+    // 비결정적이 된다. 덮어쓰지도 않는다(기존 기록이 더 정확할 수 있다).
+    return { recorded: false, note: '이미 executions 행이 있어 추가 기록하지 않았다' };
+  }
+
+  const executedAt = partial.ts > 0 ? new Date(partial.ts) : new Date();
+  await pool.query(
+    `INSERT INTO executions (order_id, price, quantity, fee, executed_at)
+     VALUES (?, ?, ?, 0, ?)`,
+    [order.id, price, partial.filledQty, executedAt],
+  ).catch((e: unknown) => {
+    // 여기서 실패하면 상태를 `filled` 로 넘기면 안 된다 — 넘기는 순간 이 주문은 다음
+    // 회차 조회 대상에서 사라지고 실제 체결 수량이 영구히 유실된다. 호출부의 per-order
+    // catch 로 올려 **이번 회차 미판정**으로 처리하고 다음 회차에 다시 시도하게 한다.
+    throw new Error(`executions insert failed (order ${order.id}): ${errMsg(e)}`);
+  });
+
+  const dup = await detectDuplicateExecutions(pool, order.id);
+  return dup === null ? { recorded: true } : { recorded: true, note: dup };
+}
+
+/**
+ * 방금 쓴 행이 **혼자인지** 확인한다 (§동시성).
+ *
+ * 원자성을 강제하지 않기로 한 대가로, 최소한 **깨졌을 때 알 수는 있어야** 한다.
+ * 경합이 일어나면 두 프로세스 중 나중에 검사하는 쪽이 `2` 를 보므로 탐지는 실질적으로
+ * 확실하다. 비용은 부분체결 종결 1건당 SELECT 한 번 — 이 경로 자체가 드물어 무시할 만하다.
+ *
+ * 탐지 실패(조회 자체가 실패)는 삼킨다. 이건 진단이지 판정이 아니라서, 여기서 예외를 올리면
+ * **이미 성공한 기록과 상태 전이를 미판정으로 되돌려** 다음 회차 중복 판정을 유발한다.
+ */
+async function detectDuplicateExecutions(
+  pool: ReturnType<typeof getPool>,
+  orderId: number,
+): Promise<string | null> {
+  try {
+    const [rows] = await pool.query<(RowDataPacket & { n: number })[]>(
+      'SELECT COUNT(*) AS n FROM executions WHERE order_id = ?',
+      [orderId],
+    );
+    const n = Number(rows?.[0]?.n ?? 1);
+    if (!Number.isFinite(n) || n <= 1) return null;
+
+    const note = `executions 행이 ${n}개다 — 동시 실행 경합으로 중복 기록됐다`;
+    console.error(
+      `[order-sync] 🔴 ORDER_SYNC_EXEC_DUPLICATE order=${orderId} rows=${n} — `
+      + 'SELECT-then-INSERT 멱등 가드가 동시 실행에서 깨졌다. 손익은 (fee=0·동일값 가정) 아직 '
+      + '맞을 수 있으나, "노출도가 낮다"는 전제가 깨진 것이므로 executions 스키마를 '
+      + '체결 건별 다행 + 자연키 중복 제거로 확정해야 한다 (order-sync.ts §동시성 승격 트리거)',
+    );
+    return note;
+  } catch {
+    return null;   // 진단 실패가 판정을 되돌리게 두지 않는다
+  }
+}
+
+/**
+ * `trade_logs` 감사 기록 (CLAUDE.md "실매매 원칙" 3항 — 성공·거부·에러 모두 남긴다).
+ *
+ * 감사 기록 실패가 상태 전이를 되돌려서는 안 되므로 **여기서만은 삼키고** `errors[]` 에
+ * 남긴다. 이미 `executions` 와 `orders.status` 가 쓰인 뒤라, 여기서 예외를 올리면
+ * 성공한 전이를 미판정으로 되돌려 다음 회차에 중복 판정을 유발한다.
+ */
+async function auditPartialSettlement(
+  pool: ReturnType<typeof getPool>,
+  order: PendingOrder,
+  market: Market,
+  eid: string,
+  partial: PartialFill,
+  errors: string[],
+): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
+      [order.id, 'partial_fill_settled', JSON.stringify({
+        exchangeOrderId: eid,
+        symbol: order.symbol,
+        market,
+        side: order.side ?? null,
+        orderedQty: partial.orderedQty,
+        filledQty: partial.filledQty,
+        shortfallQty: partial.orderedQty - partial.filledQty,
+        price: partial.price > 0 ? partial.price : null,
+        source: 'order-sync',
+      })],
+    );
+  } catch (e) {
+    errors.push(`partial_fill_settled audit ${order.id}: ${errMsg(e)}`);
+    console.error(`[order-sync] partial_fill_settled 감사 기록 실패 order=${order.id}:`, errMsg(e));
+  }
 }
 
 // ── 취소 판정 유예 설정 (§유예 기간) ─────────────────────────────────────────
@@ -715,6 +1080,96 @@ function reportUnreconciled(r: OrderSyncResult): void {
   }
 }
 
+/**
+ * 부분체결 종결 알림의 창. 커버리지·확인불가 경고와 같은 6시간을 쓴다 —
+ * 재시도로 달라지는 상황이 아니라 **사람이 한 번 확인하면 되는** 종류라 짧은 창은 소음만 늘린다.
+ */
+const PARTIAL_SETTLED_ALERT_TTL_MS = 6 * 60 * 60_000;
+
+/**
+ * 부분체결 종결을 **보이게** 만든다 (T-019 D-3).
+ *
+ * ## 알림 정책
+ *
+ * 키를 매수/매도로 **나눈다.** `sendAlertThrottled` 는 키 단위로 창을 잡으므로 한 키에
+ * 묶으면 흔한 쪽(매수)이 드문 쪽(매도)을 조용히 억눌러 버린다 — T-018 H-4(B) 가 같은
+ * 이유로 `order-sync:coverage` 와 `order-sync:partial-unconfirmed` 를 분리했다.
+ *
+ * 두 상황의 의미가 실제로 다르다:
+ *  - **매수** 부분체결 = 의도한 만큼 자본이 투입되지 않았다. 손실 위험은 없다.
+ *  - **매도** 부분체결 = **포지션이 다 닫히지 않았다.** 손절이었다면 보호가 절반만 걸린
+ *    상태로 남는다. 확인이 필요한 쪽은 이쪽이다.
+ *
+ * 수준은 둘 다 `warning` 이다. 장 마감 시 브로커가 잔량을 자동 취소하는 것은 **오류가
+ * 아니라 정상 동작**이고(T-018 H-4(B) 가 문구를 조정한 이유와 같다), 정상 이벤트를
+ * critical 로 알리면 사람이 무시하기 시작해 알림이 있으나 마나가 된다. 창은 6시간 —
+ * 부분체결 종결은 대부분 장 마감 시각에 몰리므로 하루 몇 건이 한 통으로 묶인다.
+ *
+ * 로그는 스로틀 없이 **매 회차** 남긴다(`ORDER_SYNC_PARTIAL_SETTLED`). 알림을 줄이는
+ * 것과 기록을 줄이는 것은 다른 문제다.
+ */
+function reportPartialSettlements(r: OrderSyncResult): void {
+  if (r.partialSettlements.length === 0) return;
+
+  const fmt = (p: PartialSettlement): string =>
+    `${p.symbol}#${p.id} ${p.side ?? '?'} ${p.filledQty}/${p.orderedQty}주`;
+
+  console.warn(
+    `[order-sync] ⚠️ ORDER_SYNC_PARTIAL_SETTLED — ${r.partialSettlements.length}건이 `
+    + '부분체결 상태로 종결됐다 (잔량이 미체결 목록에서 사라짐 — 장 마감 자동취소가 정상 사유). '
+    + '완전 체결로 기록하지 않고 실제 체결 수량을 executions 에 남겼다',
+  );
+  for (const p of r.partialSettlements) {
+    console.warn(
+      // note 는 미기록 사유일 수도, 기록은 됐지만 짚어야 할 사실(중복 행 탐지)일 수도 있다.
+      // 기록됐다는 이유로 note 를 버리면 탐지기가 조용해진다.
+      `[order-sync]   부분체결 종결 ${fmt(p)} eid=${p.exchangeOrderId} (${p.market}) `
+      + `executions=${p.executionRecorded ? '기록' : '미기록'}${p.note ? ` — ${p.note}` : ''}`,
+    );
+  }
+
+  const unrecorded = r.partialSettlements.filter(p => !p.executionRecorded);
+  if (unrecorded.length > 0) {
+    // 여기가 이 작업의 목표를 달성하지 **못한** 잔여분이다. 반드시 따로 드러낸다.
+    console.warn(
+      `[order-sync] ⚠️ ORDER_SYNC_PARTIAL_UNRECORDED — ${unrecorded.length}건은 실제 체결 수량을 `
+      + '남기지 못해 손익 리포트가 주문 수량을 그대로 쓴다: '
+      + unrecorded.map(fmt).join(', '),
+    );
+  }
+
+  const sells = r.partialSettlements.filter(p => p.side === 'sell');
+  const buys  = r.partialSettlements.filter(p => p.side !== 'sell');
+
+  if (sells.length > 0) {
+    sendAlertThrottled(
+      'order-sync:partial-settled-sell',
+      'warning',
+      '매도 주문이 일부만 체결된 채 종결됐습니다',
+      `${sells.length}건의 매도가 주문 수량 전부를 채우지 못하고 끝났습니다.\n`
+      + `대상: ${sells.map(fmt).join(', ')}\n`
+      + '잔량이 장 마감 때 브로커에서 자동 취소된 것이라면 정상 상황이며, 이 알림은 오류 통보가 '
+      + '아니라 확인 요청입니다. 다만 **팔지 못한 수량만큼 포지션이 남아 있습니다** — '
+      + '손절·청산 주문이었다면 남은 물량을 어떻게 할지 판단하세요. '
+      + '체결된 수량은 이미 기록되어 손익에 반영됩니다.',
+      PARTIAL_SETTLED_ALERT_TTL_MS,
+    );
+  }
+  if (buys.length > 0) {
+    sendAlertThrottled(
+      'order-sync:partial-settled-buy',
+      'warning',
+      '매수 주문이 일부만 체결된 채 종결됐습니다',
+      `${buys.length}건의 매수가 주문 수량 전부를 채우지 못하고 끝났습니다.\n`
+      + `대상: ${buys.map(fmt).join(', ')}\n`
+      + '잔량이 장 마감 때 브로커에서 자동 취소된 것이라면 정상 상황이며, 이 알림은 오류 통보가 '
+      + '아니라 확인 요청입니다. 의도한 것보다 적게 매수됐으므로 목표 비중과 차이가 날 수 있습니다. '
+      + '체결된 수량은 이미 기록되어 손익에 반영됩니다.',
+      PARTIAL_SETTLED_ALERT_TTL_MS,
+    );
+  }
+}
+
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -724,5 +1179,12 @@ function emptyResult(): OrderSyncResult {
     synced: 0, errors: [], skipped: 0, complete: true,
     marketsOk: [], marketsFailed: [], unreconciled: [],
     staleCount: 0, oldestUnreconciledMs: 0,
+    partialSettlements: [], completenessUnverified: 0,
   };
+}
+
+/** `Number()` 로 바꾸되 비유한값은 0(="모름")으로 접는다. */
+function numOrZero(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }

@@ -1,12 +1,35 @@
 ---
 project: StockInvest
-updated: 2026-08-06
+updated: 2026-08-11
 tags:
   - type/context
 ---
 # 현재 상태
 
-## 지금 상태
+## 🔴 2026-08-11 — 실거래 무장 상태 + 주문경로 결함 2건 수정(승인 대기)
+
+**실계좌 실거래 중이다.** `safety_dry_run=false` · `safety_kill_switch=false` · `engine_enabled=true` · `autopilot_mode=assist` · `safety_order_max_pct=6` · `safety_daily_order_max_pct=10`(과거 0 → 개방). `.env` 의 `DRY_RUN=true` 는 **죽은 설정**이다(DB `system_config` 가 우선). 아래 문서 중 "DRY_RUN 이라 안전하다"는 취지의 옛 서술은 전부 무효다.
+
+### 오늘 배포됨
+
+- [[T-017-kis-rate-limit-throttle]] (`bbe074b`) · [[T-018-order-sync-fail-closed]] (`3d4197e`) — 같은 push 로 배포. pm2 기동 `04:39:08 UTC`, 헬스체크 그린.
+
+### 오늘 작업 완료·**커밋 승인 대기** (미커밋)
+
+- [[T-019-partial-fill-false-filled]] — 부분체결이 `filled` 로 오기록되어 손익 장부가 틀어지던 문제. `executions` 에 실제 체결 수량 기록(역사상 0행이던 표에 처음으로)
+- [[T-020-fractional-order-quantity-sizing]] — 소수점 주문 수량이 전송 직전 절삭돼 조용히 축소집행되던 문제. 사이징 시점 정수화 + 0주 스킵의 관측 가능한 흔적
+
+둘 다 developer(Opus) → reviewer(Sonnet, 2라운드 **PASS**) → QA(**검증 통과**) 순환 완료. **93 suites / 1411 tests**, typecheck exit 0.
+⚠️ **미커밋 상태다.** `deploy-stockinvest.sh` 의 `git clean -fdx` 가 미추적 파일을 지우므로, 다음 배포 전에 커밋 여부를 반드시 결정해야 한다.
+
+### 현재 노출도 (후속 판단 기준선, 2026-08-11 실측)
+
+`executions` 0행 · 역대 `partially_filled` 0건 · order-sync 대상 0건 · 06월 이후 해외 주문 0건 · 08월 시그널은 전부 `expired`/`ai_skipped` 로 주문 도달 0건.
+→ 두 결함 모두 **아직 발화한 적 없다.** 다만 킬스위치 해제 · T-017 의 레이트리밋 제거 · 일일한도 개방으로 **억제 요인이 전부 풀렸다** — "현재 0건"은 안전의 근거가 아니라 시한의 근거다.
+
+---
+
+## 지금 상태 (이하 2026-08-06 기준 — 재구성 맥락)
 
 **프로젝트 재구성 진행 중** (사용자 요청: "시그널도 안 나오고 수익도 없어 사용 중단 → 다시 쓸 수 있게 재구성").
 

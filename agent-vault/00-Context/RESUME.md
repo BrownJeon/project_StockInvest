@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-06
+updated: 2026-08-11
 tags:
   - type/context
 aliases:
@@ -12,6 +12,39 @@ aliases:
 
 > 사용자가 **"이어서 작업해줘"** 라고 하면 이 파일부터 읽고, 아래 "다음 할 일"의 1번부터 진행한다.
 > 다른 PC에서 재개할 수 있으므로 **모든 맥락은 이 vault 안에 있다** (세션 메모리·플랜 파일에 의존하지 말 것).
+
+---
+
+## 🔴 최신 상태 — 2026-08-11 (이 절이 아래 08-06 서술보다 우선한다)
+
+### 실거래가 무장돼 있다
+
+`safety_dry_run=false` · `safety_kill_switch=false` · `engine_enabled=true` · `autopilot_mode=assist` · `safety_order_max_pct=6` · `safety_daily_order_max_pct=10`.
+**`.env` 의 `DRY_RUN=true` 는 죽은 설정이다**(DB `system_config` 가 우선). 아래 08-06 이전 서술 중 "킬스위치 ON 이라 주문이 차단 중"·"DRY_RUN 이라 안전"은 **전부 무효**다.
+
+> 참고: 과거 "🔴 사용자 결정 필요" 1번의 `safety_daily_order_max_pct = 0`(국내 신규매수 전면 차단)은 **해소됐다** — 현재 `10`. 그 결과 **국내 신규 매수 경로가 살아났다**는 점이 T-020 의 위험 판단 근거가 됐다.
+
+### 오늘 배포됨
+
+| 커밋 | 내용 |
+|---|---|
+| `bbe074b` | [[T-017-kis-rate-limit-throttle]] — KIS 초당 유량 제어(단일 관문 + 우선순위 레인). 주문은 무조건 `critical` |
+| `3d4197e` | [[T-018-order-sync-fail-closed]] — 조회 실패가 살아있는 주문을 `cancelled` 로 만들던 문제 fail-closed 전환 |
+
+pm2 `stockinvest` online, 기동 `2026-08-11 04:39:08 UTC`, 헬스체크 그린.
+
+### ⚠️ 미커밋 작업물이 있다 — 승인 대기
+
+[[T-019-partial-fill-false-filled]] · [[T-020-fractional-order-quantity-sizing]] 두 건이 **구현·독립감사 2라운드 PASS·QA 검증통과** 까지 끝났으나 **커밋하지 않았다**(실거래 자금 영향 변경이라 사용자 승인 필수).
+
+🔴 **`deploy-stockinvest.sh` 의 `git clean -fdx` 가 미추적 파일을 삭제한다.** 다음 배포가 일어나기 전에 커밋 여부를 반드시 결정해야 하며, 그 전에 다른 이유로 push 가 발생하면 **이 작업물이 증발한다.**
+
+### 다음 할 일 (2026-08-11 기준)
+
+1. **T-019 · T-020 커밋·배포 승인 결정** ← 최우선
+2. [[T-016-recommend-build-page-invalid-id]] — 코드는 이미 배포됨(`c0324d6`). **브라우저에서 "추천 → 내 시나리오 만들기" 클릭이 실제로 되는지 확인만 남음**
+3. board.md Backlog 최상단의 T-018 파생 잔여건 — `getActiveOrders` 페이지네이션 미처리(🔴, 동시 미체결 주문이 늘면 즉시 승격) / 구조적 hold 의 30분 critical 무한반복(알림 정책 별도 설계)
+4. 신규 백로그 4건(T-019/T-020 파생) — 시장가 부분체결 미검증 / `executions` 동시성 + 건별 다행 설계 / `POST /api/orders` 수량 무방어 / 보류 사유 라벨 부정확
 
 ## ✅ 2026-08-06 Phase 2 배포 완료 — Step 5 관측 대기
 
