@@ -1424,6 +1424,15 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS order_sync_stale_tracking (
+      order_id       BIGINT PRIMARY KEY,
+      symbol         VARCHAR(20) NOT NULL,
+      first_stale_at DATETIME NOT NULL,
+      escalated_at   DATETIME NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // ── symbol_universe: RS Rating 컬럼 추가 (Phase D) ──────────────────────
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_rating     TINYINT UNSIGNED`).catch(() => {});
   await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS near_52w_high BOOLEAN DEFAULT FALSE`).catch(() => {});

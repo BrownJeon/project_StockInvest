@@ -16,6 +16,12 @@ interface HealthResponse {
   };
 }
 
+interface OrderSyncStatus {
+  count: number;
+  structuralCount: number;
+  oldestAgeMs: number;
+}
+
 type EmergencyState = 'idle' | 'confirm' | 'running' | 'done' | 'failed';
 
 /**
@@ -36,6 +42,7 @@ export function classifyCancelAll(r: { cancelled: number; failed: number }): Can
 
 export function SafetyBar() {
   const [health, setHealth]       = useState<HealthResponse | null>(null);
+  const [orderSyncStatus, setOrderSyncStatus] = useState<OrderSyncStatus | null>(null);
   const [open, setOpen]           = useState(false);
   const [error, setError]         = useState<string | null>(null);
   const [emState, setEmState]     = useState<EmergencyState>('idle');
@@ -48,6 +55,15 @@ export function SafetyBar() {
       .then((r) => r.json())
       .then((j: HealthResponse) => { if (alive) setHealth(j); })
       .catch((e) => { if (alive) setError(String(e)); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/safety/order-sync-status')
+      .then((r) => r.json())
+      .then((j) => { if (alive && j.ok) setOrderSyncStatus(j.data); })
+      .catch(() => { /* 배지는 부가 정보라 실패해도 나머지 화면에 영향 없음 */ });
     return () => { alive = false; };
   }, []);
 
@@ -116,6 +132,19 @@ export function SafetyBar() {
         }}>{summary}</span>
         <span style={{ fontSize: 12, color: 'var(--muted)', transition: 'transform .2s', transform: open ? 'rotate(180deg)' : undefined }}>▲</span>
       </button>
+
+      {orderSyncStatus != null && orderSyncStatus.count > 0 && (
+        <div style={{
+          marginTop: 8, padding: '6px 10px', borderRadius: 6,
+          background: orderSyncStatus.structuralCount > 0 ? 'rgba(239,68,68,.12)' : 'rgba(245,158,11,.12)',
+          border: `1px solid ${orderSyncStatus.structuralCount > 0 ? 'var(--danger)' : 'var(--warn)'}`,
+          fontSize: 13, color: 'var(--text)',
+        }}>
+          {orderSyncStatus.count}건 판단 보류 중
+          (최장 {Math.floor(orderSyncStatus.oldestAgeMs / 3_600_000)}시간
+          {orderSyncStatus.structuralCount > 0 && `, 그중 ${orderSyncStatus.structuralCount}건 구조적`})
+        </div>
+      )}
 
       <div style={{
         background: 'var(--bg2)', maxHeight: open ? 260 : 0,

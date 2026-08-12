@@ -6,6 +6,9 @@ import {
 import { getMarketFromSymbol, isOverseasSymbol, parseOverseas, type Market } from '@/lib/exchanges/kis-symbols';
 import { submittedQuantity } from '@/lib/exchanges/order-quantity';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
+import {
+  STRUCTURAL_MS, getStaleTracking, recordFirstStale, markEscalated, clearResolved,
+} from './order-sync-escalation';
 
 interface PendingOrder extends RowDataPacket {
   id: number;
@@ -287,6 +290,7 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
   if (rows.length === 0) {
     // "판정할 게 없었다" — 판정 실패와 명확히 다른 상태다.
     pruneTracker(new Set());
+    await clearResolved([]);
     return emptyResult();
   }
 
@@ -540,7 +544,7 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
     completenessUnverified,
   };
 
-  reportUnreconciled(result);
+  await reportUnreconciled(result);
   reportPartialSettlements(result);
   return result;
 }
@@ -983,6 +987,23 @@ async function cancelGraceMs(pool: ReturnType<typeof getPool>): Promise<number> 
  */
 const STALE_MS = Math.max(1, Number(process.env.ORDER_SYNC_STALE_MINUTES ?? 30)) * 60_000;
 
+/**
+ * 🔴 Fix3(I3) — `STRUCTURAL_MS`(하드코딩 2시간)는 항상 `STALE_MS`(env로 조정 가능)보다
+ * 유의미하게 커야 한다. 그렇지 않으면 "30분~2시간은 반복 알림" 단계가 사라지고, 모든 정체
+ * 주문이 첫 감지부터 곧장 구조적으로 승격+잠긴다 — 누군가 `ORDER_SYNC_STALE_MINUTES`를
+ * 120분 넘게 설정하는 순간 조용히 벌어질 수 있는 일이다. 여기서 잘못을 알리고, 비교
+ * 지점에서는 항상 안전한 값을 쓴다(아래 `EFFECTIVE_STRUCTURAL_MS`).
+ */
+if (STRUCTURAL_MS <= STALE_MS) {
+  console.warn(
+    `[order-sync] ⚠️ ORDER_SYNC_STRUCTURAL_MS_MISCONFIGURED — STRUCTURAL_MS(${STRUCTURAL_MS}ms)가 `
+    + `STALE_MS(${STALE_MS}ms) 이하다. ORDER_SYNC_STALE_MINUTES 설정을 확인하라 — `
+    + '비교 시점에는 방어적으로 보정한 값을 쓴다.',
+  );
+}
+/** 실제 비교에 쓰는 값 — 위 불변식이 깨져도 항상 `STALE_MS`보다 크다. */
+const EFFECTIVE_STRUCTURAL_MS = Math.max(STRUCTURAL_MS, STALE_MS + 1);
+
 /** 같은 상황을 30분에 한 번만 알린다 (로그는 매 회차 남는다). */
 const STALE_ALERT_TTL_MS = 30 * 60_000;
 /**
@@ -997,7 +1018,15 @@ const COVERAGE_ALERT_TTL_MS = 6 * 60 * 60_000;
  * 호출부가 반환값을 버려도 최소한 로그와 알림은 남는다. 이 작업의 요점이 조용한 실패의
  * 제거이므로, 새로 만든 신호가 다시 조용해지면 안 된다.
  */
-function reportUnreconciled(r: OrderSyncResult): void {
+async function reportUnreconciled(r: OrderSyncResult): Promise<void> {
+  // 🔴 Fix1(I1) — 이 호출도 에스컬레이션 추적 DB 호출이다. 실패해도 뒤따르는 판정 보고·알림
+  // 로직(및 호출부의 reportPartialSettlements)이 죽으면 안 되므로 여기서 삼킨다.
+  try {
+    await clearResolved(r.unreconciled.map(u => u.id));
+  } catch (e) {
+    reportEscalationTrackingFailure(e);
+  }
+
   if (r.unreconciled.length === 0) return;
   // `too_fresh` 만 있는 회차는 정상 운영 상태다 — 새 주문을 낼 때마다 경고를 찍으면
   // 이 토큰이 흔해져서 진짜 보류를 가린다. (유예를 넘겨도 안 풀리면 아래 사유로 승격된다.)
@@ -1021,23 +1050,86 @@ function reportUnreconciled(r: OrderSyncResult): void {
 
   const staleFailures = r.unreconciled.filter(
     u => u.reason !== 'active_coverage_gap'
-      && u.reason !== 'too_fresh'          // 시계에 오르지 않으므로 원래 걸릴 수 없지만, 의도를 명시한다
-      && u.reason !== 'partial_fill_unconfirmable'   // 체결 사실은 기록됐다 — 긴급도가 다르다
+      // 시계에 오르지 않으므로 원래 걸릴 수 없지만, 의도를 명시한다
+      && u.reason !== 'too_fresh'
+      // 체결 사실은 기록됐다 — 긴급도가 다르다
+      && u.reason !== 'partial_fill_unconfirmable'
       && u.unreconciledForMs >= STALE_MS,
   );
+
   if (staleFailures.length > 0) {
-    sendAlertThrottled(
-      'order-sync:stale',
-      'critical',
-      '주문 상태 확인 불가가 지속되고 있습니다',
-      `${staleFailures.length}건의 주문 상태를 ${Math.floor(STALE_MS / 60_000)}분 넘게 확인하지 못했습니다 `
-      + `(최장 ${oldestMin}분).\n`
-      + `실패 시장: ${r.marketsFailed.map(f => `${f.market}(${f.error})`).join(', ') || '-'}\n`
-      + `대상: ${staleFailures.map(u => `${u.symbol}#${u.id}`).join(', ')}\n`
-      + '이 주문들은 브로커에 살아 있을 수 있어 취소로 처리하지 않았습니다. '
-      + 'KIS 조회 실패(레이트리밋·토큰·네트워크)를 확인하세요.',
-      STALE_ALERT_TTL_MS,
-    );
+    const now = Date.now();
+    // 🔴 Fix1(I1) — 에스컬레이션 추적 DB 호출(getStaleTracking/recordFirstStale/markEscalated)이
+    // 실패해도 이 함수 전체가 reject하면 안 된다. reject하면 syncPendingOrders()가 reject하고,
+    // 바로 뒤에 이어지는 reportPartialSettlements(result)가 **영원히 실행되지 않아** 무관한
+    // 부분체결 알림까지 조용히 삼켜진다 — 특히 `order_sync_stale_tracking`이 아직 마이그레이션
+    // 되지 않은 부팅 경쟁(getPool()이 ensureSetup() 완료 전에 풀을 내주는 경우)에서 실제로
+    // 벌어질 수 있다. 실패하면 **fail-open** — 에스컬레이션이 아예 없었던 것처럼
+    // `staleFailures` 전원을 예전 그대로 반복 알림 대상으로 둔다(= fail-closed로 침묵하지 않는다).
+    let repeating = staleFailures;
+    try {
+      const tracking = await getStaleTracking(staleFailures.map(u => u.id));
+
+      for (const u of staleFailures) {
+        if (!tracking.has(u.id)) await recordFirstStale(u.id, u.symbol, now - u.unreconciledForMs);
+      }
+
+      const newlyStructural = staleFailures.filter(u => {
+        const t = tracking.get(u.id);
+        if (t?.escalatedAt != null) return false;
+        const firstStaleAt = t?.firstStaleAt ?? (now - u.unreconciledForMs);
+        return (now - firstStaleAt) >= EFFECTIVE_STRUCTURAL_MS;
+      });
+
+      for (const u of newlyStructural) {
+        const t = tracking.get(u.id);
+        const firstStaleAt = t?.firstStaleAt ?? (now - u.unreconciledForMs);
+        // Fix2 bundled M4 — 고정 임계값이 아니라 이 주문의 실제 경과 시간을 보여준다.
+        // 재시작 뒤에는 DB에 남은 firstStaleAt 때문에 실제 나이가 2시간보다 훨씬 클 수 있다.
+        const ageHours = (now - firstStaleAt) / 3_600_000;
+        // 🔴 Fix2(I2) — 키를 주문별로 나눈다. 예전의 고정 키(`order-sync:stale-structural`)는
+        // 같은 날 두 번째로 2시간을 넘는 주문의 알림을 24시간 창 안에서 조용히 삼켰다 —
+        // markEscalated는 그대로 실행돼 반복 알림 대상에서는 빠지는데, 정작 **한 번도
+        // 알려지지 않은 채 잠기는** 결함이었다. TTL은 그대로 defense-in-depth로 남긴다:
+        // "알림은 보냈는데 markEscalated가 그 직후에 던지는" 시나리오에서 재전송을 24시간
+        // 동안 눌러 준다 — `escalated_at IS NOT NULL` DB 체크와 이중 안전장치를 이룬다.
+        sendAlertThrottled(
+          `order-sync:stale-structural:${u.id}`,
+          'critical',
+          '주문 상태 확인 불가가 구조적 상태로 전환됐습니다',
+          `${u.symbol}#${u.id}가 ${ageHours.toFixed(1)}시간 넘게 확인되지 않아 반복 알림을 멈추고 `
+          + '대시보드로 추적을 전환합니다.\n'
+          + '근본 원인(KIS 조회 실패·레이트리밋·토큰)을 확인하세요. 정상 정리되면 이 상태는 '
+          + '자동으로 해제되고, 다음 발생 시 처음부터 다시 알립니다.',
+          24 * 60 * 60_000,
+        );
+        await markEscalated(u.id, now);
+      }
+
+      const escalatedIds = new Set([
+        ...newlyStructural.map(u => u.id),
+        ...[...tracking.values()].filter(t => t.escalatedAt != null).map(t => t.orderId),
+      ]);
+      repeating = staleFailures.filter(u => !escalatedIds.has(u.id));
+    } catch (e) {
+      reportEscalationTrackingFailure(e);
+      // repeating은 위에서 선언한 대로 staleFailures 전체 — fail-open 유지.
+    }
+
+    if (repeating.length > 0) {
+      sendAlertThrottled(
+        'order-sync:stale',
+        'critical',
+        '주문 상태 확인 불가가 지속되고 있습니다',
+        `${repeating.length}건의 주문 상태를 ${Math.floor(STALE_MS / 60_000)}분 넘게 확인하지 못했습니다 `
+        + `(최장 ${oldestMin}분).\n`
+        + `실패 시장: ${r.marketsFailed.map(f => `${f.market}(${f.error})`).join(', ') || '-'}\n`
+        + `대상: ${repeating.map(u => `${u.symbol}#${u.id}`).join(', ')}\n`
+        + '이 주문들은 브로커에 살아 있을 수 있어 취소로 처리하지 않았습니다. '
+        + 'KIS 조회 실패(레이트리밋·토큰·네트워크)를 확인하세요.',
+        STALE_ALERT_TTL_MS,
+      );
+    }
   }
 
   const coverage = r.unreconciled.filter(u => u.reason === 'active_coverage_gap');
@@ -1078,6 +1170,31 @@ function reportUnreconciled(r: OrderSyncResult): void {
       COVERAGE_ALERT_TTL_MS,
     );
   }
+}
+
+/**
+ * 🔴 Fix1(I1) — 에스컬레이션 추적 DB 실패의 공통 처리.
+ *
+ * `order_sync_stale_tracking` 관련 호출(`clearResolved`/`getStaleTracking`/`recordFirstStale`/
+ * `markEscalated`)이 던지는 이유는 대부분 인프라성이다 — 테이블이 아직 마이그레이션되지 않은
+ * 부팅 경쟁(`getPool()`이 `ensureSetup()` 완료 전에 풀을 내주는 fire-and-forget 설정)이 대표적.
+ * 이 자체는 거래 긴급 상황이 아니므로 `warning`으로 6시간 창을 쓴다 — 다만 grep 가능한
+ * 토큰으로 반드시 로그에 남긴다: 조용해지면 이 작업이 없애려는 침묵이 다른 이름으로 돌아온다.
+ */
+function reportEscalationTrackingFailure(e: unknown): void {
+  console.warn(
+    `[order-sync] ⚠️ ORDER_SYNC_ESCALATION_TRACKING_FAILED — ${errMsg(e)} — `
+    + '에스컬레이션 추적 없이 기존 반복 알림 동작으로 계속 진행한다',
+  );
+  sendAlertThrottled(
+    'order-sync:escalation-tracking-failed',
+    'warning',
+    '주문 에스컬레이션 추적 실패',
+    `order_sync_stale_tracking 관련 DB 호출이 실패했습니다: ${errMsg(e)}\n`
+    + '구조적 에스컬레이션(2시간 1회 알림·잠금) 없이 기존 반복 알림 동작으로 계속 진행합니다. '
+    + '테이블 존재 여부·마이그레이션 상태를 확인하세요.',
+    6 * 60 * 60_000,
+  );
 }
 
 /**
