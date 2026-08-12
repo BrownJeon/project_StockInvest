@@ -399,51 +399,88 @@ export async function getKisTickers(symbols: string[]): Promise<Ticker[]> {
  *
  * `rt_cd !== '0'` 은 HTTP 200 이어도 **API 레벨 에러**다. "주문 0건"과 같은 값으로
  * 뭉개면 안 된다 ([[T-012]]·[[T-014]] 와 같은 결함 유형).
+ *
+ * ## 🔴 연속조회(페이지네이션) 처리 (T-023)
+ *
+ * KIS는 한 응답에 담기는 행 수에 한도가 있고, 더 있으면 응답 헤더 `tr_cont` 가 `M`/`F`
+ * (계속 있음)로 오며 body의 `ctx_area_fk100`/`ctx_area_nk100`(다음 페이지 조회 키)가
+ * 채워져 온다. 예전 코드는 첫 페이지만 읽고 멈췄다 — 미체결 주문이 한 페이지를 넘기면
+ * 뒤쪽 페이지의 주문은 이 함수 결과에 아예 없어, order-sync 가 "조회 성공, 목록에 없음"
+ * 으로 읽고 **살아 있는 주문을 cancelled 로 오기록**할 수 있었다(T-018 과 같은 실패
+ * 유형 — 이번엔 원인이 볼륨). 다음 요청은 `tr_cont: 'N'` 헤더와 함께 이전 응답의
+ * ctx_area_fk100/nk100 을 그대로 되돌려 보낸다. `MAX_PAGES` 는 무한루프 방지용 — 실계좌
+ * 에서 도달할 상황이 아니지만, 도달하면 경고를 남기고 그때까지 모은 결과를 반환한다
+ * (모은 페이지만큼은 실제 데이터이므로 조용히 던지지 않는다).
  */
+const MAX_ACTIVE_ORDERS_PAGES = 20;
+
 export async function getActiveOrders(): Promise<{ orderId: string; symbol: string }[]> {
   const trId = isMock() ? 'VTTC8036R' : 'TTTC8036R';
   const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
-  const params = new URLSearchParams({
-    CANO:           cano,
-    ACNT_PRDT_CD:   acntPrdt,
-    INQR_DVSN_1:    '0',
-    INQR_DVSN_2:    '0',
-    CTX_AREA_FK100: '',
-    CTX_AREA_NK100: '',
-  });
-  const headers = await kisHeaders(trId);
-  const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl?${params}`;
-  const res = await kisFetch(url, { headers }, { label: 'domestic getActiveOrders' });
-  if (!res.ok) {
-    const body = kisBodyText(res) ?? await res.text().catch(() => '');
-    throw new Error(
-      `KIS getActiveOrders: ${res.status} body=${body.slice(0, 300)}`
-      + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
-    );
+
+  const allRows: Record<string, string>[] = [];
+  let fk100 = '';
+  let nk100 = '';
+  let trCont = '';
+
+  for (let page = 0; page < MAX_ACTIVE_ORDERS_PAGES; page++) {
+    const params = new URLSearchParams({
+      CANO:           cano,
+      ACNT_PRDT_CD:   acntPrdt,
+      INQR_DVSN_1:    '0',
+      INQR_DVSN_2:    '0',
+      CTX_AREA_FK100: fk100,
+      CTX_AREA_NK100: nk100,
+    });
+    const headers = await kisHeaders(trId, { tr_cont: trCont });
+    const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl?${params}`;
+    const res = await kisFetch(url, { headers }, { label: 'domestic getActiveOrders' });
+    if (!res.ok) {
+      const body = kisBodyText(res) ?? await res.text().catch(() => '');
+      throw new Error(
+        `KIS getActiveOrders: ${res.status} body=${body.slice(0, 300)}`
+        + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+      );
+    }
+    const data = await res.json();
+    if (process.env.KIS_DOMESTIC_DEBUG === '1') {
+      console.log('[kis-domestic getActiveOrders raw] page=', page, 'rt_cd=', data.rt_cd,
+        'output[0]=', JSON.stringify(data.output?.[0] ?? null));
+    }
+    if (data.rt_cd !== '0') {
+      throw new Error(
+        `KIS getActiveOrders: rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+        + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
+      );
+    }
+    const rows = data.output;
+    // rt_cd='0' 은 API 가 명시적으로 "성공"이라고 말한 것이다. 그 상태에서 배열이 아예 없는 것은
+    // KIS 가 빈 결과를 그렇게 표현하는 경우가 있어 **이 페이지 0건으로 읽는다** (경고는 남긴다).
+    if (rows == null) {
+      console.warn(`[kis-domestic getActiveOrders] page=${page} rt_cd=0 인데 output 이 없다 — 이 페이지 0건으로 간주`);
+    } else if (!Array.isArray(rows)) {
+      // "있는데 배열이 아니다"는 해석 불가능한 형태다. 0건과 구분이 안 되므로 던진다.
+      throw new Error(`KIS getActiveOrders: output 형식 이상 (${typeof rows}) — 0건과 구분할 수 없어 실패로 처리`);
+    } else {
+      allRows.push(...(rows as Record<string, string>[]));
+    }
+
+    const respTrCont = res.headers.get('tr_cont') ?? '';
+    if (respTrCont !== 'M' && respTrCont !== 'F') break; // 마지막 페이지
+
+    if (page === MAX_ACTIVE_ORDERS_PAGES - 1) {
+      console.warn(
+        `[kis-domestic getActiveOrders] ⚠️ 페이지 상한(${MAX_ACTIVE_ORDERS_PAGES})에 도달했는데 `
+        + `tr_cont 가 여전히 계속(${respTrCont})을 가리킨다 — 그때까지 모은 ${allRows.length}건만 반환한다`,
+      );
+      break;
+    }
+    fk100 = String(data.ctx_area_fk100 ?? '');
+    nk100 = String(data.ctx_area_nk100 ?? '');
+    trCont = 'N';
   }
-  const data = await res.json();
-  if (process.env.KIS_DOMESTIC_DEBUG === '1') {
-    console.log('[kis-domestic getActiveOrders raw] rt_cd=', data.rt_cd,
-      'output[0]=', JSON.stringify(data.output?.[0] ?? null));
-  }
-  if (data.rt_cd !== '0') {
-    throw new Error(
-      `KIS getActiveOrders: rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
-      + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
-    );
-  }
-  const rows = data.output;
-  // rt_cd='0' 은 API 가 명시적으로 "성공"이라고 말한 것이다. 그 상태에서 배열이 아예 없는 것은
-  // KIS 가 빈 결과를 그렇게 표현하는 경우가 있어 **0건으로 읽는다** (경고는 남긴다).
-  if (rows == null) {
-    console.warn('[kis-domestic getActiveOrders] rt_cd=0 인데 output 이 없다 — 미체결 0건으로 간주');
-    return [];
-  }
-  // 반대로 "있는데 배열이 아니다"는 우리가 해석할 수 없는 형태다. 0건과 구분이 불가능하므로 던진다.
-  if (!Array.isArray(rows)) {
-    throw new Error(`KIS getActiveOrders: output 형식 이상 (${typeof rows}) — 0건과 구분할 수 없어 실패로 처리`);
-  }
-  return (rows as Record<string, string>[])
+
+  return allRows
     .filter(o => Number(o.rmn_qty ?? o.ord_qty ?? 0) > 0)
     .map(o => ({
       orderId: String(o.odno),

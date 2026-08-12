@@ -422,44 +422,74 @@ export function activeOrderExchanges(): OverseasExchange[] {
  * 빈 배열은 "살아 있는 주문 전부를 취소로 마킹"으로 직결된다. 지금은 전부 던진다.
  *
  * 커버리지 한계는 {@link activeOrderExchanges} 주석 참조.
+ *
+ * ## 🔴 연속조회(페이지네이션) 처리 (T-023)
+ *
+ * kis-domestic.ts의 getActiveOrders와 같은 이유·같은 프로토콜(필드 접미사만 FK200/NK200)
+ * — 상세 설명은 그쪽 주석 참조.
  */
+const MAX_ACTIVE_ORDERS_PAGES = 20;
+
 export async function getActiveOrders(): Promise<{ orderId: string; symbol: string }[]> {
   const trId = isMock() ? 'VTTS3018R' : 'TTTS3018R';
   const defaultExcd = activeOrderExchanges()[0];
   const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
-  const params = new URLSearchParams({
-    CANO:           cano,
-    ACNT_PRDT_CD:   acntPrdt,
-    OVRS_EXCG_CD:   toOvrsExcgCd(defaultExcd),
-    SORT_SQN:       'DS',
-    CTX_AREA_FK200: '',
-    CTX_AREA_NK200: '',
-  });
-  const headers = await kisHeaders(trId);
-  const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-nccs?${params}`, { headers }, { label: 'overseas getActiveOrders' });
-  if (!res.ok) {
-    const body = kisBodyText(res) ?? await res.text().catch(() => '');
-    throw new Error(
-      `KIS overseas getActiveOrders(${defaultExcd}): ${res.status} body=${body.slice(0, 300)}`
-      + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
-    );
+
+  const allRows: Record<string, string>[] = [];
+  let fk200 = '';
+  let nk200 = '';
+  let trCont = '';
+
+  for (let page = 0; page < MAX_ACTIVE_ORDERS_PAGES; page++) {
+    const params = new URLSearchParams({
+      CANO:           cano,
+      ACNT_PRDT_CD:   acntPrdt,
+      OVRS_EXCG_CD:   toOvrsExcgCd(defaultExcd),
+      SORT_SQN:       'DS',
+      CTX_AREA_FK200: fk200,
+      CTX_AREA_NK200: nk200,
+    });
+    const headers = await kisHeaders(trId, { tr_cont: trCont });
+    const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-nccs?${params}`, { headers }, { label: 'overseas getActiveOrders' });
+    if (!res.ok) {
+      const body = kisBodyText(res) ?? await res.text().catch(() => '');
+      throw new Error(
+        `KIS overseas getActiveOrders(${defaultExcd}): ${res.status} body=${body.slice(0, 300)}`
+        + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+      );
+    }
+    const data = await res.json();
+    if (data.rt_cd !== '0') {
+      throw new Error(
+        `KIS overseas getActiveOrders(${defaultExcd}): rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+        + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
+      );
+    }
+    const rows = data.output;
+    if (rows == null) {
+      console.warn(`[kis-overseas getActiveOrders] page=${page} rt_cd=0 인데 output 이 없다 — 이 페이지 0건으로 간주`);
+    } else if (!Array.isArray(rows)) {
+      throw new Error(`KIS overseas getActiveOrders(${defaultExcd}): output 형식 이상 (${typeof rows}) — 0건과 구분 불가`);
+    } else {
+      allRows.push(...(rows as Record<string, string>[]));
+    }
+
+    const respTrCont = res.headers.get('tr_cont') ?? '';
+    if (respTrCont !== 'M' && respTrCont !== 'F') break;
+
+    if (page === MAX_ACTIVE_ORDERS_PAGES - 1) {
+      console.warn(
+        `[kis-overseas getActiveOrders] ⚠️ 페이지 상한(${MAX_ACTIVE_ORDERS_PAGES})에 도달했는데 `
+        + `tr_cont 가 여전히 계속(${respTrCont})을 가리킨다 — 그때까지 모은 ${allRows.length}건만 반환한다`,
+      );
+      break;
+    }
+    fk200 = String(data.ctx_area_fk200 ?? '');
+    nk200 = String(data.ctx_area_nk200 ?? '');
+    trCont = 'N';
   }
-  const data = await res.json();
-  if (data.rt_cd !== '0') {
-    throw new Error(
-      `KIS overseas getActiveOrders(${defaultExcd}): rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
-      + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
-    );
-  }
-  const rows = data.output;
-  if (rows == null) {
-    console.warn('[kis-overseas getActiveOrders] rt_cd=0 인데 output 이 없다 — 미체결 0건으로 간주');
-    return [];
-  }
-  if (!Array.isArray(rows)) {
-    throw new Error(`KIS overseas getActiveOrders(${defaultExcd}): output 형식 이상 (${typeof rows}) — 0건과 구분 불가`);
-  }
-  return (rows as Record<string, string>[])
+
+  return allRows
     .filter(o => Number(o.nccs_qty ?? o.ord_qty ?? 0) > 0)
     .map(o => {
       const ticker = String(o.pdno ?? '').toUpperCase();
