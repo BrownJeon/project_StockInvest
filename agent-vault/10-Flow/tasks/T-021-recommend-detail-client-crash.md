@@ -1,9 +1,9 @@
 ---
 id: T-021
 title: 추천 시그널 상세 클릭 시 "Application error" 클라이언트 크래시
-status: review
+status: done
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 owner: leader
 tags:
   - type/task
@@ -651,7 +651,15 @@ git log --oneline -1
 테스트 **94개 묶음 / 1444건 전부 통과**(회귀 방지 테스트 33건 신규). 감사 판정 **PASS(중대결함 0건)**.
 주문·자금·안전장치 관련 파일은 **한 줄도 바뀌지 않았다** — 순수 화면 수정이다.
 
-**남은 것**: 사용자 승인 후 커밋·배포. 그리고 파생 백로그 1건(아래 §6).
+**남은 것**: 파생 백로그 2건(아래 §6)뿐.
+
+## 배포 확인 (2026-08-12)
+
+커밋 `3ff6e0c`(2026-08-11 18:59:36 KST)로 push·webhook 배포 완료. `git status`가 `origin/main`과
+동기화 상태를 확인했고, pm2 `stockinvest` 정상 기동(재시작 343회 누적, 배포 직후 재기동 시각과 일치),
+`/api/health` 재확인 결과 `safetyStatus:"green"`·`dryRun:false`·`killSwitch:false`·`engine.enabled:true`
+전부 정상. 이 확인은 RESUME.md/board.md 작성 시점(2026-08-11 저녁, 미커밋 상태)보다 늦게 일어난
+커밋·배포를 vault 문서가 못 따라간 것 — 실제로는 이미 완료돼 있었다.
 
 ---
 

@@ -33,24 +33,16 @@ aliases:
 
 pm2 `stockinvest` online, 기동 `2026-08-11 04:39:08 UTC`, 헬스체크 그린.
 
-### ⚠️ 미커밋 작업물이 있다 — 승인 대기
+### ✅ 미커밋 작업물 없음 (2026-08-12 확인)
 
-**정정(2026-08-11 저녁)**: [[T-019-partial-fill-false-filled]] · [[T-020-fractional-order-quantity-sizing]] 는 **승인 후 `d67dceb` 로 커밋·배포 완료**됐다(08:33 UTC). 아래 경고는 이제 **[[T-021-recommend-detail-client-crash]]** 에 적용된다.
+**정정(2026-08-12)**: [[T-021-recommend-detail-client-crash]] 도 **이미 커밋·배포 완료**됐다(`3ff6e0c`, 2026-08-11 18:59 KST — 아래 "미커밋" 경고는 이 vault 문서가 그 이후 갱신되지 않아 낡은 상태였을 뿐, 실제로는 push·webhook 배포까지 끝나 있었다). `git status` 는 `origin/main` 과 동기화, pm2 `stockinvest` 정상, `/api/health` 재확인 결과 `safetyStatus:"green"`.
 
-현재 미커밋: **T-021**(추천 상세 클릭 크래시 수정) — 구현·독립감사 PASS·QA 2라운드 완료, 순수 UI 변경.
-미추적 신규 파일 3개: `src/app/error.tsx` · `src/components/scenario-view-model.ts` · `src/components/__tests__/scenario-view-model.test.ts` (+ task 파일).
+### 다음 할 일 (2026-08-12 기준)
 
-🔴 **`deploy-stockinvest.sh` 의 `git clean -fdx` 가 미추적 파일을 삭제한다.** 다른 이유로 push 가 먼저 발생하면 **이 작업물이 증발한다.**
-
-### 다음 할 일 (2026-08-11 기준)
-
-0. 🔴 **[[T-021-recommend-detail-client-crash]] 커밋·배포 승인 결정** ← **최우선(신규, 미커밋)**
-   추천 시그널 클릭 시 "Application error" 크래시 수정. 구현·감사(PASS)·QA 2라운드 완료, HEAD 는 여전히 `8d68a0c`.
-   순수 UI 방어 코드 + `src/app/error.tsx` 신설. 주문·자금·안전장치 무변경. 94 suites/1444 tests PASS.
-   ⚠️ **신규 파일 3개가 미추적 상태** — `git clean -fdx` 하는 배포가 먼저 일어나면 증발한다.
-1. ~~T-019 · T-020 커밋·배포 승인 결정~~ → ✅ **해소됨** — 승인 후 `d67dceb` 로 커밋·배포 완료(08-11 08:33 UTC)
-2. [[T-016-recommend-build-page-invalid-id]] — 코드는 이미 배포됨(`c0324d6`). **브라우저에서 "추천 → 내 시나리오 만들기" 클릭이 실제로 되는지 확인만 남음**
-3. board.md Backlog 최상단의 T-018 파생 잔여건 — `getActiveOrders` 페이지네이션 미처리(🔴, 동시 미체결 주문이 늘면 즉시 승격) / 구조적 hold 의 30분 critical 무한반복(알림 정책 별도 설계)
+0. ~~[[T-021-recommend-detail-client-crash]] 커밋·배포 승인 결정~~ → ✅ **해소 확인됨(2026-08-12)** — `3ff6e0c` 로 이미 배포 완료, 헬스체크 green
+1. [[T-016-recommend-build-page-invalid-id]] — 코드는 이미 배포됨(`c0324d6`). chrome-devtools 로 재확인 시도했으나 `middleware.ts` 가 무인증 요청을 먼저 로그인으로 리다이렉트해 판별 불가(자격증명 없이는 이 이상 불가). **여전히 사용자가 갤럭시에서 "추천 → 내 시나리오 만들기" 클릭해 확인해야 함**
+2. 🔵 **알림 정책 설계 착수(신규, 2026-08-12)** — board.md Backlog "구조적으로 해결 불가능한 hold 에 30분마다 critical 경보가 영원히 반복된다" (T-018 MED-4 파생). `notify/throttle.ts` 가 킬스위치·낙폭 경보와 공유 코드라 별도 과제로 설계 중.
+3. board.md Backlog 의 `getActiveOrders` 페이지네이션 미처리(🔴, 동시 미체결 주문이 늘면 즉시 승격)
 4. 신규 백로그 4건(T-019/T-020 파생) — 시장가 부분체결 미검증 / `executions` 동시성 + 건별 다행 설계 / `POST /api/orders` 수량 무방어 / 보류 사유 라벨 부정확
 
 ## ✅ 2026-08-06 Phase 2 배포 완료 — Step 5 관측 대기

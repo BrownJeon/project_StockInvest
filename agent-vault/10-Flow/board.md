@@ -162,21 +162,14 @@ tags:
 
 ## Review
 
-- 🔴 [[T-021-recommend-detail-client-crash]] — **구현·독립감사(PASS)·QA 2라운드 전부 완료. 커밋 안 함 — 사용자 승인 대기(2026-08-11).**
-  추천 목록에서 시그널을 클릭하면 화면 전체가 `Application error: a client-side exception has occurred` 로 바뀌던 문제.
-  원인은 **소비자 타입이 DB JSON 을 신뢰해 required 로 선언**한 것 — post-market 엔진이 `risk_factors`·`why_now`·`context`·`ev` 를 채우지 않고 INSERT 하는데 `ScenarioDetail.tsx:418` 이 `sc.risk_factors.length` 를 무가드로 읽었다. **타입이 거짓말을 해서 컴파일러가 못 잡았다.**
-  **만성 문제였다** — 06월 중순~08-11 거의 매일 결측 시그널이 생성됐고, 과거 것들은 `expired` 라 클릭이 안 됐을 뿐이다(신고 시점 pending 노출은 17211 1건).
-  **수정**: 소비자 타입 `StoredScenario`(전 필드 옵셔널) + 표시 판정 순수 함수를 `scenario-view-model.ts` 로 분리. 타입을 정직하게 만들자 **컴파일러가 같은 클래스 무가드 지점 15곳을 스스로 찾아냈고 전부 방어**(`ScenarioDetail` 8 · `ScenarioCard` 6 · **`TradingBoard` 1 — 진단에 없던 4번째 파일, developer 전수 grep 으로 발견**). 결측 항목은 빈값·`—` 대신 **미표시**. **EV 가 `NaN%` 로 표시되던 거짓 수치도 제거.** 생산자 타입(`scenario-builder.ts` `ScenarioCard`)은 **무변경**(느슨해지면 생산자 결함을 컴파일러가 못 잡으므로).
-  **`post-market-engine.ts` 는 의도적으로 무변경** — `ev` 를 LLM 자기신고 confidence 에서 유도하는 건 *측정한 적 없는 숫자를 측정값처럼* 보이게 하는 일이라 T-007·T-012·T-014·T-018 내내 없애온 문제의 재발. 과거 데이터는 소급 수정되지 않으므로 **UI 가 결측을 견디는 게 근본 해법**.
-  **`src/app/error.tsx` 신설** — 이 앱에 렌더 예외 경계가 **하나도 없었다**. digest 만 노출(스택·`error.message` 미노출), `console.error` 만, 외부 전송 없음. `global-error.tsx` 는 만들지 않음.
-  typecheck 0에러 · **94 suites / 1444 tests PASS**(회귀 테스트 33건 신규, RTL 부재로 표시 판정을 순수 함수로 추출해 검증). reviewer **PASS**(Critical 0 / High 0 / Low 1 — `grade` 옵셔널화 자율확장, **Leader 승인**). 주문·자금·안전장치 파일 **전부 무변경**.
-
-- [[T-016-recommend-build-page-invalid-id]] — **커밋은 됐으나(`c0324d6`, T-015 와 함께) 브라우저 실사용 확인 여부는 미상(2026-08-11 기준)**. "추천 → 내 시나리오 만들기" 클릭 시 "invalid id" 실패 — 근본 원인은 `/recommend/build` 페이지 파일 부재로 Next.js 가 동적 라우트 `[id]` 로 오인 매칭(`Number("build")=NaN`). `src/app/recommend/build/page.tsx` 신설로 해결. reviewer 가 부수적으로 `.gitignore` 의 비앵커링 `build/` 규칙을 `/build/` 로 앵커링 수정. typecheck 0에러 · test 80/1161 PASS.
-  ⚠️ **남은 것은 사용자가 실제 브라우저에서 클릭해 성공하는지 확인하는 일 하나뿐이다.** 코드는 이미 운영에 배포되어 있다. 확인되면 Done 으로 옮긴다.
+- [[T-016-recommend-build-page-invalid-id]] — **커밋은 됐으나(`c0324d6`, T-015 와 함께) 브라우저 실사용 확인 여부는 미상(2026-08-12 기준 재확인 시도, 새 정보 없음)**. "추천 → 내 시나리오 만들기" 클릭 시 "invalid id" 실패 — 근본 원인은 `/recommend/build` 페이지 파일 부재로 Next.js 가 동적 라우트 `[id]` 로 오인 매칭. `src/app/recommend/build/page.tsx` 신설로 해결. typecheck 0에러 · test 80/1161 PASS.
+  ⚠️ **남은 것은 사용자가 실제 브라우저에서 클릭해 성공하는지 확인하는 일 하나뿐이다.** 코드는 이미 운영에 배포되어 있다. 2026-08-12 chrome-devtools 로 무인증 재확인 시도했으나 `middleware.ts` 가 먼저 로그인 리다이렉트를 걸어 판별 불가(QA 기존 진단과 동일) — 자격증명 없이는 더 진행 불가. 확인되면 Done 으로 옮긴다.
 
 > **`T-007` 중복 항목 제거(2026-08-11)** — 이 Review 섹션에 남아 있던 `T-007` 항목은 이미 Done 섹션에도 있는 잔재였다(커밋 `5f51763` 로 2026-08-06 배포 완료). 상태가 두 곳에 갈라져 있으면 어느 쪽이 참인지 매번 다시 판단해야 하므로 Review 쪽을 삭제했다.
 
 ## Done
+
+- [[T-021-recommend-detail-client-crash]] — **구현·독립감사(PASS)·QA 2라운드·커밋·배포 전부 완료(2026-08-12 확인, 커밋 `3ff6e0c` 2026-08-11 18:59 KST).** 추천 시그널 클릭 시 "Application error" 크래시 수정 — 소비자 타입 정직화(전 필드 옵셔널) + 렌더 경계(`error.tsx`) 신설. 94 suites/1444 tests PASS, reviewer PASS. 배포 후 헬스체크 재확인: `safetyStatus:"green"`·`dryRun:false`·`killSwitch:false`·`engine.enabled:true`. 파생 백로그 2건(트레일링 표시 불일치 등, Low)은 위 Backlog 참조.
 
 - [[T-019-partial-fill-false-filled]] — 🔴🔴 **구현·독립감사 2라운드(PASS)·QA(검증 통과)·커밋·배포 전부 완료(2026-08-11, `d67dceb`)**. 부분체결 주문이 잔량 소멸만으로 `filled` 로 오기록되어 손익 장부가 조용히 틀어지던 문제. 이제 **체결 수량 증거**를 확인해 판정하고, 실제 체결 수량을 **`executions` 에 기록**(역사상 0행이던 표에 처음으로)해 `trade-report` 가 참값을 집게 했다. 금액도 체결 비율만큼 축소해 한 행 안의 수량·금액 모순 제거. 로그 토큰 3종 + `trade_logs` 감사기록 + `OrderSyncResult.partialSettlements[]` + 매수/매도 분리 알림(장마감 잔량취소가 **정상**임을 전제한 문구). `market` 주문은 의도적으로 무검증(잔량 확인 수단이 구조적으로 없음). 88/1341 → 93 suites / 1411 tests. T-020 과 같은 push 로 배포, pm2 재기동(restarts 341) · 헬스체크 그린 확인(2026-08-11 08:33:37 UTC).
 
