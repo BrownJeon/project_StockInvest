@@ -154,7 +154,6 @@ tags:
 - **[신규, T-022 파생, Low] 대시보드 배지 폴링 없음** — [[T-022-order-sync-alert-escalation]] 참조. 마운트 시 1회만 fetch, "계속 추적한다"는 알림 문구와 완전히 일치하려면 폴링 추가 검토
 - **[신규, T-022 파생, Low] 배지 시간 표시가 시간 단위 반올림** — 30분~2시간 구간에서 "최장 0시간"으로 보일 수 있음(표시만의 문제)
 - **[신규, T-022 파생, Low] markEscalated 루프 중간 실패 시 과다 알림 가능** — 같은 주문에 구조적+반복 알림이 둘 다 갈 수 있는 좁은 엣지케이스(과다 알림 방향이라 심각하지 않음)
-- **[신규, T-022] 브라우저 QA 미완료** — SafetyBar 배지 실제 렌더(0건 숨김, 구조적 건 빨강 표시 등) 사용자 확인 필요
 - **Step 5 관측** — 2026-08-07부터 3영업일 eval_funnel 집계로 [[T-003-phase2-pipeline-redesign]] §6 사후 기준 4개(소생·감쇠분산·중복스팸·런성능) 확인. 통과 시 실거래 해제 논의
 - **[신규, 배포 후 발견] `weekly-trend-follow-v1` 구조적 발화 불가** — 1d 210봉 요구 vs KIS 100봉 반환. FIND_IN_SET 제거로 비로소 드러남. 실질 장중 활성 4종. ①KIS 봉수 확대 ②룰 재설계 ③기본 비활성 복귀 중 택일 필요
 
@@ -166,14 +165,16 @@ tags:
 
 ## Review
 
-- [[T-016-recommend-build-page-invalid-id]] — **커밋은 됐으나(`c0324d6`, T-015 와 함께) 브라우저 실사용 확인 여부는 미상(2026-08-12 기준 재확인 시도, 새 정보 없음)**. "추천 → 내 시나리오 만들기" 클릭 시 "invalid id" 실패 — 근본 원인은 `/recommend/build` 페이지 파일 부재로 Next.js 가 동적 라우트 `[id]` 로 오인 매칭. `src/app/recommend/build/page.tsx` 신설로 해결. typecheck 0에러 · test 80/1161 PASS.
-  ⚠️ **남은 것은 사용자가 실제 브라우저에서 클릭해 성공하는지 확인하는 일 하나뿐이다.** 코드는 이미 운영에 배포되어 있다. 2026-08-12 chrome-devtools 로 무인증 재확인 시도했으나 `middleware.ts` 가 먼저 로그인 리다이렉트를 걸어 판별 불가(QA 기존 진단과 동일) — 자격증명 없이는 더 진행 불가. 확인되면 Done 으로 옮긴다.
 
 > **`T-007` 중복 항목 제거(2026-08-11)** — 이 Review 섹션에 남아 있던 `T-007` 항목은 이미 Done 섹션에도 있는 잔재였다(커밋 `5f51763` 로 2026-08-06 배포 완료). 상태가 두 곳에 갈라져 있으면 어느 쪽이 참인지 매번 다시 판단해야 하므로 Review 쪽을 삭제했다.
 
 ## Done
 
-- [[T-022-order-sync-alert-escalation]] — **구현·전체 브랜치 최종 리뷰(Opus)·fix round·재검토·병합·배포 전부 완료(2026-08-12, 커밋 `5880185`)**. `order-sync:stale` 30분 critical 무한반복을 없앰 — 2시간 넘으면 1회성 "구조적 상태" 알림 + 반복 잠금, 정상 정리 시 해제. `order_sync_stale_tracking` 신규 테이블로 30분 알림 발화 시점만 영속화(재시작 내구성). 최종 리뷰가 이 기능 자체가 만들 뻔한 "침묵" 2건(DB 실패 시 전체 무음정지, 구조적 알림 키 공유로 2번째부터 미발송) 발견·수정. `GET /api/safety/order-sync-status` + SafetyBar 배지 신설. 96 suites/1461 tests PASS, typecheck 0에러. 주문·자금 경로 무접촉.
+- **[신규, T-022 파생] "진입 감시 중" 수량 표시 소수점 과다 노출 수정** — 커밋 `acafb08`, 배포 완료(2026-08-12 06:44 KST, exit=0). `signals.quantity`(DECIMAL(36,18))가 mysql2 기본설정상 문자열로 반환되는데 number로 오신뢰해 "1.000000000000000000주"처럼 원본이 그대로 노출되던 문제. `recommend/page.tsx`·`ScenarioCard.tsx`의 `fmtQty` 둘 다 수정(같은 버그 클래스 — T-021과 동일). Number 변환 후 정수는 그대로, 소수는 2자리 버림(truncate). 비정수 수량이면 `.toFixed()`가 문자열에 호출돼 크래시할 수 있었던 잠재 버그이기도 함. typecheck 0에러, 96 suites/1461 tests PASS. 사용자가 실브라우저에서 정상 표시 확인함.
+
+- [[T-016-recommend-build-page-invalid-id]] — **브라우저 실사용 확인 완료(2026-08-12, 사용자)**. "추천 → 내 시나리오 만들기" 클릭 → 입력 → 분석 → 등록까지 정상 동작 확인(커밋 `c0324d6`). 확인 과정에서 위 수량 표시 버그를 사용자가 발견, 같이 수정됨.
+
+- [[T-022-order-sync-alert-escalation]] — **브라우저 QA 완료(2026-08-12, 사용자)**. SafetyBar 배지가 판단보류 0건 상태에서 정상적으로 숨겨지는 것 확인(설계대로 — 평소엔 안 보이는 게 맞음). — **구현·전체 브랜치 최종 리뷰(Opus)·fix round·재검토·병합·배포 전부 완료(2026-08-12, 커밋 `5880185`)**. `order-sync:stale` 30분 critical 무한반복을 없앰 — 2시간 넘으면 1회성 "구조적 상태" 알림 + 반복 잠금, 정상 정리 시 해제. `order_sync_stale_tracking` 신규 테이블로 30분 알림 발화 시점만 영속화(재시작 내구성). 최종 리뷰가 이 기능 자체가 만들 뻔한 "침묵" 2건(DB 실패 시 전체 무음정지, 구조적 알림 키 공유로 2번째부터 미발송) 발견·수정. `GET /api/safety/order-sync-status` + SafetyBar 배지 신설. 96 suites/1461 tests PASS, typecheck 0에러. 주문·자금 경로 무접촉.
 
 - [[T-021-recommend-detail-client-crash]] — **구현·독립감사(PASS)·QA 2라운드·커밋·배포 전부 완료(2026-08-12 확인, 커밋 `3ff6e0c` 2026-08-11 18:59 KST).** 추천 시그널 클릭 시 "Application error" 크래시 수정 — 소비자 타입 정직화(전 필드 옵셔널) + 렌더 경계(`error.tsx`) 신설. 94 suites/1444 tests PASS, reviewer PASS. 배포 후 헬스체크 재확인: `safetyStatus:"green"`·`dryRun:false`·`killSwitch:false`·`engine.enabled:true`. 파생 백로그 2건(트레일링 표시 불일치 등, Low)은 위 Backlog 참조.
 
