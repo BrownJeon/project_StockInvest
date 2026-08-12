@@ -206,6 +206,8 @@ export default function RecommendPage() {
             {pendingEntry.map(sig => {
               const { target, stop } = getExitInfo(sig);
               const { text: zoneText, pct: zonePct } = getPriceZone(sig);
+              // DB DECIMAL(36,18) 컬럼은 mysql2 가 문자열로 반환한다 — Number 로 정직하게 변환 후 다룬다.
+              const qty = sig.quantity != null ? Number(sig.quantity) : null;
               return (
                 <div key={sig.id} style={{
                   background: 'var(--bg2)', borderRadius: 12,
@@ -229,12 +231,12 @@ export default function RecommendPage() {
                         color: sig.side === 'buy' ? 'var(--up)' : 'var(--down)',
                       }}>
                         {sig.side === 'buy' ? '매수' : '매도'}
-                        {sig.quantity != null && sig.quantity > 0 && (
+                        {qty != null && qty > 0 && (
                           <span style={{ marginLeft: 4, fontWeight: 600 }}>
-                            · {sig.quantity % 1 === 0 ? sig.quantity : sig.quantity.toFixed(2)}주
+                            · {Number.isInteger(qty) ? qty : (Math.floor(qty * 100) / 100).toFixed(2)}주
                           </span>
                         )}
-                        {(sig.quantity == null || sig.quantity <= 0) && sig.amount_krw != null && sig.amount_krw > 0 && (
+                        {(qty == null || qty <= 0) && sig.amount_krw != null && sig.amount_krw > 0 && (
                           <span style={{ marginLeft: 4, fontWeight: 600 }}>
                             · 약 {sig.amount_krw.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}원
                           </span>

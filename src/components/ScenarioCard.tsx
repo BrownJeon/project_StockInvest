@@ -46,9 +46,11 @@ function minutesUntil(dateStr: string | null): number | null {
   return Math.max(0, Math.floor((new Date(dateStr).getTime() - Date.now()) / 60000));
 }
 
-function fmtQty(qty: number | null | undefined, amountKrw: number | null | undefined): string | null {
+function fmtQty(qtyRaw: number | string | null | undefined, amountKrw: number | null | undefined): string | null {
+  // DB DECIMAL(36,18) 컬럼은 mysql2 가 문자열로 반환한다 — Number 로 정직하게 변환 후 다룬다.
+  const qty = qtyRaw != null ? Number(qtyRaw) : null;
   if (qty != null && qty > 0) {
-    return qty % 1 === 0 ? `${qty}주` : `${qty.toFixed(2)}주`;
+    return Number.isInteger(qty) ? `${qty}주` : `${(Math.floor(qty * 100) / 100).toFixed(2)}주`;
   }
   if (amountKrw != null && amountKrw > 0) {
     return `약 ${amountKrw.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}원`;
