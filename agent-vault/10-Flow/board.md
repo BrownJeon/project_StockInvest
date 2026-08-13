@@ -42,8 +42,6 @@ tags:
   `recordSettledFill` 의 SELECT-then-INSERT 가 원자적이지 않아 동시 실행(수동 force 트리거 + cron, 배포 중 잔류 요청)에서 주문당 2행이 생길 이론적 여지가 있다. **`UNIQUE(order_id)` 로 막지 않기로 했다**(Leader 판단) — 그러면 "주문당 1행"이 스키마에 못박혀 **장래에 실제 체결 건별로 여러 행을 기록하는 자연스러운 설계가 영구히 봉쇄**되기 때문이다. 지금의 "1행 누적"은 편의적 선택이지 최종형이 아니다. 락 기반 대안 3종(`INSERT…WHERE NOT EXISTS` / `FOR UPDATE` / `GET_LOCK`)은 각각 격리수준 의존·주문경로 락경합·커넥션풀 누수 위험으로 기각. 대신 `detectDuplicateExecutions()` **런타임 탐지기**를 넣었다.
   **승격 트리거**: `ORDER_SYNC_EXEC_DUPLICATE` 가 **1회라도 관측되면** 즉시. 올바른 최종형은 `fetchOrderRows` 를 `SUM(e.quantity)`·가중평균 price 로 바꾸고 `(order_id, executed_at, price, quantity)` 자연키로 중복을 거르는 것 — 그러면 ①동시성과 ②건별 기록이 함께 풀린다.
 
-- **[신규, T-020 파생] `POST /api/orders` 수동 주문 경로는 수량 방어가 없다**
-  클라이언트가 보낸 `quantity` 를 그대로 쓴다 — 소수점이 들어오면 T-020 이 없앤 문제가 이 경로로 재현된다. 엔진 경로(2곳)는 전부 정수화됐으므로 남은 구멍은 여기뿐이다. UI 가 정수만 보내더라도 **API 는 스스로를 방어해야 한다.**
 
 - **[신규, T-019 파생, Low] `executions` INSERT 실패 시 보류 사유 라벨이 부정확**
   T-018 의 per-order catch 로 흘러 `both_queries_failed` 가 붙지만 실제로는 **조회 성공 + 쓰기 실패**다(`detail` 에는 진실이 담긴다). `UnreconciledReason` 에 `'write_failed'` 를 추가하는 것은 T-018 계약 표면을 넓히는 일이라 하지 않았다. 기존 UPDATE 실패도 같은 문제라 **일관되기는 하다.** 사유별 대응이 달라지는 시점에 함께 정리.
@@ -164,6 +162,8 @@ tags:
 > **`T-007` 중복 항목 제거(2026-08-11)** — 이 Review 섹션에 남아 있던 `T-007` 항목은 이미 Done 섹션에도 있는 잔재였다(커밋 `5f51763` 로 2026-08-06 배포 완료). 상태가 두 곳에 갈라져 있으면 어느 쪽이 참인지 매번 다시 판단해야 하므로 Review 쪽을 삭제했다.
 
 ## Done
+
+- **[신규, T-020 파생] `POST /api/orders` 수동 주문 경로 수량 방어 추가** — 커밋 배포 대기. 클라이언트가 보낸 `quantity`를 T-020이 만든 `sizeOrderQuantity()`(엔진 2경로가 이미 쓰는 정수화 함수)로 통과시키도록 수정 — 소수점 수량이 이 수동 경로로 재현되던 구멍을 막음. amountKRW만 있는 지정가 주문도 사전 정수 산출. 시장가 케이스는 기존처럼 어댑터에 위임(회귀 없음). 회귀 테스트 6건 신설, 99 suites/1476 tests PASS.
 
 - [[T-023-getactiveorders-pagination]] — **구현·회귀테스트·typecheck 전부 완료(2026-08-12), 배포 승인 대기**. `getActiveOrders`(국내·해외 둘 다) 가 KIS 연속조회(tr_cont/CTX_AREA_FK·NK)를 처리 안 해 미체결이 1페이지를 넘으면 뒤쪽 주문이 조용히 사라지던 문제. 공식 KIS Developers 예제로 프로토콜 검증 후 페이지 순회 루프로 재작성, 무한루프 방지 상한(20페이지) 포함. 98 suites/1470 tests PASS. 실계좌 실측은 테스트 환경 제약상 미완 — 배포 후 로그 관찰 권고.
 
