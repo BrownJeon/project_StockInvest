@@ -1,12 +1,31 @@
 ---
 project: StockInvest
-updated: 2026-08-11
+updated: 2026-08-13
 tags:
   - type/context
 ---
 # 현재 상태
 
-## 🔴 2026-08-11 — 실거래 무장 상태 + 주문경로 결함 2건 수정(승인 대기)
+## ✅ 2026-08-13 — Reviewer 감사 없이 이미 배포된 것을 발견 → 사후 감사 완주 → 배포 권고
+
+아래 08-11 절이 "커밋 배포 대기"라고 적어 둔 [[T-023-getactiveorders-pagination]]과 (당시 task
+파일도 없던) `POST /api/orders` 수량 방어 건이, 실제로는 이 문서가 갱신되지 않은 사이에
+**Reviewer 감사 단계 없이 이미 커밋·push·webhook-deploy 배포까지 끝나 있었다**(`f2c6f95`
+2026-08-12 17:54 · `9456be5` 2026-08-13 09:48, 둘 다 webhook-deploy exit=0 확인, pm2 `stockinvest`
+당시 후자 커밋으로 기동 중이었음). Leader 가 사용자의 "이어서 작업" 지시로 재개하며 `git log`/
+`git status`/webhook-deploy 로그 실측 중 발견.
+
+**사후 감사 완주 결과(같은 날 완료)**: 두 건 모두 자금 손실로 이어지는 Critical/High 결함 없음.
+T-023 은 Reviewer 1차 감사가 HIGH 1건(페이지 상한 도달 시 불완전한 목록을 성공으로 위장 반환 —
+order-sync fail-closed 우회 가능성, 현재 계좌 규모에선 사실상 도달 불가하나 구조적 결함)을 발견
+→ Developer 즉시 수정(`break`→`throw` + 다운스트림 검증 테스트 2건 추가) → Reviewer 라운드2
+PASS → QA PASS. T-024 는 Reviewer 1차 PASS(Medium 2건 — 비-number quantity 가 시장가/가격없는
+지정가 한정으로 무의미한 라이브 API 호출까지 도달하나 자금손실 아니고 호출 프론트엔드 자체가
+없어 실노출 0에 가까움 — 배포 비차단 판단, board.md 백로그 이관) → QA PASS. **최종 회귀테스트
+99 suites / 1478 tests 전부 통과, typecheck 0에러.** git commit/push 는 사용자(상위 세션)가
+직접 처리 예정. 상세는 [[RESUME]] 최신 절, 각 task 파일 "최종 요약" 섹션, board.md Done 참조.
+
+## ✅ 2026-08-11 상태 (아래는 그대로 보존 — 위 절이 최신) — 실거래 무장 상태 + 주문경로 결함 2건 수정(승인 대기)
 
 **실계좌 실거래 중이다.** `safety_dry_run=false` · `safety_kill_switch=false` · `engine_enabled=true` · `autopilot_mode=assist` · `safety_order_max_pct=6` · `safety_daily_order_max_pct=10`(과거 0 → 개방). `.env` 의 `DRY_RUN=true` 는 **죽은 설정**이다(DB `system_config` 가 우선). 아래 문서 중 "DRY_RUN 이라 안전하다"는 취지의 옛 서술은 전부 무효다.
 

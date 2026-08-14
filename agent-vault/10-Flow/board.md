@@ -8,6 +8,20 @@ tags:
 
 ## Backlog
 
+- 🔴 **[신규, 프로세스, 2026-08-13 Leader 발견] Reviewer 감사 없이 커밋되는 것을 막는 절차적 장치가 없다**
+  T-023·T-024 사고([[RESUME]] 최신 절, 위 Done 섹션 참조)의 재발 방지책. 현재는 "커밋은 사용자
+  승인 후"가 CLAUDE.md/agent 페르소나에 **문서로만** 적혀 있고, 이를 강제하는 장치(예: 커밋 전
+  task 파일에 `## Reviewer` PASS 기록이 있는지 확인하는 습관·체크리스트, 혹은 pre-commit hook)가
+  없다. 이번엔 Leader 가 "다음 작업 이어서" 지시를 받고서야 `git log`로 우연히 발견했다 — 발견이
+  운에 의존하고 있었다는 뜻. **제안**: (a) Leader 워크플로우에 "task 를 Done 으로 옮기기 전
+  `## Reviewer` 섹션 존재 여부 확인"을 명시적 단계로 추가 (b) 가능하면 `.git/hooks/pre-commit`
+  또는 CI 성격의 장치로 기계적으로 강제. 이번 세션 범위 밖 — 별도 과제로 다룰 것.
+
+- **[신규, T-024 Reviewer MEDIUM-1, 2026-08-13] 비-number `quantity`가 `POST /api/orders` 방어선과 domestic 어댑터 가드를 모두 통과해 라이브 KIS 주문 API 호출까지 도달함(시장가/가격없는 지정가 한정)** — Leader 판단: **배포 차단 아님, 백로그로 defer.**
+  `body.quantity`가 문자열(`"3.7"`) 등 비-number 런타임 값이면 `sizeOrderQuantity` branch③(`undefined`)로 떨어져 원본이 `orderReq.quantity`에 남고, `kis-domestic.ts:270`의 `quantity <= 0` 가드가 JS의 느슨한 `<=` 숫자변환(`"3.7"<=0`→false) 때문에 걸러내지 못해 **실제 KIS 라이브 주문 API 호출까지 나간다**(최종 `ORD_QTY`는 `submittedQuantity`의 엄격한 `Number.isFinite` 덕분에 `"0"`이 되어 브로커가 거절할 것으로 합리적으로 기대됨 — **자금손실 경로 아님**, 무의미한 API 호출 1건 + 거절 로그가 최악). 해외(overseas)는 이 구멍이 없음(가격 없으면 `adjPrice<=0` 가드가 먼저 걸림, domestic 전용). **실노출도 사실상 0**: `middleware.ts` 확인 결과 인증 세션 필수(비인증 접근 불가) + 현재 이 리포지토리에 `POST /api/orders`를 호출하는 프론트엔드 코드가 **전혀 없음**(GET 목록/DELETE 취소만 존재, `/order` 페이지는 `/strategy`로 즉시 redirect) — 계정 소유자 본인의 직접 curl 호출로만 도달 가능. **수정 방향(다음 정기 작업 시)**: `route.ts`에서 `typeof body.quantity==='number'` 런타임 가드 추가(비-number면 400) 또는 `kis-domestic.ts`/`kis-overseas.ts`의 `quantity<=0` 가드를 `!Number.isFinite(quantity)||quantity<=0`로 강화(후자가 더 근본적 — 수동 주문 경로 외 다른 진입점에도 방어가 걸림). 상세: [[T-024-manual-order-quantity-guard]] Reviewer 절.
+
+- **[신규, T-024 Reviewer MEDIUM-2, 2026-08-13] `route.test.ts` 신규 테스트 6건 전부 숫자 `quantity`만 사용 — 위 MEDIUM-1 경로가 테스트 커버리지 밖** — Leader 판단: **배포 차단 아님, 위 MEDIUM-1과 함께 처리.** `quantity:'3.7'`(문자열) + `type:'market'` 조합 테스트가 없어 MEDIUM-1 경로가 회귀해도 CI가 못 잡는다. MEDIUM-1 수정 시 함께 테스트 추가 권고. 상세: [[T-024-manual-order-quantity-guard]] Reviewer 절.
+
 - **[신규, T-021 파생, Low] 트레일링 활성화 표시가 실제 발화 기준과 다르다 + 기준값이 세 곳에 흩어져 있다**
   `ScenarioAnalysis.tsx:209` 가 `+{ai.exit.trailing_activate_pct ?? 0}%` 로 렌더해 값이 없으면 **"+0%"** 라고 말하는데, **실제 발화 기준은 그 값이 아니다.**
   ✅ **먼저, 안심할 근거**(T-021 Developer 조사, 코드 확인됨): `entry-watcher/route.ts:317-322` 가 `position_state.scenario_exit` 에 넣는 건 `targetLo/targetHi/stopLo/stopHi` **4개뿐**이고 `ScenarioExitParams` 에 트레일링 필드가 아예 없다. 실제 발화는 `exit-engine.ts:146` 의 **전역 `style.trailingActivatePct`(기본 2.5)** 가 담당한다. → **시나리오 JSON 에 이 필드가 없어도 트레일링은 정상 동작한다. 조용히 꺼지는 매매 로직 공백은 없다.**
@@ -163,9 +177,38 @@ tags:
 
 ## Done
 
-- **[신규, T-020 파생] `POST /api/orders` 수동 주문 경로 수량 방어 추가** — 커밋 배포 대기. 클라이언트가 보낸 `quantity`를 T-020이 만든 `sizeOrderQuantity()`(엔진 2경로가 이미 쓰는 정수화 함수)로 통과시키도록 수정 — 소수점 수량이 이 수동 경로로 재현되던 구멍을 막음. amountKRW만 있는 지정가 주문도 사전 정수 산출. 시장가 케이스는 기존처럼 어댑터에 위임(회귀 없음). 회귀 테스트 6건 신설, 99 suites/1476 tests PASS.
+- ✅ **[절차 위반 발견·사후감사 완결 — 2026-08-13] [[T-023-getactiveorders-pagination]] · [[T-024-manual-order-quantity-guard]] 둘 다 Reviewer 감사 없이 먼저 커밋·배포됐던 것을 발견 → 정식 Developer→Reviewer→QA 순환 사후 완주, 둘 다 최종 PASS**
+  `f2c6f95`(2026-08-12 17:54)·`9456be5`(2026-08-13 09:48)가 Reviewer 감사 없이 이미 커밋·push·
+  webhook-deploy 배포까지 끝난 상태로 Leader 가 실측 발견(T-024 는 당시 task 파일조차 없었음 —
+  사후 작성). **사후 라이브 감사 결과 두 건 모두 자금 손실로 이어지는 Critical/High 결함 없음.**
+  T-023 은 Reviewer 1차 감사에서 HIGH 1건(페이지 상한 도달 시 불완전한 목록을 성공으로 위장 —
+  order-sync fail-closed 우회 가능성) 발견 → Developer 즉시 수정(`break`→`throw`) → Reviewer
+  라운드 2 PASS → QA PASS. T-024 는 Reviewer 1차 PASS(Medium 2건은 배포 비차단으로 판단해 백로그
+  이관) → QA PASS. **최종 회귀테스트 99 suites / 1478 tests 전부 통과, typecheck 0에러.** 두 건 다
+  Leader 배포 권고 완료 — git commit/push 는 사용자(상위 세션)가 직접 처리. 재발 방지 백로그 1건
+  신설(아래 Backlog "Reviewer 감사 없이 커밋되는 것을 막는 절차적 장치가 없다"). 상세: [[RESUME]]
+  2026-08-13 절, 각 task 파일 "최종 요약" 섹션.
 
-- [[T-023-getactiveorders-pagination]] — **구현·회귀테스트·typecheck 전부 완료(2026-08-12), 배포 승인 대기**. `getActiveOrders`(국내·해외 둘 다) 가 KIS 연속조회(tr_cont/CTX_AREA_FK·NK)를 처리 안 해 미체결이 1페이지를 넘으면 뒤쪽 주문이 조용히 사라지던 문제. 공식 KIS Developers 예제로 프로토콜 검증 후 페이지 순회 루프로 재작성, 무한루프 방지 상한(20페이지) 포함. 98 suites/1470 tests PASS. 실계좌 실측은 테스트 환경 제약상 미완 — 배포 후 로그 관찰 권고.
+- [[T-024-manual-order-quantity-guard]] — **Reviewer PASS(Critical 0/High 0/Medium 2)→QA PASS 로 완결.**
+  `POST /api/orders` 수동 주문 경로가 클라이언트가 보낸 `quantity`를 무가공으로 신뢰하던 구멍을
+  T-020 의 `sizeOrderQuantity()` 재사용으로 막음(자동매매 엔진 2경로는 T-020 이 이미 정수화, 이
+  수동 경로만 빠져 있었음). amountKRW만 있는 지정가 주문도 사전 정수 산출, 시장가는 기존처럼
+  어댑터 위임(회귀 없음). Reviewer 가 찾은 Medium 2건(비-number quantity 가 시장가/가격없는
+  지정가 한정으로 domestic 어댑터 가드까지 뚫고 무의미한 라이브 API 호출까지 도달 — 자금손실은
+  아니고 이 엔드포인트를 호출하는 프론트엔드 자체가 현재 없어 실노출도 0에 가까움 + 그 경로
+  테스트 커버리지 부재)는 배포 비차단으로 판단해 아래 Backlog 로 이관. 회귀 테스트 6건 신설,
+  **최종 99 suites/1478 tests PASS.**
+
+- [[T-023-getactiveorders-pagination]] — **Reviewer 1차 CONDITIONAL_PASS(HIGH 1건)→Developer 수정→
+  Reviewer 라운드2 PASS→QA PASS 로 완결.** `getActiveOrders`(국내·해외 둘 다)가 KIS 연속조회
+  (tr_cont/CTX_AREA_FK·NK)를 처리 안 해 미체결이 1페이지를 넘으면 뒤쪽 주문이 조용히 사라지던
+  문제를 페이지 순회 루프로 재작성, 무한루프 방지 상한(20페이지) 포함. **Reviewer 1차 감사가
+  "페이지 상한 도달 시 불완전한 목록을 성공으로 위장 반환"하는 HIGH 결함을 새로 발견**(order-sync
+  의 fail-closed 판정을 우회할 수 있는 구조 — 현재 계좌 규모에선 사실상 도달 불가능하나 구조적
+  결함) → `break`→`throw` 한 줄로 즉시 수정 + 다운스트림(`getActiveOrdersDetailed`) 분류 검증
+  통합테스트 2건 추가 → Reviewer 라운드2 PASS(Critical/High/Medium 전부 0) → QA 실행검증 PASS.
+  **최종 99 suites/1478 tests PASS**(신규 11건: T-023 원본 9건 + HIGH-1 수정 통합테스트 2건).
+  실계좌 실측은 테스트 환경 제약상 미완 — 배포 후 로그 관찰 권고(유지).
 
 - **[신규, T-022 파생] "진입 감시 중" 수량 표시 소수점 과다 노출 수정** — 커밋 `acafb08`, 배포 완료(2026-08-12 06:44 KST, exit=0). `signals.quantity`(DECIMAL(36,18))가 mysql2 기본설정상 문자열로 반환되는데 number로 오신뢰해 "1.000000000000000000주"처럼 원본이 그대로 노출되던 문제. `recommend/page.tsx`·`ScenarioCard.tsx`의 `fmtQty` 둘 다 수정(같은 버그 클래스 — T-021과 동일). Number 변환 후 정수는 그대로, 소수는 2자리 버림(truncate). 비정수 수량이면 `.toFixed()`가 문자열에 호출돼 크래시할 수 있었던 잠재 버그이기도 함. typecheck 0에러, 96 suites/1461 tests PASS. 사용자가 실브라우저에서 정상 표시 확인함.
 

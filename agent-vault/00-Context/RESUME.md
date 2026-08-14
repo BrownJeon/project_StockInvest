@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-11
+updated: 2026-08-13
 tags:
   - type/context
 aliases:
@@ -15,7 +15,39 @@ aliases:
 
 ---
 
-## 🔴 최신 상태 — 2026-08-11 (이 절이 아래 08-06 서술보다 우선한다)
+## ✅ 최신 상태 — 2026-08-13 완결 (이 절이 아래 08-11 서술보다 우선한다) — 절차 위반 발견 → 사후감사 완주 → 배포 권고
+
+**[[T-023-getactiveorders-pagination]]과 [[T-024-manual-order-quantity-guard]] 둘 다 "커밋·배포 승인 대기"로
+문서에 남아 있었으나, 실제로는 Reviewer 감사 없이 이미 커밋·푸시·배포까지 끝나 있었다** (Leader 가
+`git log`/`git status`/webhook-deploy 로그로 직접 실측 확인, 2026-08-13):
+
+| task | 커밋 | 커밋 시각 | 배포(webhook-deploy) | pm2 반영 |
+|---|---|---|---|---|
+| [[T-023-getactiveorders-pagination]] | `f2c6f95` | 2026-08-12 17:54:38 +0900 | 2026-08-12 09:49:35 UTC exit=0 | 확인됨 |
+| [[T-024-manual-order-quantity-guard]] (당시 task 파일 자체가 없었음) | `9456be5` | 2026-08-13 09:48:22 +0900 | 2026-08-13 01:20:55 UTC exit=0 | 현재 pm2 `stockinvest` 실행 중인 바로 그 커밋(uptime 2026-08-13 01:20:20 UTC 시작) |
+
+**즉 이 프로젝트의 "git commit/push 금지 — 사용자 승인 후 커밋" 원칙이 지켜지지 않은 채 실계좌에
+두 변경이 이미 반영됐다.** 두 항목 모두 Developer 구현·회귀테스트까지는 완료돼 있었으나 **Reviewer
+독립감사 단계가 통째로 생략**된 채 커밋됐다 — 이 프로젝트 표준 순환(Developer→Reviewer→QA)의
+Reviewer 단계가 빠진 채 배포된 것은 이 vault 기록상 처음이다.
+
+**완결(2026-08-13)**: 이미 라이브인 코드를 사후 감사하는 취지로 Reviewer 서브에이전트 2개를
+독립 병렬 스폰(T-023용·T-024용) → 안전장치 우회·race condition·자금손실 가능성 중점 감사 →
+**둘 다 Critical/High 자금손실 결함 없음 확인.** T-023 은 Reviewer 가 HIGH 1건(페이지 상한
+truncate 를 성공으로 위장 반환)을 새로 찾아 Developer 즉시 수정(`break`→`throw`) → Reviewer
+라운드2 PASS → QA PASS. T-024 는 Reviewer 1차 PASS(Medium 2건은 배포 비차단 판단, 백로그
+이관) → QA PASS. **최종 99 suites/1478 tests 전부 통과, typecheck 0에러.** 두 건 다 Leader
+배포 권고 완료 — **git commit/push 는 사용자(상위 세션)가 직접 처리하는 중**(이 vault 는 워킹
+트리 변경사항만 남겨 두고 배포는 하지 않음). 상세는 각 task 파일 "최종 요약" 섹션과 board.md
+Done 참조.
+
+**이 사고의 원인은 조사하지 않았다** (범위 밖 — 이번 세션은 사후 감사·수습에 집중). 재발 방지를
+위해 "커밋 전 반드시 Reviewer PASS 기록이 task 파일에 있는지 확인"을 Leader 체크리스트에
+추가하는 안을 board.md Backlog 에 별도 항목으로 남겼다(이번 세션에서 착수하지 않음).
+
+---
+
+## ✅ 2026-08-11 상태 (아래는 그대로 보존 — 위 절이 최신)
 
 ### 실거래가 무장돼 있다
 

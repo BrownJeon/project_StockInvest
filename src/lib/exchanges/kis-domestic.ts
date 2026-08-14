@@ -409,8 +409,10 @@ export async function getKisTickers(symbols: string[]): Promise<Ticker[]> {
  * 으로 읽고 **살아 있는 주문을 cancelled 로 오기록**할 수 있었다(T-018 과 같은 실패
  * 유형 — 이번엔 원인이 볼륨). 다음 요청은 `tr_cont: 'N'` 헤더와 함께 이전 응답의
  * ctx_area_fk100/nk100 을 그대로 되돌려 보낸다. `MAX_PAGES` 는 무한루프 방지용 — 실계좌
- * 에서 도달할 상황이 아니지만, 도달하면 경고를 남기고 그때까지 모은 결과를 반환한다
- * (모은 페이지만큼은 실제 데이터이므로 조용히 던지지 않는다).
+ * 에서 도달할 상황이 아니지만, 도달했는데 `tr_cont` 가 여전히 계속(M/F)을 가리키면 결과가
+ * **불완전하다는 걸 아는 채로** 던진다(T-023 Reviewer HIGH-1) — 이걸 조용히 truncate 해
+ * 성공으로 반환하면 이 함수 상단의 "실패를 빈 배열로 바꾸지 않는다" 원칙을 어기고, 21페이지
+ * 이후에 있었을 주문이 order-sync 에서 cancelled 로 오기록될 수 있다.
  */
 const MAX_ACTIVE_ORDERS_PAGES = 20;
 
@@ -469,11 +471,10 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
     if (respTrCont !== 'M' && respTrCont !== 'F') break; // 마지막 페이지
 
     if (page === MAX_ACTIVE_ORDERS_PAGES - 1) {
-      console.warn(
-        `[kis-domestic getActiveOrders] ⚠️ 페이지 상한(${MAX_ACTIVE_ORDERS_PAGES})에 도달했는데 `
-        + `tr_cont 가 여전히 계속(${respTrCont})을 가리킨다 — 그때까지 모은 ${allRows.length}건만 반환한다`,
+      throw new Error(
+        `KIS getActiveOrders: 페이지 상한(${MAX_ACTIVE_ORDERS_PAGES})에 도달했는데 `
+        + `tr_cont=${respTrCont}(계속) — ${allRows.length}건만 모은 채 불완전하여 실패로 처리`,
       );
-      break;
     }
     fk100 = String(data.ctx_area_fk100 ?? '');
     nk100 = String(data.ctx_area_nk100 ?? '');

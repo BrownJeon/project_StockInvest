@@ -121,6 +121,39 @@ describe('getActiveOrdersDetailed — 시장별 성공/실패를 보존한다', 
     expect(r.orders).toEqual([]);          // 목록은 비었지만
     expect(r.ok).not.toContain('domestic'); // "국내 0건"이라고 말하지는 않는다
   });
+
+  /**
+   * T-023 Reviewer MEDIUM-1 — HIGH-1(페이지 상한 truncate 시 throw)의 다운스트림 상호작용을
+   * 못박는다. `getActiveOrders()` 자체의 단위 테스트(kis-domestic.test.ts/kis-overseas.test.ts)는
+   * 던지는지만 확인하고, 그 결과 `getActiveOrdersDetailed()` 가 실제로 해당 시장을 ok 에서
+   * 빼는지는 여기서 확인해야 한다 — order-sync 의 fail-closed 판정이 바로 이 ok/failed 분류를
+   * 근거로 삼기 때문이다.
+   */
+  test('🔴 T-023 HIGH-1 — 페이지 상한 truncate 에러도 국내 시장을 실패로 분류한다(ok 에서 제외)', async () => {
+    const PAGE_CAP_ERROR = new Error(
+      'KIS getActiveOrders: 페이지 상한(20)에 도달했는데 tr_cont=M(계속) — 20건만 모은 채 불완전하여 실패로 처리',
+    );
+    domGetActiveOrders.mockRejectedValue(PAGE_CAP_ERROR);
+    ovsGetActiveOrders.mockResolvedValue(OVS);
+    const r = await getActiveOrdersDetailed();
+    expect(r.complete).toBe(false);
+    expect(r.failed).toEqual([{ market: 'domestic', error: PAGE_CAP_ERROR.message }]);
+    expect(r.ok).toEqual(['overseas']);
+    expect(r.orders).toEqual(OVS); // 해외분은 보존, 국내는 잘린 목록을 성공으로 위장하지 않는다
+  });
+
+  test('🔴 T-023 HIGH-1 — 해외 쪽 페이지 상한 truncate 에러도 동일하게 해외 시장을 실패로 분류한다', async () => {
+    const PAGE_CAP_ERROR = new Error(
+      'KIS overseas getActiveOrders(NAS): 페이지 상한(20)에 도달했는데 tr_cont=M(계속) — 20건만 모은 채 불완전하여 실패로 처리',
+    );
+    domGetActiveOrders.mockResolvedValue(DOM);
+    ovsGetActiveOrders.mockRejectedValue(PAGE_CAP_ERROR);
+    const r = await getActiveOrdersDetailed();
+    expect(r.complete).toBe(false);
+    expect(r.failed).toEqual([{ market: 'overseas', error: PAGE_CAP_ERROR.message }]);
+    expect(r.ok).toEqual(['domestic']);
+    expect(r.orders).toEqual(DOM);
+  });
 });
 
 describe('getActiveOrders — 부분 실패를 조용히 통과시키지 않고 던진다', () => {

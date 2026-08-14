@@ -478,11 +478,10 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
     if (respTrCont !== 'M' && respTrCont !== 'F') break;
 
     if (page === MAX_ACTIVE_ORDERS_PAGES - 1) {
-      console.warn(
-        `[kis-overseas getActiveOrders] ⚠️ 페이지 상한(${MAX_ACTIVE_ORDERS_PAGES})에 도달했는데 `
-        + `tr_cont 가 여전히 계속(${respTrCont})을 가리킨다 — 그때까지 모은 ${allRows.length}건만 반환한다`,
+      throw new Error(
+        `KIS overseas getActiveOrders(${defaultExcd}): 페이지 상한(${MAX_ACTIVE_ORDERS_PAGES})에 `
+        + `도달했는데 tr_cont=${respTrCont}(계속) — ${allRows.length}건만 모은 채 불완전하여 실패로 처리`,
       );
-      break;
     }
     fk200 = String(data.ctx_area_fk200 ?? '');
     nk200 = String(data.ctx_area_nk200 ?? '');

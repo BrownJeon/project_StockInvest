@@ -81,19 +81,15 @@ describe('kis-overseas getActiveOrders — 연속조회(페이지네이션)', ()
     expect(secondCallHeaders.tr_cont).toBe('N');
   });
 
-  test('페이지 상한에서 경고 후 모은 결과만 반환한다', async () => {
+  test('🔴 페이지 상한에 도달했는데 tr_cont 가 여전히 계속을 가리키면 던진다(잘린 목록을 성공으로 위장하지 않는다)', async () => {
     (kisFetch as jest.Mock).mockImplementation(async () => fakeResponse({
       trCont: 'M',
       output: [{ odno: 'X', pdno: 'aapl', nccs_qty: '1', ovrs_excg_cd: 'NASD' }],
       ctx_area_fk200: 'F', ctx_area_nk200: 'N',
     }));
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const result = await getActiveOrders();
+    await expect(getActiveOrders()).rejects.toThrow(/페이지 상한\(20\)/);
 
     expect(kisFetch).toHaveBeenCalledTimes(20);
-    expect(result).toHaveLength(20);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('페이지 상한'));
-    warnSpy.mockRestore();
   });
 });

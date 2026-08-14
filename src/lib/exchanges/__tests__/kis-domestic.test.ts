@@ -99,17 +99,13 @@ describe('kis-domestic getActiveOrders — 연속조회(페이지네이션)', ()
     expect(result).toEqual([{ orderId: 'O1', symbol: '005930' }]);
   });
 
-  test('페이지 상한에 도달하면 경고만 남기고 그때까지 모은 결과를 반환한다(무한루프 없음)', async () => {
+  test('🔴 페이지 상한에 도달했는데 tr_cont 가 여전히 계속을 가리키면 던진다(잘린 목록을 성공으로 위장하지 않는다)', async () => {
     (kisFetch as jest.Mock).mockImplementation(async () =>
       fakeResponse({ trCont: 'M', output: [{ odno: 'X', pdno: '005930', rmn_qty: '1' }], ctx_area_fk100: 'F', ctx_area_nk100: 'N' }));
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const result = await getActiveOrders();
+    await expect(getActiveOrders()).rejects.toThrow(/페이지 상한\(20\)/);
 
     expect(kisFetch).toHaveBeenCalledTimes(20); // MAX_ACTIVE_ORDERS_PAGES
-    expect(result).toHaveLength(20);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('페이지 상한'));
-    warnSpy.mockRestore();
   });
 
   test('rmn_qty<=0 인 행은 여전히 걸러진다(다중 페이지에서도)', async () => {
