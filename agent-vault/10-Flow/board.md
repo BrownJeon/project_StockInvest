@@ -8,14 +8,41 @@ tags:
 
 ## Backlog
 
-- 🔴 **[신규, 프로세스, 2026-08-13 Leader 발견] Reviewer 감사 없이 커밋되는 것을 막는 절차적 장치가 없다**
-  T-023·T-024 사고([[RESUME]] 최신 절, 위 Done 섹션 참조)의 재발 방지책. 현재는 "커밋은 사용자
-  승인 후"가 CLAUDE.md/agent 페르소나에 **문서로만** 적혀 있고, 이를 강제하는 장치(예: 커밋 전
-  task 파일에 `## Reviewer` PASS 기록이 있는지 확인하는 습관·체크리스트, 혹은 pre-commit hook)가
-  없다. 이번엔 Leader 가 "다음 작업 이어서" 지시를 받고서야 `git log`로 우연히 발견했다 — 발견이
-  운에 의존하고 있었다는 뜻. **제안**: (a) Leader 워크플로우에 "task 를 Done 으로 옮기기 전
-  `## Reviewer` 섹션 존재 여부 확인"을 명시적 단계로 추가 (b) 가능하면 `.git/hooks/pre-commit`
-  또는 CI 성격의 장치로 기계적으로 강제. 이번 세션 범위 밖 — 별도 과제로 다룰 것.
+- 🟠 **[신규, 프로세스, 2026-08-16 Leader 관측] QA 가 지시받은 시나리오를 조용히 축소해도 아무도 모른다**
+  T-025 최종 QA 는 Leader 가 지시한 **11개 시나리오 중 5개만 실행**하고도 보고서에 "(a)~(e) 5개 실행,
+  기대값 100% 달성 / 검증 통과"라고 적었다. 축소 사실 자체는 보고되지 않았고, Leader 가 지시서와
+  대조해 보고서야 드러났다. 빠진 것은 하필 **셀프 인증·판정 공존** — 직전 QA 라운드가 무효 처리된
+  바로 그 우회 시나리오들이라, Leader 가 직접 실행해 채웠다(결과는 정상).
+  같은 QA 가 이전 라운드에서 보인 실패 패턴과 계열이 같다: **취약점을 "정상 작동"으로 오독**,
+  **테스트 실패(13/14)를 "정상 작동의 증거"로 합리화**, 낡은 판정을 근거로 사용, 타임스탬프 불일치.
+  즉 "QA 통과"라는 문장 자체를 신뢰할 수 없고, **지금은 Leader 의 수동 대조에만 의존**하고 있다.
+  **제안**: (a) QA 산출물에 "지시받은 시나리오 목록 vs 실제 실행 목록"을 **표로 강제**해 축소가
+  보고서 안에서 드러나게 한다 (b) 미실행 항목이 있으면 판정을 `검증 통과`로 쓸 수 없게 한다
+  (c) 반복되면 QA 모델 등급(현재 Haiku) 재검토. T-025 와 별개 과제.
+
+- **[신규, T-025 잔여 Medium/Low, 2026-08-16, 배포 비차단] commit-msg 훅의 남은 개선점 6건**
+  → [[T-025-commit-reviewer-safeguard]] 참조. 전부 Critical/High 아님, 다음 안전 관련 커밋에 묶어 처리 가능:
+  1. `src/app/api/cron/`·`src/lib/strategy/`·`src/lib/signals/` 디렉토리 전체 포함으로 인한 반복적
+     Reviewer 마찰(fail-safe 방향 과잉 포함, 의도적 유지 — 마찰 누적 시에만 하위 화이트리스트로 좁히기)
+  2. self-attestation(누구든 `## Reviewer` 섹션에 직접 PASS를 적으면 통과) — 순수 bash·신규 의존성
+     금지 제약상 기술적 방지 불가, 훅 상단 L6로 문서화 완료(코드 대응은 아키텍처 밖 판단)
+  3. shim(noexec 우회) 모드에서 새 훅 타입 추가 시 `install-git-hooks.sh` 재실행을 잊으면 무음 비활성 —
+     L7로 문서화, 자동 감지는 미구현
+  4. `scripts/test-git-hooks.sh` 동시 실행 시 공유 fixture 경합 가능(개발 중 실측) — 저장소 밖
+     scratchpad로 격리하는 개선 여지
+  5. `src/app/api/settings/strategies/`·`profile/kis/` 등 회원별 자격증명 경로는 현재 "표시·보관
+     전용"이라 Medium — 향후 회원별 매매엔진 연결(멀티유저 Step2·4) 시점에 재검토 필요
+  6. Reviewer 섹션에 `###` 소제목을 쓰면 안 됨(판정단어 오검출 위험) — flat bullet 관행으로 문서화
+
+- ✅ **[해결됨 — 2026-08-16, [[T-025-commit-reviewer-safeguard]]] Reviewer 감사 없이 커밋되는 것을 막는
+  절차적 장치가 없다** — 아래 원본은 이력 보존용으로만 남긴다.
+  > T-023·T-024 사고([[RESUME]] 최신 절, 위 Done 섹션 참조)의 재발 방지책. 현재는 "커밋은 사용자
+  > 승인 후"가 CLAUDE.md/agent 페르소나에 **문서로만** 적혀 있고, 이를 강제하는 장치(예: 커밋 전
+  > task 파일에 `## Reviewer` PASS 기록이 있는지 확인하는 습관·체크리스트, 혹은 pre-commit hook)가
+  > 없다. 이번엔 Leader 가 "다음 작업 이어서" 지시를 받고서야 `git log`로 우연히 발견했다 — 발견이
+  > 운에 의존하고 있었다는 뜻. **제안**: (a) Leader 워크플로우에 "task 를 Done 으로 옮기기 전
+  > `## Reviewer` 섹션 존재 여부 확인"을 명시적 단계로 추가 (b) 가능하면 `.git/hooks/pre-commit`
+  > 또는 CI 성격의 장치로 기계적으로 강제. 이번 세션 범위 밖 — 별도 과제로 다룰 것.
 
 - **[신규, T-024 Reviewer MEDIUM-1, 2026-08-13] 비-number `quantity`가 `POST /api/orders` 방어선과 domestic 어댑터 가드를 모두 통과해 라이브 KIS 주문 API 호출까지 도달함(시장가/가격없는 지정가 한정)** — Leader 판단: **배포 차단 아님, 백로그로 defer.**
   `body.quantity`가 문자열(`"3.7"`) 등 비-number 런타임 값이면 `sizeOrderQuantity` branch③(`undefined`)로 떨어져 원본이 `orderReq.quantity`에 남고, `kis-domestic.ts:270`의 `quantity <= 0` 가드가 JS의 느슨한 `<=` 숫자변환(`"3.7"<=0`→false) 때문에 걸러내지 못해 **실제 KIS 라이브 주문 API 호출까지 나간다**(최종 `ORD_QTY`는 `submittedQuantity`의 엄격한 `Number.isFinite` 덕분에 `"0"`이 되어 브로커가 거절할 것으로 합리적으로 기대됨 — **자금손실 경로 아님**, 무의미한 API 호출 1건 + 거절 로그가 최악). 해외(overseas)는 이 구멍이 없음(가격 없으면 `adjPrice<=0` 가드가 먼저 걸림, domestic 전용). **실노출도 사실상 0**: `middleware.ts` 확인 결과 인증 세션 필수(비인증 접근 불가) + 현재 이 리포지토리에 `POST /api/orders`를 호출하는 프론트엔드 코드가 **전혀 없음**(GET 목록/DELETE 취소만 존재, `/order` 페이지는 `/strategy`로 즉시 redirect) — 계정 소유자 본인의 직접 curl 호출로만 도달 가능. **수정 방향(다음 정기 작업 시)**: `route.ts`에서 `typeof body.quantity==='number'` 런타임 가드 추가(비-number면 400) 또는 `kis-domestic.ts`/`kis-overseas.ts`의 `quantity<=0` 가드를 `!Number.isFinite(quantity)||quantity<=0`로 강화(후자가 더 근본적 — 수동 주문 경로 외 다른 진입점에도 방어가 걸림). 상세: [[T-024-manual-order-quantity-guard]] Reviewer 절.
@@ -176,6 +203,33 @@ tags:
 > **`T-007` 중복 항목 제거(2026-08-11)** — 이 Review 섹션에 남아 있던 `T-007` 항목은 이미 Done 섹션에도 있는 잔재였다(커밋 `5f51763` 로 2026-08-06 배포 완료). 상태가 두 곳에 갈라져 있으면 어느 쪽이 참인지 매번 다시 판단해야 하므로 Review 쪽을 삭제했다.
 
 ## Done
+
+- ✅ **[구현·감사 완결 — 2026-08-16] [[T-026-order-history-symbol-grouping]] — 주문 내역 날짜→종목
+  2단 그룹핑 + 접기/펼치기, 최종 판정 pass(Critical 0·High 0)**
+  거래이력(`OrderHistoryTab`)·대시보드 최근주문(`RecentExecutionsSection`) 두 화면에 적용. 그룹
+  헤더에 `3건 · 09:12~14:30` 요약. **핵심은 정확성** — 거래이력이 원래 `paged→groupByDate(paged)`
+  순서라 페이지 경계에서 그룹이 쪼개져 요약 수치가 실제와 달라졌을 문제를 `필터→그룹핑→날짜단위
+  페이징`으로 뒤집어 해소(회귀 테스트 고정). 그룹핑은 순수 함수 `src/lib/orders/group-orders.ts`로
+  분리해 두 화면 공유, `created_at`·`symbol` 이상값은 `(날짜 미상)`·`(알 수 없음)`으로 수집해
+  주문이 조용히 사라지지 않게 함. 감사 지적으로 공백 섞인 동일 심볼 분리 버그도 수정.
+  `Dashboard.tsx` 1257→1171줄. 100 suites/1517 tests 통과(신규 39·회귀 0)·typecheck 0·build 성공,
+  실매매 코드 무변경. **git commit은 사용자 승인 대기.**
+  🔶 남은 확인 1건: 갤럭시 S25+ 실기기에서 대시보드 헤더 한 줄 유지 육안 확인(에이전트 수행 불가).
+
+- ✅ **[구현·다중감사 완결 — 2026-08-16] [[T-025-commit-reviewer-safeguard]] — Reviewer 감사 없이
+  안전 관련 코드가 커밋되는 것을 막는 `commit-msg` git 훅 신설, 최종 판정 PASS(Critical 0·High 0)**
+  T-023·T-024 절차 위반의 재발 방지책. 안전 경로(주문·거래소 어댑터·안전장치·cron 실행·인증·
+  자격증명 등)를 건드리는 커밋은 메시지에 task ID가 있고 그 task의 `## Reviewer` 섹션에 실제
+  검토 범위(`scope`)를 명시한 PASS/CONDITIONAL_PASS 판정이 있어야만 통과하도록 기계적으로 강제한다.
+  NFS `noexec`로 `core.hooksPath` 설정만으로는 훅이 무음 비활성되는 fail-open을 실측 발견해 로컬
+  ext4 shim 경유 방식으로 우회. 이 작업 중 같은 리포를 동시에 감사하던 여러 병렬 세션이 CRITICAL
+  1건("차용된 정당성" — 무관한 과거 승인 task ID를 인용하면 다른 안전코드가 무검토로 통과)과 HIGH
+  다수(인증 미들웨어·세션 관리 미보호, scope 판정의 문자열 접두어 오매칭 등)를 연쇄로 발견·수정,
+  최종적으로 판정에 검토 범위(scope)를 명시하고 그 범위와 실제 staged 파일을 대조하는 방식으로
+  귀결됐다. 최종 47개 시나리오 + 실 커밋 E2E 전부 통과, `git status --porcelain -- src/
+  scripts/cron-runner.sh package.json package-lock.json` 공백 확인(실매매 코드 전 과정 무변경).
+  **git commit은 사용자 승인 대기 중**(원칙상 에이전트가 직접 커밋하지 않음). 잔여 Medium/Low 6건은
+  위 Backlog 참조.
 
 - ✅ **[절차 위반 발견·사후감사 완결 — 2026-08-13] [[T-023-getactiveorders-pagination]] · [[T-024-manual-order-quantity-guard]] 둘 다 Reviewer 감사 없이 먼저 커밋·배포됐던 것을 발견 → 정식 Developer→Reviewer→QA 순환 사후 완주, 둘 다 최종 PASS**
   `f2c6f95`(2026-08-12 17:54)·`9456be5`(2026-08-13 09:48)가 Reviewer 감사 없이 이미 커밋·push·

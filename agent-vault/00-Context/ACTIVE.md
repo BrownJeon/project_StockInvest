@@ -1,10 +1,28 @@
 ---
 project: StockInvest
-updated: 2026-08-13
+updated: 2026-08-16
 tags:
   - type/context
 ---
 # 현재 상태
+
+## ✅ 2026-08-16 — [[T-025-commit-reviewer-safeguard]] 완료: Reviewer 감사 없이 커밋되는 것을 막는 git 훅 신설
+
+2026-08-13 절차 위반(T-023·T-024가 Reviewer 감사 없이 커밋·배포됨)의 재발 방지책. 안전 관련 코드를
+건드리는 커밋은 task ID + 그 task의 Reviewer 승인 기록(검토 범위 명시 포함)이 없으면 `commit-msg`
+git 훅이 기계적으로 차단한다. NFS noexec로 훅이 무음 비활성되는 함정을 로컬 shim으로 우회.
+
+같은 리포를 동시에 감사하던 여러 병렬 세션(다른 인터랙티브 세션들)이 CRITICAL 1건("무관한 과거
+승인 task를 인용하면 다른 안전코드가 무검토로 통과")과 HIGH 다수(인증 미들웨어·세션관리 미보호,
+scope 문자열 접두어 오매칭)를 연쇄로 찾아내 전부 수정 완료. 최종 Reviewer PASS(Critical 0·High
+0)·QA PASS, 47개 시나리오+실 커밋 E2E 통과. 실매매 코드는 전 과정 무변경. **git commit/push는
+사용자 승인 대기 중** — 아직 안 함. 잔여 Medium/Low 6건은 board.md Backlog 참조.
+
+**동시 세션 관련 참고**: 이 작업 중 워크스페이스에 이 프로젝트를 동시에 다루는 인터랙티브 세션이
+최소 1개 더 있었다(다른 세션이 board.md에 [[T-026-order-history-symbol-grouping]]을 등록하고,
+T-025 Reviewer 감사에도 독립적으로 참여함). 파일 동시수정으로 인한 충돌은 append-only 관행 덕분에
+데이터 손실 없이 넘어갔으나, 다음에 이 프로젝트를 다룰 때 다른 세션이 동시에 열려 있는지 먼저
+확인하는 습관이 필요하다.
 
 ## ✅ 2026-08-13 — Reviewer 감사 없이 이미 배포된 것을 발견 → 사후 감사 완주 → 배포 권고
 
