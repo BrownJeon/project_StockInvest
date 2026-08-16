@@ -54,6 +54,15 @@ export function formatTimeKST(ts: number | string | Date | null | undefined): st
   return formatAbsoluteKST(ts, { hour: '2-digit', minute: '2-digit' });
 }
 
+/**
+ * 시각(HH:MM)만 KST 24시간제로 포맷 — `09:12` / `14:30`.
+ * `formatTimeKST`는 로케일 기본값이 12시간제(`AM 09:12`)라 폭을 많이 먹는다.
+ * 좁은 폭에 시각 범위를 넣어야 하는 곳(주문 그룹 헤더 등)에서 사용.
+ */
+export function formatTimeKST24(ts: number | string | Date | null | undefined): string {
+  return formatAbsoluteKST(ts, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+}
+
 /** 날짜+시각(M/D HH:MM)을 KST로 포맷 */
 export function formatDateTimeKST(ts: number | string | Date | null | undefined): string {
   return formatAbsoluteKST(ts, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });

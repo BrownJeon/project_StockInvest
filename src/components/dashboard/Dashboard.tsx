@@ -6,9 +6,10 @@ import { CandleChart } from '@/components/CandleChart';
 import { PnlChip } from '@/components/PnlChip';
 import { TradingBoard } from '@/components/TradingBoard';
 import { EvalFunnelCard } from '@/components/dashboard/EvalFunnelCard';
+import { RecentExecutionsSection } from '@/components/dashboard/RecentExecutionsSection';
 import { fmtNum, fmtPnl, pnlColor, fmtMarketPrice } from '@/lib/format';
 import { useFxRate } from '@/lib/hooks/useFxRate';
-import { formatRelativeTime, formatDateTimeKST, kstTodayStart } from '@/lib/time';
+import { formatRelativeTime, kstTodayStart } from '@/lib/time';
 import { formatSymbolShort, symbolUnit } from '@/lib/symbols';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
@@ -380,7 +381,7 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
       <EvalFunnelCard reloadKey={reloadKey} />
 
       {/* 최근 체결 타임라인 */}
-      <RecentExecutionsSection orders={orders} symbolMeta={symbolMeta} />
+      <RecentExecutionsSection orders={orders} />
 
       {/* 보유/관심/내일시나리오 탭 */}
       <div style={sx.tabs}>
@@ -779,93 +780,6 @@ function ActiveStrategyItem({ strategy }: { strategy: StrategyRow }) {
         </div>
       </div>
     </div>
-  );
-}
-
-const ORDER_STATUS_META: Record<OrderStatus, { text: string; color: string; bg: string }> = {
-  pending:          { text: '대기',     color: 'var(--muted)',   bg: 'var(--bg3)'              },
-  accepted:         { text: '접수됨',   color: '#818cf8',        bg: 'rgba(99,102,241,.18)'    },
-  partially_filled: { text: '부분체결', color: 'var(--accent)',  bg: 'rgba(245,158,11,.18)'    },
-  filled:           { text: '체결됨',   color: 'var(--ok)',      bg: 'rgba(34,197,94,.18)'     },
-  cancelled:        { text: '취소됨',   color: 'var(--muted)',   bg: 'var(--bg3)'              },
-  rejected:         { text: '거부됨',   color: 'var(--down)',    bg: 'rgba(239,68,68,.15)'     },
-  failed:           { text: '실패',     color: 'var(--down)',    bg: 'rgba(239,68,68,.15)'     },
-  dry_run:          { text: '테스트',   color: 'var(--accent)',  bg: 'rgba(245,158,11,.15)'    },
-  blocked:          { text: '차단됨',   color: 'var(--down)',    bg: 'rgba(239,68,68,.15)'     },
-};
-
-function fmtOrderAmount(o: OrderRow): string {
-  if (o.amount_krw) return `₩${fmtNum(parseFloat(o.amount_krw))}`;
-  if (o.quantity)   return `${parseFloat(o.quantity).toFixed(4)} ${symbolUnit(o.symbol)}`;
-  if (o.price && o.quantity) return `₩${fmtNum(parseFloat(o.price) * parseFloat(o.quantity))}`;
-  return '-';
-}
-
-function RecentExecutionsSection({ orders, symbolMeta }: { orders: OrderRow[]; symbolMeta: Record<string, string> }) {
-  const fmtSymbol = (s: string) => {
-    const name = symbolMeta[s];
-    const idx = s.indexOf(':');
-    const short = idx > 0 ? s.slice(idx + 1) : s;
-    if (name && name !== s && name !== short) return `${name} (${s})`;
-    return short;
-  };
-  const display = orders.slice(0, 10);
-
-  return (
-    <section style={sx.card}>
-      <div style={sx.cardHeader}>
-        <span style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '.6px', textTransform: 'uppercase' }}>
-          최근 주문
-        </span>
-        <Link href="/order" style={{ fontSize: 11, color: 'var(--muted)' }}>
-          전체 보기 →
-        </Link>
-      </div>
-
-      {display.length === 0 ? (
-        <div style={{ padding: '16px 14px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>
-          주문 이력 없음
-        </div>
-      ) : (
-        display.map((o, i) => {
-          const meta = ORDER_STATUS_META[o.status];
-          return (
-            <div key={o.id} style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '10px 14px', gap: 8,
-              borderTop: i === 0 ? '1px solid var(--border)' : undefined,
-              borderBottom: '1px solid var(--border)',
-            }}>
-              {/* Side + Symbol */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                <span style={{
-                  fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, flexShrink: 0,
-                  background: o.side === 'buy' ? 'rgba(239,68,68,.18)' : 'rgba(59,130,246,.18)',
-                  color: o.side === 'buy' ? 'var(--up)' : 'var(--down)',
-                }}>{o.side === 'buy' ? '매수' : '매도'}</span>
-                <span style={{ fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {fmtSymbol(o.symbol)}
-                </span>
-              </div>
-
-              {/* Amount + Status + Time */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                <span className="num" style={{ fontSize: 12, color: 'var(--text)' }}>
-                  {fmtOrderAmount(o)}
-                </span>
-                <span style={{
-                  fontSize: 10, padding: '2px 6px', borderRadius: 8, fontWeight: 600,
-                  color: meta.color, background: meta.bg,
-                }}>{meta.text}</span>
-                <span style={{ fontSize: 10, color: 'var(--muted)' }}>
-                  {formatDateTimeKST(o.created_at)}
-                </span>
-              </div>
-            </div>
-          );
-        })
-      )}
-    </section>
   );
 }
 

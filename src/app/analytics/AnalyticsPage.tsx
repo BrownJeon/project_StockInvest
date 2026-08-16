@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PortfolioTab }          from './components/PortfolioTab';
 import { OrderHistoryTab }       from './components/OrderHistoryTab';
 import { MissedOpportunityTab }  from './components/MissedOpportunityTab';
@@ -21,8 +21,18 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'diagnostics', label: '신호 진단'  },
 ];
 
+const TAB_IDS = new Set<string>(TABS.map(t => t.id));
+
 export function AnalyticsPage() {
   const [tab, setTab] = useState<Tab>('portfolio');
+
+  /* `?tab=orders` 딥링크 (대시보드 "최근 주문 → 전체 보기").
+     `useSearchParams()`는 Suspense 경계를 요구하므로, 마운트 후 1회 읽어
+     hydration mismatch 없이 초기 탭만 맞춘다. */
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    if (requested && TAB_IDS.has(requested)) setTab(requested as Tab);
+  }, []);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
