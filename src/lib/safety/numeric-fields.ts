@@ -25,6 +25,21 @@
  * 즉 여기로 숫자 문자열이 들어올 정상 사유가 없다.
  */
 
+/**
+ * **주문 발원 경계가 공유하는 단 하나의 판정 규칙.**
+ *
+ * `Number.isFinite` 는 non-number 에 대해 **강제변환 없이** false 를 돌려준다
+ * (`Number.isFinite('3.7') === false`) — 전역 `isFinite` 와 다른 지점이자 이 가드의 핵심이다.
+ *
+ * T-029 에서 이 함수를 따로 뽑았다. `POST /api/signals/custom/confirm` 은 평면
+ * `price/quantity/amountKRW` 가 아니라 **중첩·배열 shape**(`entryZonePct`·`manualSlices[]`)이라
+ * 아래 `invalidNumericField` 를 그대로 쓸 수 없는데, 그렇다고 판정 규칙까지 복제하면
+ * "한쪽만 바뀌는" 상태가 다시 결함의 구조가 된다. **모양은 라우트마다, 기준은 여기 한 곳.**
+ */
+export function isFiniteNumber(v: unknown): v is number {
+  return Number.isFinite(v);
+}
+
 /** 주문 금액·수량·가격을 결정하는 필드 — 하나라도 비-number 면 아래 계산이 전부 오염된다. */
 export const ORDER_NUMERIC_FIELDS = ['price', 'quantity', 'amountKRW'] as const;
 
@@ -43,9 +58,7 @@ export function invalidNumericField(body: NumericFieldCarrier): OrderNumericFiel
   for (const field of ORDER_NUMERIC_FIELDS) {
     const v = body[field];
     if (v === undefined || v === null) continue;
-    // Number.isFinite 는 non-number 에 대해 강제변환 없이 false 를 돌려준다
-    // (`Number.isFinite('3.7') === false`) — 전역 isFinite 와 다른 지점이자 이 가드의 핵심.
-    if (!Number.isFinite(v)) return field;
+    if (!isFiniteNumber(v)) return field;
   }
   return null;
 }

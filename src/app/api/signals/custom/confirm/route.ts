@@ -14,6 +14,7 @@ import { calcSplitSlices } from '@/lib/signals/scenario-builder';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import { getSymbolLabel, sendAlert } from '@/lib/notify';
 import { AWAITING_APPROVAL_STATUSES, sqlStatusList } from '@/lib/signals/statuses';
+import { invalidConfirmField, warnConfirmFieldRejected } from '@/lib/safety/scenario-confirm-fields';
 
 async function isManualNotifyEnabled(pool: ReturnType<typeof import('@/lib/db')['getPool']>): Promise<boolean> {
   try {
@@ -45,6 +46,10 @@ function roundToTick(price: number): number {
   return Math.round(price / tick) * tick;
 }
 
+/**
+ * ⚠️ 아래 선언은 **타입일 뿐 런타임 가드가 아니다.** JSON body 는 무엇이든 담을 수 있다.
+ * 실제 강제는 `invalidConfirmField`(@/lib/safety/scenario-confirm-fields)가 한다 — T-029.
+ */
 interface ManualSliceBody {
   zoneLo: number;
   zoneHi: number;
@@ -71,15 +76,34 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ConfirmBody;
     const { symbol, direction, scenario } = body;
-    const cp = body.currentPrice ?? 0;
-    const entryZonePct = body.entryZonePct ?? [-0.5, 0.5];
-    const splits = body.splits ?? 1;
-    const market = body.market ?? getMarketFromSymbol(symbol);
 
     if (!symbol || !direction || !scenario) {
       return Response.json({ ok: false, error: 'symbol/direction/scenario required' }, { status: 400 });
     }
-    if (cp <= 0 && !scenario.entry?.price_zone) {
+
+    // 🔴 T-029 — 수치·배열 shape 런타임 가드. **required 검사 뒤**에 두어 기존 문구를 앞지르지 않는다.
+    //
+    //   이 라우트는 INSERT 직후 `approved_pending_entry`(진입 감시)로 전환된다 — 사람이 한 번 더
+    //   볼 기회가 없다. 그리고 `manualSlices` 의 문자열 수치는 `NaN` 이 아니라 **유효해 보이는
+    //   오염 가격**을 만든다(`'100' + '200'` → `'100200'` → /2 → 50100). 아래 단계(주문 한도
+    //   fail-closed·어댑터 가드)는 유한수를 통과시키므로 그 무엇도 이걸 잡지 못한다.
+    //   → 값이 들어온 이 경계에서 행 생성 이전에 되돌린다.
+    const badField = invalidConfirmField(body);
+    if (badField) {
+      warnConfirmFieldRejected('api/signals/custom/confirm POST', badField, body);
+      return Response.json({ ok: false, error: badField.message }, { status: 400 });
+    }
+
+    const cp = body.currentPrice ?? 0;
+    // 위 가드가 배열 shape 를 실제로 확인했으므로 이 타입 표기는 런타임과 일치한다.
+    // (기존의 `as [number, number]` 캐스트는 아무것도 보장하지 않았다 — T-029 에서 제거)
+    const entryZonePct: [number, number] = body.entryZonePct ?? [-0.5, 0.5];
+    const splits = body.splits ?? 1;
+    const market = body.market ?? getMarketFromSymbol(symbol);
+
+    // `cp <= 0` 이 아니라 `!(cp > 0)` — 비교 대상이 수가 아닐 때 조용히 통과하지 않는 관용구(T-027).
+    // 위 가드가 이미 유한수를 보장하지만, 게이트 자체가 fail-closed 로 읽히게 둔다.
+    if (!(cp > 0) && !scenario.entry?.price_zone) {
       return Response.json({ ok: false, error: 'currentPrice or scenario.entry.price_zone required' }, { status: 400 });
     }
 
@@ -97,7 +121,7 @@ export async function POST(req: Request) {
           };
         })
       : cp > 0
-        ? calcSplitSlices(direction, cp, entryZonePct as [number, number], splits, undefined, body.holdingQty)
+        ? calcSplitSlices(direction, cp, entryZonePct, splits, undefined, body.holdingQty)
         : [{
             index: 1,
             priceZoneStr: scenario.entry?.price_zone ?? '0~0',
@@ -130,9 +154,14 @@ export async function POST(req: Request) {
           : {}),
       };
 
+      // T-029: `priceZoneStr` 은 `scenario.entry.price_zone`(사용자·LLM 생성 문자열)에서 올 수 있어
+      // 수치 가드가 닿지 않는다. 파싱 결과가 유한수가 아니면 **기존의 `null`(가격 미상) 분기**로
+      // 보낸다 — 그러지 않으면 `NaN` 이 그대로 price 컬럼 바인딩까지 흘러갔다.
       const priceMid = slice.priceMid > 0 ? slice.priceMid : (() => {
         const parts = slice.priceZoneStr.split('~').map(Number);
-        return parts.length === 2 ? roundToTick(Math.round((parts[0] + parts[1]) / 2)) : null;
+        return parts.length === 2 && parts.every(Number.isFinite)
+          ? roundToTick(Math.round((parts[0] + parts[1]) / 2))
+          : null;
       })();
 
       const [ins] = await pool.query<ResultSetHeader>(

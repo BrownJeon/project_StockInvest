@@ -10,6 +10,7 @@ import { kis } from '@/lib/exchanges/kis';
 import { rsi, macd, bollinger, atr } from '@/lib/strategy/indicators';
 import { gradeFromEv } from '@/lib/signals/scenario-builder';
 import { runLlm, getActiveProvider } from '@/lib/llm/provider';
+import { isFiniteNumber } from '@/lib/safety/numeric-fields';
 import type { Candle } from '@/lib/exchanges/types';
 
 interface LlmAnalysis {
@@ -101,7 +102,11 @@ interface CustomBody {
   symbol: string;
   direction: 'buy' | 'sell';
   currentPrice?: number;
-  /** 진입 구간 % [lo, hi] - 현재가 기준 오프셋 (음수=아래, 양수=위). */
+  /**
+   * ⚠️ T-029 실측: `entryZonePct`·`splits` 는 **선언만 있고 이 라우트가 전혀 사용하지 않는다**
+   * (호출자는 `splits` 를 보내지만 무시된다). 값이 소비되지 않으므로 수치 가드도 두지 않는다 —
+   * 소비하기 시작하는 순간 `currentPrice` 와 같은 검증이 필요하다.
+   */
   entryZonePct?: [number, number];
   splits?: number;
   /** 보유 마감기한 YYYY-MM-DD */
@@ -123,6 +128,29 @@ export async function POST(req: Request) {
 
     if (!symbol || !direction) {
       return Response.json({ ok: false, error: 'symbol/direction required' }, { status: 400 });
+    }
+
+    // 🔴 T-029 — confirm 라우트와 **같은 클래스**의 문자열 연결 사고가 여기에도 있었다.
+    //   `currentPrice='70000'` 이면 아래 `price_zone` 조립에서
+    //     `${Math.round(currentPrice - aiDelta)}~${Math.round(currentPrice + aiDelta)}`
+    //   의 `-` 는 강제변환되지만 `+` 는 **연결**이라 `'70000' + 210` → `'70000210'` →
+    //   `'69790~70000210'` 이라는 오염된 구간 문자열이 나온다.
+    //
+    //   이 라우트는 DB 에 쓰지 않지만, 이 `aiSuggestedScenario` 가 그대로
+    //   `POST /api/signals/custom/confirm` 의 `scenario` 로 실려 가고, 거기서
+    //   `scenario.entry.price_zone` 은 **confirm 의 수치 가드가 닿지 않는 유일한 가격 원천**이다
+    //   (`currentPrice <= 0` 폴백 경로에서 파싱되어 price 컬럼이 된다).
+    //   → 오염이 만들어지는 지점에서 막는다.
+    if (body.currentPrice !== undefined && body.currentPrice !== null
+        && !isFiniteNumber(body.currentPrice)) {
+      console.warn(
+        `[api/signals/custom POST] 비-number currentPrice 거절 — symbol=${String(symbol)} ` +
+        `type=${typeof body.currentPrice}`,
+      );
+      return Response.json(
+        { ok: false, error: 'currentPrice must be a finite number' },
+        { status: 400 },
+      );
     }
 
     // 현재 지표 조회
