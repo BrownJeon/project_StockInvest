@@ -3,6 +3,11 @@ import { getPool } from '@/lib/db';
 import { isEngineEnabled } from '@/lib/signals/router';
 import { createSignal } from '@/lib/signals/service';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
+import {
+  invalidNumericField,
+  numericFieldError,
+  warnNumericFieldRejected,
+} from '@/lib/safety/numeric-fields';
 import { isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +34,20 @@ export async function POST(req: Request) {
     if (!body.symbol || !body.side || !body.orderType || !body.amountKRW) {
       return Response.json(
         { ok: false, error: 'symbol/side/orderType/amountKRW required' },
+        { status: 400 },
+      );
+    }
+    // 🔴 T-028 — required 검사는 truthiness 뿐이라 `'abc'` 같은 **truthy 비-number 는 통과**한다.
+    //    (`NaN` 은 falsy 라 우연히 위에서 걸릴 뿐이고, 애초에 JSON 으로는 전송되지 않는다.)
+    //    시그널은 `createSignal` → 자동제출 시 `submitOrder` 까지 이어지는 **주문 발원 경로**이므로
+    //    `POST /api/orders` 와 **같은 규칙**을 같은 자리에 둔다 — 기존 계약의 연장이지 변경이 아니다.
+    //    유효하지 않은 수치를 가진 요청은 애초에 유효한 시그널이 아니라, 행을 남겨 봐야 무의미한
+    //    값이 든 `signals` 행이 아래로 흘러갈 뿐이다.
+    const badField = invalidNumericField(body);
+    if (badField) {
+      warnNumericFieldRejected('api/signals POST', badField, body);
+      return Response.json(
+        { ok: false, error: numericFieldError(badField) },
         { status: 400 },
       );
     }

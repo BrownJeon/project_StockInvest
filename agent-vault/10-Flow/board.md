@@ -8,6 +8,13 @@ tags:
 
 ## Backlog
 
+- 🟠 **[신규, T-028 Reviewer 권고로 격상, 2026-08-17] `POST /api/signals/custom/confirm` 수치 필드 무검증 — T-029 후보**
+  → [[T-028-signals-api-numeric-guard]] 참조. T-027/T-028 이 닫은 것과 **같은 클래스**인데, 이 라우트는
+  **사람 승인 없이 `approved_pending_entry` 로 즉시 진입감시에 들어간다** — 그래서 Reviewer 가 "비차단"보다
+  우선순위 격상을 권고했다. `createSignal` 비경유 + 직접 INSERT + 배열 필드 shape 이라 T-028 의 공용 가드
+  (`src/lib/safety/numeric-fields.ts`)를 그대로 붙일 수 없어 별도 설계가 필요하다. 현재 실피해는 억제됨
+  (UI 호출자 2곳 모두 `Number()` 변환 후 전송).
+
 - **[신규, T-027 잔여, 2026-08-17, 비차단] `POST /api/signals` 가 price·quantity·amountKRW 를 무검증으로 `createSignal` 에 넘긴다**
   → [[T-027-nonnumber-quantity-guard]] 참조. `src/app/api/signals/route.ts:48` — T-027 이 `POST /api/orders`
   에서 닫은 것과 **같은 패턴**("타입 선언일 뿐 런타임 가드가 아니다")이 그대로 남아 있다. Developer 가
@@ -28,6 +35,7 @@ tags:
   **제안**: (a) QA 산출물에 "지시받은 시나리오 목록 vs 실제 실행 목록"을 **표로 강제**해 축소가
   보고서 안에서 드러나게 한다 (b) 미실행 항목이 있으면 판정을 `검증 통과`로 쓸 수 없게 한다
   (c) 반복되면 QA 모델 등급(현재 Haiku) 재검토. T-025 와 별개 과제.
+  **2026-08-17 추가 사례**: T-026·T-028 에서 표를 명시적으로 필수 지시했는데 T-028 이 또 미준수했다(내용은 14항목 모두 다뤘으나 형식 무시). **프롬프트로 형식을 강제하는 방식이 3회 연속 실패**했다는 뜻이므로, (a)(b) 대신 산출물 검증을 Leader 수동 대조가 아닌 기계적 장치로 옮기는 쪽을 검토할 것.
 
 - **[신규, T-025 잔여 Medium/Low, 2026-08-16, 배포 비차단] commit-msg 훅의 남은 개선점 6건**
   → [[T-025-commit-reviewer-safeguard]] 참조. 전부 Critical/High 아님, 다음 안전 관련 커밋에 묶어 처리 가능:
@@ -213,6 +221,16 @@ tags:
 > **`T-007` 중복 항목 제거(2026-08-11)** — 이 Review 섹션에 남아 있던 `T-007` 항목은 이미 Done 섹션에도 있는 잔재였다(커밋 `5f51763` 로 2026-08-06 배포 완료). 상태가 두 곳에 갈라져 있으면 어느 쪽이 참인지 매번 다시 판단해야 하므로 Review 쪽을 삭제했다.
 
 ## Done
+
+- ✅ **[구현·감사 완결 — 2026-08-17] [[T-028-signals-api-numeric-guard]] — `POST /api/signals` 수치 필드
+  런타임 가드, 최종 판정 pass(Critical 0·High 0)**
+  T-027 잔여분 마감. 기존 truthiness 검사(`!body.amountKRW`)는 `NaN` 만 우연히 걸렀고 `'abc'` 같은 truthy
+  비-number 는 그대로 `createSignal` 로 흘렀다. `src/lib/safety/numeric-fields.ts` 를 신설해
+  `POST /api/orders` 와 **같은 규칙을 공유**(복붙 시 한쪽만 고쳐지는 구조를 피함), orders 기존 동작은
+  로그 문구까지 바이트 동일 보존. 과도차단 위험은 Reviewer 가 두 전제를 독립 재현해 해소 — mysql2 DECIMAL
+  경로는 이 핸들러를 거치지 않고(직접 함수 호출 + 자체 `Number()` 변환), bare POST 호출자가 **0건**이다.
+  103 suites/1717 tests 통과(+57·회귀 0), typecheck 0. **QA 가 필수 표 형식을 3회 연속 미준수**해
+  Leader 가 전체 스위트를 직접 재현해 보강했다.
 
 - ✅ **[구현·감사 완결 — 2026-08-17] [[T-027-nonnumber-quantity-guard]] — 비-number 수량·가격 가드 강화
   + **NaN 주문한도 우회 폐쇄**, 최종 판정 pass(Critical 0·High 0)**

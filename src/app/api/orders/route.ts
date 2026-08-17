@@ -4,6 +4,11 @@ import { kis } from '@/lib/exchanges/kis';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import type { OrderRequest } from '@/lib/exchanges/types';
 import { submitOrder } from '@/lib/safety/dry-run';
+import {
+  invalidNumericField,
+  numericFieldError,
+  warnNumericFieldRejected,
+} from '@/lib/safety/numeric-fields';
 import { sizeOrderQuantity } from '@/lib/signals/service';
 
 export const dynamic = 'force-dynamic';
@@ -21,41 +26,13 @@ interface CreateBody {
 
 /**
  * 🔴 T-027 — `CreateBody` 의 `price?: number` 류 선언은 **타입일 뿐 런타임 가드가 아니다.**
+ * 규칙 본문과 그 근거는 `@/lib/safety/numeric-fields` 에 한 벌만 둔다 (T-028 공용화 —
+ * `POST /api/signals` 가 같은 규칙을 쓰므로, 복붙하면 한쪽만 바뀌는 상태가 결함의 구조가 된다).
  *
- * JSON 본문은 무엇이든 담을 수 있고, 비-number 수치는 아래로 흘러가며 조용히 통과했다:
- *  - `quantity: '3.7'` → `sizeOrderQuantity` 가 값을 만들지 못해(`undefined`) 원본이 그대로
- *    `orderReq.quantity` 에 남고, 어댑터의 `quantity <= 0` 이 `'3.7' <= 0 → false` 로
- *    통과시켜 **라이브 KIS 주문 호출까지** 도달했다.
- *  - `price: 'abc'` → `resolveOrderAmountKRW` 가 `NaN` 을 만들고, `checkOrderMax` 의
- *    `amount <= 0` 도 `amount > max` 도 NaN 비교라 **둘 다 false** → 1회·일일 한도가 통째로
- *    무력화됐다.
- *
- * 어댑터와 한도 검사 쪽도 각각 fail-closed 로 고쳤지만(방어 이중화), **원인을 가장 잘 설명할
- * 수 있는 자리는 값이 들어온 API 경계**다. 여기서 400 으로 되돌려 주면 호출자가 무엇을 잘못
- * 보냈는지 즉시 안다.
- *
- * `undefined`/`null` 은 정상 입력이다 — 하위 사이징·어댑터가 금액에서 파생한다.
- *
- * ⚠️ **이 경계는 `price` 도 예외적으로 엄격하다**(어댑터는 느슨하다 — `Number(x)` 로 판정해
- * `'70000'` 같은 숫자 문자열을 통과시킨다). 비대칭이 의도적인 이유: 느슨함이 필요한 근거는
- * mysql2 가 DECIMAL 을 문자열로 돌려주는 **DB 경유 경로**(`POST /api/signals`·entry-watcher)에만
- * 해당하는데, 여기는 사람이 직접 만든 JSON 이 들어오는 자리라 그 사정이 없다. 그리고 이
- * 엔드포인트에는 현재 리포지토리 안에 호출자가 전무하므로(계정 소유자의 직접 curl 만 도달)
- * 엄격하게 잡아도 끊길 정상 트래픽이 없다. 호출자가 생기면 이 전제를 다시 확인해야 한다.
+ * 이 라우트에 고유한 근거 하나: 여기는 사람이 직접 만든 JSON 이 들어오는 자리고 현재
+ * 리포지토리 안에 호출자가 전무하므로(계정 소유자의 직접 curl 만 도달) 엄격하게 잡아도 끊길
+ * 정상 트래픽이 없다. 호출자가 생기면 이 전제를 다시 확인해야 한다.
  */
-const NUMERIC_FIELDS = ['price', 'quantity', 'amountKRW'] as const;
-
-function invalidNumericField(body: CreateBody): (typeof NUMERIC_FIELDS)[number] | null {
-  for (const field of NUMERIC_FIELDS) {
-    const v = body[field];
-    if (v === undefined || v === null) continue;
-    // Number.isFinite 는 non-number 에 대해 강제변환 없이 false 를 돌려준다
-    // (`Number.isFinite('3.7') === false`) — 전역 isFinite 와 다른 지점이자 이 가드의 핵심.
-    if (!Number.isFinite(v)) return field;
-  }
-  return null;
-}
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as CreateBody;
@@ -66,14 +43,9 @@ export async function POST(req: Request) {
 
     const badField = invalidNumericField(body);
     if (badField) {
-      // 흔적 없는 거절을 남기지 않는다. 여기서 막힌 요청은 `orders` 행이 생기기 전이라
-      // 감사 로그에 남지 않으므로(= 정상 400 과 동일 취급), 최소한 서버 로그에는 남긴다.
-      console.warn(
-        `[api/orders POST] 비-number ${badField} 거절 — symbol=${body.symbol} ` +
-        `type=${typeof body[badField]} value=${JSON.stringify(body[badField])}`,
-      );
+      warnNumericFieldRejected('api/orders POST', badField, body);
       return Response.json(
-        { ok: false, error: `${badField} must be a finite number` },
+        { ok: false, error: numericFieldError(badField) },
         { status: 400 },
       );
     }
