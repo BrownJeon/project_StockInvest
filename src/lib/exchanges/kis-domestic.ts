@@ -6,7 +6,7 @@ import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
 import { kisFetch, isKisRateLimited, kisBodyText } from './kis-http';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
-import { submittedQuantity } from './order-quantity';
+import { submittedQuantity, unusableQuantityReason } from './order-quantity';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
 
 const isMock = () => String(process.env.KIS_MOCK ?? 'true').toLowerCase() === 'true';
@@ -267,7 +267,28 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
 
   const price    = req.price ?? 0;
   const quantity = req.quantity ?? (price > 0 && req.amountKRW ? Math.floor(req.amountKRW / price) : 0);
-  if (quantity <= 0) return { ok: false, error: 'quantity 계산 실패' };
+  // 🔴 T-027 — 타입까지 본다. `quantity <= 0` 만으로는 `'3.7' <= 0 → false` 라 비-number 가
+  //    통과해 아래 라이브 주문 호출까지 도달했다. 사유 구분은 `unusableQuantityReason` 참조.
+  const badQty = unusableQuantityReason(quantity);
+  if (badQty) return { ok: false, error: badQty };
+
+  // 🔴 T-027 — 지정가의 `price` 도 같은 계열의 구멍이었다. 비-number 가격은 `roundToTick`
+  //    을 통과하면서 `NaN` 이 되고 `ORD_UNPR: "NaN"` 이라는 쓰레기 payload 가 그대로 라이브
+  //    API 로 나간다. 매수는 한도 검사(`checkOrderMax`)가 NaN 금액을 막게 됐지만 **매도는
+  //    한도 검사 자체를 건너뛰므로**(청산 우선 정책) 여기서 막지 않으면 남는 경로가 있다.
+  //
+  //    ⚠️ 여기는 quantity 와 달리 **`typeof === 'number'` 까지 요구하지 않는다.** quantity 는
+  //    앞단 `sizeOrderQuantity` 가 모든 진입점에서 number|undefined 로 정규화하지만, price 는
+  //    가공 없이 통과하고 `POST /api/signals` 는 본문의 price 를 그대로 흘린다. 게다가 mysql2
+  //    는 DECIMAL 을 **문자열로** 돌려준다(2026-08-16 에 같은 원인의 표시 결함을 고쳤다).
+  //    즉 `'70000'` 은 오늘 정상 송신되는 값이고, 그것을 막으면 실매매를 끊는 사고가 된다.
+  //    막아야 할 것은 딱 하나 — `ORD_UNPR: "NaN"` 을 만드는 값이다.
+  //    `<= 0` 도 건드리지 않는다 — 현행 동작(0 이면 KIS 가 거절)을 바꾸지 않기 위해서다.
+  if (req.type !== 'market' && !Number.isFinite(Number(price))) {
+    // 값 자체는 `trade_logs.submit_attempt` 에 원본 req 로 남으므로 여기서는 타입만 적는다
+    // (임의 객체를 문자열화하다 던지는 일이 없게).
+    return { ok: false, error: `price 타입 오류: 유한한 숫자가 아님 (${typeof price})` };
+  }
 
   const [headers, cano, acntPrdt] = await Promise.all([
     kisHeaders(trId), accountNo(), accountProduct(),

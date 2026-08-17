@@ -261,6 +261,8 @@ export function categorizeRejectReason(error: string | null | undefined): string
   if (/주문가능시간|주문.*시간/i.test(e))                              return 'time_restriction';
   if (/거래정지|관리종목|trading.?halt/i.test(e))                     return 'trading_halt';
   if (/단일가|예상체결|동시호가/i.test(e))                             return 'auction_phase';
+  // T-027 — 타입 결함(비-number)과 사이징 결과 0은 원인도 조치도 다르므로 분리해서 남긴다.
+  if (/(quantity|price)\s*타입\s*오류/i.test(e))                      return 'bad_number_field';
   if (/quantity\s*계산\s*실패|quantity\s*<=\s*0/i.test(e))           return 'qty_calc_failed';
   if (/timeout|aborted|ETIMEDOUT|ECONNRESET|fetch failed/i.test(e))   return 'network_error';
   return 'kis_rejected';

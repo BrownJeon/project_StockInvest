@@ -51,3 +51,51 @@ export function submittedQuantity(market: Market, quantity: number): number {
   if (!Number.isFinite(quantity) || quantity <= 0) return 0;
   return market === 'overseas' ? Math.floor(quantity) : quantity;
 }
+
+/**
+ * 주문 송신 직전 **수량이 쓸 수 없는 값인지** 판정하고, 그렇다면 사유 문자열을 돌려준다 (T-027).
+ * 쓸 수 있으면 `null`.
+ *
+ * ## 왜 `quantity <= 0` 만으로는 부족했는가
+ *
+ * `OrderRequest.quantity` 의 `?: number` 는 **컴파일타임 선언일 뿐 런타임 가드가 아니다.**
+ * JSON 본문 등 타입 경계 밖에서 온 값은 무엇이든 될 수 있는데, JS 의 관계연산자는 피연산자를
+ * 숫자로 강제변환하므로 `'3.7' <= 0` 은 **false** 다. 즉 타입이 깨진 수량이 어댑터의 가드를
+ * 그대로 통과해 **라이브 주문 API 호출까지 도달**했다(T-024 Reviewer MEDIUM → [[T-027]]).
+ *
+ * 자금이 나가는 경로는 아니다 — 최종 `ORD_QTY` 는 위 `submittedQuantity` 의 엄격한
+ * `Number.isFinite` 덕에 `"0"` 이 되어 브로커가 거절한다. 그래도 "가드가 있는데 안 걸리는"
+ * 상태를 주문 송신 경로에 남겨 두지 않는다.
+ *
+ * ## 왜 사유를 두 갈래로 나누는가
+ *
+ * `quantity 계산 실패`(사이징이 0을 만든 정상 분기)와 `quantity 타입 오류`(호출부가 애초에
+ * 숫자가 아닌 값을 넘긴 결함)는 **원인도 조치도 다르다.** 로그만 보고 판별할 수 있어야 하므로
+ * 문자열을 분리하고, `categorizeRejectReason` 이 각각 `qty_calc_failed` / `bad_number_field` 로
+ * 분류해 `orders.blocked_by` 에 남긴다. 후자는 두 어댑터의 `price 타입 오류` 와 **공유하는**
+ * 카테고리다 — 같은 원인(호출부가 숫자 아닌 값을 넘김)이라 함께 조회하는 편이 진단에 낫다.
+ *
+ * 기존 `quantity 계산 실패` 문구는 **그대로 유지한다** — 이미 분류 정규식과 운영 로그가
+ * 그 문자열에 걸려 있다. `context` 는 해외 어댑터가 쓰던 부연을 잃지 않기 위한 것이다.
+ */
+export function unusableQuantityReason(quantity: unknown, context?: string): string | null {
+  if (typeof quantity !== 'number' || !Number.isFinite(quantity)) {
+    return `quantity 타입 오류: 유한한 숫자가 아님 (${describeValue(quantity)})`;
+  }
+  if (quantity <= 0) {
+    return context ? `quantity 계산 실패 (${context})` : 'quantity 계산 실패';
+  }
+  return null;
+}
+
+/** 진단 로그용 값 표기. 어떤 입력에도 던지지 않는다 (심볼·BigInt·순환참조 포함). */
+function describeValue(v: unknown): string {
+  if (v === null) return 'null';
+  if (typeof v === 'string') return `string: ${JSON.stringify(v)}`;
+  if (typeof v === 'number') return `number: ${v}`;   // NaN / Infinity
+  try {
+    return `${typeof v}: ${JSON.stringify(v) ?? String(v)}`;
+  } catch {
+    return `${typeof v}: (직렬화 불가)`;
+  }
+}

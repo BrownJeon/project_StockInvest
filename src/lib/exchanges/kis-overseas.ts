@@ -17,7 +17,7 @@ import { getCredential } from '@/lib/credentials';
 import { kisFetch, isKisRateLimited, kisBodyText } from './kis-http';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
 import { parseOverseas, formatOverseas, toOvrsExcgCd, type OverseasExchange } from './kis-symbols';
-import { submittedQuantity } from './order-quantity';
+import { submittedQuantity, unusableQuantityReason } from './order-quantity';
 import { getUsdKrwRate } from './fx';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
 
@@ -318,7 +318,32 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
 
   const krwPrice = req.price ?? 0;
   const quantity = req.quantity ?? 0;
-  if (quantity <= 0) return { ok: false, error: 'quantity 계산 실패 (해외는 USD 가격·수량 필수)' };
+  // 🔴 T-027 — 국내 어댑터와 동일. `quantity <= 0` 은 비-number 를 못 거른다(`'3.7' <= 0 → false`).
+  //    해외는 `adjPrice <= 0` 가드가 뒤에 한 겹 더 있어 실도달이 어려웠지만, 두 어댑터가 같은
+  //    규칙을 쓰지 않으면 한쪽만 고친 상태가 다시 결함의 구조가 된다.
+  //    기존 문구는 그대로 유지된다(`context` 인자) — 분류 정규식·운영 로그가 걸려 있다.
+  const badQty = unusableQuantityReason(quantity, '해외는 USD 가격·수량 필수');
+  if (badQty) return { ok: false, error: badQty };
+
+  // 🔴 T-027 (Reviewer MEDIUM-1) — 국내에만 있던 price 유한성 가드를 해외에도 대칭으로 둔다.
+  //    아래 `adjPrice <= 0` 는 `NaN` 은 막지만(`NaN > 0` → false) **`Infinity` 는 통과시킨다**
+  //    (`Infinity > 0` → true) → `OVRS_ORD_UNPR: "Infinity"` 라는 쓰레기 payload 가 라이브로
+  //    나간다. 국내의 `ORD_UNPR:"NaN"` 과 정확히 같은 클래스다. 특히 **매도는 상위 한도 검사를
+  //    건너뛰므로**(청산 우선 정책) 해외 매도에서는 이 가드가 유일한 방어선이다.
+  //
+  //    ⚠️ 두 가지가 국내와 다르다.
+  //    ① **`type` 으로 스코프하지 않는다.** 국내는 시장가면 `ORD_UNPR:'0'` 이라 price 를 아예
+  //       쓰지 않지만, KIS 해외는 시장가를 지원하지 않아 `ORD_DVSN:'00'`(지정가) 고정이고
+  //       시장가도 `usdPrice` 에서 공격적 호가를 파생시킨다 — 즉 **모든 주문이 price 를 쓴다.**
+  //    ② quantity 와 달리 **느슨하게(`Number(...)`) 판정한다.** mysql2 가 DECIMAL 을 문자열로
+  //       돌려주므로 `'280000'` 은 오늘 정상 송신되는 값이다. 엄격하게 가면 해외 매도가 끊기고,
+  //       청산을 막는 것은 이 결함보다 훨씬 무겁다.
+  //
+  //    `<= 0` 은 여전히 아래 `adjPrice` 가드가 담당한다 — 현행 동작을 바꾸지 않는다.
+  if (!Number.isFinite(Number(krwPrice))) {
+    // 값 자체는 `trade_logs.submit_attempt` 에 원본 req 로 남으므로 여기서는 타입만 적는다.
+    return { ok: false, error: `price 타입 오류: 유한한 숫자가 아님 (${typeof krwPrice})` };
+  }
 
   // KIS 해외 주문은 지정가(ORD_DVSN='00')만 지원 — '01'은 장전시간외(오류 유발).
   // 가격은 USD 단가: ticker.price가 KRW로 환산되어 있으므로 FX로 역산.

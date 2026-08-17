@@ -15,9 +15,21 @@ function inferMarket(req: OrderRequest): Market {
   return req.market ?? getMarketFromSymbol(req.symbol);
 }
 
+/**
+ * 🔴 T-027 — `price * quantity` 가 **NaN 이 될 수 있고, NaN 은 모든 한도 비교를 통과한다.**
+ *
+ * `price: 'abc'` 처럼 비-number 가 섞이면 곱은 NaN 이다. 그 NaN 이 그대로 반환되면
+ * `checkOrderMax` 의 `amount <= 0`(→false) 도 `amount > effectiveMax`(→false) 도 걸리지 않아
+ * **1회·일일 한도가 통째로 무력화된다.** 원래의 [[T-027]] 결함(비-number quantity)과 같은
+ * 계열이되, 이쪽은 자금 한도를 우회하므로 성격이 더 무겁다. 산출 불가는 0(= 한도 검사에서
+ * 즉시 거부)으로 되돌린다 — 애매하면 막는다.
+ */
 export function resolveOrderAmountKRW(req: OrderRequest): number {
   if (req.amountKRW != null && req.amountKRW > 0) return req.amountKRW;
-  if (req.price && req.quantity) return req.price * req.quantity;
+  if (req.price && req.quantity) {
+    const amount = req.price * req.quantity;
+    return Number.isFinite(amount) ? amount : 0;
+  }
   return 0;
 }
 
@@ -29,6 +41,9 @@ export async function resolveOrderAmountKRWAsync(req: OrderRequest): Promise<num
   if (req.amountKRW != null && req.amountKRW > 0) return req.amountKRW;
   if (req.price && req.quantity) {
     const amount = req.price * req.quantity;
+    // 🔴 T-027 — sync 판(`resolveOrderAmountKRW`)과 동일 이유. NaN 을 그대로 흘리면
+    //    한도 비교가 전부 false 가 되어 fail-open 이다. 환산 이전에 잘라낸다.
+    if (!Number.isFinite(amount)) return 0;
     if (req.currency === 'USD' || inferMarket(req) === 'overseas') {
       const { usdToKrw } = await import('@/lib/exchanges/fx');
       return usdToKrw(amount);
@@ -170,7 +185,10 @@ export function getEnvDailyMax(_exchange?: ExchangeId): number {
  */
 export function checkOrderMax(req: OrderRequest, effectiveMax: number): LimitCheck {
   const amount = resolveOrderAmountKRW(req);
-  if (amount <= 0) return { ok: false, reason: 'order_limit', detail: 'amount unresolved' };
+  // 🔴 T-027 — `amount <= 0` 이 아니라 `!(amount > 0)`. NaN 은 **모든** 관계연산에서 false 라
+  //    `<= 0` 도 `> effectiveMax` 도 통과시켜 한도 검사 전체가 무력화된다. 부정형으로 뒤집으면
+  //    NaN 이 여기서 멈춘다. 유한한 양수에 대해서는 두 식이 완전히 동치라 회귀가 없다.
+  if (!(amount > 0)) return { ok: false, reason: 'order_limit', detail: 'amount unresolved' };
   if (!Number.isFinite(effectiveMax) || effectiveMax <= 0) {
     return { ok: false, reason: 'order_limit', detail: 'order limit not configured (0) — buy blocked' };
   }
@@ -190,7 +208,9 @@ export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number
     return { ok: false, reason: 'daily_limit', detail: 'daily limit not configured (0) — buy blocked' };
   }
   const amount = await resolveOrderAmountKRWAsync(req);
-  if (amount <= 0) return { ok: false, reason: 'daily_limit', detail: 'amount unresolved' };
+  // 🔴 T-027 — `checkOrderMax` 와 동일 이유로 부정형. NaN 이면 `already + NaN > max` 도
+  //    false 라 일일 누적 한도까지 통째로 빠져나간다.
+  if (!(amount > 0)) return { ok: false, reason: 'daily_limit', detail: 'amount unresolved' };
 
   try {
     const pool = getPool();

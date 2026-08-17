@@ -8,6 +8,15 @@ tags:
 
 ## Backlog
 
+- **[신규, T-027 잔여, 2026-08-17, 비차단] `POST /api/signals` 가 price·quantity·amountKRW 를 무검증으로 `createSignal` 에 넘긴다**
+  → [[T-027-nonnumber-quantity-guard]] 참조. `src/app/api/signals/route.ts:48` — T-027 이 `POST /api/orders`
+  에서 닫은 것과 **같은 패턴**("타입 선언일 뿐 런타임 가드가 아니다")이 그대로 남아 있다. Developer 가
+  발견해 숨기지 않고 보고했고 Reviewer 도 이번 제외에 동의했다. **현재 실피해는 억제돼 있다** — quantity 는
+  `sizeOrderQuantity` 가 정규화하고, price 는 T-027 이 신설한 어댑터 가드 + 한도 fail-closed 가 잡는다.
+  **미룬 이유**: 시그널은 주문 **이전에** DB 행이 생기므로 400 을 넣으면 시그널 생성 semantics 가 바뀐다 —
+  설계 판단이 필요해 Developer 단독으로 정할 사안이 아니다. **착수 시 결정할 것**: 무효 입력을 400 으로
+  거절할지, 아니면 행은 만들되 `rejected` 로 기록할지.
+
 - 🟠 **[신규, 프로세스, 2026-08-16 Leader 관측] QA 가 지시받은 시나리오를 조용히 축소해도 아무도 모른다**
   T-025 최종 QA 는 Leader 가 지시한 **11개 시나리오 중 5개만 실행**하고도 보고서에 "(a)~(e) 5개 실행,
   기대값 100% 달성 / 검증 통과"라고 적었다. 축소 사실 자체는 보고되지 않았고, Leader 가 지시서와
@@ -44,10 +53,10 @@ tags:
   > `## Reviewer` 섹션 존재 여부 확인"을 명시적 단계로 추가 (b) 가능하면 `.git/hooks/pre-commit`
   > 또는 CI 성격의 장치로 기계적으로 강제. 이번 세션 범위 밖 — 별도 과제로 다룰 것.
 
-- **[신규, T-024 Reviewer MEDIUM-1, 2026-08-13] 비-number `quantity`가 `POST /api/orders` 방어선과 domestic 어댑터 가드를 모두 통과해 라이브 KIS 주문 API 호출까지 도달함(시장가/가격없는 지정가 한정)** — Leader 판단: **배포 차단 아님, 백로그로 defer.**
+- ✅ **[해결됨 — 2026-08-17, [[T-027-nonnumber-quantity-guard]]]** **[신규, T-024 Reviewer MEDIUM-1, 2026-08-13] 비-number `quantity`가 `POST /api/orders` 방어선과 domestic 어댑터 가드를 모두 통과해 라이브 KIS 주문 API 호출까지 도달함(시장가/가격없는 지정가 한정)** — Leader 판단: **배포 차단 아님, 백로그로 defer.**
   `body.quantity`가 문자열(`"3.7"`) 등 비-number 런타임 값이면 `sizeOrderQuantity` branch③(`undefined`)로 떨어져 원본이 `orderReq.quantity`에 남고, `kis-domestic.ts:270`의 `quantity <= 0` 가드가 JS의 느슨한 `<=` 숫자변환(`"3.7"<=0`→false) 때문에 걸러내지 못해 **실제 KIS 라이브 주문 API 호출까지 나간다**(최종 `ORD_QTY`는 `submittedQuantity`의 엄격한 `Number.isFinite` 덕분에 `"0"`이 되어 브로커가 거절할 것으로 합리적으로 기대됨 — **자금손실 경로 아님**, 무의미한 API 호출 1건 + 거절 로그가 최악). 해외(overseas)는 이 구멍이 없음(가격 없으면 `adjPrice<=0` 가드가 먼저 걸림, domestic 전용). **실노출도 사실상 0**: `middleware.ts` 확인 결과 인증 세션 필수(비인증 접근 불가) + 현재 이 리포지토리에 `POST /api/orders`를 호출하는 프론트엔드 코드가 **전혀 없음**(GET 목록/DELETE 취소만 존재, `/order` 페이지는 `/strategy`로 즉시 redirect) — 계정 소유자 본인의 직접 curl 호출로만 도달 가능. **수정 방향(다음 정기 작업 시)**: `route.ts`에서 `typeof body.quantity==='number'` 런타임 가드 추가(비-number면 400) 또는 `kis-domestic.ts`/`kis-overseas.ts`의 `quantity<=0` 가드를 `!Number.isFinite(quantity)||quantity<=0`로 강화(후자가 더 근본적 — 수동 주문 경로 외 다른 진입점에도 방어가 걸림). 상세: [[T-024-manual-order-quantity-guard]] Reviewer 절.
 
-- **[신규, T-024 Reviewer MEDIUM-2, 2026-08-13] `route.test.ts` 신규 테스트 6건 전부 숫자 `quantity`만 사용 — 위 MEDIUM-1 경로가 테스트 커버리지 밖** — Leader 판단: **배포 차단 아님, 위 MEDIUM-1과 함께 처리.** `quantity:'3.7'`(문자열) + `type:'market'` 조합 테스트가 없어 MEDIUM-1 경로가 회귀해도 CI가 못 잡는다. MEDIUM-1 수정 시 함께 테스트 추가 권고. 상세: [[T-024-manual-order-quantity-guard]] Reviewer 절.
+- ✅ **[해결됨 — 2026-08-17, [[T-027-nonnumber-quantity-guard]]]** **[신규, T-024 Reviewer MEDIUM-2, 2026-08-13] `route.test.ts` 신규 테스트 6건 전부 숫자 `quantity`만 사용 — 위 MEDIUM-1 경로가 테스트 커버리지 밖** — Leader 판단: **배포 차단 아님, 위 MEDIUM-1과 함께 처리.** `quantity:'3.7'`(문자열) + `type:'market'` 조합 테스트가 없어 MEDIUM-1 경로가 회귀해도 CI가 못 잡는다. MEDIUM-1 수정 시 함께 테스트 추가 권고. 상세: [[T-024-manual-order-quantity-guard]] Reviewer 절.
 
 - **[신규, T-021 파생, Low] 트레일링 활성화 표시가 실제 발화 기준과 다르다 + 기준값이 세 곳에 흩어져 있다**
   `ScenarioAnalysis.tsx:209` 가 `+{ai.exit.trailing_activate_pct ?? 0}%` 로 렌더해 값이 없으면 **"+0%"** 라고 말하는데, **실제 발화 기준은 그 값이 아니다.**
@@ -59,8 +68,9 @@ tags:
   `scenario-builder` 의 **생산자 타입 `ScenarioCard`(전 필드 required)** 로 분석 API 응답을 받아 `ai.exit.trailing_activate_pct` 같은 무가드 접근이 남아 있다. T-021 이 없앤 것과 **같은 클래스**지만, 이 경로("추천 → 내 시나리오 만들기")는 DB 에 쌓인 임의 JSON 이 아니라 **같은 요청 안에서 서버가 방금 만들어 돌려준 값**이라 신뢰 근거가 다르고 크래시 신고도 없어 범위에서 뺐다.
   **승격 조건**: 분석 API 가 부분 응답을 낼 수 있게 바뀌거나, 이 화면에서 크래시가 관측되면 즉시. 상세: [[T-021-recommend-detail-client-crash]] §6.2
 
-- 🔴🔴 **[신규, T-018 감사 H-5 — 해외주문량 재개 *전에* 처리할 것] `settledStatus` 가 체결수량 증거를 무시하고 부재만으로 `filled` 를 쓴다 → 손익 계산까지 왜곡**
-  → **2026-08-11 착수: [[T-019-partial-fill-false-filled]]** (아래 원문은 근거로 보존)
+- ✅ **[해결됨 — 2026-08-11, [[T-019-partial-fill-false-filled]] 커밋 `d67dceb` 배포 완료] T-018 감사 H-5 — `settledStatus` 가 체결수량 증거를 무시하고 부재만으로 `filled` 를 쓰던 문제 (손익 계산 왜곡)**
+  `settleDecision()` 이 체결수량을 검증하고, 수량 < 송신수량이면 `executions` 에 실제 체결수량을 기록하도록 수정됨(2026-08-16 Leader 코드 실측 재확인). **아래 원문은 이력 보존용이며 현재 유효한 과제가 아니다.**
+  > ⚠️ 2026-08-16 기록: 이 항목이 해결 후에도 `🔴🔴` 최우선 마커를 단 채 Backlog 에 남아 있어서, Leader 가 다음 작업으로 이것을 추천하는 오판이 실제로 발생했다. **해결된 항목은 즉시 마커를 내리고 Done 성격으로 표시할 것** — 낡은 상태 표기가 판단을 오도한다(T-023/T-024 사고와 같은 계열).
   "조회 신뢰가능" 분기에서 미체결 목록에 없다는 이유만으로 `filled` 를 기록한다. **하필 H-4(B) 가 "정상"이라고 분류한 바로 그 이벤트**(장마감 시 미체결 잔량 자동취소)에서, 부분체결된 매도주문이 **"완전 청산"으로 오기록**된다.
   **파급이 주문상태에서 안 끝난다**: `executions` 테이블이 역사상 **0행**이라 `trade-report.ts` 가 항상 주문수량 전체를 체결수량으로 계산한다 → **FIFO 원가·실현손익이 왜곡**된다. 즉 "얼마 벌었나"가 틀리게 나온다.
   **현재 노출 0** — order-sync 대상 0건, 역대 `partially_filled` 0건.
@@ -203,6 +213,19 @@ tags:
 > **`T-007` 중복 항목 제거(2026-08-11)** — 이 Review 섹션에 남아 있던 `T-007` 항목은 이미 Done 섹션에도 있는 잔재였다(커밋 `5f51763` 로 2026-08-06 배포 완료). 상태가 두 곳에 갈라져 있으면 어느 쪽이 참인지 매번 다시 판단해야 하므로 Review 쪽을 삭제했다.
 
 ## Done
+
+- ✅ **[구현·감사 완결 — 2026-08-17] [[T-027-nonnumber-quantity-guard]] — 비-number 수량·가격 가드 강화
+  + **NaN 주문한도 우회 폐쇄**, 최종 판정 pass(Critical 0·High 0)**
+  T-024 MEDIUM 1·2 해소. 어댑터의 `quantity <= 0` 가 JS 느슨한 비교(`'3.7'<=0`→false)로 비-number 를
+  못 걸러 라이브 KIS 호출까지 나가던 문제를 `!Number.isFinite(...)` 로 강화하고, `POST /api/orders` 에
+  런타임 타입 가드(400)를 이중화. **조사 중 더 무거운 것을 발견해 함께 수정** — `price` 비-number →
+  `price*quantity`=NaN → NaN 은 모든 관계연산 false 라 1회·일일 **주문 한도를 통째로 우회**했다
+  (`amount<=0` → `!(amount>0)` 로 fail-closed, 유한 양수에서 완전 동치라 회귀 없음). 해외 어댑터에
+  `Infinity` 가 `adjPrice<=0` 을 빠져나가던 거울상 구멍도 폐쇄(해외 매도는 한도검사를 건너뛰어 어댑터가
+  유일 방어선). **과도차단이 최대 위험**이라 `quantity` 엄격 / `price` 느슨 비대칭을 택했다 — mysql2 가
+  DECIMAL 을 문자열로 돌려주므로 `'70000'` 은 오늘 정상 송신되는 값이다. 102 suites/1660 tests 통과
+  (신규 +143·회귀 0), typecheck 0, QA 16항목 전수. 안전장치 단계·순서 무변경.
+  **git commit 은 사용자 승인 대기.** 훅 게이트 사전 시뮬레이션 통과 확인.
 
 - ✅ **[구현·감사 완결 — 2026-08-16] [[T-026-order-history-symbol-grouping]] — 주문 내역 날짜→종목
   2단 그룹핑 + 접기/펼치기, 최종 판정 pass(Critical 0·High 0)**
