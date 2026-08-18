@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-13
+updated: 2026-08-18
 tags:
   - type/context
 aliases:
@@ -15,7 +15,20 @@ aliases:
 
 ---
 
-## ✅ 최신 상태 — 2026-08-13 완결 (이 절이 아래 08-11 서술보다 우선한다) — 절차 위반 발견 → 사후감사 완주 → 배포 권고
+## ✅ 최신 상태 — 2026-08-18 (이 절이 아래 08-13 서술보다 우선한다)
+
+**T-025(commit-msg Reviewer 게이트 훅)~T-029(custom/confirm 수치가드)까지 전부 커밋 완료, `git status` 클린.**
+상세: [[ACTIVE]] 2026-08-18 절 참조. 요지:
+- T-025: Reviewer 감사 없이 안전코드가 커밋되는 것을 막는 git 훅 신설 — 실제 프로덕션에서 1회 발동 확인됨(형식 결함 있는 Reviewer 판정을 실제로 차단)
+- T-026: 거래이력·최근주문 UI 날짜→종목 그룹핑 (사용자 요청) — ✅ 실기기 확인 완료(2026-08-18), 완전 종결
+- T-027~T-029: `POST /api/orders`·`/api/signals`·`/api/signals/custom/confirm` 세 경로에서 연쇄로
+  발견된 비-number 입력 가드 결함(그중 하나는 **주문 한도 검사를 완전히 무력화하는 NaN 우회**였음) 순차 해결
+
+**다음 할 일 후보**: board.md Backlog의 QA 형식
+준수·잔여 Medium/Low 항목들 — 전부 배포 비차단, 급하지 않음. Phase 로드맵상 다음 단계는 없음(현재는
+발견 즉시 대응하는 안전 결함 정리 국면).
+
+## ✅ 2026-08-13 완결 (이 절이 아래 08-11 서술보다 우선한다) — 절차 위반 발견 → 사후감사 완주 → 배포 권고
 
 **[[T-023-getactiveorders-pagination]]과 [[T-024-manual-order-quantity-guard]] 둘 다 "커밋·배포 승인 대기"로
 문서에 남아 있었으나, 실제로는 Reviewer 감사 없이 이미 커밋·푸시·배포까지 끝나 있었다** (Leader 가

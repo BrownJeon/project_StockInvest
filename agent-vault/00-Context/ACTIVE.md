@@ -1,10 +1,43 @@
 ---
 project: StockInvest
-updated: 2026-08-16
+updated: 2026-08-18
 tags:
   - type/context
 ---
 # 현재 상태
+
+## ✅ 2026-08-18 (추가) — [[T-030-fundamentals-refresh-stale-state]] 완료: 즐겨찾기 재무갱신 "데이터없음" 미반영 버그 수정
+
+사용자 신고("재무갱신 호출 시 데이터없음으로 처리되지 않는다")를 Leader가 코드 추적으로 원인
+확정 → Developer 2라운드 → Reviewer PASS → QA PASS로 완결. 캐시 DELETE 후 AI 재분석이 실패하면
+화면 재동기화를 안 하던 결함(목록·상세 두 화면 동일 패턴)을 고쳤다. 상세화면은 처음 구현된
+"실패 시 AI 재호출" 방식을 Leader 판단으로 제거하고 "재호출 없이 표시만 정확히 전환"으로
+조정했다. 107 suites/1888 tests, 실매매 코드 무변경. **git commit은 사용자 승인 대기.**
+
+## ✅ 2026-08-18 — T-025~T-029 전부 커밋 완료 (아래 08-16 절의 "커밋 대기 중"은 낡은 서술, 무효)
+
+`git status` 클린, 최근 커밋 5개: `cc6dd03`(T-025 훅)·`7b9de61`(T-026 UI)·`c2533aa`(T-027)·
+`cec5423`(T-028)·`0481d55`(T-029). T-025 이후 다른 세션들이 이어서 작업했고, **T-025의
+commit-msg 훅이 실제 프로덕션에서 동작 확인됨** — T-029 커밋 시도 중 Reviewer 판정 형식 결함으로
+실제 차단(exit=1)됐고 Reviewer가 직접 정정 후 통과, 훅이 의도대로 작동한 첫 실사례.
+
+- [[T-026-order-history-symbol-grouping]]: 거래이력·최근주문 UI를 날짜→종목 2단 그룹핑으로 개선.
+  페이지네이션이 그룹핑보다 먼저 적용되던 정확성 버그도 같이 수정(순서 반전). 100 suites/1517
+  tests. 갤럭시 S25+ 실기기 헤더 줄바꿈 여부 → ✅ 2026-08-18 사용자 확인 완료(정상, 한 줄 유지).
+- [[T-027-nonnumber-quantity-guard]]: `POST /api/orders`의 비-number quantity/price 가드. 조사 중
+  더 심각한 결함 발견 — price가 NaN이면 주문 한도 검사가 전부 무력화(관계연산에서 NaN은 항상
+  false)돼 **금액 무제한 주문**이 가능했음. 해외 어댑터의 대칭 구멍(Infinity)도 같이 닫음.
+  102 suites/1660 tests.
+- [[T-028-signals-api-numeric-guard]]: `POST /api/signals`에 같은 클래스의 수치 가드. 공용 모듈
+  `src/lib/safety/numeric-fields.ts` 신설로 orders·signals 두 경로가 규칙 공유. 103 suites/1717 tests.
+- [[T-029-custom-confirm-numeric-guard]]: `POST /api/signals/custom/confirm` — **사람 승인 없이
+  즉시 진입감시로 전환되는 유일한 경로**라 우선순위 격상. 문자열 `+` 연산이 NaN이 아니라 "그럴듯한
+  틀린 값"을 만들어(`'100'+'200'`→`'100200'`) 아래 단계 가드를 전부 통과하던 결함. 106 suites/1877
+  tests. 잔여 LOW(`splits` 상한 없음, 자해성 DoS뿐)만 백로그.
+
+**남은 것**: board.md Backlog의 QA 형식 준수 이슈(4회 중
+3회 미준수 후 4회째 준수 — 지시문에 "표 없으면 무효" 명시가 효과 있었음, 기계적 강제는 미도입),
+T-025 잔여 Medium/Low 6건(비차단).
 
 ## ✅ 2026-08-16 — [[T-025-commit-reviewer-safeguard]] 완료: Reviewer 감사 없이 커밋되는 것을 막는 git 훅 신설
 

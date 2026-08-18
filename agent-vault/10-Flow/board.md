@@ -8,6 +8,12 @@ tags:
 
 ## Backlog
 
+- **[신규, T-030 Reviewer LOW, 2026-08-18, 비차단] 재무갱신 중 네트워크 자체가 끊기면(fetch/res.json() throw) 화면 재동기화가 안 됨**
+  → [[T-030-fundamentals-refresh-stale-state]] 참조. `refresh-fundamentals.ts`가 `if (!json.ok)`만
+  다루고 `try/catch`가 없어, fetch 자체가 예외를 던지면(네트워크 단절·비JSON 응답) 재동기화 없이
+  예외가 전파돼 동일한 stale 화면이 남을 수 있음. 이번 수정 이전부터 있던 사전 결함, 발생 조건이
+  드묾. `catch` 블록에서도 재동기화를 호출하도록 확장 권고.
+
 - **[신규, T-029 잔여, 2026-08-18, LOW·비차단] `custom/confirm` 의 `splits` 상한 없음**
   → [[T-029-custom-confirm-numeric-guard]] 참조. 수 검증은 걸렸으나 상한이 없다. 미들웨어가 이 라우트를
   세션 인증 대상에 포함해 외부 미노출이고 1인 실사용이라 자해성 DoS 뿐 — Reviewer 가 블로커 아님으로 판정.
@@ -229,6 +235,20 @@ tags:
 
 ## Done
 
+- ✅ **[구현·감사 완결 — 2026-08-18] [[T-030-fundamentals-refresh-stale-state]] — 즐겨찾기 재무갱신
+  실패 시 "데이터없음" 미반영 버그 수정, 최종 판정 PASS(Critical 0·High 0)**
+  사용자 신고("재무갱신 호출 시 데이터없음으로 처리되지 않는다")를 Leader가 코드 추적으로 원인
+  확정 — `FavoritesPage.tsx`·`FavoriteDetailPage.tsx`의 재무갱신 함수가 서버 캐시 DELETE 후
+  AI 재분석이 실패하면 화면 재동기화를 호출하지 않고 그냥 끝나, 실제로는 데이터가 없는데도 옛
+  캐시 값이 화면에 계속 남던 결함(두 파일에 동일 패턴 복붙). 공용 모듈
+  `src/app/favorites/refresh-fundamentals.ts` 신설로 성공·실패 양쪽 다 재동기화하도록 통일.
+  상세화면은 처음엔 실패 시 AI를 90초짜리로 한 번 더 재호출하도록 구현됐으나, 사용자가 원한 건
+  재시도가 아니라 정확한 표시라고 Leader가 판단해 AI 재호출 없이 `setFund(null)+fetchCore()`로만
+  전환하도록 조정. 기존 "분석 실패" 2.5초 노출 UX·성공 경로는 전부 보존. Developer 2라운드 →
+  Reviewer 1라운드(PASS) → QA(검증 통과) 완료. 107 suites/1888 tests(신규 11건), typecheck 0에러.
+  실매매 코드 무변경. 잔여 LOW 1건(네트워크 자체 단절 시 예외 전파 — 사전 결함, 백로그 이관)만
+  남음. **git commit은 사용자 승인 대기.**
+
 - ✅ **[구현·감사 완결 — 2026-08-18] [[T-029-custom-confirm-numeric-guard]] — `custom/confirm` 수치·배열
   가드, 최종 판정 pass(Critical 0·High 0)**
   **사람 승인 없이 진입감시로 직행하는 유일한 경로**를 마감. 앞선 두 건과 달리 결함이 `NaN` 이 아니라
@@ -273,8 +293,9 @@ tags:
   분리해 두 화면 공유, `created_at`·`symbol` 이상값은 `(날짜 미상)`·`(알 수 없음)`으로 수집해
   주문이 조용히 사라지지 않게 함. 감사 지적으로 공백 섞인 동일 심볼 분리 버그도 수정.
   `Dashboard.tsx` 1257→1171줄. 100 suites/1517 tests 통과(신규 39·회귀 0)·typecheck 0·build 성공,
-  실매매 코드 무변경. **git commit은 사용자 승인 대기.**
-  🔶 남은 확인 1건: 갤럭시 S25+ 실기기에서 대시보드 헤더 한 줄 유지 육안 확인(에이전트 수행 불가).
+  실매매 코드 무변경. **커밋 완료(`7b9de61`).**
+  ✅ **갤럭시 S25+ 실기기 확인 완료(2026-08-18, 사용자)** — 헤더 줄바꿈 없이 한 줄 정상 표시.
+  이 task의 유일한 미확인 항목이 해소돼 완전히 종결됐다.
 
 - ✅ **[구현·다중감사 완결 — 2026-08-16] [[T-025-commit-reviewer-safeguard]] — Reviewer 감사 없이
   안전 관련 코드가 커밋되는 것을 막는 `commit-msg` git 훅 신설, 최종 판정 PASS(Critical 0·High 0)**

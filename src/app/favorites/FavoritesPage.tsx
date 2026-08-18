@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatSymbolShort } from '@/lib/symbols';
 import { isAwaitingApproval } from '@/lib/signals/statuses';
+import { runFundamentalsRefresh } from './refresh-fundamentals';
 
 interface KeyFactor {
   label: string;
@@ -143,22 +144,13 @@ export function FavoritesPage() {
   }
 
   async function refreshFundamentals(symbol: string) {
-    setProgress(symbol, { step: 1, label: '캐시 초기화 중' });
-    try {
-      await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
-      setProgress(symbol, { step: 2, label: 'AI 분석 중' });
-      const res = await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
-      const json = await res.json() as { ok: boolean; error?: string };
-      if (!json.ok) {
-        setProgress(symbol, { step: 2, label: `분석 실패 (${json.error ?? 'unknown'})` });
-        await new Promise(r => setTimeout(r, 2500));
-        return;
-      }
-      setProgress(symbol, { step: 3, label: '데이터 적용 중' });
-      await load();
-    } finally {
-      setProgress(symbol, null);
-    }
+    // 성공·실패 양쪽에서 load() 로 재동기화한다 — 실패해도 서버 캐시는 이미 비워졌으므로
+    // 화면이 옛 값을 계속 보여주면 안 된다 (T-030).
+    await runFundamentalsRefresh({
+      symbol,
+      setProgress: (info) => setProgress(symbol, info),
+      resync: load,
+    });
   }
 
   function toggleSummary(symbol: string) {

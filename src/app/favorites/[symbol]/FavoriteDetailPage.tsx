@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatSymbolShort } from '@/lib/symbols';
 import { isAwaitingApproval } from '@/lib/signals/statuses';
+import { runFundamentalsRefresh } from '../refresh-fundamentals';
 
 interface KeyFactor { label: string; value: string; description: string; }
 
@@ -177,6 +178,10 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
     ]);
     if (fundRes.status === 'fulfilled' && fundRes.value.ok) {
       setFund(fundRes.value.data);
+    } else {
+      // 재무 데이터를 못 받았으면 이전 값을 남겨두지 않는다 — 남겨두면 서버에서 이미
+      // 삭제된 재무 정보가 화면에 계속 표시된다 (T-030). null 이면 `item` 값으로 폴백한다.
+      setFund(null);
     }
     setLoadingFund(false);
     if (chartRes.status === 'fulfilled' && chartRes.value.ok) {
@@ -189,22 +194,17 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
   useEffect(() => { void fetchAi(); }, [fetchAi]);
 
   async function refreshFundamentals() {
-    setFundProgress({ step: 1, label: '캐시 초기화 중' });
-    try {
-      await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`, { method: 'DELETE' });
-      setFundProgress({ step: 2, label: 'AI 분석 중' });
-      const res = await fetch(`/api/fundamentals/${encodeURIComponent(symbol)}`);
-      const json = await res.json() as { ok: boolean; error?: string };
-      if (!json.ok) {
-        setFundProgress({ step: 2, label: `분석 실패 (${json.error ?? 'unknown'})` });
-        await new Promise(r => setTimeout(r, 2500));
-        return;
-      }
-      setFundProgress({ step: 3, label: '데이터 적용 중' });
-      await fetchAi();
-    } finally {
-      setFundProgress(null);
-    }
+    await runFundamentalsRefresh({
+      symbol,
+      setProgress: setFundProgress,
+      resync: fetchAi,
+      // 실패해도 서버 캐시는 이미 비워졌다. 이 화면의 재무 표시는 `fund` 뿐 아니라
+      // `item`(fetchCore — /api/favorites 가 stock_fundamentals 를 LEFT JOIN 한 값)에도
+      // 폴백하므로, 둘 다 비워야 "데이터 없음"이 화면에 반영된다 (T-030).
+      // 여기서 fetchAi() 를 부르지 않는 건 의도적이다 — 방금 실패한 AI 분석(최대 90초)을
+      // 사용자가 요청하지도 않았는데 조용히 한 번 더 트는 셈이라 체감 대기만 늘린다.
+      resyncOnFailure: async () => { setFund(null); await fetchCore(); },
+    });
   }
 
   async function refreshChartAnalysis() {
