@@ -167,7 +167,7 @@ export function recordKbFailure(label: string): void {
 export async function getKbClient(): Promise<M4KbClient> {
   if (isKbCircuitOpen()) throw new Error('KB circuit breaker open — M4 unreachable');
   if (_cachedClient) return _cachedClient;
-  const base = process.env.AI_API_BASE ?? 'http://192.168.219.163:8000';
+  const base = process.env.AI_API_BASE ?? 'http://192.168.219.100:8000';
   const apiKey = process.env.AI_API_KEY ?? '';
   const adminToken = process.env.M4_ADMIN_TOKEN ?? process.env.ADMIN_TOKEN ?? '';
   _cachedClient = new M4KbClient(base, apiKey, adminToken);

@@ -64,7 +64,7 @@ StockInvest 의 [src/lib/rag/retrieval.ts](../src/lib/rag/retrieval.ts) 가 호�
 
 | 변수 | 기본값 | 역할 |
 |---|---|---|
-| `AI_API_BASE` | `http://192.168.219.163:8000` | home-m4-api 게이트웨이 주소 |
+| `AI_API_BASE` | `http://192.168.219.100:8000` | home-m4-api 게이트웨이 주소 |
 | `AI_API_KEY` | (발급된 mk_*) | KB read/write 권한 (X-API-Key) |
 | `M4_ADMIN_TOKEN` | (관리자 토큰) | ensureCollection 전용 (X-Admin-Token) |
 | `M4_DEFAULT_EMBED_MODEL` | `bge-m3` | 신규 KB 컬렉션 기본 모델 (D-3/D-8) |
@@ -92,7 +92,7 @@ StockInvest 의 [src/lib/rag/retrieval.ts](../src/lib/rag/retrieval.ts) 가 호�
 진단:
 ```bash
 # 컬렉션별 항목 수
-curl -s http://192.168.219.163:8000/v1/kb/news.macro/stats \
+curl -s http://192.168.219.100:8000/v1/kb/news.macro/stats \
   -H "X-API-Key: $AI_API_KEY"
 # → points_count 가 0 이면 적재 미작동 → n8n 워크플로우 확인
 
@@ -145,7 +145,7 @@ StockInvest 자체는 정상 작동 (Stage 1 이 RAG 없이 진행). 게이트�
 
 ```bash
 # domestic 시그널 query
-curl -sX POST http://192.168.219.163:8000/v1/kb/signals.stockinvest/search \
+curl -sX POST http://192.168.219.100:8000/v1/kb/signals.stockinvest/search \
   -H "X-API-Key: $AI_API_KEY" -H "Content-Type: application/json" \
   -d '{"query":"삼성전자 RSI 과매도 매수","top_k":5,"filter":{"date":{"gte":"2026-04-08"}}}' \
   | python3 -m json.tool

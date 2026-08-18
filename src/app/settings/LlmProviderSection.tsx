@@ -50,7 +50,7 @@ export function LlmProviderSection() {
   const [saving, setSaving]     = useState(false);
   const [provider, setProvider] = useState<Provider>('claude');
   // home-m4-api
-  const [m4Base, setM4Base]   = useState('http://192.168.219.163:8000');
+  const [m4Base, setM4Base]   = useState('http://192.168.219.100:8000');
   const [m4Model, setM4Model] = useState('qwen2.5:14b-instruct');
   const [m4Temp, setM4Temp]   = useState('0.3');
   const [apiKeySet, setApiKeySet] = useState<boolean>(false);
@@ -196,7 +196,7 @@ export function LlmProviderSection() {
       {/* home-m4-api 설정 입력 */}
       {provider === 'home-m4-api' && (
         <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <Field label="API Base URL" hint="예: http://192.168.219.163:8000 (.env AI_API_BASE 가 초기값)">
+          <Field label="API Base URL" hint="예: http://192.168.219.100:8000 (.env AI_API_BASE 가 초기값)">
             <input value={m4Base} onChange={e => setM4Base(e.target.value)} placeholder="http://host:port" style={inputStyle} />
           </Field>
           <Field label="모델명" hint="예: qwen2.5:14b-instruct · llama3.3 · glm-4.7-flash (.env AI_API_MODEL 이 초기값)">

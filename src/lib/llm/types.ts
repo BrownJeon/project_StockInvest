@@ -28,7 +28,7 @@ export interface LlmCaller {
 
 export interface LlmProviderConfig {
   provider: LlmProvider;
-  /** home-m4-api 베이스 URL (예: http://192.168.219.163:8000) */
+  /** home-m4-api 베이스 URL (예: http://192.168.219.100:8000) */
   homeM4ApiBase?: string;
   /** home-m4-api 모델 (Ollama 모델명, 예: llama3 / llama3.3 / glm-4.7-flash) */
   homeM4ApiModel?: string;

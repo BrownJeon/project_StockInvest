@@ -48,7 +48,7 @@ export async function getProviderConfig(): Promise<LlmProviderConfig> {
   const homeM4ApiBase =
     (await readSystemConfig('home_m4_api_base')) ??
     process.env.AI_API_BASE ??
-    'http://192.168.219.163:8000';
+    'http://192.168.219.100:8000';
   const homeM4ApiModel =
     (await readSystemConfig('home_m4_api_model')) ??
     process.env.AI_API_MODEL ??
@@ -100,7 +100,7 @@ async function buildCaller(opts?: { stage?: 1 | 2; domain?: 'domestic' | 'overse
       return {
         provider: 'hybrid',
         caller: new HomeM4ApiCaller(
-          cfg.homeM4ApiBase ?? 'http://192.168.219.163:8000',
+          cfg.homeM4ApiBase ?? 'http://192.168.219.100:8000',
           process.env.AI_API_KEY ?? '',
           cfg.stage1Model ?? 'qwen2.5:14b-instruct',
           cfg.homeM4ApiTemperature ?? 0.3,
@@ -115,7 +115,7 @@ async function buildCaller(opts?: { stage?: 1 | 2; domain?: 'domestic' | 'overse
     return {
       provider: 'home-m4-api',
       caller: new HomeM4ApiCaller(
-        cfg.homeM4ApiBase ?? 'http://192.168.219.163:8000',
+        cfg.homeM4ApiBase ?? 'http://192.168.219.100:8000',
         process.env.AI_API_KEY ?? '',
         cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct',
         cfg.homeM4ApiTemperature ?? 0.3,
