@@ -12,6 +12,8 @@
 #  - news-fetch        : 매일 06:00 KST — M4 KB news.kr_market + news.us_market RSS 갱신
 #  - post-market-domestic: 매일 16:00 KST — 국내장 마감 후 익일 시나리오 분석
 #  - post-market-overseas: 매일 08:00 KST — 해외장 마감 후 익일 시나리오 분석
+#  - research-cycle-domestic: 매일 16:00 KST — 국내 리서치 추적 종목 사이클 패턴 재계산 (T-032, 주문 없음)
+#  - research-cycle-overseas: 매일 07:00 KST — 해외 리서치 추적 종목 사이클 패턴 재계산 (T-032, 주문 없음)
 #  - export-llm-trainset: 매일 03:00 KST — signals+followup → LoRA 학습 JSONL 생성·전송
 
 set -u
@@ -50,6 +52,8 @@ NEWS_FETCH_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-last-date"
 POST_MARKET_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-domestic-last-date"
 POST_MARKET_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-last-date"
 RS_UPDATE_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/rs-update-last-date"
+RESEARCH_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-domestic-last-date"
+RESEARCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-overseas-last-date"
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
 # M4 뉴스 fetch 설정 (.env에서 로드)
@@ -112,6 +116,20 @@ while true; do
   if [ "$HH" = "16" ] && [ "$LAST_POST_DOM" != "$TODAY" ]; then
     call "/api/cron/post-market-analysis?market=domestic" "post-market-domestic"
     echo "$TODAY" > "$POST_MARKET_DOMESTIC_LAST_RUN_FILE"
+  fi
+  # 매일 07:00 KST: 해외 리서치 사이클 재계산 (T-032) — 미국 16:00 ET 마감 → KST 06:00, 반영 대기 후 07:00.
+  # post-market-overseas(08:00)와 **독립된 블록**이다 — 실패·성공이 서로 영향을 주지 않아야 한다.
+  LAST_RESEARCH_OVS=$(cat "$RESEARCH_OVERSEAS_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "07" ] && [ "$LAST_RESEARCH_OVS" != "$TODAY" ]; then
+    call "/api/cron/research-cycle-overseas" "research-cycle-overseas"
+    echo "$TODAY" > "$RESEARCH_OVERSEAS_LAST_RUN_FILE"
+  fi
+  # 매일 16:00 KST: 국내 리서치 사이클 재계산 (T-032) — 15:30 마감 후 30분 데이터 반영 대기.
+  # post-market-domestic(16:00)과 **독립된 블록**이다 — 같은 시각이지만 합치지 않는다.
+  LAST_RESEARCH_DOM=$(cat "$RESEARCH_DOMESTIC_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "16" ] && [ "$LAST_RESEARCH_DOM" != "$TODAY" ]; then
+    call "/api/cron/research-cycle-domestic" "research-cycle-domestic"
+    echo "$TODAY" > "$RESEARCH_DOMESTIC_LAST_RUN_FILE"
   fi
   # 매일 06:00 KST: M4 KB 뉴스 fetch (하루 1회만) — news.kr_market + news.us_market 갱신
   LAST_NEWS=$(cat "$NEWS_FETCH_LAST_RUN_FILE" 2>/dev/null || echo "")

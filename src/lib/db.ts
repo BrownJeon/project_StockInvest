@@ -1233,6 +1233,35 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // 리서치 추적 on/off (T-032) — 즐겨찾기 종목별 사이클 패턴 리서치 대상 지정.
+  // 기존 테이블에도 안전하게 재실행되도록 idempotent ALTER (position_state 관례와 동일).
+  await p.query(
+    `ALTER TABLE stock_favorites ADD COLUMN IF NOT EXISTS research_enabled TINYINT(1) NOT NULL DEFAULT 0`,
+  ).catch(() => {});
+
+  // ── 리서치: 급등·급락 사이클 패턴 분석 결과 (T-032) ─────────────────────
+  // 심볼×실행일 1행. 매일 장 마감 후 cron이 upsert. 실매매와 무관한 조회 전용 데이터.
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS research_rally_results (
+      id                 BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      symbol             VARCHAR(32) NOT NULL,
+      market             ENUM('domestic','overseas') NOT NULL,
+      run_date           DATE NOT NULL,
+      data_range_from    DATE NULL,
+      data_range_to      DATE NULL,
+      event_count        INT NOT NULL DEFAULT 0,
+      events             JSON NULL,
+      avg_rally_pct      DECIMAL(6,2) NULL,
+      avg_days_to_rally  DECIMAL(6,2) NULL,
+      precursor_analysis JSON NULL,
+      data_warnings      JSON NULL,
+      error              TEXT NULL,
+      created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_symbol_date (symbol, run_date),
+      INDEX idx_research_rally_run (run_date DESC, symbol)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   // ── 재무·가치 캐시 (Phase A) — 1일 TTL ──────────────────────────────────
   await p.query(`
     CREATE TABLE IF NOT EXISTS stock_fundamentals (

@@ -228,6 +228,12 @@ tags:
 
 ## Doing
 
+- **[신규, 2026-08-19] [[T-032-research-rally-cycle]] — 즐겨찾기 연동 사이클 패턴 리서치 기능**
+  사용자가 마이크론/샌디스크류 급등락 반복 패턴의 통계적 실재 여부·선행지표를 검증하고 싶어함.
+  즐겨찾기 on/off 토글 + "추적중" 배지 + 분석탭 "리서치" 서브탭 + 매일 cron(국내16:00/해외07:00,
+  Yahoo Finance 비공식 API, LLM 미사용, 자동매매 미연결). Developer 배정, cron route 2개는
+  Reviewer PASS 필요(SAFETY_PATHS).
+
 ## Review
 
 

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatSymbolShort } from '@/lib/symbols';
 import { isAwaitingApproval } from '@/lib/signals/statuses';
+import { requestJson } from '@/lib/http';
 import { runFundamentalsRefresh } from '../refresh-fundamentals';
 
 interface KeyFactor { label: string; value: string; description: string; }
@@ -18,6 +19,8 @@ interface FavoriteItem {
   eps: number | null; market_cap_bn: number | null; dividend_yield: number | null;
   key_factors: KeyFactor[] | null; ai_summary: string | null;
   fundamentals_updated_at: string | null;
+  /** 리서치(급등·급락 사이클) 추적 대상 여부 — T-032 */
+  research_enabled?: boolean;
 }
 
 interface TechnicalData {
@@ -51,6 +54,9 @@ const usd = (v: number) => '$' + v.toLocaleString('en-US', { minimumFractionDigi
 const pct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
 const fmt = (v: number | null, isOverseas: boolean) =>
   v == null ? '—' : isOverseas ? usd(v) : krw(v) + '원';
+
+/** 리서치 추적 강조색 — FavoritesPage "추적중" 배지와 동일 계열 (T-032) */
+const RESEARCH_COLOR = '#14b8a6';
 
 const MARKET_STATE_KO: Record<string, string> = {
   divergence_signal: '다이버전스',
@@ -153,6 +159,10 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
   const [loadingFund, setLoadingFund] = useState(true);
   const [loadingChart, setLoadingChart] = useState(true);
   const [fundProgress, setFundProgress] = useState<{ step: number; label: string } | null>(null);
+  // 리서치 추적 토글 (T-032) — 서버 값과 별도 상태를 두어 낙관적 갱신 후 실패 시 되돌린다.
+  const [researchEnabled, setResearchEnabled] = useState<boolean | null>(null);
+  const [researchSaving, setResearchSaving] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
 
   // 1단계: 즐겨찾기 목록 + 기술지표 (빠름, 화면 즉시 표시)
   const fetchCore = useCallback(async () => {
@@ -161,7 +171,9 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
       fetch(`/api/favorites/${encodeURIComponent(symbol)}/technical`).then(r => r.json() as Promise<{ ok: boolean; data: TechnicalData }>),
     ]);
     if (favRes.status === 'fulfilled' && favRes.value.ok) {
-      setItem(favRes.value.data.find(f => f.symbol === symbol) ?? null);
+      const found = favRes.value.data.find(f => f.symbol === symbol) ?? null;
+      setItem(found);
+      if (found) setResearchEnabled(found.research_enabled === true);
     }
     setLoadingItem(false);
     if (techRes.status === 'fulfilled' && techRes.value.ok) {
@@ -205,6 +217,28 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
       // 사용자가 요청하지도 않았는데 조용히 한 번 더 트는 셈이라 체감 대기만 늘린다.
       resyncOnFailure: async () => { setFund(null); await fetchCore(); },
     });
+  }
+
+  /**
+   * 리서치 추적 on/off (T-032). 낙관적으로 UI를 먼저 바꾸고, 서버가 거부하면 되돌린다 —
+   * 성공한 것처럼 남겨두면 다음 cron에서 왜 안 도는지 사용자가 알 수 없다.
+   */
+  async function toggleResearch(next: boolean) {
+    if (researchSaving) return;
+    const prev = researchEnabled;
+    setResearchEnabled(next);
+    setResearchSaving(true);
+    setResearchError(null);
+    const outcome = await requestJson(`/api/favorites/${encodeURIComponent(symbol)}/research`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    });
+    if (!outcome.ok) {
+      setResearchEnabled(prev);
+      setResearchError(outcome.failure.message);
+    }
+    setResearchSaving(false);
   }
 
   async function refreshChartAnalysis() {
@@ -308,6 +342,37 @@ export function FavoriteDetailPage({ symbol }: { symbol: string }) {
           </div>
         )}
         {item.latestSignal && <SignalBadge signal={item.latestSignal} />}
+      </div>
+
+      {/* 리서치 추적 토글 (T-032) — 켜면 매일 장 마감 후 사이클 패턴을 재계산해
+          분석 탭 "리서치" 서브탭에 결과가 쌓인다. 매매에는 관여하지 않는다. */}
+      <div style={S.section}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={researchEnabled === true}
+          aria-label="리서치 추적"
+          disabled={researchSaving || researchEnabled === null}
+          onClick={() => void toggleResearch(!researchEnabled)}
+          style={S.researchToggleRow}
+        >
+          <span style={{ textAlign: 'left' }}>
+            <span style={S.researchToggleTitle}>리서치 추적</span>
+            <span style={S.researchToggleDesc}>
+              장 마감 후 급등·급락 사이클 패턴을 매일 분석합니다 (매매와 무관)
+            </span>
+          </span>
+          <span
+            style={{
+              ...S.switchTrack,
+              background: researchEnabled ? RESEARCH_COLOR : 'var(--bg3)',
+              opacity: researchSaving ? 0.5 : 1,
+            }}
+          >
+            <span style={{ ...S.switchKnob, transform: researchEnabled ? 'translateX(20px)' : 'translateX(0)' }} />
+          </span>
+        </button>
+        {researchError && <div style={S.researchError}>{researchError}</div>}
       </div>
 
       {/* 기술 분석 섹션들 */}
@@ -691,4 +756,21 @@ const S: Record<string, React.CSSProperties> = {
     background: 'var(--bg3)', border: 'none', borderRadius: 8,
     color: 'var(--fg)', fontSize: 11, padding: '5px 10px', cursor: 'pointer',
   },
+  // 리서치 추적 토글 (T-032) — 모바일 터치 타겟 최소 44px 유지
+  researchToggleRow: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+    width: '100%', minHeight: 44, padding: 0,
+    background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--fg)',
+  },
+  researchToggleTitle: { display: 'block', fontSize: 13, fontWeight: 700, color: 'var(--fg)' },
+  researchToggleDesc: { display: 'block', fontSize: 11, color: 'var(--muted)', marginTop: 3, lineHeight: 1.5 },
+  switchTrack: {
+    position: 'relative', flexShrink: 0, width: 44, height: 24, borderRadius: 12,
+    display: 'inline-block', transition: 'background 0.2s',
+  },
+  switchKnob: {
+    position: 'absolute', top: 2, left: 2, width: 20, height: 20, borderRadius: '50%',
+    background: '#fff', transition: 'transform 0.2s', display: 'block',
+  },
+  researchError: { fontSize: 11, color: 'var(--red)', marginTop: 8, lineHeight: 1.5 },
 };

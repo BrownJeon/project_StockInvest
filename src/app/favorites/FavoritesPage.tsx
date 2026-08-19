@@ -31,6 +31,8 @@ interface Favorite {
   changeRate: number | null;
   priceError?: boolean;
   latestSignal: LatestSignal | null;
+  /** 리서치(급등·급락 사이클) 추적 대상 여부 — T-032 */
+  research_enabled?: boolean;
   // fundamentals
   pbr: number | null;
   per: number | null;
@@ -53,6 +55,9 @@ interface SearchResult {
 const krw = (v: number) => v.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
 const usd = (v: number) => '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%';
+
+/** 리서치 추적 배지 색 — 시그널 배지(주황·초록·빨강·파랑)와 겹치지 않는 청록 (T-032) */
+export const RESEARCH_BADGE_COLOR = '#14b8a6';
 
 function getSignalLabel(signal: LatestSignal): { text: string; color: string } {
   const isPending = isAwaitingApproval(signal.status) || signal.status === 'detected';
@@ -228,6 +233,13 @@ export function FavoritesPage() {
                     {sigLabel && (
                       <span style={{ ...S.signalBadge, background: sigLabel.color + '22', color: sigLabel.color }}>
                         {sigLabel.text}
+                      </span>
+                    )}
+                    {/* 리서치 추적 배지 (T-032) — 매수/매도(빨강·파랑)·대기(주황)·승인(초록)과
+                        겹치지 않도록 청록 계열을 쓴다. */}
+                    {item.research_enabled && (
+                      <span style={{ ...S.signalBadge, background: RESEARCH_BADGE_COLOR + '22', color: RESEARCH_BADGE_COLOR }}>
+                        추적중
                       </span>
                     )}
                   </div>

@@ -11,6 +11,7 @@ export async function GET() {
     const [rows] = await pool.query<RowDataPacket[]>(`
       SELECT
         f.id, f.symbol, f.name, f.memo, f.sort_order, f.added_at,
+        f.research_enabled,
         COALESCE(m.market, 'domestic') AS market,
         fu.pbr, fu.per, fu.eps, fu.market_cap_bn, fu.dividend_yield, fu.roe,
         fu.key_factors, fu.ai_summary, fu.data_source, fu.updated_at AS fundamentals_updated_at
@@ -57,6 +58,8 @@ export async function GET() {
             : null;
           return {
             ...row,
+            // TINYINT(1) → boolean (T-032). 클라이언트가 0/1 진리값을 직접 다루지 않게 한다.
+            research_enabled: Number(row.research_enabled ?? 0) === 1,
             price: ticker.price,
             priceUsd: ticker.priceUsd ?? null,
             changeRate,
@@ -66,6 +69,7 @@ export async function GET() {
         } catch {
           return {
             ...row,
+            research_enabled: Number(row.research_enabled ?? 0) === 1,
             price: null,
             priceUsd: null,
             changeRate: null,

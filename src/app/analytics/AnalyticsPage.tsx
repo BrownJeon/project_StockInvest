@@ -8,14 +8,16 @@ import { SignalDiagnosticsTab }  from './components/SignalDiagnosticsTab';
 import { TradeJournalTab }       from './components/TradeJournalTab';
 import { TrailingStopTab }       from './components/TrailingStopTab';
 import { LeaderboardTab }        from './components/LeaderboardTab';
+import { ResearchTab }           from './components/ResearchTab';
 
-type Tab = 'portfolio' | 'trailing' | 'leaderboard' | 'notes' | 'missed' | 'orders' | 'diagnostics';
+type Tab = 'portfolio' | 'trailing' | 'leaderboard' | 'notes' | 'research' | 'missed' | 'orders' | 'diagnostics';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'portfolio',   label: '포트폴리오' },
   { id: 'trailing',    label: '포지션 추적' },
   { id: 'leaderboard', label: '주도주'      },
   { id: 'notes',       label: '투자일지'    },
+  { id: 'research',    label: '리서치'      },
   { id: 'missed',      label: '놓친 기회'  },
   { id: 'orders',      label: '거래 이력'  },
   { id: 'diagnostics', label: '신호 진단'  },
@@ -65,6 +67,7 @@ export function AnalyticsPage() {
         {tab === 'trailing'    && <TrailingStopTab />}
         {tab === 'leaderboard' && <LeaderboardTab />}
         {tab === 'notes'       && <TradeJournalTab />}
+        {tab === 'research'    && <ResearchTab />}
         {tab === 'missed'      && <MissedOpportunityTab />}
         {tab === 'orders'      && <OrderHistoryTab />}
         {tab === 'diagnostics' && <SignalDiagnosticsTab />}
