@@ -523,4 +523,5 @@ docs/screens.md                                       # 분석 탭에 "리서치
 - 타임아웃 회귀 테스트 추가(`buildResearchReport`가 영원히 안 끝나도 8초에서 500으로 종료하고
   `upsert`를 호출하지 않는지 fake timer로 검증).
 - `npm run typecheck` 무오류, `npm test` **118 suites/2008 tests 전부 통과**(신규 1건, 회귀 없음).
-- 배포: 사용자 승인 후 진행 — 배포 전 `pm2 restart stockinvest-cron` 선제조치 → push할 것.
+- 배포: 사용자 승인 → 배포 전 `pm2 restart stockinvest-cron` 선제조치 → 커밋 `e8084bd` push →
+  webhook-deploy **1차 시도로 성공**(`exit=0`, 헬스체크 green). 완결.
