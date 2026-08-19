@@ -228,11 +228,19 @@ tags:
 
 ## Doing
 
-- **[신규, 2026-08-19] [[T-032-research-rally-cycle]] — 즐겨찾기 연동 사이클 패턴 리서치 기능**
+- ✅ **[해결됨, 인프라, 2026-08-19] `git clean -fdx`가 `scripts/` 아래 NFS silly-rename 잔재
+  파일을 "장치나 자원이 동작 중"으로 못 지워 `deploy-stockinvest.sh`가 Sync 단계에서 즉시
+  중단됐다** — 08-18 14:07 배포부터 이미 실패 중이던 선재 문제(T-032가 만든 게 아님). 원인은
+  `stockinvest-cron` pm2 프로세스가 오래된 `cron-runner.sh` 파일핸들을 계속 쥐고 있던 것.
+  `pm2 restart stockinvest-cron --update-env`로 해제 + 잔여 1개는 직접 `rm -f`로 정리해 해소.
+  상세: [[T-032-research-rally-cycle]] Leader 기록, [[RESUME]] 2026-08-19 절.
+
+- **[진행중, 2026-08-19] [[T-032-research-rally-cycle]] — 즐겨찾기 연동 사이클 패턴 리서치 기능**
   사용자가 마이크론/샌디스크류 급등락 반복 패턴의 통계적 실재 여부·선행지표를 검증하고 싶어함.
   즐겨찾기 on/off 토글 + "추적중" 배지 + 분석탭 "리서치" 서브탭 + 매일 cron(국내16:00/해외07:00,
-  Yahoo Finance 비공식 API, LLM 미사용, 자동매매 미연결). Developer 배정, cron route 2개는
-  Reviewer PASS 필요(SAFETY_PATHS).
+  Yahoo Finance 비공식 API, LLM 미사용, 자동매매 미연결). **구현·Reviewer PASS·커밋·push까지 전부
+  완료**(`5c23d35`). 배포 중 위 NFS 인프라 이슈 발견·해소, 빈 커밋(`fe2a22e`)으로 재배포 트리거 —
+  결과 확인 후 `pm2 restart stockinvest-cron --update-env` 재실행 필요.
 
 ## Review
 

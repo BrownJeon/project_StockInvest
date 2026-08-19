@@ -15,6 +15,33 @@ aliases:
 
 ---
 
+## ✅ 2026-08-19 — [[T-032-research-rally-cycle]] 완료. 배포 중 발견된 인프라 결함도 원인규명·해소
+
+즐겨찾기 연동 사이클 패턴 리서치 기능(Developer 구현 → Reviewer PASS[Critical/High/Medium/Low 0건]
+→ QA 부분검증 → Leader가 나머지 갭 직접 검증). 118 suites/2003 tests 통과, 커밋 `5c23d35`.
+
+**배포 중 별개의 인프라 버그를 발견·해소했다**: `deploy-stockinvest.sh`의 `git clean -fdx`가
+`scripts/` 아래 NFS silly-rename 잔재 파일 2개를 "device or resource busy"로 못 지워 배포 스크립트가
+Sync 단계에서 즉시 중단되고 있었다(`set -eo pipefail`) — **08-18 14:07 배포(단순 `.env` IP 수정
+커밋)부터 이미 실패 중이던 선재 문제**, T-032가 만든 게 아니다. 원인: **`stockinvest-cron` pm2
+프로세스가 예전 `cron-runner.sh` 파일핸들을 계속 쥐고 있었다** —
+`pm2 restart stockinvest-cron --update-env`로 해제하자 오래된 파일(6월 7일자)이 즉시 사라졌고,
+남은 한 개(오늘자, T-032의 `cron-runner.sh` 편집으로 생긴 것)는 직접 `rm -f`로 정리했다. 빈 커밋
+(`fe2a22e`)으로 webhook-deploy 재발화, 배포 진행/결과는 아래 참조.
+
+**교훈(재발 방지)**: 이 조사·수정 과정에서 vault 문서(RESUME.md·board.md)를 **커밋 없이** 편집했다가
+`deploy-stockinvest.sh`의 `git reset --hard origin/main`에 그대로 날아갔다 — CLAUDE.md가 경고해온
+"push 시점에 워킹트리가 지저분하면 증발한다"를 이번엔 배포 트리거(빈 커밋 push) 자체가 직접
+실증한 사례. **작업 중인 vault 편집은 다음 배포 트리거(push) 전에 커밋해둘 것** — 특히 배포 재시도를
+유발하는 작업 도중에는 더 위험하다.
+
+**다음 할 일**: 배포 성공 확인 후 (이미 사용자 승인됨) → `pm2 restart stockinvest-cron --update-env`
+(cron-runner.sh 신규 블록 반영, 위에서 이미 한 번 재시작했으나 배포 후 코드 갱신분 반영 위해 배포
+완료 후 한 번 더 필요할 수 있음 — 배포 스크립트 자체는 `stockinvest`만 reload하고 `-cron`은
+건드리지 않음) → 브라우저 실기기 확인(사용자 직접, 이 프로젝트 기존 관행)은 사용자 몫으로 남겨둠.
+
+---
+
 ## ✅ 최신 상태 — 2026-08-18 (이 절이 아래 08-13 서술보다 우선한다)
 
 **T-025(commit-msg Reviewer 게이트 훅)~T-029(custom/confirm 수치가드)까지 전부 커밋 완료, `git status` 클린.**
