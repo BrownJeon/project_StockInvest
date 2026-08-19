@@ -475,4 +475,5 @@ docs/screens.md                                       # 분석 탭에 "리서치
   Developer/Reviewer/QA 서브에이전트 사이클 없이 Leader가 직접 구현.
 - `npm run typecheck` 무오류, `npm test` 118 suites/2003 tests 전부 통과(회귀 없음, 신규 테스트는
   추가하지 않음 — 이 파일 자체가 기존에도 컴포넌트 단위 테스트가 없던 관례를 따름).
-- 사용자 승인 후 커밋·push·배포 진행 — 결과는 아래 갱신.
+- 사용자 승인 → 커밋 `a1e0540` → 배포 전 `pm2 restart stockinvest-cron`(NFS 잠금 재발 방지 선제조치)
+  → push → webhook-deploy **1차 시도로 성공**(`exit=0`, 헬스체크 green). 완결.
