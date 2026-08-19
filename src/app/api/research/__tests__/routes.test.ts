@@ -4,10 +4,16 @@
 import type { NextRequest } from 'next/server';
 
 const getLatestMock = jest.fn();
+const listTrackedMock = jest.fn();
+const upsertMock = jest.fn();
 const buildReportMock = jest.fn();
 const queryMock = jest.fn();
 
-jest.mock('@/lib/research/storage', () => ({ getLatestResearchResults: () => getLatestMock() }));
+jest.mock('@/lib/research/storage', () => ({
+  getLatestResearchResults: () => getLatestMock(),
+  listTrackedSymbols: (...a: unknown[]) => listTrackedMock(...a),
+  upsertResearchResult: (...a: unknown[]) => upsertMock(...a),
+}));
 jest.mock('@/lib/research/research-report', () => ({
   buildResearchReport: (...a: unknown[]) => buildReportMock(...a),
 }));
@@ -19,6 +25,8 @@ function nextReq(url: string): NextRequest {
 
 beforeEach(() => {
   getLatestMock.mockReset();
+  listTrackedMock.mockReset();
+  upsertMock.mockReset();
   buildReportMock.mockReset();
   queryMock.mockReset();
 });
@@ -139,5 +147,58 @@ describe('PATCH /api/favorites/[symbol]/research', () => {
     const { PATCH } = await import('@/app/api/favorites/[symbol]/research/route');
     const res = await PATCH(jsonReq({ enabled: true }), { params: params('005930') });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('POST /api/research/tracked/[symbol]/run', () => {
+  const params = (symbol: string) => Promise.resolve({ symbol });
+  const emptyReq = () => ({}) as unknown as NextRequest;
+
+  test('추적중 심볼은 재분석 후 upsert하고 결과를 반환한다', async () => {
+    listTrackedMock.mockResolvedValue([{ symbol: 'NAS:MU', name: 'Micron', market: 'overseas' }]);
+    buildReportMock.mockResolvedValue({
+      symbol: 'NAS:MU', market: 'overseas', runDate: '2026-08-20',
+      eventCount: 8, avgRallyPct: 23.25, error: null,
+    });
+
+    const { POST } = await import('../tracked/[symbol]/run/route');
+    const res = await POST(emptyReq(), { params: params('NAS%3AMU') });
+    const body = await res.json();
+
+    expect(buildReportMock).toHaveBeenCalledWith('NAS:MU', {});
+    expect(upsertMock).toHaveBeenCalledWith(expect.objectContaining({ symbol: 'NAS:MU', eventCount: 8 }));
+    expect(body.ok).toBe(true);
+    expect(body.data.name).toBe('Micron');
+    expect(body.data.result.eventCount).toBe(8);
+  });
+
+  test('추적(research_enabled=1) 중이 아닌 심볼은 계산 없이 404', async () => {
+    listTrackedMock.mockResolvedValue([{ symbol: '005930', name: '삼성전자', market: 'domestic' }]);
+    const { POST } = await import('../tracked/[symbol]/run/route');
+    const res = await POST(emptyReq(), { params: params('NAS%3AMU') });
+
+    expect(res.status).toBe(404);
+    expect(buildReportMock).not.toHaveBeenCalled();
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  test('빈 심볼은 400', async () => {
+    const { POST } = await import('../tracked/[symbol]/run/route');
+    const res = await POST(emptyReq(), { params: params('') });
+    expect(res.status).toBe(400);
+    expect(listTrackedMock).not.toHaveBeenCalled();
+  });
+
+  test('계산 실패는 500이고 upsert를 호출하지 않는다', async () => {
+    listTrackedMock.mockResolvedValue([{ symbol: 'NAS:MU', name: 'Micron', market: 'overseas' }]);
+    buildReportMock.mockRejectedValue(new Error('yahoo timeout'));
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { POST } = await import('../tracked/[symbol]/run/route');
+    const res = await POST(emptyReq(), { params: params('NAS%3AMU') });
+
+    expect(res.status).toBe(500);
+    expect(upsertMock).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

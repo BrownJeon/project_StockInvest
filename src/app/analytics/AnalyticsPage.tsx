@@ -17,7 +17,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'trailing',    label: '포지션 추적' },
   { id: 'leaderboard', label: '주도주'      },
   { id: 'notes',       label: '투자일지'    },
-  { id: 'research',    label: '리서치'      },
+  { id: 'research',    label: '리서치분석'    },
   { id: 'missed',      label: '놓친 기회'  },
   { id: 'orders',      label: '거래 이력'  },
   { id: 'diagnostics', label: '신호 진단'  },

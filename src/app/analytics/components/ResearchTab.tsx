@@ -76,6 +76,8 @@ export function ResearchTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [running, setRunning] = useState<Set<string>>(new Set());
+  const [runError, setRunError] = useState<Map<string, string>>(new Map());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -103,6 +105,26 @@ export function ResearchTab() {
       if (n.has(symbol)) n.delete(symbol); else n.add(symbol);
       return n;
     });
+  }
+
+  /** 장마감까지 기다리지 않고 지금 바로 재분석 (T-032 후속). */
+  async function runNow(symbol: string) {
+    if (running.has(symbol)) return;
+    setRunning((s) => new Set(s).add(symbol));
+    setRunError((m) => { const n = new Map(m); n.delete(symbol); return n; });
+    try {
+      const res = await fetch(`/api/research/tracked/${encodeURIComponent(symbol)}/run`, { method: 'POST' });
+      const json = await res.json() as { ok: boolean; data?: TrackedItem; error?: string };
+      if (json.ok && json.data) {
+        setItems((prev) => prev.map((i) => (i.symbol === symbol ? json.data as TrackedItem : i)));
+      } else {
+        setRunError((m) => new Map(m).set(symbol, json.error ?? '분석에 실패했습니다.'));
+      }
+    } catch (e) {
+      setRunError((m) => new Map(m).set(symbol, e instanceof Error ? e.message : String(e)));
+    } finally {
+      setRunning((s) => { const n = new Set(s); n.delete(symbol); return n; });
+    }
   }
 
   if (loading) return <div style={S.center}>로딩 중...</div>;
@@ -140,10 +162,23 @@ export function ResearchTab() {
                 </span>
                 <span style={S.marketChip}>{item.market === 'overseas' ? '해외' : '국내'}</span>
               </div>
-              {r && <span style={S.runDate}>{r.runDate} 분석</span>}
+              <div style={S.headerRight}>
+                {r && <span style={S.runDate}>{r.runDate} 분석</span>}
+                <button
+                  style={S.runNowBtn}
+                  disabled={running.has(item.symbol)}
+                  onClick={() => void runNow(item.symbol)}
+                >
+                  {running.has(item.symbol) ? '분석 중...' : '지금 분석'}
+                </button>
+              </div>
             </div>
 
-            {!r && <div style={S.pending}>아직 분석 결과가 없습니다 — 다음 장 마감 후 생성됩니다.</div>}
+            {runError.has(item.symbol) && (
+              <div style={S.errorBox}>지금 분석 실패: {runError.get(item.symbol)}</div>
+            )}
+
+            {!r && <div style={S.pending}>아직 분석 결과가 없습니다 — 다음 장 마감 후 생성됩니다. 기다리지 않으려면 위 "지금 분석"을 눌러주세요.</div>}
 
             {r?.error && <div style={S.errorBox}>분석 실패: {r.error}</div>}
 
@@ -261,7 +296,13 @@ const S: Record<string, React.CSSProperties> = {
   cardCode: { fontSize: 11, color: 'var(--muted)', fontWeight: 400 },
   badge: { fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10 },
   marketChip: { fontSize: 10, color: 'var(--muted)', background: 'var(--bg3)', padding: '2px 6px', borderRadius: 8 },
-  runDate: { fontSize: 10, color: 'var(--muted)', flexShrink: 0, marginTop: 3 },
+  headerRight: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 },
+  runDate: { fontSize: 10, color: 'var(--muted)' },
+  runNowBtn: {
+    background: 'var(--bg3)', border: 'none', borderRadius: 8,
+    color: 'var(--fg)', fontSize: 11, padding: '5px 10px', cursor: 'pointer',
+    minHeight: 28,
+  },
   pending: { fontSize: 12, color: 'var(--muted)' },
   errorBox: { fontSize: 12, color: 'var(--red)', lineHeight: 1.5, wordBreak: 'break-all' },
   metricsRow: { display: 'flex', gap: 18, paddingTop: 2 },

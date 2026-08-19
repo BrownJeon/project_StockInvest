@@ -477,3 +477,25 @@ docs/screens.md                                       # 분석 탭에 "리서치
   추가하지 않음 — 이 파일 자체가 기존에도 컴포넌트 단위 테스트가 없던 관례를 따름).
 - 사용자 승인 → 커밋 `a1e0540` → 배포 전 `pm2 restart stockinvest-cron`(NFS 잠금 재발 방지 선제조치)
   → push → webhook-deploy **1차 시도로 성공**(`exit=0`, 헬스체크 green). 완결.
+
+## Leader 후속 2 (2026-08-19, 서브탭 이름 변경 + 수동 재분석 버튼)
+
+사용자 요청: ① 분석탭 서브탭 이름 "리서치" → "리서치분석" ② "리서치분석" 목록의 종목별로 장마감까지
+기다리지 않고 지금 바로 재분석할 수 있는 버튼 추가.
+
+- `AnalyticsPage.tsx` TABS 라벨 변경. `docs/screens.md`도 서브탭 표·상세 절·변경이력 동기화.
+- **신규 API**: `POST /api/research/tracked/[symbol]/run` — cron(`runResearchCycle`)이 내부적으로
+  하는 일(`buildResearchReport()` → `upsertResearchResult()`)을 심볼 1개에 대해 즉시 실행한다.
+  `research_enabled=1`(추적중)인 심볼만 허용(아니면 404, 계산 자체를 안 함 — 임의 심볼 처리 방지).
+  세션 인증(미들웨어 기본 보호, cron-secret 아님) — 로그인한 사람이 누르는 버튼이다.
+  같은 날 재실행하면 오늘자 행을 덮어쓴다 — `storage.ts` 설계 주석에 이미 "수동 재트리거 허용"으로
+  명시돼 있던 동작이라 별도 정책 판단 불필요했음.
+  신규 테스트 4건(성공/미추적 404/빈심볼 400/계산실패 500 — upsert 미호출 확인 포함) 추가.
+- `ResearchTab.tsx`: 카드 헤더에 "지금 분석" 버튼 추가(분석 중엔 "분석 중..." + disabled), 성공 시
+  해당 카드만 낙관적으로 새 결과로 교체(전체 재조회 없음), 실패 시 카드 안에 에러 문구 노출.
+  아직 결과 없는("분석 대기중") 카드에도 안내문에 버튼 사용법을 덧붙임.
+- SAFETY_PATHS 대상 아님. 신규 백엔드 로직(단순 UI 재사용이 아님)이라 API 테스트는 작성했으나,
+  규모상 별도 Developer/Reviewer/QA 사이클 없이 Leader가 직접 구현·검증.
+- `npm run typecheck` 무오류, `npm test` **118 suites/2007 tests 전부 통과**(신규 4건, 회귀 없음).
+- 배포: 사용자 승인 후 진행 예정 — 배포 전 `pm2 restart stockinvest-cron` 선제조치 후 push할 것
+  (직전 후속에서 확인된 NFS 잠금 재발 방지 절차).
