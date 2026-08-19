@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatSymbolShort } from '@/lib/symbols';
 import { isAwaitingApproval } from '@/lib/signals/statuses';
+import { requestJson } from '@/lib/http';
 import { runFundamentalsRefresh } from './refresh-fundamentals';
 
 interface KeyFactor {
@@ -80,6 +81,7 @@ export function FavoritesPage() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [expandedSummary, setExpandedSummary] = useState<Set<string>>(new Set());
   const [refreshProgress, setRefreshProgress] = useState<Map<string, { step: number; label: string }>>(new Map());
+  const [researchSaving, setResearchSaving] = useState<Set<string>>(new Set());
 
   function setProgress(symbol: string, info: { step: number; label: string } | null) {
     setRefreshProgress(prev => {
@@ -155,6 +157,30 @@ export function FavoritesPage() {
       symbol,
       setProgress: (info) => setProgress(symbol, info),
       resync: load,
+    });
+  }
+
+  /**
+   * 리서치 추적 on/off — 목록에서 바로 (T-032 후속). 낙관적으로 먼저 바꾸고,
+   * 서버가 거부하면 되돌린다. 상세화면의 toggleResearch와 동일한 API·정책을 쓴다.
+   */
+  async function toggleResearch(symbol: string, next: boolean) {
+    if (researchSaving.has(symbol)) return;
+    const prevItems = items;
+    setItems((cur) => cur.map((i) => (i.symbol === symbol ? { ...i, research_enabled: next } : i)));
+    setResearchSaving((prev) => new Set(prev).add(symbol));
+    const outcome = await requestJson(`/api/favorites/${encodeURIComponent(symbol)}/research`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: next }),
+    });
+    if (!outcome.ok) {
+      setItems(prevItems);
+    }
+    setResearchSaving((prev) => {
+      const n = new Set(prev);
+      n.delete(symbol);
+      return n;
     });
   }
 
@@ -235,13 +261,24 @@ export function FavoritesPage() {
                         {sigLabel.text}
                       </span>
                     )}
-                    {/* 리서치 추적 배지 (T-032) — 매수/매도(빨강·파랑)·대기(주황)·승인(초록)과
-                        겹치지 않도록 청록 계열을 쓴다. */}
-                    {item.research_enabled && (
-                      <span style={{ ...S.signalBadge, background: RESEARCH_BADGE_COLOR + '22', color: RESEARCH_BADGE_COLOR }}>
-                        추적중
-                      </span>
-                    )}
+                    {/* 리서치 추적 토글 (T-032) — 목록에서 바로 on/off. 매수/매도(빨강·파랑)·
+                        대기(주황)·승인(초록)과 겹치지 않도록 청록 계열을 쓴다. */}
+                    <button
+                      type="button"
+                      aria-pressed={item.research_enabled === true}
+                      disabled={researchSaving.has(item.symbol)}
+                      onClick={(e) => { e.stopPropagation(); void toggleResearch(item.symbol, !item.research_enabled); }}
+                      style={{
+                        ...S.signalBadge,
+                        ...S.researchToggleBadge,
+                        background: item.research_enabled ? RESEARCH_BADGE_COLOR + '22' : 'transparent',
+                        color: item.research_enabled ? RESEARCH_BADGE_COLOR : 'var(--muted)',
+                        borderColor: item.research_enabled ? RESEARCH_BADGE_COLOR + '55' : 'var(--border)',
+                        opacity: researchSaving.has(item.symbol) ? 0.5 : 1,
+                      }}
+                    >
+                      {item.research_enabled ? '추적중' : '추적'}
+                    </button>
                   </div>
                   {item.price != null ? (
                     <div style={{ ...S.cardPrice, color: priceColor }}>
@@ -392,6 +429,9 @@ const S: Record<string, React.CSSProperties> = {
   },
   signalBadge: {
     fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
+  },
+  researchToggleBadge: {
+    fontFamily: 'inherit', borderWidth: 1, borderStyle: 'solid', cursor: 'pointer',
   },
   metricsRow: { display: 'flex', gap: 16, paddingTop: 2 },
   factorsWrap: { display: 'flex', flexWrap: 'wrap', gap: 6 },

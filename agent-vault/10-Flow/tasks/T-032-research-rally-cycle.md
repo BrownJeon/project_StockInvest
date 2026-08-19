@@ -461,3 +461,18 @@ docs/screens.md                                       # 분석 탭에 "리서치
 **최종 판정:**
 - **검증 보류** — (a)~(c) 빌드·테스트·문법 수준에서는 통과하나, (d)~(o) 기능 검증 미실행으로 "검증 통과" 판정 불가
 - 코드 품질(Reviewer PASS + 테스트 통과)은 양호하나, 실행 검증이 미완료 상태
+
+## Leader 후속 (2026-08-19, UI 개선)
+
+사용자가 "즐겨찾기 목록에서도 바로 on/off 설정 가능하게" 요청 — 기존엔 상세화면
+(`FavoriteDetailPage.tsx`)에만 토글이 있고 목록(`FavoritesPage.tsx`)은 읽기전용 "추적중" 배지였다.
+
+- `FavoritesPage.tsx`의 배지를 클릭 가능한 토글 버튼으로 교체(꺼짐: "추적" 회색 테두리 / 켜짐: "추적중"
+  청록 채움). `FavoriteDetailPage.tsx`의 `toggleResearch()`와 **동일한 API·낙관적 갱신·실패 시 롤백
+  로직**을 그대로 재사용 — 새 엔드포인트·새 검증 로직 없음, 이미 Reviewer가 감사한
+  `PATCH /api/favorites/[symbol]/research`를 그대로 호출.
+- SAFETY_PATHS 대상 아님(즐겨찾기 UI). 규모가 작고 기존 검증된 경로를 그대로 재사용해 별도
+  Developer/Reviewer/QA 서브에이전트 사이클 없이 Leader가 직접 구현.
+- `npm run typecheck` 무오류, `npm test` 118 suites/2003 tests 전부 통과(회귀 없음, 신규 테스트는
+  추가하지 않음 — 이 파일 자체가 기존에도 컴포넌트 단위 테스트가 없던 관례를 따름).
+- 사용자 승인 후 커밋·push·배포 진행 — 결과는 아래 갱신.
