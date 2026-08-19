@@ -497,5 +497,5 @@ docs/screens.md                                       # 분석 탭에 "리서치
 - SAFETY_PATHS 대상 아님. 신규 백엔드 로직(단순 UI 재사용이 아님)이라 API 테스트는 작성했으나,
   규모상 별도 Developer/Reviewer/QA 사이클 없이 Leader가 직접 구현·검증.
 - `npm run typecheck` 무오류, `npm test` **118 suites/2007 tests 전부 통과**(신규 4건, 회귀 없음).
-- 배포: 사용자 승인 후 진행 예정 — 배포 전 `pm2 restart stockinvest-cron` 선제조치 후 push할 것
-  (직전 후속에서 확인된 NFS 잠금 재발 방지 절차).
+- 배포: 사용자 승인 → 배포 전 `pm2 restart stockinvest-cron` 선제조치 → 커밋 `f9d1b18` push →
+  webhook-deploy **1차 시도로 성공**(`exit=0`, 헬스체크 green). 완결.
