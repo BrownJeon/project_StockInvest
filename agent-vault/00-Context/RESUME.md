@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-18
+updated: 2026-08-19
 tags:
   - type/context
 aliases:
@@ -27,6 +27,36 @@ aliases:
 **다음 할 일 후보**: board.md Backlog의 QA 형식
 준수·잔여 Medium/Low 항목들 — 전부 배포 비차단, 급하지 않음. Phase 로드맵상 다음 단계는 없음(현재는
 발견 즉시 대응하는 안전 결함 정리 국면).
+
+---
+
+## 🔴 2026-08-19 — 진행 중인 조사: news-fetch 실패 → **[[T-031-news-fetch-m4-500]]**
+
+**이어서 작업한다면 여기부터.** cron 의 `news-fetch ... FAILED` 반복(최근 200줄에 72건) 조사를
+systematic-debugging 으로 Phase 1~3 까지 마쳤고 **원인이 두 겹**임을 확인했다:
+
+1. **낡은 IP ✅ 해결** — `.env` 의 `AI_API_BASE` 가 죽은 `192.168.219.163` 을 가리켰다. 실제는
+   **`192.168.219.100:8001`**(포트 8001 은 원래 맞았고 IP 만 틀렸음). 커밋 `54e1e02` 로 반영됨.
+2. **M4 API `/v1/news/fetch` 가 500 🔴 미해결** — IP 를 고치자 `HTTP=000`(연결불가) →
+   **`HTTP=500`(서버 내부 오류)** 로 양상이 바뀌었다. `/health` 는 200 이라 서버 자체는 살아 있다.
+   핸들러가 RSS 실패·KB upsert 실패를 각각 **502** 로 감싸는데 실제로는 **500** 이 나오므로,
+   **예외 처리가 없는 구간**(유력: `kb.get_collection_meta`)에서 터진다고 좁혔다. RSS 두 소스는
+   여기서 HTTP=200 정상이라 범인이 아닐 가능성이 크다.
+
+**남은 근본 원인은 이 저장소 밖([[home-m4-api]] 프로젝트, 맥미니 M4)에 있다.** 여기서 코드를 찾지
+말 것 — `src/app/api/cron/news-fetch` 라우트는 **존재하지 않는다**(cron 이 외부 서버를 부른다).
+→ M4 의 **uvicorn 스택 트레이스**를 보는 것이 가장 빠른 길. 재현 커맨드·후보 3줄·검증 표는
+[[T-031-news-fetch-m4-500]] 에 전부 정리돼 있다.
+
+**곁가지 3건**(같은 task 파일 §C):
+- StockInvest 쪽 **재시도 폭주** — `cron-runner.sh:137` 이 성공해야만 날짜 파일을 써서 06시대 내내
+  매 분 재시도한다. M4 와 별개로 백오프를 넣을 만함(단 `scripts/cron-runner.sh` 는 SAFETY_PATHS →
+  Reviewer 게이트 대상)
+- **TradingInvest `.env` 도 구 IP·구 포트**(`163:8000`) — 같은 증상 가능성, 확인 권고
+- **webhook-deploy 가 `0481d55` push 에 발화하지 않아** 수동 배포했다 — 다음 배포 때 재현 확인 필요
+
+**매매 영향 없음**: `entry-watcher`·`holding-checker`·`strategy-eval`·`trade-report` 는 계속 OK.
+영향은 뉴스 KB 갱신 중단뿐이다(시그널 품질 판단에 뉴스가 쓰인다면 낡은 데이터로 판단 중일 수 있음).
 
 ## ✅ 2026-08-13 완결 (이 절이 아래 08-11 서술보다 우선한다) — 절차 위반 발견 → 사후감사 완주 → 배포 권고
 
