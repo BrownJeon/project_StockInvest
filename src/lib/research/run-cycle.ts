@@ -21,7 +21,7 @@ export const CONCURRENCY = 4;
  * 합이 아니라 최대값이다. 개별 HTTP 타임아웃은 예산 안에 여유를 두고 6초로 잡는다.
  */
 export const SYMBOL_TIMEOUT_MS = 8000;
-const PER_FETCH_TIMEOUT_MS = 6000;
+export const PER_FETCH_TIMEOUT_MS = 6000;
 
 export interface ResearchCycleResult {
   market: ResearchMarket;
@@ -33,7 +33,7 @@ export interface ResearchCycleResult {
   durationMs: number;
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timeout after ${ms}ms: ${label}`)), ms);
     p.then(

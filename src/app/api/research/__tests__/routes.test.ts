@@ -165,7 +165,8 @@ describe('POST /api/research/tracked/[symbol]/run', () => {
     const res = await POST(emptyReq(), { params: params('NAS%3AMU') });
     const body = await res.json();
 
-    expect(buildReportMock).toHaveBeenCalledWith('NAS:MU', {});
+    // cron 경로와 동일하게 심볼당 fetch 타임아웃(PER_FETCH_TIMEOUT_MS)을 넘긴다 — 8초 상한 이중화.
+    expect(buildReportMock).toHaveBeenCalledWith('NAS:MU', { history: { timeoutMs: 6000 } });
     expect(upsertMock).toHaveBeenCalledWith(expect.objectContaining({ symbol: 'NAS:MU', eventCount: 8 }));
     expect(body.ok).toBe(true);
     expect(body.data.name).toBe('Micron');
@@ -187,6 +188,25 @@ describe('POST /api/research/tracked/[symbol]/run', () => {
     const res = await POST(emptyReq(), { params: params('') });
     expect(res.status).toBe(400);
     expect(listTrackedMock).not.toHaveBeenCalled();
+  });
+
+  test('🔴 buildResearchReport가 무한정 걸리면 8초 상한에서 타임아웃 처리한다(무한 대기 금지)', async () => {
+    jest.useFakeTimers();
+    listTrackedMock.mockResolvedValue([{ symbol: 'NAS:MU', name: 'Micron', market: 'overseas' }]);
+    buildReportMock.mockImplementation(() => new Promise(() => {})); // 영원히 끝나지 않음
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { POST } = await import('../tracked/[symbol]/run/route');
+    const resPromise = POST(emptyReq(), { params: params('NAS%3AMU') });
+    await jest.advanceTimersByTimeAsync(8010); // SYMBOL_TIMEOUT_MS + 여유
+    const res = await resPromise;
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/timeout after/);
+    expect(upsertMock).not.toHaveBeenCalled();
+    spy.mockRestore();
+    jest.useRealTimers();
   });
 
   test('계산 실패는 500이고 upsert를 호출하지 않는다', async () => {

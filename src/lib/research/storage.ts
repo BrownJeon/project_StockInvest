@@ -77,7 +77,12 @@ export async function listTrackedSymbols(market?: ResearchMarket): Promise<Track
   return market ? all.filter((s) => s.market === market) : all;
 }
 
-/** 하루 1행 upsert — 같은 날 재실행하면 덮어쓴다(수동 재트리거 허용). */
+/**
+ * 하루 1행 upsert — 같은 날 재실행하면 덮어쓴다(수동 재트리거 허용).
+ * `created_at`을 재실행 시에도 갱신한다 — 안 그러면 "지금 분석"을 눌러 같은 날 다시 돌려도
+ * (시장 데이터가 그대로라 숫자가 이전과 동일할 수 있어) 화면상 "방금 실행됐다"는 신호가 전혀
+ * 없어진다. 컬럼명은 최초 삽입 시각을 뜻했지만, 이 테이블은 "최근 계산 시각"으로 재정의한다.
+ */
 export async function upsertResearchResult(report: ResearchReport): Promise<void> {
   const pool = getPool();
   await pool.query(
@@ -95,7 +100,8 @@ export async function upsertResearchResult(report: ResearchReport): Promise<void
        avg_days_to_rally  = VALUES(avg_days_to_rally),
        precursor_analysis = VALUES(precursor_analysis),
        data_warnings      = VALUES(data_warnings),
-       error              = VALUES(error)`,
+       error              = VALUES(error),
+       created_at         = CURRENT_TIMESTAMP`,
     [
       report.symbol,
       report.market,

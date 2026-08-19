@@ -499,3 +499,28 @@ docs/screens.md                                       # 분석 탭에 "리서치
 - `npm run typecheck` 무오류, `npm test` **118 suites/2007 tests 전부 통과**(신규 4건, 회귀 없음).
 - 배포: 사용자 승인 → 배포 전 `pm2 restart stockinvest-cron` 선제조치 → 커밋 `f9d1b18` push →
   webhook-deploy **1차 시도로 성공**(`exit=0`, 헬스체크 green). 완결.
+
+## Leader 후속 3 (2026-08-19, "지금 분석" 무반응 버그 수정)
+
+사용자 신고: "지금 분석" 클릭 시 "분석중"이었다가 아무 변화 없이 끝남.
+
+**진단**: pm2 운영 로그에 관련 에러 없음. 유력 원인 — 같은 날 재실행하면 시장 데이터가 그대로라
+결과 숫자가 이전과 동일해 **화면상 변화가 안 보이는 것**(버그 아님). 조사 중 진짜 결함도 발견:
+`upsertResearchResult()`의 `ON DUPLICATE KEY UPDATE`가 `created_at`을 갱신하지 않아, 재실행해도
+"언제 실행됐는지" 확인할 방법이 UI에 전혀 없었다. 추가로 신규 수동실행 라우트가 cron 경로
+(`run-cycle.ts`)와 달리 심볼당 타임아웃 상한이 없어, Yahoo 두 호스트가 각각 최대 8초씩 실패하면
+이론상 최대 16초까지 버튼이 "분석 중..."에 멈춰 있을 수 있는 잠재 결함도 확인.
+
+**수정**:
+1. `storage.ts` `upsertResearchResult()` — `ON DUPLICATE KEY UPDATE`에 `created_at = CURRENT_TIMESTAMP`
+   추가(재실행 시마다 갱신). 컬럼 의미를 "최초 삽입 시각"에서 "최근 계산 시각"으로 재정의.
+2. `run-cycle.ts`의 `withTimeout`/`SYMBOL_TIMEOUT_MS`/`PER_FETCH_TIMEOUT_MS`를 export해 수동실행
+   라우트가 재사용 — cron과 동일하게 심볼당 8초 상한 적용(이중 방어 아님, 원래 있어야 했던
+   보호가 빠져 있던 것).
+3. `ResearchTab.tsx` — 클라이언트 `fetch`에도 `AbortSignal.timeout(12_000)` 추가(서버 응답 자체가
+   안 오는 경우까지 대비, 방어적 이중화). 카드 헤더에 `createdAt`을 KST `HH:MM`으로 표시
+   ("YYYY-MM-DD 분석 (HH:MM 갱신)") — 숫자가 동일해도 재실행됐음을 시각으로 확인 가능해짐.
+- 타임아웃 회귀 테스트 추가(`buildResearchReport`가 영원히 안 끝나도 8초에서 500으로 종료하고
+  `upsert`를 호출하지 않는지 fake timer로 검증).
+- `npm run typecheck` 무오류, `npm test` **118 suites/2008 tests 전부 통과**(신규 1건, 회귀 없음).
+- 배포: 사용자 승인 후 진행 — 배포 전 `pm2 restart stockinvest-cron` 선제조치 → push할 것.

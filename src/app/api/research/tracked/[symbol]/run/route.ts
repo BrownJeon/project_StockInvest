@@ -10,10 +10,16 @@
  * 임의로 처리하게 두지 않는다. 인증은 다른 사용자 API와 동일하게 미들웨어 기본 세션 보호를
  * 쓴다(cron-secret 아님 — 이 경로는 사람이 로그인해서 누르는 버튼이다).
  * LLM·주문·시그널 경로는 이 파일 어디에도 없다.
+ *
+ * cron 경로(run-cycle.ts)와 동일하게 심볼 1개당 `SYMBOL_TIMEOUT_MS`(8초) 상한을 건다 — 이게
+ * 없으면 Yahoo 두 호스트가 각각 최대 8초씩(개별 fetch 타임아웃) 실패할 때 최대 16초까지 걸릴
+ * 수 있고, 브라우저의 "지금 분석" 버튼이 그만큼 오래 "분석 중..."으로 멈춰 있어 사용자에게는
+ * 마치 아무 반응이 없는 것처럼 보인다.
  */
 import { NextRequest } from 'next/server';
 import { buildResearchReport } from '@/lib/research/research-report';
 import { listTrackedSymbols, upsertResearchResult } from '@/lib/research/storage';
+import { withTimeout, SYMBOL_TIMEOUT_MS, PER_FETCH_TIMEOUT_MS } from '@/lib/research/run-cycle';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,8 +40,13 @@ export async function POST(
       return Response.json({ ok: false, error: 'not tracked' }, { status: 404 });
     }
 
-    const report = await buildResearchReport(symbol, {});
+    const report = await withTimeout(
+      buildResearchReport(symbol, { history: { timeoutMs: PER_FETCH_TIMEOUT_MS } }),
+      SYMBOL_TIMEOUT_MS,
+      symbol,
+    );
     await upsertResearchResult(report);
+    console.log('[api/research/tracked/[symbol]/run] done', { symbol, eventCount: report.eventCount });
 
     return Response.json({
       ok: true,

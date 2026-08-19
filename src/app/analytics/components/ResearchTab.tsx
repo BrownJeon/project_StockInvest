@@ -53,6 +53,7 @@ interface ResearchResult {
   precursorAnalysis: PrecursorAnalysis | null;
   dataWarnings: string[];
   error: string | null;
+  createdAt: string | null;
 }
 
 interface TrackedItem {
@@ -70,6 +71,14 @@ const WARNING_KO: Record<string, string> = {
 };
 
 const pct = (v: number | null, digits = 1) => (v == null ? '—' : v.toFixed(digits) + '%');
+
+/** "지금 분석" 직후 화면상 확인 수단 — 값이 이전과 동일해도 이 시각은 항상 바뀐다. */
+function formatKstTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Seoul' });
+}
 
 export function ResearchTab() {
   const [items, setItems] = useState<TrackedItem[]>([]);
@@ -107,13 +116,21 @@ export function ResearchTab() {
     });
   }
 
-  /** 장마감까지 기다리지 않고 지금 바로 재분석 (T-032 후속). */
+  /**
+   * 장마감까지 기다리지 않고 지금 바로 재분석 (T-032 후속).
+   * 서버는 심볼당 8초 상한(SYMBOL_TIMEOUT_MS)을 걸지만, 클라이언트도 별도로 12초 타임아웃을
+   * 둔다 — 네트워크 구간에서 응답이 아예 안 오는 경우까지 대비해 버튼이 "분석 중..."에 무한정
+   * 멈춰 있지 않게 하기 위함(방어적 이중화).
+   */
   async function runNow(symbol: string) {
     if (running.has(symbol)) return;
     setRunning((s) => new Set(s).add(symbol));
     setRunError((m) => { const n = new Map(m); n.delete(symbol); return n; });
     try {
-      const res = await fetch(`/api/research/tracked/${encodeURIComponent(symbol)}/run`, { method: 'POST' });
+      const res = await fetch(`/api/research/tracked/${encodeURIComponent(symbol)}/run`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(12_000),
+      });
       const json = await res.json() as { ok: boolean; data?: TrackedItem; error?: string };
       if (json.ok && json.data) {
         setItems((prev) => prev.map((i) => (i.symbol === symbol ? json.data as TrackedItem : i)));
@@ -121,7 +138,8 @@ export function ResearchTab() {
         setRunError((m) => new Map(m).set(symbol, json.error ?? '분석에 실패했습니다.'));
       }
     } catch (e) {
-      setRunError((m) => new Map(m).set(symbol, e instanceof Error ? e.message : String(e)));
+      const timedOut = e instanceof Error && e.name === 'TimeoutError';
+      setRunError((m) => new Map(m).set(symbol, timedOut ? '응답이 너무 오래 걸려 중단했습니다.' : (e instanceof Error ? e.message : String(e))));
     } finally {
       setRunning((s) => { const n = new Set(s); n.delete(symbol); return n; });
     }
@@ -163,7 +181,11 @@ export function ResearchTab() {
                 <span style={S.marketChip}>{item.market === 'overseas' ? '해외' : '국내'}</span>
               </div>
               <div style={S.headerRight}>
-                {r && <span style={S.runDate}>{r.runDate} 분석</span>}
+                {r && (
+                  <span style={S.runDate}>
+                    {r.runDate} 분석{formatKstTime(r.createdAt) ? ` (${formatKstTime(r.createdAt)} 갱신)` : ''}
+                  </span>
+                )}
                 <button
                   style={S.runNowBtn}
                   disabled={running.has(item.symbol)}
