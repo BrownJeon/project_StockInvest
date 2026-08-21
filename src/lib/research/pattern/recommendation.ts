@@ -45,6 +45,14 @@ export interface BuyRecommendation {
   /** 과거에 이 규칙이 참이었던 일수 — 표본 크기 */
   triggerCount: number;
   confidence: RecommendationConfidence | null;
+  /**
+   * `action==='buy'`이고 현재가·과거평균상승폭이 함께 주어졌을 때만 채워진다(그 외 null).
+   * 목표가 = 현재가 × (1+avgRallyPct/100) — 참고치일 뿐 보장이 아니다.
+   */
+  nowPriceKRW: number | null;
+  targetPriceKRW: number | null;
+  /** 과거 평균 소요 거래일을 달력일로 환산한 값 — "며칠 안에"의 근사치 */
+  timeframeDays: number | null;
   /** 과신 방지 고정 문구 — 표시 시 항상 함께 노출한다 */
   note: string;
 }
@@ -56,6 +64,12 @@ export interface SellAssessment {
   /** (현재가 - 진입가) / 진입가 * 100 */
   gainPct: number | null;
   reason: 'target_reached' | 'duration_exceeded' | 'in_progress' | null;
+  /** 표본 크기(eventCount) 기준 신뢰도 — buy 와 동일 기준(confidenceFor) */
+  confidence: RecommendationConfidence | null;
+  /** 목표가 = 진입가 × (1+avgRallyPct/100). sampleOk 일 때만 채워진다. */
+  targetPriceKRW: number | null;
+  /** 과거 평균 소요 거래일을 달력일로 환산한 "목표 기한"(진입일 기준 며칠째까지) */
+  timeframeDays: number | null;
   note: string;
 }
 
@@ -68,6 +82,16 @@ export const MIN_SAMPLE_FOR_RECOMMENDATION = 8;
 
 /** 기저율 대비 이 배수 이상이어야 "매수 고려". 미만이면 규칙이 있어도 관망. */
 export const MIN_LIFT_FOR_BUY = 1.8;
+
+/**
+ * "매수 고려"로 표시하는 목표 도달 기간의 상한(달력일).
+ *
+ * 사용자 피드백(2026-08-21): 예시로 보여준 14일은 "변동성이 크고 타이밍을 잡을 수 없다"는 이유로
+ * 너무 길다고 판단, 5일 이내로 좁혀달라고 요청했다. 과거 평균 소요기간이 이 값을 넘는 종목은
+ * lift 조건을 통과해도 `buy`가 아니라 `hold`로 내린다 — "5일 이내"라고 표시할 근거가 없는데
+ * 매수를 권하지 않기 위함(기간을 5일로 잘라 보여주는 게 아니라, 애초에 추천 자체를 보류한다).
+ */
+export const MAX_TIMEFRAME_DAYS_FOR_BUY = 5;
 
 /** 과거 평균 상승폭의 이 비율에 도달하면 "매도 고려"(목표 도달). */
 export const TARGET_REACHED_RATIO = 0.8;
@@ -92,6 +116,34 @@ function confidenceFor(triggerCount: number): RecommendationConfidence {
   return 'low';
 }
 
+/** 과거 평균 소요 거래일 → 달력일 반올림 정수. 표시용("며칠 안에")이며 판정에는 안 쓴다. */
+export function estimateTimeframeDays(avgDaysToRally: number | null | undefined): number | null {
+  if (avgDaysToRally == null || !Number.isFinite(avgDaysToRally) || avgDaysToRally <= 0) return null;
+  return Math.round(avgDaysToRally * CALENDAR_DAYS_PER_TRADING_DAY);
+}
+
+/**
+ * referencePrice × (1+avgRallyPct/100) — 참고 목표가.
+ * 🔴 예측이 아니라 과거 평균 상승폭을 현재/진입가에 대입한 어림값이다. 보장하지 않는다.
+ */
+export function estimateTargetPrice(
+  referencePriceKRW: number | null | undefined,
+  avgRallyPct: number | null | undefined,
+): number | null {
+  if (
+    referencePriceKRW == null || !Number.isFinite(referencePriceKRW) || referencePriceKRW <= 0 ||
+    avgRallyPct == null || !Number.isFinite(avgRallyPct)
+  ) return null;
+  return referencePriceKRW * (1 + avgRallyPct / 100);
+}
+
+/** 매수 컨텍스트(현재가·과거평균) — 주어졌을 때만 목표가·기간을 채운다. */
+export interface BuyPriceContext {
+  nowPriceKRW?: number | null;
+  avgRallyPct?: number | null;
+  avgDaysToRally?: number | null;
+}
+
 function emptyBuy(action: BuyRecommendation['action']): BuyRecommendation {
   return {
     action,
@@ -101,6 +153,9 @@ function emptyBuy(action: BuyRecommendation['action']): BuyRecommendation {
     lift: null,
     triggerCount: 0,
     confidence: null,
+    nowPriceKRW: null,
+    targetPriceKRW: null,
+    timeframeDays: null,
     note: PRECURSOR_NOTE,
   };
 }
@@ -109,7 +164,12 @@ function buyFrom(
   action: BuyRecommendation['action'],
   rule: PrecursorRuleStat,
   confidence: RecommendationConfidence | null,
+  ctx?: BuyPriceContext,
 ): BuyRecommendation {
+  // 가격·기간은 실제 매수 추천(action==='buy')일 때만 채운다 — 관망/보류에 목표가를 붙이면
+  // "그래도 사도 되나?"로 오해할 수 있다.
+  const showPrice = action === 'buy';
+  const nowPriceKRW = showPrice ? (ctx?.nowPriceKRW ?? null) : null;
   return {
     action,
     ruleId: rule.id,
@@ -118,6 +178,9 @@ function buyFrom(
     lift: rule.lift,
     triggerCount: rule.triggerCount,
     confidence,
+    nowPriceKRW,
+    targetPriceKRW: showPrice ? estimateTargetPrice(nowPriceKRW, ctx?.avgRallyPct) : null,
+    timeframeDays: showPrice ? estimateTimeframeDays(ctx?.avgDaysToRally) : null,
     note: PRECURSOR_NOTE,
   };
 }
@@ -135,10 +198,14 @@ function buyFrom(
  *  - 충족했지만 표본(`triggerCount`)이 전부 문턱 미만 → `insufficient_data`
  *    (근거 표시용으로 표본이 가장 큰 활성 규칙을 함께 돌려준다 — "트리거 4건" 같은 안내)
  *  - 표본을 넘긴 후보 중 lift 1위가 `MIN_LIFT_FOR_BUY` 이상 → `buy`, 아니면 `hold`
+ *
+ * @param priceContext 현재가·과거평균(상승폭/소요일) — 주어지면 `action==='buy'`일 때 목표가·
+ *                     기간을 함께 계산한다. 생략하면(기존 호출부 하위호환) 가격 필드는 전부 null.
  */
 export function evaluateBuySignal(
   todayActiveRuleIds: string[] | null | undefined,
   rules: PrecursorRuleStat[] | null | undefined,
+  priceContext?: BuyPriceContext,
 ): BuyRecommendation {
   if (todayActiveRuleIds == null) return emptyBuy('insufficient_data');
   if (!rules || rules.length === 0) return emptyBuy('insufficient_data');
@@ -160,10 +227,16 @@ export function evaluateBuySignal(
   }
 
   const top = [...candidates].sort((a, b) => (b.lift ?? -1) - (a.lift ?? -1))[0];
-  if ((top.lift ?? 0) >= MIN_LIFT_FOR_BUY) {
-    return buyFrom('buy', top, confidenceFor(top.triggerCount));
+  const passesLift = (top.lift ?? 0) >= MIN_LIFT_FOR_BUY;
+  // 과거 평균 소요기간이 상한을 넘으면 "5일 이내"라고 보여줄 근거가 없다 — buy로 올리지 않는다.
+  // avgDaysToRally 자체가 없으면(드묾 — precision 이 있으면 사실상 항상 함께 있다) 막지 않는다.
+  const timeframeDays = estimateTimeframeDays(priceContext?.avgDaysToRally);
+  const withinTimeframe = timeframeDays == null || timeframeDays <= MAX_TIMEFRAME_DAYS_FOR_BUY;
+
+  if (passesLift && withinTimeframe) {
+    return buyFrom('buy', top, confidenceFor(top.triggerCount), priceContext);
   }
-  return buyFrom('hold', top, confidenceFor(top.triggerCount));
+  return buyFrom('hold', top, confidenceFor(top.triggerCount), priceContext);
 }
 
 /**
@@ -201,22 +274,39 @@ export function evaluateSellSignal(
   const gainPct = priceOk ? ((currentPrice! - entryPrice!) / entryPrice!) * 100 : null;
 
   if (!sampleOk || !priceOk || avgRallyPct == null || !Number.isFinite(avgRallyPct)) {
-    return { action: 'insufficient_data', daysSinceEntry: days, gainPct, reason: null, note };
+    return {
+      action: 'insufficient_data', daysSinceEntry: days, gainPct, reason: null,
+      confidence: null, targetPriceKRW: null, timeframeDays: null, note,
+    };
   }
 
+  // 표본이 sampleOk 를 넘겼으니 이 시점부터는 신뢰도·목표가·기간을 항상 채운다.
+  const confidence = confidenceFor(eventCount ?? 0);
+  const targetPriceKRW = estimateTargetPrice(entryPrice, avgRallyPct);
+  const timeframeDays = estimateTimeframeDays(avgDaysToRally);
+
   if (avgRallyPct > 0 && gainPct != null && gainPct >= avgRallyPct * TARGET_REACHED_RATIO) {
-    return { action: 'sell', daysSinceEntry: days, gainPct, reason: 'target_reached', note };
+    return {
+      action: 'sell', daysSinceEntry: days, gainPct, reason: 'target_reached',
+      confidence, targetPriceKRW, timeframeDays, note,
+    };
   }
 
   if (days != null && avgDaysToRally != null && Number.isFinite(avgDaysToRally) && avgDaysToRally > 0) {
     const deadlineCalendarDays =
       avgDaysToRally * CALENDAR_DAYS_PER_TRADING_DAY * DURATION_EXCEEDED_RATIO;
     if (days >= deadlineCalendarDays) {
-      return { action: 'sell', daysSinceEntry: days, gainPct, reason: 'duration_exceeded', note };
+      return {
+        action: 'sell', daysSinceEntry: days, gainPct, reason: 'duration_exceeded',
+        confidence, targetPriceKRW, timeframeDays, note,
+      };
     }
   }
 
-  return { action: 'hold', daysSinceEntry: days, gainPct, reason: 'in_progress', note };
+  return {
+    action: 'hold', daysSinceEntry: days, gainPct, reason: 'in_progress',
+    confidence, targetPriceKRW, timeframeDays, note,
+  };
 }
 
 /** 목표(과거 평균 상승폭) 대비 진행률(%). 표시 전용 — 판정에는 쓰지 않는다. */

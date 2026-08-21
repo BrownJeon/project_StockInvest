@@ -35,7 +35,8 @@ function input(symbol: string, over: Partial<RecommendationInput> = {}): Recomme
   return {
     symbol, market: 'domestic', dataRangeTo: '2026-08-19',
     todayActiveRuleIds: ['rsi_lt_30'], precursorAnalysis: analysis,
-    avgRallyPct: 20, avgDaysToRally: 10, eventCount: 12,
+    // avgDaysToRally=3 → 달력일 환산 4.2일(반올림 4) → MAX_TIMEFRAME_DAYS_FOR_BUY(5) 이내라 buy 유지.
+    avgRallyPct: 20, avgDaysToRally: 3, eventCount: 12,
     ...over,
   };
 }
@@ -51,8 +52,8 @@ beforeEach(() => {
 afterEach(() => { warnSpy.mockRestore(); jest.clearAllMocks(); });
 
 describe('buildResearchRecommendations', () => {
-  test('미보유 종목 — 매수 추천만 나오고 시세 조회를 하지 않는다', async () => {
-    const fetchPrices = jest.fn(async () => new Map<string, number>());
+  test('미보유 + 매수고려 종목 — 시세를 조회해 목표가·기간까지 채운다', async () => {
+    const fetchPrices = jest.fn(async () => new Map([['005930', 70_000]]));
     const out = await buildResearchRecommendations([input('005930')], fetchPrices, NOW);
 
     const v = out.get('005930')!;
@@ -60,6 +61,36 @@ describe('buildResearchRecommendations', () => {
     expect(v.asOfDate).toBe('2026-08-19');
     expect(v.sell).toBeNull();
     expect(v.holding).toBeNull();
+    // action==='buy'인 종목은 미보유여도 목표가 계산을 위해 시세를 조회한다(T-033 후속)
+    expect(fetchPrices).toHaveBeenCalledWith([{ symbol: '005930', market: 'domestic' }]);
+    expect(v.buy.nowPriceKRW).toBe(70_000);
+    expect(v.buy.targetPriceKRW).toBeCloseTo(70_000 * 1.2, 4);   // avgRallyPct=20
+    expect(v.buy.timeframeDays).toBe(4);                         // avgDaysToRally=3 → round(3*7/5)=4
+  });
+
+  test('과거 평균 소요기간이 5일 상한을 넘으면 buy가 아니라 hold로 내린다', async () => {
+    const fetchPrices = jest.fn(async () => new Map([['005930', 70_000]]));
+    const out = await buildResearchRecommendations(
+      [input('005930', { avgDaysToRally: 10 })],   // 10*7/5=14일 → 상한(5일) 초과
+      fetchPrices, NOW,
+    );
+    const v = out.get('005930')!;
+    expect(v.buy.action).toBe('hold');
+    expect(v.buy.targetPriceKRW).toBeNull();
+    // 시세 조회 대상 판정은 1차(가격 없는) 평가 기준이라 lift만으로 candidate였던 종목은 여전히 조회된다
+    // — 다만 최종 action은 hold이므로 화면엔 가격이 안 뜬다.
+  });
+
+  test('관망(hold) 종목은 매수 근거만 나오고 시세를 조회하지 않는다', async () => {
+    const fetchPrices = jest.fn(async () => new Map<string, number>());
+    const out = await buildResearchRecommendations(
+      [input('005930', { todayActiveRuleIds: [] })],   // 오늘 충족 규칙 0개 → hold
+      fetchPrices, NOW,
+    );
+
+    const v = out.get('005930')!;
+    expect(v.buy.action).toBe('hold');
+    expect(v.buy.targetPriceKRW).toBeNull();
     expect(fetchPrices).not.toHaveBeenCalled();
   });
 
@@ -116,13 +147,21 @@ describe('buildResearchRecommendations', () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
-  test('시세 조회는 보유중인 추적 종목으로만 좁힌다', async () => {
+  test('시세 조회는 보유중이거나 매수고려인 추적 종목으로 좁힌다(그 외는 제외)', async () => {
     queryImpl = () => rows([
       { symbol: '005930', market: 'domestic', entry_price: 70_000, qty: 10, first_seen_at: null },
     ]);
     const fetchPrices = jest.fn(async () => new Map<string, number>());
-    await buildResearchRecommendations([input('005930'), input('NAS:MU', { market: 'overseas' })], fetchPrices, NOW);
-    expect(fetchPrices).toHaveBeenCalledWith([{ symbol: '005930', market: 'domestic' }]);
+    await buildResearchRecommendations(
+      [
+        input('005930'),                                          // 보유중 + 매수고려
+        input('NAS:MU', { market: 'overseas' }),                   // 미보유지만 매수고려 → 포함
+        input('000660', { todayActiveRuleIds: [] }),                // 미보유 + 관망 → 제외
+      ],
+      fetchPrices, NOW,
+    );
+    const [targets] = fetchPrices.mock.calls[0] as [{ symbol: string; market: string }[]];
+    expect(targets.map(t => t.symbol).sort()).toEqual(['005930', 'NAS:MU']);
   });
 
   test('입력이 비면 쿼리조차 쏘지 않는다', async () => {

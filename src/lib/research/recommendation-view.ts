@@ -108,10 +108,16 @@ export async function buildResearchRecommendations(
 
   const positions = await fetchPositions(inputs.map((i) => i.symbol));
 
-  // 시세 조회는 **보유중인 추적 종목**으로만 좁힌다 — 미보유 종목은 매도 판단이 없어 현재가가
-  // 필요 없고, 화면 로딩마다 증권사 API 를 필요 이상으로 두드릴 이유도 없다.
+  // 가격 없이 1차 평가 — action 판정에 가격은 영향을 주지 않으므로(표시용일 뿐) 어느 심볼이
+  // "매수 고려"로 뜨는지 먼저 알아야 시세 조회 대상을 정할 수 있다.
+  const prelimBuy = new Map(
+    inputs.map((i) => [i.symbol, evaluateBuySignal(i.todayActiveRuleIds, i.precursorAnalysis?.rules ?? null)]),
+  );
+
+  // 시세 조회 대상 — 보유중인 추적 종목(매도 판단용) + "매수 고려"로 판정된 종목(목표가 표시용).
+  // 그 외(관망·판단보류·미보유)는 목표가를 안 보여주므로 증권사 API 를 두드릴 이유가 없다.
   const priceTargets = inputs
-    .filter((i) => positions.has(i.symbol))
+    .filter((i) => positions.has(i.symbol) || prelimBuy.get(i.symbol)?.action === 'buy')
     .map((i) => ({ symbol: i.symbol, market: positions.get(i.symbol)?.market || i.market }));
   const prices = priceTargets.length > 0
     ? await fetchPrices(priceTargets).catch((e) => {
@@ -121,7 +127,11 @@ export async function buildResearchRecommendations(
     : new Map<string, number>();
 
   for (const input of inputs) {
-    const buy = evaluateBuySignal(input.todayActiveRuleIds, input.precursorAnalysis?.rules ?? null);
+    const buy = evaluateBuySignal(input.todayActiveRuleIds, input.precursorAnalysis?.rules ?? null, {
+      nowPriceKRW: prices.get(input.symbol) ?? null,
+      avgRallyPct: input.avgRallyPct,
+      avgDaysToRally: input.avgDaysToRally,
+    });
     const pos = positions.get(input.symbol) ?? null;
 
     let sell: SellAssessment | null = null;

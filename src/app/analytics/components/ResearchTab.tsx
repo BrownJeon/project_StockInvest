@@ -66,6 +66,10 @@ interface BuyRecommendation {
   lift: number | null;
   triggerCount: number;
   confidence: 'low' | 'medium' | 'high' | null;
+  /** action==='buy'일 때만 채워진다(그 외 null) — T-033 후속 */
+  nowPriceKRW: number | null;
+  targetPriceKRW: number | null;
+  timeframeDays: number | null;
   note: string;
 }
 
@@ -74,6 +78,9 @@ interface SellAssessment {
   daysSinceEntry: number | null;
   gainPct: number | null;
   reason: 'target_reached' | 'duration_exceeded' | 'in_progress' | null;
+  confidence: 'low' | 'medium' | 'high' | null;
+  targetPriceKRW: number | null;
+  timeframeDays: number | null;
   note: string;
 }
 
@@ -106,6 +113,7 @@ const WARNING_KO: Record<string, string> = {
 };
 
 const pct = (v: number | null, digits = 1) => (v == null ? '—' : v.toFixed(digits) + '%');
+const krw = (v: number | null) => (v == null ? '—' : '₩' + Math.round(v).toLocaleString('ko-KR'));
 
 /** "지금 분석" 직후 화면상 확인 수단 — 값이 이전과 동일해도 이 시각은 항상 바뀐다. */
 function formatKstTime(iso: string | null): string | null {
@@ -202,7 +210,6 @@ export function ResearchTab() {
       {items.map((item) => {
         const r = item.result;
         const isOpen = expanded.has(item.symbol);
-        const recent = r ? r.events.slice(-3).reverse() : [];
 
         return (
           <div key={item.symbol} style={S.card}>
@@ -240,42 +247,11 @@ export function ResearchTab() {
             {r?.error && <div style={S.errorBox}>분석 실패: {r.error}</div>}
 
             {r && !r.error && item.recommendation && (
-              <RecommendationBlock rec={item.recommendation} avgRallyPct={r.avgRallyPct} />
+              <RecommendationBlock rec={item.recommendation} />
             )}
 
             {r && !r.error && (
               <>
-                <div style={S.metricsRow}>
-                  <Metric label="사이클 수" value={String(r.eventCount)} />
-                  <Metric label="평균 상승" value={pct(r.avgRallyPct)} />
-                  <Metric label="평균 소요" value={r.avgDaysToRally == null ? '—' : `${r.avgDaysToRally.toFixed(0)}일`} />
-                </div>
-
-                {r.dataRangeFrom && r.dataRangeTo && (
-                  <div style={S.rangeText}>데이터 범위: {r.dataRangeFrom} ~ {r.dataRangeTo}</div>
-                )}
-
-                {recent.length > 0 && (
-                  <div style={S.eventsWrap}>
-                    <div style={S.subTitle}>최근 이벤트</div>
-                    {recent.map((e, i) => (
-                      <div key={i} style={S.eventRow}>
-                        <span style={S.eventDate}>{e.troughDate} → {e.peakDate}</span>
-                        <span style={S.eventRally}>+{e.rallyPct.toFixed(1)}%</span>
-                        <span style={S.eventDays}>{e.daysToRally}일</span>
-                        <span style={{
-                          ...S.cycleChip,
-                          color: e.confirmedCycle === true ? RESEARCH_COLOR : 'var(--muted)',
-                        }}>
-                          {e.confirmedCycle === true
-                            ? `재하락 ${pct(e.declinePct)}`
-                            : e.confirmedCycle === false ? '재하락 없음' : '관측중'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
                 {r.dataWarnings.length > 0 && (
                   <div style={S.warnWrap}>
                     {r.dataWarnings.map((w) => (
@@ -304,16 +280,18 @@ export function ResearchTab() {
 const CONFIDENCE_KO: Record<string, string> = { low: '낮음', medium: '보통', high: '높음' };
 
 /**
- * 매수/매도 "고려" 배지 — T-033.
+ * 매수/매도 "고려" 예측 — T-033 + 후속.
+ *
+ * 사용자 요청("신뢰도·기간·가격 중심으로")에 맞춰 근거를 3줄(신뢰도/기간/가격)로 고정한다.
  *
  * 🔴 문구 규율:
  *  - "확률"이라고 쓰지 않는다. 우리가 가진 건 **과거 조건부 적중률**뿐이다.
- *  - 표본이 적으면 추천 대신 "판단 보류(표본부족)"를 보여준다.
+ *  - 표본이 적으면 추천 대신 "판단 보류(표본부족)"를 보여준다 — 가격·기간도 함께 감춘다.
  *  - 기준일(`asOfDate`)을 항상 함께 노출한다 — 국내는 전일 종가, 해외는 당일 종가 기준이라
  *    실시간이 아니다. 이걸 감추면 사용자가 "지금 값"으로 오해한다.
- *  - 면책 문구(`note`)를 배지 바로 아래에 붙인다.
+ *  - 가격은 전부 **참고치**다("목표가" 도달·기한 준수를 보장하지 않는다) — 면책 문구를 항상 동반.
  */
-function RecommendationBlock({ rec, avgRallyPct }: { rec: Recommendation; avgRallyPct: number | null }) {
+function RecommendationBlock({ rec }: { rec: Recommendation }) {
   const { buy, sell, holding } = rec;
   const asOf = rec.asOfDate ? `${rec.asOfDate} 종가 기준` : '기준일 데이터 없음';
 
@@ -332,39 +310,70 @@ function RecommendationBlock({ rec, avgRallyPct }: { rec: Recommendation; avgRal
         ? { icon: '⚪', text: '보유 관망', color: 'var(--muted)' }
         : { icon: '⚪', text: '매도 판단 보류(표본부족)', color: 'var(--muted)' };
 
-  const evidence =
-    buy.ruleLabel != null && buy.precision != null
-      ? `${buy.ruleLabel} — 과거 적중률 ${(buy.precision * 100).toFixed(0)}%(${buy.triggerCount}건 중 ${Math.round(buy.precision * buy.triggerCount)}건)` +
-        (buy.lift != null ? ` · lift ×${buy.lift.toFixed(2)}` : '') +
-        (buy.confidence ? ` · 표본 신뢰도 ${CONFIDENCE_KO[buy.confidence] ?? buy.confidence}` : '')
-      : buy.action === 'hold'
-        ? '기준일 종가에서 충족한 선행지표 규칙이 없습니다.'
-        : '판단에 쓸 만한 과거 표본이 부족합니다.';
+  const buyHint =
+    buy.action === 'hold'
+      ? '오늘 종가 기준 충족한 선행지표 조건이 없습니다.'
+      : buy.action === 'insufficient_data'
+        ? `판단에 쓸 과거 표본이 부족합니다${buy.triggerCount > 0 ? `(트리거 ${buy.triggerCount}건)` : ''}.`
+        : null;
 
-  const sellReason = !sell
-    ? null
-    : sell.action === 'insufficient_data'
+  const sellHint =
+    sell && sell.action !== 'sell' && sell.action !== 'hold'
       ? '리서치 표본이 부족해 매도 판단을 보류합니다.'
-      : [
-          avgRallyPct != null
-            ? `목표(과거평균 ${avgRallyPct >= 0 ? '+' : ''}${avgRallyPct.toFixed(1)}%) 대비 ${holding?.targetProgressPct != null ? `${holding.targetProgressPct.toFixed(0)}% 진행` : '진행률 데이터 없음'}`
-            : '목표 데이터 없음',
-          sell.daysSinceEntry != null ? `보유 ${sell.daysSinceEntry}일째` : '보유기간 데이터 없음',
-          sell.reason === 'duration_exceeded' ? '과거 평균 소요기간 초과' : null,
-        ].filter(Boolean).join(' · ');
+      : null;
 
   return (
     <div style={S.recWrap}>
       <div style={S.recBadgeRow}>
         <span style={{ ...S.recBadge, color: buyBadge.color }}>{buyBadge.icon} {buyBadge.text}</span>
-        {sellBadge && (
-          <span style={{ ...S.recBadge, color: sellBadge.color }}>{sellBadge.icon} {sellBadge.text}</span>
-        )}
         <span style={S.recAsOf}>{asOf}</span>
       </div>
-      <div style={S.recEvidence}>근거: {evidence}</div>
-      {sellReason && <div style={S.recEvidence}>보유: {sellReason}</div>}
+
+      {buy.action === 'buy' ? (
+        <PredictionRows
+          confidenceText={`${CONFIDENCE_KO[buy.confidence ?? ''] ?? '—'} (과거 적중률 ${pct(buy.precision != null ? buy.precision * 100 : null, 0)}, ${buy.triggerCount}건 중 ${buy.precision != null ? Math.round(buy.precision * buy.triggerCount) : '—'}건)`}
+          timeframeText={buy.timeframeDays != null ? `약 ${buy.timeframeDays}일 이내 목표가 도달 예상` : '기간 데이터 없음'}
+          priceText={`현재가 ${krw(buy.nowPriceKRW)} → 목표가 ${krw(buy.targetPriceKRW)}`}
+        />
+      ) : (
+        buyHint && <div style={S.recEvidence}>{buyHint}</div>
+      )}
+
+      {sellBadge && (
+        <>
+          <div style={S.recBadgeRow}>
+            <span style={{ ...S.recBadge, color: sellBadge.color }}>{sellBadge.icon} {sellBadge.text}</span>
+          </div>
+          {(sell!.action === 'sell' || sell!.action === 'hold') ? (
+            <PredictionRows
+              confidenceText={`${CONFIDENCE_KO[sell!.confidence ?? ''] ?? '—'} (과거 사이클 표본 기준)`}
+              timeframeText={
+                sell!.timeframeDays != null
+                  ? `목표 기한 약 ${sell!.timeframeDays}일${sell!.daysSinceEntry != null ? ` (현재 ${sell!.daysSinceEntry}일째 보유)` : ''}`
+                  : '기간 데이터 없음'
+              }
+              priceText={`진입가 ${krw(holding?.entryPriceKRW ?? null)} → 목표가 ${krw(sell!.targetPriceKRW)} (현재가 ${krw(holding?.nowPriceKRW ?? null)})`}
+            />
+          ) : (
+            sellHint && <div style={S.recEvidence}>{sellHint}</div>
+          )}
+        </>
+      )}
+
       <div style={S.noteText}>{buy.note}</div>
+    </div>
+  );
+}
+
+/** 신뢰도/기간/가격 3줄 고정 레이아웃 — 사용자가 원한 "언제·얼마" 예측 형식. */
+function PredictionRows(
+  { confidenceText, timeframeText, priceText }: { confidenceText: string; timeframeText: string; priceText: string },
+) {
+  return (
+    <div style={S.predictWrap}>
+      <div style={S.predictRow}><span style={S.predictLabel}>신뢰도</span><span style={S.predictValue}>{confidenceText}</span></div>
+      <div style={S.predictRow}><span style={S.predictLabel}>기간</span><span style={S.predictValue}>{timeframeText}</span></div>
+      <div style={S.predictRow}><span style={S.predictLabel}>가격</span><span style={S.predictValue}>{priceText}</span></div>
     </div>
   );
 }
@@ -399,15 +408,6 @@ function PrecursorPanel({ analysis }: { analysis: PrecursorAnalysis }) {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ textAlign: 'center', minWidth: 60 }}>
-      <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--fg)' }}>{value}</div>
-    </div>
-  );
-}
-
 const S: Record<string, React.CSSProperties> = {
   center: { textAlign: 'center', padding: 40, color: 'var(--muted)' },
   empty: { textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontSize: 13, lineHeight: 1.8 },
@@ -434,18 +434,6 @@ const S: Record<string, React.CSSProperties> = {
   },
   pending: { fontSize: 12, color: 'var(--muted)' },
   errorBox: { fontSize: 12, color: 'var(--red)', lineHeight: 1.5, wordBreak: 'break-all' },
-  metricsRow: { display: 'flex', gap: 18, paddingTop: 2 },
-  rangeText: { fontSize: 10, color: 'var(--muted)' },
-  subTitle: { fontSize: 11, fontWeight: 600, color: 'var(--muted)', marginBottom: 6 },
-  eventsWrap: { display: 'flex', flexDirection: 'column', gap: 4 },
-  eventRow: {
-    display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-    background: 'var(--bg3)', borderRadius: 8, padding: '7px 10px', fontSize: 11,
-  },
-  eventDate: { color: 'var(--muted)', flex: 1, minWidth: 130 },
-  eventRally: { color: 'var(--red)', fontWeight: 700, fontSize: 12 },
-  eventDays: { color: 'var(--muted)' },
-  cycleChip: { fontSize: 10, fontWeight: 600 },
   warnWrap: { display: 'flex', flexDirection: 'column', gap: 4 },
   warnRow: { fontSize: 11, color: '#f59e0b', lineHeight: 1.5 },
   expandBtn: {
@@ -460,6 +448,10 @@ const S: Record<string, React.CSSProperties> = {
   recBadge: { fontSize: 12, fontWeight: 700 },
   recAsOf: { fontSize: 10, color: 'var(--muted)', marginLeft: 'auto' },
   recEvidence: { fontSize: 11, color: 'var(--fg)', lineHeight: 1.6 },
+  predictWrap: { display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 2 },
+  predictRow: { display: 'flex', gap: 8, fontSize: 11, lineHeight: 1.5 },
+  predictLabel: { color: 'var(--muted)', minWidth: 32, flexShrink: 0 },
+  predictValue: { color: 'var(--fg)' },
   precursorWrap: { display: 'flex', flexDirection: 'column', gap: 8 },
   precursorMeta: { fontSize: 10, color: 'var(--muted)' },
   ruleTable: { display: 'flex', flexDirection: 'column', gap: 3 },

@@ -968,7 +968,12 @@ export async function fetchResearchDigest(): Promise<ResearchDigest> {
     for (const t of tracked) {
       const r = bySymbol.get(t.symbol);
       if (!r || r.error) continue;
-      const buy = evaluateBuySignal(r.todayActiveRuleIds, r.precursorAnalysis?.rules ?? null);
+      // avgDaysToRally 만 넘긴다(가격은 이 리포트에서 안 보여주므로 nowPriceKRW 조회는 생략) —
+      // ResearchTab 과 동일한 5일 기간 상한(MAX_TIMEFRAME_DAYS_FOR_BUY)을 적용해 두 화면의
+      // "매수 고려" 판정이 어긋나지 않게 한다.
+      const buy = evaluateBuySignal(r.todayActiveRuleIds, r.precursorAnalysis?.rules ?? null, {
+        avgDaysToRally: r.avgDaysToRally,
+      });
       if (buy.action === 'buy') activeCount++;
       const worthShowing =
         buy.action === 'buy' ||

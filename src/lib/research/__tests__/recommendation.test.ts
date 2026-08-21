@@ -13,6 +13,8 @@ import {
   MIN_LIFT_FOR_BUY,
   MIN_SAMPLE_FOR_RECOMMENDATION,
   TARGET_REACHED_RATIO,
+  estimateTargetPrice,
+  estimateTimeframeDays,
   evaluateBuySignal,
   evaluateSellSignal,
   targetProgressPct,
@@ -126,6 +128,64 @@ describe('evaluateBuySignal', () => {
       expect(r.note).toBe(PRECURSOR_NOTE);
     }
   });
+
+  describe('priceContext (T-033 후속 — 신뢰도/기간/가격 예측)', () => {
+    test('action=buy 일 때만 목표가·기간을 채운다', () => {
+      const ctx = { nowPriceKRW: 70_000, avgRallyPct: 20, avgDaysToRally: 3 };   // 3*7/5=4.2일(상한 이내)
+      const bought = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], ctx);
+      expect(bought.action).toBe('buy');
+      expect(bought.nowPriceKRW).toBe(70_000);
+      expect(bought.targetPriceKRW).toBeCloseTo(84_000, 4);
+      expect(bought.timeframeDays).toBe(4);
+
+      // hold — 컨텍스트를 줘도 가격을 안 보여준다("사도 되나?" 오해 방지)
+      const held = evaluateBuySignal(['a'], [rule('a', { lift: MIN_LIFT_FOR_BUY - 0.01 })], ctx);
+      expect(held.action).toBe('hold');
+      expect(held.targetPriceKRW).toBeNull();
+    });
+
+    test('priceContext 를 생략하면(기존 호출부) 가격 필드는 전부 null', () => {
+      const r = evaluateBuySignal(['a'], [rule('a', { lift: 3 })]);
+      expect(r.action).toBe('buy');
+      expect(r.nowPriceKRW).toBeNull();
+      expect(r.targetPriceKRW).toBeNull();
+      expect(r.timeframeDays).toBeNull();
+    });
+
+    test('🔴 사용자 피드백(2026-08-21) — 과거 평균 소요기간이 5일 상한을 넘으면 buy가 아니라 hold', () => {
+      // avgDaysToRally=4 → 4*7/5=5.6 → round 6일, 상한(5일) 초과
+      const tooSlow = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], { avgDaysToRally: 4, nowPriceKRW: 100, avgRallyPct: 20 });
+      expect(tooSlow.action).toBe('hold');
+      expect(tooSlow.targetPriceKRW).toBeNull();
+      // avgDaysToRally=3 → round(4.2)=4일, 상한 이내 — buy 유지
+      const fastEnough = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], { avgDaysToRally: 3, nowPriceKRW: 100, avgRallyPct: 20 });
+      expect(fastEnough.action).toBe('buy');
+    });
+
+    test('avgDaysToRally 데이터 자체가 없으면(드묾) 기간 상한으로 막지 않는다', () => {
+      const r = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], { nowPriceKRW: 100, avgRallyPct: 20, avgDaysToRally: null });
+      expect(r.action).toBe('buy');
+      expect(r.timeframeDays).toBeNull();
+    });
+  });
+});
+
+describe('estimateTargetPrice / estimateTimeframeDays', () => {
+  test('목표가 = 기준가 × (1+상승폭%)', () => {
+    expect(estimateTargetPrice(70_000, 20)).toBeCloseTo(84_000, 4);
+    expect(estimateTargetPrice(100, -10)).toBeCloseTo(90, 4);
+  });
+  test('기준가·상승폭 중 하나라도 없거나 기준가가 0 이하면 null', () => {
+    expect(estimateTargetPrice(null, 20)).toBeNull();
+    expect(estimateTargetPrice(70_000, null)).toBeNull();
+    expect(estimateTargetPrice(0, 20)).toBeNull();
+    expect(estimateTargetPrice(-1, 20)).toBeNull();
+  });
+  test('거래일 → 달력일 반올림', () => {
+    expect(estimateTimeframeDays(10)).toBe(Math.round(10 * CALENDAR_DAYS_PER_TRADING_DAY));
+    expect(estimateTimeframeDays(null)).toBeNull();
+    expect(estimateTimeframeDays(0)).toBeNull();
+  });
 });
 
 describe('evaluateSellSignal', () => {
@@ -200,6 +260,21 @@ describe('evaluateSellSignal', () => {
     ]) {
       expect(r.note).toBe(PRECURSOR_NOTE);
     }
+  });
+
+  test('T-033 후속 — 표본이 충분하면 신뢰도·목표가·기간을 항상 채운다', () => {
+    const r = evaluateSellSignal(100, 105, 3, AVG_RALLY, AVG_DAYS, 20);
+    expect(r.confidence).toBe('medium');            // eventCount=20 → 15~29 구간
+    expect(r.targetPriceKRW).toBeCloseTo(120, 4);    // 진입가 100 × (1+20/100)
+    expect(r.timeframeDays).toBe(14);                // 10거래일 → 14달력일
+  });
+
+  test('표본부족(insufficient_data)이면 신뢰도·목표가·기간도 null', () => {
+    const r = evaluateSellSignal(100, 130, 5, AVG_RALLY, AVG_DAYS, MIN_SAMPLE_FOR_RECOMMENDATION - 1);
+    expect(r.action).toBe('insufficient_data');
+    expect(r.confidence).toBeNull();
+    expect(r.targetPriceKRW).toBeNull();
+    expect(r.timeframeDays).toBeNull();
   });
 });
 

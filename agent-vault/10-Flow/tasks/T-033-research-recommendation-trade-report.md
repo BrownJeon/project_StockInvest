@@ -414,3 +414,45 @@ dev 인스턴스(3099, 운영 pm2 미접촉, 검증 후 종료)로 직접 재현
 Developer 구현(Phase1→Phase2) → Reviewer PASS(Critical/High/Medium 0건) → QA 핵심로직 통과(결함 0건,
 UI 최종확인만 세션제약으로 보류) → Leader가 실전송까지 직접 재현 완료. **커밋·배포는 사용자 승인
 대기 중.**
+
+## Leader 후속 4 (2026-08-21, 신뢰도/기간/가격 예측 형식으로 재구성)
+
+사용자 피드백: "매수 고려" 근거가 규칙명·적중률·lift가 뒤섞여 불명확 — 원하는 건 "언제·얼마"
+예측(신뢰도/기간/가격 3가지). 다른 정보(사이클 수·평균 상승·평균 소요 메트릭 행, 최근 이벤트
+목록)는 제거 요청.
+
+- `recommendation.ts`: `BuyRecommendation`에 `nowPriceKRW`/`targetPriceKRW`/`timeframeDays`,
+  `SellAssessment`에 `confidence`/`targetPriceKRW`/`timeframeDays` 추가. 목표가 = 기준가×(1+
+  avgRallyPct%)(매수는 현재가, 매도는 진입가 기준), 기간 = avgDaysToRally를 달력일로 환산
+  (기존 CALENDAR_DAYS_PER_TRADING_DAY 재사용). `evaluateBuySignal`에 선택적 3번째 인자
+  `priceContext` 추가(하위호환 — 생략 시 기존 동작과 동일, trade-report.ts 무변경).
+  `action==='buy'`가 아니면 가격을 안 보여준다("그래도 사도 되나?" 오해 방지).
+- `recommendation-view.ts`: 시세 조회 대상을 "보유중" 외에 "매수 고려로 판정된 미보유 종목"까지
+  확장(가격 없이 1차 평가로 action만 먼저 판정 후 대상 결정).
+- `ResearchTab.tsx`: 메트릭 행·최근 이벤트 목록 제거, "신뢰도/기간/가격" 3줄 고정 레이아웃
+  (`PredictionRows`)으로 교체. "선행지표 보기" 상세 패널(이미 접힌 상태)은 유지.
+- 표본부족(`insufficient_data`)이면 가격·기간도 함께 숨긴다 — 추측성 수치 노출 금지 원칙 유지.
+  "확률" 단어 미사용, 면책 문구 유지.
+- 신규 테스트 8건(`estimateTargetPrice`/`estimateTimeframeDays`, priceContext 유무별 buy, sell
+  confidence/targetPrice/timeframeDays 채움 여부), 기존 2건 수정(시세조회 대상 확장 반영).
+- `npm run typecheck` 무오류, `npm test` **121 suites/2103 tests 전부 통과**(회귀 없음).
+- SAFETY_PATHS 대상 파일 무변경(전부 `src/lib/research/`, `src/app/analytics/` — 게이트 밖).
+  규모·재사용 비중을 고려해 Leader가 직접 구현(Developer/Reviewer/QA 사이클 생략).
+- 배포: 사용자 승인 대기.
+
+## Leader 후속 5 (2026-08-21, 매수 추천 기간 상한 5일)
+
+사용자 피드백: 예시로 든 14일은 변동성이 크고 타이밍을 잡을 수 없다 — 예상기간은 5일 이내로.
+
+- `recommendation.ts`: `MAX_TIMEFRAME_DAYS_FOR_BUY = 5` 신설. `evaluateBuySignal`이 기존
+  lift 조건을 통과해도 `estimateTimeframeDays(avgDaysToRally)`가 5일을 넘으면 `buy`가 아니라
+  `hold`로 내린다 — "5일 이내"라고 표시할 근거가 없는 종목을 매수 고려로 보여주지 않기 위함
+  (숫자를 5일로 잘라 보여주는 게 아니라 추천 자체를 보류). `avgDaysToRally` 자체가 없으면
+  막지 않는다(정보 부족과 "너무 느림"을 구분).
+- `trade-report.ts`의 `fetchResearchDigest()`도 `avgDaysToRally`를 `evaluateBuySignal`에 함께
+  넘기도록 수정 — ResearchTab과 텔레그램 리포트의 "매수 고려" 판정이 같은 기준을 쓰게 함(안 그러면
+  화면엔 관망인데 리포트엔 매수 고려로 뜨는 불일치가 생김).
+- 관련 테스트 픽스처(`avgDaysToRally` 기본값)를 상한 이내로 조정 + 신규 경계값 테스트 3건 추가.
+- `npm run typecheck` 무오류, `npm test` **121 suites/2106 tests 전부 통과**.
+- SAFETY_PATHS 대상 파일 무변경. Leader가 직접 구현.
+- 배포: 사용자 승인 대기.

@@ -200,7 +200,8 @@ describe('fetchResearchDigest', () => {
     return {
       symbol, market: 'domestic', runDate: '2026-08-20',
       dataRangeFrom: '2020-01-01', dataRangeTo: '2026-08-19',
-      eventCount: 12, events: [], avgRallyPct: 18, avgDaysToRally: 10,
+      // avgDaysToRally=3 → 달력일 환산 4.2일(반올림 4) → MAX_TIMEFRAME_DAYS_FOR_BUY(5) 이내(buy 유지).
+      eventCount: 12, events: [], avgRallyPct: 18, avgDaysToRally: 3,
       precursorAnalysis: { rules: [statRule()] },
       todayActiveRuleIds: ['rsi_lt_30'],
       dataWarnings: [], error: null, createdAt: null,
