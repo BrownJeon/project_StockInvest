@@ -51,9 +51,43 @@ interface ResearchResult {
   avgRallyPct: number | null;
   avgDaysToRally: number | null;
   precursorAnalysis: PrecursorAnalysis | null;
+  todayActiveRuleIds: string[] | null;
   dataWarnings: string[];
   error: string | null;
   createdAt: string | null;
+}
+
+/** T-033 — 매수 추천. `precision` 은 확률이 아니라 **과거 조건부 적중률**이다. */
+interface BuyRecommendation {
+  action: 'buy' | 'hold' | 'insufficient_data';
+  ruleId: string | null;
+  ruleLabel: string | null;
+  precision: number | null;
+  lift: number | null;
+  triggerCount: number;
+  confidence: 'low' | 'medium' | 'high' | null;
+  note: string;
+}
+
+interface SellAssessment {
+  action: 'sell' | 'hold' | 'insufficient_data';
+  daysSinceEntry: number | null;
+  gainPct: number | null;
+  reason: 'target_reached' | 'duration_exceeded' | 'in_progress' | null;
+  note: string;
+}
+
+interface Recommendation {
+  asOfDate: string | null;
+  buy: BuyRecommendation;
+  sell: SellAssessment | null;
+  holding: {
+    entryPriceKRW: number;
+    qty: number;
+    daysSinceEntry: number | null;
+    nowPriceKRW: number | null;
+    targetProgressPct: number | null;
+  } | null;
 }
 
 interface TrackedItem {
@@ -61,6 +95,7 @@ interface TrackedItem {
   name: string | null;
   market: string;
   result: ResearchResult | null;
+  recommendation: Recommendation | null;
 }
 
 const WARNING_KO: Record<string, string> = {
@@ -204,6 +239,10 @@ export function ResearchTab() {
 
             {r?.error && <div style={S.errorBox}>분석 실패: {r.error}</div>}
 
+            {r && !r.error && item.recommendation && (
+              <RecommendationBlock rec={item.recommendation} avgRallyPct={r.avgRallyPct} />
+            )}
+
             {r && !r.error && (
               <>
                 <div style={S.metricsRow}>
@@ -258,6 +297,74 @@ export function ResearchTab() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+const CONFIDENCE_KO: Record<string, string> = { low: '낮음', medium: '보통', high: '높음' };
+
+/**
+ * 매수/매도 "고려" 배지 — T-033.
+ *
+ * 🔴 문구 규율:
+ *  - "확률"이라고 쓰지 않는다. 우리가 가진 건 **과거 조건부 적중률**뿐이다.
+ *  - 표본이 적으면 추천 대신 "판단 보류(표본부족)"를 보여준다.
+ *  - 기준일(`asOfDate`)을 항상 함께 노출한다 — 국내는 전일 종가, 해외는 당일 종가 기준이라
+ *    실시간이 아니다. 이걸 감추면 사용자가 "지금 값"으로 오해한다.
+ *  - 면책 문구(`note`)를 배지 바로 아래에 붙인다.
+ */
+function RecommendationBlock({ rec, avgRallyPct }: { rec: Recommendation; avgRallyPct: number | null }) {
+  const { buy, sell, holding } = rec;
+  const asOf = rec.asOfDate ? `${rec.asOfDate} 종가 기준` : '기준일 데이터 없음';
+
+  const buyBadge =
+    buy.action === 'buy'
+      ? { icon: '🟢', text: '매수 고려', color: '#ef4444' }
+      : buy.action === 'hold'
+        ? { icon: '⚪', text: '관망', color: 'var(--muted)' }
+        : { icon: '⚪', text: '판단 보류(표본부족)', color: 'var(--muted)' };
+
+  const sellBadge = !sell
+    ? null
+    : sell.action === 'sell'
+      ? { icon: '🔴', text: '매도 고려', color: '#3b82f6' }
+      : sell.action === 'hold'
+        ? { icon: '⚪', text: '보유 관망', color: 'var(--muted)' }
+        : { icon: '⚪', text: '매도 판단 보류(표본부족)', color: 'var(--muted)' };
+
+  const evidence =
+    buy.ruleLabel != null && buy.precision != null
+      ? `${buy.ruleLabel} — 과거 적중률 ${(buy.precision * 100).toFixed(0)}%(${buy.triggerCount}건 중 ${Math.round(buy.precision * buy.triggerCount)}건)` +
+        (buy.lift != null ? ` · lift ×${buy.lift.toFixed(2)}` : '') +
+        (buy.confidence ? ` · 표본 신뢰도 ${CONFIDENCE_KO[buy.confidence] ?? buy.confidence}` : '')
+      : buy.action === 'hold'
+        ? '기준일 종가에서 충족한 선행지표 규칙이 없습니다.'
+        : '판단에 쓸 만한 과거 표본이 부족합니다.';
+
+  const sellReason = !sell
+    ? null
+    : sell.action === 'insufficient_data'
+      ? '리서치 표본이 부족해 매도 판단을 보류합니다.'
+      : [
+          avgRallyPct != null
+            ? `목표(과거평균 ${avgRallyPct >= 0 ? '+' : ''}${avgRallyPct.toFixed(1)}%) 대비 ${holding?.targetProgressPct != null ? `${holding.targetProgressPct.toFixed(0)}% 진행` : '진행률 데이터 없음'}`
+            : '목표 데이터 없음',
+          sell.daysSinceEntry != null ? `보유 ${sell.daysSinceEntry}일째` : '보유기간 데이터 없음',
+          sell.reason === 'duration_exceeded' ? '과거 평균 소요기간 초과' : null,
+        ].filter(Boolean).join(' · ');
+
+  return (
+    <div style={S.recWrap}>
+      <div style={S.recBadgeRow}>
+        <span style={{ ...S.recBadge, color: buyBadge.color }}>{buyBadge.icon} {buyBadge.text}</span>
+        {sellBadge && (
+          <span style={{ ...S.recBadge, color: sellBadge.color }}>{sellBadge.icon} {sellBadge.text}</span>
+        )}
+        <span style={S.recAsOf}>{asOf}</span>
+      </div>
+      <div style={S.recEvidence}>근거: {evidence}</div>
+      {sellReason && <div style={S.recEvidence}>보유: {sellReason}</div>}
+      <div style={S.noteText}>{buy.note}</div>
     </div>
   );
 }
@@ -345,6 +452,14 @@ const S: Record<string, React.CSSProperties> = {
     background: 'transparent', border: 'none', color: 'var(--accent)',
     fontSize: 11, cursor: 'pointer', padding: '6px 0', textAlign: 'left', minHeight: 32,
   },
+  recWrap: {
+    display: 'flex', flexDirection: 'column', gap: 5,
+    background: 'var(--bg3)', borderRadius: 10, padding: '9px 12px',
+  },
+  recBadgeRow: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  recBadge: { fontSize: 12, fontWeight: 700 },
+  recAsOf: { fontSize: 10, color: 'var(--muted)', marginLeft: 'auto' },
+  recEvidence: { fontSize: 11, color: 'var(--fg)', lineHeight: 1.6 },
   precursorWrap: { display: 'flex', flexDirection: 'column', gap: 8 },
   precursorMeta: { fontSize: 10, color: 'var(--muted)' },
   ruleTable: { display: 'flex', flexDirection: 'column', gap: 3 },

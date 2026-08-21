@@ -1,6 +1,16 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
-import type { EvalFunnelSummary } from '@/lib/strategy/eval-funnel-query';
+import { getKisTickers, getKisOverseasTickers } from '@/lib/exchanges/kis';
+import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
+import { PRECURSOR_NOTE } from '@/lib/research/pattern/precursor-analysis';
+import {
+  evaluateBuySignal,
+  evaluateSellSignal,
+  targetProgressPct,
+  type BuyRecommendation,
+  type SellAssessment,
+} from '@/lib/research/pattern/recommendation';
+import { getLatestResearchResults } from '@/lib/research/storage';
 
 export interface BuyCandidate {
   symbol: string;
@@ -13,10 +23,28 @@ export interface BuyCandidate {
 
 export interface HoldingStatus {
   symbol: string;
+  /**
+   * 🔴 **"고점대비"다.** `(peak_price - entry_price) / entry_price * 100` —
+   * 진입가 대비 **보유 중 관측된 최고가** 기준이며 현재가 대비도, 리포트 주기 대비도 아니다.
+   * 이름이 그렇게 안 읽혀서 과거에 "익절 임박" 오판을 만들었다(T-033). 그 판정에는 더 이상
+   * 쓰지 않으며, 표시할 때는 반드시 "고점대비"라는 라벨을 붙인다.
+   */
   profitPct: number;
   entryKRW: number;
   currentKRW: number;
   qty: number;
+  /** 매입금액 = 진입단가 × 수량 (KRW) */
+  investedKRW: number;
+  /** 리포트 구간 시작 시점의 KRW 환산 단가. 스냅샷이 없으면 null */
+  periodStartKRW: number | null;
+  /** 현재 KRW 환산 단가. 시세 조회 실패 시 null */
+  nowPriceKRW: number | null;
+  /** 리포트 주기 동안의 단가 변동률(%) — "고점대비"와 다른 값이다 */
+  periodChangePct: number | null;
+  /** 리서치(사후 관찰) 기준 매도 고려 판단. 자동매매와 무관한 참고 정보 */
+  sellSignal: SellAssessment | null;
+  /** 과거 평균 상승폭(%) — "목표 대비 진행률" 표시의 분모 */
+  avgRallyPct: number | null;
 }
 
 export interface SellPnl {
@@ -32,6 +60,39 @@ export interface SignalCandidates {
   holdings: HoldingStatus[];
   sellPnl: SellPnl[];
 }
+
+/** 조회가 통째로 실패했을 때 쓰는 빈 값 — 호출부마다 리터럴을 다시 쓰지 않게 상수로 둔다. */
+export const EMPTY_CANDIDATES: SignalCandidates = { buyWatchlist: [], holdings: [], sellPnl: [] };
+
+/**
+ * 리포트에 싣는 리서치 요약 1건 — T-033.
+ * `asOfDate` 는 **종가 기준일**이다. 국내 리서치는 16:00(전일 종가), 해외는 07:00(당일 종가)에만
+ * 갱신되므로 실시간이 아니다. 이 값을 추천 옆에 항상 같이 노출한다.
+ */
+export interface ResearchDigestItem {
+  symbol: string;
+  market: 'domestic' | 'overseas';
+  asOfDate: string | null;
+  buy: BuyRecommendation;
+}
+
+export interface ResearchDigest {
+  /** 리서치 추적중(`research_enabled=1`) 종목 수 */
+  trackedCount: number;
+  /** 그중 "매수 고려"로 판정된 종목 수 */
+  activeCount: number;
+  /** 리포트에 실을 항목 — 매수 고려 + (오늘 규칙은 걸렸으나 표본부족)인 것만 */
+  items: ResearchDigestItem[];
+  /** 과신 방지 고정 문구 */
+  note: string;
+}
+
+export const EMPTY_RESEARCH_DIGEST: ResearchDigest = {
+  trackedCount: 0,
+  activeCount: 0,
+  items: [],
+  note: PRECURSOR_NOTE,
+};
 
 /**
  * 정기 거래 리포트 빌더 — 분석 기간(rangeStart~rangeEnd) 의 거래·잔액 변동을 집계해
@@ -281,51 +342,112 @@ function fmtKstDate(d: Date): string {
     .replace(/\. /g, '-').replace('.', '');
 }
 
-/** T-002 §4 — 평가 깔때기 요약 문단 (국내장). eval_funnel 관측 자체가 실패하면 null 전달 → 섹션 생략. */
-export function formatFunnelSection(funnel: EvalFunnelSummary): string {
+/** 부호 있는 퍼센트. 값이 없으면 "데이터 없음" — 0 이나 빈칸으로 얼버무리지 않는다. */
+function fmtSignedPct(v: number | null | undefined, digits = 2): string {
+  if (v == null || !Number.isFinite(v)) return '데이터 없음';
+  return `${v >= 0 ? '+' : ''}${v.toFixed(digits)}%`;
+}
+
+const CONFIDENCE_KO: Record<string, string> = { low: '낮음', medium: '보통', high: '높음' };
+
+/**
+ * 선행지표 규칙 라벨(`RSI14 < 30`, `누적낙폭 > 15%` …)을 **메시지에 넣어도 안전한 형태**로.
+ *
+ * 이 body 는 두 채널에 서로 다른 방식으로 실린다:
+ *  - 슬랙 — mrkdwn 그대로. 짝이 맞는 `<…>` 는 링크로 해석돼 문장이 통째로 사라질 수 있다
+ *    (규칙 라벨 두 개가 한 메시지에 들어가면 `<`·`>` 가 실제로 짝을 이룬다)
+ *  - 텔레그램 — `mrkdwnToTelegramHtml` 이 **body 전체를 다시 escape** 한다.
+ *    그래서 여기서 `&lt;` 로 미리 escape 하면 `&amp;lt;` 가 되어 화면에 `&lt;` 가 그대로 보인다
+ *
+ * 즉 어느 쪽으로 escape 해도 한 채널이 깨진다. 부등호를 **전각 문자로 치환**하면 마크업이
+ * 아니게 되어 두 채널 모두 의도한 대로 렌더된다. 표시 전용 변환이며 규칙 id·통계에는 영향 없다.
+ */
+function messageSafeLabel(label: string): string {
+  return label.replace(/</g, '＜').replace(/>/g, '＞');
+}
+
+/**
+ * 매수 추천 1건의 **근거 줄**. "확률"이라는 단어를 쓰지 않는다 —
+ * 우리가 가진 건 과거 조건부 적중률(precision)뿐이다.
+ */
+function formatBuyEvidence(buy: BuyRecommendation): string | null {
+  if (buy.ruleLabel == null || buy.precision == null) return null;
+  const hits = Math.round(buy.precision * buy.triggerCount);
+  const liftStr = buy.lift != null ? `, lift ×${buy.lift.toFixed(2)}` : '';
+  const confStr = buy.confidence ? `, 표본 신뢰도 ${CONFIDENCE_KO[buy.confidence] ?? buy.confidence}` : '';
+  return `   근거: ${messageSafeLabel(buy.ruleLabel)} — 과거 적중률 ${(buy.precision * 100).toFixed(0)}%(${buy.triggerCount}건 중 ${hits}건)${liftStr}${confStr}`;
+}
+
+/**
+ * 보유종목의 리서치 매도 판단 한 줄. 자동매매 청산 로직과 **무관한 참고 정보**임이 드러나도록
+ * "고려"라는 말과 비교 대상(과거평균)을 반드시 함께 적는다.
+ */
+function formatSellSignalLine(h: HoldingStatus): string | null {
+  const s = h.sellSignal;
+  if (!s) return null;
+  const days = s.daysSinceEntry != null ? `보유 ${s.daysSinceEntry}일째` : '보유기간 데이터 없음';
+
+  if (s.action === 'insufficient_data') {
+    return `   └ 🔬 판단 보류 (리서치 표본부족) · ${days}`;
+  }
+
+  const progress = targetProgressPct(s.gainPct, h.avgRallyPct);
+  const target = h.avgRallyPct != null
+    ? `목표(과거평균 ${fmtSignedPct(h.avgRallyPct, 1)}) 대비 ${progress != null ? `${progress.toFixed(0)}% 진행` : '진행률 데이터 없음'}`
+    : '목표 데이터 없음';
+
+  if (s.action === 'sell') {
+    const why = s.reason === 'duration_exceeded' ? '과거 평균 소요기간 초과' : target;
+    return `   └ 🔬 매도 고려 — ${why}, ${days}`;
+  }
+  return `   └ 🔬 관망 — ${target}, ${days}`;
+}
+
+/** 리서치 요약 문단 (T-033). 추적 0종목·활성 0종목도 조용히 생략하지 않고 명시한다. */
+function formatResearchSection(research: ResearchDigest, nameOf: (s: string) => string): string {
   const lines: string[] = [];
-  lines.push('*📊 평가 깔때기 — 국내장*');
-  lines.push(
-    `런 ${funnel.runs}회${funnel.fullEvalRuns !== funnel.runs ? `(풀평가 ${funnel.fullEvalRuns}회)` : ''} · 종목평가 ${funnel.symbolsEvaluated}건`,
-  );
+  lines.push('*🔬 리서치분석 요약 (참고용)*');
 
-  // 사슬·괄호 모두 **평가 트랙 전용**. exit 엔진 청산 시그널을 여기 합산하면
-  // `✅ 시그널 0건 (매도 2)` 같은 자기모순이 생긴다 (T-004 analyst 판정).
-  const signalTotal = funnel.buySignals + funnel.sellSignals;
-  const stepLine = funnel.steps
-    .filter(s => s.key !== 'evaluated')
-    // 터미널에 '건'을 붙이지 않는다 — 사슬의 각 항은 건수가 아니라 symbol×run 이라 단위가 다르다.
-    .map(s => s.key === 'signal' ? `✅ 시그널 ${s.count}` : `${s.label} ${s.count}`)
-    .join(' → ');
-  if (stepLine) {
-    const sideDetail = signalTotal > 0
-      ? ` (매수 ${funnel.buySignals} · 매도 ${funnel.sellSignals})`
-      : '';
-    lines.push(stepLine + sideDetail);
+  if (research.trackedCount === 0) {
+    lines.push('추적 중인 종목이 없습니다 — 즐겨찾기에서 리서치 추적을 켜주세요.');
+  } else {
+    lines.push(`추적 ${research.trackedCount}종목 중 매수 고려 ${research.activeCount}종목`);
+    if (research.items.length === 0) {
+      lines.push('기준일 종가에서 조건을 충족한 종목이 없습니다.');
+    }
   }
 
-  // exit 트랙은 깔때기와 모수가 다르므로 사슬에 넣지 않고 별도 줄로 표기한다.
-  if (funnel.exitSignals > 0) {
-    lines.push(`청산(보유관리) 매도 ${funnel.exitSignals}건`);
+  for (const item of research.items) {
+    const asOf = item.asOfDate ? `${item.asOfDate} 종가 기준` : '기준일 데이터 없음';
+    if (item.buy.action === 'buy') {
+      lines.push(`📈 ${nameOf(item.symbol)} — 매수 고려 (${asOf})`);
+      const evidence = formatBuyEvidence(item.buy);
+      if (evidence) lines.push(evidence);
+    } else {
+      const trig = item.buy.triggerCount > 0 ? `표본부족, 트리거 ${item.buy.triggerCount}건` : '표본부족';
+      lines.push(`⚪ ${nameOf(item.symbol)} — 판단 보류 (${trig}) (${asOf})`);
+    }
   }
 
-  if (funnel.bottlenecks.length > 0 && funnel.symbolsEvaluated > 0) {
-    const parts = funnel.bottlenecks.map((b, i) => i === 0
-      ? `${b.label} ${b.count}/${funnel.symbolsEvaluated}종목 (${Math.round((b.count / funnel.symbolsEvaluated) * 100)}%)`
-      : `${i + 1}위 ${b.label} ${b.count}건`);
-    lines.push(`병목: ${parts.join(' · ')}`);
-  }
-
-  const anomalyParts = funnel.anomalies.map(a => `${a.label} ${a.count}회`);
-  if (funnel.neutralPct != null && funnel.neutralPct > 0) {
-    anomalyParts.push(`neutral 상태 ${funnel.neutralPct}% (30m 룰 전체 비활성)`);
-  }
-  if (anomalyParts.length > 0) lines.push(`⚠ 이상: ${anomalyParts.join(' · ')}`);
-
+  lines.push('');
+  lines.push(research.note);
   return lines.join('\n');
 }
 
-export function formatReportMessage(rep: TradeReport, totalKRW: number, baselineKRW: number | null, candidates?: SignalCandidates, funnel?: EvalFunnelSummary | null): string {
+/**
+ * @param labels 심볼 → 한글 종목명 Map. 이 함수는 **동기 순수 함수로 유지한다** —
+ *   `getSymbolLabels()` 는 비동기이므로 호출부에서 미리 조회해 넘긴다. 옵션 인자라
+ *   넘기지 않으면 기존처럼 심볼 코드가 그대로 표시된다.
+ */
+export function formatReportMessage(
+  rep: TradeReport,
+  totalKRW: number,
+  baselineKRW: number | null,
+  candidates?: SignalCandidates,
+  research?: ResearchDigest | null,
+  labels?: Map<string, string>,
+): string {
+  const nameOf = (sym: string) => labels?.get(sym) ?? sym;
   const hours = Math.round((rep.rangeEnd.getTime() - rep.rangeStart.getTime()) / 3600_000);
   const lines: string[] = [];
   lines.push(`*📊 거래 리포트 (${hours}h)*`);
@@ -361,7 +483,7 @@ export function formatReportMessage(rep: TradeReport, totalKRW: number, baseline
       const icon = p.pnlKRW >= 0 ? '🔴' : '🔵';
       const sign = p.pnlPct >= 0 ? '+' : '';
       const kind = exitLabel[p.exitKind] ?? p.exitKind;
-      lines.push(`${icon} ${p.symbol} ${fmtKRW(p.pnlKRW)} (${sign}${p.pnlPct.toFixed(2)}%) [${kind}]`);
+      lines.push(`${icon} ${nameOf(p.symbol)} ${fmtKRW(p.pnlKRW)} (${sign}${p.pnlPct.toFixed(2)}%) [${kind}]`);
     }
   } else if (rep.sells > 0) {
     lines.push(`• 실현 손익: ${fmtKRW(rep.lifoPnlKRW)}`);
@@ -372,18 +494,29 @@ export function formatReportMessage(rep: TradeReport, totalKRW: number, baseline
   if (rep.churnSymbols.length > 0) {
     lines.push('');
     lines.push('*경고*');
-    lines.push(`• 회전매매: ${rep.churnSymbols.join(', ')} (사이클 ≥ ${FEE_THRESHOLD_CYCLES})`);
+    lines.push(`• 회전매매: ${rep.churnSymbols.map(nameOf).join(', ')} (사이클 ≥ ${FEE_THRESHOLD_CYCLES})`);
   }
 
   // ── 보유 현황 ──
+  // 🔴 "익절 임박" 문구는 T-033 에서 제거했다. 그 판정이 `profitPct`(= **고점대비**)를 현재
+  //    수익률로 오독한 결과였기 때문이다. 이름 때문에 다시 살아나지 않도록 라벨을 명시한다.
   if (candidates?.holdings && candidates.holdings.length > 0) {
     lines.push('');
     lines.push('*📦 현재 보유*');
     for (const h of candidates.holdings) {
-      const sign = h.profitPct >= 0 ? '+' : '';
       const icon = h.profitPct >= 2.5 ? '🔴' : h.profitPct <= -1.5 ? '🔵' : '⚪';
-      const warn = h.profitPct <= -1.5 ? ' ← 손절 임박' : h.profitPct >= 2.5 ? ' ← 익절 임박' : '';
-      lines.push(`${icon} ${h.symbol} ${sign}${h.profitPct.toFixed(2)}% (${h.qty}주)${warn}`);
+      const warn = h.profitPct <= -1.5 ? ' ← 손절 임박' : '';
+      lines.push(
+        `${icon} ${nameOf(h.symbol)} 고점대비 ${fmtSignedPct(h.profitPct)} · ` +
+        `최근추이 ${fmtSignedPct(h.periodChangePct)} (${h.qty}주)${warn}`,
+      );
+      lines.push(
+        h.investedKRW > 0
+          ? `   └ 투자금 ${fmtKRWPlain(h.investedKRW)}`
+          : '   └ 투자금 데이터 없음',
+      );
+      const sellLine = formatSellSignalLine(h);
+      if (sellLine) lines.push(sellLine);
     }
   }
 
@@ -403,14 +536,15 @@ export function formatReportMessage(rep: TradeReport, totalKRW: number, baseline
       const confStr = c.aiConf != null && c.aiConf > 0 ? ` AI${c.aiConf}%` : '';
       const label  = statusLabel[c.status] ?? c.status;
       const rsiBadge = c.rsi != null && c.rsi < 30 ? '🔥' : c.rsi != null && c.rsi < 35 ? '⚡' : '•';
-      lines.push(`${rsiBadge} ${c.symbol} ${rsiStr}${confStr}${evStr} [${label}]`);
+      lines.push(`${rsiBadge} ${nameOf(c.symbol)} ${rsiStr}${confStr}${evStr} [${label}]`);
     }
   }
 
-  // ── 평가 깔때기 (T-002) ──
-  if (funnel) {
+  // ── 리서치분석 요약 (T-033) — 평가 깔때기를 대체했다.
+  //    깔때기는 대시보드(`eval-funnel-query`)에 그대로 남아 있고, 텔레그램에서만 뺐다.
+  if (research) {
     lines.push('');
-    lines.push(formatFunnelSection(funnel));
+    lines.push(formatResearchSection(research, nameOf));
   }
 
   return lines.join('\n');
@@ -432,11 +566,51 @@ const BASELINE_MIN_KRW = 1_000;
 const BASELINE_MAX_KRW = 100_000_000;
 const BASELINE_RATIO   = 5;
 
-export async function fetchPortfolioBaselineKRW(rangeStart: Date): Promise<number | null> {
+/** 스냅샷 1행의 보유 항목(`portfolio_snapshots.positions` JSON 원소). */
+interface SnapshotPositionRow {
+  currency: string;
+  qty: number;
+  /** KRW 환산 단가. 현금 KRW 는 1, USD 는 환율 */
+  price: number;
+  value_krw: number;
+}
+
+export interface PortfolioBaselineSnapshot {
+  totalKRW: number;
+  positions: SnapshotPositionRow[];
+}
+
+function parsePositions(v: unknown): SnapshotPositionRow[] {
+  let raw: unknown = v;
+  if (typeof raw === 'string') {
+    try { raw = JSON.parse(raw); } catch { return []; }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((p) => {
+    if (!p || typeof p !== 'object') return [];
+    const o = p as Record<string, unknown>;
+    const currency = typeof o.currency === 'string' ? o.currency : null;
+    if (!currency) return [];
+    return [{
+      currency,
+      qty:       Number(o.qty ?? 0),
+      price:     Number(o.price ?? 0),
+      value_krw: Number(o.value_krw ?? 0),
+    }];
+  });
+}
+
+/**
+ * 🔴 **outlier 가드의 단일 구현.** `fetchPortfolioBaselineKRW` 와 `fetchSymbolBaselinePrices`
+ * 가 **같은 행**을 근거로 삼도록 여기 한 곳에서만 행을 고른다. 총액은 정상 판정된 행에서
+ * 가져왔는데 종목별 단가는 걸러진 행에서 가져오는 상황(= 총액과 종목 단가가 서로 다른 시점)을
+ * 구조적으로 불가능하게 만드는 것이 이 함수의 존재 이유다.
+ */
+async function fetchPortfolioBaselineSnapshot(rangeStart: Date): Promise<PortfolioBaselineSnapshot | null> {
   try {
     const pool = getPool();
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT total_krw FROM portfolio_snapshots
+      `SELECT total_krw, positions FROM portfolio_snapshots
         WHERE ts >= ?
           AND total_krw BETWEEN ? AND ?
         ORDER BY ts ASC
@@ -469,7 +643,7 @@ export async function fetchPortfolioBaselineKRW(rangeStart: Date): Promise<numbe
           continue;
         }
       }
-      return v;
+      return { totalKRW: v, positions: parsePositions(r.positions) };
     }
     return null;
   } catch {
@@ -477,9 +651,153 @@ export async function fetchPortfolioBaselineKRW(rangeStart: Date): Promise<numbe
   }
 }
 
+/**
+ * 분석 기간 시작 시점의 portfolio baseline 조회.
+ *
+ * Outlier 보호 (사후 안전망 — savePortfolioSnapshot sanity guard 보완):
+ *  1. 절대 범위 [1000, 100,000,000] 외 행 제외 (KIS 환율 결함으로 박힌 historical outlier 차단)
+ *  2. 24h median 대비 ±5배 초과 행 제외 (단일 시점 비정상 점프)
+ *  3. 위 둘 통과한 첫 행을 baseline 으로 채택
+ *
+ * 모두 제외돼 행이 없으면 null — 호출자(formatReportMessage)가 "기간 시작 스냅샷 없음" 표시.
+ *
+ * ⚠ 시그니처·동작은 T-033 이전과 100% 동일하다. 내부에서 행 선택만
+ *   `fetchPortfolioBaselineSnapshot` 에 위임한다.
+ */
+export async function fetchPortfolioBaselineKRW(rangeStart: Date): Promise<number | null> {
+  const snap = await fetchPortfolioBaselineSnapshot(rangeStart);
+  return snap ? snap.totalKRW : null;
+}
+
+/**
+ * 같은 baseline 행에서 **종목별 KRW 환산 단가**를 뽑는다 (T-033).
+ *
+ * 새 테이블을 만들지 않는다 — `portfolio_snapshots.positions` 에 이미 종목별 단가가 들어 있고,
+ * 총액과 같은 행에서 꺼내야 "총 자산 변동률"과 "종목별 주기 변동률"이 같은 시점을 가리킨다.
+ * 그 시점에 보유하지 않았던 종목은 Map 에 아예 없다(0 으로 채우지 않는다 — 0 은 -100% 가 된다).
+ */
+export async function fetchSymbolBaselinePrices(
+  rangeStart: Date,
+  symbols: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const want = new Set(symbols);
+  if (want.size === 0) return out;
+
+  const snap = await fetchPortfolioBaselineSnapshot(rangeStart);
+  if (!snap) return out;
+
+  for (const p of snap.positions) {
+    if (!want.has(p.currency)) continue;
+    if (!Number.isFinite(p.price) || p.price <= 0) continue;   // 시세 실패 sentinel 방어
+    out.set(p.currency, p.price);
+  }
+  return out;
+}
+
+/**
+ * 현재 KRW 환산 단가 조회 (T-033).
+ *
+ * `getKisTickers` / `getKisOverseasTickers` 는 **중복 제거를 하지 않고**, 국내/해외 통합 함수도
+ * 없다. 그래서 여기서 심볼을 중복 제거하고 시장별로 나눠 각각 호출한다
+ * (`src/lib/strategy/universe.ts` 와 같은 패턴 — 그 파일은 import 도 하지 않고 형태만 따랐다).
+ *
+ * 해외 티커의 `price` 는 이미 KRW 환산값이다(`kis-overseas.getTicker` 가 환율을 곱해 반환).
+ * 조회에 실패한 심볼은 Map 에 없다 — 소비자가 "데이터 없음"으로 표시하게 한다.
+ * 시세 조회 실패로 리포트 전체가 실패하면 안 되므로 시장별로 개별 catch 한다.
+ */
+export async function fetchCurrentPricesKRW(
+  targets: { symbol: string; market: string }[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!targets || targets.length === 0) return out;
+
+  const domestic: string[] = [];
+  const overseas: string[] = [];
+  for (const t of targets) {
+    if (!t?.symbol) continue;
+    // market 컬럼을 우선 믿되, 값이 이상하면 심볼 포맷으로 판별한다.
+    const market = t.market === 'domestic' || t.market === 'overseas'
+      ? t.market
+      : getMarketFromSymbol(t.symbol);
+    (market === 'overseas' ? overseas : domestic).push(t.symbol);
+  }
+
+  const collect = (tickers: { symbol: string; price: number }[]) => {
+    for (const tk of tickers) {
+      const price = Number(tk.price);
+      if (Number.isFinite(price) && price > 0) out.set(tk.symbol, price);
+    }
+  };
+
+  const jobs: Promise<void>[] = [];
+  const uniqDomestic = [...new Set(domestic)];
+  const uniqOverseas = [...new Set(overseas)];
+
+  if (uniqDomestic.length > 0) {
+    jobs.push(
+      getKisTickers(uniqDomestic).then(collect).catch((e) => {
+        console.warn(`[trade-report] 국내 현재가 조회 실패(${uniqDomestic.length}종목): ${e instanceof Error ? e.message : String(e)}`);
+      }),
+    );
+  }
+  if (uniqOverseas.length > 0) {
+    jobs.push(
+      getKisOverseasTickers(uniqOverseas).then(collect).catch((e) => {
+        console.warn(`[trade-report] 해외 현재가 조회 실패(${uniqOverseas.length}종목): ${e instanceof Error ? e.message : String(e)}`);
+      }),
+    );
+  }
+  await Promise.all(jobs);
+  return out;
+}
+
+/** 보유종목 매도 판단에 필요한 심볼별 리서치 통계(최신 1건). 추적이 꺼진 종목도 과거 행이 있으면 쓴다. */
+interface ResearchStats {
+  avgRallyPct: number | null;
+  avgDaysToRally: number | null;
+  eventCount: number;
+}
+
+async function fetchResearchStatsForSymbols(symbols: string[]): Promise<Map<string, ResearchStats>> {
+  const out = new Map<string, ResearchStats>();
+  const unique = [...new Set(symbols)];
+  if (unique.length === 0) return out;
+
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT r.symbol, r.avg_rally_pct, r.avg_days_to_rally, r.event_count
+         FROM research_rally_results r
+         JOIN (
+           SELECT symbol, MAX(run_date) AS run_date
+             FROM research_rally_results
+            WHERE symbol IN (?)
+            GROUP BY symbol
+         ) latest ON latest.symbol = r.symbol AND latest.run_date = r.run_date`,
+      [unique],
+    );
+    for (const r of rows) {
+      out.set(String(r.symbol), {
+        avgRallyPct:    r.avg_rally_pct != null ? Number(r.avg_rally_pct) : null,
+        avgDaysToRally: r.avg_days_to_rally != null ? Number(r.avg_days_to_rally) : null,
+        eventCount:     Number(r.event_count ?? 0),
+      });
+    }
+  } catch (e) {
+    // 리서치 통계는 부가정보다 — 없으면 매도 판단만 생략하고 리포트는 그대로 나간다.
+    console.warn(`[trade-report] 리서치 통계 조회 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return out;
+}
+
 // ─── 매수 후보 + 보유 현황 조회 ─────────────────────────────────────────────
 
-export async function fetchSignalCandidates(): Promise<SignalCandidates> {
+/**
+ * @param rangeStart 리포트 구간 시작. 종목별 "주기 변동률"의 기준 시점이다.
+ *                   생략하면 baseline 조회를 건너뛰고 `periodStartKRW`/`periodChangePct` 가 null 이 된다.
+ */
+export async function fetchSignalCandidates(rangeStart?: Date): Promise<SignalCandidates> {
   const pool = getPool();
 
   // 최근 4시간 내 buy 시그널 발화 종목 (최신 1건/종목)
@@ -519,21 +837,69 @@ export async function fetchSignalCandidates(): Promise<SignalCandidates> {
     };
   });
 
-  // 현재 보유 포지션 (position_state)
+  // 현재 보유 포지션 (position_state) — 🔴 SELECT 전용. 이 함수는 position_state 를 쓰지 않는다.
   const [posRows] = await pool.query<RowDataPacket[]>(`
-    SELECT symbol, market, entry_price, peak_price, qty,
+    SELECT symbol, market, entry_price, peak_price, qty, first_seen_at,
       ROUND((peak_price - entry_price) / entry_price * 100, 2) AS profit_pct
     FROM position_state
     ORDER BY ROUND((peak_price - entry_price) / entry_price * 100, 2) DESC
   `);
 
-  const holdings: HoldingStatus[] = posRows.map(r => ({
-    symbol:     String(r.symbol),
-    profitPct:  Number(r.profit_pct ?? 0),
-    entryKRW:   Number(r.entry_price ?? 0),
-    currentKRW: Number(r.peak_price ?? 0),
-    qty:        Number(r.qty ?? 0),
+  const positions = posRows.map(r => ({
+    symbol:      String(r.symbol),
+    market:      String(r.market ?? ''),
+    profitPct:   Number(r.profit_pct ?? 0),
+    entryKRW:    Number(r.entry_price ?? 0),
+    currentKRW:  Number(r.peak_price ?? 0),
+    qty:         Number(r.qty ?? 0),
+    firstSeenAt: r.first_seen_at ? new Date(r.first_seen_at as string | Date) : null,
   }));
+  const heldSymbols = positions.map(p => p.symbol);
+
+  // 세 조회는 서로 독립이라 병렬. 어느 하나가 실패해도 나머지 정보는 그대로 나가야 한다.
+  const [baselinePrices, nowPrices, researchStats] = await Promise.all([
+    rangeStart ? fetchSymbolBaselinePrices(rangeStart, heldSymbols) : Promise.resolve(new Map<string, number>()),
+    fetchCurrentPricesKRW(positions.map(p => ({ symbol: p.symbol, market: p.market })))
+      .catch(() => new Map<string, number>()),
+    fetchResearchStatsForSymbols(heldSymbols),
+  ]);
+
+  const nowMs = Date.now();
+  const holdings: HoldingStatus[] = positions.map(p => {
+    const periodStartKRW = baselinePrices.get(p.symbol) ?? null;
+    const nowPriceKRW    = nowPrices.get(p.symbol) ?? null;
+    const periodChangePct = periodStartKRW != null && periodStartKRW > 0 && nowPriceKRW != null
+      ? ((nowPriceKRW - periodStartKRW) / periodStartKRW) * 100
+      : null;
+
+    // 달력일. 판정 시 거래일↔달력일 환산은 evaluateSellSignal 이 담당한다.
+    const daysSinceEntry = p.firstSeenAt && !Number.isNaN(p.firstSeenAt.getTime())
+      ? Math.max(0, Math.floor((nowMs - p.firstSeenAt.getTime()) / 86_400_000))
+      : null;
+
+    const stats = researchStats.get(p.symbol) ?? null;
+    // 리서치 통계 자체가 없으면 "판단 보류"조차 만들지 않는다 — 빈 값을 표시할 이유가 없다.
+    const sellSignal = stats
+      ? evaluateSellSignal(
+          p.entryKRW, nowPriceKRW, daysSinceEntry,
+          stats.avgRallyPct, stats.avgDaysToRally, stats.eventCount,
+        )
+      : null;
+
+    return {
+      symbol:     p.symbol,
+      profitPct:  p.profitPct,
+      entryKRW:   p.entryKRW,
+      currentKRW: p.currentKRW,
+      qty:        p.qty,
+      investedKRW: p.entryKRW * p.qty,
+      periodStartKRW,
+      nowPriceKRW,
+      periodChangePct,
+      sellSignal,
+      avgRallyPct: stats?.avgRallyPct ?? null,
+    };
+  });
 
   // 최근 25시간 매도 시그널에서 실제 손익 (exit-engine indicators 기준)
   const [sellRows] = await pool.query<RowDataPacket[]>(`
@@ -571,4 +937,75 @@ export async function fetchSignalCandidates(): Promise<SignalCandidates> {
   });
 
   return { buyWatchlist, holdings, sellPnl };
+}
+
+// ─── 리서치 요약 (T-033) ────────────────────────────────────────────────────
+
+/**
+ * 리서치분석(T-032) 결과를 리포트용 요약으로 압축한다.
+ *
+ * 🔴 **여기서 확률·목표가를 다시 계산하지 않는다.** 화면(ResearchTab)과 08:00 리포트가
+ * `evaluateBuySignal()` 이라는 **같은 함수**에 **같은 저장값**(`todayActiveRuleIds`,
+ * `precursorAnalysis.rules`)을 넣어 같은 답을 얻는다. 어느 한쪽에서 재계산하면 두 화면의
+ * 숫자가 조용히 어긋나고, 그 순간 이 기능의 신뢰도는 끝난다.
+ *
+ * 🔴 이 반환값은 리포트 문자열로만 흘러간다 — `createSignal()`·`submitOrder()`·전략 엔진
+ * 어디에도 연결되지 않는다.
+ *
+ * 실을 항목은 "말할 것이 있는" 종목만 고른다:
+ *  - `buy`               — 매수 고려
+ *  - `insufficient_data` 중 오늘 규칙이 실제로 걸린 것(= 표본부족으로 강등된 것)
+ * `hold`(관망)은 매일 전 종목이 해당돼 신호 대 잡음비만 떨어뜨리므로 싣지 않는다.
+ */
+export async function fetchResearchDigest(): Promise<ResearchDigest> {
+  try {
+    const { tracked, results } = await getLatestResearchResults();
+    const bySymbol = new Map(results.map(r => [r.symbol, r]));
+
+    const items: ResearchDigestItem[] = [];
+    let activeCount = 0;
+
+    for (const t of tracked) {
+      const r = bySymbol.get(t.symbol);
+      if (!r || r.error) continue;
+      const buy = evaluateBuySignal(r.todayActiveRuleIds, r.precursorAnalysis?.rules ?? null);
+      if (buy.action === 'buy') activeCount++;
+      const worthShowing =
+        buy.action === 'buy' ||
+        (buy.action === 'insufficient_data' && buy.ruleId != null);
+      if (!worthShowing) continue;
+      items.push({ symbol: t.symbol, market: t.market, asOfDate: r.dataRangeTo, buy });
+    }
+
+    // 매수 고려 먼저, 그 안에서는 lift 내림차순 — 사용자가 위에서부터 읽으면 된다.
+    items.sort((a, b) => {
+      const rank = (x: ResearchDigestItem) => (x.buy.action === 'buy' ? 0 : 1);
+      if (rank(a) !== rank(b)) return rank(a) - rank(b);
+      return (b.buy.lift ?? -1) - (a.buy.lift ?? -1);
+    });
+
+    return { trackedCount: tracked.length, activeCount, items, note: PRECURSOR_NOTE };
+  } catch (e) {
+    console.warn(`[trade-report] 리서치 요약 조회 실패: ${e instanceof Error ? e.message : String(e)}`);
+    return EMPTY_RESEARCH_DIGEST;
+  }
+}
+
+/**
+ * 리포트 한 통에 등장하는 **모든 심볼**을 모은다 — 한글 종목명을 쿼리 1번으로 받기 위한 목록.
+ * 중복 제거는 `getSymbolLabels()` 가 하지만, 여기서도 Set 으로 접어 호출 크기를 줄인다.
+ */
+export function collectReportSymbols(
+  rep: TradeReport,
+  candidates?: SignalCandidates | null,
+  research?: ResearchDigest | null,
+): string[] {
+  const out = new Set<string>();
+  for (const p of rep.perSymbol) out.add(p.symbol);
+  for (const s of rep.churnSymbols) out.add(s);
+  for (const h of candidates?.holdings ?? []) out.add(h.symbol);
+  for (const c of candidates?.buyWatchlist ?? []) out.add(c.symbol);
+  for (const s of candidates?.sellPnl ?? []) out.add(s.symbol);
+  for (const i of research?.items ?? []) out.add(i.symbol);
+  return [...out];
 }

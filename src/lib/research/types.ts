@@ -139,6 +139,16 @@ export interface ResearchReport {
   avgRallyPct: number | null;
   avgDaysToRally: number | null;
   precursorAnalysis: PrecursorAnalysis | null;
+  /**
+   * `dataRangeTo`(마지막 캔들 = 종가 기준일)에 참이었던 선행지표 규칙 id 들 — T-033.
+   *
+   * `null`  = 평가하지 못함(캔들 없음·지표 워밍업 구간)
+   * `[]`    = 평가했고 충족한 규칙이 없음 — **결측이 아니라 관측 결과다**
+   *
+   * ⚠ 여기서 말하는 "오늘"은 실시간이 아니다. 국내는 16:00 cron(전일 종가 기준), 해외는
+   *   07:00 cron(당일 종가 기준)에만 갱신된다. 소비자는 반드시 `dataRangeTo` 를 함께 노출한다.
+   */
+  todayActiveRuleIds: string[] | null;
   dataWarnings: ResearchDataWarning[];
   error: string | null;
 }

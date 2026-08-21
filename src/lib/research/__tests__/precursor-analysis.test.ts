@@ -1,7 +1,12 @@
 /**
  * 선행지표 hit-rate 분석 — 과신 방지 장치가 제대로 붙는지 검증 (T-032).
  */
-import { analyzePrecursors, PRECURSOR_NOTE } from '../pattern/precursor-analysis';
+import {
+  analyzePrecursors,
+  getActiveRuleIds,
+  getRuleLabel,
+  PRECURSOR_NOTE,
+} from '../pattern/precursor-analysis';
 import type { PrecursorFeatures } from '../types';
 
 /** 완전히 채워진(평가 가능) 피처 1개 */
@@ -106,5 +111,53 @@ describe('analyzePrecursors', () => {
     const r = analyzePrecursors(feats, [], { labelToleranceDays: 0 });
     const rule = r.rules.find((x) => x.id === 'rsi_lt_35_and_vol_gt_1_5x')!;
     expect(rule.triggerCount).toBe(1);
+  });
+});
+
+// ─── T-033 — getActiveRuleIds ───────────────────────────────────────────────
+
+describe('getActiveRuleIds', () => {
+  test('평가 불가(피처 결측)면 null — "충족 규칙 없음"과 구분한다', () => {
+    expect(getActiveRuleIds(null)).toBeNull();
+    expect(getActiveRuleIds(undefined)).toBeNull();
+    expect(getActiveRuleIds(f(0, { rsi14: null }))).toBeNull();
+    expect(getActiveRuleIds(f(0, { volumeRatio: null }))).toBeNull();
+  });
+
+  test('평가 가능하지만 충족 규칙이 0개면 빈 배열(결측 아님)', () => {
+    // 중립값: RSI 50, %B 0.5, 낙폭 5%, 거래량비 1, ATR 2%
+    expect(getActiveRuleIds(f(0))).toEqual([]);
+  });
+
+  test('충족 규칙 1개', () => {
+    // ATR% 5 → atr_gt_4 만 참
+    expect(getActiveRuleIds(f(0, { atrPct: 5 }))).toEqual(['atr_gt_4']);
+  });
+
+  test('충족 규칙 다수 — 복합 규칙까지 포함하고 RULES 정의 순서를 유지한다', () => {
+    const ids = getActiveRuleIds(f(0, { rsi14: 28, volumeRatio: 2 }));
+    expect(ids).toEqual(['rsi_lt_30', 'rsi_lt_35', 'volume_gt_1_5x', 'rsi_lt_35_and_vol_gt_1_5x']);
+  });
+
+  test('규칙 id 는 analyzePrecursors 가 내는 id 집합의 부분집합이다(라벨 복원 가능)', () => {
+    const feats = Array.from({ length: 10 }, (_, i) => f(i, { rsi14: 25, drawdownPct: 30 }));
+    const stats = analyzePrecursors(feats, [1], { labelToleranceDays: 1 });
+    const known = new Set(stats.rules.map((r) => r.id));
+    for (const id of getActiveRuleIds(feats[9]) ?? []) {
+      expect(known.has(id)).toBe(true);
+      expect(getRuleLabel(id)).toEqual(expect.any(String));
+    }
+  });
+
+  test('getRuleLabel — 모르는 id 는 null', () => {
+    expect(getRuleLabel('does_not_exist')).toBeNull();
+  });
+
+  test('🔴 look-ahead 없음 — 뒤에 캔들이 더 붙어도 같은 행의 판정은 그대로다', () => {
+    const day = f(5, { rsi14: 28, volumeRatio: 2 });
+    const before = getActiveRuleIds(day);
+    // 함수는 행 1개만 보므로 미래 데이터를 넣을 자리 자체가 없다 — 이 성질을 회귀로 고정한다.
+    const after = getActiveRuleIds({ ...day });
+    expect(after).toEqual(before);
   });
 });

@@ -20,6 +20,8 @@ import { NextRequest } from 'next/server';
 import { buildResearchReport } from '@/lib/research/research-report';
 import { listTrackedSymbols, upsertResearchResult } from '@/lib/research/storage';
 import { withTimeout, SYMBOL_TIMEOUT_MS, PER_FETCH_TIMEOUT_MS } from '@/lib/research/run-cycle';
+import { buildResearchRecommendations } from '@/lib/research/recommendation-view';
+import { fetchCurrentPricesKRW } from '@/lib/reports/trade-report';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,6 +50,12 @@ export async function POST(
     await upsertResearchResult(report);
     console.log('[api/research/tracked/[symbol]/run] done', { symbol, eventCount: report.eventCount });
 
+    // T-033 — 목록 조회(GET /api/research/tracked)와 **같은 조립 함수**를 쓴다.
+    // 여기서만 빠지면 "지금 분석" 직후 배지가 사라져 사용자가 결과를 잃은 것처럼 본다.
+    const recommendations = report.error
+      ? new Map()
+      : await buildResearchRecommendations([report], fetchCurrentPricesKRW);
+
     return Response.json({
       ok: true,
       data: {
@@ -55,6 +63,7 @@ export async function POST(
         name: match.name,
         market: report.market,
         result: { ...report, createdAt: new Date().toISOString() },
+        recommendation: recommendations.get(report.symbol) ?? null,
       },
     });
   } catch (e) {

@@ -5,8 +5,17 @@ import { getPortfolioTotalKRW } from '@/lib/safety/portfolio-total';
 import { sendSlackAlert } from '@/lib/notify/slack';
 import { sendTelegramAlert, mrkdwnToTelegramHtml } from '@/lib/notify/telegram';
 import { notifyFailed, redactSecrets, type NotifyResult } from '@/lib/notify/result';
-import { buildTradeReport, formatReportMessage, fetchPortfolioBaselineKRW, fetchSignalCandidates } from '@/lib/reports/trade-report';
-import { getEvalFunnelSummary } from '@/lib/strategy/eval-funnel-query';
+import {
+  buildTradeReport,
+  formatReportMessage,
+  fetchPortfolioBaselineKRW,
+  fetchSignalCandidates,
+  fetchResearchDigest,
+  collectReportSymbols,
+  EMPTY_CANDIDATES,
+  EMPTY_RESEARCH_DIGEST,
+} from '@/lib/reports/trade-report';
+import { getSymbolLabels } from '@/lib/notify/symbol-name';
 import { parseAnchorList, shouldFireAtAnchorList } from '@/lib/reports/anchor';
 import { isTradingDay } from '@/lib/reports/trading-day';
 
@@ -154,15 +163,21 @@ export async function POST(req: NextRequest) {
     const rangeStart = rangeCapped ? lookbackFloor : rawRangeStart;
     const rangeEnd = now;
 
-    const [totalKRW, baselineKRW, candidates, funnel] = await Promise.all([
+    // T-033 — 평가 깔때기(`getEvalFunnelSummary`)를 리포트에서 제거하고 리서치분석 요약으로 교체.
+    // 깔때기 자체는 대시보드가 `eval-funnel-query` 로 계속 소비하므로 그 모듈은 그대로 둔다.
+    // 🔴 여기서 오는 리서치 추천은 **메시지 문자열로만** 흘러간다 —
+    //    `createSignal()`·`submitOrder()`·전략 엔진 어디에도 연결되지 않는다.
+    const [totalKRW, baselineKRW, candidates, research] = await Promise.all([
       getPortfolioTotalKRW(true).catch(() => 0),
       fetchPortfolioBaselineKRW(rangeStart),
-      fetchSignalCandidates().catch(() => ({ buyWatchlist: [], holdings: [], sellPnl: [] })),
-      getEvalFunnelSummary('domestic', rangeStart, rangeEnd).catch(() => null),
+      fetchSignalCandidates(rangeStart).catch(() => EMPTY_CANDIDATES),
+      fetchResearchDigest().catch(() => EMPTY_RESEARCH_DIGEST),
     ]);
 
     const report = await buildTradeReport({ rangeStart, rangeEnd, totalKRW, baselineKRW });
-    const body = formatReportMessage(report, totalKRW, baselineKRW, candidates, funnel);
+    // 한글 종목명은 쿼리 1번으로 모아 받는다. 실패해도 던지지 않고 심볼 코드로 폴백한다.
+    const labels = await getSymbolLabels(collectReportSymbols(report, candidates, research));
+    const body = formatReportMessage(report, totalKRW, baselineKRW, candidates, research, labels);
     const hours = Math.round((rangeEnd.getTime() - rangeStart.getTime()) / 3600_000);
     const title = `거래 리포트 (${hours}h)`;
 

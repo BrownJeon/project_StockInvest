@@ -59,3 +59,39 @@ export async function getSymbolLabel(symbol: string): Promise<string> {
   }
   return fallback;
 }
+
+/**
+ * 배치판 — 심볼 여러 개를 **쿼리 1번**으로 라벨링한다 (T-033).
+ *
+ * 정기 리포트는 보유·매수후보·매도·리서치 종목을 합쳐 수십 개를 한 번에 표시하므로
+ * `getSymbolLabel()` 을 반복 호출하면 그만큼 왕복이 늘어난다. 동작 계약은 단건과 **동일**하다:
+ * 실패해도 던지지 않고, 이름이 없으면 심볼 코드로 폴백하며, 반환 문자열은 이스케이프된 상태다.
+ *
+ * 반환 Map 은 **입력 심볼 전부**에 대한 키를 가진다(조회 실패·미등록 포함) — 소비자가
+ * `labels.get(sym) ?? sym` 같은 이중 폴백을 잊어도 코드가 그대로 노출되지 않게 하기 위함.
+ */
+export async function getSymbolLabels(symbols: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set((symbols ?? []).filter((s) => typeof s === 'string' && s.trim()))];
+  for (const s of unique) out.set(s, escapeAlertText(s));
+  if (unique.length === 0) return out;
+
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<(RowDataPacket & { symbol: string; name: string | null })[]>(
+      'SELECT symbol, name FROM stock_meta WHERE symbol IN (?)',
+      [unique],
+    );
+    for (const r of rows) {
+      const name = r.name;
+      if (typeof name === 'string' && name.trim()) {
+        out.set(String(r.symbol), escapeAlertText(name.trim()));
+      }
+    }
+  } catch (e) {
+    console.warn(
+      `[notify/symbol-name] stock_meta 배치 조회 실패 — ${unique.length}개 심볼: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  return out;
+}

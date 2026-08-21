@@ -2,6 +2,8 @@
  * 리포트 조립 — 이력 부족 구분, 실패 흡수, LLM 미사용 검증 (T-032).
  */
 import { buildResearchReport, kstDateString, SHORT_HISTORY_MIN_DAYS } from '../research-report';
+import { computePrecursorSeries } from '../pattern/precursor-features';
+import { getActiveRuleIds } from '../pattern/precursor-analysis';
 import type { DailyCandle } from '../types';
 
 /** 하락 → 급등 → 재하락 사이클을 `cycles`번 반복하는 결정적 시계열 */
@@ -97,5 +99,65 @@ describe('buildResearchReport', () => {
   test('runDate 미지정 시 KST 오늘로 채운다', async () => {
     const r = await buildResearchReport('005930', loaderFor(cyclicSeries(6)));
     expect(r.runDate).toBe(kstDateString());
+  });
+});
+
+// ─── T-033 — todayActiveRuleIds ─────────────────────────────────────────────
+
+describe('buildResearchReport — todayActiveRuleIds (T-033)', () => {
+  test('마지막 캔들(= dataRangeTo)의 활성 규칙을 계산해 리포트에 싣는다', async () => {
+    const candles = cyclicSeries(7);
+    const r = await buildResearchReport('NAS:MU', { runDate: '2026-08-19', ...loaderFor(candles) });
+
+    expect(Array.isArray(r.todayActiveRuleIds)).toBe(true);
+    // 마지막 캔들의 피처로 직접 계산한 값과 일치해야 한다(기준일이 어긋나지 않았다는 증거)
+    const feats = computePrecursorSeries(candles);
+    expect(r.todayActiveRuleIds).toEqual(getActiveRuleIds(feats[feats.length - 1]));
+  });
+
+  test('🔴 기준일이 dataRangeTo 와 같은 행이다 — 캔들을 하루 더 붙이면 값이 그 날 기준으로 바뀐다', async () => {
+    const candles = cyclicSeries(7);
+    const shorter = candles.slice(0, candles.length - 1);
+
+    const a = await buildResearchReport('NAS:MU', { runDate: '2026-08-19', ...loaderFor(shorter) });
+    const b = await buildResearchReport('NAS:MU', { runDate: '2026-08-19', ...loaderFor(candles) });
+
+    expect(a.dataRangeTo).toBe(shorter[shorter.length - 1].date);
+    expect(b.dataRangeTo).toBe(candles[candles.length - 1].date);
+    const featsA = computePrecursorSeries(shorter);
+    expect(a.todayActiveRuleIds).toEqual(getActiveRuleIds(featsA[featsA.length - 1]));
+  });
+
+  test('이벤트가 없어(precursorAnalysis=null) 도 활성 규칙은 계산된다', async () => {
+    // 단조 상승 — trough 이벤트가 잡히지 않는다
+    const flat: DailyCandle[] = Array.from({ length: 300 }, (_, i) => {
+      const v = 100 + i * 0.2;
+      return {
+        date: new Date(Date.UTC(2020, 0, 1) + i * 86400000).toISOString().slice(0, 10),
+        open: v, high: v, low: v, close: v, volume: 1000,
+      };
+    });
+    const r = await buildResearchReport('005930', { runDate: '2026-08-19', ...loaderFor(flat) });
+    expect(r.precursorAnalysis).toBeNull();
+    expect(r.dataWarnings).toContain('insufficient_for_precursors');
+    // 결측(null)이 아니라 "충족 규칙 없음"([])으로 관측된다
+    expect(r.todayActiveRuleIds).toEqual([]);
+  });
+
+  test('워밍업 구간만큼도 안 되는 짧은 시계열은 null(평가 못 함)', async () => {
+    const tiny: DailyCandle[] = Array.from({ length: 3 }, (_, i) => ({
+      date: `2026-08-1${i}`, open: 100, high: 100, low: 100, close: 100, volume: 10,
+    }));
+    const r = await buildResearchReport('005930', { runDate: '2026-08-19', ...loaderFor(tiny) });
+    expect(r.todayActiveRuleIds).toBeNull();
+  });
+
+  test('조회 실패 리포트는 null', async () => {
+    const r = await buildResearchReport('005930', {
+      runDate: '2026-08-19',
+      history: { loader: async () => { throw new Error('yahoo down'); } },
+    });
+    expect(r.error).toMatch(/yahoo down/);
+    expect(r.todayActiveRuleIds).toBeNull();
   });
 });

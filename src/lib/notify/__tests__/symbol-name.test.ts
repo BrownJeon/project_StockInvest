@@ -20,7 +20,7 @@ jest.mock('@/lib/db', () => ({
   }),
 }));
 
-import { getSymbolLabel } from '@/lib/notify/symbol-name';
+import { getSymbolLabel, getSymbolLabels } from '@/lib/notify/symbol-name';
 
 const rows = (r: unknown[]): Promise<unknown> => Promise.resolve([r, []]);
 
@@ -82,5 +82,59 @@ describe('getSymbolLabel', () => {
   test('빈 심볼은 DB 조회 없이 빈 문자열', async () => {
     await expect(getSymbolLabel('')).resolves.toBe('');
     expect(queryCalls).toHaveLength(0);
+  });
+});
+
+// ─── T-033 — 배치판 ─────────────────────────────────────────────────────────
+
+describe('getSymbolLabels', () => {
+  test('쿼리 1번으로 여러 심볼을 라벨링한다', async () => {
+    queryImpl = () => rows([
+      { symbol: '000660', name: 'SK하이닉스' },
+      { symbol: '005930', name: '삼성전자' },
+    ]);
+    const labels = await getSymbolLabels(['000660', '005930']);
+    expect(queryCalls).toHaveLength(1);
+    expect(labels.get('000660')).toBe('SK하이닉스');
+    expect(labels.get('005930')).toBe('삼성전자');
+  });
+
+  test('중복 심볼은 한 번만 조회한다', async () => {
+    queryImpl = () => rows([]);
+    await getSymbolLabels(['005930', '005930', '005930']);
+    expect(queryCalls[0].params).toEqual([['005930']]);
+  });
+
+  test('캐시 미스·빈 이름은 심볼 코드로 폴백하고, 입력 전부에 키가 생긴다', async () => {
+    queryImpl = () => rows([{ symbol: '005930', name: '   ' }]);
+    const labels = await getSymbolLabels(['005930', 'NAS:MU']);
+    expect(labels.get('005930')).toBe('005930');
+    expect(labels.get('NAS:MU')).toBe('NAS:MU');
+    expect(labels.size).toBe(2);
+  });
+
+  test('DB 가 던져도 전파하지 않고 심볼 코드로 폴백한다', async () => {
+    queryImpl = () => Promise.reject(new Error('db down'));
+    const labels = await getSymbolLabels(['005930']);
+    expect(labels.get('005930')).toBe('005930');
+    expect(warnSpy).toHaveBeenCalled();
+  });
+
+  test('종목명의 & 등은 이스케이프된다(텔레그램 HTTP 400 방지)', async () => {
+    queryImpl = () => rows([{ symbol: '064960', name: 'S&T모티브' }]);
+    expect((await getSymbolLabels(['064960'])).get('064960')).toBe('S&amp;T모티브');
+  });
+
+  test('빈 목록이면 쿼리조차 쏘지 않는다', async () => {
+    expect((await getSymbolLabels([])).size).toBe(0);
+    expect((await getSymbolLabels(['', '  '])).size).toBe(0);
+    expect(queryCalls).toHaveLength(0);
+  });
+
+  test('라이브 KIS 폴백은 없다 — stock_meta 만 본다', async () => {
+    queryImpl = () => rows([]);
+    await getSymbolLabels(['NAS:MU']);
+    expect(queryCalls).toHaveLength(1);
+    expect(queryCalls[0].sql).toMatch(/stock_meta/);
   });
 });

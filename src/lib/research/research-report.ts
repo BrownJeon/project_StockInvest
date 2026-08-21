@@ -7,7 +7,11 @@
 import { loadDailyHistory, type HistoryLoadOptions } from './data/history-source';
 import { detectRallyEvents } from './pattern/rally-cycle';
 import { computePrecursorSeries, type PrecursorFeatureConfig } from './pattern/precursor-features';
-import { analyzePrecursors, type PrecursorAnalysisConfig } from './pattern/precursor-analysis';
+import {
+  analyzePrecursors,
+  getActiveRuleIds,
+  type PrecursorAnalysisConfig,
+} from './pattern/precursor-analysis';
 import {
   DEFAULT_RALLY_CYCLE_CONFIG,
   type DailyCandle,
@@ -54,10 +58,18 @@ function buildReport(
   if (detection.events.length === 0) warnings.push('no_events');
   if (detection.pendingTroughCount > 0) warnings.push('pending_recent_trough');
 
-  // 선행지표는 이벤트(양성 라벨)가 있어야 의미가 있다.
+  // T-033 — 피처 시계열은 이벤트 유무와 무관하게 한 번 계산한다.
+  // 예전에는 이벤트가 있을 때만 계산했지만, "기준일에 어떤 규칙이 걸렸는가"(todayActiveRuleIds)는
+  // 이벤트가 없어도 관측 가능한 사실이고, 한 번 계산해 둘 다에 쓰는 편이 중복 계산도 없앤다.
+  // 계산량은 수년치 일봉 O(n·window) 수준이라 무시 가능하다.
+  const features = computePrecursorSeries(candles, opts.features);
+  // 마지막 캔들 = `dataRangeTo`(종가 기준일)와 같은 행이어야 한다 — 두 값이 어긋나면
+  // 화면에 표시되는 기준일과 실제 판정일이 달라진다.
+  const todayActiveRuleIds = getActiveRuleIds(features[features.length - 1] ?? null);
+
+  // 선행지표 **집계**는 이벤트(양성 라벨)가 있어야 의미가 있다.
   let precursorAnalysis = null as ResearchReport['precursorAnalysis'];
   if (detection.troughIndices.length > 0) {
-    const features = computePrecursorSeries(candles, opts.features);
     precursorAnalysis = analyzePrecursors(features, detection.troughIndices, opts.analysis);
   } else {
     warnings.push('insufficient_for_precursors');
@@ -74,6 +86,7 @@ function buildReport(
     avgRallyPct: detection.avgRallyPct,
     avgDaysToRally: detection.avgDaysToRally,
     precursorAnalysis,
+    todayActiveRuleIds,
     dataWarnings: warnings,
     error: null,
   };
@@ -106,6 +119,7 @@ export async function buildResearchReport(
       avgRallyPct: null,
       avgDaysToRally: null,
       precursorAnalysis: null,
+      todayActiveRuleIds: null,
       dataWarnings: [],
       error,
     };

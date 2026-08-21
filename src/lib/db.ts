@@ -1256,11 +1256,19 @@ async function setupDB(): Promise<void> {
       precursor_analysis JSON NULL,
       data_warnings      JSON NULL,
       error              TEXT NULL,
+      today_active_rule_ids JSON NULL,
       created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_symbol_date (symbol, run_date),
       INDEX idx_research_rally_run (run_date DESC, symbol)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+  // T-033 — 기준일(data_range_to) 종가에서 어떤 선행지표 규칙이 참이었는지 저장.
+  // 없으면 매수/매도 추천을 만들 때마다 캔들을 다시 받아 재계산해야 하고, 화면(ResearchTab)과
+  // 08:00 리포트가 서로 다른 시점의 데이터로 다른 숫자를 낼 수 있다. `null`(미저장)과
+  // `[]`(오늘 충족 규칙 없음)은 서로 다른 뜻이므로 DEFAULT 를 두지 않는다.
+  await p.query(
+    `ALTER TABLE research_rally_results ADD COLUMN IF NOT EXISTS today_active_rule_ids JSON NULL`,
+  ).catch(() => {});
 
   // ── 재무·가치 캐시 (Phase A) — 1일 TTL ──────────────────────────────────
   await p.query(`

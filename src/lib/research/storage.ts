@@ -34,6 +34,8 @@ export interface StoredResearchResult {
   avgRallyPct: number | null;
   avgDaysToRally: number | null;
   precursorAnalysis: PrecursorAnalysis | null;
+  /** T-033 — 기준일에 참이었던 규칙 id. `null`=미평가/구버전 행, `[]`=충족 규칙 없음 */
+  todayActiveRuleIds: string[] | null;
   dataWarnings: ResearchDataWarning[];
   error: string | null;
   createdAt: string | null;
@@ -88,20 +90,22 @@ export async function upsertResearchResult(report: ResearchReport): Promise<void
   await pool.query(
     `INSERT INTO research_rally_results
        (symbol, market, run_date, data_range_from, data_range_to, event_count, events,
-        avg_rally_pct, avg_days_to_rally, precursor_analysis, data_warnings, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        avg_rally_pct, avg_days_to_rally, precursor_analysis, today_active_rule_ids,
+        data_warnings, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
-       market             = VALUES(market),
-       data_range_from    = VALUES(data_range_from),
-       data_range_to      = VALUES(data_range_to),
-       event_count        = VALUES(event_count),
-       events             = VALUES(events),
-       avg_rally_pct      = VALUES(avg_rally_pct),
-       avg_days_to_rally  = VALUES(avg_days_to_rally),
-       precursor_analysis = VALUES(precursor_analysis),
-       data_warnings      = VALUES(data_warnings),
-       error              = VALUES(error),
-       created_at         = CURRENT_TIMESTAMP`,
+       market                = VALUES(market),
+       data_range_from       = VALUES(data_range_from),
+       data_range_to         = VALUES(data_range_to),
+       event_count           = VALUES(event_count),
+       events                = VALUES(events),
+       avg_rally_pct         = VALUES(avg_rally_pct),
+       avg_days_to_rally     = VALUES(avg_days_to_rally),
+       precursor_analysis    = VALUES(precursor_analysis),
+       today_active_rule_ids = VALUES(today_active_rule_ids),
+       data_warnings         = VALUES(data_warnings),
+       error                 = VALUES(error),
+       created_at            = CURRENT_TIMESTAMP`,
     [
       report.symbol,
       report.market,
@@ -113,6 +117,8 @@ export async function upsertResearchResult(report: ResearchReport): Promise<void
       report.avgRallyPct != null ? Number(report.avgRallyPct.toFixed(2)) : null,
       report.avgDaysToRally != null ? Number(report.avgDaysToRally.toFixed(2)) : null,
       report.precursorAnalysis ? JSON.stringify(report.precursorAnalysis) : null,
+      // `null`(미평가)과 `[]`(충족 규칙 없음)은 뜻이 다르므로 빈 배열을 null 로 접지 않는다.
+      report.todayActiveRuleIds ? JSON.stringify(report.todayActiveRuleIds) : null,
       JSON.stringify(report.dataWarnings),
       report.error,
     ],
@@ -157,6 +163,7 @@ export async function getLatestResearchResults(): Promise<
     avgRallyPct: toNumberOrNull(r.avg_rally_pct),
     avgDaysToRally: toNumberOrNull(r.avg_days_to_rally),
     precursorAnalysis: parseJson<PrecursorAnalysis | null>(r.precursor_analysis, null),
+    todayActiveRuleIds: parseJson<string[] | null>(r.today_active_rule_ids, null),
     dataWarnings: parseJson<ResearchDataWarning[]>(r.data_warnings, []),
     error: (r.error as string | null) ?? null,
     createdAt: r.created_at ? new Date(r.created_at as string | Date).toISOString() : null,

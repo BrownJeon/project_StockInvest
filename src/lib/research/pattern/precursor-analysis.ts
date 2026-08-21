@@ -67,6 +67,32 @@ function isEvaluable(f: PrecursorFeatures): boolean {
   );
 }
 
+/**
+ * 특정 하루(대개 시계열의 마지막 캔들)에 **참이 된 규칙 id 목록** — T-033.
+ *
+ * `analyzePrecursors` 가 과거 전체를 집계하는 것과 달리, 이 함수는 시점 1개만 본다.
+ * 매수 추천은 "오늘 걸린 규칙"과 "그 규칙의 과거 적중률"을 곱해서 만들어지는데, 앞쪽 절반이
+ * 여기서 나온다. `RULES` 가 비export 라 이 파일 안에 둔다 — 다른 파일에서 규칙을 재정의하면
+ * 화면과 리포트가 서로 다른 규칙 집합을 쓰게 된다.
+ *
+ * 🔴 **look-ahead bias 없음**: `PrecursorFeatures` 한 행만 받고, 그 행은
+ * `computePrecursorSeries` 의 불변식상 `candles[0..t]` 에만 의존한다. 미래 캔들은 관여하지 않는다.
+ *
+ * 반환값의 세 상태를 구분한다:
+ *  - `null`  — 피처가 없거나 계산 불가(지표 워밍업 구간 등). "평가하지 않았다"는 뜻.
+ *  - `[]`    — 평가했고 **오늘 충족한 규칙이 하나도 없다**. 관측 결과이지 결측이 아니다.
+ *  - `[...]` — 충족한 규칙 id 들. 순서는 `RULES` 정의 순서(안정적).
+ */
+export function getActiveRuleIds(features: PrecursorFeatures | null | undefined): string[] | null {
+  if (!features || !isEvaluable(features)) return null;
+  return RULES.filter((rule) => rule.test(features)).map((rule) => rule.id);
+}
+
+/** 규칙 id → 사람이 읽는 라벨. 저장된 id 만 있는 소비자(리포트·추천)가 라벨을 복원할 때 쓴다. */
+export function getRuleLabel(ruleId: string): string | null {
+  return RULES.find((r) => r.id === ruleId)?.label ?? null;
+}
+
 export function analyzePrecursors(
   features: PrecursorFeatures[],
   troughIndices: number[],

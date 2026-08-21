@@ -48,16 +48,33 @@ jest.mock('@/lib/notify/telegram', () => ({
 }));
 jest.mock('@/lib/safety/portfolio-total', () => ({ getPortfolioTotalKRW: async () => 1_000_000 }));
 jest.mock('@/lib/reports/trading-day',    () => ({ isTradingDay: async () => true }));
-jest.mock('@/lib/strategy/eval-funnel-query', () => ({ getEvalFunnelSummary: async () => null }));
+// T-033 — 평가 깔때기는 리포트에서 빠졌다. `getEvalFunnelSummary` 를 부르지 않는지도 검증한다.
+const funnelMock = jest.fn(async () => null);
+jest.mock('@/lib/strategy/eval-funnel-query', () => ({ getEvalFunnelSummary: () => funnelMock() }));
+const researchDigestMock = jest.fn(async () => EMPTY_DIGEST);
+const signalCandidatesMock = jest.fn(async (_rangeStart?: Date) => EMPTY_CANDS);
+const symbolLabelsMock = jest.fn(async (_symbols: string[]) => new Map<string, string>());
+const formatMock = jest.fn(() => '리포트 본문');
+
+const EMPTY_CANDS = { buyWatchlist: [], holdings: [], sellPnl: [] };
+const EMPTY_DIGEST = { trackedCount: 0, activeCount: 0, items: [], note: 'note' };
+
 jest.mock('@/lib/reports/trade-report', () => ({
   buildTradeReport: async (o: { rangeStart: Date; rangeEnd: Date }) => ({
     rangeStart: o.rangeStart, rangeEnd: o.rangeEnd,
     buys: 1, sells: 2, buysAmountKRW: 100, sellsAmountKRW: 200,
     headerPnlKRW: 100, lifoPnlKRW: 50, perSymbol: [], churnSymbols: [],
   }),
-  formatReportMessage: () => '리포트 본문',
+  formatReportMessage: (...a: unknown[]) => formatMock(...(a as [])),
   fetchPortfolioBaselineKRW: async () => 900_000,
-  fetchSignalCandidates: async () => ({ buyWatchlist: [], holdings: [], sellPnl: [] }),
+  fetchSignalCandidates: (rangeStart?: Date) => signalCandidatesMock(rangeStart),
+  fetchResearchDigest: () => researchDigestMock(),
+  collectReportSymbols: () => ['005930'],
+  EMPTY_CANDIDATES: { buyWatchlist: [], holdings: [], sellPnl: [] },
+  EMPTY_RESEARCH_DIGEST: { trackedCount: 0, activeCount: 0, items: [], note: 'note' },
+}));
+jest.mock('@/lib/notify/symbol-name', () => ({
+  getSymbolLabels: (symbols: string[]) => symbolLabelsMock(symbols),
 }));
 
 import { POST } from '@/app/api/cron/trade-report/route';
@@ -102,6 +119,10 @@ beforeEach(() => {
   writes.length = 0;
   slackMock.mockResolvedValue(OK);
   telegramMock.mockResolvedValue(OK);
+  formatMock.mockReturnValue('리포트 본문');
+  researchDigestMock.mockResolvedValue(EMPTY_DIGEST);
+  signalCandidatesMock.mockResolvedValue(EMPTY_CANDS);
+  symbolLabelsMock.mockResolvedValue(new Map());
   errSpy  = jest.spyOn(console, 'error').mockImplementation(() => {});
   warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
@@ -353,5 +374,49 @@ describe('장애 장기화 안전성', () => {
     expect(b.rangeCapped).toBe(false);
     const ageDays = (Date.now() - new Date(b.rangeStart).getTime()) / (24 * HOUR);
     expect(ageDays).toBeGreaterThan(9.99);
+  });
+});
+
+// ─── T-033 — 리서치 요약 배선 (평가 깔때기 제거) ──────────────────────────────
+
+describe('T-033 리포트 구성 변경', () => {
+  test('평가 깔때기(getEvalFunnelSummary)를 더 이상 호출하지 않는다', async () => {
+    setConfig('telegram');
+    await POST(makeReq());
+    expect(funnelMock).not.toHaveBeenCalled();
+  });
+
+  test('fetchSignalCandidates 가 rangeStart 를 받는다 (종목별 주기 변동률 기준 시점)', async () => {
+    setConfig('telegram');
+    const b = await (await POST(makeReq())).json() as Body;
+    expect(signalCandidatesMock).toHaveBeenCalledTimes(1);
+    const passed = signalCandidatesMock.mock.calls[0][0] as unknown as Date;
+    expect(passed).toBeInstanceOf(Date);
+    expect(passed.toISOString()).toBe(b.rangeStart);
+  });
+
+  test('리서치 다이제스트를 조회해 formatReportMessage 5번째 인자로 넘긴다', async () => {
+    setConfig('telegram');
+    await POST(makeReq());
+    expect(researchDigestMock).toHaveBeenCalledTimes(1);
+    expect(formatMock.mock.calls[0][4]).toEqual(EMPTY_DIGEST);
+  });
+
+  test('한글 종목명 Map 을 6번째 인자로 넘긴다', async () => {
+    setConfig('telegram');
+    symbolLabelsMock.mockResolvedValue(new Map([['005930', '삼성전자']]));
+    await POST(makeReq());
+    expect(symbolLabelsMock).toHaveBeenCalledWith(['005930']);
+    expect(formatMock.mock.calls[0][5]).toEqual(new Map([['005930', '삼성전자']]));
+  });
+
+  test('리서치·후보 조회가 실패해도 리포트는 발송된다(빈 값 폴백)', async () => {
+    setConfig('telegram');
+    researchDigestMock.mockRejectedValue(new Error('research down'));
+    signalCandidatesMock.mockRejectedValue(new Error('db down'));
+    const b = await (await POST(makeReq())).json() as Body;
+    expect(b.sent).toBe(true);
+    expect(formatMock.mock.calls[0][3]).toEqual({ buyWatchlist: [], holdings: [], sellPnl: [] });
+    expect(formatMock.mock.calls[0][4]).toEqual({ trackedCount: 0, activeCount: 0, items: [], note: 'note' });
   });
 });

@@ -235,12 +235,19 @@ tags:
   `pm2 restart stockinvest-cron --update-env`로 해제 + 잔여 1개는 직접 `rm -f`로 정리해 해소.
   상세: [[T-032-research-rally-cycle]] Leader 기록, [[RESUME]] 2026-08-19 절.
 
-- **[진행중, 2026-08-19] [[T-032-research-rally-cycle]] — 즐겨찾기 연동 사이클 패턴 리서치 기능**
-  사용자가 마이크론/샌디스크류 급등락 반복 패턴의 통계적 실재 여부·선행지표를 검증하고 싶어함.
-  즐겨찾기 on/off 토글 + "추적중" 배지 + 분석탭 "리서치" 서브탭 + 매일 cron(국내16:00/해외07:00,
-  Yahoo Finance 비공식 API, LLM 미사용, 자동매매 미연결). **구현·Reviewer PASS·커밋·push까지 전부
-  완료**(`5c23d35`). 배포 중 위 NFS 인프라 이슈 발견·해소, 빈 커밋(`fe2a22e`)으로 재배포 트리거 —
-  결과 확인 후 `pm2 restart stockinvest-cron --update-env` 재실행 필요.
+- **[구현·감사·검증 완료 — 커밋 대기, 2026-08-20] [[T-033-research-recommendation-trade-report]] —
+  리서치분석 매수/매도 추천(Phase 1) + 거래 리포트 08:00 개선(Phase 2)**
+  T-032 후속. Developer(Phase1→Phase2) → Reviewer PASS(Critical/High/Medium 0건) → QA 핵심로직
+  통과(결함 0건) → Leader가 임시 dev 인스턴스로 실제 텔레그램 발송까지 재현 확인(`sent:true`).
+  121 suites/2095 tests 전부 통과. `trade-report/route.ts`만 SAFETY_PATHS 대상(Reviewer PASS 기록
+  완료). **git commit/push는 사용자 승인 대기.**
+
+## Done (T-032 완결)
+
+- ✅ **[2026-08-19] [[T-032-research-rally-cycle]] — 즐겨찾기 연동 사이클 패턴 리서치 기능**
+  구현·Reviewer PASS·커밋·배포 전부 완료(`5c23d35` + 후속 3건: 목록 토글, 서브탭 이름 변경+수동
+  재분석 버튼, 타임아웃/갱신시각 버그수정). 배포 중 발견된 NFS 인프라 이슈(위 항목)도 해소.
+  최종 상태·검증 로그는 task 파일 참조.
 
 ## Review
 

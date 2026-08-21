@@ -1,5 +1,15 @@
-import { computeLifoPnl, buildTradeReport, formatReportMessage, formatFunnelSection, type OrderRow } from '../trade-report';
-import type { EvalFunnelSummary } from '@/lib/strategy/eval-funnel-query';
+import {
+  computeLifoPnl,
+  buildTradeReport,
+  formatReportMessage,
+  collectReportSymbols,
+  EMPTY_RESEARCH_DIGEST,
+  type HoldingStatus,
+  type OrderRow,
+  type ResearchDigest,
+  type TradeReport,
+} from '../trade-report';
+import { PRECURSOR_NOTE } from '@/lib/research/pattern/precursor-analysis';
 
 function row(symbol: string, side: 'buy'|'sell', price: number, qty: number, ts: number, fee = 0): OrderRow {
   return { symbol, side, price, quantity: qty, amount_krw: price * qty, fee, ts };
@@ -186,105 +196,246 @@ describe('formatReportMessage', () => {
   });
 });
 
-function funnel(overrides: Partial<EvalFunnelSummary> = {}): EvalFunnelSummary {
+
+// ─── T-033 — 리포트 개선(투자금액·주기변동·한글명·리서치 요약) ────────────────
+
+function holding(over: Partial<HoldingStatus> = {}): HoldingStatus {
   return {
-    market: 'domestic',
-    rangeStart: new Date(T0),
-    rangeEnd: new Date(T0 + 3 * HOUR),
-    runs: 78,
-    fullEvalRuns: 2,
-    symbolsEvaluated: 72,
-    buySignals: 1,
-    sellSignals: 0,
-    exitSignals: 0,
-    steps: [
-      { key: 'evaluated', label: '종목평가', count: 72, pctOfPrev: null },
-      { key: 'fired', label: '룰 발화', count: 9, pctOfPrev: 12.5 },
-      { key: 'guard', label: '가드 통과', count: 6, pctOfPrev: 66.7 },
-      { key: 'prefilter', label: '프리필터 통과', count: 4, pctOfPrev: 66.7 },
-      { key: 'ai', label: 'AI 통과', count: 1, pctOfPrev: 25 },
-      { key: 'signal', label: '전략시그널', count: 1, pctOfPrev: 100 },
-    ],
-    bottlenecks: [
-      { gate: 'rule_no_fire', label: '룰 미발화', count: 63 },
-      { gate: 'cooldown_rebuy', label: '재매수 쿨다운', count: 4 },
-      { gate: 'ai_low_confidence', label: 'AI 신뢰도 미달', count: 3 },
-    ],
-    anomalies: [{ label: 'AI 배치 실패', count: 2 }],
-    neutralPct: 41,
-    ...overrides,
+    symbol: '000660',
+    profitPct: 3.2,
+    entryKRW: 198_000,
+    currentKRW: 204_000,
+    qty: 10,
+    investedKRW: 1_980_000,
+    periodStartKRW: 200_000,
+    nowPriceKRW: 203_700,
+    periodChangePct: 1.85,
+    sellSignal: null,
+    avgRallyPct: 18,
+    ...over,
   };
 }
 
-describe('formatFunnelSection', () => {
-  test('T-002 §4 포맷 예시 — 헤더·단계·병목·이상 배너 모두 렌더', () => {
-    const msg = formatFunnelSection(funnel());
-    expect(msg).toMatch(/📊 평가 깔때기 — 국내장/);
-    expect(msg).toMatch(/런 78회\(풀평가 2회\) · 종목평가 72건/);
-    expect(msg).toMatch(/룰 발화 9 → 가드 통과 6 → 프리필터 통과 4 → AI 통과 1 → ✅ 시그널 1 \(매수 1 · 매도 0\)/);
-    expect(msg).toMatch(/병목: 룰 미발화 63\/72종목 \(88%\) · 2위 재매수 쿨다운 4건 · 3위 AI 신뢰도 미달 3건/);
-    expect(msg).toMatch(/⚠ 이상: AI 배치 실패 2회 · neutral 상태 41% \(30m 룰 전체 비활성\)/);
+function digest(over: Partial<ResearchDigest> = {}): ResearchDigest {
+  return {
+    trackedCount: 8,
+    activeCount: 1,
+    items: [{
+      symbol: 'NAS:MU',
+      market: 'overseas',
+      asOfDate: '2026-08-20',
+      buy: {
+        action: 'buy',
+        ruleId: 'rsi_lt_30',
+        ruleLabel: 'RSI14 < 30 (과매도)',
+        precision: 0.625,
+        lift: 2.1,
+        triggerCount: 40,
+        confidence: 'high',
+        note: PRECURSOR_NOTE,
+      },
+    }],
+    note: PRECURSOR_NOTE,
+    ...over,
+  };
+}
+
+async function emptyReport(): Promise<TradeReport> {
+  return buildTradeReport({
+    rangeStart: new Date(T0), rangeEnd: new Date(T0 + HOUR),
+    totalKRW: 1000, baselineKRW: null, rows: [],
+  });
+}
+
+describe('formatReportMessage — 보유 현황 (T-033)', () => {
+  test('"고점대비"와 "최근추이"를 라벨로 구분해 표기한다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, { buyWatchlist: [], holdings: [holding()], sellPnl: [] });
+    expect(msg).toMatch(/고점대비 \+3\.20%/);
+    expect(msg).toMatch(/최근추이 \+1\.85%/);
   });
 
-  test('풀평가 == 런 총수면 괄호 생략', () => {
-    const msg = formatFunnelSection(funnel({ runs: 2, fullEvalRuns: 2 }));
-    expect(msg).toMatch(/런 2회 · 종목/);
-    expect(msg).not.toMatch(/풀평가/);
-  });
-
-  test('시그널 0건이면 매수/매도 상세 생략', () => {
-    const base = funnel();
-    const msg = formatFunnelSection({
-      ...base,
-      buySignals: 0,
-      sellSignals: 0,
-      steps: base.steps.map(s => s.key === 'signal' ? { ...s, count: 0 } : s),
+  test('🔴 "익절 임박" 문구는 더 이상 출력되지 않는다 (고점대비 값 오독 재발 방지)', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({ profitPct: 9.9 })],   // 예전이면 "익절 임박"이 붙던 구간
     });
-    expect(msg).toMatch(/✅ 시그널 0$/m);
+    expect(msg).not.toMatch(/익절 임박/);
   });
 
-  // ── T-004: exit 트랙 분리 ────────────────────────────────────────────────
-  test('exit 청산 시그널은 사슬 터미널에 합산되지 않고 별도 줄로 표기된다', () => {
-    const base = funnel();
-    const msg = formatFunnelSection({
-      ...base,
-      buySignals: 0,
-      sellSignals: 0,
-      exitSignals: 2,
-      steps: base.steps.map(s => (s.key === 'signal' ? { ...s, count: 0 } : s)),
+  test('손절 임박 경고는 유지된다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [], holdings: [holding({ profitPct: -3 })],
     });
-    // 터미널은 평가 트랙 0 그대로 — exit 2건이 새어 들어오면 안 된다
-    expect(msg).toMatch(/✅ 시그널 0$/m);
-    expect(msg).toMatch(/^청산\(보유관리\) 매도 2건$/m);
-    // 회귀 방지: 이것이 T-004 이전의 자기모순 출력이었다
-    expect(msg).not.toMatch(/✅ 시그널 0건 \(매수 0 · 매도 2\)/);
+    expect(msg).toMatch(/손절 임박/);
   });
 
-  test('exitSignals 0이면 청산 줄 자체가 없다', () => {
-    const msg = formatFunnelSection(funnel({ exitSignals: 0 }));
-    expect(msg).not.toMatch(/청산\(보유관리\)/);
+  test('종목별 투자금액을 표기한다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, { buyWatchlist: [], holdings: [holding()], sellPnl: [] });
+    expect(msg).toMatch(/└ 투자금 ₩1,980,000/);
   });
 
-  test('평가 트랙과 exit 트랙이 동시에 있으면 둘 다 각자 자리에 표기된다', () => {
-    const base = funnel();
-    const msg = formatFunnelSection({ ...base, buySignals: 1, sellSignals: 2, exitSignals: 3 });
-    // 괄호는 평가 트랙만 (1 · 2) — exit 3은 절대 섞이지 않는다
-    expect(msg).toMatch(/✅ 시그널 1 \(매수 1 · 매도 2\)/);
-    expect(msg).toMatch(/^청산\(보유관리\) 매도 3건$/m);
+  test('baseline·현재가가 없으면 조용히 생략하지 않고 "데이터 없음"을 명시한다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({ periodStartKRW: null, nowPriceKRW: null, periodChangePct: null, investedKRW: 0 })],
+    });
+    expect(msg).toMatch(/최근추이 데이터 없음/);
+    expect(msg).toMatch(/투자금 데이터 없음/);
   });
 
-  test('이상·neutral 모두 없으면 이상 배너 줄 생략', () => {
-    const msg = formatFunnelSection(funnel({ anomalies: [], neutralPct: 0 }));
-    expect(msg).not.toMatch(/⚠ 이상/);
+  test('매도 고려 — 목표 대비 진행률과 보유일수를 함께 보여준다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        sellSignal: {
+          action: 'sell', daysSinceEntry: 12, gainPct: 14.76,
+          reason: 'target_reached', note: PRECURSOR_NOTE,
+        },
+      })],
+    });
+    expect(msg).toMatch(/🔬 매도 고려 — 목표\(과거평균 \+18\.0%\) 대비 82% 진행, 보유 12일째/);
   });
 
-  test('formatReportMessage에 funnel 전달 시 섹션 포함, 미전달 시 생략', async () => {
+  test('표본부족이면 매도 추천 대신 "판단 보류"를 보여준다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        sellSignal: { action: 'insufficient_data', daysSinceEntry: 3, gainPct: 1, reason: null, note: PRECURSOR_NOTE },
+      })],
+    });
+    expect(msg).toMatch(/🔬 판단 보류 \(리서치 표본부족\)/);
+    expect(msg).not.toMatch(/매도 고려/);
+  });
+
+  test('sellSignal 이 없으면 리서치 줄 자체가 없다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, { buyWatchlist: [], holdings: [holding()], sellPnl: [] });
+    expect(msg).not.toMatch(/🔬/);
+  });
+});
+
+describe('formatReportMessage — 한글 종목명 (T-033)', () => {
+  test('labels 를 넘기면 보유·매수후보·매도손익·리서치 전부 한글명으로 표기된다', async () => {
+    const rep = await emptyReport();
+    const labels = new Map([['000660', 'SK하이닉스'], ['NAS:MU', '마이크론'], ['005930', '삼성전자']]);
+    const msg = formatReportMessage(
+      rep, 1000, null,
+      {
+        holdings: [holding()],
+        buyWatchlist: [{ symbol: '005930', rsi: 28, aiConf: null, evPct: null, status: 'watchlist', skipReason: null }],
+        sellPnl: [{ symbol: '005930', exitKind: 'target_profit', pnlPct: 3, pnlKRW: 1000, sellAmountKRW: 10000 }],
+      },
+      digest(),
+      labels,
+    );
+    expect(msg).toMatch(/SK하이닉스 고점대비/);
+    expect(msg).toMatch(/🔴 삼성전자 \+₩1,000/);
+    expect(msg).toMatch(/삼성전자 RSI 28\.0/);
+    expect(msg).toMatch(/📈 마이크론 — 매수 고려/);
+    expect(msg).not.toMatch(/000660/);
+  });
+
+  test('labels 미전달 시 기존처럼 심볼 코드가 그대로 나온다(하위호환)', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, { buyWatchlist: [], holdings: [holding()], sellPnl: [] });
+    expect(msg).toMatch(/000660 고점대비/);
+  });
+});
+
+describe('formatReportMessage — 리서치분석 요약 (T-033)', () => {
+  test('평가 깔때기 섹션은 더 이상 렌더되지 않는다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, undefined, digest());
+    expect(msg).not.toMatch(/평가 깔때기/);
+  });
+
+  test('research 미전달이면 섹션 자체가 없다', async () => {
+    const rep = await emptyReport();
+    expect(formatReportMessage(rep, 1000, null)).not.toMatch(/리서치분석 요약/);
+  });
+
+  test('매수 고려 — 근거를 "과거 적중률"로 표기하고 "확률"이라는 말을 쓰지 않는다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, undefined, digest());
+    expect(msg).toMatch(/🔬 리서치분석 요약 \(참고용\)/);
+    expect(msg).toMatch(/추적 8종목 중 매수 고려 1종목/);
+    expect(msg).toMatch(/📈 NAS:MU — 매수 고려 \(2026-08-20 종가 기준\)/);
+    // 부등호는 전각(＜)으로 치환된다 — 슬랙 링크 오해석·텔레그램 이중 escape 를 동시에 피한다
+    expect(msg).toMatch(/근거: RSI14 ＜ 30 \(과매도\) — 과거 적중률 63%\(40건 중 25건\), lift ×2\.10, 표본 신뢰도 높음/);
+    expect(msg).not.toMatch(/확률/);
+    expect(msg).not.toMatch(/[<>]/);
+  });
+
+  test('표본부족 종목은 "판단 보류"로 강등되고 트리거 건수를 보여준다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, undefined, digest({
+      activeCount: 0,
+      items: [{
+        symbol: '005930', market: 'domestic', asOfDate: '2026-08-20',
+        buy: {
+          action: 'insufficient_data', ruleId: 'rsi_lt_30', ruleLabel: 'RSI14 < 30 (과매도)',
+          precision: 0.5, lift: 1.2, triggerCount: 4, confidence: null, note: PRECURSOR_NOTE,
+        },
+      }],
+    }));
+    expect(msg).toMatch(/⚪ 005930 — 판단 보류 \(표본부족, 트리거 4건\)/);
+    expect(msg).not.toMatch(/매수 고려 \(/);
+  });
+
+  test('면책 문구가 항상 붙는다', async () => {
+    const rep = await emptyReport();
+    expect(formatReportMessage(rep, 1000, null, undefined, digest())).toContain(PRECURSOR_NOTE);
+  });
+
+  test('추적 0종목 / 활성 0종목도 조용히 생략하지 않고 명시한다', async () => {
+    const rep = await emptyReport();
+    expect(formatReportMessage(rep, 1000, null, undefined, EMPTY_RESEARCH_DIGEST))
+      .toMatch(/추적 중인 종목이 없습니다/);
+    expect(formatReportMessage(rep, 1000, null, undefined, digest({ activeCount: 0, items: [] })))
+      .toMatch(/기준일 종가에서 조건을 충족한 종목이 없습니다/);
+  });
+
+  test('기준일이 없으면 "기준일 데이터 없음" — 실시간으로 오인시키지 않는다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, undefined, digest({
+      items: [{ ...digest().items[0], asOfDate: null }],
+    }));
+    expect(msg).toMatch(/기준일 데이터 없음/);
+  });
+});
+
+describe('collectReportSymbols (T-033)', () => {
+  test('리포트에 등장하는 모든 심볼을 중복 없이 모은다', async () => {
     const rangeStart = new Date(T0);
-    const rangeEnd = new Date(T0 + HOUR);
-    const rep = await buildTradeReport({ rangeStart, rangeEnd, totalKRW: 1000, baselineKRW: null, rows: [] });
-    const withFunnel = formatReportMessage(rep, 1000, null, undefined, funnel());
-    expect(withFunnel).toMatch(/📊 평가 깔때기 — 국내장/);
-    const withoutFunnel = formatReportMessage(rep, 1000, null);
-    expect(withoutFunnel).not.toMatch(/평가 깔때기/);
+    const rep = await buildTradeReport({
+      rangeStart, rangeEnd: new Date(T0 + 8 * HOUR), totalKRW: 1000, baselineKRW: null,
+      rows: [
+        row('BCH', 'buy', 100, 1, T0 + 1 * HOUR), row('BCH', 'sell', 105, 1, T0 + 2 * HOUR),
+        row('BCH', 'buy', 108, 1, T0 + 3 * HOUR), row('BCH', 'sell', 110, 1, T0 + 4 * HOUR),
+      ],
+    });
+    const symbols = collectReportSymbols(
+      rep,
+      {
+        holdings: [holding()],
+        buyWatchlist: [{ symbol: '005930', rsi: null, aiConf: null, evPct: null, status: 'watchlist', skipReason: null }],
+        sellPnl: [{ symbol: '000660', exitKind: 'ai_sell', pnlPct: 0, pnlKRW: 0, sellAmountKRW: 0 }],
+      },
+      digest(),
+    );
+    expect(symbols.sort()).toEqual(['000660', '005930', 'BCH', 'NAS:MU'].sort());
+  });
+
+  test('candidates·research 가 없어도 던지지 않는다', async () => {
+    const rep = await emptyReport();
+    expect(collectReportSymbols(rep)).toEqual([]);
+    expect(collectReportSymbols(rep, null, null)).toEqual([]);
   });
 });
