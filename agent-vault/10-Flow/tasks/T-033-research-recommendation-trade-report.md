@@ -456,3 +456,5 @@ UI 최종확인만 세션제약으로 보류) → Leader가 실전송까지 직�
 - `npm run typecheck` 무오류, `npm test` **121 suites/2106 tests 전부 통과**.
 - SAFETY_PATHS 대상 파일 무변경. Leader가 직접 구현.
 - 배포: 사용자 승인 대기.
+
+배포 확인: 커밋 `b4e2d9d` push → webhook-deploy 성공(`exit=0`), 헬스체크 green. 완결.
