@@ -235,12 +235,11 @@ tags:
   `pm2 restart stockinvest-cron --update-env`로 해제 + 잔여 1개는 직접 `rm -f`로 정리해 해소.
   상세: [[T-032-research-rally-cycle]] Leader 기록, [[RESUME]] 2026-08-19 절.
 
-- **[구현·감사·검증 완료 — 커밋 대기, 2026-08-20] [[T-033-research-recommendation-trade-report]] —
-  리서치분석 매수/매도 추천(Phase 1) + 거래 리포트 08:00 개선(Phase 2)**
+- ✅ **[완결 — 2026-08-20] [[T-033-research-recommendation-trade-report]] — 리서치분석 매수/매도
+  추천(Phase 1) + 거래 리포트 08:00 개선(Phase 2)**
   T-032 후속. Developer(Phase1→Phase2) → Reviewer PASS(Critical/High/Medium 0건) → QA 핵심로직
-  통과(결함 0건) → Leader가 임시 dev 인스턴스로 실제 텔레그램 발송까지 재현 확인(`sent:true`).
-  121 suites/2095 tests 전부 통과. `trade-report/route.ts`만 SAFETY_PATHS 대상(Reviewer PASS 기록
-  완료). **git commit/push는 사용자 승인 대기.**
+  통과(결함 0건) → Leader가 실제 텔레그램 발송까지 재현 확인 → 사용자 승인 후 커밋(`fe9355b`)·
+  배포 완료(`exit=0`, 헬스체크 green). 121 suites/2095 tests 전부 통과.
 
 ## Done (T-032 완결)
 
