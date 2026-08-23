@@ -1,7 +1,7 @@
 ---
 task_id: T-035
 title: 해외 종목의 종목별 금액을 USD로 표기 (리서치분석 + 텔레그램 리포트)
-status: doing
+status: deployed
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-032, T-033, T-034]
 tags:
@@ -316,3 +316,11 @@ toDisplayAmount(amountKRW, currency, quote) → DisplayAmount { value, currency,
 ### 최종 판정
 
 **검증 통과** — 실데이터 5종목 전수에서 통화 분기가 의도대로 동작. 결함 0건.
+
+## 배포 (2026-08-23)
+
+사용자 승인 → 배포 전 `pm2 restart stockinvest-cron` + **webhook-deploy 실제 프로세스 생존을
+`ps` 로 확인**(pm2 status 만 믿지 않는다 — 같은 날 프로세스가 죽어 있는데 online 으로 표시돼
+커밋 3건이 조용히 유실된 적이 있다) → 커밋 `fa531d6` push → **배포 성공**
+(`05:24:52 START` → `05:26:03 END exit=0`), 헬스체크 200, `.next/BUILD_ID` 정상 재생성,
+배포 트리에 `src/lib/display-amount.ts` 반영 확인. 완결.
