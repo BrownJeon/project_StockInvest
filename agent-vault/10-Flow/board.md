@@ -253,6 +253,16 @@ tags:
   별도 백로그 항목화 권고) → `deploy-stockinvest.sh` 수동 실행으로 배포 완료(`exit=0`,
   헬스체크 green, `dryRun:false`·`killSwitch:false`·`engine.enabled:true` 안전장치 무영향 확인).
 
+- ✅ **[완결 — 2026-08-24] [[T-034-chart-based-price-targets]] "Leader 후속" — 차트 목표가
+  옆 현재가 표기.** 매수 후보(미보유) 종목은 현재가가 화면 어디에도 안 보이던 결함 해소.
+  `targets.asOfPrice`를 목표가와 같은 포맷터로 재사용(신규 산술 없음). 4줄 추가, SAFETY_PATHS
+  무접촉, 관련 21 suites/332 tests 통과. 커밋 `382dac4` 배포 완료(로그 START→END exit=0 확인).
+
+- ✅ **[완결 — 2026-08-23] [[T-035-overseas-usd-display]] — 해외 종목 금액을 USD로 표기**
+  (리서치분석 + 텔레그램 리포트). 진입가·현재가·투자금이 KRW/USD 로 섞여 보이던 것을 해소.
+  환산 지점을 `src/lib/display-amount.ts` 한 곳으로 모으고 통화혼용 경계 테스트로 봉인.
+  Developer→Reviewer PASS(Medium 1·비차단)→Leader 대행 QA→배포(`fa531d6`) 완료.
+
 - 🔴 **[핸드오프 필요, 2026-08-19] [[T-031-news-fetch-m4-500]] — news-fetch cron 500 에러**
   낡은 IP는 해결됐으나(커밋 `54e1e02`), M4 API `/v1/news/fetch`의 500 에러 근본원인은
   **home-m4-api 프로젝트(Mac Mini M4) 내부**에 있어 이 저장소에서는 더 진행 불가. 매매 자체는

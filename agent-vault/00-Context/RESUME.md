@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-23
+updated: 2026-08-24
 tags:
   - type/context
 aliases:
@@ -14,6 +14,14 @@ aliases:
 > 다른 PC에서 재개할 수 있으므로 **모든 맥락은 이 vault 안에 있다** (세션 메모리·플랜 파일에 의존하지 말 것).
 
 ---
+
+## ✅ 2026-08-24 — 리서치분석 차트 목표가 옆 현재가 표기 완료(`382dac4`, [[T-034-chart-based-price-targets]] "Leader 후속" 절)
+
+또한 T-035([[T-035-overseas-usd-display]], 해외 종목 금액 USD 표기)가 그 사이 완결·배포됐다
+(`fa531d6`). **T-034 배포가 실제로는 webhook-deploy 프로세스 사망(pm2 online 오표시)으로
+한동안 미반영이었다가 발견·복구된 사고가 있었다** — 상세는 T-034 task 파일 "배포 사고" 절.
+**교훈: 배포 확인은 반드시 `webhook-deploy` 로그의 `START sha=<커밋>`→`END exit=0` 쌍으로
+직접 할 것, pm2 status만으로 판단 금지.** 이번 배포는 이 방식으로 정상 확인됨.
 
 ## ✅ 2026-08-23 — [[T-034-chart-based-price-targets]] 배포 완료. 아래 08-19 절은 낡음(참고만)
 

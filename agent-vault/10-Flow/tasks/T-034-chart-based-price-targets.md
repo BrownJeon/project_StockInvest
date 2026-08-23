@@ -748,5 +748,6 @@ src/lib/notify` + `currency-mixing-fence.test.ts` **21 suites / 332 tests 전부
 표시 전용 컴포넌트). 규모가 작아(4줄, 기존 값 재사용) Developer/Reviewer/QA 사이클 없이
 Leader가 직접 구현(T-033 "Leader 후속 4/5"와 동일 판단 기준).
 
-**배포**: 사용자 승인 대기. 승인 시 배포 전 `pm2 restart stockinvest-cron --update-env` +
-push 후 반드시 `webhook-deploy` 로그의 `START`→`END exit=0` 쌍으로 확인할 것(위 사고 교훈).
+**배포**: 사용자 승인 → webhook-deploy 프로세스 생존(`ps`) 확인 → cron 재시작 →
+커밋 `382dac4` push → 로그로 직접 확인: `[22:42:49] started sha=382dac4` →
+`[22:43:54] finished exit=0`(UTC). 헬스체크 green, 배포 HEAD `382dac4` 일치 확인. 완결.
