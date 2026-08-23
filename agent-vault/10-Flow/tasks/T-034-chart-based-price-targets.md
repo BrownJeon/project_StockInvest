@@ -8,7 +8,7 @@ tags:
   - type/task
   - domain/research
 created: 2026-08-21
-updated: 2026-08-23
+updated: 2026-08-24
 ---
 
 ## 배경 — 사용자가 실제 화면에서 발견한 결함
@@ -716,3 +716,37 @@ SAFETY_PATHS 대상 파일 무변경.
 반드시 `webhook-deploy` 로그의 `START sha=<커밋>` → `END exit=0` 쌍으로 확인해야 한다.**
 push 가 성공해도 수신 측이 죽어 있으면 아무 흔적 없이 조용히 유실된다 — 이번이 정확히 그
 경우였고, 그래서 "배포 완료" 문서 기록까지 만들어졌다.
+
+## Leader 후속 — 차트 목표가 옆에 현재가 병기 (2026-08-24)
+
+**사용자 요청**: "리서치분석 화면에서 차트 목표가에서 현재가도 함께 표기해줘."
+
+**결함**: "🎯 차트 목표가" 블록(매수/매도/기한 3행)에는 원래 현재가가 전혀 없었다. 현재가는
+T-035 가 추가한 "보유" 블록(`sellBadge`가 있을 때, 즉 **보유 중**일 때만)에만 있었다 —
+아직 사지 않은 매수 후보 종목은 카드 어디에도 지금 얼마인지가 안 보였다.
+
+**수정**: `ResearchTab.tsx` `RecommendationBlock` — 매수 행 **앞**에 `현재가` 행 1개 추가.
+`targets.asOfPrice`(T-034가 이미 계산해 저장해 둔 분석 기준일 종가)를 T-035의
+`formatTargetPrice(price, currency)`로 그대로 포맷 — 신규 데이터 조회·신규 산술 없음,
+목표가와 완전히 같은 통화 규약을 그대로 재사용(통화 혼용 위험 0). 보유·미보유 종목 모두에
+공통으로 뜬다(targets는 포지션과 무관하게 항상 계산됨).
+
+```
+🎯 차트 목표가                    2026-08-20 종가 기준
+현재가   $397.92
+매수     $370.13 · 볼린저 하단(20,2)
+매도     $428.35 · 볼린저 상단(20,2)
+기한     14일 이내
+```
+
+**범위**: `ResearchTab.tsx` 4줄 추가뿐(SAFETY_PATHS 0건 대조 완료). 텔레그램 리포트는
+사용자가 "리서치분석 화면"이라고 명시해 이번 범위에 넣지 않았다(원하면 별도 요청).
+
+**검증**: `npm run typecheck` 무오류. `npx jest src/lib/research src/lib/reports
+src/lib/notify` + `currency-mixing-fence.test.ts` **21 suites / 332 tests 전부 통과**(회귀
+없음 — 이번 변경은 lib 로직을 건드리지 않아 영향권 밖). 판정 로직·자동매매 무접촉(파일 자체가
+표시 전용 컴포넌트). 규모가 작아(4줄, 기존 값 재사용) Developer/Reviewer/QA 사이클 없이
+Leader가 직접 구현(T-033 "Leader 후속 4/5"와 동일 판단 기준).
+
+**배포**: 사용자 승인 대기. 승인 시 배포 전 `pm2 restart stockinvest-cron --update-env` +
+push 후 반드시 `webhook-deploy` 로그의 `START`→`END exit=0` 쌍으로 확인할 것(위 사고 교훈).

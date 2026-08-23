@@ -410,6 +410,10 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
       </div>
       <div style={S.predictWrap}>
         <PredictRow
+          label="현재가"
+          value={targets ? formatTargetPrice(targets.asOfPrice, targets.currency) : '—'}
+        />
+        <PredictRow
           label="매수"
           value={buyZone && targets
             ? `${formatTargetPrice(buyZone.price, targets.currency)} · ${buyZone.basis}`
