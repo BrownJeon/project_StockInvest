@@ -15,6 +15,7 @@ import {
   formatTargetPrice,
   unreachableReasonKo,
 } from '@/lib/research/pattern/price-targets';
+import { targetVsEntryPct } from '@/lib/research/pattern/recommendation';
 import type { PriceTargets } from '@/lib/research/types';
 
 const RESEARCH_COLOR = '#14b8a6';
@@ -209,10 +210,6 @@ export function ResearchTab() {
 
   return (
     <div style={S.list}>
-      <div style={S.disclaimer}>
-        과거 데이터의 <b>사후 관찰 통계</b>입니다. 자동매매에 연결돼 있지 않으며 매매 신호가 아닙니다.
-      </div>
-
       {items.map((item) => {
         const r = item.result;
         const isOpen = expanded.has(item.symbol);
@@ -338,6 +335,21 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
   const buyZone = displayableBuyZone(targets);
   const sellTarget = displayableSellTarget(targets);
 
+  /**
+   * 매도 목표가 옆에 **사용자가 산 금액**을 함께 보여준다(사용자 요청).
+   * 보유 중일 때만 붙으며 **표시 전용** — 매도 판정은 여전히 차트 목표가 기준이다.
+   *
+   * 🔴 통화 주의: 목표가는 캔들 통화(해외는 USD), 진입가는 KRW 라 나란히 두면 대소 비교가
+   * 불가능하다. 그래서 금액과 **함께** `targetVsEntryPct`(같은 통화끼리의 비 두 개를 곱해
+   * 통화를 섞지 않고 구한 값)로 "목표가가 내 진입가 대비 몇 %인지"를 붙인다 —
+   * 목표가에 팔면 이득인지 손해인지가 이 숫자 하나로 드러난다.
+   */
+  const entryPct = targetVsEntryPct(sellTarget?.price, targets?.asOfPrice, sell?.gainPct);
+  const entryComparison = holding?.entryPriceKRW
+    ? ` · 내 진입가 ${krw(holding.entryPriceKRW)}`
+      + (entryPct != null ? ` 대비 ${entryPct >= 0 ? '+' : ''}${entryPct.toFixed(1)}%` : '')
+    : '';
+
   // 🔴 매도 사유는 **차트 문장만** 나온다. 보유기간·손익은 아래 "보유" 정보 줄로 분리했다.
   const sellReasonText =
     !sell ? null
@@ -365,7 +377,7 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
         <PredictRow
           label="매도"
           value={sellTarget && targets
-            ? `${formatTargetPrice(sellTarget.price, targets.currency)} · ${sellTarget.basis}`
+            ? `${formatTargetPrice(sellTarget.price, targets.currency)} · ${sellTarget.basis}${entryComparison}`
             : unreachableReasonKo(targets, 'sell')}
         />
         <PredictRow label="기한" value={horizonText} />
@@ -455,10 +467,6 @@ const S: Record<string, React.CSSProperties> = {
   center: { textAlign: 'center', padding: 40, color: 'var(--muted)' },
   empty: { textAlign: 'center', padding: '32px 16px', color: 'var(--muted)', fontSize: 13, lineHeight: 1.8 },
   list: { display: 'flex', flexDirection: 'column', gap: 12 },
-  disclaimer: {
-    fontSize: 11, color: 'var(--muted)', lineHeight: 1.6,
-    background: 'var(--bg3)', borderRadius: 10, padding: '8px 12px',
-  },
   card: {
     background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 14,
     padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10,

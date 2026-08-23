@@ -286,3 +286,37 @@ export function evaluateSellSignal(
 
   return { ...base, action: 'hold', reason: 'in_progress', horizonDays };
 }
+
+/**
+ * 목표가가 **사용자 진입가 대비** 몇 %인지 — 표시 전용(판정에 쓰지 않는다).
+ *
+ * 🔴 통화 안전: 목표가·기준가는 캔들 통화(해외는 USD), 진입가·현재가는 KRW다.
+ * 두 값을 직접 빼거나 나누면 통화가 섞인다. 대신 **같은 통화끼리의 비(ratio)** 두 개를 곱한다:
+ *
+ *   목표가/진입가 = (목표가/기준가) × (현재가/진입가)
+ *                    └ 캔들 통화끼리      └ KRW 끼리
+ *
+ * 각 비는 무차원이라 곱해도 통화가 섞이지 않는다. 이렇게 해야 해외 종목에서도
+ * "목표가에 팔면 내 진입가 대비 이득인가 손해인가"를 정확히 answer 할 수 있다.
+ *
+ * ⚠ 근사: 두 비의 기준 시점이 다르다(목표가·기준가는 분석 기준일 종가, 현재가는 실시간).
+ * 장중 변동만큼 오차가 있으나 방향·대략의 크기 판단에는 충분하다.
+ *
+ * @param targetPrice   목표가 (캔들 통화)
+ * @param asOfPrice     분석 기준일 종가 (캔들 통화)
+ * @param gainPct       (현재가 - 진입가) / 진입가 × 100 — KRW 끼리 계산된 값
+ * @returns 진입가 대비 % (양수면 진입가보다 높은 목표가). 계산 불가면 null
+ */
+export function targetVsEntryPct(
+  targetPrice: number | null | undefined,
+  asOfPrice: number | null | undefined,
+  gainPct: number | null | undefined,
+): number | null {
+  if (targetPrice == null || !Number.isFinite(targetPrice) || targetPrice <= 0) return null;
+  if (asOfPrice == null || !Number.isFinite(asOfPrice) || asOfPrice <= 0) return null;
+  if (gainPct == null || !Number.isFinite(gainPct)) return null;
+  const currentOverEntry = 1 + gainPct / 100;
+  if (currentOverEntry <= 0) return null;          // 진입가 대비 -100% 이하 — 의미 없는 값
+  const targetOverEntry = (targetPrice / asOfPrice) * currentOverEntry;
+  return (targetOverEntry - 1) * 100;
+}

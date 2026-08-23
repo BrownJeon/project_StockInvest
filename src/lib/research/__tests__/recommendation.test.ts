@@ -14,6 +14,7 @@ import {
   MIN_SAMPLE_FOR_RECOMMENDATION,
   evaluateBuySignal,
   evaluateSellSignal,
+  targetVsEntryPct,
 } from '../pattern/recommendation';
 import { TARGET_HORIZON_DAYS } from '../pattern/price-targets';
 import type { PrecursorRuleStat, PriceTargets } from '../types';
@@ -320,5 +321,35 @@ describe('evaluateSellSignal — 판정은 차트 하나로만 (T-034)', () => {
       expect(without.gainPct).toBeNull();
       expect(without.daysSinceEntry).toBeNull();
     });
+  });
+});
+
+describe('targetVsEntryPct — 통화 안전한 "목표가 vs 진입가"', () => {
+  test('국내(동일 통화) — 단순 계산과 일치한다', () => {
+    // 진입 100, 현재 110(+10%), 목표 121 → 목표/진입 = 1.21 → +21%
+    expect(targetVsEntryPct(121, 110, 10)).toBeCloseTo(21, 6);
+  });
+
+  test('🔴 해외 실사례(SNPS) — 목표가가 USD, 진입가가 KRW 여도 올바른 %가 나온다', () => {
+    // 기준가 $397.92, 목표가 $428.35(볼린저 상단), 진입가 대비 현재 -17.8%
+    // 목표/진입 = (428.35/397.92) × 0.822 = 0.8849 → 약 -11.5%
+    const r = targetVsEntryPct(428.35, 397.92, -17.8);
+    expect(r).toBeCloseTo(-11.5, 1);
+    // 🔴 핵심: 목표가에 팔아도 여전히 진입가 아래라는 사실이 드러나야 한다
+    expect(r!).toBeLessThan(0);
+  });
+
+  test('현재가가 진입가와 같으면 목표가/기준가 비율이 그대로 나온다', () => {
+    expect(targetVsEntryPct(110, 100, 0)).toBeCloseTo(10, 6);
+  });
+
+  test('값이 없거나 0/음수면 null (0 나눗셈·무의미 값 방지)', () => {
+    expect(targetVsEntryPct(null, 100, 0)).toBeNull();
+    expect(targetVsEntryPct(110, null, 0)).toBeNull();
+    expect(targetVsEntryPct(110, 100, null)).toBeNull();
+    expect(targetVsEntryPct(0, 100, 0)).toBeNull();
+    expect(targetVsEntryPct(110, 0, 0)).toBeNull();
+    expect(targetVsEntryPct(110, 100, -100)).toBeNull();   // 진입가 대비 -100% → 분모 0
+    expect(targetVsEntryPct(110, 100, -150)).toBeNull();
   });
 });
