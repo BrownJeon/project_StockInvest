@@ -1,5 +1,5 @@
 /**
- * 리서치 매수/매도 "고려" 추천 — T-033.
+ * 리서치 매수/매도 "고려" 추천 — T-033, 목표가 전면 재설계 T-034.
  *
  * ## 🔴 이 파일이 만드는 것은 예측이 아니다
  *
@@ -15,6 +15,18 @@
  *  3. **면책 문구를 항상 동반한다.** 모든 반환값이 `note`(= `PRECURSOR_NOTE`)를 들고 다닌다.
  *     소비자가 문구를 따로 챙기는 걸 잊을 수 없게 값에 붙여 보낸다.
  *
+ * ## 🔴 T-034 — 목표가는 차트에서 나온다. 진입가는 쓰지 않는다.
+ *
+ * 이전 설계는 `targetPriceKRW = 진입가(또는 현재가) × (1 + 과거평균상승폭)` 이었다.
+ * -18% 물린 종목에서 "현재가 대비 +49%" 같은 숫자가 나와 예측처럼 읽혔고, 사용자가 실화면에서
+ * 이를 지적했다. 지금은 **목표가 산출이 `price-targets.ts`(캔들 전용 순수 함수)로 완전히
+ * 분리**돼 있고 이 파일은 그 결과를 받아 쓰기만 한다.
+ *
+ * 이 파일 어디에도 `entryPrice` 를 목표가·기한 계산에 넣는 코드는 없다.
+ * `gainPct`(진입가 대비 손익)만 **표시 전용**으로 남으며, KRW끼리만 계산한다
+ * (`PriceTargets` 는 원통화라 절대 섞지 않는다 — `price-targets.ts` 헤더 참조).
+ * 회귀 테스트가 "진입가를 바꿔도 매도 목표가·판정이 변하지 않는다"를 고정한다.
+ *
  * ## 🔴 자동매매와 연결하지 않는다
  *
  * 이 모듈의 어떤 값도 `createSignal()` · `submitOrder()` · `src/lib/strategy/` 로 흘러가지
@@ -23,15 +35,18 @@
  *
  * ## 임계치의 지위
  *
- * 8건 / ×1.8 / ×0.8 / ×1.5 는 **1차 휴리스틱이며 실증검증된 값이 아니다.**
+ * 8건 / ×1.8 / ATR×1 은 **1차 휴리스틱이며 실증검증된 값이 아니다.**
  * 근거와 재검토 조건은 `docs/research-rally-cycle.md` 에 기록한다.
  */
 import { PRECURSOR_NOTE, getRuleLabel } from './precursor-analysis';
-import type { PrecursorRuleStat } from '../types';
+import type { PrecursorRuleStat, PriceTargets } from '../types';
 
 export type RecommendationAction = 'buy' | 'sell' | 'hold' | 'insufficient_data';
 
 export type RecommendationConfidence = 'low' | 'medium' | 'high';
+
+/** `buy` 조건을 만족했는데도 관망으로 내린 이유 — 화면이 사용자에게 그대로 설명한다. */
+export type BuyDowngradeReason = 'no_support_level' | 'buy_zone_unreachable';
 
 export interface BuyRecommendation {
   action: 'buy' | 'hold' | 'insufficient_data';
@@ -45,31 +60,28 @@ export interface BuyRecommendation {
   /** 과거에 이 규칙이 참이었던 일수 — 표본 크기 */
   triggerCount: number;
   confidence: RecommendationConfidence | null;
-  /**
-   * `action==='buy'`이고 현재가·과거평균상승폭이 함께 주어졌을 때만 채워진다(그 외 null).
-   * 목표가 = 현재가 × (1+avgRallyPct/100) — 참고치일 뿐 보장이 아니다.
-   */
-  nowPriceKRW: number | null;
-  targetPriceKRW: number | null;
-  /** 과거 평균 소요 거래일을 달력일로 환산한 값 — "며칠 안에"의 근사치 */
-  timeframeDays: number | null;
+  /** 차트 게이트 때문에 buy → hold 로 내려간 경우에만 채워진다 */
+  downgradeReason: BuyDowngradeReason | null;
   /** 과신 방지 고정 문구 — 표시 시 항상 함께 노출한다 */
   note: string;
 }
 
 export interface SellAssessment {
   action: 'sell' | 'hold' | 'insufficient_data';
-  /** 진입 후 경과 **달력일**(표시용). 판정에는 거래일 환산치를 쓴다 — 아래 주석 참조 */
+  /**
+   * 진입 후 경과 **달력일** — 🔴 **표시 전용이며 판정에 쓰지 않는다.**
+   * 이 값이 들어오든 안 들어오든 `action`/`reason` 은 동일하다(회귀 테스트로 고정).
+   */
   daysSinceEntry: number | null;
-  /** (현재가 - 진입가) / 진입가 * 100 */
+  /**
+   * (현재가 - 진입가) / 진입가 * 100 — **사용자 참고용 표시 전용**.
+   * 🔴 판정에도, 목표가 계산에도 쓰지 않는다. 두 값 모두 KRW 여야 한다.
+   */
   gainPct: number | null;
-  reason: 'target_reached' | 'duration_exceeded' | 'in_progress' | null;
-  /** 표본 크기(eventCount) 기준 신뢰도 — buy 와 동일 기준(confidenceFor) */
-  confidence: RecommendationConfidence | null;
-  /** 목표가 = 진입가 × (1+avgRallyPct/100). sampleOk 일 때만 채워진다. */
-  targetPriceKRW: number | null;
-  /** 과거 평균 소요 거래일을 달력일로 환산한 "목표 기한"(진입일 기준 며칠째까지) */
-  timeframeDays: number | null;
+  /** `target_reached` = 저항선 도달/돌파, `in_progress` = 아직 저항선 아래 */
+  reason: 'target_reached' | 'in_progress' | null;
+  /** 목표가 판단에 쓴 기한(달력일). 화면에 표시하는 숫자와 **같은 값**이다 */
+  horizonDays: number | null;
   note: string;
 }
 
@@ -83,65 +95,11 @@ export const MIN_SAMPLE_FOR_RECOMMENDATION = 8;
 /** 기저율 대비 이 배수 이상이어야 "매수 고려". 미만이면 규칙이 있어도 관망. */
 export const MIN_LIFT_FOR_BUY = 1.8;
 
-/**
- * "매수 고려"로 표시하는 목표 도달 기간의 상한(달력일).
- *
- * 사용자 피드백(2026-08-21): 예시로 보여준 14일은 "변동성이 크고 타이밍을 잡을 수 없다"는 이유로
- * 너무 길다고 판단, 5일 이내로 좁혀달라고 요청했다. 과거 평균 소요기간이 이 값을 넘는 종목은
- * lift 조건을 통과해도 `buy`가 아니라 `hold`로 내린다 — "5일 이내"라고 표시할 근거가 없는데
- * 매수를 권하지 않기 위함(기간을 5일로 잘라 보여주는 게 아니라, 애초에 추천 자체를 보류한다).
- */
-export const MAX_TIMEFRAME_DAYS_FOR_BUY = 5;
-
-/** 과거 평균 상승폭의 이 비율에 도달하면 "매도 고려"(목표 도달). */
-export const TARGET_REACHED_RATIO = 0.8;
-
-/** 과거 평균 소요일의 이 배수를 넘기면 "매도 고려"(기간 초과). */
-export const DURATION_EXCEEDED_RATIO = 1.5;
-
-/**
- * 거래일 → 달력일 환산 계수.
- *
- * `avgDaysToRally` 는 캔들 개수, 즉 **거래일** 단위다. 반면 보유기간은
- * `position_state.first_seen_at` 에서 나오는 **달력일**이다. 단위를 맞추지 않고 비교하면
- * 주말·공휴일만큼(약 1.4배) 기간이 부풀려져 "기간 초과" 매도 추천이 실제보다 훨씬 빨리 뜬다.
- * 주 5거래일 가정으로 avgDaysToRally 를 달력일로 환산해서 비교한다(설계서에 없던 세부 결정).
- */
-export const CALENDAR_DAYS_PER_TRADING_DAY = 7 / 5;
-
 /** 표본 크기 구간 → 신뢰도 라벨. 순수 휴리스틱이며 통계적 유의성 검정이 아니다. */
 function confidenceFor(triggerCount: number): RecommendationConfidence {
   if (triggerCount >= 30) return 'high';
   if (triggerCount >= 15) return 'medium';
   return 'low';
-}
-
-/** 과거 평균 소요 거래일 → 달력일 반올림 정수. 표시용("며칠 안에")이며 판정에는 안 쓴다. */
-export function estimateTimeframeDays(avgDaysToRally: number | null | undefined): number | null {
-  if (avgDaysToRally == null || !Number.isFinite(avgDaysToRally) || avgDaysToRally <= 0) return null;
-  return Math.round(avgDaysToRally * CALENDAR_DAYS_PER_TRADING_DAY);
-}
-
-/**
- * referencePrice × (1+avgRallyPct/100) — 참고 목표가.
- * 🔴 예측이 아니라 과거 평균 상승폭을 현재/진입가에 대입한 어림값이다. 보장하지 않는다.
- */
-export function estimateTargetPrice(
-  referencePriceKRW: number | null | undefined,
-  avgRallyPct: number | null | undefined,
-): number | null {
-  if (
-    referencePriceKRW == null || !Number.isFinite(referencePriceKRW) || referencePriceKRW <= 0 ||
-    avgRallyPct == null || !Number.isFinite(avgRallyPct)
-  ) return null;
-  return referencePriceKRW * (1 + avgRallyPct / 100);
-}
-
-/** 매수 컨텍스트(현재가·과거평균) — 주어졌을 때만 목표가·기간을 채운다. */
-export interface BuyPriceContext {
-  nowPriceKRW?: number | null;
-  avgRallyPct?: number | null;
-  avgDaysToRally?: number | null;
 }
 
 function emptyBuy(action: BuyRecommendation['action']): BuyRecommendation {
@@ -153,9 +111,7 @@ function emptyBuy(action: BuyRecommendation['action']): BuyRecommendation {
     lift: null,
     triggerCount: 0,
     confidence: null,
-    nowPriceKRW: null,
-    targetPriceKRW: null,
-    timeframeDays: null,
+    downgradeReason: null,
     note: PRECURSOR_NOTE,
   };
 }
@@ -164,12 +120,8 @@ function buyFrom(
   action: BuyRecommendation['action'],
   rule: PrecursorRuleStat,
   confidence: RecommendationConfidence | null,
-  ctx?: BuyPriceContext,
+  downgradeReason: BuyDowngradeReason | null = null,
 ): BuyRecommendation {
-  // 가격·기간은 실제 매수 추천(action==='buy')일 때만 채운다 — 관망/보류에 목표가를 붙이면
-  // "그래도 사도 되나?"로 오해할 수 있다.
-  const showPrice = action === 'buy';
-  const nowPriceKRW = showPrice ? (ctx?.nowPriceKRW ?? null) : null;
   return {
     action,
     ruleId: rule.id,
@@ -178,9 +130,7 @@ function buyFrom(
     lift: rule.lift,
     triggerCount: rule.triggerCount,
     confidence,
-    nowPriceKRW,
-    targetPriceKRW: showPrice ? estimateTargetPrice(nowPriceKRW, ctx?.avgRallyPct) : null,
-    timeframeDays: showPrice ? estimateTimeframeDays(ctx?.avgDaysToRally) : null,
+    downgradeReason,
     note: PRECURSOR_NOTE,
   };
 }
@@ -199,13 +149,16 @@ function buyFrom(
  *    (근거 표시용으로 표본이 가장 큰 활성 규칙을 함께 돌려준다 — "트리거 4건" 같은 안내)
  *  - 표본을 넘긴 후보 중 lift 1위가 `MIN_LIFT_FOR_BUY` 이상 → `buy`, 아니면 `hold`
  *
- * @param priceContext 현재가·과거평균(상승폭/소요일) — 주어지면 `action==='buy'`일 때 목표가·
- *                     기간을 함께 계산한다. 생략하면(기존 호출부 하위호환) 가격 필드는 전부 null.
+ * @param targets 차트 기반 목표가(T-034). 주어지면 **도달 가능성 게이트**가 추가로 걸린다 —
+ *   기한 내 닿을 매수 희망가가 없으면 "얼마에 사라"고 말할 근거가 없으므로 `buy` 로 올리지
+ *   않는다. 이것이 T-033 의 `MAX_TIMEFRAME_DAYS_FOR_BUY`(과거 평균 소요일 상한)를 대체한다.
+ *   `targets` 자체가 없으면(구버전 행·캔들 부족) 게이트를 걸지 않는다 — 그때의 결핍은
+ *   "너무 멀다"가 아니라 "모른다"이고, 둘을 같은 판정으로 뭉개지 않는다.
  */
 export function evaluateBuySignal(
   todayActiveRuleIds: string[] | null | undefined,
   rules: PrecursorRuleStat[] | null | undefined,
-  priceContext?: BuyPriceContext,
+  targets?: PriceTargets | null,
 ): BuyRecommendation {
   if (todayActiveRuleIds == null) return emptyBuy('insufficient_data');
   if (!rules || rules.length === 0) return emptyBuy('insufficient_data');
@@ -223,100 +176,113 @@ export function evaluateBuySignal(
   if (candidates.length === 0) {
     // 표본부족 — 추천하지 않는다. 다만 "무엇이 얼마나 부족했는지"는 보여준다.
     const best = [...active].sort((a, b) => b.triggerCount - a.triggerCount)[0];
-    return { ...buyFrom('insufficient_data', best, null), confidence: null };
+    return buyFrom('insufficient_data', best, null);
   }
 
   const top = [...candidates].sort((a, b) => (b.lift ?? -1) - (a.lift ?? -1))[0];
-  const passesLift = (top.lift ?? 0) >= MIN_LIFT_FOR_BUY;
-  // 과거 평균 소요기간이 상한을 넘으면 "5일 이내"라고 보여줄 근거가 없다 — buy로 올리지 않는다.
-  // avgDaysToRally 자체가 없으면(드묾 — precision 이 있으면 사실상 항상 함께 있다) 막지 않는다.
-  const timeframeDays = estimateTimeframeDays(priceContext?.avgDaysToRally);
-  const withinTimeframe = timeframeDays == null || timeframeDays <= MAX_TIMEFRAME_DAYS_FOR_BUY;
+  const confidence = confidenceFor(top.triggerCount);
+  if ((top.lift ?? 0) < MIN_LIFT_FOR_BUY) return buyFrom('hold', top, confidence);
 
-  if (passesLift && withinTimeframe) {
-    return buyFrom('buy', top, confidenceFor(top.triggerCount), priceContext);
+  // 도달 가능성 게이트 — 근거 있는 매수 희망가가 없으면 매수를 권하지 않는다.
+  if (targets) {
+    if (targets.buyZone == null) return buyFrom('hold', top, confidence, 'no_support_level');
+    if (targets.buyReachable !== true) return buyFrom('hold', top, confidence, 'buy_zone_unreachable');
   }
-  return buyFrom('hold', top, confidenceFor(top.triggerCount), priceContext);
+  return buyFrom('buy', top, confidence);
 }
 
 /**
- * 매도 추천 — 보유 포지션이 "과거 평균 사이클" 대비 어디쯤 와 있는지.
+ * `evaluateSellSignal` 의 **표시 전용** 포지션 정보.
  *
- * 이건 손절 로직이 아니다. 실제 손절·트레일링은 `src/lib/strategy/` 의 exit 엔진이 담당하고
- * 이 값은 그 경로에 **전혀 닿지 않는다**. 여기서 보는 건 "과거에 이 종목이 저점에서 평균
- * +N% / M거래일 만에 고점을 찍었는데, 지금 보유분이 그 궤적의 어디쯤인가" 하나뿐이다.
- *
- * ⚠ 알려진 근사: 과거 통계는 **저점(trough) 기준**이고 우리 진입가는 저점이 아니다.
- *   따라서 `gainPct` 를 `avgRallyPct` 와 직접 비교하는 것은 낙관/비관 어느 쪽으로도 치우칠 수
- *   있는 근사다. 화면·리포트에서 "목표(과거평균 +N%) 대비 X% 진행"이라고 **비교 대상을 명시**해
- *   사용자가 근사임을 알 수 있게 한다.
- *
- * @param daysSinceEntry 진입 후 경과 달력일
- * @param avgDaysToRally 과거 평균 소요 **거래일** (단위가 달라 내부에서 환산한다)
- * @param eventCount     과거 관측된 사이클 수 = 표본
+ * 🔴 이 객체의 어떤 값도 `action`/`reason` 에 영향을 주지 않는다. 그대로 반환값에 실려
+ *    화면·리포트의 "정보 줄"이 될 뿐이다. 첫 인자(차트)만이 판정 입력이고 이 인자는 표시
+ *    입력이라는 것을 **시그니처 자체로** 드러내려고 두 번째 인자로 분리했다.
+ *    가격은 전부 KRW 다(`PriceTargets` 는 원통화이므로 절대 섞지 않는다).
  */
-export function evaluateSellSignal(
-  entryPrice: number | null | undefined,
-  currentPrice: number | null | undefined,
-  daysSinceEntry: number | null | undefined,
-  avgRallyPct: number | null | undefined,
-  avgDaysToRally: number | null | undefined,
-  eventCount: number | null | undefined,
-): SellAssessment {
-  const note = PRECURSOR_NOTE;
-  const days = daysSinceEntry != null && Number.isFinite(daysSinceEntry) ? daysSinceEntry : null;
-
-  const sampleOk = (eventCount ?? 0) >= MIN_SAMPLE_FOR_RECOMMENDATION;
-  const priceOk =
-    entryPrice != null && Number.isFinite(entryPrice) && entryPrice > 0 &&
-    currentPrice != null && Number.isFinite(currentPrice) && currentPrice > 0;
-
-  const gainPct = priceOk ? ((currentPrice! - entryPrice!) / entryPrice!) * 100 : null;
-
-  if (!sampleOk || !priceOk || avgRallyPct == null || !Number.isFinite(avgRallyPct)) {
-    return {
-      action: 'insufficient_data', daysSinceEntry: days, gainPct, reason: null,
-      confidence: null, targetPriceKRW: null, timeframeDays: null, note,
-    };
-  }
-
-  // 표본이 sampleOk 를 넘겼으니 이 시점부터는 신뢰도·목표가·기간을 항상 채운다.
-  const confidence = confidenceFor(eventCount ?? 0);
-  const targetPriceKRW = estimateTargetPrice(entryPrice, avgRallyPct);
-  const timeframeDays = estimateTimeframeDays(avgDaysToRally);
-
-  if (avgRallyPct > 0 && gainPct != null && gainPct >= avgRallyPct * TARGET_REACHED_RATIO) {
-    return {
-      action: 'sell', daysSinceEntry: days, gainPct, reason: 'target_reached',
-      confidence, targetPriceKRW, timeframeDays, note,
-    };
-  }
-
-  if (days != null && avgDaysToRally != null && Number.isFinite(avgDaysToRally) && avgDaysToRally > 0) {
-    const deadlineCalendarDays =
-      avgDaysToRally * CALENDAR_DAYS_PER_TRADING_DAY * DURATION_EXCEEDED_RATIO;
-    if (days >= deadlineCalendarDays) {
-      return {
-        action: 'sell', daysSinceEntry: days, gainPct, reason: 'duration_exceeded',
-        confidence, targetPriceKRW, timeframeDays, note,
-      };
-    }
-  }
-
-  return {
-    action: 'hold', daysSinceEntry: days, gainPct, reason: 'in_progress',
-    confidence, targetPriceKRW, timeframeDays, note,
-  };
+export interface SellPositionContext {
+  /** 진입 후 경과 달력일 — 표시 전용 */
+  daysSinceEntry?: number | null;
+  entryPriceKRW?: number | null;
+  currentPriceKRW?: number | null;
 }
 
-/** 목표(과거 평균 상승폭) 대비 진행률(%). 표시 전용 — 판정에는 쓰지 않는다. */
-export function targetProgressPct(
-  gainPct: number | null | undefined,
-  avgRallyPct: number | null | undefined,
-): number | null {
-  if (gainPct == null || avgRallyPct == null || !Number.isFinite(gainPct) || !Number.isFinite(avgRallyPct)) {
-    return null;
+/**
+ * 저항선 "근접"으로 볼 잔여 거리 = ATR14 × 이 배수.
+ *
+ * 새 자유 파라미터를 만들지 않으려고 이미 계산해 둔 ATR14(하루 평균 변동폭)에 묶었다 —
+ * "저항선까지 남은 거리가 **하루치 변동폭 이내**면 사실상 닿은 것"이라는 해석이며,
+ * 임의의 % 임계치보다 종목별 변동성에 자동으로 적응한다. 1차 휴리스틱이다.
+ */
+export const SELL_PROXIMITY_ATR_MULTIPLE = 1;
+
+/**
+ * 매도 추천 — **차트 기준 하나로만** 판정한다 (T-034, 기간초과 제거).
+ *
+ * 이건 손절 로직이 아니다. 실제 손절·트레일링은 `src/lib/strategy/` 의 exit 엔진이 담당하고
+ * 이 값은 그 경로에 **전혀 닿지 않는다**.
+ *
+ * ## 🔴 사용자 포지션은 판정에 들어가지 않는다
+ *
+ * 진입가도, **진입일도** 쓰지 않는다. 초안에는 "보유일수 ≥ 기한이면 매도 고려(기간 초과)"가
+ * 있었으나 폐기했다 — 진입일은 포지션 정보이고, 이번 작업의 대전제가 사용자 지시
+ * *"분석은 사용자 포지션과 완전히 독립적이어야 한다"* 이므로 정면 충돌한다. 실제로 그 규칙은
+ * **2주 넘게 보유한 종목 전부에서 상시 발화**했는데, 그 노이즈가 바로 충돌의 증상이었다.
+ * 사용자가 "제거 — 순수 차트 기준으로만 판정"을 선택했다(2026-08-21).
+ *
+ * 판정:
+ *  - `targets` 없음(캔들 부족·구버전 행) → `insufficient_data`
+ *  - `sellTarget == null` → `sell / target_reached`.
+ *    현재가 위에 저항 후보(볼린저 상단·직전 60거래일 고점·MA60)가 **하나도 없다**는 뜻이므로
+ *    이미 관측 가능한 저항을 전부 넘어선 상태다.
+ *  - `sellReachable !== true`(기한 내 도달 근거 없음·ATR 산출 불가) → `insufficient_data`.
+ *    표시할 목표가가 없으면 판정도 하지 않는다 — 숫자도 판정도 만들어내지 않는다.
+ *  - 저항선까지 남은 거리 ≤ ATR14 × `SELL_PROXIMITY_ATR_MULTIPLE` → `sell / target_reached`
+ *  - 그 외 → `hold / in_progress`
+ *
+ * 🔴 도달 여부를 KRW 현재가가 아니라 **캔들 종가(`asOfPrice`, 목표가와 같은 통화)** 로만
+ *    판정한다. KRW와 원통화를 비교하는 코드 경로를 아예 만들지 않기 위해서다.
+ */
+export function evaluateSellSignal(
+  targets: PriceTargets | null | undefined,
+  position?: SellPositionContext,
+): SellAssessment {
+  const note = PRECURSOR_NOTE;
+
+  // ── 아래 두 값은 표시 전용이다. 이 함수의 분기 조건에 절대 등장하지 않는다. ──
+  const rawDays = position?.daysSinceEntry;
+  const daysSinceEntry = rawDays != null && Number.isFinite(rawDays) ? rawDays : null;
+  const entry = position?.entryPriceKRW;
+  const current = position?.currentPriceKRW;
+  const gainPct =
+    entry != null && Number.isFinite(entry) && entry > 0 &&
+    current != null && Number.isFinite(current) && current > 0
+      ? ((current - entry) / entry) * 100
+      : null;
+
+  const base = { daysSinceEntry, gainPct, note };
+
+  if (!targets) {
+    return { ...base, action: 'insufficient_data', reason: null, horizonDays: null };
   }
-  if (avgRallyPct <= 0) return null;
-  return (gainPct / avgRallyPct) * 100;
+
+  const horizonDays = targets.horizonDays;
+
+  // 위쪽 저항을 전부 넘어섰다 — 관측 사실이므로 "판단 보류"가 아니라 매도 고려다.
+  if (targets.sellTarget == null) {
+    return { ...base, action: 'sell', reason: 'target_reached', horizonDays };
+  }
+
+  // 기한 내 도달 근거가 없으면 목표가 숫자를 감추므로, 그 위에 판정을 얹지 않는다.
+  // (이 분기를 지나면 `atr14`/`expectedMove` 는 non-null 이 보장된다 — reachable 계산의 전제)
+  if (targets.sellReachable !== true) {
+    return { ...base, action: 'insufficient_data', reason: null, horizonDays };
+  }
+
+  const distance = targets.sellTarget.price - targets.asOfPrice;
+  const proximity = (targets.atr14 ?? 0) * SELL_PROXIMITY_ATR_MULTIPLE;
+  if (distance <= proximity) {
+    return { ...base, action: 'sell', reason: 'target_reached', horizonDays };
+  }
+
+  return { ...base, action: 'hold', reason: 'in_progress', horizonDays };
 }

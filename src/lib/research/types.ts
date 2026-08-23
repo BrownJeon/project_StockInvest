@@ -121,6 +121,56 @@ export interface PrecursorAnalysis {
   rules: PrecursorRuleStat[];
 }
 
+// ─── 차트 기반 목표가 (T-034) ───────────────────────────────────────────────
+
+/**
+ * 목표가의 통화 — **캔들의 통화**다.
+ *
+ * 🔴 `DailyCandle` 은 Yahoo 원본이라 국내는 KRW, 해외(NASDAQ/NYSE/AMEX)는 USD 다.
+ *    반면 `position_state.entry_price` 와 `fetchCurrentPricesKRW()` 는 **항상 KRW**(해외는
+ *    KIS 가 환율을 곱해 돌려준다). 두 계열을 섞어 비교하면 해외 종목에서 1,000배 이상 틀린
+ *    숫자가 조용히 나온다. 그래서 목표가는 **환산하지 않고 원통화 그대로** 보관하고,
+ *    이 필드가 화면 라벨(`$412.50` / `₩70,000`)까지 그대로 따라간다.
+ *    자세한 결정 근거는 `docs/research-rally-cycle.md` §3 참조.
+ */
+export type TargetCurrency = 'KRW' | 'USD';
+
+/** 차트에서 뽑은 가격 레벨 1개. `price` 의 단위는 `PriceTargets.currency` 다. */
+export interface PriceLevel {
+  price: number;
+  /** 근거 라벨 — 화면에 그대로 노출한다 ('볼린저 하단(20,2)' 등) */
+  basis: string;
+}
+
+/**
+ * 캔들만으로 산출한 매수 희망가·매도 목표가 — T-034.
+ *
+ * 🔴 **사용자 포지션(진입가·수량·손익)은 입력에 들어가지 않는다.** 진입가 기반 목표가가
+ *    물린 종목에서 비현실적인 숫자를 만들던 T-033 결함을 구조적으로 차단하기 위한 경계다.
+ */
+export interface PriceTargets {
+  /** 분석 기준일 = 마지막 캔들의 날짜(`ResearchReport.dataRangeTo` 와 같은 행) */
+  asOfDate: string | null;
+  /** 분석 기준일 종가 (단위: `currency`) */
+  asOfPrice: number;
+  currency: TargetCurrency;
+  /** ATR(14) — 단위: `currency` */
+  atr14: number | null;
+  /** 기한 내 통계적 기대 변동폭 = ATR14 × √(기한 거래일). 단위: `currency` */
+  expectedMove: number | null;
+  /** 매수 희망가 = 현재가 아래 가장 가까운 지지선 */
+  buyZone: PriceLevel | null;
+  /** 매도 목표가 = 현재가 위 가장 가까운 저항선. `null` 이면 이미 저항 상단을 넘어섰다는 뜻 */
+  sellTarget: PriceLevel | null;
+  /** 기한 내 도달 가능 범위인가 — `|target - asOfPrice| ≤ expectedMove`. 판단 불가면 null */
+  buyReachable: boolean | null;
+  sellReachable: boolean | null;
+  /** 분석 기한 — **달력일**. 화면 문구·매도 기간판정이 모두 이 숫자 하나를 쓴다 */
+  horizonDays: number;
+  /** 위 기한을 거래일로 환산한 값. √ 스케일링에만 쓰인다(캔들이 거래일 단위이므로) */
+  horizonTradingDays: number;
+}
+
 export type ResearchDataWarning =
   | 'short_history'
   | 'no_events'
@@ -149,6 +199,11 @@ export interface ResearchReport {
    *   07:00 cron(당일 종가 기준)에만 갱신된다. 소비자는 반드시 `dataRangeTo` 를 함께 노출한다.
    */
   todayActiveRuleIds: string[] | null;
+  /**
+   * 차트 지표 기반 매수 희망가·매도 목표가 — T-034.
+   * 캔들이 모자라 산출 불가하면 `null`(추측으로 채우지 않는다).
+   */
+  priceTargets: PriceTargets | null;
   dataWarnings: ResearchDataWarning[];
   error: string | null;
 }

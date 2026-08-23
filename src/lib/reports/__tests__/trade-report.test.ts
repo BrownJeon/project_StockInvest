@@ -10,6 +10,7 @@ import {
   type TradeReport,
 } from '../trade-report';
 import { PRECURSOR_NOTE } from '@/lib/research/pattern/precursor-analysis';
+import type { PriceTargets } from '@/lib/research/types';
 
 function row(symbol: string, side: 'buy'|'sell', price: number, qty: number, ts: number, fee = 0): OrderRow {
   return { symbol, side, price, quantity: qty, amount_krw: price * qty, fee, ts };
@@ -211,7 +212,20 @@ function holding(over: Partial<HoldingStatus> = {}): HoldingStatus {
     nowPriceKRW: 203_700,
     periodChangePct: 1.85,
     sellSignal: null,
-    avgRallyPct: 18,
+    priceTargets: chartTargets(),
+    ...over,
+  };
+}
+
+/** T-034 — 차트 목표가 픽스처. 통화가 값에 붙어 다니는지도 여기서 확인한다. */
+function chartTargets(over: Partial<PriceTargets> = {}): PriceTargets {
+  return {
+    asOfDate: '2026-08-20', asOfPrice: 203_700, currency: 'KRW',
+    atr14: 3_000, expectedMove: 3_000 * Math.sqrt(10),
+    buyZone: { price: 198_000, basis: '볼린저 하단(20,2)' },
+    sellTarget: { price: 208_000, basis: '최근 60거래일 고점' },
+    buyReachable: true, sellReachable: true,
+    horizonDays: 14, horizonTradingDays: 10,
     ...over,
   };
 }
@@ -232,8 +246,15 @@ function digest(over: Partial<ResearchDigest> = {}): ResearchDigest {
         lift: 2.1,
         triggerCount: 40,
         confidence: 'high',
+        downgradeReason: null,
         note: PRECURSOR_NOTE,
       },
+      // 해외 종목이라 목표가는 USD — 리포트에도 `$` 로 나가야 한다
+      targets: chartTargets({
+        currency: 'USD', asOfPrice: 108.9, atr14: 3, expectedMove: 3 * Math.sqrt(10),
+        buyZone: { price: 105.25, basis: '볼린저 하단(20,2)' },
+        sellTarget: { price: 115, basis: '최근 60거래일 고점' },
+      }),
     }],
     note: PRECURSOR_NOTE,
     ...over,
@@ -288,29 +309,119 @@ describe('formatReportMessage — 보유 현황 (T-033)', () => {
     expect(msg).toMatch(/투자금 데이터 없음/);
   });
 
-  test('매도 고려 — 목표 대비 진행률과 보유일수를 함께 보여준다', async () => {
+  test('T-034 — 관망이면 차트 매도 목표가와 근거·기한을 보여준다', async () => {
     const rep = await emptyReport();
     const msg = formatReportMessage(rep, 1000, null, {
       buyWatchlist: [], sellPnl: [],
       holdings: [holding({
         sellSignal: {
-          action: 'sell', daysSinceEntry: 12, gainPct: 14.76,
-          reason: 'target_reached', note: PRECURSOR_NOTE,
+          action: 'hold', daysSinceEntry: 12, gainPct: 2.88,
+          reason: 'in_progress', horizonDays: 14, note: PRECURSOR_NOTE,
         },
       })],
     });
-    expect(msg).toMatch(/🔬 매도 고려 — 목표\(과거평균 \+18\.0%\) 대비 82% 진행, 보유 12일째/);
+    expect(msg).toMatch(/🔬 관망 — 매도 목표가 ₩208,000 \(최근 60거래일 고점\), 14일 이내/);
+    // 🔴 폐기된 진입가 기반 표현이 되살아나지 않았는지
+    expect(msg).not.toMatch(/과거평균/);
+    expect(msg).not.toMatch(/진행/);
   });
 
-  test('표본부족이면 매도 추천 대신 "판단 보류"를 보여준다', async () => {
+  test('T-034 — 저항선 돌파면 목표가 대신 그 사실을 쓴다', async () => {
     const rep = await emptyReport();
     const msg = formatReportMessage(rep, 1000, null, {
       buyWatchlist: [], sellPnl: [],
       holdings: [holding({
-        sellSignal: { action: 'insufficient_data', daysSinceEntry: 3, gainPct: 1, reason: null, note: PRECURSOR_NOTE },
+        priceTargets: chartTargets({ sellTarget: null, sellReachable: null }),
+        sellSignal: {
+          action: 'sell', daysSinceEntry: 12, gainPct: 14.76,
+          reason: 'target_reached', horizonDays: 14, note: PRECURSOR_NOTE,
+        },
       })],
     });
-    expect(msg).toMatch(/🔬 판단 보류 \(리서치 표본부족\)/);
+    expect(msg).toMatch(/🔬 매도 고려 — 차트 저항선 돌파\(현재가 위 저항 근거 없음\)/);
+  });
+
+  test('T-034 — 저항선 근접이면 목표가와 함께 "근접"으로 쓴다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        sellSignal: {
+          action: 'sell', daysSinceEntry: 12, gainPct: 2.1,
+          reason: 'target_reached', horizonDays: 14, note: PRECURSOR_NOTE,
+        },
+      })],
+    });
+    expect(msg).toMatch(/🔬 매도 고려 — 매도 목표가 ₩208,000 \(최근 60거래일 고점\) 근접/);
+  });
+
+  test('🔴 T-034 — "기간 초과" 표현은 더 이상 출력되지 않는다 (판정에서 폐기)', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        sellSignal: {
+          action: 'hold', daysSinceEntry: 999, gainPct: -18.1,
+          reason: 'in_progress', horizonDays: 14, note: PRECURSOR_NOTE,
+        },
+      })],
+    });
+    expect(msg).not.toMatch(/기간 초과/);
+    expect(msg).not.toMatch(/기한 .*초과/);
+    // 보유기간은 판단 줄이 아니라 별도 "참고 정보" 줄로만 나온다
+    expect(msg).toMatch(/ℹ️ 보유 999일째 · 진입가 대비 -18\.1% \(참고 정보\)/);
+    expect(msg).toMatch(/🔬 관망 —/);
+  });
+
+  test('🔴 T-034 — 도달 근거가 없으면 목표가 숫자를 만들어내지 않는다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        priceTargets: chartTargets({ sellReachable: false }),
+        sellSignal: {
+          action: 'hold', daysSinceEntry: 3, gainPct: 1,
+          reason: 'in_progress', horizonDays: 14, note: PRECURSOR_NOTE,
+        },
+      })],
+    });
+    expect(msg).toMatch(/매도 목표가: 14일 내 도달 근거 없음/);
+    expect(msg).not.toMatch(/₩208,000/);
+  });
+
+  test('🔴 T-034 — 해외 종목 목표가는 USD 기호로 표기한다(KRW 로 착시 금지)', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        symbol: 'NAS:SNPS',
+        priceTargets: chartTargets({
+          currency: 'USD', asOfPrice: 397.92, atr14: 8, expectedMove: 8 * Math.sqrt(10),
+          sellTarget: { price: 412.5, basis: '최근 60거래일 고점' },
+        }),
+        sellSignal: {
+          action: 'hold', daysSinceEntry: 16, gainPct: -18.1,
+          reason: 'in_progress', horizonDays: 14, note: PRECURSOR_NOTE,
+        },
+      })],
+    });
+    expect(msg).toMatch(/매도 목표가 \$412\.50/);
+    expect(msg).not.toMatch(/₩412/);
+  });
+
+  test('차트 데이터가 없으면 매도 추천 대신 "판단 보류"를 보여준다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        priceTargets: null,
+        sellSignal: {
+          action: 'insufficient_data', daysSinceEntry: 3, gainPct: 1,
+          reason: null, horizonDays: null, note: PRECURSOR_NOTE,
+        },
+      })],
+    });
+    expect(msg).toMatch(/🔬 판단 보류 \(차트 데이터 부족\)/);
     expect(msg).not.toMatch(/매도 고려/);
   });
 
@@ -373,6 +484,22 @@ describe('formatReportMessage — 리서치분석 요약 (T-033)', () => {
     expect(msg).not.toMatch(/[<>]/);
   });
 
+  test('🔴 T-034 — "얼마에" 를 차트 지지선(통화 기호 포함)으로 제시한다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, undefined, digest());
+    expect(msg).toMatch(/가격: 매수 희망가 \$105\.25 \(볼린저 하단\(20,2\)\), 14일 이내/);
+  });
+
+  test('🔴 T-034 — 도달 근거가 없으면 매수 희망가 숫자를 만들어내지 않는다', async () => {
+    const rep = await emptyReport();
+    const d = digest();
+    const msg = formatReportMessage(rep, 1000, null, undefined, digest({
+      items: [{ ...d.items[0], targets: chartTargets({ buyZone: null, buyReachable: null }) }],
+    }));
+    expect(msg).toMatch(/가격: 매수 희망가: 현재가 아래 지지 근거 없음/);
+    expect(msg).not.toMatch(/\$105\.25/);
+  });
+
   test('표본부족 종목은 "판단 보류"로 강등되고 트리거 건수를 보여준다', async () => {
     const rep = await emptyReport();
     const msg = formatReportMessage(rep, 1000, null, undefined, digest({
@@ -381,8 +508,10 @@ describe('formatReportMessage — 리서치분석 요약 (T-033)', () => {
         symbol: '005930', market: 'domestic', asOfDate: '2026-08-20',
         buy: {
           action: 'insufficient_data', ruleId: 'rsi_lt_30', ruleLabel: 'RSI14 < 30 (과매도)',
-          precision: 0.5, lift: 1.2, triggerCount: 4, confidence: null, note: PRECURSOR_NOTE,
+          precision: 0.5, lift: 1.2, triggerCount: 4, confidence: null,
+          downgradeReason: null, note: PRECURSOR_NOTE,
         },
+        targets: chartTargets(),
       }],
     }));
     expect(msg).toMatch(/⚪ 005930 — 판단 보류 \(표본부족, 트리거 4건\)/);

@@ -12,6 +12,7 @@ import {
   getActiveRuleIds,
   type PrecursorAnalysisConfig,
 } from './pattern/precursor-analysis';
+import { computePriceTargets, currencyForMarket } from './pattern/price-targets';
 import {
   DEFAULT_RALLY_CYCLE_CONFIG,
   type DailyCandle,
@@ -67,6 +68,12 @@ function buildReport(
   // 화면에 표시되는 기준일과 실제 판정일이 달라진다.
   const todayActiveRuleIds = getActiveRuleIds(features[features.length - 1] ?? null);
 
+  // T-034 — 차트 기반 매수/매도 목표가. 여기서 한 번 계산해 DB 에 저장하면 조회(ResearchTab·
+  // 08:00 리포트)는 읽기만 하면 되고, 두 화면이 서로 다른 시점의 캔들로 다른 숫자를 낼 일이
+  // 없다(T-033 의 `todayActiveRuleIds` 와 같은 패턴). 통화는 시장에서 결정된다 — 국내 KRW,
+  // 해외 USD. 환산하지 않는 이유는 `price-targets.ts` 헤더 참조.
+  const priceTargets = computePriceTargets(candles, { currency: currencyForMarket(market) });
+
   // 선행지표 **집계**는 이벤트(양성 라벨)가 있어야 의미가 있다.
   let precursorAnalysis = null as ResearchReport['precursorAnalysis'];
   if (detection.troughIndices.length > 0) {
@@ -87,6 +94,7 @@ function buildReport(
     avgDaysToRally: detection.avgDaysToRally,
     precursorAnalysis,
     todayActiveRuleIds,
+    priceTargets,
     dataWarnings: warnings,
     error: null,
   };
@@ -120,6 +128,7 @@ export async function buildResearchReport(
       avgDaysToRally: null,
       precursorAnalysis: null,
       todayActiveRuleIds: null,
+      priceTargets: null,
       dataWarnings: [],
       error,
     };

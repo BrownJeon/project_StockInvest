@@ -10,6 +10,7 @@ import { getPool } from '@/lib/db';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import type {
   PrecursorAnalysis,
+  PriceTargets,
   RallyEvent,
   ResearchDataWarning,
   ResearchMarket,
@@ -36,6 +37,8 @@ export interface StoredResearchResult {
   precursorAnalysis: PrecursorAnalysis | null;
   /** T-033 — 기준일에 참이었던 규칙 id. `null`=미평가/구버전 행, `[]`=충족 규칙 없음 */
   todayActiveRuleIds: string[] | null;
+  /** T-034 — 차트 기반 목표가. `null`=구버전 행 또는 캔들 부족 */
+  priceTargets: PriceTargets | null;
   dataWarnings: ResearchDataWarning[];
   error: string | null;
   createdAt: string | null;
@@ -91,8 +94,8 @@ export async function upsertResearchResult(report: ResearchReport): Promise<void
     `INSERT INTO research_rally_results
        (symbol, market, run_date, data_range_from, data_range_to, event_count, events,
         avg_rally_pct, avg_days_to_rally, precursor_analysis, today_active_rule_ids,
-        data_warnings, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        data_warnings, error, price_targets)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        market                = VALUES(market),
        data_range_from       = VALUES(data_range_from),
@@ -105,6 +108,7 @@ export async function upsertResearchResult(report: ResearchReport): Promise<void
        today_active_rule_ids = VALUES(today_active_rule_ids),
        data_warnings         = VALUES(data_warnings),
        error                 = VALUES(error),
+       price_targets         = VALUES(price_targets),
        created_at            = CURRENT_TIMESTAMP`,
     [
       report.symbol,
@@ -121,6 +125,8 @@ export async function upsertResearchResult(report: ResearchReport): Promise<void
       report.todayActiveRuleIds ? JSON.stringify(report.todayActiveRuleIds) : null,
       JSON.stringify(report.dataWarnings),
       report.error,
+      // T-034 — 산출 불가면 null. 빈 객체로 채우면 "근거 없는 목표가"가 만들어진다.
+      report.priceTargets ? JSON.stringify(report.priceTargets) : null,
     ],
   );
 }
@@ -164,6 +170,7 @@ export async function getLatestResearchResults(): Promise<
     avgDaysToRally: toNumberOrNull(r.avg_days_to_rally),
     precursorAnalysis: parseJson<PrecursorAnalysis | null>(r.precursor_analysis, null),
     todayActiveRuleIds: parseJson<string[] | null>(r.today_active_rule_ids, null),
+    priceTargets: parseJson<PriceTargets | null>(r.price_targets, null),
     dataWarnings: parseJson<ResearchDataWarning[]>(r.data_warnings, []),
     error: (r.error as string | null) ?? null,
     createdAt: r.created_at ? new Date(r.created_at as string | Date).toISOString() : null,

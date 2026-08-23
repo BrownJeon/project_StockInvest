@@ -6,11 +6,17 @@ import { PRECURSOR_NOTE } from '@/lib/research/pattern/precursor-analysis';
 import {
   evaluateBuySignal,
   evaluateSellSignal,
-  targetProgressPct,
   type BuyRecommendation,
   type SellAssessment,
 } from '@/lib/research/pattern/recommendation';
+import {
+  displayableBuyZone,
+  displayableSellTarget,
+  formatTargetPrice,
+  unreachableReasonKo,
+} from '@/lib/research/pattern/price-targets';
 import { getLatestResearchResults } from '@/lib/research/storage';
+import type { PriceTargets } from '@/lib/research/types';
 
 export interface BuyCandidate {
   symbol: string;
@@ -43,8 +49,11 @@ export interface HoldingStatus {
   periodChangePct: number | null;
   /** 리서치(사후 관찰) 기준 매도 고려 판단. 자동매매와 무관한 참고 정보 */
   sellSignal: SellAssessment | null;
-  /** 과거 평균 상승폭(%) — "목표 대비 진행률" 표시의 분모 */
-  avgRallyPct: number | null;
+  /**
+   * T-034 — 차트 기반 목표가. **진입가와 무관**하며 통화는 `currency` 필드에 들어 있다
+   * (해외 종목은 USD — 위 `entryKRW`/`nowPriceKRW` 와 섞어 계산하지 말 것).
+   */
+  priceTargets: PriceTargets | null;
 }
 
 export interface SellPnl {
@@ -74,6 +83,8 @@ export interface ResearchDigestItem {
   market: 'domestic' | 'overseas';
   asOfDate: string | null;
   buy: BuyRecommendation;
+  /** T-034 — 차트 기반 매수 희망가. 통화는 `targets.currency`(해외는 USD) */
+  targets: PriceTargets | null;
 }
 
 export interface ResearchDigest {
@@ -379,28 +390,61 @@ function formatBuyEvidence(buy: BuyRecommendation): string | null {
 }
 
 /**
+ * 목표가 한 조각 — 도달 근거가 확인된 레벨만 숫자로 쓰고, 아니면 사유를 대신 쓴다(T-034).
+ * 통화 기호는 `targets.currency` 가 결정한다 — 해외 종목은 `$`, 국내는 `₩`.
+ */
+function formatTargetFragment(
+  t: PriceTargets | null | undefined,
+  side: 'buy' | 'sell',
+  horizonDays: number | null,
+): string {
+  const label = side === 'buy' ? '매수 희망가' : '매도 목표가';
+  const level = side === 'buy' ? displayableBuyZone(t) : displayableSellTarget(t);
+  if (!level || !t) return `${label}: ${unreachableReasonKo(t, side)}`;
+  const within = horizonDays != null ? `, ${horizonDays}일 이내` : '';
+  return `${label} ${formatTargetPrice(level.price, t.currency)} (${messageSafeLabel(level.basis)})${within}`;
+}
+
+/**
  * 보유종목의 리서치 매도 판단 한 줄. 자동매매 청산 로직과 **무관한 참고 정보**임이 드러나도록
- * "고려"라는 말과 비교 대상(과거평균)을 반드시 함께 적는다.
+ * "고려"라는 말과 근거(차트 레벨)를 반드시 함께 적는다.
+ *
+ * 🔴 T-034 — 판단 근거는 **차트뿐**이다. 진입가 대비 진행률(과거평균 기반)도, 보유기간(기간 초과)도
+ *    판정에서 뺐다. 보유일수·손익은 아래 `formatHoldingInfoLine()` 이 **별도 정보 줄**로 내보내
+ *    매도 판단 근거로 읽히지 않게 한다.
  */
 function formatSellSignalLine(h: HoldingStatus): string | null {
   const s = h.sellSignal;
   if (!s) return null;
-  const days = s.daysSinceEntry != null ? `보유 ${s.daysSinceEntry}일째` : '보유기간 데이터 없음';
 
   if (s.action === 'insufficient_data') {
-    return `   └ 🔬 판단 보류 (리서치 표본부족) · ${days}`;
+    return `   └ 🔬 판단 보류 (${unreachableReasonKo(h.priceTargets, 'sell')})`;
   }
-
-  const progress = targetProgressPct(s.gainPct, h.avgRallyPct);
-  const target = h.avgRallyPct != null
-    ? `목표(과거평균 ${fmtSignedPct(h.avgRallyPct, 1)}) 대비 ${progress != null ? `${progress.toFixed(0)}% 진행` : '진행률 데이터 없음'}`
-    : '목표 데이터 없음';
 
   if (s.action === 'sell') {
-    const why = s.reason === 'duration_exceeded' ? '과거 평균 소요기간 초과' : target;
-    return `   └ 🔬 매도 고려 — ${why}, ${days}`;
+    const level = displayableSellTarget(h.priceTargets);
+    if (!level || !h.priceTargets) {
+      return '   └ 🔬 매도 고려 — 차트 저항선 돌파(현재가 위 저항 근거 없음)';
+    }
+    const price = formatTargetPrice(level.price, h.priceTargets.currency);
+    return `   └ 🔬 매도 고려 — 매도 목표가 ${price} (${messageSafeLabel(level.basis)}) 근접`;
   }
-  return `   └ 🔬 관망 — ${target}, ${days}`;
+
+  return `   └ 🔬 관망 — ${formatTargetFragment(h.priceTargets, 'sell', s.horizonDays)}`;
+}
+
+/**
+ * 보유 정보 줄 — 🔴 **판단이 아니라 사실 나열이다.**
+ * 위 🔬 줄(차트 판단)과 시각적으로 분리해서, 보유기간·손익이 매도 근거로 읽히지 않게 한다.
+ */
+function formatHoldingInfoLine(h: HoldingStatus): string | null {
+  const s = h.sellSignal;
+  if (!s) return null;
+  const parts: string[] = [];
+  if (s.daysSinceEntry != null) parts.push(`보유 ${s.daysSinceEntry}일째`);
+  if (s.gainPct != null) parts.push(`진입가 대비 ${fmtSignedPct(s.gainPct, 1)}`);
+  if (parts.length === 0) return null;
+  return `   └ ℹ️ ${parts.join(' · ')} (참고 정보)`;
 }
 
 /** 리서치 요약 문단 (T-033). 추적 0종목·활성 0종목도 조용히 생략하지 않고 명시한다. */
@@ -423,6 +467,8 @@ function formatResearchSection(research: ResearchDigest, nameOf: (s: string) => 
       lines.push(`📈 ${nameOf(item.symbol)} — 매수 고려 (${asOf})`);
       const evidence = formatBuyEvidence(item.buy);
       if (evidence) lines.push(evidence);
+      // T-034 — "얼마에" 를 차트 지지선으로 제시한다. 도달 근거가 없으면 숫자 대신 그 사실을 쓴다.
+      lines.push(`   가격: ${formatTargetFragment(item.targets, 'buy', item.targets?.horizonDays ?? null)}`);
     } else {
       const trig = item.buy.triggerCount > 0 ? `표본부족, 트리거 ${item.buy.triggerCount}건` : '표본부족';
       lines.push(`⚪ ${nameOf(item.symbol)} — 판단 보류 (${trig}) (${asOf})`);
@@ -517,6 +563,8 @@ export function formatReportMessage(
       );
       const sellLine = formatSellSignalLine(h);
       if (sellLine) lines.push(sellLine);
+      const infoLine = formatHoldingInfoLine(h);
+      if (infoLine) lines.push(infoLine);
     }
   }
 
@@ -752,22 +800,20 @@ export async function fetchCurrentPricesKRW(
   return out;
 }
 
-/** 보유종목 매도 판단에 필요한 심볼별 리서치 통계(최신 1건). 추적이 꺼진 종목도 과거 행이 있으면 쓴다. */
-interface ResearchStats {
-  avgRallyPct: number | null;
-  avgDaysToRally: number | null;
-  eventCount: number;
-}
-
-async function fetchResearchStatsForSymbols(symbols: string[]): Promise<Map<string, ResearchStats>> {
-  const out = new Map<string, ResearchStats>();
+/**
+ * 보유종목 매도 판단에 필요한 심볼별 **차트 목표가**(최신 1건). 추적이 꺼진 종목도 과거 행이
+ * 있으면 쓴다. T-034 이전에는 과거 평균 상승폭·소요일을 읽었지만, 그 값으로 만든 목표가가
+ * 진입가 기반이라 폐기됐다 — 지금은 리서치 cron 이 캔들로 계산해 저장한 값을 그대로 읽는다.
+ */
+async function fetchPriceTargetsForSymbols(symbols: string[]): Promise<Map<string, PriceTargets>> {
+  const out = new Map<string, PriceTargets>();
   const unique = [...new Set(symbols)];
   if (unique.length === 0) return out;
 
   try {
     const pool = getPool();
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT r.symbol, r.avg_rally_pct, r.avg_days_to_rally, r.event_count
+      `SELECT r.symbol, r.price_targets
          FROM research_rally_results r
          JOIN (
            SELECT symbol, MAX(run_date) AS run_date
@@ -778,15 +824,19 @@ async function fetchResearchStatsForSymbols(symbols: string[]): Promise<Map<stri
       [unique],
     );
     for (const r of rows) {
-      out.set(String(r.symbol), {
-        avgRallyPct:    r.avg_rally_pct != null ? Number(r.avg_rally_pct) : null,
-        avgDaysToRally: r.avg_days_to_rally != null ? Number(r.avg_days_to_rally) : null,
-        eventCount:     Number(r.event_count ?? 0),
-      });
+      const raw = r.price_targets;
+      if (raw == null) continue;
+      let parsed: PriceTargets | null = null;
+      if (typeof raw === 'string') {
+        try { parsed = JSON.parse(raw) as PriceTargets; } catch { parsed = null; }
+      } else {
+        parsed = raw as PriceTargets;
+      }
+      if (parsed) out.set(String(r.symbol), parsed);
     }
   } catch (e) {
-    // 리서치 통계는 부가정보다 — 없으면 매도 판단만 생략하고 리포트는 그대로 나간다.
-    console.warn(`[trade-report] 리서치 통계 조회 실패: ${e instanceof Error ? e.message : String(e)}`);
+    // 목표가는 부가정보다 — 없으면 매도 판단만 "판단 보류"로 떨어지고 리포트는 그대로 나간다.
+    console.warn(`[trade-report] 리서치 목표가 조회 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
   return out;
 }
@@ -857,11 +907,11 @@ export async function fetchSignalCandidates(rangeStart?: Date): Promise<SignalCa
   const heldSymbols = positions.map(p => p.symbol);
 
   // 세 조회는 서로 독립이라 병렬. 어느 하나가 실패해도 나머지 정보는 그대로 나가야 한다.
-  const [baselinePrices, nowPrices, researchStats] = await Promise.all([
+  const [baselinePrices, nowPrices, researchTargets] = await Promise.all([
     rangeStart ? fetchSymbolBaselinePrices(rangeStart, heldSymbols) : Promise.resolve(new Map<string, number>()),
     fetchCurrentPricesKRW(positions.map(p => ({ symbol: p.symbol, market: p.market })))
       .catch(() => new Map<string, number>()),
-    fetchResearchStatsForSymbols(heldSymbols),
+    fetchPriceTargetsForSymbols(heldSymbols),
   ]);
 
   const nowMs = Date.now();
@@ -872,18 +922,20 @@ export async function fetchSignalCandidates(rangeStart?: Date): Promise<SignalCa
       ? ((nowPriceKRW - periodStartKRW) / periodStartKRW) * 100
       : null;
 
-    // 달력일. 판정 시 거래일↔달력일 환산은 evaluateSellSignal 이 담당한다.
+    // 보유 달력일 — 🔴 표시 전용이다. T-034 에서 기간초과 매도 판정을 폐기해 판정에 쓰지 않는다.
     const daysSinceEntry = p.firstSeenAt && !Number.isNaN(p.firstSeenAt.getTime())
       ? Math.max(0, Math.floor((nowMs - p.firstSeenAt.getTime()) / 86_400_000))
       : null;
 
-    const stats = researchStats.get(p.symbol) ?? null;
-    // 리서치 통계 자체가 없으면 "판단 보류"조차 만들지 않는다 — 빈 값을 표시할 이유가 없다.
-    const sellSignal = stats
-      ? evaluateSellSignal(
-          p.entryKRW, nowPriceKRW, daysSinceEntry,
-          stats.avgRallyPct, stats.avgDaysToRally, stats.eventCount,
-        )
+    const priceTargets = researchTargets.get(p.symbol) ?? null;
+    // 리서치 행 자체가 없으면 "판단 보류"조차 만들지 않는다 — 빈 값을 표시할 이유가 없다.
+    // 🔴 진입가·현재가·보유일수는 표시용 두 번째 인자로만 넘어간다(판정·목표가에 미사용).
+    const sellSignal = priceTargets
+      ? evaluateSellSignal(priceTargets, {
+          daysSinceEntry,
+          entryPriceKRW: p.entryKRW,
+          currentPriceKRW: nowPriceKRW,
+        })
       : null;
 
     return {
@@ -897,7 +949,7 @@ export async function fetchSignalCandidates(rangeStart?: Date): Promise<SignalCa
       nowPriceKRW,
       periodChangePct,
       sellSignal,
-      avgRallyPct: stats?.avgRallyPct ?? null,
+      priceTargets,
     };
   });
 
@@ -968,18 +1020,18 @@ export async function fetchResearchDigest(): Promise<ResearchDigest> {
     for (const t of tracked) {
       const r = bySymbol.get(t.symbol);
       if (!r || r.error) continue;
-      // avgDaysToRally 만 넘긴다(가격은 이 리포트에서 안 보여주므로 nowPriceKRW 조회는 생략) —
-      // ResearchTab 과 동일한 5일 기간 상한(MAX_TIMEFRAME_DAYS_FOR_BUY)을 적용해 두 화면의
-      // "매수 고려" 판정이 어긋나지 않게 한다.
-      const buy = evaluateBuySignal(r.todayActiveRuleIds, r.precursorAnalysis?.rules ?? null, {
-        avgDaysToRally: r.avgDaysToRally,
-      });
+      // T-034 — 저장된 차트 목표가를 그대로 넘긴다. ResearchTab 과 **같은 함수·같은 저장값**을
+      // 써야 "화면엔 관망인데 리포트엔 매수 고려"라는 불일치가 안 생긴다(도달가능성 게이트 포함).
+      const buy = evaluateBuySignal(r.todayActiveRuleIds, r.precursorAnalysis?.rules ?? null, r.priceTargets);
       if (buy.action === 'buy') activeCount++;
       const worthShowing =
         buy.action === 'buy' ||
         (buy.action === 'insufficient_data' && buy.ruleId != null);
       if (!worthShowing) continue;
-      items.push({ symbol: t.symbol, market: t.market, asOfDate: r.dataRangeTo, buy });
+      items.push({
+        symbol: t.symbol, market: t.market, asOfDate: r.dataRangeTo, buy,
+        targets: r.priceTargets ?? null,
+      });
     }
 
     // 매수 고려 먼저, 그 안에서는 lift 내림차순 — 사용자가 위에서부터 읽으면 된다.

@@ -1,8 +1,8 @@
 /**
- * 리서치 화면(ResearchTab)에 실을 매수/매도 추천 조립 — T-033.
+ * 리서치 화면(ResearchTab)에 실을 매수/매도 추천 조립 — T-033, 목표가 재설계 T-034.
  *
- * 저장된 리서치 결과 + `position_state`(보유 여부·진입가·진입시각) + 현재가를 합쳐
- * 심볼별 추천 1건을 만든다. 조회 라우트 2개(`/api/research/tracked`,
+ * 저장된 리서치 결과(차트 목표가 포함) + `position_state`(보유 여부·진입가·진입시각) + 현재가를
+ * 합쳐 심볼별 추천 1건을 만든다. 조회 라우트 2개(`/api/research/tracked`,
  * `/api/research/tracked/[symbol]/run`)가 **같은 답**을 내도록 로직을 여기 하나로 모은다.
  *
  * ## 🔴 안전 경계
@@ -10,6 +10,13 @@
  * - `position_state` 는 **SELECT 만** 한다. 이 파일은 어떤 테이블도 쓰지 않는다.
  * - 결과는 화면 표시용이다. `createSignal()`·`submitOrder()`·`src/lib/strategy/` 로
  *   흘러가지 않으며, 그렇게 연결하려면 T-033 의 전제를 다시 논의해야 한다.
+ *
+ * ## 🔴 통화 경계 (T-034)
+ *
+ * `PriceTargets`(목표가)는 **캔들 통화**(국내 KRW / 해외 USD)이고,
+ * `HoldingContext.entryPriceKRW`·`nowPriceKRW` 는 **항상 KRW** 다.
+ * 이 파일에서 두 계열이 만나는 연산은 **하나도 없다** — 목표가는 그대로 전달만 하고,
+ * 손익률(`gainPct`)은 KRW 끼리만 계산한다. 새 계산을 추가할 때 이 경계를 먼저 확인할 것.
  *
  * ## 현재가 조회를 주입받는 이유
  *
@@ -22,11 +29,10 @@ import { getPool } from '@/lib/db';
 import {
   evaluateBuySignal,
   evaluateSellSignal,
-  targetProgressPct,
   type BuyRecommendation,
   type SellAssessment,
 } from './pattern/recommendation';
-import type { PrecursorAnalysis, ResearchMarket } from './types';
+import type { PrecursorAnalysis, PriceTargets, ResearchMarket } from './types';
 
 /** 추천을 만들기 위해 필요한 최소 입력 — `ResearchReport` 와 `StoredResearchResult` 둘 다 만족한다. */
 export interface RecommendationInput {
@@ -35,9 +41,8 @@ export interface RecommendationInput {
   dataRangeTo: string | null;
   todayActiveRuleIds: string[] | null;
   precursorAnalysis: PrecursorAnalysis | null;
-  avgRallyPct: number | null;
-  avgDaysToRally: number | null;
-  eventCount: number;
+  /** T-034 — 차트 기반 목표가(리서치 cron 이 계산해 저장한 값) */
+  priceTargets: PriceTargets | null;
   error?: string | null;
 }
 
@@ -47,13 +52,16 @@ export interface HoldingContext {
   /** 진입 후 경과 **달력일** */
   daysSinceEntry: number | null;
   nowPriceKRW: number | null;
-  /** 목표(과거 평균 상승폭) 대비 진행률(%) — 표시 전용 */
-  targetProgressPct: number | null;
 }
 
 export interface ResearchRecommendationView {
   /** 판단의 기준이 된 **종가 기준일**. 실시간이 아님을 화면에서 반드시 함께 보여준다. */
   asOfDate: string | null;
+  /**
+   * 차트 목표가 — 매수/매도 공통. **사용자 포지션과 무관**하며 보유 여부에 따라 달라지지 않는다.
+   * 통화는 `targets.currency` 에 들어 있다(해외 종목은 USD).
+   */
+  targets: PriceTargets | null;
   buy: BuyRecommendation;
   /** 보유중일 때만. 미보유 종목은 매도 판단 자체가 성립하지 않는다 */
   sell: SellAssessment | null;
@@ -108,16 +116,11 @@ export async function buildResearchRecommendations(
 
   const positions = await fetchPositions(inputs.map((i) => i.symbol));
 
-  // 가격 없이 1차 평가 — action 판정에 가격은 영향을 주지 않으므로(표시용일 뿐) 어느 심볼이
-  // "매수 고려"로 뜨는지 먼저 알아야 시세 조회 대상을 정할 수 있다.
-  const prelimBuy = new Map(
-    inputs.map((i) => [i.symbol, evaluateBuySignal(i.todayActiveRuleIds, i.precursorAnalysis?.rules ?? null)]),
-  );
-
-  // 시세 조회 대상 — 보유중인 추적 종목(매도 판단용) + "매수 고려"로 판정된 종목(목표가 표시용).
-  // 그 외(관망·판단보류·미보유)는 목표가를 안 보여주므로 증권사 API 를 두드릴 이유가 없다.
+  // T-034 — 시세 조회는 **보유 종목만**. 목표가가 차트에서 나오므로 미보유 종목에는 현재가가
+  // 필요 없어졌다(T-033 때는 "매수 고려" 종목의 목표가 계산에 현재가가 필요해 함께 조회했다).
+  // 보유 종목의 현재가는 오직 사용자 손익(gainPct) 표시에만 쓴다 — 판정에는 안 쓴다.
   const priceTargets = inputs
-    .filter((i) => positions.has(i.symbol) || prelimBuy.get(i.symbol)?.action === 'buy')
+    .filter((i) => positions.has(i.symbol))
     .map((i) => ({ symbol: i.symbol, market: positions.get(i.symbol)?.market || i.market }));
   const prices = priceTargets.length > 0
     ? await fetchPrices(priceTargets).catch((e) => {
@@ -127,11 +130,8 @@ export async function buildResearchRecommendations(
     : new Map<string, number>();
 
   for (const input of inputs) {
-    const buy = evaluateBuySignal(input.todayActiveRuleIds, input.precursorAnalysis?.rules ?? null, {
-      nowPriceKRW: prices.get(input.symbol) ?? null,
-      avgRallyPct: input.avgRallyPct,
-      avgDaysToRally: input.avgDaysToRally,
-    });
+    const targets = input.priceTargets ?? null;
+    const buy = evaluateBuySignal(input.todayActiveRuleIds, input.precursorAnalysis?.rules ?? null, targets);
     const pos = positions.get(input.symbol) ?? null;
 
     let sell: SellAssessment | null = null;
@@ -142,20 +142,22 @@ export async function buildResearchRecommendations(
       const daysSinceEntry = pos.firstSeenAt && !Number.isNaN(pos.firstSeenAt.getTime())
         ? Math.max(0, Math.floor((now.getTime() - pos.firstSeenAt.getTime()) / 86_400_000))
         : null;
-      sell = evaluateSellSignal(
-        pos.entryPriceKRW, nowPriceKRW, daysSinceEntry,
-        input.avgRallyPct, input.avgDaysToRally, input.eventCount,
-      );
+      // 🔴 진입가·현재가·보유일수는 전부 **표시 전용**으로 두 번째 인자에만 넘어간다.
+      //    매도 목표가·판정은 첫 인자(차트)에서만 나온다 — 기간초과 판정은 T-034에서 폐기됐다.
+      sell = evaluateSellSignal(targets, {
+        daysSinceEntry,
+        entryPriceKRW: pos.entryPriceKRW,
+        currentPriceKRW: nowPriceKRW,
+      });
       holding = {
         entryPriceKRW: pos.entryPriceKRW,
         qty: pos.qty,
         daysSinceEntry,
         nowPriceKRW,
-        targetProgressPct: targetProgressPct(sell.gainPct, input.avgRallyPct),
       };
     }
 
-    out.set(input.symbol, { asOfDate: input.dataRangeTo, buy, sell, holding });
+    out.set(input.symbol, { asOfDate: input.dataRangeTo, targets, buy, sell, holding });
   }
 
   return out;

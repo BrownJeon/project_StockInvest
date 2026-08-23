@@ -4,6 +4,7 @@
 import { buildResearchReport, kstDateString, SHORT_HISTORY_MIN_DAYS } from '../research-report';
 import { computePrecursorSeries } from '../pattern/precursor-features';
 import { getActiveRuleIds } from '../pattern/precursor-analysis';
+import { TARGET_HORIZON_DAYS } from '../pattern/price-targets';
 import type { DailyCandle } from '../types';
 
 /** 하락 → 급등 → 재하락 사이클을 `cycles`번 반복하는 결정적 시계열 */
@@ -159,5 +160,42 @@ describe('buildResearchReport — todayActiveRuleIds (T-033)', () => {
     });
     expect(r.error).toMatch(/yahoo down/);
     expect(r.todayActiveRuleIds).toBeNull();
+    expect(r.priceTargets).toBeNull();
+  });
+});
+
+// ─── T-034 — priceTargets ───────────────────────────────────────────────────
+
+describe('buildResearchReport — priceTargets (T-034)', () => {
+  test('차트 목표가를 계산해 리포트에 싣고, 기준일이 dataRangeTo 와 같다', async () => {
+    const candles = cyclicSeries(7);
+    const r = await buildResearchReport('NAS:MU', { runDate: '2026-08-19', ...loaderFor(candles) });
+
+    expect(r.priceTargets).not.toBeNull();
+    expect(r.priceTargets!.asOfDate).toBe(r.dataRangeTo);
+    expect(r.priceTargets!.asOfPrice).toBe(candles[candles.length - 1].close);
+    expect(r.priceTargets!.horizonDays).toBe(TARGET_HORIZON_DAYS);
+  });
+
+  test('🔴 통화는 시장에서 나온다 — 해외는 USD, 국내는 KRW (환산하지 않는다)', async () => {
+    const candles = cyclicSeries(7);
+    const overseas = await buildResearchReport('NAS:MU', { runDate: '2026-08-19', ...loaderFor(candles) });
+    const domestic = await buildResearchReport('005930', { runDate: '2026-08-19', ...loaderFor(candles) });
+
+    expect(overseas.market).toBe('overseas');
+    expect(overseas.priceTargets!.currency).toBe('USD');
+    expect(domestic.market).toBe('domestic');
+    expect(domestic.priceTargets!.currency).toBe('KRW');
+    // 같은 캔들이면 숫자는 동일 — 환율이 개입하지 않는다는 증거
+    expect(overseas.priceTargets!.asOfPrice).toBe(domestic.priceTargets!.asOfPrice);
+  });
+
+  test('캔들이 모자라면 부분값이 아니라 null', async () => {
+    const tiny: DailyCandle[] = Array.from({ length: 30 }, (_, i) => ({
+      date: new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString().slice(0, 10),
+      open: 100, high: 101, low: 99, close: 100, volume: 10,
+    }));
+    const r = await buildResearchReport('005930', { runDate: '2026-08-19', ...loaderFor(tiny) });
+    expect(r.priceTargets).toBeNull();
   });
 });

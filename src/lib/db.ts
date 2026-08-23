@@ -1257,6 +1257,7 @@ async function setupDB(): Promise<void> {
       data_warnings      JSON NULL,
       error              TEXT NULL,
       today_active_rule_ids JSON NULL,
+      price_targets      JSON NULL,
       created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uq_symbol_date (symbol, run_date),
       INDEX idx_research_rally_run (run_date DESC, symbol)
@@ -1268,6 +1269,13 @@ async function setupDB(): Promise<void> {
   // `[]`(오늘 충족 규칙 없음)은 서로 다른 뜻이므로 DEFAULT 를 두지 않는다.
   await p.query(
     `ALTER TABLE research_rally_results ADD COLUMN IF NOT EXISTS today_active_rule_ids JSON NULL`,
+  ).catch(() => {});
+  // T-034 — 차트 지표 기반 매수 희망가·매도 목표가(`PriceTargets`)를 리서치 cron 이 계산해 저장.
+  // 조회(ResearchTab·08:00 리포트)는 읽기만 한다. 매번 Yahoo 를 다시 받으면 느릴 뿐 아니라
+  // 두 화면이 서로 다른 시점의 캔들로 다른 목표가를 내게 된다. 산출 불가는 NULL 이며,
+  // 통화(KRW/USD)는 JSON 안의 `currency` 필드에 들어간다 — 값만 보고 통화를 추측하지 말 것.
+  await p.query(
+    `ALTER TABLE research_rally_results ADD COLUMN IF NOT EXISTS price_targets JSON NULL`,
   ).catch(() => {});
 
   // ── 재무·가치 캐시 (Phase A) — 1일 TTL ──────────────────────────────────

@@ -7,7 +7,7 @@ import {
   listTrackedSymbols,
   upsertResearchResult,
 } from '../storage';
-import type { ResearchReport } from '../types';
+import type { PriceTargets, ResearchReport } from '../types';
 
 jest.mock('@/lib/db', () => ({ getPool: jest.fn() }));
 
@@ -18,6 +18,16 @@ function mockQuery(...results: unknown[]) {
   (getPool as jest.Mock).mockReturnValue({ query });
   return query;
 }
+
+/** T-034 — 해외 종목이라 통화는 USD. 왕복해도 통화가 살아 있어야 한다. */
+const PRICE_TARGETS: PriceTargets = {
+  asOfDate: '2026-08-18', asOfPrice: 108.9, currency: 'USD',
+  atr14: 3, expectedMove: 3 * Math.sqrt(10),
+  buyZone: { price: 105.25, basis: '볼린저 하단(20,2)' },
+  sellTarget: { price: 115, basis: '최근 60거래일 고점' },
+  buyReachable: true, sellReachable: false,
+  horizonDays: 14, horizonTradingDays: 10,
+};
 
 const baseReport: ResearchReport = {
   symbol: 'NAS:MU',
@@ -31,6 +41,7 @@ const baseReport: ResearchReport = {
   avgDaysToRally: 7.891,
   precursorAnalysis: null,
   todayActiveRuleIds: ['rsi_lt_30', 'bb_pctb_lt_010'],
+  priceTargets: PRICE_TARGETS,
   dataWarnings: ['short_history'],
   error: null,
 };
@@ -109,6 +120,23 @@ describe('upsertResearchResult', () => {
     expect(params[10]).toBeNull();
   });
 
+  test('T-034 — price_targets 는 컬럼 목록·VALUES·UPDATE 절에 모두 들어가고 JSON 으로 직렬화된다', async () => {
+    const query = mockQuery([{ affectedRows: 1 }]);
+    await upsertResearchResult(baseReport);
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(String(sql)).toMatch(/price_targets/);
+    expect(String(sql)).toMatch(/price_targets\s+= VALUES\(price_targets\)/);
+    expect((String(sql).match(/\?/g) ?? []).length).toBe(params.length);
+    expect(JSON.parse(String(params[13]))).toEqual(PRICE_TARGETS);
+  });
+
+  test('T-034 — 목표가를 못 구했으면 빈 객체가 아니라 null 로 저장한다', async () => {
+    const query = mockQuery([{ affectedRows: 1 }]);
+    await upsertResearchResult({ ...baseReport, priceTargets: null });
+    const [, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(params[13]).toBeNull();
+  });
+
   test('실패 리포트도 error 컬럼과 함께 기록한다', async () => {
     const query = mockQuery([{ affectedRows: 1 }]);
     await upsertResearchResult({ ...baseReport, error: 'yahoo fetch failed', eventCount: 0 });
@@ -140,6 +168,7 @@ describe('getLatestResearchResults', () => {
         avg_days_to_rally: '7.89',
         precursor_analysis: '{"positiveDays":12}',
         today_active_rule_ids: '["rsi_lt_30"]',
+        price_targets: JSON.stringify(PRICE_TARGETS),
         data_warnings: '["short_history"]',
         error: null,
         created_at: '2026-08-19T07:00:00.000Z',
@@ -160,6 +189,23 @@ describe('getLatestResearchResults', () => {
     expect(r.precursorAnalysis).toEqual({ positiveDays: 12 });
     expect(r.dataWarnings).toEqual(['short_history']);
     expect(r.todayActiveRuleIds).toEqual(['rsi_lt_30']);   // T-033 컬럼 왕복
+    // T-034 컬럼 왕복 — 🔴 통화가 살아 있어야 KRW 로 오독되지 않는다
+    expect(r.priceTargets).toEqual(PRICE_TARGETS);
+    expect(r.priceTargets?.currency).toBe('USD');
+  });
+
+  test('T-034 — price_targets 가 없는 구버전 행은 null 로 읽힌다(빈 객체 아님)', async () => {
+    mockQuery(
+      [{ symbol: 'NAS:MU', name: null }],
+      [{
+        symbol: 'NAS:MU', market: 'overseas', run_date: '2026-08-19',
+        data_range_from: null, data_range_to: null, event_count: 0,
+        events: '[]', avg_rally_pct: null, avg_days_to_rally: null,
+        precursor_analysis: null, data_warnings: '[]', error: null, created_at: null,
+      }],
+    );
+    const { results } = await getLatestResearchResults();
+    expect(results[0].priceTargets).toBeNull();
   });
 
   test('T-033 — today_active_rule_ids 가 없는 구버전 행은 null 로 읽힌다(빈 배열 아님)', async () => {

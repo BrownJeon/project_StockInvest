@@ -1,25 +1,22 @@
 /**
- * 매수/매도 "고려" 추천 — T-033.
+ * 매수/매도 "고려" 추천 — T-033, 목표가 차트 기반 재설계 T-034.
  *
  * 이 스위트가 지키는 것은 **정확한 숫자**가 아니라 **과신 방지 규율**이다:
  *  1. 표본이 적으면 buy/sell 이 아니라 insufficient_data 로 강등된다
  *  2. `null`(평가 못 함)과 `[]`(충족 규칙 없음)이 서로 다른 답을 낸다
  *  3. 모든 반환값이 면책 문구를 들고 다닌다
+ *  4. 🔴 **진입가는 매도 목표가·판정에 전혀 영향을 주지 않는다**(T-034 핵심 회귀)
+ *  5. 기한 내 도달 근거가 없으면 매수를 권하지 않는다
  */
 import { PRECURSOR_NOTE } from '../pattern/precursor-analysis';
 import {
-  CALENDAR_DAYS_PER_TRADING_DAY,
-  DURATION_EXCEEDED_RATIO,
   MIN_LIFT_FOR_BUY,
   MIN_SAMPLE_FOR_RECOMMENDATION,
-  TARGET_REACHED_RATIO,
-  estimateTargetPrice,
-  estimateTimeframeDays,
   evaluateBuySignal,
   evaluateSellSignal,
-  targetProgressPct,
 } from '../pattern/recommendation';
-import type { PrecursorRuleStat } from '../types';
+import { TARGET_HORIZON_DAYS } from '../pattern/price-targets';
+import type { PrecursorRuleStat, PriceTargets } from '../types';
 
 function rule(id: string, over: Partial<PrecursorRuleStat> = {}): PrecursorRuleStat {
   const triggerCount = over.triggerCount ?? 40;
@@ -31,6 +28,24 @@ function rule(id: string, over: Partial<PrecursorRuleStat> = {}): PrecursorRuleS
     hitCount: Math.round(triggerCount * precision),
     precision,
     lift: over.lift ?? 2.1,
+    ...over,
+  };
+}
+
+/** 기본값: 매수·매도 목표가가 둘 다 기한 내 도달 가능한 정상 상태 */
+function targets(over: Partial<PriceTargets> = {}): PriceTargets {
+  return {
+    asOfDate: '2026-08-20',
+    asOfPrice: 100,
+    currency: 'KRW',
+    atr14: 2,
+    expectedMove: 2 * Math.sqrt(10),          // ≈ 6.32
+    buyZone: { price: 96, basis: '볼린저 하단(20,2)' },
+    sellTarget: { price: 105, basis: '최근 60거래일 고점' },
+    buyReachable: true,
+    sellReachable: true,
+    horizonDays: TARGET_HORIZON_DAYS,
+    horizonTradingDays: 10,
     ...over,
   };
 }
@@ -47,6 +62,7 @@ describe('evaluateBuySignal', () => {
     const r = evaluateBuySignal([], [rule('rsi_lt_30')]);
     expect(r.action).toBe('hold');
     expect(r.triggerCount).toBe(0);
+    expect(r.downgradeReason).toBeNull();
   });
 
   test('과거 통계 자체가 없으면 insufficient_data', () => {
@@ -78,6 +94,7 @@ describe('evaluateBuySignal', () => {
     const below = evaluateBuySignal(['a'], [rule('a', { lift: MIN_LIFT_FOR_BUY - 0.01 })]);
     expect(below.action).toBe('hold');
     expect(below.ruleId).toBe('a');   // 관망이어도 근거는 남긴다
+    expect(below.downgradeReason).toBeNull();   // 차트 게이트가 아니라 lift 미달이다
 
     const at = evaluateBuySignal(['a'], [rule('a', { lift: MIN_LIFT_FOR_BUY })]);
     expect(at.action).toBe('buy');
@@ -124,168 +141,184 @@ describe('evaluateBuySignal', () => {
       evaluateBuySignal(null, []),
       evaluateBuySignal([], [rule('a')]),
       evaluateBuySignal(['a'], [rule('a', { lift: 3 })]),
+      evaluateBuySignal(['a'], [rule('a', { lift: 3 })], targets({ buyZone: null, buyReachable: null })),
     ]) {
       expect(r.note).toBe(PRECURSOR_NOTE);
     }
   });
 
-  describe('priceContext (T-033 후속 — 신뢰도/기간/가격 예측)', () => {
-    test('action=buy 일 때만 목표가·기간을 채운다', () => {
-      const ctx = { nowPriceKRW: 70_000, avgRallyPct: 20, avgDaysToRally: 3 };   // 3*7/5=4.2일(상한 이내)
-      const bought = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], ctx);
-      expect(bought.action).toBe('buy');
-      expect(bought.nowPriceKRW).toBe(70_000);
-      expect(bought.targetPriceKRW).toBeCloseTo(84_000, 4);
-      expect(bought.timeframeDays).toBe(4);
-
-      // hold — 컨텍스트를 줘도 가격을 안 보여준다("사도 되나?" 오해 방지)
-      const held = evaluateBuySignal(['a'], [rule('a', { lift: MIN_LIFT_FOR_BUY - 0.01 })], ctx);
-      expect(held.action).toBe('hold');
-      expect(held.targetPriceKRW).toBeNull();
-    });
-
-    test('priceContext 를 생략하면(기존 호출부) 가격 필드는 전부 null', () => {
-      const r = evaluateBuySignal(['a'], [rule('a', { lift: 3 })]);
+  describe('T-034 — 도달 가능성 게이트 (구 MAX_TIMEFRAME_DAYS_FOR_BUY 대체)', () => {
+    test('기한 내 닿을 매수 희망가가 있으면 buy 유지', () => {
+      const r = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], targets());
       expect(r.action).toBe('buy');
-      expect(r.nowPriceKRW).toBeNull();
-      expect(r.targetPriceKRW).toBeNull();
-      expect(r.timeframeDays).toBeNull();
+      expect(r.downgradeReason).toBeNull();
     });
 
-    test('🔴 사용자 피드백(2026-08-21) — 과거 평균 소요기간이 5일 상한을 넘으면 buy가 아니라 hold', () => {
-      // avgDaysToRally=4 → 4*7/5=5.6 → round 6일, 상한(5일) 초과
-      const tooSlow = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], { avgDaysToRally: 4, nowPriceKRW: 100, avgRallyPct: 20 });
-      expect(tooSlow.action).toBe('hold');
-      expect(tooSlow.targetPriceKRW).toBeNull();
-      // avgDaysToRally=3 → round(4.2)=4일, 상한 이내 — buy 유지
-      const fastEnough = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], { avgDaysToRally: 3, nowPriceKRW: 100, avgRallyPct: 20 });
-      expect(fastEnough.action).toBe('buy');
+    test('🔴 지지 후보가 없으면 buy 가 아니라 hold — "얼마에 사라"고 할 근거가 없다', () => {
+      const r = evaluateBuySignal(
+        ['a'], [rule('a', { lift: 3 })],
+        targets({ buyZone: null, buyReachable: null }),
+      );
+      expect(r.action).toBe('hold');
+      expect(r.downgradeReason).toBe('no_support_level');
     });
 
-    test('avgDaysToRally 데이터 자체가 없으면(드묾) 기간 상한으로 막지 않는다', () => {
-      const r = evaluateBuySignal(['a'], [rule('a', { lift: 3 })], { nowPriceKRW: 100, avgRallyPct: 20, avgDaysToRally: null });
-      expect(r.action).toBe('buy');
-      expect(r.timeframeDays).toBeNull();
+    test('🔴 지지선이 기한 내 기대 변동폭 밖이면 hold', () => {
+      const r = evaluateBuySignal(
+        ['a'], [rule('a', { lift: 3 })],
+        targets({ buyZone: { price: 60, basis: '볼린저 하단(20,2)' }, buyReachable: false }),
+      );
+      expect(r.action).toBe('hold');
+      expect(r.downgradeReason).toBe('buy_zone_unreachable');
+    });
+
+    test('도달 여부를 판단할 수 없어도(ATR 산출 불가) buy 로 올리지 않는다', () => {
+      const r = evaluateBuySignal(
+        ['a'], [rule('a', { lift: 3 })],
+        targets({ atr14: null, expectedMove: null, buyReachable: null }),
+      );
+      expect(r.action).toBe('hold');
+      expect(r.downgradeReason).toBe('buy_zone_unreachable');
+    });
+
+    test('targets 자체가 없으면(구버전 행·캔들 부족) 게이트를 걸지 않는다 — 결측과 "너무 멂"은 다르다', () => {
+      expect(evaluateBuySignal(['a'], [rule('a', { lift: 3 })]).action).toBe('buy');
+      expect(evaluateBuySignal(['a'], [rule('a', { lift: 3 })], null).action).toBe('buy');
+    });
+
+    test('게이트는 lift 판정 뒤에만 걸린다 — 원래 hold 였던 건 사유가 붙지 않는다', () => {
+      const r = evaluateBuySignal(
+        ['a'], [rule('a', { lift: MIN_LIFT_FOR_BUY - 0.01 })],
+        targets({ buyZone: null, buyReachable: null }),
+      );
+      expect(r.action).toBe('hold');
+      expect(r.downgradeReason).toBeNull();
     });
   });
 });
 
-describe('estimateTargetPrice / estimateTimeframeDays', () => {
-  test('목표가 = 기준가 × (1+상승폭%)', () => {
-    expect(estimateTargetPrice(70_000, 20)).toBeCloseTo(84_000, 4);
-    expect(estimateTargetPrice(100, -10)).toBeCloseTo(90, 4);
-  });
-  test('기준가·상승폭 중 하나라도 없거나 기준가가 0 이하면 null', () => {
-    expect(estimateTargetPrice(null, 20)).toBeNull();
-    expect(estimateTargetPrice(70_000, null)).toBeNull();
-    expect(estimateTargetPrice(0, 20)).toBeNull();
-    expect(estimateTargetPrice(-1, 20)).toBeNull();
-  });
-  test('거래일 → 달력일 반올림', () => {
-    expect(estimateTimeframeDays(10)).toBe(Math.round(10 * CALENDAR_DAYS_PER_TRADING_DAY));
-    expect(estimateTimeframeDays(null)).toBeNull();
-    expect(estimateTimeframeDays(0)).toBeNull();
-  });
-});
-
-describe('evaluateSellSignal', () => {
-  const AVG_RALLY = 20;      // 과거 평균 +20%
-  const AVG_DAYS = 10;       // 과거 평균 10거래일
-
-  test('사이클 표본이 부족하면 insufficient_data', () => {
-    const r = evaluateSellSignal(100, 130, 5, AVG_RALLY, AVG_DAYS, MIN_SAMPLE_FOR_RECOMMENDATION - 1);
+describe('evaluateSellSignal — 판정은 차트 하나로만 (T-034)', () => {
+  test('targets 가 없으면 insufficient_data (숫자를 지어내지 않는다)', () => {
+    const r = evaluateSellSignal(null, { daysSinceEntry: 5, entryPriceKRW: 100, currentPriceKRW: 130 });
     expect(r.action).toBe('insufficient_data');
     expect(r.reason).toBeNull();
-    // 계산 가능한 값(수익률)은 그대로 보여준다 — 판정만 보류하는 것이다
+    expect(r.horizonDays).toBeNull();
+    // 계산 가능한 값(손익)은 그대로 보여준다 — 판정만 보류하는 것이다
     expect(r.gainPct).toBeCloseTo(30, 8);
   });
 
-  test('현재가가 없으면(시세 조회 실패) insufficient_data', () => {
-    const r = evaluateSellSignal(100, null, 5, AVG_RALLY, AVG_DAYS, 20);
-    expect(r.action).toBe('insufficient_data');
+  test('현재가가 없으면(시세 조회 실패) 손익만 null 이고 판정은 그대로 나온다', () => {
+    const r = evaluateSellSignal(targets(), { daysSinceEntry: 5, entryPriceKRW: 100, currentPriceKRW: null });
     expect(r.gainPct).toBeNull();
-  });
-
-  test('진입가가 0/음수면 insufficient_data (0 나눗셈 방지)', () => {
-    expect(evaluateSellSignal(0, 100, 5, AVG_RALLY, AVG_DAYS, 20).action).toBe('insufficient_data');
-    expect(evaluateSellSignal(-5, 100, 5, AVG_RALLY, AVG_DAYS, 20).action).toBe('insufficient_data');
-  });
-
-  test('목표 도달 경계 — 평균 상승폭의 80% 지점', () => {
-    expect(AVG_RALLY * TARGET_REACHED_RATIO).toBeCloseTo(16, 8);   // 목표선 = +16%
-    const just = evaluateSellSignal(100, 116, 3, AVG_RALLY, AVG_DAYS, 20);
-    expect(just.action).toBe('sell');
-    expect(just.reason).toBe('target_reached');
-
-    const below = evaluateSellSignal(100, 115.9, 3, AVG_RALLY, AVG_DAYS, 20);
-    expect(below.action).toBe('hold');
-    expect(below.reason).toBe('in_progress');
-  });
-
-  test('기간 초과 — avgDaysToRally 는 거래일이므로 달력일로 환산해서 비교한다', () => {
-    const deadline = AVG_DAYS * CALENDAR_DAYS_PER_TRADING_DAY * DURATION_EXCEEDED_RATIO; // 21일
-    expect(deadline).toBeCloseTo(21, 8);
-
-    // 21일 미만 — 아직 진행중
-    expect(evaluateSellSignal(100, 105, 20, AVG_RALLY, AVG_DAYS, 20).reason).toBe('in_progress');
-    // 21일 도달 — 기간 초과
-    const over = evaluateSellSignal(100, 105, 21, AVG_RALLY, AVG_DAYS, 20);
-    expect(over.action).toBe('sell');
-    expect(over.reason).toBe('duration_exceeded');
-
-    // 🔴 회귀 방지: 거래일을 그대로 달력일처럼 비교하면 15일에 이미 발화했을 것이다
-    expect(evaluateSellSignal(100, 105, 15, AVG_RALLY, AVG_DAYS, 20).action).toBe('hold');
-  });
-
-  test('목표 도달이 기간 초과보다 우선한다', () => {
-    const r = evaluateSellSignal(100, 200, 999, AVG_RALLY, AVG_DAYS, 20);
-    expect(r.reason).toBe('target_reached');
-  });
-
-  test('보유기간을 모르면 기간 초과 판정을 하지 않는다(추측 금지)', () => {
-    const r = evaluateSellSignal(100, 105, null, AVG_RALLY, AVG_DAYS, 20);
     expect(r.action).toBe('hold');
-    expect(r.daysSinceEntry).toBeNull();
+    expect(r.reason).toBe('in_progress');
   });
 
-  test('avgRallyPct 가 없으면 insufficient_data', () => {
-    expect(evaluateSellSignal(100, 130, 5, null, AVG_DAYS, 20).action).toBe('insufficient_data');
+  test('진입가가 0/음수면 손익을 만들지 않는다(0 나눗셈 방지)', () => {
+    expect(evaluateSellSignal(targets(), { entryPriceKRW: 0, currentPriceKRW: 100 }).gainPct).toBeNull();
+    expect(evaluateSellSignal(targets(), { entryPriceKRW: -5, currentPriceKRW: 100 }).gainPct).toBeNull();
+  });
+
+  test('현재가 위에 저항 후보가 없으면 매도 고려(저항선 돌파)', () => {
+    const r = evaluateSellSignal(targets({ sellTarget: null, sellReachable: null }));
+    expect(r.action).toBe('sell');
+    expect(r.reason).toBe('target_reached');
+    expect(r.horizonDays).toBe(TARGET_HORIZON_DAYS);
+  });
+
+  test('저항선까지 남은 거리가 ATR14 이내면 "근접"으로 보고 매도 고려', () => {
+    // atr14=2, 근접 문턱 = 2×1 = 2. 기준가 100.
+    const near = evaluateSellSignal(targets({ sellTarget: { price: 102, basis: '볼린저 상단(20,2)' } }));
+    expect(near.action).toBe('sell');
+    expect(near.reason).toBe('target_reached');
+
+    const far = evaluateSellSignal(targets({ sellTarget: { price: 102.01, basis: '볼린저 상단(20,2)' } }));
+    expect(far.action).toBe('hold');
+    expect(far.reason).toBe('in_progress');
+  });
+
+  test('근접 문턱은 ATR 에 비례한다 — 변동성이 큰 종목일수록 넓다', () => {
+    const calm = evaluateSellSignal(targets({ atr14: 1, sellTarget: { price: 103, basis: 'x' } }));
+    const wild = evaluateSellSignal(targets({ atr14: 5, sellTarget: { price: 103, basis: 'x' } }));
+    expect(calm.action).toBe('hold');
+    expect(wild.action).toBe('sell');
+  });
+
+  test('🔴 기한 내 도달 근거가 없으면 판정도 하지 않는다(insufficient_data)', () => {
+    const unreachable = evaluateSellSignal(targets({ sellReachable: false }));
+    expect(unreachable.action).toBe('insufficient_data');
+    expect(unreachable.reason).toBeNull();
+
+    // ATR 산출 불가(reachable=null)도 마찬가지 — false 와 구분 없이 판정 보류
+    const unknown = evaluateSellSignal(targets({ atr14: null, expectedMove: null, sellReachable: null }));
+    expect(unknown.action).toBe('insufficient_data');
+  });
+
+  test('저항선 아래에 있으면 관망 — 기한 숫자는 표시용으로 그대로 실린다', () => {
+    const r = evaluateSellSignal(targets());
+    expect(r.action).toBe('hold');
+    expect(r.reason).toBe('in_progress');
+    expect(r.horizonDays).toBe(TARGET_HORIZON_DAYS);
   });
 
   test('모든 반환값에 면책 문구가 붙는다', () => {
     for (const r of [
-      evaluateSellSignal(100, 130, 5, AVG_RALLY, AVG_DAYS, 20),
-      evaluateSellSignal(100, null, 5, AVG_RALLY, AVG_DAYS, 20),
-      evaluateSellSignal(100, 101, 1, AVG_RALLY, AVG_DAYS, 20),
+      evaluateSellSignal(null),
+      evaluateSellSignal(targets()),
+      evaluateSellSignal(targets({ sellTarget: null })),
+      evaluateSellSignal(targets({ sellReachable: false })),
     ]) {
       expect(r.note).toBe(PRECURSOR_NOTE);
     }
   });
 
-  test('T-033 후속 — 표본이 충분하면 신뢰도·목표가·기간을 항상 채운다', () => {
-    const r = evaluateSellSignal(100, 105, 3, AVG_RALLY, AVG_DAYS, 20);
-    expect(r.confidence).toBe('medium');            // eventCount=20 → 15~29 구간
-    expect(r.targetPriceKRW).toBeCloseTo(120, 4);    // 진입가 100 × (1+20/100)
-    expect(r.timeframeDays).toBe(14);                // 10거래일 → 14달력일
-  });
+  describe('🔴 T-034 핵심 회귀 — 사용자 포지션은 매도 판단에 개입하지 않는다', () => {
+    const t = targets();
 
-  test('표본부족(insufficient_data)이면 신뢰도·목표가·기간도 null', () => {
-    const r = evaluateSellSignal(100, 130, 5, AVG_RALLY, AVG_DAYS, MIN_SAMPLE_FOR_RECOMMENDATION - 1);
-    expect(r.action).toBe('insufficient_data');
-    expect(r.confidence).toBeNull();
-    expect(r.targetPriceKRW).toBeNull();
-    expect(r.timeframeDays).toBeNull();
-  });
-});
+    test('보유기간을 아무리 길게 줘도 차트 조건이 같으면 sell 로 바뀌지 않는다', () => {
+      // 기간 초과 판정은 폐기됐다(진입일 = 포지션 정보라 "분석은 포지션과 독립" 원칙과 충돌).
+      for (const days of [0, 13, 14, 15, 30, 365, 999]) {
+        const r = evaluateSellSignal(t, { daysSinceEntry: days });
+        expect(r.action).toBe('hold');
+        expect(r.reason).toBe('in_progress');
+        expect(r.daysSinceEntry).toBe(days);   // 표시용으로는 그대로 실린다
+      }
+    });
 
-describe('targetProgressPct', () => {
-  test('목표 대비 진행률', () => {
-    expect(targetProgressPct(16, 20)).toBeCloseTo(80, 8);
-  });
-  test('값이 없거나 목표가 0 이하면 null', () => {
-    expect(targetProgressPct(null, 20)).toBeNull();
-    expect(targetProgressPct(10, null)).toBeNull();
-    expect(targetProgressPct(10, 0)).toBeNull();
-    expect(targetProgressPct(10, -3)).toBeNull();
+    test('보유기간이 길어도 sell 인 종목은 사유가 항상 차트(target_reached)다', () => {
+      const broke = targets({ sellTarget: null, sellReachable: null });
+      expect(evaluateSellSignal(broke, { daysSinceEntry: 999 }).reason).toBe('target_reached');
+      expect(evaluateSellSignal(broke, { daysSinceEntry: 0 }).reason).toBe('target_reached');
+    });
+
+    test('진입가를 어떻게 바꿔도 판정·기한이 변하지 않는다', () => {
+      const at = (entry: number) => evaluateSellSignal(t, { daysSinceEntry: 5, entryPriceKRW: entry, currentPriceKRW: 90 });
+      const cheap = at(10);          // 크게 이익난 상태
+      const expensive = at(675_724); // -18% 물린 상태(실제 NAS:SNPS 사례)
+      expect(expensive.action).toBe(cheap.action);
+      expect(expensive.reason).toBe(cheap.reason);
+      expect(expensive.horizonDays).toBe(cheap.horizonDays);
+      // 손익률만 달라진다 — 이건 사용자 참고 표시 전용이다
+      expect(expensive.gainPct).not.toBeCloseTo(cheap.gainPct!, 4);
+    });
+
+    test('매도 목표가는 애초에 이 함수의 반환값에 없다 — 차트(targets)에서만 나온다', () => {
+      const r = evaluateSellSignal(t, { daysSinceEntry: 5, entryPriceKRW: 675_724, currentPriceKRW: 553_109 });
+      expect(Object.keys(r).sort()).toEqual(
+        ['action', 'daysSinceEntry', 'gainPct', 'horizonDays', 'note', 'reason'],
+      );
+      // 목표가는 입력으로 준 차트 값 그대로이고 진입가의 함수가 아니다
+      expect(t.sellTarget!.price).toBe(105);
+    });
+
+    test('포지션 정보를 아예 안 넘겨도 판정이 완전히 동일하다', () => {
+      const withPos = evaluateSellSignal(t, { daysSinceEntry: 999, entryPriceKRW: 675_724, currentPriceKRW: 553_109 });
+      const without = evaluateSellSignal(t);
+      expect(without.action).toBe(withPos.action);
+      expect(without.reason).toBe(withPos.reason);
+      expect(without.horizonDays).toBe(withPos.horizonDays);
+      expect(without.gainPct).toBeNull();
+      expect(without.daysSinceEntry).toBeNull();
+    });
   });
 });

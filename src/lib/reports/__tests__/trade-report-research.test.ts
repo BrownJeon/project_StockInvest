@@ -38,7 +38,7 @@ import {
   fetchResearchDigest,
   fetchSymbolBaselinePrices,
 } from '../trade-report';
-import type { PrecursorRuleStat } from '@/lib/research/types';
+import type { PrecursorRuleStat, PriceTargets } from '@/lib/research/types';
 
 const rows = (r: unknown[]): Promise<unknown> => Promise.resolve([r, []]);
 
@@ -196,14 +196,26 @@ describe('fetchResearchDigest', () => {
       ...over,
     };
   }
+  function targets(over: Partial<PriceTargets> = {}): PriceTargets {
+    return {
+      asOfDate: '2026-08-19', asOfPrice: 70_000, currency: 'KRW',
+      atr14: 1_500, expectedMove: 1_500 * Math.sqrt(10),
+      buyZone: { price: 67_000, basis: '볼린저 하단(20,2)' },
+      sellTarget: { price: 73_000, basis: '최근 60거래일 고점' },
+      buyReachable: true, sellReachable: true,
+      horizonDays: 14, horizonTradingDays: 10,
+      ...over,
+    };
+  }
   function result(symbol: string, over: Record<string, unknown> = {}) {
     return {
       symbol, market: 'domestic', runDate: '2026-08-20',
       dataRangeFrom: '2020-01-01', dataRangeTo: '2026-08-19',
-      // avgDaysToRally=3 → 달력일 환산 4.2일(반올림 4) → MAX_TIMEFRAME_DAYS_FOR_BUY(5) 이내(buy 유지).
       eventCount: 12, events: [], avgRallyPct: 18, avgDaysToRally: 3,
       precursorAnalysis: { rules: [statRule()] },
       todayActiveRuleIds: ['rsi_lt_30'],
+      // T-034 — 기한 내 도달 가능한 매수 희망가가 있어야 buy 가 유지된다
+      priceTargets: targets(),
       dataWarnings: [], error: null, createdAt: null,
       ...over,
     };
@@ -221,6 +233,30 @@ describe('fetchResearchDigest', () => {
     expect(d.items[0].buy.action).toBe('buy');
     expect(d.items[0].asOfDate).toBe('2026-08-19');
     expect(d.note).toBe(PRECURSOR_NOTE);
+    // T-034 — 저장된 차트 목표가를 그대로 싣는다(리포트에서 재계산하지 않는다)
+    expect(d.items[0].targets?.buyZone?.price).toBe(67_000);
+  });
+
+  test('🔴 T-034 — 기한 내 닿을 지지선이 없으면 "매수 고려"로 올리지 않는다', async () => {
+    latestResults.mockResolvedValue({
+      tracked: [{ symbol: '005930', name: null, market: 'domestic' }],
+      results: [result('005930', {
+        priceTargets: targets({ buyZone: { price: 40_000, basis: '볼린저 하단(20,2)' }, buyReachable: false }),
+      })],
+    });
+    const d = await fetchResearchDigest();
+    expect(d.activeCount).toBe(0);
+    expect(d.items).toHaveLength(0);       // hold 는 리포트에 싣지 않는다
+  });
+
+  test('T-034 — 저장된 목표가가 없는 구버전 행은 게이트 없이 기존 판정을 유지한다', async () => {
+    latestResults.mockResolvedValue({
+      tracked: [{ symbol: '005930', name: null, market: 'domestic' }],
+      results: [result('005930', { priceTargets: null })],
+    });
+    const d = await fetchResearchDigest();
+    expect(d.items[0].buy.action).toBe('buy');
+    expect(d.items[0].targets).toBeNull();
   });
 
   test('🔴 표본부족은 매수 고려로 승격되지 않고, 항목으로만 남는다', async () => {

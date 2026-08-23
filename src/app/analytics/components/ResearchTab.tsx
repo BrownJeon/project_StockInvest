@@ -9,6 +9,13 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { formatSymbolShort } from '@/lib/symbols';
+import {
+  displayableBuyZone,
+  displayableSellTarget,
+  formatTargetPrice,
+  unreachableReasonKo,
+} from '@/lib/research/pattern/price-targets';
+import type { PriceTargets } from '@/lib/research/types';
 
 const RESEARCH_COLOR = '#14b8a6';
 
@@ -66,26 +73,26 @@ interface BuyRecommendation {
   lift: number | null;
   triggerCount: number;
   confidence: 'low' | 'medium' | 'high' | null;
-  /** action==='buy'일 때만 채워진다(그 외 null) — T-033 후속 */
-  nowPriceKRW: number | null;
-  targetPriceKRW: number | null;
-  timeframeDays: number | null;
+  /** 차트 게이트로 buy → hold 로 내려간 사유 — T-034 */
+  downgradeReason: 'no_support_level' | 'buy_zone_unreachable' | null;
   note: string;
 }
 
 interface SellAssessment {
   action: 'sell' | 'hold' | 'insufficient_data';
+  /** 보유 달력일 — **표시 전용**. 매도 판정에 쓰지 않는다(T-034에서 기간초과 판정 폐기) */
   daysSinceEntry: number | null;
+  /** 진입가 대비 손익(%) — **사용자 참고 표시 전용**. 목표가·판정과 무관하다(T-034) */
   gainPct: number | null;
-  reason: 'target_reached' | 'duration_exceeded' | 'in_progress' | null;
-  confidence: 'low' | 'medium' | 'high' | null;
-  targetPriceKRW: number | null;
-  timeframeDays: number | null;
+  reason: 'target_reached' | 'in_progress' | null;
+  horizonDays: number | null;
   note: string;
 }
 
 interface Recommendation {
   asOfDate: string | null;
+  /** T-034 — 차트 기반 목표가. 통화는 `targets.currency`(해외 종목은 USD) */
+  targets: PriceTargets | null;
   buy: BuyRecommendation;
   sell: SellAssessment | null;
   holding: {
@@ -93,7 +100,6 @@ interface Recommendation {
     qty: number;
     daysSinceEntry: number | null;
     nowPriceKRW: number | null;
-    targetProgressPct: number | null;
   } | null;
 }
 
@@ -279,21 +285,31 @@ export function ResearchTab() {
 
 const CONFIDENCE_KO: Record<string, string> = { low: '낮음', medium: '보통', high: '높음' };
 
+const DOWNGRADE_KO: Record<string, string> = {
+  no_support_level: '현재가 아래 지지 근거가 없어 매수 희망가를 제시할 수 없습니다.',
+  buy_zone_unreachable: '가장 가까운 지지선이 기한 내 기대 변동폭 밖이라 매수를 권하지 않습니다.',
+};
+
 /**
- * 매수/매도 "고려" 예측 — T-033 + 후속.
- *
- * 사용자 요청("신뢰도·기간·가격 중심으로")에 맞춰 근거를 3줄(신뢰도/기간/가격)로 고정한다.
+ * 매수/매도 "고려" — T-033, 목표가 차트 기반 재설계 T-034.
  *
  * 🔴 문구 규율:
  *  - "확률"이라고 쓰지 않는다. 우리가 가진 건 **과거 조건부 적중률**뿐이다.
- *  - 표본이 적으면 추천 대신 "판단 보류(표본부족)"를 보여준다 — 가격·기간도 함께 감춘다.
+ *  - 표본이 적으면 추천 대신 "판단 보류(표본부족)"를 보여준다.
+ *  - **기한 내 도달 근거가 없으면 목표가 숫자를 만들어 보여주지 않는다** — 대신 그 사실을 쓴다.
  *  - 기준일(`asOfDate`)을 항상 함께 노출한다 — 국내는 전일 종가, 해외는 당일 종가 기준이라
  *    실시간이 아니다. 이걸 감추면 사용자가 "지금 값"으로 오해한다.
- *  - 가격은 전부 **참고치**다("목표가" 도달·기한 준수를 보장하지 않는다) — 면책 문구를 항상 동반.
+ *  - 목표가는 **차트 레벨**이며 진입가·손익과 무관하다. 통화 기호(`$`/`₩`)를 항상 붙인다 —
+ *    해외 종목의 목표가는 USD 이고 진입가·현재가는 KRW 라 기호가 없으면 같은 단위로 오해한다.
+ *  - 전부 **참고치**다(도달·기한 준수를 보장하지 않는다) — 면책 문구를 항상 동반.
  */
 function RecommendationBlock({ rec }: { rec: Recommendation }) {
-  const { buy, sell, holding } = rec;
+  const { buy, sell, holding, targets } = rec;
   const asOf = rec.asOfDate ? `${rec.asOfDate} 종가 기준` : '기준일 데이터 없음';
+  // "기한"은 오직 **목표가 도달 판단 창**을 뜻한다 — 보유기간과 무관하다(T-034).
+  const horizonText = targets
+    ? `분석 기준일로부터 ${targets.horizonDays}일 이내`
+    : '기한 데이터 없음';
 
   const buyBadge =
     buy.action === 'buy'
@@ -308,55 +324,85 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
       ? { icon: '🔴', text: '매도 고려', color: '#3b82f6' }
       : sell.action === 'hold'
         ? { icon: '⚪', text: '보유 관망', color: 'var(--muted)' }
-        : { icon: '⚪', text: '매도 판단 보류(표본부족)', color: 'var(--muted)' };
+        : { icon: '⚪', text: '매도 판단 보류', color: 'var(--muted)' };
 
   const buyHint =
     buy.action === 'hold'
-      ? '오늘 종가 기준 충족한 선행지표 조건이 없습니다.'
+      ? (buy.downgradeReason
+          ? DOWNGRADE_KO[buy.downgradeReason]
+          : '오늘 종가 기준 충족한 선행지표 조건이 없습니다.')
       : buy.action === 'insufficient_data'
         ? `판단에 쓸 과거 표본이 부족합니다${buy.triggerCount > 0 ? `(트리거 ${buy.triggerCount}건)` : ''}.`
         : null;
 
-  const sellHint =
-    sell && sell.action !== 'sell' && sell.action !== 'hold'
-      ? '리서치 표본이 부족해 매도 판단을 보류합니다.'
-      : null;
+  const buyZone = displayableBuyZone(targets);
+  const sellTarget = displayableSellTarget(targets);
+
+  // 🔴 매도 사유는 **차트 문장만** 나온다. 보유기간·손익은 아래 "보유" 정보 줄로 분리했다.
+  const sellReasonText =
+    !sell ? null
+      : sell.action === 'insufficient_data' ? `${unreachableReasonKo(targets, 'sell')} — 매도 판단을 보류합니다.`
+      : sell.reason === 'target_reached'
+        ? (targets?.sellTarget == null
+            ? '현재가 위에 저항 근거가 없습니다(저항선 돌파).'
+            : '현재가가 매도 목표가(저항선)에 근접했습니다.')
+        : '아직 매도 목표가(저항선) 아래입니다.';
 
   return (
     <div style={S.recWrap}>
+      {/* ── 차트 목표가: 포지션과 무관한 분석 결과라 배지보다 먼저, 한 번만 보여준다 ── */}
       <div style={S.recBadgeRow}>
-        <span style={{ ...S.recBadge, color: buyBadge.color }}>{buyBadge.icon} {buyBadge.text}</span>
+        <span style={S.recBadge}>🎯 차트 목표가</span>
         <span style={S.recAsOf}>{asOf}</span>
       </div>
-
-      {buy.action === 'buy' ? (
-        <PredictionRows
-          confidenceText={`${CONFIDENCE_KO[buy.confidence ?? ''] ?? '—'} (과거 적중률 ${pct(buy.precision != null ? buy.precision * 100 : null, 0)}, ${buy.triggerCount}건 중 ${buy.precision != null ? Math.round(buy.precision * buy.triggerCount) : '—'}건)`}
-          timeframeText={buy.timeframeDays != null ? `약 ${buy.timeframeDays}일 이내 목표가 도달 예상` : '기간 데이터 없음'}
-          priceText={`현재가 ${krw(buy.nowPriceKRW)} → 목표가 ${krw(buy.targetPriceKRW)}`}
+      <div style={S.predictWrap}>
+        <PredictRow
+          label="매수"
+          value={buyZone && targets
+            ? `${formatTargetPrice(buyZone.price, targets.currency)} · ${buyZone.basis}`
+            : unreachableReasonKo(targets, 'buy')}
         />
+        <PredictRow
+          label="매도"
+          value={sellTarget && targets
+            ? `${formatTargetPrice(sellTarget.price, targets.currency)} · ${sellTarget.basis}`
+            : unreachableReasonKo(targets, 'sell')}
+        />
+        <PredictRow label="기한" value={horizonText} />
+      </div>
+
+      {/* ── 매수 판단 ── */}
+      <div style={S.recBadgeRow}>
+        <span style={{ ...S.recBadge, color: buyBadge.color }}>{buyBadge.icon} {buyBadge.text}</span>
+      </div>
+      {buy.action === 'buy' ? (
+        <div style={S.recEvidence}>
+          근거: {buy.ruleLabel ?? '—'} — 과거 적중률{' '}
+          {pct(buy.precision != null ? buy.precision * 100 : null, 0)}
+          {` (${buy.triggerCount}건 중 ${buy.precision != null ? Math.round(buy.precision * buy.triggerCount) : '—'}건)`}
+          {buy.confidence ? ` · 표본 신뢰도 ${CONFIDENCE_KO[buy.confidence] ?? buy.confidence}` : ''}
+        </div>
       ) : (
         buyHint && <div style={S.recEvidence}>{buyHint}</div>
       )}
 
+      {/* ── 매도 판단(보유중일 때만) ── */}
       {sellBadge && (
         <>
           <div style={S.recBadgeRow}>
             <span style={{ ...S.recBadge, color: sellBadge.color }}>{sellBadge.icon} {sellBadge.text}</span>
           </div>
-          {(sell!.action === 'sell' || sell!.action === 'hold') ? (
-            <PredictionRows
-              confidenceText={`${CONFIDENCE_KO[sell!.confidence ?? ''] ?? '—'} (과거 사이클 표본 기준)`}
-              timeframeText={
-                sell!.timeframeDays != null
-                  ? `목표 기한 약 ${sell!.timeframeDays}일${sell!.daysSinceEntry != null ? ` (현재 ${sell!.daysSinceEntry}일째 보유)` : ''}`
-                  : '기간 데이터 없음'
-              }
-              priceText={`진입가 ${krw(holding?.entryPriceKRW ?? null)} → 목표가 ${krw(sell!.targetPriceKRW)} (현재가 ${krw(holding?.nowPriceKRW ?? null)})`}
+          {sellReasonText && <div style={S.recEvidence}>{sellReasonText}</div>}
+          {/* 🔴 진입가·손익·보유일수는 **참고 정보**다 — 위 목표가·매도 판정에는 쓰이지 않는다 */}
+          <div style={S.predictWrap}>
+            <PredictRow
+              label="보유"
+              value={`진입가 ${krw(holding?.entryPriceKRW ?? null)} · 현재가 ${krw(holding?.nowPriceKRW ?? null)}`
+                + `${sell?.gainPct != null ? ` (${sell.gainPct >= 0 ? '+' : ''}${sell.gainPct.toFixed(1)}%)` : ''}`
+                + `${sell?.daysSinceEntry != null ? ` · ${sell.daysSinceEntry}일째` : ''}`}
             />
-          ) : (
-            sellHint && <div style={S.recEvidence}>{sellHint}</div>
-          )}
+            <div style={S.noteText}>위 보유 정보는 참고용이며 매도 판단 근거가 아닙니다 — 판단은 차트 목표가 기준입니다.</div>
+          </div>
         </>
       )}
 
@@ -365,15 +411,12 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
   );
 }
 
-/** 신뢰도/기간/가격 3줄 고정 레이아웃 — 사용자가 원한 "언제·얼마" 예측 형식. */
-function PredictionRows(
-  { confidenceText, timeframeText, priceText }: { confidenceText: string; timeframeText: string; priceText: string },
-) {
+/** 라벨 + 값 한 줄. 사용자가 원한 "얼마에·언제까지" 형식. */
+function PredictRow({ label, value }: { label: string; value: string }) {
   return (
-    <div style={S.predictWrap}>
-      <div style={S.predictRow}><span style={S.predictLabel}>신뢰도</span><span style={S.predictValue}>{confidenceText}</span></div>
-      <div style={S.predictRow}><span style={S.predictLabel}>기간</span><span style={S.predictValue}>{timeframeText}</span></div>
-      <div style={S.predictRow}><span style={S.predictLabel}>가격</span><span style={S.predictValue}>{priceText}</span></div>
+    <div style={S.predictRow}>
+      <span style={S.predictLabel}>{label}</span>
+      <span style={S.predictValue}>{value}</span>
     </div>
   );
 }
