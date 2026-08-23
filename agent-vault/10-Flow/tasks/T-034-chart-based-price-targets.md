@@ -1,14 +1,14 @@
 ---
 task_id: T-034
 title: 매수/매도 목표가를 차트 지표 기반으로 재설계 (진입가·과거평균 의존 제거)
-status: doing
+status: deployed
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-032, T-033]
 tags:
   - type/task
   - domain/research
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-08-23
 ---
 
 ## 배경 — 사용자가 실제 화면에서 발견한 결함
@@ -619,3 +619,33 @@ T-034 코드와 무관한 이 프로젝트의 알려진 간헐 네트워크 이�
 `sent:true` 성공했음). 배포 후 정기 08:00 발송에서 확인 가능.
 
 임시 인스턴스 종료 확인, 운영 pm2(`stockinvest` online 2h) 무영향.
+
+## 배포 (2026-08-23)
+
+사용자 승인 확인 → 커밋 `eac1e83` → `git push origin main`.
+
+**webhook-deploy가 push에 반응하지 않았다** — RESUME.md 2026-08-19 절이 이미 기록한 "`0481d55`
+push에 미발화" 증상이 이번(`eac1e83`)에도 재현됐다(2번째 관측). `pm2 logs webhook-deploy`를 90초
+실시간 추적해도 새 `started` 로그가 없음을 확인 후, 선례([[RESUME]] 2026-08-19 절)대로
+`/home/brownjeon/.local/webhook-deploy/deploy-stockinvest.sh`를 Leader가 직접 수동 실행했다.
+
+- 빌드 성공, `pm2 reload stockinvest` 성공(restarts 2810→2811)
+- 헬스체크: `{"ok":true,"db":true,"safetyStatus":"green","safety":{"dryRun":false,"killSwitch":false,...},"engine":{"enabled":true,"autopilotMode":"assist"}}` — 안전장치 전부 무영향 확인
+- 배포된 HEAD가 `eac1e83`(방금 커밋)임을 `git log -1`로 직접 확인
+- 배포 전 관례대로 `pm2 restart stockinvest-cron --update-env` 선행 완료(NFS 잠금 재발 방지)
+
+**webhook-deploy 미발화가 2회 관측된 것은 별도 조사 가치가 있는 인프라 결함이다** — board.md
+Doing에 백로그로 남겨둠(이번 세션 범위 밖, 매번 수동 배포로 우회 가능하나 근본 원인 미상).
+
+## 최종 요약
+
+T-033 배포 후 사용자가 실화면(NAS:SNPS)에서 "목표가가 진입가 기준이라 비현실적"이라고 지적한
+결함을 Leader가 실측으로 재확인하고, 목표가 산출을 진입가·과거평균 의존에서 **차트 지표(볼린저밴드/
+60일 고저·ATR14 도달가능성 게이트)** 기반으로 전면 재설계했다. 진입가는 이제 목표가 계산 경로
+어디에도 등장하지 않으며(회귀 테스트로 고정), 통화(KRW/USD) 혼용은 환산 코드 자체를 없애 구조적으로
+차단했고, 화면 표시 기한과 실제 매도 판정 기준의 불일치(21일 vs 31.5일)도 14일 하나로 통합했다.
+Developer 구현 → Reviewer 독립감사(코드 직접 대조, Critical~Low 0건) → QA 실행검증(0건 결함) →
+Leader의 DB·Yahoo 실데이터 대조까지 4단계 전부 통과했고, 자동매매(`createSignal`/`submitOrder`)와는
+전 과정 무접촉임을 반복 확인했다. 2026-08-23 사용자 승인을 받아 커밋·배포했으며, 배포 과정에서
+webhook-deploy 자동 트리거 실패(2회째 관측)를 발견해 수동 배포로 우회 완료했다 — 이 인프라 결함
+자체는 후속 조사 과제로 남겼다.

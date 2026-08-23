@@ -1,10 +1,28 @@
 ---
 project: StockInvest
-updated: 2026-08-18
+updated: 2026-08-23
 tags:
   - type/context
 ---
 # 현재 상태
+
+## ✅ 2026-08-23 — [[T-034-chart-based-price-targets]] 배포 완료 (아래 08-18 절부터는 이 사이 갱신되지 않아 낡아 있었음)
+
+이 절과 08-18 절 사이(08-19~08-21)에 T-032 후속 4건([[T-032-research-rally-cycle]]) +
+[[T-033-research-recommendation-trade-report]](리서치분석 매수/매도 추천 + 거래리포트 개선) +
+T-034가 전부 구현·검증·배포됐다. ACTIVE.md가 그 기간 갱신되지 않았던 것이지, 실제 프로젝트가
+멈춰 있었던 게 아니다 — 상세는 [[RESUME]] 최신 절과 각 task 파일 참조.
+
+**T-034**: 목표가 산출을 진입가·과거평균 의존에서 차트 지표(볼린저밴드/60일 고저·ATR14 도달가능성
+게이트) 기반으로 재설계. 진입가 의존 완전 제거(회귀 테스트 고정), 통화(KRW/USD) 혼용 구조적 차단,
+기한 표시/판정 불일치 해소. Developer→Reviewer PASS(0건)→QA PASS(0건)→Leader 실데이터 대조 완료.
+122 suites/2147 tests. 사용자 승인 → 커밋 `eac1e83` → **webhook-deploy 미발화(2회째 관측, 백로그)**
+→ 수동 배포 완료, 헬스체크 green, 안전장치(`dryRun:false`/`killSwitch:false`/`engine.enabled:true`)
+무영향.
+
+**미해결로 남긴 것**: webhook-deploy 미발화 원인 조사(백로그), [[T-031-news-fetch-m4-500]]은
+home-m4-api 프로젝트로 핸드오프 필요(이 저장소 범위 밖), TradingInvest `.env` 구IP 확인 권고(그
+프로젝트 팀 소관).
 
 ## ✅ 2026-08-18 (추가) — [[T-030-fundamentals-refresh-stale-state]] 완료: 즐겨찾기 재무갱신 "데이터없음" 미반영 버그 수정
 

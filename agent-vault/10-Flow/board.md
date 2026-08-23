@@ -241,6 +241,23 @@ tags:
   통과(결함 0건) → Leader가 실제 텔레그램 발송까지 재현 확인 → 사용자 승인 후 커밋(`fe9355b`)·
   배포 완료(`exit=0`, 헬스체크 green). 121 suites/2095 tests 전부 통과.
 
+- ✅ **[완결 — 2026-08-23 배포] [[T-034-chart-based-price-targets]] — 매수/매도 목표가를 차트
+  지표 기반으로 재설계 (진입가·과거평균 의존 제거)**
+  T-033 배포 후 사용자가 실화면에서 발견한 결함(목표가가 진입가 기준이라 물린 종목에서
+  "21일 내 +49%" 같은 비현실적 수치) 해소. 볼린저밴드/60일 고저·ATR14 도달가능성 게이트로
+  교체, 통화(KRW/USD) 혼용 구조적 차단, 진입가 의존성 완전 제거(회귀 테스트로 고정), 기한
+  표시/판정 불일치 해소(14일 단일화, `duration_exceeded` 매도판정 폐기). Developer → Reviewer
+  PASS(Critical/High/Medium/Low 0건) → QA PASS(결함 0건) → Leader가 DB·Yahoo 실데이터 직접
+  대조로 재확인. 122 suites/2147 tests 전부 통과. 2026-08-23 사용자 승인 → 커밋(`eac1e83`).
+  **webhook-deploy가 push에 미발화**(RESUME.md 2026-08-19 절의 동일 증상 재현, 2번째 관측 —
+  별도 백로그 항목화 권고) → `deploy-stockinvest.sh` 수동 실행으로 배포 완료(`exit=0`,
+  헬스체크 green, `dryRun:false`·`killSwitch:false`·`engine.enabled:true` 안전장치 무영향 확인).
+
+- 🔴 **[핸드오프 필요, 2026-08-19] [[T-031-news-fetch-m4-500]] — news-fetch cron 500 에러**
+  낡은 IP는 해결됐으나(커밋 `54e1e02`), M4 API `/v1/news/fetch`의 500 에러 근본원인은
+  **home-m4-api 프로젝트(Mac Mini M4) 내부**에 있어 이 저장소에서는 더 진행 불가. 매매 자체는
+  무영향(뉴스 KB 갱신만 중단). home-m4-api 팀 세션에서 이어받을 것 — 조사 내용은 task 파일 §A 참조.
+
 ## Done (T-032 완결)
 
 - ✅ **[2026-08-19] [[T-032-research-rally-cycle]] — 즐겨찾기 연동 사이클 패턴 리서치 기능**

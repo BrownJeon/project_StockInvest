@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-19
+updated: 2026-08-23
 tags:
   - type/context
 aliases:
@@ -12,6 +12,33 @@ aliases:
 
 > 사용자가 **"이어서 작업해줘"** 라고 하면 이 파일부터 읽고, 아래 "다음 할 일"의 1번부터 진행한다.
 > 다른 PC에서 재개할 수 있으므로 **모든 맥락은 이 vault 안에 있다** (세션 메모리·플랜 파일에 의존하지 말 것).
+
+---
+
+## ✅ 2026-08-23 — [[T-034-chart-based-price-targets]] 배포 완료. 아래 08-19 절은 낡음(참고만)
+
+**이 절 아래의 08-19~08-18 서술은 이 문서가 그 시점 이후 갱신되지 않아 낡아 있었다.** 실제로는
+그 사이 T-032 후속 4건 + [[T-033-research-recommendation-trade-report]] + [[T-034-chart-based-price-targets]]가
+전부 구현·검증·배포까지 완료됐다(git log 기준, ACTIVE.md·board.md도 이 세션에서 함께 갱신함).
+
+**T-034**: T-033 배포 후 사용자가 실화면에서 발견한 "목표가가 진입가 기준이라 비현실적" 결함을
+차트 지표(볼린저밴드/60일 고저·ATR14 도달가능성 게이트) 기반으로 재설계해 해소. Developer→Reviewer
+PASS→QA PASS→Leader 실데이터 대조까지 완료 후 사용자 승인 받아 커밋 `eac1e83`. **배포 중
+webhook-deploy가 push에 미발화**(아래 08-19 절의 동일 증상 2번째 재현) → 수동 배포
+(`deploy-stockinvest.sh`)로 완료, 헬스체크 green, 안전장치 무영향. 상세는 task 파일 "배포" 절.
+
+**다음 할 일**:
+1. 🔴 **webhook-deploy 미발화 원인 조사** — 이번까지 2회 관측(08-19 `0481d55`, 08-23 `eac1e83`).
+   매번 수동 배포로 우회는 가능하나 근본 원인 미상 — 재현 조건 파악 필요(패턴: 두 번 다 연속
+   커밋들이 짧은 간격으로 여러 번 push된 세션의 마지막 push였을 가능성, 확인 안 됨).
+2. 🔴 **[[T-031-news-fetch-m4-500]] — 이 프로젝트 범위 밖으로 핸드오프 필요.** M4 API
+   `/v1/news/fetch` 500 에러 근본원인이 **home-m4-api 프로젝트(Mac Mini M4) 내부**에 있다 —
+   다음에 이 항목을 다루려면 StockInvest가 아니라 **API서버(home-m4-api) 팀 세션**으로 전환할 것.
+   매매 자체는 무영향(뉴스 KB 갱신만 중단).
+3. (곁가지, 확인만 됨) **TradingInvest `.env`의 `AI_API_BASE`도 구IP·구포트**(`163:8000`) —
+   같은 M4 연결 증상 가능성 있음, TradingInvest 팀 세션에서 확인 권고(이번 세션에서 미수정).
+4. board.md Backlog의 QA 형식준수·잔여 Medium/Low 항목들 — 배포 비차단, 급하지 않음(08-18
+   절 참조, 여전히 유효).
 
 ---
 
