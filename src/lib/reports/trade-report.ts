@@ -10,13 +10,21 @@ import {
   type SellAssessment,
 } from '@/lib/research/pattern/recommendation';
 import {
+  currencyForMarket,
   displayableBuyZone,
   displayableSellTarget,
   formatTargetPrice,
   unreachableReasonKo,
 } from '@/lib/research/pattern/price-targets';
 import { getLatestResearchResults } from '@/lib/research/storage';
-import type { PriceTargets } from '@/lib/research/types';
+import type { PriceTargets, ResearchMarket } from '@/lib/research/types';
+import {
+  isFxConverted,
+  isFxFallback,
+  toDisplayAmount,
+  type DisplayAmount,
+  type SymbolQuote,
+} from '@/lib/display-amount';
 
 export interface BuyCandidate {
   symbol: string;
@@ -54,6 +62,24 @@ export interface HoldingStatus {
    * (해외 종목은 USD — 위 `entryKRW`/`nowPriceKRW` 와 섞어 계산하지 말 것).
    */
   priceTargets: PriceTargets | null;
+  /**
+   * T-035 — **표시 전용** 금액. 해외 종목이면 같은 시점 시세 쌍의 환율로 환산한 USD 다.
+   * 🔴 위 KRW 필드들이 여전히 계산의 원본이고, 이 값은 화면에 찍는 용도로만 쓴다.
+   */
+  display: HoldingDisplay;
+}
+
+/**
+ * 보유종목 금액의 표시용 통화·값 (T-035).
+ * 환산은 `src/lib/display-amount.ts` 한 곳에서만 일어난다 — 여기서 다시 계산하지 않는다.
+ *
+ * 🔴 현재 리포트가 **종목 단위 금액**으로 찍는 것은 투자금 한 줄뿐이다. 진입가·현재가는
+ *    금액이 아니라 "진입가 대비 -17.8%" 같은 **비율**로만 나오므로 환산 대상이 아니다
+ *    (비율은 KRW 끼리 계산돼 통화와 무관하다). 새 금액 줄을 추가할 때 이 필드를 늘린다.
+ */
+export interface HoldingDisplay {
+  /** 투자금 = 진입단가 × 수량 */
+  invested: DisplayAmount;
 }
 
 export interface SellPnl {
@@ -447,6 +473,29 @@ function formatHoldingInfoLine(h: HoldingStatus): string | null {
   return `   └ ℹ️ ${parts.join(' · ')} (참고 정보)`;
 }
 
+/**
+ * 종목별 금액 한 조각 (T-035) — 해외 종목은 달러, 국내는 원화.
+ *
+ * 목표가와 **같은 포맷터**(`formatTargetPrice`)를 쓴다. 한 줄 안에서 목표가는 `$`, 진입가는 `₩`
+ * 로 갈리던 것이 사용자가 지적한 문제였으므로, 표기가 어긋날 여지를 남기지 않는다.
+ *
+ * 🔴 두 가지를 반드시 드러낸다:
+ *  - 환산본이면 원화 원본과 "현재 환율 환산"이라는 사실 (매수 당시 체결가가 아니다)
+ *  - 달러로 못 바꿨으면 그 사실 (통화 기호만 바꾸거나 숫자를 지어내지 않는다)
+ */
+function formatDisplayAmount(d: DisplayAmount | null | undefined, fallbackKRW: number | null): string {
+  // `display` 자체가 없는 경우(구버전 호출부)에는 원화 원본으로 되돌아간다 — 금액을 감추지 않는다.
+  if (!d || d.value == null) {
+    return fallbackKRW != null && Number.isFinite(fallbackKRW) ? fmtKRWPlain(fallbackKRW) : '데이터 없음';
+  }
+  const main = formatTargetPrice(d.value, d.currency);
+  if (isFxFallback(d)) return `${main} (달러 환산 불가 — 원화 표시)`;
+  if (isFxConverted(d) && d.sourceKRW != null) {
+    return `${main} (원화 ${fmtKRWPlain(d.sourceKRW)} · 현재 환율 환산)`;
+  }
+  return main;
+}
+
 /** 리서치 요약 문단 (T-033). 추적 0종목·활성 0종목도 조용히 생략하지 않고 명시한다. */
 function formatResearchSection(research: ResearchDigest, nameOf: (s: string) => string): string {
   const lines: string[] = [];
@@ -556,9 +605,10 @@ export function formatReportMessage(
         `${icon} ${nameOf(h.symbol)} 고점대비 ${fmtSignedPct(h.profitPct)} · ` +
         `최근추이 ${fmtSignedPct(h.periodChangePct)} (${h.qty}주)${warn}`,
       );
+      // T-035 — 해외 종목이면 달러로. 원본 KRW(`investedKRW`)가 유효할 때만 줄을 만든다.
       lines.push(
         h.investedKRW > 0
-          ? `   └ 투자금 ${fmtKRWPlain(h.investedKRW)}`
+          ? `   └ 투자금 ${formatDisplayAmount(h.display?.invested, h.investedKRW)}`
           : '   └ 투자금 데이터 없음',
       );
       const sellLine = formatSellSignalLine(h);
@@ -744,37 +794,51 @@ export async function fetchSymbolBaselinePrices(
 }
 
 /**
- * 현재 KRW 환산 단가 조회 (T-033).
+ * 시세 조회 대상의 시장 판별 — `market` 컬럼을 우선 믿되, 값이 손상됐으면 심볼 포맷으로 본다.
+ * 통화 판별(`currencyForMarket`)과 시세 라우팅이 **같은 답**을 쓰도록 한 곳으로 모아 둔다.
+ */
+function resolveMarket(symbol: string, market: string | null | undefined): ResearchMarket {
+  return market === 'domestic' || market === 'overseas'
+    ? market
+    : getMarketFromSymbol(symbol) === 'overseas' ? 'overseas' : 'domestic';
+}
+
+/**
+ * 현재 시세 조회 — **KRW 환산가와 (해외의) USD 원가를 쌍으로** 돌려준다 (T-033 확장, T-035).
  *
  * `getKisTickers` / `getKisOverseasTickers` 는 **중복 제거를 하지 않고**, 국내/해외 통합 함수도
  * 없다. 그래서 여기서 심볼을 중복 제거하고 시장별로 나눠 각각 호출한다
  * (`src/lib/strategy/universe.ts` 와 같은 패턴 — 그 파일은 import 도 하지 않고 형태만 따랐다).
  *
- * 해외 티커의 `price` 는 이미 KRW 환산값이다(`kis-overseas.getTicker` 가 환율을 곱해 반환).
+ * 해외 티커의 `price` 는 이미 KRW 환산값이고(`kis-overseas.getTicker` 가 환율을 곱해 반환),
+ * 같은 응답의 `priceUsd` 가 **환산 전 USD 원가**다. 🔴 두 값이 **동일 시점 쌍**이라는 점이
+ * T-035 의 달러 표기 근거다 — 이 쌍에서 나온 비율만이 그 가격에 실제로 적용된 환율이다
+ * (자세한 근거·한계는 `src/lib/display-amount.ts` 헤더 참조).
+ *
  * 조회에 실패한 심볼은 Map 에 없다 — 소비자가 "데이터 없음"으로 표시하게 한다.
  * 시세 조회 실패로 리포트 전체가 실패하면 안 되므로 시장별로 개별 catch 한다.
  */
-export async function fetchCurrentPricesKRW(
+export async function fetchCurrentQuotes(
   targets: { symbol: string; market: string }[],
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+): Promise<Map<string, SymbolQuote>> {
+  const out = new Map<string, SymbolQuote>();
   if (!targets || targets.length === 0) return out;
 
   const domestic: string[] = [];
   const overseas: string[] = [];
   for (const t of targets) {
     if (!t?.symbol) continue;
-    // market 컬럼을 우선 믿되, 값이 이상하면 심볼 포맷으로 판별한다.
-    const market = t.market === 'domestic' || t.market === 'overseas'
-      ? t.market
-      : getMarketFromSymbol(t.symbol);
-    (market === 'overseas' ? overseas : domestic).push(t.symbol);
+    (resolveMarket(t.symbol, t.market) === 'overseas' ? overseas : domestic).push(t.symbol);
   }
 
-  const collect = (tickers: { symbol: string; price: number }[]) => {
+  const collect = (tickers: { symbol: string; price: number; priceUsd?: number }[]) => {
     for (const tk of tickers) {
       const price = Number(tk.price);
-      if (Number.isFinite(price) && price > 0) out.set(tk.symbol, price);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      // USD 원가는 해외 티커에만 있다. 없거나 0 이하면 null — 추정하지 않는다.
+      const usdRaw = tk.priceUsd != null ? Number(tk.priceUsd) : Number.NaN;
+      const usd = Number.isFinite(usdRaw) && usdRaw > 0 ? usdRaw : null;
+      out.set(tk.symbol, { krw: price, usd });
     }
   };
 
@@ -797,6 +861,19 @@ export async function fetchCurrentPricesKRW(
     );
   }
   await Promise.all(jobs);
+  return out;
+}
+
+/**
+ * 현재 KRW 환산 단가만 필요한 소비자용 얇은 래퍼 (T-033 시그니처 유지).
+ * 달러 표기가 필요하면 `fetchCurrentQuotes()` 를 직접 쓴다.
+ */
+export async function fetchCurrentPricesKRW(
+  targets: { symbol: string; market: string }[],
+): Promise<Map<string, number>> {
+  const quotes = await fetchCurrentQuotes(targets);
+  const out = new Map<string, number>();
+  for (const [symbol, q] of quotes) out.set(symbol, q.krw);
   return out;
 }
 
@@ -907,17 +984,19 @@ export async function fetchSignalCandidates(rangeStart?: Date): Promise<SignalCa
   const heldSymbols = positions.map(p => p.symbol);
 
   // 세 조회는 서로 독립이라 병렬. 어느 하나가 실패해도 나머지 정보는 그대로 나가야 한다.
-  const [baselinePrices, nowPrices, researchTargets] = await Promise.all([
+  const [baselinePrices, nowQuotes, researchTargets] = await Promise.all([
     rangeStart ? fetchSymbolBaselinePrices(rangeStart, heldSymbols) : Promise.resolve(new Map<string, number>()),
-    fetchCurrentPricesKRW(positions.map(p => ({ symbol: p.symbol, market: p.market })))
-      .catch(() => new Map<string, number>()),
+    fetchCurrentQuotes(positions.map(p => ({ symbol: p.symbol, market: p.market })))
+      .catch(() => new Map<string, SymbolQuote>()),
     fetchPriceTargetsForSymbols(heldSymbols),
   ]);
 
   const nowMs = Date.now();
   const holdings: HoldingStatus[] = positions.map(p => {
     const periodStartKRW = baselinePrices.get(p.symbol) ?? null;
-    const nowPriceKRW    = nowPrices.get(p.symbol) ?? null;
+    const quote          = nowQuotes.get(p.symbol) ?? null;
+    const nowPriceKRW    = quote?.krw ?? null;
+    // 🔴 변동률은 KRW 끼리만 — 표시 통화(아래 display)와 접점이 0이다.
     const periodChangePct = periodStartKRW != null && periodStartKRW > 0 && nowPriceKRW != null
       ? ((nowPriceKRW - periodStartKRW) / periodStartKRW) * 100
       : null;
@@ -938,18 +1017,27 @@ export async function fetchSignalCandidates(rangeStart?: Date): Promise<SignalCa
         })
       : null;
 
+    // T-035 — 해외 종목 금액을 달러로 표기하기 위한 **표시 전용** 변환.
+    // 위 판정·집계는 전부 KRW 원본으로 이미 끝났고, 여기서 만든 값은 문자열로만 흘러간다.
+    const investedKRW = p.entryKRW * p.qty;
+    const displayCurrency = currencyForMarket(resolveMarket(p.symbol, p.market));
+    const display: HoldingDisplay = {
+      invested: toDisplayAmount(investedKRW, displayCurrency, quote),
+    };
+
     return {
       symbol:     p.symbol,
       profitPct:  p.profitPct,
       entryKRW:   p.entryKRW,
       currentKRW: p.currentKRW,
       qty:        p.qty,
-      investedKRW: p.entryKRW * p.qty,
+      investedKRW,
       periodStartKRW,
       nowPriceKRW,
       periodChangePct,
       sellSignal,
       priceTargets,
+      display,
     };
   });
 

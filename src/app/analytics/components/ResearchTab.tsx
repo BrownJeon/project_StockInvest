@@ -16,6 +16,7 @@ import {
   unreachableReasonKo,
 } from '@/lib/research/pattern/price-targets';
 import { targetVsEntryPct } from '@/lib/research/pattern/recommendation';
+import { isFxConverted, isFxFallback, type DisplayAmount } from '@/lib/display-amount';
 import type { PriceTargets } from '@/lib/research/types';
 
 const RESEARCH_COLOR = '#14b8a6';
@@ -101,6 +102,15 @@ interface Recommendation {
     qty: number;
     daysSinceEntry: number | null;
     nowPriceKRW: number | null;
+    /**
+     * T-035 — 화면 표기용 금액. 해외 종목은 USD, 국내는 KRW.
+     * 🔴 달러 진입가는 **현재 환율 환산본**이지 매수 당시 체결가가 아니다(아래 문구로 고지).
+     * 구버전 API 응답에는 없을 수 있으므로 optional 로 받고 KRW 로 폴백한다.
+     */
+    display?: {
+      entryPrice: DisplayAmount;
+      nowPrice: DisplayAmount;
+    } | null;
   } | null;
 }
 
@@ -121,6 +131,22 @@ const WARNING_KO: Record<string, string> = {
 
 const pct = (v: number | null, digits = 1) => (v == null ? '—' : v.toFixed(digits) + '%');
 const krw = (v: number | null) => (v == null ? '—' : '₩' + Math.round(v).toLocaleString('ko-KR'));
+
+/**
+ * 종목별 금액 표기 (T-035) — 해외는 달러, 국내는 원화.
+ *
+ * 목표가와 **같은 포맷터**(`formatTargetPrice`)를 쓴다. 한 줄 안에서 목표가는 `$`, 진입가는 `₩`
+ * 로 갈리던 것이 사용자가 지적한 문제였으므로 표기가 어긋날 여지를 남기지 않는다.
+ * 달러로 못 바꿨으면(시세 조회 실패 등) 원화로 폴백하고 그 사실을 함께 적는다 —
+ * 숫자를 지어내거나 기호만 바꾸지 않는다.
+ *
+ * @param fallbackKRW `display` 가 없는 구버전 응답을 위한 원화 원본
+ */
+function amount(d: DisplayAmount | null | undefined, fallbackKRW: number | null): string {
+  if (!d || d.value == null) return krw(fallbackKRW);
+  const main = formatTargetPrice(d.value, d.currency);
+  return isFxFallback(d) ? `${main}(달러 환산 불가)` : main;
+}
 
 /** "지금 분석" 직후 화면상 확인 수단 — 값이 이전과 동일해도 이 시각은 항상 바뀐다. */
 function formatKstTime(iso: string | null): string | null {
@@ -296,8 +322,11 @@ const DOWNGRADE_KO: Record<string, string> = {
  *  - **기한 내 도달 근거가 없으면 목표가 숫자를 만들어 보여주지 않는다** — 대신 그 사실을 쓴다.
  *  - 기준일(`asOfDate`)을 항상 함께 노출한다 — 국내는 전일 종가, 해외는 당일 종가 기준이라
  *    실시간이 아니다. 이걸 감추면 사용자가 "지금 값"으로 오해한다.
- *  - 목표가는 **차트 레벨**이며 진입가·손익과 무관하다. 통화 기호(`$`/`₩`)를 항상 붙인다 —
- *    해외 종목의 목표가는 USD 이고 진입가·현재가는 KRW 라 기호가 없으면 같은 단위로 오해한다.
+ *  - 목표가는 **차트 레벨**이며 진입가·손익과 무관하다. 통화 기호(`$`/`₩`)를 항상 붙인다.
+ *  - T-035 — 종목별 금액(진입가·현재가)도 목표가와 **같은 통화**로 찍는다(해외는 USD).
+ *    한 줄 안에서 목표가만 `$`, 진입가는 `₩` 로 갈리던 것이 사용자가 지적한 문제였다.
+ *    🔴 달러 진입가는 **현재 환율 환산본**이며 매수 당시 체결가가 아니다 — 원화 원본과 함께
+ *    그 사실을 문구(`fxNote`)로 반드시 노출한다.
  *  - 전부 **참고치**다(도달·기한 준수를 보장하지 않는다) — 면책 문구를 항상 동반.
  */
 function RecommendationBlock({ rec }: { rec: Recommendation }) {
@@ -345,10 +374,22 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
    * 목표가에 팔면 이득인지 손해인지가 이 숫자 하나로 드러난다.
    */
   const entryPct = targetVsEntryPct(sellTarget?.price, targets?.asOfPrice, sell?.gainPct);
+  // T-035 — 진입가도 목표가와 **같은 통화**로 찍는다(해외는 USD). 통화가 한 줄에서 섞이던 것이
+  // 사용자가 지적한 문제였다. 값 자체는 환산 전 KRW 를 쓴 `entryPct` 와 독립이다.
+  const entryDisplay = holding ? amount(holding.display?.entryPrice, holding.entryPriceKRW) : '—';
   const entryComparison = holding?.entryPriceKRW
-    ? ` · 내 진입가 ${krw(holding.entryPriceKRW)}`
+    ? ` · 내 진입가 ${entryDisplay}`
       + (entryPct != null ? ` 대비 ${entryPct >= 0 ? '+' : ''}${entryPct.toFixed(1)}%` : '')
     : '';
+
+  /**
+   * 🔴 달러 진입가는 **현재 시세의 환율로 환산한 값**이지 매수 당시 체결가가 아니다.
+   * DB 에는 원화 진입가만 있고 매수 시점 환율은 남아 있지 않다. 환율이 움직였으면 실제
+   * 체결 단가와 다르므로, 원화 원본과 함께 이 성격을 반드시 드러낸다.
+   */
+  const fxNote = isFxConverted(holding?.display?.entryPrice)
+    ? `달러 금액은 현재 시세 기준 환율로 환산한 값입니다 — 진입가 ${krw(holding?.entryPriceKRW ?? null)}(원화 기록)의 환산본이며 매수 당시 체결가가 아닙니다.`
+    : null;
 
   // 🔴 매도 사유는 **차트 문장만** 나온다. 보유기간·손익은 아래 "보유" 정보 줄로 분리했다.
   const sellReasonText =
@@ -409,11 +450,12 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
           <div style={S.predictWrap}>
             <PredictRow
               label="보유"
-              value={`진입가 ${krw(holding?.entryPriceKRW ?? null)} · 현재가 ${krw(holding?.nowPriceKRW ?? null)}`
+              value={`진입가 ${entryDisplay} · 현재가 ${amount(holding?.display?.nowPrice, holding?.nowPriceKRW ?? null)}`
                 + `${sell?.gainPct != null ? ` (${sell.gainPct >= 0 ? '+' : ''}${sell.gainPct.toFixed(1)}%)` : ''}`
                 + `${sell?.daysSinceEntry != null ? ` · ${sell.daysSinceEntry}일째` : ''}`}
             />
             <div style={S.noteText}>위 보유 정보는 참고용이며 매도 판단 근거가 아닙니다 — 판단은 차트 목표가 기준입니다.</div>
+            {fxNote && <div style={S.noteText}>{fxNote}</div>}
           </div>
         </>
       )}

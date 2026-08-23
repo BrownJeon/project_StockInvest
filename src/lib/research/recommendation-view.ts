@@ -11,16 +11,20 @@
  * - 결과는 화면 표시용이다. `createSignal()`·`submitOrder()`·`src/lib/strategy/` 로
  *   흘러가지 않으며, 그렇게 연결하려면 T-033 의 전제를 다시 논의해야 한다.
  *
- * ## 🔴 통화 경계 (T-034)
+ * ## 🔴 통화 경계 (T-034 → T-035)
  *
  * `PriceTargets`(목표가)는 **캔들 통화**(국내 KRW / 해외 USD)이고,
  * `HoldingContext.entryPriceKRW`·`nowPriceKRW` 는 **항상 KRW** 다.
- * 이 파일에서 두 계열이 만나는 연산은 **하나도 없다** — 목표가는 그대로 전달만 하고,
+ * 이 파일에서 두 계열이 만나는 **연산**은 여전히 하나도 없다 — 목표가는 그대로 전달만 하고,
  * 손익률(`gainPct`)은 KRW 끼리만 계산한다. 새 계산을 추가할 때 이 경계를 먼저 확인할 것.
+ *
+ * T-035 에서 화면 표기용으로 `HoldingContext.display`(해외는 USD)를 덧붙였다. 그 변환은
+ * `src/lib/display-amount.ts` **한 곳**에서만 일어나고 결과는 **표시로만** 흐른다 —
+ * 판정(`evaluateSellSignal`)·손익률에는 KRW 원본만 들어간다.
  *
  * ## 현재가 조회를 주입받는 이유
  *
- * 현재가 조회(`fetchCurrentPricesKRW`)는 `src/lib/reports/trade-report.ts` 에 있고 그 파일은
+ * 현재가 조회(`fetchCurrentQuotes`)는 `src/lib/reports/trade-report.ts` 에 있고 그 파일은
  * 이미 `src/lib/research/*` 를 import 한다. 여기서 되받아 import 하면 디렉토리 사이에 순환이
  * 생긴다. 그래서 **함수로 주입**받는다 — 라우트(앱 계층)가 두 모듈을 각각 알고 연결한다.
  */
@@ -32,7 +36,9 @@ import {
   type BuyRecommendation,
   type SellAssessment,
 } from './pattern/recommendation';
+import { currencyForMarket } from './pattern/price-targets';
 import type { PrecursorAnalysis, PriceTargets, ResearchMarket } from './types';
+import { toDisplayAmount, type DisplayAmount, type SymbolQuote } from '@/lib/display-amount';
 
 /** 추천을 만들기 위해 필요한 최소 입력 — `ResearchReport` 와 `StoredResearchResult` 둘 다 만족한다. */
 export interface RecommendationInput {
@@ -52,6 +58,23 @@ export interface HoldingContext {
   /** 진입 후 경과 **달력일** */
   daysSinceEntry: number | null;
   nowPriceKRW: number | null;
+  /**
+   * T-035 — 화면에 찍을 통화·금액. 해외 종목은 USD, 국내는 KRW 그대로다.
+   * 🔴 **표시 전용**이며 위 KRW 필드가 여전히 계산 원본이다.
+   */
+  display: HoldingDisplay;
+}
+
+/**
+ * 보유 금액의 표시용 통화·값 (T-035).
+ *
+ * 🔴 진입가의 달러 표기는 **현재 시세 환율로 환산한 값**이지 매수 당시 체결가가 아니다.
+ *    DB(`position_state.entry_price`)에는 KRW 만 있고 매수 시점 환율은 남아 있지 않다.
+ *    화면은 이 사실을 문구로 함께 노출해야 한다(`ResearchTab` 의 보유 정보 주석 참조).
+ */
+export interface HoldingDisplay {
+  entryPrice: DisplayAmount;
+  nowPrice: DisplayAmount;
 }
 
 export interface ResearchRecommendationView {
@@ -104,11 +127,15 @@ async function fetchPositions(symbols: string[]): Promise<Map<string, PositionRo
   return out;
 }
 
-export type PriceFetcher = (targets: { symbol: string; market: string }[]) => Promise<Map<string, number>>;
+/**
+ * 현재 시세 조회 주입 지점. **KRW 환산가와 (해외의) USD 원가를 쌍으로** 받는다 —
+ * 그 쌍이 T-035 달러 표기의 유일한 환율 근거다(`fetchCurrentQuotes()` 구현 참조).
+ */
+export type QuoteFetcher = (targets: { symbol: string; market: string }[]) => Promise<Map<string, SymbolQuote>>;
 
 export async function buildResearchRecommendations(
   inputs: RecommendationInput[],
-  fetchPrices: PriceFetcher,
+  fetchQuotes: QuoteFetcher,
   now: Date = new Date(),
 ): Promise<Map<string, ResearchRecommendationView>> {
   const out = new Map<string, ResearchRecommendationView>();
@@ -122,12 +149,12 @@ export async function buildResearchRecommendations(
   const priceTargets = inputs
     .filter((i) => positions.has(i.symbol))
     .map((i) => ({ symbol: i.symbol, market: positions.get(i.symbol)?.market || i.market }));
-  const prices = priceTargets.length > 0
-    ? await fetchPrices(priceTargets).catch((e) => {
+  const quotes = priceTargets.length > 0
+    ? await fetchQuotes(priceTargets).catch((e) => {
         console.warn(`[research/recommendation-view] 현재가 조회 실패: ${e instanceof Error ? e.message : String(e)}`);
-        return new Map<string, number>();
+        return new Map<string, SymbolQuote>();
       })
-    : new Map<string, number>();
+    : new Map<string, SymbolQuote>();
 
   for (const input of inputs) {
     const targets = input.priceTargets ?? null;
@@ -138,7 +165,8 @@ export async function buildResearchRecommendations(
     let holding: HoldingContext | null = null;
 
     if (pos) {
-      const nowPriceKRW = prices.get(input.symbol) ?? null;
+      const quote = quotes.get(input.symbol) ?? null;
+      const nowPriceKRW = quote?.krw ?? null;
       const daysSinceEntry = pos.firstSeenAt && !Number.isNaN(pos.firstSeenAt.getTime())
         ? Math.max(0, Math.floor((now.getTime() - pos.firstSeenAt.getTime()) / 86_400_000))
         : null;
@@ -149,11 +177,20 @@ export async function buildResearchRecommendations(
         entryPriceKRW: pos.entryPriceKRW,
         currentPriceKRW: nowPriceKRW,
       });
+      // T-035 — 표기 통화 변환은 판정이 **끝난 뒤** 표시값에만 적용한다.
+      // 통화 판별은 `currencyForMarket()` 한 곳(T-034 결정)을 그대로 쓴다.
+      const displayCurrency = currencyForMarket(
+        pos.market === 'domestic' || pos.market === 'overseas' ? pos.market : input.market,
+      );
       holding = {
         entryPriceKRW: pos.entryPriceKRW,
         qty: pos.qty,
         daysSinceEntry,
         nowPriceKRW,
+        display: {
+          entryPrice: toDisplayAmount(pos.entryPriceKRW, displayCurrency, quote),
+          nowPrice:   toDisplayAmount(nowPriceKRW, displayCurrency, quote),
+        },
       };
     }
 

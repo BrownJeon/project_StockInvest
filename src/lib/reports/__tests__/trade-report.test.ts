@@ -10,6 +10,7 @@ import {
   type TradeReport,
 } from '../trade-report';
 import { PRECURSOR_NOTE } from '@/lib/research/pattern/precursor-analysis';
+import { toDisplayAmount } from '@/lib/display-amount';
 import type { PriceTargets } from '@/lib/research/types';
 
 function row(symbol: string, side: 'buy'|'sell', price: number, qty: number, ts: number, fee = 0): OrderRow {
@@ -213,6 +214,8 @@ function holding(over: Partial<HoldingStatus> = {}): HoldingStatus {
     periodChangePct: 1.85,
     sellSignal: null,
     priceTargets: chartTargets(),
+    // T-035 — 국내 종목 기본값. 해외 케이스는 `display` 를 직접 덮어쓴다.
+    display: { invested: toDisplayAmount(1_980_000, 'KRW', null) },
     ...over,
   };
 }
@@ -297,6 +300,41 @@ describe('formatReportMessage — 보유 현황 (T-033)', () => {
     const rep = await emptyReport();
     const msg = formatReportMessage(rep, 1000, null, { buyWatchlist: [], holdings: [holding()], sellPnl: [] });
     expect(msg).toMatch(/└ 투자금 ₩1,980,000/);
+  });
+
+  // ── T-035 — 해외 보유 종목의 종목별 금액은 달러로 ─────────────────────────
+  test('🔴 해외 보유 종목의 투자금은 달러로 찍히고, 원화 원본·환산 사실을 함께 밝힌다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        symbol: 'NAS:SNPS', investedKRW: 10_717_728,
+        display: { invested: toDisplayAmount(10_717_728, 'USD', { krw: 553_109, usd: 397.92 }) },
+      })],
+    });
+    expect(msg).toMatch(/└ 투자금 \$7,7\d\d\.\d\d/);
+    expect(msg).toMatch(/원화 ₩10,717,728 · 현재 환율 환산/);
+    // 🔴 달러 자리에 원화 자릿수(수백만)가 새어 나오면 실패한다
+    expect(msg).not.toMatch(/투자금 \$10,717,728/);
+  });
+
+  test('국내 보유 종목의 투자금은 계속 원화이고 환산 문구가 붙지 않는다', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, { buyWatchlist: [], holdings: [holding()], sellPnl: [] });
+    expect(msg).toMatch(/└ 투자금 ₩1,980,000$/m);
+    expect(msg).not.toMatch(/환율 환산/);
+  });
+
+  test('🔴 해외인데 달러로 못 바꾸면 원화로 표시하고 그 사실을 밝힌다 (숫자를 지어내지 않는다)', async () => {
+    const rep = await emptyReport();
+    const msg = formatReportMessage(rep, 1000, null, {
+      buyWatchlist: [], sellPnl: [],
+      holdings: [holding({
+        symbol: 'NAS:SNPS', investedKRW: 10_717_728,
+        display: { invested: toDisplayAmount(10_717_728, 'USD', null) },
+      })],
+    });
+    expect(msg).toMatch(/└ 투자금 ₩10,717,728 \(달러 환산 불가 — 원화 표시\)/);
   });
 
   test('baseline·현재가가 없으면 조용히 생략하지 않고 "데이터 없음"을 명시한다', async () => {

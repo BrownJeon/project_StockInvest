@@ -23,7 +23,13 @@ jest.mock('@/lib/db', () => ({
 
 import { buildResearchRecommendations, type RecommendationInput } from '../recommendation-view';
 import { TARGET_HORIZON_DAYS } from '../pattern/price-targets';
+import type { SymbolQuote } from '@/lib/display-amount';
 import type { PrecursorAnalysis, PriceTargets } from '../types';
+
+/** T-035 — 시세 조회는 KRW·USD 쌍을 돌려준다. 국내 종목은 USD 가 없다. */
+const quotes = (m: Record<string, SymbolQuote>) => async () => new Map(Object.entries(m));
+const krwOnly = (m: Record<string, number>) =>
+  quotes(Object.fromEntries(Object.entries(m).map(([k, v]) => [k, { krw: v, usd: null }])));
 
 const rows = (r: unknown[]): Promise<unknown> => Promise.resolve([r, []]);
 
@@ -67,7 +73,7 @@ afterEach(() => { warnSpy.mockRestore(); jest.clearAllMocks(); });
 
 describe('buildResearchRecommendations', () => {
   test('미보유 + 매수고려 종목 — 차트 목표가를 그대로 싣고 시세는 조회하지 않는다', async () => {
-    const fetchPrices = jest.fn(async () => new Map<string, number>());
+    const fetchPrices = jest.fn(async () => new Map<string, SymbolQuote>());
     const out = await buildResearchRecommendations([input('005930')], fetchPrices, NOW);
 
     const v = out.get('005930')!;
@@ -84,7 +90,7 @@ describe('buildResearchRecommendations', () => {
   test('기한 내 닿을 지지선이 없으면 buy 가 아니라 hold 로 내려간다', async () => {
     const out = await buildResearchRecommendations(
       [input('005930', { priceTargets: targets({ buyZone: null, buyReachable: null }) })],
-      async () => new Map<string, number>(), NOW,
+      async () => new Map<string, SymbolQuote>(), NOW,
     );
     const v = out.get('005930')!;
     expect(v.buy.action).toBe('hold');
@@ -92,7 +98,7 @@ describe('buildResearchRecommendations', () => {
   });
 
   test('관망(hold) 종목은 매수 근거만 나오고 시세를 조회하지 않는다', async () => {
-    const fetchPrices = jest.fn(async () => new Map<string, number>());
+    const fetchPrices = jest.fn(async () => new Map<string, SymbolQuote>());
     const out = await buildResearchRecommendations(
       [input('005930', { todayActiveRuleIds: [] })],   // 오늘 충족 규칙 0개 → hold
       fetchPrices, NOW,
@@ -105,7 +111,7 @@ describe('buildResearchRecommendations', () => {
 
   test('🔴 position_state 는 SELECT 만 한다 (INSERT/UPDATE/DELETE 없음)', async () => {
     queryImpl = () => rows([HELD]);
-    await buildResearchRecommendations([input('005930')], async () => new Map([['005930', 82_000]]), NOW);
+    await buildResearchRecommendations([input('005930')], krwOnly({ '005930': 82_000 }), NOW);
 
     const posQueries = queryCalls.filter(c => /position_state/.test(c.sql));
     expect(posQueries).toHaveLength(1);
@@ -118,7 +124,7 @@ describe('buildResearchRecommendations', () => {
     queryImpl = () => rows([HELD]);
     const out = await buildResearchRecommendations(
       [input('005930')],
-      async () => new Map([['005930', 82_000]]),
+      krwOnly({ '005930': 82_000 }),
       NOW,
     );
     const v = out.get('005930')!;
@@ -136,7 +142,7 @@ describe('buildResearchRecommendations', () => {
     // first_seen_at 을 3년 전으로 — 예전 설계였다면 "기간 초과"로 매도 고려가 떴다.
     queryImpl = () => rows([{ ...HELD, first_seen_at: '2023-08-08T00:00:00Z' }]);
     const out = await buildResearchRecommendations(
-      [input('005930')], async () => new Map([['005930', 82_000]]), NOW,
+      [input('005930')], krwOnly({ '005930': 82_000 }), NOW,
     );
     const v = out.get('005930')!;
     expect(v.sell?.action).toBe('hold');
@@ -148,7 +154,7 @@ describe('buildResearchRecommendations', () => {
     const run = async (entryPrice: number) => {
       queryImpl = () => rows([{ ...HELD, entry_price: entryPrice }]);
       const out = await buildResearchRecommendations(
-        [input('005930')], async () => new Map([['005930', 57_000]]), NOW,
+        [input('005930')], krwOnly({ '005930': 57_000 }), NOW,
       );
       return out.get('005930')!;
     };
@@ -182,7 +188,7 @@ describe('buildResearchRecommendations', () => {
     queryImpl = () => rows([HELD]);
     const out = await buildResearchRecommendations(
       [input('005930', { priceTargets: null })],
-      async () => new Map([['005930', 82_000]]), NOW,
+      krwOnly({ '005930': 82_000 }), NOW,
     );
     const v = out.get('005930')!;
     expect(v.targets).toBeNull();
@@ -199,7 +205,7 @@ describe('buildResearchRecommendations', () => {
 
   test('시세 조회는 보유 종목으로만 좁힌다(미보유는 목표가에 현재가가 필요 없다)', async () => {
     queryImpl = () => rows([{ ...HELD, first_seen_at: null }]);
-    const fetchPrices = jest.fn(async () => new Map<string, number>());
+    const fetchPrices = jest.fn(async () => new Map<string, SymbolQuote>());
     await buildResearchRecommendations(
       [
         input('005930'),                                   // 보유중 → 포함
@@ -210,6 +216,91 @@ describe('buildResearchRecommendations', () => {
     );
     const [priceTargets] = fetchPrices.mock.calls[0] as [{ symbol: string; market: string }[]];
     expect(priceTargets.map(t => t.symbol)).toEqual(['005930']);
+  });
+
+  // ── T-035 — 해외 종목 금액의 달러 표기 ──────────────────────────────────
+  //
+  // 진입가 USD 는 DB 에 없다. 같은 시세 응답의 KRW/USD 쌍에서 환율을 얻어 역산한다.
+  // 🔴 이건 **현재 환율 환산본**이지 매수 당시 체결가가 아니다(화면이 그 사실을 고지한다).
+  const HELD_OVERSEAS = {
+    symbol: 'NAS:SNPS', market: 'overseas', entry_price: 669_858, qty: 16,
+    first_seen_at: '2026-08-08T00:00:00Z',
+  };
+  /** NAS:SNPS 실사례 근사 — KRW 553,109 / USD 397.92 (환율 ≈ 1,390) */
+  const SNPS_QUOTE = { krw: 553_109, usd: 397.92 };
+
+  test('🔴 해외 보유 종목 — 진입가·현재가가 달러로 나온다 (환율은 시세 쌍에서 역산)', async () => {
+    queryImpl = () => rows([HELD_OVERSEAS]);
+    const out = await buildResearchRecommendations(
+      [input('NAS:SNPS', { market: 'overseas' })],
+      quotes({ 'NAS:SNPS': SNPS_QUOTE }), NOW,
+    );
+    const d = out.get('NAS:SNPS')!.holding!.display;
+    expect(d.entryPrice.currency).toBe('USD');
+    expect(d.entryPrice.basis).toBe('usd_converted');
+    expect(d.entryPrice.value!).toBeCloseTo(669_858 * (397.92 / 553_109), 6);
+    // 현재가는 시세의 USD 원가 그 자체와 같은 값이 된다
+    expect(d.nowPrice.currency).toBe('USD');
+    expect(d.nowPrice.value!).toBeCloseTo(397.92, 6);
+    // 원본 KRW 는 그대로 남는다 — 손익·판정은 여전히 이 값으로 계산된다
+    expect(out.get('NAS:SNPS')!.holding!.entryPriceKRW).toBe(669_858);
+    expect(out.get('NAS:SNPS')!.holding!.nowPriceKRW).toBe(553_109);
+  });
+
+  test('국내 보유 종목은 계속 원화다 — 환산 경로에 들어가지 않는다', async () => {
+    queryImpl = () => rows([HELD]);
+    const out = await buildResearchRecommendations(
+      [input('005930')], krwOnly({ '005930': 82_000 }), NOW,
+    );
+    const d = out.get('005930')!.holding!.display;
+    expect(d.entryPrice).toEqual({ value: 70_000, currency: 'KRW', basis: 'krw_native', sourceKRW: 70_000 });
+    expect(d.nowPrice.currency).toBe('KRW');
+    expect(d.nowPrice.value).toBe(82_000);
+  });
+
+  test('🔴 해외인데 USD 원가가 없으면 원화로 폴백하고 그 사실이 드러난다', async () => {
+    queryImpl = () => rows([HELD_OVERSEAS]);
+    const out = await buildResearchRecommendations(
+      [input('NAS:SNPS', { market: 'overseas' })],
+      quotes({ 'NAS:SNPS': { krw: 553_109, usd: null } }), NOW,
+    );
+    const d = out.get('NAS:SNPS')!.holding!.display;
+    expect(d.entryPrice.currency).toBe('KRW');
+    expect(d.entryPrice.basis).toBe('krw_fallback');
+    expect(d.entryPrice.value).toBe(669_858);   // 숫자를 지어내지 않는다
+  });
+
+  test('시세 조회가 통째로 실패해도 진입가는 원화로 표시된다', async () => {
+    queryImpl = () => rows([HELD_OVERSEAS]);
+    const out = await buildResearchRecommendations(
+      [input('NAS:SNPS', { market: 'overseas' })],
+      async () => { throw new Error('KIS down'); }, NOW,
+    );
+    const d = out.get('NAS:SNPS')!.holding!.display;
+    expect(d.entryPrice.basis).toBe('krw_fallback');
+    expect(d.entryPrice.value).toBe(669_858);
+    expect(d.nowPrice.value).toBeNull();        // 현재가는 정말 없다
+  });
+
+  test('🔴 환율이 달라져도 판정·손익률은 한 톨도 변하지 않는다 (통화 혼용 회귀)', async () => {
+    const run = async (usd: number) => {
+      queryImpl = () => rows([HELD_OVERSEAS]);
+      const out = await buildResearchRecommendations(
+        [input('NAS:SNPS', { market: 'overseas' })],
+        quotes({ 'NAS:SNPS': { krw: 553_109, usd } }), NOW,
+      );
+      return out.get('NAS:SNPS')!;
+    };
+    const a = await run(397.92);
+    const b = await run(397.92 * 2);   // 환율만 절반이 된 세계
+
+    expect(b.sell!.action).toBe(a.sell!.action);
+    expect(b.sell!.reason).toBe(a.sell!.reason);
+    expect(b.sell!.gainPct).toBe(a.sell!.gainPct);
+    expect(b.targets!.sellTarget!.price).toBe(a.targets!.sellTarget!.price);
+    expect(b.holding!.entryPriceKRW).toBe(a.holding!.entryPriceKRW);
+    // 달라지는 건 오직 달러 **표시값**이고, 정확히 2배다(상수 KRW 항이 끼면 실패)
+    expect(b.holding!.display.entryPrice.value!).toBeCloseTo(a.holding!.display.entryPrice.value! * 2, 6);
   });
 
   test('입력이 비면 쿼리조차 쏘지 않는다', async () => {

@@ -9,7 +9,7 @@
  */
 import { getLatestResearchResults } from '@/lib/research/storage';
 import { buildResearchRecommendations } from '@/lib/research/recommendation-view';
-import { fetchCurrentPricesKRW } from '@/lib/reports/trade-report';
+import { fetchCurrentQuotes } from '@/lib/reports/trade-report';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,7 +21,7 @@ export async function GET() {
     // 결과가 있고 실패하지 않은 심볼만 추천 대상 — 실패 행에 추천을 붙이면 근거 없는 값이 된다.
     const recommendations = await buildResearchRecommendations(
       results.filter((r) => !r.error),
-      fetchCurrentPricesKRW,
+      fetchCurrentQuotes,
     );
 
     // 즐겨찾기 정렬 순서를 그대로 유지한다(사용자가 기대하는 순서).

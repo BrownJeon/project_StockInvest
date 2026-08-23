@@ -21,7 +21,7 @@ import { buildResearchReport } from '@/lib/research/research-report';
 import { listTrackedSymbols, upsertResearchResult } from '@/lib/research/storage';
 import { withTimeout, SYMBOL_TIMEOUT_MS, PER_FETCH_TIMEOUT_MS } from '@/lib/research/run-cycle';
 import { buildResearchRecommendations } from '@/lib/research/recommendation-view';
-import { fetchCurrentPricesKRW } from '@/lib/reports/trade-report';
+import { fetchCurrentQuotes } from '@/lib/reports/trade-report';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +54,7 @@ export async function POST(
     // 여기서만 빠지면 "지금 분석" 직후 배지가 사라져 사용자가 결과를 잃은 것처럼 본다.
     const recommendations = report.error
       ? new Map()
-      : await buildResearchRecommendations([report], fetchCurrentPricesKRW);
+      : await buildResearchRecommendations([report], fetchCurrentQuotes);
 
     return Response.json({
       ok: true,

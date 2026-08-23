@@ -253,7 +253,18 @@ KIS가 일봉을 **100봉**만 반환하는데 이 룰은 **210봉**을 요구�
 - **git commit/push 금지** — push가 곧 운영 배포다(webhook-deploy, 위 참조). 커밋은 사용자 승인 후.
 - **커밋은 리눅스 호스트에서** — Windows SMB 마운트 작업 시 파일 권한 비트가 다수 파일에서 바뀐 것으로 잡힌다. `git -c core.fileMode=false status`로 실변경만 확인.
 - **`npm install`을 Windows에서 실행 금지** — node_modules가 리눅스 바이너리 트리라 SWC 바이너리 교체로 운영이 깨진다. 패키지 변경 시 `npm install --package-lock-only --save-exact`로 lock만 갱신.
-- **로컬 검증 빌드 주의** — 이 경로(NFS) 자체가 운영 배포 경로다. **검증은 `npm run typecheck` + `npm test`만 사용, `npm run build`는 실행하지 않는다**(pm2가 서빙 중인 `.next`를 덮어씀). 실제 배포는 webhook-deploy가 별도로 `npm run build`를 수행하므로 문제없다.
+- 🔴 **로컬 검증 빌드·dev 서버 금지** — 이 경로(NFS) 자체가 운영 배포 경로다. **검증은
+  `npm run typecheck` + `npm test`만 사용**한다. 실제 배포는 webhook-deploy가 별도로
+  `npm run build`를 수행하므로 문제없다.
+  - `npm run build` 금지 — pm2가 서빙 중인 `.next`를 덮어쓴다.
+  - **`next dev`/`npm run dev` 도 금지(2026-08-23 추가).** 포트를 3099 등으로 바꿔도
+    `distDir`이 분리돼 있지 않아 **같은 `.next`를 덮는다.** 실제로 T-035 작업 중 이 사고가 나서
+    운영 빌드의 `BUILD_ID`가 사라졌다(실행 중 프로세스는 응답했으나 다음 재시작 시 기동 실패할
+    상태였고, HEAD 상태에서 `next build` 1회로 복구). **"포트를 나누면 안전하다"는 직관이 틀렸다** —
+    이 실패 모드를 잊기 쉬우니 여기 못박아 둔다.
+  - 그럼 실데이터·화면은 어떻게 보나: **jest에서 실제 DB를 조회**(SELECT만)하거나 `mysql` 직접
+    조회로 값을 확인하고, **브라우저 화면 확인은 배포 후 사용자가 실기기로** 한다(기존 관행).
+    서브에이전트에게 검증을 지시할 때 이 금지를 **지시문에 명시**할 것 — 안 적으면 반복된다.
 - **DB는 운영 MariaDB** — 파괴적 SQL 금지. 스키마 변경은 `src/lib/db.ts` 코드로만(부팅 시 idempotent). 조회는 SELECT만.
 - Windows에서 git dubious ownership 에러: `git -c safe.directory='%(prefix)///brownjeon_nas/homes/brownjeon/project/StockInvest' <cmd>` 일회성 지정(글로벌 config 변경 금지).
 - **배포 후 `stockinvest-cron` 재시작은 _조건부_** — 2026-08-05 정정. `scripts/cron-runner.sh`는 next를 전혀 require하지 않는 순수 bash+curl 루프라 **next 버전 변경만으로는 재시작 불필요**. 단 `.env`나 `cron-runner.sh` **자체가 바뀐 배포**에서는 여전히 필요(시작 시 `CRON_SECRET`을 1회만 읽고, 실행 중 스크립트 교체 시 bash 오작동 가능). 상세: [[T-005-next15-upgrade]] §Leader 검증 ①

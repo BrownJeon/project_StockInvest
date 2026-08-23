@@ -34,6 +34,7 @@ jest.mock('@/lib/research/storage', () => ({
 import { PRECURSOR_NOTE } from '@/lib/research/pattern/precursor-analysis';
 import {
   fetchCurrentPricesKRW,
+  fetchCurrentQuotes,
   fetchPortfolioBaselineKRW,
   fetchResearchDigest,
   fetchSymbolBaselinePrices,
@@ -185,6 +186,47 @@ describe('fetchCurrentPricesKRW', () => {
     expect((await fetchCurrentPricesKRW([])).size).toBe(0);
     expect(domesticTickers).not.toHaveBeenCalled();
     expect(overseasTickers).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchCurrentQuotes — KRW/USD 동일 시점 쌍 (T-035)', () => {
+  test('🔴 해외 티커의 `priceUsd`(환산 전 USD 원가)를 KRW 와 쌍으로 실어 보낸다', async () => {
+    domesticTickers.mockResolvedValue([{ symbol: '005930', price: 70_000 }]);
+    overseasTickers.mockResolvedValue([{ symbol: 'NAS:SNPS', price: 553_109, priceUsd: 397.92 }]);
+
+    const quotes = await fetchCurrentQuotes([
+      { symbol: '005930', market: 'domestic' },
+      { symbol: 'NAS:SNPS', market: 'overseas' },
+    ]);
+    // 이 쌍의 비가 곧 그 시세에 실제 적용된 환율이다 — 달러 표기의 유일한 근거
+    expect(quotes.get('NAS:SNPS')).toEqual({ krw: 553_109, usd: 397.92 });
+    // 국내 티커에는 USD 원가가 없다 — 없는 값을 만들어내지 않는다
+    expect(quotes.get('005930')).toEqual({ krw: 70_000, usd: null });
+  });
+
+  test('USD 원가가 없거나 0/NaN 이면 null — 추정하지 않는다', async () => {
+    overseasTickers.mockResolvedValue([
+      { symbol: 'NAS:A', price: 100, priceUsd: 0 },
+      { symbol: 'NAS:B', price: 100, priceUsd: Number.NaN },
+      { symbol: 'NAS:C', price: 100 },
+    ]);
+    const q = await fetchCurrentQuotes(['NAS:A', 'NAS:B', 'NAS:C'].map(symbol => ({ symbol, market: 'overseas' })));
+    for (const s of ['NAS:A', 'NAS:B', 'NAS:C']) expect(q.get(s)!.usd).toBeNull();
+  });
+
+  test('KRW 가격이 0/NaN 이면 USD 가 있어도 버린다 (시세 실패 sentinel 방어)', async () => {
+    overseasTickers.mockResolvedValue([
+      { symbol: 'NAS:A', price: 0, priceUsd: 397.92 },
+      { symbol: 'NAS:B', price: Number.NaN, priceUsd: 397.92 },
+    ]);
+    const q = await fetchCurrentQuotes(['NAS:A', 'NAS:B'].map(symbol => ({ symbol, market: 'overseas' })));
+    expect(q.size).toBe(0);
+  });
+
+  test('`fetchCurrentPricesKRW` 는 같은 조회의 KRW 만 추려 준다(기존 소비자 하위호환)', async () => {
+    overseasTickers.mockResolvedValue([{ symbol: 'NAS:SNPS', price: 553_109, priceUsd: 397.92 }]);
+    const prices = await fetchCurrentPricesKRW([{ symbol: 'NAS:SNPS', market: 'overseas' }]);
+    expect(prices.get('NAS:SNPS')).toBe(553_109);
   });
 });
 
