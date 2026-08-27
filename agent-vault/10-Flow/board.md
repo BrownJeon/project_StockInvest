@@ -292,18 +292,31 @@ tags:
   > §B(재시도 폭주)·관측성은 T-036에서 수정 중. §C(webhook 미발화)의 원인도 T-036에서 규명됐다
   > (`webhook-deploy` pm2 유령 프로세스).
 
-- 🔨 **[진행 중 — 2026-08-27] [[T-036-news-fetch-observability]] — news-fetch 107일 무성 실패:
+- ✅ **[완결 — 2026-08-27, 재구현] [[T-036-news-fetch-observability]] — news-fetch 107일 무성 실패:
   근본원인 규명(M4) + 관측성·재시도폭주 수정**
   [[T-031-news-fetch-m4-500]] 후속. **마지막 성공이 2026-05-13, 이후 107일간 매일 실패했고
   아무도 몰랐다** — 실측 누적 실패 12,060건(성공 2건). 뉴스 KB가 2026-05-12에 얼어붙어
   `src/lib/rag/retrieval.ts`가 먹이는 RAG 컨텍스트가 107일 묵은 상태였다.
-  근본원인은 home-m4-api 소유(직접 수정 않고 제안서 인계), StockInvest 쪽은 실패 알림 부재 +
-  재시도 폭주(하루 120건)를 수정한다. Developer 진행 중 → Reviewer → QA.
-  **부수 발견(별건)**: `stockinvest-cron`이 pm2 `online` 표기와 달리 **실제로 죽어 있고**
-  (2026-08-24 23:38 이후 2일 11시간 정지) 그동안 `entry-watcher` 등 자동매매 전체가 멈춰 있었다.
-  `n8n`·`webhook-deploy`도 같은 유령 상태. 기동은 사용자 승인 사항이라 미실행 — main에 보고 완료.
-  > **2026-08-27 갱신**: 사용자가 직접 재기동(10:51:23, pid 1193580) — 이 별건은
-  > [[T-037-cron-outage-impact-and-watchdog]]로 분리해 이어받는다(영향점검+원인규명+상시워치독).
+  근본원인(home-m4-api의 Redis/Qdrant 메타 불일치, `kb.py:74` 미포착 예외)은 이 저장소 밖
+  소관이라 직접 수정하지 않고 제안서만 인계 상태로 유지. StockInvest 쪽은 news-fetch를
+  `/api/cron/news-fetch` 라우트로 이관(시장별 최대 3회 재시도+타임아웃+실패 알림)하고,
+  news-fetch·export-llm-trainset 둘 다 날짜파일을 성공/실패 무관하게 무조건 기록하도록 고쳐
+  재시도 폭주(실측 누적 약 18,600건)를 해소, export-llm-trainset의 NFS noexec `bash` 경유
+  실행도 함께 수정.
+  **부수 발견(별건, 이미 처리 완료)**: `stockinvest-cron` pm2 유령 프로세스 2일 11시간 정지 →
+  [[T-037-cron-outage-impact-and-watchdog]]로 분리해 완결됨(재기동·워치독 도입·배포 완료).
+  > **2026-08-27 사고 — 미커밋 코드 삭제 후 재구현**: T-037 커밋(`a8dab3a`) 직후
+  > `webhook-deploy` 자동발동(`git reset --hard`+`git clean -fdx`)이 이 task의 최초 Developer
+  > 구현(미커밋)을 전부 삭제했다. 원인 분석은 이 문서·ACTIVE.md에 이미 커밋돼 살아남아
+  > 재구현 근거로 사용, 신규 leader가 task 이력서를 재작성하고 Developer→Reviewer→QA 전체
+  > 순환을 처음부터 다시 완주했다.
+  > **재구현 완결(같은 날)**: Developer 구현 → Reviewer PASS(scope: `scripts/cron-runner.sh`,
+  > `src/app/api/cron/news-fetch/`, Critical/High/Medium/Low 0건) → QA ✅ 검증 통과(14개 지시
+  > 시나리오 전부 실행+표 기록, 결함 0건). 세 역할 모두 각자 별도의 `~/.node-local/` 격리
+  > 클론에서 독립적으로 `npm ci`+`npm run build` 재현 성공(T-037 때 이 단계를 생략해 빌드
+  > 실패가 났던 전례 재발 방지). 126 suites/2221 tests 전부 통과. T-037 하트비트 블록과
+  > 물리적으로 분리된 위치에 적용해 충돌 없음. **git commit/push는 사용자 승인 대기.**
+  > 상세는 task 파일 "최종 요약" 참조.
 
 - ✅ **[완결 — 2026-08-27] [[T-037-cron-outage-impact-and-watchdog]] — stockinvest-cron
   2.5일 무성 정지: 실매매 영향 점검 + 원인 규명 + 상시 워치독 도입**

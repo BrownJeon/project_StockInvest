@@ -10,6 +10,8 @@
 #  - trade-report      : 5분 — 거래 리포트 anchor·interval 검증 후 Slack/Telegram 발송 (라우트 내부 자체 판단)
 #  - sync-stock-meta   : 매일 17:00 KST — KIS KOSPI/KOSDAQ 마스터 → stock_meta 현행화
 #  - news-fetch        : 매일 06:00 KST — M4 KB news.kr_market + news.us_market RSS 갱신
+#                        (T-036에서 bash 직접 curl → /api/cron/news-fetch 라우트로 이관.
+#                         재시도·타임아웃·실패 알림은 전부 라우트 안에 있다)
 #  - post-market-domestic: 매일 16:00 KST — 국내장 마감 후 익일 시나리오 분석
 #  - post-market-overseas: 매일 08:00 KST — 해외장 마감 후 익일 시나리오 분석
 #  - research-cycle-domestic: 매일 16:00 KST — 국내 리서치 추적 종목 사이클 패턴 재계산 (T-032, 주문 없음)
@@ -46,6 +48,16 @@ call() {
 # 시작 시 한 번 실행 (선택)
 echo "[cron-runner] started, base=$BASE_URL"
 
+# 하루 1회 잡의 "날짜파일" — 오늘 이미 시도했는지 기록한다.
+#
+# 🔴 (T-036) 날짜파일은 **성공·실패와 무관하게 기록한다.** 성공해야만 기록하던 두 잡
+#    (news-fetch, export-llm-trainset)은 실패가 지속되면 해당 시각 한 시간 내내 매 분
+#    재시도해서 낭비 호출이 폭주했다 — 실측 누적 약 18,600건
+#    (news-fetch 12,060건 / export-llm-trainset 6,574건).
+#    "일시 장애 자동복구" 의도는 이해되지만 **항구적 장애와 구분이 되지 않는다.**
+#    일시 장애 흡수는 이제 라우트 내부의 제한적 재시도가 담당하고(news-fetch: 시장별 2회),
+#    바깥에서는 하루 1회 시도로 끝낸다. 실패를 조용히 삼키지 않는 것은 재시도가 아니라
+#    알림의 역할이다.
 META_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/sync-stock-meta-last-date"
 TRAINSET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/export-llm-trainset-last-date"
 NEWS_FETCH_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-last-date"
@@ -56,11 +68,9 @@ RESEARCH_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-
 RESEARCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-overseas-last-date"
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
-# M4 뉴스 fetch 설정 (.env에서 로드)
-AI_API_BASE_ENV=$(grep '^AI_API_BASE=' "$PROJECT_DIR/.env" | cut -d= -f2-)
-M4_ADMIN_TOKEN_ENV=$(grep '^M4_ADMIN_TOKEN=' "$PROJECT_DIR/.env" | cut -d= -f2-)
-M4_BASE="${AI_API_BASE:-${AI_API_BASE_ENV:-}}"
-M4_ADMIN="${M4_ADMIN_TOKEN:-${M4_ADMIN_TOKEN_ENV:-}}"
+# (T-036) M4 뉴스 fetch용 AI_API_BASE/M4_ADMIN_TOKEN 플럼빙은 여기서 제거했다 —
+# 이제 /api/cron/news-fetch 라우트가 process.env로 직접 읽는다. `.env`의 값 자체는
+# 다른 코드(src/lib/rag/m4-kb.ts 등)도 쓰므로 그대로 둔다.
 
 # 분 단위 카운터 (동기 호출이라 60초 슬립으로 간략)
 i=0
@@ -153,42 +163,32 @@ while true; do
     call "/api/cron/research-cycle-domestic" "research-cycle-domestic"
     echo "$TODAY" > "$RESEARCH_DOMESTIC_LAST_RUN_FILE"
   fi
-  # 매일 06:00 KST: M4 KB 뉴스 fetch (하루 1회만) — news.kr_market + news.us_market 갱신
+  # 매일 06:00 KST: M4 KB 뉴스 fetch (하루 1회만) — news.kr_market + news.us_market 갱신.
+  # (T-036) bash 직접 curl → 라우트 호출로 이관. 재시도·타임아웃·실패 알림은 라우트 안에 있다.
   LAST_NEWS=$(cat "$NEWS_FETCH_LAST_RUN_FILE" 2>/dev/null || echo "")
-  if [ "$HH" = "06" ] && [ "$LAST_NEWS" != "$TODAY" ] && [ -n "$M4_BASE" ] && [ -n "$M4_ADMIN" ]; then
-    ts=$(date '+%F %T')
-    echo "[$ts] news-fetch start"
-    OK=1
-    for market in domestic overseas; do
-      code=$(curl -sS --connect-timeout 10 --max-time 60 \
-        -o /tmp/news-fetch-$market-$$.json -w "%{http_code}" \
-        -X POST "$M4_BASE/v1/news/fetch" \
-        -H "X-Admin-Token: $M4_ADMIN" -H "Content-Type: application/json" \
-        -d "{\"market\":\"$market\",\"limit\":20}" 2>/dev/null)
-      if [ "$code" = "200" ]; then
-        upserted=$(python3 -c "import json; d=json.load(open('/tmp/news-fetch-$market-$$.json')); print(d.get('upserted',0))" 2>/dev/null || echo "?")
-        echo "[$ts] news-fetch $market OK upserted=$upserted"
-      else
-        echo "[$ts] news-fetch $market FAILED HTTP=$code $(cat /tmp/news-fetch-$market-$$.json 2>/dev/null | head -c 100)"
-        OK=0
-      fi
-      rm -f "/tmp/news-fetch-$market-$$.json"
-    done
-    [ "$OK" = "1" ] && echo "$TODAY" > "$NEWS_FETCH_LAST_RUN_FILE"
+  if [ "$HH" = "06" ] && [ "$LAST_NEWS" != "$TODAY" ]; then
+    call /api/cron/news-fetch "news-fetch"
+    echo "$TODAY" > "$NEWS_FETCH_LAST_RUN_FILE"   # 성공·실패 무관 기록 (날짜파일 선언부 주석 참고)
   fi
   # 매일 03:00 KST: LoRA 학습 데이터셋 export (하루 1회만)
   LAST_TRAINSET=$(cat "$TRAINSET_LAST_RUN_FILE" 2>/dev/null || echo "")
   if [ "$HH" = "03" ] && [ "$LAST_TRAINSET" != "$TODAY" ]; then
     ts=$(date '+%F %T')
     echo "[$ts] export-llm-trainset start"
-    if "$PROJECT_DIR/scripts/export-llm-trainset.sh" >> "${HOME}/.node-local/stockinvest/logs/export-trainset.log" 2>&1; then
+    # (T-036) 반드시 `bash` 경유로 실행한다 — 이 저장소의 편집 경로는 NFS `noexec` 마운트라
+    # 파일 모드가 `-rwxrwxr-x`여도 +x 비트가 무효다(CLAUDE.md git 훅 절의 그 함정과 동일).
+    # 직접 실행하던 이전 코드는 매번 "허가 거부"로 죽어 이 잡은 단 한 번도 성공한 적이 없다
+    # (실측: OK 0건 / FAILED 6,574건, 날짜파일 자체가 생성된 적 없음).
+    # cron-runner.sh 자신이 돌아가는 건 pm2가 `bash cron-runner.sh`로 띄우기 때문이다.
+    if bash "$PROJECT_DIR/scripts/export-llm-trainset.sh" >> "${HOME}/.node-local/stockinvest/logs/export-trainset.log" 2>&1; then
       ts=$(date '+%F %T')
       echo "[$ts] export-llm-trainset OK"
-      echo "$TODAY" > "$TRAINSET_LAST_RUN_FILE"
     else
       ts=$(date '+%F %T')
       echo "[$ts] export-llm-trainset FAILED — see logs/export-trainset.log"
     fi
+    # 성공·실패 무관하게 기록 (날짜파일 선언부 주석 참고) — 실패해도 하루 1회로 끝낸다.
+    echo "$TODAY" > "$TRAINSET_LAST_RUN_FILE"
   fi
   i=$(( (i + 1) % 1440 ))   # 24h 사이클
   sleep 60

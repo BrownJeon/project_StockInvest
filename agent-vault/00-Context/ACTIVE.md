@@ -42,23 +42,31 @@ tags:
   > 아직 커밋되지 않았다** — 다음 커밋 시 `a8dab3a` 위에 반드시 함께 포함해야 한다. 상세는
   > task 파일 "최종 요약 추가" 절 참조.
 
-## 🔨 2026-08-27 — [[T-036-news-fetch-observability]] 진행 중: news-fetch 107일 무성 실패
+## ✅ 2026-08-27 — [[T-036-news-fetch-observability]] 완결(사고로 삭제 후 재구현): news-fetch 107일 무성 실패
 
 [[T-031-news-fetch-m4-500]](done으로 승계 종료) 후속. **마지막 성공 2026-05-13, 이후 107일간
 매일 실패했고 아무도 몰랐다** — 실측 누적 실패 12,060건 / 성공 2건.
 
-- **근본원인(home-m4-api 소유)**: Redis에 `kbcoll:<name>` 메타가 없고 Qdrant에는 컬렉션이 있는
-  불일치 상태에서 `create_collection`이 Qdrant **409**를 받는데, 이는 `ValueError`가 아니라
-  `UnexpectedResponse`라 미포착 → 500. 배포본 트레이스백 줄번호가 NFS 사본과 일치함을 대조 확인.
-  **409만 삼켜서는 안 고쳐진다** — `upsert_items`가 메타를 다시 조회해 502가 된다. Redis 메타를
-  Qdrant 실체로부터 복구(reconcile)하는 것이 옳은 수정. → 직접 고치지 않고 제안서를 main 경유 인계.
-- **현재 우연히 잠복 중**: 오늘 09:24경 M4 Redis가 재시작되며 RDB(04-26 메타)를 재적재해 200이
+- **근본원인(home-m4-api 소유, 이번에도 미수정)**: Redis에 `kbcoll:<name>` 메타가 없고 Qdrant에는
+  컬렉션이 있는 불일치 상태에서 `create_collection`이 Qdrant **409**를 받는데, 이는 `ValueError`가
+  아니라 `UnexpectedResponse`라 미포착 → 500. 배포본 트레이스백 줄번호가 NFS 사본과 일치함을 대조
+  확인. **409만 삼켜서는 안 고쳐진다** — `upsert_items`가 메타를 다시 조회해 502가 된다. Redis 메타를
+  Qdrant 실체로부터 복구(reconcile)하는 것이 옳은 수정. → 직접 고치지 않고 제안서를 main 경유 인계,
+  아직 미해결.
+- **현재 우연히 잠복 중**: 08-27 09:24경 M4 Redis가 재시작되며 RDB(04-26 메타)를 재적재해 200이
   나온다. uvicorn은 08-19 이후 재시작 없음 — **코드는 안 바뀌었다. 회복이지 수정이 아니다.**
 - **실피해**: 뉴스 KB가 `ingested_at` 기준 **2026-05-12에 얼어붙어 있었다**(`news.kr_market` 70건 중
   67건이 05-12). `src/lib/rag/retrieval.ts`가 이걸 전략 분석 RAG 입력으로 먹인다.
-- **StockInvest 쪽 수정(이 팀 범위)**: 실패 알림 부재 + 재시도 폭주(하루 120건) → cron 라우트화 +
-  `sendAlertThrottled` 알림 + 날짜파일 무조건 기록. Developer 진행 중.
-- 🟠 **별건**: StockInvest의 `AI_API_KEY`가 M4에서 **401 `invalid or disabled api key`**.
+- **StockInvest 쪽 수정(완료)**: news-fetch를 `/api/cron/news-fetch` 라우트로 이관(시장별 최대
+  3회 재시도+타임아웃+`sendAlertThrottled` 실패 알림), news-fetch·export-llm-trainset 둘 다
+  날짜파일 성공/실패 무관 무조건 기록으로 재시도 폭주(실측 누적 약 18,600건) 해소,
+  export-llm-trainset NFS noexec `bash` 경유 실행 수정.
+  > **2026-08-27 사고·재구현**: T-037 커밋(`a8dab3a`) 직후 `webhook-deploy` 자동발동이 이
+  > task의 최초 미커밋 구현을 전부 삭제 → 신규 leader가 이미 커밋돼 살아남은 원인분석을
+  > 근거로 task 이력서 재작성, Developer→Reviewer PASS→QA ✅ 검증통과 전체 순환을 같은 날
+  > 다시 완주(세 역할 모두 독립 `~/.node-local/` 클론에서 build 재현). 126 suites/2221 tests.
+  > **git commit/push는 사용자 승인 대기.** 상세는 task 파일 "최종 요약" 참조.
+- 🟠 **별건, 미해결**: StockInvest의 `AI_API_KEY`가 M4에서 **401 `invalid or disabled api key`**.
   `src/lib/rag/m4-kb.ts`의 검색·upsert가 전부 이 키를 쓰므로 **RAG 검색 자체가 실패**하고
   `retrieval.ts`는 빈 컨텍스트로 조용히 진행한다. M4에서 키 재발급 필요(사용자 액션).
 
