@@ -8,6 +8,26 @@ tags:
 
 ## Backlog
 
+- **[신규, T-036 Reviewer Low, 2026-08-27, 비차단] `cron-runner.sh`의 `call()`에 `--max-time`이 없다**
+  → [[T-036-news-fetch-observability]] Reviewer 기록 참조. `call()`(36-38행)은 `curl`에 전체
+  타임아웃이 없어, 호출한 라우트가 응답하지 않으면 **bash 루프를 무한정 붙잡는다**. 그러면 그 분의
+  `entry-watcher`(자동 주문 실행) 주기가 통째로 밀린다.
+  구 news-fetch 블록은 자체 `--max-time 60`이라는 바깥 경계를 갖고 있었으므로 T-036으로 방어 계층이
+  하나 줄어든 것은 사실이나, **나머지 12개 잡이 이미 전부 같은 무경계 `call()`을 쓰고 있어**
+  news-fetch만 특별히 노출되는 게 아니라 기존 프로젝트 전반의 성질이다. 따라서 T-036 범위에서
+  제외했다. 개선한다면 `call()` 공통에 `--max-time`을 두는 별건 작업이 맞다.
+  ⚠ `scripts/cron-runner.sh`는 `SAFETY_PATHS`라 착수 시 Reviewer 게이트 대상이다.
+
+- **[신규, T-036 파생, 2026-08-27, LOW·위생] `scripts/` 아래 `.nfs*` silly-rename 잔재가 `.gitignore` 미등록**
+  → [[T-036-news-fetch-observability]] 참조. Developer가 작업 중 발견(자기 작업과 무관, 둘 다 08-19자):
+  `scripts/.nfs000000000125a1570000001a`, `scripts/.nfs000000000143b46b00000002`. untracked인데
+  `.gitignore`에 `.nfs*` 패턴이 없어 `git add -A` 시 딸려 들어갈 수 있다.
+  **주의 — ignore 추가만으로는 진짜 문제가 안 풀린다**: [[T-032-research-rally-cycle]]에서 배포를
+  막았던 건 `git clean -fdx`가 이 파일들을 "장치나 자원이 동작 중"으로 못 지운 것이고, 원인은
+  pm2가 파일핸들을 쥐고 있던 것이었다(ignore 여부와 무관). 위생 목적의 `.gitignore` 추가와
+  핸들 점유 대응은 **별개 항목으로** 다뤄야 한다. T-036 범위에서는 제외(인과 무관 + Reviewer
+  scope 희석 방지).
+
 - **[신규, T-030 Reviewer LOW, 2026-08-18, 비차단] 재무갱신 중 네트워크 자체가 끊기면(fetch/res.json() throw) 화면 재동기화가 안 됨**
   → [[T-030-fundamentals-refresh-stale-state]] 참조. `refresh-fundamentals.ts`가 `if (!json.ok)`만
   다루고 `try/catch`가 없어, fetch 자체가 예외를 던지면(네트워크 단절·비JSON 응답) 재동기화 없이
@@ -267,6 +287,39 @@ tags:
   낡은 IP는 해결됐으나(커밋 `54e1e02`), M4 API `/v1/news/fetch`의 500 에러 근본원인은
   **home-m4-api 프로젝트(Mac Mini M4) 내부**에 있어 이 저장소에서는 더 진행 불가. 매매 자체는
   무영향(뉴스 KB 갱신만 중단). home-m4-api 팀 세션에서 이어받을 것 — 조사 내용은 task 파일 §A 참조.
+  > **2026-08-27 갱신**: [[T-036-news-fetch-observability]]가 이 건을 이어받아 §A(원인규명)를 닫았다
+  > (Redis↔Qdrant 메타 불일치 — `kb.py:74`에서 Qdrant 409가 `ValueError`가 아니라 미포착 → 500).
+  > §B(재시도 폭주)·관측성은 T-036에서 수정 중. §C(webhook 미발화)의 원인도 T-036에서 규명됐다
+  > (`webhook-deploy` pm2 유령 프로세스).
+
+- 🔨 **[진행 중 — 2026-08-27] [[T-036-news-fetch-observability]] — news-fetch 107일 무성 실패:
+  근본원인 규명(M4) + 관측성·재시도폭주 수정**
+  [[T-031-news-fetch-m4-500]] 후속. **마지막 성공이 2026-05-13, 이후 107일간 매일 실패했고
+  아무도 몰랐다** — 실측 누적 실패 12,060건(성공 2건). 뉴스 KB가 2026-05-12에 얼어붙어
+  `src/lib/rag/retrieval.ts`가 먹이는 RAG 컨텍스트가 107일 묵은 상태였다.
+  근본원인은 home-m4-api 소유(직접 수정 않고 제안서 인계), StockInvest 쪽은 실패 알림 부재 +
+  재시도 폭주(하루 120건)를 수정한다. Developer 진행 중 → Reviewer → QA.
+  **부수 발견(별건)**: `stockinvest-cron`이 pm2 `online` 표기와 달리 **실제로 죽어 있고**
+  (2026-08-24 23:38 이후 2일 11시간 정지) 그동안 `entry-watcher` 등 자동매매 전체가 멈춰 있었다.
+  `n8n`·`webhook-deploy`도 같은 유령 상태. 기동은 사용자 승인 사항이라 미실행 — main에 보고 완료.
+  > **2026-08-27 갱신**: 사용자가 직접 재기동(10:51:23, pid 1193580) — 이 별건은
+  > [[T-037-cron-outage-impact-and-watchdog]]로 분리해 이어받는다(영향점검+원인규명+상시워치독).
+
+- ✅ **[완결 — 2026-08-27] [[T-037-cron-outage-impact-and-watchdog]] — stockinvest-cron
+  2.5일 무성 정지: 실매매 영향 점검 + 원인 규명 + 상시 워치독 도입**
+  [[T-036-news-fetch-observability]] §5 부수 발견의 후속(같은 task가 미리 "T-037 후보"로 지목).
+  **실매매 피해 0건**(주문·체결·포지션 변화 0건, 우려했던 "밀린 만료 시그널 뒤늦은 오발주"는
+  `signal-expiry`가 애초에 주문을 안 내는 구조라 발생 불가능함을 확인). **원인은 2단**:
+  ① 08-24 23:39 호스트 급사(OOM 아님, 진짜 원인은 로거까지 죽어 규명 불가) ② 08-25 09:54
+  재부팅 시 pm2가 NFS 마운트보다 11초 먼저 떠서 fork 모드 `stockinvest-cron`이 `spawn ENOENT`로
+  영구 유령(`status=online`/`pid=N/A`)이 됨 — 08-22부터 재부팅마다 반복돼 온 구조적 결함이며
+  `check-and-recover.sh`는 실제로 돌았으나 등록부 스키마 한계로 이 유령을 못 잡고 "전체 정상"
+  오판정. **재발방지**: `scripts/cron-runner.sh` 하트비트 + `src/instrumentation.ts`/
+  `src/lib/ops/cron-watchdog.ts`(자금경로 완전 격리, edge-triggered critical 알림) 구현·검증
+  완료(Developer→Reviewer PASS→QA ✅ 검증 통과, 결함 0건, 126 suites/2216 tests 무회귀) —
+  **단 아직 배포 전**(빌드+재기동은 사용자 승인 대기). HOME-SERVER 소관 근본원인(pm2 서비스
+  유닛 순서, 등록부 스키마 확장, 상시 순찰 전환)은 diff로 제안만 하고 별도 세션 인계 권고.
+  상세는 task 파일 "최종 요약" 참조.
 
 ## Done (T-032 완결)
 

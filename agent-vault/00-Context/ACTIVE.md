@@ -1,10 +1,58 @@
 ---
 project: StockInvest
-updated: 2026-08-23
+updated: 2026-08-27
 tags:
   - type/context
 ---
 # 현재 상태
+
+## 🔴 2026-08-27 — 운영 중단 발견: `stockinvest-cron`이 죽은 채 pm2는 "online"으로 표기
+
+[[T-036-news-fetch-observability]] 조사 중 부수 발견. **자동매매가 2026-08-24 23:38 이후
+2일 11시간 멈춰 있었다.**
+
+- `pm2 jlist` → `stockinvest-cron`: `status=online` 이지만 **`pid=None`**, `ps`에 `cron-runner.sh` 없음.
+- 마지막 cron 로그: `~/.node-local/stockinvest/logs/cron-out.log` `2026-08-24 23:38:28`.
+- 멈춘 것: `entry-watcher`(**진입 도달 시 자동 주문 실행**)·`holding-checker`·`strategy-eval`·
+  `signal-followup`·`signal-expiry`·`portfolio-snapshot`·`trade-report` **전부**.
+- 같은 유령 상태: `n8n`, **`webhook-deploy`** ← 08-19·08-23 두 차례 관측된 "webhook 미발화"의 원인.
+- 앱 본체(`stockinvest`, pid 7705 next-server)는 **정상** — `/api/health` 200, 3003 리스닝.
+- **기동은 자금이 걸린 자동주문을 되살리는 행위라 에이전트 판단으로 실행하지 않았다 — 사용자 승인 필요.**
+- 워크스페이스 메모리의 기존 gotcha(`pm2 "online"≠실제 응답`, 2026-08-22 HOME-SERVER)와 **동일 실패모드 재발**.
+  pm2 유령이 3개 프로세스에 걸쳐 있으므로 **근본 대응은 HOME-SERVER(인프라) 소관**이다.
+- **2026-08-27 완결**: 사용자가 직접 재기동 완료(10:51:23, pid 1193580).
+  [[T-037-cron-outage-impact-and-watchdog]]가 후속 조사·재발방지를 마쳤다 — **실매매 피해 0건**
+  확인(만료 시그널 뒤늦은 오발주는 구조적으로 불가능함을 코드로 확인). **원인은 2단**: ①08-24
+  23:39 호스트 급사(원인 불명, OOM 아님) ②08-25 09:54 재부팅 시 pm2가 NFS 마운트보다 11초 먼저
+  떠 fork 모드 `stockinvest-cron`이 `spawn ENOENT`로 영구 유령화 — **08-22부터 재부팅마다 반복돼
+  온 구조적 결함**이고 `check-and-recover.sh`가 이를 놓치고 "전체 정상"으로 오판정했다(원인은
+  이미 그 스크립트 헤더 주석에 적혀 있었음 — 대응이 우회책이었을 뿐). **재발방지 워치독**
+  (`scripts/cron-runner.sh` 하트비트 + `src/instrumentation.ts`/`src/lib/ops/cron-watchdog.ts`,
+  자금경로 완전 격리) 구현·Reviewer PASS·QA 검증통과까지 완료, **배포는 사용자 승인 대기**(빌드+
+  cron 먼저 재기동→앱 재기동 순서 필요). HOME-SERVER 소관 근본원인(pm2 서비스 유닛 순서 —
+  `RequiresMountsFor` 필요, 등록부 스키마 확장, 상시 순찰 전환) 3건은 diff 제안만 하고 별도
+  세션 인계 권고. `scripts/.nfs*` 잔여파일 2개(08-19 생성, 이번 건과 무관) 정리 여부도 사용자
+  판단 필요. 상세는 task 파일 "최종 요약" 참조.
+
+## 🔨 2026-08-27 — [[T-036-news-fetch-observability]] 진행 중: news-fetch 107일 무성 실패
+
+[[T-031-news-fetch-m4-500]](done으로 승계 종료) 후속. **마지막 성공 2026-05-13, 이후 107일간
+매일 실패했고 아무도 몰랐다** — 실측 누적 실패 12,060건 / 성공 2건.
+
+- **근본원인(home-m4-api 소유)**: Redis에 `kbcoll:<name>` 메타가 없고 Qdrant에는 컬렉션이 있는
+  불일치 상태에서 `create_collection`이 Qdrant **409**를 받는데, 이는 `ValueError`가 아니라
+  `UnexpectedResponse`라 미포착 → 500. 배포본 트레이스백 줄번호가 NFS 사본과 일치함을 대조 확인.
+  **409만 삼켜서는 안 고쳐진다** — `upsert_items`가 메타를 다시 조회해 502가 된다. Redis 메타를
+  Qdrant 실체로부터 복구(reconcile)하는 것이 옳은 수정. → 직접 고치지 않고 제안서를 main 경유 인계.
+- **현재 우연히 잠복 중**: 오늘 09:24경 M4 Redis가 재시작되며 RDB(04-26 메타)를 재적재해 200이
+  나온다. uvicorn은 08-19 이후 재시작 없음 — **코드는 안 바뀌었다. 회복이지 수정이 아니다.**
+- **실피해**: 뉴스 KB가 `ingested_at` 기준 **2026-05-12에 얼어붙어 있었다**(`news.kr_market` 70건 중
+  67건이 05-12). `src/lib/rag/retrieval.ts`가 이걸 전략 분석 RAG 입력으로 먹인다.
+- **StockInvest 쪽 수정(이 팀 범위)**: 실패 알림 부재 + 재시도 폭주(하루 120건) → cron 라우트화 +
+  `sendAlertThrottled` 알림 + 날짜파일 무조건 기록. Developer 진행 중.
+- 🟠 **별건**: StockInvest의 `AI_API_KEY`가 M4에서 **401 `invalid or disabled api key`**.
+  `src/lib/rag/m4-kb.ts`의 검색·upsert가 전부 이 키를 쓰므로 **RAG 검색 자체가 실패**하고
+  `retrieval.ts`는 빈 컨텍스트로 조용히 진행한다. M4에서 키 재발급 필요(사용자 액션).
 
 ## ✅ 2026-08-23 — [[T-034-chart-based-price-targets]] 배포 완료 (아래 08-18 절부터는 이 사이 갱신되지 않아 낡아 있었음)
 

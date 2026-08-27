@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-24
+updated: 2026-08-27
 tags:
   - type/context
 aliases:
@@ -12,6 +12,28 @@ aliases:
 
 > 사용자가 **"이어서 작업해줘"** 라고 하면 이 파일부터 읽고, 아래 "다음 할 일"의 1번부터 진행한다.
 > 다른 PC에서 재개할 수 있으므로 **모든 맥락은 이 vault 안에 있다** (세션 메모리·플랜 파일에 의존하지 말 것).
+
+---
+
+## ✅ 2026-08-27 — [[T-037-cron-outage-impact-and-watchdog]] 완결: cron 2.5일 무성정지 사후조사 + 워치독 구현. **배포는 사용자 승인 대기 — 여기부터 재개**
+
+`stockinvest-cron`이 2026-08-24 23:39~2026-08-27 10:51(2.5일) pm2 `online`인데 실제로는 죽어
+있었다([[T-036-news-fetch-observability]] §5 부수 발견, 사용자가 이미 수동 재기동). 조사 결과
+**실매매 피해 0건**(주문·체결·포지션 변화 없음, 걱정했던 "밀린 만료 시그널의 뒤늦은 오발주"는
+`signal-expiry`가 애초에 주문을 안 내는 구조라 불가능). **원인 2단**: ①08-24 23:39 호스트 급사
+(원인불명, OOM 아님) ②08-25 09:54 재부팅 시 pm2가 NFS 마운트보다 11초 먼저 떠 fork 모드
+`stockinvest-cron`이 `spawn ENOENT`로 영구 유령화 — **08-22부터 재부팅마다 반복돼 온 구조적
+결함**. Developer→Reviewer(PASS)→QA(✅ 검증 통과) 순환으로 상시 하트비트 워치독
+(`scripts/cron-runner.sh` + `src/instrumentation.ts`/`src/lib/ops/cron-watchdog.ts`, 자금경로
+완전 격리) 구현·검증까지 마쳤다.
+
+**다음 할 일(사용자 결정 필요, task 파일 "최종 요약" 참조)**:
+1. 워치독 코드 커밋 승인 여부(Reviewer PASS 기록 있어 훅 통과 가능한 상태, 아직 미커밋)
+2. 배포(빌드 → `pm2 restart stockinvest-cron` 먼저 → `pm2 restart stockinvest` 순서) 여부·시점
+3. HOME-SERVER 소관 근본원인 3건(pm2 서비스 유닛에 `RequiresMountsFor` 추가, `projects.json`
+   `health_type` 스키마 확장, `check-and-recover.sh` 상시 순찰 전환) — diff 제안만 있음, 별도
+   HOME-SERVER 세션 인계 권고
+4. `scripts/.nfs*` 잔여파일 2개(08-19 생성, 이번 건과 무관) 정리 여부
 
 ---
 
