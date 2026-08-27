@@ -31,3 +31,7 @@ yarn-error.log*
 # TS
 *.tsbuildinfo
 next-env.d.ts
+
+# NFS silly-rename 잔재 (2026-08-27) — 열려있는 파일 위에 rename/delete가 걸리면 NFS가
+# 만드는 임시 유령 파일. git add -A 시 실수로 딸려 들어갈 수 있어 명시적으로 제외한다.
+.nfs*
