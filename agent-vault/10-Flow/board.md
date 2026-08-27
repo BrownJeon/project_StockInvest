@@ -320,6 +320,15 @@ tags:
   **단 아직 배포 전**(빌드+재기동은 사용자 승인 대기). HOME-SERVER 소관 근본원인(pm2 서비스
   유닛 순서, 등록부 스키마 확장, 상시 순찰 전환)은 diff로 제안만 하고 별도 세션 인계 권고.
   상세는 task 파일 "최종 요약" 참조.
+  > **2026-08-27 오후 갱신 — 재순환 완료**: 커밋(`a8dab3a`) 후 사용자가 실배포 중 진짜 빌드
+  > 실패(`npm run build` → mysql2/crypto 미해석, Edge 번들링 문제)를 발견 — `src/middleware.ts`
+  > 존재로 `instrumentation.ts`가 Edge용으로도 컴파일되는데 기존 "조기 return" 가드 형태가
+  > webpack 상수제거에 안 걸려 `import()`가 Edge 번들에 남던 것. `src/instrumentation.ts` 1개
+  > 파일만(가드를 양수조건 `if` 블록으로 교체) 수정해 해결, Developer→Reviewer PASS(scope:
+  > src/instrumentation.ts)→QA ✅ 검증 통과 재순환 완료. 격리 클론(`~/.node-local/
+  > stockinvest-buildfix`)에서 3자 모두 독립적으로 build/test/typecheck exit 0 재현. **아직
+  > 커밋되지 않은 워킹트리 변경**(a8dab3a에는 이 수정이 빠져 있음) — 커밋 시 반드시 함께
+  > 포함해야 배포 시 빌드 실패가 재현되지 않는다. 상세는 task 파일 "최종 요약 추가" 절 참조.
 
 ## Done (T-032 완결)
 

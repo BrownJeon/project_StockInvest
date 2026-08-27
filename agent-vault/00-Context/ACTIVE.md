@@ -33,6 +33,14 @@ tags:
   `RequiresMountsFor` 필요, 등록부 스키마 확장, 상시 순찰 전환) 3건은 diff 제안만 하고 별도
   세션 인계 권고. `scripts/.nfs*` 잔여파일 2개(08-19 생성, 이번 건과 무관) 정리 여부도 사용자
   판단 필요. 상세는 task 파일 "최종 요약" 참조.
+  > **2026-08-27 오후 추가 — 빌드 실패 재순환 완료**: 커밋(`a8dab3a`) 후 사용자가 실배포 중
+  > `npm run build`가 webpack 에러(mysql2→crypto 미해석)로 실패하는 것을 발견 — `middleware.ts`
+  > 존재로 `instrumentation.ts`가 Edge용으로도 컴파일되는데 기존 가드가 "조기 return" 형태라
+  > webpack이 죽은 코드로 못 지워 Edge 번들에 Node 전용 의존성이 남던 것. `src/instrumentation.ts`
+  > 1개 파일만(양수조건 `if` 블록으로 교체) 수정해 해결. Developer→Reviewer PASS→QA ✅ 검증
+  > 통과 재순환 완료, 격리 클론에서 3자 모두 독립적으로 build/test/typecheck 재현. **이 수정은
+  > 아직 커밋되지 않았다** — 다음 커밋 시 `a8dab3a` 위에 반드시 함께 포함해야 한다. 상세는
+  > task 파일 "최종 요약 추가" 절 참조.
 
 ## 🔨 2026-08-27 — [[T-036-news-fetch-observability]] 진행 중: news-fetch 107일 무성 실패
 
