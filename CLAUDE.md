@@ -70,7 +70,7 @@ npm run dev   # http://localhost:3000
 
 ## 에이전트 팀
 
-Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다. 프로젝트 전용 팀은 4인 (역할별 모델 차등):
+Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다. 프로젝트 전용 팀은 **6인** (역할별 모델 차등):
 
 | 역할 | 모델 | 담당 |
 |------|------|------|
@@ -78,6 +78,8 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 | developer | **Opus** | Next.js·거래소 어댑터·DB 코드 구현 |
 | qa | **Haiku** | **실매매 안전장치 전담 검증** (최우선) |
 | analyst | **Fable** | 지표·전략·백테스트 설계, 수치 검증 |
+| reviewer | **Sonnet** | 안전장치 우회 경로·아키텍처·보안 독립 감사 |
+| deployer | **Haiku** | 운영 배포 실행·`RELEASE_RESULT` 판정·롤백 — 절차서 [`docs/deploy-order.md`](docs/deploy-order.md) |
 
 자세한 역할은 `.claude/agents/*.md` 참고.
 
@@ -207,6 +209,23 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
 
 **진행 중인 큰 작업**: 프로젝트 재구성 (시그널 미생성·수익 부재 원인 해소). 진단·설계 전문은 [`agent-vault/30-Knowledge/decisions/2026-08-02-restructure-plan.md`](./agent-vault/30-Knowledge/decisions/2026-08-02-restructure-plan.md).
 
+## 배포
+
+배포 절차의 **정본은 [`docs/deploy-order.md`](docs/deploy-order.md)** 다. 배포 전에 그 문서를 먼저 읽는다.
+
+| 항목 | 값 |
+|---|---|
+| 배포 명령 | `scripts/deploy.sh StockInvest` |
+| 실행 주체 | `.claude/agents/deployer.md` (QA PASS 이후에만 기동) |
+| 대상 프로세스 | stockinvest + stockinvest-cron |
+| 현재 상태 | 🔴 아직 컷오버 전 — NFS 직접 구동. **앱이 2개라 cron 중복 기동이 최대 위험**이다 |
+
+- 배포는 **`origin` 의 ref 기준**이다 — push 되지 않은 커밋은 나가지 않는다.
+- `--with-migrate`(DB 마이그레이션)는 **사용자 승인 사항**이다. 개발과 운영이 같은 NAS MariaDB 를 보고, 롤백은 코드만 되돌린다.
+- 배포 실패로 수정했다면 곧바로 재배포하지 않고 **Reviewer 부터 전체 재순환**한다.
+
+워크스페이스 공통: [배포 메커니즘](../docs/dev-deploy-workflow.md) · [연계 정책](../docs/deployer-integration-procedure.md) · [롤아웃 순서](../docs/deploy-rollout-order.md)
+
 ## 에이전트 팀 세션 프로토콜
 
 이 CLAUDE.md 로드 및 현재 상태 요약 완료 후, 아래 팀 소집 문구를 자동 출력한다.
@@ -221,8 +240,9 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
   - analyst  (Fable)  — 지표·전략·백테스트 설계 및 실매매 시그널 실행
   - reviewer (Sonnet) — 안전장치 우회 경로·아키텍처·보안 독립 감사
   - qa       (Haiku)  — 실매매 안전장치·엣지케이스 전담 검증
+  - deployer (Haiku)  — 운영 배포 실행(scripts/deploy.sh StockInvest, 앱 2개)·결과 판정·롤백
 
-워크플로우: Leader → Analyst → Developer → Reviewer → QA → Leader
+워크플로우: Leader → Analyst → Developer → Reviewer → QA → Deployer → Leader
 작업 지시 방법:
   → leader에게 직접 요청하면 팀이 역할별로 분담해서 처리합니다.
   → 팀 정리 시: "팀 정리해줘" 또는 "Clean up the team"

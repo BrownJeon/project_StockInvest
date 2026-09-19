@@ -54,7 +54,7 @@ model: opus
 
 ## 통신 규약
 
-> 📄 공통 프로토콜: [`../../docs/agent-communication-protocol.md`](../../docs/agent-communication-protocol.md)
+> 📄 공통 프로토콜: [`../../../docs/agent-communication-protocol.md`](../../../docs/agent-communication-protocol.md)
 
 사용자 → Leader → Developer/Analyst → Reviewer → QA → Leader → 사용자
 
@@ -134,3 +134,42 @@ qa의 "✅ 검증 통과"가 나오면:
 - qa 결함 보고 → developer에게 수정 지시
 - 지표·전략 관련 의문 → analyst에게 자문 요청
 - 반복 3회 초과 → 사용자에게 요구사항 재확인
+
+
+---
+
+## 배포 단계 (Deployer) — 2026-09-19 편입
+
+워크플로우에 배포 단계가 들어왔다.
+
+```
+Leader → (특화역할) → Developer → Reviewer → QA → Deployer → Leader → 사용자
+                          ▲                     │          │
+                          └─────────────────────┴──────────┘
+                               수정 후 항상 Reviewer 부터 재순환
+```
+
+- **최종 보고는 deployer 의 배포 결과를 받은 뒤에 한다.**
+  `deploy_status != ok` 이면 배포 실패 사실과 운영 상태(`production_state`)를 사용자에게 **먼저** 알린다.
+- QA 가 PASS 를 내면 Leader 가 아니라 deployer 로 직행한다. Leader 는 그 결과만 받는다.
+- **이 프로젝트의 배포 경로**: `scripts/deploy.sh StockInvest`
+- 배포 절차의 정본은 [`../../docs/deploy-order.md`](../../docs/deploy-order.md) 다. 배포와 관련한 질문·계획은 그 문서를 근거로 답한다.
+- pm2 앱이 2개(`stockinvest`+`stockinvest-cron`)다. 배포 후 **cron 앱이 정확히 1개**인지 확인한다 — 중복 기동하면 주문·집계가 두 번 돈다.
+
+### Leader 가 사용자 승인을 받아와야 하는 것
+
+| 항목 | 이유 |
+|------|------|
+| DB 마이그레이션 (`--with-migrate`) | 개발과 운영이 같은 NAS MariaDB 를 본다. blue/green 롤백은 **코드만** 되돌린다 |
+| 공유 런타임 변경 (venv·공용 패키지 등) | 릴리스 밖의 공유 상태라 롤백해도 되돌아가지 않는다 |
+| 수동 롤백 (`--rollback`) | 자동 롤백은 스크립트가 이미 한다. 수동 롤백은 판단이 필요한 상황이다 |
+| QA PASS 없는 배포 | 게이트를 건너뛰는 행위 |
+| `sudo`·nginx vhost 동반 작업 | `agent-vault/00-Context/OPS-QUEUE.md` 에 적고 대기 |
+
+### 에스컬레이션 (배포)
+
+- `deploy_status = rollback_unhealthy` → 🔴 **즉시 사용자에게 알린다. 추가 배포를 중단한다**
+- 동일 원인 배포 3회 실패 → 재시도 중단, 원인 재분석
+- `migration_required = true` → 사용자 승인 요청
+
+상세: [`../../../docs/deployer-integration-procedure.md`](../../../docs/deployer-integration-procedure.md) §2

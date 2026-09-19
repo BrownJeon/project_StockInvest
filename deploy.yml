@@ -1,0 +1,64 @@
+# StockInvest(주식 자동매매) 배포 매니페스트
+# 스키마: docs/dev-deploy-workflow.md §3 · 절차서: StockInvest/docs/deploy-order.md
+# 실행 주체: .claude/agents/deployer.md
+#
+# ⚠️⚠️ 적용 전 선결 과제 4건 (2026-09-19 점검) — 상세는 docs/deploy-order.md §1
+#
+#   1. 🔴 현재 운영이 NFS 편집 트리에서 직접 돈다. 컷오버 필요.
+#      **실매매 코드이고 앱이 2개**라 중단 시점을 사용자와 먼저 합의한다.
+#
+#   2. 🔴 **cron 중복 기동**이 이 프로젝트 최대 위험이다. 컷오버 과정에서 옛 경로의
+#      `stockinvest-cron` 과 새 릴리스의 것이 동시에 떠 있으면 주문·집계가 두 번 돈다.
+#      컷오버 시 반드시 `pm2 delete stockinvest-cron` 을 먼저 하고 재등록한다.
+#
+#   3. 🔴 webhook 자동배포가 이미 등록돼 있다 (Gitea `project_StockInvest`, hook_id 2 →
+#      `deploy-stockinvest.sh`). 컷오버 전에 정리하지 않으면 이중 배포가 된다.
+#
+#   4. 🔴 `@workspace/auth-oauth` 가 **저장소 상대경로**로 들어 있다
+#        package.json: "file:../shared/auth-oauth"  ·  lock 도 "../shared/auth-oauth"
+#      릴리스 디렉토리에서 이 경로는 /home/brownjeon/apps/stockinvest/releases/shared/auth-oauth
+#      로 풀리는데 그런 디렉토리는 없다 → `npm ci` 가 ENOENT 로 깨진다.
+#      → 권장 조치: `.npmrc` 에 install-links=true + file: 을 NFS 절대경로로 (TheMeal·VoiceVault 방식).
+#        developer 작업이며 사용자 승인 사항이다.
+
+name: stockinvest
+
+target:
+  host: 125.177.194.26
+  port: 993
+  user: brownjeon
+  base: /home/brownjeon/apps/stockinvest
+
+source:
+  repo: http://192.168.219.154:3000/brownjeon/project_StockInvest.git
+  ref: main
+
+runtime:
+  manager: pm2
+  # 앱이 2개다. 헬스체크는 아래 port(web) 하나만 본다 —
+  # cron 앱은 pm2 프로세스 상태로만 확인되므로 배포 후 따로 볼 것.
+  apps:
+    - stockinvest
+    - stockinvest-cron
+  port: 3003
+  ecosystem: ecosystem.config.js   # cwd 가 __dirname 이라 릴리스 경로로 해석된다
+
+build:
+  install: npm ci --no-audit --no-fund
+  command: node node_modules/.bin/prisma generate && node node_modules/next/dist/bin/next build
+
+shared:
+  - .env
+  - logs
+
+health:
+  path: /api/health          # src/app/api/health/route.ts 에 실재한다 (2026-09-19 확인)
+  timeout: 30
+
+# migrate:
+#   운영 DB 공유. prisma migrate dev 는 개발 전용이라 적지 않는다.
+#   비워 두면 --with-migrate 를 deploy.sh 가 거부한다 — 의도된 상태다.
+#   command: node node_modules/.bin/prisma migrate deploy
+#   requires_approval: true
+
+keep_releases: 5

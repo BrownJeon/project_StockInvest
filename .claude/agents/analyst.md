@@ -54,7 +54,7 @@ model: fable
 
 ## 통신 규약
 
-> 📄 공통 프로토콜: [`../../docs/agent-communication-protocol.md`](../../docs/agent-communication-protocol.md)
+> 📄 공통 프로토콜: [`../../../docs/agent-communication-protocol.md`](../../../docs/agent-communication-protocol.md)
 
 Leader → Analyst → Leader (전략 사양 전달)
 Analyst → Developer (Leader 중재): 의사코드·수식·예제 데이터 직접 인계
