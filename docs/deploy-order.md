@@ -204,22 +204,9 @@ scripts/deploy.sh StockInvest --logs 100
 - [ ] **두 앱 모두** pm2 재시작 횟수가 늘지 않는가
 - [ ] cron 로그에 기동 직후 예외가 없는가
 
-### ⚠️ Prisma 를 쓰는 프로젝트의 함정 — `generate` 가 조용히 실패한다
-
-`prisma generate` 가 **구 스키마로 돌고도 `✔ Generated Prisma Client` 로 끝나는 경우**를
-VoiceVault 에서 실측했다. 그 상태로 배포하면 신규 모델을 쓰는 기능이 500 으로 죽고,
-로그만 봐서는 원인이 드러나지 않는다.
-
-스키마를 바꾼 배포라면 배포 후 생성 결과를 직접 확인한다.
-
-```bash
-ssh home_ubuntu "grep -c '<신규모델 camelCase>' /home/brownjeon/apps/stockinvest/current/node_modules/.prisma/client/index.d.ts"
-# 0 이면 실패다 — 재배포하고 다시 확인한다
-```
-
-⚠️ `npx prisma` 를 쓰지 않는다 — `node_modules` 가 없는 곳에서 npx 가 레지스트리에서
-Prisma RC 를 받아오려다 실패한다(맥에서 실측). 반드시 `node node_modules/.bin/prisma` 를 직접 호출한다.
-
+> ℹ️ **이 프로젝트는 Prisma 를 쓰지 않는다** — DB 접근은 `mysql2` 직결이다.
+> 다른 프로젝트 절차서에 있는 `prisma generate` 검증 항목은 여기 해당 없음.
+> (2026-09-19 첫 컷오버에서 `deploy.yml` 에 `prisma generate` 가 들어가 있어 `build_failed` 가 났고, 제거했다.)
 
 ---
 

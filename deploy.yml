@@ -45,7 +45,9 @@ runtime:
 
 build:
   install: npm ci --no-audit --no-fund
-  command: node node_modules/.bin/prisma generate && node node_modules/next/dist/bin/next build
+  # ⚠️ 이 프로젝트는 Prisma 를 쓰지 않는다 — DB 접근은 mysql2 직결이다
+  #    (2026-09-19 첫 컷오버에서 `prisma generate` 를 넣었다가 .bin/prisma 가 없어 build_failed).
+  command: node node_modules/next/dist/bin/next build
 
 shared:
   - .env
@@ -56,9 +58,7 @@ health:
   timeout: 30
 
 # migrate:
-#   운영 DB 공유. prisma migrate dev 는 개발 전용이라 적지 않는다.
+#   Prisma 를 쓰지 않으므로 마이그레이션 도구가 없다. 스키마 변경은 수동 SQL 이다.
 #   비워 두면 --with-migrate 를 deploy.sh 가 거부한다 — 의도된 상태다.
-#   command: node node_modules/.bin/prisma migrate deploy
-#   requires_approval: true
 
 keep_releases: 5
