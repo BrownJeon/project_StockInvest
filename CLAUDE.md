@@ -218,7 +218,7 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
 | 배포 명령 | `scripts/deploy.sh StockInvest` |
 | 실행 주체 | `.claude/agents/deployer.md` (QA PASS 이후에만 기동) |
 | 대상 프로세스 | stockinvest + stockinvest-cron |
-| 현재 상태 | 🔴 아직 컷오버 전 — NFS 직접 구동. **앱이 2개라 cron 중복 기동이 최대 위험**이다 |
+| 현재 상태 | ✅ **blue/green 컷오버 완료 (2026-09-19, 릴리스 `20260919-225120-31f4ea26`)**. push 하면 webhook 이 release.sh 로 blue/green 배포한다 — NFS 트리에 빌드해도 운영에 반영되지 않는다 |
 
 - 배포는 **`origin` 의 ref 기준**이다 — push 되지 않은 커밋은 나가지 않는다.
 - `--with-migrate`(DB 마이그레이션)는 **사용자 승인 사항**이다. 개발과 운영이 같은 NAS MariaDB 를 보고, 롤백은 코드만 되돌린다.

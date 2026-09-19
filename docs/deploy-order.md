@@ -28,8 +28,11 @@
                                        └─ 실패 → 자동 롤백 (운영 그대로)
 ```
 
-> **현재 상태 (2026-09-19)**: 🔴 아직 컷오버되지 않았다. 운영 pm2 가 **NFS 편집 트리에서 직접** 돌고 있다.
-> **실매매 코드 + 앱 2개(cron 포함)** 라 이 워크스페이스에서 위험도가 가장 높은 컷오버다.
+> **현재 상태 (2026-09-19)**: ✅ **blue/green 컷오버 완료** — 릴리스 `20260919-225120-31f4ea26`, `RELEASE_RESULT status: ok`.
+> pm2 `stockinvest + stockinvest-cron` 가 `/home/brownjeon/apps/stockinvest/releases/…` 에서 돈다.
+> **webhook 도 release.sh 위임으로 교체했다** — 이제 `git push` 가 곧 blue/green 배포다
+> (종전 스크립트는 `webhook-deploy/pre-bluegreen-backup-20260919/` 에 보관).
+> NFS 편집 트리에 빌드해도 운영에 반영되지 않는다.
 
 ---
 
