@@ -229,6 +229,37 @@ scripts/deploy.sh StockInvest --rollback 2    # 두 단계 전으로
 > (미러·NFS 를 가리키는 cwd)를 담고 있다. 그리로 롤백하면 재등록이 옛 경로로 떨어져 실패한다.
 > 새 ecosystem 으로 만든 릴리스가 2개 이상 쌓인 뒤에 롤백을 연습한다.
 
+### ⚠️ 첫 컷오버에서 `health_failed` 가 났지만 실제로는 정상이었다 (2026-09-19)
+
+```
+재등록 완료: stockinvest (/home/brownjeon/apps/stockinvest/releases/20260919-224638-49f01e77)
+재등록 완료: stockinvest-cron (…같은 릴리스…)
+⚠️  헬스체크 실패 — 자동 롤백한다
+RELEASE_RESULT {"status":"health_failed", ... ,"rolled_back_to":"none"}
+```
+
+**`rolled_back_to: none` 이 중요하다** — 최초 배포라 되돌아갈 이전 릴리스가 없어
+`current` 는 새 릴리스를 가리킨 채로 남았고, 옛 NFS pm2 등록은 이미 지워진 뒤였다.
+즉 **판정은 실패인데 시스템은 새 릴리스로 넘어간 상태**였다.
+
+직후 실측한 실제 상태는 정상이었다.
+
+| 확인 | 결과 |
+|---|---|
+| `pm2 list` | `stockinvest` online · `stockinvest-cron` **정확히 1개** |
+| 앱 로그 | `✓ Ready in 207ms` · 포트 3003 LISTEN |
+| `/api/health` | **200**, `safetyStatus: "green"`, 안전장치 값이 컷오버 전과 동일 |
+| 운영 도메인 | 307 (로그인 리다이렉트 — 정상) |
+
+**원인은 `health.timeout: 30` 이 짧았던 것이다.** Next.js 기동 자체는 빠른데
+부팅 시 설정 로딩(KIS 유량·청산 엔진 상태 등)이 이어져 첫 응답까지 30초를 넘겼다.
+120초로 올렸다.
+
+> **최초 배포에서 헬스 실패는 위험하다.** 되돌아갈 릴리스가 없어 자동 롤백이 작동하지
+> 않는다. 그래서 **첫 컷오버일수록 `health.timeout` 을 넉넉히** 잡아야 한다.
+> 실패 판정을 받으면 **반드시 실제 상태(pm2·포트·헬스 본문)를 직접 확인**하고,
+> 정상이면 재배포해 릴리스를 2개로 만들어 롤백 경로를 확보한다.
+
 ### 흔할 만한 실패와 원인
 
 | 증상 | 원인 | 조치 |
