@@ -1,10 +1,16 @@
 ---
 project: StockInvest
-updated: 2026-08-27
+updated: 2026-09-22
 tags:
   - type/context
 ---
 # 현재 상태
+
+## 🟠 2026-09-22 — 착수 대기 2건 (워크스페이스 세션이 조사·작업서 작성)
+
+- [[T-038-llm-base-url-setting]] — `system_config.home_m4_api_base` 가 옛 주소 `http://192.168.219.163:8001` 이라 **hybrid 1단계 AI 필터가 08-19 이후 매번 실패 → legacy 로 대체** 중. 설정 화면은 hybrid 에서 주소 칸을 숨긴다(`LlmProviderSection.tsx:197`). 적용은 **장 마감 후**(매매 판단 경로가 바뀜).
+- [[T-039-alert-dup-and-telegram-timeout]] — 09-22 11:49 재배포 때 앱이 두 번 기동하며 in-memory 스로틀이 초기화돼 `🔕 자동 청산 OFF` 알림 2건 중복(**실주문 0건 확인**). 별개로 텔레그램 간헐 ETIMEDOUT(오늘 49건)으로 **승인 요청이 유실**되고 있다.
+- 09-22 `AI_API_KEY` 재발급(게이트웨이 미등록이었음)·11:49 재배포 완료 — RAG 401 해소. 보유 000660(-27%)·005930(-15%)는 하드손절 조건 충족 상태이나 `exit_engine_enabled=false` 로 자동 매도 없음.
 
 ## 🔴 2026-08-27 — 운영 중단 발견: `stockinvest-cron`이 죽은 채 pm2는 "online"으로 표기
 

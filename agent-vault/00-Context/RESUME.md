@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-08-27
+updated: 2026-09-22
 tags:
   - type/context
 aliases:
@@ -9,6 +9,8 @@ aliases:
 ---
 
 # ▶ 이어서 작업 — 재개 진입점
+
+> **2026-09-22 추가 — 착수 대기 2건(우선)**: [[T-038-llm-base-url-setting]] (hybrid 1단계 AI 필터가 죽은 M4 주소 호출 중 · 적용은 장 마감 후) · [[T-039-alert-dup-and-telegram-timeout]] (재배포 시 알림 중복 + 텔레그램 ETIMEDOUT 으로 승인 요청 유실). 두 task 파일에 사실 조사·해결 방향·주의·검증 체크리스트가 다 들어 있다.
 
 > 사용자가 **"이어서 작업해줘"** 라고 하면 이 파일부터 읽고, 아래 "다음 할 일"의 1번부터 진행한다.
 > 다른 PC에서 재개할 수 있으므로 **모든 맥락은 이 vault 안에 있다** (세션 메모리·플랜 파일에 의존하지 말 것).
