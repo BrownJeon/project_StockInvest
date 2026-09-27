@@ -35,3 +35,11 @@ next-env.d.ts
 # NFS silly-rename 잔재 (2026-08-27) — 열려있는 파일 위에 rename/delete가 걸리면 NFS가
 # 만드는 임시 유령 파일. git add -A 시 실수로 딸려 들어갈 수 있어 명시적으로 제외한다.
 .nfs*
+
+# 검증 산출물(스크린샷·스냅샷·로그)은 /tmp/qa-artifacts 에 둔다 — 워크스페이스 docs/browser-verification.md §5
+# 루트에 새어 나와도 커밋되지 않게 막는다(2026-09-27 TheMeal 루트 QA 스크린샷 48장 커밋 사고)
+/.playwright-mcp/
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
