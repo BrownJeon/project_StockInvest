@@ -70,7 +70,7 @@ npm run dev   # http://localhost:3000
 
 ## 에이전트 팀
 
-Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다. 프로젝트 전용 팀은 **6인** (역할별 모델 차등):
+Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다. 프로젝트 전용 팀은 **8인** (역할별 모델 차등):
 
 | 역할 | 모델 | 담당 |
 |------|------|------|
@@ -80,6 +80,8 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 | analyst | **Fable** | 지표·전략·백테스트 설계, 수치 검증 |
 | reviewer | **Sonnet** | 안전장치 우회 경로·아키텍처·보안 독립 감사 |
 | deployer | **Haiku** | 운영 배포 실행·`RELEASE_RESULT` 판정·롤백 — 절차서 [`docs/deploy-order.md`](docs/deploy-order.md) |
+| judge | **Haiku** | Jev 판정 도구 실행 — 작업 접수 분류·developer 모델·Codex 개입 판정(C1·C2·C3). 직접 추론·코드 수정 금지 (2026-09-28 팀 프로젝트 확산) |
+| codex | **Haiku** | judge 개입 판정 시에만 Codex CLI 읽기 전용 검토 실행·기록. 실패해도 작업 진행 후 실패 내역 보고 |
 
 자세한 역할은 `.claude/agents/*.md` 참고.
 
@@ -241,8 +243,10 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
   - reviewer (Sonnet) — 안전장치 우회 경로·아키텍처·보안 독립 감사
   - qa       (Haiku)  — 실매매 안전장치·엣지케이스 전담 검증
   - deployer (Haiku)  — 운영 배포 실행(scripts/deploy.sh StockInvest, 앱 2개)·결과 판정·롤백
+  - judge     (Haiku)  — Jev 판정: 작업 접수 분류·developer 모델·Codex 개입(C1 설계·C2 리뷰 후·C3 재발)
+  - codex     (Haiku)  — judge 판정 시에만 Codex 읽기 전용 외부 검토, 실패는 보고 후 진행
 
-워크플로우: Leader → Analyst → Developer → Reviewer → QA → Deployer → Leader
+워크플로우: Leader(→Judge 접수) → Analyst → [Judge C1 → Codex?] → Developer → Reviewer → [Judge C2 → Codex? → Reviewer 판정] → QA → Deployer → Leader
 작업 지시 방법:
   → leader에게 직접 요청하면 팀이 역할별로 분담해서 처리합니다.
   → 팀 정리 시: "팀 정리해줘" 또는 "Clean up the team"
