@@ -10,13 +10,13 @@
 |------|------|
 | 프론트엔드·API | Next.js 14 (App Router) + TypeScript |
 | 데이터베이스 | MariaDB (NAS 호스팅, mysql2/promise) |
-| 거래소·증권사 | 코인원 REST(현재) → 업비트(확장) → 바이낸스(선택) → KIS OpenAPI |
+| 증권사 | 한국투자증권 KIS OpenAPI — 국내(`kis-domestic`)·해외(`kis-overseas`), 진입점 `src/lib/exchanges/kis.ts` |
 | 지표 | 자체 구현 (순수 함수) — TA-Lib 값과 대조 |
 
 ## 디렉토리 구조
 
 ```
-TradingInvest/
+StockInvest/
 ├── .claude/
 │   ├── settings.json              # Agent Teams 활성화
 │   ├── settings.local.json
@@ -33,7 +33,7 @@ TradingInvest/
 │   ├── components/
 │   ├── lib/
 │   │   ├── db.ts                  # MariaDB Pool + Retry
-│   │   ├── exchanges/             # coinone / upbit(확장) / binance / kis 어댑터
+│   │   ├── exchanges/             # kis(진입점)·kis-auth·kis-http·kis-throttle·kis-domestic·kis-overseas·kis-master·kis-symbols·fx
 │   │   └── safety/                # Kill Switch / 주문 한도 / DRY_RUN
 │   └── types/
 ├── public/
@@ -55,7 +55,7 @@ TradingInvest/
 cp .env.example .env
 # 값 입력 후
 npm install
-npm run dev   # http://localhost:3000
+npm run dev   # http://localhost:3003
 ```
 
 ### 안전장치 환경변수 (필수)
@@ -66,7 +66,7 @@ npm run dev   # http://localhost:3000
 | `KILL_SWITCH` | `false` | `true`면 모든 주문 송신 즉시 차단 |
 | `ORDER_MAX_KRW` | `100000` | 1회 주문 최대 KRW |
 | `DAILY_ORDER_MAX_KRW` | `500000` | 1일 누적 주문 최대 KRW |
-| `ALLOWED_SYMBOLS` | `KRW-BTC,KRW-ETH` | 허용 심볼 화이트리스트 |
+| `ALLOWED_SYMBOLS` | (코드에서 읽지 않음) | 초기 복사본 항목 — 현재 `src/lib/symbols.ts` `isAllowedSymbol()` 은 항상 허용, 국내 6자리·해외 `NAS:AAPL` 형식 |
 
 ## 에이전트 팀
 
@@ -87,15 +87,8 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 
 ## Phase 로드맵
 
-| Phase | 내용 | 상태 |
-|-------|------|------|
-| 01 | 기본 골격 구성 | ✅ |
-| 02 | 코인원 시세·포트폴리오 조회 | ⬜ |
-| 03 | 코인원 실매매(수동 주문) + 안전장치 | ⬜ |
-| 04 | 기술 지표 엔진 (MA/RSI/MACD/볼린저) | ⬜ |
-| 05 | 지표 기반 자동매매 실행 | ⬜ |
-| 06 | 백테스팅·수익 분석 | ⬜ |
-| 07 | KIS API 미국주식 확장 | ⬜ |
+> 이 표는 프로젝트 생성 때 TradingInvest(코인원)에서 복사된 초기 로드맵이라 실제 진행과 다르다(2026-09-28 정정). **현재 진행 상황은 `agent-vault/10-Flow/board.md`·`00-Context/ACTIVE.md` 가 정본이다.**
+
 
 ## 실매매 원칙 (중요)
 
@@ -132,7 +125,7 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 - safety 레이어 우회 코드 금지
 - `.env` 커밋 금지
 - 백테스트 미검증 전략의 실매매 운용 금지
-- **UI 목업 합의 없이 화면을 즉흥 구현 금지** (developer.md 워크플로우 참조)
+- **UI 데모(목업) 승인 없이 화면을 즉흥 구현 금지** — 데모는 designer 담당, 워크스페이스 [`docs/demo-review-gate.md`](../docs/demo-review-gate.md) 데모 검토 게이트(2026-09-28)
 - **Reviewer 독립감사 없이 안전 관련 코드를 커밋 금지** (아래 커밋 안전장치 참조)
 
 ## 커밋 안전장치 — commit-msg git 훅 (T-025)
@@ -238,6 +231,7 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
 프로젝트: 주식 자동매매 (StockInvest)
 팀 구성:
   - leader   (Opus)   — 요구사항 분석·작업 분배·최종 보고
+  - designer  (Opus)   — 화면 데모(mockups/)·사용자 승인·구현 가이드 (데모 검토 게이트: 워크스페이스 docs/demo-review-gate.md)
   - developer (Opus)   — Next.js·KIS OpenAPI·DB 코드 구현
   - analyst  (Fable)  — 지표·전략·백테스트 설계 및 실매매 시그널 실행
   - reviewer (Sonnet) — 안전장치 우회 경로·아키텍처·보안 독립 감사
@@ -246,7 +240,7 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
   - judge     (Haiku)  — Jev 판정: 작업 접수 분류·developer 모델·Codex 개입(C1 설계·C2 리뷰 후·C3 재발)
   - codex     (Haiku)  — judge 판정 시에만 Codex 읽기 전용 외부 검토, 실패는 보고 후 진행
 
-워크플로우: Leader(→Judge 접수) → Analyst → [Judge C1 → Codex?] → Developer → Reviewer → [Judge C2 → Codex? → Reviewer 판정] → QA → Deployer → Leader
+워크플로우: Leader(→Judge 접수) → Analyst → [화면 작업: Designer 데모 → 사용자 승인] → [Judge C1 → Codex?] → Developer → Reviewer → [Judge C2 → Codex? → Reviewer 판정] → QA → Deployer → Leader
 작업 지시 방법:
   → leader에게 직접 요청하면 팀이 역할별로 분담해서 처리합니다.
   → 팀 정리 시: "팀 정리해줘" 또는 "Clean up the team"
