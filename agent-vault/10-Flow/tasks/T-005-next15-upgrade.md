@@ -2,7 +2,7 @@
 task-id: T-005
 project: StockInvest
 created: 2026-08-05
-status: doing
+status: done
 tags:
   - type/task
   - domain/infra

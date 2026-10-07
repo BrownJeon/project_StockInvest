@@ -2,7 +2,7 @@
 task-id: T-001
 project: StockInvest
 created: 2026-08-02
-status: reviewer-passed-with-followups
+status: done
 tags:
   - type/task
   - domain/safety

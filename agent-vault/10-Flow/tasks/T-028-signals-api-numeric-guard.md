@@ -1,7 +1,7 @@
 ---
 task_id: T-028
 title: POST /api/signals 수치 필드 런타임 가드 — T-027 잔여분 마감
-status: review
+status: done
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-027-nonnumber-quantity-guard, T-024-manual-order-quantity-guard]
 tags:

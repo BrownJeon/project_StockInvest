@@ -2,7 +2,7 @@
 task-id: T-002
 project: StockInvest
 created: 2026-08-02
-status: dev-complete-pending-deploy
+status: done
 tags:
   - type/task
   - domain/observability

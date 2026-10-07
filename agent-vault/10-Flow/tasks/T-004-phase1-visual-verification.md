@@ -2,7 +2,7 @@
 task-id: T-004
 project: StockInvest
 created: 2026-08-04
-status: doing
+status: done
 tags:
   - type/task
   - domain/observability

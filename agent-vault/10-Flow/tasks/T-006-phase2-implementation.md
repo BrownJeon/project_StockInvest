@@ -2,7 +2,7 @@
 task-id: T-006
 project: StockInvest
 created: 2026-08-06
-status: doing
+status: done
 tags:
   - type/task
   - domain/strategy

@@ -1,7 +1,7 @@
 ---
 task_id: T-031
 title: news-fetch cron 실패 조사 — 낡은 IP(해결) + M4 API 500(미해결)
-status: doing
+status: done
 roles_involved: [leader]
 related_tasks: []
 tags:

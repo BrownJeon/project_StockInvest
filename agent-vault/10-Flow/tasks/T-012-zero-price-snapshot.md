@@ -2,7 +2,7 @@
 task-id: T-012
 project: StockInvest
 created: 2026-08-09
-status: doing
+status: done
 tags:
   - type/task
   - domain/safety

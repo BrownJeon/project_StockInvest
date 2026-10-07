@@ -2,7 +2,8 @@
 task-id: T-009
 project: StockInvest
 created: 2026-08-08
-status: blocked-awaiting-decision
+status: done
+waiting: device_verify
 tags:
   - type/task
   - domain/auth

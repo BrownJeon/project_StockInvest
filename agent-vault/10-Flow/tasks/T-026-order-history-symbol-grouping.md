@@ -1,7 +1,7 @@
 ---
 task_id: T-026
 title: 주문 내역 종목별 그룹핑·접기펼치기 — 거래이력·대시보드 최근주문 가독성 개선
-status: review
+status: done
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-021-recommend-detail-client-crash]
 tags:

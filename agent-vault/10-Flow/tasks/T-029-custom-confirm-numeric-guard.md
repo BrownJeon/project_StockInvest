@@ -1,7 +1,7 @@
 ---
 task_id: T-029
 title: POST /api/signals/custom/confirm 수치·배열 필드 가드 — 무승인 진입 경로 마감
-status: review
+status: done
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-028-signals-api-numeric-guard, T-027-nonnumber-quantity-guard]
 tags:

@@ -1,7 +1,7 @@
 ---
 task_id: T-027
 title: 비-number quantity 가 주문 가드를 통과해 라이브 KIS 주문 호출까지 도달하는 문제
-status: review
+status: done
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-024-manual-order-quantity-guard, T-020-fractional-order-quantity-sizing]
 tags:

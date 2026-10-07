@@ -3,7 +3,7 @@ task-id: T-019
 project: StockInvest
 created: 2026-08-11
 updated: 2026-08-11
-status: review
+status: done
 review-round: 2
 qa: passed
 tags:

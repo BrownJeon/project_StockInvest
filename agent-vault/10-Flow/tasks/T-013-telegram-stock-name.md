@@ -3,7 +3,7 @@ task-id: T-013
 project: StockInvest
 created: 2026-08-09
 updated: 2026-08-09
-status: review
+status: done
 tags:
   - type/task
   - domain/notify
