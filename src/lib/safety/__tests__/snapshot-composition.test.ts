@@ -448,6 +448,22 @@ describe('M-3 — 기준에도 0원으로 기록돼 있던 종목(영구 0원 �
     expect(a.pureDisappearance).toBe(false);
   });
 
+  test('영구 0원 행의 소폭 수량 증가(10 → 10.5)도 정황이다 — 정확 비교, 허용치 없음', () => {
+    const cur = [hold('KRW', 0, 0), hold('B', 5_000_000, 5), hold('HALT', 0, 10.5)];
+    const a = assessDrawdownComposition(10_000_000, 5_000_000, base, cur);
+    expect(a.unpricedTradingCodes).toEqual(['HALT']);
+    expect(a.pureDisappearance).toBe(false);
+  });
+
+  test('쓰레기 입력: 같은 코드의 합산 값이 0 이하이고 수량이 불명이면 증가를 증명할 수 없다 → 정황 (방어 절)', () => {
+    // {값 5·수량 없음} + {값 -10·수량 3} → 합산 값 -5, 수량 null. 저장 가드가 음수 값을 막아 운영에는 닿지 않지만,
+    // `h.qty == null` 방어 절을 지우면 정황이 사라져 보류로 뒤집힌다.
+    const cur = [hold('KRW', 0, 0), hold('B', 5_000_000, 5), { currency: 'HALT', value_krw: 5 }, hold('HALT', -10, 3)];
+    const a = assessDrawdownComposition(10_000_000, 5_000_000, base, cur);
+    expect(a.unpricedTradingCodes).toEqual(['HALT']);
+    expect(a.pureDisappearance).toBe(false);
+  });
+
   test('기준에 0원이던 종목의 가격 복귀는 금액이 있는 신규 정황 (3라운드 동작 유지)', () => {
     const cur = [hold('KRW', 0, 0), hold('B', 5_000_000, 5), hold('HALT', 3_000_000, 10)];
     const a = assessDrawdownComposition(10_000_000, 8_000_000, base, cur);
