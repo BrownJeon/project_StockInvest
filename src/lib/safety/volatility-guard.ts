@@ -3,6 +3,7 @@ import { getPool } from '@/lib/db';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled, resetAlertThrottle } from '@/lib/notify/throttle';
 import { minutesSinceSessionOpen } from '@/lib/strategy/market-hours';
+import { evaluateVanish } from './snapshot-composition';
 
 async function getVolGuardEnabled(): Promise<boolean> {
   try {
@@ -229,13 +230,9 @@ const TOTAL_TOLERANCE_KRW = 1_000;
  * 기록된다. 정상 최대 간격은 cron 이 보장하는 90분이므로 2배 여유다.
  */
 const COMPOSITION_MAX_AGE_MS = 3 * 60 * 60 * 1000;
-/** 사라진 보유가 직전 총액의 이 비율 미만이면 판정하지 않는다 (소액 종목 노이즈 회피). */
-const VANISH_MIN_SHARE = 0.10;
-/** 사라진 금액의 이 비율 이상이 총액에서 그대로 증발했으면 매도가 아니라 조회 실패다. */
-const VANISH_DROP_RATIO = 0.7;
-
-/** 현금 항목 — 출금은 정상적으로 총액을 줄이므로 "소실 종목" 판정에서 제외한다. */
-const CASH_CURRENCIES = new Set(['KRW', 'USD']);
+// 소실 판정의 임계값(VANISH_MIN_SHARE 10% / VANISH_DROP_RATIO 70%)과 현금 항목 정의는
+// `./snapshot-composition` 한 곳에 있다 (T-041). 킬스위치의 24h 드로다운 검사도 같은 파일의 상수·현금 정의를
+// 쓴다 — 어긋나면 "저장 가드는 증발이라 거부했는데 킬스위치는 -72% 손실로 읽는" 사고가 재발한다.
 
 // ─── 실명 임계 — **거래 세션 인식** (2026-08-09) ──────────────────────────────
 //
@@ -398,37 +395,16 @@ export function checkHoldingVanished(
   const ageMs = nowMs - prev.ts.getTime();
   if (!Number.isFinite(ageMs) || ageMs > COMPOSITION_MAX_AGE_MS) return null;
 
-  const nowValue = new Map<string, number>();
-  for (const p of positions) {
-    if (!p || typeof p.currency !== 'string') continue;
-    nowValue.set(p.currency, Number(p.value_krw) || 0);
-  }
-
-  const vanished: string[] = [];
-  let missing = 0;
-  for (const p of prev.positions) {
-    if (!p || typeof p.currency !== 'string') continue;
-    if (CASH_CURRENCIES.has(p.currency)) continue;
-    if (allowZero.has(p.currency)) continue;
-    const before = Number(p.value_krw) || 0;
-    if (before <= 0) continue;
-    if ((nowValue.get(p.currency) ?? 0) > 0) continue;
-    vanished.push(p.currency);
-    missing += before;
-  }
-  if (vanished.length === 0) return null;
-
-  const share = missing / prev.totalKRW;
-  if (share < VANISH_MIN_SHARE) return null;
-
-  const drop = prev.totalKRW - totalKRW;
-  if (drop < missing * VANISH_DROP_RATIO) return null;   // 현금 등으로 이동 = 매도·정상
+  // 판정 본체는 snapshot-composition.ts 의 evaluateVanish (T-041 이전 본문과 동작 동일 — 비유한 총액은 거부).
+  // 킬스위치는 이 정의를 쓰지 않는다(총액 감소를 소실의 증거로 쓰기 때문) — assessDrawdownComposition 참고.
+  const v = evaluateVanish(prev.totalKRW, totalKRW, prev.positions, positions, { allowZero });
+  if (!v.evaporated) return null;   // 소실 없음 / 소액 / 현금 등으로 이동 = 매도·정상
 
   return {
     code: 'holding_vanished',
     detail:
-      `보유 종목 소실 [${vanished.join(', ')}] ${Math.round(missing)}KRW `
-      + `(직전 총액의 ${(share * 100).toFixed(1)}%) 이 현금으로 이동하지 않고 총액에서 증발 `
+      `보유 종목 소실 [${v.vanished.join(', ')}] ${Math.round(v.missingKRW)}KRW `
+      + `(직전 총액의 ${(v.share * 100).toFixed(1)}%) 이 현금으로 이동하지 않고 총액에서 증발 `
       + `(${Math.round(prev.totalKRW)} → ${Math.round(totalKRW)}, 직전 스냅샷 ${Math.round(ageMs / 60000)}분 전)`,
   };
 }

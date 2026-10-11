@@ -4,6 +4,7 @@ import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { checkSnapshotFreshness } from './volatility-guard';
 import { parseBoolFlag, shouldReportUnparsable } from './flags';
+import { assessDrawdownComposition, parseSnapshotPositions } from './snapshot-composition';
 
 /**
  * DB system_config override takes precedence over env var.
@@ -82,6 +83,7 @@ export type DrawdownCheckResult =
         | 'snapshot_missing'    // 스냅샷이 아예 없음
         | 'baseline_missing'    // 24h 전 창이 비어 있음
         | 'baseline_invalid'    // 기준 자본 0 이하
+        | 'composition_change_suspected' // 임계 초과이나 보유 종목이 현금 이동 없이 사라진 탓 (T-041) — 발동 보류 + critical 알림
         | 'error';
       detail?: string;
     }
@@ -160,8 +162,8 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     }
 
     // ── ② 기준선은 반드시 24h 전 ±60분 창에서만 온다 ────────────────────────
-    const [snapRows] = await pool.query<(RowDataPacket & { total_krw: number; ts: Date })[]>(
-      `SELECT total_krw, ts FROM portfolio_snapshots
+    const [snapRows] = await pool.query<(RowDataPacket & { total_krw: number; ts: Date; positions?: unknown })[]>(
+      `SELECT total_krw, positions, ts FROM portfolio_snapshots
        WHERE ts BETWEEN DATE_SUB(NOW(), INTERVAL ? MINUTE) AND DATE_SUB(NOW(), INTERVAL ? MINUTE)
        ORDER BY ABS(TIMESTAMPDIFF(MINUTE, ts, DATE_SUB(NOW(), INTERVAL 24 HOUR))) ASC
        LIMIT 1`,
@@ -192,8 +194,8 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     }
 
     // ── ③ 현재 자본 — ①에서 나이를 검증한 바로 그 최신 행 ──────────────────
-    const [curRows] = await pool.query<(RowDataPacket & { total_krw: number })[]>(
-      'SELECT total_krw FROM portfolio_snapshots ORDER BY ts DESC LIMIT 1',
+    const [curRows] = await pool.query<(RowDataPacket & { total_krw: number; positions?: unknown })[]>(
+      'SELECT total_krw, positions FROM portfolio_snapshots ORDER BY ts DESC LIMIT 1',
     );
 
     if (curRows.length === 0) {
@@ -208,6 +210,75 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
       return { status: 'evaluated', drawdownPct, triggered: false }; // 손실 미달 — 발동 불필요
     }
 
+    // ── ④ 임계 초과 — 그 손실이 "시장 손실"인가, 소실된 보유가 관측에서 사라진 것인가 (T-041) ──────────
+    //
+    // 2026-10-03 오발동: 보유 NAS:SNPS·NAS:SMH(총액의 72%)가 평가에서 사라지고 매도 대금은 총액에
+    // 잡히지 않았다(해외 잔고 `locked` 는 항상 0). 저장 가드는 두 번 거부했지만 직전 스냅샷이 3시간을
+    // 넘기자 릴리스 밸브가 검사를 끄고 그 행을 저장했고, 여기서 그 행이 "-72.3% 손실"로 읽혔다.
+    //
+    // 판정은 "종목이 사라졌는가"가 아니라 "**사라진 가치가 어딘가에 설명되는가**"다. 정상 매도는 종목을 사라지게
+    // 하지만 대금이 현금 증가나 신규 보유로 잡힌다. 그렇게 설명되지 않는 몫(U)만이 관측 불능이고, 총 변화에서
+    // U 만 걷어낸 같은 조건 손실률이 나머지의 실제 시장 움직임이다 (snapshot-composition.ts 머리 주석).
+    //
+    // ⚠️ 1차 설계(총액 감소 ≥ 소실액×70% 를 "증발"로 판정)는 Reviewer C-1 로 폐기됐다: 정상 매도 뒤 남은 보유의
+    //    **실제 하락**도 총액을 줄이므로 진짜 손실이 "관측 불능"으로 오인돼 발동이 보류됐다(새 fail-open).
+    //
+    //  - **거래 정황(현금 유입·신규 보유·추가 매수)이 보이면 → 발동** (C-2: 스냅샷만으로는 관측 불능과 "낮은 가격에
+    //    청산한 실현 손실·그 대금으로 산 보유의 하락"을 구별할 수 없다 — 보류는 순수 소실로 한정)
+    //  - 보정 후에도 임계 초과 → **그대로 발동** (사유에 소실 사실을 덧붙임)
+    //  - 순수 소실이고 보정 후 엄격히 임계 이내 → 발동 **보류** + critical 알림 (조용한 보류 금지)
+    //  - **검증 불가는 발동 쪽**: 구성(positions)을 읽을 수 없는 행, 보정 기준 ≤ 0, 이 단계의 예외
+    //
+    // 0원으로 *기록된* 보유(상장폐지·거래정지)는 관측된 실제 손실이라 소실이 아니다. 반면 상장폐지·정리로 종목
+    // **행 자체**가 계좌에서 제거된 실손실은 미설명 소실과 구별되지 않는다 — 알려진 한계이며 그래서 보류는
+    // 반드시 critical 알림으로 사람에게 알린다.
+    let compositionNote = '';
+    try {
+      const basePositions = parseSnapshotPositions(snapRows[0].positions);
+      const curPositions  = parseSnapshotPositions(curRows[0].positions);
+      if (basePositions && curPositions) {
+        const a = assessDrawdownComposition(baseline, current, basePositions, curPositions);
+        if (a.suspected) {
+          const won = (n: number) => Math.round(n).toLocaleString('ko-KR');
+          const codes = a.vanished.join(', ');
+          if (a.suppressible && a.adjustedDrawdownPct != null && a.adjustedDrawdownPct > -thresholdPct) {
+            const detail =
+              `24h ${drawdownPct.toFixed(1)}% (${won(current - baseline)}원) 이지만 기준선에 있던 [${codes}] `
+              + `${won(a.vanishedKRW)}원이 현재 스냅샷에서 사라졌고, 그중 ${won(a.unexplainedKRW)}원`
+              + `(기준 총액의 ${(a.unexplainedShare * 100).toFixed(1)}%)은 현금 증가·신규 보유로 설명되지 않는다. `
+              + `현금 유입·신규 보유·추가 매수 등 거래 정황은 없다(${won(a.tradingEvidenceKRW)}원). `
+              + `설명되지 않는 소실을 제외한 같은 조건 비교는 ${a.adjustedDrawdownPct.toFixed(1)}%`;
+            console.error(`[kill-switch:drawdown] 자동 발동 보류 — ${detail}`);
+            sendAlertThrottled(
+              // 사건(소실 종목 조합)마다 키를 달리해 다른 사건의 알림이 스로틀에 먹히지 않게 한다
+              `kill-switch:composition-suspected:${[...a.vanished].sort().join(',')}`,
+              'critical',
+              '⚠️ Kill Switch 자동 발동 보류 — 보유 종목 소실 의심',
+              `${detail}.\n`
+              + '매도 대금 정산 대기·잔고 조회 누락 등 **관측 불능일 수 있어** 자동 발동을 보류했습니다 (시장 손실이면 종목은 남고 단가만 내립니다).\n'
+              + '단, 상장폐지·정리매매로 종목이 계좌에서 제거된 **실손실**도 이렇게 보일 수 있습니다.\n'
+              + '**실제 손실이라면 설정 > 안전장치에서 킬스위치를 수동으로 켜세요.**\n'
+              + '스냅샷 저장 가드의 `holding_vanished` 경보가 함께 왔는지, KIS 체결내역에 매도가 있는지 확인하세요.',
+              6 * 60 * 60 * 1000,
+            );
+            return { status: 'skipped', reason: 'composition_change_suspected', detail };
+          }
+          // 보류하지 않는 경우 — 사유를 남기고 발동한다:
+          //  · 거래 정황(현금 유입·신규 보유·추가 매수)이 있다 → 소실을 관측 불능으로 읽을 근거가 없다 (C-2)
+          //  · 미설명 소실을 걷어내고도 임계 초과(또는 보정 불가) → 남은 보유가 실제로 빠졌다
+          compositionNote = !a.pureDisappearance
+            ? ` · 보유 소실 [${codes}] 이 있으나 거래 정황(현금 유입·신규 보유·추가 매수 ${won(a.tradingEvidenceKRW)}원)이 `
+              + '있어 관측 불능으로 보지 않음'
+            : ` · 보유 소실 [${codes}] 중 설명되지 않는 ${won(a.unexplainedKRW)}원 포함, 이를 제외하면 `
+              + (a.adjustedDrawdownPct != null ? `${a.adjustedDrawdownPct.toFixed(1)}%` : '계산 불가');
+        }
+      }
+    } catch (e) {
+      // 이 단계는 *보류*를 결정하는 유일한 경로다. 검증을 못 했으면 보류할 근거가 없다 → 총액 기준으로 발동한다.
+      console.error(`[kill-switch:drawdown] 구성 검증 실패 — 보정 없이 총액 기준으로 발동: ${e instanceof Error ? e.message : String(e)}`);
+      compositionNote = ' · 구성 검증 실패(보정 없이 발동)';
+    }
+
     // Kill Switch 영속 저장 (DB SSOT)
     await pool.query(
       'INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
@@ -215,7 +286,7 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     );
 
     const lostKRW = current - baseline;
-    const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과`;
+    const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과${compositionNote}`;
     console.error(`[kill-switch:drawdown] 자동 발동: ${msg}`);
     sendAlert('critical', 'Kill Switch 자동 발동', msg);
     return { status: 'evaluated', drawdownPct, triggered: true };
