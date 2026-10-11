@@ -458,7 +458,79 @@ describe('알려진 한계를 고정한다 (조용히 바뀌지 않게)', () => 
     await checkAndTriggerDrawdownKillSwitch(10);
     const body = String(sendAlertThrottled.mock.calls[0][3]);
     expect(body).toContain('10,000,000원이 현재 스냅샷에서 사라졌고');
-    expect(body).toContain('거래 정황은 없다(200,000원)');      // 현금 유입 20만 원 = 거래 정황 합계
+    expect(body).toContain('거래 정황은 미미하다(허용치 이내 200,000원)');      // 현금 유입 20만 원 = 거래 정황 합계
     expect(body).toContain('그중 9,800,000원');
+  });
+});
+
+describe('🔴 M-1 · M-2 — 감사가 찾은 보류 우회는 발동으로 닫혀 있다', () => {
+  const h = (currency: string, value_krw: number, qty: number) => ({ currency, value_krw, qty, price: qty > 0 ? value_krw / qty : 0 });
+
+  test('M-1: 신규 보유가 가치 0·수량 50 으로 기록돼도 발동하고, 사유에 가치 미기록 보유를 적는다', async () => {
+    mockState(
+      { total: 10_000_000, positions: [h('KRW', 0, 0), h('A', 5_000_000, 5), h('B', 5_000_000, 5)] },
+      { total: 5_000_000, positions: [h('KRW', 0, 0), h('B', 5_000_000, 5), h('C', 0, 50)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true });
+    expect(inserted()).toHaveLength(1);
+    expect(sendAlertThrottled).not.toHaveBeenCalled();         // 보류 알림이 아니라 발동 알림
+    const body = String(sendAlert.mock.calls[0][2]);
+    expect(body).toContain('보유 소실 [A]');
+    expect(body).toContain('가치 미기록 보유 [C]');
+    expect(body).toContain('관측 불능으로 보지 않음');
+  });
+
+  test('M-1 대조: 같은 상황에서 C 기록이 아예 없으면(10-03 사고 형태) 여전히 보류', async () => {
+    mockState(
+      { total: 10_000_000, positions: [h('KRW', 0, 0), h('A', 5_000_000, 5), h('B', 5_000_000, 5)] },
+      { total: 5_000_000, positions: [h('KRW', 0, 0), h('B', 5_000_000, 5)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'skipped', reason: 'composition_change_suspected' });
+    expect(inserted()).toHaveLength(0);
+  });
+
+  test('M-3: 허용 심볼의 영구 0원 행이 양쪽에 있어도 10-03 사고 형태는 여전히 보류', async () => {
+    mockState(
+      { total: 10_000_000, positions: [h('KRW', 0, 0), h('A', 5_000_000, 5), h('B', 5_000_000, 5), h('HALT', 0, 10)] },
+      { total: 5_000_000, positions: [h('KRW', 0, 0), h('B', 5_000_000, 5), h('HALT', 0, 10)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'skipped', reason: 'composition_change_suspected' });
+    expect(inserted()).toHaveLength(0);
+  });
+
+  test('M-3 대조: 그 영구 0원 행의 수량이 늘었으면 발동하고 사유에 가치 미기록 보유를 적는다', async () => {
+    mockState(
+      { total: 10_000_000, positions: [h('KRW', 0, 0), h('A', 5_000_000, 5), h('B', 5_000_000, 5), h('HALT', 0, 10)] },
+      { total: 5_000_000, positions: [h('KRW', 0, 0), h('B', 5_000_000, 5), h('HALT', 0, 12)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true });
+    expect(inserted()).toHaveLength(1);
+    expect(String(sendAlert.mock.calls[0][2])).toContain('가치 미기록 보유 [HALT]');
+  });
+
+  test('M-2: 대금이 USD 행으로 들어오고 원화가 같은 만큼 출금돼 순변화가 0 이어도 발동한다', async () => {
+    mockState(
+      { total: 10_000_000, positions: [p('KRW', 3_000_000), p('A', 4_000_000), p('B', 3_000_000)] },
+      { total: 6_000_000, positions: [p('KRW', 200_000), p('USD', 2_800_000), p('B', 3_000_000)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true });
+    expect(inserted()).toHaveLength(1);
+    expect(sendAlertThrottled).not.toHaveBeenCalled();
+    expect(String(sendAlert.mock.calls[0][2])).toContain('거래 정황(현금 유입·신규 보유·추가 매수 2,800,000원)');
+  });
+
+  test('M-2 대조: 현금 유입이 전혀 없고 보유만 사라지면 보류 — 10-03 사고 형태', async () => {
+    mockState(
+      { total: 10_000_000, positions: [p('KRW', 3_000_000), p('A', 4_000_000), p('B', 3_000_000)] },
+      { total: 6_000_000, positions: [p('KRW', 3_000_000), p('B', 3_000_000)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'skipped', reason: 'composition_change_suspected' });
+    expect(inserted()).toHaveLength(0);
   });
 });

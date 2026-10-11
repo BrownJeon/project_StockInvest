@@ -141,13 +141,24 @@ export interface DrawdownCompositionAssessment {
   newHoldings: string[];
   /** N — 신규 종목의 현재 평가금액 합 */
   newKRW: number;
-  /** 현금 항목(KRW·USD)의 증감 (현재 - 기준, 부호 있음) */
+  /** 현금 항목(KRW·USD)의 증감 합 (현재 - 기준, 부호 있음). 소실이 *설명되는 몫* 계산에만 쓴다 */
   cashDeltaKRW: number;
+  /**
+   * 통화 행별 **양(+)의 증가**만 합한 현금 유입 (M-2). 순변화(`cashDeltaKRW`)와 달리 USD 증가와 KRW 감소가
+   * 상쇄되지 않는다 — 소실 종목 대금이 USD 행으로 들어오고 같은 날 원화가 출금되면 순변화는 0이지만 매도 정황은 남는다.
+   */
+  cashInflowKRW: number;
   /** 양쪽 스냅샷에 모두 있는 비현금 종목의 *추가 매수* 평가금액 합 (수량 증가분 × 현재 단가) */
   commonBuyKRW: number;
-  /** 거래 정황 = max(0, 현금 증감) + 신규 보유 + 추가 매수. 소실을 관측 불능으로 읽는 것을 *막는* 증거 */
+  /**
+   * 가치 0으로 *기록됐지만 수량이 있는* 보유 중 거래 정황이 되는 종목 (M-1·M-3) — 기준에 행이 전혀 없던 신규 종목이면
+   * 그 사실 자체가, 기준에 있던 종목(0원 행 포함)이면 수량 증가(또는 증가 여부를 증명할 수 없음)가 정황이다. 금액을 매길 수 없어
+   * `tradingEvidenceKRW` 에 못 넣으므로 별도 목록으로 두고 `pureDisappearance` 를 직접 꺾는다.
+   */
+  unpricedTradingCodes: string[];
+  /** 거래 정황 = 현금 유입(통화별 양의 증가 합) + 신규 보유 + 추가 매수. 소실을 관측 불능으로 읽는 것을 *막는* 증거 */
   tradingEvidenceKRW: number;
-  /** 거래 정황이 소실액의 3% 이하 = 보유만 사라지고 다른 항목은 거의 안 움직인 "순수 소실" */
+  /** 거래 정황이 소실액의 3% 이하이고 가치 미기록 정황도 없음 = 보유만 사라지고 다른 항목은 거의 안 움직인 "순수 소실" */
   pureDisappearance: boolean;
   /** min(V, max(0, 현금 증가 + N)) — 소실 가치 중 현금/신규 보유로 **설명되는** 부분 */
   explainedKRW: number;
@@ -195,8 +206,8 @@ export function assessDrawdownComposition(
   curPositions: readonly CompositionPosition[],
 ): DrawdownCompositionAssessment {
   const none: DrawdownCompositionAssessment = {
-    vanished: [], vanishedKRW: 0, newHoldings: [], newKRW: 0, cashDeltaKRW: 0,
-    commonBuyKRW: 0, tradingEvidenceKRW: 0, pureDisappearance: false,
+    vanished: [], vanishedKRW: 0, newHoldings: [], newKRW: 0, cashDeltaKRW: 0, cashInflowKRW: 0,
+    commonBuyKRW: 0, unpricedTradingCodes: [], tradingEvidenceKRW: 0, pureDisappearance: false,
     explainedKRW: 0, unexplainedKRW: 0, unexplainedShare: 0, suspected: false, suppressible: false,
     adjustedBaselineKRW: baselineTotalKRW, adjustedDrawdownPct: null,
   };
@@ -211,12 +222,16 @@ export function assessDrawdownComposition(
   };
 
   // 같은 코드가 여러 행으로 오면 *합산*한다 (현금·보유 모두 같은 규칙).
-  interface Holding { value: number; qty: number | null }
+  //  · `pricedQty` = 값 > 0 인 행의 수량 합 — 가치 0 행이 섞여도 현재 단가(value / pricedQty)가 희석되지 않게 한다.
+  interface Holding { value: number; qty: number | null; pricedQty: number }
   const baseHoldings = new Map<string, Holding>();   // 비현금, 값 > 0
-  const curHoldings = new Map<string, Holding>();    // 비현금, 값 > 0
+  const baseRecorded = new Map<string, Holding>();   // 비현금, 기준에 *행이 있던* 모든 코드 (값 0 포함) — "신규" 판정용 (M-3)
+  const curHoldings = new Map<string, Holding>();    // 비현금, 값 > 0 **또는 수량 > 0** (M-1: 가치 0 기록 보유 포함)
   const curPresent = new Set<string>();              // 값과 무관하게 현재 스냅샷에 항목이 있는 코드
-  let baseCash = 0;
-  let curCash = 0;
+  const baseCashBy = new Map<string, number>();      // 통화 행별 현금 (M-2)
+  const curCashBy = new Map<string, number>();
+  const addCash = (m: Map<string, number>, p: CompositionPosition) =>
+    m.set(p.currency, (m.get(p.currency) ?? 0) + val(p));
   const add = (m: Map<string, Holding>, p: CompositionPosition) => {
     const prev = m.get(p.currency);
     const q = finiteQty(p);
@@ -224,20 +239,25 @@ export function assessDrawdownComposition(
       value: (prev?.value ?? 0) + val(p),
       // 수량은 모든 행에서 읽혔을 때만 유효 — 하나라도 못 읽으면 null(= 가치 증가로 보수 판정)
       qty: prev ? (prev.qty != null && q != null ? prev.qty + q : null) : q,
+      pricedQty: (prev?.pricedQty ?? 0) + (val(p) > 0 && q != null ? q : 0),
     });
   };
 
   for (const p of basePositions) {
     if (!valid(p)) continue;
-    if (CASH_CURRENCIES.has(p.currency)) baseCash += val(p);
-    else if (val(p) > 0) add(baseHoldings, p);
+    if (CASH_CURRENCIES.has(p.currency)) { addCash(baseCashBy, p); continue; }
+    add(baseRecorded, p);
+    if (val(p) > 0) add(baseHoldings, p);
   }
   for (const p of curPositions) {
     if (!valid(p)) continue;
     curPresent.add(p.currency);
-    if (CASH_CURRENCIES.has(p.currency)) curCash += val(p);
-    else if (val(p) > 0) add(curHoldings, p);
+    if (CASH_CURRENCIES.has(p.currency)) addCash(curCashBy, p);
+    else if (val(p) > 0 || (finiteQty(p) ?? 0) > 0) add(curHoldings, p);
   }
+  const sumOf = (m: Map<string, number>) => { let s = 0; for (const v of m.values()) s += v; return s; };
+  const baseCash = sumOf(baseCashBy);
+  const curCash = sumOf(curCashBy);
 
   const vanished: string[] = [];
   let V = 0;
@@ -248,24 +268,55 @@ export function assessDrawdownComposition(
   }
   if (vanished.length === 0) return none;
 
+  // 가치 0 으로 기록됐지만 수량이 있는 보유 — 금액은 못 매기지만 *거래가 있었다는 사실*이다 (M-1).
+  const unpriced: string[] = [];
+
   const newHoldings: string[] = [];
   let N = 0;
   for (const [code, h] of curHoldings) {
     if (baseHoldings.has(code)) continue;
-    newHoldings.push(code);
-    N += h.value;
+    if (h.value > 0) {                           // 신규, 또는 기준에 0원이던 종목의 가격 복귀 — 둘 다 금액이 있는 정황
+      newHoldings.push(code);
+      N += h.value;
+      continue;
+    }
+    // 이하: 현재 가치 0·수량 > 0 인 행 (M-1)
+    const rec = baseRecorded.get(code);
+    if (!rec) {                                  // 기준에 행이 전혀 없던 신규 — 금액은 못 매기지만 매수 사실
+      newHoldings.push(code);
+      unpriced.push(code);
+    } else if (rec.qty == null || h.qty == null || h.qty > rec.qty) {
+      // 기준에도 0원으로 *기록돼* 있던 종목(허용 심볼의 영구 0원 행): 수량이 늘었을 때만 정황 (M-3).
+      // 수량을 몰라 증가 여부를 증명할 수 없으면 정황으로 본다.
+      unpriced.push(code);
+    }
   }
 
   // 기존 종목의 추가 매수: 수량 증가분 × 현재 단가. 수량을 못 읽으면 가치 증가분(보수적: 가격 상승도 포함).
+  // 현재 가치가 0 이면 단가를 현재 값에서 못 구하므로 기준 단가로 환산하고, 그것도 불가하면 가치 미기록 정황으로 둔다.
   let commonBuy = 0;
   for (const [code, cur] of curHoldings) {
     const base = baseHoldings.get(code);
     if (!base) continue;
     if (base.qty != null && cur.qty != null && cur.qty > 0) {
-      commonBuy += Math.max(0, cur.qty - base.qty) * (cur.value / cur.qty);
-    } else {
+      const dq = Math.max(0, cur.qty - base.qty);
+      if (dq === 0) continue;
+      const curUnit = cur.pricedQty > 0 ? cur.value / cur.pricedQty : 0;
+      const baseUnit = base.pricedQty > 0 ? base.value / base.pricedQty : 0;
+      const unit = curUnit > 0 ? curUnit : baseUnit;
+      if (unit > 0) commonBuy += dq * unit;
+      else unpriced.push(code);
+    } else if (cur.value > 0) {
       commonBuy += Math.max(0, cur.value - base.value);
+    } else if (cur.qty != null && cur.qty > 0) {
+      unpriced.push(code);                       // 수량은 있는데 증가 여부를 증명할 방법이 없다 → 정황으로 본다
     }
+  }
+
+  // 현금 유입은 통화 행별 양의 증가만 합한다 — 순변화는 USD 증가와 KRW 출금을 상쇄해 매도 정황을 지운다 (M-2).
+  let cashInflow = 0;
+  for (const c of new Set([...baseCashBy.keys(), ...curCashBy.keys()])) {
+    cashInflow += Math.max(0, (curCashBy.get(c) ?? 0) - (baseCashBy.get(c) ?? 0));
   }
 
   const cashDelta = curCash - baseCash;
@@ -274,8 +325,9 @@ export function assessDrawdownComposition(
   const unexplainedShare = U / baselineTotalKRW;
   const suspected = unexplainedShare >= VANISH_MIN_SHARE;
 
-  const tradingEvidence = Math.max(0, cashDelta) + N + commonBuy;
-  const pureDisappearance = tradingEvidence <= PURE_DISAPPEARANCE_MAX_EVIDENCE_RATIO * V;
+  const tradingEvidence = cashInflow + N + commonBuy;
+  const pureDisappearance = unpriced.length === 0
+    && tradingEvidence <= PURE_DISAPPEARANCE_MAX_EVIDENCE_RATIO * V;
 
   const adjustedBaseline = baselineTotalKRW - U;
   const adjustedDrawdownPct = adjustedBaseline > 0
@@ -283,8 +335,8 @@ export function assessDrawdownComposition(
     : null;
 
   return {
-    vanished, vanishedKRW: V, newHoldings, newKRW: N, cashDeltaKRW: cashDelta,
-    commonBuyKRW: commonBuy, tradingEvidenceKRW: tradingEvidence, pureDisappearance,
+    vanished, vanishedKRW: V, newHoldings, newKRW: N, cashDeltaKRW: cashDelta, cashInflowKRW: cashInflow,
+    commonBuyKRW: commonBuy, unpricedTradingCodes: unpriced, tradingEvidenceKRW: tradingEvidence, pureDisappearance,
     explainedKRW: explained, unexplainedKRW: U, unexplainedShare, suspected,
     suppressible: suspected && pureDisappearance,
     adjustedBaselineKRW: adjustedBaseline, adjustedDrawdownPct,

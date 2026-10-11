@@ -246,7 +246,7 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
               `24h ${drawdownPct.toFixed(1)}% (${won(current - baseline)}원) 이지만 기준선에 있던 [${codes}] `
               + `${won(a.vanishedKRW)}원이 현재 스냅샷에서 사라졌고, 그중 ${won(a.unexplainedKRW)}원`
               + `(기준 총액의 ${(a.unexplainedShare * 100).toFixed(1)}%)은 현금 증가·신규 보유로 설명되지 않는다. `
-              + `현금 유입·신규 보유·추가 매수 등 거래 정황은 없다(${won(a.tradingEvidenceKRW)}원). `
+              + `현금 유입·신규 보유·추가 매수 등 거래 정황은 미미하다(허용치 이내 ${won(a.tradingEvidenceKRW)}원). `
               + `설명되지 않는 소실을 제외한 같은 조건 비교는 ${a.adjustedDrawdownPct.toFixed(1)}%`;
             console.error(`[kill-switch:drawdown] 자동 발동 보류 — ${detail}`);
             sendAlertThrottled(
@@ -267,8 +267,9 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
           //  · 거래 정황(현금 유입·신규 보유·추가 매수)이 있다 → 소실을 관측 불능으로 읽을 근거가 없다 (C-2)
           //  · 미설명 소실을 걷어내고도 임계 초과(또는 보정 불가) → 남은 보유가 실제로 빠졌다
           compositionNote = !a.pureDisappearance
-            ? ` · 보유 소실 [${codes}] 이 있으나 거래 정황(현금 유입·신규 보유·추가 매수 ${won(a.tradingEvidenceKRW)}원)이 `
-              + '있어 관측 불능으로 보지 않음'
+            ? ` · 보유 소실 [${codes}] 이 있으나 거래 정황(현금 유입·신규 보유·추가 매수 ${won(a.tradingEvidenceKRW)}원`
+              + (a.unpricedTradingCodes.length > 0 ? `, 가치 미기록 보유 [${a.unpricedTradingCodes.join(', ')}]` : '')
+              + ')이 있어 관측 불능으로 보지 않음'
             : ` · 보유 소실 [${codes}] 중 설명되지 않는 ${won(a.unexplainedKRW)}원 포함, 이를 제외하면 `
               + (a.adjustedDrawdownPct != null ? `${a.adjustedDrawdownPct.toFixed(1)}%` : '계산 불가');
         }
