@@ -5,6 +5,7 @@ import type { Market } from '@/lib/exchanges/kis-symbols';
 import { submittedQuantity } from '@/lib/exchanges/order-quantity';
 import type { OrderRequest } from '@/lib/exchanges/types';
 import { getSymbolLabel, sendAlert } from '@/lib/notify';
+import { escapeAlertText } from '@/lib/notify/escape';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { submitOrder } from '@/lib/safety/dry-run';
 import { checkSymbolBlacklist } from '@/lib/safety/order-limits';
@@ -22,6 +23,11 @@ import {
   sqlStatusList,
 } from './statuses';
 import { buildScenarioFromAiResult } from './scenario-builder';
+import {
+  claimAwaitingSignal,
+  rejectAwaitingSignal,
+  releaseClaim,
+} from './approval-transitions';
 import { getStyleConfig } from '@/lib/strategy/style';
 
 /** safety_limit_chase_disabled = true 면 chasePct 0 강제 (즉시 무력화 스위치). */
@@ -94,7 +100,21 @@ export type CreateSignalErrorCode =
   | 'symbol_blacklisted'
   | 'duplicate_active_signal'
   /** T-020 — 사이징 결과가 1주 미만이라 주문이 성립하지 않는다 */
-  | 'quantity_below_min';
+  | 'quantity_below_min'
+  /** T-042 — 승인은 됐지만 안전층·거래소가 주문을 받지 않았다(킬스위치·한도·잔고 부족 등). 시그널은 대기로 남는다 */
+  | 'order_not_accepted'
+  /** T-042 — 주문이 거래소에 접수됐는지 알 수 없다(송신 중 예외·5xx·연결 끊김). 재시도하면 이중 주문이 될 수 있어 시그널을 `executing` 으로 잠가 둔다 */
+  | 'order_uncertain';
+
+/**
+ * `trade_logs.event` 는 **varchar(32)** 이고 운영 DB 는 STRICT 모드다 — 33자가 되면 INSERT 가 실패한다.
+ * 이 INSERT 들은 감사 보조라 `.catch` 로 삼키기 때문에 **초과해도 아무 데도 안 남고 아무도 모른다**(T-042 감사 D-2).
+ * 이름을 바꿀 때는 `service.test.ts` 가 길이 ≤ 32 를 단언한다.
+ */
+export const TRADE_LOG_EVENTS = {
+  approveOrderRejected: 'signal_approve_order_rejected',    // 29자
+  approveOrderUncertain: 'signal_approve_order_uncertain',  // 30자
+} as const;
 
 export interface CreateSignalResult {
   ok: boolean;
@@ -404,39 +424,26 @@ export async function createSignal(
   });
 
   if (decision.route !== 'auto_submit') {
-    const ttlMin = decision.expiresAt
-      ? Math.round((new Date(decision.expiresAt).getTime() - Date.now()) / 60000)
-      : 30;
-    const flags = await getSignalNotifyFlags();
-    if (flags.pending) {
-      const exitKind = enrichedIndicators != null && typeof enrichedIndicators === 'object'
-        ? (enrichedIndicators as Record<string, unknown>)['exit_kind'] as string | undefined
-        : undefined;
-      const exitLabel: Record<string, string> = {
-        hard_stop: '🔴 하드 손절 (자금보호)',
-        target_profit: '🟢 목표 익절',
-        trailing_stop: '🟡 트레일링 스탑',
-        eod_loss_cut: '🔴 EOD 손절',
-      };
-      // reasoning 핵심 라인 추출:
-      //  - exit 시그널: 첫 번째 줄 (이미 "[하드 손절] 손실 -X.XX%..." 형태)
-      //  - AI 선택 시그널: "[AI N%]" 포함 줄 우선 (AI 근거가 가장 핵심)
-      //  - 그 외: 첫 번째 비어있지 않은 줄
-      const reasonLine = (() => {
-        if (!input.reasoning) return undefined;
-        const lines = input.reasoning.split('\n').map(l => l.trim()).filter(Boolean);
-        if (!lines.length) return undefined;
-        if (exitKind) return lines[0].slice(0, 100); // exit: 첫 줄이 핵심
-        const aiLine = lines.find(l => l.startsWith('[AI '));
-        return (aiLine ?? lines[0]).slice(0, 100);
-      })();
-      const bodyLines = [
-        `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · TTL ${ttlMin}분`,
-        exitKind && exitLabel[exitKind] ? `유형: ${exitLabel[exitKind]}` : undefined,
-        reasonLine ? `사유: ${reasonLine}` : undefined,
-      ].filter(Boolean);
-      sendAlert('info', `📩 승인 요청: ${await getSymbolLabel(input.symbol)}`, bodyLines.join('\n'));
-    }
+    // T-042 — 승인 요청 알림은 별도 모듈이 만든다: 모든 동적 값 이스케이프(이전 본문은 사유 줄의 `<` 때문에 텔레그램이
+    // 400 으로 거부해 약 78% 가 유실됐다), 실행 불가 매수는 요약으로, 버튼 승인이 켜져 있으면 버튼 메시지.
+    // fire-and-forget — 알림 I/O 가 시그널 생성을 지연시키거나 실패시키면 안 된다.
+    void (async () => {
+      const { notifyApprovalRequest } = await import('./approval-notify');
+      await notifyApprovalRequest({
+        signalId,
+        symbol: input.symbol,
+        side: input.side,
+        amountKRW: input.amountKRW,
+        price: input.price,
+        strategyId: input.strategyId ?? null,
+        reasoning: input.reasoning,
+        indicators: enrichedIndicators,
+        market,
+        expiresAt: decision.expiresAt ? new Date(decision.expiresAt) : null,
+      });
+    })().catch((e) => {
+      console.error(`[createSignal] 승인 요청 알림 실패 (signal ${signalId}):`, e instanceof Error ? e.message : String(e));
+    });
     return { ok: true, signalId, autoSubmitted: false };
   }
 
@@ -479,8 +486,10 @@ export async function createSignal(
       : undefined;
     const bodyLines2 = [
       `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · 주문 #${orderResult.orderId ?? '-'}`,
-      reasonLine2 ? `사유: ${reasonLine2}` : undefined,
+      // T-042 — 승인 요청과 같은 결함: 사유 줄의 `<`·`&` 를 이스케이프하지 않으면 텔레그램이 400 으로 거부해 알림이 사라진다.
+      reasonLine2 ? `사유: ${escapeAlertText(reasonLine2)}` : undefined,
     ].filter(Boolean);
+    // `getSymbolLabel` 은 이미 이스케이프된 값을 돌려준다 — 다시 씌우면 `&amp;amp;` (2라운드 감사 R2-1). 사유 줄은 원문이라 이스케이프한다.
     sendAlert('info', `✅ 자동 제출: ${await getSymbolLabel(input.symbol)}`, bodyLines2.join('\n'));
   }
   return {
@@ -514,8 +523,11 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
     return { ok: false, signalId: id, autoSubmitted: false, error: `invalid_status:${row.status}` };
   }
   if (row.expires_at && new Date(row.expires_at) < new Date()) {
-    const pool = getPool();
-    await pool.query(`UPDATE signals SET status='expired', updated_at=NOW() WHERE id=?`, [id]);
+    // T-042 — 조건부 UPDATE: 그 사이 다른 쪽이 승인·거절한 행을 `expired` 로 덮어쓰지 않는다.
+    await pool.query(
+      `UPDATE signals SET status='expired', updated_at=NOW() WHERE id=? AND status IN (${sqlStatusList(AWAITING_APPROVAL_STATUSES)})`,
+      [id],
+    );
     return { ok: false, signalId: id, autoSubmitted: false, error: 'signal_expired' };
   }
 
@@ -547,14 +559,91 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
     };
   }
 
-  const orderResult = await submitOrder(orderReq, kis.createOrder, {
-    assetClass: 'stock',
-    source: 'signal',
-  });
+  // T-042 — 선점. 웹과 텔레그램이 동시에 승인해도 이 UPDATE 를 이긴 쪽만 `submitOrder` 를 부른다(이중 주문 방지).
+  const claim = await claimAwaitingSignal(pool, id, 'executing');
+  if (!claim.ok) {
+    return { ok: false, signalId: id, autoSubmitted: false, error: claim.error };
+  }
+
+  let orderResult: Awaited<ReturnType<typeof submitOrder>>;
+  try {
+    orderResult = await submitOrder(orderReq, kis.createOrder, {
+      assetClass: 'stock',
+      source: 'signal',
+    });
+  } catch (e) {
+    await releaseClaim(pool, id, row.status).catch(() => { /* 복귀 실패는 원 예외를 가리지 않는다 */ });
+    throw e;
+  }
+
+  // 🔴 T-042 — 주문이 **받아들여졌을 때만** `approved` 로 기록한다. 이전에는 거부·차단(킬스위치·한도·잔고 부족)
+  //    이어도 `approved` 로 남아 "승인했는데 주문이 없는" 행이 쌓였다(`consumed_order_id` NULL 4건).
+  //    T-020 과 같은 취지: 거짓 기록 대신 대기로 되돌려 사람이 다시 판단하게 하고, 사유는 trade_logs 에 남긴다.
+  if (!orderResult.ok) {
+    // 🔴 단, 거래소에 접수됐는지 *알 수 없는* 실패(송신 중 예외·5xx·연결 끊김, 접수 직후 DB 갱신 실패)는 되돌리면 안 된다.
+    //    대기로 돌려놓으면 같은 시그널을 다시 승인할 수 있고, 첫 주문이 실제로 접수됐다면 **이중 주문**이다(실계좌).
+    //    선점(`executing`) 상태로 잠가 두고 사람에게 체결내역 확인을 요청한다. 이전에는 무조건 `approved` 라 재주문이 불가능했다.
+    if (orderResult.outcomeUnknown === true) {
+      await pool.query(
+        `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
+        [orderResult.orderId ?? null, TRADE_LOG_EVENTS.approveOrderUncertain,
+          JSON.stringify({ signalId: id, symbol: row.symbol, side: row.side, error: orderResult.error ?? null })],
+      ).catch((e) => console.error('[approveSignal] 결과 불명 감사 기록 실패:', e instanceof Error ? e.message : String(e)));
+      sendAlert(
+        'critical',
+        '⚠️ 주문 결과 불명 — 체결내역 확인 필요',
+        `시그널 #${id} ${escapeAlertText(row.symbol)} ${row.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · 주문 #${orderResult.orderId ?? '-'}\n`
+        + `사유: ${escapeAlertText(String(orderResult.error ?? 'unknown').slice(0, 160))}\n`
+        + '거래소에 주문이 접수됐는지 알 수 없어 이중 주문을 막으려고 시그널을 잠갔습니다. KIS 체결/미체결 내역을 확인하세요. '
+        + '접수되지 않았다면 DB 에서 시그널 상태를 되돌려야 합니다(runbook: docs/telegram-approval.md).',
+      );
+      return {
+        ok: false,
+        signalId: id,
+        autoSubmitted: false,
+        orderId: orderResult.orderId,
+        orderResult,
+        error: `order_uncertain: ${orderResult.error ?? 'unknown'}`,
+        errorCode: 'order_uncertain',
+      };
+    }
+
+    // 복귀가 실패해도 "주문이 거부됐다"는 사실은 그대로 돌려준다. 시그널은 `executing` 에 남아(재승인 불가 — 안전한 쪽) 사람이 풀어야 한다.
+    await releaseClaim(pool, id, row.status).catch((e) => {
+      console.error(`[approveSignal] 선점 복귀 실패 (signal ${id}, executing 에 남음):`, e instanceof Error ? e.message : String(e));
+      sendAlert('warning', '시그널 선점 복귀 실패', `시그널 #${id} 의 주문은 거부됐지만 대기 상태로 되돌리지 못해 executing 에 남았습니다. 재승인이 필요하면 DB 에서 상태를 되돌리세요(docs/telegram-approval.md §6.1).`);
+    });
+    await pool.query(
+      `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
+      [
+        orderResult.orderId ?? null,
+        TRADE_LOG_EVENTS.approveOrderRejected,
+        JSON.stringify({
+          signalId: id, symbol: row.symbol, side: row.side,
+          blockedBy: orderResult.blockedBy ?? null, error: orderResult.error ?? null,
+        }),
+      ],
+    ).catch((e) => console.error('[approveSignal] 거부 감사 기록 실패:', e instanceof Error ? e.message : String(e)));
+    return {
+      ok: false,
+      signalId: id,
+      autoSubmitted: false,
+      orderId: orderResult.orderId,
+      orderResult,
+      error: `order_not_accepted: ${orderResult.blockedBy ?? orderResult.error ?? 'unknown'}`,
+      errorCode: 'order_not_accepted',
+    };
+  }
+
+  // 주문은 이미 접수됐다. 상태 기록이 실패해도 "처리하지 못했다"고 답하면 거짓이다(재시도를 부추기지만 executing 잠금이 막는다).
+  // 기록 실패는 경보로 알리고 결과는 사실대로(주문 접수) 돌려준다. 시그널은 executing 에 남아 이중 주문을 막는다.
   await pool.query(
-    `UPDATE signals SET status='approved', consumed_order_id=? WHERE id=?`,
+    `UPDATE signals SET status='approved', consumed_order_id=? WHERE id=? AND status='executing'`,
     [orderResult.orderId ?? null, id],
-  );
+  ).catch((e) => {
+    console.error(`[approveSignal] approved 기록 실패 (signal ${id}, 주문 #${orderResult.orderId ?? '-'} 은 접수됨):`, e instanceof Error ? e.message : String(e));
+    sendAlert('warning', '주문은 접수됐으나 시그널 상태 기록 실패', `시그널 #${id} 의 주문 #${orderResult.orderId ?? '-'} 은 접수됐지만 status 를 approved 로 기록하지 못했습니다(executing 에 남음 — 재승인은 막혀 있습니다). DB 에서 status='approved', consumed_order_id=${orderResult.orderId ?? 'NULL'} 로 맞추세요.`);
+  });
   return {
     ok: true,
     signalId: id,
@@ -584,11 +673,15 @@ export async function approveSignalHybrid(
     return { ok: false, error: `invalid_status:${row.status}` };
   }
   if (row.expires_at && new Date(row.expires_at) < new Date()) {
-    await pool.query(`UPDATE signals SET status='expired', updated_at=NOW() WHERE id=?`, [id]);
+    await pool.query(
+      `UPDATE signals SET status='expired', updated_at=NOW() WHERE id=? AND status IN (${sqlStatusList(AWAITING_APPROVAL_STATUSES)})`,
+      [id],
+    );
     return { ok: false, error: 'signal_expired' };
   }
 
   // editedScenario가 있으면 indicators.ai.scenario에 merge
+  let mergedIndicatorsJson: string | undefined;
   if (editedScenario != null) {
     let parsed: Record<string, unknown> = {};
     try {
@@ -605,16 +698,13 @@ export async function approveSignalHybrid(
       ...parsed,
       ai: { ...existingAi, scenario: mergedScenario },
     };
-    await pool.query(
-      `UPDATE signals SET indicators=?, status='approved_pending_entry', updated_at=NOW() WHERE id=?`,
-      [JSON.stringify(mergedIndicators), id],
-    );
-  } else {
-    await pool.query(
-      `UPDATE signals SET status='approved_pending_entry', updated_at=NOW() WHERE id=?`,
-      [id],
-    );
+    mergedIndicatorsJson = JSON.stringify(mergedIndicators);
   }
+
+  // T-042 — 원자적 전이: 대기 상태이고 만료 전일 때만 바뀐다. 이전에는 `WHERE id=?` 뿐이라 그 사이 거절·만료된
+  // 행을 다시 승인 상태로 덮어쓸 수 있었다.
+  const claim = await claimAwaitingSignal(pool, id, 'approved_pending_entry', { indicatorsJson: mergedIndicatorsJson });
+  if (!claim.ok) return { ok: false, error: claim.error };
 
   return {
     ok: true,
@@ -632,7 +722,9 @@ export async function rejectSignal(id: number): Promise<{ ok: boolean; error?: s
     return { ok: false, error: `invalid_status:${row.status}` };
   }
 
-  await pool.query(`UPDATE signals SET status='rejected' WHERE id=?`, [id]);
+  // T-042 — 원자적 전이. 이미 승인·만료된 행을 거절로 덮어쓰지 않고, 이긴 쪽만 로그·쿨다운을 남긴다.
+  const rejected = await rejectAwaitingSignal(pool, id);
+  if (!rejected.ok) return { ok: false, error: rejected.error };
   await pool.query(
     `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
     [null, 'signal_rejected', JSON.stringify({ signalId: id, symbol: row.symbol, side: row.side })],

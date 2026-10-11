@@ -31,6 +31,17 @@ jest.mock('@/lib/notify/throttle', () => ({
   sendAlertThrottled: jest.fn(() => true),
   resetAlertThrottle: jest.fn(),
 }));
+// T-042 — `approveSignal` 은 이제 주문이 **받아들여졌을 때만** `approved` 로 기록한다. 정책 한도(총자산 대비 %)는
+// 포트폴리오 총액에서 계산되는데 이 목 DB 에는 없어서, 한도를 통과시키지 않으면 승인 성공 경로를 검증할 수 없다.
+// (예전엔 이 차단이 `approved` 기록에 가려져 테스트가 우연히 통과했다.)
+jest.mock('@/lib/safety/order-limits', () => {
+  const actual = jest.requireActual('@/lib/safety/order-limits');
+  return {
+    ...actual,
+    getEffectiveOrderMax: jest.fn(async () => 10_000_000),
+    getEffectiveDailyMax: jest.fn(async () => 50_000_000),
+  };
+});
 
 // ── ① 순수 함수 계약 ─────────────────────────────────────────────────────────
 
@@ -124,8 +135,9 @@ function setupMockDB(signalRow?: Record<string, unknown>): Captured {
       return [{ insertId: nextId++ }];
     }
     const m = /UPDATE signals SET status='([a-z_]+)'/i.exec(sql);
-    if (m) { cap.signalStatusUpdates.push(m[1]); return [{}]; }
-    if (/UPDATE signals/i.test(sql)) return [{}];
+    // T-042 — 승인·거절 전이는 `affectedRows` 로 성패를 판정한다. 목은 "1행 변경"을 돌려준다.
+    if (m) { cap.signalStatusUpdates.push(m[1]); return [{ affectedRows: 1 }]; }
+    if (/UPDATE signals/i.test(sql)) return [{ affectedRows: 1 }];
     if (/SELECT[\s\S]*FROM signals WHERE id=\?/i.test(sql)) return [signalRow ? [signalRow] : []];
     if (/SELECT id FROM signals/i.test(sql)) return [[]];
     if (/UPDATE orders/i.test(sql)) return [{}];

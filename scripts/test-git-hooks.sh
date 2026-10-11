@@ -246,6 +246,19 @@ stage_and_run 1 "(t) auth/secret-box.ts·settings/hybrid (Developer 추가분) �
   "$(msg 'chore: 암호화·하이브리드 설정 수정')" \
   "src/lib/auth/secret-box.ts" "src/app/api/settings/hybrid/route.ts"
 
+# (t42) T-042 — 텔레그램 버튼 승인의 입구(봇 클라이언트·폴러 기동)와 승인 핸들러가 게이트에 걸린다
+stage_and_run 1 "(t42a) notify/telegram-api.ts (봇 입구) → 차단" \
+  "$(msg 'chore: 텔레그램 봇 클라이언트 수정')" "src/lib/notify/telegram-api.ts"
+stage_and_run 1 "(t42b) instrumentation.ts (폴러 기동) → 차단" \
+  "$(msg 'chore: 기동 훅 수정')" "src/instrumentation.ts"
+stage_and_run 1 "(t42c) signals/telegram-approval.ts·telegram-poller.ts (승인 핸들러·폴러) → 차단" \
+  "$(msg 'chore: 버튼 승인 핸들러 수정')" "src/lib/signals/telegram-approval.ts" "src/lib/signals/telegram-poller.ts"
+stage_and_run 1 "(t42e) telegram-api.test.ts·instrumentation-shape.test.ts (안전 경로의 테스트) → 차단" \
+  "$(msg 'chore: 봇 클라이언트 테스트 수정')" "src/lib/notify/__tests__/telegram-api.test.ts" "src/__tests__/instrumentation-shape.test.ts"
+# 과도차단 방지: 같은 디렉토리의 일반 알림 코드는 자금과 무관 — 걸리지 않는다
+stage_and_run 0 "(t42d) notify/slack.ts (일반 알림) → 비차단" \
+  "$(msg 'chore: 슬랙 알림 문구')" "src/lib/notify/slack.ts"
+
 # (u) 확대 후에도 자금 무관 경로는 여전히 비차단이어야 한다 (과도차단 회귀 방지)
 #     watch-symbols 는 `system_config.watch_symbols` 를 읽는 코드가 src/ 에 0건이라 의도적 제외.
 stage_and_run 0 "(u) llm-provider·notify-channel·watch-symbols → 여전히 통과(의도적 제외)" \

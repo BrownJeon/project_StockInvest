@@ -21,6 +21,7 @@ import { getStyleConfig } from '@/lib/strategy/style';
 import { setPositionScenarioExit } from '@/lib/strategy/position-state';
 import type { ScenarioExitParams } from '@/lib/strategy/position-state';
 import { getSymbolLabel, sendAlert } from '@/lib/notify';
+import { escapeAlertText } from '@/lib/notify/escape';
 
 // notify_signal_entry 플래그 캐시 (30초 TTL)
 let entryNotifyCache: { enabled: boolean; ts: number } | null = null;
@@ -58,6 +59,16 @@ function resolveHoldingDeadline(exitObj: Record<string, unknown>): Date | null {
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * T-042 (3라운드 감사 R3-1) — **주문이 이미 나갔을 수 있는데 DB 에 그 사실을 기록하지 못한** 시그널.
+ *
+ * 이 라우트는 1분마다 돈다. 주문 뒤의 상태 UPDATE(`executing` 잠금/기록)가 DB 장애로 실패하면 시그널이 `approved_pending_entry` 로
+ * 남아 **다음 틱에 같은 주문을 다시 낸다.** DB 에 쓸 수 없는 상황이므로 DB 로는 막을 수 없다 → 이 프로세스 안에서만이라도 건너뛴다.
+ * 프로세스를 재기동하면 비워진다(그래서 실패 시 critical 경보로 사람이 알게 한다 — docs/telegram-approval.md §6.1).
+ * 항목은 극히 드물게만 생기므로 정리하지 않는다. (Next 의 route 파일은 지정된 이름만 export 할 수 있어 모듈 지역 변수다.)
+ */
+const orderSentButUnrecorded = new Set<number>();
+
 interface PendingEntryRow {
   id: number;
   symbol: string;
@@ -78,7 +89,9 @@ interface WatchResult {
   outcome: 'submitted' | 'expired' | 'out_of_zone' | 'no_zone' | 'price_fetch_failed' | 'order_failed'
     | 'blocked_by_prior_split'
     /** T-020 — 사이징 결과가 1주 미만이라 주문을 내지 않았다 (실패가 아니라 정책 스킵) */
-    | 'quantity_below_min';
+    | 'quantity_below_min'
+    /** T-042 — 주문이 접수됐는지 알 수 없다(송신 중 예외·5xx). 같은 주문을 다시 내지 않도록 시그널을 잠갔다 */
+    | 'order_uncertain';
   detail?: string;
 }
 
@@ -122,6 +135,12 @@ export async function POST(req: NextRequest) {
 
   for (const row of rows) {
     const signalId = row.id;
+
+    // 🔴 주문이 나갔을 수 있는데 기록하지 못한 시그널은 다시 제출하지 않는다 (R3-1)
+    if (orderSentButUnrecorded.has(signalId)) {
+      results.push({ signalId, symbol: row.symbol, outcome: 'order_uncertain', detail: 'skipped: order may already be sent (state record failed)' });
+      continue;
+    }
 
     // 만료 체크
     if (row.expires_at && new Date(row.expires_at) < now) {
@@ -282,10 +301,23 @@ export async function POST(req: NextRequest) {
       });
 
       if (orderResult.ok || orderResult.dryRun) {
-        await pool.query(
-          `UPDATE signals SET status='executing', consumed_order_id=?, updated_at=NOW() WHERE id=?`,
-          [orderResult.orderId ?? null, signalId],
-        );
+        // 주문은 이미 접수됐다. 이 기록이 실패해도 "주문 실패"로 취급하면 다음 틱에 같은 주문이 다시 나간다(R3-1).
+        try {
+          await pool.query(
+            `UPDATE signals SET status='executing', consumed_order_id=?, updated_at=NOW() WHERE id=?`,
+            [orderResult.orderId ?? null, signalId],
+          );
+        } catch (e) {
+          orderSentButUnrecorded.add(signalId);
+          const why = e instanceof Error ? e.message : String(e);
+          console.error(`[entry-watcher] 주문 접수 후 상태 기록 실패 signal=${signalId} order=${orderResult.orderId ?? '-'}:`, why);
+          sendAlert(
+            'critical',
+            `⚠️ 진입 주문은 접수됐으나 시그널 상태 기록 실패: ${await getSymbolLabel(row.symbol)}`,
+            `시그널 #${signalId} · 주문 #${orderResult.orderId ?? '-'}\n사유: ${escapeAlertText(why.slice(0, 160))}\n`
+            + '같은 주문이 다시 나가지 않도록 이 프로세스에서는 건너뜁니다(재기동하면 풀립니다). DB 에서 status=\'executing\', consumed_order_id 를 맞추세요.',
+          );
+        }
 
         // 진입 알람 발송 (notify_signal_entry=true 이고 DRY_RUN이 아닌 경우에만)
         if (!orderResult.dryRun && await isEntryNotifyEnabled()) {
@@ -335,6 +367,33 @@ export async function POST(req: NextRequest) {
           outcome: 'submitted',
           detail: `orderId=${orderResult.orderId ?? 'dry_run'} price=${currentPrice}`,
         });
+      } else if (orderResult.outcomeUnknown === true) {
+        // 🔴 T-042 — 접수 여부를 알 수 없는 실패(송신 중 예외·연결 끊김·5xx, 접수 직후 DB 갱신 실패).
+        //    시그널을 `approved_pending_entry` 로 두면 **다음 틱(1분 뒤)에 같은 주문을 다시 낸다** — 첫 주문이 실제로 접수됐다면
+        //    1분마다 이중 주문이다. `executing` 으로 잠가 감시를 끝내고 사람에게 체결내역 확인을 요청한다.
+        //    (조건부 UPDATE: 그 사이 다른 쪽이 바꾼 행은 건드리지 않는다)
+        // 🔴 잠금 UPDATE 가 실패해도(DB 장애) 경보는 나가야 하고 재주문은 막아야 한다 — 경보는 UPDATE 바깥, 실패하면 프로세스 지역 집합으로 (R3-1)
+        let lockNote = '시그널을 잠갔습니다';
+        try {
+          await pool.query(
+            `UPDATE signals SET status='executing', consumed_order_id=?, updated_at=NOW()
+             WHERE id=? AND status='approved_pending_entry'`,
+            [orderResult.orderId ?? null, signalId],
+          );
+        } catch (e) {
+          orderSentButUnrecorded.add(signalId);
+          lockNote = 'DB 잠금에는 실패했지만 이 프로세스에서는 건너뜁니다(재기동하면 풀립니다)';
+          console.error(`[entry-watcher] 결과 불명 잠금 UPDATE 실패 signal=${signalId}:`, e instanceof Error ? e.message : String(e));
+        }
+        const uncertainDetail = orderResult.error ?? 'unknown';
+        sendAlert(
+          'critical',
+          `⚠️ 진입 주문 결과 불명 — 체결내역 확인 필요: ${await getSymbolLabel(row.symbol)}`,
+          `시그널 #${signalId} ${row.side === 'buy' ? '매수' : '매도'} · 주문 #${orderResult.orderId ?? '-'}\n`
+          + `사유: ${escapeAlertText(String(uncertainDetail).slice(0, 160))}\n`
+          + `거래소에 주문이 접수됐는지 알 수 없어 같은 주문이 다시 나가지 않도록 ${lockNote}. KIS 체결/미체결 내역을 확인하세요 (docs/telegram-approval.md §6.1).`,
+        );
+        results.push({ signalId, symbol: row.symbol, outcome: 'order_uncertain', detail: uncertainDetail });
       } else {
         results.push({
           signalId,

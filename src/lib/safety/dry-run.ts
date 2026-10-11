@@ -139,6 +139,10 @@ async function submitOrderInner(
     ],
   );
   const orderId = ins.insertId;
+  // T-042 — 거래소로 송신을 시작했는가. 이 이후의 어떤 예외도 "주문이 나갔을 수 있다"이므로 `outcomeUnknown` 이다.
+  // (송신 성공 뒤 `accepted` UPDATE 가 실패하고 안쪽 catch 의 `failed` UPDATE 까지 던지면 예외가 *바깥* catch 로 올라간다 —
+  //  그 catch 는 원래 "송신 전 예외"만 가정하고 있었다. 2라운드 감사 R2-2.)
+  let sendReached = false;
   await auditLog(orderId, 'submit_attempt', { req, assetClass, source });
 
   try {
@@ -204,7 +208,10 @@ async function submitOrderInner(
 
   // 8. 실 송신
   try {
+    sendReached = true;
     const result = await realSubmit(req);
+    // T-042 — 거래소가 5xx 를 돌려줬거나 연결이 끊긴 경우 주문이 접수됐는지 알 수 없다(KIS 가 처리한 뒤 응답만 잃을 수 있다).
+    let outcomeUnknown = false;
     if (result.ok) {
       await pool.query(
         `UPDATE orders SET status='accepted', exchange_order_id=? WHERE id=?`,
@@ -215,26 +222,31 @@ async function submitOrderInner(
       // KIS createOrder 응답에 blockedBy 필드 없음 → error 메시지에서 카테고리 자동 분류.
       // raw error 는 trade_logs(audit) 에 보존, blocked_by 컬럼엔 짧은 카테고리만.
       const blockedBy = result.blockedBy ?? categorizeRejectReason(result.error);
+      outcomeUnknown = blockedBy === 'kis_5xx' || blockedBy === 'network_error';
       await pool.query(
         `UPDATE orders SET status='rejected', blocked_by=? WHERE id=?`,
         [blockedBy, orderId],
       );
       await auditLog(orderId, 'rejected', result);
     }
-    return { ...result, orderId, clientOrderId };
+    return { ...result, orderId, clientOrderId, ...(outcomeUnknown ? { outcomeUnknown: true } : {}) };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     await pool.query(`UPDATE orders SET status='failed' WHERE id=?`, [orderId]);
     await auditLog(orderId, 'error', { error });
-    return { ok: false, orderId, clientOrderId, error };
+    // T-042 — 송신 단계의 예외는 거래소가 주문을 받은 뒤(예: 접수 직후 orders UPDATE 실패)에도 날 수 있다 → 결과 불명.
+    return { ok: false, orderId, clientOrderId, error, outcomeUnknown: true };
   }
 
   } catch (e) {
     // step 3~7 사이 예외 — pending 상태로 남지 않도록 failed 처리
     const error = e instanceof Error ? e.message : String(e);
     await pool.query(`UPDATE orders SET status='failed' WHERE id=?`, [orderId]).catch(() => {});
-    await auditLog(orderId, 'error', { error, phase: 'safety_check' });
-    return { ok: false, orderId, clientOrderId, error };
+    await auditLog(orderId, 'error', { error, phase: sendReached ? 'post_send' : 'safety_check' });
+    // 송신 전 예외는 확정 실패(거래소에 나가지 않았다). 송신 시작 후라면 결과 불명 — 호출처가 재시도하면 이중 주문이 될 수 있다.
+    return sendReached
+      ? { ok: false, orderId, clientOrderId, error, outcomeUnknown: true }
+      : { ok: false, orderId, clientOrderId, error };
   }
 }
 

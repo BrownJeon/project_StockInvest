@@ -43,5 +43,16 @@ export async function register(): Promise<void> {
       // (감시는 2차 방어선이고, 앱 정지는 그 자체로 1차 사고다).
       console.error('[instrumentation] cron 워치독 기동 실패:', e instanceof Error ? e.message : String(e));
     }
+
+    // T-042 — 텔레그램 버튼 콜백 폴러. 같은 양수 조건 블록 안에 둔다(조기 return 형태 금지 — 위 설명 참조).
+    // 지연 시작(30초)·모든 예외 삼킴·두 스위치(telegram_poller_enabled / telegram_approval_enabled, 기본 꺼짐).
+    // 이 루프가 실패해도 서버 기동과 웹 승인 경로는 영향받지 않는다. 폴러는 거래 승인 권한을 가진 경로라
+    // 이 파일은 훅 SAFETY_PATHS 에 포함돼 있다.
+    try {
+      const { startTelegramApprovalPoller } = await import('@/lib/signals/telegram-poller');
+      startTelegramApprovalPoller();
+    } catch (e) {
+      console.error('[instrumentation] 텔레그램 폴러 기동 실패:', e instanceof Error ? e.message : String(e));
+    }
   }
 }

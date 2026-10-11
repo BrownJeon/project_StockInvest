@@ -214,6 +214,120 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
     expect(cap.logs.map((l) => l.event)).toContain('error');
   });
 
+  // ── T-042 — "결과 불명"(outcomeUnknown): 재시도하면 같은 주문이 두 번 나갈 수 있는 실패 ────────────────────────
+  describe('outcomeUnknown — 주문이 접수됐는지 알 수 없는 실패', () => {
+    test.each([
+      ['송신 중 예외 (연결 끊김)', () => jest.fn().mockRejectedValue(new Error('fetch failed (ECONNRESET)'))],
+      ['KIS 5xx 응답', () => jest.fn().mockResolvedValue({ ok: false, error: 'HTTP 502 bad gateway' })],
+      ['네트워크 타임아웃 응답', () => jest.fn().mockResolvedValue({ ok: false, error: 'request timeout' })],
+    ])('🔴 %s → outcomeUnknown=true', async (_name, makeSubmit) => {
+      process.env.DRY_RUN = 'false';
+      setupMockDB();
+      const r = await submitOrder(baseReq, makeSubmit());
+      expect(r.ok).toBe(false);
+      expect(r.outcomeUnknown).toBe(true);
+    });
+
+    test('🔴 KIS 가 접수한 직후 orders UPDATE 가 실패해도 결과 불명이다 (거래소엔 주문이 있다)', async () => {
+      process.env.DRY_RUN = 'false';
+      const cap = setupMockDB();
+      // 접수 UPDATE 만 실패시킨다: 기본 목을 감싸 `status='accepted'` UPDATE 에서 던지게 한다
+      const pool = (getPool as jest.Mock)();
+      const inner = pool.query as jest.Mock;
+      (getPool as jest.Mock).mockReturnValue({
+        query: jest.fn(async (sql: string, p?: unknown[]) => {
+          if (/UPDATE orders SET status='accepted'/.test(String(sql))) throw new Error('db gone');
+          return inner(sql, p);
+        }),
+      });
+      const realSubmit = jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-9' });
+      const r = await submitOrder(baseReq, realSubmit);
+      expect(realSubmit).toHaveBeenCalledTimes(1);            // 거래소엔 이미 나갔다
+      expect(r.ok).toBe(false);                               // 그러나 우리는 ok:false 를 돌려준다
+      expect(r.outcomeUnknown).toBe(true);                    // → 호출처가 재시도하면 안 된다는 표시
+      expect(cap.logs.map((l) => l.event)).toContain('error');
+    });
+
+    test('🔴 [2라운드 R2-2] 송신 성공 뒤 DB 가 계속 죽어 `failed` UPDATE 까지 던져도 결과 불명이다 (안쪽 catch 가 던지면 바깥 catch 로 올라간다)', async () => {
+      process.env.DRY_RUN = 'false';
+      setupMockDB();
+      const pool = (getPool as jest.Mock)();
+      const inner = pool.query as jest.Mock;
+      (getPool as jest.Mock).mockReturnValue({
+        query: jest.fn(async (sql: string, p?: unknown[]) => {
+          // 송신 *이후*의 모든 orders 상태 갱신이 실패한다 (accepted 도, failed 도)
+          if (/UPDATE orders SET status='(accepted|failed)'/.test(String(sql))) throw new Error('db gone');
+          return inner(sql, p);
+        }),
+      });
+      const realSubmit = jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-77' });
+      const r = await submitOrder(baseReq, realSubmit);
+      expect(realSubmit).toHaveBeenCalledTimes(1);            // 거래소엔 이미 나갔다
+      expect(r.ok).toBe(false);
+      expect(r.error).toBe('db gone');
+      expect(r.outcomeUnknown).toBe(true);                    // 🔴 플래그가 없으면 호출처가 확정 거부로 읽고 재시도해 이중 주문이 된다
+    });
+
+    test('송신 *전*(안전층 검사 단계)의 예외는 확정 실패다 — 바깥 catch 를 실제로 지나며, 거래소에 나가지 않았으므로 outcomeUnknown 이 없다', async () => {
+      process.env.DRY_RUN = 'false';
+      const cap = setupMockDB();
+      const pool = (getPool as jest.Mock)();
+      // 변동폭 가드(step 6b)가 던지게 한다: 이 예외는 checkDailyMax 처럼 자체 처리되지 않고 바깥 catch 로 올라간다
+      jest.resetModules();
+      jest.doMock('../volatility-guard', () => ({ checkVolatilityGuard: jest.fn().mockRejectedValue(new Error('guard gone')) }));
+      let freshSubmit: typeof submitOrder;
+      jest.isolateModules(() => {
+        // 격리 레지스트리의 db 목은 새 인스턴스다 — 같은 풀에 연결한다
+        const db = require('@/lib/db');
+        db.getPool.mockReturnValue(pool);
+        db.getAccountId.mockResolvedValue(1);
+        freshSubmit = require('../dry-run').submitOrder;
+      });
+      try {
+        const realSubmit = jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-1' });
+        const r = await freshSubmit!(baseReq, realSubmit);
+        expect(realSubmit).not.toHaveBeenCalled();             // 송신 전에 죽었다
+        expect(r.ok).toBe(false);
+        expect(r.error).toBe('guard gone');                    // 바깥 catch 를 지났다는 증거
+        expect(r.outcomeUnknown).toBeUndefined();              // 🔴 송신 전 실패에 불명 표시를 붙이면 멀쩡한 시그널이 잠긴다
+        expect(cap.logs.map((l) => l.event)).toContain('error');
+      } finally {
+        jest.dontMock('../volatility-guard');
+        jest.resetModules();
+      }
+    });
+
+    test.each([
+      ['잔고 부족', 'INSUFFICIENT_BALANCE 주문가능금액 부족'],
+      ['호가 단위 오류', '호가단위 오류'],
+      ['장 마감', '장종료 시간외'],
+      ['거래 정지', '거래정지 종목'],
+    ])('KIS 의 명시적 거부(%s)는 확정 거부 — outcomeUnknown 이 없다', async (_n, error) => {
+      process.env.DRY_RUN = 'false';
+      setupMockDB();
+      const r = await submitOrder(baseReq, jest.fn().mockResolvedValue({ ok: false, error }));
+      expect(r.ok).toBe(false);
+      expect(r.outcomeUnknown).toBeUndefined();
+    });
+
+    test('안전층 차단(킬스위치·한도)은 송신 전이므로 확정 거부', async () => {
+      process.env.KILL_SWITCH = 'true';
+      setupMockDB();
+      const r = await submitOrder(baseReq, jest.fn());
+      expect(r).toMatchObject({ ok: false, blockedBy: 'kill_switch' });
+      expect(r.outcomeUnknown).toBeUndefined();
+    });
+
+    test('성공·DRY_RUN 결과에는 outcomeUnknown 이 붙지 않는다 (기존 결과 형태 불변)', async () => {
+      setupMockDB();
+      const dry = await submitOrder(baseReq, jest.fn());
+      expect(dry.outcomeUnknown).toBeUndefined();
+      process.env.DRY_RUN = 'false';
+      const ok = await submitOrder(baseReq, jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-1' }));
+      expect(ok.outcomeUnknown).toBeUndefined();
+    });
+  });
+
   test('9. clientOrderId 옵션 → INSERT orders의 client_order_id 컬럼에 전달 값 사용', async () => {
     const cap = setupMockDB();
     const r = await submitOrder(baseReq, (async () => ({ ok: true })) as never, { clientOrderId: 'custom-id-42' });

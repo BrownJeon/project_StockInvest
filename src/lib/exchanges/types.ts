@@ -25,6 +25,12 @@ export interface OrderResult {
   exchangeOrderId?: string;
   raw?: unknown;
   error?: string;
+  /**
+   * T-042 — `ok:false` 인데 **주문이 거래소에 접수됐는지 알 수 없다**(송신 중 예외·연결 끊김·5xx, 접수 직후 DB 갱신 실패).
+   * 안전층 차단(`blockedBy`)이나 거래소의 명시적 거부와 달리 *재시도하면 같은 주문이 두 번 나갈 수 있다.*
+   * 설정되는 곳은 `submitOrder` 의 송신 단계뿐이다. 없으면(undefined) 확정 거부로 읽는다.
+   */
+  outcomeUnknown?: boolean;
 }
 
 export interface CancelRequest {

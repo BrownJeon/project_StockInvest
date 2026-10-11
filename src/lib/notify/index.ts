@@ -96,11 +96,34 @@ export async function dispatchAlert(
   title: string,
   body: string,
 ): Promise<AlertDispatch> {
+  return dispatchVia(level, title, body, () => sendTelegramAlert(level, title, body));
+}
+
+/**
+ * T-042 — 텔레그램 쪽만 다른 발송 함수(버튼이 달린 메시지 등)로 바꿔 끼운다.
+ * 채널 정책(`notify_channel`)·슬랙 동시 전송·실패 로깅(`logDispatch`)·예외 격리(`attempt`)는 `dispatchAlert` 와 **똑같이**
+ * 적용된다 — 버튼 메시지가 채널 설정을 우회하거나 실패를 조용히 삼키지 않게 하려는 것이다.
+ */
+export async function dispatchAlertWithTelegram(
+  level: AlertLevel,
+  title: string,
+  body: string,
+  sendTelegram: () => Promise<NotifyResult>,
+): Promise<AlertDispatch> {
+  return dispatchVia(level, title, body, sendTelegram);
+}
+
+async function dispatchVia(
+  level: AlertLevel,
+  title: string,
+  body: string,
+  sendTelegram: () => Promise<NotifyResult>,
+): Promise<AlertDispatch> {
   const ch = await getChannel();
 
   const tasks: Promise<{ channel: ChannelName; result: NotifyResult }>[] = [];
   if (ch === 'slack'    || ch === 'both') tasks.push(attempt('slack',    () => sendSlackAlert(level, title, body)));
-  if (ch === 'telegram' || ch === 'both') tasks.push(attempt('telegram', () => sendTelegramAlert(level, title, body)));
+  if (ch === 'telegram' || ch === 'both') tasks.push(attempt('telegram', sendTelegram));
   const results = await Promise.all(tasks);   // 기존과 동일하게 두 채널 동시 전송
 
   const dispatch: AlertDispatch = {

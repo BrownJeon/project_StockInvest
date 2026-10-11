@@ -24,7 +24,7 @@ jest.mock('@/lib/notify/telegram', () => ({
   sendTelegramAlert: (...a: unknown[]) => telegramMock(...a),
 }));
 
-import { dispatchAlert, sendAlert } from '@/lib/notify';
+import { dispatchAlert, dispatchAlertWithTelegram, sendAlert } from '@/lib/notify';
 
 const OK: NotifyResult      = { ok: true };
 const SKIPPED: NotifyResult = { ok: false, skipped: true };
@@ -167,5 +167,52 @@ describe('sendAlert — fire-and-forget 계약 유지', () => {
     expect(() => sendAlert('critical', '예외', '본문')).not.toThrow();
     await new Promise(r => setImmediate(r));
     expect(logged()).toContain('CRITICAL_ALERT_UNDELIVERED');
+  });
+});
+
+// ── T-042 — 버튼이 달린 텔레그램 메시지: 텔레그램 발송 함수만 바꿔 끼운다 ─────────────────────────────────
+describe('dispatchAlertWithTelegram — 채널 정책·슬랙·로깅은 dispatchAlert 와 같다', () => {
+  const custom = jest.fn<Promise<NotifyResult>, []>();
+  beforeEach(() => { custom.mockReset(); custom.mockResolvedValue(OK); });
+
+  test('🔴 텔레그램 쪽은 주어진 함수를 쓰고 기본 sendTelegramAlert 는 부르지 않는다', async () => {
+    const d = await dispatchAlertWithTelegram('info', '제목', '본문', custom);
+    expect(custom).toHaveBeenCalledTimes(1);
+    expect(telegramMock).not.toHaveBeenCalled();
+    expect(d.delivered.sort()).toEqual(['slack', 'telegram']);
+  });
+
+  test('슬랙에는 평소처럼 제목·본문이 간다', async () => {
+    await dispatchAlertWithTelegram('warning', '제목X', '본문Y', custom);
+    expect(slackMock).toHaveBeenCalledWith('warning', '제목X', '본문Y');
+  });
+
+  test.each([
+    ['none', 0, 0], ['telegram', 0, 1], ['slack', 1, 0], ['both', 1, 1],
+  ])('🔴 채널 정책 %s → 슬랙 %i · 텔레그램(주어진 함수) %i 회 (정책을 우회하지 않는다)', async (policy, slack, tg) => {
+    channelValue = policy;
+    jest.resetModules();                                       // 채널 정책은 30초 캐시된다 — 새 모듈로 읽는다 (기존 테스트와 같은 방식)
+    const fresh = await import('@/lib/notify');
+    await fresh.dispatchAlertWithTelegram('info', 't', 'b', custom);
+    expect(slackMock).toHaveBeenCalledTimes(slack);
+    expect(custom).toHaveBeenCalledTimes(tg);
+  });
+
+  test('주어진 함수가 실패하면 failed 로 집계하고 로그를 남긴다 (조용히 삼키지 않는다)', async () => {
+    custom.mockResolvedValue(FAIL('HTTP 400 can\'t parse entities'));
+    const d = await dispatchAlertWithTelegram('info', '승인 요청', 'b', custom);
+    expect(d.failed).toEqual([{ channel: 'telegram', error: "HTTP 400 can't parse entities" }]);
+    expect(logged()).toContain('telegram 전송 실패');
+  });
+
+  test('주어진 함수가 던져도 dispatch 는 죽지 않는다', async () => {
+    custom.mockRejectedValue(new Error('boom'));
+    const d = await dispatchAlertWithTelegram('info', 't', 'b', custom);
+    expect(d.failed[0].channel).toBe('telegram');
+  });
+
+  test('기존 dispatchAlert 는 여전히 sendTelegramAlert 를 쓴다 (리팩터가 동작을 바꾸지 않았다)', async () => {
+    await dispatchAlert('info', 't', 'b');
+    expect(telegramMock).toHaveBeenCalledWith('info', 't', 'b');
   });
 });

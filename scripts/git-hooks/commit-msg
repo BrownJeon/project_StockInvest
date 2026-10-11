@@ -225,6 +225,18 @@ check_hook_sync || true
 #                               (portfolio-snapshot 이 kill-switch·volatility-guard 를 실행하는 등
 #                                초안 목록 밖에도 안전 경로가 이미 존재했음).
 # 제외 판단: src/lib/db.ts(공통 인프라·과도차단), src/app/api/analytics|dashboard(읽기 전용 집계).
+#
+# T-042 추가 (텔레그램 버튼 승인 — 거래 승인 권한이 채팅으로 이동):
+#   + src/lib/notify/telegram-api.ts  → 봇 토큰을 쓰고 `getUpdates`/콜백을 받는 **입구**다. 여기가 약화되면
+#                               (발신자 확인 우회가 아니라) 콜백 수신·메시지 수정 자체가 오염될 수 있다.
+#                               `src/lib/notify/` 전체는 넣지 않았다 — 슬랙·일반 알림은 자금과 무관하고 과도차단이 된다.
+#   + src/instrumentation.ts          → 서버 기동 시 **폴러를 띄우는 곳**이다. 빌드타임 분기 형태를 깨면 빌드가 깨지고
+#                               (T-037 사고), 폴러 기동 조건을 건드리면 승인 경로가 조용히 켜지거나 꺼진다.
+#   + src/lib/notify/__tests__/telegram-api.test.ts, src/__tests__/instrumentation-shape.test.ts
+#                             → 위 두 안전 경로의 테스트. 이 프로젝트의 원칙(아래 "테스트 파일 — 제외하지 않는다")을 따른다:
+#                               토큰 가림·409 구분·계측 분기 형태를 고정하는 단언을 무검토로 지울 수 있으면 회귀망이 먼저 오염된다.
+#   (승인 핸들러·폴러·서명 코덱·상태 전이는 src/lib/signals/ 아래에 둬서 이미 포함돼 있다. 경로 선택을 바꾸는
+#    승인 라우트는 src/app/api/signals/, 자가 점검 라우트는 src/app/api/cron/ 에 포함된다.)
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
@@ -233,6 +245,10 @@ SAFETY_PATHS=(
   '^src/lib/strategy/'
   '^src/lib/credentials\.ts$'
   '^src/lib/cron-auth\.ts$'
+  '^src/lib/notify/telegram-api\.ts$'
+  '^src/instrumentation\.ts$'
+  '^src/lib/notify/__tests__/telegram-api\.test\.ts$'
+  '^src/__tests__/instrumentation-shape\.test\.ts$'
   '^src/lib/auth/users\.ts$'
   '^src/lib/auth/owner-kis-migration\.ts$'
   '^src/lib/auth/secret-box\.ts$'
