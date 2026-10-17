@@ -9,7 +9,7 @@
  *  5. Claude AI 배치 분석 → 익일 진입 시나리오 판단
  *  6. signals INSERT (valid_from = 다음 거래일 09:00 KST, status = 'pending')
  */
-import type { ResultSetHeader } from 'mysql2';
+import type { Pool, ResultSetHeader } from 'mysql2/promise';
 import { getPool } from '@/lib/db';
 import { getCandles } from '@/lib/exchanges/kis-domestic';
 import { getAlwaysIncludeSymbols, getUniverseSnapshot } from './universe';
@@ -31,6 +31,10 @@ export interface PostMarketResult {
   signalsSkipped: number;
   errors: string[];
   validFrom: string;
+  /** T-045 — 이미 같은 (종목·방향·valid_from) 카드가 있어 만들지 않은 수. `signalsSkipped` 에도 포함된다. */
+  duplicatesSkipped?: number;
+  /** T-045 — 분석을 하지 않고 끝낸 사유. 주말(토·일, KST)이면 `weekend`. 공휴일은 건너뛰지 않는다. */
+  skipped?: 'weekend';
 }
 
 interface AiDecision {
@@ -42,6 +46,15 @@ interface AiDecision {
   holding_days?: number;
   confidence?: number;
   reasoning?: string;
+}
+
+/**
+ * 지금이 한국 시간(KST) 기준 토·일인가. 서버 시간대와 무관하게 epoch + 9h 로 요일을 읽는다.
+ * DB·공휴일 목록을 쓰지 않는 순수 함수라 던지지 않는다.
+ */
+export function isWeekendKst(date: Date): boolean {
+  const dow = new Date(date.getTime() + 9 * 3600_000).getUTCDay(); // 0=일, 6=토
+  return dow === 0 || dow === 6;
 }
 
 /** 다음 거래일 09:00 KST (주말 스킵) */
@@ -69,6 +82,56 @@ function nextTradingDayOpen(): Date {
 function nextTradingDayClose(): Date {
   const open = nextTradingDayOpen();
   return new Date(open.getTime() + 6.5 * 60 * 60 * 1000); // +6h30m
+}
+
+export interface ScenarioCardRow {
+  strategyId: string;
+  symbol: string;
+  /** 진입 구간 중간값(지정가 기준가) */
+  price: number;
+  reasoning: string;
+  indicatorsJson: string;
+  expiresAt: string;
+  validFrom: string;
+}
+
+/**
+ * 시나리오 카드를 넣되, **같은 (종목·방향·valid_from·scenario_source) 카드가 이미 있으면 넣지 않는다.**
+ *
+ * T-045 — 상태를 가리지 않는다. 사용자가 거절했거나 `superseded` 로 정리한 카드가 같은 `valid_from` 으로
+ * 다시 살아나면 안 되기 때문이다. 판정과 삽입이 한 문장이라 "조회 후 삽입" 사이에 끼어들 틈이 없지만,
+ * 같은 키를 **동시에** 넣는 두 실행은 둘 다 통과할 수 있다(유니크 인덱스가 없다 — 마이그레이션은 사용자 승인 사항).
+ * cron 은 직렬이라 정상 운영에서는 해당하지 않는다.
+ *
+ * @returns 'created' | 'duplicate'
+ */
+export async function insertScenarioCardIfAbsent(
+  pool: Pick<Pool, 'query'>,
+  row: ScenarioCardRow,
+): Promise<'created' | 'duplicate'> {
+  const [res] = await pool.query<ResultSetHeader>(
+    `INSERT INTO signals
+       (strategy_id, symbol, side, order_type, price, amount_krw,
+        reasoning, indicators, status, expires_at, valid_from, market, scenario_source)
+     SELECT ?, ?, 'buy', 'limit', ?, 100000, ?, ?, 'pending', ?, ?, 'domestic', 'post-market'
+       FROM DUAL
+      WHERE NOT EXISTS (
+        SELECT 1 FROM signals
+         WHERE symbol = ? AND side = 'buy' AND valid_from = ? AND scenario_source = 'post-market'
+      )`,
+    [
+      row.strategyId,
+      row.symbol,
+      row.price,
+      row.reasoning,
+      row.indicatorsJson,
+      row.expiresAt,
+      row.validFrom,
+      row.symbol,
+      row.validFrom,
+    ],
+  );
+  return res.affectedRows > 0 ? 'created' : 'duplicate';
 }
 
 async function loadSymbols(market: PostMarketMarket): Promise<string[]> {
@@ -158,6 +221,20 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
   const expiresAt = expiresAtDate.toISOString().slice(0, 19).replace('T', ' ');
   const nextDay = validFromDate.toISOString().slice(0, 10);
 
+  // T-045 — 주말(토·일)에는 새 종가가 없다. 그래도 돌리면 같은 데이터로 LLM 출력만 달라진 모순된 카드를 같은
+  // 다음 거래일용으로 또 만든다(2026-10-17 토요일 실행이 금요일 카드와 구간이 다른 카드를 중복 생성).
+  // **공휴일은 일부러 건너뛰지 않는다**: `nextTradingDayOpen()` 이 공휴일을 건너뛰지 못하므로, 공휴일 전날 실행은 휴장일용
+  // 카드를 만든다. 공휴일 당일 실행이 "그 다음 거래일"용 카드를 만드는 유일한 실행이라, 이것까지 막으면 그 거래일에
+  // 카드가 한 장도 없다(독립 감사 R-1). 그 카드는 전날 카드와 valid_from 이 달라 중복도 아니다. 이 방식은 공휴일 목록의
+  // 정확도에도 의존하지 않는다. 해외는 종목이 없어 변화 없음이므로 국내만 건너뛴다.
+  if (market === 'domestic' && isWeekendKst(new Date())) {
+    console.log('[post-market] 주말 — 새 종가가 없어 분석을 건너뜁니다');
+    return {
+      market, symbolsEvaluated: 0, candidatesFound: 0, signalsCreated: 0, signalsSkipped: 0,
+      errors, validFrom, skipped: 'weekend',
+    };
+  }
+
   // 1. 심볼 로드
   const symbols = await loadSymbols(market);
   if (symbols.length === 0) {
@@ -229,6 +306,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
   const pool = getPool();
   let signalsCreated = 0;
   let signalsSkipped = 0;
+  let duplicatesSkipped = 0;
 
   for (const d of decisions) {
     const candidate = uniqueCandidates.find(c => c.symbol === d.symbol);
@@ -278,23 +356,23 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     ].join('\n');
 
     try {
-      await pool.query<ResultSetHeader>(
-        `INSERT INTO signals
-           (strategy_id, symbol, side, order_type, price, amount_krw,
-            reasoning, indicators, status, expires_at, valid_from, market, scenario_source)
-         VALUES (?, ?, 'buy', 'limit', ?, 100000, ?, ?, 'pending', ?, ?, 'domestic', 'post-market')`,
-        [
-          `${candidate.pattern}-v1`,
-          candidate.symbol,
-          entryMid,
-          reasoning,
-          JSON.stringify(indicators),
-          expiresAt,
-          validFrom,
-        ],
-      );
-      signalsCreated++;
-      console.log(`[post-market] ✅ ${candidate.symbol} ${candidate.pattern} valid_from=${validFrom} conf=${confidence}%`);
+      const outcome = await insertScenarioCardIfAbsent(pool, {
+        strategyId: `${candidate.pattern}-v1`,
+        symbol: candidate.symbol,
+        price: entryMid,
+        reasoning,
+        indicatorsJson: JSON.stringify(indicators),
+        expiresAt,
+        validFrom,
+      });
+      if (outcome === 'duplicate') {
+        duplicatesSkipped++;
+        signalsSkipped++;
+        console.log(`[post-market] ⏭ ${candidate.symbol} valid_from=${validFrom} — 같은 카드가 이미 있어 만들지 않음`);
+      } else {
+        signalsCreated++;
+        console.log(`[post-market] ✅ ${candidate.symbol} ${candidate.pattern} valid_from=${validFrom} conf=${confidence}%`);
+      }
     } catch (e) {
       errors.push(`insert_fail:${candidate.symbol}:${e instanceof Error ? e.message : String(e)}`);
       signalsSkipped++;
@@ -303,7 +381,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
 
   console.log(
     `[post-market] market=${market} evaluated=${symbols.length} candidates=${uniqueCandidates.length} ` +
-    `created=${signalsCreated} skipped=${signalsSkipped} valid_from=${validFrom}`,
+    `created=${signalsCreated} skipped=${signalsSkipped} (중복 ${duplicatesSkipped}) valid_from=${validFrom}`,
   );
 
   return {
@@ -314,5 +392,6 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     signalsSkipped,
     errors,
     validFrom,
+    duplicatesSkipped,
   };
 }
