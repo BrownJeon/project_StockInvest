@@ -53,6 +53,9 @@ updated: 2026-10-18
 4. **코드 → 마이그레이션 순서**: 코드가 `ER_DUP_ENTRY` 를 duplicate 로 처리하도록 먼저 나가는 것은 인덱스가 없을 때 무해하므로, 배포 순서는 코드 → 마이그레이션이 안전하다.
 5. **대안(승인이 안 날 때)**: 프로세스 내 실행 중 표식(`try/finally`, 두 번째 요청은 즉시 `skipped`). `stockinvest` 는 pm2 cluster 인스턴스 1개라 현실적인 겹침을 덮지만 구조적 보증은 아니다. `GET_LOCK` 은 연결 단위 잠금이라 풀 연결에 잠금이 남는 위험이 있어 권하지 않는다(T-042 폴러에서 겪음).
 
+6. **T-043 독립 감사 R-1 (medium) — 오래된 무번호 `executing` 자동 경보**: T-043 으로 위험의 방향이 "이중 주문"에서 "주문 누락 + 무음"으로 바뀌었다. 선점(`executing`) 뒤 프로세스가 죽거나 복귀가 0행이면 `executing` + `consumed_order_id` NULL 로 남고 알림이 없다. **T-046 으로 카드가 실행 가능해지기 전에** 틱에서 `SELECT … WHERE status='executing' AND consumed_order_id IS NULL AND updated_at < NOW() - INTERVAL 10 MINUTE` 를 돌려 경보(스로틀)하게 한다. 같은 SQL 이 `docs/telegram-approval.md` §7 에 수록돼 있어 그때까지는 수동 점검이다. 즉시 주문 경로(`approveSignal`)가 결과 불명으로 잠근 행도 같은 조건에 걸리는지 함께 확인할 것.
+7. **표시 문구(T-043 감사 R-7, low)**: 대시보드 `MyDecisionTab` 이 주문 번호 없는 `executing` 을 "주문 실행됨"으로 보여 준다(T-042 의 결과 불명 잠금부터의 성질). 카드가 실제로 실행되기 시작하면 오해가 커지므로 문구를 "처리 중/확인 필요"로 바꾸는 화면 작업이 필요하다(화면 변경이라 데모 게이트 대상).
+
 ## 열린 질문 (사용자)
 
 - 카드가 실제로 실행 가능해져도 괜찮은가 — 카드당 `amount_krw` 10만 원 고정, 현금 8만 원이면 수량 0(`quantity_below_min`)일 가능성이 크다. 한도(1회 약 137만, 일 약 229만)는 안전장치가 적용한다.

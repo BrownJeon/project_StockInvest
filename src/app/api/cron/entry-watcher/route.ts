@@ -6,10 +6,12 @@
  *  2. 장중 여부 확인 (국내 09:00~15:30 KST) — 장외이면 즉시 종료
  *  3. approved_pending_entry 상태 시그널 전체 조회
  *  4. 각 시그널: price_zone 파싱 → KIS 현재가 조회 → 구간 내이면 submitOrder 호출
- *  5. 주문 성공 → status=executing, expiresAt 초과 → status=expired
+ *  5. 구간 도달 → **주문 직전에 조건부 UPDATE 로 executing 선점**(T-043) — 이긴 쪽만 submitOrder 호출
+ *  6. 성공·결과 불명 → executing 유지 / 확정 거부·송신 전 예외 → approved_pending_entry 복귀(다음 틱 재시도) /
+ *     expiresAt 초과 → status=expired
  */
 import { NextRequest, NextResponse } from 'next/server';
-import type { RowDataPacket } from 'mysql2';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { checkCronAuth } from '@/lib/cron-auth';
 import { kis } from '@/lib/exchanges/kis';
@@ -22,6 +24,7 @@ import { setPositionScenarioExit } from '@/lib/strategy/position-state';
 import type { ScenarioExitParams } from '@/lib/strategy/position-state';
 import { getSymbolLabel, sendAlert } from '@/lib/notify';
 import { escapeAlertText } from '@/lib/notify/escape';
+import { claimEntrySignal, recordEntryOrder, releaseEntryClaim } from '@/lib/signals/entry-claim';
 
 // notify_signal_entry 플래그 캐시 (30초 TTL)
 let entryNotifyCache: { enabled: boolean; ts: number } | null = null;
@@ -59,16 +62,6 @@ function resolveHoldingDeadline(exitObj: Record<string, unknown>): Date | null {
 
 export const dynamic = 'force-dynamic';
 
-/**
- * T-042 (3라운드 감사 R3-1) — **주문이 이미 나갔을 수 있는데 DB 에 그 사실을 기록하지 못한** 시그널.
- *
- * 이 라우트는 1분마다 돈다. 주문 뒤의 상태 UPDATE(`executing` 잠금/기록)가 DB 장애로 실패하면 시그널이 `approved_pending_entry` 로
- * 남아 **다음 틱에 같은 주문을 다시 낸다.** DB 에 쓸 수 없는 상황이므로 DB 로는 막을 수 없다 → 이 프로세스 안에서만이라도 건너뛴다.
- * 프로세스를 재기동하면 비워진다(그래서 실패 시 critical 경보로 사람이 알게 한다 — docs/telegram-approval.md §6.1).
- * 항목은 극히 드물게만 생기므로 정리하지 않는다. (Next 의 route 파일은 지정된 이름만 export 할 수 있어 모듈 지역 변수다.)
- */
-const orderSentButUnrecorded = new Set<number>();
-
 interface PendingEntryRow {
   id: number;
   symbol: string;
@@ -91,7 +84,9 @@ interface WatchResult {
     /** T-020 — 사이징 결과가 1주 미만이라 주문을 내지 않았다 (실패가 아니라 정책 스킵) */
     | 'quantity_below_min'
     /** T-042 — 주문이 접수됐는지 알 수 없다(송신 중 예외·5xx). 같은 주문을 다시 내지 않도록 시그널을 잠갔다 */
-    | 'order_uncertain';
+    | 'order_uncertain'
+    /** T-043 — 주문 직전 선점에 지지 않았다(다른 실행이 먼저 가져갔거나 그 사이 만료). 주문하지 않았다 */
+    | 'claim_lost';
   detail?: string;
 }
 
@@ -99,6 +94,26 @@ function getEffectiveChasePctSync(stylePct: number): number {
   // cron 컨텍스트에서는 동기 폴백만 사용 — DB 체크는 service.ts의 getEffectiveChasePct와 동일 원칙이나
   // cron은 단순화해서 style 값을 그대로 사용 (safety_limit_chase_disabled는 submitOrder 내부 안전장치가 아님).
   return stylePct;
+}
+
+/**
+ * 주문이 나가지 않은 것이 확실할 때 선점을 되돌린다(확정 거부·송신 전 예외). 되돌리지 못해도 **재주문 위험은 없다** —
+ * 시그널이 `executing` 에 남아 더 이상 감시되지 않을 뿐이다. 그 경우 사람이 알도록 경보한다.
+ */
+async function giveBackEntryClaim(pool: ReturnType<typeof getPool>, signalId: number, symbol: string): Promise<void> {
+  try {
+    const restored = await releaseEntryClaim(pool, signalId);
+    if (!restored) console.warn(`[entry-watcher] 선점 복귀 대상 없음(이미 다른 상태) signal=${signalId}`);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.error(`[entry-watcher] 선점 복귀 실패 signal=${signalId}:`, why);
+    sendAlert(
+      'warning',
+      `⚠️ 진입 감시 선점 복귀 실패: ${escapeAlertText(symbol)}`,
+      `시그널 #${signalId} 의 주문은 나가지 않았지만 executing 에서 되돌리지 못했습니다(${escapeAlertText(why.slice(0, 160))}). `
+      + '재주문 위험은 없으나 더는 감시되지 않습니다. 주문이 없음을 확인한 뒤 DB 에서 status=\'approved_pending_entry\' 로 되돌리세요 (docs/telegram-approval.md §6.1).',
+    );
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -136,19 +151,26 @@ export async function POST(req: NextRequest) {
   for (const row of rows) {
     const signalId = row.id;
 
-    // 🔴 주문이 나갔을 수 있는데 기록하지 못한 시그널은 다시 제출하지 않는다 (R3-1)
-    if (orderSentButUnrecorded.has(signalId)) {
-      results.push({ signalId, symbol: row.symbol, outcome: 'order_uncertain', detail: 'skipped: order may already be sent (state record failed)' });
-      continue;
-    }
-
-    // 만료 체크
+    // 만료 체크 — 앱 시계로 후보를 걸러내되, **확정은 DB 시각 조건부 UPDATE 의 결과**로 한다(T-043 감사 R-2 + Codex C2).
+    // 선점 쪽 만료 비교(`expires_at > NOW()`)와 같은 기준(DB 시각)을 써야 앱·DB 시계 편차로 아직 유효한 시그널을 조기에 만료시키지 않고,
+    // 상태 조건을 걸어 다른 실행이 방금 선점(`executing`)한 행을 덮지 않으며, 0행이면 `expired` 로 거짓 보고하지 않는다.
     if (row.expires_at && new Date(row.expires_at) < now) {
-      await pool.query(
-        `UPDATE signals SET status='expired', updated_at=NOW() WHERE id=?`,
-        [signalId],
-      ).catch(e => console.error(`[entry-watcher] expire update failed signal=${signalId}:`, e));
-      results.push({ signalId, symbol: row.symbol, outcome: 'expired' });
+      try {
+        const [res] = await pool.query<ResultSetHeader>(
+          `UPDATE signals SET status='expired', updated_at=NOW()
+            WHERE id=? AND status='approved_pending_entry' AND expires_at IS NOT NULL AND expires_at <= NOW()`,
+          [signalId],
+        );
+        if (res.affectedRows === 1) {
+          results.push({ signalId, symbol: row.symbol, outcome: 'expired' });
+        } else {
+          console.warn(`[entry-watcher] 만료 처리 대상 아님 signal=${signalId} (다른 실행이 이미 처리했거나 DB 시각 기준 아직 유효)`);
+          results.push({ signalId, symbol: row.symbol, outcome: 'claim_lost', detail: '만료 처리 대상 아님(다른 실행이 이미 처리했거나 DB 시각 기준 아직 유효)' });
+        }
+      } catch (e) {
+        console.error(`[entry-watcher] expire update failed signal=${signalId}:`, e);
+        results.push({ signalId, symbol: row.symbol, outcome: 'expired', detail: `expire update failed: ${e instanceof Error ? e.message : String(e)}` });
+      }
       continue;
     }
 
@@ -294,28 +316,59 @@ export async function POST(req: NextRequest) {
       currency: market === 'overseas' ? 'USD' as const : 'KRW' as const,
     };
 
+    // 🔴 T-043 — 주문 직전 **조건부 선점**. 이 UPDATE 를 이긴 실행만 submitOrder 를 부른다.
+    //    조회(SELECT)와 주문 사이에 선점이 없으면, 같은 시그널을 보는 실행이 둘일 때(cron 앱 2개·수동 호출·배포 중 끊김 후 새
+    //    인스턴스) 둘 다 실주문을 낸다. `client_order_id` 가 호출마다 랜덤이라 DB 멱등성도 없다. 선점 UPDATE 가 실패하면
+    //    (DB 장애 포함) **주문하지 않는다** — 다음 틱에 다시 본다.
+    let claimed: boolean;
     try {
-      const orderResult = await submitOrder(orderReq, kis.createOrder, {
+      claimed = await claimEntrySignal(pool, signalId);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      console.error(`[entry-watcher] 선점 UPDATE 실패 — 주문하지 않음 signal=${signalId}:`, detail);
+      results.push({ signalId, symbol: row.symbol, outcome: 'order_failed', detail: `claim_failed: ${detail}` });
+      continue;
+    }
+    if (!claimed) {
+      console.warn(`[entry-watcher] 선점 패배 — 주문하지 않음 signal=${signalId} symbol=${row.symbol} (다른 실행이 먼저 가져갔거나 만료)`);
+      results.push({ signalId, symbol: row.symbol, outcome: 'claim_lost', detail: '다른 실행이 먼저 선점했거나 그 사이 만료됨' });
+      continue;
+    }
+
+    // submitOrder 호출 **하나만** try 로 감싼다. 주문 결과를 받은 뒤의 후처리 예외가 "송신 전 실패"로 오인돼 선점이 풀리면
+    // 이미 나간 주문이 재주문된다(아래 후처리 catch 참고).
+    let orderResult: Awaited<ReturnType<typeof submitOrder>>;
+    try {
+      orderResult = await submitOrder(orderReq, kis.createOrder, {
         assetClass: 'stock',
         source: 'auto',
       });
+    } catch (e) {
+      // submitOrder 가 **던졌다**. 송신 이후의 예외는 submitOrder 가 `outcomeUnknown` 결과로 돌려주므로(T-042) 여기는 송신 전 실패다
+      // — 주문이 나가지 않았으니 선점을 되돌린다.
+      const detail = e instanceof Error ? e.message : String(e);
+      console.error(`[entry-watcher] submitOrder failed signal=${signalId}:`, detail);
+      await giveBackEntryClaim(pool, signalId, row.symbol);
+      results.push({ signalId, symbol: row.symbol, outcome: 'order_failed', detail });
+      continue;
+    }
 
+    try {
       if (orderResult.ok || orderResult.dryRun) {
-        // 주문은 이미 접수됐다. 이 기록이 실패해도 "주문 실패"로 취급하면 다음 틱에 같은 주문이 다시 나간다(R3-1).
+        // 주문은 이미 접수됐다. 시그널은 주문 전에 `executing` 으로 선점돼 있어 이 기록이 실패해도 **재주문은 없다**(T-043).
+        // 주문 번호만 연결하고, 실패하면 사람이 맞추도록 경보한다.
         try {
-          await pool.query(
-            `UPDATE signals SET status='executing', consumed_order_id=?, updated_at=NOW() WHERE id=?`,
-            [orderResult.orderId ?? null, signalId],
-          );
+          if (!(await recordEntryOrder(pool, signalId, orderResult.orderId ?? null))) {
+            throw new Error('연결할 행이 없습니다(시그널이 더는 executing 이 아님)');
+          }
         } catch (e) {
-          orderSentButUnrecorded.add(signalId);
           const why = e instanceof Error ? e.message : String(e);
-          console.error(`[entry-watcher] 주문 접수 후 상태 기록 실패 signal=${signalId} order=${orderResult.orderId ?? '-'}:`, why);
+          console.error(`[entry-watcher] 주문 접수 후 주문 번호 기록 실패 signal=${signalId} order=${orderResult.orderId ?? '-'}:`, why);
           sendAlert(
-            'critical',
-            `⚠️ 진입 주문은 접수됐으나 시그널 상태 기록 실패: ${await getSymbolLabel(row.symbol)}`,
+            'warning',
+            `⚠️ 진입 주문은 접수됐으나 주문 번호 기록 실패: ${await getSymbolLabel(row.symbol)}`,
             `시그널 #${signalId} · 주문 #${orderResult.orderId ?? '-'}\n사유: ${escapeAlertText(why.slice(0, 160))}\n`
-            + '같은 주문이 다시 나가지 않도록 이 프로세스에서는 건너뜁니다(재기동하면 풀립니다). DB 에서 status=\'executing\', consumed_order_id 를 맞추세요.',
+            + '시그널은 executing 으로 잠겨 있어 같은 주문이 다시 나가지는 않습니다. DB 에서 consumed_order_id 를 맞추세요.',
           );
         }
 
@@ -368,22 +421,17 @@ export async function POST(req: NextRequest) {
           detail: `orderId=${orderResult.orderId ?? 'dry_run'} price=${currentPrice}`,
         });
       } else if (orderResult.outcomeUnknown === true) {
-        // 🔴 T-042 — 접수 여부를 알 수 없는 실패(송신 중 예외·연결 끊김·5xx, 접수 직후 DB 갱신 실패).
-        //    시그널을 `approved_pending_entry` 로 두면 **다음 틱(1분 뒤)에 같은 주문을 다시 낸다** — 첫 주문이 실제로 접수됐다면
-        //    1분마다 이중 주문이다. `executing` 으로 잠가 감시를 끝내고 사람에게 체결내역 확인을 요청한다.
-        //    (조건부 UPDATE: 그 사이 다른 쪽이 바꾼 행은 건드리지 않는다)
-        // 🔴 잠금 UPDATE 가 실패해도(DB 장애) 경보는 나가야 하고 재주문은 막아야 한다 — 경보는 UPDATE 바깥, 실패하면 프로세스 지역 집합으로 (R3-1)
-        let lockNote = '시그널을 잠갔습니다';
+        // 🔴 T-042/T-043 — 접수 여부를 알 수 없는 실패(송신 중 예외·연결 끊김·5xx, 접수 직후 DB 갱신 실패).
+        //    시그널은 **주문 전에 이미 `executing` 으로 선점**돼 있어 다음 틱에 같은 주문이 다시 나가지 않는다 — 되돌리지 않는다.
+        //    확인용으로 주문 번호만 연결하고, 사람에게 체결내역 확인을 요청한다.
+        let recordNote = '';
         try {
-          await pool.query(
-            `UPDATE signals SET status='executing', consumed_order_id=?, updated_at=NOW()
-             WHERE id=? AND status='approved_pending_entry'`,
-            [orderResult.orderId ?? null, signalId],
-          );
+          if (!(await recordEntryOrder(pool, signalId, orderResult.orderId ?? null))) {
+            throw new Error('연결할 행이 없습니다(시그널이 더는 executing 이 아님)');
+          }
         } catch (e) {
-          orderSentButUnrecorded.add(signalId);
-          lockNote = 'DB 잠금에는 실패했지만 이 프로세스에서는 건너뜁니다(재기동하면 풀립니다)';
-          console.error(`[entry-watcher] 결과 불명 잠금 UPDATE 실패 signal=${signalId}:`, e instanceof Error ? e.message : String(e));
+          recordNote = ' (주문 번호 연결에는 실패했으니 consumed_order_id 도 직접 맞추세요)';
+          console.error(`[entry-watcher] 결과 불명 주문 번호 기록 실패 signal=${signalId}:`, e instanceof Error ? e.message : String(e));
         }
         const uncertainDetail = orderResult.error ?? 'unknown';
         sendAlert(
@@ -391,10 +439,13 @@ export async function POST(req: NextRequest) {
           `⚠️ 진입 주문 결과 불명 — 체결내역 확인 필요: ${await getSymbolLabel(row.symbol)}`,
           `시그널 #${signalId} ${row.side === 'buy' ? '매수' : '매도'} · 주문 #${orderResult.orderId ?? '-'}\n`
           + `사유: ${escapeAlertText(String(uncertainDetail).slice(0, 160))}\n`
-          + `거래소에 주문이 접수됐는지 알 수 없어 같은 주문이 다시 나가지 않도록 ${lockNote}. KIS 체결/미체결 내역을 확인하세요 (docs/telegram-approval.md §6.1).`,
+          + `거래소에 주문이 접수됐는지 알 수 없어 같은 주문이 다시 나가지 않도록 시그널을 주문 전에 잠가 두었습니다${recordNote}. `
+          + 'KIS 체결/미체결 내역을 확인하세요 (docs/telegram-approval.md §6.1).',
         );
         results.push({ signalId, symbol: row.symbol, outcome: 'order_uncertain', detail: uncertainDetail });
       } else {
+        // 확정 거부(킬스위치·한도·심볼 차단·잔고 부족 등) — 주문이 나가지 않았다. 선점을 되돌려 다음 틱에 다시 본다(가격·잔고가 바뀔 수 있다).
+        await giveBackEntryClaim(pool, signalId, row.symbol);
         results.push({
           signalId,
           symbol: row.symbol,
@@ -403,9 +454,23 @@ export async function POST(req: NextRequest) {
         });
       }
     } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
-      console.error(`[entry-watcher] submitOrder failed signal=${signalId}:`, detail);
-      results.push({ signalId, symbol: row.symbol, outcome: 'order_failed', detail });
+      // 🔴 T-043 — 주문 **결과를 받은 뒤** 후처리(알림·포지션 기록 등)에서 난 예외. 주문은 나갔을 수 있으므로 **선점을 되돌리지 않는다**
+      // (되돌리면 다음 틱에 같은 주문이 다시 나간다). 결과에 따라 분류하고 사람이 확인하도록 경보한다.
+      const why = e instanceof Error ? e.message : String(e);
+      console.error(`[entry-watcher] 주문 후처리 예외(선점 유지) signal=${signalId} order=${orderResult.orderId ?? '-'}:`, why);
+      const outcome: WatchResult['outcome'] = (orderResult.ok || orderResult.dryRun)
+        ? 'submitted'
+        : (orderResult.outcomeUnknown === true ? 'order_uncertain' : 'order_failed');
+      results.push({ signalId, symbol: row.symbol, outcome, detail: `post_order_error: ${why}` });
+      if (outcome !== 'order_failed') {
+        // 라벨 조회 등 추가 비동기 호출 없이 보낸다 — 이 분기에서 다시 던지면 틱 전체가 중단된다.
+        sendAlert(
+          'warning',
+          `⚠️ 진입 주문 후처리 예외: ${escapeAlertText(row.symbol)}`,
+          `시그널 #${signalId} · 주문 #${orderResult.orderId ?? '-'}\n사유: ${escapeAlertText(why.slice(0, 160))}\n`
+          + '주문 결과는 받았고 시그널은 executing 으로 잠겨 있습니다(재주문 없음). 알림·포지션 기록이 빠졌을 수 있으니 확인하세요.',
+        );
+      }
     }
   }
 
@@ -415,10 +480,15 @@ export async function POST(req: NextRequest) {
   // T-020 — 1주 미만 스킵을 회차 요약에 싣는다. 개별 로그(`SIZING_BELOW_MIN_QTY`)만 있으면
   // "이번 틱에 몇 건이 그렇게 빠졌는가"를 세려면 로그 전체를 훑어야 한다.
   const belowMin  = results.filter(r => r.outcome === 'quantity_below_min').length;
+  // T-043 — 선점 패배·결과 불명도 회차 요약에 싣는다(둘 다 평소엔 0 이라 보이면 눈에 띈다).
+  const claimLost = results.filter(r => r.outcome === 'claim_lost').length;
+  const uncertain = results.filter(r => r.outcome === 'order_uncertain').length;
   console.log(
     `[cron/entry-watcher] total=${rows.length} submitted=${submitted} expired=${expired} ` +
     `out_of_zone=${results.filter(r => r.outcome === 'out_of_zone').length} blocked_prior=${blocked}` +
-    (belowMin > 0 ? ` below_min_qty=${belowMin}` : ''),
+    (belowMin > 0 ? ` below_min_qty=${belowMin}` : '') +
+    (claimLost > 0 ? ` claim_lost=${claimLost}` : '') +
+    (uncertain > 0 ? ` order_uncertain=${uncertain}` : ''),
   );
 
   return NextResponse.json({ ok: true, processed: rows.length, results });

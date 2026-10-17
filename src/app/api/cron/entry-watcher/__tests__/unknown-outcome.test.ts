@@ -1,9 +1,10 @@
 /**
- * T-042 (2라운드 감사 — 같은 결함 계열) — **결과 불명 주문은 다음 틱에 다시 내지 않는다.**
+ * T-042 + T-043 — **결과별로 시그널이 어떤 상태로 끝나는가**, 그리고 다음 틱에 같은 주문이 다시 나가는가.
  *
- * `entry-watcher` 는 1분마다 돈다. 주문이 실패(`ok:false`)하면 시그널을 `approved_pending_entry` 로 두고 다음 틱에
- * 다시 시도하는데, 실패가 "거래소가 접수했는지 알 수 없는" 종류(송신 중 예외·5xx·연결 끊김)이면 **1분마다 같은 주문이
- * 반복돼 이중 주문**이 된다. `submitOrder` 가 붙이는 `outcomeUnknown` 으로 이를 구분해 시그널을 잠근다.
+ * 시그널은 주문 직전에 `executing` 으로 선점된다(T-043). 그 뒤:
+ *  - 성공·결과 불명 → `executing` 유지(+주문 번호). 다음 틱의 조회에 잡히지 않아 재주문이 없다.
+ *  - 확정 거부 → `approved_pending_entry` 로 복귀, 다음 틱에 다시 시도(가격·잔고가 바뀔 수 있다).
+ * 상태를 가진 가짜 DB(`fakeSignalsDb`)로 "행의 실제 상태"와 "다음 틱의 submitOrder 호출 수"를 본다.
  */
 jest.mock('@/lib/cron-auth', () => ({ checkCronAuth: jest.fn(() => null) }));
 jest.mock('@/lib/strategy/market-hours', () => ({
@@ -24,27 +25,12 @@ import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
 import { submitOrder } from '@/lib/safety/dry-run';
 import { sendAlert } from '@/lib/notify';
+import { FakeSignalsDb, fakeSignal } from './fakeSignalsDb';
 
-const ZONE = { ai: { scenario: { entry: { price_zone: '1 ~ 99999999' } } } };
-const row = (id: number) => ({
-  id, symbol: '005930', side: 'buy', order_type: 'limit', price: '6540', quantity: null, amount_krw: '100000',
-  market: 'domestic', indicators: JSON.stringify(ZONE), reasoning: null, expires_at: null,
-});
-
-let updates: Array<{ sql: string; params: unknown[] }>;
-function setupPool(rows: unknown[]) {
-  updates = [];
-  (getPool as jest.Mock).mockReturnValue({
-    query: jest.fn(async (sqlArg: unknown, params: unknown[] = []) => {
-      const sql = String(sqlArg);
-      if (/UPDATE signals/i.test(sql)) { updates.push({ sql: sql.replace(/\s+/g, ' '), params }); return [{ affectedRows: 1 }]; }
-      if (/FROM signals/i.test(sql)) return [rows];
-      return [[]];
-    }),
-  });
-}
+let db: FakeSignalsDb;
 const req = () => new NextRequest('http://localhost:3003/api/cron/entry-watcher', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
 const run = async () => (await POST(req())).json() as Promise<{ results?: Array<{ outcome: string; detail?: string }> }>;
+const alerts = () => (sendAlert as jest.Mock).mock.calls as Array<[string, string, string]>;
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -52,79 +38,94 @@ beforeEach(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
   (kis.getTicker as jest.Mock).mockResolvedValue({ price: 6_540 });
+  db = new FakeSignalsDb();
+  (getPool as jest.Mock).mockReturnValue(db.pool);
 });
 afterEach(() => jest.restoreAllMocks());
 
-describe('entry-watcher — 결과 불명 주문', () => {
-  test('🔴 outcomeUnknown 이면 시그널을 executing 으로 잠가 다음 틱의 재주문을 막는다 (+ critical 알림)', async () => {
+describe('결과 불명 주문 (T-042/T-043)', () => {
+  test('🔴 outcomeUnknown → 시그널은 executing 으로 남고(선점 유지) 주문 번호가 연결되며 critical 경보가 나간다', async () => {
     (submitOrder as jest.Mock).mockResolvedValue({ ok: false, orderId: 77, error: 'fetch failed (ECONNRESET)', outcomeUnknown: true });
-    setupPool([row(5)]);
+    db.add(fakeSignal(5));
     const body = await run();
-    const lock = updates.find((u) => /status='executing'/.test(u.sql));
-    expect(lock).toBeDefined();
-    expect(lock!.sql).toMatch(/WHERE id=\? AND status='approved_pending_entry'/);      // 조건부 — 다른 쪽이 바꾼 행은 덮어쓰지 않는다
-    expect(lock!.params).toEqual([77, 5]);                                              // 확인용으로 주문 ID 를 남긴다
     expect(body.results?.[0].outcome).toBe('order_uncertain');
-    const alert = (sendAlert as jest.Mock).mock.calls[0];
-    expect(alert[0]).toBe('critical');
-    expect(String(alert[1])).toContain('결과 불명');
+    expect(db.statusOf(5)).toBe('executing');
+    expect(db.orderOf(5)).toBe(77);
+    expect(db.events).not.toContain('release:5:ok');
+    expect(alerts()[0][0]).toBe('critical');
+    expect(alerts()[0][1]).toContain('결과 불명');
   });
 
-  test('🔴 확정 거부(outcomeUnknown 없음)는 기존대로 approved_pending_entry 를 유지해 다음 틱에 다시 시도한다 (가격·잔고가 바뀔 수 있다)', async () => {
-    (submitOrder as jest.Mock).mockResolvedValue({ ok: false, orderId: 78, blockedBy: 'order_limit', error: 'x' });
-    setupPool([row(6)]);
-    const body = await run();
-    expect(updates.some((u) => /status='executing'/.test(u.sql))).toBe(false);
-    expect(body.results?.[0].outcome).toBe('order_failed');
-    expect(sendAlert).not.toHaveBeenCalled();
+  test('🔴 결과 불명 뒤 다음 틱에는 같은 주문을 다시 내지 않는다 (잠금이 DB 상태라서 재기동·다른 인스턴스에도 유효)', async () => {
+    (submitOrder as jest.Mock).mockResolvedValue({ ok: false, orderId: 77, error: 'x', outcomeUnknown: true });
+    db.add(fakeSignal(5));
+    await run();
+    await run();
+    await run();
+    expect(submitOrder).toHaveBeenCalledTimes(1);
   });
 
-  test('성공은 기존대로 executing + consumed_order_id', async () => {
-    (submitOrder as jest.Mock).mockResolvedValue({ ok: true, orderId: 79 });
-    setupPool([row(7)]);
+  test('🔴 결과 불명 + 주문 번호 기록 UPDATE 실패 → 여전히 executing, 재주문 없음, 경보 본문에 안내', async () => {
+    (submitOrder as jest.Mock).mockResolvedValue({ ok: false, orderId: 78, error: 'x', outcomeUnknown: true });
+    db.add(fakeSignal(6));
+    db.failOn = [/^UPDATE signals SET consumed_order_id=/];
     const body = await run();
-    expect(updates.find((u) => /status='executing'/.test(u.sql))?.params).toEqual([79, 7]);
-    expect(body.results?.[0].outcome).toBe('submitted');
+    expect(body.results?.[0].outcome).toBe('order_uncertain');
+    expect(db.statusOf(6)).toBe('executing');
+    expect(alerts().some((a) => a[0] === 'critical' && a[2].includes('consumed_order_id'))).toBe(true);
+    db.failOn = [];
+    await run();
+    expect(submitOrder).toHaveBeenCalledTimes(1);
   });
 
   test('알림 본문의 사유는 이스케이프된다', async () => {
     (submitOrder as jest.Mock).mockResolvedValue({ ok: false, orderId: 80, error: 'bad <gateway> & more', outcomeUnknown: true });
-    setupPool([row(8)]);
+    db.add(fakeSignal(8));
     await run();
-    expect(String((sendAlert as jest.Mock).mock.calls[0][2])).toContain('bad &lt;gateway&gt; &amp; more');
+    expect(alerts()[0][2]).toContain('bad &lt;gateway&gt; &amp; more');
   });
 });
 
-// ── 3라운드 감사 R3-1 재현 (이 블록은 수정 전에 실패해야 한다) ──────────────────────────────────────────────
-describe('R3-1 — 잠금/기록 UPDATE 자체가 실패해도 재주문하지 않고 경보한다', () => {
-  function setupPoolWithFailingUpdate(rows: unknown[]) {
-    (getPool as jest.Mock).mockReturnValue({
-      query: jest.fn(async (sqlArg: unknown) => {
-        const sql = String(sqlArg);
-        if (/UPDATE signals/i.test(sql)) throw new Error('db gone');
-        if (/FROM signals/i.test(sql)) return [rows];
-        return [[]];
-      }),
-    });
-  }
-
-  test('🔴 결과 불명 + 잠금 UPDATE 실패 → critical 경보는 나가고, 같은 시그널을 다음 틱에 다시 제출하지 않는다', async () => {
-    (submitOrder as jest.Mock).mockResolvedValue({ ok: false, orderId: 91, error: 'fetch failed', outcomeUnknown: true });
-    setupPoolWithFailingUpdate([row(31)]);
+describe('확정 거부', () => {
+  test('🔴 outcomeUnknown 이 없는 거부는 선점을 되돌려 approved_pending_entry 로 두고 다음 틱에 다시 시도한다', async () => {
+    (submitOrder as jest.Mock)
+      .mockResolvedValueOnce({ ok: false, orderId: 78, blockedBy: 'order_limit', error: 'x' })
+      .mockResolvedValueOnce({ ok: true, orderId: 79 });
+    db.add(fakeSignal(6));
     const first = await run();
-    expect(first.results?.[0].outcome).toBe('order_uncertain');            // order_failed 로 떨어지지 않는다
-    expect((sendAlert as jest.Mock).mock.calls.some((c) => c[0] === 'critical')).toBe(true);
-    const second = await run();                                            // 1분 뒤 다음 틱
-    expect(submitOrder).toHaveBeenCalledTimes(1);                          // 🔴 두 번째 틱에 같은 주문을 다시 내지 않는다
-    expect(second.results?.[0].outcome).toBe('order_uncertain');
+    expect(first.results?.[0].outcome).toBe('order_failed');
+    expect(db.statusOf(6)).toBe('approved_pending_entry');            // 되돌려졌다
+    expect(db.events).toContain('release:6:ok');
+    expect(sendAlert).not.toHaveBeenCalled();                          // 확정 거부는 경보 대상이 아니다(기존과 동일)
+    const second = await run();                                        // 1분 뒤 — 다시 시도해 성공
+    expect(second.results?.[0].outcome).toBe('submitted');
+    expect(submitOrder).toHaveBeenCalledTimes(2);
+    expect(db.statusOf(6)).toBe('executing');
+    expect(db.orderOf(6)).toBe(79);
+  });
+});
+
+describe('성공', () => {
+  test('성공은 executing 으로 남고 주문 번호가 연결된다 — 다음 틱 재주문 없음', async () => {
+    (submitOrder as jest.Mock).mockResolvedValue({ ok: true, orderId: 79 });
+    db.add(fakeSignal(7));
+    const body = await run();
+    expect(body.results?.[0].outcome).toBe('submitted');
+    expect(db.statusOf(7)).toBe('executing');
+    expect(db.orderOf(7)).toBe(79);
+    await run();
+    expect(submitOrder).toHaveBeenCalledTimes(1);
   });
 
-  test('🔴 접수 확정 + executing 기록 UPDATE 실패 → 재주문하지 않고 critical 경보', async () => {
+  test('🔴 성공 + 주문 번호 기록 UPDATE 실패 → 주문은 접수된 것으로 처리(submitted), executing 유지, 재주문 없음, warning 경보', async () => {
     (submitOrder as jest.Mock).mockResolvedValue({ ok: true, orderId: 92 });
-    setupPoolWithFailingUpdate([row(32)]);
+    db.add(fakeSignal(32));
+    db.failOn = [/^UPDATE signals SET consumed_order_id=/];
     const first = await run();
-    expect(first.results?.[0].outcome).toBe('submitted');                  // 주문은 접수됐다 — 거짓으로 order_failed 라고 하지 않는다
-    expect((sendAlert as jest.Mock).mock.calls.some((c) => c[0] === 'critical')).toBe(true);
+    expect(first.results?.[0].outcome).toBe('submitted');              // 거짓으로 order_failed 라고 하지 않는다
+    expect(db.statusOf(32)).toBe('executing');
+    expect(alerts().some((a) => a[0] === 'warning' && a[1].includes('주문 번호 기록 실패'))).toBe(true);
+    db.failOn = [];
     await run();
     expect(submitOrder).toHaveBeenCalledTimes(1);
   });

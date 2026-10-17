@@ -81,7 +81,7 @@ StockInvest 와 TradingInvest 가 **같은 봇 토큰**을 쓴다. 텔레그램�
    만료됐으면 그냥 두거나 `status='expired'` 로.
 4. 어느 쪽 경로인지는 **받은 알림 제목**으로 구분한다(위 표). `price_zone` 유무로는 구분할 수 없다 — 구간이 있어도 하이브리드가 꺼져 있거나 시나리오를 수정해 승인하면 즉시 주문 경로를 탄다. 확인용으로, 즉시 주문 경로는 `trade_logs` 에 `signal_approve_order_uncertain` 이벤트(당시 오류 포함)를 남기고 진입 감시 경로는 남기지 않는다.
 
-**DB 장애로 잠금/기록 UPDATE 자체가 실패한 경우** (진입 감시): critical 알림이 "DB 잠금에는 실패했지만 이 프로세스에서는 건너뜁니다"라고 알린다. 이 건너뛰기는 **프로세스 메모리**에만 있어 앱을 재기동하면 풀린다. 배포도 재기동이므로 **이 알림이 정리되기 전에는 배포하지 않는다.** 먼저 위 절차로 체결내역을 확인하고, 접수돼 있으면 시그널을 `executing`/`approved` 로 맞춘 뒤 재기동한다. 접수 후 상태 기록 실패(알림 "주문은 접수됐으나 시그널 상태 기록 실패")도 같다: `UPDATE signals SET status='executing', consumed_order_id=<N> WHERE id=<시그널>`.
+**진입 감시 경로는 주문 전에 시그널을 먼저 `executing` 으로 선점한다(T-043).** 그래서 ① 결과 불명이면 알림이 오기 전에 이미 잠겨 있고 ② 주문 번호 연결(`consumed_order_id`)이 DB 장애로 실패해도 시그널은 `executing` 에 남아 **재주문이 없다** — 알림 "주문은 접수됐으나 주문 번호 기록 실패"(warning) 또는 결과 불명 알림 본문의 안내대로 위 2번의 SQL 로 주문 번호만 맞추면 된다. 선점 복귀가 실패한 경우(알림 "진입 감시 선점 복귀 실패", warning)는 주문이 나가지 않았음을 확인한 뒤 위 3번의 진입 감시 SQL 로 되돌린다. 주문 결과를 받은 **뒤** 알림·포지션 기록 같은 후처리에서 예외가 나면 선점은 그대로 두고(재주문 방지) 알림 "진입 주문 후처리 예외"(warning)가 온다 — 주문 결과와 포지션 기록을 확인한다. 잠금은 DB 에 있으므로 앱을 재기동하거나 배포해도 풀리지 않는다 (T-042 시절의 "이 프로세스에서만 건너뛰기"는 없어졌다).
 
 ### 6.2 주문이 거부됐다 (order_rejected)
 킬스위치·한도·심볼 차단·잔고 부족 등 **확정 거부**다. 시그널은 만료 전까지 승인 대기로 되돌아가고 버튼이 남는다. 사유는 `trade_logs` 의 `signal_approve_order_rejected` 와 메시지에 있다.
@@ -96,9 +96,10 @@ StockInvest 와 TradingInvest 가 **같은 봇 토큰**을 쓴다. 텔레그램�
 
 ## 7. 알려진 한계
 
-- 🔴 **`entry-watcher` 는 주문 전에 시그널을 선점하지 않는다** — 조회(`approved_pending_entry`) → `submitOrder` → 그 뒤 `executing` 기록 순이라, 같은 시그널을 보는 틱이 겹치면 실주문이 두 번 나갈 수 있다. **T-042 이전부터 있던 구조**이고(HEAD 도 동일) 이번 변경이 악화시키지 않았다(결과 불명 재제출 차단은 오히려 추가됨). 정상 운영에서는 `cron-runner.sh` 가 단일 루프에서 curl 을 동기 호출해 겹치지 않는다. 겹치는 경우는 ① `stockinvest-cron` 중복 기동 ② 수동 curl ③ 배포 중 새 cron-runner 첫 틱과 옛 릴리스의 진행 중 요청 ④ 배포 중 주문 송신 뒤 기록 전 프로세스 종료다. 상한은 1회·일 한도 검사(각 주문이 따로 통과해야 함)다. 수정은 후속 **T-043**(주문 전 조건부 선점) — `telegram_approval_enabled` 를 켜면 구간 카드 승인이 쉬워지므로 T-043 이 먼저 또는 같은 주에 들어가길 권한다.
-  - **수동으로 `/api/cron/entry-watcher` 를 호출하지 않는다.** 배포 뒤에는 `pm2 list | grep stockinvest-cron` 이 정확히 1행인지 확인한다(기존 절차).
-  - **배포 직후 점검 SQL** — 이 중복을 알려 주는 알림은 없고 이 쿼리가 유일한 탐지 수단이다. 결과가 0행이면 정상:
+- ✅ **`entry-watcher` 의 "주문 전 선점 부재"는 T-043 에서 해결됐다**(2026-10-18). 조회 → **조건부 선점(`executing`)** → `submitOrder` 순이라 같은 시그널을 보는 실행이 둘이어도(cron 앱 2개·수동 호출·배포 중 끊김 후 새 인스턴스) 선점에 이긴 쪽만 주문한다. 선점하지 못하면(경합·만료·DB 오류) **주문하지 않는다**(결과 `claim_lost`, 또는 `order_failed` + detail `claim_failed:`). `claim_lost` 는 선점 패배와, 만료 UPDATE 가 0행일 때(다른 실행이 이미 처리했거나 DB 시각 기준 아직 유효) 둘 다에 쓰인다 — 어느 쪽인지는 detail 로 구분. 확정 거부와 송신 전 예외만 `approved_pending_entry` 로 되돌려 다음 틱에 다시 시도하고, 성공·결과 불명은 `executing` 을 유지한다.
+  - `client_order_id` 는 여전히 호출마다 랜덤이라 DB 수준 멱등성은 없다 — **방어는 이 선점 UPDATE 한 문장**이다. 그래서 `entry-claim.ts` 의 WHERE 조건을 바꾸는 변경은 안전 경로 감사 대상이다.
+  - 수동으로 `/api/cron/entry-watcher` 를 호출하는 것은 이제 안전하지만(선점이 막는다) 불필요하다. 배포 뒤에는 `pm2 list | grep stockinvest-cron` 이 정확히 1행인지 확인한다(기존 절차).
+  - 점검 SQL(선택): 같은 종목·방향의 접수·체결 자동 주문이 3분 안에 둘 이상이면 이중 주문의 신호다. 결과가 0행이면 정상:
     ```sql
     SELECT a.id AS first_id, b.id AS second_id, a.symbol, a.side, a.created_at,
            TIMESTAMPDIFF(SECOND, a.created_at, b.created_at) AS gap_s
@@ -110,9 +111,14 @@ StockInvest 와 TradingInvest 가 **같은 봇 토큰**을 쓴다. 텔레그램�
       AND b.status IN ('accepted','partially_filled','filled')
       AND a.created_at >= NOW() - INTERVAL 1 DAY;
     ```
-    (2026-10-12 기준 전체 기간 0행, 접수·체결된 자동 주문 19건·마지막 05-26 — 과거 중복 흔적 없음.)
+    (참고: 이 질의에서 `created_at` 조건을 빼고 전체 기간으로 돌렸을 때 0행 — `accepted`/`partially_filled`/`filled` 상태의 자동 주문 17건·마지막 2026-05-27 00:18, 과거 중복 흔적 없음. 2026-10-18 재확인.)
 - 폴러가 롱폴링 도중 락을 잃고 다른 소비자가 락을 얻으면, 잃은 쪽이 이미 받은 업데이트를 한 번 더 처리하고 오프셋을 작은 값으로 저장할 수 있다. 시그널 전이가 원자적이라 **주문은 한 번만** 나가고, 영향은 콜백 응답 중복 거절(텔레그램이 두 번째를 거부)·감사 행 중복·결과 메시지가 "이미 처리됨"으로 덮여 주문 번호가 가려질 수 있는 정도다(Low). 락 재확인·오프셋 단조 증가·덮어쓰기 금지는 후속 하드닝으로 둔다(독립 감사 5라운드).
-- 선점(`executing`) 뒤 **프로세스가 죽으면** 시그널이 `executing` 으로 남는다(정리 코드 없음). 6.1 절차로 수동 확인.
+- 선점(`executing`) 뒤 **프로세스가 죽으면** 시그널이 `executing` + 주문 번호 없음으로 남는다(정리 코드 없음) — 즉시 주문 경로와 진입 감시 경로 모두. 재주문은 없지만 **알림도 오지 않는다**(위험의 방향이 "이중 주문"에서 "주문 누락 + 무음"으로 바뀐 것이 T-043 의 실제 트레이드오프다). 아래 SQL 로 직접 찾아 6.1 절차로 확인한다 — 틱에서 자동 경보하는 것은 T-046 선행 조건이다:
+  ```sql
+  SELECT id, symbol, side, status, updated_at FROM signals
+   WHERE status = 'executing' AND consumed_order_id IS NULL AND updated_at < NOW() - INTERVAL 10 MINUTE;
+  ```
+- **분할 진입 게이트의 의미 차이 (T-043, 좁은 경우)**: 같은 group 의 2회차 이후는 이전 회차가 `approved_pending_entry` 인 동안 대기한다. 선점 때문에 이전 회차가 주문 중에는 `executing` 이라 게이트가 열린다 — 단일 실행자(정상 운영)에서는 전과 같지만, 실행자가 둘이면 1회차 주문 도중에 2회차가 풀릴 수 있고, 1회차 복귀 UPDATE 가 DB 오류로 실패해도 2회차가 풀린다(경고 알림은 나간다).
 - 확정 거부 뒤 선점 복귀(`releaseClaim`)가 DB 장애로 실패하면 시그널은 `executing` 에 남는데(경고 알림이 온다), 그때 텔레그램 메시지는 "승인 대기로 남아 있습니다"라고 쓰고 버튼을 남긴다. 다시 누르면 "이미 처리된 시그널입니다"가 나오고 버튼이 지워진다 — 재승인이 막히는 안전한 쪽이라 문구 불일치만 있다. 6.1 의 복구 SQL 로 되돌린다.
 - 결과 불명 주문은 `checkDailyMax` 의 일 한도 합계(`status NOT IN (rejected, failed, blocked, cancelled, pending)`)에서 **`failed`(송신 중 예외) 또는 `rejected`(5xx) 로 기록돼 빠진다** — 실제로는 접수됐을 수 있어 그날 한도가 과소 집계될 수 있다(별도 사안).
 - `cron/trade-report` 는 이미 이스케이프된 종목명을 본문에 넣은 뒤 본문 전체를 다시 이스케이프한다 — `&` 가 든 종목명이 정기 리포트에서 `&amp;` 로 보일 가능성이 높다(코드 읽기만, T-042 범위 밖 기존 코드).

@@ -81,6 +81,8 @@ function setupPool(rows: unknown[]): Captured {
       });
       return [{ insertId: 1 }];
     }
+    // T-043 — 주문 직전 선점 UPDATE 는 성공한다(이 테스트의 관심사는 사이징이다)
+    if (/^UPDATE signals SET status='executing'/.test(sql.replace(/\s+/g, ' ').trim())) return [{ affectedRows: 1 }];
     if (/FROM signals/i.test(sql)) return [rows];
     return [[]];
   });
