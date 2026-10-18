@@ -28,12 +28,20 @@ export interface PollDeps {
   saveOffset(offset: number): Promise<void>;
   getUpdates(offset: number, timeoutSec: number): Promise<BotCallResult<TelegramUpdate[]>>;
   handle(cq: TelegramCallbackQuery): Promise<unknown>;
+  /**
+   * 이 소비자가 아직 단일 소비자 락을 쥐고 있는가 (T-047). 롱폴링·처리 도중 락을 잃었을 수 있다 —
+   * 그 사이 다른 소비자가 같은 배치를 처리하고 더 큰 오프셋을 저장했을 수 있으므로, 잃었으면 배치를 버린다.
+   * 던지면(연결 끊김) 쥐고 있다고 믿지 않는다: 예외가 그대로 전파되고 아무것도 저장하지 않는다.
+   */
+  stillHoldsLock(): Promise<boolean>;
   /** 처리기가 던진 업데이트(오프셋은 넘어간다) */
   onPoison?(update: TelegramUpdate, error: unknown): void;
 }
 
 export type PollStep =
   | { kind: 'processed'; handled: number; waitMs: 0 }
+  /** 락을 잃어 배치의 나머지를 버렸다. 처리가 끝난 업데이트의 오프셋까지는 저장했다(단조 SQL 이라 역행 없음), 남은 것은 미처리·미저장 */
+  | { kind: 'lock_lost'; handled: number; waitMs: 0 }
   | { kind: 'idle'; handled: 0; waitMs: 0 }
   | { kind: 'conflict'; handled: 0; waitMs: number }
   | { kind: 'rate_limited'; handled: 0; waitMs: number }
@@ -65,6 +73,10 @@ export async function pollOnce(d: PollDeps): Promise<PollStep> {
   const updates = [...res.result].sort((a, b) => a.update_id - b.update_id);
   if (updates.length === 0) return { kind: 'idle', handled: 0, waitMs: 0 };
 
+  // T-047: 롱폴링(최대 25초) 도중 락을 잃었을 수 있다 — 그러면 이 배치는 이미 다른 소비자 몫이다.
+  // 이 확인이 첫 업데이트의 "처리 전" 확인을 겸한다(둘 사이에 아무 일도 없다).
+  if (!(await d.stillHoldsLock())) return { kind: 'lock_lost', handled: 0, waitMs: 0 };
+
   let handled = 0;
   for (const u of updates) {
     if (u.callback_query) {
@@ -76,7 +88,15 @@ export async function pollOnce(d: PollDeps): Promise<PollStep> {
         d.onPoison?.(u, e);
       }
     }
-    await d.saveOffset(u.update_id + 1);       // 처리 후 저장 — 최소 한 번 처리 (처리기는 멱등)
+    // 처리 후 저장 — 최소 한 번 처리. 🔴 순서는 **저장 → 락 확인** (T-047 Codex C2):
+    //  - 처리(handle·독·무시)가 끝난 업데이트는 락을 잃었어도 오프셋을 저장한다. 저장하지 않으면 새 소유자가 같은 콜백을
+    //    다시 받고, 확정 거부로 선점이 풀린(releaseClaim) 시그널은 원자적 전이가 다시 성공해 **재승인 없이 두 번째 주문**이 나간다
+    //    (순차 재처리는 조건부 전이가 막지 못한다 — 이 경로에서는 처리기가 멱등이 아니다).
+    //  - 락을 잃은 뒤 저장해도 안전하다: 저장 SQL 이 단조 증가라 다른 소비자가 저장한 더 큰 값을 되돌리지 못한다.
+    //  - 저장이 던지면 그대로 전파한다(루프가 백오프).
+    await d.saveOffset(u.update_id + 1);
+    // 그다음 확인 — 잃었으면 남은 업데이트는 처리하지 않는다. 이 확인이 다음 업데이트의 "처리 전" 확인을 겸한다(둘 사이에 아무 일도 없다).
+    if (!(await d.stillHoldsLock())) return { kind: 'lock_lost', handled, waitMs: 0 };
   }
   return { kind: 'processed', handled, waitMs: 0 };
 }
@@ -282,6 +302,8 @@ export interface PollerHandle { stopped: boolean; startedAt: number }
 export const START_DELAY_MS = 30_000;
 export const DISABLED_RECHECK_MS = 30_000;
 export const LOCK_RETRY_MS = 30_000;
+/** 폴링 중 락을 잃은 뒤 재획득을 시도하기 전 최소 대기 (T-047 R-1) */
+export const LOCK_LOST_WAIT_MS = 1_000;
 const FAILURE_ALERT_AT = 10;
 const CONFLICT_ALERT_AT = 3;
 
@@ -324,6 +346,7 @@ export async function runLoop(io: LoopIO, handle: PollerHandle): Promise<void> {
           saveOffset: (n) => io.saveOffset(n),
           getUpdates: (offset, t) => io.getUpdates(offset, t),
           handle: (cq) => io.handle(cq, deps),
+          stillHoldsLock: () => stillHoldsLock(conn),
           onPoison: (u, e) => io.error(`[telegram-poller] 업데이트 ${u.update_id} 처리 중 예외(건너뜀): ${e instanceof Error ? e.message : String(e)}`),
         };
 
@@ -346,6 +369,13 @@ export async function runLoop(io: LoopIO, handle: PollerHandle): Promise<void> {
                 '다른 프로세스가 같은 봇의 getUpdates 를 소비하거나 웹훅이 걸려 있습니다. 공유 봇(TradingInvest)에 수신 코드가 생겼는지 확인하세요. 그동안 버튼 승인은 동작하지 않습니다.', 60 * 60_000);
             }
             await io.sleep(step.waitMs);
+          } else if (step.kind === 'lock_lost') {
+            // 실패가 아니다(백오프·경보 없음). 락을 내려놓고 연결을 반납한 뒤 다시 잡으러 간다 — 다른 소비자가 쥐고 있으면 그쪽이 계속한다.
+            io.info(`[telegram-poller] 락 상실 — 배치를 버리고 재획득을 시도합니다 (처리 ${step.handled}건)`);
+            // T-047 R-1: 재획득이 성공한 직후 다시 잃는 일이 반복돼도 대기 없이 getUpdates 를 연타하지 않게 최소 대기를 둔다.
+            // 대기는 아래 공통 경로에서 락 해제·연결 반납 **뒤에** 한다. 재획득이 실패하면 그때는 기존 LOCK_RETRY_MS 대기를 탄다.
+            waitAfter = LOCK_LOST_WAIT_MS;
+            break;
           } else {
             failures = 0;
             conflicts = 0;
@@ -382,8 +412,14 @@ export async function defaultLoopIO(): Promise<LoopIO> {
     buildDeps: () => buildApprovalDeps(),
     loadOffset: async () => { const v = await readConfig('telegram_poll_offset').catch(() => 0); return Number.isInteger(v) && (v as number) >= 0 ? (v as number) : 0; },
     saveOffset: async (n) => {
+      // 숫자 문자열만 SQL 로 보낸다 — 아니면 CAST 가 엄격 모드에서 오류가 되거나, NaN 이 "null" 로 저장된다
+      if (!Number.isSafeInteger(n) || n < 0) throw new Error(`invalid_offset: ${String(n)}`);
+      // T-047: **단조 증가**. 락을 잃은 옛 소비자가 늦게 저장해도 더 큰 값을 되돌리지 못한다(110 → 103 회귀 방지).
+      // `value` 는 LONGTEXT 라 CAST 로 숫자 비교한다(문자열 비교면 '99' > '110'). 지금 값이 숫자가 아니면(손상) 새 값으로 고친다 —
+      // loadOffset 도 그 값을 0 으로 읽으므로 같은 판단이다. ODKU 안의 `value` 는 기존 행의 값, VALUES(value) 는 새 값이다.
       await getPool().query(
-        'INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+        'INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = '
+          + "IF(value NOT REGEXP '^[0-9]+$' OR CAST(VALUES(value) AS UNSIGNED) > CAST(value AS UNSIGNED), VALUES(value), value)",
         ['telegram_poll_offset', JSON.stringify(n)],
       );
     },

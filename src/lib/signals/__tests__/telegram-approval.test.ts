@@ -332,6 +332,55 @@ describe('6. 승인 — 기존 승인 함수만 부르고, 경로는 구간 유�
     expect(await handleCallbackQuery(press('a', RULE_SIGNAL), h2.deps)).toMatchObject({ view: { kind: 'expired' } });
   });
 
+  test.each(['approved', 'approved_pending_entry', 'executing', 'rejected', 'auto_submitted', 'superseded'])(
+    '🔴 [T-047] 승인 전이에서 졌을 때(invalid_status:%s) 본문을 덮어쓰지 않고 버튼만 제거한다 — 이긴 쪽의 결과(주문 번호)를 지우지 않는다',
+    async (status) => {
+      const h = harness();
+      h.approve.mockResolvedValueOnce({ ok: false, error: `invalid_status:${status}` });
+      const out = await handleCallbackQuery(press('a', RULE_SIGNAL), h.deps);
+      expect(out).toMatchObject({ kind: 'decision', action: 'approve', view: { kind: 'already_handled', status } });
+      expect(h.edits).toEqual([]);                                          // 본문 수정 없음
+      expect(h.sends).toEqual([]);                                          // 대체 메시지도 없음 (수정 실패가 아니다)
+      expect(h.clears).toEqual([{ chatId: CHAT, messageId: 55 }]);          // 버튼만 제거
+      expect(h.answers).toEqual([{ text: '처리 중…', alert: undefined }]);  // 응답은 이미 한 번 했다 — 두 번째는 텔레그램이 거부한다
+      expect(h.audits.at(-1)).toMatchObject({ event: 'signal_decision_channel', payload: { result: 'already_handled', action: 'approve' } });
+    },
+  );
+
+  test('🔴 [T-047] 거절 전이에서 졌을 때도 본문을 덮어쓰지 않고 버튼만 제거한다', async () => {
+    const h = harness();
+    h.reject.mockResolvedValueOnce({ ok: false, error: 'invalid_status:executing' });
+    const out = await handleCallbackQuery(press('r', RULE_SIGNAL), h.deps);
+    expect(out).toMatchObject({ action: 'reject', view: { kind: 'already_handled', status: 'executing' } });
+    expect(h.edits).toEqual([]);
+    expect(h.sends).toEqual([]);
+    expect(h.clears).toEqual([{ chatId: CHAT, messageId: 55 }]);
+    expect(h.answers).toHaveLength(1);
+  });
+
+  test('[T-047] 전이 패배라도 만료(signal_expired·invalid_status:expired)는 지금처럼 본문을 만료로 바꾼다 — 가릴 주문 번호가 없다', async () => {
+    for (const error of ['signal_expired', 'invalid_status:expired']) {
+      const h = harness();
+      h.approve.mockResolvedValueOnce({ ok: false, error });
+      await handleCallbackQuery(press('a', RULE_SIGNAL), h.deps);
+      expect(h.edits).toHaveLength(1);
+      expect(h.edits[0].text).toContain('만료됨');
+      expect(h.clears).toEqual([]);
+    }
+  });
+
+  test('[T-047] 전이 패배 + 메시지 ID 를 모를 때(수정할 본문이 없음)는 새 메시지로만 알린다 — 덮어쓸 것이 없다', async () => {
+    const h = harness();
+    h.approve.mockResolvedValueOnce({ ok: false, error: 'invalid_status:approved' });
+    const cq = press('a', RULE_SIGNAL);
+    (cq.message as { message_id?: number }).message_id = undefined as unknown as number;
+    await handleCallbackQuery(cq, h.deps);
+    expect(h.edits).toEqual([]);
+    expect(h.clears).toEqual([]);
+    expect(h.sends).toHaveLength(1);
+    expect(h.sends[0].text).toContain('이미 처리된 시그널');
+  });
+
   test('🔴 승인 함수가 예외를 던져도 처리기는 던지지 않고 실패를 알린다 (버튼 유지)', async () => {
     const h = harness();
     h.approve.mockRejectedValueOnce(new Error('kis down'));

@@ -6,6 +6,7 @@
  */
 import {
   backoffMs,
+  defaultLoopIO,
   LONG_POLL_SEC,
   pollOnce,
   POLLER_LOCK_NAME,
@@ -16,6 +17,12 @@ import {
   type PollDeps,
 } from '../telegram-poller';
 import type { BotCallResult, TelegramUpdate } from '@/lib/notify/telegram-api';
+
+// T-047: `defaultLoopIO().saveOffset` 의 SQL 을 보려고 DB 풀만 가짜로 바꾼다 (실 DB·텔레그램·경보 모듈을 끌어오지 않는다)
+const mockPoolQuery = jest.fn();
+jest.mock('@/lib/db', () => ({ getPool: () => ({ query: mockPoolQuery, getConnection: jest.fn() }) }));
+jest.mock('@/lib/notify/throttle', () => ({ sendAlertThrottled: jest.fn() }));
+jest.mock('@/lib/notify/telegram-api', () => ({ getTelegramUpdates: jest.fn() }));
 
 const cb = (update_id: number, data = `si1:a:${update_id}:0000000000000000`): TelegramUpdate => ({
   update_id,
@@ -31,9 +38,16 @@ function deps(res: BotCallResult<TelegramUpdate[]>, over: Partial<PollDeps> = {}
     saveOffset: async (n) => { saved.push(n); log.push(`save:${n}`); },
     getUpdates: jest.fn(async () => res),
     handle: async (cq) => { handled.push(cq.id); log.push(`handle:${cq.id}`); },
+    stillHoldsLock: async () => true,
     ...over,
   };
   return { d, log, saved, handled };
+}
+
+/** 락 확인 결과를 호출 순서대로 내준다 (소진 후 true). 몇 번째 확인에서 잃었는지를 log 에 남긴다 */
+function lockScript(seq: boolean[], log: string[]) {
+  const q = [...seq];
+  return jest.fn(async () => { const v = q.length ? q.shift()! : true; log.push(`lock:${v ? 'held' : 'lost'}`); return v; });
 }
 
 describe('pollOnce — 한 번의 폴링 단계', () => {
@@ -107,6 +121,112 @@ describe('pollOnce — 한 번의 폴링 단계', () => {
   });
 });
 
+describe('🔴 T-047 — 락을 잃은 소비자는 새 업데이트를 처리하지 않는다 (처리가 끝난 것만 저장)', () => {
+  test('롱폴링(getUpdates) 도중 락을 잃었으면 반환된 배치를 통째로 버린다', async () => {
+    const h = deps({ ok: true, result: [cb(103), cb(104)] });
+    h.d.stillHoldsLock = lockScript([false], h.log);
+    expect(await pollOnce(h.d)).toEqual({ kind: 'lock_lost', handled: 0, waitMs: 0 });
+    expect(h.handled).toEqual([]);
+    expect(h.saved).toEqual([]);
+    expect(h.log).toEqual(['lock:lost']);
+  });
+
+  // ⚠ T-047 Codex C2 로 불변식이 바뀌었다: 예전에는 "처리 뒤 락을 잃었으면 저장하지 않는다"였으나, 저장하지 않으면 새 소유자가
+  //   같은 콜백을 다시 받아 확정 거부로 선점이 풀린 시그널에 두 번째 주문을 낼 수 있다. 저장은 단조 증가 SQL 이라 락을 잃은 뒤에
+  //   해도 역행이 없다 → **처리가 끝난 업데이트는 저장하고, 남은 것은 미처리·미저장**. 순서는 처리 → 저장 → 확인.
+  test('🔴 [C2] 처리 도중(handle 실행 중) 락을 잃었어도 처리가 끝난 그 업데이트의 오프셋은 저장하고, 남은 배치는 처리하지 않는다', async () => {
+    const h = deps({ ok: true, result: [cb(103), cb(104)] });
+    h.d.stillHoldsLock = lockScript([true, false], h.log);       // 반환 직후 held → (103 처리·저장 뒤) lost
+    expect(await pollOnce(h.d)).toEqual({ kind: 'lock_lost', handled: 1, waitMs: 0 });
+    expect(h.log).toEqual(['lock:held', 'handle:q103', 'save:104', 'lock:lost']);   // 저장 → 확인 순서
+    expect(h.saved).toEqual([104]);
+    expect(h.handled).toEqual(['q103']);                          // 104 는 처리하지도 저장하지도 않는다
+  });
+
+  test('저장 뒤 확인이 다음 업데이트의 "처리 전" 확인을 겸한다 — 잃었으면 다음 것을 처리하지 않는다', async () => {
+    const h = deps({ ok: true, result: [cb(103), cb(104), cb(105)] });
+    h.d.stillHoldsLock = lockScript([true, true, false], h.log); // 103 저장 뒤 held → 104 저장 뒤 lost
+    expect(await pollOnce(h.d)).toEqual({ kind: 'lock_lost', handled: 2, waitMs: 0 });
+    expect(h.log).toEqual(['lock:held', 'handle:q103', 'save:104', 'lock:held', 'handle:q104', 'save:105', 'lock:lost']);
+    expect(h.handled).toEqual(['q103', 'q104']);
+    expect(h.saved).toEqual([104, 105]);
+  });
+
+  test('락을 계속 쥐고 있으면 순서는 확인 → (처리 → 저장 → 확인) × 업데이트', async () => {
+    const h = deps({ ok: true, result: [cb(101), cb(102)] });
+    h.d.stillHoldsLock = lockScript([], h.log);
+    expect(await pollOnce(h.d)).toEqual({ kind: 'processed', handled: 2, waitMs: 0 });
+    expect(h.log).toEqual(['lock:held', 'handle:q101', 'save:102', 'lock:held', 'handle:q102', 'save:103', 'lock:held']);
+  });
+
+  test('[C2] callback_query 가 없는 업데이트도 저장한 뒤 확인한다', async () => {
+    const h = deps({ ok: true, result: [{ update_id: 200 }, { update_id: 201 }] });
+    h.d.stillHoldsLock = lockScript([true, false], h.log);
+    expect(await pollOnce(h.d)).toMatchObject({ kind: 'lock_lost', handled: 0 });
+    expect(h.saved).toEqual([201]);
+  });
+
+  test('[C2] 독이 든 업데이트도 오프셋은 넘기고(저장) 그 뒤에 확인한다', async () => {
+    const poison = jest.fn();
+    const h = deps({ ok: true, result: [cb(101), cb(102)] }, { handle: async () => { throw new Error('boom'); }, onPoison: poison });
+    h.d.stillHoldsLock = lockScript([true, false], h.log);
+    expect(await pollOnce(h.d)).toMatchObject({ kind: 'lock_lost', handled: 0 });
+    expect(h.saved).toEqual([102]);
+    expect(poison).toHaveBeenCalledTimes(1);                      // 102 는 건드리지 않았다
+  });
+
+  test('[C2] 저장이 던지면 확인하지 않고 그대로 전파한다 (루프가 백오프)', async () => {
+    const h = deps({ ok: true, result: [cb(101), cb(102)] }, { saveOffset: async () => { throw new Error('db down'); } });
+    h.d.stillHoldsLock = lockScript([], h.log);
+    await expect(pollOnce(h.d)).rejects.toThrow('db down');
+    expect(h.log).toEqual(['lock:held', 'handle:q101']);          // 저장 실패 뒤 확인·다음 처리 없음
+  });
+
+  test('🔴 [R-8] 저장 뒤 확인(= 다음 업데이트 처리 전)이 던지면 전파한다 — 쥐고 있다고 믿고 다음 것을 처리하지 않는다', async () => {
+    const h = deps({ ok: true, result: [cb(101), cb(102)] });
+    let n = 0;
+    h.d.stillHoldsLock = async () => { n++; if (n === 2) throw new Error('conn gone'); return true; };
+    await expect(pollOnce(h.d)).rejects.toThrow('conn gone');
+    expect(h.handled).toEqual(['q101']);                          // 102 는 처리하지 않았다
+    expect(h.saved).toEqual([102]);                               // 101 은 처리가 끝났으므로 저장돼 있다
+  });
+
+  test('락 확인 자체가 실패하면(연결 끊김) 예외를 전파하고 아무것도 저장하지 않는다 — 쥐고 있다고 믿지 않는다', async () => {
+    const h = deps({ ok: true, result: [cb(101)] }, { stillHoldsLock: async () => { throw new Error('conn gone'); } });
+    await expect(pollOnce(h.d)).rejects.toThrow('conn gone');
+    expect(h.handled).toEqual([]);
+    expect(h.saved).toEqual([]);
+  });
+
+  test('빈 배치는 버릴 것이 없다 — idle', async () => {
+    const h = deps({ ok: true, result: [] }, { stillHoldsLock: async () => false });
+    expect(await pollOnce(h.d)).toEqual({ kind: 'idle', handled: 0, waitMs: 0 });
+  });
+});
+
+describe('🔴 T-047 — 오프셋 저장은 단조 증가 (늦게 도착한 옛 소비자가 되돌리지 못한다)', () => {
+  beforeEach(() => { mockPoolQuery.mockReset(); mockPoolQuery.mockResolvedValue([{ affectedRows: 1 }, []]); });
+
+  test('저장 SQL 은 지금 값보다 클 때만 바꾼다 (숫자 비교 — 문자열 비교면 "99" > "110")', async () => {
+    const io = await defaultLoopIO();
+    await io.saveOffset(110);
+    expect(mockPoolQuery).toHaveBeenCalledTimes(1);
+    const [sql, params] = mockPoolQuery.mock.calls[0] as [string, unknown[]];
+    const norm = sql.replace(/\s+/g, ' ');
+    expect(norm).toContain('INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = IF(');
+    expect(norm).toContain('CAST(VALUES(value) AS UNSIGNED) > CAST(value AS UNSIGNED)');
+    expect(norm).toMatch(/, VALUES\(value\), value\)$/);                 // 참이면 새 값, 거짓이면 지금 값 유지
+    expect(norm).toContain("value NOT REGEXP '^[0-9]+$'");             // 지금 값이 숫자가 아니면(손상) 새 값으로 고친다
+    expect(params).toEqual(['telegram_poll_offset', '110']);
+  });
+
+  test.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('잘못된 오프셋(%p)은 저장하지 않고 던진다', async (n) => {
+    const io = await defaultLoopIO();
+    await expect(io.saveOffset(n)).rejects.toThrow(/invalid_offset/);
+    expect(mockPoolQuery).not.toHaveBeenCalled();
+  });
+});
+
 describe('backoffMs', () => {
   test('2s, 4s, 8s … 최대 60s', () => {
     expect([1, 2, 3, 4, 5, 6, 7, 50].map(backoffMs)).toEqual([2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000]);
@@ -150,6 +270,7 @@ describe('단일 소비자 락', () => {
     const c = conn({ held: 1 });
     await stillHoldsLock(c);
     expect(c.sqls[0]).toMatch(/IS_USED_LOCK\(\?\) = CONNECTION_ID\(\)/);
+    expect(c.params[0]).toEqual([POLLER_LOCK_NAME]);                  // [T-047 R-3] 획득한 락과 같은 이름을 묻는다
   });
 
   test('락 해제는 연결이 이미 죽었어도 던지지 않는다', async () => {

@@ -9,6 +9,7 @@ import {
   backoffMs,
   buildApprovalDepsFrom,
   DISABLED_RECHECK_MS,
+  LOCK_LOST_WAIT_MS,
   LOCK_RETRY_MS,
   POLLER_LOCK_NAME,
   runLoop,
@@ -294,7 +295,7 @@ describe('배선 + 처리기 끝까지 (주입된 협력자 위에서)', () => {
 interface LoopScript {
   flags?: { poller: boolean[] };               // 호출 순서대로 소진, 끝나면 마지막 값 유지
   lockGranted?: boolean[];                     // 연결마다 GET_LOCK 결과
-  heldChecks?: boolean[];                      // IS_USED_LOCK 결과 (소진 후 true)
+  heldChecks?: Array<boolean | 'throw'>;       // IS_USED_LOCK 결과 (소진 후 true). 'throw' = 그 확인 쿼리가 던진다(연결 끊김)
   updates?: Array<BotCallResult<TelegramUpdate[]>>;
   buildDepsThrows?: boolean;
   getConnectionThrows?: boolean;
@@ -309,7 +310,8 @@ function makeLoop(script: LoopScript = {}) {
   const alerts: Array<{ key: string; level: string }> = [];
   const handled: string[] = [];
   const saved: number[] = [];
-  const conns: Array<{ released: number; queries: string[] }> = [];
+  const conns: Array<{ released: number; queries: string[]; params: unknown[][] }> = [];
+  const errors: string[] = [];
   const pollerFlags = [...(script.flags?.poller ?? [true])];
   const lockGranted = [...(script.lockGranted ?? [true])];
   const heldChecks = [...(script.heldChecks ?? [])];
@@ -324,14 +326,19 @@ function makeLoop(script: LoopScript = {}) {
     },
     getConnection: async () => {
       if (script.getConnectionThrows) throw new Error('pool exhausted');
-      const c = { released: 0, queries: [] as string[] };
+      const c = { released: 0, queries: [] as string[], params: [] as unknown[][] };
       conns.push(c);
       events.push(`conn#${conns.length}`);
       return {
-        async query(sql: string) {
+        async query(sql: string, p: unknown[] = []) {
           c.queries.push(sql);
+          c.params.push(p);
           if (/GET_LOCK/.test(sql)) return [[{ got: (lockGranted.length > 1 ? lockGranted.shift()! : lockGranted[0]) ? 1 : 0 }], []];
-          if (/IS_USED_LOCK/.test(sql)) return [[{ held: (heldChecks.length ? heldChecks.shift()! : true) ? 1 : 0 }], []];
+          if (/IS_USED_LOCK/.test(sql)) {
+            const v = heldChecks.length ? heldChecks.shift()! : true;
+            if (v === 'throw') throw new Error('conn gone');
+            return [[{ held: v ? 1 : 0 }], []];
+          }
           return [[], []];
         },
         release() { c.released++; events.push(`release#${conns.indexOf(c) + 1}`); },
@@ -357,9 +364,9 @@ function makeLoop(script: LoopScript = {}) {
       if (script.stopAfterSleeps != null && sleeps.length >= script.stopAfterSleeps) handle.stopped = true;
     },
     info: () => {},
-    error: () => {},
+    error: (m) => { errors.push(m); },
   };
-  return { io, handle, events, sleeps, alerts, handled, saved, conns, get polls() { return polls; } };
+  return { io, handle, events, sleeps, alerts, handled, saved, conns, errors, get polls() { return polls; } };
 }
 
 const cbUpdate = (id: number): TelegramUpdate => ({ update_id: id, callback_query: { id: `q${id}`, from: { id: 1 }, data: 'x' } });
@@ -472,6 +479,133 @@ describe('runLoop — 락·연결·백오프', () => {
     await runLoop(l.io, l.handle);
     expect(l.conns).toHaveLength(0);
     expect(l.sleeps).toEqual([]);
+  });
+
+  test('🔴 [T-047] 롱폴링 도중 락을 잃은 소비자는 돌아온 배치를 처리하지도, 오프셋을 되돌리지도 않는다 (T-042 r42-f2 재현)', async () => {
+    // 소비자 A: 오프셋 103 으로 롱폴링 → 그 사이 연결이 끊겨 락을 잃고, 소비자 B 가 103~109 를 처리해 110 을 저장했다.
+    // A 의 getUpdates 가 늦게 [103..109] 를 돌려준다. 수정 전에는 A 가 7건을 다시 처리하고 104 부터 저장해 오프셋을 되돌렸다.
+    const batch = [103, 104, 105, 106, 107, 108, 109].map(cbUpdate);
+    const l = makeLoop({
+      lockGranted: [true, false],
+      heldChecks: [true, false],                                 // while 조건에서는 held → getUpdates 반환 직후 lost
+      updates: [{ ok: true, result: batch }],
+      stopAfterPolls: 99,                                        // 배치 소진으로 자동 정지하지 않게
+      stopAfterSleeps: 2,
+    });
+    await runLoop(l.io, l.handle);
+    expect(l.handled).toEqual([]);                               // 승인 처리기를 한 번도 부르지 않았다
+    expect(l.saved).toEqual([]);                                 // 오프셋을 건드리지 않았다
+    expect(l.conns.every((c) => c.released === 1)).toBe(true);   // 연결은 정확히 한 번 반납
+    expect(l.conns.length).toBeGreaterThanOrEqual(2);            // 다시 잡으러 갔다 (B 가 쥐고 있어 실패 → 대기)
+    // 락 상실은 실패가 아니다 — 백오프(2s·4s…)가 아니라 최소 대기(R-1) 뒤 재획득, 재획득 실패는 기존 30초 대기
+    expect(l.sleeps).toEqual([LOCK_LOST_WAIT_MS, LOCK_RETRY_MS]);
+    expect(l.errors).toEqual([]);
+  });
+
+  test('🔴 [T-047 R-1] 재획득 성공 직후 다시 잃기를 반복해도 매번 최소 대기를 둔다 — 대기 없이 getUpdates 를 연타하지 않는다', async () => {
+    const cycles = 3;
+    const l = makeLoop({
+      lockGranted: [true],                                       // 재획득은 매번 성공
+      heldChecks: Array.from({ length: 20 }, (_, i) => i % 2 === 0),   // while 조건 held → 반환 직후 lost, 반복
+      updates: Array.from({ length: 20 }, (_, i) => ({ ok: true as const, result: [cbUpdate(200 + i)] })),
+      stopAfterPolls: 20,                                        // (변이 시 무한 루프 방지용 상한)
+      stopAfterSleeps: cycles,
+    });
+    await runLoop(l.io, l.handle);
+    expect(l.sleeps).toEqual(Array(cycles).fill(LOCK_LOST_WAIT_MS));
+    expect(l.polls).toBe(cycles);                                // 대기 1회당 getUpdates 1회
+    expect(l.handled).toEqual([]);
+    expect(l.saved).toEqual([]);
+    // 대기는 락 해제·연결 반납 **뒤**에 한다 (쉬는 동안 풀 슬롯을 쥐지 않는다)
+    expect(l.events.slice(0, 3)).toEqual(['conn#1', 'release#1', `sleep:${LOCK_LOST_WAIT_MS}`]);
+    expect(l.conns.every((c) => c.released === 1 && c.queries.filter((q) => /RELEASE_LOCK/.test(q)).length === 1)).toBe(true);
+  });
+
+  test.each([
+    // [C2] 순서가 처리 → 저장 → 확인으로 바뀌어, 두 번째 경우는 처리가 끝난 103 의 오프셋(104)이 확인 전에 저장돼 있다
+    ['getUpdates 반환 직후', [true, 'throw'] as Array<boolean | 'throw'>, [] as string[], [] as number[]],
+    ['처리·저장 뒤(= 다음 업데이트 처리 전)', [true, true, 'throw'] as Array<boolean | 'throw'>, ['q103'], [104]],
+  ])('🔴 [T-047 R-3] 락 확인 쿼리가 던지면(%s) 쥐고 있다고도, 잃었다고도 보지 않는다 — 오류로 전파돼 남은 배치 미처리·백오프 (fail-closed)', async (_where, heldChecks, expectHandled, expectSaved) => {
+    const l = makeLoop({
+      lockGranted: [true, false],
+      heldChecks,
+      updates: [{ ok: true, result: [cbUpdate(103), cbUpdate(104)] }],
+      stopAfterPolls: 99,
+      stopAfterSleeps: 1,
+    });
+    await runLoop(l.io, l.handle);
+    expect(l.handled).toEqual(expectHandled);                    // held 로 보면(fail-open) 배치를 계속 처리한다
+    expect(l.saved).toEqual(expectSaved);                        // 확인 실패 뒤로는 저장하지 않는다
+    expect(l.sleeps).toEqual([backoffMs(1)]);                    // lost 로 보면 최소 대기(1초)로 조용히 재진입한다 — 그게 아니라 실패 백오프
+    expect(l.errors).toHaveLength(1);
+    expect(l.errors[0]).toMatch(/루프 예외.*conn gone/);           // 오류가 삼켜지지 않고 기록된다
+    expect(l.conns[0].released).toBe(1);
+    expect(l.conns[0].queries.filter((q) => /RELEASE_LOCK/.test(q))).toHaveLength(1);
+  });
+
+  test('🔴 [T-047 R-3] 폴링 중 락 확인은 획득한 락과 **같은 이름**을 같은 연결에서 묻는다', async () => {
+    const l = makeLoop({
+      lockGranted: [true],
+      updates: [{ ok: true, result: [cbUpdate(103), cbUpdate(104)] }],
+    });
+    await runLoop(l.io, l.handle);
+    const c = l.conns[0];
+    const nameOf = (re: RegExp) => c.queries.map((q, i) => [q, c.params[i]] as const).filter(([q]) => re.test(q)).map(([, p]) => p);
+    const got = nameOf(/GET_LOCK/);
+    const checks = nameOf(/IS_USED_LOCK/);
+    expect(got).toEqual([[POLLER_LOCK_NAME]]);
+    expect(checks.length).toBeGreaterThanOrEqual(4);             // while 조건 + 반환 직후 + 저장 뒤 ×2
+    expect(checks.every((p) => JSON.stringify(p) === JSON.stringify([POLLER_LOCK_NAME]))).toBe(true);
+    expect(l.saved).toEqual([104, 105]);
+  });
+
+  // ⚠ [C2] 이 테스트는 원래 "처리 도중 락을 잃으면 저장하지 않는다"(saved=[])를 고정했다. 저장하지 않으면 새 소유자가 같은 콜백을
+  //   다시 처리해 확정 거부로 풀린 선점에 두 번째 주문이 나갈 수 있어(아래 재현 테스트) 불변식을 바꿨다 — 단조 SQL 이 역행을 막는다.
+  test('🔴 [T-047 C2] 처리 도중 락을 잃어도 처리가 끝난 업데이트의 오프셋은 저장하고, 남은 것은 처리·저장하지 않는다', async () => {
+    const l = makeLoop({
+      lockGranted: [true, false],
+      heldChecks: [true, true, false],                           // while → 반환 직후 → (103 처리·저장 뒤) lost
+      updates: [{ ok: true, result: [cbUpdate(103), cbUpdate(104)] }],
+      stopAfterPolls: 99,
+      stopAfterSleeps: 1,
+    });
+    await runLoop(l.io, l.handle);
+    expect(l.handled).toEqual(['q103']);
+    expect(l.saved).toEqual([104]);
+    expect(l.sleeps).toEqual([LOCK_LOST_WAIT_MS]);
+  });
+
+  test('🔴 [T-047 C2] 확정 거부로 선점이 풀린 승인을 처리한 직후 락을 잃어도, 같은 입력을 다시 받아 두 번째 주문을 내지 않는다', async () => {
+    // 가짜 텔레그램: 확인되지 않은(offset 이상) 업데이트를 돌려준다. 가짜 저장소: 단조 증가(운영 SQL 과 같은 의미).
+    // 가짜 처리기: approveSignal 의 확정 거부 경로 — 원자적 선점 성공 → submitOrder → 거부 → releaseClaim(대기 상태로 복귀).
+    const l = makeLoop({ lockGranted: [true, true], heldChecks: [true, true, false] });   // 1차: while → 반환 직후 → 103 처리·저장 뒤 lost
+    const pending = [cbUpdate(103)];
+    let stored = 100;
+    const offsets: number[] = [];
+    const signal = { status: 'awaiting_approval' };
+    let submits = 0;
+    l.io.loadOffset = async () => stored;
+    l.io.saveOffset = async (n) => { l.saved.push(n); stored = Math.max(stored, n); };
+    l.io.getUpdates = async (offset) => {
+      offsets.push(offset);
+      if (offsets.length >= 2) l.handle.stopped = true;          // 재획득 후 한 번 더 폴링하고 끝
+      return { ok: true, result: pending.filter((u) => u.update_id >= offset) };
+    };
+    l.io.handle = async (cq) => {
+      l.handled.push(cq.id);
+      if (signal.status !== 'awaiting_approval') return { kind: 'decision', view: { kind: 'already_handled' } };
+      signal.status = 'executing';                               // claimAwaitingSignal 성공
+      submits++;                                                 // submitOrder
+      signal.status = 'awaiting_approval';                       // order_not_accepted → releaseClaim
+      return { kind: 'decision', view: { kind: 'order_rejected' } };
+    };
+    await runLoop(l.io, l.handle);
+    expect(submits).toBe(1);                                     // 🔴 버튼 한 번 = 주문 시도 한 번
+    expect(l.handled).toEqual(['q103']);
+    expect(l.saved).toEqual([104]);                              // 락을 잃었어도 처리가 끝난 103 은 확인(저장)됐다
+    expect(offsets).toEqual([100, 104]);                         // 새 소유자는 104 부터 받는다
+    expect(l.sleeps).toEqual([LOCK_LOST_WAIT_MS]);               // lock_lost 로 끝나고 재획득했다
+    expect(l.conns).toHaveLength(2);
   });
 
   test('독이 든 업데이트가 있어도 루프는 계속되고 오프셋은 넘어간다', async () => {

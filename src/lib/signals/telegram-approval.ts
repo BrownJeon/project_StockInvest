@@ -240,7 +240,12 @@ export async function handleCallbackQuery(cq: TelegramCallbackQuery, deps: Appro
 
   // 7. 결과 반영 + 감사. 🔴 결과 수정이 실패하면 새 메시지로 대체한다 — "처리 중…" 토스트만 보고 실주문이 나갔는지 모르는 상태를 만들지 않는다.
   const rendered = renderDecision(view, ctx);
-  if (chatId != null && messageId != null) {
+  if (view.kind === 'already_handled' && chatId != null && messageId != null) {
+    // 🔴 T-047: 원자적 전이에서 **졌다** — 다른 쪽(다른 탭·다른 소비자·웹)이 먼저 처리했다. 같은 메시지를 이긴 쪽이 결과(주문 번호)로
+    // 고치고 있거나 이미 고쳤으므로, 진 쪽은 본문을 덮어쓰지 않고 버튼만 지운다(5의 빠른 판정과 같은 규칙, 감사 D-4).
+    // 토스트는 위에서 "처리 중…"으로 이미 한 번 응답했다 — 콜백 응답은 한 번뿐이라 다시 보내지 않는다.
+    await safe(deps.telegram.clearKeyboard(chatId, messageId));
+  } else if (chatId != null && messageId != null) {
     const keyboard = rendered.keepButtons ? buildDecisionKeyboard(deps.key, row.id, amountKRW, await deps.appUrl().catch(() => null)) : undefined;
     const edited = await safe(deps.telegram.edit(chatId, messageId, rendered.text, keyboard));
     if (!edited) await safe(deps.telegram.send(rendered.text, keyboard));
