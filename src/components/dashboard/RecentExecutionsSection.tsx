@@ -25,7 +25,7 @@ export interface RecentOrderRow {
 /** 표시 건수 — 그룹핑 도입 후에도 현행 유지 (T-026 결정 4) */
 const RECENT_LIMIT = 10;
 
-const ORDER_STATUS_META: Record<OrderStatus, { text: string; color: string; bg: string }> = {
+export const ORDER_STATUS_META: Record<OrderStatus, { text: string; color: string; bg: string }> = {
   pending:          { text: '대기',     color: 'var(--muted)',   bg: 'var(--bg3)'              },
   accepted:         { text: '접수됨',   color: '#818cf8',        bg: 'rgba(99,102,241,.18)'    },
   partially_filled: { text: '부분체결', color: 'var(--accent)',  bg: 'rgba(245,158,11,.18)'    },

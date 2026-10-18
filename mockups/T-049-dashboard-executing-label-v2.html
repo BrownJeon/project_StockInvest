@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="demo-version" content="T-049-v2">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="description" content="T-049-v2 — 대시보드 맨 아래 '내 결정' 섹션 추가 + executing 주문 상태 표시(A안·D1·안내 줄 항상) 데모 (delta)">
+<title>T-049-v2 대시보드 내 결정 섹션</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지) */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    /* 기존 컴포넌트에 하드코딩된 색(새 토큰 아님) — RecentExecutionsSection·MyDecisionTab 값 그대로 */
+    --c-accepted: #818cf8;
+    --c-watch: #fbbf24;
+    --c-approved: #60a5fa;
+    /* 데모 주석 전용(앱 UI 아님) */
+    --note: #9fb3d1;
+    --phone-w: 412px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size: 14px; -webkit-text-size-adjust: 100%;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  /* ── 데모 문서 틀 ── */
+  .page { max-width: 1280px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-bottom)); }
+  .page > header h1 { font-size: 17px; margin: 0 0 6px; line-height: 1.4; }
+  .page > header p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--note); color: var(--note); margin: 0 6px 4px 0; }
+  section.block { margin-top: 28px; }
+  section.block > h2 { font-size: 15px; margin: 0 0 8px; }
+  section.block > p.lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .box { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; margin-top: 12px; }
+  .box h3 { font-size: 13px; margin: 0 0 6px; }
+  .box.warnbox { border-color: rgba(245,158,11,0.45); background: rgba(245,158,11,0.08); }
+  .box.warnbox h3 { color: var(--warn); }
+  ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  ul.plain li { margin-bottom: 4px; }
+  .note { margin: 10px 0 4px; font-size: 11px; color: var(--note); border-left: 2px dashed var(--note); padding-left: 6px; line-height: 1.45; }
+
+  /* 데모 조작 패널 */
+  .controls { display: flex; flex-direction: column; gap: 10px; max-width: 412px; margin: 0 auto 14px; }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 0; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px;
+                  border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  /* 현재 vs 제안 */
+  .compare { display: grid; grid-template-columns: 1fr; gap: 28px; }
+  @media (min-width: 900px) { .compare { grid-template-columns: 1fr 1fr; align-items: start; } }
+  .col-title { font-size: 13px; font-weight: 700; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .col-title .was { color: var(--muted); font-weight: 600; }
+
+  /* 폰 프레임 — overflow:clip 이라 하단 탭(sticky)이 화면 아래에 붙는다 */
+  .phone { width: 100%; max-width: var(--phone-w); margin: 0 auto; background: var(--bg); border: 1px solid var(--border2); border-radius: 12px; overflow: clip; }
+
+  /* ── 대시보드 윤곽(상단 섹션 — 실제 내용 재현 안 함) ── */
+  .ol { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 8px 14px; border-bottom: 1px solid var(--border);
+        background: repeating-linear-gradient(135deg, #1a1e26 0 10px, #181b22 10px 20px); color: var(--muted); }
+  .ol .n { font-size: 12px; font-weight: 700; color: #aab2c4; }
+  .ol .d { font-size: 11px; line-height: 1.4; }
+  .ol.cond { border-left: 3px dashed var(--border2); }
+  .ol.sticky-mark .n::after { content: " · 상단 고정"; font-weight: 600; color: var(--muted); }
+  .scroll-gap { padding: 6px 14px; font-size: 11px; color: var(--note); text-align: center; border-bottom: 1px dashed var(--note); }
+  .nav-spacer { height: calc(var(--nav-h) + var(--safe-bottom)); }
+  .bottom-nav { position: sticky; bottom: 0; z-index: 3; height: calc(var(--nav-h) + var(--safe-bottom)); padding-bottom: var(--safe-bottom);
+                background: var(--bg2); border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(5, 1fr); }
+  .bottom-nav span { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; font-weight: 600; color: var(--muted); min-height: 56px; }
+  .bottom-nav span.on { color: var(--accent); }
+  .bottom-nav i { font-style: normal; font-size: 20px; line-height: 1; }
+  .new-mark { position: relative; outline: 2px dashed var(--note); outline-offset: -2px; }
+  .new-mark::before { content: "새 섹션"; position: absolute; top: -1px; right: 40px; transform: translateY(-50%); font-size: 11px; font-weight: 700;
+                      color: #0f1115; background: var(--note); border-radius: 4px; padding: 0 6px; z-index: 1; }
+
+  /* ── 새 섹션: 내 결정 (대시보드 sx.card · sx.cardHeader 톤) ── */
+  .dsec { background: var(--bg2); border-bottom: 1px solid var(--border); }
+  .dsec-head { display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left; padding: 10px 14px 8px; min-height: 44px; }
+  .dsec-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .dsec-title { font-size: 12px; color: var(--muted); letter-spacing: .6px; white-space: nowrap; }
+  .dsec-sub { font-size: 11px; color: var(--muted); opacity: .75; white-space: nowrap; }
+  .caret { margin-left: auto; font-size: 14px; color: var(--muted); display: inline-block; transition: transform .15s; }
+  .dsec-head[aria-expanded="true"] .caret { transform: rotate(180deg); }
+  .dsec-sum { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--text); }
+  .dsec-sum .m { color: var(--muted); }
+  .chip-warn { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; font-weight: 700; color: var(--warn);
+               background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.45); border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+  .dsec-body { background: var(--bg); padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); }
+  .dsec-body[hidden] { display: none; }
+
+  /* MyDecisionTab 구성 그대로 — 시각 크기는 원본, 터치 영역만 44px */
+  .row-toggle, .row-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+  .hit { min-height: 44px; display: inline-flex; align-items: center; }
+  .pill { padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .p-period { background: var(--bg3); color: var(--muted); }
+  .hit[aria-pressed="true"] .p-period { background: var(--accent); color: #000; }
+  .p-filter { color: var(--muted); border: 1px solid transparent; }
+  .hit[aria-pressed="true"] .p-filter { background: var(--bg3); color: var(--text); border-color: var(--border); }
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .state-msg { text-align: center; padding: 32px 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .state-msg.err { color: var(--text); }
+  .state-msg.err b { color: var(--warn); }
+  .btn-retry { margin-top: 8px; min-height: 44px; padding: 0 16px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); font-size: 13px; font-weight: 600; }
+  .pager { display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .pager .pg { padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); }
+  .pager .hit[disabled] { cursor: not-allowed; }
+  .pager .hit[disabled] .pg { opacity: .45; }
+  .pager .pos { font-size: 12px; color: var(--muted); }
+  .btn-more { min-height: 44px; width: 100%; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg2); font-size: 13px; font-weight: 600; color: var(--text); }
+
+  /* 결정 카드 (MyDecisionTab DecisionCard) */
+  .card { background: var(--bg2); border-radius: 10px; border: 1px solid var(--border); overflow: hidden; }
+  .card.expired { border-style: dashed; }
+  .card.is-warn { border-color: rgba(245,158,11,0.55); }
+  .card-in { padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .r1, .r2 { display: flex; align-items: center; min-width: 0; }
+  .r1 { gap: 6px; }
+  .r2 { gap: 8px; }
+  .side { flex-shrink: 0; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
+  .side.buy { background: rgba(239,68,68,0.15); color: var(--up); }
+  .side.sell { background: rgba(59,130,246,0.15); color: var(--down); }
+  .flag { flex-shrink: 0; font-size: 12px; }
+  .sym { font-size: 13px; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { flex-shrink: 0; font-size: 11px; color: var(--muted); }
+  .badge { flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 10px; }
+  .badge.ok { background: rgba(96,165,250,0.15); color: var(--c-approved); }
+  .badge.no { background: rgba(100,100,100,0.12); color: var(--muted); }
+  .outcome { font-size: 11px; color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .o-accepted { color: var(--c-accepted); font-weight: 600; }
+  .o-partial { color: var(--accent); font-weight: 600; }
+  .o-filled { color: var(--ok); font-weight: 600; }
+  .o-muted { color: var(--muted); }
+  .o-watch { color: var(--c-watch); }
+  .o-up { color: var(--up); }
+  .o-warn { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
+            color: var(--warn); font-weight: 700; background: rgba(245,158,11,0.12);
+            border: 1px solid rgba(245,158,11,0.45); border-radius: 6px; padding: 1px 6px; }
+  .hint { font-size: 12px; line-height: 1.5; color: var(--text); padding-top: 6px; border-top: 1px dashed var(--border2); }
+  .hint b { color: var(--warn); }
+
+  /* 상태 어휘표 */
+  .tbl-wrap { max-width: 100%; }
+  table.def { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+  table.def th, table.def td { border-bottom: 1px solid var(--border); padding: 8px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; line-height: 1.45; }
+  table.def th { color: var(--muted); font-weight: 600; }
+  table.def td.src { color: var(--muted); font-size: 11px; }
+  table.def tr.grp td { background: var(--bg2); font-weight: 700; color: #aab2c4; }
+  table.def tr.na td { color: var(--muted); }
+  @media (max-width: 600px) { table.def col.c-src { width: 0; } table.def .src { display: none; } }
+
+  /* 결정 필요 */
+  .decide { display: grid; grid-template-columns: 1fr; gap: 12px; }
+  @media (min-width: 900px) { .decide { grid-template-columns: 1fr 1fr; } }
+  .q { background: var(--bg2); border: 1px solid var(--border2); border-radius: 10px; padding: 12px; min-width: 0; }
+  .q h3 { font-size: 13px; margin: 0 0 8px; }
+  .q .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .opt { border: 1px solid var(--border); border-radius: 8px; padding: 8px; font-size: 12px; line-height: 1.5; min-width: 0; overflow-wrap: anywhere; }
+  .opt.rec { border-color: var(--accent); }
+  .opt .h { font-weight: 700; display: block; margin-bottom: 4px; }
+  .opt .rec-tag { font-size: 11px; color: var(--accent); font-weight: 700; }
+  .q .why { margin: 8px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+</style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <p><span class="tag">데모 T-049-v2</span><span class="tag">delta</span><span class="tag">합성 데이터</span></p>
+    <h1>대시보드 맨 아래 "내 결정" 섹션 추가 + 주문 상태 표시 정정</h1>
+    <p>대시보드 위쪽 섹션은 <b>그대로</b>이고(회색 윤곽으로만 표시), 맨 아래에 "내 결정" 섹션 하나가 붙습니다. 섹션 안 구성(기간 1일·7일·30일, 전체·승인·거절·만료 칩, 카드 목록 7건 + 페이저)은 분석 화면에 있던 <code>MyDecisionTab</code> 그대로이고, <b>executing 카드의 상태 문구</b>만 바뀝니다. 점선 파란 글씨는 데모 설명이며 앱에는 나오지 않습니다.</p>
+
+    <div class="box warnbox" role="note">
+      <h3>⚠ 먼저 알아 둘 사실</h3>
+      <ul class="plain">
+        <li>이 "내 결정" 화면은 <b>6월 중순 이후 앱 어디에도 연결돼 있지 않았습니다</b>(분석 화면 탭에서 빠짐). 대시보드에 붙이면 그때 이후 처음 다시 보이는 화면입니다.</li>
+        <li>최근 기록은 <b>만료가 대부분</b>이라, 기간 7일·필터 "전체"로 열면 만료 카드만 줄지어 보일 가능성이 높습니다. → 결정 ②</li>
+        <li>거절 카드의 "1시간 뒤 가격 변화"는 지금 시그널 API 가 그 값을 내보내지 않아 <b>항상 "거절됨"으로만</b> 보입니다(이번 데모도 그렇게 그렸습니다).</li>
+        <li>주문 상태 문구는 주문 기록(<code>orders</code>)의 상태를 함께 읽어야 정확해집니다(v1 에서 승인된 D1). 시그널 API 에 주문 상태 필드가 추가됩니다.</li>
+      </ul>
+    </div>
+
+    <div class="box" role="note">
+      <h3>v1 에서 바뀐 점</h3>
+      <ul class="plain">
+        <li>위치: 분석 › 내 결정 → <b>대시보드 맨 아래 섹션</b>.</li>
+        <li>번호 있는 주문의 문구를 대시보드 <b>"최근 주문" 섹션과 같은 말·같은 색</b>으로 맞췄습니다(접수됨·부분체결·체결됨·취소됨·테스트). 같은 화면에서 같은 주문이 두 가지로 보이지 않게 하려는 것입니다. v1 의 "모의"는 KIS 모의투자 계좌와 헷갈려서 "테스트 · 실주문 아님"으로 바꿨습니다.</li>
+        <li>"주문 처리 중" 앞의 ⏳ 이모지를 뺐습니다(기기에서 노랗게 그려져 경고처럼 보였음 — v1 자체 점검 P2).</li>
+        <li>만료 카드: 반투명(opacity 0.65) 대신 <b>점선 테두리</b>로 구분합니다. 반투명 회색 글자는 대비가 약 3:1 로 기준(4.5:1) 미달이었습니다.</li>
+        <li>버튼(기간·필터·페이저)의 <b>터치 영역만 44px</b>로 키웠습니다. 보이는 크기는 원본 그대로입니다.</li>
+        <li>불러오기 실패 시 원본은 "결정 내역 없음"으로 보였습니다(오류를 빈 목록처럼 표시). 확인 필요 주문이 숨지 않도록 <b>오류 상태</b>를 따로 둡니다.</li>
+      </ul>
+    </div>
+  </header>
+
+  <!-- 데모 조작 -->
+  <section class="block" aria-labelledby="h-ctl">
+    <h2 id="h-ctl">데모 조작</h2>
+    <p class="lead">아래 제안 화면에만 적용됩니다. 결정 ①·②는 "결정 필요"의 선택지와 같습니다.</p>
+    <div class="controls">
+      <fieldset class="seg">
+        <legend>기기 폭</legend>
+        <div class="seg-row">
+          <label><input type="radio" name="w" value="412" checked><span>412px (S25+)</span></label>
+          <label><input type="radio" name="w" value="360"><span>360px (경계)</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="seg">
+        <legend>결정 ① 섹션 기본 상태</legend>
+        <div class="seg-row">
+          <label><input type="radio" name="fold" value="A" checked><span>A · 기본 접힘 + 요약 줄 (권고)</span></label>
+          <label><input type="radio" name="fold" value="B"><span>B · 항상 펼침 (원본 그대로)</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="seg">
+        <legend>결정 ② 펼쳤을 때 목록 길이</legend>
+        <div class="seg-row">
+          <label><input type="radio" name="size" value="keep" checked><span>7건 + 페이저 (원본 그대로, 권고)</span></label>
+          <label><input type="radio" name="size" value="short"><span>3건 + "더 보기"</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="seg">
+        <legend>데이터 상태</legend>
+        <div class="seg-row">
+          <label><input type="radio" name="ds" value="ok" checked><span>정상</span></label>
+          <label><input type="radio" name="ds" value="loading"><span>로딩</span></label>
+          <label><input type="radio" name="ds" value="empty"><span>빈</span></label>
+          <label><input type="radio" name="ds" value="error"><span>오류</span></label>
+        </div>
+      </fieldset>
+    </div>
+  </section>
+
+  <!-- 1. 현재 vs 제안 -->
+  <section class="block" aria-labelledby="h-compare">
+    <h2 id="h-compare">1. 대시보드 세로 구성 — 현재 vs 제안</h2>
+    <p class="lead">위쪽 섹션 이름·순서는 <code>Dashboard.tsx</code> 렌더 순서 그대로입니다. 높이는 데이터 양에 따라 달라지는 <b>추정치</b>이고, 데모에서는 줄여서 그렸습니다. 하단 탭(60px)은 화면 아래에 고정되고, 앱 레이아웃이 그만큼 아래 여백을 두므로 마지막 카드가 탭에 가려지지 않습니다.</p>
+
+    <div class="compare">
+      <!-- 현재 -->
+      <div>
+        <p class="col-title"><span class="was">이전</span> 현재 대시보드 (변경 없음)</p>
+        <div class="phone" aria-label="현재 대시보드 윤곽">
+          <div class="ol"><span class="n">상단 요약</span><span class="d">브랜드·새로고침 · 시장 배지 · 총 평가액 · 당일 등락·현금% (약 120px)</span></div>
+          <div class="ol cond"><span class="n">승인 대기 배너</span><span class="d">대기 건이 있을 때만 (약 40px)</span></div>
+          <div class="ol"><span class="n">투자 현황</span><span class="d">승인 대기·진입 감시 중·오늘 체결·포트폴리오 오늘 2×2 (약 150px)</span></div>
+          <div class="ol"><span class="n">트레이딩 보드</span><span class="d">승인 대기 → 진입 감시 → 포지션 (가변)</span></div>
+          <div class="ol"><span class="n">운용 전략 n/m</span><span class="d">기본 접힘 (약 40px)</span></div>
+          <div class="ol"><span class="n">오늘의 평가 깔때기</span><span class="d">기본 접힘, 결론 줄 표시 (약 80px)</span></div>
+          <div class="ol"><span class="n">최근 주문 · 최근 10건</span><span class="d">날짜 → 종목 그룹, 기본 접힘 (가변)</span></div>
+          <div class="ol sticky-mark"><span class="n">보유 / 관심 / 내일 탭</span><span class="d">목록 7행 + 페이저 (약 600px)</span></div>
+          <div class="ol"><span class="n">차트</span><span class="d">종목 칩 · 간격 · 캔들 · 당일 고/저/거래량 (약 450px)</span></div>
+          <div class="nav-spacer" aria-hidden="true"></div>
+          <div class="bottom-nav" aria-hidden="true">
+            <span class="on"><i>🏠</i>대시보드</span><span><i>⭐</i>즐겨찾기</span><span><i>💡</i>추천</span><span><i>📈</i>분석</span><span><i>⚙️</i>설정</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 제안 -->
+      <div>
+        <p class="col-title">제안 — 맨 아래에 "내 결정" <span class="was" id="sel-summary">A · 7건 + 페이저</span></p>
+        <div class="phone" aria-label="제안 대시보드">
+          <div class="ol"><span class="n">상단 요약</span><span class="d">변경 없음</span></div>
+          <div class="ol cond"><span class="n">승인 대기 배너</span><span class="d">변경 없음 (있을 때만)</span></div>
+          <div class="ol"><span class="n">투자 현황</span><span class="d">변경 없음</span></div>
+          <div class="ol"><span class="n">트레이딩 보드</span><span class="d">변경 없음</span></div>
+          <div class="ol"><span class="n">운용 전략 n/m</span><span class="d">변경 없음</span></div>
+          <div class="ol"><span class="n">오늘의 평가 깔때기</span><span class="d">변경 없음</span></div>
+          <div class="ol"><span class="n">최근 주문 · 최근 10건</span><span class="d">변경 없음</span></div>
+          <div class="ol sticky-mark"><span class="n">보유 / 관심 / 내일 탭</span><span class="d">변경 없음</span></div>
+          <div class="ol"><span class="n">차트</span><span class="d">변경 없음</span></div>
+          <p class="scroll-gap">↑ 여기까지 약 1,600~2,000px 스크롤 (추정)</p>
+
+          <!-- ▼ 새 섹션 (풀 해상도) -->
+          <section class="dsec new-mark" id="dsec" aria-labelledby="dsec-title">
+            <button type="button" class="dsec-head" id="dsec-toggle" aria-expanded="false" aria-controls="dsec-body">
+              <span class="dsec-row">
+                <span class="dsec-title" id="dsec-title">내 결정</span>
+                <span class="dsec-sub" id="dsec-sub">· 최근 7일</span>
+                <span class="caret" aria-hidden="true">▾</span>
+              </span>
+              <span class="dsec-sum" id="dsec-sum"></span>
+            </button>
+            <div class="dsec-body" id="dsec-body" hidden>
+              <div class="row-toggle" role="group" aria-label="기간" id="periods"></div>
+              <div class="row-filter" role="group" aria-label="결정 필터" id="filters"></div>
+              <p class="sr" id="list-status" aria-live="polite"></p>
+              <div id="list-area"></div>
+            </div>
+          </section>
+
+          <div class="nav-spacer" aria-hidden="true"></div>
+          <div class="bottom-nav" aria-hidden="true">
+            <span class="on"><i>🏠</i>대시보드</span><span><i>⭐</i>즐겨찾기</span><span><i>💡</i>추천</span><span><i>📈</i>분석</span><span><i>⚙️</i>설정</span>
+          </div>
+        </div>
+        <p class="note">대시보드는 30초마다 자동 새로고침합니다. 새 섹션도 같은 주기로 다시 불러오므로 "10분" 경계가 화면을 연 채로 있어도 넘어갑니다(원본은 기간을 바꿀 때만 다시 불러왔음).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. 상태별 카드 -->
+  <section class="block" aria-labelledby="h-cards">
+    <h2 id="h-cards">2. 상태별 카드 한눈에 (권고안 기준, 같은 합성 데이터 12건)</h2>
+    <p class="lead">위 제안 화면은 7건씩 나눠 보여 주므로, 비교하기 쉽게 전부 펼쳐 둡니다. 색만으로 구분하지 않습니다 — 확인 필요는 ⚠ 아이콘 + 테두리 칩 + 카드 테두리 + 안내 줄, 나머지는 문구로 구분됩니다.</p>
+    <div class="phone" style="padding: 12px" aria-label="상태별 카드 목록">
+      <div class="list" id="all-cards"></div>
+    </div>
+  </section>
+
+  <!-- 3. 상태 어휘표 -->
+  <section class="block" aria-labelledby="h-def">
+    <h2 id="h-def">3. executing 표시 규칙 (코드로 확인한 주문 상태 기준)</h2>
+    <p class="lead">조건은 시그널 상태가 <code>executing</code> 일 때입니다. "번호"는 시그널에 연결된 주문 번호(<code>consumed_order_id</code>), "주문 상태"는 그 주문 기록의 <code>status</code>(+<code>blocked_by</code>)입니다. 표에 없는 조합이 오면 <b>확인 필요로 표시</b>합니다(안전한 쪽).</p>
+    <div class="tbl-wrap">
+      <table class="def">
+        <colgroup><col style="width:30%"><col style="width:30%"><col style="width:20%"><col class="c-src" style="width:20%"></colgroup>
+        <thead><tr><th scope="col">조건</th><th scope="col">표시</th><th scope="col">사용자 행동</th><th scope="col" class="src">근거</th></tr></thead>
+        <tbody>
+          <tr class="grp"><td colspan="4">번호 있음 — 주문이 실제로 만들어짐</td></tr>
+          <tr><td>accepted (거래소 접수)</td><td><span class="o-accepted">주문 접수됨 #N</span><br><span class="o-muted">남색, 최근 주문과 같음</span></td><td>없음(체결 대기)</td><td class="src">dry-run.ts:216-220 · entry-watcher 385-389</td></tr>
+          <tr><td>partially_filled</td><td><span class="o-partial">부분체결 #N</span></td><td>없음</td><td class="src">order-sync.ts:646</td></tr>
+          <tr><td>filled</td><td><span class="o-filled">✓ 체결됨 #N</span></td><td>없음</td><td class="src">order-sync.ts:645</td></tr>
+          <tr><td>cancelled (미체결 후 사라짐)</td><td><span class="o-muted">주문 취소됨 #N</span></td><td>없음(체결 안 됨)</td><td class="src">order-sync.ts:647</td></tr>
+          <tr><td>dry_run (DRY_RUN 켜짐)</td><td><span class="o-muted">테스트 #N · 실주문 아님</span></td><td>없음</td><td class="src">dry-run.ts:202-206 · entry-watcher 385</td></tr>
+          <tr><td><b>결과 불명</b>: rejected + kis_5xx·network_error, failed, pending, rejected + 사유 없음(옛 기록)</td><td><span class="o-warn"><span aria-hidden="true">⚠ </span>주문 여부 확인 필요 #N</span><br>+ 안내 줄</td><td><b>KIS 체결 내역 확인 · 재주문 금지</b></td><td class="src">dry-run.ts:225, 235-238, 244-248 · entry-watcher 451-457</td></tr>
+          <tr class="na"><td>확정 거부·차단: rejected(그 밖 사유)·blocked(킬스위치·한도 등)</td><td>코드상 executing 에 <b>남지 않음</b> → 데모 카드에서 제외. 만약 보이면 <span style="color:var(--down)">주문 안 나감 #N</span></td><td>없음</td><td class="src">entry-watcher 474-476 → entry-claim.ts:46-53 (대기로 되돌림), 번호는 389·457 에서만 연결</td></tr>
+          <tr class="grp"><td colspan="4">번호 없음 — 주문 직전 선점 상태</td></tr>
+          <tr><td>마지막 갱신 10분 미만</td><td><span class="o-muted">주문 처리 중…</span></td><td>없음(정상은 수 초)</td><td class="src">entry-claim.ts:31-38</td></tr>
+          <tr><td>마지막 갱신 10분 이상</td><td><span class="o-warn"><span aria-hidden="true">⚠ </span>주문 여부 확인 필요 · N분째</span><br>+ 안내 줄</td><td><b>KIS 체결 내역 확인 · 재주문 금지</b></td><td class="src">entry-claim.ts:92-102 (경보와 같은 10분) · service.ts:586-609 (즉시 승인 경로의 결과 불명은 번호를 연결하지 않음)</td></tr>
+          <tr class="grp"><td colspan="4">그 밖의 상태 — 바뀌지 않음</td></tr>
+          <tr><td colspan="4" class="o-muted">진입 감시 중 · 자동 제출됨 · 즉시 승인 · 거절됨 · 만료 — 조치 없음 (만료 카드의 반투명만 점선 테두리로 바뀜)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 4. 결정 필요 -->
+  <section class="block" aria-labelledby="h-decide">
+    <h2 id="h-decide">4. 결정 필요</h2>
+    <p class="lead">v1 에서 정한 것(문구 A안 · 주문 상태로 구분 D1 · 안내 줄 항상 표시)은 다시 묻지 않습니다. 대시보드에 붙이면서 생긴 두 가지만 묻습니다. 대시보드 재개편 전 임시 배치라는 점을 기준으로 권고했습니다.</p>
+    <div class="decide">
+      <div class="q">
+        <h3>① 섹션 기본 상태</h3>
+        <div class="opts">
+          <div class="opt rec"><span class="h">A · 기본 접힘 <span class="rec-tag">권고</span></span>머리 줄에 "승인 n · 거절 n · 만료 n"과 확인 필요 건수(⚠ 칩)만. 누르면 원본 구성이 펼쳐짐. 대시보드 길이 +약 60px</div>
+          <div class="opt"><span class="h">B · 항상 펼침</span>원본 그대로. 누를 필요 없이 바로 보이지만 대시보드가 약 600px 더 길어짐</div>
+        </div>
+        <p class="why">운용 전략·평가 깔때기·최근 주문도 기본 접힘이라 같은 동작입니다. 접혀 있어도 확인 필요 주문이 있으면 머리 줄 칩으로 보입니다. 단, 맨 아래라 스크롤해야 보이므로 확인 필요의 1차 알림은 텔레그램 경보(T-046)입니다.</p>
+      </div>
+      <div class="q">
+        <h3>② 펼쳤을 때 목록 길이 (기간 기본 7일은 그대로)</h3>
+        <div class="opts">
+          <div class="opt rec"><span class="h">7건 + 페이저 <span class="rec-tag">권고</span></span>원본 그대로. 새 규칙이 없어 재개편 때 버릴 것도 없음</div>
+          <div class="opt"><span class="h">3건 + "더 보기"</span>펼친 뒤 길이가 짧음. 누르면 7건 + 페이저로 바뀜. 새 동작 1개 추가</div>
+        </div>
+        <p class="why">A(접힘)를 고르면 길이 문제는 이미 풀리므로 원본을 유지하는 편이 구현·검증 범위가 작습니다. B(펼침)를 고른다면 3건안이 낫습니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. 점검 메모 -->
+  <section class="block" aria-labelledby="h-chk">
+    <h2 id="h-chk">5. 모바일·접근성 점검 메모</h2>
+    <ul class="plain">
+      <li>360·412px: 상태 문구는 원본처럼 한 줄 말줄임, 안내 줄·요약 줄은 줄바꿈 허용 → 가로 스크롤 0.</li>
+      <li>명암비(카드 배경 #171a21): 경고 노랑 8.1:1 · 접수됨 남색 5.9:1 · 체결됨 초록 7.7:1 · 회색 5.7:1 · 빨강 4.6:1.</li>
+      <li>섹션 머리 줄은 버튼(펼침 여부를 화면 낭독기에 알림), 기간·필터는 눌림 상태를 알리는 버튼, 터치 영역 44px.</li>
+      <li>아이콘은 화면 낭독기에서 숨기고, 확인 필요 칩에는 "경고:" 숨김 텍스트를 붙입니다.</li>
+      <li>건수(전체·승인·거절·만료)는 원본처럼 불러온 목록 안에서 셉니다. 원본은 최대 200건까지만 불러오므로 기간이 길면 실제보다 적게 보일 수 있습니다.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+(function () {
+  // 합성 데이터 — 생성 시각 역순. ago = 몇 분 전 생성, idle = 마지막 갱신 후 경과 분
+  var DATA = [
+    { side: 'sell', sym: '마바화학',   flag: '',   ago: 2,    amt: 120000, d: 'ok', k: 'wait',  idle: 2,  note: '① executing · 번호 없음 · 선점 2분째 (10분 미만)' },
+    { side: 'buy',  sym: '사아전기',   flag: '',   ago: 20,   amt: 100000, d: 'ok', k: 'watch',           note: '② approved_pending_entry (안 바뀜)' },
+    { side: 'buy',  sym: 'SAMPL',      flag: '🇺🇸', ago: 40,   amt: 95000,  d: 'ok', k: 'stuck', idle: 14, note: '③ executing · 번호 없음 · 마지막 갱신 14분 전 (10분 이상)' },
+    { side: 'buy',  sym: '다라바이오', flag: '',   ago: 60,   amt: 80000,  d: 'ok', k: 'unk',   ord: 1235, note: '④ executing · 주문 #1235 · 주문 기록 rejected(kis_5xx) = 결과 불명' },
+    { side: 'buy',  sym: '가나전자',   flag: '',   ago: 180,  amt: 100000, d: 'ok', k: 'acc',   ord: 1234, note: '⑤ executing · 주문 #1234 · accepted' },
+    { side: 'buy',  sym: '차카통신',   flag: '',   ago: 240,  amt: 70000,  d: 'ok', k: 'part',  ord: 1240, note: '⑥ executing · 주문 #1240 · partially_filled' },
+    { side: 'sell', sym: '타파건설',   flag: '',   ago: 300,  amt: 50000,  d: 'ok', k: 'dry',   ord: 1237, note: '⑦ executing · 주문 #1237 · dry_run (DRY_RUN 켜진 때)' },
+    { side: 'buy',  sym: '하나식품',   flag: '',   ago: 1500, amt: 90000,  d: 'ok', k: 'fill',  ord: 1236, note: '⑧ executing · 주문 #1236 · filled' },
+    { side: 'buy',  sym: 'EXMPL',      flag: '🇺🇸', ago: 2900, amt: 60000,  d: 'ok', k: 'canc',  ord: 1238, note: '⑨ executing · 주문 #1238 · cancelled' },
+    { side: 'sell', sym: '자차금융',   flag: '',   ago: 4400, amt: 60000,  d: 'ok', k: 'auto',            note: '⑩ auto_submitted (안 바뀜)' },
+    { side: 'buy',  sym: '거너소재',   flag: '',   ago: 5800, amt: 100000, d: 'no', k: 'rej',             note: '⑪ rejected (안 바뀜 — 1시간 뒤 변화는 API 에 값이 없어 표시 안 됨)' },
+    { side: 'buy',  sym: '더러기계',   flag: '',   ago: 7300, amt: 80000,  d: 'ex', k: 'exp',             note: '⑫ expired (안 바뀜 — 반투명 → 점선 테두리)' }
+  ];
+  var HINT = '<div class="hint"><b aria-hidden="true">→</b> KIS 체결 내역 먼저 확인 · 확인 전 재주문 금지</div>';
+  var WARN_KINDS = { unk: 1, stuck: 1 };
+
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function rel(min) {
+    if (min < 60) return min + '분 전';
+    if (min < 1440) return Math.floor(min / 60) + '시간 전';
+    return Math.floor(min / 1440) + '일 전';
+  }
+  function won(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '원'; }
+  function outcome(r) {
+    var n = r.ord ? ' <span class="num">#' + r.ord + '</span>' : '';
+    switch (r.k) {
+      case 'wait':  return '<span class="o-muted">주문 처리 중…</span>';
+      case 'stuck': return '<span class="o-warn"><span class="sr">경고: </span><span aria-hidden="true">⚠ </span>주문 여부 확인 필요 · <span class="num">' + r.idle + '분째</span></span>';
+      case 'unk':   return '<span class="o-warn"><span class="sr">경고: </span><span aria-hidden="true">⚠ </span>주문 여부 확인 필요' + n + '</span>';
+      case 'acc':   return '<span class="o-accepted">주문 접수됨' + n + '</span>';
+      case 'part':  return '<span class="o-partial">부분체결' + n + '</span>';
+      case 'fill':  return '<span class="o-filled"><span aria-hidden="true">✓ </span>체결됨' + n + '</span>';
+      case 'canc':  return '<span class="o-muted">주문 취소됨' + n + '</span>';
+      case 'dry':   return '<span class="o-muted">테스트' + n + ' · 실주문 아님</span>';
+      case 'watch': return '<span class="o-watch">진입 감시 중</span>';
+      case 'auto':  return '<span class="o-up">자동 제출됨</span>';
+      case 'rej':   return '거절됨';
+      case 'exp':   return '만료 — 조치 없음';
+    }
+    return '';
+  }
+  function card(r, withNote) {
+    var badge = r.d === 'ok' ? '<span class="badge ok">승인</span>' : r.d === 'no' ? '<span class="badge no">거절</span>' : '<span class="badge no">만료</span>';
+    var cls = 'card' + (WARN_KINDS[r.k] ? ' is-warn' : '') + (r.k === 'exp' ? ' expired' : '');
+    var html = '';
+    if (withNote) html += '<p class="note">' + esc(r.note) + '</p>';
+    html += '<article class="' + cls + '"><div class="card-in">'
+      + '<div class="r1"><span class="side ' + r.side + '">' + (r.side === 'buy' ? '매수' : '매도') + '</span>'
+      + (r.flag ? '<span class="flag" aria-hidden="true">' + r.flag + '</span>' : '')
+      + '<span class="sym">' + esc(r.sym) + '</span><span class="meta">' + rel(r.ago) + '</span></div>'
+      + '<div class="r2">' + badge + '<span class="outcome">' + outcome(r) + '</span><span class="meta num">' + won(r.amt) + '</span></div>'
+      + (WARN_KINDS[r.k] ? HINT : '')
+      + '</div></article>';
+    return html;
+  }
+
+  // 전부 펼친 비교 목록
+  var all = document.getElementById('all-cards');
+  var buf = '';
+  for (var i = 0; i < DATA.length; i++) buf += card(DATA[i], true);
+  all.innerHTML = buf;
+
+  // ── 새 섹션 상태 ──
+  var S = { fold: 'A', size: 'keep', ds: 'ok', open: false, period: '7d', filter: 'all', page: 0, more: false };
+  var PERIODS = [['1d', '1일'], ['7d', '7일'], ['30d', '30일']];
+  var LIMIT = { '1d': 600, '7d': 7 * 1440, '30d': 30 * 1440 };
+  var sec = { head: document.getElementById('dsec-toggle'), body: document.getElementById('dsec-body'), sub: document.getElementById('dsec-sub'),
+              sum: document.getElementById('dsec-sum'), periods: document.getElementById('periods'), filters: document.getElementById('filters'),
+              area: document.getElementById('list-area'), status: document.getElementById('list-status') };
+
+  function rows() {
+    if (S.ds !== 'ok') return [];
+    return DATA.filter(function (r) { return r.ago <= LIMIT[S.period]; });
+  }
+  function counts(list) {
+    var c = { all: list.length, ok: 0, no: 0, ex: 0, warn: 0 };
+    list.forEach(function (r) { c[r.d]++; if (WARN_KINDS[r.k]) c.warn++; });
+    return c;
+  }
+  function pressBtn(label, on, cls, attr) {
+    return '<button type="button" class="hit" aria-pressed="' + (on ? 'true' : 'false') + '" ' + attr + '><span class="pill ' + cls + '">' + label + '</span></button>';
+  }
+  function render() {
+    var list = rows();
+    var c = counts(list);
+    var plabel = { '1d': '오늘', '7d': '최근 7일', '30d': '최근 30일' }[S.period];
+    sec.sub.textContent = '· ' + plabel;
+
+    // 머리 줄: A 는 접힘 버튼 + 요약, B 는 제목만
+    var foldable = S.fold === 'A';
+    var expanded = foldable ? S.open : true;
+    sec.head.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    sec.head.disabled = !foldable;
+    sec.head.style.cursor = foldable ? 'pointer' : 'default';
+    sec.head.querySelector('.caret').style.display = foldable ? '' : 'none';
+    var sum = '';
+    if (foldable) {
+      if (S.ds === 'loading') sum = '<span class="m">불러오는 중…</span>';
+      else if (S.ds === 'error') sum = '<span class="chip-warn"><span class="sr">경고: </span><span aria-hidden="true">⚠</span> 불러오지 못함</span><span class="m">펼쳐서 다시 시도</span>';
+      else if (c.all === 0) sum = '<span class="m">해당 기간 결정 내역 없음</span>';
+      else {
+        sum = '<span>승인 <b class="num">' + c.ok + '</b></span><span class="m">·</span><span>거절 <b class="num">' + c.no + '</b></span><span class="m">·</span><span>만료 <b class="num">' + c.ex + '</b></span>';
+        if (c.warn > 0) sum += '<span class="chip-warn"><span class="sr">경고: </span><span aria-hidden="true">⚠</span> 확인 필요 ' + c.warn + '건</span>';
+      }
+    }
+    sec.sum.innerHTML = sum;
+    sec.sum.style.display = foldable ? '' : 'none';
+    sec.body.hidden = !expanded;
+
+    // 기간·필터
+    var pb = '';
+    PERIODS.forEach(function (p) { pb += pressBtn(p[1], S.period === p[0], 'p-period', 'data-period="' + p[0] + '"'); });
+    sec.periods.innerHTML = pb;
+    var F = [['all', '전체 ' + c.all], ['ok', '승인 ' + c.ok], ['no', '거절 ' + c.no], ['ex', '만료 ' + c.ex]];
+    var fb = '';
+    F.forEach(function (f) { fb += pressBtn(f[1], S.filter === f[0], 'p-filter', 'data-filter="' + f[0] + '"'); });
+    sec.filters.innerHTML = fb;
+
+    // 목록
+    var html = '';
+    if (S.ds === 'loading') { html = '<div class="state-msg" role="status">불러오는 중...</div>'; sec.status.textContent = '불러오는 중'; }
+    else if (S.ds === 'error') {
+      html = '<div class="state-msg err" role="alert"><b aria-hidden="true">⚠</b> 결정 내역을 불러오지 못했습니다.<br><span class="o-muted">30초 뒤 자동으로 다시 시도합니다.</span><br><button type="button" class="btn-retry" id="retry">다시 시도</button></div>';
+      sec.status.textContent = '';
+    } else {
+      var fl = list.filter(function (r) { return S.filter === 'all' || r.d === S.filter; });
+      if (fl.length === 0) { html = '<div class="state-msg">해당 기간 결정 내역 없음</div>'; sec.status.textContent = '결정 내역 없음'; }
+      else {
+        var short = S.size === 'short' && !S.more;
+        var size = short ? 3 : 7;
+        var pages = Math.ceil(fl.length / size);
+        if (S.page > pages - 1) S.page = pages - 1;
+        var start = short ? 0 : S.page * size;
+        var paged = fl.slice(start, start + size);
+        html += '<div class="list">';
+        paged.forEach(function (r) { html += card(r, false); });
+        html += '</div>';
+        if (short && fl.length > 3) {
+          html += '<button type="button" class="btn-more" id="more">더 보기 (+' + (fl.length - 3) + '건)</button>';
+        } else if (!short && pages > 1) {
+          html += '<div class="pager">'
+            + '<button type="button" class="hit" id="prev" aria-label="이전 페이지"' + (S.page === 0 ? ' disabled' : '') + '><span class="pg">← 이전</span></button>'
+            + '<span class="pos num">' + (S.page + 1) + ' / ' + pages + '</span>'
+            + '<button type="button" class="hit" id="next" aria-label="다음 페이지"' + (S.page >= pages - 1 ? ' disabled' : '') + '><span class="pg">다음 →</span></button>'
+            + '</div>';
+        }
+        sec.status.textContent = fl.length + '건 중 ' + (start + 1) + '–' + (start + paged.length) + '번째';
+      }
+    }
+    sec.area.innerHTML = html;
+
+    var names = { A: 'A · 접힘', B: 'B · 펼침', keep: '7건 + 페이저', short: '3건 + 더 보기' };
+    document.getElementById('sel-summary').textContent = names[S.fold] + ' · ' + names[S.size];
+  }
+
+  sec.head.addEventListener('click', function () { if (S.fold === 'A') { S.open = !S.open; render(); } });
+  document.getElementById('dsec-body').addEventListener('click', function (e) {
+    var t = e.target.closest('button');
+    if (!t) return;
+    if (t.dataset.period) { S.period = t.dataset.period; S.page = 0; S.more = false; }
+    else if (t.dataset.filter) { S.filter = t.dataset.filter; S.page = 0; S.more = false; }
+    else if (t.id === 'prev') S.page = Math.max(0, S.page - 1);
+    else if (t.id === 'next') S.page = S.page + 1;
+    else if (t.id === 'more') S.more = true;
+    else if (t.id === 'retry') { S.ds = 'ok'; document.querySelector('input[name="ds"][value="ok"]').checked = true; }
+    else return;
+    render();
+  });
+  function bind(name, fn) {
+    var els = document.querySelectorAll('input[name="' + name + '"]');
+    for (var i = 0; i < els.length; i++) els[i].addEventListener('change', function () { fn(this.value); render(); });
+  }
+  bind('w', function (v) { document.documentElement.style.setProperty('--phone-w', v + 'px'); });
+  bind('fold', function (v) { S.fold = v; });
+  bind('size', function (v) { S.size = v; S.more = false; S.page = 0; });
+  bind('ds', function (v) { S.ds = v; });
+  render();
+})();
+</script>
+</body>
+</html>

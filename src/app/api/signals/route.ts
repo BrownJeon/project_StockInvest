@@ -100,6 +100,13 @@ export async function GET(req: Request) {
 
     const scenarioSource = url.searchParams.get('scenarioSource');
 
+    // T-049 — 대시보드 "내 결정" 섹션 전용 옵트인 2개. 값이 **정확히 '1'** 일 때만 켜진다.
+    // 그 밖의 값·없음이면 아래 SQL·응답은 변경 전과 같다(다른 소비자 14곳 — signals-get.test.ts 가 고정).
+    //  - includeExpired=1 : status 가 있을 때 붙던 만료 제외 절을 생략 — 결정 내역은 거의 전부 TTL 이 지났다.
+    //  - withOrder=1      : 각 행에 order_status·order_blocked_by 를 붙인다(orders PK IN 2차 조회, JOIN 아님).
+    const includeExpired = url.searchParams.get('includeExpired') === '1';
+    const withOrder = url.searchParams.get('withOrder') === '1';
+
     const where: string[] = [];
     const params: unknown[] = [];
     if (symbol) { where.push('symbol = ?'); params.push(symbol); }
@@ -117,8 +124,8 @@ export async function GET(req: Request) {
         where.push(`status IN (${statuses.map(() => '?').join(',')})`);
         params.push(...statuses);
       }
-      // 만료 시각이 지난 시그널은 cron 처리 여부와 무관하게 제외
-      where.push('(expires_at IS NULL OR expires_at >= NOW())');
+      // 만료 시각이 지난 시그널은 cron 처리 여부와 무관하게 제외 (includeExpired=1 일 때만 생략)
+      if (!includeExpired) where.push('(expires_at IS NULL OR expires_at >= NOW())');
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -133,7 +140,28 @@ export async function GET(req: Request) {
        LIMIT ?`,
       [...params, limit],
     );
-    return Response.json({ ok: true, data: rows });
+    if (!withOrder) return Response.json({ ok: true, data: rows });
+
+    // 2차 조회 — 번호가 있는 행만, 중복 제거. 실패하면 바깥 catch 로 500:
+    // null 로 채워 성공시키면 번호 있는 카드가 전부 "주문 여부 확인 필요"로 바뀌어 거짓 경고가 된다.
+    const orderIds = [...new Set(
+      rows.map(r => r.consumed_order_id).filter(v => v != null).map(v => Number(v)),
+    )];
+    const orderById = new Map<number, { status: string | null; blocked_by: string | null }>();
+    if (orderIds.length > 0) {
+      const [orderRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id, status, blocked_by FROM orders WHERE id IN (${orderIds.map(() => '?').join(',')})`,
+        orderIds,
+      );
+      for (const o of orderRows) {
+        orderById.set(Number(o.id), { status: o.status ?? null, blocked_by: o.blocked_by ?? null });
+      }
+    }
+    const data = rows.map(r => {
+      const o = r.consumed_order_id != null ? orderById.get(Number(r.consumed_order_id)) : undefined;
+      return { ...r, order_status: o?.status ?? null, order_blocked_by: o?.blocked_by ?? null };
+    });
+    return Response.json({ ok: true, data });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     console.error('[api/signals GET]', error);

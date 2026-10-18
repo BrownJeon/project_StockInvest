@@ -6,6 +6,7 @@ import { CandleChart } from '@/components/CandleChart';
 import { PnlChip } from '@/components/PnlChip';
 import { TradingBoard } from '@/components/TradingBoard';
 import { EvalFunnelCard } from '@/components/dashboard/EvalFunnelCard';
+import { MyDecisionSection } from '@/components/dashboard/MyDecisionSection';
 import { RecentExecutionsSection } from '@/components/dashboard/RecentExecutionsSection';
 import { fmtNum, fmtPnl, pnlColor, fmtMarketPrice } from '@/lib/format';
 import { useFxRate } from '@/lib/hooks/useFxRate';
@@ -642,6 +643,9 @@ export function Dashboard({ allowedSymbols, defaultSymbol }: Props) {
           />
         </div>
       </div>
+
+      {/* 내 결정 — 맨 아래, 기본 접힘 (T-049) */}
+      <MyDecisionSection reloadKey={reloadKey} />
 
     </main>
   );
