@@ -83,6 +83,8 @@ function setupPool(rows: unknown[]): Captured {
     }
     // T-043 — 주문 직전 선점 UPDATE 는 성공한다(이 테스트의 관심사는 사이징이다)
     if (/^UPDATE signals SET status='executing'/.test(sql.replace(/\s+/g, ' ').trim())) return [{ affectedRows: 1 }];
+    // T-046 — 멈춘 executing 점검 쿼리는 빈 결과(사이징 테스트의 관심사가 아니다)
+    if (/status='executing' AND consumed_order_id IS NULL AND updated_at </.test(sql.replace(/\s+/g, ' ').trim())) return [[]];
     if (/FROM signals/i.test(sql)) return [rows];
     return [[]];
   });

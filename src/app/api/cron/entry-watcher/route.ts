@@ -24,7 +24,8 @@ import { setPositionScenarioExit } from '@/lib/strategy/position-state';
 import type { ScenarioExitParams } from '@/lib/strategy/position-state';
 import { getSymbolLabel, sendAlert } from '@/lib/notify';
 import { escapeAlertText } from '@/lib/notify/escape';
-import { claimEntrySignal, recordEntryOrder, releaseEntryClaim } from '@/lib/signals/entry-claim';
+import { claimEntrySignal, findStuckExecutions, recordEntryOrder, releaseEntryClaim } from '@/lib/signals/entry-claim';
+import { sendAlertThrottled } from '@/lib/notify/throttle';
 
 // notify_signal_entry 플래그 캐시 (30초 TTL)
 let entryNotifyCache: { enabled: boolean; ts: number } | null = null;
@@ -116,6 +117,29 @@ async function giveBackEntryClaim(pool: ReturnType<typeof getPool>, signalId: nu
   }
 }
 
+/** 선점 뒤 멈춘 `executing` 시그널이 있으면 1시간에 한 번 critical 경보한다. 던지지 않는다. */
+async function alertStuckExecutions(pool: ReturnType<typeof getPool>): Promise<void> {
+  try {
+    const stuck = await findStuckExecutions(pool);
+    if (stuck.length === 0) return;
+    const lines = stuck.slice(0, 10).map((s) => `#${s.id} ${escapeAlertText(s.symbol)} ${s.side === 'buy' ? '매수' : '매도'} · 선점 ${escapeAlertText(s.updatedAt.replace('T', ' ').slice(0, 19))} KST`);
+    // 키에 멈춘 ID 집합을 넣는다: 같은 집합은 1시간 스로틀하되, 새 시그널이 추가로 멈추면 TTL 과 무관하게 즉시 경보한다
+    // (고정 키면 먼저 난 사고의 경보가 이후 독립 사고를 최대 1시간 가린다 — T-046 Codex C2). 집합이 바뀌는 경우(일부 정리 포함)에는
+    // 남은 건에 대해 한 번 더 알린다. 멈춤은 드문 사고라 키 개수·알림 수는 문제되지 않는다.
+    sendAlertThrottled(
+      `entry-watcher:stuck-executing:${stuck.map((s) => s.id).join(',')}`,
+      'critical',
+      `⚠️ 주문 번호 없는 executing 시그널 ${stuck.length}건 — 확인 필요`,
+      `${lines.join('\n')}${stuck.length > 10 ? `\n… 외 ${stuck.length - 10}건` : ''}\n`
+      + '주문 직전에 선점된 뒤 10분 넘게 주문 번호가 연결되지 않았습니다(프로세스 중단·기록 실패 가능). 같은 주문이 다시 나가지는 않지만 주문 누락일 수 있습니다. '
+      + 'KIS 체결/미체결 내역을 확인한 뒤 docs/telegram-approval.md §6.1 절차로 정리하세요.',
+      60 * 60 * 1000,
+    );
+  } catch (e) {
+    console.error('[entry-watcher] 멈춘 executing 점검 실패(주문 경로는 계속):', e instanceof Error ? e.message : String(e));
+  }
+}
+
 export async function POST(req: NextRequest) {
   const authErr = checkCronAuth(req);
   if (authErr) return authErr;
@@ -128,6 +152,10 @@ export async function POST(req: NextRequest) {
 
   const pool = getPool();
   const now = new Date();
+
+  // T-046 C(T-043 감사 R-1) — 선점 뒤 멈춘 시그널(`executing` + 주문 번호 없음 + 10분 이상)을 틱마다 점검해 경보한다.
+  // 조회할 대기 시그널이 없어도 돌아야 하므로 아래 `rows.length === 0` 조기 반환보다 앞에 둔다. 점검이 실패해도 주문 경로는 계속된다.
+  await alertStuckExecutions(pool);
 
   // approved_pending_entry 상태 시그널 조회 — valid_from 미래인 것은 제외 (익일 시나리오 사전 등록 대응)
   const [rows] = await pool.query<(RowDataPacket & PendingEntryRow)[]>(

@@ -7,7 +7,7 @@
  * (4) 거래일 정상 경로·해외·INSERT 실패 처리는 그대로다.
  */
 import type { DailyCandidate } from '../rules/eod-high-close';
-import { runPostMarketAnalysis, insertScenarioCardIfAbsent, isWeekendKst } from '../post-market-engine';
+import { runPostMarketAnalysis, insertScenarioCardIfAbsent, isWeekendKst, toKstDatetime } from '../post-market-engine';
 import { getPool } from '@/lib/db';
 import { getCandles } from '@/lib/exchanges/kis-domestic';
 import { getAlwaysIncludeSymbols, getUniverseSnapshot } from '../universe';
@@ -133,7 +133,7 @@ describe('주말 스킵 (국내)', () => {
     const r = await runPostMarketAnalysis('domestic');
     expect(r.skipped).toBeUndefined();
     expect(r.signalsCreated).toBe(1);
-    expect(r.validFrom).toBe('2026-10-12 00:00:00');   // 토·일을 건너뛴 다음 월요일
+    expect(r.validFrom).toBe('2026-10-12 09:00:00');   // 토·일을 건너뛴 다음 월요일 09:00 KST
   });
 
   test('해외는 주말에도 판정하지 않는다(변화 없음 — 종목이 없어 no_symbols)', async () => {
@@ -150,7 +150,7 @@ describe('중복 카드 방지', () => {
     setNow(FRI_1602);
     arrangeFlow(['005380'], [{ affectedRows: 1 }]);
     const r = await runPostMarketAnalysis('domestic');
-    expect(r).toMatchObject({ signalsCreated: 1, signalsSkipped: 0, duplicatesSkipped: 0, validFrom: '2026-10-19 00:00:00' });
+    expect(r).toMatchObject({ signalsCreated: 1, signalsSkipped: 0, duplicatesSkipped: 0, validFrom: '2026-10-19 09:00:00' });
     expect(query).toHaveBeenCalledTimes(1);
     const [sql, params] = query.mock.calls[0] as [string, unknown[]];
     expect(sql).toMatch(/INSERT INTO signals/);
@@ -159,9 +159,9 @@ describe('중복 카드 방지', () => {
     expect(params[2]).toBe(312000);                               // 구간 중간값
     expect(String(params[3])).toContain('[익일 시나리오]');
     expect(JSON.parse(String(params[4])).ai.scenario.entry.price_zone).toBe('310000~314000');
-    expect(params[5]).toBe('2026-10-19 06:30:00');                // expires_at
-    expect(params[6]).toBe('2026-10-19 00:00:00');                // valid_from
-    expect(params.slice(7)).toEqual(['005380', '2026-10-19 00:00:00']);   // NOT EXISTS 의 비교 키
+    expect(params[5]).toBe('2026-10-19 15:30:00');                // expires_at — 다음 거래일 15:30 KST (T-046: 예전엔 UTC 문자열 06:30)
+    expect(params[6]).toBe('2026-10-19 09:00:00');                // valid_from — 다음 거래일 09:00 KST (예전엔 00:00)
+    expect(params.slice(7)).toEqual(['005380', '2026-10-19 09:00:00']);   // NOT EXISTS 의 비교 키
   });
 
   test('🔴 같은 카드가 이미 있으면(affectedRows 0) 만들지 않고 중복으로 센다', async () => {
@@ -226,5 +226,73 @@ describe('insertScenarioCardIfAbsent', () => {
   test('DB 예외는 삼키지 않고 호출자에게 던진다(호출자가 insert_fail 로 기록)', async () => {
     const q = jest.fn().mockRejectedValue(new Error('boom'));
     await expect(insertScenarioCardIfAbsent({ query: q } as never, row)).rejects.toThrow('boom');
+  });
+});
+
+describe('toKstDatetime (T-046) — DB 는 KST 라서 KST 벽시계 문자열로 저장한다', () => {
+  test.each([
+    ['다음 거래일 09:00 KST = 00:00Z', '2026-10-19T00:00:00Z', '2026-10-19 09:00:00'],
+    ['다음 거래일 15:30 KST = 06:30Z', '2026-10-19T06:30:00Z', '2026-10-19 15:30:00'],
+    ['UTC 로는 전날 15:00 = KST 자정(날짜가 넘어간다)', '2026-10-18T15:00:00Z', '2026-10-19 00:00:00'],
+    ['UTC 14:59:59 는 아직 같은 KST 날짜 23:59:59', '2026-10-18T14:59:59Z', '2026-10-18 23:59:59'],
+    ['연말 경계', '2026-12-31T15:00:00Z', '2027-01-01 00:00:00'],
+  ])('%s', (_n, iso, expected) => {
+    expect(toKstDatetime(new Date(iso as string))).toBe(expected);
+  });
+
+  test('🔴 UTC 문자열(예전 버그)과 9시간 다르다 — 회귀 방지', () => {
+    const d = new Date('2026-10-19T00:00:00Z');
+    expect(d.toISOString().slice(0, 19).replace('T', ' ')).toBe('2026-10-19 00:00:00');   // 예전 값
+    expect(toKstDatetime(d)).not.toBe('2026-10-19 00:00:00');
+  });
+
+  test('🔴 엔진은 금요일 16:02 KST 실행에서 월요일 09:00 / 15:30 KST 를 쓴다 (예전엔 00:00 / 06:30)', async () => {
+    setNow(FRI_1602);
+    arrangeFlow(['005380'], [{ affectedRows: 1 }]);
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r.validFrom).toBe('2026-10-19 09:00:00');
+    const params = query.mock.calls[0][1] as unknown[];
+    expect([params[5], params[6]]).toEqual(['2026-10-19 15:30:00', '2026-10-19 09:00:00']);
+  });
+});
+
+describe('ER_DUP_ENTRY 매핑 (T-046 B, T-048 유니크 인덱스)', () => {
+  const row = {
+    strategyId: 'eod-high-close-v1', symbol: '005380', price: 312000, reasoning: 'r', indicatorsJson: '{}',
+    expiresAt: '2026-10-19 15:30:00', validFrom: '2026-10-19 09:00:00',
+  };
+  const dupErr = (extra: Record<string, unknown>) => Object.assign(new Error("Duplicate entry '005380-buy-…' for key 'uq_signals_scenario_card'"), extra);
+
+  test.each([
+    ['errno 1062', { errno: 1062 }],
+    ['code ER_DUP_ENTRY', { code: 'ER_DUP_ENTRY' }],
+  ])('🔴 %s → duplicate (중복이 생기지 않은 것)', async (_n, extra) => {
+    const q = jest.fn().mockRejectedValue(dupErr(extra as Record<string, unknown>));
+    expect(await insertScenarioCardIfAbsent({ query: q } as never, row)).toBe('duplicate');
+  });
+
+  test.each([
+    ['교착 1213', { errno: 1213, code: 'ER_LOCK_DEADLOCK' }],
+    ['1467(AUTOINC 읽기 실패)', { errno: 1467 }],
+    ['연결 오류', { code: 'ECONNRESET' }],
+    ['오류 정보 없음', {}],
+  ])('🔴 %s 는 duplicate 로 삼키지 않고 던진다 (호출자가 insert_fail 로 남김)', async (_n, extra) => {
+    const q = jest.fn().mockRejectedValue(Object.assign(new Error('x'), extra));
+    await expect(insertScenarioCardIfAbsent({ query: q } as never, row)).rejects.toThrow('x');
+  });
+
+  test('엔진: 동시 삽입에 진 쪽(1062)은 duplicatesSkipped 로 세고 insert_fail 이 아니다', async () => {
+    setNow(FRI_1602);
+    arrangeFlow(['005380'], [dupErr({ errno: 1062 }) as never]);
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r).toMatchObject({ signalsCreated: 0, signalsSkipped: 1, duplicatesSkipped: 1, errors: [] });
+  });
+
+  test('엔진: 1062 가 아닌 오류는 기존대로 insert_fail 로 기록한다', async () => {
+    setNow(FRI_1602);
+    arrangeFlow(['005380'], [Object.assign(new Error('deadlock'), { errno: 1213 }) as never]);
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r.duplicatesSkipped).toBe(0);
+    expect(r.errors).toEqual([expect.stringContaining('insert_fail:005380:deadlock')]);
   });
 });

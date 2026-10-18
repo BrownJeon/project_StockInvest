@@ -2,7 +2,7 @@
  * T-043 — entry-claim: 주문 전 선점·복귀·주문 번호 기록의 SQL 형태와 반환값.
  * 조건(WHERE)이 곧 안전장치다: 선점은 `approved_pending_entry` + 만료 전일 때만, 복귀는 `executing` + 주문 번호 없음일 때만.
  */
-import { claimEntrySignal, recordEntryOrder, releaseEntryClaim } from '../entry-claim';
+import { claimEntrySignal, findStuckExecutions, recordEntryOrder, releaseEntryClaim } from '../entry-claim';
 
 const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
 const runner = (affectedRows: number | 'throw') => ({
@@ -64,5 +64,45 @@ describe('recordEntryOrder', () => {
   test('대상이 없으면 false, DB 오류는 던진다', async () => {
     expect(await recordEntryOrder(runner(0), 5, 1)).toBe(false);
     await expect(recordEntryOrder(runner('throw'), 5, 1)).rejects.toThrow('db gone');
+  });
+});
+
+describe('findStuckExecutions', () => {
+  test('🔴 SQL: executing + 주문 번호 없음 + 오래된 행만, 기본 10분·20건', async () => {
+    const q = { query: jest.fn(async () => [[{ id: 7, symbol: '005930', side: 'buy', updated_at: new Date('2026-10-18T01:00:00Z') }]]) };
+    const rows = await findStuckExecutions(q);
+    const [sql, params] = q.query.mock.calls[0] as unknown as [string, unknown[]];
+    expect(norm(sql)).toBe("SELECT id, symbol, side, updated_at FROM signals WHERE status='executing' AND consumed_order_id IS NULL AND updated_at < NOW() - INTERVAL ? MINUTE ORDER BY id LIMIT ?");
+    expect(params).toEqual([10, 20]);
+    expect(rows).toEqual([{ id: 7, symbol: '005930', side: 'buy', updatedAt: '2026-10-18 10:00:00' }]);   // 🔴 UTC 01:00 = KST 10:00 (T-046 감사 R-1)
+  });
+
+  test('🔴 선점 시각은 KST 벽시계로 — 날짜 경계(UTC 15:00 = 다음 날 KST 00:00)와 문자열 그대로 통과', async () => {
+    const q = {
+      query: jest.fn(async () => [[
+        { id: 1, symbol: '005930', side: 'buy', updated_at: new Date('2026-10-17T15:00:00Z') },
+        { id: 2, symbol: '005930', side: 'sell', updated_at: new Date('2026-12-31T14:59:59Z') },
+        { id: 3, symbol: '005930', side: 'buy', updated_at: '2026-10-18 10:00:00' },        // dateStrings 모드: DB 가 이미 KST 벽시계
+      ]]),
+    };
+    const rows = await findStuckExecutions(q);
+    expect(rows.map((r) => r.updatedAt)).toEqual(['2026-10-18 00:00:00', '2026-12-31 23:59:59', '2026-10-18 10:00:00']);
+  });
+
+  test('분·건수는 정수로 다듬고 최소 1 로 고정한다', async () => {
+    const q = { query: jest.fn(async () => [[]]) };
+    await findStuckExecutions(q, 0.4, -3);
+    expect((q.query.mock.calls[0] as unknown as [string, unknown[]])[1]).toEqual([1, 1]);
+    await findStuckExecutions(q, 15.9, 5.2);
+    expect((q.query.mock.calls[1] as unknown as [string, unknown[]])[1]).toEqual([15, 5]);
+  });
+
+  test('결과 형태가 이상하면(행 배열 아님) 빈 배열', async () => {
+    expect(await findStuckExecutions({ query: jest.fn(async () => undefined) })).toEqual([]);
+    expect(await findStuckExecutions({ query: jest.fn(async () => [{ affectedRows: 0 }]) })).toEqual([]);
+  });
+
+  test('🔴 DB 오류는 던진다 — 삼키는 것은 호출자(틱을 계속해야 하므로)의 몫', async () => {
+    await expect(findStuckExecutions({ query: jest.fn(async () => { throw new Error('db gone'); }) })).rejects.toThrow('db gone');
   });
 });

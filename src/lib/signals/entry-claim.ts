@@ -65,3 +65,49 @@ export async function recordEntryOrder(pool: SqlRunner, id: number, orderId: num
   );
   return affected(res) === 1;
 }
+
+/** 선점 뒤 멈춘 것으로 보이는 시그널 한 건. */
+export interface StuckExecution {
+  id: number;
+  symbol: string;
+  side: string;
+  /** 선점된 시각(= 마지막 갱신)의 **KST 벽시계** `YYYY-MM-DD HH:mm:ss` — 사람이 체결 내역과 대조하는 값이라 UTC 로 내보내면 안 된다 (T-046 감사 R-1) */
+  updatedAt: string;
+}
+
+/** `Date`(풀이 KST 로 해석해 만든 올바른 시점)를 KST 벽시계 문자열로. 서버 TZ 와 무관하게 +9h 산술로 만든다. */
+function toKstWallClock(d: Date): string {
+  return new Date(d.getTime() + 9 * 3600_000).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/**
+ * `executing` 인데 **주문 번호가 없고 오래된** 시그널을 찾는다 (T-043 독립 감사 R-1, T-046 C).
+ *
+ * T-043 으로 위험의 방향이 "이중 주문"에서 "주문 누락 + 무음"으로 바뀌었다: 선점 뒤 프로세스가 죽거나 복귀가 0행이면
+ * `executing` + `consumed_order_id` NULL 로 남고 알림이 없다. 정상 경로에서 이 상태는 `submitOrder` 가 도는 동안(수 초)만
+ * 존재하므로 기본 10분이면 정상 지연과 구분된다.
+ *
+ * @throws DB 오류 — 호출자는 삼키고 틱을 계속해야 한다(점검 실패가 주문 경로를 막으면 안 된다).
+ */
+export async function findStuckExecutions(
+  pool: SqlRunner,
+  olderThanMinutes = 10,
+  limit = 20,
+): Promise<StuckExecution[]> {
+  const minutes = Math.max(1, Math.floor(olderThanMinutes));
+  const max = Math.max(1, Math.floor(limit));
+  const res = await pool.query(
+    `SELECT id, symbol, side, updated_at FROM signals
+      WHERE status='executing' AND consumed_order_id IS NULL AND updated_at < NOW() - INTERVAL ? MINUTE
+      ORDER BY id LIMIT ?`,
+    [minutes, max],
+  );
+  const rows = (Array.isArray(res) ? res[0] : res) as Array<{ id: unknown; symbol: unknown; side: unknown; updated_at: unknown }> | undefined;
+  if (!Array.isArray(rows)) return [];
+  return rows.map((r) => ({
+    id: Number(r.id),
+    symbol: String(r.symbol),
+    side: String(r.side),
+    updatedAt: r.updated_at instanceof Date ? toKstWallClock(r.updated_at) : String(r.updated_at),
+  }));
+}

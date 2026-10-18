@@ -10,6 +10,8 @@ export interface FakeSignal {
   status: string;
   consumed_order_id: number | null;
   expires_at: Date | null;
+  /** 마지막 갱신(선점 시각) — 멈춘 executing 점검에 쓴다 */
+  updated_at: Date;
   symbol: string;
   side: 'buy' | 'sell';
   order_type: 'limit' | 'market';
@@ -25,7 +27,7 @@ const ZONE = { ai: { scenario: { entry: { price_zone: '1 ~ 99999999' } } } };
 
 export function fakeSignal(id: number, over: Partial<FakeSignal> = {}): FakeSignal {
   return {
-    id, status: 'approved_pending_entry', consumed_order_id: null, expires_at: null,
+    id, status: 'approved_pending_entry', consumed_order_id: null, expires_at: null, updated_at: new Date(),
     symbol: '005930', side: 'buy', order_type: 'limit', price: '6540', quantity: null, amount_krw: '100000',
     indicators: JSON.stringify(ZONE), reasoning: null, market: 'domestic', ...over,
   };
@@ -63,7 +65,7 @@ export class FakeSignalsDb {
       const id = Number(params[0]);
       const r = this.rows.get(id);
       const alive = r && r.status === 'approved_pending_entry' && (r.expires_at == null || r.expires_at.getTime() > this.nowFn().getTime());
-      if (alive) r!.status = 'executing';
+      if (alive) { r!.status = 'executing'; r!.updated_at = this.nowFn(); }
       this.events.push(`claim:${id}:${alive ? 'won' : 'lost'}`);
       return [{ affectedRows: alive ? 1 : 0 }];
     }
@@ -109,6 +111,17 @@ export class FakeSignalsDb {
         return !!sp && sp.group_id === groupId && Number(sp.index) < Number(index);
       }).map((r) => ({ id: r.id, status: r.status }));
       return [prior];
+    }
+    // 멈춘 executing 점검 (T-046 C): executing + 주문 번호 없음 + 마지막 갱신이 N분보다 오래됨
+    if (/^SELECT id, symbol, side, updated_at FROM signals WHERE status='executing' AND consumed_order_id IS NULL AND updated_at < NOW\(\) - INTERVAL \? MINUTE ORDER BY id LIMIT \?$/.test(sql)) {
+      const [minutes, limit] = params as [number, number];
+      this.events.push('stuck-check');
+      const cutoff = this.nowFn().getTime() - minutes * 60_000;
+      const rows = [...this.rows.values()]
+        .filter((r) => r.status === 'executing' && r.consumed_order_id == null && r.updated_at.getTime() < cutoff)
+        .sort((a, b) => a.id - b.id).slice(0, limit)
+        .map((r) => ({ id: r.id, symbol: r.symbol, side: r.side, updated_at: r.updated_at }));
+      return [rows];
     }
     // 조회
     if (/FROM signals WHERE status = 'approved_pending_entry'/.test(sql)) {

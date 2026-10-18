@@ -78,10 +78,27 @@ function nextTradingDayOpen(): Date {
   return next;
 }
 
+/**
+ * `Date` → DB `DATETIME` 문자열을 **KST 벽시계**로 만든다 (`YYYY-MM-DD HH:MM:SS`).
+ *
+ * T-046 — DB 서버 시간대와 앱 풀(`timezone: '+09:00'`)이 모두 KST 라서 `DATETIME` 컬럼은 KST 로 읽힌다. 예전에는
+ * `toISOString()`(UTC) 문자열을 그대로 넣어 의도한 09:00/15:30 이 00:00/06:30 으로 9시간 어긋났고, 카드가 개장 전에 만료돼
+ * 한 번도 실행되지 못했다(post-market 카드 46장 전부, 주문 연결 0장).
+ */
+export function toKstDatetime(date: Date): string {
+  return new Date(date.getTime() + 9 * 3600_000).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 /** 내일 만료: 장 마감 15:30 KST = 06:30 UTC */
 function nextTradingDayClose(): Date {
   const open = nextTradingDayOpen();
   return new Date(open.getTime() + 6.5 * 60 * 60 * 1000); // +6h30m
+}
+
+/** MariaDB/MySQL 유니크 키 충돌(1062, ER_DUP_ENTRY). */
+function isDuplicateKeyError(e: unknown): boolean {
+  const err = e as { errno?: unknown; code?: unknown } | null | undefined;
+  return err?.errno === 1062 || err?.code === 'ER_DUP_ENTRY';
 }
 
 export interface ScenarioCardRow {
@@ -99,9 +116,10 @@ export interface ScenarioCardRow {
  * 시나리오 카드를 넣되, **같은 (종목·방향·valid_from·scenario_source) 카드가 이미 있으면 넣지 않는다.**
  *
  * T-045 — 상태를 가리지 않는다. 사용자가 거절했거나 `superseded` 로 정리한 카드가 같은 `valid_from` 으로
- * 다시 살아나면 안 되기 때문이다. 판정과 삽입이 한 문장이라 "조회 후 삽입" 사이에 끼어들 틈이 없지만,
- * 같은 키를 **동시에** 넣는 두 실행은 둘 다 통과할 수 있다(유니크 인덱스가 없다 — 마이그레이션은 사용자 승인 사항).
- * cron 은 직렬이라 정상 운영에서는 해당하지 않는다.
+ * 다시 살아나면 안 되기 때문이다. 판정과 삽입이 한 문장이라 "조회 후 삽입" 사이에 끼어들 틈이 없다.
+ * 같은 키를 **동시에** 넣는 두 실행은 T-048 의 유니크 인덱스(`uq_signals_scenario_card`)가 구조적으로 막는다 — 진 쪽은
+ * 1062(ER_DUP_ENTRY)로 거부되며, 중복이 생기지 않은 것이므로 `duplicate` 로 돌려준다. (REPEATABLE READ 에서는 진 쪽이
+ * 다른 오류 코드로 실패할 수도 있다 — 그것은 던져서 호출자가 `insert_fail` 로 남긴다.)
  *
  * @returns 'created' | 'duplicate'
  */
@@ -109,28 +127,34 @@ export async function insertScenarioCardIfAbsent(
   pool: Pick<Pool, 'query'>,
   row: ScenarioCardRow,
 ): Promise<'created' | 'duplicate'> {
-  const [res] = await pool.query<ResultSetHeader>(
-    `INSERT INTO signals
-       (strategy_id, symbol, side, order_type, price, amount_krw,
-        reasoning, indicators, status, expires_at, valid_from, market, scenario_source)
-     SELECT ?, ?, 'buy', 'limit', ?, 100000, ?, ?, 'pending', ?, ?, 'domestic', 'post-market'
-       FROM DUAL
-      WHERE NOT EXISTS (
-        SELECT 1 FROM signals
-         WHERE symbol = ? AND side = 'buy' AND valid_from = ? AND scenario_source = 'post-market'
-      )`,
-    [
-      row.strategyId,
-      row.symbol,
-      row.price,
-      row.reasoning,
-      row.indicatorsJson,
-      row.expiresAt,
-      row.validFrom,
-      row.symbol,
-      row.validFrom,
-    ],
-  );
+  let res: ResultSetHeader;
+  try {
+    [res] = await pool.query<ResultSetHeader>(
+      `INSERT INTO signals
+         (strategy_id, symbol, side, order_type, price, amount_krw,
+          reasoning, indicators, status, expires_at, valid_from, market, scenario_source)
+       SELECT ?, ?, 'buy', 'limit', ?, 100000, ?, ?, 'pending', ?, ?, 'domestic', 'post-market'
+         FROM DUAL
+        WHERE NOT EXISTS (
+          SELECT 1 FROM signals
+           WHERE symbol = ? AND side = 'buy' AND valid_from = ? AND scenario_source = 'post-market'
+        )`,
+      [
+        row.strategyId,
+        row.symbol,
+        row.price,
+        row.reasoning,
+        row.indicatorsJson,
+        row.expiresAt,
+        row.validFrom,
+        row.symbol,
+        row.validFrom,
+      ],
+    );
+  } catch (e) {
+    if (isDuplicateKeyError(e)) return 'duplicate';
+    throw e;
+  }
   return res.affectedRows > 0 ? 'created' : 'duplicate';
 }
 
@@ -217,8 +241,9 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
   const errors: string[] = [];
   const validFromDate = nextTradingDayOpen();
   const expiresAtDate = nextTradingDayClose();
-  const validFrom = validFromDate.toISOString().slice(0, 19).replace('T', ' ');
-  const expiresAt = expiresAtDate.toISOString().slice(0, 19).replace('T', ' ');
+  // T-046 — DB 는 KST. 다음 거래일 09:00 / 15:30 KST 로 저장한다(UTC 문자열을 넣으면 00:00/06:30 이 된다).
+  const validFrom = toKstDatetime(validFromDate);
+  const expiresAt = toKstDatetime(expiresAtDate);
   const nextDay = validFromDate.toISOString().slice(0, 10);
 
   // T-045 — 주말(토·일)에는 새 종가가 없다. 그래도 돌리면 같은 데이터로 LLM 출력만 달라진 모순된 카드를 같은

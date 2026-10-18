@@ -26,6 +26,8 @@ import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
 import { submitOrder } from '@/lib/safety/dry-run';
 import { getSymbolLabel, sendAlert } from '@/lib/notify';
+import { sendAlertThrottled } from '@/lib/notify/throttle';
+import { isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 import { FakeSignalsDb, fakeSignal } from './fakeSignalsDb';
 
 let db: FakeSignalsDb;
@@ -51,7 +53,7 @@ describe('선점 순서', () => {
     (submitOrder as jest.Mock).mockImplementation(async () => { db.events.push('submit'); return { ok: true, orderId: 11 }; });
     db.add(fakeSignal(1));
     await run();
-    expect(db.events.filter((e) => e !== 'select')).toEqual(['claim:1:won', 'submit', 'record:1:11']);
+    expect(db.events.filter((e) => e !== 'select' && e !== 'stuck-check')).toEqual(['claim:1:won', 'submit', 'record:1:11']);
   });
 });
 
@@ -343,5 +345,99 @@ describe('감사 R-4 — 살아남았던 변이를 겨냥', () => {
     expect(body.results?.map((r) => [r.signalId, r.outcome])).toEqual([[30, 'out_of_zone'], [31, 'blocked_by_prior_split']]);
     expect(db.events.some((e) => e.startsWith('claim:'))).toBe(false);
     expect(submitOrder).not.toHaveBeenCalled();
+  });
+});
+
+// ── T-046 C (T-043 독립 감사 R-1) — 선점 뒤 멈춘 executing 시그널 자동 경보 ───────────────────────────────
+
+describe('멈춘 executing 자동 경보', () => {
+  const MIN = 60_000;
+  const throttled = () => (sendAlertThrottled as jest.Mock).mock.calls as Array<[string, string, string, string, number]>;
+
+  test('🔴 executing + 주문 번호 없음 + 10분 넘음 → critical 경보 1건(키·1시간 스로틀·시그널 정보 포함)', async () => {
+    const claimedAt = new Date(Date.now() - 11 * MIN);
+    db.add(fakeSignal(60, { status: 'executing', updated_at: claimedAt }));
+    await run();
+    expect(throttled()).toHaveLength(1);
+    const [key, level, title, body, ttl] = throttled()[0];
+    expect(key).toBe('entry-watcher:stuck-executing:60');
+    expect(level).toBe('critical');
+    expect(title).toContain('1건');
+    expect(body).toContain('#60');
+    expect(body).toContain('005930');
+    expect(ttl).toBe(60 * 60 * 1000);
+    // 🔴 선점 시각은 KST 로 표기한다 — 이 값으로 사람이 KIS 체결 내역과 대조한다 (T-046 감사 R-1: 이전에는 UTC 가 시간대 표기 없이 나갔다).
+    const kst = claimedAt.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 19);       // Intl 기반 독립 계산 (구현의 +9h 산술과 다른 경로)
+    const utc = claimedAt.toISOString().slice(0, 19).replace('T', ' ');
+    expect(body).toContain(`선점 ${kst} KST`);
+    expect(body).not.toContain(`선점 ${utc}`);
+  });
+
+  test('아직 10분이 안 됐거나(정상 지연) 주문 번호가 있으면 경보하지 않는다', async () => {
+    db.add(fakeSignal(61, { status: 'executing', updated_at: new Date(Date.now() - 2 * MIN) }));                       // 방금 선점
+    db.add(fakeSignal(62, { status: 'executing', consumed_order_id: 99, updated_at: new Date(Date.now() - 60 * MIN) })); // 주문 번호 있음
+    db.add(fakeSignal(63, { status: 'approved_pending_entry', updated_at: new Date(Date.now() - 60 * MIN) }));            // executing 아님
+    await run();
+    expect(throttled()).toHaveLength(0);
+  });
+
+  test('🔴 조회할 대기 시그널이 하나도 없어도 점검한다 (rows.length===0 조기 반환보다 앞)', async () => {
+    db.add(fakeSignal(64, { status: 'executing', updated_at: new Date(Date.now() - 30 * MIN) }));   // 대기(approved_pending_entry) 시그널은 없음
+    const body = await run();
+    expect(body.results).toEqual([]);
+    expect(throttled()).toHaveLength(1);
+  });
+
+  test('🔴 장외에는 점검하지 않는다 (시장이 닫혀 있으면 조기 반환)', async () => {
+    (isDomesticOpen as jest.Mock).mockResolvedValueOnce(false);
+    (isOverseasOpen as jest.Mock).mockResolvedValueOnce(false);
+    db.add(fakeSignal(65, { status: 'executing', updated_at: new Date(Date.now() - 30 * MIN) }));
+    await run();
+    expect(db.events).not.toContain('stuck-check');
+    expect(throttled()).toHaveLength(0);
+  });
+
+  test('🔴 점검 쿼리가 DB 오류여도 주문 경로는 계속된다 (점검 실패가 틱을 막지 않는다)', async () => {
+    (submitOrder as jest.Mock).mockResolvedValue({ ok: true, orderId: 70 });
+    db.add(fakeSignal(66));
+    db.failOn = [/^SELECT id, symbol, side, updated_at FROM signals WHERE status='executing'/];
+    const body = await run();
+    expect(body.results?.[0].outcome).toBe('submitted');
+    expect(submitOrder).toHaveBeenCalledTimes(1);
+    expect((console.error as jest.Mock).mock.calls.some((c) => String(c[0]).includes('멈춘 executing 점검 실패'))).toBe(true);
+  });
+
+  test('10건을 넘으면 본문은 10건까지만 싣고 나머지 개수를 알린다', async () => {
+    for (let i = 0; i < 12; i++) db.add(fakeSignal(100 + i, { status: 'executing', updated_at: new Date(Date.now() - 20 * MIN) }));
+    await run();
+    const [, , title, body] = throttled()[0];
+    expect(title).toContain('12건');
+    expect(body).toContain('#109');
+    expect(body).not.toContain('#110');
+    expect(body).toContain('외 2건');
+  });
+
+  test('🔴 스로틀 키는 멈춘 ID 집합별 — 같은 집합은 같은 키(1시간 스로틀), 새 시그널이 더 멈추면 다른 키(즉시 경보) (Codex C2)', async () => {
+    db.add(fakeSignal(80, { status: 'executing', updated_at: new Date(Date.now() - 20 * MIN) }));
+    await run();
+    await run();                                                                                      // 같은 집합 — 같은 키
+    db.add(fakeSignal(81, { status: 'executing', updated_at: new Date(Date.now() - 15 * MIN) }));      // 독립 사고가 추가로 발생
+    await run();
+    const keys = throttled().map((c) => c[0]);
+    expect(keys).toEqual([
+      'entry-watcher:stuck-executing:80',
+      'entry-watcher:stuck-executing:80',
+      'entry-watcher:stuck-executing:80,81',
+    ]);
+    expect(keys[2]).not.toBe(keys[0]);                                                                // 🔴 고정 키였다면 셋 다 같아 81 의 경보가 가려진다
+  });
+
+  test('같은 틱에서 점검 경보와 정상 주문이 함께 처리된다', async () => {
+    (submitOrder as jest.Mock).mockResolvedValue({ ok: true, orderId: 71 });
+    db.add(fakeSignal(67, { status: 'executing', updated_at: new Date(Date.now() - 30 * MIN) }));
+    db.add(fakeSignal(68));
+    const body = await run();
+    expect(throttled()).toHaveLength(1);
+    expect(body.results?.map((r) => r.outcome)).toEqual(['submitted']);
   });
 });

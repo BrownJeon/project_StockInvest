@@ -1,7 +1,7 @@
 ---
 task_id: T-045
 title: post-market 시나리오가 주말에도 돌아 같은 거래일용 카드를 중복·모순되게 만든다 — 주말 스킵 + 중복 INSERT 방지
-status: in-progress
+status: done
 priority: high
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-042, T-043, T-021]
@@ -45,6 +45,7 @@ updated: 2026-10-18
 2. **중복 방지**: `INSERT … SELECT … FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM signals WHERE symbol=? AND side='buy' AND valid_from=? AND scenario_source='post-market')`. `affectedRows === 0` 이면 중복으로 세고 `signalsSkipped` 에 더한다. **상태를 가리지 않는다** — 사용자가 거절·대체한 카드가 같은 `valid_from` 으로 다시 살아나지 않게 한다.
 3. **잔여 위험(문서화, Codex C2·Reviewer 실험으로 정정)**: 같은 `(symbol, valid_from)` 을 두 실행이 **동시에** 삽입하는 경우 — 운영 격리수준 **REPEATABLE READ 에서는 한쪽이 0행 차단되거나 오류(MariaDB 1467 / MySQL 1213)로 끝나 중복이 남지 않았다**(Reviewer 가 일회용 MariaDB 10.11 에서 같은 문장으로 300회 반복, 중복 0/300). **READ COMMITTED 로 바뀌면 300/300 이 중복**된다. 즉 지금의 방어는 구조적 유일성이 아니라 **격리수준에 기대는 방어**다. 구조적 해결은 유니크 인덱스(마이그레이션=사용자 승인 사항, 이번엔 하지 않음). 겹침 자체가 비정상 사건이다: `stockinvest-cron` 은 pm2 1개, 수동 호출은 `CRON_SECRET` 필요, 러너가 16시대에 재시작되면 같은 날 두 번 호출될 수 있다(날짜 파일은 호출 종료 후 기록).
    - **운영 조건**: DB 전역 격리수준을 READ COMMITTED 로 바꾸지 않는다 — 바꾸는 순간 이 방어가 조용히 사라진다.
+     - ✅ **[해제 2026-10-18, T-048]** 유니크 인덱스 `uq_signals_scenario_card` 가 생겨 이 조건은 더 이상 필요 없다(일회용 DB: 12연결×150키가 REPEATABLE READ·READ COMMITTED 모두 중복 0). 단 인덱스가 정확 일치(`valid_from`)라 T-046 의 시각 형식 전환일에는 앱 쪽 `DATE(valid_from)` 중복 검사가 필요하다.
    - **신호**: 응답 `errors` 나 로그에 `insert_fail` 이 보이면 겹침 실행의 신호로 취급한다(정상 실행은 한 연결이 순차로 보내므로 해당 없음).
    - **순서 게이트**: 카드를 실행 가능하게 만드는 수정(T-046)은 **유니크 인덱스(또는 직렬화)가 먼저 또는 같이** 배포되지 않으면 내보내지 않는다 — 그 순간부터 중복 카드가 이중 매수 후보가 된다. (지금은 카드가 실행되지 못해 노출이 사실상 0.)
 
@@ -65,6 +66,8 @@ updated: 2026-10-18
 
 - [10-17 22:5x] 사용자 "a,c 진행해줘". judge 접수(`judge-result@2`): **R2** · 복잡도 1.35 · developer=opus · 데모 불필요. 관련 승인 교훈 없음(`/이슈기록 관련 domain/signals`).
 - [10-17 22:5x] **C 완료**: 19099(055550)·19100(005380) 을 `status='superseded'` 로 갱신(조건부 `WHERE id IN (…) AND status='pending'`, affectedRows 2). 금요일 카드 19077·19078 은 `pending` 유지(005380 은 금요일 신뢰도가 높음 75 vs 60, 055550 은 신뢰도 동일해 원본 유지). `rejected` 가 아니라 `superseded` 를 쓴 것은 승인율 통계에 거절로 섞이지 않게 하려는 것이다. 백업 `backup-signals-19099-19100.json`(세션 scratchpad) · 되돌리기: `UPDATE signals SET status='pending' WHERE id IN (19099,19100) AND status='superseded'`.
+- [10-17 23:5x] 독립 감사 2라운드 PASS(1라운드의 R-1 을 받아들여 공휴일 스킵 → 주말 스킵으로 교체한 뒤 변경분 재확인) → judge C2: Codex 필요(`adversarial-review`·concurrency) → Codex 지적 1건(동시 실행 시 NOT EXISTS 유일성) → Reviewer 분류: 문서화된 잔여 위험과 같음, 배포를 막지 않음, 조건 4개(문구 정정·T-046 순서 게이트·격리수준 유지·`insert_fail` 신호) 기록. 커밋 `19f42d3`(5파일) → push → 배포 `20261017-235248-19f42d3a`.
+- [10-17] **Reviewer 부수 행동 기록**: 동시성 분류를 위해 Reviewer 가 이 서버에서 일회용 MariaDB 10.11 컨테이너와 MySQL 8 프로세스를 띄워 실험하고 모두 정리했다고 보고했다(운영 DB 쓰기 없음). 내가 지시한 범위(읽기 전용 조회)보다 넓은 행동이라 사용자에게 알린다.
 - [10-17] 작업 트리에 **다른 세션의 미커밋 변경**(T-044 관련 `service.ts`·`approval-notify.ts` 등)이 있다. 이 task 의 커밋은 T-045 파일만 스테이징한다.
 
 ## Developer
@@ -122,8 +125,21 @@ updated: 2026-10-18
 
 ## QA
 
-(검증 후 기록)
+- [10-17 23:54] **운영 배포 후 검증(Leader 직접 실행, QA 역할 겸임 — 별도 QA 에이전트는 두지 않음)**: 릴리스 `20261017-235248-19f42d3a` · `RELEASE_RESULT ok` · exit 0. `pm2` stockinvest/stockinvest-cron online(cron 1행) · `/api/health` ok·killSwitch false·safety green · 배포본 `post-market-engine.ts` sha256 `257be2cb1548` = 커밋·감사본과 일치.
+- [10-17 23:54] **주말 스킵 실측**: 토요일 23:54 에 `POST /api/cron/post-market-analysis?market=domestic` 1회 → 응답 `{ok:true, skipped:"weekend", signalsCreated:0, errors:[]}`, HTTP 200, **6ms**(LLM·시세·RAG·DB 호출 없음), 앱 로그 `[post-market] 주말 — 새 종가가 없어 분석을 건너뜁니다`. 호출 전후 `signals` 19,075행·최대 id 19100 동일, 19077·19078 `pending`, 19099·19100 `superseded` 그대로.
+- [10-18 16:49] **관측 완료 ①**: 일요일 10-18 16:00:57 자동 실행이 `[post-market] 주말 — 새 종가가 없어 분석을 건너뜁니다` · `skipped:"weekend"` · `signalsCreated:0` 로 끝났고 월요일(10-19)용 카드는 금요일 4장(pending)+토요일 정리분 2장(superseded) 그대로, `signals` 최대 id 19100 불변.
+- **아직 관측하지 못한 것(다음 확인)**: ① (완료 — 위) 일요일 10-18 16:00 자동 실행이 스킵되는지(로그 `주말 — … 건너뜁니다`, 응답 `skipped:"weekend"`) ② 월요일 10-19 16:00 실행이 정상 진행하고 `valid_from` 이 화요일(10-20)인 카드를 만들며 `signals` 에 (symbol, valid_from) 중복이 새로 생기지 않는지 ③ 평일 공휴일 당일 실행(12-25 금)이 12-28(월)용 카드를 만드는지 ④ 응답·로그에 `insert_fail` 이 보이면 겹침 실행의 신호.
 
 ## 최종 요약 (사용자용)
 
-(완료 후 작성)
+**무엇이 문제였나**: 국내 post-market 시나리오 분석이 주말에도 돌아(`cron-runner` 가 매일 16:00 호출), 같은 금요일 종가로 다시 분석한 결과가 월요일용 매수 카드로 **중복·모순되게** 쌓였다(현대차·신한지주 각 2장, 구간도 달랐다).
+
+**무엇을 했나**
+- **정리(C)**: 토요일 카드 2장(19099·19100)을 `superseded` 로 바꿨다(금요일 카드 19077·19078 유지, 백업·되돌리기 SQL 있음).
+- **수정(A)**: ① 국내 분석을 KST 토·일에 건너뛴다. 평일 공휴일은 건너뛰지 않는다 — 공휴일 당일 실행이 그 다음 거래일 카드를 만드는 유일한 실행이기 때문(독립 감사가 잡은 설계 결함 R-1 반영) ② 같은 종목·방향·`valid_from` 카드가 이미 있으면 상태 불문 새로 만들지 않는다.
+- **검증**: 테스트 20개 · 변이 23개 전부 검출 · 운영 DB 롤백 트랜잭션으로 SQL 실측 · 독립 감사 2라운드 통과 · Codex 외부 검토 반영 · 운영 배포 후 토요일 라우트 호출로 스킵 확인(6ms, DB 변화 없음).
+
+**남은 위험·후속 (이 task 범위 밖)**
+- 🔴 **T-046**: 카드의 `valid_from`/`expires_at` 이 UTC 문자열로 KST 컬럼에 들어가 9시간 어긋난다 → 카드 46장이 전부 개장 전에 만료되어 **주문과 연결된 카드가 0장**. 고치면 카드가 처음으로 실주문을 내므로 사용자 결정 필요. 순서: T-043 → (유니크 인덱스 승인) → T-046 → 텔레그램 버튼 스위치.
+- 동시 실행 방어는 운영 격리수준(REPEATABLE READ)에 기대는 것이지 구조적 보증이 아니다 — DB 격리수준을 READ COMMITTED 로 바꾸지 말 것. 유니크 인덱스는 마이그레이션이라 승인 사항이고, 기존 중복 그룹 4개 정리가 선행된다.
+- `nextTradingDayOpen()` 이 공휴일을 건너뛰지 못해 공휴일 전날 실행은 휴장일용 카드를 만든다(무해하나 낭비). 금요일 실행이 실패하면 주말에 만회할 재시도가 없다.

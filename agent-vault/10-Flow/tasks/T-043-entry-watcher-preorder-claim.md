@@ -1,7 +1,7 @@
 ---
 task_id: T-043
 title: entry-watcher 주문 전 조건부 선점 — 틱이 겹쳐도 같은 시그널에 실주문이 두 번 나가지 않게 (T-042 외부 검토 파생)
-status: in-progress
+status: done
 priority: high
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-042, T-045, T-046, T-047, T-037, T-025]
@@ -130,8 +130,22 @@ T-042 의 Codex 외부 검토(C2, 2026-10-12)가 지적했고 Leader·Reviewer �
 
 ## QA
 
-(검증 후 기록)
+- [10-18 01:16] **운영 배포 후 검증(Leader 직접 실행, QA 역할 겸임)**: 릴리스 `20261018-011511-d27e08f2` · `RELEASE_RESULT ok` · exit 0. `pm2` stockinvest/stockinvest-cron online(cron 1행) · `/api/health` ok·killSwitch false·safety green · 배포본 `entry-watcher/route.ts` `9e31025f65e5`·`entry-claim.ts` `487317fb6c8d` = 커밋·감사본과 일치. 배포 이후 `pm2-err` 에 entry-watcher 관련 새 오류 없음.
+- [10-18 01:16] **장외 호출 실측**: `POST /api/cron/entry-watcher` → `{ok:true, skipped:true, reason:"market_closed", processed:0}`, 4ms, `signals` 상태 분포 호출 전후 동일. 진입 감시 대상(`approved_pending_entry`) 0건이라 **선점 경로는 운영에서 아직 한 번도 실행되지 않았다** — 이 경로의 증거는 단위·통합·실DB SQL·일회용 DB 동시성 실험이다.
+- **아직 관측하지 못한 것**: 운영에서 실제로 `claim_lost`·선점·복귀가 일어나는 모습(카드가 승인되고 T-046 이 들어간 뒤 첫 실사용), 틱 요약 로그의 `claim_lost`/`order_uncertain` 건수.
 
 ## 최종 요약 (사용자용)
 
-(완료 후 작성)
+**무엇이 문제였나**: 진입 감시 cron 이 시그널을 조회한 뒤 주문하고 나서야 상태를 바꿔, 같은 시그널을 보는 실행이 둘이면 실주문이 두 번 나갈 수 있었다(T-042 외부 검토가 지적).
+
+**무엇을 했나**
+- 주문 **직전**에 조건부 UPDATE 로 선점하고 이긴 쪽만 주문. 선점 실패·DB 오류면 주문하지 않는다. 성공·결과 불명은 잠금 유지, 확정 거부와 송신 전 예외만 되돌려 다음 틱에 재시도.
+- 구현 중 자체 점검으로 **후처리 예외가 선점을 풀어 이미 나간 주문이 재주문되는 허점**을 찾아 `submitOrder` 호출만 별도 try 로 분리했다.
+- 독립 감사가 만료 UPDATE 의 상태 조건 누락(R-2)을 찾았고, Codex 가 앱·DB 시계 편차와 0행 거짓 보고를 지적해 만료 UPDATE 도 DB 시각·상태 조건부로 바꿨다.
+- **검증**: 테스트 52개(상태를 가진 가짜 DB 로 경합 재현) · 변이 38개 전부 검출 · 운영 DB 롤백 트랜잭션 SQL 11건 · 일회용 MariaDB 에서 300행×12 동시 선점(승자 정확히 1, 상태 조건 없는 대조군은 12) · 독립 감사 2라운드 통과 · Codex 반영 · 운영 배포 후 장외 호출 확인.
+
+**남은 위험·후속**
+- 위험의 방향이 "이중 주문"에서 "주문 누락 + 무음"으로 바뀌었다 — 선점 뒤 프로세스가 죽으면 `executing`+주문 번호 없음으로 남고 알림이 없다. 틱 자동 경보는 **T-046 선행 조건**, 그때까지는 `docs/telegram-approval.md` §7 의 점검 SQL.
+- 폴러 Low 하드닝 3건은 **T-047**(텔레그램 스위치를 켜기 전까지).
+- 이 경로는 운영에서 아직 실행된 적이 없다(대상 시그널 0건). 첫 실사용은 T-046 이후.
+- **작업 사고**: 마무리 중 `docs/telegram-approval.md` 작업 트리 파일을 제 스크립트 실수로 0바이트로 비웠다(다른 세션 T-044 의 미커밋 변경 포함). 커밋에는 영향이 없다(HEAD 기반 블롭으로 스테이징). 복원 완성본(세션 scratchpad `telegram-approval.RESTORED.md`)을 사용자가 직접 `cp` 로 복원했고, 바이트 일치·`git diff HEAD` 가 T-044 원래 규모(7+/2-)와 같음을 확인했다(2026-10-18). 재발 방지 규칙은 메모리 `feedback_safe_file_rewrite.md`.
