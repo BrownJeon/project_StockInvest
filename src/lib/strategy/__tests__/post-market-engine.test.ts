@@ -7,8 +7,9 @@
  * (4) 거래일 정상 경로·해외·INSERT 실패 처리는 그대로다.
  */
 import type { DailyCandidate } from '../rules/eod-high-close';
-import { runPostMarketAnalysis, insertScenarioCardIfAbsent, isWeekendKst, toKstDatetime } from '../post-market-engine';
+import { runPostMarketAnalysis, insertScenarioCardIfAbsent, isWeekendKst, toKstDatetime, POST_MARKET_CARD_AMOUNT_KRW, cardBuysZeroShares } from '../post-market-engine';
 import { getPool } from '@/lib/db';
+import { getStyleConfig } from '../style';
 import { getCandles } from '@/lib/exchanges/kis-domestic';
 import { getAlwaysIncludeSymbols, getUniverseSnapshot } from '../universe';
 import { runLlm } from '@/lib/llm/provider';
@@ -26,6 +27,8 @@ jest.mock('@/lib/rag/format', () => ({ formatRagSection: jest.fn(() => '') }));
 jest.mock('../rules/eod-high-close', () => ({ eodHighClose: jest.fn() }));
 jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
 jest.mock('../rules/oversold-bounce-daily', () => ({ oversoldBounceDaily: jest.fn() }));
+// T-053 — 엔진이 지정가 추격률(limitChasePct)을 읽는다. DB 목(query)의 INSERT 응답 순서를 건드리지 않도록 따로 목한다.
+jest.mock('../style', () => ({ getStyleConfig: jest.fn() }));
 
 const mGetPool = getPool as jest.Mock;
 const mCandles = getCandles as jest.Mock;
@@ -36,6 +39,9 @@ const mRag = retrieveRagContext as jest.Mock;
 const mEod = eodHighClose as jest.Mock;
 const mInside = insideBar as jest.Mock;
 const mOversold = oversoldBounceDaily as jest.Mock;
+const mStyle = getStyleConfig as jest.Mock;
+/** 운영 기본값(DEFAULT_STYLE_CONFIG.limitChasePct, system_config override 없음 — 2026-10-19 실측) */
+const PROD_CHASE = 0.005;
 
 /** Date 만 가짜로 만든다 — 비동기 목은 그대로 동작해야 한다. */
 function setNow(iso: string) {
@@ -55,7 +61,9 @@ const candidate = (symbol: string): DailyCandidate => ({
   volume: 1_000_000, volRatio: 1.8, rsi14: 55, ma5: 311000, ma20: 305000, reasoning: '종가 고가권 마감',
 });
 
-const buy = (symbol: string, lo = 310000, hi = 314000, confidence = 75) => ({
+// T-053 — 기본 진입 구간은 1주를 살 수 있는 가격(중간값 93,500 × 1.005 ≤ 100,000)이다. 예전 기본값 310,000~314,000 은
+// 이제 생성 단계에서 "금액 초과"로 제외되므로(그게 이 task 의 목적), T-045/T-046 테스트의 의도와 무관한 가격만 바꿨다.
+const buy = (symbol: string, lo = 93000, hi = 94000, confidence = 75) => ({
   symbol, action: 'BUY', entry_zone: { lo, hi }, target_pct: 3.5, stop_pct: 1.8, holding_days: 2, confidence, reasoning: '근거',
 });
 
@@ -83,6 +91,7 @@ beforeEach(() => {
   jest.spyOn(console, 'error').mockImplementation(() => {});
   query = jest.fn();
   mGetPool.mockReturnValue({ query });
+  mStyle.mockResolvedValue({ limitChasePct: PROD_CHASE });
 });
 
 afterEach(() => {
@@ -156,9 +165,9 @@ describe('중복 카드 방지', () => {
     expect(sql).toMatch(/INSERT INTO signals/);
     expect(params[0]).toBe('eod-high-close-v1');
     expect(params[1]).toBe('005380');
-    expect(params[2]).toBe(312000);                               // 구간 중간값
+    expect(params[2]).toBe(93500);                                // 구간 중간값
     expect(String(params[3])).toContain('[익일 시나리오]');
-    expect(JSON.parse(String(params[4])).ai.scenario.entry.price_zone).toBe('310000~314000');
+    expect(JSON.parse(String(params[4])).ai.scenario.entry.price_zone).toBe('93000~94000');
     expect(params[5]).toBe('2026-10-19 15:30:00');                // expires_at — 다음 거래일 15:30 KST (T-046: 예전엔 UTC 문자열 06:30)
     expect(params[6]).toBe('2026-10-19 09:00:00');                // valid_from — 다음 거래일 09:00 KST (예전엔 00:00)
     expect(params.slice(7)).toEqual(['005380', '2026-10-19 09:00:00']);   // NOT EXISTS 의 비교 키
@@ -294,5 +303,201 @@ describe('ER_DUP_ENTRY 매핑 (T-046 B, T-048 유니크 인덱스)', () => {
     const r = await runPostMarketAnalysis('domestic');
     expect(r.duplicatesSkipped).toBe(0);
     expect(r.errors).toEqual([expect.stringContaining('insert_fail:005380:deadlock')]);
+  });
+});
+
+describe('T-053 — 1주 가격이 카드 금액을 넘는 카드는 만들지 않는다 (수량 0 → 영원히 실행 불가)', () => {
+  type Zone = { symbol: string; lo: unknown; hi: unknown; confidence?: number; action?: string };
+  /** 종목별 진입 구간을 직접 정한다. INSERT 는 들어오는 만큼 created 로 답한다. */
+  function arrangeZones(zones: Zone[], close = 312000) {
+    mAlways.mockResolvedValue(zones.map(z => z.symbol));
+    mUniverse.mockResolvedValue({});
+    mCandles.mockResolvedValue([]);
+    mEod.mockImplementation((symbol: string) => ({ ...candidate(symbol), close }));
+    mInside.mockReturnValue(null);
+    mOversold.mockReturnValue(null);
+    mRag.mockResolvedValue({ totalChars: 0 });
+    mLlm.mockResolvedValue(JSON.stringify({
+      decisions: zones.map(z => ({
+        ...buy(z.symbol, 0, 0, z.confidence ?? 75),
+        action: z.action ?? 'BUY',
+        entry_zone: { lo: z.lo, hi: z.hi },
+      })),
+    }));
+    query.mockResolvedValue([{ affectedRows: 1 }, undefined]);
+  }
+  const insertedSymbols = () => query.mock.calls.map(c => (c[1] as unknown[])[1]);
+  const logs = () => (console.log as jest.Mock).mock.calls.map(c => String(c[0]));
+
+  test('카드 금액 상수는 INSERT SQL 의 amount_krw 리터럴과 같다 (한쪽만 바뀌면 필터가 엉뚱한 예산으로 판정한다)', async () => {
+    const q = jest.fn().mockResolvedValue([{ affectedRows: 1 }, undefined]);
+    await insertScenarioCardIfAbsent({ query: q } as never, {
+      strategyId: 's', symbol: '005380', price: 1, reasoning: 'r', indicatorsJson: '{}', expiresAt: 'e', validFrom: 'v',
+    });
+    expect(POST_MARKET_CARD_AMOUNT_KRW).toBe(100000);
+    expect((q.mock.calls[0] as [string])[0]).toContain(`'limit', ?, ${POST_MARKET_CARD_AMOUNT_KRW}, ?`);
+  });
+
+  describe('경계 — 추격률 0 일 때 1주 가격 == 카드 금액은 수량 1 이라 만든다', () => {
+    beforeEach(() => mStyle.mockResolvedValue({ limitChasePct: 0 }));
+
+    test('🔴 1주 100,000원 == 카드 금액 → 만든다', async () => {
+      setNow(FRI_1602);
+      arrangeZones([{ symbol: '000001', lo: 100000, hi: 100000 }]);
+      const r = await runPostMarketAnalysis('domestic');
+      expect(r).toMatchObject({ signalsCreated: 1, signalsSkipped: 0, unaffordableSkipped: 0 });
+      expect((query.mock.calls[0][1] as unknown[])[2]).toBe(100000);
+    });
+
+    test('🔴 1주 100,001원 (카드 금액 + 1원) → 만들지 않고 금액 초과로 센다, DB 에는 가지 않는다', async () => {
+      setNow(FRI_1602);
+      arrangeZones([{ symbol: '000002', lo: 100001, hi: 100001 }]);
+      const r = await runPostMarketAnalysis('domestic');
+      expect(r).toMatchObject({ signalsCreated: 0, signalsSkipped: 1, unaffordableSkipped: 1, duplicatesSkipped: 0, errors: [] });
+      expect(query).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('기준 가격 = 실행 경로(entry-watcher) 사이징과 같은 값: 카드 price(진입 구간 중간값) × (1 + 지정가 추격률)', () => {
+    test('🔴 추격 0.5%: 중간값 99,500 → 지정가 99,997.5 → 1주 → 만든다', async () => {
+      setNow(FRI_1602);
+      arrangeZones([{ symbol: '000003', lo: 99000, hi: 100000 }]);
+      const r = await runPostMarketAnalysis('domestic');
+      expect(r).toMatchObject({ signalsCreated: 1, unaffordableSkipped: 0 });
+    });
+
+    test('🔴 추격 0.5%: 중간값 99,600 은 예산 이하지만 지정가 100,098 → 수량 0 → 만들지 않는다 (중간값만 보면 놓친다)', async () => {
+      setNow(FRI_1602);
+      arrangeZones([{ symbol: '000004', lo: 99600, hi: 99600 }]);
+      const r = await runPostMarketAnalysis('domestic');
+      expect(r).toMatchObject({ signalsCreated: 0, signalsSkipped: 1, unaffordableSkipped: 1 });
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    test('🔴 종가가 아니라 진입 구간 중간값을 본다 — 종가 312,000 이어도 구간 95,000~97,000 이면 만든다', async () => {
+      setNow(FRI_1602);
+      arrangeZones([{ symbol: '017670', lo: 95000, hi: 97000 }], 312000);
+      const r = await runPostMarketAnalysis('domestic');
+      expect(r).toMatchObject({ signalsCreated: 1, unaffordableSkipped: 0 });
+    });
+
+    test('🔴 종가가 아니라 진입 구간 중간값을 본다 — 종가 90,000 이어도 구간 105,000~107,000 이면 만들지 않는다', async () => {
+      setNow(FRI_1602);
+      arrangeZones([{ symbol: '000005', lo: 105000, hi: 107000 }], 90000);
+      const r = await runPostMarketAnalysis('domestic');
+      expect(r).toMatchObject({ signalsCreated: 0, unaffordableSkipped: 1 });
+    });
+
+    test('추격률이 음수·NaN 이면 entry-watcher 처럼 추격하지 않은 가격으로 본다', async () => {
+      setNow(FRI_1602);
+      for (const bad of [-0.01, Number.NaN]) {
+        jest.clearAllMocks();
+        mGetPool.mockReturnValue({ query });
+        mStyle.mockResolvedValue({ limitChasePct: bad });
+        arrangeZones([
+          { symbol: '000006', lo: 100000, hi: 100000 },   // 추격 없으면 1주 → 만든다
+          { symbol: '000016', lo: 100500, hi: 100500 },   // 추격 없으면 0주 → 제외 (음수 추격을 적용하면 99,495원으로 통과해 버린다)
+        ]);
+        const r = await runPostMarketAnalysis('domestic');
+        expect(r).toMatchObject({ signalsCreated: 1, unaffordableSkipped: 1 });
+        expect(insertedSymbols()).toEqual(['000006']);
+      }
+    });
+
+    test('추격률을 읽지 못하면(예외) 추격 0 으로 판정한다 — 필터가 새 실패를 만들지 않고, 실행 가능한 카드를 잘라내지도 않는다', async () => {
+      setNow(FRI_1602);
+      mStyle.mockRejectedValue(new Error('style down'));
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      arrangeZones([
+        { symbol: '000007', lo: 99600, hi: 99600 },     // 추격 0 이면 1주 → 만든다
+        { symbol: '000008', lo: 100001, hi: 100001 },   // 추격과 무관하게 수량 0 → 제외
+      ]);
+      const r = await runPostMarketAnalysis('domestic');
+      expect(r).toMatchObject({ signalsCreated: 1, unaffordableSkipped: 1, errors: [] });
+      expect(insertedSymbols()).toEqual(['000007']);
+    });
+  });
+
+  test('🔴 2026-10-19 16:47 재현 — 5장 중 1주 가격이 10만 원을 넘는 3장(009540·032830·068270)은 만들지 않고 나머지 2장은 만든다', async () => {
+    setNow('2026-10-19T07:47:00Z');
+    arrangeZones([
+      { symbol: '009540', lo: 255000, hi: 275000 },
+      { symbol: '042660', lo: 62000, hi: 65000 },
+      { symbol: '032830', lo: 235000, hi: 245000 },
+      { symbol: '055550', lo: 92000, hi: 94000 },
+      { symbol: '068270', lo: 195000, hi: 197000 },
+    ]);
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r).toMatchObject({ signalsCreated: 2, signalsSkipped: 3, unaffordableSkipped: 3, duplicatesSkipped: 0, errors: [] });
+    expect(insertedSymbols()).toEqual(['042660', '055550']);   // 앞의 제외가 뒤 후보 처리를 멈추지 않는다
+    // 종목별 로그 한 줄 — 종목·1주 지정가·구간 중간값·카드 금액
+    const excluded = logs().filter(l => l.includes('금액 초과'));
+    expect(excluded.filter(l => l.includes('💸'))).toHaveLength(3);
+    expect(excluded.find(l => l.includes('009540'))).toEqual(expect.stringContaining('266325'));   // 265,000 × 1.005
+    expect(excluded.find(l => l.includes('009540'))).toEqual(expect.stringContaining('265000'));
+    expect(excluded.find(l => l.includes('009540'))).toEqual(expect.stringContaining('100000'));
+    expect(excluded.find(l => l.includes('032830'))).toEqual(expect.stringContaining('241200'));   // 240,000 × 1.005
+    expect(excluded.find(l => l.includes('068270'))).toEqual(expect.stringContaining('196980'));   // 196,000 × 1.005
+    // 요약 줄에도 건수
+    expect(logs().find(l => l.includes('[post-market] market=domestic'))).toEqual(expect.stringContaining('금액 초과 3'));
+  });
+
+  test('다른 필터(SKIP·신뢰도 미달)가 먼저다 — 그쪽에서 걸린 비싼 종목은 금액 초과로 세지 않는다', async () => {
+    setNow(FRI_1602);
+    arrangeZones([
+      { symbol: '000009', lo: 300000, hi: 300000, action: 'SKIP' },
+      { symbol: '000010', lo: 300000, hi: 300000, confidence: 50 },
+    ]);
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r).toMatchObject({ signalsCreated: 0, signalsSkipped: 2, unaffordableSkipped: 0 });
+  });
+
+  test.each([
+    ['NaN', Number.NaN],
+    ['0', 0],
+    ['음수', -5],
+    ['undefined', undefined as unknown as number],
+  ])('cardBuysZeroShares: 가격 %s 이면 수량 0 으로 판정하지 않는다(사이징이 수량을 정하지 않는 값)', (_n, price) => {
+    expect(cardBuysZeroShares(price, PROD_CHASE).zero).toBe(false);
+    expect(cardBuysZeroShares(price, 0).zero).toBe(false);
+  });
+
+  test('cardBuysZeroShares: 경계값을 sizeOrderQuantity 와 같은 방식으로 가른다', () => {
+    expect(cardBuysZeroShares(100000, 0)).toEqual({ zero: false, chasedPrice: 100000 });
+    expect(cardBuysZeroShares(100001, 0)).toEqual({ zero: true, chasedPrice: 100001 });
+    expect(cardBuysZeroShares(99500, PROD_CHASE).zero).toBe(false);
+    expect(cardBuysZeroShares(99600, PROD_CHASE).zero).toBe(true);
+  });
+
+  test.each([
+    ['가격 0', 0, 0],
+    ['가격 음수', -5, -5],
+  ])('%s 이면 이 필터는 판정하지 않는다(기존 동작 그대로 — INSERT 경로로 간다)', async (_n, lo, hi) => {
+    setNow(FRI_1602);
+    arrangeZones([{ symbol: '000011', lo, hi }]);
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r.unaffordableSkipped).toBe(0);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  test('진입 구간이 없으면 기존 필터가 건너뛴다(금액 초과로 세지 않음)', async () => {
+    setNow(FRI_1602);
+    arrangeZones([{ symbol: '000012', lo: 1, hi: 1 }]);
+    mLlm.mockResolvedValue(JSON.stringify({ decisions: [{ symbol: '000012', action: 'BUY', target_pct: 3, stop_pct: 1, confidence: 80 }] }));
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r).toMatchObject({ signalsCreated: 0, signalsSkipped: 1, unaffordableSkipped: 0 });
+  });
+
+  test('살 수 있는 카드의 중복 판정은 그대로다 — 금액 초과 카드는 DB 에 가지 않으므로 중복으로도 세지 않는다', async () => {
+    setNow(FRI_1602);
+    arrangeZones([
+      { symbol: '000013', lo: 50000, hi: 50000 },
+      { symbol: '000014', lo: 500000, hi: 500000 },
+    ]);
+    query.mockReset();
+    query.mockResolvedValueOnce([{ affectedRows: 0 }, undefined]);
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r).toMatchObject({ signalsCreated: 0, signalsSkipped: 2, duplicatesSkipped: 1, unaffordableSkipped: 1 });
+    expect(query).toHaveBeenCalledTimes(1);
   });
 });

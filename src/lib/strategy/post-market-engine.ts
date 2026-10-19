@@ -20,6 +20,8 @@ import { eodHighClose } from './rules/eod-high-close';
 import { insideBar } from './rules/inside-bar';
 import { oversoldBounceDaily } from './rules/oversold-bounce-daily';
 import type { DailyCandidate } from './rules/eod-high-close';
+import { getStyleConfig } from './style';
+import { sizeOrderQuantity } from '@/lib/signals/service';
 
 export type PostMarketMarket = 'domestic' | 'overseas';
 
@@ -35,6 +37,38 @@ export interface PostMarketResult {
   duplicatesSkipped?: number;
   /** T-045 — 분석을 하지 않고 끝낸 사유. 주말(토·일, KST)이면 `weekend`. 공휴일은 건너뛰지 않는다. */
   skipped?: 'weekend';
+  /**
+   * T-053 — 1주 가격이 카드 금액을 넘어(수량 0) 만들지 않은 수. `signalsSkipped` 에도 포함된다.
+   * 국내만 센다. 다른 필터(BUY 아님·필수 값 없음·신뢰도 미달)에 먼저 걸린 종목은 여기 세지 않는다.
+   */
+  unaffordableSkipped?: number;
+}
+
+/**
+ * post-market 카드 1장의 금액(KRW). `insertScenarioCardIfAbsent` SQL 의 `amount_krw` 리터럴과 **같은 값이어야 한다**
+ * (테스트가 둘을 대조한다). T-053 필터가 이 값으로 "1주를 살 수 있는가"를 판정한다. 금액 정책 자체는 바꾸지 않는다.
+ */
+export const POST_MARKET_CARD_AMOUNT_KRW = 100000;
+
+/**
+ * T-053 — 이 카드가 실행 시점에 **1주도 살 수 없는가**(수량 0 → `quantity_below_min` 로 영원히 실행되지 않음).
+ *
+ * 판정은 실행 경로와 **같은 입력·같은 함수**로 한다. post-market 카드는 승인 뒤 `approved_pending_entry` 로 대기하다
+ * `entry-watcher` 가 주문하는데, 그쪽 사이징은 `chasedPrice = 카드 price × (1 + limitChasePct)`(추격률 > 0 이고 가격 > 0 일 때만)
+ * 를 `sizeOrderQuantity` 에 넣는다(`src/app/api/cron/entry-watcher/route.ts` 의 basePrice/chasedPrice/sizeOrderQuantity).
+ * 진입 구간 중간값만 보면 99,600원 카드(추격 0.5% → 100,098원 → 0주)를 놓치고, 종가를 보면 구간이 종가보다 낮게 잡힌
+ * 실행 가능한 카드를 잘라낸다.
+ *
+ * 가격이 0·음수·NaN 이면 `sizeOrderQuantity` 가 수량을 정하지 않는다(`undefined`) → false(이 필터는 판정하지 않고 기존 동작 유지).
+ */
+export function cardBuysZeroShares(
+  cardPrice: number,
+  chasePct: number,
+  amountKRW: number = POST_MARKET_CARD_AMOUNT_KRW,
+): { zero: boolean; chasedPrice: number } {
+  const chasedPrice = chasePct > 0 && cardPrice > 0 ? cardPrice * (1 + chasePct) : cardPrice;
+  const sized = sizeOrderQuantity({ market: 'domestic', orderType: 'limit', amountKRW, price: chasedPrice });
+  return { zero: sized.quantity === 0, chasedPrice };
 }
 
 interface AiDecision {
@@ -332,6 +366,20 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
   let signalsCreated = 0;
   let signalsSkipped = 0;
   let duplicatesSkipped = 0;
+  let unaffordableSkipped = 0;
+
+  // T-053 — 실행 경로(entry-watcher)가 쓰는 지정가 추격률. 읽지 못하면 0(추격 없음)으로 판정한다: 그러면 필터가
+  // 덜 걸러질 뿐(예전 동작 쪽) 실행 가능한 카드를 잘라내지 않고, 분석 자체를 실패시키지도 않는다.
+  // 국내만 적용한다 — 해외는 `loadSymbols` 가 빈 목록이라 여기 오지 않고, INSERT 도 market='domestic' 고정이며,
+  // `sizeOrderQuantity` 는 해외 가격(USD)을 KRW 예산과 그대로 나눈다(환산 없음). 해외 카드가 구현되면 통화 기준부터 정해야 한다.
+  let chasePct = 0;
+  if (market === 'domestic') {
+    try {
+      chasePct = (await getStyleConfig()).limitChasePct;
+    } catch (e) {
+      console.warn(`[post-market] 지정가 추격률을 읽지 못해 추격 0 으로 금액 판정: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   for (const d of decisions) {
     const candidate = uniqueCandidates.find(c => c.symbol === d.symbol);
@@ -346,6 +394,23 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     if (confidence < 60) { signalsSkipped++; continue; }
 
     const entryMid = (d.entry_zone.lo + d.entry_zone.hi) / 2;
+
+    // T-053 — 1주도 살 수 없는 카드(수량 0)는 만들지 않는다. 승인해도 매 분 quantity_below_min 만 남기고 만료된다.
+    // 다른 필터(위)는 그대로 먼저 적용하고, INSERT 직전에 판정한다. 코드에는 카드 개수 제한이 없다(프롬프트의 "최대 5종목"
+    // 은 LLM 지시이고, 기준가인 진입 구간은 LLM 응답 뒤에야 생긴다).
+    if (market === 'domestic') {
+      const { zero, chasedPrice } = cardBuysZeroShares(entryMid, chasePct);
+      if (zero) {
+        unaffordableSkipped++;
+        signalsSkipped++;
+        console.log(
+          `[post-market] 💸 ${candidate.symbol} 금액 초과 — 1주 지정가 ${Math.round(chasedPrice)}원 > 카드 금액 ${POST_MARKET_CARD_AMOUNT_KRW}원 ` +
+          `(진입 구간 중간값 ${Math.round(entryMid)}원, 지정가 추격 ${(chasePct * 100).toFixed(2)}%) — 수량 0 이라 만들지 않음`,
+        );
+        continue;
+      }
+    }
+
     const priceZoneStr = `${d.entry_zone.lo.toFixed(0)}~${d.entry_zone.hi.toFixed(0)}`;
     const holdingDays = d.holding_days ?? 2;
     const holdingDeadline = new Date(validFromDate.getTime() + holdingDays * 86400000)
@@ -406,7 +471,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
 
   console.log(
     `[post-market] market=${market} evaluated=${symbols.length} candidates=${uniqueCandidates.length} ` +
-    `created=${signalsCreated} skipped=${signalsSkipped} (중복 ${duplicatesSkipped}) valid_from=${validFrom}`,
+    `created=${signalsCreated} skipped=${signalsSkipped} (중복 ${duplicatesSkipped}, 금액 초과 ${unaffordableSkipped}) valid_from=${validFrom}`,
   );
 
   return {
@@ -418,5 +483,6 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     errors,
     validFrom,
     duplicatesSkipped,
+    unaffordableSkipped,
   };
 }
