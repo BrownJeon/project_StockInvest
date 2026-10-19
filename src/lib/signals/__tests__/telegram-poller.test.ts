@@ -220,6 +220,30 @@ describe('🔴 T-047 — 오프셋 저장은 단조 증가 (늦게 도착한 옛
     expect(params).toEqual(['telegram_poll_offset', '110']);
   });
 
+  // T-054 (T-047 Reviewer R-2): 위 부분 일치 검사는 `OR → AND` 변이(저장값이 숫자면 영영 갱신하지 않음 → 같은 입력 무한 재처리)를
+  // 통과시켰다. jest 에는 DB 가 없어 SQL 의미는 일회용 MariaDB 실측(T-047 Developer·Reviewer 기록)이 근거이고, 여기서는 그 실측한
+  // **문장 그대로**를 고정한다 — 한 글자라도 바뀌면 실측을 다시 해야 한다는 신호다. 락을 잃은 뒤에도 저장하는 설계(T-047 C2)의 안전 근거가 이 문장이다.
+  const MONOTONIC_SAVE_SQL =
+    "INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = "
+    + "IF(value NOT REGEXP '^[0-9]+$' OR CAST(VALUES(value) AS UNSIGNED) > CAST(value AS UNSIGNED), VALUES(value), value)";
+
+  test.each([
+    [0, '0'],
+    [110, '110'],
+    [123456789012, '123456789012'],
+    [Number.MAX_SAFE_INTEGER, '9007199254740991'],
+  ])('🔴 [T-054] 저장 SQL 은 실측한 단조 증가 문장과 전체가 정확히 같다 — 오프셋 %p → 파라미터 %p', async (n, serialized) => {
+    const io = await defaultLoopIO();
+    await io.saveOffset(n);
+    expect(mockPoolQuery).toHaveBeenCalledTimes(1);
+    const call = mockPoolQuery.mock.calls[0] as unknown[];
+    expect(call).toHaveLength(2);                                         // (sql, params) — 다른 옵션 인자 없음
+    const [sql, params] = call as [string, unknown[]];
+    expect(sql.replace(/\s+/g, ' ').trim()).toBe(MONOTONIC_SAVE_SQL);
+    expect(params).toStrictEqual(['telegram_poll_offset', serialized]);  // 키·JSON 직렬화 정수 문자열 정확 일치 (숫자형 아님)
+    expect(serialized).toBe(JSON.stringify(n));
+  });
+
   test.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('잘못된 오프셋(%p)은 저장하지 않고 던진다', async (n) => {
     const io = await defaultLoopIO();
     await expect(io.saveOffset(n)).rejects.toThrow(/invalid_offset/);
