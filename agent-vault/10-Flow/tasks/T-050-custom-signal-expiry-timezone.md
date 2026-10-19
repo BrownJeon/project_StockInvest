@@ -108,3 +108,4 @@ judge 접수: `local_fix` · 복잡도 0.91 · 위험 R2 · developer opus · �
 - [10-18] T-046 Reviewer 가 발견(R-3) → Leader 가 코드 확인 후 분리. 코드·DB 변경 없음.
 - [10-18 저녁] Developer(Leader 직접)→Reviewer PASS(R-1 MINOR·R-2~4 NIT, 비차단)→judge C2→Codex high 2건(위)→**배포 보류**, [[T-052-custom-confirm-hardening]] 로 분리. 미커밋.
 - [10-19 19:20] 선행 조건이던 [[T-052-custom-confirm-hardening]] 이 구현·독립 감사(4라운드, pass)를 마쳐 **T-052 와 함께 2차 배포**한다. 이 task 의 코드(`time.ts` `toKstDatetime`, `custom/confirm/route.ts` 의 만료 문자열)는 감사본 그대로(`time.ts` `dac77c104318` · `time.test.ts` `31726d00e08b`)이고 T-052 감사 scope 에도 포함됐다. 배포 뒤 확인은 T-052 Leader 기록 참조.
+- [10-19 19:23] **배포 완료** — [[T-052-custom-confirm-hardening]] 과 함께 커밋 `cb68cfc`·릴리스 `20261019-192141-cb68cfc4`. `time.ts`·`time.test.ts` 는 감사 해시 그대로 배포됨(`time.ts` `dac77c104318` 확인). 24시간(1440분) 만료의 실제 확인은 첫 `scenario_source='user'` 행에서 한다(T-052 Leader 기록 참조). 이 문서 변경은 다음 코드 커밋에 함께 싣는다.

@@ -714,6 +714,22 @@ async function setupDB(): Promise<void> {
     console.warn(`[db] exit_engine_enabled 시드 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // ── T-055 (2026-10-19) — 매도 제안 1단계 미리보기 스위치·임계값 ─────────────────
+  //
+  // 스위치 `sell_proposal_preview_enabled` 초기값 `false` + 임계값 6/5/1(사용자 확정 Q1·Q3).
+  // 값 목록의 단일 소스는 `strategy/sell-proposal-policy.ts` 의 `SELL_PROPOSAL_CONFIG_SEED` 다.
+  // (정적 import 로 끌어오면 db ↔ policy 순환 import 가 생겨 exit-switch 와 같은 동적 import 를 쓴다.)
+  // ⚠️ **INSERT IGNORE.** 운영자가 켠 스위치·바꾼 임계값을 부팅이 되돌리지 않는다 (D3·T-015 원칙).
+  // ⚠️ 판독기는 키 누락·무효 값이면 **꺼짐**이라 이 시드가 실패해도 아무 일도 일어나지 않는다.
+  try {
+    const { SELL_PROPOSAL_CONFIG_SEED } = await import('@/lib/strategy/sell-proposal-policy');
+    for (const [key, val] of SELL_PROPOSAL_CONFIG_SEED) {
+      await p.query('INSERT IGNORE INTO system_config (`key`, value) VALUES (?,?)', [key, val]);
+    }
+  } catch (e) {
+    console.warn(`[db] sell_proposal_* 시드 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   // ── T-017 (2026-08-10) — KIS 요청 유량(초당) ───────────────────────────
   //
   // `EGW00201`/`EGW00215`("초당 거래건수 초과")가 상시 발생해 잔고·시세 조회가 간헐 실패하고,

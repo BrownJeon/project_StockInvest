@@ -128,6 +128,12 @@ export const FUNNEL_GATES = [
    * `exit_hard_stop_disabled`(hard_stop 만 개별 차단)보다 상위 게이트다.
    */
   'exit_engine_disabled',
+  /**
+   * T-055 1단계 — 매도 제안 **읽기 전용 시뮬레이션**. 보유 종목마다 "사람에게 매도를 제안했을
+   * 것인가"를 기록만 한다(pass = 제안 대상, skip = 아님 — reason 에 사유). 시그널·주문은 없다.
+   * strategy_id='sell-proposal-v1'. 자동 청산 OFF 이고 `sell_proposal_preview_enabled=true` 일 때만.
+   */
+  'sell_proposal_preview',
 ] as const;
 
 export type FunnelGate = (typeof FUNNEL_GATES)[number];
@@ -213,6 +219,8 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   exit_engine_disabled: 25,
   exit_cooldown_5m: 25,
   exit_create_failed: 29,
+  // exit 트랙(21~29) 안, 판정(24) 뒤·생성(29) 앞. `final` 행을 쓰지 않으므로 6단계 깔때기에 섞이지 않는다.
+  sell_proposal_preview: 26,
 };
 
 /** 사용자 화면·리포트용 한글 라벨 (T-002 §4 "한글 라벨 매핑") */
@@ -294,6 +302,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   exit_engine_disabled: '🔕 자동 청산 엔진 OFF — 발화 조건 충족했으나 주문 안 함',
   exit_cooldown_5m: '청산 쿨다운',
   exit_create_failed: '청산 시그널 생성 실패',
+  sell_proposal_preview: '매도 제안 시뮬레이션 (시그널·주문 없음)',
 };
 
 /**

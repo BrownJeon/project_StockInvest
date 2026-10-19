@@ -50,6 +50,7 @@ import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { EvalFunnelRecorder } from './eval-funnel';
 import type { FunnelGate, FunnelVerdict } from './eval-funnel-labels';
+import { openSellProposalPreview, type SellProposalPreviewRun } from './sell-proposal-preview';
 
 interface StrategyRow extends RowDataPacket {
   id: string;
@@ -778,6 +779,23 @@ async function runExitEngine(
   let created = 0;
   let blocked = 0;
 
+  // ─── T-055 1단계 — 매도 제안 **미리보기**(읽기 전용 시뮬레이션) ─────────────────
+  //
+  // 자동 청산 마스터가 OFF 일 때만 연다(설계 §2.2 — 둘 다 켜지면 자동 엔진이 우선이고 제안은 없다.
+  // 자동 매도가 실제로 나가는 상태에서 "제안했을 것" 요약을 보내면 오해만 낳는다).
+  // `sell_proposal_preview_enabled` 가 불리언 true 가 아니거나 임계값이 무효면 null 이고,
+  // 그때 아래 루프에서 하는 일은 0이다. 결과는 eval_funnel 과 하루 1회 요약뿐 —
+  // 시그널·주문·쿨다운·position_state 쓰기 없음. 어떤 예외도 청산 평가·틱으로 새지 않게 격리한다.
+  let preview: SellProposalPreviewRun | null = null;
+  if (!exitSwitch.enabled) {
+    try {
+      preview = await openSellProposalPreview(market, heldSymbols.length);
+    } catch (e) {
+      preview = null;
+      console.warn(`[sell-proposal-preview:${market}] 열기 실패 — 미리보기 생략 (청산 엔진 영향 없음): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   for (const symbol of heldSymbols) {
     const entry = heldAmounts.get(symbol);
     if (!entry || entry.qty <= 0) continue;
@@ -823,6 +841,17 @@ async function runExitEngine(
         detail: { ratio: Number(unitRatio.toFixed(4)), price: ticker.price, entry: state.entryPrice },
       });
       // evaluateExit 이 동일 조건으로 null 을 반환하므로 아래에서 자연히 exit_no_fire 없이 종료
+    }
+
+    // T-055 미리보기 — evaluateExit 의 발화 여부와 **무관하게** 보유 종목마다 판정한다.
+    // (마스터 게이트 블록 안에 두면 evaluateExit 이 null 인 종목 — 예: hardStopPct 를 10 으로 올린
+    //  상태의 −7% 포지션 — 이 미리보기에서 통째로 빠진다.) 이미 조회한 ticker·state·잔고만 넘긴다.
+    if (preview) {
+      try {
+        preview.observe({ symbol, ticker, state, kis: entry }, rec);
+      } catch (e) {
+        console.warn(`[sell-proposal-preview:${market}] ${symbol} 관측 예외 (청산 엔진 영향 없음): ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
     const exitSig = evaluateExit({ symbol, market, ticker, state, style });
@@ -917,6 +946,18 @@ async function runExitEngine(
         detail: { exitKind: exitSig.exitKind, error: res.error },
       });
       console.warn(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 실패: ${res.error}`);
+    }
+  }
+
+  // T-055 미리보기 요약 — 하루 1회(시장 거래일, DB 표식). **기다리지 않는다**: 선점 쿼리·전송이
+  // 느리거나 실패해도 이 틱의 나머지(경보·진입 평가·eval_funnel flush)는 그대로 진행된다.
+  if (preview) {
+    try {
+      void preview.finish().catch((e: unknown) => {
+        console.warn(`[sell-proposal-preview:${market}] 요약 예외 (틱 영향 없음): ${e instanceof Error ? e.message : String(e)}`);
+      });
+    } catch (e) {
+      console.warn(`[sell-proposal-preview:${market}] 요약 시작 실패 (틱 영향 없음): ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
