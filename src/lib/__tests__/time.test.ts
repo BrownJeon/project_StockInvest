@@ -1,4 +1,4 @@
-import { formatRelativeTime, kstTodayStart } from '../time';
+import { formatRelativeTime, kstTodayStart, toKstDatetime } from '../time';
 
 describe('kstTodayStart', () => {
   test('UTC 14:59에도 KST 기준 같은 날 00:00 반환 (= UTC 전날 15:00)', () => {
@@ -41,5 +41,25 @@ describe('formatRelativeTime', () => {
   test('null/undefined 방어', () => {
     expect(formatRelativeTime(null)).toBe('-');
     expect(formatRelativeTime(undefined)).toBe('-');
+  });
+});
+
+describe('toKstDatetime (T-050) — DB 가 KST 인 DATETIME 컬럼에 문자열로 바인딩할 값', () => {
+  // 구현의 +9h 산술과 다른 경로(Intl)로 만든 독립 기대값. sv-SE 는 'YYYY-MM-DD HH:mm:ss' 로 나온다.
+  const oracle = (d: Date) => d.toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' }).slice(0, 19);
+
+  test('🔴 UTC 벽시계가 아니라 KST 벽시계 — UTC 01:00 은 10:00', () => {
+    expect(toKstDatetime(new Date('2026-10-18T01:00:00Z'))).toBe('2026-10-18 10:00:00');
+  });
+
+  test('날짜 경계: UTC 15:00 은 다음 날 00:00, 14:59:59 는 같은 날 23:59:59', () => {
+    expect(toKstDatetime(new Date('2026-10-17T15:00:00Z'))).toBe('2026-10-18 00:00:00');
+    expect(toKstDatetime(new Date('2026-12-31T14:59:59Z'))).toBe('2026-12-31 23:59:59');
+    expect(toKstDatetime(new Date('2026-12-31T15:00:00Z'))).toBe('2027-01-01 00:00:00');
+  });
+
+  test('밀리초는 버리고 초 단위로 — 윤일 포함 여러 시점이 독립 계산과 같다', () => {
+    const samples = ['2028-02-28T15:00:00.999Z', '2028-02-29T14:59:59.001Z', '2026-03-31T23:59:59Z', '2026-01-01T00:00:00Z'];
+    for (const iso of samples) expect(toKstDatetime(new Date(iso))).toBe(oracle(new Date(iso)));
   });
 });

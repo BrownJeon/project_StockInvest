@@ -13,6 +13,18 @@ export function kstTodayStart(now: Date = new Date()): Date {
   return new Date(Date.UTC(y, m, d, 0, 0, 0) - KST_OFFSET_MS);
 }
 
+/**
+ * `Date` 를 KST 벽시계 `YYYY-MM-DD HH:mm:ss` 문자열로 — DB 서버와 앱 풀(`timezone:'+09:00'`)이 KST 인 DATETIME 컬럼에
+ * **문자열로 바인딩**할 값을 만들 때 쓴다. `toISOString()` 을 그대로 자르면 UTC 벽시계라 DB 가 KST 로 읽어 9시간 일찍 만료된다
+ * (T-046 post-market 카드, T-050 사용자 시나리오 확정). +9h 산술이라 서버 프로세스 TZ 와 무관하다.
+ *
+ * 같은 변환이 `strategy/post-market-engine.ts`(`toKstDatetime`)와 `signals/entry-claim.ts`(`toKstWallClock`)에 각각 있다 —
+ * 감사·배포를 마친 파일이라 이번에는 합치지 않았다.
+ */
+export function toKstDatetime(date: Date): string {
+  return new Date(date.getTime() + KST_OFFSET_MS).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 export function formatRelativeTime(ts: number | string | Date | null | undefined): string {
   if (ts == null) return '-';
   const t = typeof ts === 'number' ? ts : new Date(ts).getTime();

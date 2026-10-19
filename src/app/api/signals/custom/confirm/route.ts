@@ -6,6 +6,8 @@
  *
  * Body: { symbol, direction, scenario, currentPrice?, entryZonePct?, splits?, amountKRW?, holdingQty? }
  * 반환: { ok: true, signalId, signalIds, splitCount, status: 'approved_pending_entry' }
+ * 거절(T-052): 400 보유 마감일이 이미 지남 · 404 원본 시그널 없음 · 409 원본이 이미 처리됨 / 같은 구간 활성 시나리오 있음 /
+ *             같은 (종목·방향) 확정이 처리 중 — 모두 `{ ok: false, error: <한국어 문장> }`
  */
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
@@ -14,7 +16,17 @@ import { calcSplitSlices } from '@/lib/signals/scenario-builder';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import { getSymbolLabel, sendAlert } from '@/lib/notify';
 import { AWAITING_APPROVAL_STATUSES, sqlStatusList } from '@/lib/signals/statuses';
+import { toKstDatetime } from '@/lib/time';
 import { invalidConfirmField, warnConfirmFieldRejected } from '@/lib/safety/scenario-confirm-fields';
+import {
+  CONFIRM_BUSY_MESSAGE,
+  CONFIRM_LOCK_WAIT_SEC,
+  activeDuplicateMessage,
+  confirmLockName,
+  findActiveZoneDuplicate,
+  resolveConfirmExpiry,
+  sourceAlreadyHandledMessage,
+} from '@/lib/signals/custom-confirm-guard';
 
 async function isManualNotifyEnabled(pool: ReturnType<typeof import('@/lib/db')['getPool']>): Promise<boolean> {
   try {
@@ -68,7 +80,7 @@ interface ConfirmBody {
   holdingQty?: number;
   /** 슬라이스별 개별 입력값 */
   manualSlices?: ManualSliceBody[];
-  /** AI 시그널 승인 시: 원본 시그널 ID — 생성 완료 후 approved로 마킹 */
+  /** AI 시그널 승인 시: 원본 시그널 ID — 같은 트랜잭션에서 **먼저** approved 로 선점한 뒤 생성한다(T-052) */
   sourceSignalId?: number;
 }
 
@@ -130,13 +142,21 @@ export async function POST(req: Request) {
             amountKRW: 0,
           }];
 
-    const pool = getPool();
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
-      .toISOString().replace('T', ' ').slice(0, 19);
+    // T-052 D-2: 만료 = min(지금 + 24h, 보유 마감일 23:59:59 KST). 마감이 이미 지났으면 진입 감시에 넣지 않는다 —
+    //   넣으면 마감 뒤에 실주문이 나갈 수 있고 청산 엔진이 꺼져 있어 정리되지 않는다. 마감이 없거나 형식이 다르면 기존대로 24h.
+    const expiry = resolveConfirmExpiry(scenario, Date.now());
+    if (!expiry.ok) {
+      console.warn(`[api/signals/custom/confirm POST] 지난 보유 마감 거절 — symbol=${String(symbol)} ${expiry.error}`);
+      return Response.json({ ok: false, error: expiry.error }, { status: 400 });
+    }
+    // T-050: DB·앱 풀이 KST 인 DATETIME 컬럼이라 KST 벽시계로 넣는다. UTC 문자열이면 DB 가 9시간 앞선 시각으로 읽어 24시간이 아니라 15시간 만에 만료된다.
+    const expiresAt = toKstDatetime(new Date(expiry.expiresAtMs));
 
-    const signalIds: number[] = [];
+    const pool = getPool();
     const groupId = crypto.randomUUID();
 
+    // INSERT 값은 DB 를 잡기 전에 모두 계산한다(락·트랜잭션을 쥐는 시간을 줄인다). 열 순서·값은 T-052 이전과 같다.
+    const insertParams: unknown[][] = [];
     for (const slice of slices) {
       const splitScenario = {
         ...scenario,
@@ -164,37 +184,124 @@ export async function POST(req: Request) {
           : null;
       })();
 
-      const [ins] = await pool.query<ResultSetHeader>(
-        `INSERT INTO signals
-         (strategy_id, symbol, side, order_type, price, quantity, amount_krw,
-          reasoning, indicators, status, expires_at, market, scenario_source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          null,
-          symbol,
-          direction,
-          'limit',
-          priceMid,
-          slice.qty ?? null,
-          slice.amountKRW ?? 0,
-          scenario.why_now ?? null,
-          JSON.stringify(indicators),
-          'approved_pending_entry',
-          expiresAt,
-          market,
-          'user',
-        ],
-      );
-      signalIds.push(ins.insertId);
+      insertParams.push([
+        null,
+        symbol,
+        direction,
+        'limit',
+        priceMid,
+        slice.qty ?? null,
+        slice.amountKRW ?? 0,
+        scenario.why_now ?? null,
+        JSON.stringify(indicators),
+        'approved_pending_entry',
+        expiresAt,
+        market,
+        'user',
+      ]);
     }
 
-    // 원본 AI 시그널이 있으면 approved로 마킹 (소비됨)
-    if (body.sourceSignalId) {
-      await pool.query(
-        `UPDATE signals SET status='approved', updated_at=NOW()
-          WHERE id=? AND status IN (${sqlStatusList([...AWAITING_APPROVAL_STATUSES, 'detected'])})`,
-        [body.sourceSignalId],
-      );
+    // 🔴 T-052 D-1 — 중복 확정 방지. 같은 시나리오가 두 번 확정되면(동시 요청·재시도·탭 두 개·재클릭) 서로 다른 signal 이
+    //   둘 생기고 entry-watcher 선점(T-043)은 signal 단위라 실주문이 두 번 나갈 수 있었다.
+    //   T-052 라운드3(Codex C2): **두 경로 모두** 같은 (종목·방향) 명명 락 아래에서 같은 활성 구간 중복 검사를 거친다 —
+    //   경로마다 다르게 두면 직접 경로와 sourceSignalId 경로(또는 서로 다른 원본 둘)가 같은 구간을 각각 넣을 수 있었다.
+    //   순서: GET_LOCK(대기 0) → BEGIN → [sourceSignalId 면 원본 조건부 선점] → 활성 구간 중복 검사 → 분할 INSERT → COMMIT → RELEASE_LOCK.
+    //   - 원본 선점: affectedRows === 1 일 때만 계속. 동시 요청의 뒤쪽은 이미 'approved' 인 원본을 보고 0행 → 409/404.
+    //   - 중복이면 rollback(원본 선점도 함께 되돌림) 후 409. 중복 조회는 scenario_source='user' 행만 보므로 AI 원본 행 자신은 잡히지 않는다.
+    //   - 락은 트랜잭션 **시작 전에** 잡아 커밋 뒤에 푼다 — 뒤 요청의 조회 스냅숏이 앞 요청의 커밋 뒤에 만들어지게.
+    //   - 락 대기는 0 이다: 못 잡으면 곧바로 연결을 풀에 돌려주고 409. 기다리는 동안 풀 연결을 쥐고 있으면 같은 키 요청 몇 개로
+    //     풀(connectionLimit 10)이 차서 entry-watcher 등 다른 DB 작업이 줄을 섰다(Codex C2 medium).
+    const sourceSignalId = body.sourceSignalId;
+    const lockName = confirmLockName(symbol, direction);
+    const signalIds: number[] = [];
+    const conn = await pool.getConnection();
+    let lockHeld = false;
+    let discardConn = false;   // 락 해제·롤백이 실패한 연결은 풀에 돌려주지 않는다(락 누수·트랜잭션 잔존 방지)
+    try {
+      let lockRows: (RowDataPacket & { got: unknown })[];
+      try {
+        [lockRows] = await conn.query<(RowDataPacket & { got: unknown })[]>(
+          'SELECT GET_LOCK(?, ?) AS got', [lockName, CONFIRM_LOCK_WAIT_SEC],
+        );
+      } catch (e) {
+        // 서버에서는 락을 잡았는데 응답만 잃었을 수 있다 — 이 연결을 풀에 돌려주면 락이 남는다(Reviewer R-3). 닫아서 세션째 푼다.
+        discardConn = true;
+        throw e;
+      }
+      // 1 이 아니면(0 = 다른 요청이 쥐고 있음, NULL = 서버 오류) 락을 못 잡은 것 — 값을 정상 수신했으므로 연결은 그대로 반환한다.
+      if (Number(lockRows[0]?.got) !== 1) {   // Number(null)=0, Number(undefined)=NaN → 둘 다 못 잡은 것
+        return Response.json({ ok: false, error: CONFIRM_BUSY_MESSAGE }, { status: 409 });
+      }
+      lockHeld = true;
+
+      await conn.beginTransaction();
+      try {
+        // ① sourceSignalId 경로: 원본 조건부 선점
+        if (sourceSignalId) {
+          const [claim] = await conn.query<ResultSetHeader>(
+            `UPDATE signals SET status='approved', updated_at=NOW()
+              WHERE id=? AND status IN (${sqlStatusList([...AWAITING_APPROVAL_STATUSES, 'detected'])})`,
+            [sourceSignalId],
+          );
+          if (claim.affectedRows !== 1) {
+            await conn.rollback();
+            const [cur] = await conn.query<(RowDataPacket & { status: string })[]>(
+              'SELECT status FROM signals WHERE id=?', [sourceSignalId],
+            );
+            if (cur.length === 0) {
+              return Response.json({ ok: false, error: `원본 시그널 #${sourceSignalId} 을(를) 찾을 수 없습니다.` }, { status: 404 });
+            }
+            return Response.json(
+              { ok: false, error: sourceAlreadyHandledMessage(sourceSignalId, cur[0].status) },
+              { status: 409 },
+            );
+          }
+        }
+
+        // ② 활성 구간 중복 검사 — 두 경로 공통
+        const [active] = await conn.query<(RowDataPacket & { id: number; indicators: unknown })[]>(
+          `SELECT id, indicators FROM signals
+            WHERE symbol = ? AND side = ? AND scenario_source = 'user'
+              AND status IN ('approved_pending_entry', 'executing')
+              AND consumed_order_id IS NULL
+              AND (expires_at IS NULL OR expires_at > NOW())`,
+          [symbol, direction],
+        );
+        const dup = findActiveZoneDuplicate(active, slices.map(s => s.priceZoneStr));
+        if (dup) {
+          await conn.rollback();   // sourceSignalId 경로면 ① 의 원본 선점도 여기서 되돌아간다
+          return Response.json({ ok: false, error: activeDuplicateMessage(dup) }, { status: 409 });
+        }
+
+        // ③ 분할 INSERT → ④ COMMIT
+        for (const params of insertParams) {
+          const [ins] = await conn.query<ResultSetHeader>(
+            `INSERT INTO signals
+             (strategy_id, symbol, side, order_type, price, quantity, amount_krw,
+              reasoning, indicators, status, expires_at, market, scenario_source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            params,
+          );
+          signalIds.push(ins.insertId);
+        }
+        await conn.commit();
+      } catch (e) {
+        // 분할 INSERT 일부만 남거나 원본만 소비되는 일이 없게 통째로 되돌린다.
+        await conn.rollback().catch(() => { discardConn = true; });
+        throw e;
+      }
+    } finally {
+      if (lockHeld) {
+        try {
+          const [rel] = await conn.query<(RowDataPacket & { rel: unknown })[]>('SELECT RELEASE_LOCK(?) AS rel', [lockName]);
+          if (Number(rel[0]?.rel) !== 1) discardConn = true;
+        } catch {
+          discardConn = true;
+        }
+      }
+      // 명명 락은 세션(연결)에 붙는다 — 풀려 있지 않을 수 있는 연결을 풀에 돌려주면 이후 같은 (종목·방향) 확정이 막힌다.
+      // 연결을 닫으면 서버가 그 세션의 락을 함께 푼다.
+      if (discardConn) conn.destroy(); else conn.release();
     }
 
     // 수동 시나리오 등록 알람
