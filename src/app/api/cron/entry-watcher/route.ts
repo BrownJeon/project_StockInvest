@@ -6,6 +6,8 @@
  *  2. 장중 여부 확인 (국내 09:00~15:30 KST) — 장외이면 즉시 종료
  *  3. approved_pending_entry 상태 시그널 전체 조회
  *  4. 각 시그널: price_zone 파싱 → KIS 현재가 조회 → 구간 내이면 submitOrder 호출
+ *  4-1. 국내 매수는 선점 전에 가용 현금 사전 점검(T-051) — 모자라면 선점·주문 없이 이번 틱을 건너뛰고(시그널당 하루 1회 알림),
+ *       잔고를 모르면(조회 실패·8초 초과) 기존 경로
  *  5. 구간 도달 → **주문 직전에 조건부 UPDATE 로 executing 선점**(T-043) — 이긴 쪽만 submitOrder 호출
  *  6. 성공·결과 불명 → executing 유지 / 확정 거부·송신 전 예외 → approved_pending_entry 복귀(다음 틱 재시도) /
  *     expiresAt 초과 → status=expired
@@ -26,6 +28,12 @@ import { getSymbolLabel, sendAlert } from '@/lib/notify';
 import { escapeAlertText } from '@/lib/notify/escape';
 import { claimEntrySignal, findStuckExecutions, recordEntryOrder, releaseEntryClaim } from '@/lib/signals/entry-claim';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
+import {
+  ENTRY_CASH_BUFFER_RATIO, effectiveEntryQuantity, judgeEntryCash, readDomesticAvailableCashKRW,
+} from '@/lib/signals/entry-cash-precheck';
+
+/** T-051 — 현금 부족 알림·감사 기록 창(시그널당). 프로세스 로컬 스로틀이라 재시작하면 초기화된다(재시작 직후 한 번 더 나갈 수 있다). */
+const CASH_SHORT_ALERT_TTL_MS = 24 * 60 * 60 * 1000;
 
 // notify_signal_entry 플래그 캐시 (30초 TTL)
 let entryNotifyCache: { enabled: boolean; ts: number } | null = null;
@@ -87,7 +95,9 @@ interface WatchResult {
     /** T-042 — 주문이 접수됐는지 알 수 없다(송신 중 예외·5xx). 같은 주문을 다시 내지 않도록 시그널을 잠갔다 */
     | 'order_uncertain'
     /** T-043 — 주문 직전 선점에 지지 않았다(다른 실행이 먼저 가져갔거나 그 사이 만료). 주문하지 않았다 */
-    | 'claim_lost';
+    | 'claim_lost'
+    /** T-051 — 국내 매수의 예상 비용이 가용 현금보다 커서 선점·주문 없이 건너뛰었다. 시그널은 계속 감시된다 */
+    | 'cash_insufficient';
   detail?: string;
 }
 
@@ -114,6 +124,43 @@ async function giveBackEntryClaim(pool: ReturnType<typeof getPool>, signalId: nu
       `시그널 #${signalId} 의 주문은 나가지 않았지만 executing 에서 되돌리지 못했습니다(${escapeAlertText(why.slice(0, 160))}). `
       + '재주문 위험은 없으나 더는 감시되지 않습니다. 주문이 없음을 확인한 뒤 DB 에서 status=\'approved_pending_entry\' 로 되돌리세요 (docs/telegram-approval.md §6.1).',
     );
+  }
+}
+
+/**
+ * T-051 — 현금 부족으로 건너뛴 사실을 **시그널당 하루 한 번** 알리고, 그때만 감사 기록 1행을 남긴다(매 분 1행씩 쌓지 않는다 —
+ * 이 기능의 목적이 소음 제거다. 틱마다의 건너뜀은 호출부의 console 로그와 응답 `results` 에 남는다). 던지지 않는다:
+ * 선점 전 코드라 여기서 던지면 틱 전체가 중단된다.
+ */
+async function reportCashShortOnce(
+  pool: ReturnType<typeof getPool>,
+  a: { signalId: number; symbol: string; quantity: number; price: number; requiredKRW: number; availableKRW: number; shortfallKRW: number },
+): Promise<void> {
+  try {
+    const label = await getSymbolLabel(a.symbol).catch(() => escapeAlertText(a.symbol));
+    const lines = [
+      `시그널 #${a.signalId} ${label} 매수 — 진입 구간에 도달했지만 현금이 모자라 주문을 내지 않았습니다.`,
+      `필요 금액(예상): ${fmtKrw(a.requiredKRW)}원 (${a.quantity}주 × ${fmtKrw(a.price)}원 + 여유 ${(ENTRY_CASH_BUFFER_RATIO * 100).toFixed(1)}%)`,
+      `가용 현금: ${fmtKrw(a.availableKRW)}원 (부족 ${fmtKrw(a.shortfallKRW)}원)`,
+      '현금이 채워지면 자동으로 다시 시도됩니다. 이 알림은 시그널당 하루 한 번 보냅니다(재시작 시 다시 알릴 수 있음).',
+    ].filter(Boolean);
+    const sent = sendAlertThrottled(
+      `entry-watcher:cash-insufficient:${a.signalId}`,
+      'warning',
+      `💸 진입 보류 — 현금 부족: ${label}`,
+      lines.join('\n'),
+      CASH_SHORT_ALERT_TTL_MS,
+    );
+    if (!sent) return;
+    await pool.query(
+      `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
+      [null, 'entry_cash_insufficient', JSON.stringify({
+        where: 'entry-watcher', signalId: a.signalId, symbol: a.symbol, quantity: a.quantity, price: a.price,
+        requiredKRW: a.requiredKRW, availableKRW: a.availableKRW, bufferRatio: ENTRY_CASH_BUFFER_RATIO,
+      })],
+    );
+  } catch (e) {
+    console.error(`[entry-watcher] 현금 부족 알림/기록 실패 signal=${a.signalId}(건너뛰기는 유지):`, e instanceof Error ? e.message : String(e));
   }
 }
 
@@ -344,6 +391,29 @@ export async function POST(req: NextRequest) {
       currency: market === 'overseas' ? 'USD' as const : 'KRW' as const,
     };
 
+    // 🔴 T-051 — **선점 전** 가용 현금 점검(국내 매수만). 모자라면 선점·submitOrder 없이 이번 틱을 건너뛴다 — 시그널은
+    //    approved_pending_entry 로 남아 다음 틱에 다시 보고, 만료는 기존대로다. 이 점검은 주문을 **더 막기만** 한다:
+    //    "충분"·"모름"(잔고 조회 실패·값 이상·수량/가격 미확정)이면 아래 기존 경로(선점 → submitOrder 의 킬스위치·한도·DRY_RUN)를 그대로 탄다.
+    //    해외는 USD 예수금·환율·가격 단위가 얽혀 이번 범위에서 제외(기존 동작). 매도는 현금이 필요 없다.
+    if (market === 'domestic' && row.side === 'buy') {
+      const estQty = effectiveEntryQuantity({ quantity, amountKRW: orderReq.amountKRW, price: orderReq.price });
+      const cash = await readDomesticAvailableCashKRW();
+      const verdict = judgeEntryCash({ availableCashKRW: cash, quantity: estQty, price: orderReq.price });
+      if (verdict.kind === 'insufficient') {
+        const detail = `현금 부족: 필요 ${fmtKrw(verdict.requiredKRW)}원 > 가용 ${fmtKrw(verdict.availableKRW)}원`;
+        console.warn(`[entry-watcher] CASH_INSUFFICIENT signal=${signalId} symbol=${row.symbol} qty=${estQty} price=${orderReq.price} ${detail} — 선점·주문 없이 건너뜀`);
+        await reportCashShortOnce(pool, {
+          signalId, symbol: row.symbol, quantity: estQty as number, price: orderReq.price as number,
+          requiredKRW: verdict.requiredKRW, availableKRW: verdict.availableKRW, shortfallKRW: verdict.shortfallKRW,
+        });
+        results.push({ signalId, symbol: row.symbol, outcome: 'cash_insufficient', detail });
+        continue;
+      }
+      if (verdict.kind === 'unknown') {
+        console.warn(`[entry-watcher] 현금 점검 판단불가 signal=${signalId} (${verdict.reason}) — 기존 경로로 진행`);
+      }
+    }
+
     // 🔴 T-043 — 주문 직전 **조건부 선점**. 이 UPDATE 를 이긴 실행만 submitOrder 를 부른다.
     //    조회(SELECT)와 주문 사이에 선점이 없으면, 같은 시그널을 보는 실행이 둘일 때(cron 앱 2개·수동 호출·배포 중 끊김 후 새
     //    인스턴스) 둘 다 실주문을 낸다. `client_order_id` 가 호출마다 랜덤이라 DB 멱등성도 없다. 선점 UPDATE 가 실패하면
@@ -511,12 +581,14 @@ export async function POST(req: NextRequest) {
   // T-043 — 선점 패배·결과 불명도 회차 요약에 싣는다(둘 다 평소엔 0 이라 보이면 눈에 띈다).
   const claimLost = results.filter(r => r.outcome === 'claim_lost').length;
   const uncertain = results.filter(r => r.outcome === 'order_uncertain').length;
+  const cashShort = results.filter(r => r.outcome === 'cash_insufficient').length;
   console.log(
     `[cron/entry-watcher] total=${rows.length} submitted=${submitted} expired=${expired} ` +
     `out_of_zone=${results.filter(r => r.outcome === 'out_of_zone').length} blocked_prior=${blocked}` +
     (belowMin > 0 ? ` below_min_qty=${belowMin}` : '') +
     (claimLost > 0 ? ` claim_lost=${claimLost}` : '') +
-    (uncertain > 0 ? ` order_uncertain=${uncertain}` : ''),
+    (uncertain > 0 ? ` order_uncertain=${uncertain}` : '') +
+    (cashShort > 0 ? ` cash_insufficient=${cashShort}` : ''),
   );
 
   return NextResponse.json({ ok: true, processed: rows.length, results });
