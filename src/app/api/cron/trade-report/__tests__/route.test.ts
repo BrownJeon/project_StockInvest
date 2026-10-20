@@ -46,7 +46,8 @@ jest.mock('@/lib/notify/telegram', () => ({
   sendTelegramAlert: (...a: unknown[]) => telegramMock(...a),
   mrkdwnToTelegramHtml: (s: string) => s,
 }));
-jest.mock('@/lib/safety/portfolio-total', () => ({ getPortfolioTotalKRW: async () => 1_000_000 }));
+// T-056: 합계는 상태로 받는다(조회 불가면 null 로 표시) — 이 파일의 관심사는 발송·갱신 정책이라 정상값으로 고정한다.
+jest.mock('@/lib/safety/portfolio-total', () => ({ getPortfolioTotalState: async () => ({ status: 'ok', krw: 1_000_000 }) }));
 jest.mock('@/lib/reports/trading-day',    () => ({ isTradingDay: async () => true }));
 // T-033 — 평가 깔때기는 리포트에서 빠졌다. `getEvalFunnelSummary` 를 부르지 않는지도 검증한다.
 const funnelMock = jest.fn(async () => null);

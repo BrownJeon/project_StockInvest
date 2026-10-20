@@ -266,6 +266,104 @@ updated: 2026-10-19
 
 - [23:40] 확인하지 못한 것(추가): ⑦ CTRP6504R 가 폐장·점검 시간에 응답하는지(R8) ⑧ `dispatchAlert` 의 채널별 타임아웃 — 결과 콜백이 늦게 와도 다음 틱(1시간) 전에는 오는지 ⑨ A′ 를 기각했으므로 오프셋 유도 질의는 실측하지 않았다.
 
+- [08:30] **단계 0 실측 결과 — 1회차(폐장, 10-20 08:23:58~08:24:01 KST, 미국장 마감 뒤·국내장 개장 전).** 사용자 승인(`## Leader 기록` [08:18]) 범위 안에서 GET 3건만 호출했다. 실행 환경: `git archive HEAD`(24a5440) 격리 사본 `scratchpad/t056probe/`, 앱 인증 모듈(`kis-auth.ts`·`credentials.ts`·`kis-http.ts`·`kis-throttle.ts`)을 HEAD 그대로 CommonJS 로 변환해 재사용. 앱 `db.ts` 는 기동 시 스키마 생성·마이그레이션을 돌리므로 쓰지 않고, SELECT 와 토큰 캐시 쓰기 2종만 허용하는 shim 으로 대체. 전역 fetch 를 감싸 허용 목록(GET 3경로 + tr_id 일치, 토큰 없을 때의 POST `/oauth2/tokenP`) 밖 호출은 송신 전에 예외로 막았다(자체 시험: 주문·정정·국내 주문·tr_id 불일치·POST 모두 차단 확인). 호출 간격 1.2초, 레이트리밋 재시도 0. 마스킹된 원응답: `scratchpad/t056-kis-probe-20261020-0824.json`(계좌번호·앱키·시크릿 포함 여부를 저장 직후 검사).
+
+| # | 경로 | tr_id | 시각(UTC) | HTTP | 소요 | rt_cd / msg_cd / msg1 |
+|---|---|---|---|---|---|---|
+| 1 | `/uapi/overseas-stock/v1/trading/inquire-present-balance` (`WCRC_FRCR_DVSN_CD=02, NATN_CD=840, TR_MKET_CD=00, INQR_DVSN_CD=00`) | CTRP6504R | 23:23:58.754 | 200 | 190ms | `0` / `KIOK0530` / 조회되었습니다 |
+| 2 | `/uapi/overseas-stock/v1/trading/inquire-balance` (현행 어댑터 파라미터, `OVRS_EXCG_CD=NASD, TR_CRCY_CD=USD`) | TTTS3012R | 23:24:00.148 | 200 | 17ms | `0` / `KIOK0510` / 조회가 완료되었습니다 |
+| 3 | `/uapi/overseas-stock/v1/trading/inquire-psamount` (현행 어댑터 파라미터, `OVRS_ORD_UNPR=0, ITEM_CD=''`) | TTTS3007R | 23:24:01.369 | 200 | 11ms | **`7` / `APBN0746` / 상품이 없습니다** |
+
+- [08:30] [확실] 토큰: 앱 DB 캐시 토큰(만료 10-20 21:23 KST)을 그대로 썼다. **새 발급 0회(`tokenP` 호출 0), DB 쓰기 0건**(shim 기록 빈 배열, 토큰 행 `updated_at` 전후 동일).
+- [08:30] 필드 존재표(금액은 응답 원값):
+
+| 응답 | 필드 | 실측 |
+|---|---|---|
+| CTRP6504R `output2` | 행 수 / 통화 | **1행, `crcy_cd=USD`**(KRW·기타 통화 행 없음) |
+| 〃 | `frcr_dncl_amt_2`(외화예수금액2) | **368.51 USD** |
+| 〃 | `frcr_drwg_psbl_amt_1`(외화출금가능금액1) · `nxdy_frcr_drwg_psbl_amt`(익일) | 368.51 · 368.51 |
+| 〃 | `frst_bltn_exrt`(최초고시환율) | 1332.10 (같은 시각 앱 `fx_rates` 도 1332.1) |
+| 〃 | `frcr_evlu_amt2` | 490,892 (= 368.51 × 1332.10, 원화) |
+| 〃 | `frcr_buy_amt_smtl`·`frcr_sll_amt_smtl`·`frcr_buy_mgn_amt`·`frcr_etc_mgna` | 모두 0 |
+| CTRP6504R `output3` | `ustl_sll_amt_smtl`·`ustl_buy_amt_smtl`(미결제 매도·매수) | 0 · 0 (매매 없는 날) |
+| 〃 | `frcr_evlu_tota`(외화평가총액) | 490,892 — USD 행 원화값과 일치 |
+| 〃 | `tot_dncl_amt`·`wdrw_psbl_tot_amt` | 80,138 · 80,138 — **국내 KRW 예수금과 같은 값** |
+| 〃 | `evlu_amt_smtl_amt`(해외 보유 평가 원화) | 17,271,463 |
+| 〃 | `tot_asst_amt`(총자산금액) | 17,842,493 = 17,271,463 + 490,892 + 80,138 (정확히 일치) — **국내 주식은 포함하지 않음** |
+| 〃 | `tot_frcr_cblc_smtl`("총외화잔고합계") | 571,030 = 490,892 + 80,138 — 이름과 달리 KRW 예수금이 섞여 있음 |
+| 〃 | `mgna_tota`·`buy_mgn_amt`·`tot_loan_amt` | 0 · 0 · 0 |
+| CTRP6504R `output1` | 행 | 5행: MU 11·SMH 4·ORCL 6 + **미니스탁 MSFT 0.071471·TSLA 0.005924**(`prdt_dvsn=03`, 합 40.31 USD ≈ 53,699원) |
+| TTTS3012R `output2` | `frcr_dncl_amt1`·`frcr_dncl_amt`·`dnca_tot_amt` | **셋 다 없음.** 있는 키: `frcr_pchs_amt1, ovrs_rlzt_pfls_amt, ovrs_tot_pfls, rlzt_erng_rt, tot_evlu_pfls_amt, tot_pftrt, frcr_buy_amt_smtl1, ovrs_rlzt_pfls_amt2, frcr_buy_amt_smtl2` |
+| TTTS3012R `output1` | 행 | 3행(MU·ORCL·SMH) — 미니스탁 없음 |
+| TTTS3007R | `output` | **없음**(rt_cd 7 오류 응답) |
+
+- [08:30] [확실] **원인 확정**: 현행 어댑터의 USD 경로는 ① TTTS3012R 에 없는 필드를 읽어 0, ② 폴백 TTTS3007R 이 `ITEM_CD=''` 때문에 `rt_cd=7 APBN0746 상품이 없습니다` 로 실패 → `kis-overseas.ts:197` 이 0 을 돌려준다. 즉 앱은 매 해외 잔고 조회마다 실패하는 호출을 1회 하고 그 실패를 0 으로 바꿔 왔다. (바뀜: 위 [23:12] "원인" bullet 의 ② "[가능성 높음] … 요청 오류로 0 이 되는 것으로 보인다" → [확실], 오류 코드 `APBN0746`.)
+- [08:30] [확실] **USD 잔액 실측 368.51 USD = 490,892 원(최신 스냅샷 총액 20,560,017 의 2.39%).** 스냅샷 재구성 추정 0.3~0.4M 원보다 약 0.09~0.19M 크다(V·KO 매도 대금과 SMH 매수 금액의 환율·수수료 차이를 스냅샷만으로는 못 맞춘 것). 별도로 앱이 모르는 **미니스탁 2종 53,699원**이 있다. KIS 기준 실제 자산 ≈ 17,842,493 + 국내 주식(000660·005930, 최신 행 3,315,500) ≈ 21.16M 이고 스냅샷 20.56M 은 약 0.54M(2.6%) 과소다. (바뀜: 위 [23:12] "[추측] 현재 X 추정" bullet → 실측 X = 490,892 원. 재검산 표의 X=0.37M 은 0.49M 으로 바뀌며, S6 "보정 없음"의 은폐 폭이 1.8%p → 약 2.4%p 로 커질 뿐 각 행의 판정(E 채택 결론 포함)은 바뀌지 않는다.)
+- [08:30] [가능성 높음] 통합증거금 여부: `mgna_tota`·`buy_mgn_amt`·`tot_loan_amt` 가 0 이고 `frcr_drwg_psbl_amt_1` 이 예수금과 같아 증거금·대출 사용 흔적은 없다. 다만 `tot_frcr_cblc_smtl` 이 KRW 예수금 80,138 을 "외화잔고"에 포함하고 있어, 이 계좌는 원화를 해외 거래에 쓸 수 있는 구조(원화 주문 서비스류)일 수 있다 [추측]. TTTS3007R 이 오류라 매수가능금액 쪽 근거는 못 얻었다. **설계 영향: USD 평가에는 `output2` USD 행 `frcr_dncl_amt_2` 만 쓰고 `output3` 의 현금 합계(`tot_frcr_cblc_smtl`·`tot_dncl_amt`·`wdrw_psbl_tot_amt`)는 쓰지 않는다** — 이를 쓰면 KRW 행과 이중 계상된다(바뀜 아님, 위 권고의 실측 근거).
+- [08:30] **Q9 결론**: 이번 실측은 USD 잔액이 0 이 아니어서(368.51) "잔액 0 일 때 USD 행이 오는가"는 **여전히 직접 관측하지 못했다.** 따라서 R1(생략 → 데드락)·R2(0 오독) 중 어느 것이 실제인지 이 응답만으로 확정할 수 없다. 대신 `output3` 에 USD 값과 독립으로 맞물리는 항등식 두 개가 실측으로 확인됐다: `frcr_evlu_tota` = Σ output2 `frcr_evlu_amt2`(490,892) 그리고 `tot_asst_amt` − `evlu_amt_smtl_amt` − `tot_dncl_amt` = `frcr_evlu_tota`(17,842,493 − 17,271,463 − 80,138 = 490,892). 이것으로 두 위험을 함께 닫는 판정 규칙을 제안한다:
+
+| 응답 모양 | 판정 | 근거 |
+|---|---|---|
+| `rt_cd='0'` + output2 USD 행 있음 + `frcr_dncl_amt_2` 유한·≥0 + `frcr_evlu_amt2 ≈ frcr_dncl_amt_2 × frst_bltn_exrt`(±1원) + `output3.frcr_evlu_tota ≈ Σ output2 frcr_evlu_amt2` | **known = `frcr_dncl_amt_2`** | 오늘 실측 모양 그대로 |
+| `rt_cd='0'` + output2 에 USD 행 없음 + output3 존재 + `frcr_evlu_tota` 가 숫자 0 + `tot_asst_amt − evlu_amt_smtl_amt − tot_dncl_amt = 0` | **known = 0** | KIS 가 0 통화를 생략해도 데드락 없음(R1 닫힘). 잘린 응답은 output3 가 없거나 항등식이 깨져 0 으로 읽히지 않음(R2 닫힘) |
+| 그 밖(HTTP≠200, `rt_cd≠'0'`, output3 없음, 항등식 불일치, 비유한 값, USD 행 2개 이상) | **unknown → 스냅샷 보류** | fail-closed |
+
+- [08:30] [가능성 높음] 위 규칙의 남은 가정: 잔액 0 일 때 `frcr_evlu_tota` 가 `"0"` 으로 온다는 것. 오늘 값이 USD 원화값과 정확히 같으므로 의미는 맞지만, 0 상태는 미관측이다. 잔액 0 이 되는 날(전액 재투자 직후 등) 첫 스냅샷 결과를 단계 4 와 함께 확인 항목에 넣는다. 그 날 output3 이 0 이 아닌 다른 모양으로 오면 규칙상 unknown → 보류 + critical 이 되어 **조용히 0 으로 읽히는 일은 없다**(최악은 보류 = 사람이 보게 됨).
+- [08:30] [확실] 체결기준(미결제 매도 대금 포함 여부)은 오늘 매매가 없어 판별 불가(`ustl_*` 0, `frcr_sll_amt_smtl` 0). 판별 재료는 응답에 있다: 매도 당일 `output1.thdt_sll_ccld_frcr_amt`(당일매도체결외화금액)·`output2.frcr_sll_amt_smtl`·`output3.ustl_sll_amt_smtl` 과 `frcr_dncl_amt_2` 를 같은 응답에서 비교하면 된다. 설계 영향: 미결제 보정(`frcr_dncl_amt_2 + ustl_sll − ustl_buy`)은 **지금 넣지 않는다** — 예수금이 이미 체결분을 포함한다면 이중 계상이 된다. 단계 4(첫 해외 매도 직후 관측)에서 결정하고, 그 전까지는 `ustl_sll_amt_smtl > 0` 이면 **스냅샷 행에 미결제 금액을 별도 필드로 기록**(`unsettled_sell_usd`)해 사후 판별 자료를 남기는 것만 한다(총액에는 미반영). T-055 2단계 관문은 그대로 유지.
+- [08:30] [확실] 폐장 시각 응답(R8): 08:24 KST 에 세 경로 모두 HTTP 200, CTRP6504R 190ms(첫 호출, 연결 수립 포함)·나머지 11~17ms. 폐장 중 조회 실패 위험은 이 시각에는 없음. KIS 정기 점검 시간대의 동작은 미확인.
+- [08:30] 실측으로 바뀌는 설계 항목:
+
+| 위치 | 이전 | 바뀜 |
+|---|---|---|
+| [23:12] 출처 표 "응답 성공인데 USD 행 자체가 없음" 행 | 실측 전 "모름"; 실측 후 결정 | **위 판정 규칙(output3 항등식으로 known 0 / unknown 구분)** |
+| [23:12] 출처 표 "출처" 행 | `frcr_dncl_amt_2` (+필요 시 미결제 보정) | `frcr_dncl_amt_2` 단독. 미결제는 별도 필드 기록만, 보정은 단계 4 후 결정 |
+| [23:12] 출처 표 "환율" 행 | 앱 환율로 `price` 기록 | 앱 환율 유지(보유 종목 시세와 같은 환율). KIS `frst_bltn_exrt` 는 응답 정합 검사에만 사용 |
+| [23:40] Q9 | 실측 후 결정 | 위 3분기 규칙으로 결정(남은 가정: 0 잔액 시 output3 모양) |
+| [23:40] R1·R2 | 둘 중 하나를 골라야 함 | 둘 다 위 규칙으로 닫힘(직접 관측 아닌 항등식 근거, [가능성 높음]) |
+| [23:12] 원인 bullet ② | [가능성 높음] | [확실] `APBN0746` |
+| [23:12] X 추정 | 0.3~0.4M [추측] | 490,892 원 [확실] |
+| 새 사실 | — | 미니스탁(분수 주식) 53,699원이 CTRP6504R 에만 있고 TTTS3012R·앱 스냅샷에는 없다. **이번 범위 밖**(보유 출처를 바꾸면 분수 수량이 `submittedQuantity` 정수 가정과 충돌) — 후속 후보로 기록 |
+| 시험 계획 | — | 어댑터 파싱 시험에 오늘 실측 응답(마스킹본)을 그대로 고정 픽스처로 쓰고, 판정 규칙 3분기 각각(행 있음·행 없음+항등식 0·항등식 불일치)과 `APBN0746` 같은 rt_cd≠0 을 넣는다 |
+
+- [08:30] 확인하지 못한 것(실측 후): ① 잔액 0 일 때 output2·output3 모양 ② `frcr_dncl_amt_2` 의 체결기준 여부(매도 당일) ③ 장중 응답(오늘 밤 2회차) ④ KIS 새벽 점검 시간대 동작 ⑤ 통합증거금·원화주문 서비스 가입 여부(응답만으로는 [추측]).
+- [08:30] 2회차(장중) 재실행: `node /tmp/claude-1000/-home-brownjeon-NFS-homes-brownjeon-project/79cdec39-27b7-459c-a488-3c4755cd39d0/scratchpad/t056probe/probe.js --label 장중` (먼저 `--selftest` 로 차단 검사 확인 권장, KIS 호출 없음). 결과 파일은 같은 scratchpad 에 `t056-kis-probe-<KST 시각>.json`. scratchpad 는 `/tmp` 아래라 재부팅 시 사라질 수 있다.
+- [09:13] **구현** (커밋·add·push·배포·DB 쓰기·KIS 호출 0건, `dry-run.ts`·`fx.ts`·`kis-http.ts`·`kis-master.ts`·`throttle.ts`·`snapshot-composition.ts` 무수정). 격리 사본(`git archive 24a5440` + 내 파일만 덮어씀) 기준 **tsc 0 오류, jest 165 스위트 / 3,761 테스트 전부 통과**(기준선 153 / 3,564). 변경: 소스 17파일(신규 `exchanges/market-flags.ts`·`safety/confirmed-alert.ts`) + 테스트 수정 9 · 신규 12 + 익명화 픽스처 1(`exchanges/__tests__/fixtures/ctrp6504r-closed-20261020.json` — 종목코드·이름 일반화, 계좌 필드 없음, 수치·항등식 원본 그대로).
+  - 어댑터: TTTS3012R `usdAmount`·TTTS3007R 폴백·`.catch(()=>0)` 삭제. `getUsdCash()`(CTRP6504R, 모의 VTRP6504R)는 실패 시 던지고, 판정은 순수 함수 `parseUsdCashFromPresentBalance` 에 Q9 3분기 + ±1원(`USD_CASH_RECONCILE_TOLERANCE_KRW=1`). **설계와 다른 점 ①**: 분기 2 에도 `frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2` 를 적용(다른 통화 행에 값이 있는데 합계 0 인 자기모순 응답이 0 으로 읽히던 구멍 — 시험이 잡음). 분기 3 쪽으로만 엄격해진다.
+  - Facade: `BalancesResult.cash.USD`(known/unknown/not_queried) + `overseasEnabled`, `balances` 에서 USD 행 방어 필터. `isOverseasEnabled()` 는 의존성 없는 `market-flags.ts` 에 두고 `kis.ts` 2곳·`settings/safety` 가 사용. **설계와 다른 점 ②**: "USD 소비자 4곳이 타입 오류로 드러남"은 달성하지 못했다 — `b.currency==='USD'` 비교는 타입상 유효해 오류가 나지 않는다. 강제하려면 `ExchangeClient.getBalances` 반환형을 바꿔야 하는데 그 호출부 `settings/credentials/test/route.ts` 에 다른 세션 미커밋 변경이 있어 건드리지 않았다. 대신 4곳(크론·portfolio-total·`/api/portfolio`·`markets/status`)을 전부 `getBalancesDetailed()`+`cash.USD` 로 옮겼고, 남은 `kis.getBalances()` 호출부(`/api/balances`, `credentials/test`)는 USD 를 읽지 않음을 grep 으로 확인했다.
+  - 크론: USD unknown/not_queried(해외 활성)·환율 실패·KRW 요약 없음(Q3) → 저장 보류 + `sendAlertUntilDelivered('snapshot:usd_cash_unavailable'|'snapshot:krw_cash_unavailable','critical',…,2h)`(전달 확인 뒤에만 억제, in-flight 10분 만료) + `reportSnapshotBlindness`, 킬스위치·변동성 가드 미실행. USD 행 `{currency:'USD', qty, price:그 틱 getUsdKrwRate, value_krw, locked:0, src:'CTRP6504R'}`, 0 도 기록, KRW 행도 0 이어도 기록. **설계와 다른 점 ③**: 미결제 필드 이름을 `unsettled_sell_usd` 가 아니라 KIS 원이름 `ustl_sll_amt_smtl` 로 했다 — output3 의 값들이 원화 형식(`tot_dncl_amt=80138` 등)이라 USD 로 단정할 근거가 없다[가능성 높음: 원화]. 총액 미반영은 지시대로.
+  - 저장 가드: `savePortfolioSnapshot(…, cashReq)` 4번째 인자 **필수**(기본값 없음, 빠지면 거부). `cash_row_missing` 은 1b 단계(릴리스 밸브 없음), 직전 행과 비교하지 않음. KRW 도 요구(price=1).
+  - 킬스위치 E: `applyUsdSymmetricRemoval`(한쪽만 USD 행 → 양쪽 행·값 제거, positions 못 읽으면 미적용). 결과에 `usdSymmetricRemoval:true`, 알림·사유에 문구. S1~S10 전부 설계 표와 같은 판정으로 고정.
+  - 한도: `MarketTotal = ok | unknown(usd_cash_unknown|fx_unavailable|krw_cash_unknown|balances_failed)`, unknown 은 캐시 폴백 금지, `balances_failed` 만 기존 직전값 폴백(더 새 판정이 unknown 이면 그 시장 직전값 삭제). `getPortfolioTotalByMarketKRW`·`getPortfolioTotalKRW` 삭제 → `getMarketTotal`·`getPortfolioTotalState`. 한도 함수 본체 try/catch 로 "숫자 반환·절대 던지지 않음". 호출자 7곳: dry-run·engine·approval-context·health·analyst/run 은 숫자 계약 그대로라 무수정, order-limits·trade-report 수정. **설계와 다른 점 ④(Q3 확장)**: KRW 요약 없음을 한도에서도 국내 unknown(`krw_cash_unknown`, 국내 신규 매수 차단)으로 처리했다 — "같은 규칙"을 한도까지 적용. 원치 않으면 그 분기만 되돌리면 된다(사용자 결정 쟁점). ⑤ 정상 조회인데 합계 0 인 경우 예전엔 캐시로 폴백했으나 이제 0 그대로(더 보수적).
+  - 그 밖: `/api/portfolio` 현금 모르면 기존 503, `markets/status` 는 예수금 하나라도 모르면 **전체** `balance:null`(화면이 두 시장을 `?? 0` 으로 합산해 부분 null 이면 과소 총액이 뜨기 때문), 거래 리포트는 `null` → "총 자산: 조회 불가". 승인 맥락은 시장별 현금(그 시장 현금 행 없으면 모름 → 사유 안 셈).
+  - 기존 시험 계약 변경(약화 아님, 이유): `approval-context` 해외 매수 현금 기대값 3,500,000→500,000(KRW+USD 합산이 결함 자체) 및 KRW 행만 둔 해외 매수 시험 4건의 입력을 USD 행으로(기대값 불변); `portfolio-total-dedup` 의 `{domestic:0,overseas:0,total:0}`·`.total` 기대값을 상태 동치로(`total` 필드 삭제); `kill-switch-composition` M-2 의 기준선에 `USD 0` 행 추가(신형 대 신형이 M-2 계약 — 기대값 불변) + 전환 구간 형제 시험 추가(E 적용 시에도 발동, 사유 문구만 다름); 나머지는 목·인자 추가뿐.
+  - 변이 23종 전부 새 시험이 죽임(옛 관련 스위트 585건은 20종에서 생존): `.catch(()=>0)` 부활(Facade·HTTP·rt_cd 3종), unknown→0 행·보유만 계상·환율 무시, `cash_row_missing` 제거, 밸브 적용, E 부호 반전·원설계·현재만·기준선만·끔, 캐시 폴백 부활, 한도 함수 throw, 허용오차 0·10, Facade 필터 제거, 승인 맥락 합산 복귀, 국내 `?? 0`, 크론 KRW 보류 제거, 경보 선기록, 분기 2 항등식 생략.
+  - 새로 찾은 잔여 위험(숨기지 않음): [가능성 높음] **전환 24h 안의 해외 손절**(대금이 USD 로 들어오고 남은 보유는 거의 안 빠짐)은 E 가 USD 유입 정황을 지우므로 T-041 C-2 α 와 달리 **보류+critical** 로 간다(실현 손실 은폐 가능). 오늘 운영 코드와 같은 동작(USD 행이 늘 없음)이고 24h 로 한정된다. 그 밖 S4b·R5~R9 는 설계 기록 그대로. 린트는 프로젝트에 ESLint 설정이 없어 실행 불가.
+
+- [09:53] **라운드 2** (Reviewer CONDITIONAL_PASS 조건 C-3 + R-5 지시). 소스 무변경 — `kill-switch.ts` 포함 소스 17개 해시 그대로(`kill-switch.ts` fbb274daaa1a). 커밋·add·push·배포·DB·KIS 0건.
+  - A(시험만): ① `kis-overseas-usd-cash.test.ts` 에 "판정 규칙 각 층 직접 고정" 블록 — 수치 필드 전부 `''` → 던짐(M08), USD 행 없음 + 다른 통화 행 값 v + 합계 v + 잔차 0 → 던짐(M04, ±1원 known 0 / 2원 던짐 경계), USD 행 2·3개(전부 0, 항등식 0) → 던짐(M44), 분기 2 정상 known 0 과 잔차 ±1 통과·±2·490,892 던짐, `frcr_evlu_tota=-1` 통과. ② 신규 `cron/trade-report/__tests__/route-total-unknown.test.ts` — 합계 unknown·거부 시 `formatReportMessage`·`buildTradeReport` 에 null(0 아님), ok 0 은 0(M36). ③ 신규 `lib/__tests__/usd-cash-balance-fence.test.ts`(T-035 펜스 방식) — 비-테스트 소스의 `currency`↔`'USD'` 같음 비교를 파일·개수까지 허용 목록 7곳(사유 주석)과 대조, `.find(…'USD'…)` 0건, 패턴 자기 점검. ④ `kill-switch-usd-transition.test.ts` 에 E 뒤 기준선 0 가드 시험(현재>0 → Infinity 아님, 현재 0 → NaN 발동 없음, 대조 신형 대 신형 평가)(M50).
+  - **B(R-5 알림 문구)는 구현하지 않고 멈췄다.** [확실] E 가 적용되면 코드에 남는 `drawdownPct` 는 USD 를 뺀 값뿐이고, USD 포함 실제 총액 변화율·금액은 어디에도 계산돼 있지 않다(입력 `rawBaseline` 과 인라인 `Number(curRows[0].total_krw)` 만 있다). 지시 제약 ②("새 계산을 만들지 않는다, 만들어야 하면 멈추고 보고")에 걸린다. 승인되면 넣을 변경(문구 조립 전용, 판정 무관): 보류 분기 `detail` 앞에 `const rawCurKRW = Number(curRows[0].total_krw); const rawPct = ((rawCurKRW - rawBaseline) / rawBaseline) * 100;` 두 줄과, `usdNorm.applied` 일 때만 "기록상(USD 포함) 24h {rawPct}% ({rawCurKRW − rawBaseline}원) — 전환 24h 한정 비교" 한 줄을 문구 맨 앞에 붙이고 수동 안내 줄은 유지 + 그 문구 고정 시험.
+  - 변이: Reviewer 생존 5종 M08·M04·M44·M36·M50 + 펜스 변이 2종(시장 현황에 `find(…'USD')` 부활, 한도에 `'USD' == b.currency` 추가) **전부 새 시험이 죽임**(옛 관련 스위트에서는 M36 외 생존 — M36 은 옛 경로 패턴이 새 라우트 시험 파일까지 잡아서 함께 실패로 나옴). 라운드 1 변이 23종 재실행 — 여전히 전부 사망.
+  - 격리 사본: tsc 0 오류, jest **167 스위트 / 3,784 테스트 전부 통과**(라운드 1: 165 / 3,761).
+  - 새로 안 것: 펜스는 `currency` 식별자와 `'USD'` 리터럴의 같음 비교만 본다 — `CASH_CURRENCIES.has(b.currency)`·상수 변수(`const U='USD'`)를 거친 비교는 못 잡는다 [확실, 정규식 한계]. 공유 트리에서 다른 세션이 USD 비교를 추가하면 이 펜스가 실패한다(의도).
+
+- [10:00] **라운드 3(R-5)** (Leader 승인). 소스는 `kill-switch.ts` 하나만 변경(fbb274daaa1a → **afd9f82c7f86**), 나머지 소스 16개 해시 그대로(대조 완료). 커밋·add·push·배포·DB·KIS 0건.
+  - 변경: 순수 함수 `transitionRawNote(applied, rawBaseline, curRows[0].total_krw)` 추가 — 안에서 `rawCurKRW`·`rawPct`(USD 포함 기록상 변화율)·금액을 계산하고, E 적용 시에만 "기록상(USD 포함) 24h {rawPct}% ({금액}원) — 전환 24h 한정 비교(아래 수치는 USD 를 양쪽에서 뺀 값)." 한 줄을 돌려준다. 보류 분기에서 이 줄을 **알림 본문 맨 앞에만** 붙였다(`${rawNote}${detail}.\n…`). 수동 발동 안내 줄 그대로.
+  - 지시와 다른 점: 두 줄을 `detail` 앞에 인라인으로 두지 않고 헬퍼 안에 넣었고, 반환값 `detail` 에는 붙이지 않았다 — `detail` 은 반환값의 일부라 "반환값 한 글자도 바꾸지 말 것"을 지키기 위해서다. 판정·분기·임계 비교·반환 객체는 무변경.
+  - 던지지 않음: 숫자 또는 숫자 문자열만 읽고(`Number()` 강제 변환 없음 — Symbol·BigInt·toString 이 던지는 객체도 안전), 기준선 ≤0·비유한·null·빈 값은 `n/a`, 전체 try/catch → 실패 시 빈 문자열(= 기존 문구).
+  - 시험(신규 `kill-switch-transition-note.test.ts`, 722c5a814d76): (a) 전환 24h MU -30% 매도 → 판정 보류 그대로 + 본문이 "기록상(USD 포함) 24h -16.8% (-3,514,108원) — 전환 24h 한정 비교" 로 시작, "같은 조건 비교는 0.0%"·"전환 규칙 E"·수동 안내 포함, NaN/Infinity 없음, 반환 `detail` 불변, total_krw 숫자 문자열도 같음 (b) 기준선·현재 각 18종 비정상 입력에서 던지지 않고 `n/a` (c) E 미적용(신형 대 신형 S5, 구형 대 구형) → 본문이 기존 "24h …" 로 시작, 새 줄 없음.
+  - 판정 동일성: 라운드 2 의 `kill-switch.ts`(fbb274daaa1a)를 격리 사본에 넣고 같은 시험을 돌리면 통합 시험의 판정 단언(`skipped/composition_change_suspected`, INSERT 0)은 전부 통과하고 실패는 문구 단언(60·80행)과 헬퍼 단위 시험뿐 — 문구 코드 유무와 판정이 같다.
+  - 변이 6종 전부 새 시험이 죽임: N1 호출부가 던짐(`null.x`) → 결과가 `skipped`→`evaluated`(거짓 발동)로 뒤집혀 시험이 잡음 / N2 헬퍼 try/catch 제거 + 비정상 입력에서 던짐 / N3 NaN% 노출 / N4 E 미적용에도 문구 / N5 반환 detail 에 문구 / N6 문구 줄 삭제. 기존 kill-switch 변이(M4a~e·M50) 재실행 — 여전히 전부 사망.
+  - 격리 사본: tsc 0 오류, jest **168 스위트 / 3,825 테스트 전부 통과**.
+  - 남은 것: 새 문구의 실제 텔레그램 표시(줄바꿈·길이)는 미확인 — QA 실전송 항목.
+
+- [10:22] **라운드 4(Codex C2 high)**. 소스는 `kis-overseas.ts` 하나만 변경(01793e887a07 → **3a0f7c29634c**), 나머지 소스 16개 해시 그대로(`kill-switch.ts` afd9f82c7f86 포함, 대조 완료). 커밋·add·push·배포·DB·KIS 0건.
+  - 변경: `parseUsdCashFromPresentBalance` 분기 1 에 `if (!(rate > 0)) fail('USD 행 환율(frst_bltn_exrt)이 양수가 아님')` 한 줄(숫자 검사 바로 뒤). 분기 1 에 `tot_asst_amt` 항등식은 넣지 않았다(Leader 결정).
+  - `frcr_evlu_amt2` 는 바꾸지 않았다: 비유한은 `strictNum` 이 이미 거르고, 환율 > 0·예수금 ≥ 0 이면 `within(evlu, usd×rate)` 가 −1원 아래 음수를 이미 막는다(시험 (f)로 확인). −1원 이내 음수(예수금 0)는 반올림 허용치라 known 0.
+  - 시험(`kis-overseas-usd-cash.test.ts` 끝에 추가만, 29e8e5a2086a): (a) USD 1,000,000 + 환율 0 + 평가 0 + 합계 0 → 던짐 (b) 환율 음수(정합 맞춤) → 던짐 (c) 환율 NaN·abc·빈·공백·1e3·없음 → 던짐(라운드 1 부터 막힘 확인) (d) 픽스처 known 368.51 (e) **의도**: 환율 0.0001 처럼 아주 작은 양수도 정합이 맞으면 known — 크기 하한·타당성 범위 검사는 범위 밖 (f) 환율 양수 + 평가 −5 → 정합 불일치로 이미 던짐.
+  - 변이 38종 전부 사망: R4 `rate>0` 검사 삭제·R4b `>=0` 완화(새 시험 (a)(b)가 죽임) + 라운드 2(M08·M04·M44·M36·M50·펜스 2) + 라운드 3(N1~N6) + 라운드 1(23종).
+  - 격리 사본: tsc 0 오류, jest **168 스위트 / 3,836 테스트 전부 통과**.
+  - 남은 위험(새로): [확실] 양수이기만 하면 환율 크기는 보지 않는다 — KIS 가 0.0001 같은 비정상 소액 환율과 그에 맞춘 평가·합계를 함께 주면 같은 과대 기록이 가능하다(시험 (e)로 고정한 의도된 동작). 막으려면 앱 환율(`fx_rates`)과의 괴리 밴드가 필요하지만, 장중 환율이 KIS 고시와 다를 수 있어 정상 보류를 만들 위험이 있다 — 별건 판단 사항.
+
 ## Codex C1 (외부 읽기 전용 설계 검토, 2026-10-19 밤)
 
 - judge C1: `codex_required=true` · `adversarial-review` · focus `error_handling` · 규칙 `CX-limit-unknown-r2` · 스위치 on. 인계서 `scratchpad/handoff-T-056-c1.md`, 실행 110초, 스냅샷에서 파일 변경 0. 결과 원본 `scratchpad/codex-T-056-c1.out.json`. 코드가 아직 없는 설계 검토다. Codex 가 검토하지 못했다고 밝힌 것: CTRP6504R 실응답 필드 의미(미실측), 운영 DB 4,667행·알림 전달 이력 재조회.
@@ -276,9 +374,165 @@ updated: 2026-10-19
   4. **medium — 첫 critical 알림 전달 실패가 2시간 억제된다**(`throttle.ts` 33-37): `sendAlertThrottled` 는 전송 결과를 기다리지 않고 `lastSentAt` 을 먼저 기록하고 `sendAlert` 는 fire-and-forget 이다. 텔레그램·Slack 이 모두 실패하면 스냅샷 저장·킬스위치가 멈춘 동안 운영자가 못 받고 채널 복구 뒤에도 최대 2시간 재통지가 없다. 요구: 안전 관련 critical 은 전달 성공 뒤에만 긴 스로틀을 적용하거나 짧은 재시도 창 + 독립 감시. (`throttle.ts` 는 공용이라 이 task 에서 바꾸지 않는 쪽을 우선 검토)
 - Leader 판단: 4건 모두 설계 단계에서 잡혀 코드 비용이 없다. 구현 전에 Developer 에게 설계 수정을 지시한다(코드 변경 없음). 수정 설계는 같은 항목을 시나리오 표(S7: 배포 후 정상 매도 포함)로 재검산하고, Reviewer 사전 검토 또는 Codex 재검토(judge C3 판정)를 거친 뒤 구현한다. 필드 의미 실측(단계 0)은 여전히 사용자 승인 대기.
 
+## Codex C2 (외부 읽기 전용 구현 검토, 2026-10-20)
+
+- judge C2: `codex_required=true` · `adversarial-review` · focus `error_handling` · 규칙 `CX-limit-unknown-r2` · 스위치 on · 이전 호출 1건(C1). 인계서 `scratchpad/handoff-T-056-c2.md`, 실행 103초, 스냅샷에서 파일 변경 0, 결과 원본 `scratchpad/codex-T-056-c2.out.json`. 첫 검토(C1) 지적 4건이 실제 코드에서 해소됐는지도 검증 대상이었고 **다시 지적되지 않았다.** Codex 가 검토하지 못했다고 밝힌 것: 지정 범위 밖 다른 세션 변경 파일, 읽기 전용 제약 때문에 실행하지 못한 jest·실 KIS 호출, 미관측 장중 CTRP6504R 응답 모양.
+- 지적 2건과 Leader 확인:
+  1. **high — 분기 1 이 환율 0·음수를 거르지 않는다**(`kis-overseas.ts:288-293`): `rate` 는 `strictNum` 으로 숫자인지만 보고 양수인지는 보지 않는다. USD 행에 양수 예수금(예: 1,000,000)과 `frst_bltn_exrt=0`, 그 곱과 일치하는 `frcr_evlu_amt2=0`·`output3.frcr_evlu_tota=0` 이 오면 모든 정합 검사(`within(0, usd×0)`, Σ 일치)를 통과해 **known USD 1,000,000** 이 된다. 앱은 이 금액을 자체 환율로 환산하므로 총자산이 과대 기록돼 실손실 감지를 은폐하고 해외 한도를 부풀릴 수 있다. [확실 — 코드 대조] KIS 가 환율 0 을 줄 가능성은 낮지만 이 구현이 막으려는 "형식은 맞는 잘못된 성공 응답" 그 자체다. 권고: `frst_bltn_exrt` 가 유한한 양수가 아니면 unknown, 회귀 시험. (분기 1 에도 `tot_asst_amt` 항등식을 적용하자는 선택 권고는 **채택하지 않는다** — 그 항등식은 오늘 한 시점에서만 확인된 관계라, 분기 1 에 추가하면 항등식이 깨지는 날 USD 가 있는데도 스냅샷이 영구 보류될 위험을 새로 만든다. 분기 2 가 이미 그 위험을 지고 있어 더 늘리지 않는다.)
+  2. **medium — 종목 시세 부분 실패가 합계에서 조용히 빠진다**(`portfolio-total.ts:115-139`): 양수 보유 종목의 `getTicker` 가 실패하면 로그만 남기고 그 종목을 합계에서 제외한 채 상태를 ok 로 돌려준다. 새 `ok/unknown` 계약이 시세 부분 실패를 식별하지 못한다. [확실 — 코드 대조] **T-056 이전부터 있던 동작**이고 방향은 총자산이 *과소*(한도가 보수적으로 줄어듦; 킬스위치는 이 값을 쓰지 않고 스냅샷 크론에 별도 평균단가 폴백이 있음)다. T-056 범위 밖 — 후속 후보(`ticker_unknown` 사유 추가 또는 검증된 avgPrice 폴백)로 기록하고 이번에는 고치지 않는다.
+- Leader 결정: 1 은 수정(작은 변경 + 회귀 시험, 이후 Reviewer 가 바뀐 부분만 재확인), 2 는 기존 동작 수용 후 후속 후보로 기록. 판정 도구 호출 수는 이 task 에서 2건(C1·C2)이다.
+
 ## Reviewer
 
-(대기)
+- [09:50] **범위·방법·해시 대조.** 대상: T-056 구현(소스 17 + 테스트·픽스처 22 = 39개), HEAD `24a5440`. 격리 사본 2개를 `git archive 24a5440` + Developer 파일 39개 덮어쓰기로 만들었다 — `scratchpad/t056rev`(변이 시험용), `scratchpad/t056rev2`(무변이 검증·실DB 재현용). 앱 소스(작업 트리) 수정·커밋·add·push·배포·운영 DB 쓰기·KIS 호출은 0건이다. 운영 DB 는 `SET SESSION TRANSACTION READ ONLY` 세션에서 SELECT 만(자격 값은 출력하지 않음), 일회용 `mariadb:11`(`t056r-scratch`, tmpfs)은 작업 후 `docker rm -f` 로 제거했다.
+  - [확실] 해시: 작업 트리 39개 전부 보고값(12자리)과 일치. 두 사본도 일치하고, 변이 52회 모두 복원 직후 해시를 다시 대조했다(불일치 0, 최종 재대조도 0).
+  - [확실] `dry-run.ts`·`snapshot-composition.ts`·`notify/throttle.ts` 는 `git diff HEAD` 0 이다. `fx.ts`·`kis-http.ts`·`kis-master.ts` 는 다른 세션(T-040) 미커밋 diff(mtime 10-18)가 있고 T-056 보고 목록에 없다. 격리 사본은 이 셋의 HEAD 버전을 쓰는데도 T-056 시험이 전부 통과하므로 의존이 없다.
+  - [확실] 무변이 사본에서 직접 실행: jest 165 스위트 / 3,761 테스트 전부 통과, `tsc --noEmit` 오류 0(Developer 보고와 같다). 단 `tsconfig.json` 이 테스트를 exclude 하므로(기존) 테스트 타입은 따로 `tsc -p`(테스트 포함)로 봤고 T-056 신규·수정 테스트의 신규 오류는 0이다(남은 51건은 무관 파일이며 수정된 `route.test.ts` 403-421줄의 4건은 T-056 diff 밖의 기존 오류).
+- [09:52] **요약.** CRITICAL 0 · MAJOR 0 · MINOR 7 · NIT 7. 소스 로직에서 거짓 발동·은폐·청산 불가를 만드는 결함은 찾지 못했다. 찾은 것은 (a) 핵심 불변식의 회귀망 구멍(변이 5종 생존), (b) 설계가 약속했으나 실제로는 도달 불가한 환율 실패 분기, (c) 전환 24h 알림 문구, (d) 롤백·전환 구간 제한이 배포 문서에 없음, (e) 배포 전 관문(장중 2회차 실측)이 아직 안 끝났다는 점이다. 그래서 무조건 통과가 아니라 조건부로 판정한다(맨 아래 조건 C-1~C-4).
+- [09:54] **집중 1 — "모름 → 0" 경로 전수.** 대상 17개 파일을 `?? 0`·`|| 0`·`Number(`·`catch {}`·`.catch(` 로 전수 grep 하고 호출자·소비자까지 따라갔다.
+  - [확실] T-056 이 만들거나 바꾼 경로에서 실패·누락·비유한 값이 0 이나 빈 값이 되는 곳은 `parseUsdCashFromPresentBalance` 분기 2(`kis-overseas.ts:296-302`) **하나뿐**이다. 분기 2 의 조건은 `rt_cd='0'` + output3 존재 + `frcr_evlu_tota` 유한 + `frcr_evlu_tota ≈ Σ output2 frcr_evlu_amt2`(±1) + `frcr_evlu_tota ≈ 0` + `tot_asst−evlu_amt_smtl−tot_dncl ≈ 0` 전부이고, 하나라도 어긋나면 던진다. 숫자 변환은 `strictNum`(정규식 `^-?\d+(\.\d+)?$`)이라 `''`·null·`'1e3'` 이 0 이 되지 않는다.
+  - [확실] 속성 시험(스크래치 `rev-fuzz.test.ts`): 실측 픽스처의 말단 필드 전부(output1 제외 79개)를 12가지 값(삭제·`''`·null·`'NaN'`·`'0'`·`'-1'`·`'1e3'`·문자·0·1e15·공백)으로 오염시킨 단일 2,208건, 필드 쌍(삭제·`''`·`'0'`·0 조합) 269,376건 모두에서 결과가 "던짐" 또는 원값 368.51 이외로 나온 경우가 0건이다. 구조 변조 16종(output2/3 삭제·null·`[]`·`[{}]`·`[null]`·rt_cd 숫자 0·USD 행 복제·통화 코드 변경 등)도 전부 던진다(소문자 `usd` 만 정상 인식). 잘린 응답은 0 으로 읽히지 않는다.
+  - [확실] 소비자: `/api/portfolio/route.ts:125` 의 fx `catch → 0` 은 USD 행이 `price_source='unknown'` 이 되어 `unpriced` 검사(503)로 닫힌다. `markets/status` 는 예수금 하나라도 모르면 전체 `balance:null`. 승인 맥락은 시장별 현금 행이 없으면 null(모름). `holdings` 테이블 `INSERT`(`/api/balances`)를 읽는 곳은 `src/` 에 0건이라 USD 행이 사라진 영향이 없다.
+  - [확실] 기존·범위 밖으로 남은 비슷한 모양: `markets/status/route.ts:54·60` 보유 시세 실패 → `?? 0`(표시 전용), `kis-overseas.ts:401` `fetchUsdKrwRate` 폴백 1. T-056 diff 가 건드리지 않았다.
+- [09:58] **집중 2 — 킬스위치 전환 규칙 E.** 코드(`kill-switch.ts:39-65`)는 `baseHas !== curHas` 일 때만 양쪽 행과 값을 뺀다. 부호·방향 정상. positions 를 읽을 수 없으면(null) 미적용 — MariaDB 의 `positions` 는 NOT NULL JSON(LONGTEXT)이라 실DB 에서는 문자열로 돌아오고 파서가 처리한다(R0).
+  - [확실] 기준선은 23~25시간 창에서 24h 에 가장 가까운 **한 행**이고 E 는 그 행의 형식만 본다 — 창 안에 구형·신형이 섞여도 판정은 둘 중 하나로 확정된다(코드 읽기 + 아래 매트릭스).
+  - [확실] 설계 S1~S10 직접 재검산: 운영 최신 행 구조(KRW + 국내 2 + 해외 3, 총 20,560,017, MU 64.6%)로 일회용 MariaDB 에 `portfolio_snapshots` 를 실제 INSERT 하고 **실제** `checkAndTriggerDrawdownKillSwitch`(풀·SQL 포함)를 돌렸다. 기준선 형식 × 현재 형식 × 사건 매트릭스(임계 10%, 알림은 목):
+
+| 기준선→현재 | 사건 | 기록상 총자산 변화 | 결과 |
+|---|---|---|---|
+| 구형→구형(오늘 코드) | 시장 -11% | -11.0% | 발동 |
+| 구형→구형 | MU par 매도 / MU -30% 매도 | 대금 미관측 | 둘 다 보류+critical (10-03 모양) |
+| 구형→신형(전환 24h) | 변화 없음 | +2.4% | 미발동 [E] |
+| 구형→신형 | 시장 -11% | -8.6% | 발동 [E] (USD 를 뺀 보유 기준으로 발동 — 정답) |
+| 구형→신형 | MU par 매도(대금 USD) | +2.2% | 보류+critical (S7) |
+| 구형→신형 | MU par 매도 + 잔여 -15% | -3.0% | 발동 [E] (S7b, 오늘과 같은 보수 방향) |
+| 구형→신형 | MU -30% 매도(대금 USD) | -17.0% | 보류+critical (개발자 보고 위험, 아래) |
+| 신형→신형(정상 운영) | 변화 없음 / 환율 +1%(USD 13M) | 0.0% / +0.4% | 미발동 / 미발동 |
+| 신형→신형 | 시장 -11% / MU par 매도 / 매도+잔여 -15% / MU -30% 매도 | -10.7% / -0.2% / -5.3% / -18.9% | 발동 / 미발동 / 미발동 / **발동** (정답) |
+| 신형→USD 없음(롤백·해외 비활성) | 변화 없음 / 시장 -11% | -2.3% / -13.0% | 미발동 [E] / 발동 [E] |
+| 신형(USD 13.35M)→USD 행만 빠짐 (S4/S8) | — | 0.0% | 미발동 [E] (2차 방어) |
+
+  - [확실] 개발자 표 S1~S10 의 판정과 모두 같은 방향이다. 신형→신형에서는 정상 매도 거짓 발동도, 실손실 은폐(-18.9% 손절이 발동)도 없다.
+  - [확실] **Developer 가 새로 보고한 위험(전환 24h 안 해외 손절 → 보류+critical)을 직접 재현했다**: 구형→신형 MU -30% 매도(기록상 -17.0%)가 보류로 간다. **판정: 수용 가능(조건부).** 근거: ① 같은 사건이 오늘 코드(구형→구형)에서도 똑같이 보류+critical 이다(매트릭스 위 두 행) — 회귀가 아니라 "개선 혜택이 24h 늦게 오는 것"이다. ② 보류는 `kill-switch:composition-suspected:NAS:MU` critical 알림으로 사람에게 간다(실DB 재현에서 알림 호출 확인). ③ 24h 한정(기준선이 신형 행이 되면 끝). ④ 발생에 수동 해외 매도가 필요하다 — 운영 DB 실측으로 `exit_engine_enabled=false`·`exit_hard_stop_enabled=false`, 최근 14일 주문 0건, T-055 는 1단계(읽기 전용)라 24h 안에 자동 매도가 나올 경로가 없다. ⑤ 대안(전환 구간에 USD 를 거래 정황으로 유지)은 정상 par 매도(S7)를 **발동**으로 바꿔 거짓 발동이 커진다 — 더 나쁜 쪽이다. 다만 **은폐 가능성 자체는 실재**하고 알림 문구가 이를 덜어 주지 못한다(R-5, 조건 C-2).
+- [10:02] **집중 3 — 한도·청산 우선·캐시.**
+  - [확실] `effectiveMaxFromPct`(`order-limits.ts:159-184`)는 전체가 try/catch 이고 동적 import 까지 안쪽이라 어떤 입력에서도 숫자를 돌려준다. unknown 은 사유 로그 + 0. `getPortfolioTotalsKRW`·`getMarketTotal` 도 던지지 않는다. 변이로 확인: unknown 에서 던지게 한 변이(M22)·catch 가 재던지는 변이(M22b)를 `order-limits-market-state`·`submit-order-sell-invariant` 가 잡았다(해외·국내 매도가 5개 조건 모두에서 `realSubmit` 까지 도달).
+  - [확실] 캐시 폴백: `usd_cash_unknown`·`fx_unavailable`·`krw_cash_unknown` 은 폴백하지 않고, 더 새로운 판정이 unknown 이면 `lastOk` 를 지운다(`portfolio-total.ts:171-175`). 폴백 부활 변이 M23·`lastOk` 삭제 제거 M24·USD unknown 을 보유만으로 계상 M25·KRW 요약 없음을 ok 로 M26·fx 실패 시 USD 누락 M43 모두 사망. `balances_failed` 의 직전값 폴백(나이 상한 없음)은 기존 동작이고 범위 밖(설계 R5)이다.
+  - [확실] 호출자 전수: 삭제된 `getPortfolioTotalByMarketKRW`·`getPortfolioTotalKRW` 의 잔존 호출은 `src/`·`scripts/`·`docs/` 에서 0건(테스트의 주석 언급 제외). `getPortfolioTotalsKRW` 는 `portfolio-total.ts` 내부에서만 쓰고 외부는 `getMarketTotal`(order-limits)·`getPortfolioTotalState`(trade-report)뿐이다. `MarketTotals.total` 제거의 파급은 테스트 쪽(이미 수정)뿐이고 `tsc` 0 오류가 이를 뒷받침한다.
+  - [확실] 한도 호출 자체의 지연 의존은 기존 구조(매도도 `dry-run.ts:164-165` 에서 이 계산을 await)이며 T-056 은 거기에 던지는 경로를 더하지 않았다. 호출 수는 `TTTS3007R`(늘 실패) 1회를 `CTRP6504R` 1회가 대체해 같다.
+- [10:08] **집중 4 — 저장 가드·크론·경보.**
+  - [확실] `savePortfolioSnapshot` 호출자는 크론 한 곳뿐이고(`route.ts:200`), 4번째 인자는 타입상 필수이며 누락 시 런타임에서도 `cash_row_missing` 으로 거부한다(M12 사망). `cash_row_missing` 은 릴리스 밸브 앞단(1b)이라 3시간 뒤에도 통과하지 않는다. `usdCashRequired` 는 `getBalancesDetailed().overseasEnabled`(같은 틱 값)이라 영구 거부 경로가 없다 — 실DB 로 최초 배포 첫 행(R1)·USD 0 행(C2)·해외 비활성(C4)·행 누락 거부(R3) 확인.
+  - [확실] 보류 경로(USD unknown / 환율 이상 / KRW 요약 없음)는 `holdForCash` 에서 즉시 반환하므로 `savePortfolioSnapshot`·킬스위치·변동성 가드가 실행되지 않는다 — 크론을 실DB 로 끝까지 돌려 C1 응답에 `drawdown` 키가 없고 C1·C3·C5 모두 INSERT 0건임을 확인했다.
+  - [확실] 경보(`confirmed-alert.ts`): 선기록(M31)·전달 0건 억제(M32)·in-flight 영구화(M33) 변이 모두 사망. 같은 틱 이중 전송은 in-flight 표시를 동기 구간에서 세워 막고, 걸린 전송은 10분 뒤 재전송, 전달 확인(`delivered.length>0`) 뒤에만 2h 억제한다. `notify_channel='none'` 이면 매 틱 재시도되고 `CRITICAL_ALERT_UNDELIVERED` 로그가 남는다(의도된 동작). 크론 응답은 알림을 기다리지 않는다.
+  - [확실] 같은 사건에 `dispatchAlert`(신규 키)와 `reportSnapshotBlindness`(`sendAlert`, 선기록 결함이 남은 Q10 별건)의 critical 이 둘 다 나갈 수 있다(C1 재현) — 중복이지만 한쪽이 유실돼도 다른 쪽이 남아 오히려 안전하다.
+- [10:12] **집중 5 — 국내 KRW 확장(Q3 + 한도).** 설계의 Q3 는 "스냅샷 규칙 +30줄"이었고 한도의 `krw_cash_unknown`(국내 신규 매수 차단)은 Developer 가 [09:13] ④로 밝힌 **설계 밖 확장**이다(MarketTotal 사유 3개 → 4개).
+  - [확실] 실DB 근거(읽기 전용): `portfolio_snapshots` 4,674행 중 KRW 행이 없는 행은 36개(0.77%)이고 전부 06-02~08-09 에 몰려 있으며(총액이 이웃 행보다 3~5M 낮은 T-012/T-014 이전 부분 실패 오염 행) 08-10 이후(09-01 이후 712행 포함) 0건이다. 이 행들은 "국내 호출은 성공인데 output2 요약만 없음"이 아니라 국내 잔고 호출 전체가 `[]` 로 삼켜지던 모양이다. 지금은 `complete=false` 로 따로 걸러진다. 즉 정상 국내 매수가 요약 누락으로 과도 차단될 근거 사건이 현재 코드 기준 0건이다.
+  - [가능성 높음] 차단 영향은 작다: 60초 캐시 TTL 안에 자동 재조회로 복구, 매도·청산 무영향, 한도는 어차피 평가액 비례라 국내 현금 요약 없이 산출한 값은 과소 계상(= 이미 보수 방향)이었다. **권고: 유지.** 근거는 위 빈도 + 방향 일관성(Q5 와 같은 규칙) + 코드 한 분기(`portfolio-total.ts:133-135`)라 되돌리기 쉽다. 단 사용자 결정 쟁점으로 Leader 가 한 줄 보고할 것(조건 C-4).
+- [10:16] **집중 6 — 실DB·실데이터 재현.** (a) 일회용 `mariadb:11`(`t056r-scratch`)에 `ensureSetup()` 으로 실제 스키마를 만들고 실제 풀로 실행. (b) 운영 최신 행(id 5385)·24h 기준선 행(id 5370)의 구조를 읽기 전용으로 가져와 USD 행을 얹은 현실 시나리오.
+
+| 시나리오(실DB) | 결과 |
+|---|---|
+| R0 JSON 컬럼 왕복 | MariaDB 가 `positions` 를 **문자열**로 돌려줌 — `parseSnapshotPositions`·`getPrevSnapshot`·승인 맥락이 모두 문자열을 파싱해 정상 |
+| R1 배포 직후 첫 행(구형 기준선+구형 직전 → USD 368.51 신형) | 저장 통과, E 적용, 발동 없음 |
+| R2 신형 정상 운영 중 MU 전량 매도(대금 USD) | 저장 통과(`holding_vanished` 없음), 발동 없음 |
+| R3 신형 환경에서 USD 행 누락 상태로 저장 시도(`usdCashRequired=true`) | `cash_row_missing` 으로 거부, INSERT 0 |
+| R4 USD 가 0 으로 오기록(S4b 잔여 위험, 실제는 13M) | 저장 통과 + **킬스위치 발동 -63.8%** — 설계가 "주문 정지 쪽 잔여 위험"으로 수용한 그대로 |
+| R5·R5b 전환 24h 해외 손절(par / -30%) | 보류+critical (위 매트릭스) |
+| R6 해외 비활성(`usdCashRequired=false`) | USD 사유 거부 없음. 단 해외 보유가 사라진 총액 변화로 기존 `median_band` 가 거부(기존 가드, T-056 무관) |
+| R7 환율 +1%(USD 13M) | 발동 없음 |
+| C1 크론 USD unknown | `skipped:usd_cash_unavailable`, INSERT 0, 킬스위치 미실행, critical 2건(확인경보 + 실명) |
+| C2 USD known 0 | USD 0 행 기록(`qty 0, price 환율, value_krw 0`) |
+| C3 KRW 요약 없음 | `skipped:krw_cash_unavailable`, INSERT 0 |
+| C4 해외 비활성 | USD 행 없이 저장, `cash.USD:null` |
+| C5 환율 NaN/0/-5/throw | 전부 `usd_cash_unavailable` 보류 (단 R-1 참조) |
+| C6 정상 | 총액 21,049,948 = 구형 합계 + 489,9xx(368.51×1329.49) |
+| C7 보유 시세 실패+평단 없음 | 기존 경로(보유 제외) 그대로 — USD 영향 없음 |
+
+  - [확실] 배포 직후 첫 행의 총액은 구형 최신 행(20,560,017)보다 USD 만큼(약 +2.4%) 커진다 — 대시보드 "오늘 손익"·거래 리포트·분석 화면에 1회성 불연속(설계가 이미 소비자 표에 적음).
+- [10:22] **집중 7 — 테스트 품질.** 변이 52종을 격리 사본에서 직접 재현했다(`scratchpad/t056rev-tools/mutate.py`·`mutate2.py`, 변이마다 전체 jest 실행 후 원본 복사·해시 재대조). **47종 사망, 5종 생존.** 사망 변이: Facade unknown→known 0(M01)·어댑터 HTTP 실패→0(M02)·분기 2 잔여 항등식 삭제(M03)·합계 항등식 삭제(M05)·허용오차 1→1000/0(M06·M07)·국내 요약 없음→0원 행(M09)·`cashNum('')`→0(M42)·Facade USD 필터 삭제(M10)·`cash_row_missing` 제거(M11)·플래그 미수신 fail-open(M12)·qty 음수 허용(M13)·행 개수 검사 완화(M14)·USD price 검사 삭제(M40)·E 부호 반전(M15)·E 현재만/기준선만 제거(M16·M17)·positions 유지(M18)·E 끔(M19)·E 한 방향만(M20)·positions null 에도 적용(M21)·한도 throw(M22·M22b)·캐시 폴백 부활(M23·M24)·USD unknown 보유만 계상(M25)·KRW 없음 ok(M26)·fx 실패 USD 누락(M43)·크론 요구 플래그 false 고정(M27·M39)·크론 KRW 0 행(M28)·크론 USD unknown 0 진행(M29)·환율 이상값 무시(M30)·경보 선기록·전달 0건 억제·영구 in-flight(M31~M33)·markets/status USD 0(M34)·/api/portfolio 검사 끔(M35)·승인 맥락 합산 복귀·행 없음 0(M37·M38)·`isOverseasEnabled` 느슨화(M41)·파서 음수 허용(M45)·rt_cd 검사 삭제(M46)·`overseasEnabled` 상수(M47)·output3 없음 허용(M48)·분기 1 정합 삭제(M49)·거래 리포트 null→0 표시(M51).
+
+| 생존 변이 | 판정 |
+|---|---|
+| M08 `strictNum('')`→0 | 단일·쌍 오염 271,584건에서도 오독 0 — 항등식 중복층 덕이다. 하지만 **모든 수치 필드가 `''` 인 응답**은 변이 코드에서 known 0 이 된다(직접 확인, 실코드는 throws). "빈 문자열 ≠ 0" 을 직접 고정한 시험이 없다 (R-2) |
+| M04 분기 2 `frcr_evlu_tota≈0` 삭제 / M44 USD 행 중복 허용 | 같은 방식으로 다른 항등식이 가려 줌 — 중복 방어 계층, 시험 없음 (R-2) |
+| M36 거래 리포트 라우트 `.catch(()=>null)`→`.catch(()=>0)` | 라우트 배선을 고정한 시험 없음(라우트 시험은 합계를 항상 ok 로 목 처리). 표시 경로 (R-3) |
+| M50 E 적용 뒤 기준선≤0 가드 삭제 | 시험 없음. 기준선이 전부 USD 인 비현실 입력 한정(삭제 시 기준선 0 에서 +Infinity, 현재도 0 이면 NaN 이 되어 발동 경로로 넘어간다) (R-12) |
+
+- [10:26] **기존 `expect` 변경 전수 판정**(`git diff HEAD`, Developer 가 밝힌 3건 + 내가 찾은 입력 변경):
+
+| 파일·시험 | 변경 | 판정 |
+|---|---|---|
+| `approval-context.test.ts` "실행 가능" | 해외 매수 현금 기대 3,500,000→500,000 | **의미 있는 계약 변경(강화)** — 옛 기대값은 KRW+USD 합산이라는 결함 자체를 고정했다. 시장별 4개 시험 + 배포 후 실제 모양 시험이 추가돼 순증 |
+| 〃 "50% 경계", "여러 사유", "한도 조회가 던지면" | 현금 행 KRW→USD (기본 심볼이 해외) | 입력 정렬, 경계·사유 기대 불변 |
+| 〃 "오늘의 실제 상황 현금 8만 원" | 해외 매수→국내 매수(`005930`) 입력, 기대 불변 | 약화 아님. 단 이 시험이 고정하던 "해외 매수에 원화를 현금으로 셈"은 사라졌고 구형 스냅샷의 해외 현금은 "모름"(R-8) |
+| `portfolio-total-dedup.test.ts` | `{0,0,0}`→`unknown(balances_failed)`, `.total>0`→`domestic.krw>0` | 계약 변경(필드 `total` 삭제, 숫자 0 → 명시 상태). 귀결(한도 0)은 같다. 약화 아님 — 시험명 "여전히 0/0/0" 이 낡음 (R-11) |
+| `kill-switch-composition.test.ts` M-2 | 기준선에 `USD 0` 행 추가 + 전환 구간 형제 시험 신설 | **허용, 단 보장 범위 축소를 명시**: "USD 유입이 거래 정황" 보장은 신형 대 신형에서만 유지된다. 전환 구간에서는 E 가 정황을 지운다 — 형제 시험이 같은 입력의 발동(다른 사유)을 고정하고, 지워진 정황의 대가가 위 매트릭스의 보류 행이다 |
+| `portfolio-snapshot-sanity.test.ts` | 4번째 인자 `NO_CASH_REQ` 추가 | 인자만, 기대 불변 |
+| `portfolio-snapshot-killswitch`·`portfolio-partial-balances`·`submit-order`·`order-limits-failsafe`·`trade-report route` 시험 | 목 모양(`getBalancesDetailed`·`getMarketTotal`·`getPortfolioTotalState`) 변경 | expect 불변 |
+
+  - [확실] 픽스처 `ctrp6504r-closed-20261020.json`: 계좌번호·토큰·앱키·실제 종목 코드(`STK1~5`·`종목A~E`로 일반화)·표준코드 없음을 스캔·파싱으로 확인했다. 금액(총자산 17,842,493 등)은 실측 원값이라 저장소(비공개) 안에 실계좌 규모가 남는다 (R-9).
+- [10:30] **집중 8 — 설계가 약속했으나 못 이룬 것.** "USD 소비자가 타입 오류로 드러난다"는 달성하지 못했다(`b.currency==='USD'` 가 타입상 유효). 대신 4곳을 수동 이전했고, 남은 `kis.getBalances()` 호출부(`/api/balances`·`settings/credentials/test`)는 USD 를 읽지 않음을 grep 으로 확인했다 [확실]. 앞으로의 재발 가드는 `types.ts:111-116` 주석 + Facade 방어 필터(M10 사망)뿐이고 **구조 시험이 없다** (R-4).
+- [10:34] **결함·권고 목록.** CRITICAL 0 · MAJOR 0.
+  - R-1 MINOR — `getUsdKrwRate()` 는 던지지 않는다(`fx.ts:126-162`: 외부 실패 → DB 의 낡은 값 → env `FX_USDKRW_FALLBACK` 1380). 그래서 크론의 환율 실패 보류(`route.ts:150-159`)·한도 `fx_unavailable`(`portfolio-total.ts:93-100`)·markets/status 환산 실패는 실제로는 도달하지 못하는 죽은 분기이고, 시험은 목이 던지게 해서 통과한다(C5). Developer 보고의 "환율 실패 → 저장 보류"는 실현되지 않았다. 방향은 0 이 아니라 낡은/기본 환율 사용이고 같은 틱의 보유 시세도 같은 환율이라 총액 일관성은 유지된다. 권고: 보고·시험 문구 정정, 필요하면 `isFxStale()`(24h) 가드를 별건으로.
+  - R-2 MINOR — 변이 M08·M04·M44 생존: 파서의 핵심 불변식을 직접 고정한 시험이 없다. 권고 시험 3개: (a) 수치 필드 전부 `''` 인 응답 → throws, (b) USD 행 없음 + 다른 통화 행에 값 있음 → throws(분기 2), (c) USD 행 2개(둘 다 0 값) → throws.
+  - R-3 MINOR — 변이 M36 생존: 거래 리포트 라우트의 "합계 모름 → null" 배선(`cron/trade-report/route.ts:172`)을 고정한 시험이 없다. 권고: `getPortfolioTotalState` 가 `unknown`/거부일 때 `formatReportMessage` 에 `null` 이 가는지 라우트 시험 1개.
+  - R-4 MINOR — 미래의 `kis.getBalances()` + `currency==='USD'` 소비자를 막는 구조 가드가 없다. 권고: 소스 전체에서 `currency === 'USD'` 사용처를 허용 목록(스냅샷 포지션·표시용 행)과 대조하는 grep 시험 1개.
+  - R-5 MINOR — 전환 24h 보류 알림이 "설명되지 않는 소실을 제외한 같은 조건 비교 2.3%" 를 앞세워 실손실을 과소 전달한다(재현: 기록상 -17.1% 인데 문구는 2.3%, `kill-switch.ts:334`). USD 값은 문구에 있으나 "USD 를 뺀 비교" 임이 한눈에 안 보인다. 권고: E 적용 알림에 "USD 포함 총액 기준 변화율" 병기(소스 한 줄, 판정 로직 무변경).
+  - R-6 MINOR(정책) — 국내 한도 `krw_cash_unknown`: 설계 밖 확장. 유지 권고(집중 5). 사용자에게 사실로 알릴 것.
+  - R-7 MINOR(절차) — 롤백 시 "USD 가 총액의 10% 이상이면 킬스위치 선행 수동 ON" 과 "배포 후 24h 해외 매도 시 보류 알림 수동 판단"이 task 문서에만 있고 `docs/deploy-order.md` 에는 없다(grep 0건). 롤백한 옛 코드에는 E 가 없어 -64.9% 거짓 발동이 나는 것은 설계 R6 로 이미 확인된 사실이다. 변동성 가드(10분 창)는 시간당 스냅샷이라 기준이 거의 최신 행 자신이 되어 실효 영향이 거의 없다(개발자 설명과 일치).
+  - R-8 NIT — 승인 맥락: 배포 후 첫 신형 스냅샷 전까지(최대 한 크론 주기) 해외 매수의 "현금 부족" 분류가 "모름 → 실행 가능"으로 바뀐다(현금 8만 원 계좌에서 오늘은 'cash' 로 분류됨). 알림 개별/요약 분류에만 쓰이고 fail-open 방향이다.
+  - R-9 NIT — 픽스처에 실측 금액 원값(총자산 규모) 포함. 계좌 식별자는 없다.
+  - R-10 NIT — `tsc --noEmit` 이 테스트를 검사하지 않는 기존 구성(`tsconfig.json` exclude)이라 jest(swc)는 타입을 안 본다. T-056 시험은 별도 검사로 깨끗하다.
+  - R-11 NIT — `portfolio-total-dedup.test.ts` 시험명 "잔고 조회 실패는 여전히 0/0/0" 이 낡았다.
+  - R-12 NIT — M50: E 적용 뒤 기준선≤0 가드(`kill-switch.ts:284-287`) 시험 없음.
+  - R-13 NIT [추측] — 분기 2 는 USD 행이 없고 **다른 외화** 행에 값이 있는 계정(다중 통화)이면 `frcr_evlu_tota≠0` 으로 영구 보류가 된다. 현재 계좌는 USD 단일이라 해당 없음.
+  - R-14 NIT — `kis-overseas.ts:401` 폴백 1, `markets/status/route.ts:54·60` `?? 0` 은 기존이며 T-056 범위 밖(참고).
+- [10:38] **QA 에 넘기는 high_risk_areas.** ① `parseUsdCashFromPresentBalance`(`kis-overseas.ts:239-302`) — 2회차(장중) 실측 응답을 같은 판정에 넣어 분기 1 정합이 ±1원 안인지(큰 USD 에서 환율 소수 자리 차이가 오차를 키우는지는 미관측 [추측]). ② 킬스위치 E(`kill-switch.ts:39-65, 268-290`) 전환 구간 알림 실제 문구. ③ 크론 보류 3경로의 알림 전달(`confirmed-alert.ts`) — 텔레그램 실제 수신. ④ 배포 직후 force 스냅샷 1회: USD 행·합계 항등·`price` = `fx_rates`·경보 0건. ⑤ 롤백 리허설(USD 소액일 때)과 해외 비활성 토글.
+- [10:40] **확인하지 못한 것(통과로 가정하지 않음).** (1) 장중(미국 정규장) CTRP6504R 응답 — 2회차 실측이 오늘 밤 23:07 KST 예약이라 아직 없다. 내 판정은 폐장 1회 픽스처에 의존한다. (2) 잔액 0 일 때 output2/output3 의 실제 모양(분기 2 는 가정, 다른 모양이면 영구 보류+critical 이고 탈출구 Q8 은 보류 상태). (3) `frcr_dncl_amt_2` 가 미결제 매도 대금을 포함하는지(체결기준 여부) — 첫 해외 매도 뒤에만 확정(T-055 2단계 관문). (4) KIS 점검 시간대 동작. (5) 통합증거금·원화주문 여부(승인 맥락의 시장별 현금 분리가 그 계좌에서 옳은지). (6) 텔레그램 실전송 — 알림은 목으로만 확인했다. (7) 실제 `next build`/PM2 기동·blue/green 배포 경로. (8) `src/lib/exchanges/`·`src/lib/safety/` 안의 **T-056 이 아닌** 파일(특히 T-040 의 `kis-http.ts`·`fx.ts`·`kis-master.ts`)은 검토하지 않았다.
+- [10:42] **scope 에 관한 단서.** 아래 마지막 줄의 `scope` 는 훅 호환을 위해 지시된 디렉터리 단위로 적었지만, **내가 실제로 읽고 실행해 검토한 것은 위 해시로 대조한 39개 파일과 그 호출자·소비자뿐**이다. 같은 디렉터리에 함께 staged 되는 다른 세션의 파일(T-040 `kis-http.ts`·`fx.ts`·`kis-master.ts`, T-055 관련, `src/lib/signals/` 의 `approval-notify.ts`·`service.ts` 등)은 이 판정으로 갈음하지 말고 각자의 감사를 받아야 한다. T-056 파일이 위 해시와 달라지면 이 판정은 무효다.
+- [10:44] **조건(CONDITIONAL).** C-1(배포 전) 2회차 장중 실측 결과를 같은 판정 규칙·픽스처에 대조하고, 모양이 달라 파서·판정을 고치면 Reviewer 재감사. C-2(배포 전) 배포 보고·`docs/deploy-order.md` 에 전환 24h 제한(해외 매도 시 보류 알림은 사람이 판단)과 롤백 선행 절차(R-7) 명시, 알림 문구 개선(R-5)은 권장. C-3(커밋 전) 시험 보강 R-2·R-3·R-4 — 소스 무변경이면 재감사 없이 Reviewer 가 변이 M08·M04·M44·M36 사망만 5분 재확인. C-4 Leader 가 사용자에게 R-6(국내 한도 확장)과 배포 후 첫 해외 매도 관측(단계 4)을 한 줄 보고. 배포 직후에는 force 스냅샷으로 USD 행·총액 항등·알림 0건을 확인한다.
+- [10:46] (라운드 1 종결 기록 — 라운드 2 의 마지막 줄이 대신한다) 라운드 1 결론은 conditional_pass 였고, 조건 C-1~C-4 중 코드·시험·문서에 해당하는 것이 라운드 2·3 에서 충족돼 아래에서 갱신됐다. scope 는 라운드 2 의 마지막 줄을 따른다.
+- [10:09] **라운드 2·3 재확인 시작(전체 재감사 아님).** Developer 가 시험 보강(라운드 2, 소스 무변경)과 R-5 알림 문구(라운드 3, 소스는 `kill-switch.ts` 하나)를 마쳤다. 변경분만 본다. 참고: 위 라운드 1 bullet 의 시각(09:50~10:46)은 작성 시 실제 시각과 맞지 않게 적은 값이다(10:46 은 지금 시각보다 뒤다). 시각 기준은 이 라운드 2 의 값이다.
+  - [확실] 해시 대조: `kill-switch.ts` fbb274daaa1a → afd9f82c7f86, `kis-overseas-usd-cash.test.ts` → 3e6226db6706, `kill-switch-usd-transition.test.ts` → 97d50fcc7982, 신규 `route-total-unknown.test.ts` 27c8b368806b · `usd-cash-balance-fence.test.ts` cc59fe51f91f · `kill-switch-transition-note.test.ts` 722c5a814d76 — 작업 트리 전부 보고값과 일치. 소스 나머지 16개와 기존 시험·픽스처 20개는 라운드 1 해시 그대로이고, `dry-run.ts`·`snapshot-composition.ts`·`throttle.ts` 는 여전히 `git diff HEAD` 0 이다. 격리 사본 `scratchpad/t056rev3`(HEAD + T-056 파일 39 + 신규 3, 즉 42개)을 새로 만들어 해시를 다시 대조했다. 앱 소스·운영 DB·KIS 접근은 0건이고, 일회용 `mariadb:11`(`t056r-scratch`)은 쓰고 `docker rm -f` 로 제거했다.
+- [10:09] **확인 1 — R-5 소스 변경이 판정을 바꾸지 않는다.** `diff -u` (라운드 1 사본 fbb274daaa1a ↔ 현재) 결과 변경 hunk 는 정확히 2개다. ① `isUsdRow` 와 `applyUsdSymmetricRemoval` 사이에 `transitionRawNote` 함수(주석 포함 약 31줄) 신설 ② 보류 분기(`composition_change_suspected`)에서 `console.error` 뒤·`sendAlertThrottled` 앞에 주석 1줄 + `const rawNote = transitionRawNote(usdNorm.applied, rawBaseline, curRows[0].total_krw);` 1줄 추가, 알림 본문 첫 줄을 `${detail}.\n` → `${rawNote}${detail}.\n` 로 한 줄 수정. 즉 "추가 2줄 + 수정 1줄"이다(요청서의 "두 줄"에 본문 연결 줄이 더해진다). 판정·분기·임계 비교(`drawdownPct > -thresholdPct`)·반환 객체·`detail`·발동 경로의 알림은 한 글자도 바뀌지 않았다 [확실]. 임계 비교 부호를 바꾸는 변이 N11 이 `kill-switch-usd-transition.test.ts` 에 잡히는 것으로 회귀망도 확인했다.
+  - [확실] **`detail` 에 새 줄을 붙이지 않은 선택은 타당하다.** `detail` 은 ① 반환 객체 ② `console.error` 문구 ③ 크론 응답의 `drawdown.detail` 이고, 반환값 불변 계약과 양립하려면 알림 본문에만 붙일 수밖에 없다. 사람이 읽는 채널은 알림이고, 반환 `detail` 에는 이미 `usdNote`(USD 를 뺀 비교임)가 있다. 비용은 로그·크론 응답에 기록상 변화율이 안 남는 것뿐이라 수용한다. 변이 N5(`detail` 에 note 를 붙임)가 사망하고 시험 `반환값 detail 은 바뀌지 않는다` 가 이를 고정한다.
+- [10:09] **확인 2 — `transitionRawNote` 는 던지지 않는다.** 코드: `applied` 가 거짓이면 빈 문자열, 아니면 본문 전체가 try/catch 이고 안쪽 `num` 은 `typeof` 로만 분기한다(객체의 `toString`·getter 를 건드리지 않는다). 직접 속성 시험(스크래치 `rev-note-fuzz.test.ts`): 입력 32종(Symbol·BigInt·BigInt(9×400)·`toString`/`valueOf`/`toPrimitive` 가 던지는 클래스·순환 객체·getter 가 던지는 객체·revoked Proxy·trap 이 던지는 Proxy·`Object.create(null)`·함수·1천만 자리 문자열·5백만 자리 소수·공백 5백만 개·`1e308`·`Number.MAX_VALUE`·`-0`·Date(무효 포함)·`new String`·전각/아랍 숫자 등) × 32종 × `applied` 6가지(true·false·undefined·1·'x'·{}) = 6,144 조합에서 **던진 경우 0건, 문자열 아닌 반환 0건, `applied=true` 일 때 `NaN`/`Infinity` 출력 0건** [확실]. 호출부: 현재 행 `total_krw` 가 숫자·숫자 문자열·`valueOf` 객체·BigInt 로 와도 보류 유지(발동·INSERT 0)를 확인했다 — 비정상 값은 문구에 `n/a` 로만 남는다. 호출부 `rawNote` 생성은 인자 접근(`usdNorm.applied`·`rawBaseline`·`curRows[0].total_krw`)뿐이라 구성 판정 try/catch 안에서 예외를 만들 경로가 없다.
+  - [확실] **뒤집힘 직접 재현:** 격리 사본에서 `transitionRawNote` 첫 줄에 `throw` 를 넣는 변이(N1)를 적용하고 같은 호출부 시험을 돌리니 4개 입력 모두 `{status:'evaluated', triggered:true}` + `system_config` INSERT 1건 — 보류가 발동으로 뒤집혔다(Developer 보고와 같다). 원본 코드는 같은 입력에서 보류다. N1 은 새 시험 2개 파일에서 41건 실패로 사망한다.
+- [10:09] **확인 3 — 라운드 2 시험이 생존 변이를 죽인다.** 내 변이 스크립트(`mutate.py`·`mutate2.py`)를 새 시험 위에서 재실행: **M08·M04·M44·M36·M50 전부 사망**(M08·M04·M44 → `kis-overseas-usd-cash.test.ts`, M36 → `route-total-unknown.test.ts`, M50 → `kill-switch-usd-transition.test.ts`, 각 2건 실패). 라운드 1 의 생존 5종이 0이 됐다. 추가로 R-5 용 변이 9종을 새로 만들어 돌렸다: N1(문구 코드 던짐)·N3(USD 뺀 값을 문구에 씀)·N4(본문에서 note 누락)·N5(`detail` 에 note)·N6(부호 반전)·N7(E 미적용에도 부착)·N8(금액 단위 오류)·N10(항상 0%)·N11(임계 부호) — **9종 모두 사망**. 변이마다 원본 복원 해시를 다시 대조했다(불일치 0).
+  - [확실] **구조 가드 `usd-cash-balance-fence.test.ts`:** (a) 오탐 — 격리 사본(168 스위트 통과)뿐 아니라 **현재 작업 트리 `src/` 전체(다른 세션의 미커밋 변경 포함)를 복사해** 같은 시험을 돌려도 3건 모두 통과했다. (b) 허용 목록 — 독립 grep(`currency` 와 `'USD'` 의 `===`/`==`)로 비-테스트 소스의 같음 비교를 다시 세어 **7개 파일 8곳**(portfolio route 1 · portfolio-total 1 · engine 1 · kill-switch 1 · Dashboard 2 · order-limits 1 · price-targets 1)이 허용 목록과 정확히 일치함을 확인했다. 각 항목의 사유(합성 표시 행·`continue` 건너뜀·스냅샷 행 판별·주문 요청 통화)도 코드로 맞다. (c) 우회 한계 — 정규식 변형을 직접 시험하니 원형(`find(b => b.currency === 'USD')`)·`==`·역순·옵셔널·템플릿 리터럴은 잡고, **상수 경유·`includes`/`Set.has`·`switch`·객체 질의 `find({currency:'USD'})` 중 `find` 외 경로·다른 변수명·여러 줄로 쪼갠 비교는 못 잡는다**(둘째 시험이 `.find(...'USD'...)` 한 줄 형태는 따로 잡는다). 판단: R-4 가 막으려던 현실적 재발은 "옛 크론·시장 현황·한도 코드의 복사"이고 그 모양은 확실히 잡는다. 적대적·우회형 작성은 못 막는 속도 방지턱이며 이 정도로 R-4 의 목적은 달성으로 본다. 잔여 한계는 NIT(R-15)로 남긴다.
+- [10:09] **확인 4 — 전체 실행·`expect` 변경.** 격리 사본 `t056rev3` 에서 직접: `tsc --noEmit` 0 오류, jest **168 스위트 / 3,825 테스트 전부 통과**(Developer 보고와 같다). 테스트 포함 `tsc -p` 의 오류 51건은 라운드 1 과 파일·메시지가 동일(신규 0). **기존 `expect` 삭제·변경 0 [확실]:** 수정된 2개 시험 파일을 라운드 1 사본과 `diff` 하니 각각 파일 끝에 한 덩어리(+81줄, +23줄)가 붙었을 뿐 `<`(삭제·변경) 줄이 0이다. 나머지 기존 시험·픽스처 20개는 해시가 라운드 1 과 같다.
+- [10:09] **확인 5 — 새 문구의 숫자.** 일회용 MariaDB 에 운영 최신 행 구조(기준선=구형 실제 행 20,560,017)와 현재(MU 매도 대금이 USD 로)를 INSERT 하고 실제 `checkAndTriggerDrawdownKillSwitch` 를 돌려, 알림 본문 첫 줄의 N·금액을 `SELECT total_krw` 로 읽은 값에서 다시 계산한 기대값과 비교했다.
+
+| 사건 | DB 기준선 → 현재 `total_krw` | 기대(재계산) | 알림 첫 줄 | 판정 |
+|---|---|---|---|---|
+| MU -30% 매도(대금 USD) | 20,560,017 → 17,066,264 | -17.0% (-3,493,753원) | -17.0% (-3,493,753원) | 보류 유지 |
+| MU par 매도 | 20,560,017 → 21,016,750 | 2.2% (456,733원) | 2.2% (456,733원) | 보류 유지 |
+| MU -12% 매도 | 20,560,017 → 19,456,474 | -5.4% (-1,103,543원) | -5.4% (-1,103,543원) | 보류 유지 |
+
+  - [확실] 3건 모두 N·금액이 글자까지 일치한다. 시험(`kill-switch-transition-note.test.ts`)의 -16.8% (-3,514,108원) 도 손으로 검산했다(구형 20,945,638 → 신형 17,431,530). 이로써 라운드 1 의 R-5(실손실 -17.1% 인데 "2.3%"만 표시)는 해소됐다 — 첫 줄이 기록상 변화를 앞세우고 "아래 수치는 USD 를 양쪽에서 뺀 값"임을 밝힌다. E 미적용(신형 대 신형·구형 대 구형) 보류와 발동 경로의 알림은 바뀌지 않는다(시험·N7 사망).
+- [10:09] **라운드 1 항목 현황.** 해소: R-2(M08·M04·M44 사망) · R-3(M36 사망) · R-4(구조 가드, 한계는 R-15) · R-5(문구, 숫자 검산) · R-7(`docs/deploy-order.md` 195-206줄 T-056 배포 직후 확인, 244줄 롤백 선행 ON 절차 — 내가 제시한 10% 보다 엄격한 5% 기준이라 수용) · R-12(M50 사망) · C-2(문서 부분)·C-3. 열려 있음(변경 없음): R-1 MINOR(`getUsdKrwRate` 는 던지지 않아 환율 실패 보류 분기가 도달 불가 — 보고 문구 정정 또는 별건), R-6 MINOR(국내 한도 확장 — Leader 가 사용자에게 보고, 조건 C-4), NIT R-8·R-9·R-10·R-11·R-13·R-14, 신규 NIT R-15(구조 가드의 우회 한계). 라운드 2·3 에서 새 결함은 찾지 못했다(CRITICAL 0 · MAJOR 0).
+- [10:09] **남은 것 — 판정 방식.** 라운드 1 의 조건 중 코드·시험·문서에 해당하는 것(C-2 문서, C-3 시험, R-5 문구)은 모두 충족됐다. 남은 C-1 은 코드 결함이 아니라 **외부 증거(장중 CTRP6504R 실측)가 아직 없다는 사실**이라, 판정을 올리되 **배포 게이트 G-1 로 분리**한다. **G-1(배포 전, Leader):** 오늘 23:07 KST 장중 2회차 응답을 같은 규칙·픽스처에 대조해 필드 이름·output3 항등식·USD 행 형식이 폐장 응답과 같음을 확인한다. 같으면 이 판정이 그대로 유효하다. **다르면 이 판정은 그 부분에 대해 무효**이고 파서·판정 수정 후 Reviewer 재감사를 받는다. G-1 이 끝나기 전에는 배포하지 않는다. 그 밖의 확인하지 못한 것(잔액 0 모양·체결기준 여부·KIS 점검 시간대·텔레그램 실전송·`next build`·blue/green)은 라운드 1 목록 그대로 유효하다.
+- [10:09] **scope 단서 갱신.** 아래 마지막 줄의 `scope` 는 훅 호환을 위한 디렉터리 단위 표기다. 실제로 읽고 실행해 검토한 것은 라운드 1 의 39개 파일(해시 대조)과 이번 6개(소스 1 + 시험 5, 그중 신규 3)와 그 호출자·소비자뿐이다. `src/lib/__tests__/` 에서는 `usd-cash-balance-fence.test.ts` 만 검토했고(같은 디렉터리의 `api-usage-callsites.test.ts` 등은 T-040 소관이라 검토하지 않았다), `src/app/api/cron/trade-report/` 에서는 `route.ts`·`__tests__/route.test.ts`·`__tests__/route-total-unknown.test.ts` 만 봤다. 같은 디렉터리의 다른 세션 파일(T-040 `kis-http.ts`·`fx.ts`·`kis-master.ts`, T-055 관련, `src/lib/signals/` 의 `approval-notify.ts`·`service.ts` 등)은 이 판정으로 갈음하지 말고 각자의 감사를 받아야 한다. 위 해시와 달라지면 이 판정은 무효다.
+- [10:09] (라운드 2·3 종결 기록 — 라운드 4 의 마지막 줄이 대신한다) 라운드 2·3 결론은 pass 였고, 라운드 4 에서 Codex C2 수정분을 재확인해 갱신됐다. scope 는 라운드 4 의 마지막 줄을 따른다.
+- [10:28] **라운드 4 재확인 시작(Codex C2 high 수정분만, 전체 재감사 아님).** 지적: 분기 1 이 `frst_bltn_exrt`(rate)가 숫자인지만 보고 양수인지는 안 봐서, USD 양수 + 환율 0 + 평가 0 + `frcr_evlu_tota` 0 이 모든 정합을 통과해 known USD 가 된다(총자산 과대 기록). Codex 전문과 Leader 결정(`## Codex C2`)은 읽기만 했다.
+  - [확실] 해시 대조: `kis-overseas.ts` 01793e887a07 → 3a0f7c29634c, `kis-overseas-usd-cash.test.ts` 3e6226db6706 → 29e8e5a2086a — 작업 트리가 보고값과 일치한다. 라운드 3 사본(`scratchpad/t056rev3`) 대비 바뀐 파일은 이 둘뿐이고 나머지 40개(`kill-switch.ts` afd9f82c7f86 등)는 그대로다. `dry-run.ts`·`snapshot-composition.ts`·`throttle.ts` 는 `git diff HEAD` 0 이다. 격리 사본에 이번 변경을 반영해 해시를 다시 대조했다(앱 소스·운영 DB·KIS 접근 0건).
+- [10:28] **확인 1 — 소스 diff 는 2줄뿐이다.** `diff -u`(라운드 3 사본 ↔ 현재): hunk 1개, 추가 2줄, 삭제·변경 0. 주석 1줄 + `if (!((rate as number) > 0)) fail(\`USD 행 환율(frst_bltn_exrt)이 양수가 아님 (${rate})\`);` 1줄이고 위치는 분기 1 의 숫자 검사(`rate == null || evlu == null`) 바로 뒤, `evlu` 정합 검사(`within(evlu, usd×rate)`) 바로 앞이다(`kis-overseas.ts:292-293`). 그래서 환율 0·음수는 정합 검사에 도달하기 전에 걸린다 [확실]. 판정 순서(rt_cd → output3 → Σ 항등식 → 분기 1/2)·반환값·분기 2·합계 항등식은 바이트 단위로 그대로다. 변이 R4e(검사를 정합 검사 뒤로 옮김)는 생존하는데, 0·음수 환율 응답이 정합 검사에 걸리든 먼저 걸리든 결과가 똑같이 던짐이고 오류 문구만 다르기 때문이다 — 동치 변이라 문제 없다.
+- [10:28] **확인 2 — 새 시험이 요구한 모양을 모두 고정한다.** 파일 끝에 `라운드 4` 블록 하나가 붙었다(+43줄, 삭제·변경 0 — `diff` 로 확인).
+  - (a) USD 1,000,000 + 환율 0 + 평가 0 + 합계 0 → `환율(frst_bltn_exrt)이 양수가 아님` 으로 던짐(Codex 가 지적한 바로 그 입력) (b) 환율 음수(평가·합계도 그 음수에 맞춤) → 던짐 (c) 환율 `NaN`·`abc`·`''`·`'  '`·`1e3`·필드 없음 6종 → 던짐(숫자 아님은 라운드 1 부터 막혀 있고 이 시험이 그 사실을 확인) (d) 오늘 픽스처 그대로 → known 368.51 (e) 아주 작은 양수 환율(0.0001)은 정합이 맞으면 known — **의도된 한계로 고정** (f) 환율 양수 + 평가 음수 → 정합 불일치로 던짐.
+  - [확실] 변이를 내 스크립트(`mutate4.py`)로 직접 재현: **R4(`rate>0` 검사 삭제) 사망**(2건 실패), **R4b(`>=0` 완화) 사망**(1건), 추가로 R4c(`!==0`, 음수 통과)·R4d(`===0` 만 거름, 음수 통과) 도 각 1건 실패로 사망. 환율 퇴행 매트릭스를 직접 돌려 같은 결론을 얻었다 — 환율 0·`0.00000000`·음수·`''`·`' '`·`NaN`·없음·`1e3` 은 USD 368.51/1,000,000/0 어느 쪽에서도 전부 던진다. 오늘 픽스처는 known 368.51 그대로다.
+- [10:28] **확인 3 — 기존 변이·전체 실행·`expect` 변경.**
+  - [확실] 기존 생존 변이 5종 재확인: **M08·M04·M44·M36·M50 전부 여전히 사망**(각 파일에서 1~2건 실패). 변이마다 복원 해시를 다시 대조했고 불일치 0이다. 참고: M08 은 이제 1건으로만 죽는다 — 라운드 2 의 "모든 수치 필드 빈 문자열" 시험이 새 환율 검사로도 던져지게 돼 그 시험만으로는 M08 을 가리지 못하고, 분기 2 의 빈 문자열 시험이 단독으로 잡는다. 고정력은 유지되지만 한 시험에 기댄다(NIT R-16).
+  - [확실] 격리 사본(HEAD + T-056 전체 + 라운드 4)에서 직접: `tsc --noEmit` 0 오류, jest **168 스위트 / 3,836 테스트 전부 통과**(Developer 보고와 같다). 테스트 포함 `tsc -p` 의 51건은 라운드 1 과 파일·메시지가 동일(신규 0). 파서 속성 시험(필드 79개 단일 오염 2,208건 + 쌍 269,376건)도 새 코드에서 "던짐 또는 원값 368.51" 외 결과 0건이다. **기존 `expect` 삭제·변경 0** — 수정된 시험 파일에 `<`(삭제·변경) 줄이 0이다.
+- [10:28] **확인 4 — Developer 가 밝힌 한계(작은 양수 환율)를 어떻게 볼 것인가: 수용을 권고, 앱 환율 괴리 밴드는 권고하지 않는다.**
+  - [확실] 한계의 실제 모양: `rate × usd` 가 ±1원 안(반올림 한 칸)이면 평가·합계가 `0` 이어도 정합이 맞는다. 직접 확인한 통과 입력: USD 368.51·환율 `0.0001`·평가 0.0369 → known, USD 1,000,000·환율 `0.0001`·평가 100 → known, USD 1,000,000·환율 `0.00000001`·평가 0.01 → known. 즉 "정확히 0" 은 막혔지만 "0 에 가까운 양수 + 그에 맞춘 평가·합계"는 같은 구멍이다. 단 KIS 형식(`"1332.10000000"`, 소수 8자리)에서 환율 필드의 미관측·무효 표현은 `"0.00000000"` 이지 `0.00000001` 이 아니다. 이 구멍을 쓰려면 KIS 가 환율·평가·합계 세 필드를 **서로 맞게 틀린** 양수로 줘야 하고 그런 응답을 낼 현실적 원인이 보이지 않는다 [가능성 높음].
+  - [확실] 앱 환율 대비 괴리 밴드의 비용: ① 앱 환율은 `getUsdKrwRate()`(던지지 않음 — 낡은 DB 값 → env 1380 폴백, R-1)라 밴드 기준이 낡은 값일 수 있어 **밴드가 오히려 false hold 의 직접 원인**이 된다. ② KIS `frst_bltn_exrt` 는 최초고시환율이라 하루 고정인데 앱 환율은 5분 단위로 움직여, 정상 응답에서도 같은 날 안에 어긋난다(08:24 KIS 1332.10 = 당시 앱 1332.1, 약 한 시간 뒤 운영 `fx_rates` 1329.49 → 0.196%). ③ 밴드가 지키는 것은 환율 필드 오염뿐이다 — 정작 위험한 `frcr_dncl_amt_2`(예수금 수량) 자체에는 독립 증거를 더하지 못한다(수량을 교차 검증할 외부 값이 응답에 없다). 이득 < 비용이다. 대안으로 정적 범위(예 100 ≤ 환율 ≤ 10,000, 앱 환율 비의존)는 비용·false hold 위험이 거의 없지만 막는 것도 "KIS 가 비현실적으로 작은 양수 환율을 줄 때"뿐이라 **필수 아님·선택 사항**이다. Leader 예비 판단(수용)에 동의한다. 시험 (e) 가 이 한계를 의도로 못 박아 둔 것도 적절하다(NIT R-17: 수용된 한계).
+- [10:28] **확인 5 — 새 검사가 정상 응답을 보류시킬 가능성: 결과는 항상 보류+critical 이고 0 으로 읽히지 않는다.**
+  - [확실] 경로: 새 검사는 `fail()` → `UsdCashUnavailableError` → `getUsdCash` 가 던짐 → Facade 가 `cash.USD = unknown` → 크론은 저장 보류 + `snapshot:usd_cash_unavailable` critical(킬스위치·변동성 가드 미실행), 한도는 해외 `usd_cash_unknown`(신규 매수 차단, 매도·국내 무영향), `/api/portfolio` 503, markets/status 전체 `null`. 라운드 1 의 모든 파서 실패와 같은 경로라 0 이나 빈 행을 만드는 갈래는 없다(위 속성 시험·환율 퇴행 매트릭스에서 환율 이상 입력은 전부 throws).
+  - [가능성 높음] 새로 보류되는 "정상으로 보일 수 있는" 모양은 둘이다. ① 장중·주말·공휴일에 `frst_bltn_exrt` 가 `"0.00000000"` 인 USD 행 — 이 경우 옛 코드는 (예수금 수량이 정확하다면) 맞는 값을 known 으로 받았고 지금은 보류다. ② 잔액 0 인 날 USD 행이 자리표시로 와서 환율도 0 인 모양(매트릭스 `usd=0, rate=0` → 던짐). 둘 다 **미관측**이다: 유일한 실측(폐장, 개장 전 08:24)은 정상 환율 `"1332.10000000"` 이었고, 이는 최초고시가 아직 없는 시각에도 직전 고시값이 유지된다는 신호로 읽힌다 [추측]. 장중·주말은 확인하지 못했다.
+  - 권고: **G-1 점검표에 "장중 응답의 USD 행 `frst_bltn_exrt` 가 양수인가"를 명시**하고, 가능하면 첫 주말 전에 읽기 전용 실측 1회(주말·공휴일 응답)를 더한다(사용자 승인 사항). 결과가 0 이면 보류가 정확한 동작이고, 그날 파서를 어떻게 할지는 새 실측으로 정한다.
+- [10:28] **라운드 4 결론·남은 항목.** 새 결함은 찾지 못했다(CRITICAL 0 · MAJOR 0). 신규 NIT 2건: R-16(M08 이 시험 한 곳에만 기댐), R-17(수용된 한계 — 작은 양수 환율). 나머지 열린 항목은 직전 기록 그대로다: MINOR R-1(환율 실패 보류 분기 도달 불가)·R-6(국내 한도 확장, 사용자 보고 C-4), NIT R-8~R-11·R-13~R-15. Leader 의 "분기 1 에 `tot_asst_amt` 항등식을 추가하지 않는다" 결정에 동의한다 — 그 항등식은 실측 한 점으로만 확인됐고(`tot_asst_amt` 는 국내 주식을 제외), 깨지는 날 USD 가 있는데도 영구 보류될 위험이 새 이득보다 크다.
+  - **G-1(배포 게이트, Leader) 유지:** 오늘 23:07 KST 장중 2회차 응답을 같은 규칙·픽스처에 대조해 필드 이름·output3 항등식·USD 행 형식이 폐장 응답과 같고 `frst_bltn_exrt` 가 양수임을 확인한다. 같으면 이 판정이 유효하고, 다르면 그 부분은 무효이며 파서·판정을 고친 뒤 Reviewer 재감사를 받는다. G-1 이 끝나기 전에는 배포하지 않는다.
+  - **scope 단서(변경 없음):** 아래 마지막 줄의 `scope` 는 훅 호환을 위한 디렉터리 단위 표기이며 실제 검토 범위는 지금까지 해시로 대조한 파일들(라운드 1 의 39개 + 라운드 2·3 의 6개 + 라운드 4 의 변경 2개 — 겹침 제외)과 그 호출자·소비자뿐이다. 같은 디렉터리의 다른 세션 파일(T-040 `kis-http.ts`·`fx.ts`·`kis-master.ts`, T-055 관련 등)은 이 판정으로 갈음하지 말고 각자의 감사를 받아야 한다. 위 해시와 달라지면 이 판정은 무효다.
+- [10:28] **최종 판정: PASS (scope: src/lib/exchanges/, src/lib/safety/, src/lib/signals/approval-context.ts, src/lib/signals/__tests__/approval-context.test.ts, src/app/api/cron/portfolio-snapshot/, src/app/api/cron/trade-report/, src/app/api/settings/safety/route.ts, src/app/api/portfolio/route.ts, src/app/api/markets/status/route.ts, src/lib/reports/, src/app/api/__tests__/, src/lib/__tests__/)**
 
 ## Leader 기록
 
@@ -292,3 +546,7 @@ updated: 2026-10-19
   - Q9(응답 정상 + USD 행 없음의 해석)는 실측 결과로 결정. Q10(`reportSnapshotBlindness` 선기록 결함)은 별건 후속.
   - Q3(국내 KRW 행 포함)·Q4(critical)·Q5(unknown 이면 해외 신규 매수 차단)·Q6(과거 불연속 그대로)는 앞서 정한 대로.
 - [10-19 23:50] **구현 착수 조건: 사용자의 단계 0(KIS 읽기 전용 실측, 장중·폐장 각 1회) 승인.** Developer 가 이 실측이 없으면 R1(잔액 0 통화를 생략하면 USD 0 인 날부터 모든 스냅샷이 영구 보류되는 데드락)과 R2(0 으로 처리하면 잘린 응답이 0 으로 읽혀 거짓 발동) 중 하나를 모른 채 고르게 된다고 지적했고 Leader 도 동의한다. 승인이 오면: 실측 → 설계의 Q9 확정 → (필요 시 Codex 재검토, judge C3) → 구현 → Reviewer → judge C2(Codex) → 장외 배포. 
+- [10-20 08:18] **사용자 승인 접수(단계 0).** Leader 가 "KIS 읽기 전용 조회, 장중과 폐장 각 1회 — 새 출처 필드 확인용, 주문이 아니라 잔고 조회, 앱이 평소 하는 조회와 같은 종류, '승인'이라고 답해 주시면 T-056 구현을 시작" 이라고 요청했고 사용자가 **"승인"** 이라고 답했다. 승인 범위 해석(Leader): ① 읽기 전용 조회 GET 만 — CTRP6504R(해외 체결기준현재잔고)·TTTS3007R(현행 폴백 호출)·TTTS3012R(`output2` 필드 확인) ② 폐장 1회(10-20 08:2x, 미국장 마감 뒤·국내장 개장 전)와 장중 1회(오늘 밤 미국 정규장 중) ③ 주문·정정·취소 계열 호출 절대 금지, 앱 외 경로로 토큰을 따로 발급하지 않음(앱의 인증 모듈 재사용) ④ 응답은 계좌번호·토큰·앱키를 가리고 금액·필드 이름만 기록. 이 범위를 넘는 호출이 필요해지면 다시 묻는다.
+- [10-20 08:30] **단계 0 폐장 회차 실측 검토(Leader).** Developer 가 08:23:58~08:24:01 KST 에 허용 경로 GET 3회(CTRP6504R·TTTS3012R·TTTS3007R, 간격 1.2초, 앱 캐시 토큰 재사용 — 새 발급 0·DB 쓰기 0)를 실행했다. Leader 가 직접 확인한 것 [확실]: ① 저장된 응답 파일(scratchpad `t056-kis-probe-20261020-0824.json`)에 토큰·앱키·계좌번호 없음(계좌는 `46***16` 형태로 마스킹, 8자리 숫자는 전부 금액·수량·환율 필드) ② 합계 항등식 재계산: 해외 보유 평가 17,271,463 + USD 490,892 + KRW 80,138 = 17,842,493 = `tot_asst_amt`. 확정된 사실: 현행 폴백 TTTS3007R 은 `ITEM_CD=''` 때문에 `rt_cd=7 APBN0746 상품이 없습니다` 로 **매번 실패**하고 그 실패가 `kis-overseas.ts:197` 에서 0 이 되어 왔다(앱은 해외 잔고 조회마다 실패하는 호출을 1회 해 왔다). 실제 USD 예수금 **368.51 USD = 490,892원**(최신 스냅샷 총액의 2.39%; 스냅샷 재구성 추정 0.3~0.4M 보다 큼). 앱이 모르는 **미니스탁 2종 53,699원**이 CTRP6504R 에만 있어 스냅샷은 KIS 기준 실제 자산보다 약 0.54M원(2.6%) 과소 — 기준선과 현재가 같은 방식으로 과소라 킬스위치 판단에는 중립이지만 사용자에게 알린다(범위 밖, 후속 후보: 분수 수량이 주문 수량의 정수 가정과 충돌).
+- [10-20 08:30] **Leader 결정(권고안 위임 범위):** ① Q9 판정 규칙(3분기 — 행 있음+정합=확인값 / 행 없음+output3 존재+항등식 0=확인된 0 / 그 밖=unknown→보류)을 채택한다. 정합·항등식 비교는 **±1원 허용**으로 통일(분기마다 정확 일치와 ±1원이 섞이지 않게; "0"도 |x|≤1 로 해석) — 반올림 한 칸 때문에 0 잔액 날에 영구 보류되는 것을 막되 그 외 불일치는 모두 보류. ② USD 평가에는 `output2` USD 행 `frcr_dncl_amt_2` 만 쓴다(`output3` 의 현금 합계는 KRW 가 섞여 이중 계상). ③ 미결제 보정은 넣지 않고 `ustl_sll_amt_smtl>0` 이면 스냅샷 행에 별도 필드(`unsettled_sell_usd`)로 기록만, 보정은 단계 4(첫 해외 매도 직후 관측)에서 결정 — T-055 2단계 관문 유지. ④ 미니스탁은 이번 범위 밖. ⑤ 설계 단계 judge C3: `codex_required=false`(Codex 재호출 없음, 호출 1건 사용) — 구현 뒤 judge C2 에서 다시 판정한다.
+- [10-20 08:30] **구현 착수.** 범위는 설계 문서 `변경 후보 파일` 표 + Q3(국내 KRW 행 동일 규칙) 포함, Q7(`dry-run.ts`) 제외, Q8 보류. 시험 픽스처는 오늘 실측 응답을 **익명화한 사본**(필드 이름·타입·수치 관계 유지, 종목 코드 일반화, 계좌 없음)으로 저장소에 넣는다. 장중(미국 정규장) 2회차 실측은 오늘 밤 23:07 KST 예약 — 결과가 응답 모양을 바꾸면 구현·픽스처를 고친다. 배포는 양시장 폐장·킬스위치 OFF 구간(05:10~08:30 또는 15:40~22:20 KST)에, 롤백 전에는 USD 가 클 때 킬스위치를 수동 ON(설계 문서 롤백 절).

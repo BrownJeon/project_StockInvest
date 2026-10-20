@@ -60,7 +60,9 @@ describe('실행 가능', () => {
     const r = await run();
     expect(r).toEqual({
       executable: true, reasons: [],
-      ctx: { totalKRW: 20_000_000, cashKRW: 3_500_000, dailyRemainingKRW: 1_900_000 },     // 현금 = KRW + USD 행
+      // T-056: 해외 매수(NAS:BKNG)의 현금 = **USD 행만**(500,000). 예전 기대값 3,500,000 은 KRW+USD 합산이었다 —
+      //        달러가 아닌 원화로는 해외 주식을 못 사고 그 반대도 같아서 시장별로 나눴다(계약 변경, task T-056 Developer 절).
+      ctx: { totalKRW: 20_000_000, cashKRW: 500_000, dailyRemainingKRW: 1_900_000 },
     });
   });
 
@@ -74,10 +76,11 @@ describe('실행 가능', () => {
 
   test('현금이 시그널 금액의 정확히 50% 이면 아직 실행 가능, 1원 모자라면 현금 부족', async () => {
     expect(CASH_SHORTFALL_RATIO).toBe(0.5);
-    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'KRW', value_krw: 500_000 }], ageMs: 60_000 } });
+    // T-056: 기본 심볼이 해외(NAS:BKNG)라 현금 행을 USD 로 둔다(시장별 현금). 경계 판정 자체는 그대로다.
+    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'USD', value_krw: 500_000 }], ageMs: 60_000 } });
     expect((await run()).executable).toBe(true);
     resetApprovalContextCache();
-    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'KRW', value_krw: 499_999 }], ageMs: 60_000 } });
+    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'USD', value_krw: 499_999 }], ageMs: 60_000 } });
     expect(await run()).toMatchObject({ executable: false, reasons: ['cash'] });
   });
 });
@@ -85,7 +88,14 @@ describe('실행 가능', () => {
 describe('실행 불가 사유', () => {
   test('🔴 오늘의 실제 상황 — 현금 8만 원, 매수 112만 원 → 현금 부족', async () => {
     world({ snapshot: { total_krw: 22_936_066, positions: [{ currency: 'KRW', value_krw: 80_000 }, { currency: 'NAS:MU', value_krw: 15_180_000 }], ageMs: 5 * 60_000 } });
-    expect(await run({ amountKRW: 1_121_925 })).toMatchObject({ executable: false, reasons: ['cash'], ctx: { cashKRW: 80_000 } });
+    // T-056: 이 스냅샷(배포 전 구형)에는 USD 행이 없다 → 해외 매수의 현금은 "모름" — 원화 8만 원을 해외 현금으로 세지 않는다.
+    //        같은 사실을 국내 매수로 보면 예전 판정(현금 8만 원 → 부족)이 그대로다.
+    expect(await run({ symbol: '005930', amountKRW: 1_121_925, price: 70_000 })).toMatchObject({ executable: false, reasons: ['cash'], ctx: { cashKRW: 80_000 } });
+  });
+
+  test('🔴 T-056 배포 후 실제 모양 — KRW 80,138 + USD 368.51(490,892원), 해외 매수 112만 원 → USD 만 보고 현금 부족', async () => {
+    world({ snapshot: { total_krw: 20_560_017, positions: [{ currency: 'KRW', value_krw: 80_138 }, { currency: 'USD', value_krw: 490_892 }, { currency: 'NAS:MU', value_krw: 13_259_446 }], ageMs: 5 * 60_000 } });
+    expect(await run({ amountKRW: 1_121_925 })).toMatchObject({ executable: false, reasons: ['cash'], ctx: { cashKRW: 490_892 } });
   });
 
   test('1회 한도(양수)를 금액이 넘으면 order_limit — 주문 경로의 실제 checkOrderMax 판정', async () => {
@@ -111,7 +121,7 @@ describe('실행 불가 사유', () => {
   });
 
   test('여러 사유가 겹치면 모두 적는다', async () => {
-    world({ used: 2_000_000, snapshot: { total_krw: 20_000_000, positions: [{ currency: 'KRW', value_krw: 1 }], ageMs: 60_000 } });
+    world({ used: 2_000_000, snapshot: { total_krw: 20_000_000, positions: [{ currency: 'USD', value_krw: 1 }], ageMs: 60_000 } });   // 해외 매수 → USD 행 (T-056)
     (getEffectiveOrderMax as jest.Mock).mockResolvedValue(500_000);
     expect((await run()).reasons.sort()).toEqual(['cash', 'daily_limit', 'order_limit']);
   });
@@ -192,7 +202,7 @@ describe('🔴 의심스러우면 보낸다 (fail-open)', () => {
   });
 
   test('한도 조회가 던지면 한도 사유를 만들지 않고, 현금 판정은 계속한다', async () => {
-    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'KRW', value_krw: 1 }], ageMs: 60_000 } });
+    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'USD', value_krw: 1 }], ageMs: 60_000 } });   // 해외 매수 → USD 행 (T-056)
     (getEffectiveOrderMax as jest.Mock).mockRejectedValue(new Error('db down'));
     expect(await run()).toMatchObject({ executable: false, reasons: ['cash'] });
   });
@@ -207,6 +217,33 @@ describe('🔴 의심스러우면 보낸다 (fail-open)', () => {
   test('현금 행의 값이 숫자가 아니면 0 으로 센다 (예외 없음)', async () => {
     world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'KRW', value_krw: 'abc' }, null, 5, { currency: 'USD' }], ageMs: 60_000 } });
     await expect(run()).resolves.toMatchObject({ executable: false, reasons: ['cash'], ctx: { cashKRW: 0 } });
+  });
+});
+
+describe('🔴 T-056 — 현금은 시장별로 본다 (달러로 국내 주식을 못 산다)', () => {
+  test('국내 매수는 KRW 행만 — USD 를 더하면 통과했을 금액도 현금 부족', async () => {
+    world();                                                                 // KRW 3,000,000 + USD 500,000
+    const r = await run({ symbol: '005930', amountKRW: 7_000_000, price: 70_000 });   // 기준 3,500,000
+    expect(r).toMatchObject({ reasons: expect.arrayContaining(['cash']), ctx: { cashKRW: 3_000_000 } });
+  });
+
+  test('해외 매수는 USD 행만 — KRW 를 더하면 통과했을 금액도 현금 부족', async () => {
+    world();
+    const r = await run({ amountKRW: 1_100_000 });                             // 기준 550,000 > USD 500,000
+    expect(r).toMatchObject({ reasons: expect.arrayContaining(['cash']), ctx: { cashKRW: 500_000 } });
+  });
+
+  test('그 시장의 현금 행이 없으면(구형 스냅샷) 모름 — 현금 사유를 만들지 않는다(의심스러우면 보낸다)', async () => {
+    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'KRW', value_krw: 1 }, { currency: 'NAS:MU', value_krw: 19_999_999 }], ageMs: 60_000 } });
+    expect(await run()).toMatchObject({ executable: true, reasons: [], ctx: { cashKRW: null, totalKRW: 20_000_000 } });
+    resetApprovalContextCache();
+    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'USD', value_krw: 1 }, { currency: '005930', value_krw: 19_999_999 }], ageMs: 60_000 } });
+    expect(await run({ symbol: '005930', price: 70_000 })).toMatchObject({ executable: true, reasons: [], ctx: { cashKRW: null } });
+  });
+
+  test('USD 0 행(확인된 0)은 모름이 아니라 0 — 해외 매수 현금 부족', async () => {
+    world({ snapshot: { total_krw: 20_000_000, positions: [{ currency: 'KRW', value_krw: 5_000_000 }, { currency: 'USD', value_krw: 0 }], ageMs: 60_000 } });
+    expect(await run()).toMatchObject({ executable: false, reasons: ['cash'], ctx: { cashKRW: 0 } });
   });
 });
 

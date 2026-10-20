@@ -301,7 +301,8 @@ export async function fetchOrderRows(opts: FetchOptions): Promise<OrderRow[]> {
 export interface BuildOptions {
   rangeStart: Date;
   rangeEnd: Date;
-  totalKRW: number;
+  /** 현재 총자산. null = 조회 불가(T-056 — 예수금·환율 확인 불가). 리포트 본문 계산에는 쓰지 않는다. */
+  totalKRW: number | null;
   baselineKRW: number | null;
   market?: Market;
   rows?: OrderRow[];           // 테스트 주입
@@ -536,7 +537,8 @@ function formatResearchSection(research: ResearchDigest, nameOf: (s: string) => 
  */
 export function formatReportMessage(
   rep: TradeReport,
-  totalKRW: number,
+  /** null = 현재 총자산 조회 불가(T-056). 0 으로 적지 않는다 — "총 자산 0원(-100%)" 같은 거짓 숫자가 나간다. */
+  totalKRW: number | null,
   baselineKRW: number | null,
   candidates?: SignalCandidates,
   research?: ResearchDigest | null,
@@ -549,7 +551,10 @@ export function formatReportMessage(
   lines.push(`🕐 분석 기간: ${fmtKstDate(rep.rangeStart)} ${fmtKstHHMM(rep.rangeStart)} ~ ${fmtKstHHMM(rep.rangeEnd)} KST`);
   lines.push('');
   lines.push('*포트폴리오*');
-  if (baselineKRW != null && baselineKRW > 0) {
+  if (totalKRW == null) {
+    lines.push(`• 총 자산: 조회 불가 (증권사 잔고·예수금·환율을 확인하지 못함)${
+      baselineKRW != null && baselineKRW > 0 ? `  (기간 시작 ${fmtKRWPlain(baselineKRW)})` : ''}`);
+  } else if (baselineKRW != null && baselineKRW > 0) {
     const deltaPct = ((totalKRW - baselineKRW) / baselineKRW) * 100;
     const sign = deltaPct >= 0 ? '+' : '';
     lines.push(`• 총 자산: ${fmtKRWPlain(totalKRW)}  (기간 시작 ${fmtKRWPlain(baselineKRW)}, ${sign}${deltaPct.toFixed(2)}%)`);

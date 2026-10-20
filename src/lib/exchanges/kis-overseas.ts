@@ -19,7 +19,7 @@ import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
 import { parseOverseas, formatOverseas, toOvrsExcgCd, type OverseasExchange } from './kis-symbols';
 import { submittedQuantity, unusableQuantityReason } from './order-quantity';
 import { getUsdKrwRate } from './fx';
-import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
+import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest, UsdCashReading } from './types';
 
 /**
  * 해외 시세 응답은 USD 원본. 룰·prefilter·indicator 계산은 KRW 가격 가정으로 일관 동작하도록
@@ -178,27 +178,168 @@ async function getDailyCandles(symbol: string, count: number): Promise<Candle[]>
     .slice(-count);
 }
 
-// ── 해외 매수가능금액(USD) 조회 — TTTS3007R(실전)/VTTS3007R(모의) ─────────────
-async function fetchOverseasUsdCash(): Promise<number> {
-  const trId = isMock() ? 'VTTS3007R' : 'TTTS3007R';
-  const defaultExcd = (process.env.KIS_OVERSEAS_DEFAULT_EXCHANGE ?? 'NAS') as OverseasExchange;
+// ── 해외 USD 예수금 — CTRP6504R(실전)/VTRP6504R(모의) 체결기준현재잔고 (T-056) ───
+//
+// ## 왜 바꿨는가 (2026-10-20 실측)
+//
+// 예전 경로는 ① TTTS3012R `output2` 의 `frcr_dncl_amt1 ?? frcr_dncl_amt ?? dnca_tot_amt` 를 읽었는데 그 응답에는 셋 다
+// **없다**(항상 0). ② 그래서 매번 TTTS3007R 매수가능금액 폴백을 불렀는데 `ITEM_CD=''` 때문에 `rt_cd=7 APBN0746 상품이 없습니다`
+// 로 **매번 실패**했고, 그 실패를 `!res.ok → 0`·`rt_cd≠0 → 0`·호출부 `.catch(() => 0)` 세 겹이 0 으로 바꿨다. 스냅샷 4,667행에
+// USD 행이 한 번도 없었던 이유다. 해외 매도 대금이 총자산에서 사라져 10-03 킬스위치 오발동의 한 원인이 됐다.
+//
+// ## 무엇을 읽는가
+//
+// `output2` USD 행의 `frcr_dncl_amt_2`(외화예수금액2) **하나만** 평가에 쓴다. `output3` 의 현금 합계(`tot_frcr_cblc_smtl`·
+// `tot_dncl_amt`·`wdrw_psbl_tot_amt`)는 원화 예수금이 섞여 있어(실측: `tot_frcr_cblc_smtl` = USD 원화값 + KRW 예수금) 쓰면
+// KRW 행과 **이중 계상**된다. `output3` 은 아래 정합 검사에만 쓴다.
+//
+// ## 판정 규칙 (설계 Q9 + Leader 결정 — 비교는 모두 ±1원)
+//
+//  1. `rt_cd='0'` + USD 행 정확히 1개 + `frcr_dncl_amt_2` 유한·≥0 + `frcr_evlu_amt2 ≈ frcr_dncl_amt_2 × frst_bltn_exrt`
+//     + `output3.frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2`                                  → **known = frcr_dncl_amt_2**
+//  2. `rt_cd='0'` + USD 행 없음 + output3 존재 + `frcr_evlu_tota ≈ 0` + `tot_asst_amt − evlu_amt_smtl_amt − tot_dncl_amt ≈ 0`
+//     (+ 1번과 같은 `frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2` — 자기모순 응답 차단, 구현 시 추가)
+//                                                                                          → **known = 0** (KIS 가 0 통화를 생략해도 데드락 없음)
+//  3. 그 밖 전부(HTTP≠200, `rt_cd≠'0'`, output3 없음, 항등식 불일치, 비유한 값, USD 행 2개 이상)  → **던진다** (호출부는 unknown)
+//
+// 🔴 **이 경로 어디에도 실패를 0 으로 바꾸는 지점이 없어야 한다.** 0 은 2번 분기(항등식이 0 을 확인)에서만 나온다.
+
+/** 정합·항등식 허용치 — 원화 반올림 한 칸. 분기마다 같은 값을 쓴다(Leader 결정 10-20 08:30). */
+export const USD_CASH_RECONCILE_TOLERANCE_KRW = 1;
+
+/** USD 예수금을 확인할 수 없다 — 0 으로 해석하지 말 것. */
+export class UsdCashUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UsdCashUnavailableError';
+  }
+}
+
+/**
+ * KIS 숫자 문자열(`"368.510000"`) → 유한한 숫자. 빈 문자열·null·`'abc'`·`'1e3'` 등은 null.
+ * `Number('')`·`Number(null)` 이 0 이 되는 것을 그대로 쓰면 "값 없음"이 확정적인 0 이 된다 — 그래서 형식을 먼저 본다.
+ */
+function strictNum(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+function within(a: number, b: number): boolean {
+  return Math.abs(a - b) <= USD_CASH_RECONCILE_TOLERANCE_KRW;
+}
+
+/**
+ * CTRP6504R 응답 본문 → USD 예수금. **순수 함수**(fetch·db 없음) — 판정 규칙 전부가 여기 있다.
+ * 규칙을 통과하지 못하면 `UsdCashUnavailableError` 를 던진다. 0 은 오직 2번 분기에서만 반환된다.
+ */
+export function parseUsdCashFromPresentBalance(data: unknown): { usd: number; ustlSllAmtSmtl: number } {
+  const fail = (why: string): never => { throw new UsdCashUnavailableError(`CTRP6504R USD 예수금 판정 불가 — ${why}`); };
+  if (!data || typeof data !== 'object') fail('응답 본문이 객체가 아님');
+  const d = data as Record<string, unknown>;
+  if (d.rt_cd !== '0') {
+    fail(`rt_cd=${String(d.rt_cd)} msg_cd=${String(d.msg_cd ?? '-')} msg=${String(d.msg1 ?? '').trim().slice(0, 120)}`);
+  }
+
+  const o3raw = d.output3;
+  const o3 = (Array.isArray(o3raw) ? o3raw[0] : o3raw) as Record<string, unknown> | undefined;
+  if (!o3 || typeof o3 !== 'object') fail('output3(합계) 없음');
+  const o3n = (key: string): number => {
+    const n = strictNum(o3![key]);
+    if (n == null) fail(`output3.${key} 가 숫자가 아님 (${JSON.stringify(o3![key])})`);
+    return n as number;
+  };
+
+  // output2: 통화별 행. KIS 는 한 행일 때 객체로 줄 수도 있어 배열로 맞춘다. null/undefined 는 "행 없음".
+  const o2raw = d.output2;
+  let rows: Record<string, unknown>[];
+  if (o2raw == null) rows = [];
+  else if (Array.isArray(o2raw)) rows = o2raw as Record<string, unknown>[];
+  else if (typeof o2raw === 'object') rows = [o2raw as Record<string, unknown>];
+  else return fail(`output2 형식 이상 (${typeof o2raw})`);
+
+  const frcrEvluTota = o3n('frcr_evlu_tota');
+  const ustlSll = strictNum(o3!.ustl_sll_amt_smtl);
+  const ustlSllAmtSmtl = ustlSll != null && ustlSll > 0 ? ustlSll : 0;
+
+  const usdRows = rows.filter(r => r && String(r.crcy_cd ?? '').trim().toUpperCase() === 'USD');
+  if (usdRows.length > 1) fail(`output2 에 USD 행이 ${usdRows.length}개`);
+
+  // 두 분기 공통 항등식: output3.frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2 (실측으로 확인된 관계).
+  // 분기 2 에도 적용한다 — USD 행은 없는데 다른 통화 행에 값이 있고 합계는 0 이라고 말하는 자기모순 응답을 0 으로 읽지 않게.
+  let sumEvlu = 0;
+  for (const row of rows) {
+    const v = strictNum(row?.frcr_evlu_amt2);
+    if (v == null) fail(`output2 ${String(row?.crcy_cd)} 행의 frcr_evlu_amt2 가 숫자가 아님`);
+    sumEvlu += v as number;
+  }
+  if (!within(frcrEvluTota, sumEvlu)) {
+    fail(`output3.frcr_evlu_tota=${frcrEvluTota} ≠ Σ output2.frcr_evlu_amt2=${sumEvlu}`);
+  }
+
+  if (usdRows.length === 1) {
+    // ── 분기 1: USD 행 있음 + 정합 ──
+    const r = usdRows[0];
+    const usd = strictNum(r.frcr_dncl_amt_2);
+    if (usd == null) fail(`frcr_dncl_amt_2 가 숫자가 아님 (${JSON.stringify(r.frcr_dncl_amt_2)})`);
+    if ((usd as number) < 0) fail(`frcr_dncl_amt_2 음수 (${usd})`);
+    const rate = strictNum(r.frst_bltn_exrt);
+    const evlu = strictNum(r.frcr_evlu_amt2);
+    if (rate == null || evlu == null) fail('USD 행의 frst_bltn_exrt·frcr_evlu_amt2 가 숫자가 아님');
+    // (Codex C2 high) 환율 0·음수면 `0 × usd = 0` 정합이 아무 예수금이나 통과시킨다 — 앱은 자체 환율로 환산하므로 총자산 과대 기록.
+    if (!((rate as number) > 0)) fail(`USD 행 환율(frst_bltn_exrt)이 양수가 아님 (${rate})`);
+    if (!within(evlu as number, (usd as number) * (rate as number))) {
+      fail(`USD 행 정합 불일치: frcr_evlu_amt2=${evlu} ≠ ${usd}×${rate}`);
+    }
+    return { usd: usd as number, ustlSllAmtSmtl };
+  }
+
+  // ── 분기 2: USD 행 없음 — output3 항등식이 0 을 확인할 때만 known 0 ──
+  if (!within(frcrEvluTota, 0)) fail(`USD 행이 없는데 output3.frcr_evlu_tota=${frcrEvluTota} ≠ 0`);
+  const residual = o3n('tot_asst_amt') - o3n('evlu_amt_smtl_amt') - o3n('tot_dncl_amt');
+  if (!within(residual, 0)) fail(`USD 행이 없는데 tot_asst_amt − evlu_amt_smtl_amt − tot_dncl_amt = ${residual} ≠ 0`);
+  return { usd: 0, ustlSllAmtSmtl };
+}
+
+/**
+ * 해외 USD 예수금 조회. **실패하면 던진다**(0 을 돌려주지 않는다). 토큰 만료(EGW00123)만 1회 재발급 후 재시도.
+ * 호출 수: 예전에 매 해외 잔고마다 실패하던 TTTS3007R 1회를 이 호출 1회가 **대체**한다.
+ */
+export async function getUsdCash(): Promise<UsdCashReading> {
+  const trId = isMock() ? 'VTRP6504R' : 'CTRP6504R';
   const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
   const params = new URLSearchParams({
-    CANO:         cano,
-    ACNT_PRDT_CD: acntPrdt,
-    OVRS_EXCG_CD: toOvrsExcgCd(defaultExcd),
-    OVRS_ORD_UNPR: '0',
-    ITEM_CD:      '',
+    CANO:              cano,
+    ACNT_PRDT_CD:      acntPrdt,
+    WCRC_FRCR_DVSN_CD: '02',   // 외화
+    NATN_CD:           '840',  // 미국
+    TR_MKET_CD:        '00',   // 전체
+    INQR_DVSN_CD:      '00',   // 전체
   });
-  const headers = await kisHeaders(trId);
-  const res = await kisFetch(`${BASE()}/uapi/overseas-stock/v1/trading/inquire-psamount?${params}`, { headers }, { label: 'overseas usdCash' });
-  if (!res.ok) return 0;
-  const data = await res.json();
-  if (data.rt_cd !== '0') return 0;
-  const o = data.output;
-  // ord_psbl_frcr_amt = 주문가능외화금액(USD), frcr_ord_psbl_amt1 = 외화매수가능금액
-  const usd = Number(o?.ord_psbl_frcr_amt ?? o?.frcr_ord_psbl_amt1 ?? 0);
-  return Number.isFinite(usd) ? usd : 0;
+  let attempt = 0;
+  for (;;) {
+    const headers = await kisHeaders(trId);
+    const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-present-balance?${params}`;
+    const res = await kisFetch(url, { headers }, { label: 'overseas usdCash' });
+    if (!res.ok) {
+      const body = kisBodyText(res) ?? await res.text().catch(() => '');
+      if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
+        await invalidateKisToken();
+        attempt++;
+        continue;
+      }
+      throw new UsdCashUnavailableError(
+        `KIS overseas usdCash(CTRP6504R): ${res.status} body=${body.slice(0, 200)}`
+        + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+      );
+    }
+    const data: unknown = await res.json();
+    const parsed = parseUsdCashFromPresentBalance(data);
+    return { usd: parsed.usd, source: 'CTRP6504R', ustlSllAmtSmtl: parsed.ustlSllAmtSmtl };
+  }
 }
 
 // ── 잔고 조회 ────────────────────────────────────────────────────────────────
@@ -207,7 +348,7 @@ async function fetchBalancesForExchange(
   cano: string,
   acntPrdt: string,
   trId: string,
-): Promise<{ usdAmount: number; items: Record<string, string>[] }> {
+): Promise<{ items: Record<string, string>[] }> {
   const params = new URLSearchParams({
     CANO:           cano,
     ACNT_PRDT_CD:   acntPrdt,
@@ -244,17 +385,12 @@ async function fetchBalancesForExchange(
       console.log(`  [${excd}][${idx}] cano=${cano}-${acnt_prdt_cd} pdno=${ovrs_pdno} excg=${ovrs_excg_cd} cblc_qty=${ovrs_cblc_qty} ord_psbl_qty=${ord_psbl_qty} loan_type=${loan_type_cd} prdt_type=${prdt_type_cd}`);
     });
   }
-  const summary = Array.isArray(data.output2) ? data.output2[0] : data.output2;
-  let usdAmount = 0;
-  if (summary) {
-    const usdRaw = summary.frcr_dncl_amt1 ?? summary.frcr_dncl_amt ?? summary.dnca_tot_amt ?? 0;
-    usdAmount = Number(usdRaw);
-  }
-  return { usdAmount, items: data.output1 ?? [] };
+  // T-056: TTTS3012R `output2` 에는 예수금 필드가 없다(실측) — 여기서 USD 를 읽지 않는다. 예수금은 `getUsdCash()`.
+  return { items: data.output1 ?? [] };
 }
 
 /**
- * 해외주식 잔고 조회.
+ * 해외주식 **보유 종목** 조회. USD 예수금 행은 만들지 않는다(T-056 — `getUsdCash()` 로 분리).
  * TTTS3012R (OVRS_EXCG_CD=NASD) 는 NYSE·AMEX 보유 종목까지 모두 반환한다 (KIS 동작 확인됨).
  * NYSE·AMEX exchange code 로 별도 쿼리를 보내면 KIS 가 "토큰 만료" 오류를 반환하므로
  * NASD 단일 조회로만 전체 해외 보유 포지션을 가져온다.
@@ -269,13 +405,6 @@ export async function getBalances(): Promise<Balance[]> {
 
   const result = await fetchBalancesForExchange('NAS', cano, acntPrdt, trId);
   const balances: Balance[] = [];
-
-  if (result.usdAmount > 0) {
-    balances.push({ currency: 'USD', free: result.usdAmount, locked: 0 });
-  } else {
-    const fallback = await fetchOverseasUsdCash().catch(() => 0);
-    if (fallback > 0) balances.push({ currency: 'USD', free: fallback, locked: 0 });
-  }
 
   for (const item of result.items) {
     const qty = Number(item.ovrs_cblc_qty ?? item.hldg_qty ?? 0);

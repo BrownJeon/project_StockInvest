@@ -24,8 +24,25 @@ const actualKis = jest.requireActual('@/lib/exchanges/kis') as {
 };
 const { BalancesIncompleteError } = actualKis;
 
+/**
+ * T-056: 크론·대시보드는 현금 상태까지 받으려고 `getBalancesDetailed()` 를 쓴다. 이 파일의 테스트 본문은 종전처럼 `getBalances`
+ * (배열 또는 `BalancesIncompleteError` 거부)를 설정하고, 아래 어댑터가 그것을 상세 결과 모양으로 바꾼다. 해외는 비활성으로 두어
+ * USD 요구가 없다 — USD 예수금 경로는 `portfolio-snapshot-usd-cash.test.ts` 가 다룬다.
+ */
 jest.mock('@/lib/exchanges/kis', () => ({
   ...(jest.requireActual('@/lib/exchanges/kis') as object),
+  getBalancesDetailed: async () => {
+    try {
+      const balances = await getBalances();
+      return { balances, ok: ['domestic'], failed: [], complete: true, cash: { USD: { state: 'not_queried' } }, overseasEnabled: false };
+    } catch (e) {
+      const err = e as { failed?: unknown; okMarkets?: unknown };
+      if (Array.isArray(err.failed)) {
+        return { balances: [], ok: err.okMarkets ?? [], failed: err.failed, complete: false, cash: { USD: { state: 'not_queried' } }, overseasEnabled: false };
+      }
+      throw e;
+    }
+  },
   kis: {
     getBalances: (...a: unknown[]) => getBalances(...a),
     getTicker:   (...a: unknown[]) => getTicker(...a),

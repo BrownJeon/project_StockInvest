@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
-import { kis, BalancesIncompleteError } from '@/lib/exchanges/kis';
+import { kis, getBalancesDetailed, BalancesIncompleteError } from '@/lib/exchanges/kis';
+import { getUsdKrwRate } from '@/lib/exchanges/fx';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import {
   savePortfolioSnapshot, checkVolatilityGuard, reportSnapshotBlindness,
   type SnapshotPosition,
 } from '@/lib/safety/volatility-guard';
+import { sendAlertUntilDelivered } from '@/lib/safety/confirmed-alert';
 import { checkAndTriggerDrawdownKillSwitch, isKillSwitchActive } from '@/lib/safety/kill-switch';
 import { getPool } from '@/lib/db';
 import { getCurrentMarket } from '@/lib/strategy/market-hours';
@@ -25,6 +27,51 @@ function notifyBalancesIncomplete(detail: string): void {
     `${detail}\n낮은 총액을 기록하면 킬스위치 24h 기준선이 오염되므로 이번 회차는 기록하지 않았습니다. `
     + '다음 주기에 자동 복구되며, 반복되면 KIS 레이트리밋(EGW00201) 상태를 확인하세요.',
   );
+}
+
+/**
+ * (T-056) 현금 행을 확인하지 못해 저장을 보류했다 — **critical, 전달 확인 뒤 2시간 억제**.
+ *
+ * 이 동안에는 킬스위치가 돌지 않고(저장 뒤에만 실행된다), `kill-switch:stale-current` 경보도 같은 이유로 나가지 않는다.
+ * 그래서 이 경보와 `reportSnapshotBlindness` 가 운영자에게 닿는 통로다. 첫 전달이 실패하면 다음 틱에 다시 보낸다.
+ * 잔고 부분 실패 경보(30분 warning)와 키를 나눠 서로의 스로틀에 먹히지 않게 한다.
+ */
+const CASH_ALERT_SUPPRESS_MS = 2 * 60 * 60 * 1000;
+type CashHoldReason = 'usd_cash_unavailable' | 'krw_cash_unavailable';
+
+function notifyCashUnavailable(reason: CashHoldReason, detail: string): void {
+  const usd = reason === 'usd_cash_unavailable';
+  sendAlertUntilDelivered(
+    `snapshot:${reason}`,
+    'critical',
+    usd ? '🚨 포트폴리오 스냅샷 보류 — 해외 USD 예수금 확인 불가'
+        : '🚨 포트폴리오 스냅샷 보류 — 국내 KRW 예수금 확인 불가',
+    `${detail}\n`
+    + '예수금을 모르는 채 총액을 기록하면(행 생략 = 0원) 킬스위치 24h 기준선이 오염되어 거짓 발동하거나 실제 손실을 놓칩니다. '
+    + '이번 회차는 기록하지 않았습니다.\n'
+    + '**보류가 이어지는 동안 24h drawdown 자동 발동은 동작하지 않습니다.**\n'
+    + (usd
+      ? '해외 신규 매수 한도도 0 으로 막힙니다(매도·청산은 계속). KIS CTRP6504R 응답·토큰·레이트리밋(EGW00201)과 환율 조회를 확인하세요.'
+      : 'KIS 국내 잔고 응답의 예수금 요약(output2)을 확인하세요.'),
+    CASH_ALERT_SUPPRESS_MS,
+  );
+}
+
+/**
+ * (T-056) 현금 행을 확인하지 못한 틱 — **저장하지 않고, 이 회차 킬스위치·변동성 가드도 돌리지 않는다**(잔고 부분 실패와 같은
+ * 처리). 직전 값을 복사해 저장하지 않는 이유는 아래 catch 주석("없는 관측을 지어내지 않는다")과 같다.
+ */
+async function holdForCash(reason: CashHoldReason, detail: string): Promise<NextResponse> {
+  console.error(`[cron/portfolio-snapshot] ${reason} — 스냅샷 보류: ${detail}`);
+  notifyCashUnavailable(reason, detail);
+  const freshness = await reportSnapshotBlindness(reason, 'hourly').catch(() => null);
+  return NextResponse.json({
+    ok: true,
+    skipped: reason,
+    detail,
+    snapshotAgeMin: freshness?.ageMs != null ? Math.round(freshness.ageMs / 60_000) : null,
+    blindness: freshness?.level ?? 'unknown',
+  });
 }
 
 // 양시장 마감 + 최근 스냅샷 존재 시 KIS 호출 생략 (price 변동 없음)
@@ -63,36 +110,61 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // T-012: 한 시장이라도 조회 실패면 던진다. 아래 catch 에서 스냅샷을 **건너뛴다**.
+    // T-012: 한 시장이라도 **보유** 조회 실패면 던진다. 아래 catch 에서 스냅샷을 **건너뛴다**.
     // (기록을 남기지 않는 쪽이, 낮은 총액을 남기는 쪽보다 안전하다 — 근거는 catch 주석)
-    const balances = await kis.getBalances();
+    // T-056: 현금 상태(cash.USD)는 보유 완결성과 독립이라 `getBalancesDetailed()` 로 함께 받는다.
+    const detailed = await getBalancesDetailed();
+    if (!detailed.complete) throw new BalancesIncompleteError(detailed.failed, detailed.ok);
+    const balances = detailed.balances;
+    // 저장 가드에 넘길 "이 틱에 USD 행이 있어야 하는가" — 잔고를 조회한 바로 그 값(같은 틱 안에서 판정이 엇갈리지 않게).
+    const usdCashRequired = detailed.overseasEnabled;
 
-    // KRW/USD 예수금과 보유 종목(국내 6자리 / 해외 EXCD:TICKER) 분리
-    const krwBalance      = balances.find(b => b.currency === 'KRW');
-    const usdBalance      = balances.find(b => b.currency === 'USD');
-    const stockHoldings   = balances.filter(b => b.currency !== 'KRW' && b.currency !== 'USD');
+    // KRW 예수금과 보유 종목(국내 6자리 / 해외 EXCD:TICKER) 분리. USD 는 `balances` 에 없다(cash.USD 로만 온다).
+    const krwBalance    = balances.find(b => b.currency === 'KRW');
+    const stockHoldings = balances.filter(b => b.currency !== 'KRW' && b.currency !== 'USD');
 
-    // KRW free = D+2 확정 예수금(즉시 사용 가능), locked = 결제 대기 중. 자산 평가는 free만 포함.
-    const krwFree   = Number(krwBalance?.free ?? 0);
-    const krwLocked = Number(krwBalance?.locked ?? 0);
-    let totalKRW = krwFree;
-    const positions: SnapshotPosition[] = [];
-
-    if (krwBalance && (krwFree > 0 || krwLocked > 0)) {
-      positions.push({ currency: 'KRW', qty: krwFree, price: 1, value_krw: krwFree, locked: krwLocked });
+    // ── T-056 Q3: KRW 예수금 — 요약이 없으면 0원 행을 만들지 않고 **보류** ──
+    if (!krwBalance) {
+      return await holdForCash('krw_cash_unavailable',
+        '국내 잔고 응답에 예수금 요약(output2)이 없거나 값이 숫자가 아닙니다 — KRW 예수금을 확인할 수 없음');
     }
+    // KRW free = D+2 확정 예수금(즉시 사용 가능), locked = 결제 대기 중. 자산 평가는 free만 포함.
+    const krwFree   = Number(krwBalance.free);
+    const krwLocked = Number(krwBalance.locked);
+    let totalKRW = krwFree;
+    // 잔액 0 이어도 **항상** 기록한다 — "행 없음"과 "확인된 0"을 구분하기 위해서다.
+    const positions: SnapshotPosition[] = [
+      { currency: 'KRW', qty: krwFree, price: 1, value_krw: krwFree, locked: krwLocked },
+    ];
 
-    // USD 예수금은 환율 환산
-    if (usdBalance) {
-      const usdQty = Number(usdBalance.free) + Number(usdBalance.locked);
-      if (usdQty > 0) {
-        try {
-          const { usdToKrw } = await import('@/lib/exchanges/fx');
-          const usdValueKRW = await usdToKrw(usdQty);
-          totalKRW += usdValueKRW;
-          positions.push({ currency: 'USD', qty: usdQty, price: usdValueKRW / usdQty, value_krw: usdValueKRW });
-        } catch { /* fx 실패 시 USD 제외 */ }
+    // ── T-056: USD 예수금 — 해외 활성이면 반드시 known 이어야 하고, 같은 틱 환율 하나로 환산 ──
+    let usdCash: number | null = null;
+    if (usdCashRequired) {
+      const c = detailed.cash.USD;
+      if (c.state !== 'known') {
+        return await holdForCash('usd_cash_unavailable',
+          c.state === 'unknown'
+            ? `해외 USD 예수금 조회 실패: ${c.error}`
+            : '해외 시장이 활성인데 USD 예수금을 조회하지 않았습니다(not_queried)');
       }
+      let rate: number;
+      try {
+        rate = Number(await getUsdKrwRate());
+      } catch (e) {
+        return await holdForCash('usd_cash_unavailable',
+          `USD/KRW 환율 조회 실패 — USD 예수금(${c.usd} USD)을 환산할 수 없음: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (!Number.isFinite(rate) || !(rate > 0)) {
+        return await holdForCash('usd_cash_unavailable', `USD/KRW 환율 값 이상(${rate}) — USD 예수금을 환산할 수 없음`);
+      }
+      const usdValueKRW = c.usd * rate;
+      totalKRW += usdValueKRW;
+      usdCash = c.usd;
+      positions.push({
+        currency: 'USD', qty: c.usd, price: rate, value_krw: usdValueKRW, locked: 0, src: c.source,
+        // 미결제 매도 금액은 기록만 한다(총액 미반영) — 단계 4 판별 자료
+        ...(c.ustlSllAmtSmtl > 0 ? { ustl_sll_amt_smtl: c.ustlSllAmtSmtl } : {}),
+      });
     }
 
     // 보유 종목 — symbol == currency (국내 6자리 또는 해외 EXCD:TICKER)
@@ -125,7 +197,7 @@ export async function POST(req: NextRequest) {
       positions.push({ currency: b.currency, qty, price, value_krw });
     }
 
-    await savePortfolioSnapshot(totalKRW, positions, 'hourly');
+    await savePortfolioSnapshot(totalKRW, positions, 'hourly', { usdCashRequired, krwCashRequired: true });
 
     // 24h drawdown 기반 Kill Switch 자동 발동 (Phase 0, 2026-08-02 배선).
     // 방금 저장한 스냅샷이 '현재 자본'이 되므로 반드시 savePortfolioSnapshot 이후에 호출한다.
@@ -155,6 +227,8 @@ export async function POST(req: NextRequest) {
       ok: true,
       totalKRW: Math.round(totalKRW),
       positions: positions.length,
+      // T-056 배포 직후 첫 행 확인용 — 이 틱에 기록한 현금(USD 는 해외 비활성이면 null)
+      cash: { KRW: krwFree, USD: usdCash },
       volGuard: { level: volCheck.level ?? 'ok', changePct: volCheck.changePct },
       killSwitch: killSwitchActive,
       drawdown,

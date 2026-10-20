@@ -198,6 +198,25 @@ export interface SnapshotPosition {
   price:     number;
   value_krw: number;
   locked?:   number;
+  /** 현금 행의 출처 (T-056 — USD 는 `'CTRP6504R'`). 판정에 쓰지 않는다. */
+  src?:      string;
+  /**
+   * (USD 행 전용, T-056) KIS `output3.ustl_sll_amt_smtl`(미결제매도금액합계) 원값 — 0 보다 클 때만 기록. **총액에 넣지 않는다.**
+   * 첫 해외 매도 직후(단계 4) 예수금이 체결기준인지 판별하는 사후 자료다.
+   */
+  ustl_sll_amt_smtl?: number;
+}
+
+/**
+ * 이 틱에 **반드시 있어야 하는 현금 행** (T-056). 크론이 그 틱에 실제로 쓴 시장 활성 값을 그대로 넘긴다.
+ * 직전 행과 비교하지 않는다 — 그래서 최초 배포 첫 행·비활성→활성 첫 행도 정상으로 저장되고,
+ * 활성→비활성 뒤에는 USD 를 요구하지 않아 데드락이 없다(Codex C1-3).
+ */
+export interface SnapshotCashRequirement {
+  /** 해외 시장 활성 틱이면 true — USD 행이 정확히 1개, qty 유한·≥0, price(환율) > 0 이어야 저장한다 */
+  usdCashRequired: boolean;
+  /** 국내 KRW 행 (Q3) — 크론은 항상 true. KRW 행이 정확히 1개, qty 유한·≥0, price 가 1 이어야 저장한다 */
+  krwCashRequired: boolean;
 }
 
 export type SnapshotRejectCode =
@@ -206,7 +225,8 @@ export type SnapshotRejectCode =
   | 'total_mismatch'        // Σvalue_krw ≠ totalKRW
   | 'abs_band'              // 절대 상·하한 이탈
   | 'median_band'           // 24h median ±5배 이탈
-  | 'holding_vanished';     // 보유 종목이 현금 이동 없이 소실
+  | 'holding_vanished'      // 보유 종목이 현금 이동 없이 소실
+  | 'cash_row_missing';     // (T-056) 이 틱에 있어야 할 현금 행(USD·KRW)이 없거나 값이 이상 — 릴리스 밸브 없음
 
 export interface SnapshotReject {
   code:   SnapshotRejectCode;
@@ -356,6 +376,55 @@ export function validateSnapshotPositions(
       code: 'total_mismatch',
       detail: `Σvalue_krw=${Math.round(sum)} ≠ total=${Math.round(totalKRW)} (허용 ±${Math.round(tol)})`,
     };
+  }
+  return null;
+}
+
+/**
+ * (T-056) **이 틱에 있어야 할 현금 행 검사** — DB 불필요 순수 함수.
+ *
+ * 왜 필요한가: 저장 가드의 소실 판정(`checkHoldingVanished`)은 현금을 판정 대상에서 뺀다(출금은 정상이므로). 그래서 해외 매도로
+ * USD 행이 총액의 64% 가 된 뒤 그 행이 조용히 빠지면, 그 행은 "현금 출금"처럼 보여 그대로 저장되고 킬스위치가 -64% 를 본다
+ * (설계 S4). 크론의 보류 경로가 1차 방어이고 이 검사는 회귀·실수로 행이 빠졌을 때의 **2차 방어**다.
+ *
+ * 릴리스 밸브(3시간 뒤 통과)를 **적용하지 않는다** — 밸브가 바로 S4 를 다시 연다. 무한 실명 위험은 크론이 요구 플래그를
+ * 시장 활성 값으로만 정하기 때문에 생기지 않는다(비활성이면 요구하지 않음). 행이 계속 빠지는 결함은 실명 경보가 알린다.
+ */
+export function checkRequiredCashRows(
+  positions: SnapshotPosition[],
+  req: SnapshotCashRequirement | undefined | null,
+): SnapshotReject | null {
+  if (!req || typeof req !== 'object'
+      || typeof req.usdCashRequired !== 'boolean' || typeof req.krwCashRequired !== 'boolean') {
+    // 타입상 필수 인자다. 그래도 빠졌다면(타입 우회) "요구하지 않음"으로 읽지 않는다 — 모르면 저장하지 않는다.
+    return { code: 'cash_row_missing', detail: '현금 행 요구 플래그(usdCashRequired·krwCashRequired)를 받지 못함 — 저장하지 않음' };
+  }
+  const check = (currency: 'USD' | 'KRW', priceOk: (p: number) => boolean): SnapshotReject | null => {
+    const rows = (Array.isArray(positions) ? positions : []).filter(p => p && p.currency === currency);
+    if (rows.length !== 1) {
+      return {
+        code: 'cash_row_missing',
+        detail: `${currency} 현금 행이 ${rows.length}개 — 이 틱에는 정확히 1개 있어야 한다`
+          + (rows.length === 0 ? ' (행 없음을 현금 0 으로 기록하지 않는다)' : ''),
+      };
+    }
+    const qty = Number(rows[0].qty);
+    const price = Number(rows[0].price);
+    if (!Number.isFinite(qty) || qty < 0) {
+      return { code: 'cash_row_missing', detail: `${currency} 현금 행 qty=${rows[0].qty} 가 유한한 0 이상 값이 아님` };
+    }
+    if (!Number.isFinite(price) || !priceOk(price)) {
+      return { code: 'cash_row_missing', detail: `${currency} 현금 행 price=${rows[0].price} 가 유효하지 않음` };
+    }
+    return null;
+  };
+  if (req.krwCashRequired) {
+    const r = check('KRW', p => p === 1);
+    if (r) return r;
+  }
+  if (req.usdCashRequired) {
+    const r = check('USD', p => p > 0);
+    if (r) return r;
   }
   return null;
 }
@@ -608,11 +677,17 @@ function rejectSnapshot(r: SnapshotReject, source: string): void {
     .catch(() => { /* 경보 실패가 저장 경로를 깨지 않는다 */ });
 }
 
-/** 현재 포트폴리오 스냅샷을 DB에 저장. 위 4단 sanity guard 를 모두 통과할 때만 INSERT 한다. */
+/**
+ * 현재 포트폴리오 스냅샷을 DB에 저장. 위 4단 sanity guard 를 모두 통과할 때만 INSERT 한다.
+ *
+ * @param cashReq (T-056) 이 틱에 있어야 할 현금 행 — **필수 인자**. 크론이 그 틱에 실제로 쓴 시장 활성 값을 넘긴다.
+ *                "못 받으면 요구하지 않음"이 되지 않게 기본값을 두지 않는다.
+ */
 export async function savePortfolioSnapshot(
   totalKRW: number,
   positions: SnapshotPosition[],
-  source: 'hourly' | 'trade' | 'manual' | 'dashboard' = 'hourly',
+  source: 'hourly' | 'trade' | 'manual' | 'dashboard',
+  cashReq: SnapshotCashRequirement,
 ): Promise<void> {
   if (!Number.isFinite(totalKRW) || !(totalKRW > 0)) return;
 
@@ -622,6 +697,10 @@ export async function savePortfolioSnapshot(
   // 1. 보유 항목 무결성 — 인과적 근본 검사 (실측 12행 전부 여기서 걸린다)
   const bad = validateSnapshotPositions(totalKRW, positions, allowZero);
   if (bad) { rejectSnapshot(bad, source); return; }
+
+  // 1b. (T-056) 이 틱에 있어야 할 현금 행 — 릴리스 밸브 없음
+  const cashBad = checkRequiredCashRows(positions, cashReq);
+  if (cashBad) { rejectSnapshot(cashBad, source); return; }
 
   // 2. 절대 한도 — 1억원 초과 또는 1000원 미만은 결함 가능성 매우 높음
   if (totalKRW > SANITY_MAX_KRW || totalKRW < SANITY_MIN_KRW) {

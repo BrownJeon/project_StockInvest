@@ -183,6 +183,38 @@ async function getMinuteCandles(symbol: string, fidPeriod: string, count: number
 }
 
 // ── 잔고 조회 ────────────────────────────────────────────────────────────────
+/**
+ * KIS 숫자 문자열 → 유한한 숫자(부호 허용). 빈 문자열·비숫자·`'1e3'` 등은 null (`Number('')` 이 0 이 되는 것을 막는다).
+ * 음수를 거부하지 않는 이유: D+2 정산금액은 미수가 생기면 음수일 수 있고, 예전 코드는 그것을 0 으로 잘라 썼다.
+ * 음수를 "판정 불가"로 보면 그 기간 스냅샷이 계속 보류된다 — 잘라 쓰는 기존 동작을 유지한다.
+ */
+function cashNum(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 국내 잔고 `output2`(요약) → KRW 예수금 행. **판정할 수 없으면 null** — 0원 행을 지어내지 않는다 (T-056 Q3).
+ *
+ * prvs_rcdl_excc_amt(D+2 가수도정산금액) = 결제 완료 후 확정 예수금 → 진짜 사용 가능 cash.
+ * dnca_tot_amt(예수금총금액)은 매수 체결됐지만 결제 전인 금액도 포함 → free에 부적합. 차액(결제 대기) = locked.
+ * `prvs_rcdl_excc_amt` 가 응답에 **없을 때만**(null·undefined) 예수금총금액을 쓴다(기존 `??` 동작) — 있는데 숫자가 아니면 null.
+ * 예전 코드는 `dnca_tot_amt` 가 없으면 `?? 0` 으로 **0원 행**을 만들었다 — 그것이 이 함수가 막는 경로다.
+ */
+export function parseDomesticCashSummary(output2: unknown): Balance | null {
+  const summary = (Array.isArray(output2) ? output2[0] : output2) as Record<string, unknown> | null | undefined;
+  if (!summary || typeof summary !== 'object') return null;
+  const total = cashNum(summary.dnca_tot_amt);
+  if (total == null) return null;
+  const settled = summary.prvs_rcdl_excc_amt == null ? total : cashNum(summary.prvs_rcdl_excc_amt);
+  if (settled == null) return null;
+  return { currency: 'KRW', free: Math.max(0, settled), locked: Math.max(0, total - settled) };
+}
+
 export async function getBalances(): Promise<Balance[]> {
   const trId = isMock() ? 'VTTC8434R' : 'TTTC8434R';
   let attempt = 0;
@@ -217,15 +249,13 @@ export async function getBalances(): Promise<Balance[]> {
   }
 
   const balances: Balance[] = [];
-  const summary = data.output2?.[0];
-  if (summary) {
-    // prvs_rcdl_excc_amt(D+2 가수도정산금액) = 결제 완료 후 확정 예수금 → 진짜 사용 가능 cash
-    // dnca_tot_amt(예수금총금액)은 매수 체결됐지만 결제 전인 금액도 포함 → free에 부적합
-    // 차액(체결 후 결제 대기 중) = locked로 분리
-    const total   = Number(summary.dnca_tot_amt ?? 0);
-    const settled = Number(summary.prvs_rcdl_excc_amt ?? total);
-    const locked  = Math.max(0, total - settled);
-    balances.push({ currency: 'KRW', free: Math.max(0, settled), locked });
+  const krw = parseDomesticCashSummary(data.output2);
+  if (krw) balances.push(krw);
+  else {
+    // T-056 Q3 — 요약이 없거나 값이 이상하면 KRW 행을 **만들지 않는다**(예전: 필드가 없으면 `?? 0` 으로 0원 행).
+    // 보유 종목은 그대로 돌려준다(보유 완결성과 현금 상태는 독립). 스냅샷 크론은 KRW 행이 없으면 저장을 보류한다.
+    console.error('[kis-domestic getBalances] 예수금 요약(output2) 없음 또는 값 이상 — KRW 행 생략(0원으로 만들지 않음):',
+      JSON.stringify(Array.isArray(data.output2) ? data.output2[0] ?? null : data.output2 ?? null).slice(0, 200));
   }
   for (const item of (data.output1 ?? []) as Record<string, string>[]) {
     const qty = Number(item.hldg_qty ?? 0);

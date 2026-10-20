@@ -134,18 +134,7 @@ export async function getDailyMaxPct(): Promise<number> {
  * 시장 무관 합산 한도는 폐기 — 한쪽 시장 비중이 작아도 다른 쪽 합계로 한도가 부풀려지는 문제 방지.
  */
 export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
-  const pct = await readPctOverride('safety_order_max_pct', 'ORDER_MAX_PCT');
-  if (!(pct > 0)) {
-    console.warn(`[order-limits] safety_order_max_pct 미설정 → 1회 한도 0 (${market} 신규 매수 차단)`);
-    return 0;
-  }
-  const { getPortfolioTotalByMarketKRW } = await import('@/lib/safety/portfolio-total');
-  const total = await getPortfolioTotalByMarketKRW(market);
-  if (!(total > 0)) {
-    console.warn(`[order-limits] ${market} 포트폴리오 평가액 조회 실패/0 → 1회 한도 0 (신규 매수 차단)`);
-    return 0;
-  }
-  return total * (pct / 100);
+  return effectiveMaxFromPct('safety_order_max_pct', 'ORDER_MAX_PCT', '1회', market);
 }
 
 /**
@@ -154,18 +143,44 @@ export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Marke
  * **fail-safe (Phase 0, 2026-08-02)**: getEffectiveOrderMax와 동일 — 미설정·조회 실패 시 0.
  */
 export async function getEffectiveDailyMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
-  const pct = await readPctOverride('safety_daily_order_max_pct', 'DAILY_ORDER_MAX_PCT');
-  if (!(pct > 0)) {
-    console.warn(`[order-limits] safety_daily_order_max_pct 미설정 → 일일 한도 0 (${market} 신규 매수 차단)`);
+  return effectiveMaxFromPct('safety_daily_order_max_pct', 'DAILY_ORDER_MAX_PCT', '일일', market);
+}
+
+/**
+ * 1회·일일 한도 공통 본체 — **숫자를 돌려주고 절대 던지지 않는다** (T-056 불변식).
+ *
+ * 🔴 왜 "던지지 않음"이 필수인가: `submitOrder`(`dry-run.ts`)는 이 두 함수를 매수·매도 구분 없이 **먼저** 호출한다(결과는
+ *    매도면 쓰지 않는다). 여기서 하나라도 던지면 매도 주문이 바깥 catch 로 떨어져 `failed` 가 된다 = **청산 불가**.
+ *    T-056 은 이 아래 계층에 새 실패 원인(CTRP6504R USD 예수금)을 더하므로, 그 불변식을 여기서 직접 보장한다.
+ *
+ * 평가액 상태가 `unknown`(USD 예수금·환율·KRW 예수금 확인 불가, 잔고 실패에 직전값 없음)이면 사유를 남기고 0 —
+ * 그 시장 신규 매수 차단. `unknown` 을 숫자 0 으로 받아 캐시 폴백이 되살리는 경로(Codex C1-2)는 portfolio-total 이 막는다.
+ */
+async function effectiveMaxFromPct(key: string, envKey: string, label: string, market: Market): Promise<number> {
+  try {
+    const pct = await readPctOverride(key, envKey);
+    if (!(pct > 0)) {
+      console.warn(`[order-limits] ${key} 미설정 → ${label} 한도 0 (${market} 신규 매수 차단)`);
+      return 0;
+    }
+    const { getMarketTotal } = await import('@/lib/safety/portfolio-total');
+    const t = await getMarketTotal(market);
+    if (!t || t.status !== 'ok') {
+      const why = t && t.status === 'unknown' ? `${t.reason}: ${t.detail}` : '상태 없음';
+      console.warn(`[order-limits] ${market} 포트폴리오 평가액 모름(${why}) → ${label} 한도 0 (신규 매수 차단)`);
+      return 0;
+    }
+    if (!(t.krw > 0)) {
+      console.warn(`[order-limits] ${market} 포트폴리오 평가액 0 → ${label} 한도 0 (신규 매수 차단)`);
+      return 0;
+    }
+    const v = t.krw * (pct / 100);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch (e) {
+    console.error(`[order-limits] ${label} 한도 계산 예외 → 0 (신규 매수 차단, 매도 경로는 영향 없음):`,
+      e instanceof Error ? e.message : String(e));
     return 0;
   }
-  const { getPortfolioTotalByMarketKRW } = await import('@/lib/safety/portfolio-total');
-  const total = await getPortfolioTotalByMarketKRW(market);
-  if (!(total > 0)) {
-    console.warn(`[order-limits] ${market} 포트폴리오 평가액 조회 실패/0 → 일일 한도 0 (신규 매수 차단)`);
-    return 0;
-  }
-  return total * (pct / 100);
 }
 
 /** @deprecated dry-run.ts에서 async 버전으로 교체됨 — 직접 호출 금지 */

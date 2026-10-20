@@ -17,7 +17,18 @@
 const getBalances = jest.fn();
 const getTicker   = jest.fn();
 
+/**
+ * T-056: 평가액은 현금 상태까지 받으려고 `getBalancesDetailed()` 를 쓴다. 이 파일의 테스트 본문은 종전처럼 `getBalances` 에
+ * 배열(또는 거부)을 넣고, 아래 어댑터가 상세 결과로 감싼다 — 해외 활성 + USD 예수금 확인된 0. 거부는 그대로 던져
+ * `fetchTotals` 의 예외 경로(= 잔고 실패)를 태운다. USD unknown·fx 실패 경로는 `portfolio-total-market-state.test.ts` 에 있다.
+ */
 jest.mock('@/lib/exchanges/kis', () => ({
+  getBalancesDetailed: async () => ({
+    balances: await getBalances(),
+    ok: ['domestic', 'overseas'], failed: [], complete: true,
+    cash: { USD: { state: 'known', usd: 0, source: 'CTRP6504R', ustlSllAmtSmtl: 0 } },
+    overseasEnabled: true,
+  }),
   kis: {
     getBalances: (...a: unknown[]) => getBalances(...a),
     getTicker:   (...a: unknown[]) => getTicker(...a),
@@ -29,7 +40,7 @@ jest.mock('@/lib/exchanges/fx', () => ({
 
 import {
   getPortfolioTotalsKRW,
-  getPortfolioTotalByMarketKRW,
+  getMarketTotal,
   clearPortfolioTotalCache,
   isPortfolioTotalFetchInFlight,
 } from '@/lib/safety/portfolio-total';
@@ -67,10 +78,10 @@ describe('in-flight 중복 제거', () => {
 
     // /api/health 가 실제로 하는 것과 같은 모양 — 넷 다 콜드 캐시에서 동시에 진입한다.
     const all = Promise.all([
-      getPortfolioTotalByMarketKRW('domestic'),
-      getPortfolioTotalByMarketKRW('overseas'),
-      getPortfolioTotalByMarketKRW('domestic'),
-      getPortfolioTotalByMarketKRW('overseas'),
+      getMarketTotal('domestic'),
+      getMarketTotal('overseas'),
+      getMarketTotal('domestic'),
+      getMarketTotal('overseas'),
     ]);
 
     await Promise.resolve();
@@ -101,7 +112,9 @@ describe('in-flight 중복 제거', () => {
     ]);
     expect(a).toEqual(b);
     expect(b).toEqual(c);
-    expect(a.total).toBeGreaterThan(0);
+    // T-056: 합계 필드 대신 시장별 상태 — 국내가 ok 이고 양수
+    expect(a.domestic).toMatchObject({ status: 'ok' });
+    expect(a.domestic.status === 'ok' && a.domestic.krw).toBeGreaterThan(0);
   });
 
   it('forceFresh 여도 동시 호출끼리는 합쳐진다', async () => {
@@ -128,7 +141,11 @@ describe('in-flight 중복 제거', () => {
     // fetchTotals 는 던지지 않고 0/0/0 을 반환하지만, 내부 예외 경로를 태워 해제를 확인한다.
     getBalances.mockRejectedValueOnce(new Error('KIS getBalances: 500 EGW00201'));
     const first = await getPortfolioTotalsKRW();
-    expect(first).toEqual({ domestic: 0, overseas: 0, total: 0 });
+    // T-056: 0/0/0 대신 "모름"(직전 정상값이 없는 콜드 캐시) — 한도 함수는 이것을 0(신규 매수 차단)으로 낸다(같은 안전 방향).
+    expect(first).toEqual({
+      domestic: expect.objectContaining({ status: 'unknown', reason: 'balances_failed' }),
+      overseas: expect.objectContaining({ status: 'unknown', reason: 'balances_failed' }),
+    });
     // 🔑 in-flight 가 남아 있으면 이후 모든 호출이 그 실패 Promise 를 영구히 공유한다.
     expect(isPortfolioTotalFetchInFlight()).toBe(false);
 
@@ -140,7 +157,7 @@ describe('in-flight 중복 제거', () => {
      */
     getBalances.mockResolvedValue(BALANCES);
     const second = await getPortfolioTotalsKRW(true);
-    expect(second.total).toBeGreaterThan(0);
+    expect(second.domestic.status === 'ok' && second.domestic.krw).toBeGreaterThan(0);
     expect(getBalances).toHaveBeenCalledTimes(2);
   });
 });
@@ -149,14 +166,15 @@ describe('T-014/T-012 회귀 방지 — 스로틀이 안전 계약을 바꾸지 
   it('잔고 조회 실패는 여전히 0/0/0 이고, 직전 캐시가 있으면 캐시를 유지한다', async () => {
     getBalances.mockResolvedValue(BALANCES);
     const good = await getPortfolioTotalsKRW();
-    expect(good.total).toBeGreaterThan(0);
+    expect(good.domestic.status === 'ok' && good.domestic.krw).toBeGreaterThan(0);
 
     // 캐시 TTL 을 우회해 강제로 재조회시키되 실패하게 만든다.
     getBalances.mockRejectedValue(new Error('KIS 잔고 부분 실패 — 실패 시장: domestic(EGW00201)'));
     const afterFail = await getPortfolioTotalsKRW(true);
 
     // **낮은 총액으로 대체되지 않는다.** 직전 정상값을 그대로 쓴다 (T-012 계약).
-    expect(afterFail).toEqual({ domestic: good.domestic, overseas: good.overseas, total: good.total });
+    // T-056: `total` 필드는 없어졌다(합계는 getPortfolioTotalState). 시장별 직전 정상값이 그대로다.
+    expect(afterFail).toEqual({ domestic: good.domestic, overseas: good.overseas });
   });
 
   it('스로틀 대기열 초과로 시세가 실패해도 그 종목만 빠지고 조용하지 않다', async () => {
@@ -172,7 +190,7 @@ describe('T-014/T-012 회귀 방지 — 스로틀이 안전 계약을 바꾸지 
     });
 
     const totals = await getPortfolioTotalsKRW();
-    expect(totals.total).toBeGreaterThan(0);
+    expect(totals.domestic.status === 'ok' && totals.domestic.krw).toBeGreaterThan(0);
     // 조용히 사라지면 원인 모를 과소평가가 남는다 — 반드시 로그가 있어야 한다.
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('000660'),

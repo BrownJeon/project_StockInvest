@@ -4,7 +4,96 @@ import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { checkSnapshotFreshness } from './volatility-guard';
 import { parseBoolFlag, shouldReportUnparsable } from './flags';
-import { assessDrawdownComposition, parseSnapshotPositions } from './snapshot-composition';
+import { assessDrawdownComposition, parseSnapshotPositions, type CompositionPosition } from './snapshot-composition';
+
+/**
+ * (T-056) **전환 규칙 E — USD 행 대칭 제거.**
+ *
+ * 기준선·현재 중 **한쪽이라도 USD 행이 없으면, 양쪽 모두에서 USD 행과 그 값을 뺀 뒤** 총액·구성을 비교한다.
+ * 둘 다 있으면(신형 대 신형) 아무것도 하지 않는다. 둘 다 없으면 뺄 것이 없다.
+ *
+ * ## 왜 필요한가
+ *  - 배포 전 운영 스냅샷 4,667행은 전부 USD 행이 없다(USD 예수금 조회가 늘 실패했다). 배포 후 24h 동안 기준선(구형)에는 없고
+ *    현재(신형)에는 있다 → 그대로 비교하면 현재가 USD 만큼 부풀어 **실제 손실을 덜 보인다**(설계 S6 은폐).
+ *  - 원설계("현재 총액에서 현재 USD 전액을 뺀다")는 전환 중 정상 해외 매도의 대금까지 빼서 -64% **거짓 발동**을 냈다(Codex C1-1, S7).
+ *    E 는 positions 의 USD 행도 함께 빼므로 매도 대금은 구성 판정에서 "소실 + 현금 이동 없음"으로 보여 T-041 보류 경로로 간다
+ *    — **오늘 운영 코드와 정확히 같은 동작**이다(양쪽 모두 USD 없는 상태로 비교).
+ *  - 반대 방향(기준선엔 있고 현재엔 없음: 해외 비활성화·부분 롤백)도 같은 규칙으로 거짓 발동 없이 처리한다(S8).
+ *
+ * 상태가 없다(오프셋·이력 질의 없음). E 가 보지 못하는 것은 전환 구간의 "USD 값 자체의 변동"(환율·출금)뿐이다(설계 R7, 수용).
+ * positions 를 읽을 수 없는 쪽이 있으면 USD 유무를 알 수 없으므로 **적용하지 않는다**(기존 총액 비교 그대로 — 검증 불가는 발동 쪽).
+ */
+export interface UsdSymmetricRemoval {
+  applied: boolean;
+  baselineKRW: number;
+  currentKRW: number;
+  basePositions: CompositionPosition[] | null;
+  curPositions: CompositionPosition[] | null;
+  removedBaseUsdKRW: number;
+  removedCurUsdKRW: number;
+}
+
+const isUsdRow = (p: unknown): boolean =>
+  !!p && typeof p === 'object' && (p as { currency?: unknown }).currency === 'USD';
+
+/**
+ * (T-056 R-5) 전환 구간(E 적용) 보류 알림 맨 앞에 붙일 **USD 포함 기록상 총액 변화** 한 줄. 문구 전용 — 판정에 쓰지 않는다.
+ *
+ * 🔴 **절대 던지지 않는다.** 이 문구는 구성 판정(④) try 블록 안에서 조립되고, 그 블록의 예외는 "검증 불가 → 발동"으로
+ * 처리된다. 문구 코드가 던지면 보류가 발동으로 뒤집히는 거짓 발동이 된다. 그래서 입력을 엄격히 읽고(숫자 또는 숫자 문자열만),
+ * 비유한·기준 0 이하는 `n/a` 로 표시하며, 전체를 try/catch 로 감싼다. E 미적용이면 빈 문자열(문구 불변).
+ */
+export function transitionRawNote(applied: boolean, rawBaselineKRW: unknown, rawCurrentKRW: unknown): string {
+  if (!applied) return '';
+  try {
+    const num = (v: unknown): number | null => {
+      if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+      if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())) {
+        const n = Number(v.trim());
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    };
+    const rawBase = num(rawBaselineKRW);
+    const rawCurKRW = num(rawCurrentKRW);
+    const ok = rawBase != null && rawBase > 0 && rawCurKRW != null;
+    const rawPct = ok ? (((rawCurKRW as number) - (rawBase as number)) / (rawBase as number)) * 100 : NaN;
+    const diff = ok ? (rawCurKRW as number) - (rawBase as number) : NaN;
+    const pctText = Number.isFinite(rawPct) ? `${rawPct.toFixed(1)}%` : 'n/a';
+    const amtText = Number.isFinite(diff) ? `${Math.round(diff).toLocaleString('ko-KR')}원` : 'n/a';
+    return `기록상(USD 포함) 24h ${pctText} (${amtText}) — 전환 24h 한정 비교(아래 수치는 USD 를 양쪽에서 뺀 값).\n`;
+  } catch {
+    return '';
+  }
+}
+
+export function applyUsdSymmetricRemoval(
+  baselineKRW: number,
+  currentKRW: number,
+  basePositions: CompositionPosition[] | null,
+  curPositions: CompositionPosition[] | null,
+): UsdSymmetricRemoval {
+  const same: UsdSymmetricRemoval = {
+    applied: false, baselineKRW, currentKRW, basePositions, curPositions, removedBaseUsdKRW: 0, removedCurUsdKRW: 0,
+  };
+  if (!basePositions || !curPositions) return same;
+  const baseHas = basePositions.some(isUsdRow);
+  const curHas = curPositions.some(isUsdRow);
+  if (baseHas === curHas) return same;     // 둘 다 있음(신형 대 신형) 또는 둘 다 없음 — 그대로
+  const usdSum = (ps: CompositionPosition[]) =>
+    ps.filter(isUsdRow).reduce((s, p) => s + (Number(p.value_krw) || 0), 0);
+  const removedBaseUsdKRW = usdSum(basePositions);
+  const removedCurUsdKRW = usdSum(curPositions);
+  return {
+    applied: true,
+    baselineKRW: baselineKRW - removedBaseUsdKRW,
+    currentKRW: currentKRW - removedCurUsdKRW,
+    basePositions: basePositions.filter(p => !isUsdRow(p)),
+    curPositions: curPositions.filter(p => !isUsdRow(p)),
+    removedBaseUsdKRW,
+    removedCurUsdKRW,
+  };
+}
 
 /**
  * DB system_config override takes precedence over env var.
@@ -87,7 +176,11 @@ export type DrawdownCheckResult =
         | 'error';
       detail?: string;
     }
-  | { status: 'evaluated'; drawdownPct: number; triggered: boolean };
+  | {
+      status: 'evaluated'; drawdownPct: number; triggered: boolean;
+      /** (T-056) 전환 규칙 E 가 적용됐다 — 한쪽에 USD 행이 없어 양쪽에서 USD 를 빼고 비교했다 */
+      usdSymmetricRemoval?: true;
+    };
 
 /**
  * 24h drawdown 기반 Kill Switch 자동 발동.
@@ -187,8 +280,8 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
       return { status: 'skipped', reason: 'baseline_missing', detail };
     }
 
-    const baseline = Number(snapRows[0].total_krw);
-    if (!Number.isFinite(baseline) || baseline <= 0) {
+    const rawBaseline = Number(snapRows[0].total_krw);
+    if (!Number.isFinite(rawBaseline) || rawBaseline <= 0) {
       console.warn('[kill-switch:drawdown] 기준 자본 0 이하 — drawdown 검사 생략');
       return { status: 'skipped', reason: 'baseline_invalid' };
     }
@@ -203,11 +296,32 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
       return { status: 'skipped', reason: 'snapshot_missing' };
     }
 
-    const current = Number(curRows[0].total_krw);
+    // ── ③-b (T-056) 전환 규칙 E — 한쪽에만 USD 행이 있으면 양쪽에서 USD 행·값을 뺀다 ──────────
+    const usdNorm = applyUsdSymmetricRemoval(
+      rawBaseline,
+      Number(curRows[0].total_krw),
+      parseSnapshotPositions(snapRows[0].positions),
+      parseSnapshotPositions(curRows[0].positions),
+    );
+    const baseline = usdNorm.baselineKRW;
+    const current = usdNorm.currentKRW;
+    const won0 = (n: number) => Math.round(n).toLocaleString('ko-KR');
+    const usdNote = usdNorm.applied
+      ? ` · 기준선·현재 중 한쪽에 USD 행이 없어 양쪽에서 USD(기준 ${won0(usdNorm.removedBaseUsdKRW)}원·현재 `
+        + `${won0(usdNorm.removedCurUsdKRW)}원)를 빼고 비교(전환 규칙 E)`
+      : '';
+    if (usdNorm.applied) {
+      console.warn(`[kill-switch:drawdown] 전환 규칙 E 적용${usdNote}`);
+      if (!Number.isFinite(baseline) || baseline <= 0) {
+        console.warn('[kill-switch:drawdown] USD 제외 후 기준 자본 0 이하 — drawdown 검사 생략');
+        return { status: 'skipped', reason: 'baseline_invalid', detail: `USD 제외 후 기준 자본 ${Math.round(baseline)}원${usdNote}` };
+      }
+    }
     const drawdownPct = ((current - baseline) / baseline) * 100;
+    const usdFlag = usdNorm.applied ? { usdSymmetricRemoval: true as const } : {};
 
     if (drawdownPct > -thresholdPct) {
-      return { status: 'evaluated', drawdownPct, triggered: false }; // 손실 미달 — 발동 불필요
+      return { status: 'evaluated', drawdownPct, triggered: false, ...usdFlag }; // 손실 미달 — 발동 불필요
     }
 
     // ── ④ 임계 초과 — 그 손실이 "시장 손실"인가, 소실된 보유가 관측에서 사라진 것인가 (T-041) ──────────
@@ -234,8 +348,9 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     // 반드시 critical 알림으로 사람에게 알린다.
     let compositionNote = '';
     try {
-      const basePositions = parseSnapshotPositions(snapRows[0].positions);
-      const curPositions  = parseSnapshotPositions(curRows[0].positions);
+      // (T-056) E 가 적용됐으면 USD 행을 뺀 구성으로 판정한다 — 총액과 구성이 같은 집합이어야 한다.
+      const basePositions = usdNorm.basePositions;
+      const curPositions  = usdNorm.curPositions;
       if (basePositions && curPositions) {
         const a = assessDrawdownComposition(baseline, current, basePositions, curPositions);
         if (a.suspected) {
@@ -247,14 +362,16 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
               + `${won(a.vanishedKRW)}원이 현재 스냅샷에서 사라졌고, 그중 ${won(a.unexplainedKRW)}원`
               + `(기준 총액의 ${(a.unexplainedShare * 100).toFixed(1)}%)은 현금 증가·신규 보유로 설명되지 않는다. `
               + `현금 유입·신규 보유·추가 매수 등 거래 정황은 미미하다(허용치 이내 ${won(a.tradingEvidenceKRW)}원). `
-              + `설명되지 않는 소실을 제외한 같은 조건 비교는 ${a.adjustedDrawdownPct.toFixed(1)}%`;
+              + `설명되지 않는 소실을 제외한 같은 조건 비교는 ${a.adjustedDrawdownPct.toFixed(1)}%${usdNote}`;
             console.error(`[kill-switch:drawdown] 자동 발동 보류 — ${detail}`);
+            // (T-056 R-5) 전환 구간이면 USD 포함 기록상 변화를 맨 앞에 — 문구 전용, 던지지 않는다(transitionRawNote 주석)
+            const rawNote = transitionRawNote(usdNorm.applied, rawBaseline, curRows[0].total_krw);
             sendAlertThrottled(
               // 사건(소실 종목 조합)마다 키를 달리해 다른 사건의 알림이 스로틀에 먹히지 않게 한다
               `kill-switch:composition-suspected:${[...a.vanished].sort().join(',')}`,
               'critical',
               '⚠️ Kill Switch 자동 발동 보류 — 보유 종목 소실 의심',
-              `${detail}.\n`
+              `${rawNote}${detail}.\n`
               + '매도 대금 정산 대기·잔고 조회 누락 등 **관측 불능일 수 있어** 자동 발동을 보류했습니다 (시장 손실이면 종목은 남고 단가만 내립니다).\n'
               + '단, 상장폐지·정리매매로 종목이 계좌에서 제거된 **실손실**도 이렇게 보일 수 있습니다.\n'
               + '**실제 손실이라면 설정 > 안전장치에서 킬스위치를 수동으로 켜세요.**\n'
@@ -287,10 +404,10 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     );
 
     const lostKRW = current - baseline;
-    const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과${compositionNote}`;
+    const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과${compositionNote}${usdNote}`;
     console.error(`[kill-switch:drawdown] 자동 발동: ${msg}`);
     sendAlert('critical', 'Kill Switch 자동 발동', msg);
-    return { status: 'evaluated', drawdownPct, triggered: true };
+    return { status: 'evaluated', drawdownPct, triggered: true, ...usdFlag };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.error(`[kill-switch:drawdown] 오류: ${detail}`);

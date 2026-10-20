@@ -1,8 +1,8 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
-import { kis, BalancesIncompleteError } from '@/lib/exchanges/kis';
+import { kis, getBalancesDetailed, BalancesIncompleteError, type BalancesResult } from '@/lib/exchanges/kis';
 import { withKisPriority, mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
-import type { Ticker } from '@/lib/exchanges/types';
+import type { Balance, Ticker } from '@/lib/exchanges/types';
 import { kstTodayStart } from '@/lib/time';
 import { usdToKrw } from '@/lib/exchanges/fx';
 
@@ -51,6 +51,16 @@ interface HoldingView {
  *   읽기 경로는 읽기만 한다. 새 소비자가 생겨도 이 라우트에 쓰기를 되살리지 말 것.
  */
 
+/**
+ * (T-056) 예수금을 모르면 그 사유, 알면 null. USD: 해외 활성인데 `cash.USD` 가 known 이 아님. KRW(Q3): 국내 잔고에 요약 행이 없음.
+ * 예전에는 USD 조회 실패가 "USD 행 없음"이 되어 총액에서 조용히 빠졌다.
+ */
+function describeCashUnavailable(r: BalancesResult): string | null {
+  if (!r.balances.some(b => b.currency === 'KRW')) return '국내 예수금(KRW) 요약을 확인하지 못했습니다';
+  if (r.overseasEnabled && r.cash.USD.state !== 'known') return '해외 예수금(USD)을 확인하지 못했습니다';
+  return null;
+}
+
 async function fetchTodayOpenKRW(): Promise<number | null> {
   try {
     const pool = getPool();
@@ -70,7 +80,22 @@ async function fetchTodayOpenKRW(): Promise<number | null> {
 
 export async function GET() {
   try {
-    const balances = await kis.getBalances();
+    // T-056: 보유는 그대로(부분 실패 → 기존 503), USD 예수금은 `cash.USD` 로 받는다. USD 는 보유 목록에 없다.
+    const detailed = await getBalancesDetailed();
+    if (!detailed.complete) throw new BalancesIncompleteError(detailed.failed, detailed.ok);
+    const cashUnavailable = describeCashUnavailable(detailed);
+    if (cashUnavailable) {
+      // 숫자 대신 실패를 보여준다(T-012 원칙) — 예수금을 모르는 총액은 조용히 과소 계상된 값이다. 화면은 기존 오류 상태를 그대로 쓴다.
+      console.error('[api/portfolio] 예수금 확인 불가 — 평가액 미표시:', cashUnavailable);
+      return Response.json({
+        ok: false,
+        error: `${cashUnavailable} — 평가액을 표시할 수 없습니다. 잠시 후 자동으로 다시 시도합니다.`,
+      }, { status: 503 });
+    }
+    const usdCash = detailed.cash.USD.state === 'known' ? detailed.cash.USD.usd : null;
+    const balances: Balance[] = usdCash != null
+      ? [...detailed.balances, { currency: 'USD', free: usdCash, locked: 0 }]   // 화면 표시용 현금 행 (기존 모양 유지)
+      : detailed.balances;
     const DUST_THRESHOLD_KRW = 10_000;
 
     // 보유 종목 (현금 KRW/USD 제외) — symbol == currency (국내 6자리 또는 해외 EXCD:TICKER)

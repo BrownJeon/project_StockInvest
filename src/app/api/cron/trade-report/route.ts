@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
-import { getPortfolioTotalKRW } from '@/lib/safety/portfolio-total';
+import { getPortfolioTotalState } from '@/lib/safety/portfolio-total';
 import { sendSlackAlert } from '@/lib/notify/slack';
 import { sendTelegramAlert, mrkdwnToTelegramHtml } from '@/lib/notify/telegram';
 import { notifyFailed, redactSecrets, type NotifyResult } from '@/lib/notify/result';
@@ -168,7 +168,8 @@ export async function POST(req: NextRequest) {
     // 🔴 여기서 오는 리서치 추천은 **메시지 문자열로만** 흘러간다 —
     //    `createSignal()`·`submitOrder()`·전략 엔진 어디에도 연결되지 않는다.
     const [totalKRW, baselineKRW, candidates, research] = await Promise.all([
-      getPortfolioTotalKRW(true).catch(() => 0),
+      // T-056: 모르면 null — 예전 `.catch(() => 0)` 은 "총 자산 0원(-100%)"을 리포트에 적을 수 있었다.
+      getPortfolioTotalState(true).then(t => (t.status === 'ok' ? t.krw : null)).catch(() => null),
       fetchPortfolioBaselineKRW(rangeStart),
       fetchSignalCandidates(rangeStart).catch(() => EMPTY_CANDIDATES),
       fetchResearchDigest().catch(() => EMPTY_RESEARCH_DIGEST),

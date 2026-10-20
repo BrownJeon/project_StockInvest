@@ -513,8 +513,10 @@ describe('🔴 M-1 · M-2 — 감사가 찾은 보류 우회는 발동으로 닫
   });
 
   test('M-2: 대금이 USD 행으로 들어오고 원화가 같은 만큼 출금돼 순변화가 0 이어도 발동한다', async () => {
+    // T-056: 기준선에 "확인된 USD 0" 행을 둔다 — 신형 대 신형 비교에서 USD 증가가 거래 정황이라는 것이 M-2 의 계약이다.
+    //        기준선에 USD 행 자체가 없는 전환 구간은 전환 규칙 E 가 양쪽에서 USD 를 빼므로 아래 "전환 구간" 테스트가 따로 고정한다.
     mockState(
-      { total: 10_000_000, positions: [p('KRW', 3_000_000), p('A', 4_000_000), p('B', 3_000_000)] },
+      { total: 10_000_000, positions: [p('KRW', 3_000_000), p('USD', 0), p('A', 4_000_000), p('B', 3_000_000)] },
       { total: 6_000_000, positions: [p('KRW', 200_000), p('USD', 2_800_000), p('B', 3_000_000)] },
     );
     const r = await checkAndTriggerDrawdownKillSwitch(10);
@@ -522,6 +524,22 @@ describe('🔴 M-1 · M-2 — 감사가 찾은 보류 우회는 발동으로 닫
     expect(inserted()).toHaveLength(1);
     expect(sendAlertThrottled).not.toHaveBeenCalled();
     expect(String(sendAlert.mock.calls[0][2])).toContain('거래 정황(현금 유입·신규 보유·추가 매수 2,800,000원)');
+  });
+
+  test('M-2 전환 구간(T-056): 기준선이 구형(USD 행 없음)이면 E 가 USD 를 양쪽에서 빼지만 이 사건은 여전히 발동한다', async () => {
+    // E 적용 후: 기준 10M(USD 없음) vs 현재 6M − 2.8M = 3.2M, 소실 A 4M 미설명 → 보정 기준 6M 대비 -46.7% → 발동.
+    // 거래 정황(USD 유입)은 E 가 지웠으므로 사유는 "설명되지 않는 소실 포함" 쪽으로 적힌다.
+    mockState(
+      { total: 10_000_000, positions: [p('KRW', 3_000_000), p('A', 4_000_000), p('B', 3_000_000)] },
+      { total: 6_000_000, positions: [p('KRW', 200_000), p('USD', 2_800_000), p('B', 3_000_000)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true, usdSymmetricRemoval: true });
+    expect(inserted()).toHaveLength(1);
+    expect(sendAlertThrottled).not.toHaveBeenCalled();
+    const body = String(sendAlert.mock.calls[0][2]);
+    expect(body).toContain('전환 규칙 E');
+    expect(body).toContain('보유 소실 [A]');
   });
 
   test('M-2 대조: 현금 유입이 전혀 없고 보유만 사라지면 보류 — 10-03 사고 형태', async () => {

@@ -23,6 +23,12 @@ jest.mock('@/lib/strategy/market-hours', () => ({
   minutesSinceSessionOpen: async () => sinceSessionOpen,
 }));
 
+/**
+ * T-056 — `savePortfolioSnapshot` 의 현금 행 요구 플래그는 필수 인자다. 이 파일은 현금 행과 무관한 4단 가드를 보므로
+ * 요구하지 않는다(종전 동작). 현금 행 요구는 `portfolio-snapshot-cash-rows.test.ts` 가 다룬다.
+ */
+const NO_CASH_REQ = { usdCashRequired: false, krwCashRequired: false } as const;
+
 import {
   savePortfolioSnapshot,
   validateSnapshotPositions,
@@ -263,7 +269,7 @@ describe('savePortfolioSnapshot — 오염 스냅샷은 INSERT 되지 않는다'
   test('🔴 실측 오염 행은 24h median 밴드를 통과해도 저장되지 않는다', async () => {
     // 당시 median=18,375,740, ratio=0.263 > 임계 0.200 → 기존 가드로는 통과하던 값
     mockDb({ median: HEALTHY_TOTAL, prev: null });
-    await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard');
+    await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard', NO_CASH_REQ);
     expect(inserts()).toHaveLength(0);
     expect(sendAlert).toHaveBeenCalledTimes(1);
     expect(String(sendAlert.mock.calls[0][2])).toContain('position_price_zero');
@@ -274,7 +280,7 @@ describe('savePortfolioSnapshot — 오염 스냅샷은 INSERT 되지 않는다'
       median: HEALTHY_TOTAL,
       prev: { ts: new Date(Date.now() - 60_000), total_krw: HEALTHY_TOTAL, positions: JSON.stringify(HEALTHY) },
     });
-    await savePortfolioSnapshot(HEALTHY_TOTAL, HEALTHY, 'hourly');
+    await savePortfolioSnapshot(HEALTHY_TOTAL, HEALTHY, 'hourly', NO_CASH_REQ);
     const ins = inserts();
     expect(ins).toHaveLength(1);
     expect(ins[0][1]).toEqual([HEALTHY_TOTAL, JSON.stringify(HEALTHY), 'hourly']);
@@ -287,7 +293,7 @@ describe('savePortfolioSnapshot — 오염 스냅샷은 INSERT 되지 않는다'
       median: HEALTHY_TOTAL,
       prev: { ts: new Date(Date.now() - 60_000), total_krw: HEALTHY_TOTAL, positions: JSON.stringify(HEALTHY) },
     });
-    await savePortfolioSnapshot(CORRUPT_TOTAL, now, 'hourly');
+    await savePortfolioSnapshot(CORRUPT_TOTAL, now, 'hourly', NO_CASH_REQ);
     expect(inserts()).toHaveLength(0);
     expect(String(sendAlert.mock.calls[0][2])).toContain('holding_vanished');
   });
@@ -295,7 +301,7 @@ describe('savePortfolioSnapshot — 오염 스냅샷은 INSERT 되지 않는다'
   test('기존 절대 밴드 회귀 — 1억원 초과는 여전히 거부', async () => {
     const pos: SnapshotPosition[] = [{ currency: 'KRW', qty: 2e8, price: 1, value_krw: 2e8 }];
     mockDb({ median: HEALTHY_TOTAL, prev: null });
-    await savePortfolioSnapshot(2e8, pos, 'hourly');
+    await savePortfolioSnapshot(2e8, pos, 'hourly', NO_CASH_REQ);
     expect(inserts()).toHaveLength(0);
     expect(String(sendAlert.mock.calls[0][2])).toContain('abs_band');
   });
@@ -303,28 +309,28 @@ describe('savePortfolioSnapshot — 오염 스냅샷은 INSERT 되지 않는다'
   test('기존 median 밴드 회귀 — 24h median 대비 1/5 미만은 여전히 거부', async () => {
     const pos: SnapshotPosition[] = [{ currency: 'KRW', qty: 100_000, price: 1, value_krw: 100_000 }];
     mockDb({ median: HEALTHY_TOTAL, prev: null });
-    await savePortfolioSnapshot(100_000, pos, 'dashboard');
+    await savePortfolioSnapshot(100_000, pos, 'dashboard', NO_CASH_REQ);
     expect(inserts()).toHaveLength(0);
     expect(String(sendAlert.mock.calls[0][2])).toContain('median_band');
   });
 
   test('total<=0 이면 DB 를 건드리지 않는다', async () => {
     mockDb({ median: HEALTHY_TOTAL, prev: null });
-    await savePortfolioSnapshot(0, HEALTHY, 'hourly');
-    await savePortfolioSnapshot(Number.NaN, HEALTHY, 'hourly');
+    await savePortfolioSnapshot(0, HEALTHY, 'hourly', NO_CASH_REQ);
+    await savePortfolioSnapshot(Number.NaN, HEALTHY, 'hourly', NO_CASH_REQ);
     expect(query).not.toHaveBeenCalled();
   });
 
   test('알림은 사유별로 스로틀된다 — 대시보드가 30초마다 저장해도 폭주하지 않는다', async () => {
     mockDb({ median: HEALTHY_TOTAL, prev: null });
-    for (let i = 0; i < 5; i++) await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard');
+    for (let i = 0; i < 5; i++) await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard', NO_CASH_REQ);
     expect(inserts()).toHaveLength(0);
     expect(sendAlert).toHaveBeenCalledTimes(1);
   });
 
   test('🔴 거부 사유에 조치 방법(allowlist)이 안내된다 — 무한 실명 탈출구', async () => {
     mockDb({ median: HEALTHY_TOTAL, prev: null });
-    await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard');
+    await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard', NO_CASH_REQ);
     expect(String(sendAlert.mock.calls[0][2])).toContain('snapshot_zero_price_symbols');
   });
 
@@ -335,7 +341,7 @@ describe('savePortfolioSnapshot — 오염 스냅샷은 INSERT 되지 않는다'
       if (/ORDER BY ts DESC LIMIT 1/.test(sql)) throw new Error('db down');
       return [[]];
     });
-    await savePortfolioSnapshot(HEALTHY_TOTAL, HEALTHY, 'hourly');
+    await savePortfolioSnapshot(HEALTHY_TOTAL, HEALTHY, 'hourly', NO_CASH_REQ);
     expect(inserts()).toHaveLength(1);
   });
 });
@@ -390,7 +396,7 @@ describe('무한 실명 방지 — allowlist 탈출구', () => {
 
   test('savePortfolioSnapshot 이 system_config allowlist 를 읽어 적용한다', async () => {
     mockDb({ median: HALTED_TOTAL, prev: null, allowZero: ['NAS:DEAD'] });
-    await savePortfolioSnapshot(HALTED_TOTAL, HALTED, 'hourly');
+    await savePortfolioSnapshot(HALTED_TOTAL, HALTED, 'hourly', NO_CASH_REQ);
     expect(inserts()).toHaveLength(1);
   });
 
@@ -401,7 +407,7 @@ describe('무한 실명 방지 — allowlist 탈출구', () => {
       if (/MAX\(ts\)/.test(sql)) return [[{ latest: new Date() }]];
       return [[]];
     });
-    await savePortfolioSnapshot(HALTED_TOTAL, HALTED, 'hourly');
+    await savePortfolioSnapshot(HALTED_TOTAL, HALTED, 'hourly', NO_CASH_REQ);
     expect(inserts()).toHaveLength(0);
   });
 });
@@ -451,7 +457,7 @@ describe('무한 실명 방지 — 관측 공백 승격 경보', () => {
     expect(sendAlert.mock.calls.filter(c => c[0] === 'critical')).toHaveLength(1);
 
     mockDb({ median: HEALTHY_TOTAL, prev: null, latestTs: ago(1) });
-    await savePortfolioSnapshot(HEALTHY_TOTAL, HEALTHY, 'hourly');
+    await savePortfolioSnapshot(HEALTHY_TOTAL, HEALTHY, 'hourly', NO_CASH_REQ);
     expect(inserts()).toHaveLength(1);
     const info = sendAlert.mock.calls.filter(c => c[0] === 'info');
     expect(info).toHaveLength(1);
@@ -460,13 +466,13 @@ describe('무한 실명 방지 — 관측 공백 승격 경보', () => {
 
   test('critical 을 낸 적 없으면 회복 알림도 없다', async () => {
     mockDb({ median: HEALTHY_TOTAL, prev: null, latestTs: ago(1) });
-    await savePortfolioSnapshot(HEALTHY_TOTAL, HEALTHY, 'hourly');
+    await savePortfolioSnapshot(HEALTHY_TOTAL, HEALTHY, 'hourly', NO_CASH_REQ);
     expect(sendAlert.mock.calls.filter(c => c[0] === 'info')).toHaveLength(0);
   });
 
   test('sanity 거부가 실명 감시기를 호출한다 (거부가 길어지면 스스로 승격)', async () => {
     mockDb({ median: HEALTHY_TOTAL, prev: null, latestTs: ago(250) });
-    await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard');
+    await savePortfolioSnapshot(CORRUPT_TOTAL, CORRUPT, 'dashboard', NO_CASH_REQ);
     await new Promise(r => setImmediate(r));   // rejectSnapshot 내부 void promise 소진
     expect(sendAlert.mock.calls.filter(c => c[0] === 'critical')).toHaveLength(1);
   });

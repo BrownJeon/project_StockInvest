@@ -7,10 +7,13 @@ jest.mock('@/lib/db', () => ({
   getAccountId: jest.fn(),
 }));
 
+// T-056: 한도는 시장별 *상태*(`getMarketTotal`)를 읽는다. 값은 종전과 같은 1,000,000 (ok).
 jest.mock('@/lib/safety/portfolio-total', () => ({
-  getPortfolioTotalKRW: jest.fn().mockResolvedValue(1_000_000),
-  getPortfolioTotalByMarketKRW: jest.fn().mockResolvedValue(1_000_000),
-  getPortfolioTotalsKRW: jest.fn().mockResolvedValue({ domestic: 1_000_000, overseas: 0, total: 1_000_000 }),
+  getMarketTotal: jest.fn().mockResolvedValue({ status: 'ok', krw: 1_000_000 }),
+  getPortfolioTotalState: jest.fn().mockResolvedValue({ status: 'ok', krw: 1_000_000 }),
+  getPortfolioTotalsKRW: jest.fn().mockResolvedValue({
+    domestic: { status: 'ok', krw: 1_000_000 }, overseas: { status: 'ok', krw: 0 },
+  }),
 }));
 
 interface CapturedUpdate {

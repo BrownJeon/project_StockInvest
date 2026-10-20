@@ -6,7 +6,7 @@
  */
 import { getPool } from '@/lib/db';
 import type { OrderRequest } from '@/lib/exchanges/types';
-import { getPortfolioTotalByMarketKRW } from '@/lib/safety/portfolio-total';
+import { getMarketTotal } from '@/lib/safety/portfolio-total';
 import {
   checkDailyMax,
   checkOrderMax,
@@ -18,12 +18,14 @@ import {
 
 jest.mock('@/lib/db', () => ({ getPool: jest.fn() }));
 jest.mock('@/lib/safety/portfolio-total', () => ({
-  getPortfolioTotalByMarketKRW: jest.fn(),
-  getPortfolioTotalsKRW: jest.fn(),
-  getPortfolioTotalKRW: jest.fn(),
+  getMarketTotal: jest.fn(),
 }));
 
-const mockTotal = getPortfolioTotalByMarketKRW as jest.Mock;
+/**
+ * 시장 평가액(숫자). T-056 부터 한도는 시장별 *상태*(`getMarketTotal`)를 읽는다 — 이 파일의 테스트 본문은 종전처럼 숫자를 넣고,
+ * 아래 `beforeEach` 가 그 숫자를 `{ status: 'ok', krw }` 로 감싼다. `unknown` 상태 경로는 `order-limits-market-state.test.ts` 에 있다.
+ */
+const mockTotal = jest.fn();
 
 /** system_config 조회 결과를 흉내낸다. key → JSON 문자열(없으면 행 없음). */
 function mockConfig(values: Record<string, string | undefined>) {
@@ -52,6 +54,7 @@ const buyReq: OrderRequest = {
 };
 
 beforeEach(() => {
+  (getMarketTotal as jest.Mock).mockImplementation(async (m: string) => ({ status: 'ok', krw: await mockTotal(m) }));
   mockTotal.mockResolvedValue(1_000_000);
 });
 afterEach(() => jest.clearAllMocks());

@@ -16,12 +16,18 @@ jest.mock('@/lib/cron-auth', () => ({ checkCronAuth: () => undefined }));
 jest.mock('@/lib/notify', () => ({ sendAlert: (...a: unknown[]) => sendAlert(...a) }));
 jest.mock('@/lib/db', () => ({ getPool: () => ({ query: async () => [[]] }) }));
 jest.mock('@/lib/strategy/market-hours', () => ({ getCurrentMarket: async () => 'domestic' }));
+// T-056: 크론은 현금 상태까지 받으려고 `getBalancesDetailed()` 를 쓴다. 잔고 값은 종전과 같다(해외 비활성 — USD 요구 없음).
 jest.mock('@/lib/exchanges/kis', () => ({
-  kis: {
-    getBalances: async () => [
+  BalancesIncompleteError: jest.requireActual('@/lib/exchanges/kis').BalancesIncompleteError,
+  getBalancesDetailed: async () => ({
+    balances: [
       { currency: 'KRW', free: 500_000, locked: 0 },
       { currency: '005930', free: 10, locked: 0, avgPrice: 70_000 },
     ],
+    ok: ['domestic'], failed: [], complete: true,
+    cash: { USD: { state: 'not_queried' } }, overseasEnabled: false,
+  }),
+  kis: {
     getTicker: async () => ({ price: 72_000 }),
   },
 }));

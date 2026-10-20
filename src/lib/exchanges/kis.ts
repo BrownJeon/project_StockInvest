@@ -8,7 +8,10 @@
 import * as dom from './kis-domestic';
 import * as ovs from './kis-overseas';
 import { getMarketFromSymbol, type Market } from './kis-symbols';
-import type { ExchangeClient, Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
+import type { ExchangeClient, Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest, UsdCashState } from './types';
+import { isOverseasEnabled } from './market-flags';
+
+export { isOverseasEnabled };
 
 function routeBySymbol(symbol: string) {
   return getMarketFromSymbol(symbol) === 'overseas' ? ovs : dom;
@@ -37,13 +40,22 @@ async function getCandles(symbol: string, interval: string, count: number): Prom
  * 즉 **어댑터는 정상적으로 예외를 던지고 있었고, 삼킨 것은 이 Facade 였다.**
  */
 export interface BalancesResult {
+  /** 보유 종목 + 국내 KRW 예수금 행. **USD 예수금은 여기에 없다** — `cash.USD` 를 읽는다 (T-056). */
   balances: Balance[];
-  /** 조회에 성공한 시장 */
+  /** 조회에 성공한 시장 (보유 종목 기준) */
   ok:       Market[];
-  /** 조회에 실패한 시장과 사유 */
+  /** 조회에 실패한 시장과 사유 (보유 종목 기준) */
   failed:   { market: Market; error: string }[];
-  /** 활성화된 모든 시장이 성공 = 이 잔고로 총액을 계산해도 된다 */
+  /**
+   * 활성화된 모든 시장의 **보유 종목** 조회가 성공 = 보유로는 총액을 계산해도 된다.
+   * ⚠️ 현금 상태와는 **독립**이다 — USD 예수금만 실패해도 `complete` 는 true 일 수 있다. 총액을 내려면 `cash.USD` 도 봐야 한다.
+   * (현금 실패를 보유 실패로 합치면 엔진 보유 조회·청산까지 함께 멈춘다 — T-014 계약 유지)
+   */
   complete: boolean;
+  /** 현금(예수금) 상태. `unknown` 을 0 으로 읽지 말 것. */
+  cash:     { USD: UsdCashState };
+  /** 이 호출에서 쓴 해외 시장 활성 값 — 스냅샷 크론이 같은 틱 안에서 판정이 엇갈리지 않게 그대로 저장 가드에 넘긴다. */
+  overseasEnabled: boolean;
 }
 
 /**
@@ -75,29 +87,55 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
  * 총액을 계산한다면 `getBalances()` 를 써서 부분 실패에 예외를 받아야 한다.
  */
 export async function getBalancesDetailed(): Promise<BalancesResult> {
-  const enableOverseas = String(process.env.KIS_OVERSEAS_ENABLED ?? 'true').toLowerCase() === 'true';
+  const enableOverseas = isOverseasEnabled();
 
   const tasks: { market: Market; run: () => Promise<Balance[]> }[] = [
     { market: 'domestic', run: () => dom.getBalances() },
   ];
   if (enableOverseas) tasks.push({ market: 'overseas', run: () => ovs.getBalances() });
 
-  const settled = await Promise.all(tasks.map(async (t) => {
-    try {
-      return { market: t.market, balances: await t.run(), error: null as string | null };
-    } catch (e) {
-      const error = errMsg(e);
-      console.error(`[kis] ${t.market} balances failed:`, error);
-      return { market: t.market, balances: [] as Balance[], error };
-    }
-  }));
+  // USD 예수금은 보유와 **따로** 묻는다 — 실패가 보유 조회 결과를 오염시키지 않게 (T-056).
+  const usdTask: Promise<UsdCashState> = enableOverseas
+    ? (async (): Promise<UsdCashState> => {
+        try {
+          const r = await ovs.getUsdCash();
+          return { state: 'known', ...r };
+        } catch (e) {
+          const error = errMsg(e);
+          console.error('[kis] overseas usd cash failed (0 으로 해석하지 않음):', error);
+          return { state: 'unknown', error };
+        }
+      })()
+    : Promise.resolve({ state: 'not_queried' });
+
+  const [settled, usd] = await Promise.all([
+    Promise.all(tasks.map(async (t) => {
+      try {
+        return { market: t.market, balances: await t.run(), error: null as string | null };
+      } catch (e) {
+        const error = errMsg(e);
+        console.error(`[kis] ${t.market} balances failed:`, error);
+        return { market: t.market, balances: [] as Balance[], error };
+      }
+    })),
+    usdTask,
+  ]);
+
+  // 방어: 어댑터가 USD 행을 다시 섞어 보내도 보유 목록에 넣지 않는다 — 현금의 유일한 통로는 `cash.USD` 다.
+  const balances = settled.flatMap(s => s.balances).filter((b) => {
+    if (b.currency !== 'USD') return true;
+    console.error('[kis] 보유 목록에 USD 행이 섞여 들어와 버림 — USD 예수금은 cash.USD 로만 읽는다');
+    return false;
+  });
 
   const failed = settled.filter(s => s.error !== null).map(s => ({ market: s.market, error: s.error! }));
   return {
-    balances: settled.flatMap(s => s.balances),
+    balances,
     ok:       settled.filter(s => s.error === null).map(s => s.market),
     failed,
     complete: failed.length === 0,
+    cash:     { USD: usd },
+    overseasEnabled: enableOverseas,
   };
 }
 
@@ -200,7 +238,7 @@ export class ActiveOrdersIncompleteError extends Error {
  * 어차피 던질 수 없었다 — 그 비대칭도 여기서 사라진다.)
  */
 export async function getActiveOrdersDetailed(): Promise<ActiveOrdersResult> {
-  const enableOverseas = String(process.env.KIS_OVERSEAS_ENABLED ?? 'true').toLowerCase() === 'true';
+  const enableOverseas = isOverseasEnabled();
 
   const tasks: { market: Market; run: () => Promise<{ orderId: string; symbol: string }[]> }[] = [
     { market: 'domestic', run: () => dom.getActiveOrders() },

@@ -66,6 +66,31 @@ export interface Balance {
   avgPrice?: number;
 }
 
+/**
+ * 해외 USD 예수금 1회 관측값 (T-056). 출처는 CTRP6504R(해외 체결기준현재잔고) `output2` USD 행 `frcr_dncl_amt_2`.
+ */
+export interface UsdCashReading {
+  /** 외화예수금액(USD). 유한한 0 이상 값만 들어온다 — 판정 규칙을 통과하지 못한 응답은 아예 이 모양이 되지 않는다. */
+  usd: number;
+  source: 'CTRP6504R';
+  /**
+   * `output3.ustl_sll_amt_smtl`(미결제매도금액합계) 원값. **총액에 넣지 않는다** — 단계 4(첫 해외 매도 직후 관측)에서
+   * 예수금이 체결기준인지 판별하는 자료로만 남긴다. 단위는 KIS 문서상 명시가 없고 output3 의 다른 원화 합계와 같은 형식이다.
+   */
+  ustlSllAmtSmtl: number;
+}
+
+/**
+ * USD 예수금 상태 (T-056). **"행 없음 = 0" 을 타입으로 금지**하려고 현금을 `Balance[]` 에서 분리했다.
+ *  - `known`       : 판정 규칙을 통과한 관측값 (0 도 확인된 0 이다)
+ *  - `unknown`     : 조회·판정 실패 — 소비자는 0 으로 읽지 말고 보류·차단·조회불가 경로로 가야 한다
+ *  - `not_queried` : 해외 시장 비활성으로 조회하지 않음
+ */
+export type UsdCashState =
+  | ({ state: 'known' } & UsdCashReading)
+  | { state: 'unknown'; error: string }
+  | { state: 'not_queried' };
+
 export interface Candle {
   ts: number;
   open: number;
@@ -84,6 +109,10 @@ export interface ExchangeClient {
    * (lightweight-charts 등 차트 라이브러리는 오름차순 입력을 요구)
    */
   getCandles(symbol: string, interval: string, count: number): Promise<Candle[]>;
+  /**
+   * 보유 종목 + 국내 KRW 예수금 행. **USD 예수금은 여기에 없다** (T-056) — `getBalancesDetailed().cash.USD` 로만 읽는다.
+   * 이 배열에서 `currency === 'USD'` 를 찾으면 항상 없음(= 0 으로 오독)이다.
+   */
   getBalances(): Promise<Balance[]>;
   createOrder(req: OrderRequest): Promise<OrderResult>;
   cancelOrder(req: CancelRequest): Promise<OrderResult>;

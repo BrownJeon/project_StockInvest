@@ -38,17 +38,29 @@ export const CASH_SHORTFALL_RATIO = 0.5;
 const SNAPSHOT_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 const CACHE_TTL_MS = 60_000;
 
-let snapCache: { at: number; value: { totalKRW: number; cashKRW: number } | null } | null = null;
+/**
+ * 시장별 현금(KRW 환산). **그 시장의 현금 행이 스냅샷에 없으면 null(모름)** — 0 으로 세지 않는다.
+ *
+ * T-056: 예전에는 KRW+USD 행을 합쳐 "현금"으로 봤다. USD 행은 늘 없어서 드러나지 않았지만, USD 예수금이 기록되기 시작하면
+ * **국내 매수의 실행 가능 판정에 달러를 현금으로 세는** 오분류가 된다(달러로 국내 주식은 못 산다). 그래서 시장별로 나눈다:
+ * 국내 매수 = KRW 행, 해외 매수 = USD 행. 배포 전 구형 스냅샷에는 USD 행이 없으므로 해외 현금은 "모름" → 사유로 세지 않는다
+ * (이 판정의 실패 방향 = 의심스러우면 보낸다).
+ */
+interface SnapshotCash { totalKRW: number; cashByMarket: Record<Market, number | null> }
+
+let snapCache: { at: number; value: SnapshotCash | null } | null = null;
 
 /** 테스트용 */
 export function resetApprovalContextCache(): void { snapCache = null; }
 
 interface SnapPosition { currency?: unknown; value_krw?: unknown }
 
-/** 최신 스냅샷에서 총자산·현금(KRW+USD 행). 오래됐거나 읽을 수 없으면 null. */
-async function readSnapshot(now: number): Promise<{ totalKRW: number; cashKRW: number } | null> {
+const CASH_ROW: Record<Market, 'KRW' | 'USD'> = { domestic: 'KRW', overseas: 'USD' };
+
+/** 최신 스냅샷에서 총자산·시장별 현금. 오래됐거나 읽을 수 없으면 null. */
+async function readSnapshot(now: number): Promise<SnapshotCash | null> {
   if (snapCache && now - snapCache.at < CACHE_TTL_MS) return snapCache.value;
-  let value: { totalKRW: number; cashKRW: number } | null = null;
+  let value: SnapshotCash | null = null;
   try {
     const [rows] = await getPool().query<RowDataPacket[]>(
       'SELECT total_krw, positions, ts FROM portfolio_snapshots ORDER BY ts DESC LIMIT 1',
@@ -59,11 +71,16 @@ async function readSnapshot(now: number): Promise<{ totalKRW: number; cashKRW: n
       const total = Number(r.total_krw);
       const positions: unknown = typeof r.positions === 'string' ? JSON.parse(r.positions) : r.positions;
       if (Number.isFinite(age) && age >= 0 && age <= SNAPSHOT_MAX_AGE_MS && total > 0 && Array.isArray(positions)) {
-        let cash = 0;
-        for (const p of positions as SnapPosition[]) {
-          if (p && (p.currency === 'KRW' || p.currency === 'USD')) cash += Number(p.value_krw) || 0;
+        const cashByMarket: Record<Market, number | null> = { domestic: null, overseas: null };
+        for (const m of ['domestic', 'overseas'] as const) {
+          let found = false;
+          let cash = 0;
+          for (const p of positions as SnapPosition[]) {
+            if (p && p.currency === CASH_ROW[m]) { found = true; cash += Number(p.value_krw) || 0; }
+          }
+          cashByMarket[m] = found ? cash : null;
         }
-        value = { totalKRW: total, cashKRW: cash };
+        value = { totalKRW: total, cashByMarket };
       }
     }
   } catch { /* 모르면 null — 아래에서 "실행 가능"으로 본다 */ }
@@ -141,8 +158,10 @@ export async function assessExecutability(args: {
   const snap = await readSnapshot(now);
   if (snap) {
     ctx.totalKRW = snap.totalKRW;
-    ctx.cashKRW = snap.cashKRW;
-    if (snap.cashKRW < args.amountKRW * CASH_SHORTFALL_RATIO) reasons.push('cash');
+    // 이 매수의 시장 현금만 본다(T-056). 그 시장 현금 행이 없으면 모름 → 사유로 세지 않는다.
+    const cash = snap.cashByMarket[market];
+    ctx.cashKRW = cash;
+    if (cash != null && cash < args.amountKRW * CASH_SHORTFALL_RATIO) reasons.push('cash');
   }
   return { executable: reasons.length === 0, reasons, ctx };
 }

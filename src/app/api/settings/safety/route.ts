@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { isDryRun } from '@/lib/safety/dry-run';
+import { isOverseasEnabled } from '@/lib/exchanges/market-flags';
 import { syncEngineSwitchesFromLegacy } from '@/lib/signals/router';
 import { readExitEngineSwitch, describeExitEngineSwitch } from '@/lib/strategy/exit-switch';
 import {
@@ -148,7 +149,7 @@ export async function GET() {
       kis: {
         configured: !!(process.env.KIS_APP_KEY && process.env.KIS_APP_SECRET && process.env.KIS_ACCOUNT_NO),
         mock: String(process.env.KIS_MOCK ?? 'true').toLowerCase() === 'true',
-        overseasEnabled: String(process.env.KIS_OVERSEAS_ENABLED ?? 'true').toLowerCase() === 'true',
+        overseasEnabled: isOverseasEnabled(),   // T-056 — 잔고·스냅샷 가드와 같은 판정식 하나
       },
     },
   });
