@@ -197,7 +197,7 @@ ssh home_ubuntu 'pm2 list | grep stockinvest-cron'
 배포 시점은 **양시장 폐장 + 킬스위치 OFF** 구간(05:10~08:30 또는 15:40~22:20 KST)이다. 배포 직후 스냅샷을 1회 강제로 찍고(`POST /api/cron/portfolio-snapshot`, 헤더 `x-cron-secret`, 본문 `{"force":true}`) **읽기 전용으로** 아래를 본다. 확인하지 않은 항목은 "미확인"이라고 적는다.
 
 - [ ] 최신 `portfolio_snapshots` 행의 `positions` 에 `currency:'USD'` 행이 있고, `value_krw` = `qty` × `price`, `price` = 그 시각 `fx_rates` 값인가
-- [ ] 행 합계 = `total_krw` 인가(항등), 총액이 직전 행보다 USD 평가액(2026-10-20 실측 약 49만 원, 총액의 2.4%)만큼 커졌는가 — **1회성 불연속**이다(과거 행에는 USD 가 없다)
+- [ ] 행 합계 = `total_krw` 인가(항등), 총액이 직전 행보다 **그 시각 USD 평가액만큼** 커졌는가 — 과거 행에는 USD 가 없어 USD 잔액이 있으면 **1회성 불연속**이다. 잔액이 0 이면 `qty 0`·`value_krw 0` 행이 기록되고 불연속은 없다(2026-10-20 오전 368.51달러=약 49만 원이었고 같은 날 23:07 실측에서는 0 이었다 — 배포 시점 값을 먼저 읽어 기대값을 정한다)
 - [ ] `snapshot:usd_cash_unavailable` critical 경보와 `skipped:'usd_cash_unavailable'` 응답이 **없는가**(있으면 CTRP6504R 응답 모양이 실측과 다르다는 뜻 — 파서를 고치기 전에는 킬스위치가 stale 로 멈춘다. 즉시 보고)
 - [ ] `/api/health` 의 해외 1회·일일 한도가 USD 평가액 × 비율만큼만 늘었는가, 국내 한도는 불변인가
 - [ ] 킬스위치 `drawdown` 결과가 `evaluated`(또는 전환 규칙 사유 문구) 이고 발동 보류 경보가 없는가
