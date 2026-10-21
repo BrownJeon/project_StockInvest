@@ -274,6 +274,13 @@ Codex C1 지적 5건을 Leader 가 코드와 대조했다(채택·오탐의 최�
 
 ## 배포 기록
 
+- [14:38] **커밋·push**: 사용자 지시("지금 작업한 것은 커밋 및 푸시해줘")로 예약 크론(17:03)을 취소하고 즉시 진행. 사전 점검 — 작업 트리 소스·시험 16개가 QA 격리 사본과 바이트 동일, 진행 중 주문 없음(`executing` 3건은 id 5326~5330 의 오래된 매도 행), 원격 main = 로컬 `origin/main`(`05a82a8`, `git fetch` 의 `@eaDir` 객체 오류는 푸시에 영향 없음). 커밋 `8894416`(19파일: 소스·시험 16 + `docs/telegram-approval.md` + 이 task 문서 + HANDOFF 문서, 타 세션 변경이 섞인 `ACTIVE.md`·`board.md`·`20-Log/*` 는 제외), commit-msg 훅 통과("Reviewer 감사 기록 확인: T-044 T-051 T-056 T-058"). push `05a82a8..8894416` 14:38:04 — **같은 push 에 실린 다른 작업**: `fae6baf`(T-060 매도 제안 요약 보완), `f00758b`(T-056 문서). T-059 수집기 코드는 미커밋이라 포함되지 않음.
+- [14:39] **배포 결과**: webhook blue/green `RELEASE_RESULT {"status":"ok","release":"20261021-143838-88944165","sha":"8894416…","previous":"…20261021-051816-05a82a8e","migrated":false}`, 전환 14:39:13. **시간대 주의**: 국내 장중(15:30 전)이라 권장 창(15:40~22:00)을 벗어난 배포다(사용자 지시) — 전환 순간 14:39:07 `strategy-eval` 틱 1회가 `HTTP=000` 으로 빠졌고 14:40:02 부터 정상(5분 틱 1개 손실, 영향 없음).
+- [14:40] **확인한 것**: pm2 `stockinvest`·`stockinvest-cron` online·재시작 0(cron 1행), 새 릴리스 cwd. `/api/health` 200(첫 `deploy.sh --status` 가 전환 직후 ❌ 였다가 재실행에서 ✅ — 일시적), 인증 없는 `/api/signals` GET·POST 모두 401. 핵심 파일 해시 저장소=릴리스 일치(`signal-cash-gate.ts` 290d8a084ee0, `service.ts` edae73904c97, `engine.ts` 9ab837e0708e, T-060 `sell-proposal-preview.ts` 9d46f671865a). 부팅 직후 `[kill-switch:drawdown]` 전환 규칙 E 가 USD 행을 양쪽에서 빼고 비교(T-056 전환 구간, 정상). 운영 DB `system_config` 에 `signal_cash_gate%` 키 0개 = 양쪽 켜짐.
+- [14:46] **미확인(첫 평가 대기)**: 배포 후 `[signal-cash-gate]` 로그 0줄·`eval_funnel` `insufficient_cash` 0행·`signal_cash_gate_skip` 미확인 — 이 구간 국내 매수 후보가 앞단 `cooldown_entry` 등에서 걸려 `createSignal` 에 도달하지 않았다(게이트는 도달한 매수 후보에서만 돈다). 해외는 22:30 이후. 23:07 관측 크론(`a62cb30a`)이 확인한다. **게이트가 운영에서 실제로 한 번이라도 돌았다는 증거는 아직 없다.**
+- [14:46] **정정**: 앞서 보고에서 "운영은 `DRY_RUN=true`" 라고 한 것은 운영 `.env` 값이었고, 배포 후 `/api/health` 는 `"dryRun":false` 를 보고한다([확실] DB `system_config.safety_dry_run='false'`(10-18 18:22 KST 설정)가 `.env` 의 `DRY_RUN=true` 보다 우선한다 — `dry-run.ts` 의 우선순위 코드와 읽기 전용 SELECT 로 확인. 킬스위치 `safety_kill_switch='false'`). 즉 **실주문이 나갈 수 있는 상태에서 장중 배포**였다 — 진행 중 주문이 없음을 확인하고 한 것이며 이상 징후는 없다.
+- 롤백 방법: 게이트만 끄기 = 두 키를 `false`(`docs/telegram-approval.md` §2.1 의 SQL, 재시작 불필요). 코드 롤백 = 이전 릴리스 `20261021-051816-05a82a8e` 로 blue/green 되돌리기(사용자 지시 시).
+
 ## 최종 요약
 
 (완료 시 Leader 작성)
