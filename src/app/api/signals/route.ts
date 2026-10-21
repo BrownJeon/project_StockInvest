@@ -136,7 +136,7 @@ export async function GET(req: Request) {
     const pool = getPool();
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT id, strategy_id, symbol, side, order_type, price, quantity, amount_krw,
-              reasoning, indicators, status, expires_at, valid_from, scenario_source,
+              reasoning, indicators, status, expires_at, valid_from, market, scenario_source,
               consumed_order_id, created_at, updated_at
        FROM signals
        ${whereSql}

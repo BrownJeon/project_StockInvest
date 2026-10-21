@@ -4,7 +4,9 @@
  * 🔴 이 파일의 최대 목적은 **다른 소비자 회귀 방지**다. 이 API 는 승인 대기 큐·추천·트레이딩 보드·
  *    대시보드 카운트 등 14곳이 쓴다. 두 파라미터가 **없거나 값이 정확히 `'1'` 이 아니면** SQL 문자열·
  *    바인딩 값·응답 모양이 변경 전과 바이트 단위로 같아야 한다 — 아래 `baseSql`/`EXPIRES` 는 변경 전
- *    (`5fec4ff`) SQL 을 그대로 옮겨 적은 것이다. 이 값을 고쳐야 테스트가 통과한다면 그건 회귀다.
+ *    (`5fec4ff`) SQL 을 그대로 옮겨 적은 것에 **T-062 WP-U 의 `market` 열 한 단어만** 더한 것이다(승인 데모 v2,
+ *    Reviewer PASS — 화면이 국내·해외를 구분하려고 응답 행에 `market` 키 1개가 늘었고 WHERE·ORDER·LIMIT·바인딩은 그대로).
+ *    그 밖의 이유로 이 값을 고쳐야 테스트가 통과한다면 그건 회귀다.
  *
  * - `includeExpired=1` : `status` 가 있을 때 붙던 만료 제외 절만 생략(대시보드 "내 결정" 섹션 전용).
  * - `withOrder=1`      : `orders` PK `IN (...)` 2차 조회로 `order_status`·`order_blocked_by` 를 붙인다.
@@ -24,10 +26,14 @@ jest.mock('@/lib/strategy/market-hours', () => ({
 
 const mockedGetPool = getPool as jest.MockedFunction<typeof getPool>;
 
-/** 변경 전 SELECT 문 — 공백·줄바꿈까지 그대로. */
+/**
+ * 변경 전 SELECT 문 — 공백·줄바꿈까지 그대로.
+ * T-062 WP-U: 화면이 국내·해외를 구분하도록 `market` 컬럼 한 단어만 추가했다(승인 데모 v2, 가이드 G2-④).
+ * WHERE·ORDER·LIMIT·바인딩·응답 모양은 그대로이고, 응답 행에 `market` 키가 하나 늘 뿐이다.
+ */
 function baseSql(whereSql: string): string {
   return `SELECT id, strategy_id, symbol, side, order_type, price, quantity, amount_krw,
-              reasoning, indicators, status, expires_at, valid_from, scenario_source,
+              reasoning, indicators, status, expires_at, valid_from, market, scenario_source,
               consumed_order_id, created_at, updated_at
        FROM signals
        ${whereSql}

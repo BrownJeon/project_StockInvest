@@ -6,6 +6,9 @@ import { ScenarioCard, type SignalWithScenario } from '@/components/ScenarioCard
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
 import { useFxRate } from '@/lib/hooks/useFxRate';
 import { fmtMarketPrice } from '@/lib/format';
+import {
+  sortScenarioCards, gradeOf, confidenceOf, fmtApproxKrw, usdZoneText, isOverseasSignal,
+} from '@/components/scenario-card-display';
 
 interface PendingEntrySignal {
   id: number;
@@ -16,7 +19,8 @@ interface PendingEntrySignal {
   expires_at: string;
   created_at: string;
   quantity?: number | null;
-  amount_krw?: number | null;
+  /** DB DECIMAL — mysql2 는 문자열로 준다. 표시는 fmtApproxKrw() 경유(T-063). */
+  amount_krw?: number | string | null;
 }
 
 interface BlockBanner {
@@ -88,7 +92,12 @@ export default function RecommendPage() {
       const zoneMeta = ind?.['zone'] as { loPct?: number; hiPct?: number } | undefined;
 
       let text = '—';
-      if (typeof zoneStr === 'string' && zoneStr.includes('~')) {
+      // T-062 G8: 해외 카드에 서버가 저장한 달러 구간(카드 시점 환율)이 있으면 그것을 그대로 쓴다.
+      // 없으면 기존처럼 원화 구간을 지금 환율로 환산해 보인다(fmtMarketPrice 폴백).
+      const usdZone = isOverseasSignal(sig) ? usdZoneText(ind) : null;
+      if (usdZone) {
+        text = usdZone;
+      } else if (typeof zoneStr === 'string' && zoneStr.includes('~')) {
         const [lo, hi] = zoneStr.split('~').map(Number);
         const mkt = sig.market ?? 'domestic';
         const loFmt = Number.isFinite(lo) ? fmtMarketPrice(lo, mkt, fxRate) : '?';
@@ -119,11 +128,16 @@ export default function RecommendPage() {
     } catch { return {}; }
   }
 
-  const enriched = signals.map(s => ({
-    ...s,
-    displayName: displaySymbol(s.symbol),
-    marketFlag: marketFlag(s.symbol),
-  }));
+  // T-062: 평가등급순(A>B+>B>C>없음 → 같은 등급은 신뢰도 높은 순 → 서버 순서 = 최신순).
+  // 목록 API 의 indicators 는 문자열이라 gradeOf/confidenceOf 가 내부에서 파싱한다.
+  const enriched = sortScenarioCards(
+    signals.map(s => ({
+      ...s,
+      displayName: displaySymbol(s.symbol),
+      marketFlag: marketFlag(s.symbol),
+    })),
+    s => ({ grade: gradeOf(s.indicators), confidence: confidenceOf(s.indicators) }),
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 16 }}>
@@ -191,6 +205,12 @@ export default function RecommendPage() {
           </div>
         )}
 
+        {!loading && enriched.length > 0 && (
+          <div style={{ margin: '0 0 -2px', fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span>정렬: <b style={{ color: 'var(--text)' }}>평가등급순</b> (같은 등급은 신뢰도 높은 순)</span>
+          </div>
+        )}
+
         {enriched.map(s => (
           <ScenarioCard key={s.id} signal={s} />
         ))}
@@ -208,6 +228,7 @@ export default function RecommendPage() {
               const { text: zoneText, pct: zonePct } = getPriceZone(sig);
               // DB DECIMAL(36,18) 컬럼은 mysql2 가 문자열로 반환한다 — Number 로 정직하게 변환 후 다룬다.
               const qty = sig.quantity != null ? Number(sig.quantity) : null;
+              const approxKrw = fmtApproxKrw(sig.amount_krw);
               return (
                 <div key={sig.id} style={{
                   background: 'var(--bg2)', borderRadius: 12,
@@ -236,9 +257,9 @@ export default function RecommendPage() {
                             · {Number.isInteger(qty) ? qty : (Math.floor(qty * 100) / 100).toFixed(2)}주
                           </span>
                         )}
-                        {(qty == null || qty <= 0) && sig.amount_krw != null && sig.amount_krw > 0 && (
+                        {(qty == null || qty <= 0) && approxKrw && (
                           <span style={{ marginLeft: 4, fontWeight: 600 }}>
-                            · 약 {sig.amount_krw.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}원
+                            · {approxKrw}
                           </span>
                         )}
                       </span>

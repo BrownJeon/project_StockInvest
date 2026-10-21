@@ -2,6 +2,10 @@
 
 import { useRouter } from 'next/navigation';
 import { cardSummary, type StoredScenario } from './scenario-view-model';
+import {
+  parseIndicators, scenarioOf, confidenceOf, isOverseasSignal, fmtApproxKrw, sessionLine, earningsLine,
+  type EarningsLineView,
+} from './scenario-card-display';
 
 export interface SignalWithScenario {
   id: number;
@@ -9,9 +13,18 @@ export interface SignalWithScenario {
   side: 'buy' | 'sell';
   status: string;
   expires_at: string | null;
+  /** T-062 — 해외 카드 "미국 정규장" 줄의 시작 시각(09:30 ET 를 KST 로 저장). 목록·상세 API 모두 SELECT 한다. */
+  valid_from?: string | null;
   created_at: string;
   quantity?: number | null;
-  amount_krw?: number | null;
+  /** DB DECIMAL — mysql2 는 문자열(`"100000.00"`)로 준다. 표시는 `fmtApproxKrw()` 경유. */
+  amount_krw?: number | string | null;
+  /**
+   * ⚠ 목록 API(`GET /api/signals`)는 이 값을 **JSON 문자열**로 준다(파싱하지 않음 — T-062 가이드 G1).
+   * 상세 API 만 객체로 파싱한다. 읽을 때는 반드시 `parseIndicators()`/`scenarioOf()` 를 거친다.
+   * (타입을 `string` 까지 넓히면 `TradingBoard.tsx` WatchCard 의 `?.ai` 접근이 컴파일되지 않아 —
+   *  그 파일은 이번 범위 밖 — 선언은 그대로 두고 읽는 쪽에서 방어한다.)
+   */
   indicators: {
     ai?: {
       /**
@@ -46,21 +59,56 @@ function minutesUntil(dateStr: string | null): number | null {
   return Math.max(0, Math.floor((new Date(dateStr).getTime() - Date.now()) / 60000));
 }
 
-function fmtQty(qtyRaw: number | string | null | undefined, amountKrw: number | null | undefined): string | null {
+function fmtQty(qtyRaw: number | string | null | undefined, amountKrw: unknown): string | null {
   // DB DECIMAL(36,18) 컬럼은 mysql2 가 문자열로 반환한다 — Number 로 정직하게 변환 후 다룬다.
   const qty = qtyRaw != null ? Number(qtyRaw) : null;
   if (qty != null && qty > 0) {
     return Number.isInteger(qty) ? `${qty}주` : `${(Math.floor(qty * 100) / 100).toFixed(2)}주`;
   }
-  if (amountKrw != null && amountKrw > 0) {
-    return `약 ${amountKrw.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}원`;
-  }
-  return null;
+  // T-063(T-062 WP-U 합침): amount_krw 는 DECIMAL 문자열이라 String#toLocaleString 이 옵션을 무시해
+  // "약 100000.00원" 이 보였다 — 숫자로 바꾼 뒤 "약 100,000원" 으로 서식한다.
+  return fmtApproxKrw(amountKrw);
+}
+
+/** T-062 — 시장 배지 "🇺🇸 미국"(국기는 aria-hidden, 글자 "미국" 은 읽힘). 추천·내일·승인 화면 공통 모양. */
+export function UsMarketBadge({ style }: { style?: React.CSSProperties }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0,
+      fontSize: 11, fontWeight: 700, padding: '1px 6px', borderRadius: 6,
+      border: '1px solid var(--border2)', background: 'var(--bg3)', color: 'var(--text)',
+      whiteSpace: 'nowrap', ...style,
+    }}>
+      <span aria-hidden>🇺🇸</span>미국
+    </span>
+  );
+}
+
+/** T-062 — 실적 한 줄(노랑 겹침 / 회색 없음). 상태는 글자로 전달, ⚠ 는 aria-hidden. */
+export function EarningsNote({ view, style }: { view: EarningsLineView; style?: React.CSSProperties }) {
+  const warn = view.tone === 'warn';
+  return (
+    <div style={{
+      fontSize: 11, lineHeight: 1.45,
+      color: warn ? 'var(--warn)' : 'var(--muted)',
+      ...(warn ? { background: 'rgba(245,158,11,.08)', borderRadius: 6, padding: '3px 6px' } : {}),
+      ...style,
+    }}>
+      {warn && <><span aria-hidden>⚠</span>{' '}</>}{view.text}{' '}
+      <span style={{ color: 'var(--muted)' }}>{view.note}</span>
+    </div>
+  );
 }
 
 export function ScenarioCard({ signal }: Props) {
   const router = useRouter();
-  const scenario = signal.indicators?.ai?.scenario;
+  // 목록 API 는 indicators 를 문자열로 준다(G1) — 문자열·객체 모두 여기서 객체로.
+  const ind = parseIndicators(signal.indicators);
+  const scenario = scenarioOf(ind);
+  const confidence = confidenceOf(ind);
+  const overseas = isOverseasSignal(signal);
+  const session = overseas ? sessionLine(signal.valid_from, signal.expires_at) : null;
+  const earnings = overseas ? earningsLine(ind) : null;
   // 결측 필드는 전부 null 로 정규화 — `exit`/`entry` 객체 자체가 없어도 여기서 죽지 않는다.
   const { grade, targetPct, targetPctHi, stopPct, stopPctHi, trigger, holdingDays, riskFactors } =
     cardSummary(scenario);
@@ -102,7 +150,9 @@ export function ScenarioCard({ signal }: Props) {
             {signal.side === 'buy' ? '매수' : '매도'}
             {qtyLabel && <span style={{ marginLeft: 4, fontWeight: 600 }}>· {qtyLabel}</span>}
           </span>
-          {signal.marketFlag && <span aria-hidden style={{ flexShrink: 0 }}>{signal.marketFlag}</span>}
+          {overseas
+            ? <UsMarketBadge />
+            : signal.marketFlag && <span aria-hidden style={{ flexShrink: 0 }}>{signal.marketFlag}</span>}
           <span style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {signal.displayName ?? signal.symbol}
           </span>
@@ -121,6 +171,7 @@ export function ScenarioCard({ signal }: Props) {
               background: gs.bg, color: gs.color, border: `1px solid ${gs.border}`,
             }}>
               {grade}
+              {confidence != null && <span style={{ fontWeight: 600 }}> {confidence}%</span>}
             </span>
           )}
         </div>
@@ -155,6 +206,12 @@ export function ScenarioCard({ signal }: Props) {
           )}
         </div>
       )}
+
+      {/* T-062 해외 카드: 미국 정규장 시간 줄 · 실적 한 줄 (키가 없으면 그리지 않는다) */}
+      {session && (
+        <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.45 }}>{session}</div>
+      )}
+      {earnings && <EarningsNote view={earnings} style={{ marginTop: 4 }} />}
 
       {/* Row 4: 리스크 요인 */}
       {riskFactors.length > 0 && (

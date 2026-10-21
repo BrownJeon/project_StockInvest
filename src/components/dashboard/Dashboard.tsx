@@ -13,6 +13,11 @@ import { useFxRate } from '@/lib/hooks/useFxRate';
 import { formatRelativeTime, kstTodayStart } from '@/lib/time';
 import { formatSymbolShort, symbolUnit } from '@/lib/symbols';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
+import {
+  parseIndicators, sortScenarioCards, gradeOf, confidenceOf, isOverseasSignal,
+  overseasZoneView, sessionLine, earningsLine, overseasFootnote,
+} from '@/components/scenario-card-display';
+import { UsMarketBadge, EarningsNote } from '@/components/ScenarioCard';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 
 interface Props {
@@ -30,16 +35,22 @@ interface StrategyRow {
   stats: { return7d: number; winRate: number; signalCount: number };
 }
 
-interface TomorrowSignal {
+export interface TomorrowSignal {
   id: number;
   symbol: string;
   strategy_id: string | null;
   price: string | null;
   reasoning: string | null;
-  indicators: Record<string, unknown> | null;
+  /** ⚠ 목록 API 는 JSON **문자열**로 준다(T-062 G1) — 읽을 때 parseIndicators() 경유. */
+  indicators: Record<string, unknown> | string | null;
   valid_from: string | null;
   expires_at: string | null;
   status: string;
+  /** T-062: 목록 API SELECT 에 추가됨. 없으면(구 응답) 심볼 형식으로 판정. */
+  market?: 'domestic' | 'overseas' | null;
+  created_at?: string;
+  /** DB DECIMAL 문자열 — 하단 고정 문구의 카드 금액 원천. */
+  amount_krw?: string | number | null;
 }
 
 type OrderStatus = 'pending' | 'accepted' | 'partially_filled' | 'filled' | 'cancelled' | 'rejected' | 'failed' | 'dry_run' | 'blocked';
@@ -1021,7 +1032,7 @@ function MarketBadge({ status }: { status: MarketStatus | null }) {
   );
 }
 
-function TomorrowScenarioTab({
+export function TomorrowScenarioTab({
   signals, symbolMeta, onSelectSymbol,
 }: {
   signals: TomorrowSignal[];
@@ -1040,12 +1051,31 @@ function TomorrowScenarioTab({
     );
   }
 
+  // T-062: 목록 API 의 indicators 는 문자열 — 한 번만 파싱해 정렬·렌더에 같이 쓴다.
+  // 평가등급순(A>B+>B>C>없음 → 같은 등급은 신뢰도 높은 순 → 서버 순서 = 최신순).
+  const rows = sortScenarioCards(
+    signals.map(sig => ({ sig, ind: parseIndicators(sig.indicators) })),
+    r => ({ grade: gradeOf(r.ind), confidence: confidenceOf(r.ind) }),
+  );
+  const footnote = overseasFootnote(signals);
+
   return (
     <div>
-      {signals.map((sig) => {
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        padding: '8px 14px', background: 'var(--bg2)', borderBottom: '1px solid var(--border)',
+        fontSize: 11, color: 'var(--muted)',
+      }}>
+        <span>정렬: <b style={{ color: 'var(--text)', fontWeight: 700 }}>평가등급순</b> (같은 등급은 신뢰도 높은 순)</span>
+      </div>
+      {rows.map(({ sig, ind }) => {
+        const overseas = isOverseasSignal(sig);
         const meta = symbolMeta[sig.symbol];
-        const displayName = meta && meta !== sig.symbol ? `${meta} (${sig.symbol})` : sig.symbol;
-        const ind = sig.indicators as Record<string, unknown> | null;
+        const short = overseas ? formatSymbolShort(sig.symbol) : sig.symbol;
+        const displayName = meta && meta !== sig.symbol && meta !== short ? `${meta} (${short})` : short;
+        const zone = overseas ? overseasZoneView(ind) : null;
+        const session = overseas ? sessionLine(sig.valid_from, sig.expires_at) : null;
+        const earnings = overseas ? earningsLine(ind) : null;
         const ai = ind?.ai as Record<string, unknown> | undefined;
         const scenario = ai?.scenario as Record<string, unknown> | undefined;
         const exit = scenario?.exit as Record<string, unknown> | undefined;
@@ -1071,6 +1101,7 @@ function TomorrowScenarioTab({
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
+                {overseas && <UsMarketBadge style={{ marginRight: 6 }} />}
                 <span style={{ fontWeight: 700, fontSize: 14 }}>{displayName}</span>
                 <span style={{
                   marginLeft: 8, fontSize: 11, padding: '2px 7px', borderRadius: 8,
@@ -1089,8 +1120,18 @@ function TomorrowScenarioTab({
             </div>
 
             {/* 진입·목표·손절 */}
-            <div style={{ display: 'flex', gap: 12, marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>
-              {typeof entry?.price_zone === 'string' && (
+            <div style={{ display: 'flex', gap: 12, rowGap: 2, flexWrap: 'wrap', marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>
+              {/* 해외: 서버 저장 달러 구간 주표기 + 원화 보조(없으면 원화에 단위 붙여 폴백). 국내: 그대로. */}
+              {overseas ? (
+                zone && (
+                  <span>
+                    진입 <strong className="num" style={{ color: 'var(--text)' }}>{zone.usd ?? zone.krw}</strong>
+                    {zone.usd && zone.krw && (
+                      <span className="num" style={{ color: 'var(--muted)', fontWeight: 500 }}> ≈ {zone.krw}</span>
+                    )}
+                  </span>
+                )
+              ) : typeof entry?.price_zone === 'string' && (
                 <span>진입 <strong style={{ color: 'var(--text)' }}>{entry.price_zone}</strong></span>
               )}
               {typeof exit?.target_pct === 'number' && (
@@ -1115,15 +1156,26 @@ function TomorrowScenarioTab({
               </div>
             )}
 
-            {/* valid_from */}
-            {sig.valid_from && (
+            {/* valid_from — 해외는 "미국 정규장 시작 ~ 끝 KST" 줄로 교체(값이 없으면 기존 줄 유지) */}
+            {session ? (
+              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text)', lineHeight: 1.45 }}>{session}</div>
+            ) : sig.valid_from && (
               <div style={{ marginTop: 4, fontSize: 10, color: 'var(--muted)' }}>
                 진입 가능: {new Date(sig.valid_from).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} KST
               </div>
             )}
+            {earnings && <EarningsNote view={earnings} style={{ marginTop: 4 }} />}
           </div>
         );
       })}
+      {footnote && (
+        <div style={{
+          padding: '10px 14px 12px', fontSize: 11, color: 'var(--muted)', lineHeight: 1.55,
+          borderBottom: '1px solid var(--border)',
+        }}>
+          {footnote}
+        </div>
+      )}
     </div>
   );
 }

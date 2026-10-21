@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="demo-version" content="T-062-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="description" content="T-062-v1 — 해외(미국) post-market 시나리오 카드가 지금 화면에 섞일 때 보이는 모습(현행 그대로)과 최소 변경안 A·B, 빈·예외 상태 데모 (delta)">
+<title>T-062-v1 해외 시나리오 카드 표시</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지) */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    /* 기존 컴포넌트에 하드코딩된 색(새 토큰 아님) — ScenarioCard·Dashboard 값 그대로 */
+    --c-indigo: #818cf8;
+    --c-green: #22c55e;
+    --c-red: #ef4444;
+    /* 데모 주석 전용(앱 UI 아님) */
+    --note: #9fb3d1;
+    --phone-w: 412px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size: 14px; -webkit-text-size-adjust: 100%;
+  }
+  code { font-size: 12px; background: var(--bg3); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+  .num { font-variant-numeric: tabular-nums; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  /* ── 데모 문서 틀 ── */
+  .page { max-width: 1280px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-bottom)); }
+  .page > header h1 { font-size: 17px; margin: 0 0 6px; line-height: 1.4; }
+  .page > header p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--note); color: var(--note); margin: 0 6px 4px 0; }
+  .sample-banner { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--warn); color: var(--warn); font-size: 13px; font-weight: 700; line-height: 1.5; }
+  section.block { margin-top: 32px; }
+  section.block > h2 { font-size: 15px; margin: 0 0 8px; }
+  section.block > p.lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .box { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; margin-top: 12px; }
+  .box h3 { font-size: 13px; margin: 0 0 6px; }
+  .box.warnbox { border-color: rgba(245,158,11,0.45); background: rgba(245,158,11,0.08); }
+  .box.warnbox h3 { color: var(--warn); }
+  ul.plain, ol.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  ul.plain li, ol.plain li { margin-bottom: 4px; }
+  .note { margin: 10px 0 4px; font-size: 11px; color: var(--note); border-left: 2px dashed var(--note); padding-left: 6px; line-height: 1.5; }
+  .cf { font-size: 11px; font-weight: 700; color: var(--note); }
+
+  /* 데모 조작 패널 */
+  .controls { display: flex; flex-direction: column; gap: 10px; max-width: 640px; margin: 0 0 14px; }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 120px; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px;
+                  border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  /* 화면 묶음 */
+  .trio { display: grid; grid-template-columns: 1fr; gap: 28px; }
+  @media (min-width: 900px) { .trio { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); align-items: start; } }
+  .compare { display: grid; grid-template-columns: 1fr; gap: 28px; }
+  @media (min-width: 900px) { .compare { grid-template-columns: 1fr 1fr; align-items: start; } }
+  .trio > div, .compare > div { min-width: 0; }
+  .col-title { font-size: 13px; font-weight: 700; margin: 0 0 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .col-title .was { color: var(--muted); font-weight: 600; }
+  .col-title .src { font-size: 11px; color: var(--muted); font-weight: 500; }
+
+  /* 폰 프레임 */
+  .phone { width: 100%; max-width: var(--phone-w); margin: 0 auto; background: var(--bg); border: 1px solid var(--border2); border-radius: 12px; overflow: clip; }
+  .ol { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 8px 14px; border-bottom: 1px solid var(--border);
+        background: repeating-linear-gradient(135deg, #1a1e26 0 10px, #181b22 10px 20px); color: var(--muted); }
+  .ol .n { font-size: 12px; font-weight: 700; color: #aab2c4; }
+  .ol .d { font-size: 11px; line-height: 1.4; }
+  .bottom-nav { height: calc(var(--nav-h) + var(--safe-bottom)); padding-bottom: var(--safe-bottom);
+                background: var(--bg2); border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(5, 1fr); }
+  .bottom-nav span { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; font-weight: 600; color: var(--muted); min-height: 56px; }
+  .bottom-nav span.on { color: var(--accent); }
+  .bottom-nav i { font-style: normal; font-size: 20px; line-height: 1; }
+  .pin { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
+         font-size: 11px; font-weight: 800; color: #0f1115; background: var(--note); vertical-align: middle; margin-left: 4px; flex-shrink: 0; }
+  .chg { outline: 2px dashed var(--note); outline-offset: 1px; border-radius: 4px; }
+
+  /* 대시보드 탭(sx.tabs) */
+  .tabs { display: flex; background: var(--bg2); border-bottom: 1px solid var(--border); }
+  .tabs span { flex: 1; text-align: center; padding: 12px 0; font-size: 13px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; }
+  .tabs span.on { color: var(--text); border-bottom-color: var(--accent); }
+
+  /* 대시보드 '내일' 탭 카드 — TomorrowScenarioTab 원본 크기 그대로 */
+  .tc { padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--bg); }
+  .tc-r1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .tc-l { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 0; }
+  .tc-name { font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
+  .tc-pat { margin-left: 8px; font-size: 11px; padding: 2px 7px; border-radius: 8px; background: rgba(99,102,241,.15); color: var(--c-indigo); white-space: nowrap; }
+  .tc-grade { font-size: 13px; font-weight: 700; padding: 2px 8px; border-radius: 8px; white-space: nowrap; flex-shrink: 0; }
+  .g-a { color: var(--c-green); background: rgba(34,197,94,.13); }
+  .g-bp { color: var(--accent); background: rgba(245,158,11,.13); }
+  .g-b { color: var(--muted); }
+  .tc-r2 { display: flex; gap: 12px; margin-top: 6px; font-size: 12px; color: var(--muted); flex-wrap: wrap; row-gap: 2px; }
+  .tc-r2 strong { color: var(--text); }
+  .tc-r2 strong.tg { color: var(--c-green); }
+  .tc-r2 strong.sl { color: var(--c-red); }
+  .tc-rs { margin-top: 6px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .tc-vf { margin-top: 4px; font-size: 10px; color: var(--muted); }
+  /* 제안 줄 */
+  .mk { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border2); background: var(--bg3); color: var(--text); margin-right: 6px; white-space: nowrap; }
+  .usd { color: var(--muted); font-weight: 500; }
+  .sess { margin-top: 4px; font-size: 11px; color: var(--text); line-height: 1.45; }
+  .sess .m, .earn .m { color: var(--muted); }
+  .earn { margin-top: 4px; font-size: 11px; color: var(--muted); line-height: 1.45; }
+  .earn.warn { color: var(--warn); background: rgba(245,158,11,.08); border-radius: 6px; padding: 3px 6px; }
+  .list-foot { padding: 10px 14px 12px; font-size: 11px; color: var(--muted); line-height: 1.55; border-bottom: 1px solid var(--border); }
+  .run-sum { padding: 8px 14px; font-size: 11px; line-height: 1.55; color: var(--text); background: var(--bg2); border-bottom: 1px solid var(--border); }
+  .run-sum b { font-weight: 700; }
+  .run-sum .m { color: var(--muted); }
+  .empty { padding: 28px; text-align: center; color: var(--muted); font-size: 13px; }
+  .empty .ic { font-size: 20px; margin-bottom: 8px; }
+  .empty .sub { font-size: 11px; margin-top: 6px; line-height: 1.55; }
+  .empty .sub.left { text-align: left; }
+
+  /* 추천 탭 — ScenarioCard 원본 */
+  .rhead { padding: 12px 16px 10px; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .rhead b { font-size: 17px; }
+  .rhead .rf { width: 34px; height: 34px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  .rlist { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .sc { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .sc.soon { border-color: rgba(245,158,11,.5); }
+  .sc-soon { font-size: 12px; color: var(--accent); }
+  .sc-r1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sc-l { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
+  .side { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; flex-shrink: 0; background: rgba(239,68,68,.18); color: var(--up); white-space: nowrap; }
+  .sc-name { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sc-grade { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 10px; flex-shrink: 0; }
+  .sg-a { color: #22c55e; background: rgba(34,197,94,.15); border: 1px solid rgba(34,197,94,.4); }
+  .sg-bp { color: #818cf8; background: rgba(99,102,241,.18); border: 1px solid rgba(99,102,241,.4); }
+  .sg-b { color: #f59e0b; background: rgba(245,158,11,.15); border: 1px solid rgba(245,158,11,.4); }
+  .sc-tg { font-size: 13px; color: var(--up); font-weight: 700; }
+  .sc-tr { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .sc-tr b { font-weight: 600; }
+
+  /* 추천 상세(승인 화면) — ScenarioDetail 원본 */
+  .dhead { padding: 12px 16px 10px; background: var(--bg); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .dhead .back { font-size: 20px; color: var(--muted); line-height: 1; }
+  .dhead .nm { font-size: 17px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dbody { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .dprice { padding: 10px 14px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .dprice .l { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .dprice .v { font-size: 18px; font-weight: 700; }
+  .dsec { background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .dsec .lb { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .5px; }
+  .kpis { display: flex; gap: 10px; flex-wrap: wrap; }
+  .kpi { background: var(--bg); border: 1px solid var(--border2); border-radius: 10px; padding: 10px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 72px; }
+  .kpi .k { font-size: 11px; color: var(--muted); font-weight: 600; }
+  .kpi .v { font-size: 16px; font-weight: 700; }
+  .reason { font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .azone { font-size: 12px; color: var(--muted); padding: 6px 10px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--border); line-height: 1.55; }
+  .azone b { color: var(--accent); }
+  .slice-prev { font-size: 11px; color: var(--accent); font-weight: 600; }
+  .dfoot { padding: 12px 16px; background: var(--bg); border-top: 1px solid var(--border); display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .dfoot span { height: 52px; border-radius: 10px; font-size: 16px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .dfoot .ok { background: var(--up); color: #fff; }
+  .dfoot .no { background: var(--bg3); color: var(--muted); border: 1px solid var(--border2); }
+
+  /* 승인 뒤 — 진입 감시 */
+  .wc { display: flex; align-items: center; gap: 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .wc .mid { flex: 1; min-width: 0; }
+  .wc .t { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wc .z { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .pe { background: var(--bg2); border-radius: 12px; border: 1px solid rgba(99,102,241,.3); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--muted); }
+  .pe .t { display: flex; align-items: center; gap: 6px; color: var(--text); font-weight: 700; font-size: 14px; }
+  .pe .z b { color: var(--text); font-weight: 500; }
+  .sub-h { padding: 10px 16px 6px; font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .5px; }
+
+  /* 표 */
+  .tbl-wrap { max-width: 100%; overflow-x: auto; }
+  table.def { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 0; }
+  table.def th, table.def td { border-bottom: 1px solid var(--border); padding: 8px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; line-height: 1.45; }
+  table.def th { color: var(--muted); font-weight: 600; }
+  table.def td.r { text-align: right; }
+  table.def tr.no td { color: var(--muted); }
+  .ok-t { color: var(--ok); font-weight: 700; }
+  .no-t { color: var(--muted); font-weight: 700; }
+
+  /* 결정 필요 */
+  .decide { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 14px; }
+  @media (min-width: 900px) { .decide { grid-template-columns: 1fr 1fr; } }
+  .q { background: var(--bg2); border: 1px solid var(--border2); border-radius: 10px; padding: 12px; min-width: 0; }
+  .q h3 { font-size: 13px; margin: 0 0 8px; line-height: 1.45; }
+  .q .opts { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  @media (min-width: 480px) { .q .opts { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); } }
+  .opt { border: 1px solid var(--border); border-radius: 8px; padding: 8px; font-size: 12px; line-height: 1.5; min-width: 0; overflow-wrap: anywhere; }
+  .opt.rec { border-color: var(--accent); }
+  .opt .h { font-weight: 700; display: block; margin-bottom: 4px; }
+  .opt .rec-tag { font-size: 11px; color: var(--accent); font-weight: 700; }
+  .q .why { margin: 8px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .q .why b { color: var(--text); }
+</style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <p><span class="tag">데모 T-062-v1</span><span class="tag">delta</span><span class="tag">합성 데이터</span><span class="tag">앱 소스 변경 0</span></p>
+    <h1>해외(미국) 시나리오 카드가 지금 화면에 섞이면 무엇이 보이나</h1>
+    <p>T-062 는 <b>서버만</b> 바꿉니다 — 매일 08:00 에 미국 종목 시나리오 카드를 만들게 하는 작업이고, 기능 스위치 <code>post_market_overseas_enabled</code> 가 <b>꺼진 채</b> 배포됩니다. 그래서 스위치를 켜기 전까지 화면은 지금과 똑같습니다. 이 데모는 <b>켠 뒤</b> 국내 카드와 미국 카드가 같은 목록에 섞일 때 지금 화면 코드가 그대로 그리는 모습(장면 1)과, 헷갈리는 곳만 고치는 최소 변경안(장면 2), 카드가 0장일 때(장면 3)를 보여 줍니다. 점선 파란 글씨·번호 표시는 데모 설명이며 앱에는 나오지 않습니다.</p>
+    <p class="sample-banner">예시 데이터 — 실제 계좌·종목 값 아님. 가격·환율(1,330원)·등급·문구·실적 일정은 모두 설명용으로 지어낸 값입니다.</p>
+  </header>
+
+  <!-- 0. 먼저 알아야 할 것 -->
+  <section class="block" aria-labelledby="h0">
+    <h2 id="h0">0. 먼저 알아야 할 것</h2>
+    <div class="box warnbox">
+      <h3>불편한 사실부터</h3>
+      <ol class="plain">
+        <li><b>승인 화면에서 통화가 섞입니다.</b> 추천 상세(등록·거절 버튼이 있는 화면)는 현재가를 <b>$27.51</b> 처럼 달러로 보여 주는데, 바로 아래 "AI 권장 진입 구간"은 <b>36176~36708</b> — 단위 없는 <b>원화 환산 정수</b>입니다. 돈이 움직이는 버튼 바로 위에서 두 단위가 나란히 나옵니다. <span class="cf">[확실 — ScenarioDetail.tsx:76·386·465-468, 카드 price_zone 은 KRW 정수로 저장(Stage 0 계획 ⓒ)]</span></li>
+        <li><b>미국 카드도 '내일' 탭에 들어갑니다.</b> 08:00 에 만든 미국 카드는 <b>그날 밤</b> 22:30(서머타임 해제 뒤 23:30)부터 유효한데, 대시보드는 국내 카드와 함께 "내일" 탭에 묶고 시작 시각만 작게 적습니다. 끝나는 시각(05:00·06:00)은 어디에도 없습니다. <span class="cf">[확실 — Dashboard.tsx:391·1118-1123]</span></li>
+        <li><b>실적 발표 일정은 화면 어디에도 안 보입니다.</b> T-062 는 실적 추정 기간과 겹치는 종목을 막지 않고 카드의 <code>indicators.earnings</code> 에 <b>기록만</b> 합니다(Leader 결정 Q-2). 지금 화면 코드는 이 필드를 읽는 곳이 0곳이라, 승인할 때 참고할 수 없습니다. <span class="cf">[확실 — src 의 화면 파일에서 earnings 를 읽는 코드 없음]</span></li>
+        <li><b>카드가 거의 안 나올 수 있고, 화면은 이유를 모릅니다.</b> 카드 1장 금액이 100,000원이라 1주 가격이 그보다 비싼 종목(예: MU·ORCL)은 카드가 만들어지지 않습니다. 후보 54종목 중 실제로 카드가 될 수 있는 건 5종 안팎입니다(Stage 0 실측). 빈 화면 문구는 지금 "장 마감 후 (KST 16:00)" — 국내 기준 하나뿐입니다. <span class="cf">[확실 — Dashboard.tsx:1031-1040, task §10 16:10]</span></li>
+      </ol>
+    </div>
+    <div class="box">
+      <h3>미국 카드가 나타나는 곳 (화면 파일·호출 위치)</h3>
+      <div class="tbl-wrap">
+        <table class="def">
+          <thead><tr><th scope="col">어디</th><th scope="col">무엇을 보여 주나</th><th scope="col">코드</th></tr></thead>
+          <tbody>
+            <tr><td>대시보드 › 아래 탭 "내일"</td><td>종목 코드·패턴·등급·진입 구간·목표·손절·보유·AI 한 줄·"진입 가능" 시각</td><td><code>Dashboard.tsx</code> 204-209(조회), 1024-1129(TomorrowScenarioTab)</td></tr>
+            <tr><td>추천 탭 목록 (💡 AI 추천)</td><td>매수·금액·국기·종목·등급·목표%·트리거·보유 (가격·시각 없음)</td><td><code>recommend/page.tsx</code> 41·194-196 → <code>ScenarioCard.tsx</code></td></tr>
+            <tr><td>추천 상세 = 승인 화면</td><td>현재가($)·AI 평가·분석 사유·AI 권장 진입 구간·분할 설정·등록/거절</td><td><code>ScenarioDetail.tsx</code> (카드 누르면 <code>/recommend/[id]</code>)</td></tr>
+            <tr><td>승인 뒤: 진입 감시 중 (2곳)</td><td>대시보드 트레이딩 보드 WatchCard · 추천 탭 아래 "진입 감시 중"</td><td><code>TradingBoard.tsx</code> 83-136 · <code>recommend/page.tsx</code> 200-276</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">ScenarioCard 컴포넌트는 추천 탭 한 곳에서만 쓰입니다(<code>grep -rn ScenarioCard src</code> — 나머지는 같은 이름의 타입 import). 대시보드 "내일" 탭은 ScenarioCard 가 아니라 Dashboard.tsx 안의 별도 목록입니다.</p>
+    </div>
+  </section>
+
+  <!-- 1. 장면 1 현행 그대로 -->
+  <section class="block" aria-labelledby="h1">
+    <h2 id="h1">장면 1 · 현행 그대로 (화면 코드 변경 0)</h2>
+    <p class="lead">스위치를 켠 뒤 국내 카드 2장 + 미국 카드 3장이 대기 중일 때, 지금 코드가 그리는 모습입니다. 보는 시각을 바꾸면 목록 순서(만든 시각 최신순)와 만료 임박 표시가 바뀝니다.</p>
+    <div class="controls">
+      <fieldset class="seg">
+        <legend>화면을 보는 시각 (KST)</legend>
+        <div class="seg-row" id="s1-time">
+          <label><input type="radio" name="s1t" value="t1" checked><span>10-21(수) 08:30<br>미국 카드 막 생성</span></label>
+          <label><input type="radio" name="s1t" value="t2"><span>10-21(수) 22:00<br>국내 다음날 카드 생성 뒤</span></label>
+          <label><input type="radio" name="s1t" value="t3"><span>10-22(목) 04:10<br>미국 카드 만료 50분 전</span></label>
+          <label><input type="radio" name="s1t" value="t4"><span>11-03(화) 08:30<br>서머타임 해제 뒤</span></label>
+        </div>
+      </fieldset>
+    </div>
+    <div class="trio" aria-live="polite">
+      <div>
+        <p class="col-title">① 대시보드 › "내일" 탭 <span class="src">Dashboard.tsx</span></p>
+        <div class="phone" id="s1-dash"></div>
+      </div>
+      <div>
+        <p class="col-title">② 추천 탭 목록 <span class="src">ScenarioCard.tsx</span></p>
+        <div class="phone" id="s1-reco"></div>
+      </div>
+      <div>
+        <p class="col-title">③ 추천 상세 = 승인 화면 (CMCSA) <span class="src">ScenarioDetail.tsx</span></p>
+        <div class="phone" id="s1-detail"></div>
+      </div>
+      <div>
+        <p class="col-title">④ 승인 뒤 · 진입 감시 중 <span class="src">TradingBoard.tsx · recommend/page.tsx</span></p>
+        <div class="phone" id="s1-watch"></div>
+      </div>
+    </div>
+
+    <div class="box">
+      <h3>번호별 사실 (있는 그대로)</h3>
+      <ol class="plain">
+        <li><b>구분은 심볼 접두로만.</b> 대시보드 "내일" 탭은 국기·시장 표시가 없고, 종목 이름은 관심·보유 종목만 불러오므로(Dashboard.tsx:249-266) 미국 카드는 <code>NAS:CMCSA</code> 처럼 코드가 그대로 보입니다. 국내도 관심 종목이 아니면 <code>035720</code> 처럼 코드만 보입니다. — <b>불편</b>(코드에 익숙하면 구분은 됨) <span class="cf">[확실]</span></li>
+        <li><b>진입 구간에 단위가 없습니다.</b> <code>36176~36708</code> 은 원화 환산값인데 "원"·쉼표가 없습니다(Dashboard.tsx:1093-1095). CMCSA 를 $27 대로 알고 있으면 숫자만 보고 단위를 짐작해야 합니다. — <b>불편</b> <span class="cf">[확실]</span></li>
+        <li><b>"진입 가능" 시각은 맞게 읽힙니다.</b> 저장값이 KST 이고 브라우저가 KST 라 "10. 21. 오후 10:30 KST"로 나옵니다(Dashboard.tsx:1119-1123). 다만 10px 회색 글씨이고, 끝나는 시각과 "미국 정규장"이라는 말이 없습니다. — <b>부분적으로 좋음</b> <span class="cf">[확실 — 시각 변환은 T-062 설계대로 저장된다는 전제]</span></li>
+        <li><b>탭 이름 "내일".</b> 08:00 에 만든 미국 카드는 그날 밤 유효인데 "내일"에 들어갑니다. 08:30 에는 국내 카드(오늘 09:00 유효)도 같은 처지라 기존 문제와 같은 종류입니다. — <b>불편</b> <span class="cf">[확실]</span></li>
+        <li><b>추천 탭 카드는 가격·시각이 아예 없습니다.</b> 국기(🇺🇸)는 붙어서 미국 카드라는 건 보입니다(useSymbolMeta). 만료 60분 전부터만 "⏱ n분 후 만료"가 뜹니다(ScenarioCard.tsx:68-69·88-92). 트리거 줄에는 내부 값 <code>price_zone</code> 이 글자 그대로 보입니다(국내 카드도 같음). — <b>국기는 좋음, 나머지 불편</b> <span class="cf">[확실]</span></li>
+        <li><b>금액 표시 "약 100000.00원".</b> 카드 금액 컬럼(DECIMAL)이 문자열로 오면 쉼표 없이 소수점까지 나옵니다(ScenarioCard.tsx:49-58). 실제 매수는 1주 단위로 내림이라 CMCSA 는 2주 ≈ 72,900원입니다. 국내 카드도 같은 표시입니다. <span class="cf">[가능성 높음 — 코드 읽기 근거, 실화면 미확인]</span></li>
+        <li><b>승인 화면의 통화 혼합.</b> 현재가·분할 미리보기는 $(fmtMarketPrice, 지금 환율), AI 권장 진입 구간·분석 사유의 진입구간은 원 정수. 유효 시각·실적 일정은 이 화면에 없습니다. — <b>가장 불편</b> <span class="cf">[확실 — ScenarioDetail.tsx:76·386·458-468·547]</span></li>
+        <li><b>승인 뒤 표시가 두 곳에서 다릅니다.</b> 대시보드 WatchCard 는 🇺🇸 + "구간 36176~36708원"(단위 있음, TradingBoard.tsx:113·217). 추천 탭 "진입 감시 중"은 <b>🇰🇷 · ₩36,176</b> 로 국내처럼 보입니다 — 목록 API 가 <code>market</code> 컬럼을 돌려주지 않아(api/signals/route.ts:138-140) 국내로 간주합니다(recommend/page.tsx:93·221). 지금 있는 해외 전략 시그널에도 이미 해당합니다. <span class="cf">[확실 — 코드 읽기]</span></li>
+      </ol>
+    </div>
+
+    <div class="decide">
+      <div class="q">
+        <h3>Q1. 현행 그대로 스위치를 켜도 되는가?</h3>
+        <div class="opts">
+          <div class="opt"><span class="h">예 — 화면 변경 없음</span>장면 2 의 안 0. 위 ②·⑥·⑦ 은 감수(숫자 크기로 원화임을 짐작).</div>
+          <div class="opt rec"><span class="h">아니오 — 켜기 전에 최소 변경 <span class="rec-tag">권고</span></span>장면 2 에서 A 또는 B 를 고른다.</div>
+        </div>
+        <p class="why">근거: <b>⑦ 은 등록 버튼 바로 위의 단위 혼동</b>이고, 카드는 건마다 사람이 승인하는 구조라 승인 화면이 판단의 전부입니다. 스위치가 꺼진 채 배포되므로 고치는 동안 사용자 영향은 0입니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. 장면 2 최소 변경안 -->
+  <section class="block" aria-labelledby="h2">
+    <h2 id="h2">장면 2 · 최소 변경안 (선택지) — 새 화면·새 탭 없음</h2>
+    <p class="lead">왼쪽은 지금(안 0), 오른쪽은 고른 안입니다. 바뀌는 줄은 점선 테두리로 표시했습니다. 국내 카드는 어느 안에서도 그대로입니다.</p>
+    <div class="controls">
+      <fieldset class="seg">
+        <legend>안</legend>
+        <div class="seg-row" id="s2-plan">
+          <label><input type="radio" name="s2p" value="A"><span>안 A (소)<br>시장·단위·시각 라벨</span></label>
+          <label><input type="radio" name="s2p" value="B" checked><span>안 B (중)<br>A + 실적 일정 한 줄</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="seg">
+        <legend>화면</legend>
+        <div class="seg-row" id="s2-view">
+          <label><input type="radio" name="s2v" value="dash" checked><span>대시보드 "내일" 탭</span></label>
+          <label><input type="radio" name="s2v" value="reco"><span>추천 탭 목록</span></label>
+          <label><input type="radio" name="s2v" value="detail"><span>승인 화면 (CMCSA)</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="seg">
+        <legend>서머타임</legend>
+        <div class="seg-row" id="s2-dst">
+          <label><input type="radio" name="s2d" value="t1" checked><span>적용 중 (10-21)<br>22:30 ~ 05:00</span></label>
+          <label><input type="radio" name="s2d" value="t4"><span>해제 뒤 (11-03)<br>23:30 ~ 06:00</span></label>
+        </div>
+      </fieldset>
+    </div>
+    <div class="compare" aria-live="polite">
+      <div>
+        <p class="col-title"><span class="was">현재 · 안 0 (변경 없음)</span></p>
+        <div class="phone" id="s2-cur"></div>
+      </div>
+      <div>
+        <p class="col-title" id="s2-title">제안</p>
+        <div class="phone" id="s2-new"></div>
+      </div>
+    </div>
+
+    <div class="box">
+      <h3>안별 범위</h3>
+      <div class="tbl-wrap">
+        <table class="def">
+          <thead><tr><th scope="col">안</th><th scope="col">바뀌는 것 (미국 카드만)</th><th scope="col">바뀌는 파일</th><th scope="col">규모</th></tr></thead>
+          <tbody>
+            <tr><td>0 · 현행 유지</td><td>없음</td><td>없음</td><td>0</td></tr>
+            <tr><td>A</td><td>"🇺🇸 미국" 배지 · 진입 구간에 "원"·쉼표 + "≈ $27.20~27.60 (카드 환율·기준 시각)" · "미국 정규장 시작 ~ 끝 KST" 한 줄 · 승인 화면 "AI 권장 진입 구간" 줄과 유효 시각 줄</td><td><code>Dashboard.tsx</code>(TomorrowScenarioTab), <code>ScenarioCard.tsx</code>, <code>ScenarioDetail.tsx</code> — 서버·API 변경 없음(카드 JSON 의 <code>price_zone_usd</code>·<code>fx</code>·<code>session</code> 을 읽기만)</td><td>소 (표시 3곳)</td></tr>
+            <tr><td>B</td><td>A + 실적 일정 한 줄: 추정 기간과 겹침(노랑 ⚠) / 5거래일 안 일정 없음 / 확정일이 5거래일 밖</td><td>A 와 같은 3파일 + 카드 타입에 <code>earnings</code> 추가</td><td>중 (3파일 + 상태 3종 문구)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">A·B 모두 국내 카드 표시는 바꾸지 않습니다. 금액·수량 표시(⑥)·목표 초록/손절 빨강·<code>price_zone</code> 글자 노출은 국내에도 있는 기존 문제라 이 안에 넣지 않았습니다(아래 "화면 밖에서 발견한 것").</p>
+      <p class="note">B 의 "확정일이 5거래일 밖" 경우는 Stage 0 설계의 <code>earnings.status</code> 3종(none·estimated_window·confirmed_blackout)으로는 구분되지 않습니다 — 표시하려면 <code>events[]</code> 를 읽거나 서버가 값을 하나 더 써야 합니다(Leader 확인 사항).</p>
+    </div>
+
+    <div class="decide">
+      <div class="q">
+        <h3>Q2. 어느 안으로?</h3>
+        <div class="opts">
+          <div class="opt"><span class="h">안 0 · 현행 유지</span>변경 0. 장면 1 의 혼동 그대로.</div>
+          <div class="opt"><span class="h">안 A (소)</span>단위·시각 혼동만 해소. 실적 정보는 여전히 화면 밖.</div>
+          <div class="opt rec"><span class="h">안 B (중) <span class="rec-tag">권고</span></span>A + 승인 판단에 쓰는 실적 일정 한 줄.</div>
+        </div>
+        <p class="why">근거: 실적 추정 기간은 "막지 않고 기록만"으로 정했으므로 <b>화면에 안 보이면 그 기록은 사용자에게 없는 것과 같습니다</b>(Stage 0 실측: 52종목 중 29개가 앞으로 14일 안 추정 창과 겹침). 추가 비용은 A 와 같은 3파일에 한 줄씩입니다.</p>
+      </div>
+      <div class="q">
+        <h3>Q3. 언제 고치나?</h3>
+        <div class="opts">
+          <div class="opt"><span class="h">T-062 안에서 함께</span>한 번에 끝나지만, 서버 안전 경로 검토(국내 동작 불변)와 화면 검토가 한 task 에 섞임.</div>
+          <div class="opt rec"><span class="h">별도 화면 task — "스위치 켜기 전 배포"를 켜는 조건에 추가 <span class="rec-tag">권고</span></span>T-062 는 지금 계획대로 서버만.</div>
+        </div>
+        <p class="why">근거: T-062 는 스위치가 꺼진 채 배포되므로 화면이 늦어도 영향 0입니다. 대신 켜는 조건(Q-3: 금액 재논의·확정 실적일 입력·08:00 일봉 확인)에 <b>"화면 task 배포 완료"</b>를 한 줄 넣어야 순서가 지켜집니다.</p>
+      </div>
+      <div class="q">
+        <h3>Q3-b. 탭 이름 "내일"</h3>
+        <div class="opts">
+          <div class="opt rec"><span class="h">그대로 두고 카드마다 시각 표시 <span class="rec-tag">권고</span></span>A·B 의 "미국 정규장 22:30 ~ 05:00" 줄이 이 역할.</div>
+          <div class="opt"><span class="h">"다음 장"으로 바꿈</span>국내·미국 모두 맞는 말. 탭 1곳 문구 변경(소).</div>
+        </div>
+        <p class="why">근거: 08:30 에는 국내 카드도 "오늘 09:00" 유효라 이미 같은 어긋남이 있는데 지금까지 문제로 보고된 적이 없습니다. 카드 줄의 정확한 시각이 탭 이름보다 판단에 직접 쓰입니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. 장면 3 빈·예외 -->
+  <section class="block" aria-labelledby="h3">
+    <h2 id="h3">장면 3 · 미국 카드가 0장이거나 몇 장뿐일 때</h2>
+    <p class="lead">"왜 미국 카드가 안 나오지?" 하고 대시보드 "내일" 탭을 열었을 때입니다. 왼쪽은 지금, 오른쪽은 제안입니다.</p>
+    <div class="controls">
+      <fieldset class="seg">
+        <legend>상황</legend>
+        <div class="seg-row" id="s3-case">
+          <label><input type="radio" name="s3c" value="off" checked><span>스위치 꺼짐<br>미국 0장 · 국내 0장</span></label>
+          <label><input type="radio" name="s3c" value="few"><span>켜짐 · 금액 때문에<br>미국 1장만</span></label>
+          <label><input type="radio" name="s3c" value="zero"><span>켜짐 · 미국 0장<br>(금액 + 실적 제외)</span></label>
+        </div>
+      </fieldset>
+      <fieldset class="seg">
+        <legend>제안</legend>
+        <div class="seg-row" id="s3-prop">
+          <label><input type="radio" name="s3p" value="copy" checked><span>문구만 (소)<br>고정 안내 문구</span></label>
+          <label><input type="radio" name="s3p" value="sum"><span>실행 요약 줄 (중)<br>서버 기록 필요</span></label>
+        </div>
+      </fieldset>
+    </div>
+    <div class="compare" aria-live="polite">
+      <div>
+        <p class="col-title"><span class="was">현재</span></p>
+        <div class="phone" id="s3-cur"></div>
+      </div>
+      <div>
+        <p class="col-title" id="s3-title">제안</p>
+        <div class="phone" id="s3-new"></div>
+      </div>
+    </div>
+
+    <div class="box">
+      <h3>카드 1장 100,000원의 효과 (예시 환율 1,330원)</h3>
+      <div class="tbl-wrap">
+        <table class="def">
+          <thead><tr><th scope="col">종목</th><th scope="col" class="r">1주 (USD)</th><th scope="col" class="r">원 환산</th><th scope="col">100,000원으로</th><th scope="col">카드</th></tr></thead>
+          <tbody>
+            <tr><td>NAS:CMCSA</td><td class="r num">$27.40</td><td class="r num">36,442</td><td>2주 ≈ 72,900원</td><td><span class="ok-t">✓ 나옴</span></td></tr>
+            <tr><td>NYS:BAC</td><td class="r num">$41.60</td><td class="r num">55,328</td><td>1주 ≈ 55,300원</td><td><span class="ok-t">✓ 나옴</span></td></tr>
+            <tr><td>NAS:NFLX</td><td class="r num">$72.20</td><td class="r num">96,026</td><td>1주 (추격 1% 반영 96,986 — 경계)</td><td><span class="ok-t">✓ 나옴</span></td></tr>
+            <tr class="no"><td>NAS:MU (보유·관심)</td><td class="r num">$212.40</td><td class="r num">282,492</td><td>0주</td><td><span class="no-t">✕ 안 나옴</span></td></tr>
+            <tr class="no"><td>NYS:ORCL (보유)</td><td class="r num">$268.10</td><td class="r num">356,573</td><td>0주</td><td><span class="no-t">✕ 안 나옴</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">가격은 설명용 예시입니다. "보유·관심 종목은 전부 카드가 안 나온다"는 점은 Stage 0 실측(task §Developer 16:04 ①)과 같습니다. 사용자 결정(16:15)으로 금액은 100,000원 유지, 켜기 전에 다시 논의합니다.</p>
+    </div>
+
+    <div class="decide">
+      <div class="q">
+        <h3>Q4. 카드가 적거나 없을 때 이유를 화면에 보일까?</h3>
+        <div class="opts">
+          <div class="opt"><span class="h">현행</span>국내 16:00 안내 한 줄뿐. 미국 카드가 없는 이유를 알 수 없음.</div>
+          <div class="opt rec"><span class="h">문구만 (소) <span class="rec-tag">권고</span></span>국내·미국 분석 시각, 스위치, "1주 ≤ 100,000원 종목만" 을 고정 문구로. 서버 변경 없음.</div>
+          <div class="opt"><span class="h">실행 요약 줄 (중)</span>"후보 54 → 금액 초과 49 → 카드 1" 처럼 그날 실제 숫자. <b>서버가 실행 결과를 저장·제공해야 해 T-062 범위 밖</b>.</div>
+        </div>
+        <p class="why">근거: 지금 카드가 안 나오는 가장 큰 이유는 거의 항상 금액(54종목 중 5종 안팎만 가능)이라 고정 문구로 대부분 설명됩니다. 실행 요약은 켠 뒤 1~2주 운영 로그(<code>staleCandleSkipped</code> 등)를 보고 필요하면 별도로 정하는 편이 낫습니다. 단 문구만 안은 스위치가 실제로 켜져 있는지는 알려 주지 못합니다.</p>
+      </div>
+      <div class="q">
+        <h3>Q5. 실적 확정일 때문에 빠진 종목을 알릴까?</h3>
+        <div class="opts">
+          <div class="opt rec"><span class="h">지금은 알리지 않음 <span class="rec-tag">권고</span></span>카드가 없으니 화면에 아무것도 안 보임.</div>
+          <div class="opt"><span class="h">실행 요약 줄에 "실적 확정 제외 n (종목)"</span>Q4 에서 실행 요약을 고를 때만 가능.</div>
+        </div>
+        <p class="why">근거: 확정(<code>confirmed</code>) 실적일이 DB 에 <b>0행</b>이라 지금은 이 이유로 빠지는 종목이 없습니다(Stage 0 실측). 확정일을 사람이 입력하기 시작할 때 Q4 실행 요약과 함께 다시 정하면 됩니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. 화면 밖 -->
+  <section class="block" aria-labelledby="h4">
+    <h2 id="h4">화면 밖에서 발견한 것 (이번 결정 대상 아님 — Leader 전달용)</h2>
+    <ul class="plain">
+      <li>카드 분석 사유 첫 줄 접두가 <code>[익일 시나리오]</code> (post-market-engine.ts:443) — 미국 카드는 그날 밤이라 맞지 않음. <b>서버 문구</b>라 T-062 Developer 범위에서 해외만 바꿀 수 있음. <span class="cf">[확실]</span></li>
+      <li>추천 탭 "진입 감시 중"의 해외 시그널 🇰🇷·₩ 오표시 — 목록 API 가 <code>market</code> 을 SELECT 하지 않음(api/signals/route.ts:138-140). 이미 있는 해외 전략 시그널에도 해당. <span class="cf">[확실 — 코드 읽기, 실화면 미확인]</span></li>
+      <li>대시보드 "내일" 탭의 목표 초록·손절 빨강(Dashboard.tsx:1097·1100)은 프로젝트 색 규칙(상승 빨강·하락 파랑)과 반대. 국내 카드에도 해당하는 기존 표시. <span class="cf">[확실]</span></li>
+      <li>하단 탭 실제 구성(BottomTabs.tsx: 대시보드·즐겨찾기·추천·분석·설정)이 프로젝트 CLAUDE.md "UI 설계 원칙"의 5탭(대시보드·주문·전략·분석·설정)과 다름 — 이 데모는 BottomTabs.tsx 기준. <span class="cf">[확실]</span></li>
+      <li>대시보드 "내일" 탭 카드·추천 탭 카드는 누를 수 있는 <code>div</code> 라 키보드로 열 수 없음(기존 접근성 문제). <span class="cf">[확실]</span></li>
+      <li>텔레그램 승인 알림이 post-market 카드를 다루는지 — <code>src/lib/notify</code> 에서 관련 문자열 0건이라 <b>미확인</b>. 다룬다면 그쪽 가격 표기도 같은 문제를 가질 수 있음.</li>
+    </ul>
+  </section>
+
+  <!-- 5. 점검 메모 -->
+  <section class="block" aria-labelledby="h5">
+    <h2 id="h5">모바일·접근성 점검 메모</h2>
+    <ul class="plain">
+      <li>360·412px: 제안 줄은 모두 줄바꿈 허용(진입 구간 줄은 원·달러가 길어지면 다음 줄로). 폰 틀 안 가로 스크롤 0. 표는 좁은 폭에서 표 영역만 가로 스크롤.</li>
+      <li>현행 재현은 원본 크기 그대로(진입 가능 줄 10px 포함). 제안 줄은 11px 이상.</li>
+      <li>실적 "겹침"은 노랑 색만이 아니라 ⚠ 기호 + "겹침" 글자로 구분. 시장은 국기 + "미국" 글자.</li>
+      <li>데모 조작은 라디오 버튼(키보드 탐색·포커스 링), 화면 영역은 바뀔 때 읽어 주도록 aria-live.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  var FX = '1,330';
+  var TIMES = {
+    t1: { ovFirst: true,  soon: null, ov: { vf: '10. 21. 오후 10:30', s: '10-21(수) 22:30', e: '10-22(목) 05:00', fxAt: '10-21 08:00', dst: true },
+          dom: { vf: '10. 21. 오전 09:00' } },
+    t2: { ovFirst: false, soon: null, ov: { vf: '10. 21. 오후 10:30', s: '10-21(수) 22:30', e: '10-22(목) 05:00', fxAt: '10-21 08:00', dst: true },
+          dom: { vf: '10. 22. 오전 09:00' } },
+    t3: { ovFirst: false, soon: 50,   ov: { vf: '10. 21. 오후 10:30', s: '10-21(수) 22:30', e: '10-22(목) 05:00', fxAt: '10-21 08:00', dst: true },
+          dom: { vf: '10. 22. 오전 09:00' } },
+    t4: { ovFirst: true,  soon: null, ov: { vf: '11. 3. 오후 11:30', s: '11-03(화) 23:30', e: '11-04(수) 06:00', fxAt: '11-03 08:00', dst: false },
+          dom: { vf: '11. 3. 오전 09:00' } }
+  };
+
+  var CUR_EMPTY = '<div class="empty"><div class="ic" aria-hidden="true">📭</div>내일 시나리오 시그널이 없습니다.<div class="sub">장 마감 후 (KST 16:00) 자동으로 분석됩니다.</div></div>';
+  var PAT = { 'eod-high-close': '고점마감', 'inside-bar': '인사이드바', 'oversold-bounce': '과매도반등' };
+
+  var OV = [
+    { sym: 'NAS:CMCSA', short: 'CMCSA', pat: 'oversold-bounce', grade: 'B+', conf: 74, z: '36176~36708', zc: '36,176~36,708', zu: '27.20~27.60',
+      tg: 4, sl: 3, hold: '3일', rs: 'BB 하단 $27.2 부근 지지, RSI 31 과매도에서 반등 시도. 거래량 1.4배.',
+      earn: { st: 'est', txt: '10-24 ~ 10-31' } },
+    { sym: 'NYS:BAC', short: 'BAC', pat: 'eod-high-close', grade: 'A', conf: 82, z: '54929~55727', zc: '54,929~55,727', zu: '41.30~41.90',
+      tg: 3, sl: 2, hold: '2일', rs: '고가 근처 마감, 20일선 위. 금융주 강세 흐름.',
+      earn: { st: 'none' } },
+    { sym: 'NAS:NFLX', short: 'NFLX', pat: 'inside-bar', grade: 'B', conf: 66, z: '95494~96558', zc: '95,494~96,558', zu: '71.80~72.60',
+      tg: 5, sl: 3, hold: '3일', rs: '인사이드바 수렴, 상단 $72.6 돌파 시 진입.',
+      earn: { st: 'far', txt: '11-06' } }
+  ];
+  var DOM = [
+    { sym: '005930', name: '삼성전자', watch: true, pat: 'eod-high-close', grade: 'A', conf: 81, z: '71200~72500', tg: 3, sl: 2, hold: '2일',
+      rs: '고점 마감, 거래량 1.8배. 반도체 업종 강세.' },
+    { sym: '035720', name: '카카오', watch: false, pat: 'oversold-bounce', grade: 'B', conf: 63, z: '41050~41900', tg: 4, sl: 3, hold: '3일',
+      rs: '과매도 구간 반등, 볼린저 하단 터치.' }
+  ];
+
+  function pin(n) { return '<span class="pin" aria-label="설명 ' + n + '">' + n + '</span>'; }
+  function gcls(g) { return g === 'A' ? 'g-a' : g === 'B+' ? 'g-bp' : 'g-b'; }
+  function scg(g) { return g === 'A' ? 'sg-a' : g === 'B+' ? 'sg-bp' : 'sg-b'; }
+  function nav(on) {
+    var t = [['🏠', '대시보드'], ['⭐', '즐겨찾기'], ['💡', '추천'], ['📈', '분석'], ['⚙️', '설정']];
+    return '<div class="bottom-nav" aria-hidden="true">' + t.map(function (x, i) {
+      return '<span class="' + (i === on ? 'on' : '') + '"><i>' + x[0] + '</i>' + x[1] + '</span>';
+    }).join('') + '</div>';
+  }
+  function dashTop() {
+    return '<div class="ol"><span class="n">상단 요약 · 승인 대기 배너 · 자동매매 상태 · 트레이딩 보드 · 운용 전략 · 평가 깔때기 · 최근 체결</span>' +
+           '<span class="d">변경 없음 — 아래 탭까지 스크롤</span></div>';
+  }
+  function order(t) {
+    var ov = OV.map(function (c) { return { k: 'ov', c: c }; });
+    var dm = DOM.map(function (c) { return { k: 'dom', c: c }; });
+    return t.ovFirst ? ov.concat(dm) : dm.concat(ov);
+  }
+
+  // ── 대시보드 '내일' 탭 카드 ──
+  function earnLine(c, t) {
+    if (c.earn.st === 'est') return '<div class="earn warn chg"><span aria-hidden="true">⚠</span> 실적 발표 추정 기간과 겹침 · ' + c.earn.txt + ' <span class="m">(추정, 미확정)</span></div>';
+    if (c.earn.st === 'far') return '<div class="earn chg">실적 확정일 ' + c.earn.txt + ' <span class="m">(5거래일 밖 · 서버 필드 확인 필요)</span></div>';
+    return '<div class="earn chg">실적 일정: 앞으로 5거래일 안 없음 <span class="m">(추정치 기준 · 확정일 미입력)</span></div>';
+  }
+  function sessLine(t, compact) {
+    var o = t.ov;
+    return '<div class="sess chg">미국 정규장 ' + (compact ? o.s.slice(-5) + ' ~ ' + o.e.slice(-5) : o.s + ' ~ ' + o.e) + ' KST' +
+           (o.dst ? '' : ' <span class="m">· 서머타임 해제</span>') + '</div>';
+  }
+  function dashCard(item, t, plan, pins) {
+    var c = item.c, ov = item.k === 'ov';
+    var name = ov ? c.sym : (c.watch ? c.name + ' (' + c.sym + ')' : c.sym);
+    var h = '<div class="tc">';
+    h += '<div class="tc-r1"><div class="tc-l">';
+    if (ov && plan) h += '<span class="mk chg"><span aria-hidden="true">🇺🇸</span>미국</span><span class="tc-name">' + c.short + '</span>';
+    else h += '<span class="tc-name">' + name + '</span>' + (ov && pins ? pin(1) : '');
+    h += '<span class="tc-pat">' + PAT[c.pat] + '</span></div>';
+    h += '<span class="tc-grade ' + gcls(c.grade) + '">' + c.grade + ' ' + c.conf + '%</span></div>';
+    h += '<div class="tc-r2">';
+    if (ov && plan) h += '<span class="chg">진입 <strong class="num">' + c.zc + '원</strong> <span class="usd num">≈ $' + c.zu + '</span></span>';
+    else h += '<span>진입 <strong class="num">' + c.z + '</strong>' + (ov && pins ? pin(2) : '') + '</span>';
+    h += '<span>목표 <strong class="tg">+' + c.tg + '%</strong></span><span>손절 <strong class="sl">-' + c.sl + '%</strong></span><span>보유 ' + c.hold + '</span></div>';
+    h += '<div class="tc-rs">' + c.rs + '</div>';
+    if (ov && plan) {
+      h += sessLine(t, false);
+      h += '<div class="earn chg" style="margin-top:2px">카드 환율 ' + FX + '원 <span class="m">· ' + t.ov.fxAt + ' 기준</span></div>';
+      if (plan === 'B') h += earnLine(c, t);
+    } else {
+      h += '<div class="tc-vf">진입 가능: ' + (ov ? t.ov.vf : t.dom.vf) + ' KST' + (ov && pins ? pin(3) : '') + '</div>';
+    }
+    return h + '</div>';
+  }
+  function dashPhone(t, plan, pins, only, banner, foot) {
+    var items = only || order(t);
+    var h = dashTop();
+    h += '<div class="tabs" aria-hidden="true"><span>보유 3</span><span>관심 6</span><span class="on">내일 ' + (items.length || '') + (pins ? pin(4) : '') + '</span></div>';
+    h += banner || '';
+    h += items.length ? '<div>' + items.map(function (it) { return dashCard(it, t, plan, pins); }).join('') + '</div>' : (foot ? '' : CUR_EMPTY);
+    h += foot || '';
+    return h + nav(0);
+  }
+
+  // ── 추천 탭 ScenarioCard ──
+  function recoCard(item, t, plan, pins) {
+    var c = item.c, ov = item.k === 'ov';
+    var soon = ov && t.soon;
+    var name = ov ? c.short : c.name + ' (' + c.sym + ')';
+    var h = '<div class="sc' + (soon ? ' soon' : '') + '">';
+    if (soon) h += '<div class="sc-soon">⏱ ' + t.soon + '분 후 만료</div>';
+    h += '<div class="sc-r1"><div class="sc-l"><span class="side">매수<span style="margin-left:4px;font-weight:600">· 약 100000.00원</span></span>' +
+         (ov && pins ? pin(6) : '') +
+         '<span aria-hidden="true">' + (ov ? '🇺🇸' : '🇰🇷') + '</span><span class="sc-name">' + name + '</span></div>' +
+         '<span class="sc-grade ' + scg(c.grade) + '">' + c.grade + '</span></div>';
+    h += '<div class="sc-tg num">+' + c.tg + '% 목표</div>';
+    h += '<div class="sc-tr">price_zone<b> · ' + c.hold + '</b>' + (ov && pins ? pin(5) : '') + '</div>';
+    if (ov && plan) {
+      h += sessLine(t, false).replace('class="sess chg"', 'class="sess chg" style="margin-top:0"');
+      if (plan === 'B') h += earnLine(c, t);
+    }
+    return h + '</div>';
+  }
+  function recoPhone(t, plan, pins) {
+    var h = '<div class="rhead"><b>💡 AI 추천</b><span class="rf" aria-hidden="true">↻</span></div>';
+    h += '<div class="rlist">' + order(t).map(function (it) { return recoCard(it, t, plan, pins); }).join('') + '</div>';
+    h += '<p class="note" style="margin:0 16px 12px">다른 전략 시그널(승인 대기)이 있으면 같은 목록에 섞입니다. 종목 이름은 stock_meta 에 있으면 "이름 (CMCSA)"로 나옵니다.</p>';
+    return h + nav(2);
+  }
+
+  // ── 추천 상세(승인 화면) ──
+  function detailPhone(t, plan, pins) {
+    var c = OV[0];
+    var h = '<div class="dhead"><span class="back" aria-hidden="true">←</span><span class="side">매수</span><span aria-hidden="true">🇺🇸</span>' +
+            '<span class="nm">' + c.short + '</span><span class="sc-grade ' + scg(c.grade) + '">' + c.grade + '</span></div>';
+    h += '<div class="dbody">';
+    h += '<div class="dprice"><span class="l">현재가</span><span class="v num">$27.51' + (pins ? pin(7) : '') + '</span></div>';
+    if (plan) {
+      h += '<div class="azone chg" style="color:var(--text)">유효: 미국 정규장 ' + t.ov.s + ' ~ ' + t.ov.e + ' KST' + (t.ov.dst ? '' : ' <span style="color:var(--muted)">· 서머타임 해제</span>') + '</div>';
+      if (plan === 'B') h += '<div class="azone chg" style="color:var(--warn);border-color:rgba(245,158,11,.45);background:rgba(245,158,11,.08)"><span aria-hidden="true">⚠</span> 실적 발표 추정 기간과 겹침 · ' + c.earn.txt + ' (추정, 미확정 — 5거래일 차단 대상 아님)</div>';
+    }
+    h += '<div class="dsec"><span class="lb">AI 평가</span><div class="kpis">' +
+         '<div class="kpi" style="background:rgba(99,102,241,.18);border-color:rgba(99,102,241,.4)"><span class="k" style="color:#818cf8">등급</span><span class="v" style="font-size:22px;color:#818cf8">B+</span></div>' +
+         '<div class="kpi"><span class="k">목표</span><span class="v num" style="color:var(--up)">+4%</span></div>' +
+         '<div class="kpi"><span class="k">손절</span><span class="v num" style="color:var(--down)">3%</span></div></div></div>';
+    h += '<div class="dsec"><span class="lb">분석 사유</span><div class="reason">[익일 시나리오] 과매도 반등 — RSI14 31.2, BB하단 36,050 · 전저점 35,880\n진입구간: 36176~36708 | 목표: +4% | 손절: -3%\n' + c.rs + '</div>' +
+         '<p class="note" style="margin:0">분석 사유는 서버가 만든 글자 그대로 표시(문구는 예시). 규칙 근거의 가격은 원화 환산, AI 설명은 달러일 수 있음 [추측 — 해외 프롬프트가 USD 로 묻는 설계라서].</p></div>';
+    if (plan) h += '<div class="azone chg">AI 권장 진입 구간: <b class="num">' + c.zc + '원</b> <span class="num">≈ $' + c.zu + '</span><br><span style="font-size:11px">카드 환율 ' + FX + '원 · ' + t.ov.fxAt + ' 기준 — 위 현재가는 지금 환율</span></div>';
+    else h += '<div class="azone">AI 권장 진입 구간: <b class="num">' + c.z + '</b>' + (pins ? pin(7) : '') + '</div>';
+    h += '<div class="dsec"><span class="lb">진입 설정</span><div style="font-size:12px;color:var(--muted)">1회 · 1회차 진입 구간 (현재가 대비 %) <b style="color:var(--text)">-1.0 ~ -0.5 %</b></div>' +
+         '<div class="slice-prev num">$27.23 ~ $27.37</div><div style="font-size:11px;color:var(--muted)">수량·예상 금액 (변경 없음)</div></div>';
+    h += '</div>';
+    h += '<div class="dfoot" aria-hidden="true"><span class="ok">✅ 등록</span><span class="no">거절</span></div>';
+    return h + nav(2);
+  }
+
+  // ── 승인 뒤 ──
+  function watchPhone() {
+    var h = '<div class="sub-h">대시보드 › 트레이딩 보드 › 진입 감시 중</div>';
+    h += '<div style="padding:0 16px 12px"><div class="wc"><span class="side">매수</span><div class="mid"><div class="t">🇺🇸 CMCSA</div><div class="z num">구간 36176~36708원</div></div>' +
+         '<span class="sc-grade sg-bp" style="font-size:12px;padding:2px 8px">B+</span></div></div>';
+    h += '<div class="sub-h">추천 탭 아래 › 👁 진입 감시 중 (1)' + pin(8) + '</div>';
+    h += '<div style="padding:0 16px 14px"><div class="pe"><div class="t"><span style="font-size:11px" aria-hidden="true">🇰🇷</span>CMCSA' +
+         '<span class="side" style="margin-left:auto">매수 · 약 100000.00원</span></div>' +
+         '<div class="z">진입구간 <b class="num">₩36,176 ~ ₩36,708</b></div><div>목표 <span class="num" style="color:var(--up)">+4~4%</span></div>' +
+         '<div style="font-size:11px">만료 10. 22. 오전 05:00</div></div></div>';
+    return h + nav(2);
+  }
+
+  // ── 장면 1 ──
+  function s1() {
+    var t = TIMES[document.querySelector('input[name="s1t"]:checked').value];
+    document.getElementById('s1-dash').innerHTML = dashPhone(t, null, true);
+    document.getElementById('s1-reco').innerHTML = recoPhone(t, null, true);
+    document.getElementById('s1-detail').innerHTML = detailPhone(t, null, true);
+    document.getElementById('s1-watch').innerHTML = watchPhone();
+  }
+
+  // ── 장면 2 ──
+  function s2() {
+    var plan = document.querySelector('input[name="s2p"]:checked').value;
+    var view = document.querySelector('input[name="s2v"]:checked').value;
+    var t = TIMES[document.querySelector('input[name="s2d"]:checked').value];
+    var f = view === 'dash' ? dashPhone : view === 'reco' ? recoPhone : detailPhone;
+    document.getElementById('s2-cur').innerHTML = f(t, null, false);
+    document.getElementById('s2-new').innerHTML = f(t, plan, false);
+    document.getElementById('s2-title').textContent = plan === 'A' ? '제안 · 안 A (소) — 시장·단위·시각 라벨' : '제안 · 안 B (중) — A + 실적 일정 한 줄';
+  }
+
+  // ── 장면 3 ──
+  function s3() {
+    var cs = document.querySelector('input[name="s3c"]:checked').value;
+    var pr = document.querySelector('input[name="s3p"]:checked').value;
+    var t = TIMES.t1;
+    var few = [{ k: 'ov', c: OV[0] }].concat(DOM.map(function (c) { return { k: 'dom', c: c }; }));
+    var domOnly = DOM.map(function (c) { return { k: 'dom', c: c }; });
+    var items = cs === 'off' ? [] : cs === 'few' ? few : domOnly;
+    var FOOT = '<div class="list-foot chg">미국 카드는 매일 08:00 분석 · 1주 가격이 100,000원 이하인 종목만 만들어집니다(보유·관심 종목 중 비싼 종목은 나오지 않음).</div>';
+    var EMPTY_NEW = '<div class="empty chg"><div class="ic" aria-hidden="true">📭</div>대기 중인 시나리오 카드가 없습니다.' +
+      '<div class="sub left">· 국내: 평일 16:00 분석 → 다음 거래일 09:00부터<br>· 미국: 매일 08:00 분석 → 그날 밤 정규장(22:30, 서머타임 해제 뒤 23:30)부터 — 기능 스위치가 켜져 있을 때만<br>· 1주 가격이 카드 금액(100,000원)보다 비싼 종목은 카드가 나오지 않습니다</div></div>';
+    var SUM = {
+      off:  '<div class="run-sum chg"><b>미국 08:00</b> <span class="m">·</span> 꺼짐 <span class="m">(설정 스위치 — 카드를 만들지 않음)</span></div>',
+      few:  '<div class="run-sum chg"><b>미국 08:00</b> <span class="m">·</span> 후보 54 → 금액 초과 49 · 실적 확정 제외 0 · 봉 미반영 0 · AI 미선정 4 → <b>카드 1</b></div>',
+      zero: '<div class="run-sum chg"><b>미국 08:00</b> <span class="m">·</span> 후보 54 → 금액 초과 49 · 실적 확정 제외 1 (BAC) · AI 미선정 4 → <b>카드 0</b></div>'
+    };
+    var cur = dashPhone(t, null, false, items);
+    var nw;
+    if (pr === 'copy') nw = dashPhone(t, null, false, items, '', items.length ? FOOT : EMPTY_NEW);
+    else nw = dashPhone(t, null, false, items, SUM[cs], items.length ? '' : CUR_EMPTY);
+    document.getElementById('s3-cur').innerHTML = cur;
+    document.getElementById('s3-new').innerHTML = nw;
+    document.getElementById('s3-title').textContent = pr === 'copy' ? '제안 · 문구만 (소) — 서버 변경 없음' : '제안 · 실행 요약 줄 (중) — 서버가 실행 결과를 저장해야 함';
+  }
+
+  function bind(name, fn) {
+    var els = document.querySelectorAll('input[name="' + name + '"]');
+    for (var i = 0; i < els.length; i++) els[i].addEventListener('change', fn);
+  }
+  bind('s1t', s1); bind('s2p', s2); bind('s2v', s2); bind('s2d', s2); bind('s3c', s3); bind('s3p', s3);
+  s1(); s2(); s3();
+})();
+</script>
+</body>
+</html>

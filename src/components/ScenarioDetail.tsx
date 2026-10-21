@@ -3,7 +3,10 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useCallback } from 'react';
 import { useToast } from '@/components/ui/Toast';
-import type { SignalWithScenario } from './ScenarioCard';
+import { UsMarketBadge, type SignalWithScenario } from './ScenarioCard';
+import {
+  parseIndicators, scenarioOf, isOverseasSignal, overseasZoneView, detailZoneAux, sessionLine, earningsLine,
+} from './scenario-card-display';
 import {
   aiEvalItems, hasAiEval, riskFactors, entryZoneDisplay, buildConfirmScenario,
 } from './scenario-view-model';
@@ -58,6 +61,63 @@ function initSlices(direction: 'buy' | 'sell', splits: number, cp: number | null
       qty: '',
     };
   });
+}
+
+// ─── T-062 해외 카드 표시 조각 (승인 데모 v2 장면 3) ─────────────────────────────
+// 판정은 전부 `scenario-card-display.ts` 순수 함수 — 여기는 그리기만. 서버 키가 없으면 아무것도 그리지 않는다.
+
+const ZONE_BOX: React.CSSProperties = {
+  fontSize: 12, color: 'var(--muted)', padding: '6px 10px', borderRadius: 8,
+  background: 'var(--bg2)', border: '1px solid var(--border)', lineHeight: 1.55,
+};
+
+/** 현재가 아래: "유효: 미국 정규장 …" 줄 + 실적 한 줄(해외 카드만). */
+export function OverseasDetailLines({ validFrom, expiresAt, indicators }: {
+  validFrom: unknown; expiresAt: unknown; indicators: unknown;
+}) {
+  const session = sessionLine(validFrom, expiresAt);
+  const earnings = earningsLine(indicators);
+  if (!session && !earnings) return null;
+  return (
+    <>
+      {session && <div style={{ ...ZONE_BOX, color: 'var(--text)' }}>유효: {session}</div>}
+      {earnings && (earnings.tone === 'warn' ? (
+        <div style={{ ...ZONE_BOX, color: 'var(--warn)', borderColor: 'rgba(245,158,11,.45)', background: 'rgba(245,158,11,.08)' }}>
+          <span aria-hidden>⚠</span> {earnings.text} {earnings.note}
+        </div>
+      ) : (
+        <div style={ZONE_BOX}>{earnings.text} {earnings.note}</div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * "AI 권장 진입 구간" 상자. 해외: 서버 저장 달러 구간 주표기 + 원화 보조 줄(카드 환율·자동 진입 기준 안내),
+ * 달러 값이 없으면 원화 구간에 단위를 붙여 폴백(화면에서 환산하지 않는다). 국내: 기존 문자열 그대로.
+ */
+export function AiEntryZoneBox({ overseas, indicators, domesticZone }: {
+  overseas: boolean; indicators: unknown; domesticZone: string | null;
+}) {
+  if (!overseas) {
+    if (!domesticZone) return null;
+    return (
+      <div style={{ fontSize: 12, color: 'var(--muted)', padding: '6px 10px', borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
+        AI 권장 진입 구간: <span className="num" style={{ color: 'var(--accent)', fontWeight: 700 }}>{domesticZone}</span>
+      </div>
+    );
+  }
+  const view = overseasZoneView(indicators);
+  if (!view) return null;
+  const aux = detailZoneAux(indicators);
+  return (
+    <div style={ZONE_BOX}>
+      AI 권장 진입 구간: <span className="num" style={{ color: 'var(--accent)', fontWeight: 700 }}>{view.usd ?? view.krw}</span>
+      {aux && (
+        <span className="num" style={{ display: 'block', marginTop: 2, fontSize: 11, color: 'var(--muted)', fontWeight: 500 }}>{aux}</span>
+      )}
+    </div>
+  );
 }
 
 const GRADE_STYLE: Record<string, { color: string; bg: string; border: string }> = {
@@ -324,7 +384,10 @@ export function ScenarioDetail({ signalId }: Props) {
     return <div style={{ padding: 32, textAlign: 'center', color: 'var(--danger)', fontSize: 13 }}>{pageError ?? '시그널을 찾을 수 없습니다'}</div>;
   }
 
-  const sc = signal.indicators?.ai?.scenario;
+  // 상세 API 는 indicators 를 파싱해 주지만, 파싱 실패 시 문자열 그대로 둔다 — 같은 경로로 방어(T-062 G1).
+  const ind = parseIndicators(signal.indicators);
+  const sc = scenarioOf(ind);
+  const overseas = isOverseasSignal(signal);
   // DB JSON 은 필드 존재를 보장하지 않는다 — 표시 판정을 순수 함수에 위임한다(T-021).
   const evalItems  = aiEvalItems(sc);
   const risks      = riskFactors(sc);
@@ -356,7 +419,7 @@ export function ScenarioDetail({ signalId }: Props) {
           }}>
             {signal.side === 'buy' ? '매수' : '매도'}
           </span>
-          {marketFlag(signal.symbol) && (
+          {overseas ? <UsMarketBadge /> : marketFlag(signal.symbol) && (
             <span style={{ flexShrink: 0, fontSize: 15 }} aria-hidden>{marketFlag(signal.symbol)}</span>
           )}
           <span style={{ fontSize: 17, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -386,6 +449,11 @@ export function ScenarioDetail({ signalId }: Props) {
             {priceLoading ? '조회 중...' : currentPrice ? fmtPrice(currentPrice) : '—'}
           </span>
         </div>
+
+        {/* T-062 해외: 유효 시간(미국 정규장) · 실적 한 줄 */}
+        {overseas && (
+          <OverseasDetailLines validFrom={signal.valid_from} expiresAt={signal.expires_at} indicators={ind} />
+        )}
 
         {/* AI 평가 — 표시할 항목이 하나도 없으면 빈 껍데기 섹션을 남기지 않는다 */}
         {hasAiEval(evalItems) && (
@@ -461,12 +529,8 @@ export function ScenarioDetail({ signalId }: Props) {
           </section>
         )}
 
-        {/* AI 진입 구간 참고 — entry 객체 자체가 없어도 안전 */}
-        {aiEntryZone && (
-          <div style={{ fontSize: 12, color: 'var(--muted)', padding: '6px 10px', borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
-            AI 권장 진입 구간: <span className="num" style={{ color: 'var(--accent)', fontWeight: 700 }}>{aiEntryZone}</span>
-          </div>
-        )}
+        {/* AI 진입 구간 참고 — entry 객체 자체가 없어도 안전. 해외는 달러 주표기(T-062) */}
+        <AiEntryZoneBox overseas={overseas} indicators={ind} domesticZone={aiEntryZone} />
 
         {/* ─── 진입 설정 ─── */}
         <section style={sx.section}>
