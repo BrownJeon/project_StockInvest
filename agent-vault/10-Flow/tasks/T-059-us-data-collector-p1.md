@@ -1,7 +1,7 @@
 ---
 task_id: T-059
 title: 미국 종목 데이터 수집기 P1 — SEC EDGAR·KIS price-detail 수집, 신규 테이블 5개, cron 2개 (T-057 설계 구현)
-status: todo
+status: deployed
 priority: high
 roles_involved: [leader, developer, reviewer, judge, codex]
 related_tasks: [T-057, T-056, T-055, T-046, T-058]
@@ -13,7 +13,6 @@ tags:
 aliases:
   - US 데이터 수집기 P1
   - EDGAR 수집
-waiting: [user_decision]
 created: 2026-10-21
 updated: 2026-10-21
 ---
@@ -195,3 +194,11 @@ updated: 2026-10-21
 - [10-21 12:42] **사용자 승인 수령 → 두 승인 모두 실행.** 승인 경위: 사용자가 "t-058 승인" 이라 썼고(번호가 겹쳐 모호), Leader 가 AskUserQuestion 으로 확인해 "둘 다 승인"(① 이 task 의 마이그레이션 적용 + KIS 1회 읽기 호출 ② 다른 세션 T-058 현금 게이트 데모 생략)을 받았다. ②는 그 세션이 이미 사용자 직접 입력으로 처리해 둠.
 - [10-21 12:42] **KIS `HHDFS76200200` 실응답 1회 확인(승인 범위: GET 1건, NAS:INTC, 앱 DB 캐시 토큰 읽기만·신규 발급 없음·쓰기 없음).** HTTP 200 · rt_cd 0 · MCA00000 · 81ms · output 41개 필드. 확인된 사실(INTC 1건 기준): ① `perx`=현재가÷`epsx` (91.69÷2.12=43.25), `pbrx`=현재가÷`bpsx` (91.69÷17.36=5.28) — KIS 산출값 ② **`tomv` 는 달러(USD) 단위 시가총액**(`shar` 5,286,110,000 × `last` 91.69 = 484,683,425,900) — 원화·억원이 아님. 별도 필드 `mcap`(53,780,000,000)은 정의 미확인이라 사용하지 않음 ③ **`epsx` 2.12 는 EDGAR GAAP 희석 EPS 와 기준이 다르다**(INTC 최근 GAAP 분기 EPS 는 음수, 최근 4분기 비GAAP 합계 1.09 와도 다름) → PER 은 'KIS 산출값, 기준 미공개'로만 쓰고 EDGAR 실적과 섞어 계산하지 않는다 ④ `h52p`·`l52p`·`h52d`·`l52d`·`shar`·`curr`(USD)·`e_icod`(섹터 '반도체 및 반도체장비') 정상. 격리 사본에서 어댑터 `parsePriceDetail` 로 실응답을 파싱해 per 43.25·pbr 5.28·eps 2.12·bps 17.36·marketCap 484683425900·shares 5286110000·high52 142.35(2026-06-30)·low52 32.89(2025-11-21)·sector·currency 확인(전부 기대대로). 원문 저장: `scratchpad/kis-pricedetail-INTC.json`(토큰 치환).
 - [10-21 12:42] **마이그레이션 적용 완료**: `scripts/migrations/T-059-us-data-collector.sql`(5개 `CREATE TABLE IF NOT EXISTS`, 기존 테이블 변경 없음)을 운영 DB(MariaDB 10.11.11, 개발·운영 공용)에 적용. 적용 전 5개 모두 부재 확인 → 적용 후 존재, 컬럼 수 13·11·15·14·20, 행 0건, CHECK 제약 `us_earnings_events.basis`·`chk_estimated_is_window`·`chk_dated_status`·`us_fundamentals_snapshot.raw_output`(JSON) 동작 확인. 적용 직전 SQL 주석 2줄만 실측 단위로 고침(주석 제거 후 SQL 동일 확인). 되돌리기: 5개 테이블 DROP(전부 비어 있음). 이로써 Reviewer 의 '미검증' 중 'MariaDB 마이그레이션·CHECK 실행'과 'KIS 실응답(PER 표기·tomv 단위)'이 해소됐다. 남은 미검증: Node fetch 의 SEC gzip 처리, 첫 55-CIK 실행 소요·메모리, upsert SQL 의 MariaDB 실행(첫 수동 실행에서 확인).
+
+- [10-21 16:06] **커밋·push·배포 완료(사용자 지시 "T-059 커밋 및 푸시해주고").** 사전: HEAD(`8894416`)+T-059 파일 격리 사본에서 `tsc` 0·전체 jest **182 스위트 4,121건** 통과(타 세션 T-040 `api-usage` 의존 없음 확인), 작업 트리 해시가 Developer·Reviewer 기록과 일치(마이그레이션 SQL·`docs/*` 는 의도된 후속 수정), 공유 소스 3개(`kis-overseas.ts` 133줄 순수 추가·`cron-runner.sh` 4 hunk·`fundamentals/[symbol]/route.ts`)에 타 세션 hunk 없음. 커밋 `a1e5c36`(28파일, commit-msg 훅 통과) + 문서 커밋 `7cd47e7`(T-058 배포 기록·T-044·T-057 문서), push `8894416..7cd47e7` 15:45:59, 릴리스 `20261021-154632-7cd47e75` `RELEASE_RESULT ok`, 전환 15:47:06. 예약 크론(16:13)은 이 지시로 취소.
+- [10-21 16:06] **배포 후 확인**: `/api/health` 200(전환 직후 `deploy.sh --status` 헬스 ❌ 는 재실행에서 ✅ — 일시적), pm2 `stockinvest`·`stockinvest-cron` online·재시작 0·cron 1행, 인증 없는 `POST /api/cron/edgar-sync` 401, 핵심 파일 3개 해시 저장소=릴리스 일치.
+- [10-21 16:06] **첫 수동 실행(R-9 메모리 포함)**: ① `edgar-sync` 7회(15:48~16:00, 수동 반복 — 하루 100초 예산이면 하루 8~11 CIK 만 처리해 초기 수집에 5~7일이 걸려서 오늘 끝냈다. 중단 조건: aborted·ciksFailed·HTTP≠200·RSS 400MB·재시작): 1회차 HTTP 200 **100.25초 `partial:true`**(CIK 8개, 요청 17), 7회차 **`partial:false`·`ciksUnchanged` 52·요청 53(=1+CIK 52)·71.8초** → 증분 확인 기준 충족. 전 구간 `aborted` 없음·`ciksFailed` 0(SEC 429/403 0건), SEC 요청 총 약 200건. 메모리 `stockinvest` RSS 158MB → 최대 234MB(한도 512MB), 재시작 0. ② `kis-fundamentals-snapshot` 1회(16:04:40): HTTP 200·34초·`targets` 54·`written` 52·**`failed` 2**(아래)·`aborted` 없음, RSS 202MB.
+- [10-21 16:06] **행 수(읽기 전용)**: `symbol_cik_map` 53 · `us_filings` 5,901 · `us_financial_facts` 45,449 · `us_earnings_events` 52(**전부 `estimated`·`event_date_et` NULL** — 설계와 일치) · `us_fundamentals_snapshot` 52. `symbol_cik_map` `last_error` 0·facts 미동기 0. 스냅샷 `per` NULL 1건(`NAS:SMH` ETF — KIS 원문 `perx` `0.00` → NULL, R-2 설계대로)·`pbr` NULL 4건, `market_cap` USD 단위(NVDA 5.2조 달러대). → Node fetch 의 SEC gzip 처리·upsert SQL 의 MariaDB 실행은 실제 적재 성공으로 확인됨.
+- [10-21 16:06] **실패 2건 원인(T-059 코드 결함 아님, 정적 유니버스 코드 오류)**: `NYS:WMT`·`NYS:BRK.B` 의 KIS 응답 현재가(`last`)가 빈 문자열 → `PriceDetailUnavailableError`(판정 불가)로 저장하지 않음 — "모르면 쓰지 않는다"가 의도대로 동작. 앱의 KIS 마스터 `stock_meta` 에 `NYS:WMT` 는 **없고 `NAS:WMT`(WALMART INC)가 있다**, `NYS:BRK.B`(및 `NYS:BRK*`)도 없다([확실] — 정적 유니버스 50종을 `stock_meta` 와 전수 대조해 틀린 코드는 이 2개뿐). 두 종목은 최근 7일 `eval_funnel` 행도 없어 **전략도 이 둘을 평가하지 못했을 가능성이 높다**([가능성 높음]). BRK.B 의 올바른 KIS 코드는 미확인. → 후속 task 후보: `universe-overseas-static.ts` 코드 정정(`NYS:WMT`→`NAS:WMT`, BRK.B 코드 확인).
+- [10-21 16:06] **미확인·대기**: 손실 기업 PER 표기(이번 표본 52종에 손실 기업이 없다 — ETF `NAS:SMH` 만 0.00→NULL), `GET /api/fundamentals/NAS:INTC` 의 `observed` 필드(인증 필요 — 미실행), 내일 07:00(edgar-sync)·08:00 자동 실행 첫 결과와 하트비트 워치독 경보 없음.
+- [10-21 16:06] **내 실수 기록**: 수동 호출 루프의 `pgrep -af` 출력에 `CRON_SECRET` 이 프로세스 인자로 한 번 보였다(도구 출력에 노출). 이후 호출은 권한 600 헤더 파일(`curl -H @파일`)로 바꿨다. 로컬 단일 사용자 서버이고 이 값은 cron 라우트 인증에만 쓰이지만, 로테이션을 원하면 사용자가 지시한다.

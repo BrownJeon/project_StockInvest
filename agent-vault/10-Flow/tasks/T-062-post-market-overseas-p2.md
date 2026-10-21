@@ -389,6 +389,7 @@ post-market 시나리오 카드(다음 거래일용 AI 시나리오)는 지금 *
 - [05:30] **확인한 것**: `deploy.sh --status` ✅(전환 20초 뒤) · `/api/health` 200 · pm2 `stockinvest`·`stockinvest-cron` online·재시작 0·cron 1행 · 인증 없는 `GET /api/signals` 401 · 핵심 파일 6개 해시 저장소=릴리스=감사값 일치(scenario-card-display.ts fe701531f162·ScenarioCard.tsx 17d24d79580f·route.ts 89e801218a9d·Dashboard.tsx 16bfcd22cd86·recommend/page.tsx fb5a27966b98·ScenarioDetail.tsx 955936c101f5) · `strategy-eval` 틱 05:25→05:28:54 이어짐(이번엔 빠진 틱 없음) · `pm2-err.log` 신규 오류 없음(부팅 시 '자동 청산 엔진 OFF' 안내만).
 - **미확인(미실행)**: 인증 화면 실확인(추천 탭·"내일" 탭·승인 화면) · 변화는 승인 대기/pending 카드가 **0건**이라 **다음 post-market 카드 생성(10-22 16:00 KST) 이후** 눈에 띔 · `GET /api/signals` 응답의 `market` 키(인증 필요, 파일 해시로 대체) · 실제 폰 렌더.
 - **롤백**: 이전 릴리스 `20261021-154632-7cd47e75` 로 blue/green 되돌리기(사용자 지시 시) — 표시만 옛 상태로 돌아가고 데이터 영향 0.
+- [05:32] **WP-S 로컬 커밋 `89edff3`**(14개 파일: 서버 13 + 이 문서, push 없음). 커밋 훅 `Reviewer 감사 기록 확인: T-062` 통과(마지막 판정 줄 [00:10] [WP-S] PASS, scope 가 staged 안전 파일 전부 포함). 로컬 `origin/main...HEAD` = `0 1`. **WP-S 는 사용자 확인 후 오후 창(KST 15:40~22:00)에만 push**, 스위치 `post_market_overseas_enabled` 는 키 없음(꺼짐) 그대로.
 
 
 ## 최종 요약
