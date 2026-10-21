@@ -109,3 +109,26 @@ pending → accepted → partially_filled → filled
        ↘ dry_run  (safety에서 DRY_RUN으로 차단)
        ↘ blocked  (kill_switch / order_limit / symbol_not_allowed)
 ```
+
+---
+
+## 미국 종목 데이터 수집 P1 — 테이블 5개 (T-059 Part A, 2026-10-21)
+
+> **부팅 DDL 이 아니다.** 위 테이블들과 달리 `src/lib/db.ts` 의 `setupDB()` 에 넣지 않았다. 정본 DDL 은
+> [`scripts/migrations/T-059-us-data-collector.sql`](../scripts/migrations/T-059-us-data-collector.sql) 이고 **사용자 승인 후 사람이 직접 적용**한다
+> (`deploy.yml` 에 migrate 단계가 없어 `--with-migrate` 는 거부된다). 적용 전에는 `edgar-sync`·`kis-fundamentals-snapshot` cron 이
+> `skipped:'tables_missing'` 로 끝나고 `/api/fundamentals` 해외 심볼은 기존 LLM 경로 그대로다. 전부 신규 테이블(가산)이라 기존 테이블은 바뀌지 않는다.
+>
+> 시각: `*_at` DATETIME 은 KST(DB `NOW()` 또는 `toKstDatetime`). SEC 날짜(`filed`·`report_date`·`period_*`)와 `*_et` 는 **DATE**(미국 동부 현지 날짜, 시각 없음).
+
+| 테이블 | 키 | 채우는 곳 | 핵심 컬럼 |
+|---|---|---|---|
+| `symbol_cik_map` | PK `symbol` | edgar-sync (SEC `company_tickers.json`) | `cik`, `sec_ticker`(BRK-B 형식), `verified_at` + 증분 상태 `submissions_sha256`·`facts_sha256`·`facts_filed_watermark`·`last_attempt_at`·`last_error` |
+| `us_filings` | PK `accession` | edgar-sync (submissions `filings.recent`) | `form`(8-K·10-Q·10-K·20-F·6-K 등만), `items`, `report_date`, `filed`, `accepted_at`(KST), `primary_doc_url`, `is_earnings_release`(원본 8-K + item 2.02) |
+| `us_financial_facts` | UQ `(cik, taxonomy, tag, unit, frame)` | edgar-sync (companyfacts) | **`frame` 있는 사실만**(YTD 누적 배제), 10-Q·10-K(+/A·20-F·40-F)만, 화이트리스트 태그만(`src/lib/data/us-edgar/xbrl-facts.ts` `XBRL_CONCEPTS`), `period_start`·`period_end`·`val`·`fy`·`fp`(제출 문서 기준)·`form`·`filed`·`accn`. 같은 키는 늦은 `filed` 가 이긴다 |
+| `us_earnings_events` | UQ `(symbol, fiscal_period, status)` | edgar-sync(`estimated`) / 사람(`confirmed`·`manual`) | `status`, `event_date_et`(confirmed·manual 만), `window_start_et`·`window_end_et`(estimated — ±7일), `event_time_class`, `source_kind`, `source_url`, `basis`, `observed_at`, `superseded_by`. CHECK: estimated 는 날짜 NULL·창 필수 |
+| `us_fundamentals_snapshot` | UQ `(symbol, snapshot_date)` | kis-fundamentals-snapshot (KIS `HHDFS76200200`) | `per`·`pbr`·`eps`·`bps`·`market_cap`(tomv 원값 = **달러(USD) 단위 시가총액**, 2026-10-21 INTC 실응답으로 확인)·`shares`·`h52`·`l52`·`last_price`·`currency`·`sector`·`etp_type`·`raw_output`·`observed_at` |
+
+- 매출 등 대체 태그는 **원래 태그 이름으로 전부 저장**하고 읽을 때 `pickConceptValue()` 가 frame 마다 우선순위로 고른다.
+- 회계연도 4분기 단독 frame 은 보통 없다(10-K 는 연간만) — **"최근 4개 분기 frame 합 = TTM" 은 틀린다.** P1 은 파생값을 만들지 않는다.
+- `confirmed`/`manual` 실적 일정은 관리 SQL 로 넣는다(예: `INSERT INTO us_earnings_events (symbol, fiscal_period, event_date_et, event_time_class, status, source_kind, source_url, observed_at) VALUES ('NAS:INTC','FY2026Q3','2026-10-29','AMC','confirmed','ir_press_release','<보도자료 URL>',NOW())`).

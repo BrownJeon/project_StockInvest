@@ -1,6 +1,8 @@
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
 import { runLlm } from '@/lib/llm/provider';
+import { isOverseasSymbol } from '@/lib/exchanges/kis-symbols';
+import { isNoSuchTableError } from '@/lib/data/us-data-db';
 import type { RowDataPacket } from 'mysql2';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +26,41 @@ interface FundamentalsResult {
   ai_summary: string;
   data_source: string;
 }
+
+/**
+ * T-059 Part A — 해외 심볼 응답에 KIS 현재가상세 **관측값**(`us_fundamentals_snapshot` 최신 행)을 **별도 필드 `observed`** 로 덧붙인다.
+ *
+ *  - 기존 응답(`data`·`cached`)과 기존 해외 LLM 경로·`stock_fundamentals` 캐시 동작은 **그대로**다. 이 블록은 `stock_fundamentals` 를
+ *    읽지도 쓰지도 않는다(R-1, Leader 10-21: 캐시를 관측값으로 덮으면 ROE·배당·AI 요약이 화면에서 사라지는 사용자 화면 변경이라
+ *    데모 게이트 대상 → 범위에서 뺐다). 화면은 아직 `observed` 를 읽지 않으므로 사용자에게 보이는 변화가 없다.
+ *  - 스냅샷이 있으면 `observed: { …원값, observed_at, data_source:'kis_price_detail' }`, 없거나 테이블이 없으면(마이그레이션 전) `observed:false`.
+ *    스냅샷 조회가 그 밖의 이유로 실패해도 기존 경로는 막지 않고 `observed:false, observed_error:'snapshot_read_failed'` 로 표시한다.
+ *  - `market_cap_raw` 는 KIS `tomv` 원값(단위 미확인 — 화면의 '억원' 필드 `market_cap_bn` 과 섞지 않는다).
+ *  - 국내 심볼은 스냅샷을 조회하지 않고 응답에 `observed` 키도 없다(형식 불변).
+ *  - 분석가·P3 는 이 응답이 아니라 `us_fundamentals_snapshot` 테이블을 직접 읽는다.
+ */
+async function readLatestUsSnapshot(
+  pool: ReturnType<typeof getPool>,
+  symbol: string,
+): Promise<RowDataPacket | null> {
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT symbol, per, pbr, eps, bps, market_cap, shares, h52, l52, last_price, currency, sector, etp_type, observed_at
+         FROM us_fundamentals_snapshot WHERE symbol = ? ORDER BY observed_at DESC LIMIT 1`,
+      [symbol],
+    );
+    return rows[0] ?? null;
+  } catch (e) {
+    if (isNoSuchTableError(e)) return null;   // 마이그레이션 전 — 기존 경로로
+    throw e;
+  }
+}
+
+const numOrNull = (v: unknown): number | null => {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 async function fetchFromClaude(symbol: string, name: string): Promise<Partial<FundamentalsResult>> {
   const prompt = `당신은 주식 투자 분석 전문가입니다.
@@ -64,6 +101,39 @@ JSON만 반환하고 다른 텍스트는 없이.`;
   }
 }
 
+type ObservedPart = { observed?: false | Record<string, unknown>; observed_error?: string };
+
+/** 해외 심볼이면 스냅샷을 읽어 `observed` 부분을 만든다. 국내는 빈 객체(응답 형식 불변). 던지지 않는다. */
+async function buildObserved(pool: ReturnType<typeof getPool>, symbol: string, overseas: boolean): Promise<ObservedPart> {
+  if (!overseas) return {};
+  let snap: RowDataPacket | null;
+  try {
+    snap = await readLatestUsSnapshot(pool, symbol);
+  } catch (e) {
+    console.error('[api/fundamentals] us_fundamentals_snapshot 조회 실패:', e instanceof Error ? e.message : String(e));
+    return { observed: false, observed_error: 'snapshot_read_failed' };
+  }
+  if (!snap) return { observed: false };
+  return {
+    observed: {
+      per: numOrNull(snap.per),
+      pbr: numOrNull(snap.pbr),
+      eps: numOrNull(snap.eps),
+      bps: numOrNull(snap.bps),
+      market_cap_raw: numOrNull(snap.market_cap),
+      shares: numOrNull(snap.shares),
+      high_52w: numOrNull(snap.h52),
+      low_52w: numOrNull(snap.l52),
+      last_price: numOrNull(snap.last_price),
+      currency: (snap.currency as string | null) ?? null,
+      sector: (snap.sector as string | null) ?? null,
+      etp_type: (snap.etp_type as string | null) ?? null,
+      observed_at: snap.observed_at,
+      data_source: 'kis_price_detail',
+    },
+  };
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ symbol: string }> },
@@ -72,8 +142,11 @@ export async function GET(
   const { symbol } = await params;
 
   if (!symbol) return Response.json({ ok: false, error: 'symbol required' }, { status: 400 });
+  const overseas = isOverseasSymbol(symbol);
 
   try {
+    const observedPart = await buildObserved(pool, symbol, overseas);
+
     // 캐시 확인
     const [cached] = await pool.query<RowDataPacket[]>(
       'SELECT * FROM stock_fundamentals WHERE symbol = ? LIMIT 1',
@@ -86,7 +159,7 @@ export async function GET(
       const isStale = age >= CACHE_TTL_MS;
       const isEmpty = !cacheRow.pbr && !cacheRow.per && !cacheRow.roe;  // 핵심 필드 모두 null
       if (!isStale && !isEmpty) {
-        return Response.json({ ok: true, data: cacheRow, cached: true });
+        return Response.json({ ok: true, data: cacheRow, cached: true, ...observedPart });
       }
     }
 
@@ -111,9 +184,9 @@ export async function GET(
     const isAiEmpty = !aiData.pbr && !aiData.per && !aiData.roe;
     if (isAiEmpty) {
       if (cacheRow && (cacheRow.pbr || cacheRow.per || cacheRow.roe)) {
-        return Response.json({ ok: true, data: cacheRow, cached: true });
+        return Response.json({ ok: true, data: cacheRow, cached: true, ...observedPart });
       }
-      return Response.json({ ok: false, error: 'claude_unavailable' });
+      return Response.json({ ok: false, error: 'claude_unavailable', ...observedPart });
     }
 
     const toNum = (v: unknown): number | null => {
@@ -154,7 +227,7 @@ export async function GET(
 
     void currentPrice; // suppress unused warning
 
-    return Response.json({ ok: true, data: { symbol, ...fundamentals }, cached: false });
+    return Response.json({ ok: true, data: { symbol, ...fundamentals }, cached: false, ...observedPart });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     console.error('[api/fundamentals]', error);

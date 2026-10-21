@@ -205,6 +205,26 @@ ssh home_ubuntu 'pm2 list | grep stockinvest-cron'
 > 🟡 **배포 후 24시간은 킬스위치 전환 구간이다.** 기준선(24시간 전 행)에 USD 행이 없어서 킬스위치가 양쪽에서 USD 를 빼고 비교한다(전환 규칙 E). 이 구간에 **해외 손절 매도**가 있으면 USD 유입이 거래 정황으로 잡히지 않아 **발동 대신 "보류 + critical" 알림**으로 간다(오늘의 운영 동작과 같다). 알림이 오면 "같은 조건 비교" 수치만 보지 말고 **USD 를 포함한 실제 총액 변화율**을 확인하고, 실손실이면 설정 > 안전장치에서 킬스위치를 수동으로 켠다. 24시간 뒤 기준선이 새 형식이 되면 자연히 사라진다.
 > 첫 해외 매도 직후에는 스냅샷 `output3.ustl_sll_amt_smtl`(미결제 매도)과 USD 행을 비교해 매도 대금이 체결기준으로 들어오는지 확인한다(T-056 단계 4, T-055 2단계 관문).
 
+### T-059 Part A(미국 종목 데이터 수집 P1) 배포 직후 추가 확인
+
+배포만으로는 테이블이 생기지 않는다 — `scripts/migrations/T-059-us-data-collector.sql` 적용은 **별도 사용자 승인**이다(`--with-migrate` 는
+`deploy.yml` 에 migrate 가 없어 거부된다. 승인 후 `mysql … < scripts/migrations/T-059-us-data-collector.sql` 로 사람이 적용). 확인하지 않은 항목은 "미확인"이라고 적는다.
+
+> ✅ **2026-10-21 12:42 KST 마이그레이션 적용됨**(사용자 승인 "둘 다 승인", MariaDB 10.11.11, 5개 테이블·CHECK 제약 동작 확인, 전부 0행). KIS `HHDFS76200200` 실응답 1회 확인도 같은 날 완료(INTC). 아래 "마이그레이션 전" 항목은 이미 지난 단계라 건너뛴다.
+
+- [ ] **마이그레이션 전**: `POST /api/cron/edgar-sync`·`/api/cron/kis-fundamentals-snapshot`(헤더 `x-cron-secret`)이 200 + `skipped:'tables_missing'`, 앱 로그에 SEC·KIS 호출 흔적 없음
+- [ ] **마이그레이션 후**(읽기 전용 확인): `information_schema.TABLES` 에 5개(`symbol_cik_map`·`us_filings`·`us_financial_facts`·`us_earnings_events`·`us_fundamentals_snapshot`) 존재, 기존 테이블 변경 없음
+- [ ] `edgar-sync` 1회 수동 실행 결과: `targets`·`mapped`·`unmapped`(SMH 등 ETF 는 정상적으로 unmapped)·`ciksDone`·`ciksFailed`·`requests`, **`aborted` 없음**(= SEC 429/403 0건), `durationMs` < 100,000 대(예산 100초 + 마지막 CIK 처리분 — 넘으면 `partial:true` 로 다음 날 이어짐)
+- [ ] 같은 날 두 번째 수동 실행에서 `ciksUnchanged` 가 대부분이고 `requests` ≈ 1 + CIK 수(companyfacts 재호출 거의 없음 — 증분 확인)
+- [ ] 행 수(읽기 전용 `SELECT COUNT(*)`): 5개 테이블 각각. `us_earnings_events` 의 `estimated` 행은 전부 `event_date_et IS NULL`
+- [ ] `kis-fundamentals-snapshot` 1회 실행: `written`·`failed` 목록, `aborted` 없음. `tomv` 단위(USD)와 PER 산출(현재가÷`epsx`, EDGAR GAAP 과 기준이 다름)은 2026-10-21 INTC 실응답 1건으로 **확인됨**. **아직 미확인**: 손실 기업의 PER 표기(0·음수·빈 문자열) — 첫 실행의 `raw_output` 에서 `epsx` 가 0·음수인 종목을 찾아 확인
+- [ ] `GET /api/fundamentals/NAS:INTC` 응답의 `data`·`cached` 는 배포 전과 같고(기존 LLM 경로, `stock_fundamentals` 캐시 불변 — R-1), 스냅샷이 생긴 뒤에는 **별도 필드 `observed`** 에 `data_source:'kis_price_detail'`·`observed_at`·원값이 붙는다(스냅샷 전에는 `observed:false`). 국내(`005930`) 응답은 배포 전과 같은 형식(`observed` 키 없음). 화면은 `observed` 를 읽지 않으므로 화면 변화 없음
+- [ ] 스냅샷 `per`·`pbr` 이 KIS 원문 `0.00` 인 종목은 NULL 로 저장돼 있는가(R-2 — `raw_output.perx` 와 대조)
+- [ ] 다음 날 07시·08시 tick 의 cron 로그에 `edgar-sync OK`·`kis-fundamentals-snapshot OK`, 하트비트 워치독 경보 없음
+- [ ] (R-9) 첫 수동 `edgar-sync` 직후 `pm2 describe stockinvest` 로 RSS·재시작 횟수 확인(큰 회사 companyfacts 는 수 MB JSON 을 한 번에 파싱한다)
+
+> **알려진 한계(P1, 코드로 막지 않음)** — R-5: 창이 지난 `estimated` 행은 활성처럼 남는다 → 소비 쿼리(P2)는 `superseded_by IS NULL AND window_end_et >= 오늘(ET)` 를 붙인다. R-3: companyfacts 워터마크가 날짜 단위라 같은 날 두 번째 정기보고서(정정)는 다음 보고서 때 반영된다. R-6: SEC 쿨다운·동시 실행 방지는 프로세스 메모리(pm2 재시작 시 초기화, 다중 인스턴스 미공유). R-8: KIS 스냅샷 job 은 레이트리밋 응답이 계속돼도 남은 종목을 끝까지 시도한다(유량 대기 실패에서만 중단).
+
 ### 화면·API
 
 - [ ] `https://stock.미라클펭귄.com` 메인 화면이 렌더링되는가

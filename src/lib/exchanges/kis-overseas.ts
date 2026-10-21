@@ -342,6 +342,139 @@ export async function getUsdCash(): Promise<UsdCashReading> {
   }
 }
 
+// ── 해외주식 현재가상세 — HHDFS76200200 (T-059 Part A, 읽기 전용 GET) ─────────
+//
+// 엔드포인트: GET /uapi/overseas-price/v1/quotations/price-detail · tr_id HHDFS76200200 · 파라미터 AUTH='', EXCD(NAS/NYS/AMS), SYMB.
+// 근거(필드명·의미): KIS 공식 저장소 open-trading-api `examples_llm/overseas_stock/price_detail/price_detail.py`(API_URL·tr_id·params)
+//   와 같은 폴더 `chk_price_detail.py` 의 COLUMN_MAPPING — 2026-10-21 조회
+//   https://github.com/koreainvestment/open-trading-api/blob/main/examples_llm/overseas_stock/price_detail/chk_price_detail.py
+//   perx=PER · pbrx=PBR · epsx=EPS · bpsx=BPS · tomv=시가총액 · shar=상장주수 · h52p/h52d=52주최고가/일자 · l52p/l52d=52주최저가/일자
+//   last=현재가 · curr=통화 · e_icod=업종(섹터) · etyp_nm=ETP 분류명.  (주의: `mcap` 은 시가총액이 아니라 **자본금**이다.)
+// 🔴 미확인(실응답을 본 적 없음 — 사용자 승인된 1회 읽기 전용 호출 필요): PER·PBR 의 회계 기준·갱신 주기, `tomv` 의 단위(USD 원값인지
+//    천·백만 단위인지), 손실 기업의 PER 표기(0·음수·빈 값). 그래서 **원값 그대로** 저장하고 해석·환산하지 않는다.
+//
+// 판정(T-056 원칙 — 모르면 0 이 아니라 보류):
+//  - `rt_cd !== '0'`·output 없음·현재가(last) 가 양수가 아님 → 던진다(행을 쓰지 않음).
+//  - 각 지표: 키가 없거나 빈 문자열이면 **null(모름)**, 값이 있는데 숫자 형식이 아니면 **응답 형식이 다르다고 보고 던진다.**
+//  - PER·PBR 이 정확히 0 이면 null(측정값으로 위조하지 않음), 음수는 그대로(아래 `zeroToNull` 주석).
+//  - 지표 8개(per·pbr·eps·bps·시총·주수·52주 고저)가 **전부 null** 이면 빈 응답으로 보고 던진다.
+
+/** 현재가상세를 확인할 수 없다 — 이 종목은 스냅샷을 쓰지 않는다. */
+export class PriceDetailUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PriceDetailUnavailableError';
+  }
+}
+
+export interface OverseasPriceDetail {
+  symbol: string;
+  lastPrice: number;
+  per: number | null;
+  pbr: number | null;
+  eps: number | null;
+  bps: number | null;
+  marketCap: number | null;   // tomv 원값(단위 미확인)
+  shares: number | null;
+  high52: number | null;
+  low52: number | null;
+  high52Date: string | null;  // YYYY-MM-DD
+  low52Date: string | null;
+  currency: string | null;
+  sector: string | null;
+  etpType: string | null;
+  /** KIS output 원문(시세 정보만 — 계좌 정보 없음). 감사·단위 확인용. */
+  raw: Record<string, unknown>;
+}
+
+/** HHDFS76200200 응답 본문 → 스냅샷 값. **순수 함수**(fetch·db 없음). 판정 규칙은 위 블록 주석. */
+export function parsePriceDetail(data: unknown, symbol: string): OverseasPriceDetail {
+  const fail = (why: string): never => { throw new PriceDetailUnavailableError(`HHDFS76200200 ${symbol} 판정 불가 — ${why}`); };
+  if (!data || typeof data !== 'object') fail('응답 본문이 객체가 아님');
+  const d = data as Record<string, unknown>;
+  if (d.rt_cd !== '0') fail(`rt_cd=${String(d.rt_cd)} msg_cd=${String(d.msg_cd ?? '-')}`);
+  const oraw = Array.isArray(d.output) ? (d.output.length === 1 ? d.output[0] : undefined) : d.output;
+  if (!oraw || typeof oraw !== 'object') fail('output 없음');
+  const o = oraw as Record<string, unknown>;
+
+  /** 없음·빈 문자열 → null, 형식 이상 → 던짐. */
+  const num = (key: string): number | null => {
+    const v = o[key];
+    if (v == null) return null;
+    if (typeof v === 'string' && v.trim() === '') return null;
+    const n = strictNum(v);
+    if (n == null) fail(`${key} 가 숫자 형식이 아님 (${JSON.stringify(v).slice(0, 40)})`);
+    return n;
+  };
+  // (C-3) 8자리 숫자 형식만이 아니라 **실제 달력 날짜**인지 본다(연 1900~2100, Date 왕복 일치 — `20261340`·`20260230` 은 null).
+  //   통과 못 한 날짜를 그대로 DATE 컬럼에 넣으면 strict 모드 DB 가 그 종목 행 전체를 거부한다.
+  const ymd = (key: string): string | null => {
+    const v = typeof o[key] === 'string' ? (o[key] as string).trim() : '';
+    if (!/^\d{8}$/.test(v)) return null;
+    const y = Number(v.slice(0, 4)), m = Number(v.slice(4, 6)), d = Number(v.slice(6, 8));
+    if (y < 1900 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+    return `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}`;
+  };
+  const text = (key: string, max: number): string | null => {
+    const v = typeof o[key] === 'string' ? (o[key] as string).trim() : '';
+    return v ? v.slice(0, max) : null;
+  };
+
+  const lastPrice = num('last');
+  if (lastPrice == null || !(lastPrice > 0)) fail(`현재가(last)가 양수가 아님 (${JSON.stringify(o.last)})`);
+  // (R-2) PER·PBR 이 **정확히 0**("0"·"0.00" 포함)이면 null. 실제 PER·PBR 은 0 이 될 수 없고, 손실 기업·자본잠식 등 계산 불가 상태를
+  //   KIS 가 0 으로 채우는지 미확인이라 0 을 측정값으로 저장하지 않는다(원문은 `raw` 에 남는다).
+  //   **음수는 그대로 둔다** — 손실 기업 PER 을 음수(EPS 음수 ÷ 가격)로 주는 표기가 흔하고, 음수는 "0 으로 채운 빈 값"과 달리
+  //   계산 결과이므로 위조가 아니다. EPS·BPS 는 0 이 실제 값일 수 있어 이 규칙을 적용하지 않는다.
+  const zeroToNull = (v: number | null): number | null => (v === 0 ? null : v);
+  const metrics = {
+    per: zeroToNull(num('perx')), pbr: zeroToNull(num('pbrx')), eps: num('epsx'), bps: num('bpsx'),
+    marketCap: num('tomv'), shares: num('shar'), high52: num('h52p'), low52: num('l52p'),
+  };
+  if (Object.values(metrics).every((v) => v == null)) fail('지표 8개가 모두 비어 있음');
+  return {
+    symbol,
+    lastPrice: lastPrice as number,
+    ...metrics,
+    high52Date: ymd('h52d'),
+    low52Date: ymd('l52d'),
+    currency: text('curr', 8),
+    sector: text('e_icod', 64),
+    etpType: text('etyp_nm', 64),
+    raw: { ...o },
+  };
+}
+
+/**
+ * 해외주식 현재가상세 조회(읽기 전용). 실패하면 던진다 — 0·빈 값으로 바꾸지 않는다.
+ * 토큰 만료(EGW00123)만 1회 재발급 후 재시도. 스로틀은 `kisFetch` 가 담당한다(호출부가 `withKisPriority('bulk')` 로 감싼다).
+ */
+export async function getPriceDetail(symbol: string): Promise<OverseasPriceDetail> {
+  const { excd, ticker } = parseOverseas(symbol);
+  const params = new URLSearchParams({ AUTH: '', EXCD: excd, SYMB: ticker });
+  const url = `${BASE()}/uapi/overseas-price/v1/quotations/price-detail?${params}`;
+  let attempt = 0;
+  for (;;) {
+    const headers = await kisHeaders('HHDFS76200200');
+    const res = await kisFetch(url, { headers }, { timeoutMs: 5_000, label: 'overseas priceDetail' });
+    if (!res.ok) {
+      const body = kisBodyText(res) ?? await res.text().catch(() => '');
+      if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
+        await invalidateKisToken();
+        attempt++;
+        continue;
+      }
+      throw new PriceDetailUnavailableError(
+        `KIS overseas priceDetail ${symbol}: ${res.status}` + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+      );
+    }
+    const data: unknown = await res.json();
+    return parsePriceDetail(data, symbol);
+  }
+}
+
 // ── 잔고 조회 ────────────────────────────────────────────────────────────────
 async function fetchBalancesForExchange(
   excd: OverseasExchange,
