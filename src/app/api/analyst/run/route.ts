@@ -56,6 +56,12 @@ export async function POST(req: Request) {
           // (구 코드는 심볼 단위 catch 뿐이라 같은 심볼의 후속 시그널이 통째로 유실됐다)
           try {
             const r = await createSignal(s, cfg);
+            // T-058 — 현금 부족 매수는 시그널이 만들어지지 않았다(signalId 0). 생성 성공처럼 `created` 에 넣지 않는다.
+            // (다른 `ok:false` 코드의 기존 취급은 이 task 범위 밖이라 그대로 둔다)
+            if (!r.ok && r.errorCode === 'insufficient_cash') {
+              skipped.push({ symbol, reason: 'insufficient_cash' });
+              continue;
+            }
             created.push({ symbol, signalId: r.signalId, autoSubmitted: r.autoSubmitted, orderId: r.orderId });
           } catch (e) {
             const err = e instanceof Error ? e.message : String(e);

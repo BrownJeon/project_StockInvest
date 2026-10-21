@@ -3,7 +3,9 @@
  *
  * 하는 일 (순서가 계약):
  *  1. `notify_signal_pending` 이 꺼져 있으면 아무것도 보내지 않는다 (기존 스위치 존중)
- *  2. 매수인데 **지금 실행될 수 없으면**(현금 부족·한도 초과) 개별 요청 대신 **요약에 센다** (D2-b, 최대 1시간에 1건)
+ *  2. 매수인데 **지금 실행될 수 없으면**(현금 부족·한도 초과) **알림을 보내지 않고 서버 로그 1줄만** 남긴다
+ *     (T-044 — T-042 D2-b 의 시간당 요약을 제거. 생략은 `notify_skip_unexecutable` 가 키 없음 또는 정확히 `true` 일 때만이고,
+ *      그 밖의 값·읽기 오류면 실행 불가여도 개별 요청을 보낸다. 실시간 현금 부족 매수는 T-058 게이트가 시그널 자체를 만들지 않는다)
  *  3. 버튼 승인이 켜져 있으면(`telegram_approval_enabled` + 서명 키) 풍부한 본문 + 버튼, 아니면 **기존과 같은 간단한 본문**
  *
  * 🔴 두 형식 모두 모든 동적 값을 이스케이프한다 — 이전 본문은 사유 줄의 `<` 때문에 텔레그램이 400 으로 거부해
@@ -21,7 +23,7 @@ import { getPool } from '@/lib/db';
 import { getSessionSecret } from '@/lib/auth/session';
 import type { Market } from '@/lib/exchanges/kis-symbols';
 import { assessExecutability, type ExecutabilityAssessment, type NonExecutableReason } from './approval-context';
-import { renderApprovalRequest, strategyTitle, won, type ApprovalRequestView } from './approval-message';
+import { renderApprovalRequest, strategyTitle, type ApprovalRequestView } from './approval-message';
 import { extractEntryZone } from './approval-transitions';
 import { deriveApprovalKey } from './telegram-callback-data';
 
@@ -42,7 +44,7 @@ export interface ApprovalNotifyArgs {
 
 export type NotifyOutcome =
   | { kind: 'disabled_flag' }
-  | { kind: 'suppressed'; reasons: NonExecutableReason[]; summarySent: boolean }
+  | { kind: 'suppressed'; reasons: NonExecutableReason[] }
   | { kind: 'sent'; format: 'plain' | 'buttons' };
 
 export interface NotifyDeps {
@@ -59,7 +61,6 @@ export interface NotifyDeps {
   sendPlain(level: 'info', title: string, body: string): void;
   /** 버튼이 달린 본문 — 채널 정책·슬랙 동시 전송은 `dispatchAlertWithTelegram` 이 지킨다 */
   sendRich(title: string, plainBody: string, text: string, keyboard: InlineKeyboard): Promise<void>;
-  sendSummary(title: string, body: string): void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,45 +103,6 @@ export function renderPlainRequest(a: ApprovalNotifyArgs, label: string, now: Da
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 실행 불가 요약 (D2-b)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const SUMMARY_EVERY_MS = 60 * 60_000;
-const REASON_KO: Record<NonExecutableReason, string> = { cash: '현금 부족', daily_limit: '일 한도 소진', order_limit: '1회 한도 초과·미설정' };
-const SAMPLE_MAX = 3;
-
-interface SummaryState { count: number; byReason: Record<NonExecutableReason, number>; sample: string[]; lastSentAt: number }
-const summary: SummaryState = { count: 0, byReason: { cash: 0, daily_limit: 0, order_limit: 0 }, sample: [], lastSentAt: 0 };
-
-/** 테스트용 */
-export function resetSummaryState(): void {
-  summary.count = 0; summary.byReason = { cash: 0, daily_limit: 0, order_limit: 0 }; summary.sample = []; summary.lastSentAt = 0;
-}
-
-/**
- * 센다. 마지막 요약 후 1시간이 지났으면 요약 본문을 돌려주고 카운터를 비운다(= 지금 보낸다). 아니면 null.
- * 요약은 **새 실행 불가 시그널이 올 때만** 나간다 — 조용한 시간에는 쌓아 두기만 한다.
- */
-export function tallyUnexecutable(label: string, a: ExecutabilityAssessment, now: number): { title: string; body: string } | null {
-  summary.count++;
-  for (const r of a.reasons) summary.byReason[r]++;
-  if (summary.sample.length < SAMPLE_MAX && !summary.sample.includes(label)) summary.sample.push(label);
-  if (now - summary.lastSentAt < SUMMARY_EVERY_MS) return null;
-
-  const parts = (Object.keys(summary.byReason) as NonExecutableReason[])
-    .filter((r) => summary.byReason[r] > 0).map((r) => `${REASON_KO[r]} ${summary.byReason[r]}`);
-  const lines = [
-    `지금 실행할 수 없는 매수 시그널 ${summary.count}건에는 개별 승인 요청을 보내지 않았습니다. (${parts.join(' · ')})`,
-    a.ctx.cashKRW != null ? `현금 ${won(a.ctx.cashKRW)}${a.ctx.dailyRemainingKRW != null ? ` · 오늘 한도 잔여 ${won(a.ctx.dailyRemainingKRW)}` : ''}` : undefined,
-    `예: ${summary.sample.join(', ')}`,
-    '시그널은 앱의 승인 대기 목록에는 그대로 있습니다. 현금을 채우면 다시 개별 요청이 옵니다.',
-  ].filter(Boolean).join('\n');
-  const title = '📭 실행 불가 매수 시그널 요약';
-  summary.count = 0; summary.byReason = { cash: 0, daily_limit: 0, order_limit: 0 }; summary.sample = []; summary.lastSentAt = now;
-  return { title, body: lines };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // 본체
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -151,14 +113,15 @@ export async function notifyApprovalRequest(a: ApprovalNotifyArgs, deps: NotifyD
   // 조회 실패 시 대신 쓰는 원본 심볼은 여기서 이스케이프한다 (정상 경로의 라벨은 이미 안전한 값이다)
   const label = await deps.label(a.symbol).catch(() => h(a.symbol));
 
-  // D2-b: 실행 불가 매수는 요약으로. 판정 실패·불확실은 "실행 가능"(보낸다) — 알림을 줄이는 쪽이라 의심스러우면 보낸다.
+  // T-044: 실행 불가 매수는 알림을 아무것도 보내지 않는다(요약도 없음 — T-042 D2-b 의 요약을 사용자 요구로 제거).
+  // 판정 실패·불확실은 "실행 가능"(보낸다) — 알림을 줄이는 쪽이라 의심스러우면 보낸다. 매도는 판정하지 않는다(항상 보낸다).
   let assessment: ExecutabilityAssessment | null = null;
   if (a.side === 'buy' && (await deps.skipUnexecutable().catch(() => false))) {
     assessment = await deps.assess({ symbol: a.symbol, side: a.side, amountKRW: a.amountKRW, price: a.price, now: now.getTime() }).catch(() => null);
     if (assessment && !assessment.executable) {
-      const s = tallyUnexecutable(label, assessment, now.getTime());
-      if (s) deps.sendSummary(s.title, s.body);
-      return { kind: 'suppressed', reasons: assessment.reasons, summarySent: s != null };
+      // 조용히 사라지지 않게 서버 로그 1줄 — 알림 채널이 아니다. 금액·잔고 등 수치는 싣지 않는다.
+      console.info(`[approval-notify] 실행 불가 매수 알림 생략: signal ${a.signalId} ${a.symbol} reasons=${assessment.reasons.join(',')}`);
+      return { kind: 'suppressed', reasons: assessment.reasons };
     }
   }
 
@@ -199,6 +162,31 @@ async function readConfig(key: string): Promise<unknown> {
   } catch { return undefined; }
 }
 
+/**
+ * `readConfig` 와 달리 **읽기 오류를 "키 없음"과 구분한다**(T-044 Codex low). 알림을 줄이는 스위치는
+ * 오류를 기본값(켜짐 = 생략)으로 합치면 "모르는데 줄이는" 방향이 된다.
+ */
+async function readConfigState(key: string): Promise<{ state: 'missing' } | { state: 'value'; value: unknown } | { state: 'error' }> {
+  try {
+    const [rows] = await getPool().query<(RowDataPacket & { value: string })[]>(
+      'SELECT value FROM system_config WHERE `key` = ? LIMIT 1', [key],
+    );
+    if (rows.length === 0) return { state: 'missing' };
+    try { return { state: 'value', value: JSON.parse(rows[0].value) }; } catch { return { state: 'value', value: rows[0].value }; }
+  } catch { return { state: 'error' }; }
+}
+
+/**
+ * `notify_skip_unexecutable` — **키 없음 또는 정확히 JSON 불리언 `true` 일 때만** 생략한다(기본 켜짐은 유지).
+ * 그 밖의 값(`false`·문자열 `"false"`/`"true"`·0·null·파싱 불가)과 읽기 오류는 "불확실 → 보낸다"(T-044 Codex low).
+ * 예전에는 `!== false` 로 읽어 `"false"`·0·null 같은 비정상 값이 생략을 켰다.
+ */
+export function skipUnexecutableFromConfig(c: { state: 'missing' } | { state: 'value'; value: unknown } | { state: 'error' }): boolean {
+  if (c.state === 'missing') return true;
+  if (c.state === 'value') return c.value === true;
+  return false;
+}
+
 const toNotifyResult = (r: BotCallResult<SentMessage>): NotifyResult =>
   r.ok ? NOTIFY_OK : r.skipped ? NOTIFY_SKIPPED : notifyFailed(r.error);
 
@@ -209,7 +197,7 @@ export function defaultDeps(): NotifyDeps {
       const v = await readConfig('notify_signal_pending');
       return v === undefined ? true : Boolean(v);              // 기존 기본값: 켜짐
     },
-    skipUnexecutable: async () => (await readConfig('notify_skip_unexecutable')) !== false,   // 기본 켜짐
+    skipUnexecutable: async () => skipUnexecutableFromConfig(await readConfigState('notify_skip_unexecutable')),   // 키 없음·true 만 켜짐
     buttons: async () => {
       const [enabled, url] = await Promise.all([readConfig('telegram_approval_enabled'), readConfig('app_public_url')]);
       return {
@@ -226,7 +214,6 @@ export function defaultDeps(): NotifyDeps {
     },
     assess: assessExecutability,
     sendPlain: (level, title, body) => sendAlert(level, title, body),
-    sendSummary: (title, body) => sendAlert('info', title, body),
     sendRich: async (title, plainBody, text, keyboard) => {
       await dispatchAlertWithTelegram('info', title, plainBody, async () => {
         const r = await sendTelegramMessage(text, keyboard);

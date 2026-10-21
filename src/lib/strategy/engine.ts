@@ -243,6 +243,8 @@ export async function createSignalGuarded(
       // T-020 — 1주 미만 스킵은 **실패가 아니라 정책 스킵**이다. `signal_create_failed`
       // 로 뭉개면 verdict 가 'error' 가 되어 "엔진이 고장났다"로 읽힌다.
       : res.errorCode === 'quantity_below_min'    ? 'quantity_below_min'
+      // T-058 — 실시간 현금 부족으로 시그널을 만들지 않은 것도 **정책 건너뜀**이다. 엔진 고장(error)으로 집계하지 않는다.
+      : res.errorCode === 'insufficient_cash'     ? 'insufficient_cash'
       :                                             'signal_create_failed';
     const verdict: FunnelVerdict = gate === 'signal_create_failed' ? 'error' : 'skip';
     rec.record({
@@ -253,7 +255,10 @@ export async function createSignalGuarded(
       detail: { error: res.error, dupSignalId: gate === 'duplicate_active_signal' ? res.signalId : undefined },
     });
     outcome?.kill(input.symbol, 11, gate);
-    console.warn(`[signal-create] ${input.symbol} ${input.side} 생성 거부: ${res.error}`);
+    // T-058 — 현금 부족 건너뜀은 룰이 매 틱 재발화할 때마다 생긴다. 경고는 게이트가 (시장·심볼·방향) 1시간 1회로 이미 남긴다.
+    if (res.errorCode !== 'insufficient_cash') {
+      console.warn(`[signal-create] ${input.symbol} ${input.side} 생성 거부: ${res.error}`);
+    }
     return { ok: false, error: res.error, errorCode: res.errorCode, recordedGate: gate, recordedVerdict: verdict };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

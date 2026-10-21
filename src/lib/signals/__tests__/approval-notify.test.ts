@@ -4,11 +4,12 @@
  * 핵심 계약:
  *  1. 🔴 두 형식(간단/버튼) 모두 동적 값을 이스케이프한다 — 버튼 스위치가 꺼져 있어도 78% 유실 수정은 적용된다.
  *  2. 🔴 간단한 본문은 **기존 형식 그대로**다 — 사용자가 목업을 확인하고 켜기 전에는 보이는 모양이 바뀌지 않는다.
- *  3. 실행 불가 매수는 개별 알림 대신 요약으로, 요약은 최대 1시간에 1건.
+ *  3. 실행 불가 매수는 알림을 아무것도 보내지 않는다 — 요약도 없다(T-044). 서버 로그 1줄만 남긴다.
  *  4. 🔴 불확실하면 보낸다 (판정 실패·버튼 설정 실패가 알림을 삼키지 않는다).
+ *  5. 🔴 `notify_skip_unexecutable` 는 키 없음·정확히 `true` 일 때만 생략 — 그 밖의 값·읽기 오류는 보낸다 (T-044 Codex low, T-058 흡수).
  */
 import { getPool } from '@/lib/db';
-import { dispatchAlertWithTelegram } from '../../notify';
+import { dispatchAlertWithTelegram, sendAlert } from '../../notify';
 import { sendTelegramMessage } from '../../notify/telegram-api';
 import { sendTelegramAlert } from '../../notify/telegram';
 import {
@@ -16,12 +17,10 @@ import {
   notifyApprovalRequest,
   pickReasonLine,
   renderPlainRequest,
-  resetSummaryState,
-  tallyUnexecutable,
   type ApprovalNotifyArgs,
   type NotifyDeps,
 } from '../approval-notify';
-import type { ExecutabilityAssessment } from '../approval-context';
+import type { ExecutabilityAssessment, NonExecutableReason } from '../approval-context';
 import { deriveApprovalKey, parseCallbackData, verifyCallbackData } from '../telegram-callback-data';
 
 jest.mock('@/lib/db', () => ({ getPool: jest.fn() }));
@@ -45,10 +44,10 @@ const args = (over: Partial<ApprovalNotifyArgs> = {}): ApprovalNotifyArgs => ({
 const OK: ExecutabilityAssessment = { executable: true, reasons: [], ctx: { totalKRW: 22_936_066, cashKRW: 3_000_000, dailyRemainingKRW: 1_900_000 } };
 const NO_CASH: ExecutabilityAssessment = { executable: false, reasons: ['cash'], ctx: { totalKRW: 22_936_066, cashKRW: 80_000, dailyRemainingKRW: 1_900_000 } };
 
-interface Sent { plain: Array<{ title: string; body: string }>; rich: Array<{ title: string; plainBody: string; text: string; keyboard: unknown }>; summary: Array<{ title: string; body: string }> }
+interface Sent { plain: Array<{ title: string; body: string }>; rich: Array<{ title: string; plainBody: string; text: string; keyboard: unknown }> }
 
 function deps(over: Partial<NotifyDeps> = {}, assessment: ExecutabilityAssessment | 'throw' = OK, buttons = { key: KEY as Buffer | null, enabled: false, appUrl: null as string | null }) {
-  const sent: Sent = { plain: [], rich: [], summary: [] };
+  const sent: Sent = { plain: [], rich: [] };
   const d: NotifyDeps = {
     now: () => NOW,
     pendingFlag: async () => true,
@@ -59,7 +58,6 @@ function deps(over: Partial<NotifyDeps> = {}, assessment: ExecutabilityAssessmen
     assess: jest.fn(async () => { if (assessment === 'throw') throw new Error('boom'); return assessment; }),
     sendPlain: (_l, title, body) => { sent.plain.push({ title, body }); },
     sendRich: async (title, plainBody, text, keyboard) => { sent.rich.push({ title, plainBody, text, keyboard }); },
-    sendSummary: (title, body) => { sent.summary.push({ title, body }); },
     ...over,
   };
   return { d, sent };
@@ -68,13 +66,16 @@ function deps(over: Partial<NotifyDeps> = {}, assessment: ExecutabilityAssessmen
 /** 정적 태그(<b> </b> <i> </i>)를 지우고도 남는 `<` 또는 맨몸 `&` 의 수 — 0 이어야 텔레그램이 받는다 */
 const unsafe = (t: string) => (t.replace(/<\/?(?:b|i)>/g, '').match(/</g) ?? []).length + (t.replace(/&(?:amp|lt|gt);/g, '').match(/&/g) ?? []).length;
 
-beforeEach(() => resetSummaryState());
+/** 실행 불가 생략 로그(console.info) — 출력 소음을 막고 내용을 검사한다 */
+let infoSpy: jest.SpyInstance;
+beforeEach(() => { infoSpy = jest.spyOn(console, 'info').mockImplementation(() => {}); });
+afterEach(() => infoSpy.mockRestore());
 
 describe('1. 스위치', () => {
   test('notify_signal_pending 이 꺼져 있으면 아무것도 하지 않는다 (판정도 하지 않는다)', async () => {
     const { d, sent } = deps({ pendingFlag: async () => false });
     expect(await notifyApprovalRequest(args(), d)).toEqual({ kind: 'disabled_flag' });
-    expect(sent).toEqual({ plain: [], rich: [], summary: [] });
+    expect(sent).toEqual({ plain: [], rich: [] });
     expect(d.assess).not.toHaveBeenCalled();
   });
 });
@@ -207,89 +208,94 @@ describe('3. 버튼 형식', () => {
   });
 });
 
-describe('4. 🔴 실행 불가 매수는 요약으로 (D2-b)', () => {
-  test('현금 부족이면 개별 알림을 보내지 않고, 첫 건에서 요약 1건을 보낸다', async () => {
-    const { d, sent } = deps({}, NO_CASH);
-    const out = await notifyApprovalRequest(args(), d);
-    expect(out).toEqual({ kind: 'suppressed', reasons: ['cash'], summarySent: true });
-    expect(sent.plain).toEqual([]);
-    expect(sent.rich).toEqual([]);
-    expect(sent.summary).toHaveLength(1);
-    expect(sent.summary[0].title).toBe('📭 실행 불가 매수 시그널 요약');
-    expect(sent.summary[0].body).toContain('1건');
-    expect(sent.summary[0].body).toContain('현금 부족 1');
-    expect(sent.summary[0].body).toContain('현금 ₩80,000');
-    expect(unsafe(sent.summary[0].body)).toBe(0);
+describe('4. 🔴 실행 불가 매수는 알림을 보내지 않는다 (T-044 — 요약 제거)', () => {
+  const only = (r: NonExecutableReason): ExecutabilityAssessment => ({ executable: false, reasons: [r], ctx: { totalKRW: 22_936_066, cashKRW: 80_000, dailyRemainingKRW: 0 } });
+
+  test.each(['cash', 'daily_limit', 'order_limit'] as NonExecutableReason[])('%s → 발송 0회, suppressed, 서버 로그 1줄', async (r) => {
+    const { d, sent } = deps({}, only(r));
+    expect(await notifyApprovalRequest(args({ signalId: 18676, symbol: '086280' }), d)).toEqual({ kind: 'suppressed', reasons: [r] });
+    expect(sent).toEqual({ plain: [], rich: [] });
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy).toHaveBeenCalledWith(`[approval-notify] 실행 불가 매수 알림 생략: signal 18676 086280 reasons=${r}`);
   });
 
-  test('🔴 1시간 안에 더 와도 요약은 다시 나가지 않고 센다 — 1시간 뒤 첫 신호에서 누적 건수로 나간다', async () => {
+  test('🔴 진짜 기본 배선의 발송 함수(sendAlert·dispatchAlertWithTelegram·텔레그램)가 한 번도 불리지 않는다', async () => {
+    jest.clearAllMocks();
+    const real = defaultDeps();
+    const { d } = deps({ sendPlain: real.sendPlain, sendRich: real.sendRich }, NO_CASH);
+    expect((await notifyApprovalRequest(args(), d)).kind).toBe('suppressed');
+    expect(sendAlert).not.toHaveBeenCalled();
+    expect(dispatchAlertWithTelegram).not.toHaveBeenCalled();
+    expect(sendTelegramMessage).not.toHaveBeenCalled();
+    expect(sendTelegramAlert).not.toHaveBeenCalled();
+  });
+
+  test('사유가 여러 개면 로그에 쉼표로 모두 적는다 — 금액·잔고 수치는 싣지 않는다', async () => {
+    const mixed: ExecutabilityAssessment = { executable: false, reasons: ['cash', 'daily_limit', 'order_limit'], ctx: { totalKRW: 22_936_066, cashKRW: 80_138, dailyRemainingKRW: 1_900_000 } };
+    const { d, sent } = deps({}, mixed);
+    expect(await notifyApprovalRequest(args({ signalId: 7, symbol: '005930', amountKRW: 240_572 }), d)).toEqual({ kind: 'suppressed', reasons: ['cash', 'daily_limit', 'order_limit'] });
+    expect(sent).toEqual({ plain: [], rich: [] });
+    const line = infoSpy.mock.calls[0][0] as string;
+    expect(line).toBe('[approval-notify] 실행 불가 매수 알림 생략: signal 7 005930 reasons=cash,daily_limit,order_limit');
+    for (const n of ['240572', '240,572', '80138', '80,138', '1900000', '1,900,000', '22936066']) expect(line).not.toContain(n);
+  });
+
+  test('🔴 [회귀 방지] 실행 불가 매수가 1시간 안·밖으로 연속 와도 발송 0회 — 요약이 되살아나지 않는다', async () => {
     let t = NOW.getTime();
     const { d, sent } = deps({ now: () => new Date(t) }, NO_CASH);
-    await notifyApprovalRequest(args({ symbol: 'A' }), d);                    // 요약 1 (t0)
-    t += 10 * 60_000; await notifyApprovalRequest(args({ symbol: 'B' }), d);
-    t += 20 * 60_000; await notifyApprovalRequest(args({ symbol: 'C' }), d);
-    t += 29 * 60_000; await notifyApprovalRequest(args({ symbol: 'D' }), d);   // 59분 경과 — 아직
-    expect(sent.summary).toHaveLength(1);
-    t += 2 * 60_000; await notifyApprovalRequest(args({ symbol: 'E' }), d);    // 61분 경과 — 누적 4건(B,C,D,E)
-    expect(sent.summary).toHaveLength(2);
-    expect(sent.summary[1].body).toContain('4건');
-    expect(sent.summary[1].body).toContain('라벨(B)');
-    expect(sent.plain).toEqual([]);
+    const outs = [];
+    for (const [sym, stepMin] of [['A', 0], ['B', 10], ['C', 20], ['D', 29], ['E', 2], ['F', 120], ['G', 24 * 60]] as const) {
+      t += stepMin * 60_000;
+      outs.push(await notifyApprovalRequest(args({ symbol: sym }), d));
+    }
+    expect(outs.every((o) => o.kind === 'suppressed')).toBe(true);
+    expect(sent).toEqual({ plain: [], rich: [] });
+    expect(infoSpy).toHaveBeenCalledTimes(7);
+    expect(outs.some((o) => 'summarySent' in o)).toBe(false);
   });
 
-  test('예시 종목은 중복 없이 최대 3개', () => {
-    resetSummaryState();
-    let out: { body: string } | null = null;
-    for (const s of ['A', 'A', 'B', 'C', 'D', 'E']) out = tallyUnexecutable(s, NO_CASH, 10 * 3600_000) ?? out;
-    // 첫 호출에서 이미 요약이 나가 카운터가 비었으므로 이후는 쌓이기만 한다 — 다시 1시간 뒤 호출로 확인
-    const later = tallyUnexecutable('F', NO_CASH, 12 * 3600_000)!;
-    expect(later.body).toMatch(/예: (?:[^,]+, ){0,2}[^,\n]+\n/);
-    expect(later.body.split('예: ')[1].split('\n')[0].split(', ').length).toBeLessThanOrEqual(3);
-    expect(out).not.toBeNull();
+  test('🔴 [회귀 방지] 요약 관련 export 가 모듈에 남아 있지 않다', async () => {
+    const mod = (await import('../approval-notify')) as Record<string, unknown>;
+    expect(mod.tallyUnexecutable).toBeUndefined();
+    expect(mod.resetSummaryState).toBeUndefined();
+    expect('sendSummary' in defaultDeps()).toBe(false);
   });
 
-  test('🔴 요약의 종목명 예시는 이미 이스케이프된 라벨 그대로다 (이중 이스케이프 금지, 그래도 안전)', async () => {
-    const { d, sent } = deps({ label: async () => 'AT&amp;T &lt;Inc&gt;' }, NO_CASH);
-    await notifyApprovalRequest(args(), d);
-    expect(sent.summary[0].body).toContain('예: AT&amp;T &lt;Inc&gt;');
-    expect(sent.summary[0].body).not.toContain('&amp;amp;');
-    expect(unsafe(sent.summary[0].body)).toBe(0);
-  });
-
-  test('요약: 라벨 조회가 실패해 원본 심볼로 대신해도 이스케이프돼 있다', async () => {
-    const { d, sent } = deps({ label: async () => { throw new Error('db down'); } }, NO_CASH);
-    await notifyApprovalRequest(args({ symbol: 'A&B<x>' }), d);
-    expect(sent.summary[0].body).toContain('예: A&amp;B&lt;x&gt;');
-    expect(unsafe(sent.summary[0].body)).toBe(0);
-  });
-
-  test('사유를 한국어로 묶어 적는다', async () => {
-    const mixed: ExecutabilityAssessment = { executable: false, reasons: ['cash', 'daily_limit', 'order_limit'], ctx: { totalKRW: null, cashKRW: null, dailyRemainingKRW: null } };
-    const { d, sent } = deps({}, mixed);
-    await notifyApprovalRequest(args(), d);
-    expect(sent.summary[0].body).toContain('현금 부족 1 · 일 한도 소진 1 · 1회 한도 초과·미설정 1');
+  test('버튼 승인이 켜져 있어도 실행 불가 매수는 보내지 않는다', async () => {
+    const { d, sent } = deps({}, NO_CASH, { key: KEY, enabled: true, appUrl: null });
+    expect((await notifyApprovalRequest(args(), d)).kind).toBe('suppressed');
+    expect(sent).toEqual({ plain: [], rich: [] });
   });
 
   test('🔴 매도는 실행 불가 판정을 받지 않는다 — 청산 요청은 항상 보낸다', async () => {
     const { d, sent } = deps({}, NO_CASH);
-    await notifyApprovalRequest(args({ side: 'sell' }), d);
+    expect(await notifyApprovalRequest(args({ side: 'sell' }), d)).toEqual({ kind: 'sent', format: 'plain' });
     expect(sent.plain).toHaveLength(1);
     expect(d.assess).not.toHaveBeenCalled();
-    expect(sent.summary).toEqual([]);
+    expect(infoSpy).not.toHaveBeenCalled();
   });
 
-  test('notify_skip_unexecutable=false 이면 실행 불가여도 보낸다', async () => {
+  test('notify_skip_unexecutable=false 이면 실행 불가여도 개별 승인 요청을 보낸다', async () => {
     const { d, sent } = deps({ skipUnexecutable: async () => false }, NO_CASH);
     expect(await notifyApprovalRequest(args(), d)).toEqual({ kind: 'sent', format: 'plain' });
     expect(sent.plain).toHaveLength(1);
+    expect(sent.plain[0].title).toBe('📩 승인 요청: 라벨(NAS:BKNG)');
     expect(d.assess).not.toHaveBeenCalled();
+    expect(infoSpy).not.toHaveBeenCalled();
   });
 
   test('🔴 판정이 던지면(조회 실패) 실행 가능으로 보고 보낸다', async () => {
     const { d, sent } = deps({}, 'throw');
     expect(await notifyApprovalRequest(args(), d)).toEqual({ kind: 'sent', format: 'plain' });
     expect(sent.plain).toHaveLength(1);
-    expect(sent.summary).toEqual([]);
+    expect(infoSpy).not.toHaveBeenCalled();
+  });
+
+  test('🔴 판정이 null 이면(불확실) 실행 가능으로 보고 보낸다', async () => {
+    const { d, sent } = deps({ assess: jest.fn(async () => null) as unknown as NotifyDeps['assess'] });
+    expect(await notifyApprovalRequest(args(), d)).toEqual({ kind: 'sent', format: 'plain' });
+    expect(sent.plain).toHaveLength(1);
+    expect(infoSpy).not.toHaveBeenCalled();
   });
 
   test('스위치 조회가 던지면 억제하지 않는다', async () => {
@@ -298,10 +304,12 @@ describe('4. 🔴 실행 불가 매수는 요약으로 (D2-b)', () => {
     expect(sent.plain).toHaveLength(1);
   });
 
-  test('실행 가능이면 요약에 세지 않는다', async () => {
+  test('실행 가능 매수는 기존과 같이 개별 승인 요청을 보내고 생략 로그를 남기지 않는다', async () => {
     const { d, sent } = deps({}, OK);
-    await notifyApprovalRequest(args(), d);
-    expect(sent.summary).toEqual([]);
+    expect(await notifyApprovalRequest(args(), d)).toEqual({ kind: 'sent', format: 'plain' });
+    expect(sent.plain).toHaveLength(1);
+    expect(d.assess).toHaveBeenCalledTimes(1);
+    expect(infoSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -336,5 +344,58 @@ describe('defaultDeps().sendRich — 버튼 메시지가 실패하면 간단한 
     (sendTelegramMessage as jest.Mock).mockResolvedValue({ ok: false, skipped: true, error: 'telegram_not_configured' });
     expect((await run()).result).toEqual({ ok: false, skipped: true });
     expect(sendTelegramAlert).not.toHaveBeenCalled();
+  });
+});
+
+describe('5. 🔴 notify_skip_unexecutable — 키 없음 또는 정확히 true 일 때만 생략 (T-044 Codex low · T-058 흡수)', () => {
+  /** 진짜 defaultDeps 의 스위치 읽기 — system_config 조회 결과만 바꾼다 */
+  const withConfig = (row: { value: string } | null | 'throw') => {
+    (getPool as jest.Mock).mockReturnValue({
+      query: jest.fn(async (_sql: string, params: unknown[]) => {
+        if (row === 'throw') throw new Error('db down');
+        return [params?.[0] === 'notify_skip_unexecutable' && row ? [row] : []];
+      }),
+    });
+  };
+
+  test.each([
+    ['키 없음', null, true],
+    ['true', { value: 'true' }, true],
+    ['false', { value: 'false' }, false],
+    ['"false"(문자열)', { value: '"false"' }, false],
+    ['"true"(문자열)', { value: '"true"' }, false],
+    ['0', { value: '0' }, false],
+    ['1', { value: '1' }, false],
+    ['null', { value: 'null' }, false],
+    ['파싱 실패', { value: 'yes please' }, false],
+    ['빈 문자열', { value: '' }, false],
+    ['읽기 오류', 'throw', false],
+  ] as const)('%s → 생략=%s', async (_l, row, skip) => {
+    withConfig(row as { value: string } | null | 'throw');
+    expect(await defaultDeps().skipUnexecutable()).toBe(skip);
+  });
+
+  test.each([
+    ['"false"', { value: '"false"' }],
+    ['0', { value: '0' }],
+    ['null', { value: 'null' }],
+    ['파싱 실패', { value: '{' }],
+    ['읽기 오류', 'throw'],
+  ] as const)('🔴 끝까지: 스위치가 %s 이면 실행 불가 매수라도 승인 요청을 보낸다 (예전에는 생략됐다)', async (_l, row) => {
+    withConfig(row as { value: string } | 'throw');
+    const real = defaultDeps();
+    const { d, sent } = deps({ skipUnexecutable: real.skipUnexecutable }, NO_CASH);
+    expect(await notifyApprovalRequest(args(), d)).toEqual({ kind: 'sent', format: 'plain' });
+    expect(sent.plain).toHaveLength(1);
+    expect(d.assess).not.toHaveBeenCalled();
+    expect(infoSpy).not.toHaveBeenCalled();
+  });
+
+  test('끝까지: 키 없음이면 실행 불가 매수는 생략된다 (기본 켜짐 유지)', async () => {
+    withConfig(null);
+    const real = defaultDeps();
+    const { d, sent } = deps({ skipUnexecutable: real.skipUnexecutable }, NO_CASH);
+    expect((await notifyApprovalRequest(args(), d)).kind).toBe('suppressed');
+    expect(sent).toEqual({ plain: [], rich: [] });
   });
 });

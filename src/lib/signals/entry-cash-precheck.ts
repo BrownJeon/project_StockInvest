@@ -81,6 +81,39 @@ export function domesticCashFromBalances(r: BalancesLike | null | undefined): nu
 }
 
 /**
+ * T-058 — 해외 USD 예수금. `cash.USD.state === 'known'` 이고 값이 유효할 때만 그 값, 아니면 null + 이유 코드.
+ * `unknown`(조회 실패)·`not_queried`(해외 비활성)를 **0 으로 읽지 않는다**(T-056 계약). 이유 코드는 로그용이라 수치를 담지 않는다.
+ */
+export function overseasUsdCashFromBalances(
+  r: { cash?: unknown } | null | undefined,
+): { usd: number; reason: null } | { usd: null; reason: 'usd_missing' | 'usd_not_queried' | 'usd_unknown' | 'usd_invalid' } {
+  const usd = (r?.cash as { USD?: unknown } | undefined)?.USD as { state?: unknown; usd?: unknown } | undefined;
+  if (!usd || typeof usd !== 'object') return { usd: null, reason: 'usd_missing' };
+  if (usd.state === 'not_queried') return { usd: null, reason: 'usd_not_queried' };
+  if (usd.state !== 'known') return { usd: null, reason: 'usd_unknown' };
+  const v = parseCashAmount(usd.usd);
+  return v == null ? { usd: null, reason: 'usd_invalid' } : { usd: v, reason: null };
+}
+
+/**
+ * T-058 — `getBalancesDetailed()` **한 번**에서 읽은 시장별 가용 현금. 각 값은 모르면 null(0 으로 읽지 않는다).
+ * 국내 값은 T-051 의 `domesticCashFromBalances` 그대로다. 해외 USD 는 같은 응답의 `cash.USD` 다(KIS 호출을 늘리지 않는다).
+ */
+export interface AvailableCash {
+  domesticKRW: number | null;
+  overseasUSD: number | null;
+  /** `overseasUSD` 가 null 인 이유 코드. 값이 있으면 null */
+  overseasUnknownReason: string | null;
+}
+
+function cashFromBalances(r: (BalancesLike & { cash?: unknown }) | null | undefined): AvailableCash {
+  const usd = overseasUsdCashFromBalances(r);
+  return { domesticKRW: domesticCashFromBalances(r), overseasUSD: usd.usd, overseasUnknownReason: usd.reason };
+}
+
+const CASH_READ_FAILED: AvailableCash = { domesticKRW: null, overseasUSD: null, overseasUnknownReason: 'balances_read_failed' };
+
+/**
  * 현금 값의 **원시 타입을 변환 전에** 검증한다(라운드 3, Codex C2). `Number('')`·`Number(null)`·`Number(false)` 는 모두 0 이라
  * 그대로 변환하면 "알 수 없음"이 **확정적인 현금 0원**이 되어 정상 주문을 막고, 그 0 이 TTL 동안 캐시된다 — "모르면 기존 경로" 위반.
  * 유효: 유한한 비음수 숫자, 또는 공백을 걷은 뒤 `^\d+(\.\d+)?$` 인 문자열. 진짜 0(`0`·`'0'`)은 유효한 현금 0원이다.
@@ -102,15 +135,29 @@ function parseCashAmount(v: unknown): number | null {
  */
 export const CASH_READ_TIMEOUT_MS = 8_000;
 
-let cache: { at: number; value: number | null } | null = null;
+/**
+ * 캐시·진행 중 조회는 **잔고 응답 하나**(국내 KRW + 해외 USD)를 단위로 둔다(T-058). 국내만 읽는 entry-watcher(T-051)와
+ * 시그널 생성 게이트(T-058)가 같은 프로세스에서 같은 조회를 공유한다 — KIS 호출이 시장 수만큼 늘지 않는다.
+ * 국내 쪽 의미(TTL·공유 마감·늦은 결과 미캐시·실패 캐시)는 T-051 그대로다.
+ */
+let cache: { at: number; value: AvailableCash } | null = null;
 /** 진행 중인 조회와 그 **시작 시각**. 시작 시각이 공유 마감의 기준이다(라운드 3 — 아래 설명). */
-let inFlight: { promise: Promise<number | null>; startedAt: number } | null = null;
+let inFlight: { promise: Promise<AvailableCash>; startedAt: number } | null = null;
 
 /** 테스트용 */
 export function resetEntryCashCache(): void { cache = null; inFlight = null; }
 
+/** 국내 가용 현금(KRW). 아래 {@link readAvailableCash} 의 국내 값 — 의미는 T-051 그대로다. */
+export async function readDomesticAvailableCashKRW(
+  now: () => number = Date.now,
+  timeoutMs: number = CASH_READ_TIMEOUT_MS,
+): Promise<number | null> {
+  const r = await readAvailableCash(now, timeoutMs);
+  return r ? r.domesticKRW : null;
+}
+
 /**
- * 국내 가용 현금(KRW). **던지지 않는다** — 실패·상한 초과는 null(호출부는 기존 동작).
+ * 시장별 가용 현금. **던지지 않는다** — 상한 초과는 null, 조회 실패는 모든 값이 null 인 결과(호출부는 기존 동작).
  *
  * - 상한 안에 끝난 조회는 성공·실패 모두 TTL 동안 캐시한다(KIS 장애 중에 시그널마다 조회를 반복하지 않게).
  * - 동시 호출은 진행 중인 조회 하나를 공유한다. 상한을 넘긴 조회도 끝날 때까지는 공유된다 — 걸려 있는 KIS 요청 위에
@@ -123,10 +170,10 @@ export function resetEntryCashCache(): void { cache = null; inFlight = null; }
  * - **상한을 넘겨 늦게 끝난 조회의 결과는 캐시에 넣지 않는다.** 시작 시각 기준으로 상한을 넘겼으면 버린다 — 이미 판단불가로
  *   넘어간 호출의 늦은 값이 이후 틱에 "방금 읽은 값"처럼 쓰이지 않게. 그 값은 그 순간 아직 기다리던 공유자만 받는다.
  */
-export async function readDomesticAvailableCashKRW(
+export async function readAvailableCash(
   now: () => number = Date.now,
   timeoutMs: number = CASH_READ_TIMEOUT_MS,
-): Promise<number | null> {
+): Promise<AvailableCash | null> {
   if (cache && now() - cache.at < ENTRY_CASH_CACHE_TTL_MS) return cache.value;
   if (inFlight) {
     const remaining = timeoutMs - (now() - inFlight.startedAt);
@@ -138,10 +185,10 @@ export async function readDomesticAvailableCashKRW(
   // 시작한 호출이 판단불가(null)로 넘어간 바로 그 순간부터 결과를 버리는 것이 보장된다(경계에서 흔들리지 않는다).
   let late = false;
   const deadline = setTimeout(() => { late = true; }, timeoutMs);
-  const p: Promise<number | null> = (async () => {
-    let value: number | null = null;
+  const p: Promise<AvailableCash> = (async () => {
+    let value: AvailableCash = CASH_READ_FAILED;
     try {
-      value = domesticCashFromBalances(await getBalancesDetailed());
+      value = cashFromBalances(await getBalancesDetailed());
     } catch (e) {
       console.warn('[entry-cash-precheck] 국내 잔고 조회 실패 — 현금 점검 생략(기존 동작):', e instanceof Error ? e.message : String(e));
     }
@@ -155,7 +202,7 @@ export async function readDomesticAvailableCashKRW(
 }
 
 /** `p` 를 최대 `ms` 까지 기다리고, 넘으면 null. 타이머는 항상 정리한다. */
-async function withTimeout(p: Promise<number | null>, ms: number): Promise<number | null> {
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const limit = new Promise<null>((resolve) => {
     timer = setTimeout(() => {

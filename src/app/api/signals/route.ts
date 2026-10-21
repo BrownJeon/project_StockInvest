@@ -81,6 +81,10 @@ export async function POST(req: Request) {
       console.error(`[api/signals POST] signal_create_failed ${body.symbol} ${body.side}: ${err}`);
       return Response.json({ ok: false, error: 'signal_create_failed', detail: err }, { status: 500 });
     }
+    // T-058 — 현금 부족 건너뜀은 입력 오류가 아니라 정책 건너뜀이다: 200 + skipped 로 구분한다(다른 !ok 는 400 유지).
+    if (!result.ok && result.errorCode === 'insufficient_cash') {
+      return Response.json({ ok: false, skipped: true, reason: 'insufficient_cash', data: result }, { status: 200 });
+    }
     return Response.json({ ok: result.ok, data: result }, { status: result.ok ? 200 : 400 });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

@@ -21,15 +21,53 @@
 |---|---|---|
 | `telegram_poller_enabled` | 폴러가 `getUpdates` 를 읽는다. **자가 점검은 이것만 켜면 된다.** | 꺼짐 |
 | `telegram_approval_enabled` | 승인·거절 동작 허용 + 요청 메시지에 버튼. 자가 점검(`t`)은 이것과 무관 | 꺼짐 |
-| `notify_skip_unexecutable` | 실행 불가 매수를 개별 알림 대신 요약(최대 1시간 1건)으로 | **켜짐**(`false` 로 꺼짐) |
+| `notify_skip_unexecutable` | 켜짐: 지금 실행할 수 없는 매수(현금 부족·한도 소진·1회 한도)는 **알림을 보내지 않는다**(요약도 없음, 서버 로그 `[approval-notify] 실행 불가 매수 알림 생략` 1줄만). 시그널은 앱 승인 대기 목록에 그대로 있다. `false`: 실행 불가여도 개별 승인 요청을 보낸다. 매도·판정 실패는 항상 보낸다 (T-044) | **켜짐**(키 없음 또는 정확히 `true` 일 때만 생략 — 그 밖의 값·읽기 오류는 보낸다) |
 | `app_public_url` | "앱에서 자세히" 링크(https). 없으면 링크 버튼 생략 | 없음 |
 | `telegram_approval_user_ids` | 허용 사용자 JSON 배열(숫자 ID). 없으면 개인 채팅이면 채팅 ID | 없음 |
 
-값은 **엄격한 불리언 `true`** 일 때만 켜진다(문자열 `"true"`·`1` 은 꺼짐). 읽기 실패도 꺼짐.
+> **`notify_skip_unexecutable` 운영 메모 (T-044, T-058 에서 해석 수정)**
+> - 생략은 **키 없음 또는 JSON 불리언 `true`** 일 때만이다. `false`·`"false"`(문자열)·`"true"`(문자열)·`0`·`null`·파싱 불가·읽기 오류는 모두 "불확실 → 보낸다"(T-044 Codex low 반영. 예전에는 `!== false` 로 읽어 `"false"`·`0`·`null` 이 생략을 켰다).
+> - 생략 로그 위치: 앱 프로세스 `stockinvest` 의 표준 출력 `/home/brownjeon/apps/stockinvest/shared/logs/pm2-out.log`(`ecosystem.config.js` 의 `out_file`). 건수 확인: `grep '실행 불가 매수 알림 생략' /home/brownjeon/apps/stockinvest/shared/logs/pm2-out.log` — 줄 형식 `[approval-notify] 실행 불가 매수 알림 생략: signal <번호> <종목> reasons=<cash|daily_limit|order_limit,…>`(금액·잔고 수치 없음). 앱 승인 대기 목록과 대조한다.
+> - **현금 부족은 이제 앞 단계에서 걸러진다(T-058)**: 실시간 현금이 사이징된 주문 전체 비용(수량 × 지정가 × 1.002)에 못 미치는 매수는 시그널 자체가 만들어지지 않는다(아래 §2.1). 여기(알림 단계)에 남는 현금 사유는 실시간 현금을 몰랐던(unknown) 시그널에 대해 스냅샷이 부족을 말한 경우뿐이다.
+> - **알려진 한계(남음 — 사용자 결정 사항)**: **한도(일 한도 소진·1회 한도) 사유로** 알림이 생략된 시그널은 행이 남아 있어서, 유효시간(30분) 안에 한도가 풀려도 다시 알림이 오지 않는다 — 같은 종목·방향의 활성 시그널이 있으면 새 시그널이 만들어지지 않기 때문이다(`service.ts` 중복 방지). 그 시그널은 앱 승인 대기 목록에서 승인할 수 있고, 만료 후 다시 발화하면 새 알림이 간다. T-058 은 이 부분을 고치지 않았다. 현금 판정(알림 단계)은 최대 3시간 된 스냅샷 × 0.5 비율이다.
+
+### 2.1 시그널 생성 현금 게이트 (T-058)
+
+매수 시그널을 만들기 **전에** 실시간 가용 현금을 본다(`src/lib/signals/signal-cash-gate.ts`, `createSignal` 의 블랙리스트 검사 뒤·중복 검사 앞). 현금이 사이징된 주문 전체 비용(수량 × 지정가 × 1.002 — 5주 주문이면 5주 값)에 못 미치면 **시그널 행·RAG 색인·텔레그램/슬랙 승인 요청을 아무것도 만들지 않는다.** 승인 대기·자동 제출·manual(detected) 경로 모두 같다. 매도는 대상이 아니다.
+
+| 키 (`system_config`) | 의미 | 기본 |
+|---|---|---|
+| `signal_cash_gate_domestic_enabled` | 국내 매수 게이트 — 국내 KRW 예수금(`prvs_rcdl_excc_amt`, T-051 과 같은 값·30초 캐시) | **켜짐**(키 없음) |
+| `signal_cash_gate_overseas_enabled` | 해외 매수 게이트 — USD 예수금(`cash.USD`, T-056). 필요 USD = 수량 × (원화 지정가 ÷ 환율을 주문 어댑터와 같게 반올림한 단가) × 1.002 (반올림은 `roundToTickOverseas` — $1 이상은 **정수 달러**, 의도된 동작: 사용자 결정 10-21) | **켜짐**(키 없음) |
+
+- 값 해석: **키 없음·JSON `true` = 켜짐. 그 밖의 모든 값(`false`·문자열·`0`·`null`·파싱 불가)과 읽기 오류 = 꺼짐(막지 않음).** 30초 캐시라 바꾸면 최대 30초 뒤 반영된다(재시작 불필요).
+- 판정: 필요 금액 = 수량 × 호가 추격 반영 지정가 × 1.002(주문 사이징 `buildOrderRequest` 와 같은 값). 현금이 **엄격히 적을 때만** 막는다(같으면 통과). 해외는 센트 단위 비교.
+- **모르면 막지 않는다**: 잔고 조회 실패·8초 초과·USD `unknown`/`not_queried`·환율 없음/1시간보다 오래됨/상식 범위 밖·시장가·수량 미확정/1주 미만·값 이상·스위치 읽기 오류·게이트 내부 예외 → 기존대로 시그널을 만든다. 환율은 `fx_rates` 의 `USD_KRW` 행 나이로 판단하며 `fx.ts` 의 폴백 값(오래된 DB 값·`FX_USDKRW_FALLBACK`·1380)은 쓰지 않는다.
+- 로그(`pm2-out.log`, 알림 채널로는 보내지 않음, 금액·잔고 수치 없음):
+  - `grep '\[signal-cash-gate\] 현금 부족 매수' …/pm2-out.log` — 건너뜀. (시장·종목·방향)마다 **1시간 1회**만 찍고 `suppressed_since_last=<n>` 에 그 사이 억제된 건수를 싣는다. 같은 내용이 `trade_logs` 에 `event='signal_cash_gate_skip'` 으로 남는다(payload: market·symbol·side·reason·suppressedSinceLast).
+  - `[signal-cash-gate] 현금 판단 불가 — 막지 않고 기존대로 생성: market=… reason=…` — (시장·사유)마다 1시간 1회. 해외가 계속 `usd_unknown`·`fx_stale` 이면 해외 게이트가 사실상 일을 못 하고 있다는 뜻이다.
+  - `[signal-cash-gate] 스위치 꺼짐 — 점검 생략` / `[signal-cash-gate] 점검 통과(현금 충분)` — 시장마다 1시간 1회(배포 직후 게이트가 살아 있는지 확인용).
+  - 스로틀은 프로세스 로컬이다 — 재시작(배포)하면 창이 새로 시작한다. 지금 이 코드는 `stockinvest` 프로세스에서만 돈다(`stockinvest-cron` 은 bash 가 HTTP 로 라우트를 부른다).
+- 엔진 퍼널(`eval_funnel`)에는 평가마다 gate `insufficient_cash`·verdict `skip` 행이 남는다(국내·해외는 행의 `market` 으로 구분). 오류(`error`) 집계에는 올라가지 않는다.
+- `POST /api/signals` 는 이 경우 HTTP 200 + `{ ok:false, skipped:true, reason:'insufficient_cash' }` 를, `POST /api/analyst/run` 은 `skipped` 목록에 `reason:'insufficient_cash'` 를 돌려준다.
+- **알려진 위험**: USD 예수금이 0 이면 해외 매수 시그널이 전부 만들어지지 않는다. 이 계좌의 원화 통합증거금 여부는 10-21 KIS 매수가능금액 조회(읽기 전용 1회)로 확인했다 — 원화 예수금을 합쳐도 최대 주문가능수량이 늘지 않아 원화로는 해외 매수가 안 되는 계좌로 보인다([가능성 높음]). 그래도 원화로 받는 것으로 드러나면 살 수 있는 시그널까지 막히므로 그때는 `signal_cash_gate_overseas_enabled` 를 `false` 로 둔다. 해외 주문 금액(100만원대)이 예수금보다 크면 시그널이 만들어지지 않는 것이 정상 동작이다. 현금이 들어오기 전에 발화한 시그널은 남지 않는다(입금 후 같은 조건이 다시 발화하면 새로 만들어진다). 미체결 매수 주문이 묶은 현금은 조회 값에서 빠지지 않는다(그때는 "충분"으로 보고 만든다 — 막는 쪽으로 틀리지 않음).
+- **알려진 한계 (T-058 Reviewer·Codex C2, 고치지 않음)**:
+  - **해외 가용액 = 예수금**(`frcr_dncl_amt_2`)이지 구매력이 아니다. 미결제·재사용 가능 매도대금이 빠져 있을 수 있다(미결제 포함 여부는 관측 전). "매도 후 같은 날 재매수"에서 KIS 가 받아 줄 매수를 "현금 부족"으로 막을 수 있다 — 막는 쪽 오차이며 손실 경로는 아니다. 첫 해외 매도 직후 `frcr_dncl_amt_2` 와 `ustl_sll_amt_smtl` 을 대조해 정의를 확정한다(T-056 단계 4).
+  - **후보 여러 건의 합계는 보지 않는다.** 30초 캐시를 공유하는 후보가 각각 현금 이하이면 모두 통과한다(예: 현금 15만, 필요액 10.02만짜리 두 건 → 둘 다 생성). 전부 승인하면 일부는 KIS 가 잔고 부족으로 거부한다. 승인되지 않을 시그널이 현금을 점유하면 막으면 안 될 것을 막게 되어 예약·차감은 하지 않았다.
+  - 엔진 퍼널 `insufficient_cash` 행은 룰이 재발화하는 틱마다 남는다(스로틀은 로그·`trade_logs` 에만 적용). 운영 실측(10-21): `eval_funnel` 은 하루 약 8천~1.3만 행이고 30일 보존 삭제가 있다. 모든 매수 후보가 매 틱 막히는 최악이어도 하루 수백 행(기존의 약 3~10%)이고, 시그널이 안 만들어지면 진입 쿨다운이 안 걸려 기존 `cooldown_entry`·`signal_created` 행을 대체하므로 실제 순증은 더 작다.
+  - 로그의 `suppressed_since_last` 는 다음 발화가 있어야 찍히므로 마지막 창의 억제 건수는 기록되지 않는다(하한 값).
+- 되돌리기: 두 키를 `false` 로(DB, 재시작 불필요) → 필요하면 커밋 revert. 해외만 끄는 예(국내는 키 이름만 `signal_cash_gate_domestic_enabled` 로). 다시 켜려면 값을 `true` 로 두거나 행을 지운다:
+
+  ```sql
+  INSERT INTO system_config (`key`, value) VALUES ('signal_cash_gate_overseas_enabled', 'false')
+    ON DUPLICATE KEY UPDATE value = VALUES(value);
+  ```
+
+값은 **엄격한 불리언 `true`** 일 때만 켜진다(문자열 `"true"`·`1` 은 꺼짐). 읽기 실패도 꺼짐. (예외: `notify_skip_unexecutable` 와 §2.1 의 게이트 키 두 개는 **키 없음도 켜짐**이다 — 그 밖의 해석은 같다.)
 
 ## 3. 켜는 순서 (사용자 폰에서 확인하며)
 
-1. 배포. 이 시점에는 버튼이 생기지 않는다. 단, 스위치와 무관하게 적용되는 것: 승인 요청 본문 이스케이프(유실 수정), 실행 불가 매수 요약, 거부된 주문을 `approved` 로 기록하지 않음, 구간 없는 룰 시그널의 승인이 즉시 주문 경로, 승인·거절의 원자적 전이.
+1. 배포. 이 시점에는 버튼이 생기지 않는다. 단, 스위치와 무관하게 적용되는 것: 승인 요청 본문 이스케이프(유실 수정), 실행 불가 매수 알림 생략(T-044 — 이전의 시간당 요약은 제거됨), 현금 부족 매수는 시그널 자체를 만들지 않음(T-058 §2.1, 키 없음 = 켜짐), 거부된 주문을 `approved` 로 기록하지 않음, 구간 없는 룰 시그널의 승인이 즉시 주문 경로, 승인·거절의 원자적 전이.
 2. `telegram_poller_enabled` = `true`. 폴러가 락을 잡고 폴링을 시작한다(최대 ~30초).
 3. 자가 점검 메시지 보내기 (서버에서, 크론 비밀 필요):
    ```bash
@@ -93,7 +131,7 @@ StockInvest 와 TradingInvest 가 **같은 봇 토큰**을 쓴다. 텔레그램�
 - 어쨌든 웹 승인 경로는 그대로 동작한다.
 
 ### 6.4 자주 보는 로그
-`[telegram-approval]` 텔레그램 호출 실패 · `[telegram-poller]` 폴링·락 · `[approveSignal]` 감사 기록 실패 · `[notify] ... 전송 실패`.
+`[telegram-approval]` 텔레그램 호출 실패 · `[telegram-poller]` 폴링·락 · `[approveSignal]` 감사 기록 실패 · `[notify] ... 전송 실패` · `[approval-notify] 실행 불가 매수 알림 생략`(T-044) · `[signal-cash-gate]`(T-058 §2.1 — 현금 부족 건너뜀·판단 불가·스위치 꺼짐·점검 통과).
 
 ## 7. 알려진 한계
 

@@ -134,6 +134,12 @@ export const FUNNEL_GATES = [
    * strategy_id='sell-proposal-v1'. 자동 청산 OFF 이고 `sell_proposal_preview_enabled=true` 일 때만.
    */
   'sell_proposal_preview',
+  /**
+   * T-058 — stage 11(createSignal). 매수인데 **실시간 가용 현금**(국내 KRW / 해외 USD)이 사이징된 주문 전체 비용(수량 × 지정가 × 1.002)에 못 미쳐
+   * 시그널을 만들지 않았다(행·알림 없음). 실패가 아니라 정책 스킵이다(`quantity_below_min` 과 같은 성격).
+   * 행의 `market` 으로 국내·해외 건너뜀을 따로 센다.
+   */
+  'insufficient_cash',
 ] as const;
 
 export type FunnelGate = (typeof FUNNEL_GATES)[number];
@@ -221,6 +227,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   exit_create_failed: 29,
   // exit 트랙(21~29) 안, 판정(24) 뒤·생성(29) 앞. `final` 행을 쓰지 않으므로 6단계 깔때기에 섞이지 않는다.
   sell_proposal_preview: 26,
+  insufficient_cash: 11,
 };
 
 /** 사용자 화면·리포트용 한글 라벨 (T-002 §4 "한글 라벨 매핑") */
@@ -303,6 +310,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   exit_cooldown_5m: '청산 쿨다운',
   exit_create_failed: '청산 시그널 생성 실패',
   sell_proposal_preview: '매도 제안 시뮬레이션 (시그널·주문 없음)',
+  insufficient_cash: '실시간 현금 부족 (매수 시그널 미생성)',
 };
 
 /**

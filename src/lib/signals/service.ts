@@ -29,6 +29,7 @@ import {
   releaseClaim,
 } from './approval-transitions';
 import { getStyleConfig } from '@/lib/strategy/style';
+import { evaluateSignalCashGate, observeSignalCashGate } from './signal-cash-gate';
 
 /** safety_limit_chase_disabled = true 면 chasePct 0 강제 (즉시 무력화 스위치). */
 async function getEffectiveChasePct(stylePct: number): Promise<number> {
@@ -104,7 +105,12 @@ export type CreateSignalErrorCode =
   /** T-042 — 승인은 됐지만 안전층·거래소가 주문을 받지 않았다(킬스위치·한도·잔고 부족 등). 시그널은 대기로 남는다 */
   | 'order_not_accepted'
   /** T-042 — 주문이 거래소에 접수됐는지 알 수 없다(송신 중 예외·5xx·연결 끊김). 재시도하면 이중 주문이 될 수 있어 시그널을 `executing` 으로 잠가 둔다 */
-  | 'order_uncertain';
+  | 'order_uncertain'
+  /**
+   * T-058 — 매수인데 실시간 가용 현금이 사이징된 주문 전체 비용(수량 × 지정가 × 1.002)에 못 미쳐 **시그널을 만들지 않았다**(행·RAG·알림 없음, `signalId` 0).
+   * 오류가 아니라 정책 건너뜀이다 — 호출부는 경보·재시도 대상으로 다루지 않는다.
+   */
+  | 'insufficient_cash';
 
 /**
  * `trade_logs.event` 는 **varchar(32)** 이고 운영 DB 는 STRICT 모드다 — 33자가 되면 INSERT 가 실패한다.
@@ -332,6 +338,32 @@ export async function createSignal(
     return { ok: false, signalId: 0, autoSubmitted: false, error: sym.detail ?? 'symbol_not_allowed', errorCode: 'symbol_blacklisted' };
   }
 
+  // 🔴 T-058 — 실시간 현금 게이트. 현금이 모자라는 매수는 **행을 만들지 않는다**(→ RAG 색인·승인 요청 알림도 없다).
+  //    중복 검사/INSERT 앞이라 승인 대기 경로와 자동 제출 경로를 같은 지점에서 막는다. 모르면 막지 않는다(게이트는 던지지 않는다).
+  //    수량·가격은 아래 자동 제출 경로·`approveSignal` 과 **같은** `buildOrderRequest` 로 만든다 — 막는 기준과 실제 주문이 어긋나지 않게.
+  if (input.side === 'buy') {
+    const gate = await evaluateSignalCashGate({
+      symbol: input.symbol,
+      side: input.side,
+      orderType: input.orderType,
+      size: async () => {
+        const style = await getStyleConfig();
+        const chasePct = await getEffectiveChasePct(style.limitChasePct);
+        const { req, sized } = buildOrderRequest(input, chasePct);
+        return { quantity: sized.quantity, price: req.price ?? undefined };
+      },
+    });
+    // 관측은 best-effort·fire-and-forget — 기록이 늦거나 실패해도 판정은 그대로다.
+    void observeSignalCashGate({ symbol: input.symbol, side: input.side }, gate).catch(() => { /* 던지지 않지만 이중 방어 */ });
+    if (gate.kind === 'insufficient') {
+      return {
+        ok: false, signalId: 0, autoSubmitted: false,
+        error: `insufficient_cash: 실시간 가용 현금 부족(${gate.market}) — 시그널·알림을 만들지 않음`,
+        errorCode: 'insufficient_cash',
+      };
+    }
+  }
+
   // T-003 §4-1 전이표 — ENGINE_ENABLED × AUTOPILOT_MODE 가 status·주문 경로를 결정한다.
   // (구 hybrid_mode_enabled 는 getEngineSwitches 안에서 autopilot_mode 로 이관·폴백된다)
   const decision = routeSignal(input, cfg, switches);
@@ -425,7 +457,7 @@ export async function createSignal(
 
   if (decision.route !== 'auto_submit') {
     // T-042 — 승인 요청 알림은 별도 모듈이 만든다: 모든 동적 값 이스케이프(이전 본문은 사유 줄의 `<` 때문에 텔레그램이
-    // 400 으로 거부해 약 78% 가 유실됐다), 실행 불가 매수는 요약으로, 버튼 승인이 켜져 있으면 버튼 메시지.
+    // 400 으로 거부해 약 78% 가 유실됐다), 실행 불가 매수는 알림 생략 + 서버 로그 1줄(T-044), 버튼 승인이 켜져 있으면 버튼 메시지.
     // fire-and-forget — 알림 I/O 가 시그널 생성을 지연시키거나 실패시키면 안 된다.
     void (async () => {
       const { notifyApprovalRequest } = await import('./approval-notify');
