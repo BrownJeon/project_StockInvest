@@ -127,6 +127,7 @@ beforeEach(() => {
   resetSellProposalPreviewState();
   jest.spyOn(console, 'error').mockImplementation(() => {});
   jest.spyOn(console, 'warn').mockImplementation(() => {});
+  jest.spyOn(console, 'log').mockImplementation(() => {});
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -454,17 +455,396 @@ describe('🔴 알림 실패 격리', () => {
     expect(dispatchAlert).toHaveBeenCalledTimes(2);
   });
 
-  test('알림 채널 none(전송 시도 없음)은 실패가 아니다 — 재시도하지 않는다', async () => {
+  test('알림 채널 none(전달 0·실패 0)은 재시도 상한까지만 되돌려 다시 시도하고 그 뒤 멈춘다 (T-060)', async () => {
+    // (T-060) 예전 기대값은 "1회 no_channel 뒤 already_sent" — 표식이 남아 그날 요약이 조용히 영구 누락되는
+    // 동작을 고정하던 것이라 의도적으로 바꿨다. 의도된 none 이어도 매 틱 반복하지 않는 것은 그대로 검사한다.
     dispatchAlert.mockResolvedValue({ channel: 'none', delivered: [], failed: [], unconfigured: [] });
-    expect((await tick(DOMESTIC)).outcome).toBe('no_channel');
-    expect((await tick(DOMESTIC)).outcome).toBe('already_sent');
-    expect(dispatchAlert).toHaveBeenCalledTimes(1);
+    const outcomes: string[] = [];
+    for (let i = 0; i < MAX_SEND_RETRIES + 3; i++) outcomes.push(String((await tick(DOMESTIC)).outcome));
+    expect(outcomes).toEqual([
+      ...Array(MAX_SEND_RETRIES).fill('no_channel_released'),
+      'no_channel', 'already_sent', 'already_sent',
+    ]);
+    expect(dispatchAlert).toHaveBeenCalledTimes(MAX_SEND_RETRIES + 1);
   });
 
   test('종목명 조회가 실패해도 코드로 대신하고 보낸다', async () => {
     getSymbolLabel.mockRejectedValue(new Error('stock_meta down'));
     expect((await tick(DOMESTIC)).outcome).toBe('sent');
     expect(String(dispatchAlert.mock.calls[0][2])).toContain('000660');
+  });
+});
+
+describe('🔴 T-060 — 전송 결과 로그 1줄 · 전달 0·실패 0 은 표식을 되돌려 재시도', () => {
+  const NONE = { channel: 'none', delivered: [], failed: [], unconfigured: [] };
+  const UNCONF = { channel: 'telegram', delivered: [], failed: [], unconfigured: ['telegram'] };
+  const MARKER = () => configRows.get(reportMarkerKey('domestic'));
+  const logCalls = () => (console.log as jest.Mock).mock.calls.map(c => String(c[0]));
+  const warnCalls = () => (console.warn as jest.Mock).mock.calls.map(c => String(c[0]));
+  const errorCalls = () => (console.error as jest.Mock).mock.calls.map(c => String(c[0]));
+  const isResult = (s: string) => s.includes('요약 결과');
+  /** 결과 줄 — log 다음 warn 순으로 모은다(호출 시각 순서가 아님. 순서가 필요한 검사는 warn/log 를 따로 본다) */
+  const resultLines = () => [...logCalls(), ...warnCalls()].filter(isResult);
+
+  test('① delivered≥1 → sent · 표식 유지 · console.log 결과 1줄 (경고 결과 줄 없음)', async () => {
+    expect((await tick(DOMESTIC)).outcome).toBe('sent');
+    expect(MARKER()).toBe(JSON.stringify('2026-10-19'));
+    expect(logCalls().filter(isResult)).toEqual([
+      '[sell-proposal-preview:domestic] 요약 결과 sent (거래일 2026-10-19, channel=telegram, '
+      + 'delivered=[telegram], failed=[], unconfigured=[])',
+    ]);
+    expect(warnCalls().filter(isResult)).toEqual([]);
+    // 전송을 시도하지 않는 틱(already_sent)은 결과 줄을 남기지 않는다
+    expect((await tick(DOMESTIC)).outcome).toBe('already_sent');
+    expect(resultLines()).toHaveLength(1);
+  });
+
+  test('① 부분 실패(한 채널 전달·한 채널 실패)는 sent 이지만 결과 줄은 경고로 남는다', async () => {
+    dispatchAlert.mockResolvedValue({
+      channel: 'both', delivered: ['telegram'], failed: [{ channel: 'slack', error: 'HTTP 500' }], unconfigured: [],
+    });
+    expect((await tick(DOMESTIC)).outcome).toBe('sent');
+    expect(MARKER()).toBe(JSON.stringify('2026-10-19'));
+    expect(logCalls().filter(isResult)).toEqual([]);
+    expect(warnCalls().filter(isResult)).toEqual([
+      '[sell-proposal-preview:domestic] 요약 결과 sent (거래일 2026-10-19, channel=both, '
+      + 'delivered=[telegram], failed=[slack], unconfigured=[])',
+    ]);
+  });
+
+  test('② failed 만 → 기존 send_failed_released 동작 불변(표식 되돌림·기존 경고) + 결과 경고 1줄', async () => {
+    dispatchAlert.mockResolvedValue(FAILED);
+    expect((await tick(DOMESTIC)).outcome).toBe('send_failed_released');
+    expect(MARKER()).toBe(JSON.stringify(''));
+    expect(warnCalls().some(s => s.includes(`요약 전송 실패(1/${MAX_SEND_RETRIES}) — 표식을 되돌리고 다음 틱 재시도: telegram: HTTP 502`))).toBe(true);
+    expect(resultLines()).toEqual([
+      '[sell-proposal-preview:domestic] 요약 결과 send_failed_released (거래일 2026-10-19, channel=telegram, '
+      + 'delivered=[], failed=[telegram], unconfigured=[])',
+    ]);
+    expect(logCalls().filter(isResult)).toEqual([]);
+  });
+
+  test('③ 전달 0·실패 0 (자격 증명 미설정) → 경고 + 표식 되돌림 + 다음 틱에 재시도해 보낸다', async () => {
+    dispatchAlert.mockResolvedValueOnce(UNCONF).mockResolvedValue(DELIVERED);
+    expect((await tick(DOMESTIC)).outcome).toBe('no_channel_released');
+    expect(MARKER()).toBe(JSON.stringify(''));
+    expect(warnCalls().filter(isResult)).toEqual([
+      '[sell-proposal-preview:domestic] 요약 결과 no_channel_released (거래일 2026-10-19, channel=telegram, '
+      + `delivered=[], failed=[], unconfigured=[telegram]) — 전달된 채널 0·실패 0 — 표식을 되돌리고 다음 틱 재시도(1/${MAX_SEND_RETRIES})`,
+    ]);
+    // 되돌리기는 기존과 같은 조건부 UPDATE (그 거래일 값일 때만)
+    const releaseCalls = poolQuery.mock.calls.filter(c => /AND value = \?/.test(String(c[0])));
+    expect(releaseCalls).toHaveLength(1);
+    expect(releaseCalls[0][1]).toEqual([JSON.stringify(''), reportMarkerKey('domestic'), JSON.stringify('2026-10-19')]);
+
+    expect((await tick(DOMESTIC)).outcome).toBe('sent');
+    expect((await tick(DOMESTIC)).outcome).toBe('already_sent');
+    expect(dispatchAlert).toHaveBeenCalledTimes(2);
+    expect(MARKER()).toBe(JSON.stringify('2026-10-19'));
+  });
+
+  test('③ 되돌리기 중 다른 프로세스가 다음 거래일로 선점한 표식은 덮지 않는다 (no_channel 경로도 조건부)', async () => {
+    const key = reportMarkerKey('domestic');
+    dispatchAlert.mockImplementation(async () => {
+      configRows.set(key, JSON.stringify('2026-10-20'));
+      return NONE;
+    });
+    expect((await tick(DOMESTIC)).outcome).toBe('no_channel_released');
+    expect(configRows.get(key)).toBe(JSON.stringify('2026-10-20'));
+  });
+
+  test('③ 되돌리기 자체가 실패해도 finish 는 resolve 하고, 결과 줄 메모는 "되돌리기 실패 — 누락 가능"이다 (Reviewer medium-1)', async () => {
+    dispatchAlert.mockResolvedValue(NONE);
+    const release = jest.fn(async () => { throw new Error('db down'); });
+    const { outcome } = await tick(DOMESTIC, 2, deps({ release }));
+    expect(outcome).toBe('no_channel_released');
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(warnCalls().filter(isResult)).toEqual([
+      '[sell-proposal-preview:domestic] 요약 결과 no_channel_released (거래일 2026-10-19, channel=none, '
+      + `delivered=[], failed=[], unconfigured=[]) — 전달된 채널 0·실패 0(1/${MAX_SEND_RETRIES}) — 표식 되돌리기 실패 — 오늘 요약 누락 가능`,
+    ]);
+    // "되돌리고 다음 틱 재시도"라고 거짓으로 적지 않는다 (조용한 누락을 숨기지 않게)
+    expect(resultLines().some(s => s.includes('표식을 되돌리고'))).toBe(false);
+    expect(logCalls().filter(isResult)).toEqual([]);
+    // 표식은 선점된 채 남는다 — 다음 틱은 claim_lost (예전과 같은 결과, 이제 그 이유가 앞 줄에 남는다)
+    expect(MARKER()).toBe(JSON.stringify('2026-10-19'));
+    expect((await tick(DOMESTIC, 2, deps({ release }))).outcome).toBe('claim_lost');
+  });
+
+  test('② 실패 경로에서도 되돌리기가 던지면 결과 줄 메모만 바뀐다 — outcome·재시도 소비는 불변', async () => {
+    dispatchAlert.mockResolvedValue(FAILED);
+    const release = jest.fn(async () => { throw new Error('db down'); });
+    expect((await tick(DOMESTIC, 2, deps({ release }))).outcome).toBe('send_failed_released');
+    expect(warnCalls().filter(isResult)).toEqual([
+      '[sell-proposal-preview:domestic] 요약 결과 send_failed_released (거래일 2026-10-19, channel=telegram, '
+      + 'delivered=[], failed=[telegram], unconfigured=[]) — 표식 되돌리기 실패 — 오늘 요약 누락 가능',
+    ]);
+    // 기존 실패 경고 줄은 그대로
+    expect(warnCalls().some(s => s.includes(`요약 전송 실패(1/${MAX_SEND_RETRIES}) — 표식을 되돌리고 다음 틱 재시도: telegram: HTTP 502`))).toBe(true);
+  });
+
+  test('④ 전달 0·실패 0 이 계속되면 상한 도달 시 포기 — 표식 유지·포기 경고·이후 매 틱 반복 없음', async () => {
+    dispatchAlert.mockResolvedValue(UNCONF);
+    const outcomes: string[] = [];
+    for (let i = 0; i < MAX_SEND_RETRIES + 2; i++) outcomes.push(String((await tick(DOMESTIC)).outcome));
+    expect(outcomes).toEqual([...Array(MAX_SEND_RETRIES).fill('no_channel_released'), 'no_channel', 'already_sent']);
+    expect(dispatchAlert).toHaveBeenCalledTimes(MAX_SEND_RETRIES + 1);
+    expect(MARKER()).toBe(JSON.stringify('2026-10-19'));
+    const lines = resultLines();
+    expect(lines).toHaveLength(MAX_SEND_RETRIES + 1);              // 시도마다 정확히 1줄
+    expect(lines[MAX_SEND_RETRIES]).toBe(
+      '[sell-proposal-preview:domestic] 요약 결과 no_channel (거래일 2026-10-19, channel=telegram, '
+      + 'delivered=[], failed=[], unconfigured=[telegram]) — 전달된 채널 0·실패 0 — 재시도 상한 도달, 오늘은 포기',
+    );
+    expect(logCalls().filter(isResult)).toEqual([]);
+  });
+
+  test('④ 전송 실패·예외·전달 0 은 하나의 재시도 상한을 함께 쓴다', async () => {
+    dispatchAlert
+      .mockResolvedValueOnce(FAILED)
+      .mockResolvedValueOnce(NONE)
+      .mockRejectedValueOnce(new Error('reject'))
+      .mockResolvedValue(NONE);
+    const outcomes: string[] = [];
+    for (let i = 0; i < MAX_SEND_RETRIES + 2; i++) outcomes.push(String((await tick(DOMESTIC)).outcome));
+    expect(outcomes).toEqual([
+      'send_failed_released', 'no_channel_released', 'send_failed_released', 'no_channel', 'already_sent',
+    ]);
+    expect(dispatchAlert).toHaveBeenCalledTimes(MAX_SEND_RETRIES + 1);
+  });
+
+  test('④ 상한은 거래일·시장별 — 다음 거래일에는 다시 시도한다', async () => {
+    dispatchAlert.mockResolvedValue(NONE);
+    for (let i = 0; i < MAX_SEND_RETRIES + 1; i++) await tick(DOMESTIC);
+    dispatchAlert.mockResolvedValue(DELIVERED);
+    const tue = new Date('2026-10-20T01:00:00Z');
+    expect((await tick(DOMESTIC, 2, deps({ now: () => tue }))).outcome).toBe('sent');
+  });
+
+  test('⑤ dispatch 가 throw 해도 기존 동작 불변 — send_failed_released, 표식 되돌림, 결과 줄은 channel=- 로 남김', async () => {
+    dispatchAlert.mockRejectedValue(new Error('network down'));
+    const outcomes: string[] = [];
+    for (let i = 0; i < MAX_SEND_RETRIES + 2; i++) outcomes.push(String((await tick(DOMESTIC)).outcome));
+    expect(outcomes).toEqual([...Array(MAX_SEND_RETRIES).fill('send_failed_released'), 'send_failed_kept', 'already_sent']);
+    expect(MARKER()).toBe(JSON.stringify('2026-10-19'));
+    const lines = resultLines();
+    expect(lines).toHaveLength(MAX_SEND_RETRIES + 1);
+    expect(lines[0]).toBe(
+      '[sell-proposal-preview:domestic] 요약 결과 send_failed_released (거래일 2026-10-19, channel=-, '
+      + 'delivered=[], failed=[], unconfigured=[]) — 전송 호출 예외',
+    );
+    expect(lines[MAX_SEND_RETRIES]).toContain('요약 결과 send_failed_kept');
+  });
+
+  test('⑤ 결과 로그 자체가 던져도 반환값·표식은 바뀌지 않는다', async () => {
+    (console.log as jest.Mock).mockImplementation(() => { throw new Error('stdout closed'); });
+    expect((await tick(DOMESTIC)).outcome).toBe('sent');
+    expect(MARKER()).toBe(JSON.stringify('2026-10-19'));
+    expect((await tick(DOMESTIC)).outcome).toBe('already_sent');
+  });
+
+  test('⑥ 결과 줄에는 토큰·채팅 ID·실패 사유 원문·제목·본문·종목·수량·평단이 없다', async () => {
+    const FAKE_TOKEN = '123456789:AAFakeTokenValueForTest';
+    const FAKE_CHAT = '-1009876543210';
+    dispatchAlert
+      .mockResolvedValueOnce({
+        channel: 'telegram', delivered: [],
+        failed: [{ channel: 'telegram', error: `HTTP 401 bot${FAKE_TOKEN} chat_id=${FAKE_CHAT}` }], unconfigured: [],
+      })
+      // 계약 밖 채널 이름(외부 문자열 혼입)도 그대로 싣지 않는다
+      .mockResolvedValueOnce({ channel: `telegram ${FAKE_TOKEN}`, delivered: [], failed: [], unconfigured: [FAKE_CHAT] })
+      .mockResolvedValue(DELIVERED);
+    await tick(DOMESTIC);
+    await tick(DOMESTIC);
+    await tick(DOMESTIC);
+    const lines = resultLines();
+    expect(lines).toHaveLength(3);
+    const odd = lines.find(s => s.includes('요약 결과 no_channel_released'));
+    expect(odd).toContain('channel=?');
+    expect(odd).toContain('unconfigured=[?]');
+    const [, title, body] = dispatchAlert.mock.calls[2] as [string, string, string];
+    const forbidden = [
+      FAKE_TOKEN, 'AAFakeToken', FAKE_CHAT, '9876543210', 'HTTP 401',
+      title, '매도 제안 시뮬레이션', '시뮬레이션 — 시그널·주문 없음',
+      '000660', '005930', '2,641,000', '331,500', '220,000', '9주', 'KIS 수량', '매입평균',
+    ];
+    for (const line of lines) {
+      for (const f of forbidden) expect(line).not.toContain(f);
+    }
+    // 정상 전송 틱에서는 어떤 로그(log·warn·error)에도 제목·본문이 실리지 않는다
+    const all = [...logCalls(), ...warnCalls(), ...errorCalls()].join('\n');
+    expect(all).not.toContain(title);
+    for (const piece of body.split('\n').filter(s => s.trim().length > 8)) expect(all).not.toContain(piece);
+  });
+});
+
+describe('🔴 T-060 Codex C2 — 같은 프로세스에서 겹친 finish() 는 in_flight (DB·knownDone 불간섭)', () => {
+  const NONE = { channel: 'none', delivered: [], failed: [], unconfigured: [] };
+  const MARKER = () => configRows.get(reportMarkerKey('domestic'));
+  const claimQueries = () => poolQuery.mock.calls.filter(c => /INSERT IGNORE|AND value <> \?/.test(String(c[0]))).length;
+  async function openObserved() {
+    const run = await openSellProposalPreview('domestic', DOMESTIC.length, deps());
+    for (const o of DOMESTIC) run!.observe(o, recorder() as never);
+    return run!;
+  }
+  /** 첫 finish 의 전송을 붙잡아 둔다 — 느린 알림(fetch 타임아웃 없음) 흉내 */
+  async function startSlowFirst() {
+    let release!: (v: unknown) => void;
+    dispatchAlert.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    const first = (await openObserved()).finish();
+    for (let i = 0; i < 50 && dispatchAlert.mock.calls.length === 0; i++) await new Promise((r) => setImmediate(r));
+    expect(dispatchAlert).toHaveBeenCalledTimes(1);          // 선점까지 끝나고 전송 중
+    return { first, finishSend: (v: unknown) => release(v) };
+  }
+
+  test('① 첫 finish 가 전송 중이면 두 번째는 in_flight — 선점 쿼리 없음·전송 없음', async () => {
+    const { first, finishSend } = await startSlowFirst();
+    const before = claimQueries();
+    expect(await (await openObserved()).finish()).toBe('in_flight');
+    expect(claimQueries()).toBe(before);
+    expect(dispatchAlert).toHaveBeenCalledTimes(1);
+    finishSend(DELIVERED);
+    expect(await first).toBe('sent');
+  });
+
+  test('② 겹친 뒤 첫 쪽이 전달 0·실패 0 으로 표식을 되돌리면, 다음 finish 가 다시 선점해 재시도한다 (knownDone 미설정)', async () => {
+    const { first, finishSend } = await startSlowFirst();
+    expect(await (await openObserved()).finish()).toBe('in_flight');
+    finishSend(NONE);
+    expect(await first).toBe('no_channel_released');
+    expect(MARKER()).toBe(JSON.stringify(''));
+    const before = claimQueries();
+    expect(await (await openObserved()).finish()).toBe('sent');   // 세 번째 — 다시 선점·전송
+    expect(claimQueries()).toBeGreaterThan(before);
+    expect(dispatchAlert).toHaveBeenCalledTimes(2);
+    expect(MARKER()).toBe(JSON.stringify('2026-10-19'));
+  });
+
+  test('② 겹친 뒤 첫 쪽이 전송 실패로 되돌려도 같다', async () => {
+    const { first, finishSend } = await startSlowFirst();
+    expect(await (await openObserved()).finish()).toBe('in_flight');
+    finishSend(FAILED);
+    expect(await first).toBe('send_failed_released');
+    expect(await (await openObserved()).finish()).toBe('sent');
+  });
+
+  test('③ 첫 finish 가 예외로 끝나도(error) 가드가 비워져 다음 호출이 DB 까지 진행한다', async () => {
+    dispatchAlert.mockResolvedValueOnce({});                  // 계약 밖 결과 → 결과 판정에서 TypeError
+    expect(await (await openObserved()).finish()).toBe('error');
+    const before = claimQueries();
+    const next = await (await openObserved()).finish();
+    expect(next).not.toBe('in_flight');
+    expect(next).toBe('claim_lost');                           // 표식은 첫 쪽이 선점한 채 — 기존 'error' 동작 그대로
+    expect(claimQueries()).toBeGreaterThan(before);
+  });
+
+  test('③ 조기 return(선점 쿼리 오류 claim_error)에서도 가드가 비워진다', async () => {
+    poolQuery.mockImplementationOnce(async () => { throw new Error('db blip'); });
+    expect(await (await openObserved()).finish()).toBe('claim_error');
+    expect(await (await openObserved()).finish()).toBe('sent');
+  });
+
+  // ── low-7·low-8 (3차 감사) ─────────────────────────────────────────────────
+  const TUE_10_KST = new Date('2026-10-20T01:00:00Z');
+  const OVERSEAS_MON = new Date('2026-10-19T15:00:00Z');           // ET 10-19 세션
+  const inFlightWarns = () => (console.warn as jest.Mock).mock.calls.map(c => String(c[0])).filter(s => s.includes('아직 진행 중'));
+  async function openAt(market: Market, at: Date) {
+    const list = market === 'domestic' ? DOMESTIC : [obs('NAS:MU', 1_422_003, 1_197_425, 11)];
+    const run = await openSellProposalPreview(market, list.length, deps({ now: () => at }));
+    for (const o of list) run!.observe(o, recorder() as never);
+    return run!;
+  }
+  /** 모든 전송을 붙잡아 두고 풀 함수 목록을 돌려준다 */
+  function holdAllSends() {
+    const releases: Array<(v: unknown) => void> = [];
+    dispatchAlert.mockImplementation(() => new Promise((r) => { releases.push(r); }));
+    return releases;
+  }
+  async function untilSends(n: number) {
+    for (let i = 0; i < 100 && dispatchAlert.mock.calls.length < n; i++) await new Promise((r) => setImmediate(r));
+    expect(dispatchAlert).toHaveBeenCalledTimes(n);
+  }
+
+  test('low-8 가드 키는 market:sessionDate — 월요일 전송이 멈춘 채여도 다음 거래일 finish 는 정상 진행한다', async () => {
+    const { first, finishSend } = await startSlowFirst();          // 국내 2026-10-19 전송 pending
+    const before = claimQueries();
+    expect(await (await openAt('domestic', TUE_10_KST)).finish()).toBe('sent');
+    expect(claimQueries()).toBeGreaterThan(before);                // 화요일 키로 실제 선점했다
+    expect(MARKER()).toBe(JSON.stringify('2026-10-20'));
+    expect(inFlightWarns()).toEqual([]);
+    finishSend(DELIVERED);
+    expect(await first).toBe('sent');
+  });
+
+  test('low-7 in_flight 경고는 같은 시장·거래일당 1회, 고정 문구 — 상태(DB·카운터)는 건드리지 않는다', async () => {
+    const { first, finishSend } = await startSlowFirst();
+    const before = claimQueries();
+    for (let i = 0; i < 3; i++) expect(await (await openObserved()).finish()).toBe('in_flight');
+    expect(inFlightWarns()).toEqual([
+      '[sell-proposal-preview:domestic] 이전 요약 전송이 아직 진행 중 — 거래일 2026-10-19 중복 시도 보류(전송이 멈췄다면 오늘 요약이 누락될 수 있음)',
+    ]);
+    expect(claimQueries()).toBe(before);
+    expect(dispatchAlert).toHaveBeenCalledTimes(1);
+    finishSend(NONE);
+    expect(await first).toBe('no_channel_released');
+    // in_flight 는 재시도 횟수를 쓰지 않았다 — 이후 전달 0 이 MAX_SEND_RETRIES 회 더(첫 1회 포함 총 상한) 이어진 뒤에야 포기
+    dispatchAlert.mockResolvedValue(NONE);
+    const outcomes: string[] = [];
+    for (let i = 0; i < MAX_SEND_RETRIES; i++) outcomes.push(String(await (await openObserved()).finish()));
+    expect(outcomes).toEqual([...Array(MAX_SEND_RETRIES - 1).fill('no_channel_released'), 'no_channel']);
+    expect(inFlightWarns()).toHaveLength(1);
+  });
+
+  test('low-7 서로 다른 시장·거래일은 각각 1회씩 경고한다', async () => {
+    const releases = holdAllSends();
+    const pMon = (await openAt('domestic', MON_10_KST)).finish();
+    await untilSends(1);
+    const pTue = (await openAt('domestic', TUE_10_KST)).finish();
+    await untilSends(2);
+    const pOv = (await openAt('overseas', OVERSEAS_MON)).finish();
+    await untilSends(3);
+    for (let i = 0; i < 2; i++) {
+      expect(await (await openAt('domestic', MON_10_KST)).finish()).toBe('in_flight');
+      expect(await (await openAt('domestic', TUE_10_KST)).finish()).toBe('in_flight');
+      expect(await (await openAt('overseas', OVERSEAS_MON)).finish()).toBe('in_flight');
+    }
+    expect(inFlightWarns().sort()).toEqual([
+      '[sell-proposal-preview:domestic] 이전 요약 전송이 아직 진행 중 — 거래일 2026-10-19 중복 시도 보류(전송이 멈췄다면 오늘 요약이 누락될 수 있음)',
+      '[sell-proposal-preview:domestic] 이전 요약 전송이 아직 진행 중 — 거래일 2026-10-20 중복 시도 보류(전송이 멈췄다면 오늘 요약이 누락될 수 있음)',
+      '[sell-proposal-preview:overseas] 이전 요약 전송이 아직 진행 중 — 거래일 2026-10-19 중복 시도 보류(전송이 멈췄다면 오늘 요약이 누락될 수 있음)',
+    ].sort());
+    // 경고 줄에 토큰·본문·수량·실패 사유가 없다 (고정 문구 + 시장·거래일뿐)
+    for (const w of inFlightWarns()) for (const f of ['000660', '005930', 'NAS:MU', '₩', '주', 'HTTP', '매도 제안']) expect(w).not.toContain(f);
+    for (const r of releases) r(DELIVERED);
+    expect(await Promise.all([pMon, pTue, pOv])).toEqual(['sent', 'sent', 'sent']);
+  });
+
+  test('low-7 경고 기록은 재시작(로컬 상태 초기화)에 비워진다', async () => {
+    const releases = holdAllSends();
+    const p1 = (await openObserved()).finish();
+    await untilSends(1);
+    expect(await (await openObserved()).finish()).toBe('in_flight');
+    expect(inFlightWarns()).toHaveLength(1);
+    releases[0](NONE);
+    expect(await p1).toBe('no_channel_released');               // 표식 되돌림 — 같은 거래일 재시도 가능
+    resetSellProposalPreviewState();                            // 재시작 흉내
+    // 같은 시장·거래일로 다시 겹치게 만들면 경고가 다시 1회 나간다(경고 기록도 초기화됐다)
+    const p2 = (await openObserved()).finish();
+    await untilSends(2);
+    expect(await (await openObserved()).finish()).toBe('in_flight');
+    expect(await (await openObserved()).finish()).toBe('in_flight');
+    expect(inFlightWarns()).toHaveLength(2);
+    releases[1](DELIVERED);
+    expect(await p2).toBe('sent');
+  });
+
+  test('④ 다른 프로세스와의 진짜 경쟁(선점 false)은 기존대로 claim_lost + knownDone', async () => {
+    configRows.set(reportMarkerKey('domestic'), JSON.stringify('2026-10-19'));   // 다른 프로세스가 이미 선점
+    expect(await (await openObserved()).finish()).toBe('claim_lost');
+    const before = claimQueries();
+    expect(await (await openObserved()).finish()).toBe('already_sent');         // knownDone — DB 도 안 본다
+    expect(claimQueries()).toBe(before);
+    expect(dispatchAlert).not.toHaveBeenCalled();
   });
 });
 

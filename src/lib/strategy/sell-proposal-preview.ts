@@ -32,6 +32,9 @@
  * 선점 후 전송이 **모든 채널에서 실패**하거나 전송 호출이 **예외로 끝나면** 표식을 되돌려 다음 틱에
  * 다시 시도한다(거래일당 최대 {@link MAX_SEND_RETRIES}회 — 텔레그램 400 처럼 재시도해도 같은 실패가
  * 매 틱 반복되지 않게). 선점 자체가 DB 오류면 보내지 않는다 — 중복 발송보다 하루 누락이 낫다.
+ * 전달 0·실패 0(채널 없음/자격 증명 미설정)도 같은 상한을 공유해 되돌리고 재시도한다(T-060 — 예전에는
+ * 표식이 남은 채 조용히 끝나 그날 요약이 영구 누락됐다). 전송 시도마다 결과 1줄을 로그로 남긴다
+ * (`요약 결과 <outcome> (…)` — 채널 이름만, 토큰·본문·수량 없음).
  *
  * 알려진 한계(수용): ① 선점 뒤 전송 전에 프로세스가 강제 종료되면 그날 요약은 누락된다(at-most-once).
  * ② 재시도 횟수(`sendRetries`)는 프로세스 로컬이라 재시작·다중 프로세스에서는 상한이 그만큼 늘어난다
@@ -74,7 +77,7 @@ export function reportMarkerKey(market: Market): string {
 
 /** 요약 전에 "평가 못 한 종목"이 있으면 다음 틱까지 미루는 최대 횟수 (5분 틱 기준 15분). */
 export const MAX_INCOMPLETE_DEFERRALS = 3;
-/** 모든 채널 전송 실패 시 표식을 되돌려 재시도하는 최대 횟수 (거래일·시장별). */
+/** 모든 채널 전송 실패 시 표식을 되돌려 재시도하는 최대 횟수 (거래일·시장별). 전달 0·실패 0(no_channel) 경로도 같은 상한을 공유한다(T-060). */
 export const MAX_SEND_RETRIES = 3;
 /** 요약 본문에 나열할 최대 종목 수 (텔레그램 4,096자 한도) */
 const MAX_LISTED = 30;
@@ -125,12 +128,25 @@ export async function releaseDailyReport(market: Market, sessionDate: string): P
 const knownDone = new Map<Market, string>();
 const deferrals = new Map<string, number>();
 const sendRetries = new Map<string, number>();
+/**
+ * 진행 중인 요약 처리(`runKey` = `${market}:${sessionDate}`) — T-060 Codex C2 high.
+ * 엔진은 `finish()` 를 기다리지 않으므로, 앞 틱의 전송이 느려 한 틱을 넘기면 같은 프로세스 안에서 다음 틱의
+ * `finish()` 가 겹친다. 겹친 쪽이 선점에서 져 `claim_lost` 로 `knownDone` 을 세우면, 앞 쪽이 뒤이어 표식을
+ * 되돌려도(전달 0·실패 0/전송 실패) 이 프로세스는 다시 시도하지 않아 그날 요약이 누락된다. 그래서 같은
+ * runKey 가 진행 중이면 DB 를 건드리지 않고 `in_flight` 로 바로 돌아간다. 다른 프로세스와의 진짜 경쟁은
+ * 여전히 DB 선점(`claim_lost`)이 가른다.
+ */
+const inFlight = new Set<string>();
+/** `in_flight` 경고를 이미 남긴 runKey — 전송이 멈춘 경우 매 틱 같은 경고가 쌓이지 않게 runKey 당 1회 (T-060 low-7) */
+const inFlightWarned = new Set<string>();
 
 /** 테스트용 — 프로세스 로컬 상태 초기화 (재시작 흉내). */
 export function resetSellProposalPreviewState(): void {
   knownDone.clear();
   deferrals.clear();
   sendRetries.clear();
+  inFlight.clear();
+  inFlightWarned.clear();
 }
 
 // ─── 관측 ───────────────────────────────────────────────────────────────────
@@ -160,8 +176,13 @@ export type PreviewRecorder = Pick<EvalFunnelRecorder, 'pass' | 'skip'>;
 
 export type SellProposalReportOutcome =
   | 'sent'
+  /** 전달 0·실패 0(채널 없음/미설정)이 재시도 상한까지 이어져 그날을 포기함 — 표식 유지 (T-060) */
   | 'no_channel'
+  /** 전달 0·실패 0 — 표식을 되돌려 다음 틱에 재시도 ({@link MAX_SEND_RETRIES} 공유, T-060) */
+  | 'no_channel_released'
   | 'already_sent'
+  /** 같은 프로세스에서 같은 거래일·시장의 요약 처리가 아직 진행 중 — DB·로컬 완료 표시를 건드리지 않음 (T-060) */
+  | 'in_flight'
   | 'claim_lost'
   | 'claim_error'
   | 'deferred_incomplete'
@@ -317,7 +338,32 @@ async function finishReport(
   const sessionDate = sessionDateFor(market, d.now());
   const runKey = `${market}:${sessionDate}`;
   if (knownDone.get(market) === sessionDate) return 'already_sent';
+  if (inFlight.has(runKey)) {
+    // 전송이 멈춘(hang) 경우도 운영 로그에 드러나게 — runKey(시장·거래일) 당 1회. 상태(DB·카운터)는 건드리지 않는다.
+    if (!inFlightWarned.has(runKey)) {
+      inFlightWarned.add(runKey);
+      console.warn(`[sell-proposal-preview:${market}] 이전 요약 전송이 아직 진행 중 — 거래일 ${sessionDate} 중복 시도 보류(전송이 멈췄다면 오늘 요약이 누락될 수 있음)`);
+    }
+    return 'in_flight';
+  }
+  inFlight.add(runKey);
+  try {
+    // 미루기 판단·선점·전송·되돌리기 전 구간이 가드 안이다. 예외·조기 return 에서도 finally 가 비운다.
+    return await finishReportGuarded(market, heldCount, policy, items, d, sessionDate, runKey);
+  } finally {
+    inFlight.delete(runKey);
+  }
+}
 
+async function finishReportGuarded(
+  market: Market,
+  heldCount: number,
+  policy: SellProposalPolicy,
+  items: readonly PreviewItem[],
+  d: SellProposalPreviewDeps,
+  sessionDate: string,
+  runKey: string,
+): Promise<SellProposalReportOutcome> {
   // 평가 못 한 종목이 있으면(시세 레이트리밋 등) 몇 틱 미뤄 완전한 요약을 노린다.
   const missing = Math.max(0, heldCount - items.length);
   if (missing > 0) {
@@ -368,18 +414,97 @@ async function finishReport(
       console.warn(`[sell-proposal-preview:${market}] 요약 전송 실패(${r + 1}/${MAX_SEND_RETRIES}) — 표식을 되돌리고 다음 틱 재시도: ${why}`);
       // releaseDailyReport 는 "아직 이 거래일 값일 때만" 되돌리는 조건부 갱신이다 — 다른 프로세스가
       // 그 사이 다음 거래일로 선점한 표식은 건드리지 않는다.
-      try { await d.release(market, sessionDate); } catch { /* 되돌리기 실패 = 오늘 요약 누락. 중복보다 낫다 */ }
+      const released = await tryRelease(d, market, sessionDate);
+      logReportResult(market, sessionDate, 'send_failed_released', dispatch,
+        released ? undefined : RELEASE_FAILED_NOTE);
       return 'send_failed_released';
     }
     console.warn(`[sell-proposal-preview:${market}] 요약 전송 실패 — 재시도 상한 도달, 오늘은 포기: ${why}`);
     knownDone.set(market, sessionDate);
+    logReportResult(market, sessionDate, 'send_failed_kept', dispatch);
     return 'send_failed_kept';
+  }
+
+  // 전달 0·실패 0 (T-060) — 채널 정책 none / 모든 채널 자격 증명 미설정(`unconfigured`) / 그 밖.
+  // 예전에는 여기서 'no_channel' 로 조용히 끝나 표식이 선점된 채 남았고, 그날 요약은 영영 나가지 않았으며
+  // 로그로는 "받았다"와 "건너뛰었다"를 구분할 수 없었다. 자격 증명 판독이 일시적으로 빈 값을 돌려주는
+  // 경우까지 있을 수 있어 실패와 같은 재시도 상한(sendRetries 공유)으로 되돌려 다시 시도한다.
+  // 의도된 `notify_channel=none` 이어도 거래일당 최대 MAX_SEND_RETRIES 회 경고 뒤 멈춘다(매 틱 소음 아님).
+  if (dispatch.delivered.length === 0) {
+    const r = sendRetries.get(runKey) ?? 0;
+    if (r < MAX_SEND_RETRIES) {
+      sendRetries.set(runKey, r + 1);
+      const released = await tryRelease(d, market, sessionDate);
+      logReportResult(market, sessionDate, 'no_channel_released', dispatch, released
+        ? `전달된 채널 0·실패 0 — 표식을 되돌리고 다음 틱 재시도(${r + 1}/${MAX_SEND_RETRIES})`
+        : `전달된 채널 0·실패 0(${r + 1}/${MAX_SEND_RETRIES}) — ${RELEASE_FAILED_NOTE}`);
+      return 'no_channel_released';
+    }
+    knownDone.set(market, sessionDate);
+    logReportResult(market, sessionDate, 'no_channel', dispatch,
+      '전달된 채널 0·실패 0 — 재시도 상한 도달, 오늘은 포기');
+    return 'no_channel';
   }
   // ⚠️ 알려진 한계(수용, T-055 Leader 결정): 선점 뒤 전송 전에 프로세스가 강제 종료되면 그날 요약은
   //    누락된다(최대 한 번 전송 — at-most-once). 막으려면 lease·상태 머신이 필요하지만 이 요약은
   //    읽기 전용 관측 리포트이고 판정 데이터는 eval_funnel 에 틱마다 남으므로 그 복잡도를 들이지 않는다.
   knownDone.set(market, sessionDate);
-  return dispatch.delivered.length > 0 ? 'sent' : 'no_channel';
+  logReportResult(market, sessionDate, 'sent', dispatch);
+  return 'sent';
+}
+
+/**
+ * 결과 줄 메모 — 표식 되돌리기(`d.release`)가 던졌을 때 (T-060 Reviewer medium-1).
+ * 되돌리기에 실패하면 표식이 선점된 채 남아 다음 틱은 로그 없는 `claim_lost` 로 끝나므로, "되돌리고 재시도"라고
+ * 적으면 조용한 누락을 다시 숨기게 된다. outcome 이름(`*_released`)은 "되돌리기를 시도했다"는 뜻으로 유지한다.
+ */
+const RELEASE_FAILED_NOTE = '표식 되돌리기 실패 — 오늘 요약 누락 가능';
+
+/** 표식 되돌리기. 던지지 않고 성공 여부만 돌려준다(실패 = 오늘 요약 누락 가능. 중복보다 낫다). */
+async function tryRelease(d: SellProposalPreviewDeps, market: Market, sessionDate: string): Promise<boolean> {
+  try {
+    await d.release(market, sessionDate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 결과 줄에 실어도 되는 채널 이름 (notify 의 NotifyChannel·ChannelName 열거값) */
+const KNOWN_CHANNEL_NAMES: ReadonlySet<string> = new Set(['none', 'telegram', 'slack', 'both']);
+
+/**
+ * 전송 시도 1회의 결과 1줄 (T-060). 엔진은 `finish()` 결과를 버리므로 이 줄이 "받았다/건너뛰었다/실패했다"를
+ * 구분하는 유일한 운영 흔적이다.
+ *
+ * 🔴 넣는 것은 시장·거래일·outcome·채널 **이름**뿐이다. 토큰·채팅 ID·제목·본문·종목 수량/평단·실패 사유 문자열
+ * (`failed[].error` — 외부 응답이 섞일 수 있다)은 넣지 않는다. 실패 사유는 기존 경고 줄과 notify 계층의
+ * redact 된 로그가 맡는다.
+ *
+ * 전 채널 정상 전달(`sent` 이고 failed 0)만 console.log, 그 밖(부분 실패 포함)은 console.warn.
+ */
+function logReportResult(
+  market: Market,
+  sessionDate: string,
+  outcome: SellProposalReportOutcome,
+  dispatch: AlertDispatch | null,
+  note?: string,
+): void {
+  try {
+    // 채널 이름은 notify 의 열거값이다. 계약 밖 값이 와도 그 문자열을 싣지 않고 '?' 로 바꾼다
+    // (허용 목록 방식 — 이름 자리에 외부 문자열이 섞여도 토큰·본문이 로그로 새지 않게).
+    const nm = (x: unknown) => (typeof x === 'string' && KNOWN_CHANNEL_NAMES.has(x) ? x : '?');
+    const names = (xs: readonly unknown[] | undefined) => `[${(xs ?? []).map(nm).join(',')}]`;
+    const channel = dispatch ? nm(dispatch.channel) : '-';
+    const delivered = names(dispatch?.delivered);
+    const failed = names((dispatch?.failed ?? []).map(f => f?.channel));
+    const unconfigured = names(dispatch?.unconfigured);
+    const tail = [dispatch ? null : '전송 호출 예외', note ?? null].filter(Boolean).join(' · ');
+    const line = `[sell-proposal-preview:${market}] 요약 결과 ${outcome} (거래일 ${sessionDate}, channel=${channel}, `
+      + `delivered=${delivered}, failed=${failed}, unconfigured=${unconfigured})${tail ? ` — ${tail}` : ''}`;
+    if (outcome === 'sent' && (dispatch?.failed ?? []).length === 0) console.log(line);
+    else console.warn(line);
+  } catch { /* 결과 로그 실패가 요약 흐름(표식·반환값)을 바꾸지 않게 한다 */ }
 }
 
 // ─── 요약 본문 (순수) ─────────────────────────────────────────────────────────
