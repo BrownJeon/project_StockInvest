@@ -25,6 +25,31 @@ import { sizeOrderQuantity } from '@/lib/signals/service';
 
 export type PostMarketMarket = 'domestic' | 'overseas';
 
+/**
+ * T-062 — 해외 실행이 분석을 하지 않고 끝낸 사유(국내는 `weekend` 만 쓴다).
+ * `overseas_disabled` = 스위치 `post_market_overseas_enabled` 가 켜져 있지 않음(키 없음 = 꺼짐) — 이 사유 앞에는 다른 I/O 가 없다.
+ */
+export type PostMarketOverseasSkip =
+  | 'overseas_disabled'
+  | 'overseas_market_disabled'
+  | 'holidays_unknown'
+  | 'us_session_open'
+  | 'no_new_session'
+  | 'fx_unknown'
+  | 'fx_inconsistent'
+  | 'earnings_unknown'
+  | 'candles_unavailable'
+  | 'candle_scale_suspect';
+
+/**
+ * T-062 S-2·S-3 — 해외 실행의 구조화된 결과 상태. `ok` 가 아니면 라우트가 비-200 으로 답한다(해외만).
+ * `data_unknown` = 판정에 필요한 데이터를 일시적으로 모름(`skipped` 가 holidays_unknown·fx_unknown·fx_inconsistent·earnings_unknown·
+ * candles_unavailable·candle_scale_suspect)
+ * → 503(재시도 가능). 정상 판정으로 건너뛴 경우(스위치 꺼짐·새 세션 없음·장중 등)는 `ok` 다.
+ * `in_progress` = 같은 해외 세션(D0) 분석이 이 프로세스에서 이미 실행 중(single-flight, Codex C2) → 503(재시도 가능).
+ */
+export type PostMarketRunStatus = 'ok' | 'data_unknown' | 'in_progress' | 'ai_fail' | 'ai_parse_fail' | 'insert_fail';
+
 export interface PostMarketResult {
   market: PostMarketMarket;
   symbolsEvaluated: number;
@@ -35,20 +60,36 @@ export interface PostMarketResult {
   validFrom: string;
   /** T-045 — 이미 같은 (종목·방향·valid_from) 카드가 있어 만들지 않은 수. `signalsSkipped` 에도 포함된다. */
   duplicatesSkipped?: number;
-  /** T-045 — 분석을 하지 않고 끝낸 사유. 주말(토·일, KST)이면 `weekend`. 공휴일은 건너뛰지 않는다. */
-  skipped?: 'weekend';
+  /**
+   * T-045 — 분석을 하지 않고 끝낸 사유. 주말(토·일, KST)이면 `weekend`. 공휴일은 건너뛰지 않는다.
+   * T-062 — 해외는 {@link PostMarketOverseasSkip} 중 하나(국내 실행은 이 값들을 쓰지 않는다).
+   */
+  skipped?: 'weekend' | PostMarketOverseasSkip;
   /**
    * T-053 — 1주 가격이 카드 금액을 넘어(수량 0) 만들지 않은 수. `signalsSkipped` 에도 포함된다.
-   * 국내만 센다. 다른 필터(BUY 아님·필수 값 없음·신뢰도 미달)에 먼저 걸린 종목은 여기 세지 않는다.
+   * 다른 필터(BUY 아님·필수 값 없음·신뢰도 미달)에 먼저 걸린 종목은 여기 세지 않는다. (T-062 — 해외도 같은 정의로 센다.)
    */
   unaffordableSkipped?: number;
+  /** T-062 — 해외 실행만 싣는다(국내 응답 형태 불변). `ok:false` 이면 분석·저장이 실패한 것이지 "0건"이 아니다. */
+  ok?: boolean;
+  status?: PostMarketRunStatus;
 }
 
 /**
- * post-market 카드 1장의 금액(KRW). `insertScenarioCardIfAbsent` SQL 의 `amount_krw` 리터럴과 **같은 값이어야 한다**
- * (테스트가 둘을 대조한다). T-053 필터가 이 값으로 "1주를 살 수 있는가"를 판정한다. 금액 정책 자체는 바꾸지 않는다.
+ * post-market 카드 1장의 금액(KRW) — 국내. T-053 필터가 이 값으로 "1주를 살 수 있는가"를 판정한다. 금액 정책 자체는 바꾸지 않는다.
+ * T-062 — INSERT 의 `amount_krw` 는 이제 리터럴이 아니라 {@link POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET} 에서 시장별로 넣는다
+ * (테스트가 INSERT 값과 이 상수를 대조한다).
  */
 export const POST_MARKET_CARD_AMOUNT_KRW = 100000;
+
+/**
+ * T-062 D-5·D-6 — 시장별 카드 금액(KRW). 해외도 KRW 100,000(사용자 결정 Q5 (a)·D-6). 해외 금액을 바꾸려면 이 한 줄만 바꾼다
+ * (수량 0 필터·사전 금액 필터·INSERT 가 모두 이 값을 읽는다). 국내 값은 {@link POST_MARKET_CARD_AMOUNT_KRW} 와 같다.
+ */
+export const POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET: Readonly<Record<PostMarketMarket, number>> = {
+  domestic: POST_MARKET_CARD_AMOUNT_KRW,
+  overseas: 100000,
+};
 
 /**
  * T-053 — 이 카드가 실행 시점에 **1주도 살 수 없는가**(수량 0 → `quantity_below_min` 로 영원히 실행되지 않음).
@@ -60,14 +101,18 @@ export const POST_MARKET_CARD_AMOUNT_KRW = 100000;
  * 실행 가능한 카드를 잘라낸다.
  *
  * 가격이 0·음수·NaN 이면 `sizeOrderQuantity` 가 수량을 정하지 않는다(`undefined`) → false(이 필터는 판정하지 않고 기존 동작 유지).
+ *
+ * T-062 — `market` 인자(기본 국내 — 기존 호출부 불변). 해외 카드도 `price` 가 **KRW 환산값**이고 entry-watcher 가 같은 KRW/KRW
+ * 나눗셈(`sizeOrderQuantity`, 해외도 `floor` 정수 주)으로 수량을 정하므로 같은 함수·같은 입력으로 판정한다.
  */
 export function cardBuysZeroShares(
   cardPrice: number,
   chasePct: number,
   amountKRW: number = POST_MARKET_CARD_AMOUNT_KRW,
+  market: PostMarketMarket = 'domestic',
 ): { zero: boolean; chasedPrice: number } {
   const chasedPrice = chasePct > 0 && cardPrice > 0 ? cardPrice * (1 + chasePct) : cardPrice;
-  const sized = sizeOrderQuantity({ market: 'domestic', orderType: 'limit', amountKRW, price: chasedPrice });
+  const sized = sizeOrderQuantity({ market, orderType: 'limit', amountKRW, price: chasedPrice });
   return { zero: sized.quantity === 0, chasedPrice };
 }
 
@@ -144,6 +189,10 @@ export interface ScenarioCardRow {
   indicatorsJson: string;
   expiresAt: string;
   validFrom: string;
+  /** T-062 — 카드 시장. 없으면 국내(기존 호출부 불변). 해외 경로는 항상 `'overseas'` 를 넣는다. */
+  market?: PostMarketMarket;
+  /** T-062 — 카드 금액(KRW). 없으면 그 시장의 {@link POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET}. */
+  amountKrw?: number;
 }
 
 /**
@@ -155,19 +204,26 @@ export interface ScenarioCardRow {
  * 1062(ER_DUP_ENTRY)로 거부되며, 중복이 생기지 않은 것이므로 `duplicate` 로 돌려준다. (REPEATABLE READ 에서는 진 쪽이
  * 다른 오류 코드로 실패할 수도 있다 — 그것은 던져서 호출자가 `insert_fail` 로 남긴다.)
  *
+ * T-062 — `market`·`amount_krw` 를 리터럴에서 자리표시자로 바꿨다(국내 행의 저장 값은 그대로 `'domestic'`·100000 — 골든 시험).
+ * 중복 판정 키는 바꾸지 않는다: 유니크 인덱스 `(symbol, side, valid_from, scenario_source)` 에 market 이 없지만 심볼 형식이 시장을
+ * 정한다(국내 6자리 / 해외 `NAS:AAPL`) — 국내·해외 카드가 같은 키를 가질 수 없다(Stage 0 ⑥, DDL 실측).
+ * `pool` 은 풀이든 트랜잭션 연결이든 `query` 만 있으면 된다(해외는 한 실행을 트랜잭션으로 묶는다 — S-3).
+ *
  * @returns 'created' | 'duplicate'
  */
 export async function insertScenarioCardIfAbsent(
   pool: Pick<Pool, 'query'>,
   row: ScenarioCardRow,
 ): Promise<'created' | 'duplicate'> {
+  const market: PostMarketMarket = row.market ?? 'domestic';
+  const amountKrw = row.amountKrw ?? POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET[market];
   let res: ResultSetHeader;
   try {
     [res] = await pool.query<ResultSetHeader>(
       `INSERT INTO signals
          (strategy_id, symbol, side, order_type, price, amount_krw,
           reasoning, indicators, status, expires_at, valid_from, market, scenario_source)
-       SELECT ?, ?, 'buy', 'limit', ?, 100000, ?, ?, 'pending', ?, ?, 'domestic', 'post-market'
+       SELECT ?, ?, 'buy', 'limit', ?, ?, ?, ?, 'pending', ?, ?, ?, 'post-market'
          FROM DUAL
         WHERE NOT EXISTS (
           SELECT 1 FROM signals
@@ -177,10 +233,12 @@ export async function insertScenarioCardIfAbsent(
         row.strategyId,
         row.symbol,
         row.price,
+        amountKrw,
         row.reasoning,
         row.indicatorsJson,
         row.expiresAt,
         row.validFrom,
+        market,
         row.symbol,
         row.validFrom,
       ],
@@ -194,7 +252,7 @@ export async function insertScenarioCardIfAbsent(
 
 async function loadSymbols(market: PostMarketMarket): Promise<string[]> {
   if (market === 'overseas') {
-    // 해외 종목은 별도 처리 (현재 미구현, 추후 확장)
+    // T-062 — 해외는 `post-market-overseas.ts` 가 따로 처리한다(runPostMarketAnalysis 첫 줄에서 갈라져 여기 오지 않는다).
     return [];
   }
 
@@ -272,6 +330,13 @@ async function parseAiResponse(raw: string): Promise<AiDecision[]> {
 }
 
 export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<PostMarketResult> {
+  // T-062 — 해외는 별도 모듈로 간다. 그 모듈의 **첫 동작이 스위치 읽기**이고 꺼져 있으면(키 없음 = 꺼짐) 다른 I/O 없이 끝난다.
+  // 아래 국내 경로는 HEAD 7cd47e7 과 같다(국내 골든 시험 `post-market-domestic-golden.test.ts`). 지연 import 라 국내 실행은
+  // 해외 모듈(KIS 해외 어댑터·환율·실적 일정)을 불러오지도 않는다.
+  if (market === 'overseas') {
+    const { runPostMarketOverseas } = await import('./post-market-overseas');
+    return runPostMarketOverseas();
+  }
   const errors: string[] = [];
   const validFromDate = nextTradingDayOpen();
   const expiresAtDate = nextTradingDayClose();
@@ -285,7 +350,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
   // **공휴일은 일부러 건너뛰지 않는다**: `nextTradingDayOpen()` 이 공휴일을 건너뛰지 못하므로, 공휴일 전날 실행은 휴장일용
   // 카드를 만든다. 공휴일 당일 실행이 "그 다음 거래일"용 카드를 만드는 유일한 실행이라, 이것까지 막으면 그 거래일에
   // 카드가 한 장도 없다(독립 감사 R-1). 그 카드는 전날 카드와 valid_from 이 달라 중복도 아니다. 이 방식은 공휴일 목록의
-  // 정확도에도 의존하지 않는다. 해외는 종목이 없어 변화 없음이므로 국내만 건너뛴다.
+  // 정확도에도 의존하지 않는다. 해외는 `post-market-overseas.ts` 가 ET 기준으로 따로 판정한다(T-062 — 여기 오지 않는다).
   if (market === 'domestic' && isWeekendKst(new Date())) {
     console.log('[post-market] 주말 — 새 종가가 없어 분석을 건너뜁니다');
     return {
@@ -370,8 +435,8 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
 
   // T-053 — 실행 경로(entry-watcher)가 쓰는 지정가 추격률. 읽지 못하면 0(추격 없음)으로 판정한다: 그러면 필터가
   // 덜 걸러질 뿐(예전 동작 쪽) 실행 가능한 카드를 잘라내지 않고, 분석 자체를 실패시키지도 않는다.
-  // 국내만 적용한다 — 해외는 `loadSymbols` 가 빈 목록이라 여기 오지 않고, INSERT 도 market='domestic' 고정이며,
-  // `sizeOrderQuantity` 는 해외 가격(USD)을 KRW 예산과 그대로 나눈다(환산 없음). 해외 카드가 구현되면 통화 기준부터 정해야 한다.
+  // 이 함수 본문은 국내 전용이다 — 해외는 T-062 에서 `post-market-overseas.ts` 로 분리했고 그쪽이 같은 필터를 KRW 환산 카드 가격으로
+  // 적용한다(`cardBuysZeroShares(..., 'overseas')`).
   let chasePct = 0;
   if (market === 'domestic') {
     try {

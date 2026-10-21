@@ -7,7 +7,7 @@
  * (4) 거래일 정상 경로·해외·INSERT 실패 처리는 그대로다.
  */
 import type { DailyCandidate } from '../rules/eod-high-close';
-import { runPostMarketAnalysis, insertScenarioCardIfAbsent, isWeekendKst, toKstDatetime, POST_MARKET_CARD_AMOUNT_KRW, cardBuysZeroShares } from '../post-market-engine';
+import { runPostMarketAnalysis, insertScenarioCardIfAbsent, isWeekendKst, toKstDatetime, POST_MARKET_CARD_AMOUNT_KRW, POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET, cardBuysZeroShares } from '../post-market-engine';
 import { getPool } from '@/lib/db';
 import { getStyleConfig } from '../style';
 import { getCandles } from '@/lib/exchanges/kis-domestic';
@@ -145,12 +145,17 @@ describe('주말 스킵 (국내)', () => {
     expect(r.validFrom).toBe('2026-10-12 09:00:00');   // 토·일을 건너뛴 다음 월요일 09:00 KST
   });
 
-  test('해외는 주말에도 판정하지 않는다(변화 없음 — 종목이 없어 no_symbols)', async () => {
+  // T-062 — 해외는 `post-market-overseas.ts` 로 간다. 스위치 키가 없으면(= 꺼짐) 스위치 SELECT 1회 외에 아무것도 부르지 않는다.
+  // (예전 기대값 `errors:['no_symbols']` 는 "해외 종목 0개" 구현의 결과였다 — 해외 경로 상세 시험은 post-market-overseas.test.ts)
+  test('해외: 스위치 키가 없으면 overseas_disabled — 국내 경로(심볼·시세·RAG·LLM·INSERT)를 하나도 부르지 않는다', async () => {
     setNow(SAT_1602);
-    mAlways.mockResolvedValue([]);
+    query.mockResolvedValueOnce([[], undefined]);   // system_config 에 post_market_overseas_enabled 행 없음
     const r = await runPostMarketAnalysis('overseas');
-    expect(r.errors).toEqual(['no_symbols']);
-    expect(r.skipped).toBeUndefined();
+    expect(r).toMatchObject({ market: 'overseas', ok: true, status: 'ok', skipped: 'overseas_disabled', signalsCreated: 0, errors: [] });
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(String(query.mock.calls[0][0])).toContain('FROM system_config');
+    expect(query.mock.calls[0][1]).toEqual(['post_market_overseas_enabled']);
+    for (const m of [mAlways, mUniverse, mCandles, mRag, mLlm, mStyle]) expect(m).not.toHaveBeenCalled();
   });
 });
 
@@ -166,11 +171,14 @@ describe('중복 카드 방지', () => {
     expect(params[0]).toBe('eod-high-close-v1');
     expect(params[1]).toBe('005380');
     expect(params[2]).toBe(93500);                                // 구간 중간값
-    expect(String(params[3])).toContain('[익일 시나리오]');
-    expect(JSON.parse(String(params[4])).ai.scenario.entry.price_zone).toBe('93000~94000');
-    expect(params[5]).toBe('2026-10-19 15:30:00');                // expires_at — 다음 거래일 15:30 KST (T-046: 예전엔 UTC 문자열 06:30)
-    expect(params[6]).toBe('2026-10-19 09:00:00');                // valid_from — 다음 거래일 09:00 KST (예전엔 00:00)
-    expect(params.slice(7)).toEqual(['005380', '2026-10-19 09:00:00']);   // NOT EXISTS 의 비교 키
+    // T-062 — amount_krw·market 이 자리표시자가 되어 인덱스가 밀렸다(저장 값은 같다 — 골든 시험이 열 단위로 고정).
+    expect(params[3]).toBe(100000);                               // amount_krw
+    expect(String(params[4])).toContain('[익일 시나리오]');
+    expect(JSON.parse(String(params[5])).ai.scenario.entry.price_zone).toBe('93000~94000');
+    expect(params[6]).toBe('2026-10-19 15:30:00');                // expires_at — 다음 거래일 15:30 KST (T-046: 예전엔 UTC 문자열 06:30)
+    expect(params[7]).toBe('2026-10-19 09:00:00');                // valid_from — 다음 거래일 09:00 KST (예전엔 00:00)
+    expect(params[8]).toBe('domestic');                           // market
+    expect(params.slice(9)).toEqual(['005380', '2026-10-19 09:00:00']);   // NOT EXISTS 의 비교 키
   });
 
   test('🔴 같은 카드가 이미 있으면(affectedRows 0) 만들지 않고 중복으로 센다', async () => {
@@ -217,7 +225,7 @@ describe('insertScenarioCardIfAbsent', () => {
     await insertScenarioCardIfAbsent({ query: q } as never, row);
     const [sql, params] = q.mock.calls[0] as [string, unknown[]];
     expect((sql.match(/\?/g) ?? []).length).toBe(params.length);
-    expect(params).toHaveLength(9);
+    expect(params).toHaveLength(11);   // T-062 — amount_krw·market 자리표시자 2개 추가
   });
 
   test('🔴 SQL 전체를 고정한다 — "상태 불문" 정책과 대상 테이블이 바뀌면 실패 (독립 감사 R-3)', async () => {
@@ -226,7 +234,10 @@ describe('insertScenarioCardIfAbsent', () => {
     const sql = norm((q.mock.calls[0] as [string])[0]);
     // 삽입 열과 SELECT 리터럴(방향·주문유형·금액·상태·시장·출처)
     expect(sql).toContain('INSERT INTO signals (strategy_id, symbol, side, order_type, price, amount_krw, reasoning, indicators, status, expires_at, valid_from, market, scenario_source)');
-    expect(sql).toContain("SELECT ?, ?, 'buy', 'limit', ?, 100000, ?, ?, 'pending', ?, ?, 'domestic', 'post-market' FROM DUAL");
+    // T-062 — amount_krw·market 은 자리표시자(국내 행 값은 100000·'domestic' 그대로 — 아래 params 와 골든 시험)
+    expect(sql).toContain("SELECT ?, ?, 'buy', 'limit', ?, ?, ?, ?, 'pending', ?, ?, ?, 'post-market' FROM DUAL");
+    const params = (q.mock.calls[0] as [string, unknown[]])[1];
+    expect([params[3], params[8]]).toEqual([100000, 'domestic']);
     // 중복 판정: signals 테이블, 종목·방향·valid_from·출처만 — status/strategy_id 조건이 없다(거절·대체된 카드도 막는다)
     expect(sql).toContain("WHERE NOT EXISTS ( SELECT 1 FROM signals WHERE symbol = ? AND side = 'buy' AND valid_from = ? AND scenario_source = 'post-market' )");
     expect(sql.endsWith("scenario_source = 'post-market' )")).toBe(true);
@@ -261,7 +272,7 @@ describe('toKstDatetime (T-046) — DB 는 KST 라서 KST 벽시계 문자열로
     const r = await runPostMarketAnalysis('domestic');
     expect(r.validFrom).toBe('2026-10-19 09:00:00');
     const params = query.mock.calls[0][1] as unknown[];
-    expect([params[5], params[6]]).toEqual(['2026-10-19 15:30:00', '2026-10-19 09:00:00']);
+    expect([params[6], params[7]]).toEqual(['2026-10-19 15:30:00', '2026-10-19 09:00:00']);   // T-062 — 인덱스 +1(amount_krw 자리표시자)
   });
 });
 
@@ -329,13 +340,26 @@ describe('T-053 — 1주 가격이 카드 금액을 넘는 카드는 만들지 �
   const insertedSymbols = () => query.mock.calls.map(c => (c[1] as unknown[])[1]);
   const logs = () => (console.log as jest.Mock).mock.calls.map(c => String(c[0]));
 
-  test('카드 금액 상수는 INSERT SQL 의 amount_krw 리터럴과 같다 (한쪽만 바뀌면 필터가 엉뚱한 예산으로 판정한다)', async () => {
+  test('카드 금액 상수는 INSERT 의 amount_krw 값과 같다 (한쪽만 바뀌면 필터가 엉뚱한 예산으로 판정한다)', async () => {
+    // T-062 — amount_krw 는 리터럴이 아니라 시장별 상수에서 들어간다(D-5·D-6). 기본값은 두 시장 모두 100,000.
     const q = jest.fn().mockResolvedValue([{ affectedRows: 1 }, undefined]);
     await insertScenarioCardIfAbsent({ query: q } as never, {
       strategyId: 's', symbol: '005380', price: 1, reasoning: 'r', indicatorsJson: '{}', expiresAt: 'e', validFrom: 'v',
     });
     expect(POST_MARKET_CARD_AMOUNT_KRW).toBe(100000);
-    expect((q.mock.calls[0] as [string])[0]).toContain(`'limit', ?, ${POST_MARKET_CARD_AMOUNT_KRW}, ?`);
+    expect(POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET).toEqual({ domestic: POST_MARKET_CARD_AMOUNT_KRW, overseas: 100000 });
+    expect((q.mock.calls[0] as [string, unknown[]])[1][3]).toBe(POST_MARKET_CARD_AMOUNT_KRW);
+    expect((q.mock.calls[0] as [string])[0]).toContain("'limit', ?, ?, ?");
+  });
+
+  test('T-062 — 해외 행은 market·amount 를 행에서 받는다(국내 기본값 불변)', async () => {
+    const q = jest.fn().mockResolvedValue([{ affectedRows: 1 }, undefined]);
+    await insertScenarioCardIfAbsent({ query: q } as never, {
+      strategyId: 's', symbol: 'NAS:CMCSA', price: 36442, reasoning: 'r', indicatorsJson: '{}', expiresAt: 'e', validFrom: 'v', market: 'overseas',
+    });
+    const params = (q.mock.calls[0] as [string, unknown[]])[1];
+    expect([params[3], params[8]]).toEqual([POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET.overseas, 'overseas']);
+    expect(params.slice(9)).toEqual(['NAS:CMCSA', 'v']);
   });
 
   describe('경계 — 추격률 0 일 때 1주 가격 == 카드 금액은 수량 1 이라 만든다', () => {

@@ -13,7 +13,7 @@
 #                        (T-036에서 bash 직접 curl → /api/cron/news-fetch 라우트로 이관.
 #                         재시도·타임아웃·실패 알림은 전부 라우트 안에 있다)
 #  - post-market-domestic: 매일 16:00 KST — 국내장 마감 후 익일 시나리오 분석
-#  - post-market-overseas: 매일 08:00 KST — 해외장 마감 후 익일 시나리오 분석
+#  - post-market-overseas: 매일 08:00 KST — 해외장 마감 후 다음 미국장 시나리오 분석 (T-062: 200 이 아니면 08시 안에서 최대 3회)
 #  - research-cycle-domestic: 매일 16:00 KST — 국내 리서치 추적 종목 사이클 패턴 재계산 (T-032, 주문 없음)
 #  - research-cycle-overseas: 매일 07:00 KST — 해외 리서치 추적 종목 사이클 패턴 재계산 (T-032, 주문 없음)
 #  - export-llm-trainset: 매일 03:00 KST — signals+followup → LoRA 학습 JSONL 생성·전송
@@ -35,9 +35,12 @@ call() {
   local label="$2"
   local body="${3:-{}}"
   local code
-  code=$(curl -s -o /tmp/cron-runner-$$.out -w "%{http_code}" -X POST \
+  # (T-062 Codex C2 ②) CALL_MAX_TIME 이 비어 있지 않을 때만 --max-time 을 붙인다 — 지금은 해외 post-market 호출만 쓴다.
+  # 비어 있으면 아래 curl 명령은 예전과 같다(다른 모든 잡 불변).
+  code=$(curl -s ${CALL_MAX_TIME:+--max-time "$CALL_MAX_TIME"} -o /tmp/cron-runner-$$.out -w "%{http_code}" -X POST \
     -H "x-cron-secret: $CRON_SECRET" -H 'Content-Type: application/json' \
     "$BASE_URL$path" -d "$body" 2>/dev/null) || code="000"
+  CALL_LAST_CODE="$code"   # (T-062) 응답 코드를 보는 잡(post-market-overseas)만 읽는다. 다른 잡의 동작은 그대로다.
   local ts; ts=$(date '+%F %T')
   if [ "$code" = "200" ]; then
     echo "[$ts] $label OK"
@@ -46,6 +49,77 @@ call() {
   fi
   rm -f /tmp/cron-runner-$$.out
 }
+
+# >>> post-market-overseas-retry (T-062 S-2b) — scripts/test-cron-runner-pmo-retry.sh 가 이 블록만 잘라 시험한다
+# 해외 post-market 은 **HTTP 200 일 때만** 날짜파일(성공 표시)을 쓴다. 200 이 아니면(AI 응답 해석 실패·카드 저장 실패·데이터 일시 모름 503·
+# 서버 다운 등) 같은 날 최대 PMO_MAX_ATTEMPTS 회까지, 직전 시도 이후 PMO_MIN_INTERVAL_SEC 이상 지나야 다시 부른다.
+# T-036(실패하면 매 분 재시도 → 하루 수천 건 폭주)의 재발을 막는 것이 이 상한·간격의 목적이다.
+# 🔴 (T-062 Reviewer M-1) 시도는 호출 **전에** 먼저 센다(pmo_reserve). 호출 도중 러너가 죽어도(배포·재기동, HOME-SERVER 순찰이
+#    하트비트 300초 무응답이면 `pm2 restart stockinvest-cron`) 그 시도는 이미 기록돼 있어, 새 러너가 곧바로 다시 부르지 않는다 —
+#    하루 3회·간격 10분이 호출 도중 중단에도 절대 상한이다. 호출이 끝나면 마지막 시각을 종료 시각으로 늦추고(pmo_finish) 200 이면
+#    날짜파일을 쓴다. 시도 기록을 쓸 수 없으면 부르지 않고 날짜파일로 그날을 끝낸다(셀 수 없으면 부르지 않는다).
+#    스위치가 꺼져 있으면 라우트가 200 이므로 하루 1회 그대로다.
+PMO_MAX_ATTEMPTS=3
+PMO_MIN_INTERVAL_SEC=600
+# (T-062 Codex C2 ②) 해외 post-market 호출 한 번의 curl 전체 시간 상한(초). 하트비트는 tick 시작에만 쓰이므로 하트비트 나이의 최악은
+# "tick 길이 + sleep 60초"이고, HOME-SERVER 순찰은 300초를 넘으면 stockinvest-cron 을 재시작한다. 08시 첫 tick 에는 이 호출 뒤에
+# kis-fundamentals-snapshot(약 35~60초)과 매 분 잡(entry-watcher·holding-checker, 5분마다 strategy-eval·trade-report, 시간마다
+# portfolio-snapshot — 합쳐 약 30초로 봄)이 같이 돈다 → 120 + 60 + 30 + 60(sleep) = 270초 < 300초. 240 이면 240+60+30+60 = 390초로
+# 순찰이 러너를 재시작한다. 상한에 걸리면 curl 이 000 → 실패로 세고(날짜파일 없음) 재시도 규칙을 따르며, 서버 쪽 실행은 계속될 수
+# 있으나 서버의 single-flight 가 같은 세션 분석의 겹침을 막는다(재호출은 503 in_progress).
+PMO_CURL_MAX_TIME=120
+CALL_MAX_TIME=""
+# 시도 기록 파일 한 줄: "<YYYY-MM-DD> <그날 시도 횟수> <마지막 시도 시각 epoch 초(시작에 기록, 끝나면 종료 시각으로 갱신)>"
+# pmo_due TODAY NOW DONE_FILE ATTEMPT_FILE → 0(지금 부를 차례) / 1(부르지 않음)
+pmo_due() {
+  local today="$1" now="$2" done_file="$3" att_file="$4" d="" n="" last=""
+  [ "$(cat "$done_file" 2>/dev/null || echo "")" = "$today" ] && return 1
+  if [ -f "$att_file" ]; then read -r d n last < "$att_file" || true; fi
+  [ "$d" != "$today" ] && return 0
+  case "$n" in ''|*[!0-9]*) return 1 ;; esac      # 손상된 기록 → 셀 수 없으니 더 부르지 않는다
+  case "$last" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$n" -ge "$PMO_MAX_ATTEMPTS" ] && return 1
+  [ $((now - last)) -ge "$PMO_MIN_INTERVAL_SEC" ] || return 1
+  return 0
+}
+_pmo_write() {   # ATTEMPT_FILE TODAY N EPOCH — tmp→mv 원자 쓰기, 실패면 1
+  { printf '%s %s %s\n' "$2" "$3" "$4" > "${1}.tmp" && mv -f "${1}.tmp" "$1"; } 2>/dev/null
+}
+# pmo_reserve TODAY NOW DONE_FILE ATTEMPT_FILE — 호출 **전에** 시도 1회를 기록. 0 = 불러도 됨 / 1 = 부르지 말 것
+# (Reviewer L-6) 직전 pmo_due 판정을 여기서 다시 확인한다 — 러너 두 개가 겹쳐 같은 기록을 본 경우 늦은 쪽이 거부된다.
+pmo_reserve() {
+  local today="$1" now="$2" done_file="$3" att_file="$4" d="" n="" last=""
+  if [ -f "$att_file" ]; then read -r d n last < "$att_file" || true; fi
+  if [ "$d" != "$today" ]; then
+    n=0
+  else
+    case "$n" in ''|*[!0-9]*) return 1 ;; esac
+    case "$last" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$n" -ge "$PMO_MAX_ATTEMPTS" ] && return 1
+    [ $((now - last)) -ge "$PMO_MIN_INTERVAL_SEC" ] || return 1
+  fi
+  n=$((n + 1))
+  if ! _pmo_write "$att_file" "$today" "$n" "$now"; then
+    echo "$today" > "$done_file"   # 시도 횟수를 남길 수 없으면 부르지 않고 오늘은 끝낸다(폭주 방지가 재시도보다 우선)
+    echo "[$(date '+%F %T')] post-market-overseas 시도 기록($att_file)을 쓸 수 없어 오늘은 호출하지 않음"
+    return 1
+  fi
+  return 0
+}
+# pmo_finish TODAY NOW CODE DONE_FILE ATTEMPT_FILE — 호출이 끝난 뒤. 횟수는 바꾸지 않는다(이미 reserve 에서 셌다).
+pmo_finish() {
+  local today="$1" now="$2" code="$3" done_file="$4" att_file="$5" d="" n="" last=""
+  if [ -f "$att_file" ]; then read -r d n last < "$att_file" || true; fi
+  if [ "$d" = "$today" ]; then
+    case "$n" in ''|*[!0-9]*) ;; *) _pmo_write "$att_file" "$today" "$n" "$now" || true ;; esac   # 간격은 종료 시각부터(실패해도 시작 시각 기준으로 남는다)
+  fi
+  if [ "$code" = "200" ]; then
+    echo "$today" > "$done_file"
+  elif [ -n "$n" ] && [ "$n" -ge "$PMO_MAX_ATTEMPTS" ] 2>/dev/null; then
+    echo "[$(date '+%F %T')] post-market-overseas 오늘 ${n}회 모두 실패(HTTP=$code) — 내일 08시에 다시 시도"
+  fi
+}
+# <<< post-market-overseas-retry
 
 # 시작 시 한 번 실행 (선택)
 echo "[cron-runner] started, base=$BASE_URL"
@@ -65,6 +139,7 @@ TRAINSET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/export-llm-trainset-last
 NEWS_FETCH_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-last-date"
 POST_MARKET_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-domestic-last-date"
 POST_MARKET_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-last-date"
+POST_MARKET_OVERSEAS_ATTEMPT_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-attempts"   # (T-062 S-2b) 그날 시도 횟수
 RS_UPDATE_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/rs-update-last-date"
 RESEARCH_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-domestic-last-date"
 RESEARCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-overseas-last-date"
@@ -142,10 +217,17 @@ while true; do
     echo "$TODAY" > "$RS_UPDATE_LAST_RUN_FILE"
   fi
   # 매일 08:00 KST: 해외장 마감 후 익일 시나리오 분석 (미국 16:00 ET 마감 → KST 다음날 06:00, 데이터 반영 대기 후 08:00)
-  LAST_POST_OVS=$(cat "$POST_MARKET_OVERSEAS_LAST_RUN_FILE" 2>/dev/null || echo "")
-  if [ "$HH" = "08" ] && [ "$LAST_POST_OVS" != "$TODAY" ]; then
-    call "/api/cron/post-market-analysis?market=overseas" "post-market-overseas"
-    echo "$TODAY" > "$POST_MARKET_OVERSEAS_LAST_RUN_FILE"
+  # (T-062 S-2b) 날짜파일은 200 일 때만 쓴다 — 실패하면 08시 안에서 10분 이상 간격으로 하루 최대 3회(위 pmo_* 블록).
+  # 시도는 호출 전에 센다(Reviewer M-1) — 호출 도중 러너가 죽어도 상한이 유지된다.
+  # 다른 하루 1회 잡은 T-036 규칙(성공·실패 무관 기록)을 그대로 따른다.
+  if [ "$HH" = "08" ] && pmo_due "$TODAY" "$(date +%s)" "$POST_MARKET_OVERSEAS_LAST_RUN_FILE" "$POST_MARKET_OVERSEAS_ATTEMPT_FILE"; then
+    if pmo_reserve "$TODAY" "$(date +%s)" "$POST_MARKET_OVERSEAS_LAST_RUN_FILE" "$POST_MARKET_OVERSEAS_ATTEMPT_FILE"; then
+      CALL_LAST_CODE="000"
+      CALL_MAX_TIME="$PMO_CURL_MAX_TIME"   # 이 호출에만 시간 상한(위 PMO_CURL_MAX_TIME 근거)
+      call "/api/cron/post-market-analysis?market=overseas" "post-market-overseas"
+      CALL_MAX_TIME=""
+      pmo_finish "$TODAY" "$(date +%s)" "$CALL_LAST_CODE" "$POST_MARKET_OVERSEAS_LAST_RUN_FILE" "$POST_MARKET_OVERSEAS_ATTEMPT_FILE"
+    fi
   fi
   # 매일 08:00 KST: KIS 해외 현재가상세 스냅샷 (T-059) — 미국장 마감 뒤·국내장(09:00) 개장 전이라 장중 KIS 호출과 겹치지 않는다.
   # 07시(EDGAR·research)와 다른 tick 으로 둬 한 tick 의 동기 대기 시간을 나눈다. 종목 수(약 55) × 직렬 GET, bulk 우선순위.
