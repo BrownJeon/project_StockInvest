@@ -92,7 +92,11 @@ export const DEFAULT_STYLE_CONFIG: StyleConfig = {
   minRWinPct:          0.7,
   universeSource:      'volume-top',
   btcEthCoreRatioMin:  0.05,
-  maxPositionsPerSymbol: 5,
+  // T-068 WP-B: 5→4 (사용자 확정 '분할 최대 4회'). 국내 룰 엔진 24시간 내 동일 종목 매수 건수 한도 — portfolio-stability 가
+  // 24h 실주문 BUY 가 이 수에 이르면 다음 국내 자동 BUY 를 거른다(해외는 이 가드가 통과시킨다). 시나리오 확정 경로에는 적용되지
+  // 않음 — 그쪽 분할 상한은 `MAX_SCENARIO_SPLITS`(safety/scenario-confirm-fields.ts).
+  // DB `style_default_maxPositionsPerSymbol` 이 있으면 그 값이 우선한다(아래 getStyleConfig).
+  maxPositionsPerSymbol: 4,
   holdingPeriodHours:  { min: 1, max: 48 },
   holdingPeriodDays:   { min: 1, max: 10 },  // SI 주식: 1~10일
   stableCoreRatioMin:  0.20,                  // SI: 코어 비율 20%

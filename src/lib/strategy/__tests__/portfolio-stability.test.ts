@@ -1,6 +1,6 @@
 import { getPool } from '@/lib/db';
 import { checkPortfolioStability } from '../portfolio-stability';
-import type { StyleConfig } from '../style';
+import { DEFAULT_STYLE_CONFIG, type StyleConfig } from '../style';
 
 jest.mock('@/lib/db', () => ({
   getPool: jest.fn(),
@@ -90,6 +90,24 @@ describe('checkPortfolioStability', () => {
       style: STYLE_AGGRESSIVE, heldAmounts: new Map(),
     });
     expect(r.verdict).toBe('pass');
+  });
+
+  test('T-068 WP-B — 코드 기본 한도 4: 24h 실주문 4건이면 skip(한도 4), 3건이면 카운트 통과', async () => {
+    setupPool({ recentBuys: { '005930': 4 }, tiers: { '005930': 'core' } });
+    const r4 = await checkPortfolioStability({
+      symbol: '005930', side: 'buy', amountKRW: 100_000, market: 'domestic',
+      style: DEFAULT_STYLE_CONFIG, heldAmounts: new Map(),
+    });
+    expect(r4.verdict).toBe('skip');
+    expect(r4.reason).toBe('max_positions_exceeded');
+    expect(r4.detail).toMatch(/24h 내 005930 buy 4건 ≥ 한도 4/);
+
+    setupPool({ recentBuys: { '005930': 3 }, tiers: { '005930': 'core' } });
+    const r3 = await checkPortfolioStability({
+      symbol: '005930', side: 'buy', amountKRW: 100_000, market: 'domestic',
+      style: DEFAULT_STYLE_CONFIG, heldAmounts: new Map(),
+    });
+    expect(r3.verdict).toBe('pass');
   });
 
   test('누적 카운트는 signals 가 아니라 orders 실주문 기준 (dry_run·blocked 제외)', async () => {

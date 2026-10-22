@@ -49,6 +49,27 @@ describe('운영 override 시드값 적용', () => {
   });
 });
 
+describe('T-068 WP-B — 국내 룰 엔진 24시간 동일 종목 매수 주문 한도(maxPositionsPerSymbol)', () => {
+  test('코드 기본값 4 — 국내 룰 엔진 24시간 매수 주문 한도(시나리오 확정 경로는 MAX_SCENARIO_SPLITS 가 담당)', async () => {
+    expect(DEFAULT_STYLE_CONFIG.maxPositionsPerSymbol).toBe(4);
+    mockOverrides({});
+    expect((await getStyleConfig()).maxPositionsPerSymbol).toBe(4);
+  });
+
+  test('DB override(style_default_maxPositionsPerSymbol)가 있으면 그 값이 우선한다', async () => {
+    mockOverrides({ style_default_maxPositionsPerSymbol: 6 });
+    expect((await getStyleConfig()).maxPositionsPerSymbol).toBe(6);
+  });
+
+  test('범위 [1,20] 밖 override 는 무시되고 기본값 4', async () => {
+    mockOverrides({ style_default_maxPositionsPerSymbol: 0 });
+    expect((await getStyleConfig()).maxPositionsPerSymbol).toBe(4);
+    invalidateStyleOverrideCache();
+    mockOverrides({ style_default_maxPositionsPerSymbol: 21 });
+    expect((await getStyleConfig()).maxPositionsPerSymbol).toBe(4);
+  });
+});
+
 describe('override 안전장치', () => {
   test('DB 조회 실패 시 코드 default 로 폴백한다', async () => {
     (getPool as jest.Mock).mockReturnValue({ query: jest.fn(async () => { throw new Error('db down'); }) });

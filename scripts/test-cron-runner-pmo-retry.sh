@@ -201,7 +201,8 @@ eq "502 시나리오: 날짜파일 없음(성공 표시 아님)" \
    "$(cat "$RF/home/.node-local/stockinvest/post-market-overseas-last-date" 2>/dev/null || echo none)" "none"
 eq "200 시나리오: 날짜파일 = 오늘" \
    "$(cat "$RS/home/.node-local/stockinvest/post-market-overseas-last-date" 2>/dev/null || echo none)" "2026-10-21"
-others() { grep -v 'market=overseas' "$1/calls"; }
+# (T-068) 매 분 stop-alert 호출은 별도 시험(test-cron-runner-stop-alert.sh)이 본다 — 여기서는 빼고 나머지 잡이 HEAD 와 같은지만 본다.
+others() { grep -v 'market=overseas' "$1/calls" | grep -v ' /api/cron/stop-alert$'; }
 # HEAD 7cd47e7 의 cron-runner.sh 를 같은 하네스(07:58~09:57, 120틱)로 돌린 해외 외 호출 목록(305줄 "HH:MM 경로")의 sha256.
 # 다른 잡의 시각·조건이 바뀌면 이 값이 달라진다(Reviewer L-1 B07·B10).
 HEAD_OTHERS_SHA=5ac28175b82a11f6d570a92e28455c5acb6bbb387d1df8b16f331fb03109babd
@@ -216,9 +217,11 @@ eq "M-1 재시작: 시도 기록 3회" "$(cut -d' ' -f2 "$RR/home/.node-local/st
 eq "M-1 재시작: 날짜파일 없음" \
    "$(cat "$RR/home/.node-local/stockinvest/post-market-overseas-last-date" 2>/dev/null || echo none)" "none"
 # 🔴 Codex C2 ② — --max-time 은 해외 post-market 호출에만, 값 120
-eq "🔴 --max-time 은 해외 post-market 호출에만(200 시나리오)" "$(cut -d' ' -f1 "$RS/maxtime" | sort -u)" "/api/cron/post-market-analysis?market=overseas"
-eq "--max-time 값 120" "$(cut -d' ' -f2 "$RS/maxtime" | sort -u)" "max-time=120"
-eq "--max-time 이 붙은 호출 수 = 해외 호출 수(502 시나리오 3)" "$(wc -l < "$RF/maxtime")" "3"
+# (T-068) stop-alert 의 --max-time(20)은 test-cron-runner-stop-alert.sh 가 따로 본다 — 여기서는 그 줄을 빼고 해외 post-market 만 본다.
+pmo_mt() { grep -v '^/api/cron/stop-alert ' "$1/maxtime"; }
+eq "🔴 --max-time 은 (stop-alert 외) 해외 post-market 호출에만(200 시나리오)" "$(pmo_mt "$RS" | cut -d' ' -f1 | sort -u)" "/api/cron/post-market-analysis?market=overseas"
+eq "--max-time 값 120" "$(pmo_mt "$RS" | cut -d' ' -f2 | sort -u)" "max-time=120"
+eq "--max-time 이 붙은 호출 수 = 해외 호출 수(502 시나리오 3)" "$(pmo_mt "$RF" | wc -l)" "3"
 eq "🔴 curl 상한 초과(000) → 해외 3회 08:00·08:12·08:24(간격은 종료 시각부터)" \
    "$(grep 'market=overseas' "$RT/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:12 08:24 "
 eq "🔴 curl 상한 초과 → 날짜파일 없음" \

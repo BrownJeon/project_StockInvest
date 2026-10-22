@@ -54,7 +54,10 @@ describe('🔴 통화 환산 경계 — 새 지점이 생기면 실패한다', (
 
   test('USD 원가(`priceUsd`)를 읽는 파일 목록이 고정돼 있다', () => {
     // 즐겨찾기 3종은 T-035 이전부터 USD 로 표시하던 별개 경로다(이번 작업 범위 밖).
+    // T-068 stop-alert: 같은 틱 시세의 `price ÷ priceUsd` 로 표시용 환율만 만든다(알림 문구의 $ 표기). 판정(손절가 비교)은
+    //   원화끼리(`priceKrw` vs `position_state.entry_price` 기반 손절가)이고 이 환율은 판정에 쓰이지 않는다.
     expect(filesContaining('priceUsd')).toEqual([
+      'app/api/cron/stop-alert/route.ts',
       'app/api/favorites/route.ts',
       'app/favorites/FavoritesPage.tsx',
       'app/favorites/[symbol]/FavoriteDetailPage.tsx',

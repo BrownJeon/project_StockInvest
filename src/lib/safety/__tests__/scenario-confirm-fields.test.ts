@@ -4,7 +4,7 @@
  * 라우트 레벨 검증은 `src/app/api/signals/custom/confirm/__tests__/route.test.ts` 에 있다.
  * 여기서는 판정 규칙 자체를 고정한다.
  */
-import { invalidConfirmField, warnConfirmFieldRejected } from '../scenario-confirm-fields';
+import { MAX_SCENARIO_SPLITS, invalidConfirmField, warnConfirmFieldRejected } from '../scenario-confirm-fields';
 import { isFiniteNumber } from '../numeric-fields';
 
 /**
@@ -239,5 +239,44 @@ describe('warnConfirmFieldRejected — 흔적 없는 거절을 남기지 않는�
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe('T-068 WP-B — 시나리오 분할 상한 4', () => {
+  const slice = (i: number) => ({ zoneLo: 100 + i, zoneHi: 200 + i, qty: 1 });
+
+  test('상한 상수는 4', () => {
+    expect(MAX_SCENARIO_SPLITS).toBe(4);
+  });
+
+  test('splits 4 통과 / 5 거절', () => {
+    expect(invalidConfirmField({ splits: 4 })).toBeNull();
+    expect(invalidConfirmField({ splits: 5 })).toEqual({ message: 'splits must be an integer between 1 and 4', value: 5 });
+  });
+
+  test.each([[6], [20], [1e9]])('splits=%p → 거절', (value) => {
+    expect(invalidConfirmField({ splits: value })).toMatchObject({ message: 'splits must be an integer between 1 and 4' });
+  });
+
+  test('하한 위반 문구는 기존 그대로(0 → integer >= 1)', () => {
+    expect(invalidConfirmField({ splits: 0 })).toMatchObject({ message: 'splits must be an integer >= 1' });
+  });
+
+  test('manualSlices 4개 통과 / 5개 거절', () => {
+    expect(invalidConfirmField({ manualSlices: [0, 1, 2, 3].map(slice) })).toBeNull();
+    expect(invalidConfirmField({ manualSlices: [0, 1, 2, 3, 4].map(slice) })).toEqual({
+      message: 'manualSlices must be an array of at most 4 slices',
+      value: 'length=5',
+    });
+  });
+
+  test('manualSlices 빈 배열은 계속 통과', () => {
+    expect(invalidConfirmField({ manualSlices: [] })).toBeNull();
+  });
+
+  test('splits 가 4 이하여도 manualSlices 가 5개면 거절(슬라이스 수가 시그널 수)', () => {
+    expect(invalidConfirmField({ splits: 2, manualSlices: [0, 1, 2, 3, 4].map(slice) })).toMatchObject({
+      message: 'manualSlices must be an array of at most 4 slices',
+    });
   });
 });

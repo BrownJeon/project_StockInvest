@@ -19,6 +19,7 @@
 #  - export-llm-trainset: 매일 03:00 KST — signals+followup → LoRA 학습 JSONL 생성·전송
 #  - edgar-sync        : 매일 07:00 KST — SEC EDGAR 공시·XBRL 재무 읽기 전용 수집 (T-059, 주문·시그널 없음)
 #  - kis-fundamentals-snapshot: 매일 08:00 KST — KIS 해외 현재가상세(PER·PBR 등) 원값 스냅샷 (T-059, 읽기 전용 GET)
+#  - stop-alert        : 1분 — 손절가 도달 텔레그램 알림 (T-068, 알림만, curl 상한 STOP_ALERT_CURL_MAX_TIME)
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -68,6 +69,11 @@ PMO_MIN_INTERVAL_SEC=600
 # 순찰이 러너를 재시작한다. 상한에 걸리면 curl 이 000 → 실패로 세고(날짜파일 없음) 재시도 규칙을 따르며, 서버 쪽 실행은 계속될 수
 # 있으나 서버의 single-flight 가 같은 세션 분석의 겹침을 막는다(재호출은 503 in_progress).
 PMO_CURL_MAX_TIME=120
+# (T-068 WP-C) 손절가 도달 알림(stop-alert) 호출 한 번의 curl 전체 시간 상한(초). 매 분 돈다. 라우트는 장이 닫혔으면 즉시 끝나고
+# (KIS 0), 열렸을 때도 시세 10초·발송 15초 예산 안에서 스스로 멈춘다 — 이 상한은 그 예산이 깨져도 tick 이 막히지 않게 하는 마지막
+# 방어선이다. 하트비트 최악(위 PMO 계산에 더함): 120 + 60 + 30 + 20 + 60(sleep) = 290초 < 300초(순찰 재시작 기준).
+# 상한에 걸리면 curl 이 000 으로 끝나고 다음 분에 다시 부른다(서버 쪽 실행은 single-flight 라 겹치지 않는다).
+STOP_ALERT_CURL_MAX_TIME=20
 CALL_MAX_TIME=""
 # 시도 기록 파일 한 줄: "<YYYY-MM-DD> <그날 시도 횟수> <마지막 시도 시각 epoch 초(시작에 기록, 끝나면 종료 시각으로 갱신)>"
 # pmo_due TODAY NOW DONE_FILE ATTEMPT_FILE → 0(지금 부를 차례) / 1(부르지 않음)
@@ -180,6 +186,10 @@ while true; do
   call /api/cron/entry-watcher "entry-watcher"
   # 매 1분: holding-checker — 보유기간 초과 텔레그램 알림
   call /api/cron/holding-checker "holding-checker"
+  # 매 1분: stop-alert — 손절가 도달 텔레그램 알림 (T-068, 알림만 — 주문·매도·시그널 없음). 이 호출에만 시간 상한.
+  CALL_MAX_TIME="$STOP_ALERT_CURL_MAX_TIME"
+  call /api/cron/stop-alert "stop-alert"
+  CALL_MAX_TIME=""
   # 매 5분: strategy-eval
   if [ $((i % 5)) -eq 0 ]; then
     call /api/cron/strategy-eval "strategy-eval"

@@ -1077,3 +1077,41 @@ describe('POST custom/confirm — 직접 경로와 sourceSignalId 경로가 서�
     expect(events.filter(e => e === 'release')).toHaveLength(1);
   });
 });
+
+describe('POST custom/confirm — 분할 상한 4 (T-068 WP-B, MAX_SCENARIO_SPLITS)', () => {
+  const slices = (n: number) => Array.from({ length: n }, (_, i) => ({ zoneLo: 68_000 + i * 200, zoneHi: 68_100 + i * 200, qty: 1 }));
+
+  test('splits=5 → 400 · INSERT 0건 · DB 연결도 잡지 않는다(INSERT 이전 거부)', async () => {
+    const body = buildPagePayload({ splits: 5 }) as Record<string, unknown>;
+    delete body.manualSlices;
+    const res = await POST(req(body));
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: 'splits must be an integer between 1 and 4' });
+    expect(inserts()).toHaveLength(0);
+    expect(events).not.toContain('getConnection');
+  });
+
+  test('manualSlices 5개 → 400 · INSERT 0건 · DB 연결도 잡지 않는다', async () => {
+    const res = await POST(req(buildPagePayload({ splits: 4, manualSlices: slices(5) })));
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: 'manualSlices must be an array of at most 4 slices' });
+    expect(inserts()).toHaveLength(0);
+    expect(events).not.toContain('getConnection');
+  });
+
+  test('splits=4(기본 분할 계산) → 200 · INSERT 4건', async () => {
+    const body = buildPagePayload({ splits: 4 }) as Record<string, unknown>;
+    delete body.manualSlices;
+    const res = await POST(req(body));
+    expect(res.status).toBe(200);
+    expect(inserts()).toHaveLength(4);
+  });
+
+  test('manualSlices 4개 → 200 · INSERT 4건', async () => {
+    const res = await POST(req(buildPagePayload({ splits: 4, manualSlices: slices(4) })));
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ ok: true, splitCount: 4 });
+    expect(inserts()).toHaveLength(4);
+    expect(events).toContain('getConnection'); // 위 거부 시험의 'DB 연결 없음' 단언이 변별력이 있음을 확인
+  });
+});

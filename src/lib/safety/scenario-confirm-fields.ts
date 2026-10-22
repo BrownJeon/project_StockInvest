@@ -37,6 +37,16 @@
  */
 import { isFiniteNumber } from './numeric-fields';
 
+/**
+ * 시나리오 확정 1건의 분할(슬라이스) 상한 — T-068 WP-B (사용자 확정 "분할 최대 4회, 실제 집행도 4회").
+ *
+ * 라우트는 슬라이스 1개당 시그널 1건을 만든다. 화면(ScenarioBuilder)은 1~4 만 고르게 하지만 서버는 상한이 없었다 —
+ * API 를 직접 부르면 5건 이상이 진입 감시로 들어갈 수 있었다. `splits`(기본 분할 횟수)와 `manualSlices`(직접 지정 구간)
+ * 양쪽에 같은 상한을 건다. 국내 룰 엔진의 `maxPositionsPerSymbol`(style.ts, 24h 같은 종목 매수 건수)과는 별개다 —
+ * 그 한도는 시나리오 확정 경로에 적용되지 않는다.
+ */
+export const MAX_SCENARIO_SPLITS = 4;
+
 /** 이 라우트의 `ConfirmBody` 가 구조적으로 만족하는 최소 형태 — 전부 `unknown` 으로 받는다. */
 export interface ConfirmFieldCarrier {
   symbol?: unknown;
@@ -81,6 +91,10 @@ function checkSplits(body: ConfirmFieldCarrier): ConfirmFieldViolation | null {
   if (v === undefined || v === null) return null;
   if (!isFiniteNumber(v) || !Number.isInteger(v) || v < 1) {
     return violation('splits', 'an integer >= 1', v);
+  }
+  // T-068 WP-B — 상한. 아래 하한 위반 문구(`>= 1`)는 기존 호출자·시험이 기대하는 그대로 둔다.
+  if (v > MAX_SCENARIO_SPLITS) {
+    return violation('splits', `an integer between 1 and ${MAX_SCENARIO_SPLITS}`, v);
   }
   return null;
 }
@@ -132,6 +146,10 @@ function checkManualSlices(body: ConfirmFieldCarrier): ConfirmFieldViolation | n
   const v = body.manualSlices;
   if (v === undefined || v === null) return null;
   if (!Array.isArray(v)) return violation('manualSlices', 'an array', v);
+  // T-068 WP-B — 슬라이스 1개 = 시그널 1건. 빈 배열은 기존대로 통과(라우트가 기본 분할 계산으로 분기).
+  if (v.length > MAX_SCENARIO_SPLITS) {
+    return violation('manualSlices', `an array of at most ${MAX_SCENARIO_SPLITS} slices`, `length=${v.length}`);
+  }
 
   for (let i = 0; i < v.length; i++) {
     const slice: unknown = v[i];
