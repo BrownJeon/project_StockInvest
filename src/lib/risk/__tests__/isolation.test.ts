@@ -4,6 +4,10 @@
  *     (주문·청산·시그널·안전장치·알림·분석가·설정 API·instrumentation 등 전부 — 감시 폴더를 나열하지 않고 전체를 걷는다).
  *     상대경로 import(`'../risk/compute'`, `'./risk'`)도 잡는다.
  *  2. risk 모듈은 거래소(KIS)·주문·시그널·안전장치 경로를 import 하지 않고, `@/lib/strategy` 에서는 `exit-switch` 하나만 가져온다.
+ *     (T-068 WP-A) 예외 2건 — 리스크 정책 GET 라우트만, 분할 행 '집행 중인 제한' 표시용 **읽기 전용 값**을 가져온다:
+ *     `@/lib/safety/scenario-confirm-fields` 의 상수 `MAX_SCENARIO_SPLITS` 하나, `@/lib/strategy/style` 의 판독기 `getStyleConfig` 하나.
+ *     별도 계산·하드코딩 대신 집행 경로가 쓰는 바로 그 출처를 읽어야 '정책과 다름'이 사실을 보이기 때문이다.
+ *     이름까지 고정한다(검증 함수·캐시 무효화·주문 함수는 가져오지 않는다). 다른 risk 파일은 여전히 safety 0건.
  *  3. risk 모듈의 쓰기 SQL 은 system_config 뿐(position_state·orders·signals 쓰기 없음, DDL 없음).
  *  4. (T-068 WP-C) **명시적 예외 1건**: cron 라우트 `app/api/cron/stop-alert/route.ts` 가 risk → 방향으로 읽는다
  *     (`@/lib/risk/stop-alert`·`@/lib/risk/policy-store` 의 읽기 함수만). 이 라우트는 알림만 하며, 거래소는 `kis.getTicker` 만,
@@ -105,14 +109,32 @@ describe('risk 모듈은 거래소·주문 경로를 쓰지 않는다', () => {
     expect(files.length).toBeGreaterThan(15);
   });
 
-  test.each(['@/lib/exchanges', '@/lib/safety', '@/lib/signals', '@/lib/orders', '@/lib/notify', 'submitOrder', 'kis.'])('%p import·호출 0건', (needle) => {
+  test.each(['@/lib/exchanges', '@/lib/signals', '@/lib/orders', '@/lib/notify', 'submitOrder', 'kis.'])('%p import·호출 0건', (needle) => {
     const hits = files.filter(f => fs.readFileSync(f, 'utf8').includes(needle)).map(rel);
     expect(hits).toEqual([]);
   });
 
-  test('@/lib/strategy 에서 가져오는 것은 exit-switch 하나뿐 (읽기 전용 판독기)', () => {
+  const POLICY_ROUTE = 'app/api/settings/risk-policy/route.ts';
+  const SAFETY_IMPORT_LINE = "import { MAX_SCENARIO_SPLITS } from '@/lib/safety/scenario-confirm-fields';";
+
+  test('"@/lib/safety" — 정책 GET 라우트의 상수 1줄(MAX_SCENARIO_SPLITS) 외 0건 (T-068 WP-A)', () => {
+    // 다른 risk 파일(순수 모듈·화면·stop-alert 포함)은 여전히 0건
+    const hits = files.filter(f => rel(f) !== POLICY_ROUTE && fs.readFileSync(f, 'utf8').includes('@/lib/safety')).map(rel);
+    expect(hits).toEqual([]);
+    // 라우트는 그 한 줄로만 — 같은 모듈의 검증 함수나 다른 safety 모듈은 가져오지 않는다
+    const src = fs.readFileSync(path.join(SRC, POLICY_ROUTE), 'utf8');
+    expect(src.split('\n').filter(l => l.includes('@/lib/safety'))).toEqual([SAFETY_IMPORT_LINE]);
+    expect(src).not.toMatch(/invalidConfirmField|warnConfirmFieldRejected|submitOrder|import\(|require\(/);
+  });
+
+  test('@/lib/strategy 에서 가져오는 것은 exit-switch·style 판독기뿐 — 정책 GET 라우트 한 곳 (T-068 WP-A 로 style 추가)', () => {
     const froms = files.flatMap(f => [...fs.readFileSync(f, 'utf8').matchAll(/['"]@\/lib\/strategy\/?([^'"]*)['"]/g)].map(m => `${rel(f)} → ${m[1]}`));
-    expect(froms).toEqual(['app/api/settings/risk-policy/route.ts → exit-switch']);
+    expect(froms).toEqual([`${POLICY_ROUTE} → exit-switch`, `${POLICY_ROUTE} → style`]);
+    // style 에서는 엔진과 같은 판독기 getStyleConfig 하나만 (캐시 무효화·프리셋·기본값 상수 없음)
+    const src = fs.readFileSync(path.join(SRC, POLICY_ROUTE), 'utf8');
+    const fromStyle = src.match(/import\s*\{([^}]*)\}\s*from\s*'@\/lib\/strategy\/style'/)![1].split(',').map(x => x.trim()).filter(Boolean);
+    expect(fromStyle).toEqual(['getStyleConfig']);
+    expect(src).not.toMatch(/invalidateStyleOverrideCache|DEFAULT_STYLE_CONFIG|STYLE_PRESETS/);
     // 상대경로로 strategy 를 우회해 가져오지도 않는다
     const relStrategy = files.filter(f => /['"](\.{1,2}\/)+([^'"]*\/)?strategy\//.test(fs.readFileSync(f, 'utf8'))).map(rel);
     expect(relStrategy).toEqual([]);

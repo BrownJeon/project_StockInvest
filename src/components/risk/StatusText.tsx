@@ -15,7 +15,7 @@ export function StatusText({ kind, icon, children }: { kind: StatusKind; icon: s
   );
 }
 
-/** 표시·위험 계산 전용 배지 */
+/** 표시·위험 계산·알림 배지 (T-068 데모 v5 — 손절가 도달 텔레그램 알림이 생겼지만 주문·매도는 없다) */
 export function DisplayOnlyBadge() {
-  return <span className="mode disp">◌ 표시·위험 계산 전용</span>;
+  return <span className="mode disp">◌ 표시·위험 계산·알림 (주문·매도 없음)</span>;
 }

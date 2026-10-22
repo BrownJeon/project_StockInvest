@@ -136,6 +136,33 @@ export const RISK_CSS = `
 .rp table.hold tr.below td { background: rgba(245,158,11,.06); }
 .rp .only-d { display: none; }
 
+/* T-068 데모 v5 — 배지가 길어져 412·360px 에서 줄바꿈 허용 */
+.rp .rp-head { flex-wrap: wrap; row-gap: 4px; }
+.rp .rp-head h2 { flex: 1 0 auto; white-space: nowrap; }
+.rp .rp-head .mode { margin-left: 8px; }
+.rp .riskrow .top { flex-wrap: wrap; row-gap: 4px; }
+.rp .riskrow .top b { flex: 1 0 auto; white-space: nowrap; }
+.rp .mode.disp { white-space: normal; }
+
+/* T-068 데모 v5 — 손절가 도달 알림 안내 + 텔레그램 메시지 예시 */
+.rp .alertbox { border: 1px solid var(--border2); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.rp .alertbox h4 { margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.rp .alertbox ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+.rp .alertbox ul li { margin-bottom: 2px; }
+.rp .alertbox .now { font-size: 12px; line-height: 1.6; padding: 8px 10px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); }
+.rp .tgprev { display: flex; flex-direction: column; gap: 6px; }
+.rp .tgprev .cap { font-size: 11px; color: var(--muted); }
+.rp .bubble { max-width: 340px; background: var(--bg4); border: 1px solid var(--border2); border-radius: 4px 12px 12px 12px; padding: 10px 12px; font-size: 13px; line-height: 1.55; }
+.rp .bubble .bt { font-weight: 700; margin-bottom: 4px; }
+/* 말풍선 본문은 실제 발송 문구(formatStopAlert) 줄 그대로 — 데모의 dl 2열 대신 줄 단위 (Leader 결정 10-22) */
+.rp .bubble .ln { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.rp .bubble .foot { margin-top: 6px; font-weight: 600; }
+.rp .bubble .tm { display: block; text-align: right; font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+/* T-068 데모 v5 — 분할 매수 행 '집행 중인 제한' */
+.rp .exl { display: flex; flex-direction: column; gap: 6px; }
+.rp .exl > small:first-child { margin: 0; }
+
 @media (min-width: 900px) {
   .rp .app-body { padding: 20px 24px; }
   .rp .rk-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }

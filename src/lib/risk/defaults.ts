@@ -7,6 +7,7 @@
  *
  * 이 모듈·`compute.ts`·`policy-store.ts` 는 **표시·위험 계산 전용**이다.
  * 청산 엔진(exit-engine)·시그널·안전장치 경로는 이 값을 읽지 않는다 — 주문·매도에 쓰이지 않는다.
+ * (T-068: 손절가 도달 텔레그램 알림 cron 이 손절폭·기준가를 읽어 **알림만** 보낸다 — 주문·매도 없음.)
  */
 
 export type StopBasis = 'avg' | 'peak';
@@ -27,15 +28,31 @@ export interface RiskPolicyReadOnly {
   maxHoldings: number;
   marketPriority: ('overseas' | 'domestic')[];
   tradeRiskPct: number;
-  cashFloorPct: number;
+  /**
+   * 현금 하한 — **규칙 없음**(null). 현금 비중은 정보로만 보인다(T-068, 2026-10-22 사용자 확정 "권고대로 처리").
+   * 문서 정책(trading-strategy.md §5)의 10% 는 코드로 집행된 적이 없어 경고·미달 표시를 하지 않는다.
+   */
+  cashFloorPct: null;
   symbolMaxPct: number;
   weeklyLossPct: number;
   monthlyLossPct: number;
   annualLossPct: number;
-  splitBuy: { max: number; ratio: number[] };
+  /** 분할 매수 최대 횟수 — 비율은 고정하지 않는다(구간·수량은 시나리오에서 정함, T-068) */
+  splitBuy: { max: number };
 }
 
 export type RiskPolicySources = Record<keyof RiskPolicyReadOnly | keyof RiskPolicyEditable, PolicySource>;
+
+/**
+ * 분할 매수 정책과 비교해 보이는 **실제 집행 값** (GET /api/settings/risk-policy 의 `execution`, T-068 WP-A).
+ * 값은 서버가 집행 경로의 출처에서 읽어 채운다 — 이 모듈은 타입만 정의한다.
+ */
+export interface RiskExecutionLimits {
+  /** 시나리오 확정 요청 1회당 조각 상한 (`MAX_SCENARIO_SPLITS`, 시장 무관) */
+  scenarioSplitCap: number;
+  /** 국내 룰 엔진 같은 종목 24시간 매수 주문 한도 (`maxPositionsPerSymbol`) — 읽지 못하면 null */
+  domesticMaxBuysPerSymbol24h: number | null;
+}
 
 /** 정책이 아직 저장되지 않았을 때의 제안값 (손절폭 3% 제안 · 한도 2% 사용자 확정 · 평균단가 권고) */
 export const DEFAULT_EDITABLE: Readonly<RiskPolicyEditable> = Object.freeze({
@@ -49,13 +66,16 @@ export const READ_ONLY_POLICY: Readonly<RiskPolicyReadOnly> = Object.freeze({
   maxHoldings: 10,
   marketPriority: ['overseas', 'domestic'],
   tradeRiskPct: 0.25,
-  cashFloorPct: 10,
+  // T-068(2026-10-22 사용자 확정): 현금 하한 규칙 없음 — 현금 비중은 정보 표시만.
+  cashFloorPct: null,
   symbolMaxPct: 15,
   weeklyLossPct: -3,
   monthlyLossPct: -5,
   annualLossPct: -15,
-  // 2026-10-22 사용자 승인 수정: 분할 최대 2회(60/40) → 3회. 비율 40/30/30 은 제안.
-  splitBuy: { max: 3, ratio: [40, 30, 30] },
+  // T-068(2026-10-22 사용자 확정): 분할 최대 3회(40/30/30 제안) → 4회, 비율 표기 없음.
+  // 시나리오 빌더가 1~4분할을 고르고, 서버는 확정 1회당 조각을 MAX_SCENARIO_SPLITS(=4)로 막는다.
+  // 화면은 이 값과 실제 집행 값(GET 응답 `execution`)이 다르면 그 줄에 '정책과 다름'을 보인다.
+  splitBuy: { max: 4 },
 }) as Readonly<RiskPolicyReadOnly>;
 
 /** 출처 배지 — user: 사용자 확정 · proposal: 제안·승인 전 · doc: 문서 정책 */
@@ -66,7 +86,7 @@ export const POLICY_SOURCES: Readonly<RiskPolicySources> = Object.freeze({
   maxHoldings: 'user',
   marketPriority: 'user',
   tradeRiskPct: 'proposal',
-  cashFloorPct: 'doc',
+  cashFloorPct: 'user',
   symbolMaxPct: 'proposal',
   weeklyLossPct: 'doc',
   monthlyLossPct: 'doc',

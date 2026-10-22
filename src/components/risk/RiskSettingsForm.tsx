@@ -28,7 +28,7 @@ export interface SettingsFormProps {
 }
 
 function SaveBar(p: SettingsFormProps) {
-  const sub = <div className="sub">저장해도 매도 주문·알림은 만들지 않습니다. 이 저장은 안전장치 저장과 별개입니다.</div>;
+  const sub = <div className="sub">저장해도 매도 주문은 만들지 않습니다. 예상 손절가에 닿으면 텔레그램으로 알림만 보냅니다. 이 저장은 안전장치 저장과 별개입니다.</div>;
   const errs = p.check.errs;
   if (p.saveState === 'saving') {
     return (
@@ -84,7 +84,7 @@ function SaveBar(p: SettingsFormProps) {
         <div className="msg" role="status">
           <StatusText kind="ok" icon="✓">저장됨 {p.savedAtText}</StatusText> 서버 확정값(버전 {p.saved.version})으로 갱신했습니다.
         </div>
-        <div className="sub">매도 주문·알림은 만들지 않았습니다.</div>
+        <div className="sub">매도 주문은 만들지 않았습니다. 바뀐 손절가로 첫 확인 때는 알림 없이 기준만 새로 맞추고, 그다음부터 새 손절가에 닿으면 알립니다.</div>
       </div>
     );
   }

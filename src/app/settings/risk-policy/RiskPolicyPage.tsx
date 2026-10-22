@@ -4,7 +4,8 @@
  * T-066 — 설정 > 리스크 정책 (/settings/risk-policy). 승인 데모 v3 구조 A 의 '리스크 정책 화면'.
  *
  * 손절폭·손실 손절 합 한도·손절 기준가 3개를 여기서만 바꾸고, 보유 종목의 예상 손절가·손절 합을
- * 입력 즉시(저장 전 값으로) 계산해 보인다. 표시·위험 계산 전용 — 주문·매도·알림을 만들지 않는다.
+ * 입력 즉시(저장 전 값으로) 계산해 보인다. 표시·위험 계산 전용 — 주문·매도를 만들지 않는다.
+ * (T-068 데모 v5) 손절가 도달 텔레그램 알림은 별도 cron 이 보낸다 — 이 화면은 그 규칙 안내·예시만 보인다(상태·토글 없음).
  * 저장은 이 화면의 저장 바 하나(안전장치 저장과 별개): 낙관적 반영 → 서버 확정 / 실패 되돌림 / 409 선택.
  * 상태 전이 판정은 `components/risk/policy-state.ts` 의 순수 함수가 맡는다(단위 시험 대상).
  */
@@ -19,6 +20,7 @@ import { RiskSettingsForm } from '@/components/risk/RiskSettingsForm';
 import { BelowBox, RiskResult } from '@/components/risk/RiskResult';
 import { HoldingsStops } from '@/components/risk/HoldingsStops';
 import { ReadOnlyPolicyTable } from '@/components/risk/ReadOnlyPolicyTable';
+import { StopAlertNotice } from '@/components/risk/StopAlertNotice';
 import { FreshLine } from '@/components/risk/FreshLine';
 import { useRiskPolicyFeed, type RiskPolicyFeed } from '@/components/risk/useRiskPolicyFeed';
 import { checkDraft, dirtyCount, type Draft } from '@/components/risk/draft';
@@ -98,7 +100,7 @@ export function RiskPolicyPage() {
         <DisplayOnlyBadge />
       </div>
       <div className="strip">
-        <span>이 정책은 <b>아직 주문을 막지 않습니다</b>. 예상 손절가는 계산·표시용이고 <b>자동으로 팔지 않습니다</b>.</span>
+        <span>이 정책은 <b>아직 주문을 막지 않습니다</b>. 예상 손절가는 계산·표시·알림용이고 <b>자동으로 팔지 않습니다</b>.</span>
       </div>
       <main className="app-body">
         <RiskBody
@@ -171,17 +173,19 @@ export function RiskBody(p: BodyProps) {
         )}
         <BelowBox c={c} />
         <RiskResult c={c} eff={p.check.eff} tag={tag} usedFallback={p.check.usedFallback} />
+        <StopAlertNotice c={c} eff={p.check.eff} />
         <div className="infobox" role="note">
           <span className="ic" aria-hidden="true">ⓘ</span>
           <div>
-            예상 손절가는 <b>표시·위험 계산용</b>입니다. 자동 청산 엔진(지금 {data.exitEngine.enabled ? 'ON' : 'OFF'}, 기본 하드 손절 {EXIT_ENGINE_DEFAULT_HARD_STOP_PCT}%)의 값과 별개이며,
+            예상 손절가는 <b>표시·위험 계산·알림용</b>입니다. 자동 청산 엔진(지금 {data.exitEngine.enabled ? 'ON' : 'OFF'}, 기본 하드 손절 {EXIT_ENGINE_DEFAULT_HARD_STOP_PCT}%)의 값과 별개이며,
             {data.exitEngine.enabled ? ' 엔진이 이 손절가보다 먼저 팔 수 있습니다.' : ' 엔진을 켜면 이 손절가보다 먼저 팔릴 수 있습니다.'} 이 화면은 주문을 만들지 않습니다.
+            <br /><b>손절가 도달 알림은 엔진과 별개라, 엔진이 꺼져 있어도 옵니다.</b>
           </div>
         </div>
       </div>
       <div className="rk-col">
         <HoldingsStops c={c} eff={p.check.eff} fx={snap?.fx ?? null} />
-        <ReadOnlyPolicyTable c={c} ro={data.readOnly} sources={data.sources} />
+        <ReadOnlyPolicyTable c={c} ro={data.readOnly} sources={data.sources} exec={data.execution} />
       </div>
     </div>
   );

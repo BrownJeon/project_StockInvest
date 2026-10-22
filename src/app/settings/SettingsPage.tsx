@@ -447,7 +447,7 @@ export function SettingsPage() {
       <SectionHeader title="안전장치 (공통)" />
       <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
 
-        {/* T-066 — 이 카드는 실제 주문에 적용된다(집행 중). 아래 '리스크 정책' 행은 표시·위험 계산 전용이라 구분한다. */}
+        {/* T-066 — 이 카드는 실제 주문에 적용된다(집행 중). 아래 '리스크 정책' 행은 표시·위험 계산·알림(주문·매도 없음)이라 구분한다. */}
         <EnforcedStrip />
 
         {/* 실거래 여부 toggle (내부 dryRun 의미를 반전해 노출) */}

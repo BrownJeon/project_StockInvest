@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { RiskComputed } from '@/lib/risk/compute';
-import type { PolicySource, RiskPolicyReadOnly, RiskPolicySources } from '@/lib/risk/defaults';
+import type { PolicySource, RiskExecutionLimits, RiskPolicyReadOnly, RiskPolicySources } from '@/lib/risk/defaults';
 import { SourceBadge } from './SourceBadge';
 import { StatusText } from './StatusText';
 import { shortSymbol, won } from './fmt';
@@ -21,8 +21,45 @@ function Grp({ t }: { t: string }) {
 
 const na = (t: string) => <StatusText kind="na" icon="—">{t}</StatusText>;
 
-/** 그 밖의 정책 (읽기 전용) — 데모 v3 `roHtml` + 승인 수정(분할 매수 최대 3회) */
-export function ReadOnlyPolicyTable({ c, ro, sources }: { c: RiskComputed; ro: RiskPolicyReadOnly; sources: RiskPolicySources }) {
+/**
+ * 분할 매수 행 '현재 상태' — 실제로 집행 중인 제한 2가지 + 아직 없는 것 1줄 (데모 T-068 v5 `execHtml`).
+ * 초록 '● 집행 중' 배지는 쓰지 않는다(안전장치 카드 전용 표식). 각 값이 정책값과 다르면 그 줄만 '! … 정책과 다름'.
+ */
+export function ExecutionLimits({ policyMax, exec }: { policyMax: number; exec: RiskExecutionLimits }) {
+  const cap = exec.scenarioSplitCap;
+  const dom = exec.domesticMaxBuysPerSymbol24h;
+  const differs = `정책(${policyMax}회)과 다름`;
+  return (
+    <div className="exl">
+      <small>집행 중인 제한</small>
+      <div>
+        {cap === policyMax
+          ? <StatusText kind="info" icon="ⓘ">확정 1회당 조각 최대 {cap}개</StatusText>
+          : <StatusText kind="warn" icon="!">확정 1회당 조각 최대 {cap}개 — {differs}</StatusText>}
+        <small>시나리오 확정 요청마다 서버가 검사 · 시장 무관</small>
+      </div>
+      <div>
+        {dom === null
+          ? <><StatusText kind="na" icon="—">국내 자동 매수 한도 확인 불가</StatusText><small>엔진 설정을 읽지 못했습니다</small></>
+          : <>
+              {dom === policyMax
+                ? <StatusText kind="info" icon="ⓘ">국내 자동 매수 같은 종목 24시간 내 {dom}건</StatusText>
+                : <StatusText kind="warn" icon="!">국내 자동 매수 같은 종목 24시간 내 {dom}건 — {differs}</StatusText>}
+              <small>국내 룰 엔진만 · 체결·접수된 매수 주문 수</small>
+            </>}
+      </div>
+      <small>여러 번에 나눠 확정하는 누적 횟수는 아직 제한이 없습니다(후속 결정).</small>
+    </div>
+  );
+}
+
+/** 그 밖의 정책 (읽기 전용) — 데모 v3 `roHtml` + T-068 v5(현금 비중 정보 표시 · 분할 최대 4회 + 집행 중인 제한) */
+export function ReadOnlyPolicyTable({ c, ro, sources, exec }: {
+  c: RiskComputed;
+  ro: RiskPolicyReadOnly;
+  sources: RiskPolicySources;
+  exec: RiskExecutionLimits;
+}) {
   const t = c.totalKrw;
   const known = t > 0;
   const amt = (pct: number) => (known ? `≈${won(t * Math.abs(pct) / 100)}` : '총자산 미확인');
@@ -61,15 +98,14 @@ export function ReadOnlyPolicyTable({ c, ro, sources }: { c: RiskComputed; ro: R
               : comp.topPct > ro.symbolMaxPct
                 ? <StatusText kind="warn" icon="!">초과 — {shortSymbol(comp.topSymbol)} {comp.topPct.toFixed(1)}%</StatusText>
                 : <StatusText kind="ok" icon="✓">최대 {comp.topPct.toFixed(1)}%</StatusText>} />
-          <Row name="현금 하한" source={sources.cashFloorPct}
-            value={<>총자산의 {ro.cashFloorPct}%<small>{amt(ro.cashFloorPct)}</small></>}
+          {/* T-068 — 현금은 규칙이 아니라 정보: 경고 기호·'미달'·초록 ✓ 없이 중립 숫자만 */}
+          <Row name="현금 비중 (정보 표시, 하한 없음)" source={sources.cashFloorPct}
+            value={<>하한 없음<small>규칙 아님 · 표시만</small></>}
             cur={comp.cashPct === null ? na('미산출')
-              : comp.cashPct < ro.cashFloorPct
-                ? <StatusText kind="warn" icon="!">미달 — {comp.cashPct.toFixed(1)}%</StatusText>
-                : <StatusText kind="ok" icon="✓">{comp.cashPct.toFixed(1)}%</StatusText>} />
+              : <><span className="num" style={{ fontWeight: 700 }}>{comp.cashPct.toFixed(1)}%</span><small>총자산 대비 현금</small></>} />
           <Row name="분할 매수" source={sources.splitBuy}
-            value={<>최대 {ro.splitBuy.max}회<small>{ro.splitBuy.ratio.join(' / ')} (비율은 제안)</small></>}
-            cur={na('신규 진입 때 적용')} />
+            value={<>최대 {ro.splitBuy.max}회<small>비율 고정 없음 · 구간·수량은 시나리오에서 정함</small></>}
+            cur={<ExecutionLimits policyMax={ro.splitBuy.max} exec={exec} />} />
           <Grp t="시장" />
           <Row name="시장 우선순위" source={sources.marketPriority}
             value={<>{prio}</>}

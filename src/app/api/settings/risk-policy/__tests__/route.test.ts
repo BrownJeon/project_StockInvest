@@ -4,6 +4,8 @@
  *
  * 확인: 정책 없음(null)과 조회 오류 구분 · 첫 저장/갱신 · 검증 오류 400 · 409(버전 불일치·INSERT 경합·UPDATE 경합) ·
  *       소수 2자리 반올림 · history 20건 상한 · **저장 JSON 에 읽기 전용 값이 없음** · 쓰기는 system_config.risk_policy 뿐.
+ * T-068 WP-A: 현금 하한 null(정보 표시) · 분할 최대 4회(비율 없음) · `execution`(확정 1회당 조각 상한 = MAX_SCENARIO_SPLITS,
+ *       국내 자동 매수 한도 = 엔진과 같은 판독기 getStyleConfig 의 maxPositionsPerSymbol, 판독 실패 → null).
  */
 import type { NextRequest } from 'next/server';
 
@@ -60,8 +62,15 @@ jest.mock('@/lib/db', () => ({
 jest.mock('@/lib/strategy/exit-switch', () => ({
   readExitEngineSwitch: async () => ({ enabled: false, hardStopEnabled: true, source: 'config', raw: null }),
 }));
+/** 엔진과 같은 스타일 판독기 — 시험마다 반환값/예외를 바꾼다(실제 판독기는 DB 를 읽으므로 가짜 DB 와 분리) */
+const style: { impl: () => Promise<{ maxPositionsPerSymbol: unknown }> } = { impl: async () => ({ maxPositionsPerSymbol: 4 }) };
+const styleCalls = { n: 0 };
+jest.mock('@/lib/strategy/style', () => ({
+  getStyleConfig: () => { styleCalls.n++; return style.impl(); },
+}));
 
 import { GET, PUT } from '@/app/api/settings/risk-policy/route';
+import { MAX_SCENARIO_SPLITS } from '@/lib/safety/scenario-confirm-fields';
 
 const FX = 1250;
 function seedPortfolio(ageMs = 10 * 60 * 1000) {
@@ -96,6 +105,8 @@ const writes = () => sqlLog.filter(l => /^\s*(INSERT|UPDATE|DELETE|REPLACE|ALTER
 beforeEach(() => {
   db.policy = null; db.failSelectPolicy = false; db.hidePolicyOnce = false; db.bumpBeforeUpdate = false;
   sqlLog.length = 0;
+  style.impl = async () => ({ maxPositionsPerSymbol: 4 });
+  styleCalls.n = 0;
   seedPortfolio();
 });
 
@@ -117,9 +128,12 @@ describe('GET', () => {
     expect(d.enforcement).toBe('display_only');
     expect(d.policy).toBeNull();
     expect(d.defaults).toEqual({ stopPct: 3, heatCapPct: 2, stopBasis: 'avg' });
-    expect(d.readOnly.splitBuy).toEqual({ max: 3, ratio: [40, 30, 30] });
+    expect(d.readOnly.splitBuy).toEqual({ max: 4 }); // T-068: 4회 · 비율 고정 없음
+    expect(d.readOnly.cashFloorPct).toBeNull(); // T-068: 현금 하한 규칙 없음(정보 표시)
     expect(d.readOnly.maxHoldings).toBe(10);
     expect(d.sources.splitBuy).toBe('user');
+    expect(d.sources.cashFloorPct).toBe('user');
+    expect(d.execution).toEqual({ scenarioSplitCap: 4, domesticMaxBuysPerSymbol24h: 4 });
     expect(d.snapshot).toMatchObject({ stale: false, totalKrw: 20_000_000, cashKrw: 600_000, fx: FX });
     expect(d.holdings).toHaveLength(5);
     expect(d.holdings[0]).toEqual({ symbol: 'NAS:AAA', market: 'overseas', qty: 80, priceKrw: 155_000, avgKrw: 165_000, peakKrw: 175_000 });
@@ -187,6 +201,41 @@ describe('GET', () => {
   });
 });
 
+describe('GET — execution (분할 매수 집행 값, T-068 WP-A)', () => {
+  test('확정 1회당 조각 상한은 확정 검증기의 상수 그대로', async () => {
+    const d = (await json(await GET())).data;
+    expect(d.execution.scenarioSplitCap).toBe(MAX_SCENARIO_SPLITS);
+    expect(styleCalls.n).toBe(1); // 엔진 판독기를 한 번 부른다
+  });
+
+  test('국내 한도는 판독기 값(DB 덮어쓰기 5 반영)을 그대로 — 화면이 "정책과 다름"을 보일 수 있게', async () => {
+    style.impl = async () => ({ maxPositionsPerSymbol: 5 });
+    const d = (await json(await GET())).data;
+    expect(d.execution).toEqual({ scenarioSplitCap: 4, domesticMaxBuysPerSymbol24h: 5 });
+  });
+
+  test.each([
+    ['판독기 예외', async () => { throw new Error('boom'); }],
+    ['정수가 아님', async () => ({ maxPositionsPerSymbol: 4.5 })],
+    ['숫자가 아님', async () => ({ maxPositionsPerSymbol: '4' })],
+    ['0 이하', async () => ({ maxPositionsPerSymbol: 0 })],
+  ] as [string, () => Promise<{ maxPositionsPerSymbol: unknown }>][])('%s → 국내 한도 null, 화면 전체는 200', async (_n, impl) => {
+    style.impl = impl;
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const d = (await json(res)).data;
+    expect(d.execution).toEqual({ scenarioSplitCap: 4, domesticMaxBuysPerSymbol24h: null });
+    expect(d.computed.heatPct.toFixed(2)).toBe('3.36');
+  });
+
+  test('409 응답에도 execution 이 있다(화면이 같은 데이터로 다시 그린다)', async () => {
+    await put({ stopPct: 3, heatCapPct: 2, stopBasis: 'avg', baseVersion: 0 });
+    const b = await json(await put({ stopPct: 4, heatCapPct: 2, stopBasis: 'avg', baseVersion: 0 }));
+    expect(b.code).toBe('conflict');
+    expect(b.data.execution).toEqual({ scenarioSplitCap: 4, domesticMaxBuysPerSymbol24h: 4 });
+  });
+});
+
 describe('PUT — 저장', () => {
   test('첫 저장(baseVersion 0) → version 1 · 저장 JSON 에는 편집 3값·version·updatedAt·history 만', async () => {
     const res = await put({ stopPct: 3, heatCapPct: 2, stopBasis: 'avg', baseVersion: 0 });
@@ -194,7 +243,8 @@ describe('PUT — 저장', () => {
     const b = await json(res);
     expect(b.ok).toBe(true);
     expect(b.data.policy).toMatchObject({ version: 1, stopPct: 3, heatCapPct: 2, stopBasis: 'avg' });
-    expect(b.data.policy.readOnly.splitBuy.max).toBe(3); // 응답에는 상수에서 채움
+    expect(b.data.policy.readOnly.splitBuy.max).toBe(4); // 응답에는 상수에서 채움
+    expect(b.data.execution).toEqual({ scenarioSplitCap: 4, domesticMaxBuysPerSymbol24h: 4 });
     const s = stored();
     expect(Object.keys(s).sort()).toEqual(['heatCapPct', 'history', 'stopBasis', 'stopPct', 'updatedAt', 'version']);
     expect(s).not.toHaveProperty('readOnly');
