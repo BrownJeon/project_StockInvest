@@ -6,6 +6,10 @@
  *  2. 장중 여부 확인 (국내 09:00~15:30 KST) — 장외이면 즉시 종료
  *  3. approved_pending_entry 상태 시그널 전체 조회
  *  4. 각 시그널: price_zone 파싱 → KIS 현재가 조회 → 구간 내이면 submitOrder 호출
+ *  3-1. 🔴 T-072 G5 — 매수 행은 시세 조회·현금 점검·선점 **전에** 검증 상태 관문(그 행의 strategy_id). 결정적 차단(귀속 없음·미등록·
+ *       미검증·상태 이상)이면 조건부 UPDATE 로 `superseded` 종결 + trade_logs `signal_validation_gate`(행당 1회) — 선점·주문·포지션 기록 0,
+ *       매 분 재시도·경고 알림 없음. 조회 실패(일시 장애)면 이번 틱만 건너뛴다(행 유지·알림 없음). 매도 행(정규화 후 정확히 'sell')은
+ *       관문 함수가 strategies 조회 없이 통과시킨다(WP-2c — 판정은 관문 함수 첫 줄에만 둔다).
  *  4-1. 국내 매수는 선점 전에 가용 현금 사전 점검(T-051) — 모자라면 선점·주문 없이 이번 틱을 건너뛰고(시그널당 하루 1회 알림),
  *       잔고를 모르면(조회 실패·8초 초과) 기존 경로
  *  5. 구간 도달 → **주문 직전에 조건부 UPDATE 로 executing 선점**(T-043) — 이긴 쪽만 submitOrder 호출
@@ -31,6 +35,8 @@ import { sendAlertThrottled } from '@/lib/notify/throttle';
 import {
   ENTRY_CASH_BUFFER_RATIO, effectiveEntryQuantity, judgeEntryCash, readDomesticAvailableCashKRW,
 } from '@/lib/signals/entry-cash-precheck';
+import { evaluateValidationGate } from '@/lib/safety/validation-gate';
+import { recordValidationGateEvent } from '@/lib/signals/paper-fill';
 
 /** T-051 — 현금 부족 알림·감사 기록 창(시그널당). 프로세스 로컬 스로틀이라 재시작하면 초기화된다(재시작 직후 한 번 더 나갈 수 있다). */
 const CASH_SHORT_ALERT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -73,6 +79,8 @@ export const dynamic = 'force-dynamic';
 
 interface PendingEntryRow {
   id: number;
+  /** T-072 — 검증 상태 관문(G5)·submitOrder 귀속(G6)의 판정 근거. custom/confirm 행은 NULL */
+  strategy_id: string | null;
   symbol: string;
   side: 'buy' | 'sell';
   order_type: 'limit' | 'market';
@@ -97,7 +105,12 @@ interface WatchResult {
     /** T-043 — 주문 직전 선점에 지지 않았다(다른 실행이 먼저 가져갔거나 그 사이 만료). 주문하지 않았다 */
     | 'claim_lost'
     /** T-051 — 국내 매수의 예상 비용이 가용 현금보다 커서 선점·주문 없이 건너뛰었다. 시그널은 계속 감시된다 */
-    | 'cash_insufficient';
+    | 'cash_insufficient'
+    /**
+     * T-072 G5 — 매수인데 귀속 전략이 검증 상태가 아니다. 선점·주문 없음. 결정적 차단이면 행을 `superseded` 로 종결했고,
+     * 조회 실패(일시 장애)면 행을 그대로 두고 이번 틱만 건너뛰었다(detail 에 구분).
+     */
+    | 'validation_blocked';
   detail?: string;
 }
 
@@ -206,7 +219,7 @@ export async function POST(req: NextRequest) {
 
   // approved_pending_entry 상태 시그널 조회 — valid_from 미래인 것은 제외 (익일 시나리오 사전 등록 대응)
   const [rows] = await pool.query<(RowDataPacket & PendingEntryRow)[]>(
-    `SELECT id, symbol, side, order_type, price, quantity, amount_krw,
+    `SELECT id, strategy_id, symbol, side, order_type, price, quantity, amount_krw,
             indicators, reasoning, expires_at, market
      FROM signals
      WHERE status = 'approved_pending_entry'
@@ -246,6 +259,45 @@ export async function POST(req: NextRequest) {
         console.error(`[entry-watcher] expire update failed signal=${signalId}:`, e);
         results.push({ signalId, symbol: row.symbol, outcome: 'expired', detail: `expire update failed: ${e instanceof Error ? e.message : String(e)}` });
       }
+      continue;
+    }
+
+    // 🔴 T-072 G5 — 검증 상태 관문. side 판정은 관문 함수의 첫 줄이 한다(WP-2c R-1 — 여기서 `=== 'buy'` 로 거르지 않는다).
+    //    매도 행(정규화 후 정확히 'sell')은 strategies 조회 없이 통과하고(보호 청산), 그 밖의 행은 매수로 보고 그 행의 strategy_id 로
+    //    판정한다. 시세 조회·T-051 현금 점검·T-043 선점·submitOrder **전에** 끝낸다.
+    //    submitOrder(G6)에만 맡기면 막힌 주문을 "확정 거부"로 보고 선점을 되돌려 매 분 다시 선점·주문 → orders blocked 행 + 스로틀 없는
+    //    경고 알림이 반복된다(Stage 0 C — T-051 이 없앤 실패 모드와 같다). 그래서 여기서 행을 끝낸다.
+    const vg = await evaluateValidationGate({ side: row.side, strategyId: row.strategy_id });
+    if (!vg.allowed) {
+      if (vg.reason === 'lookup_error') {
+        // 일시 장애(DB·마이그레이션 전) — 판정할 수 없을 뿐 막는다. 검증된 전략의 승인 행일 수도 있어 일시 오류로 **종결하지 않는다**:
+        // 이번 틱만 건너뛰고(선점·주문·알림 없음) 다음 틱에 다시 판정한다.
+        console.warn(`[entry-watcher] VALIDATION_LOOKUP_ERROR signal=${signalId} ${row.symbol} strategy=${row.strategy_id ?? '-'} — 선점·주문 없이 이번 틱 건너뜀: ${vg.detail ?? ''}`);
+        results.push({ signalId, symbol: row.symbol, outcome: 'validation_blocked', detail: `lookup_error — 행 유지: ${vg.detail ?? ''}` });
+        continue;
+      }
+      // 결정적 차단(귀속 없음·미등록·미검증·상태 이상) — 조건부 UPDATE 로 종결한다. 다른 실행이 방금 선점·종결한 행은 덮지 않는다.
+      let closed = false;
+      try {
+        const [res] = await pool.query<ResultSetHeader>(
+          `UPDATE signals SET status='superseded', updated_at=NOW() WHERE id=? AND status='approved_pending_entry'`,
+          [signalId],
+        );
+        closed = res.affectedRows === 1;
+      } catch (e) {
+        console.error(`[entry-watcher] 검증 관문 종결 UPDATE 실패 signal=${signalId}(선점·주문 없음, 다음 틱 재판정):`, e instanceof Error ? e.message : String(e));
+      }
+      // 감사 흔적은 종결에 성공한 실행만 남긴다(행당 1회 — 매 분 쌓지 않는다).
+      if (closed) {
+        await recordValidationGateEvent({
+          where: 'entry-watcher', signalId, strategyId: vg.strategyId, symbol: row.symbol, side: 'buy', reason: vg.reason,
+        });
+      }
+      console.warn(`[entry-watcher] VALIDATION_GATE signal=${signalId} ${row.symbol} side=${JSON.stringify(row.side)} strategy=${vg.strategyId ?? '-'} reason=${vg.reason} — ${closed ? 'superseded 로 종결' : '종결 대상 아님(다른 실행이 처리했거나 상태 변경)'}, 선점·주문 없음`);
+      results.push({
+        signalId, symbol: row.symbol, outcome: 'validation_blocked',
+        detail: `${vg.reason}${closed ? ' → superseded' : ' — 종결 대상 아님'}`,
+      });
       continue;
     }
 
@@ -440,6 +492,8 @@ export async function POST(req: NextRequest) {
       orderResult = await submitOrder(orderReq, kis.createOrder, {
         assetClass: 'stock',
         source: 'auto',
+        // T-072 — 전략 귀속(G6). 이 행의 전략 그대로 — 위 G5 가 같은 값으로 판정했다.
+        attribution: { kind: 'strategy', strategyId: row.strategy_id ?? null, signalId },
       });
     } catch (e) {
       // submitOrder 가 **던졌다**. 송신 이후의 예외는 submitOrder 가 `outcomeUnknown` 결과로 돌려주므로(T-042) 여기는 송신 전 실패다
@@ -582,13 +636,15 @@ export async function POST(req: NextRequest) {
   const claimLost = results.filter(r => r.outcome === 'claim_lost').length;
   const uncertain = results.filter(r => r.outcome === 'order_uncertain').length;
   const cashShort = results.filter(r => r.outcome === 'cash_insufficient').length;
+  const validationBlocked = results.filter(r => r.outcome === 'validation_blocked').length;
   console.log(
     `[cron/entry-watcher] total=${rows.length} submitted=${submitted} expired=${expired} ` +
     `out_of_zone=${results.filter(r => r.outcome === 'out_of_zone').length} blocked_prior=${blocked}` +
     (belowMin > 0 ? ` below_min_qty=${belowMin}` : '') +
     (claimLost > 0 ? ` claim_lost=${claimLost}` : '') +
     (uncertain > 0 ? ` order_uncertain=${uncertain}` : '') +
-    (cashShort > 0 ? ` cash_insufficient=${cashShort}` : ''),
+    (cashShort > 0 ? ` cash_insufficient=${cashShort}` : '') +
+    (validationBlocked > 0 ? ` validation_blocked=${validationBlocked}` : ''),
   );
 
   return NextResponse.json({ ok: true, processed: rows.length, results });

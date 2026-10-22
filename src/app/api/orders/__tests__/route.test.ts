@@ -183,3 +183,37 @@ describe('POST /api/orders — 비-number 수치 필드 런타임 가드 (T-027)
     expect(submitOrder).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('🔴 T-072 F-1 — 직접 주문은 전략 귀속이 없다(매수는 G6 가 막는다)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test.each([undefined, 'manual', 'signal', 'auto'])('source=%s 여도 attribution 은 {strategy, null, null} — 클라이언트가 고르는 source 는 판정 근거가 아니다', async (source) => {
+    await POST(req({ symbol: '005930', side: 'buy', type: 'limit', price: 70000, quantity: 1, ...(source ? { source } : {}) }));
+    expect(submitOrder).toHaveBeenCalledTimes(1);
+    expect((submitOrder as jest.Mock).mock.calls[0][2]).toMatchObject({
+      attribution: { kind: 'strategy', strategyId: null, signalId: null },
+    });
+  });
+
+  test('본문에 strategyId 같은 필드를 넣어도 귀속으로 쓰지 않는다', async () => {
+    await POST(req({ symbol: '005930', side: 'buy', type: 'limit', price: 70000, quantity: 1, strategyId: 'validated-v1', attribution: { kind: 'strategy', strategyId: 'validated-v1' } }));
+    expect((submitOrder as jest.Mock).mock.calls[0][2].attribution).toEqual({ kind: 'strategy', strategyId: null, signalId: null });
+  });
+});
+
+describe('🔴 T-072 WP-2d — side 정규화: 변형은 정확한 값으로, buy/sell 이 아니면 400 + 한국어', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test.each([['BUY', 'buy'], ['Buy', 'buy'], ['buy ', 'buy'], ['SELL', 'sell'], [' sell ', 'sell']])('side=%p → submitOrder 에 정확히 %p', async (raw, norm) => {
+    await POST(req({ symbol: '005930', side: raw, type: 'limit', price: 70000, quantity: 1 }));
+    expect(submitOrder).toHaveBeenCalledTimes(1);
+    expect((submitOrder as jest.Mock).mock.calls[0][0].side).toBe(norm);
+  });
+
+  test.each([['purchase'], ['   '], [123], [['sell']]])('side=%p → 400 + 한국어, submitOrder 미호출', async (raw) => {
+    const res = await POST(req({ symbol: '005930', side: raw, type: 'limit', price: 70000, quantity: 1 }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: '주문 방향은 buy 또는 sell 이어야 합니다 (대소문자·앞뒤 공백은 허용)' });
+    expect(submitOrder).not.toHaveBeenCalled();
+  });
+});

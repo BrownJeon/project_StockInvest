@@ -12,6 +12,7 @@ import { getPool } from '@/lib/db';
 import {
   COOLDOWN_TTL_MIN,
   CooldownSet,
+  claimCooldown,
   loadActiveCooldowns,
   pruneExpiredCooldowns,
   setCooldown,
@@ -166,6 +167,82 @@ describe('setCooldown — 키 정규화 (NULL 금지)', () => {
 
   test('사람 거부 TTL 은 시그널 생성 TTL 보다 길다', () => {
     expect(COOLDOWN_TTL_MIN.entryRejected).toBeGreaterThan(COOLDOWN_TTL_MIN.entry);
+  });
+});
+
+/**
+ * T-072 F-16 — 원자적 선점. 실제 MariaDB(mysql2 기본 FOUND_ROWS) 동작은 `signals/__tests__/t072-disposable-mariadb.test.ts` 가
+ * 일회용 컨테이너에서 실증한다. 여기서는 SQL 모양과 affectedRows 해석을 고정한다.
+ */
+describe('claimCooldown — 원자적 선점 (T-072 F-16)', () => {
+  function claimPool(insAffected: number | Error, updAffected: number | Error = 0) {
+    const captured: Captured[] = [];
+    const query = jest.fn(async (sqlArg: unknown, paramsArg: unknown[] = []) => {
+      const sql = String(sqlArg);
+      captured.push({ sql, params: paramsArg ?? [] });
+      if (/^\s*INSERT IGNORE INTO cooldowns/i.test(sql)) {
+        if (insAffected instanceof Error) throw insAffected;
+        return [{ affectedRows: insAffected, insertId: insAffected ? 1 : 0 }];
+      }
+      if (/^\s*UPDATE cooldowns/i.test(sql)) {
+        if (updAffected instanceof Error) throw updAffected;
+        return [{ affectedRows: updAffected }];
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    });
+    (getPool as jest.Mock).mockReturnValue({ query });
+    return captured;
+  }
+  const key = { scope: 'entry' as const, symbol: 'NAS:MU', strategyId: 'rsi-oversold-v1', side: 'buy' as const };
+  let warn: jest.SpyInstance;
+  beforeEach(() => { warn = jest.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => warn.mockRestore());
+
+  test('행 없음 → INSERT IGNORE 1행 = 선점(inserted), UPDATE 하지 않는다', async () => {
+    const cap = claimPool(1);
+    await expect(claimCooldown(key, COOLDOWN_TTL_MIN.entry, 'validation_gate')).resolves.toEqual({ claimed: true, outcome: 'inserted' });
+    expect(cap).toHaveLength(1);
+    expect(cap[0].params).toEqual(['entry', 'NAS:MU', 'rsi-oversold-v1', 'buy', '', 120, 'validation_gate']);
+  });
+
+  test('만료된 행 → INSERT 0 · 조건부 UPDATE 1 = 선점(reclaimed)', async () => {
+    const cap = claimPool(0, 1);
+    await expect(claimCooldown(key, 120)).resolves.toEqual({ claimed: true, outcome: 'reclaimed' });
+    expect(cap).toHaveLength(2);
+    const upd = cap[1];
+    expect(upd.sql).toMatch(/`until`\s*<=\s*NOW\(\)/);                       // 유효한 쿨다운은 건드리지 않는다
+    expect(upd.sql).toMatch(/WHERE scope = \? AND symbol = \? AND strategy_id = \? AND side = \? AND exit_kind = \?/);
+    expect(upd.params).toEqual([120, null, 'entry', 'NAS:MU', 'rsi-oversold-v1', 'buy', '']);
+  });
+
+  test('🔴 유효한 쿨다운이 있다 → INSERT 0 · UPDATE 0 = 선점 실패(active)', async () => {
+    claimPool(0, 0);
+    await expect(claimCooldown(key, 120)).resolves.toEqual({ claimed: false, outcome: 'active' });
+  });
+
+  test('🔴 affectedRows 가 1 이 아닌 값(undefined·2)은 선점으로 보지 않는다', async () => {
+    claimPool(2, 2);
+    expect((await claimCooldown(key, 120)).claimed).toBe(false);
+  });
+
+  test('DB 오류 → 던지지 않고 선점 실패(error)', async () => {
+    claimPool(new Error('db down'));
+    await expect(claimCooldown(key, 120)).resolves.toMatchObject({ claimed: false, outcome: 'error', error: 'db down' });
+    claimPool(0, new Error('lock wait'));
+    await expect(claimCooldown(key, 120)).resolves.toMatchObject({ claimed: false, outcome: 'error' });
+  });
+
+  test('🔴 ON DUPLICATE KEY UPDATE 로 판단하지 않는다 (FOUND_ROWS 에서 "삽입"과 "변경 없음"이 둘 다 1)', async () => {
+    const cap = claimPool(0, 0);
+    await claimCooldown(key, 120);
+    for (const c of cap) expect(c.sql).not.toMatch(/ON DUPLICATE KEY/i);
+  });
+
+  test('키 정규화는 setCooldown 과 같다 — rebuy 는 strategy/side 를 빈 문자열로', async () => {
+    const cap = claimPool(1);
+    await claimCooldown({ scope: 'rebuy', symbol: '005930', strategyId: 'x', side: 'buy' }, 30);
+    expect(cap[0].params.slice(0, 5)).toEqual(['rebuy', '005930', '', '', '']);
+    expect(cap[0].params[5]).toBe(30);
   });
 });
 

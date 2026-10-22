@@ -8,6 +8,7 @@
  *  4. RAG 검색 (당일 뉴스 + 과거 유사 시그널)
  *  5. Claude AI 배치 분석 → 익일 진입 시나리오 판단
  *  6. signals INSERT (valid_from = 다음 거래일 09:00 KST, status = 'pending')
+ *     T-072 G2 — 전략이 검증 상태가 아니면 status = 'skipped'(승인 불가) + 가상 체결(paper_fills, zone_touch_pending).
  */
 import type { Pool, ResultSetHeader } from 'mysql2/promise';
 import { getPool } from '@/lib/db';
@@ -22,6 +23,13 @@ import { oversoldBounceDaily } from './rules/oversold-bounce-daily';
 import type { DailyCandidate } from './rules/eod-high-close';
 import { getStyleConfig } from './style';
 import { sizeOrderQuantity } from '@/lib/signals/service';
+import { evaluateValidationGate, type ValidationGateVerdict } from '@/lib/safety/validation-gate';
+import {
+  VALIDATION_AUDIT_STATUS,
+  insertPaperFill,
+  withValidationGateIndicators,
+  type PaperFillInput,
+} from '@/lib/signals/paper-fill';
 
 export type PostMarketMarket = 'domestic' | 'overseas';
 
@@ -70,6 +78,11 @@ export interface PostMarketResult {
    * 다른 필터(BUY 아님·필수 값 없음·신뢰도 미달)에 먼저 걸린 종목은 여기 세지 않는다. (T-062 — 해외도 같은 정의로 센다.)
    */
   unaffordableSkipped?: number;
+  /**
+   * T-072 G2 — 검증 안 된 전략이라 **승인 불가(`skipped`) 카드로 새로 기록**한 수(가상 체결 대상). `signalsSkipped` 에도 포함되고
+   * `signalsCreated`(승인 가능한 새 카드)에는 들어가지 않는다. 1 이상일 때만 싣는다(0 이면 응답 형태 불변).
+   */
+  validationBlocked?: number;
   /** T-062 — 해외 실행만 싣는다(국내 응답 형태 불변). `ok:false` 이면 분석·저장이 실패한 것이지 "0건"이 아니다. */
   ok?: boolean;
   status?: PostMarketRunStatus;
@@ -193,6 +206,83 @@ export interface ScenarioCardRow {
   market?: PostMarketMarket;
   /** T-062 — 카드 금액(KRW). 없으면 그 시장의 {@link POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET}. */
   amountKrw?: number;
+  /**
+   * T-072 — 막힌 카드의 가상 체결(`paper_fills.zone_lo/hi`)용 진입 구간. **현지 통화**(국내 원 · 해외 USD). INSERT 값에는 쓰지 않는다.
+   */
+  zoneLo?: number | null;
+  zoneHi?: number | null;
+  /**
+   * T-072 — 가상 체결 사이징용 지정가(원화, 지정가 추격 반영) — entry-watcher 가 실제로 쓸 값과 같은 `cardBuysZeroShares` 결과.
+   * 없으면 `price`. INSERT 값에는 쓰지 않는다.
+   */
+  chasedPriceKrw?: number | null;
+}
+
+/**
+ * T-072 G2 — 카드 INSERT 결과.
+ *  - `created`   : 승인 가능한 새 카드(`pending`)
+ *  - `duplicate` : 같은 (종목·방향·valid_from·출처) 카드가 이미 있어 새 행 없음 — **관문에 막혔어도** 새 행이 없으면 이것이다(가상 체결 없음)
+ *  - `blocked`   : 검증 관문에 막혀 **승인 불가(`skipped`) 카드로 새 행을 만들었다** → 그 행 id 로 가상 체결(카드형)
+ */
+export type ScenarioCardInsertOutcome = 'created' | 'duplicate' | 'blocked';
+
+export interface ScenarioCardInsertOptions {
+  /**
+   * 가상 체결 기록을 **미룬다** — 트랜잭션 안에서 부를 때(해외). 주면 막힌 카드의 가상 체결을 여기에 쌓기만 하고, 호출부가 커밋이
+   * 성공한 **뒤에** {@link flushCardPaperFills} 로 기록한다(롤백이면 버린다 → 사라진 카드를 가리키는 고아 행이 없다). 기록은 트랜잭션
+   * 밖 풀 연결이라 가상 체결의 실패·교착이 카드 INSERT·트랜잭션에 닿지 않는다. 주지 않으면(국내 — 자동 커밋 풀) 즉시 기록한다.
+   */
+  deferPaperFills?: PaperFillInput[];
+}
+
+/** 막힌 카드의 indicators 에 관문 표지를 더한다. 원문 JSON 을 해석하지 못하면 **카드 데이터를 지우지 않고** 원문을 그대로 둔다. */
+function markBlockedCardIndicators(indicatorsJson: string, v: Extract<ValidationGateVerdict, { allowed: false }>): string {
+  try {
+    return withValidationGateIndicators(JSON.parse(indicatorsJson), { reason: v.reason, status: v.status, origin: 'post_market' });
+  } catch {
+    console.warn('[post-market] 막힌 카드 indicators 를 해석하지 못해 관문 표지 없이 원문으로 기록(상태는 skipped)');
+    return indicatorsJson;
+  }
+}
+
+/** 막힌 카드 1장의 가상 체결(카드형 `zone_touch_pending`). 체결 여부는 평가 단계가 valid_from~valid_until 일봉 고저와 구간으로 판정한다. */
+function cardPaperFill(
+  cardId: number,
+  row: ScenarioCardRow,
+  market: PostMarketMarket,
+  amountKrw: number,
+  v: Extract<ValidationGateVerdict, { allowed: false }>,
+): PaperFillInput {
+  const limitPriceKrw = row.chasedPriceKrw != null && row.chasedPriceKrw > 0 ? row.chasedPriceKrw : row.price;
+  // entry-watcher 가 구간 도달 시 쓸 사이징과 같은 함수·같은 입력(카드 금액 ÷ 추격 반영 지정가, 정수 주)
+  const sized = sizeOrderQuantity({ market, orderType: 'limit', amountKRW: amountKrw, price: limitPriceKrw });
+  return {
+    signalId: cardId,
+    strategyId: row.strategyId,
+    gateReason: v.reason,
+    origin: 'post_market',
+    symbol: row.symbol,
+    orderType: 'limit',
+    limitPriceKrw,
+    quantity: sized.quantity ?? null,
+    amountKrw,
+    fillModel: 'zone_touch_pending',
+    zoneLo: row.zoneLo ?? null,
+    zoneHi: row.zoneHi ?? null,
+    // 카드 행과 **같은 KST 문자열**을 그대로 넣는다
+    validFrom: row.validFrom,
+    validUntil: row.expiresAt,
+  };
+}
+
+/** 미뤄 둔 카드 가상 체결을 기록한다(커밋 뒤). 던지지 않는다(`insertPaperFill` 이 삼킨다). 새로 생긴 행 수를 돌려준다. */
+export async function flushCardPaperFills(fills: readonly PaperFillInput[]): Promise<number> {
+  let inserted = 0;
+  for (const f of fills) {
+    const r = await insertPaperFill(f);
+    if (r.inserted) inserted++;
+  }
+  return inserted;
 }
 
 /**
@@ -209,21 +299,36 @@ export interface ScenarioCardRow {
  * 정한다(국내 6자리 / 해외 `NAS:AAPL`) — 국내·해외 카드가 같은 키를 가질 수 없다(Stage 0 ⑥, DDL 실측).
  * `pool` 은 풀이든 트랜잭션 연결이든 `query` 만 있으면 된다(해외는 한 실행을 트랜잭션으로 묶는다 — S-3).
  *
- * @returns 'created' | 'duplicate'
+ * 🔴 T-072 G2 — **검증 상태 관문**(국내·해외 공통 진입점). 카드는 늘 매수다. 판정은 INSERT **전**이고 결과에 따라 같은 문장의 상태만
+ * 다르다: 통과 → 승인 가능한 `pending`(기존과 같은 값), 막힘(미검증·미등록·조회 실패 등 fail-closed) → **승인 불가 `skipped`** +
+ * indicators 에 관문 표지. `skipped` 는 어떤 주문 경로(승인·custom/confirm 원 카드 선점·entry-watcher)도 집지 않는다. 중복 방지(NOT EXISTS·
+ * T-048 유니크 인덱스)는 상태와 무관하게 그대로 동작한다. 막힌 카드가 **실제로 새 행이 됐을 때만** 그 행 id 로 가상 체결을 남긴다
+ * (`duplicate` 에는 남기지 않는다). 가상 체결 기록 실패는 삼킨다(카드 INSERT 결과를 바꾸지 않는다).
+ *
+ * @returns {@link ScenarioCardInsertOutcome}
  */
 export async function insertScenarioCardIfAbsent(
   pool: Pick<Pool, 'query'>,
   row: ScenarioCardRow,
-): Promise<'created' | 'duplicate'> {
+  opts: ScenarioCardInsertOptions = {},
+): Promise<ScenarioCardInsertOutcome> {
   const market: PostMarketMarket = row.market ?? 'domestic';
   const amountKrw = row.amountKrw ?? POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET[market];
+
+  // 판정 조회는 `getPool()`(별도 연결, PK 읽기 1회) — 해외 트랜잭션 연결(`pool`)에 끼지 않는다. 던지지 않는다.
+  const vg = await evaluateValidationGate({ side: 'buy', strategyId: row.strategyId });
+  const block = vg.allowed ? null : vg;
+  const status = block ? VALIDATION_AUDIT_STATUS : 'pending';
+  const indicatorsJson = block ? markBlockedCardIndicators(row.indicatorsJson, block) : row.indicatorsJson;
+
   let res: ResultSetHeader;
   try {
+    // T-072 — status 는 관문 결과라 자리표시자가 됐다. 앞 열들의 파라미터 위치를 옮기지 않으려고 **맨 뒤**에 둔다.
     [res] = await pool.query<ResultSetHeader>(
       `INSERT INTO signals
          (strategy_id, symbol, side, order_type, price, amount_krw,
-          reasoning, indicators, status, expires_at, valid_from, market, scenario_source)
-       SELECT ?, ?, 'buy', 'limit', ?, ?, ?, ?, 'pending', ?, ?, ?, 'post-market'
+          reasoning, indicators, expires_at, valid_from, market, scenario_source, status)
+       SELECT ?, ?, 'buy', 'limit', ?, ?, ?, ?, ?, ?, ?, 'post-market', ?
          FROM DUAL
         WHERE NOT EXISTS (
           SELECT 1 FROM signals
@@ -235,10 +340,11 @@ export async function insertScenarioCardIfAbsent(
         row.price,
         amountKrw,
         row.reasoning,
-        row.indicatorsJson,
+        indicatorsJson,
         row.expiresAt,
         row.validFrom,
         market,
+        status,
         row.symbol,
         row.validFrom,
       ],
@@ -247,7 +353,19 @@ export async function insertScenarioCardIfAbsent(
     if (isDuplicateKeyError(e)) return 'duplicate';
     throw e;
   }
-  return res.affectedRows > 0 ? 'created' : 'duplicate';
+  if (!(res.affectedRows > 0)) return 'duplicate';
+  if (!block) return 'created';
+
+  // 막힌 카드가 새 행이 됐다 → 그 행 id 로 가상 체결(카드형). 카드 결과(`blocked`)는 기록 성패와 무관하다.
+  const cardId = Number(res.insertId);
+  if (!(Number.isFinite(cardId) && cardId > 0)) {
+    console.error(`[post-market] 막힌 카드 id 를 알 수 없어 가상 체결을 남기지 못함(카드는 skipped 로 기록됨) ${row.symbol}`);
+    return 'blocked';
+  }
+  const fill = cardPaperFill(cardId, row, market, amountKrw, block);
+  if (opts.deferPaperFills) opts.deferPaperFills.push(fill);
+  else await insertPaperFill(fill);   // 던지지 않는다
+  return 'blocked';
 }
 
 async function loadSymbols(market: PostMarketMarket): Promise<string[]> {
@@ -432,6 +550,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
   let signalsSkipped = 0;
   let duplicatesSkipped = 0;
   let unaffordableSkipped = 0;
+  let validationBlocked = 0;
 
   // T-053 — 실행 경로(entry-watcher)가 쓰는 지정가 추격률. 읽지 못하면 0(추격 없음)으로 판정한다: 그러면 필터가
   // 덜 걸러질 뿐(예전 동작 쪽) 실행 가능한 카드를 잘라내지 않고, 분석 자체를 실패시키지도 않는다.
@@ -463,8 +582,10 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     // T-053 — 1주도 살 수 없는 카드(수량 0)는 만들지 않는다. 승인해도 매 분 quantity_below_min 만 남기고 만료된다.
     // 다른 필터(위)는 그대로 먼저 적용하고, INSERT 직전에 판정한다. 코드에는 카드 개수 제한이 없다(프롬프트의 "최대 5종목"
     // 은 LLM 지시이고, 기준가인 진입 구간은 LLM 응답 뒤에야 생긴다).
+    let chasedPriceKrw: number | undefined;
     if (market === 'domestic') {
       const { zero, chasedPrice } = cardBuysZeroShares(entryMid, chasePct);
+      chasedPriceKrw = chasedPrice;   // T-072 — 막힌 카드의 가상 체결 사이징(실행 경로와 같은 값)
       if (zero) {
         unaffordableSkipped++;
         signalsSkipped++;
@@ -519,11 +640,19 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
         indicatorsJson: JSON.stringify(indicators),
         expiresAt,
         validFrom,
+        zoneLo: d.entry_zone.lo,
+        zoneHi: d.entry_zone.hi,
+        chasedPriceKrw,
       });
       if (outcome === 'duplicate') {
         duplicatesSkipped++;
         signalsSkipped++;
         console.log(`[post-market] ⏭ ${candidate.symbol} valid_from=${validFrom} — 같은 카드가 이미 있어 만들지 않음`);
+      } else if (outcome === 'blocked') {
+        // T-072 G2 — 승인 불가(skipped) 카드 + 가상 체결. 화면('내일'·추천 탭은 pending 만)에 나오지 않는다(F-3, 사용자 고지).
+        validationBlocked++;
+        signalsSkipped++;
+        console.log(`[post-market] 🚫 ${candidate.symbol} ${candidate.pattern} valid_from=${validFrom} — 검증 안 된 전략이라 승인 불가(skipped) 카드로 기록, 가상 체결만 남김`);
       } else {
         signalsCreated++;
         console.log(`[post-market] ✅ ${candidate.symbol} ${candidate.pattern} valid_from=${validFrom} conf=${confidence}%`);
@@ -536,7 +665,8 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
 
   console.log(
     `[post-market] market=${market} evaluated=${symbols.length} candidates=${uniqueCandidates.length} ` +
-    `created=${signalsCreated} skipped=${signalsSkipped} (중복 ${duplicatesSkipped}, 금액 초과 ${unaffordableSkipped}) valid_from=${validFrom}`,
+    `created=${signalsCreated} skipped=${signalsSkipped} (중복 ${duplicatesSkipped}, 금액 초과 ${unaffordableSkipped}` +
+    `${validationBlocked > 0 ? `, 검증 관문 ${validationBlocked}` : ''}) valid_from=${validFrom}`,
   );
 
   return {
@@ -549,5 +679,6 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     validFrom,
     duplicatesSkipped,
     unaffordableSkipped,
+    ...(validationBlocked > 0 ? { validationBlocked } : {}),
   };
 }

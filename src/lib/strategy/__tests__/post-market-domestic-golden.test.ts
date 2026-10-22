@@ -31,6 +31,13 @@ jest.mock('../rules/eod-high-close', () => ({ eodHighClose: jest.fn() }));
 jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
 jest.mock('../rules/oversold-bounce-daily', () => ({ oversoldBounceDaily: jest.fn() }));
 jest.mock('../style', () => ({ getStyleConfig: jest.fn() }));
+// T-072 G2 — 골든은 "검증된 전략이면 국내 경로가 HEAD 7cd47e7 과 바이트 동일"을 고정한다(아래 GOLDEN 리터럴은 그대로).
+//   관문 판정만 '검증됨'으로 고정한다 — 판정 조회가 같은 목 풀을 지나 골든의 poolCalls·inserts 를 바꾸지 않게.
+//   막히는 경우(미검증·미등록 → skipped + 가상 체결)는 post-market-validation-gate.test.ts 가 실제 관문으로 본다.
+jest.mock('@/lib/safety/validation-gate', () => ({
+  ...jest.requireActual('@/lib/safety/validation-gate'),
+  evaluateValidationGate: jest.fn(async ({ strategyId }: { strategyId: string }) => ({ allowed: true, kind: 'validated', strategyId, status: 'backtested' })),
+}));
 
 const mGetPool = getPool as jest.Mock;
 const mCandles = getCandles as jest.Mock;

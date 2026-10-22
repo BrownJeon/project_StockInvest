@@ -107,6 +107,9 @@ describe('sizeOrderQuantity — 정수 주식 수만 만든다', () => {
 
 // ── ② createSignal / approveSignal 통합 ──────────────────────────────────────
 
+/** T-072 — 검증 상태가 backtested 인 전략 (목 DB 의 strategies 행) */
+const VALIDATED_SID = 'validated-v1';
+
 interface Captured {
   queries: Array<{ sql: string; params: unknown[] }>;
   orderInserts: Array<{ quantity: unknown; price: unknown; amount: unknown }>;
@@ -142,6 +145,8 @@ function setupMockDB(signalRow?: Record<string, unknown>): Captured {
     if (/SELECT id FROM signals/i.test(sql)) return [[]];
     if (/UPDATE orders/i.test(sql)) return [{}];
     if (/SUM\(amount_krw\)/i.test(sql)) return [[{ sum_krw: 0 }]];
+    // T-072 — 검증 상태 관문(G1·G6). 이 파일은 사이징 계약을 본다 — 매수 입력은 **검증된 전략**(VALIDATED_SID)으로 둔다.
+    if (/FROM strategies/i.test(sql)) return [params[0] === VALIDATED_SID ? [{ validation_status: 'backtested' }] : []];
     return [[]];
   });
   (getPool as jest.Mock).mockReturnValue({ query });
@@ -174,7 +179,7 @@ describe('createSignal — 사이징이 정수를 만들고, 0주면 주문을 �
   test('국내 지정가: amount/price = 15.29 → 15주 주문 (DB 에도 15)', async () => {
     const cap = setupMockDB();
     const r = await createSignal({
-      symbol: '005930', side: 'buy', orderType: 'limit', price: 6_540, amountKRW: 100_000,
+      strategyId: VALIDATED_SID, symbol: '005930', side: 'buy', orderType: 'limit', price: 6_540, amountKRW: 100_000,
     });
     expect(r.ok).toBe(true);
     expect(cap.orderInserts).toHaveLength(1);
@@ -182,10 +187,22 @@ describe('createSignal — 사이징이 정수를 만들고, 0주면 주문을 �
     expect(Number.isInteger(Number(cap.orderInserts[0].quantity))).toBe(true);
   });
 
+  test('🔴 T-072 WP-2b — 검증된 전략의 자동 제출 매수는 귀속이 전달돼 G6 를 통과하고 DRY_RUN 까지 간다(validation_gate 로 막히지 않는다)', async () => {
+    const cap = setupMockDB();
+    const r = await createSignal({
+      strategyId: VALIDATED_SID, symbol: '005930', side: 'buy', orderType: 'limit', price: 6_540, amountKRW: 100_000,
+    });
+    expect(r).toMatchObject({ ok: true, autoSubmitted: true });
+    expect((r.orderResult as { blockedBy?: string }).blockedBy).toBe('dry_run');
+    // G1(createSignal)·G6(DRY_RUN 앞) 모두 같은 전략으로 조회했다 — G6 가 귀속 없음(null)으로 판정했다면 조회 없이 막혔다
+    const lookups = cap.queries.filter(q => /FROM strategies/i.test(q.sql)).map(q => q.params[0]);
+    expect(lookups).toEqual([VALIDATED_SID, VALIDATED_SID]);
+  });
+
   test('해외 지정가: amount/price = 1.9 → 1주 주문 (DB 에도 1)', async () => {
     const cap = setupMockDB();
     const r = await createSignal({
-      symbol: 'NAS:AAPL', side: 'buy', orderType: 'limit', price: 100, amountKRW: 190,
+      strategyId: VALIDATED_SID, symbol: 'NAS:AAPL', side: 'buy', orderType: 'limit', price: 100, amountKRW: 190,
     });
     expect(r.ok).toBe(true);
     expect(Number(cap.orderInserts[0].quantity)).toBe(1);
@@ -194,7 +211,7 @@ describe('createSignal — 사이징이 정수를 만들고, 0주면 주문을 �
   test('🔴 amount/price = 0.79 → 주문 없음 + 구별 가능한 errorCode', async () => {
     const cap = setupMockDB();
     const r = await createSignal({
-      symbol: 'NAS:META', side: 'buy', orderType: 'limit', price: 905_000, amountKRW: 718_971,
+      strategyId: VALIDATED_SID, symbol: 'NAS:META', side: 'buy', orderType: 'limit', price: 905_000, amountKRW: 718_971,
     });
     expect(r.ok).toBe(false);
     expect(r.errorCode).toBe('quantity_below_min');
@@ -205,7 +222,7 @@ describe('createSignal — 사이징이 정수를 만들고, 0주면 주문을 �
   test('스킵은 세 곳에 동시에 남는다 — 상태 정정 · grep 토큰 · trade_logs', async () => {
     const cap = setupMockDB();
     await createSignal({
-      symbol: 'NAS:META', side: 'buy', orderType: 'limit', price: 905_000, amountKRW: 718_971,
+      strategyId: VALIDATED_SID, symbol: 'NAS:META', side: 'buy', orderType: 'limit', price: 905_000, amountKRW: 718_971,
     });
 
     // ① 시그널 상태 — `auto_submitted` 로 남으면 "주문을 냈다"는 거짓말이 된다
@@ -240,7 +257,7 @@ describe('createSignal — 사이징이 정수를 만들고, 0주면 주문을 �
   test('매수 스킵은 알림을 보내지 않는다 (자주 발생할 수 있어 매도 경고가 묻힌다)', async () => {
     setupMockDB();
     await createSignal({
-      symbol: '005930', side: 'buy', orderType: 'limit', price: 70_000, amountKRW: 50_000,
+      strategyId: VALIDATED_SID, symbol: '005930', side: 'buy', orderType: 'limit', price: 70_000, amountKRW: 50_000,
     });
     expect(sendAlertThrottled).not.toHaveBeenCalled();
   });
@@ -270,7 +287,7 @@ describe('createSignal — 사이징이 정수를 만들고, 0주면 주문을 �
     const cap = setupMockDB();
     // 100,000 / 6,540 = 15.29 → 15주 = 실집행 98,100. 그래도 한도 검사는 100,000 으로 한다.
     await createSignal({
-      symbol: '005930', side: 'buy', orderType: 'limit', price: 6_540, amountKRW: 100_000,
+      strategyId: VALIDATED_SID, symbol: '005930', side: 'buy', orderType: 'limit', price: 6_540, amountKRW: 100_000,
     });
     expect(Number(cap.orderInserts[0].amount)).toBe(100_000);
   });
@@ -299,11 +316,26 @@ describe('approveSignal — 승인해도 1주가 안 되면 주문하지 않는�
   });
 
   test('1주 이상이면 정상 승인된다 (스킵이 정상 경로를 죽이지 않는다)', async () => {
-    const cap = setupMockDB({ ...belowMinRow, price: '100000', amount_krw: '500000' });
+    // T-072 WP-2b — 승인 경로가 전략 귀속을 넘기므로(G4 판정·G6 attribution) **검증된 전략** 행이면 예전처럼 승인이 성공한다.
+    const cap = setupMockDB({ ...belowMinRow, price: '100000', amount_krw: '500000', strategy_id: VALIDATED_SID });
     const r = await approveSignal(777);
     expect(r.ok).toBe(true);
     // 호가 추격(+0.5%) 후 500,000 / 100,500 = 4.97 → 4주. 소수가 아니라 정수다.
+    expect(cap.orderInserts).toHaveLength(1);
     expect(Number(cap.orderInserts[0].quantity)).toBe(4);
+    expect(Number.isInteger(Number(cap.orderInserts[0].quantity))).toBe(true);
     expect(cap.signalStatusUpdates).toContain('approved');
+  });
+
+  test('🔴 T-072 G4 — 같은 행이라도 전략 귀속이 없으면(strategy_id null) 선점·주문 없이 validation_gate (사이징은 통과해도)', async () => {
+    const cap = setupMockDB({ ...belowMinRow, price: '100000', amount_krw: '500000' });
+    const r = await approveSignal(777);
+    expect(r.ok).toBe(false);
+    expect(r.errorCode).toBe('validation_gate');
+    expect(cap.orderInserts).toHaveLength(0);                       // submitOrder 미도달 — orders 행 없음
+    expect(cap.signalStatusUpdates).not.toContain('executing');     // 선점 없음
+    expect(cap.signalStatusUpdates).not.toContain('approved');
+    expect(cap.tradeLogs.find(l => l.event === 'signal_validation_gate')?.payload)
+      .toEqual({ where: 'signal-approve', signalId: 777, strategyId: null, symbol: 'NAS:META', side: 'buy', reason: 'null_strategy' });
   });
 });

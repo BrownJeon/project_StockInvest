@@ -29,6 +29,13 @@ jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
 jest.mock('../rules/oversold-bounce-daily', () => ({ oversoldBounceDaily: jest.fn() }));
 // T-053 — 엔진이 지정가 추격률(limitChasePct)을 읽는다. DB 목(query)의 INSERT 응답 순서를 건드리지 않도록 따로 목한다.
 jest.mock('../style', () => ({ getStyleConfig: jest.fn() }));
+// T-072 G2 — 이 파일은 카드 INSERT 기계(중복·시각·금액 필터·SQL 모양)를 본다. 관문 판정은 '검증됨'으로 고정해 카드가 기존처럼
+//   `pending` 으로 들어가는 경로를 그대로 시험한다(판정 조회가 같은 목 풀의 mockResolvedValueOnce 를 먹지 않게).
+//   막히는 경우는 post-market-validation-gate.test.ts 가 실제 관문으로 본다.
+jest.mock('@/lib/safety/validation-gate', () => ({
+  ...jest.requireActual('@/lib/safety/validation-gate'),
+  evaluateValidationGate: jest.fn(async ({ strategyId }: { strategyId: string }) => ({ allowed: true, kind: 'validated', strategyId, status: 'backtested' })),
+}));
 
 const mGetPool = getPool as jest.Mock;
 const mCandles = getCandles as jest.Mock;
@@ -178,7 +185,8 @@ describe('중복 카드 방지', () => {
     expect(params[6]).toBe('2026-10-19 15:30:00');                // expires_at — 다음 거래일 15:30 KST (T-046: 예전엔 UTC 문자열 06:30)
     expect(params[7]).toBe('2026-10-19 09:00:00');                // valid_from — 다음 거래일 09:00 KST (예전엔 00:00)
     expect(params[8]).toBe('domestic');                           // market
-    expect(params.slice(9)).toEqual(['005380', '2026-10-19 09:00:00']);   // NOT EXISTS 의 비교 키
+    expect(params[9]).toBe('pending');                            // T-072 — status 자리표시자(맨 뒤 열) · 검증된 전략이면 기존과 같은 값
+    expect(params.slice(10)).toEqual(['005380', '2026-10-19 09:00:00']);   // NOT EXISTS 의 비교 키
   });
 
   test('🔴 같은 카드가 이미 있으면(affectedRows 0) 만들지 않고 중복으로 센다', async () => {
@@ -225,7 +233,7 @@ describe('insertScenarioCardIfAbsent', () => {
     await insertScenarioCardIfAbsent({ query: q } as never, row);
     const [sql, params] = q.mock.calls[0] as [string, unknown[]];
     expect((sql.match(/\?/g) ?? []).length).toBe(params.length);
-    expect(params).toHaveLength(11);   // T-062 — amount_krw·market 자리표시자 2개 추가
+    expect(params).toHaveLength(12);   // T-062 — amount_krw·market 자리표시자 2개 추가 · T-072 — status 자리표시자 1개 추가
   });
 
   test('🔴 SQL 전체를 고정한다 — "상태 불문" 정책과 대상 테이블이 바뀌면 실패 (독립 감사 R-3)', async () => {
@@ -233,11 +241,13 @@ describe('insertScenarioCardIfAbsent', () => {
     await insertScenarioCardIfAbsent({ query: q } as never, row);
     const sql = norm((q.mock.calls[0] as [string])[0]);
     // 삽입 열과 SELECT 리터럴(방향·주문유형·금액·상태·시장·출처)
-    expect(sql).toContain('INSERT INTO signals (strategy_id, symbol, side, order_type, price, amount_krw, reasoning, indicators, status, expires_at, valid_from, market, scenario_source)');
+    // T-072 G2 — status 는 관문 결과라 자리표시자가 됐고, 앞 열 파라미터 위치를 옮기지 않으려고 맨 뒤 열이다.
+    expect(sql).toContain('INSERT INTO signals (strategy_id, symbol, side, order_type, price, amount_krw, reasoning, indicators, expires_at, valid_from, market, scenario_source, status)');
     // T-062 — amount_krw·market 은 자리표시자(국내 행 값은 100000·'domestic' 그대로 — 아래 params 와 골든 시험)
-    expect(sql).toContain("SELECT ?, ?, 'buy', 'limit', ?, ?, ?, ?, 'pending', ?, ?, ?, 'post-market' FROM DUAL");
+    expect(sql).toContain("SELECT ?, ?, 'buy', 'limit', ?, ?, ?, ?, ?, ?, ?, 'post-market', ? FROM DUAL");
     const params = (q.mock.calls[0] as [string, unknown[]])[1];
     expect([params[3], params[8]]).toEqual([100000, 'domestic']);
+    expect(params[9]).toBe('pending');   // 검증된 전략(이 파일의 관문 목) → 승인 가능한 카드 — 기존 리터럴과 같은 값
     // 중복 판정: signals 테이블, 종목·방향·valid_from·출처만 — status/strategy_id 조건이 없다(거절·대체된 카드도 막는다)
     expect(sql).toContain("WHERE NOT EXISTS ( SELECT 1 FROM signals WHERE symbol = ? AND side = 'buy' AND valid_from = ? AND scenario_source = 'post-market' )");
     expect(sql.endsWith("scenario_source = 'post-market' )")).toBe(true);
@@ -359,7 +369,8 @@ describe('T-053 — 1주 가격이 카드 금액을 넘는 카드는 만들지 �
     });
     const params = (q.mock.calls[0] as [string, unknown[]])[1];
     expect([params[3], params[8]]).toEqual([POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET.overseas, 'overseas']);
-    expect(params.slice(9)).toEqual(['NAS:CMCSA', 'v']);
+    expect(params[9]).toBe('pending');
+    expect(params.slice(10)).toEqual(['NAS:CMCSA', 'v']);
   });
 
   describe('경계 — 추격률 0 일 때 1주 가격 == 카드 금액은 수량 1 이라 만든다', () => {

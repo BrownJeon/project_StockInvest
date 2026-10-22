@@ -16,6 +16,7 @@ import {
   resolveOrderAmountKRW,
   resolveOrderAmountKRWAsync,
 } from './order-limits';
+import { describeValidationBlock, evaluateValidationGate, normalizeOrderSide, type ValidationGateVerdict } from './validation-gate';
 import { checkVolatilityGuard } from './volatility-guard';
 
 /**
@@ -68,23 +69,43 @@ export async function isDryRun(): Promise<boolean> {
   return true;  // unset — 안전 기본값 ON
 }
 
+/**
+ * T-072 — 주문의 **전략 귀속**. 검증 상태 관문(G6)이 이 값으로 판정한다.
+ * `OrderRequest` 에는 전략 ID 가 없으므로(`types.ts`) 호출부가 여기로 넘긴다. `source` 는 클라이언트가 고를 수 있는 값이라
+ * (`orders/route.ts`) 판정 근거로 쓰지 않는다.
+ */
+export interface OrderAttribution {
+  kind: 'strategy';
+  /** null = 전략 귀속 없음 → 매수 차단 */
+  strategyId: string | null;
+  signalId: number | null;
+}
+
+/** 귀속 미지정 = 전략 없음으로 취급한다(fail-closed, 설계 F-1). */
+const UNATTRIBUTED: OrderAttribution = { kind: 'strategy', strategyId: null, signalId: null };
+
 interface SubmitOptions {
   assetClass?: AssetClass;
   source?: 'manual' | 'signal' | 'auto';
   clientOrderId?: string;
+  /** T-072 — 미지정이면 `{ kind:'strategy', strategyId:null }` 로 취급 → **매수 차단**. 매도에는 영향 없음. */
+  attribution?: OrderAttribution;
 }
 
 /**
  * 모든 주문 송신은 이 래퍼를 통과해야 한다.
  * 순서:
+ *  0. T-072 WP-2d — `side` 정규화(trim·소문자). 정확히 buy/sell 이면 그 값으로 `req` 를 바꿔 **이후 모든 단계와 어댑터에 정확한 값만** 넘긴다.
+ *     그 밖의 값은 orders 행·거래소 호출 없이 `blocked(invalid_side)` 로 끝낸다(trade_logs `blocked` + 경고 알림)
  *  1. 멱등성 key 확정
  *  2. orders INSERT (status=pending)
  *  3. Kill Switch
  *  4. 심볼 화이트리스트
  *  5. 단계별 1회 한도
  *  6. 일일 누적 한도
+ *  6c. T-072 검증 상태 관문(G6) — 매수만. 미검증·미등록·귀속 없음·조회 실패 → blocked(validation_gate). DRY_RUN 과 무관(F-4)
  *  7. DRY_RUN: 실제 송신 생략 → status=dry_run
- *  8. 실 송신 → status=accepted (상세 상태는 거래소 응답에 따라 후속 업데이트)
+ *  8. 실 송신 → status=accepted (상세 상태는 거래소 응답에 따라 후속 업데이트). `realSubmit` 직전에 6c 를 한 번 더(F-15)
  * 각 단계에서 발생 이벤트는 trade_logs에 기록.
  */
 /**
@@ -110,13 +131,20 @@ export async function submitOrder(
 }
 
 async function submitOrderInner(
-  req: OrderRequest,
+  rawReq: OrderRequest,
   realSubmit: (req: OrderRequest) => Promise<OrderResult>,
   options: SubmitOptions = {},
 ): Promise<OrderResult & { orderId?: number; clientOrderId?: string }> {
+  // 0. 🔴 T-072 WP-2d — 방향 정규화(가장 이른 지점: orders INSERT·한도·관문·어댑터 전). 어댑터는 `req.side === 'buy'` 일 때만 매수 TR 을
+  //    고르므로 `'BUY'`·`'buy '` 가 원문 그대로 내려가면 **매도 TR** 로 나갔다(Reviewer 2차 항목 6 — 검증된 전략 귀속이면 G6 를 통과했다).
+  //    `'SELL'`·`' sell '` 은 정상 매도로 정규화돼 매도 한도 면제(`!== 'sell'`)도 제대로 받는다. 이 아래의 `req` 는 전부 정규화된 값이다.
+  const clientOrderId = options.clientOrderId ?? `co-${randomUUID()}`;
+  const side = normalizeOrderSide(rawReq.side);
+  if (side === null) return rejectInvalidSide(rawReq, clientOrderId);
+  const req: OrderRequest = side === rawReq.side ? rawReq : { ...rawReq, side };
+
   const assetClass: AssetClass = options.assetClass ?? 'stock';
   const source = options.source ?? 'manual';
-  const clientOrderId = options.clientOrderId ?? `co-${randomUUID()}`;
 
   const pool = getPool();
   const accountId = await getAccountIdSafe(req.exchange);
@@ -198,12 +226,32 @@ async function submitOrderInner(
     }
   }
 
+  // 6c. 🔴 T-072 G6 — 검증 상태 관문(최후 방어선). 킬스위치·블랙리스트·한도·변동성 **뒤**, DRY_RUN 분기 **앞**(F-15·F-4).
+  //     side 판정은 관문 함수의 첫 줄이다 — 매도는 strategies 를 조회하지 않고 그대로 통과한다(I/O 0).
+  //     앞단 관문(G1~G5)이 있으면 평소 0건이어야 하므로 `markBlocked` 의 스로틀 없는 경고 알림을 그대로 둔다(F-12: 발동 = 우회 버그 신호).
+  const attribution = options.attribution ?? UNATTRIBUTED;
+  const vg = await evaluateValidationGate({ side: req.side, strategyId: attributedStrategyId(attribution) });
+  if (!vg.allowed) {
+    const detail = validationBlockDetail(vg, attribution, 'pre_dry_run');
+    await markBlocked(orderId, 'validation_gate', detail);
+    return { ok: false, orderId, clientOrderId, blockedBy: 'validation_gate', error: `validation_gate: ${detail}` };
+  }
+
   // 7. DRY_RUN
   if (await isDryRun()) {
     await pool.query(`UPDATE orders SET status='dry_run' WHERE id=?`, [orderId]);
     // Phase 0: effOrderMax/effDailyMax 는 항상 유한값 (미설정 시 0). Infinity 분기 제거.
     await auditLog(orderId, 'dry_run', { effOrderMax, effDailyMax });
     return { ok: true, orderId, clientOrderId, dryRun: true, blockedBy: 'dry_run' };
+  }
+
+  // 8a. 🔴 T-072 F-15 — 송신 **직전** 재검증. 6c 와 여기 사이에 DRY_RUN 조회 등 await 가 끼어 있으므로 그 사이 강등(사용자 SQL)을
+  //     놓치지 않게 PK 조회 1회로 다시 본다. 실패·미검증이면 송신하지 않는다(fail-closed). 매도는 I/O 0.
+  const vgSend = await evaluateValidationGate({ side: req.side, strategyId: attributedStrategyId(attribution) });
+  if (!vgSend.allowed) {
+    const detail = validationBlockDetail(vgSend, attribution, 'pre_send');
+    await markBlocked(orderId, 'validation_gate', detail);
+    return { ok: false, orderId, clientOrderId, blockedBy: 'validation_gate', error: `validation_gate: ${detail}` };
   }
 
   // 8. 실 송신
@@ -278,6 +326,37 @@ export function categorizeRejectReason(error: string | null | undefined): string
   if (/quantity\s*계산\s*실패|quantity\s*<=\s*0/i.test(e))           return 'qty_calc_failed';
   if (/timeout|aborted|ETIMEDOUT|ECONNRESET|fetch failed/i.test(e))   return 'network_error';
   return 'kis_rejected';
+}
+
+/**
+ * T-072 WP-2d — 정규화해도 buy/sell 이 아닌 주문. **orders 행을 만들지 않는다**(orders.side ENUM 이 그 값을 STRICT 로 거부해 예외가 나던
+ * 기존 동작 대신 명시적 차단 결과로 일관화). 거래소 호출 0. 감사 원칙 3 은 trade_logs(order_id NULL) `blocked` 로 지킨다. 입구 검증이
+ * 있으면 평소 0건이어야 하므로 경고 알림을 보낸다(발동 = 호출부 결함 신호). 원문 값은 알림 본문이 아니라 trade_logs 에만 남긴다. 던지지 않는다.
+ */
+async function rejectInvalidSide(
+  raw: OrderRequest,
+  clientOrderId: string,
+): Promise<OrderResult & { orderId?: number; clientOrderId?: string }> {
+  let shown: string;
+  try { shown = String(JSON.stringify(raw.side) ?? String(raw.side)).slice(0, 40); } catch { shown = '(표시 불가)'; }
+  await auditLog(null, 'blocked', { reason: 'invalid_side', side: shown, symbol: raw.symbol, type: raw.type, clientOrderId });
+  try {
+    sendAlert('warning', '주문 차단: invalid_side', '주문 방향 값이 buy/sell 이 아니어서 거래소로 보내지 않았습니다 (trade_logs 의 blocked·invalid_side 확인)');
+  } catch { /* 알림 실패가 결과를 바꾸지 않는다 */ }
+  return { ok: false, clientOrderId, blockedBy: 'invalid_side', error: 'invalid_side: 주문 방향이 buy/sell 이 아님 — 송신하지 않음' };
+}
+
+/** 귀속이 `strategy` 가 아니면(런타임 오용) 전략 없음으로 본다 — fail-closed. */
+function attributedStrategyId(a: OrderAttribution): string | null {
+  return a && a.kind === 'strategy' ? a.strategyId : null;
+}
+
+function validationBlockDetail(
+  v: Extract<ValidationGateVerdict, { allowed: false }>,
+  a: OrderAttribution,
+  phase: 'pre_dry_run' | 'pre_send',
+): string {
+  return `${describeValidationBlock(v)} · reason=${v.reason} · signal=${a?.signalId ?? '-'} · phase=${phase}`;
 }
 
 async function markBlocked(orderId: number, reason: string, detail?: string): Promise<void> {

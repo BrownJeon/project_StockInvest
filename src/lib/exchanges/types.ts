@@ -21,7 +21,15 @@ export interface OrderRequest {
 export interface OrderResult {
   ok: boolean;
   dryRun?: boolean;
-  blockedBy?: 'kill_switch' | 'order_limit' | 'daily_limit' | 'symbol_not_allowed' | 'dry_run';
+  /**
+   * T-072 — `'validation_gate'`: 매수인데 귀속 전략이 검증 상태(`strategies.validation_status` ∈ backtested·paper_validated)가
+   * 아니거나 확인할 수 없어 `submitOrder` 최후 방어선(G6)이 막았다. 앞단 관문(G1~G5)이 있으면 평소 0건이어야 한다 — 발동 = 우회 버그 신호.
+   */
+  /**
+   * T-072 WP-2d — `'invalid_side'`: `side` 를 정규화(trim·소문자)해도 `'buy'`·`'sell'` 이 아니라 `submitOrder` 가 **orders 행·거래소 호출 없이**
+   * 끝냈다(orders.side ENUM 이 그 값을 받지 않는다). 입구 검증이 있으면 평소 0건 — 발동 = 호출부 결함 신호.
+   */
+  blockedBy?: 'kill_switch' | 'order_limit' | 'daily_limit' | 'symbol_not_allowed' | 'dry_run' | 'validation_gate' | 'invalid_side';
   exchangeOrderId?: string;
   raw?: unknown;
   error?: string;

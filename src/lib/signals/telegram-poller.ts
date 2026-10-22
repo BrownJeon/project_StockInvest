@@ -149,7 +149,7 @@ export interface ApprovalIO {
   service: {
     getSignalById(id: number): Promise<{ id: unknown; status: unknown; symbol: unknown; side: 'buy' | 'sell'; amount_krw: unknown; indicators: unknown; expires_at: unknown } | null>;
     approveSignal(id: number): Promise<{ ok: boolean; orderId?: number; error?: string; errorCode?: string; orderResult?: unknown }>;
-    approveSignalHybrid(id: number): Promise<{ ok: boolean; error?: string }>;
+    approveSignalHybrid(id: number): Promise<{ ok: boolean; error?: string; errorCode?: string }>;
     rejectSignal(id: number): Promise<{ ok: boolean; error?: string }>;
   };
   tg: {
@@ -205,7 +205,8 @@ export function buildApprovalDepsFrom(io: ApprovalIO): ApprovalDeps {
     approve: async (id, path: ApprovalPath) => {
       if (path === 'hybrid') {
         const r = await io.service.approveSignalHybrid(id);
-        return { ok: r.ok, error: r.error };
+        // T-072 G4 — 하이브리드 승인도 검증 관문 코드를 넘긴다(그래야 mapFailure 가 한국어 문구로 바꾼다)
+        return { ok: r.ok, error: r.error, errorCode: r.errorCode };
       }
       const r = await io.service.approveSignal(id);
       return {

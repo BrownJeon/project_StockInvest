@@ -231,7 +231,10 @@ export async function createSignalGuarded(
     strategyId: input.strategyId ?? null,
   };
   try {
-    const res = await createSignal(input);
+    // T-072 F-16 — 엔진은 같은 후보를 매 틱 재평가한다. 검증 관문에 막힌 매수는 진입 쿨다운을 **원자 선점**한 실행만
+    // 감사 행·가상 체결을 남기고, 그 선점이 곧 진입 쿨다운(120분)이 된다 — 막힌 매수가 틱마다 재발화해 중복으로 쌓이지 않는다.
+    // (매도·청산 입력에는 영향 없다 — 관문은 매수에만 걸리고 선점은 관문에 막혔을 때만 일어난다.)
+    const res = await createSignal(input, undefined, { origin: 'engine', claimEntryCooldown: true });
     if (res.ok) {
       rec.pass('signal_created', { ...base, detail: { signalId: res.signalId } });
       outcome?.markSignal(input.symbol, res.signalId);
@@ -245,18 +248,29 @@ export async function createSignalGuarded(
       : res.errorCode === 'quantity_below_min'    ? 'quantity_below_min'
       // T-058 — 실시간 현금 부족으로 시그널을 만들지 않은 것도 **정책 건너뜀**이다. 엔진 고장(error)으로 집계하지 않는다.
       : res.errorCode === 'insufficient_cash'     ? 'insufficient_cash'
+      // T-072 — 검증 전 전략의 매수 차단은 정책 건너뜀(skip). 조회 실패로 막은 것은 인프라 이상이라 error 로 따로 센다.
+      : res.errorCode === 'validation_gate'       ? 'validation_gate'
+      : res.errorCode === 'validation_lookup_error' ? 'validation_lookup_error'
       :                                             'signal_create_failed';
-    const verdict: FunnelVerdict = gate === 'signal_create_failed' ? 'error' : 'skip';
+    const verdict: FunnelVerdict = gate === 'signal_create_failed' || gate === 'validation_lookup_error' ? 'error' : 'skip';
+    const v = res.validation;
     rec.record({
       ...base,
       gate,
       verdict,
-      reason: res.errorCode ?? (res.error ? res.error.slice(0, 64) : null),
-      detail: { error: res.error, dupSignalId: gate === 'duplicate_active_signal' ? res.signalId : undefined },
+      // T-072 — reason 은 관문 사유(unvalidated|unregistered|null_strategy|invalid_status|lookup_error)
+      reason: v ? v.reason : (res.errorCode ?? (res.error ? res.error.slice(0, 64) : null)),
+      detail: v
+        ? {
+          strategyId: v.strategyId, status: v.status, signalId: v.auditSignalId, paperFillId: v.paperFillId,
+          recorded: v.recorded, claim: v.claim,
+        }
+        : { error: res.error, dupSignalId: gate === 'duplicate_active_signal' ? res.signalId : undefined },
     });
     outcome?.kill(input.symbol, 11, gate);
     // T-058 — 현금 부족 건너뜀은 룰이 매 틱 재발화할 때마다 생긴다. 경고는 게이트가 (시장·심볼·방향) 1시간 1회로 이미 남긴다.
-    if (res.errorCode !== 'insufficient_cash') {
+    // T-072 — 검증 관문 건너뜀은 지금 모든 매수에 해당하는 예정된 결과라 경고하지 않는다(funnel 에 남는다). 조회 실패는 경고한다.
+    if (res.errorCode !== 'insufficient_cash' && res.errorCode !== 'validation_gate') {
       console.warn(`[signal-create] ${input.symbol} ${input.side} 생성 거부: ${res.error}`);
     }
     return { ok: false, error: res.error, errorCode: res.errorCode, recordedGate: gate, recordedVerdict: verdict };
@@ -1430,6 +1444,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       // createSignalGuarded 가 blacklist / duplicate_active_signal / 생성 실패를 전부
       // eval_funnel 에 기록한다 (무기록 게이트 금지 — §1).
       const res = await createSignalGuarded(cand, rec, outcome);
+      // T-072 — 검증 관문에 막힌 매수(`validation_gate`)는 createSignal 안에서 진입 쿨다운을 이미 선점했다(F-16). 여기서 다시 걸지 않는다.
       if (!res.ok) continue;
       createdCount++;
       // ③ entry 쿨다운 — 같은 (symbol, strategy, side)의 반복 발화를 봉 주기×2 동안 막는다.

@@ -53,7 +53,8 @@ describe('선점 순서', () => {
     (submitOrder as jest.Mock).mockImplementation(async () => { db.events.push('submit'); return { ok: true, orderId: 11 }; });
     db.add(fakeSignal(1));
     await run();
-    expect(db.events.filter((e) => e !== 'select' && e !== 'stuck-check')).toEqual(['claim:1:won', 'submit', 'record:1:11']);
+    // T-072 G5 — 검증 상태 관문(strategies 조회)이 선점보다 먼저다(막히면 선점·주문 0 — validation-gate.test.ts)
+    expect(db.events.filter((e) => e !== 'select' && e !== 'stuck-check')).toEqual(['strategy:validated-v1', 'claim:1:won', 'submit', 'record:1:11']);
   });
 });
 

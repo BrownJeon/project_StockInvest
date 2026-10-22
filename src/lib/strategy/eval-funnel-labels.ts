@@ -140,6 +140,14 @@ export const FUNNEL_GATES = [
    * 행의 `market` 으로 국내·해외 건너뜀을 따로 센다.
    */
   'insufficient_cash',
+  /**
+   * T-072 (D5) — stage 11(createSignal). 매수인데 귀속 전략이 **검증 상태가 아니다**(`unvalidated`·미등록·귀속 없음·상태값 이상).
+   * 승인 가능한 시그널·알림을 만들지 않고 승인 불가 감사 행(`skipped`)과 가상 체결(`paper_fills`)만 남긴다. 정책 건너뜀(skip)이다.
+   * reason = 관문 사유(unvalidated|unregistered|null_strategy|invalid_status).
+   */
+  'validation_gate',
+  /** T-072 — 검증 상태 **조회 실패**(마이그레이션 전 컬럼 없음·DB 장애)로 매수를 막았다. 막는 것은 같지만 인프라 이상이라 verdict error. */
+  'validation_lookup_error',
 ] as const;
 
 export type FunnelGate = (typeof FUNNEL_GATES)[number];
@@ -228,6 +236,8 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   // exit 트랙(21~29) 안, 판정(24) 뒤·생성(29) 앞. `final` 행을 쓰지 않으므로 6단계 깔때기에 섞이지 않는다.
   sell_proposal_preview: 26,
   insufficient_cash: 11,
+  validation_gate: 11,
+  validation_lookup_error: 11,
 };
 
 /** 사용자 화면·리포트용 한글 라벨 (T-002 §4 "한글 라벨 매핑") */
@@ -311,6 +321,8 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   exit_create_failed: '청산 시그널 생성 실패',
   sell_proposal_preview: '매도 제안 시뮬레이션 (시그널·주문 없음)',
   insufficient_cash: '실시간 현금 부족 (매수 시그널 미생성)',
+  validation_gate: '검증 전 전략 — 신규 매수 차단 (가상 체결만 기록)',
+  validation_lookup_error: '전략 검증 상태 조회 실패 — 신규 매수 차단',
 };
 
 /**

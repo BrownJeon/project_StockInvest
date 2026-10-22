@@ -15,6 +15,7 @@
  * 이 파일은 DB·텔레그램·시계를 직접 import 하지 않는다 — 전부 `ApprovalDeps` 로 주입받아 분기별로 시험한다.
  */
 import { escapeAlertText } from '../notify/escape';
+import { VALIDATION_GATE_USER_MESSAGE } from '../safety/validation-gate';
 import type { TelegramCallbackQuery } from '../notify/telegram-api';
 import {
   buildDecisionKeyboard,
@@ -119,6 +120,14 @@ export function mapFailure(error: string | undefined, errorCode?: string): Decis
   if (e === 'not_found') return { kind: 'failed', reason: '시그널을 찾을 수 없습니다' };
   if (errorCode === 'quantity_below_min' || e.startsWith('quantity_below_min')) {
     return { kind: 'failed', reason: '1주도 살 수 없는 금액입니다 (quantity_below_min)' };
+  }
+  // T-072 G4 — 검증 상태 관문(선점·주문 없음). 기계 문자열(`validation_gate: 등록되지 않은 전략(...)…`)을 그대로 보이지 않는다.
+  //   lookup_error 를 먼저 본다 — 'validation_gate' 접두로는 'validation_lookup_error' 가 걸리지 않지만 순서로도 분명히 한다.
+  if (errorCode === 'validation_lookup_error' || e.startsWith('validation_lookup_error')) {
+    return { kind: 'failed', reason: VALIDATION_GATE_USER_MESSAGE.validation_lookup_error };
+  }
+  if (errorCode === 'validation_gate' || e.startsWith('validation_gate')) {
+    return { kind: 'failed', reason: VALIDATION_GATE_USER_MESSAGE.validation_gate };
   }
   return { kind: 'failed', reason: e || '알 수 없는 오류' };
 }

@@ -19,6 +19,14 @@ jest.mock('@/lib/notify', () => ({
   sendAlert: jest.fn(),
   getSymbolLabel: jest.fn(async (s: string) => s),
 }));
+// 🔴 T-072 G3 — 사용자 결정 D-1("전부 차단")로 이제 **매수 확정은 검증 관문에서 막힌다**(이 경로의 행은 전략 귀속이 없다).
+//   이 파일은 관문 **뒤**의 기계(T-029 수치 가드·T-050/T-052 만료·락·트랜잭션·중복)를 본다 — 관문 판정만 '검증됨'으로 고정해
+//   "관문이 통과시키는 매수라면 기존과 똑같이 동작한다"를 그대로 시험한다(나중에 원 카드의 전략을 이어받게 되면 이 경로가 다시 열린다).
+//   관문 자체(매수 거절 403·행 0·선점 0·락 0, 매도는 관문 호출 0)는 validation-gate.test.ts 가 **실제 관문**으로 본다.
+jest.mock('@/lib/safety/validation-gate', () => ({
+  ...jest.requireActual('@/lib/safety/validation-gate'),
+  evaluateValidationGate: jest.fn(async ({ strategyId }: { strategyId: unknown }) => ({ allowed: true, kind: 'validated', strategyId, status: 'backtested' })),
+}));
 
 import { getPool } from '@/lib/db';
 import { AWAITING_APPROVAL_STATUSES } from '@/lib/signals/statuses';
@@ -1054,7 +1062,7 @@ describe('POST custom/confirm — 직접 경로와 sourceSignalId 경로가 서�
     expect(names[0]).toBe(names[1]);
   });
 
-  test('🔴 R-8: 철자만 다른 같은 종목·방향(대소문자·공백)도 두 경로가 같은 락 이름을 쓰고, 저장값은 요청 그대로다', async () => {
+  test('🔴 R-8: 철자만 다른 같은 종목·방향(대소문자·공백)도 두 경로가 같은 락 이름을 쓰고, symbol 저장값은 요청 그대로다', async () => {
     await POST(req(buildPagePayload({ symbol: 'NAS:AAPL', market: 'overseas' })));
     await POST(req(scenarioDetailPayload({
       symbol: ' nas:aapl ', market: 'overseas', direction: 'BUY',
@@ -1063,8 +1071,9 @@ describe('POST custom/confirm — 직접 경로와 sourceSignalId 경로가 서�
     const names = calls.filter(c => /GET_LOCK/i.test(c.sql)).map(c => c.params[0]);
     expect(names).toHaveLength(2);
     expect(names[0]).toBe(names[1]);
-    // 락 이름만 정규화한다 — DB 에 넣는 symbol·side 는 바꾸지 않는다(저장값 정규화는 별개 변경)
-    expect(inserts().map(c => [c.params[1], c.params[2]])).toEqual([['NAS:AAPL', 'buy'], [' nas:aapl ', 'BUY']]);
+    // symbol 은 락 이름만 정규화한다 — DB 에 넣는 symbol 은 바꾸지 않는다(저장값 정규화는 별개 변경).
+    // T-072 WP-2d — **방향은 입구에서 정규화**한다(어댑터가 `=== 'buy'` 만 매수로 보므로 원문 'BUY' 를 하류로 보내지 않는다) → 저장값도 'buy'.
+    expect(inserts().map(c => [c.params[1], c.params[2]])).toEqual([['NAS:AAPL', 'buy'], [' nas:aapl ', 'buy']]);
   });
 
   test('🔴 sourceSignalId 경로에서 락을 못 잡으면(0) 409 · 원본을 건드리지 않는다 · 연결 반환', async () => {

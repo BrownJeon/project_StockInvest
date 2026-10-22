@@ -37,13 +37,16 @@ import type { DailyCandidate } from './rules/eod-high-close';
 import { getStyleConfig } from './style';
 import {
   cardBuysZeroShares,
+  flushCardPaperFills,
   insertScenarioCardIfAbsent,
   toKstDatetime,
   POST_MARKET_CARD_AMOUNT_KRW_BY_MARKET,
   type PostMarketResult,
   type PostMarketRunStatus,
+  type ScenarioCardInsertOutcome,
   type ScenarioCardRow,
 } from './post-market-engine';
+import type { PaperFillInput } from '@/lib/signals/paper-fill';
 import {
   candleSessionDate,
   etDateOf,
@@ -377,10 +380,24 @@ function dedupeCandidates(candidates: DailyCandidate[]): DailyCandidate[] {
  * S-3 — 한 실행의 카드 INSERT 를 트랜잭션 하나로. 하나라도 예외면 전부 ROLLBACK(부분 생성 없음). `duplicate`(이미 같은 카드 있음,
  * NOT EXISTS 0행 또는 1062)는 실패가 아니다 — InnoDB 에서 1062 는 그 문장만 되돌리고 트랜잭션은 계속된다.
  * ROLLBACK 자체가 실패하면 연결을 풀에 돌려주지 않고 닫는다(열린 트랜잭션·락이 남은 연결 재사용 방지).
+ *
+ * T-072 G2 — 검증 관문에 막힌 카드(`blocked`, 승인 불가 `skipped` 행)의 가상 체결은 **트랜잭션 안에서 쓰지 않는다.** 쌓아 두었다가
+ * COMMIT 이 성공한 **뒤에만** 풀 연결로 기록한다 — 롤백이면 버린다(사라진 카드를 가리키는 고아 행 없음), 가상 체결의 실패·교착이
+ * 카드 트랜잭션을 되돌리거나 망치지 않는다(`insertPaperFill` 은 던지지 않는다).
  */
 async function insertCardsAtomically(
   rows: ScenarioCardRow[],
-): Promise<{ ok: true; outcomes: Array<'created' | 'duplicate'> } | { ok: false; error: string }> {
+): Promise<{ ok: true; outcomes: ScenarioCardInsertOutcome[] } | { ok: false; error: string }> {
+  const deferredFills: PaperFillInput[] = [];
+  const res = await insertCardsInTransaction(rows, deferredFills);
+  if (res.ok && deferredFills.length > 0) await flushCardPaperFills(deferredFills);
+  return res;
+}
+
+async function insertCardsInTransaction(
+  rows: ScenarioCardRow[],
+  deferredFills: PaperFillInput[],
+): Promise<{ ok: true; outcomes: ScenarioCardInsertOutcome[] } | { ok: false; error: string }> {
   let conn: PoolConnection;
   try {
     conn = await getPool().getConnection();
@@ -390,9 +407,9 @@ async function insertCardsAtomically(
   let discard = false;
   try {
     await conn.beginTransaction();
-    const outcomes: Array<'created' | 'duplicate'> = [];
+    const outcomes: ScenarioCardInsertOutcome[] = [];
     try {
-      for (const row of rows) outcomes.push(await insertScenarioCardIfAbsent(conn, row));
+      for (const row of rows) outcomes.push(await insertScenarioCardIfAbsent(conn, row, { deferPaperFills: deferredFills }));
       await conn.commit();
       return { ok: true, outcomes };
     } catch (e) {
@@ -717,6 +734,10 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
         validFrom,
         market: 'overseas',
         amountKrw,
+        // T-072 — 막힌 카드의 가상 체결용(INSERT 값 아님): 현지 통화(USD) 진입 구간 · entry-watcher 와 같은 추격 반영 원화 지정가
+        zoneLo: chk.loUsd,
+        zoneHi: chk.hiUsd,
+        chasedPriceKrw: chasedPrice,
       });
       rowMeta.push({ symbol: candidate.symbol, pattern: candidate.pattern, confidence: chk.confidence });
     }
@@ -724,6 +745,7 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     // 15. 저장(트랜잭션 하나)
     let signalsCreated = 0;
     let duplicatesSkipped = 0;
+    let validationBlocked = 0;
     const counts = { ...common, schemaRejected, zoneRejected, unaffordableSkipped };
     if (rows.length > 0) {
       const ins = await insertCardsAtomically(rows);
@@ -741,6 +763,11 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
           duplicatesSkipped++;
           signalsSkipped++;
           console.log(`[post-market] ⏭ ${m.symbol} valid_from=${validFrom} — 같은 카드가 이미 있어 만들지 않음`);
+        } else if (o === 'blocked') {
+          // T-072 G2 — 승인 불가(skipped) 카드 + 가상 체결(커밋 뒤 기록). 화면에 나오지 않는다(F-3).
+          validationBlocked++;
+          signalsSkipped++;
+          console.log(`[post-market] 🚫 ${m.symbol} ${m.pattern} valid_from=${validFrom} — 검증 안 된 전략이라 승인 불가(skipped) 카드로 기록, 가상 체결만 남김`);
         } else {
           signalsCreated++;
           console.log(`[post-market] ✅ ${m.symbol} ${m.pattern} valid_from=${validFrom} conf=${m.confidence}%`);
@@ -751,11 +778,15 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     console.log(
       `[post-market] market=overseas evaluated=${symbols.length} candidates=${unique.length} llm=${llmCandidates.length} ` +
       `created=${signalsCreated} skipped=${signalsSkipped} (중복 ${duplicatesSkipped}, 금액 초과 ${unaffordableSkipped}, ` +
-      `형식 ${schemaRejected}, 구간 ${zoneRejected}; 오래된 봉 ${staleCandleSkipped}, 블랙아웃 ${blackoutSkipped}, 사전 금액 초과 ${prefilterUnaffordable}) ` +
+      `형식 ${schemaRejected}, 구간 ${zoneRejected}${validationBlocked > 0 ? `, 검증 관문 ${validationBlocked}` : ''}; ` +
+      `오래된 봉 ${staleCandleSkipped}, 블랙아웃 ${blackoutSkipped}, 사전 금액 초과 ${prefilterUnaffordable}) ` +
       `D0=${d0} S1=${s1} valid_from=${validFrom}`,
     );
 
-    return base({ ...counts, signalsCreated, signalsSkipped, duplicatesSkipped });
+    return base({
+      ...counts, signalsCreated, signalsSkipped, duplicatesSkipped,
+      ...(validationBlocked > 0 ? { validationBlocked } : {}),
+    });
   } finally {
     overseasInFlight.delete(flightKey);   // 정상·실패·예외 모두 해제
   }

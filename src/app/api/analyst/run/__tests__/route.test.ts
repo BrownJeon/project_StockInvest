@@ -50,6 +50,30 @@ test('🔴 insufficient_cash → skipped(reason insufficient_cash), created 에 
   expect(body.data.skipped).toContainEqual({ symbol: '005930', reason: 'insufficient_cash' });
 });
 
+test.each(['validation_gate', 'validation_lookup_error'])('🔴 T-072 — %s 도 skipped(reason=그 코드), created 에 signalId 0 이 들어가지 않는다', async (code) => {
+  // rsi_momentum_v1 은 strategies 에 없는 ID 라(미등록 fail-closed) 실제로는 매수가 전부 여기로 온다
+  mockedCreate.mockImplementation(async (s: { symbol: string }) => (
+    s.symbol === '005930'
+      ? { ok: false, signalId: 0, autoSubmitted: false, errorCode: code, error: `${code}: x` }
+      : { ok: true, signalId: 42, autoSubmitted: false }
+  ));
+  const { status, body } = await run();
+  expect(status).toBe(200);
+  expect(body.data.created).toEqual([{ symbol: '000660', signalId: 42, autoSubmitted: false }]);
+  expect(body.data.created.some((c) => c.signalId === 0)).toBe(false);
+  expect(body.data.skipped).toContainEqual({ symbol: '005930', reason: code });
+});
+
+test('🔴 T-072 — createSignal 에 막힌 매수의 가상 체결 출처 origin=analyst_run 을 넘긴다(cfg 는 그대로)', async () => {
+  mockedCreate.mockResolvedValue({ ok: true, signalId: 1, autoSubmitted: false });
+  await run();
+  expect(mockedCreate).toHaveBeenCalledTimes(2);
+  for (const c of mockedCreate.mock.calls) {
+    expect(c[1]).toEqual({ defaultTtlMin: 30 });
+    expect(c[2]).toEqual({ origin: 'analyst_run' });
+  }
+});
+
 test('범위 밖 현행 고정: duplicate_active_signal 등 다른 ok:false 는 기존대로 created 에 들어간다 (후속 후보)', async () => {
   mockedCreate.mockResolvedValue({ ok: false, signalId: 777, autoSubmitted: false, errorCode: 'duplicate_active_signal', error: 'duplicate_active_signal' });
   const { body } = await run();

@@ -8,6 +8,7 @@ import {
   numericFieldError,
   warnNumericFieldRejected,
 } from '@/lib/safety/numeric-fields';
+import { INVALID_SIDE_USER_MESSAGE, normalizeOrderSide } from '@/lib/safety/validation-gate';
 import { isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 
 export const dynamic = 'force-dynamic';
@@ -51,6 +52,12 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
+    // 🔴 T-072 WP-2d — side 정규화. 대소문자·앞뒤 공백 변형은 받아 정확한 값으로 바꾸고, buy/sell 이 아니면 400.
+    //    원문 그대로 내려가면 `'BUY'` 가 현금 게이트·호가 추격 방향을 어긋나게 타고, 자동 제출이면 어댑터가 매도 TR 로 보냈다.
+    const side = normalizeOrderSide(body.side);
+    if (side === null) {
+      return Response.json({ ok: false, error: INVALID_SIDE_USER_MESSAGE }, { status: 400 });
+    }
     // 시장별 개장 가드 — 폐장 시 시그널 생성 차단
     const symMarket = getMarketFromSymbol(body.symbol);
     const open = symMarket === 'overseas' ? await isOverseasOpen() : await isDomesticOpen();
@@ -67,7 +74,7 @@ export async function POST(req: Request) {
       result = await createSignal({
         strategyId: body.strategyId,
         symbol: body.symbol,
-        side: body.side,
+        side,
         orderType: body.orderType,
         price: body.price,
         quantity: body.quantity,
@@ -75,15 +82,20 @@ export async function POST(req: Request) {
         reasoning: body.reasoning,
         indicators: body.indicators,
         expiresAt: body.expiresAt,
-      });
+      }, undefined, { origin: 'api_signals' });   // T-072 — 막힌 매수의 가상 체결 출처
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
-      console.error(`[api/signals POST] signal_create_failed ${body.symbol} ${body.side}: ${err}`);
+      console.error(`[api/signals POST] signal_create_failed ${body.symbol} ${side}: ${err}`);
       return Response.json({ ok: false, error: 'signal_create_failed', detail: err }, { status: 500 });
     }
     // T-058 — 현금 부족 건너뜀은 입력 오류가 아니라 정책 건너뜀이다: 200 + skipped 로 구분한다(다른 !ok 는 400 유지).
     if (!result.ok && result.errorCode === 'insufficient_cash') {
       return Response.json({ ok: false, skipped: true, reason: 'insufficient_cash', data: result }, { status: 200 });
+    }
+    // T-072 — 검증 상태 관문(G1) 건너뜀도 입력 오류가 아니라 정책 건너뜀이다(승인 가능한 시그널을 만들지 않았다 — signalId 0,
+    //   감사 행·가상 체결은 data.validation). `insufficient_cash` 와 같은 모양(200 + skipped)으로 구분한다.
+    if (!result.ok && (result.errorCode === 'validation_gate' || result.errorCode === 'validation_lookup_error')) {
+      return Response.json({ ok: false, skipped: true, reason: result.errorCode, data: result }, { status: 200 });
     }
     return Response.json({ ok: result.ok, data: result }, { status: result.ok ? 200 : 400 });
   } catch (e) {

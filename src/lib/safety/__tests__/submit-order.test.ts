@@ -80,6 +80,10 @@ function setupMockDB(opts: MockOpts = {}): Captured {
       if (keyParam === 'safety_daily_order_max_pct') return [[{ value: String(opts.dailyMaxPct ?? 5) }]];
       return [[]]; // 기타 config 키는 미설정
     }
+    // T-072 — 검증 상태 관문(G6). 이 파일의 매수는 검증된 전략 귀속(VALIDATED)으로 낸다 — 관문 자체는 submit-order-validation-gate.test.ts.
+    if (/SELECT validation_status FROM strategies WHERE id = \?/i.test(sql)) {
+      return [params[0] === VALIDATED_SID ? [{ validation_status: 'backtested' }] : []];
+    }
     if (/UPDATE orders/i.test(sql)) {
       const update: CapturedUpdate = { raw: { sql, params } };
       const statusLit = sql.match(/SET\s+status='([^']+)'/);
@@ -96,6 +100,10 @@ function setupMockDB(opts: MockOpts = {}): Captured {
   (getAccountId as jest.Mock).mockResolvedValue(1);
   return captured;
 }
+
+/** T-072 — 목 DB 에서 validation_status='backtested' 인 전략. 매수가 관문 뒤 단계(한도·DRY_RUN·송신)를 시험하려면 이 귀속이 필요하다. */
+const VALIDATED_SID = 'validated-v1';
+const VALIDATED = { attribution: { kind: 'strategy' as const, strategyId: VALIDATED_SID, signalId: null } };
 
 const baseReq: OrderRequest = {
   exchange: 'coinone',
@@ -126,7 +134,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
   test('1. DRY_RUN 정상 주문 → status=dry_run + trade_logs 2건 + realSubmit 미호출', async () => {
     const cap = setupMockDB();
     const realSubmit = jest.fn();
-    const r = await submitOrder(baseReq, realSubmit as never);
+    const r = await submitOrder(baseReq, realSubmit as never, VALIDATED);
 
     expect(r.ok).toBe(true);
     expect(r.dryRun).toBe(true);
@@ -144,7 +152,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
     process.env.KILL_SWITCH = 'true';
     const cap = setupMockDB();
     const realSubmit = jest.fn();
-    const r = await submitOrder(baseReq, realSubmit as never);
+    const r = await submitOrder(baseReq, realSubmit as never, VALIDATED);
 
     expect(r.ok).toBe(false);
     expect(r.blockedBy).toBe('kill_switch');
@@ -157,7 +165,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
   test('3. 블랙리스트 등록 심볼 → blocked + blocked_by=symbol_not_allowed', async () => {
     const cap = setupMockDB();
     process.env.BLOCKED_SYMBOLS_DOMESTIC = 'KRW-XRP';
-    const r = await submitOrder({ ...baseReq, symbol: 'KRW-XRP' }, (async () => ({ ok: true })) as never);
+    const r = await submitOrder({ ...baseReq, symbol: 'KRW-XRP' }, (async () => ({ ok: true })) as never, VALIDATED);
 
     expect(r.ok).toBe(false);
     expect(r.blockedBy).toBe('symbol_not_allowed');
@@ -166,7 +174,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
 
   test('4. 1회 한도 초과 → blocked_by=order_limit', async () => {
     const cap = setupMockDB();
-    const r = await submitOrder({ ...baseReq, amountKRW: 20_000 }, (async () => ({ ok: true })) as never);
+    const r = await submitOrder({ ...baseReq, amountKRW: 20_000 }, (async () => ({ ok: true })) as never, VALIDATED);
 
     expect(r.ok).toBe(false);
     expect(r.blockedBy).toBe('order_limit');
@@ -175,7 +183,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
 
   test('5. 일일 한도 초과 → blocked_by=daily_limit', async () => {
     const cap = setupMockDB({ dailySum: 45_000 });
-    const r = await submitOrder(baseReq, (async () => ({ ok: true })) as never);
+    const r = await submitOrder(baseReq, (async () => ({ ok: true })) as never, VALIDATED);
 
     expect(r.ok).toBe(false);
     expect(r.blockedBy).toBe('daily_limit');
@@ -186,7 +194,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
     process.env.DRY_RUN = 'false';
     const cap = setupMockDB();
     const realSubmit = jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-123' });
-    const r = await submitOrder(baseReq, realSubmit);
+    const r = await submitOrder(baseReq, realSubmit, VALIDATED);
 
     expect(r.ok).toBe(true);
     expect(realSubmit).toHaveBeenCalledTimes(1);
@@ -198,7 +206,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
     process.env.DRY_RUN = 'false';
     const cap = setupMockDB();
     const realSubmit = jest.fn().mockResolvedValue({ ok: false, error: 'INSUFFICIENT_BALANCE' });
-    const r = await submitOrder(baseReq, realSubmit);
+    const r = await submitOrder(baseReq, realSubmit, VALIDATED);
 
     expect(r.ok).toBe(false);
     expect(cap.updates).toContainEqual(expect.objectContaining({ status: 'rejected' }));
@@ -209,7 +217,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
     process.env.DRY_RUN = 'false';
     const cap = setupMockDB();
     const realSubmit = jest.fn().mockRejectedValue(new Error('network down'));
-    const r = await submitOrder(baseReq, realSubmit);
+    const r = await submitOrder(baseReq, realSubmit, VALIDATED);
 
     expect(r.ok).toBe(false);
     expect(r.error).toBe('network down');
@@ -226,7 +234,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
     ])('🔴 %s → outcomeUnknown=true', async (_name, makeSubmit) => {
       process.env.DRY_RUN = 'false';
       setupMockDB();
-      const r = await submitOrder(baseReq, makeSubmit());
+      const r = await submitOrder(baseReq, makeSubmit(), VALIDATED);
       expect(r.ok).toBe(false);
       expect(r.outcomeUnknown).toBe(true);
     });
@@ -244,7 +252,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
         }),
       });
       const realSubmit = jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-9' });
-      const r = await submitOrder(baseReq, realSubmit);
+      const r = await submitOrder(baseReq, realSubmit, VALIDATED);
       expect(realSubmit).toHaveBeenCalledTimes(1);            // 거래소엔 이미 나갔다
       expect(r.ok).toBe(false);                               // 그러나 우리는 ok:false 를 돌려준다
       expect(r.outcomeUnknown).toBe(true);                    // → 호출처가 재시도하면 안 된다는 표시
@@ -264,7 +272,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
         }),
       });
       const realSubmit = jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-77' });
-      const r = await submitOrder(baseReq, realSubmit);
+      const r = await submitOrder(baseReq, realSubmit, VALIDATED);
       expect(realSubmit).toHaveBeenCalledTimes(1);            // 거래소엔 이미 나갔다
       expect(r.ok).toBe(false);
       expect(r.error).toBe('db gone');
@@ -288,7 +296,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
       });
       try {
         const realSubmit = jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-1' });
-        const r = await freshSubmit!(baseReq, realSubmit);
+        const r = await freshSubmit!(baseReq, realSubmit, VALIDATED);
         expect(realSubmit).not.toHaveBeenCalled();             // 송신 전에 죽었다
         expect(r.ok).toBe(false);
         expect(r.error).toBe('guard gone');                    // 바깥 catch 를 지났다는 증거
@@ -308,7 +316,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
     ])('KIS 의 명시적 거부(%s)는 확정 거부 — outcomeUnknown 이 없다', async (_n, error) => {
       process.env.DRY_RUN = 'false';
       setupMockDB();
-      const r = await submitOrder(baseReq, jest.fn().mockResolvedValue({ ok: false, error }));
+      const r = await submitOrder(baseReq, jest.fn().mockResolvedValue({ ok: false, error }), VALIDATED);
       expect(r.ok).toBe(false);
       expect(r.outcomeUnknown).toBeUndefined();
     });
@@ -316,24 +324,24 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
     test('안전층 차단(킬스위치·한도)은 송신 전이므로 확정 거부', async () => {
       process.env.KILL_SWITCH = 'true';
       setupMockDB();
-      const r = await submitOrder(baseReq, jest.fn());
+      const r = await submitOrder(baseReq, jest.fn(), VALIDATED);
       expect(r).toMatchObject({ ok: false, blockedBy: 'kill_switch' });
       expect(r.outcomeUnknown).toBeUndefined();
     });
 
     test('성공·DRY_RUN 결과에는 outcomeUnknown 이 붙지 않는다 (기존 결과 형태 불변)', async () => {
       setupMockDB();
-      const dry = await submitOrder(baseReq, jest.fn());
+      const dry = await submitOrder(baseReq, jest.fn(), VALIDATED);
       expect(dry.outcomeUnknown).toBeUndefined();
       process.env.DRY_RUN = 'false';
-      const ok = await submitOrder(baseReq, jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-1' }));
+      const ok = await submitOrder(baseReq, jest.fn().mockResolvedValue({ ok: true, exchangeOrderId: 'EX-1' }), VALIDATED);
       expect(ok.outcomeUnknown).toBeUndefined();
     });
   });
 
   test('9. clientOrderId 옵션 → INSERT orders의 client_order_id 컬럼에 전달 값 사용', async () => {
     const cap = setupMockDB();
-    const r = await submitOrder(baseReq, (async () => ({ ok: true })) as never, { clientOrderId: 'custom-id-42' });
+    const r = await submitOrder(baseReq, (async () => ({ ok: true })) as never, { ...VALIDATED, clientOrderId: 'custom-id-42' });
     expect(r.clientOrderId).toBe('custom-id-42');
     const insertOrders = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));
     expect(insertOrders?.params[1]).toBe('custom-id-42');

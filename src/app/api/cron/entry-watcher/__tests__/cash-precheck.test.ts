@@ -142,7 +142,8 @@ describe('(b) 현금이 충분하면 기존 경로 그대로', () => {
     (getBalancesDetailed as jest.Mock).mockResolvedValue(balancesWithCash(5_000_000));
     db.add(fakeSignal(10));
     const body = await run();
-    expect(db.events.filter((e) => e !== 'select' && e !== 'stuck-check')).toEqual(['claim:10:won', 'submit', 'record:10:501']);
+    // T-072 G5 — 검증 상태 관문(strategies 조회)이 현금 점검·선점보다 먼저다
+    expect(db.events.filter((e) => e !== 'select' && e !== 'stuck-check')).toEqual(['strategy:validated-v1', 'claim:10:won', 'submit', 'record:10:501']);
     expect(body.results?.[0].outcome).toBe('submitted');
     expect(cashAlerts()).toHaveLength(0);
     expect(cashLogs()).toHaveLength(0);

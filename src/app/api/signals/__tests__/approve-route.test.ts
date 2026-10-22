@@ -89,3 +89,43 @@ describe('응답 계약', () => {
     expect(mApprove).not.toHaveBeenCalled();
   });
 });
+
+describe('🔴 T-072 G4 — 검증 관문 차단은 한국어 문구로 답한다 (기계 문자열을 그대로 보이지 않는다)', () => {
+  const RAW = 'validation_gate: 등록되지 않은 전략(rsi_momentum_v1) — 검증 전 신규 매수 차단 — 선점·주문하지 않음';
+
+  test('즉시 경로: validation_gate → 403 · error=한국어 · errorCode · data 에 원 결과', async () => {
+    setHybrid(false); mGet.mockResolvedValue(RULE);
+    mApprove.mockResolvedValueOnce({ ok: false, signalId: 1, autoSubmitted: false, error: RAW, errorCode: 'validation_gate' });
+    const res = await POST(post(), ctx('1'));
+    const json = await res.json();
+    expect(res.status).toBe(403);
+    expect(json).toMatchObject({ ok: false, error: '검증되지 않은 전략이라 매수할 수 없습니다 (validation_gate)', errorCode: 'validation_gate' });
+    expect(json.error).not.toContain('등록되지 않은');
+    expect(json.data.error).toBe(RAW);
+  });
+
+  test('즉시 경로: validation_lookup_error → 503 · 한국어', async () => {
+    setHybrid(false); mGet.mockResolvedValue(RULE);
+    mApprove.mockResolvedValueOnce({ ok: false, signalId: 1, autoSubmitted: false, error: 'validation_lookup_error: x', errorCode: 'validation_lookup_error' });
+    const res = await POST(post(), ctx('1'));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/^전략 검증 상태를 확인하지 못해 매수하지 않았습니다/);
+  });
+
+  test('하이브리드 경로: validation_gate → 403 · 한국어 · 기계 문자열은 detail 에만', async () => {
+    setHybrid(true); mGet.mockResolvedValue(CARD);
+    mHybrid.mockResolvedValueOnce({ ok: false, error: RAW, errorCode: 'validation_gate' });
+    const res = await POST(post(), ctx('2'));
+    const json = await res.json();
+    expect(res.status).toBe(403);
+    expect(json).toEqual({ ok: false, error: '검증되지 않은 전략이라 매수할 수 없습니다 (validation_gate)', errorCode: 'validation_gate', detail: RAW });
+  });
+
+  test('다른 실패 코드는 기존 응답 그대로(400)', async () => {
+    setHybrid(true); mGet.mockResolvedValue(CARD);
+    mHybrid.mockResolvedValueOnce({ ok: false, error: 'transition_conflict' });
+    const res = await POST(post(), ctx('2'));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ ok: false, error: 'transition_conflict' });
+  });
+});

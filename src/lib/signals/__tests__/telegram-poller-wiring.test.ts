@@ -185,6 +185,13 @@ describe('buildApprovalDepsFrom — 누가 승인할 수 있는가', () => {
       expect(log.hybrid).toEqual([101]);
       expect(log.approve).toEqual([]);
     });
+    test('🔴 T-072 G4 — 하이브리드 승인의 검증 관문 코드도 전달된다(그래야 mapFailure 가 한국어 문구로 바꾼다)', async () => {
+      const { io } = makeIO();
+      io.service.approveSignalHybrid = async () => ({ ok: false, error: 'validation_gate: 등록되지 않은 전략(x) — …', errorCode: 'validation_gate' });
+      expect(await buildApprovalDepsFrom(io).approve(101, 'hybrid')).toEqual({
+        ok: false, error: 'validation_gate: 등록되지 않은 전략(x) — …', errorCode: 'validation_gate',
+      });
+    });
     test('실패 코드는 가공 없이 전달된다 (order_uncertain 이 order_not_accepted 로 바뀌면 안 된다)', async () => {
       const { io } = makeIO();
       io.service.approveSignal = async () => ({ ok: false, orderId: 9, error: 'order_uncertain: x', errorCode: 'order_uncertain' });

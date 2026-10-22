@@ -7,6 +7,8 @@
  */
 export interface FakeSignal {
   id: number;
+  /** T-072 — G5 관문·G6 귀속의 판정 근거. 기본값은 검증된 전략(VALIDATED_STRATEGY) — 기존 시험이 선점·주문 기계를 그대로 보게 */
+  strategy_id: string | null;
   status: string;
   consumed_order_id: number | null;
   expires_at: Date | null;
@@ -25,9 +27,12 @@ export interface FakeSignal {
 
 const ZONE = { ai: { scenario: { entry: { price_zone: '1 ~ 99999999' } } } };
 
+/** T-072 — 가짜 strategies 테이블에서 backtested 인 전략 */
+export const VALIDATED_STRATEGY = 'validated-v1';
+
 export function fakeSignal(id: number, over: Partial<FakeSignal> = {}): FakeSignal {
   return {
-    id, status: 'approved_pending_entry', consumed_order_id: null, expires_at: null, updated_at: new Date(),
+    id, strategy_id: VALIDATED_STRATEGY, status: 'approved_pending_entry', consumed_order_id: null, expires_at: null, updated_at: new Date(),
     symbol: '005930', side: 'buy', order_type: 'limit', price: '6540', quantity: null, amount_krw: '100000',
     indicators: JSON.stringify(ZONE), reasoning: null, market: 'domestic', ...over,
   };
@@ -45,6 +50,10 @@ export class FakeSignalsDb {
   delayMs = 0;
   /** SELECT 가 돌려줄 스냅샷을 가로채고 싶을 때(경합 재현). 기본은 현재 상태 */
   selectHook?: (rows: FakeSignal[]) => FakeSignal[];
+  /** T-072 — strategies.validation_status (없음 = 행 없음, Error = 조회 예외). 조회는 events 에 'strategy:<id>' 로 남는다 */
+  strategies: Record<string, string | Error> = { [VALIDATED_STRATEGY]: 'backtested' };
+  /** T-072 — trade_logs INSERT (event, payload) */
+  tradeLogs: Array<{ event: string; payload: Record<string, unknown> }> = [];
 
   add(sig: FakeSignal): void { this.rows.set(sig.id, sig); }
   statusOf(id: number): string | undefined { return this.rows.get(id)?.status; }
@@ -102,6 +111,25 @@ export class FakeSignalsDb {
       this.events.push(`${ok ? 'expire' : 'expire-noop'}:${id}`);
       return [{ affectedRows: ok ? 1 : 0 }];
     }
+    // T-072 G5 — 검증 관문 종결. SQL 에 있는 상태 조건(`AND status='approved_pending_entry'`)만 평가한다 — 조건을 지운 변이가
+    // 다른 실행이 방금 선점한(executing) 행을 덮어쓰게 만들어 시험이 잡도록(만료 핸들러와 같은 방식).
+    if (/^UPDATE signals SET status='superseded', updated_at=NOW\(\) WHERE id=\?( AND status='approved_pending_entry')?$/.test(sql)) {
+      const id = Number(params[0]);
+      const r = this.rows.get(id);
+      const statusGuard = /AND status='approved_pending_entry'$/.test(sql);
+      const ok = !!r && (!statusGuard || r.status === 'approved_pending_entry');
+      if (ok) r!.status = 'superseded';
+      this.events.push(`${ok ? 'supersede' : 'supersede-noop'}:${id}`);
+      return [{ affectedRows: ok ? 1 : 0 }];
+    }
+    // T-072 G5 — 검증 상태 조회(관문 모듈 — PK 1행)
+    if (/^SELECT validation_status FROM strategies WHERE id = \? LIMIT 1$/.test(sql)) {
+      const sid = String(params[0]);
+      this.events.push(`strategy:${sid}`);
+      const v = this.strategies[sid];
+      if (v instanceof Error) throw v;
+      return [v === undefined ? [] : [{ validation_status: v }]];
+    }
     // 분할 진입 게이트: 같은 group 의 이전 회차 중 approved_pending_entry 가 있는가
     if (/^SELECT id, status FROM signals WHERE JSON_EXTRACT\(indicators, '\$\.split\.group_id'\) = \? AND JSON_EXTRACT\(indicators, '\$\.split\.index'\) < \? AND status = 'approved_pending_entry'$/.test(sql)) {
       const [groupId, index] = params as [string, number];
@@ -127,11 +155,20 @@ export class FakeSignalsDb {
     if (/FROM signals WHERE status = 'approved_pending_entry'/.test(sql)) {
       this.events.push('select');
       const live = [...this.rows.values()].filter((r) => r.status === 'approved_pending_entry').map((r) => ({ ...r }));
-      return [this.selectHook ? this.selectHook(live) : live];
+      const picked = this.selectHook ? this.selectHook(live) : live;
+      // T-072 — 실제 DB 처럼 **SELECT 에 적힌 열만** 돌려준다. 전체 행을 돌려주면 SELECT 에서 열(예: strategy_id)을 빼먹은 결함이
+      // 목에서는 보이지 않는다(WP-2b 변이 G5-7 이 그렇게 살아남았다).
+      const m = /^SELECT (.+?) FROM signals WHERE status = 'approved_pending_entry'/.exec(sql);
+      const cols = m ? m[1].split(',').map((c) => c.trim()) : null;
+      if (!cols) return [picked];
+      return [picked.map((r) => Object.fromEntries(cols.map((c) => [c, (r as unknown as Record<string, unknown>)[c]])))];
     }
     // 그 밖의 UPDATE signals 는 예상 밖 — 테스트가 조용히 통과하지 않게 던진다
     if (/^UPDATE signals/.test(sql)) throw new Error(`예상하지 못한 signals UPDATE: ${sql}`);
-    if (/INSERT INTO trade_logs/i.test(sql)) return [{ insertId: 1 }];
+    if (/INSERT INTO trade_logs/i.test(sql)) {
+      try { this.tradeLogs.push({ event: String(params[1]), payload: JSON.parse(String(params[2])) as Record<string, unknown> }); } catch { /* 형식 무관 */ }
+      return [{ insertId: 1 }];
+    }
     return [[]];
   }
 }

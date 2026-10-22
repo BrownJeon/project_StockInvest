@@ -58,8 +58,12 @@ interface SignalFixture {
 /** 항상 구간 안에 들어오게 넓게 잡는다 — 이 파일의 관심사는 진입 판정이 아니라 수량이다. */
 const ZONE = { ai: { scenario: { entry: { price_zone: '1 ~ 99999999' } } } };
 
+/** T-072 — 목 strategies 에서 backtested 인 전략. 이 파일은 사이징을 본다 — 관문(G5)을 통과하는 검증된 전략으로 둔다. */
+const VALIDATED_SID = 'validated-v1';
+
 function fixture(o: Partial<SignalFixture> & { id: number }) {
   return {
+    strategy_id: VALIDATED_SID,
     symbol: '005930', side: 'buy' as const, order_type: 'limit' as const,
     price: '6540', quantity: null, amount_krw: '100000', market: 'domestic' as const,
     indicators: JSON.stringify(ZONE), reasoning: null, expires_at: null,
@@ -85,6 +89,8 @@ function setupPool(rows: unknown[]): Captured {
     if (/^UPDATE signals SET status='executing'/.test(sql.replace(/\s+/g, ' ').trim())) return [{ affectedRows: 1 }];
     // T-046 — 멈춘 executing 점검 쿼리는 빈 결과(사이징 테스트의 관심사가 아니다)
     if (/status='executing' AND consumed_order_id IS NULL AND updated_at </.test(sql.replace(/\s+/g, ' ').trim())) return [[]];
+    // T-072 G5 — 검증 상태 조회(관문). 검증된 전략만 backtested, 그 밖은 행 없음(미등록).
+    if (/FROM strategies/i.test(sql)) return [params[0] === VALIDATED_SID ? [{ validation_status: 'backtested' }] : []];
     if (/FROM signals/i.test(sql)) return [rows];
     return [[]];
   });

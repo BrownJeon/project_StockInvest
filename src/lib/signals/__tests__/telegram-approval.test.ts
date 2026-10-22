@@ -618,4 +618,18 @@ describe('mapFailure', () => {
   ] as const)('%s / %s → %s', (error, code, kind) => {
     expect(mapFailure(error, code).kind).toBe(kind);
   });
+
+  // T-072 G4 — 검증 상태 관문. 미지 코드처럼 원문(`validation_gate: 등록되지 않은 전략(…)…`)을 그대로 보이지 않고 한국어 문구로.
+  test.each([
+    ['validation_gate: 등록되지 않은 전략(rsi_momentum_v1) — 검증 전 신규 매수 차단 — 선점·주문하지 않음', 'validation_gate',
+      '검증되지 않은 전략이라 매수할 수 없습니다 (validation_gate)'],
+    ['validation_gate: x', undefined, '검증되지 않은 전략이라 매수할 수 없습니다 (validation_gate)'],      // 하이브리드: 코드 없이 문자열만 와도
+    ['whatever', 'validation_gate', '검증되지 않은 전략이라 매수할 수 없습니다 (validation_gate)'],
+    ['validation_lookup_error: ER_BAD_FIELD_ERROR', 'validation_lookup_error', expect.stringMatching(/^전략 검증 상태를 확인하지 못해 매수하지 않았습니다.*\(validation_lookup_error\)$/)],
+    ['validation_lookup_error: x', undefined, expect.stringContaining('(validation_lookup_error)')],
+  ] as const)('🔴 %s / %s → failed + 한국어 문구', (error, code, reason) => {
+    const v = mapFailure(error, code);
+    expect(v).toEqual({ kind: 'failed', reason });
+    expect((v as { reason: string }).reason).not.toMatch(/등록되지 않은|ER_BAD_FIELD_ERROR/);
+  });
 });

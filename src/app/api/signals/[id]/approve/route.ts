@@ -3,6 +3,11 @@ import { getPool } from '@/lib/db';
 import { approveSignal, approveSignalHybrid, getSignalById } from '@/lib/signals/service';
 import { readHybridModeEnabled, resolveApprovalPath } from '@/lib/signals/approval-transitions';
 import type { ScenarioCard } from '@/lib/signals/scenario-builder';
+import {
+  VALIDATION_GATE_USER_MESSAGE,
+  isValidationGateErrorCode,
+  validationGateHttpStatus,
+} from '@/lib/safety/validation-gate';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,11 +44,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (path === 'hybrid') {
       // 하이브리드 모드: 즉시 주문하지 않고 진입 감시 상태로 전환
       const result = await approveSignalHybrid(id, editedScenario);
+      // T-072 G4 — 검증 관문 차단은 사람이 읽는 한국어 문구로 답한다(기계 문자열은 detail 에만). 선점·진입 감시 전환 없음.
+      if (!result.ok && isValidationGateErrorCode(result.errorCode)) {
+        return Response.json(
+          { ok: false, error: VALIDATION_GATE_USER_MESSAGE[result.errorCode], errorCode: result.errorCode, detail: result.error },
+          { status: validationGateHttpStatus(result.errorCode) },
+        );
+      }
       return Response.json(result, { status: result.ok ? 200 : 400 });
     }
 
     // 기존 즉시 주문 승인 경로
     const result = await approveSignal(id);
+    // T-072 G4 — 같은 규칙(선점·orders 행 없음). 결과 원문은 data 에 그대로 둔다(기존 응답 모양).
+    if (!result.ok && isValidationGateErrorCode(result.errorCode)) {
+      return Response.json(
+        { ok: false, error: VALIDATION_GATE_USER_MESSAGE[result.errorCode], errorCode: result.errorCode, data: result },
+        { status: validationGateHttpStatus(result.errorCode) },
+      );
+    }
     return Response.json({ ok: result.ok, data: result }, { status: result.ok ? 200 : 400 });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

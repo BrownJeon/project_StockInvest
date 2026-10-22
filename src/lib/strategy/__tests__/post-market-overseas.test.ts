@@ -20,6 +20,8 @@ import { insideBar } from '../rules/inside-bar';
 import { oversoldBounceDaily } from '../rules/oversold-bounce-daily';
 import { getStyleConfig } from '../style';
 import { getCandles as domesticGetCandles } from '@/lib/exchanges/kis-domestic';
+import { evaluateValidationGate } from '@/lib/safety/validation-gate';
+import { overseasLimitUnitUsd } from '@/lib/signals/signal-cash-gate';
 
 jest.mock('@/lib/db', () => ({ getPool: jest.fn() }));
 jest.mock('@/lib/exchanges/kis', () => ({ kis: { getCandles: jest.fn() } }));
@@ -35,6 +37,13 @@ jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
 jest.mock('../rules/oversold-bounce-daily', () => ({ oversoldBounceDaily: jest.fn() }));
 jest.mock('../style', () => ({ getStyleConfig: jest.fn() }));
 jest.mock('../universe', () => ({ getAlwaysIncludeSymbols: jest.fn(), getUniverseSnapshot: jest.fn() }));
+// T-072 G2 — 이 파일은 해외 카드 생성 기계(스위치·휴장·환율·트랜잭션·필터)를 본다. 관문 판정은 '검증됨'으로 고정해 카드가 기존처럼
+//   `pending` 으로 들어가는 경로를 그대로 시험한다(아래 풀 목은 예상 밖 SQL 을 던진다 — 판정 조회가 그 목을 지나지 않게).
+//   막히는 경우(skipped + 커밋 뒤 가상 체결)는 post-market-validation-gate.test.ts 가 실제 관문으로 본다.
+jest.mock('@/lib/safety/validation-gate', () => ({
+  ...jest.requireActual('@/lib/safety/validation-gate'),
+  evaluateValidationGate: jest.fn(async ({ strategyId }: { strategyId: string }) => ({ allowed: true, kind: 'validated', strategyId, status: 'backtested' })),
+}));
 
 const mGetPool = getPool as jest.Mock;
 const mCandles = kis.getCandles as jest.Mock;
@@ -72,7 +81,12 @@ interface DbState {
   holidays: string[] | Error;
   fxRow: Record<string, unknown> | null | Error;
   earningsRows: unknown[] | Error;
-  insertResults: Array<{ affectedRows: number } | Error>;
+  insertResults: Array<{ affectedRows: number; insertId?: number } | Error>;
+  /** T-072 G2 — 실제 관문을 쓰는 시험만: strategies.validation_status (없음 = 행 없음, Error = 조회 예외) */
+  strategies: Record<string, string | Error>;
+  /** T-072 G2 — 풀(트랜잭션 밖)로 들어온 paper_fills INSERT 파라미터 */
+  paperFills: unknown[][];
+  paperThrows: Error | null;
 }
 let db: DbState;
 let query: jest.Mock;
@@ -90,6 +104,17 @@ function wireDb() {
     }
     if (sql.includes('FROM fx_rates')) { const r = pick(db.fxRow); return [r ? [r] : [], undefined]; }
     if (sql.includes('FROM us_earnings_events')) return [pick(db.earningsRows), undefined];
+    // T-072 G2 — 관문 판정 조회(풀, 트랜잭션 연결 아님)·커밋 뒤 가상 체결 기록(풀). 기존 시험은 관문 목('검증됨')이라 여기 오지 않는다.
+    if (sql.includes('SELECT validation_status FROM strategies')) {
+      const v = db.strategies[String(params?.[0])];
+      if (v instanceof Error) throw v;
+      return [v === undefined ? [] : [{ validation_status: v }], undefined];
+    }
+    if (sql.includes('INSERT INTO paper_fills')) {
+      if (db.paperThrows) throw db.paperThrows;
+      db.paperFills.push(params ?? []);
+      return [{ affectedRows: 1, insertId: 900 + db.paperFills.length }, undefined];
+    }
     throw new Error(`예상하지 못한 SQL: ${sql.slice(0, 60)}`);
   });
   let i = 0;
@@ -159,6 +184,9 @@ beforeEach(() => {
     fxRow: { rate: '1330.0000', age_sec: 120, fetched_kst: '2026-10-21T07:58:00' },
     earningsRows: [],
     insertResults: [],
+    strategies: {},
+    paperFills: [],
+    paperThrows: null,
   };
   wireDb();
   mOvsEnabled.mockReturnValue(true);
@@ -264,7 +292,8 @@ describe('정상 경로 — G5 데이터 계약·G5-b 문구·INSERT', () => {
     expect(p[6]).toBe('2026-10-22 05:00:00');                       // expires_at = S1 16:00 EDT (KST)
     expect(p[7]).toBe('2026-10-21 22:30:00');                       // valid_from = S1 09:30 EDT (KST)
     expect(p[8]).toBe('overseas');                                  // market
-    expect(p.slice(9)).toEqual(['NAS:CMCSA', '2026-10-21 22:30:00']);
+    expect(p[9]).toBe('pending');                                   // T-072 — status 자리표시자(맨 뒤 열) · 검증된 전략이면 기존과 같은 값
+    expect(p.slice(10)).toEqual(['NAS:CMCSA', '2026-10-21 22:30:00']);
 
     const ind = JSON.parse(String(p[5]));
     expect(ind).toEqual({
@@ -788,7 +817,10 @@ describe('🔴 Leader 결정 — 일시적 "모름" 은 ok:false(data_unknown), 
       () => { db.earningsRows = new Error('x'); },
     ]) {
       jest.clearAllMocks(); wireDb(); mOvsEnabled.mockReturnValue(true); mFx.mockImplementation(async () => R); mMissing.mockResolvedValue([]);
-      db = { switchRows: [{ value: 'true' }], holidays: CLOSED, fxRow: { rate: '1330.0000', age_sec: 120, fetched_kst: '2026-10-21T07:58:00' }, earningsRows: [], insertResults: [] };
+      db = {
+        switchRows: [{ value: 'true' }], holidays: CLOSED, fxRow: { rate: '1330.0000', age_sec: 120, fetched_kst: '2026-10-21T07:58:00' }, earningsRows: [], insertResults: [],
+        strategies: {}, paperFills: [], paperThrows: null,   // T-072 WP-2c R-4 — DbState 필수 필드(빠지면 시험 포함 타입 검사에서 오류)
+      };
       prep();
       arrange({ closes: { 'NAS:CMCSA': 27.4 } });
       const r = await runPostMarketOverseas();
@@ -947,6 +979,93 @@ describe('Reviewer L-1 — 시험 공백 보강', () => {
     const r = await runPostMarketOverseas();
     expect(r).toMatchObject({ ok: true, status: 'ok', signalsCreated: 1, unaffordableSkipped: 0 });
     expect(insertParams()[0][2]).toBe(99600);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 T-072 G2 — 검증 관문(해외 트랜잭션): skipped 카드 + 커밋 뒤에만 가상 체결 (실제 관문)', () => {
+  const mGate = evaluateValidationGate as jest.Mock;
+  const realGate = (jest.requireActual('@/lib/safety/validation-gate') as typeof import('@/lib/safety/validation-gate')).evaluateValidationGate;
+  const defaultGate = mGate.getMockImplementation();
+  beforeEach(() => { mGate.mockImplementation(realGate); });
+  afterEach(() => { mGate.mockImplementation(defaultGate); });
+
+  const PF_COLS = ['signal_id', 'strategy_id', 'gate_reason', 'origin', 'market', 'symbol', 'order_type', 'currency',
+    'limit_price', 'limit_price_krw', 'fx_usdkrw', 'zone_lo', 'zone_hi', 'quantity', 'amount_krw',
+    'fee_rate_pct', 'fee_est_krw', 'fill_model', 'valid_from', 'valid_until', 'signal_created_at'] as const;
+  const pf = (params: unknown[]) => Object.fromEntries(PF_COLS.map((c, i) => [c, params[i]])) as Record<(typeof PF_COLS)[number], unknown>;
+  const pfCalls = () => query.mock.calls.filter((c) => /INSERT INTO paper_fills/.test(String(c[0])));
+
+  test('미등록(eod-high-close-v1) → 카드는 트랜잭션 연결로 status=skipped, 가상 체결은 COMMIT 뒤 풀로 1행(USD 구간·같은 유효기간)', async () => {
+    db.insertResults = [{ affectedRows: 1, insertId: 4242 }];
+    arrange({ closes: { 'NAS:CMCSA': 27.4 }, decisions: [buy('NAS:CMCSA', 27.2, 27.6)] });
+    const r = await runPostMarketOverseas();
+
+    expect(mLlm).toHaveBeenCalledTimes(1);                                   // 배치는 그대로 돈다
+    expect(r).toMatchObject({ ok: true, status: 'ok', signalsCreated: 0, signalsSkipped: 1, validationBlocked: 1, duplicatesSkipped: 0, errors: [] });
+    const p = insertParams()[0];
+    expect(p[9]).toBe('skipped');                                           // 🔴 승인 가능한 pending 이 아니다
+    expect(JSON.parse(String(p[5]))).toMatchObject({
+      gate: 'validation_gate', validation_gate: { reason: 'unregistered', status: null, origin: 'post_market' }, price_zone_usd: { lo: 27.2, hi: 27.6 },
+    });
+    // 관문 조회는 풀(트랜잭션 연결에 끼지 않는다), 가상 체결도 풀 — 트랜잭션 연결로는 카드 INSERT 만
+    expect(conn.query.mock.calls.every((c) => /^\s*INSERT INTO signals/.test(String(c[0])))).toBe(true);
+    expect(query.mock.calls.some((c) => /FROM strategies/.test(String(c[0])))).toBe(true);
+    // 🔴 커밋 뒤에만 기록
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+    expect(pfCalls()).toHaveLength(1);
+    const pfOrder = query.mock.invocationCallOrder[query.mock.calls.findIndex((c) => /INSERT INTO paper_fills/.test(String(c[0])))];
+    expect(pfOrder).toBeGreaterThan(conn.commit.mock.invocationCallOrder[0]);
+    const row = pf(db.paperFills[0]);
+    expect(row).toMatchObject({
+      signal_id: 4242, strategy_id: 'eod-high-close-v1', gate_reason: 'unregistered', origin: 'post_market',
+      market: 'overseas', symbol: 'NAS:CMCSA', order_type: 'limit', currency: 'USD', zone_lo: 27.2, zone_hi: 27.6,
+      amount_krw: 100000, fee_rate_pct: 0.25, fill_model: 'zone_touch_pending', fx_usdkrw: 1330, quantity: 2,
+      valid_from: '2026-10-21 22:30:00', valid_until: '2026-10-22 05:00:00',
+    });
+    expect(row.limit_price_krw).toBeCloseTo(36442 * 1.005, 6);              // entry-watcher 와 같은 추격 반영 원화 지정가
+    expect(row.limit_price).toBe(overseasLimitUnitUsd(36442 * 1.005, 1330));
+  });
+
+  test('🔴 트랜잭션이 되돌려지면(두 번째 카드 INSERT 실패) 가상 체결 0 — 사라진 카드를 가리키는 고아 행 없음', async () => {
+    arrange({ closes: { 'NAS:CMCSA': 27.4, 'NYS:PFE': 25.2 }, decisions: [buy('NAS:CMCSA', 27.2, 27.6), buy('NYS:PFE', 25.0, 25.4)] });
+    db.insertResults = [{ affectedRows: 1, insertId: 1 }, Object.assign(new Error('deadlock'), { errno: 1213 })];
+    wireDb();
+    const r = await runPostMarketOverseas();
+    expect(r).toMatchObject({ ok: false, status: 'insert_fail', signalsCreated: 0 });
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+    expect(pfCalls()).toHaveLength(0);
+    expect(db.paperFills).toHaveLength(0);
+  });
+
+  test('🔴 커밋 뒤 가상 체결 기록이 실패해도(테이블 없음) 실행은 ok·카드는 커밋됨·던지지 않음', async () => {
+    db.insertResults = [{ affectedRows: 1, insertId: 4243 }];
+    db.paperThrows = Object.assign(new Error("Table 'paper_fills' doesn't exist"), { code: 'ER_NO_SUCH_TABLE' });
+    arrange({ closes: { 'NAS:CMCSA': 27.4 }, decisions: [buy('NAS:CMCSA', 27.2, 27.6)] });
+    const r = await runPostMarketOverseas();
+    expect(r).toMatchObject({ ok: true, status: 'ok', validationBlocked: 1, errors: [] });
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+    expect(conn.rollback).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('가상 체결 기록 실패'));
+  });
+
+  test('중복(affectedRows 0)이면 막혔어도 가상 체결 0', async () => {
+    db.insertResults = [{ affectedRows: 0 }];
+    arrange({ closes: { 'NAS:CMCSA': 27.4 }, decisions: [buy('NAS:CMCSA', 27.2, 27.6)] });
+    const r = await runPostMarketOverseas();
+    expect(r).toMatchObject({ ok: true, duplicatesSkipped: 1, signalsCreated: 0 });
+    expect('validationBlocked' in r).toBe(false);
+    expect(pfCalls()).toHaveLength(0);
+  });
+
+  test('검증된 전략이면 기존 그대로 pending · 가상 체결 0', async () => {
+    db.strategies['eod-high-close-v1'] = 'backtested';
+    db.insertResults = [{ affectedRows: 1, insertId: 4244 }];
+    arrange({ closes: { 'NAS:CMCSA': 27.4 }, decisions: [buy('NAS:CMCSA', 27.2, 27.6)] });
+    const r = await runPostMarketOverseas();
+    expect(r).toMatchObject({ ok: true, signalsCreated: 1 });
+    expect(insertParams()[0][9]).toBe('pending');
+    expect(pfCalls()).toHaveLength(0);
   });
 });
 

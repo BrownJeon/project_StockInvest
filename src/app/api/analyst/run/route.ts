@@ -55,11 +55,17 @@ export async function POST(req: Request) {
           // T-003 §1 `signal_create_failed` — createSignal 예외가 나머지 후보까지 죽이면 안 된다.
           // (구 코드는 심볼 단위 catch 뿐이라 같은 심볼의 후속 시그널이 통째로 유실됐다)
           try {
-            const r = await createSignal(s, cfg);
+            const r = await createSignal(s, cfg, { origin: 'analyst_run' });   // T-072 — 막힌 매수의 가상 체결 출처
             // T-058 — 현금 부족 매수는 시그널이 만들어지지 않았다(signalId 0). 생성 성공처럼 `created` 에 넣지 않는다.
             // (다른 `ok:false` 코드의 기존 취급은 이 task 범위 밖이라 그대로 둔다)
             if (!r.ok && r.errorCode === 'insufficient_cash') {
               skipped.push({ symbol, reason: 'insufficient_cash' });
+              continue;
+            }
+            // T-072 — 검증 상태 관문(G1)에 막힌 매수도 승인 가능한 시그널이 아니다(signalId 0, 감사 행·가상 체결만). 같은 이유로 skipped.
+            //   (`rsi_momentum_v1` 은 strategies 에 없는 ID 라 매수는 전부 여기로 온다 — 미등록 fail-closed)
+            if (!r.ok && (r.errorCode === 'validation_gate' || r.errorCode === 'validation_lookup_error')) {
+              skipped.push({ symbol, reason: r.errorCode });
               continue;
             }
             created.push({ symbol, signalId: r.signalId, autoSubmitted: r.autoSubmitted, orderId: r.orderId });

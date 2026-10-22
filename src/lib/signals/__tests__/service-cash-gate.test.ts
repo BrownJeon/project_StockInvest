@@ -84,6 +84,8 @@ function setupDb() {
     }
     if (/FROM system_config/.test(sql)) return [[]];
     if (/FROM fx_rates/.test(sql)) return [w.fxRow ? [w.fxRow] : []];
+    // T-072 — 검증 상태 관문(G1)은 현금 게이트 **앞**이다. 이 파일은 현금 게이트를 보므로 전략은 검증된 상태(backtested)로 둔다.
+    if (/FROM strategies/.test(sql)) return [[{ validation_status: 'backtested' }]];
     if (/SELECT id FROM signals/.test(sql)) return [[]];
     if (/INSERT INTO signals/.test(sql)) { w.signalInserts.push(params); return [{ insertId: 9000 + w.signalInserts.length }]; }
     if (/INSERT INTO trade_logs/.test(sql)) { w.tradeLogs.push(params); return [{}]; }
@@ -215,6 +217,7 @@ describe('1. 🔴 현금 부족 매수 — 행·RAG·알림·주문 없음', () 
     q.mockImplementation(async (sqlArg: unknown, params: unknown[] = []) => {
       if (/INSERT INTO trade_logs/.test(String(sqlArg))) throw new Error('db down');
       if (/FROM fx_rates/.test(String(sqlArg))) return [[w.fxRow]];
+      if (/FROM strategies/.test(String(sqlArg))) return [[{ validation_status: 'backtested' }]];
       if (/INSERT INTO signals/.test(String(sqlArg))) { w.signalInserts.push(params); return [{ insertId: 1 }]; }
       return [[]];
     });

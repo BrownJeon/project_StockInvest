@@ -21,6 +21,9 @@ jest.mock('@/lib/safety/dry-run', () => {
 });
 const ACCEPTED_ORDER = { ok: true, orderId: 2000, dryRun: true, blockedBy: 'dry_run' as const };
 
+/** T-072 — 목 DB 에서 검증 상태가 backtested 인 전략 */
+const VALIDATED_SID = 'validated-v1';
+
 interface Captured {
   queries: Array<{ sql: string; params: unknown[] }>;
   signalInserts: Array<{ id: number; status: string; amount: number }>;
@@ -137,7 +140,7 @@ function setupMockDB(opts: MockOpts = {}): Captured {
         price: '90000000',
         quantity: '0.0001',
         amount_krw: '9000',
-        strategy_id: 'test',
+        strategy_id: VALIDATED_SID,   // T-072 WP-2b — 승인 경로는 G4(그 행의 전략)를 거친다
       };
       return [row ? [row] : []];
     }
@@ -167,6 +170,10 @@ function setupMockDB(opts: MockOpts = {}): Captured {
     if (/FROM system_config WHERE `key` = \?/i.test(sql)) {
       // analyst_style / safety_limit_chase_disabled / safety_dry_run 등 — 기본 미설정
       return [[]];
+    }
+    // T-072 — 검증 상태 관문(G1·G6). 이 파일의 매수 생성 시험은 **검증된 전략**(VALIDATED_SID)을 쓴다. 그 밖의 ID 는 미등록(행 없음).
+    if (/SELECT validation_status FROM strategies WHERE id = \?/i.test(sql)) {
+      return [params[0] === VALIDATED_SID ? [{ validation_status: 'backtested' }] : []];
     }
     throw new Error(`unexpected SQL: ${sql}`);
   });
@@ -202,6 +209,7 @@ describe('signals/service', () => {
     process.env.AUTOPILOT_MODE = 'auto';
     const cap = setupMockDB();
     const r = await createSignal({
+      strategyId: VALIDATED_SID,
       symbol: 'KRW-BTC',
       side: 'buy',
       orderType: 'limit',
@@ -224,6 +232,7 @@ describe('signals/service', () => {
     process.env.ANALYST_ENABLED = 'false';
     const cap = setupMockDB();
     const r = await createSignal({
+      strategyId: VALIDATED_SID,
       symbol: 'KRW-BTC',
       side: 'buy',
       orderType: 'limit',
@@ -242,6 +251,7 @@ describe('signals/service', () => {
     process.env.ANALYST_ENABLED = 'false';
     const cap = setupMockDB({ activeDuplicate: { id: 777, symbol: 'KRW-BTC', side: 'buy' } });
     const r = await createSignal({
+      strategyId: VALIDATED_SID,
       symbol: 'KRW-BTC',
       side: 'buy',
       orderType: 'limit',
@@ -260,6 +270,7 @@ describe('signals/service', () => {
     process.env.ANALYST_ENABLED = 'false';
     const cap = setupMockDB({ activeDuplicate: { id: 777, symbol: 'KRW-BTC', side: 'sell' } });
     const r = await createSignal({
+      strategyId: VALIDATED_SID,
       symbol: 'KRW-BTC',
       side: 'buy',
       orderType: 'limit',
@@ -277,6 +288,7 @@ describe('signals/service', () => {
     process.env.AUTOPILOT_MODE = 'auto';
     const cap = setupMockDB();
     const r = await createSignal({
+      strategyId: VALIDATED_SID,
       symbol: 'KRW-BTC',
       side: 'buy',
       orderType: 'limit',
@@ -313,6 +325,7 @@ describe('signals/service', () => {
     process.env.ANALYST_ENABLED = 'true';
     const cap = setupMockDB();
     const r = await createSignal({
+      strategyId: VALIDATED_SID,
       symbol: 'KRW-BTC',
       side: 'buy',
       orderType: 'limit',
@@ -331,6 +344,7 @@ describe('signals/service', () => {
     delete process.env.AUTOPILOT_MODE;
     const cap = setupMockDB();
     const r = await createSignal({
+      strategyId: VALIDATED_SID,
       symbol: 'KRW-BTC',
       side: 'buy',
       orderType: 'limit',
@@ -369,7 +383,7 @@ describe('signals/service', () => {
         price: '9000',
         quantity: '1',
         amount_krw: '9000',
-        strategy_id: 'test',
+        strategy_id: VALIDATED_SID,
       },
     });
     const r = await approveSignal(1234);
@@ -390,7 +404,7 @@ describe('signals/service', () => {
         price: '9000',
         quantity: '1',
         amount_krw: '9000',
-        strategy_id: 'test',
+        strategy_id: VALIDATED_SID,
       },
     });
     const r = await approveSignal(4321);
@@ -402,7 +416,7 @@ describe('signals/service', () => {
 
   const PENDING_ROW = {
     id: 5150, status: 'pending', symbol: 'KRW-BTC', side: 'buy' as const, order_type: 'limit' as const,
-    price: '9000', quantity: '1', amount_krw: '9000', strategy_id: 'test',
+    price: '9000', quantity: '1', amount_krw: '9000', strategy_id: VALIDATED_SID,
   };
 
   test('🔴 주문이 거부·차단되면 approved 로 기록하지 않고 대기로 되돌린다 (이전에는 approved + 주문 없음이 쌓였다)', async () => {
@@ -524,7 +538,7 @@ describe('signals/service', () => {
     (sendAlert as jest.Mock).mockClear();
     setupMockDB();
     await createSignal({
-      symbol: 'KRW-BTC', side: 'buy', orderType: 'limit', price: 1_000, quantity: 3, amountKRW: 3_000,
+      strategyId: VALIDATED_SID, symbol: 'KRW-BTC', side: 'buy', orderType: 'limit', price: 1_000, quantity: 3, amountKRW: 3_000,
       reasoning: 'RSI14=30 < 38 & 과매도 > 기준',
     });
     const call = (sendAlert as jest.Mock).mock.calls.find((c) => String(c[1]).includes('자동 제출'));
@@ -622,7 +636,7 @@ describe('signals/service', () => {
     process.env.AUTOPILOT_MODE = 'auto';   // 주문 생성 경로를 타려면 명시적 auto 가 필요하다
     const cap = setupMockDB();
     await createSignal({
-      symbol: '005930', side: 'buy', orderType: 'limit',
+      strategyId: VALIDATED_SID, symbol: '005930', side: 'buy', orderType: 'limit',
       // T-020 — 원래 price=100,000 / amount=3,000 이라 사이징이 0.03주였다. 이제 그건
       // 주문 불성립으로 스킵되므로(주식은 1주 단위) 최소 1주가 성립하는 값으로 바꾼다.
       // 이 테스트의 의도(호가 추격이 가격에 적용되는가)는 그대로다.
@@ -656,7 +670,7 @@ describe('signals/service', () => {
     process.env.AUTOPILOT_MODE = 'auto';   // 주문 생성 경로를 타려면 명시적 auto 가 필요하다
     const cap = setupMockDB();
     await createSignal({
-      symbol: '005930', side: 'buy', orderType: 'market',
+      strategyId: VALIDATED_SID, symbol: '005930', side: 'buy', orderType: 'market',
       price: undefined, amountKRW: 3_000,
     });
     const orderInsert = cap.queries.find((q) => /INSERT INTO orders/i.test(q.sql));

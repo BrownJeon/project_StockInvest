@@ -8,6 +8,12 @@
  * 반환: { ok: true, signalId, signalIds, splitCount, status: 'approved_pending_entry' }
  * 거절(T-052): 400 보유 마감일이 이미 지남 · 404 원본 시그널 없음 · 409 원본이 이미 처리됨 / 같은 구간 활성 시나리오 있음 /
  *             같은 (종목·방향) 확정이 처리 중 — 모두 `{ ok: false, error: <한국어 문장> }`
+ * 거절(T-072 G3): 403 매수인데 귀속 전략이 검증 상태가 아님(이 경로의 행은 전략 귀속이 없다 — 지금은 매수 전부) · 503 검증 상태 조회 실패 —
+ *             `{ ok: false, error: <한국어 문장>, errorCode: 'validation_gate' | 'validation_lookup_error' }`. 행 0 · 원 카드 선점 0 ·
+ *             DB 연결·명명 락을 잡지 않는다. 매도(정규화 후 정확히 'sell')는 관문이 I/O 0 으로 통과시킨다(보호 청산 — 조회 0).
+ *             `direction` 이 `'BUY'`·`'buy '` 처럼 변형돼도 매수로 판정한다(WP-2c R-1 — ENUM 이 그 값을 buy 로 저장한다).
+ * 거절(T-072 WP-2d): 400 `direction` 을 정규화(trim·소문자)해도 buy/sell 이 아님 — `{ ok: false, error: <한국어 문장> }`. 하류(관문·분할 계산·
+ *             락 이름·중복 검사·INSERT·알림)에는 **정규화된 값만** 쓴다.
  */
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
@@ -18,6 +24,15 @@ import { getSymbolLabel, sendAlert } from '@/lib/notify';
 import { AWAITING_APPROVAL_STATUSES, sqlStatusList } from '@/lib/signals/statuses';
 import { toKstDatetime } from '@/lib/time';
 import { invalidConfirmField, warnConfirmFieldRejected } from '@/lib/safety/scenario-confirm-fields';
+import {
+  INVALID_SIDE_USER_MESSAGE,
+  VALIDATION_GATE_USER_MESSAGE,
+  evaluateValidationGate,
+  normalizeOrderSide,
+  validationErrorCode,
+  validationGateHttpStatus,
+} from '@/lib/safety/validation-gate';
+import { recordValidationGateEvent } from '@/lib/signals/paper-fill';
 import {
   CONFIRM_BUSY_MESSAGE,
   CONFIRM_LOCK_WAIT_SEC,
@@ -87,10 +102,18 @@ interface ConfirmBody {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as ConfirmBody;
-    const { symbol, direction, scenario } = body;
+    const { symbol, scenario } = body;
 
-    if (!symbol || !direction || !scenario) {
+    if (!symbol || !body.direction || !scenario) {
       return Response.json({ ok: false, error: 'symbol/direction/scenario required' }, { status: 400 });
+    }
+
+    // 🔴 T-072 WP-2d — direction 정규화. 대소문자·앞뒤 공백 변형은 받아 정확한 값으로 바꾸고, buy/sell 이 아니면 400.
+    //    이 아래는 **정규화된 `direction`** 만 쓴다(원문이 섞이면 같은 종목·방향이 다른 락 이름·중복 키를 갖는다).
+    const direction = normalizeOrderSide(body.direction);
+    if (direction === null) {
+      console.warn(`[api/signals/custom/confirm POST] direction 거절(buy/sell 아님) — symbol=${String(symbol)}`);
+      return Response.json({ ok: false, error: INVALID_SIDE_USER_MESSAGE }, { status: 400 });
     }
 
     // 🔴 T-029 — 수치·배열 shape 런타임 가드. **required 검사 뒤**에 두어 기존 문구를 앞지르지 않는다.
@@ -104,6 +127,31 @@ export async function POST(req: Request) {
     if (badField) {
       warnConfirmFieldRejected('api/signals/custom/confirm POST', badField, body);
       return Response.json({ ok: false, error: badField.message }, { status: 400 });
+    }
+
+    // T-072 — 이 경로가 만드는 행의 전략 귀속. 원 카드(sourceSignalId)의 전략을 복사하지 않는다(기존 동작 — Stage 0 B 의 알려진 결함,
+    //   바꾸려면 별도 결정). G3 판정과 INSERT 가 **같은 값**을 쓰게 한 곳에 둔다 — 하나만 바뀌는 일이 없게.
+    const attributedStrategyId: string | null = null;
+
+    // 🔴 T-072 G3 — 검증 상태 관문. side 판정은 관문 함수의 첫 줄이 한다(WP-2c R-1 — 여기서 `=== 'buy'` 로 거르지 않는다:
+    //    그러면 `'BUY'` 가 관문을 건너뛰고 ENUM 이 buy 로 저장한 매수 행이 생겼다). 매도(정확히 'sell', 대소문자·공백 무관)는 I/O 0 통과.
+    //    매수는 이 경로가 만들 행의 전략 귀속(`attributedStrategyId`, 아래 INSERT 의 strategy_id 와 같은 값)으로 판정한다 — 지금은 NULL 이라
+    //    매수 확정은 전부 막힌다(사용자 결정 D-1 "전부 차단", 설계 F-1). GET_LOCK·트랜잭션·원 카드 선점·INSERT **전**이다.
+    const vg = await evaluateValidationGate({ side: direction, strategyId: attributedStrategyId });
+    if (!vg.allowed) {
+      const errorCode = validationErrorCode(vg.reason);
+      console.warn(
+        `[api/signals/custom/confirm POST] VALIDATION_GATE symbol=${String(symbol)} direction=${JSON.stringify(direction)} ` +
+        `source=${body.sourceSignalId ?? '-'} reason=${vg.reason} — 행·원 카드 선점 없이 거절`,
+      );
+      await recordValidationGateEvent({
+        where: 'custom-confirm', signalId: typeof body.sourceSignalId === 'number' ? body.sourceSignalId : null,
+        strategyId: vg.strategyId, symbol: String(symbol), side: 'buy', reason: vg.reason,
+      });
+      return Response.json(
+        { ok: false, error: VALIDATION_GATE_USER_MESSAGE[errorCode], errorCode },
+        { status: validationGateHttpStatus(errorCode) },
+      );
     }
 
     const cp = body.currentPrice ?? 0;
@@ -185,7 +233,7 @@ export async function POST(req: Request) {
       })();
 
       insertParams.push([
-        null,
+        attributedStrategyId,   // T-072 — G3 가 판정한 바로 그 귀속(지금은 NULL)
         symbol,
         direction,
         'limit',

@@ -10,12 +10,24 @@ import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { submitOrder } from '@/lib/safety/dry-run';
 import { checkSymbolBlacklist } from '@/lib/safety/order-limits';
 import {
+  describeValidationBlock,
+  evaluateValidationGate,
+  normalizeOrderSide,
+  validationErrorCode,
+  type ValidationGateErrorCode,
+  type ValidationGateReason,
+  type ValidationGateVerdict,
+} from '@/lib/safety/validation-gate';
+import { COOLDOWN_TTL_MIN, claimCooldown, type CooldownClaimOutcome } from '@/lib/strategy/cooldowns';
+import {
+  type EngineSwitches,
   type RouterConfig,
   type SignalInput,
   getEngineSwitches,
   getRouterConfig,
   routeSignal,
 } from './router';
+import { type PaperFillOrigin, recordValidationBlockedBuy, recordValidationGateEvent } from './paper-fill';
 import {
   AWAITING_APPROVAL_STATUSES,
   type SignalStatus,
@@ -110,7 +122,20 @@ export type CreateSignalErrorCode =
    * T-058 — 매수인데 실시간 가용 현금이 사이징된 주문 전체 비용(수량 × 지정가 × 1.002)에 못 미쳐 **시그널을 만들지 않았다**(행·RAG·알림 없음, `signalId` 0).
    * 오류가 아니라 정책 건너뜀이다 — 호출부는 경보·재시도 대상으로 다루지 않는다.
    */
-  | 'insufficient_cash';
+  | 'insufficient_cash'
+  /**
+   * T-072 (D5) — 매수인데 귀속 전략이 검증 상태(backtested·paper_validated)가 아니다(unvalidated·미등록·귀속 없음·상태값 이상).
+   * 승인 가능한 시그널·승인 요청 알림·RAG 를 만들지 않았다(`signalId` 0). 승인 불가 감사 행(`skipped`)·가상 체결은 `validation` 에.
+   * 정책 건너뜀이다.
+   */
+  | 'validation_gate'
+  /** T-072 — 검증 상태 **조회 실패**(마이그레이션 전·DB 장애)로 같은 방식으로 막았다. 막는 것은 같고 인프라 이상이라 따로 센다 */
+  | 'validation_lookup_error'
+  /**
+   * T-072 WP-2d — `side` 를 정규화(trim·소문자)해도 `'buy'`·`'sell'` 이 아니다. 시그널·감사 행·가상 체결·알림·주문 없음(`signalId` 0).
+   * 입구(API)가 400 으로 먼저 거르므로 평소 0건 — 엔진 집계에서는 `signal_create_failed`(error)로 잡힌다.
+   */
+  | 'invalid_input';
 
 /**
  * `trade_logs.event` 는 **varchar(32)** 이고 운영 DB 는 STRICT 모드다 — 33자가 되면 INSERT 가 실패한다.
@@ -130,6 +155,36 @@ export interface CreateSignalResult {
   orderResult?: unknown;
   error?: string;
   errorCode?: CreateSignalErrorCode;
+  /** T-072 — `errorCode` 가 `validation_gate`·`validation_lookup_error` 일 때만. funnel·로그용 */
+  validation?: ValidationBlockInfo;
+}
+
+export interface ValidationBlockInfo {
+  reason: ValidationGateReason;
+  strategyId: string | null;
+  /** 읽은 검증 상태 원값(없으면 null) */
+  status: string | null;
+  /** 승인 불가 감사 행(`signals.status='skipped'`) id — 기록하지 않았거나 실패하면 null */
+  auditSignalId: number | null;
+  paperFillId: number | null;
+  /** 감사 행·가상 체결 기록을 시도했는가 — 쿨다운 선점에 진 경우(`active`·`error`) false */
+  recorded: boolean;
+  /** F-16 진입 쿨다운 선점 결과. 선점을 요청하지 않은 호출(비엔진 경로)은 `not_requested` */
+  claim: CooldownClaimOutcome | 'not_requested';
+}
+
+/**
+ * `createSignal` 호출 맥락 (T-072). 지정하지 않으면 `{ origin:'unspecified', claimEntryCooldown:false }`.
+ */
+export interface CreateSignalOptions {
+  /** 가상 체결 `paper_fills.origin` — 어느 경로에서 막혔는가 */
+  origin?: PaperFillOrigin;
+  /**
+   * F-16 — 검증 관문에 막힌 매수를 기록하기 **전에** 진입 쿨다운(scope=entry, symbol·strategy·buy, 120분)을 원자적으로 선점한다.
+   * 같은 후보를 매 틱 재평가하는 호출부(장중 엔진)만 켠다. 선점에 이긴 호출만 감사 행·가상 체결을 만들고, 진 호출(이미 쿨다운 중·DB 오류)은
+   * 기록만 생략한다(차단은 그대로). 선점 자체가 쿨다운이 되므로 막힌 매수도 실제 시그널과 같은 빈도로만 쌓인다.
+   */
+  claimEntryCooldown?: boolean;
 }
 
 /**
@@ -323,10 +378,104 @@ export async function recordBelowMinQty(args: {
   return detail;
 }
 
-export async function createSignal(
+/**
+ * T-072 G1 — 검증 관문에 막힌 매수의 마무리. 승인 가능한 시그널·알림·RAG·중복 검사·INSERT 에 **도달하지 않는다.**
+ * 기록(감사 행·가상 체결)은 best-effort — 어떤 실패도 차단 결과를 바꾸지 않고 던지지 않는다.
+ *
+ * 호출 경로별 중복 기록 방지:
+ *  - 엔진(`claimEntryCooldown: true`): 진입 쿨다운을 **먼저** 원자 선점하고 이긴 쪽만 기록한다(F-16). 선점 = 쿨다운 설정이다.
+ *  - 그 밖(`POST /api/signals`·`analyst/run` 등, 사람이 부르는 경로): 쿨다운 없이 호출마다 기록한다. `paper_fills` 는 감사 행 id 에 대해 멱등.
+ */
+async function finishValidationBlock(
   input: SignalInput,
-  cfg?: RouterConfig,
+  vg: Extract<ValidationGateVerdict, { allowed: false }>,
+  cfg: RouterConfig,
+  switches: EngineSwitches,
+  opts: CreateSignalOptions,
 ): Promise<CreateSignalResult> {
+  const errorCode: CreateSignalErrorCode = validationErrorCode(vg.reason);
+  const origin: PaperFillOrigin = opts.origin ?? 'unspecified';
+  const info: ValidationBlockInfo = {
+    reason: vg.reason, strategyId: vg.strategyId, status: vg.status,
+    auditSignalId: null, paperFillId: null, recorded: false, claim: 'not_requested',
+  };
+
+  let mayRecord = true;
+  if (opts.claimEntryCooldown) {
+    const c = await claimCooldown(
+      { scope: 'entry', symbol: input.symbol, strategyId: input.strategyId ?? null, side: 'buy' },
+      COOLDOWN_TTL_MIN.entry,
+      'validation_gate',
+    );
+    info.claim = c.outcome;
+    mayRecord = c.claimed;
+  }
+
+  if (mayRecord) {
+    info.recorded = true;
+    try {
+      // WP-2d — 여기 오는 input 은 createSignal 맨 앞에서 이미 정규화됐다(정확히 'buy' — 관문이 매수로 판정). WP-2c 의 별도 asBuy 복사는 없앴다.
+      // 가상 체결은 실제 주문과 같은 사이징(호가 추격·정수 주식 수)으로 남긴다. 실패하면 원 가격·수량 미확정으로 기록한다.
+      let limitPriceKrw: number | null | undefined = input.price;
+      let sizedQty: number | undefined;
+      try {
+        const style = await getStyleConfig();
+        const chasePct = await getEffectiveChasePct(style.limitChasePct);
+        const { req, sized } = buildOrderRequest(input, chasePct);
+        limitPriceKrw = req.price;
+        sizedQty = sized.quantity;
+      } catch { /* 사이징 실패 — 원 가격으로 기록 */ }
+      const r = await recordValidationBlockedBuy({
+        strategyId: input.strategyId ?? null,
+        symbol: input.symbol,
+        orderType: input.orderType,
+        price: input.price,
+        quantity: input.quantity,
+        amountKrw: input.amountKRW,
+        reasoning: input.reasoning,
+        indicators: input.indicators,
+        // 막히지 않았다면 받았을 만료 시각 — routeSignal 은 순수 함수다
+        expiresAt: routeSignal(input, cfg, switches).expiresAt,
+        gateReason: vg.reason,
+        gateStatus: vg.status,
+        origin,
+        sized: { limitPriceKrw, quantity: sizedQty },
+      });
+      info.auditSignalId = r.auditSignalId;
+      info.paperFillId = r.paperFillId;
+    } catch (e) {
+      console.error(`[signal-validation-gate] 기록 예외(차단은 유지) ${input.symbol}:`, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return {
+    ok: false, signalId: 0, autoSubmitted: false,
+    error: `${errorCode}: ${describeValidationBlock(vg)} — 승인 가능한 시그널·알림을 만들지 않음`,
+    errorCode,
+    validation: info,
+  };
+}
+
+export async function createSignal(
+  rawInput: SignalInput,
+  cfg?: RouterConfig,
+  opts: CreateSignalOptions = {},
+): Promise<CreateSignalResult> {
+  // 🔴 T-072 WP-2d — 방향 정규화(맨 앞). 이 아래의 사이징·호가 추격 방향·T-058 현금 게이트·G1·routeSignal·중복 검사·INSERT·자동 제출이
+  //    **전부 정규화된 값**을 쓴다. 예전에는 `'BUY'` 가 원문 그대로 흘러 현금 게이트(`=== 'buy'`)를 건너뛰고 매도 쪽으로 호가를 추격했고,
+  //    자동 제출이면 어댑터가 매도 TR 로 보냈다(Reviewer 2차 항목 6). 알 수 없는 값은 아무것도 만들지 않고 거절한다.
+  const side = normalizeOrderSide(rawInput.side);
+  if (side === null) {
+    let shown: string;
+    try { shown = String(JSON.stringify(rawInput.side) ?? String(rawInput.side)).slice(0, 40); } catch { shown = '(표시 불가)'; }
+    console.warn(`[createSignal] INVALID_SIDE ${String(rawInput.symbol)} side=${shown} — 시그널·감사 행·가상 체결·알림을 만들지 않음`);
+    return {
+      ok: false, signalId: 0, autoSubmitted: false,
+      error: 'invalid_input: side 가 buy/sell 이 아님 — 시그널을 만들지 않음', errorCode: 'invalid_input',
+    };
+  }
+  const input: SignalInput = side === rawInput.side ? rawInput : { ...rawInput, side };
+
   const [resolvedCfg, switches] = await Promise.all([
     cfg ?? getRouterConfig(),
     getEngineSwitches(),
@@ -336,6 +485,14 @@ export async function createSignal(
   const sym = await checkSymbolBlacklist(input.symbol);
   if (!sym.ok) {
     return { ok: false, signalId: 0, autoSubmitted: false, error: sym.detail ?? 'symbol_not_allowed', errorCode: 'symbol_blacklisted' };
+  }
+
+  // 🔴 T-072 G1 — 검증 상태 관문(D5). 블랙리스트 **뒤**, T-058 현금 게이트 **앞**. 매수만(관문 함수 첫 줄이 side 판정 — 매도는 I/O 0).
+  //    미검증·미등록·귀속 없음·상태 이상·조회 실패 → 전부 차단(fail-closed). 끄는 스위치 없음, 캐시 없음, DRY_RUN 무관(F-4).
+  //    `exit_kind: 'hard_stop'` 을 단 매수(모드 무관 강제 auto)도 여기서 먼저 막힌다 — routeSignal 보다 앞이다.
+  const vg = await evaluateValidationGate({ side: input.side, strategyId: input.strategyId });
+  if (!vg.allowed) {
+    return finishValidationBlock(input, vg, cfg, switches, opts);
   }
 
   // 🔴 T-058 — 실시간 현금 게이트. 현금이 모자라는 매수는 **행을 만들지 않는다**(→ RAG 색인·승인 요청 알림도 없다).
@@ -507,6 +664,8 @@ export async function createSignal(
   const orderResult = await submitOrder(orderReq, kis.createOrder, {
     assetClass: 'stock',
     source: 'auto',
+    // T-072 — 전략 귀속(G6 판정 근거). 이 시그널 행의 전략 그대로 — 위 G1 이 같은 전략으로 이미 통과시켰다.
+    attribution: { kind: 'strategy', strategyId: input.strategyId ?? null, signalId },
   });
   if (orderResult.orderId) {
     await pool.query(`UPDATE signals SET consumed_order_id=? WHERE id=?`, [orderResult.orderId, signalId]);
@@ -543,6 +702,31 @@ export async function getSignalById(id: number): Promise<SignalRow | null> {
     [id],
   );
   return (rows[0] as SignalRow | undefined) ?? null;
+}
+
+/**
+ * 🔴 T-072 G4 — 승인 시점 검증 상태 관문. G1 이전(배포 전)에 만들어진 **잔여 승인 대기 행** 대비이자 2차 방어선이다.
+ *
+ * - side 판정은 관문 함수의 첫 줄이 한다(WP-2c R-1 — 여기서 `=== 'buy'` 로 거르지 않는다). 매도 행(정규화 후 정확히 'sell')은
+ *   조회 0 으로 통과한다(보호 청산에 새 실패 원인을 만들지 않는다). 그 밖의 값은 매수로 판정한다.
+ * - 매수 행은 **그 행의 `strategy_id`** 로 판정한다(fail-closed: 귀속 없음·미등록·미검증·이상값·조회 실패 → 차단).
+ * - 막히면 호출부는 **선점·`orders` 행 없이** 끝낸다. 시그널 상태는 그대로 둔다 — TTL 로 만료된다(`approved` 로 바꾸면 "승인해서 주문했다",
+ *   `rejected` 로 바꾸면 "사람이 거절했다"는 거짓 기록이 된다). 흔적은 trade_logs `signal_validation_gate`(감사 원칙 3).
+ *
+ * 막히지 않으면 null. 던지지 않는다(관문·기록 모두 던지지 않는다).
+ */
+async function approvalValidationBlock(
+  row: Pick<SignalRow, 'id' | 'side' | 'strategy_id' | 'symbol'>,
+  where: 'signal-approve' | 'signal-approve-hybrid',
+): Promise<{ errorCode: ValidationGateErrorCode; error: string } | null> {
+  const vg = await evaluateValidationGate({ side: row.side, strategyId: row.strategy_id });
+  if (vg.allowed) return null;
+  const errorCode = validationErrorCode(vg.reason);
+  console.warn(`[${where}] VALIDATION_GATE signal=${row.id} ${row.symbol} side=${JSON.stringify(row.side)} strategy=${vg.strategyId ?? '-'} reason=${vg.reason} — 선점·주문하지 않음`);
+  await recordValidationGateEvent({
+    where, signalId: row.id, strategyId: vg.strategyId, symbol: row.symbol, side: 'buy', reason: vg.reason,
+  });
+  return { errorCode, error: `${errorCode}: ${describeValidationBlock(vg)} — 선점·주문하지 않음` };
 }
 
 export async function approveSignal(id: number): Promise<CreateSignalResult> {
@@ -591,6 +775,12 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
     };
   }
 
+  // 🔴 T-072 G4 — 선점 **전에** 검증 상태 관문(매수만, 그 행의 전략). 막히면 선점·orders 행 없이 끝난다.
+  const gateBlock = await approvalValidationBlock(row, 'signal-approve');
+  if (gateBlock) {
+    return { ok: false, signalId: id, autoSubmitted: false, error: gateBlock.error, errorCode: gateBlock.errorCode };
+  }
+
   // T-042 — 선점. 웹과 텔레그램이 동시에 승인해도 이 UPDATE 를 이긴 쪽만 `submitOrder` 를 부른다(이중 주문 방지).
   const claim = await claimAwaitingSignal(pool, id, 'executing');
   if (!claim.ok) {
@@ -602,6 +792,8 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
     orderResult = await submitOrder(orderReq, kis.createOrder, {
       assetClass: 'stock',
       source: 'signal',
+      // T-072 — 전략 귀속(G6). 승인한 그 행의 전략 — G4 가 같은 값으로 판정했다(G6 는 송신 직전까지 다시 본다).
+      attribution: { kind: 'strategy', strategyId: row.strategy_id ?? null, signalId: id },
     });
   } catch (e) {
     await releaseClaim(pool, id, row.status).catch(() => { /* 복귀 실패는 원 예외를 가리지 않는다 */ });
@@ -695,7 +887,7 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
 export async function approveSignalHybrid(
   id: number,
   editedScenario?: Partial<import('./scenario-builder').ScenarioCard>,
-): Promise<{ ok: boolean; status?: string; message?: string; error?: string }> {
+): Promise<{ ok: boolean; status?: string; message?: string; error?: string; errorCode?: ValidationGateErrorCode }> {
   const pool = getPool();
   const row = await getSignalById(id);
   if (!row) return { ok: false, error: 'not_found' };
@@ -732,6 +924,11 @@ export async function approveSignalHybrid(
     };
     mergedIndicatorsJson = JSON.stringify(mergedIndicators);
   }
+
+  // 🔴 T-072 G4 — 진입 감시로 넘기기(선점) **전에** 검증 상태 관문(매수만). 막히면 approved_pending_entry 로 바꾸지 않는다 —
+  //    넘기면 entry-watcher(G5)가 다시 막겠지만, 승인 불가 매수를 "감시 중"으로 보이게 두지 않는다.
+  const gateBlock = await approvalValidationBlock(row, 'signal-approve-hybrid');
+  if (gateBlock) return { ok: false, error: gateBlock.error, errorCode: gateBlock.errorCode };
 
   // T-042 — 원자적 전이: 대기 상태이고 만료 전일 때만 바뀐다. 이전에는 `WHERE id=?` 뿐이라 그 사이 거절·만료된
   // 행을 다시 승인 상태로 덮어쓸 수 있었다.

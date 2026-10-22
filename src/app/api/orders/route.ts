@@ -10,6 +10,7 @@ import {
   warnNumericFieldRejected,
 } from '@/lib/safety/numeric-fields';
 import { sizeOrderQuantity } from '@/lib/signals/service';
+import { INVALID_SIDE_USER_MESSAGE, normalizeOrderSide } from '@/lib/safety/validation-gate';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,6 +51,13 @@ export async function POST(req: Request) {
       );
     }
 
+    // 🔴 T-072 WP-2d — side 정규화. 대소문자·앞뒤 공백 변형은 받아 정확한 값으로 바꾸고, buy/sell 이 아니면 400.
+    //    (`submitOrder` 도 맨 앞에서 정규화하지만 — 최후 방어선 — 입구에서 사람이 읽는 400 으로 먼저 돌려준다.)
+    const side = normalizeOrderSide(body.side);
+    if (side === null) {
+      return Response.json({ ok: false, error: INVALID_SIDE_USER_MESSAGE }, { status: 400 });
+    }
+
     // 클라이언트가 보낸 quantity를 그대로 신뢰하지 않는다 — 소수점이 들어오면 T-020이
     // entry-watcher/service.ts 두 엔진 경로에서 없앤 문제(소수점 주문 → KIS가 조용히 축소집행
     // 하거나 절삭돼 0주가 되는 문제)가 이 수동 주문 경로로 재현될 수 있었다. 같은 정수화
@@ -66,7 +74,7 @@ export async function POST(req: Request) {
     const orderReq: OrderRequest = {
       exchange: 'kis',
       symbol: body.symbol,
-      side: body.side,
+      side,
       type: body.type,
       price: body.price,
       quantity: sized.quantity ?? body.quantity,
@@ -78,6 +86,10 @@ export async function POST(req: Request) {
       assetClass: 'stock',
       source: body.source ?? 'manual',
       clientOrderId: body.clientOrderId,
+      // 🔴 T-072 F-1 — 사람이 직접 만든 주문은 **전략 귀속이 없다** → 매수는 submitOrder 관문(G6)이 막는다(사용자 결정 D-1 "전부 차단").
+      //    매도(보호 청산)는 관문과 무관하게 그대로 나간다. `source` 는 클라이언트가 고르는 값이라 판정 근거가 아니다.
+      //    미지정이어도 같은 결과지만(fail-closed) 의도를 코드로 남기려고 명시한다 — 정적 시험이 모든 호출부의 명시를 단언한다.
+      attribution: { kind: 'strategy', strategyId: null, signalId: null },
     });
 
     return Response.json({ ok: result.ok, data: result }, { status: result.ok ? 200 : 400 });
