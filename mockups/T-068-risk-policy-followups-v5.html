@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="demo-version" content="T-068-v5">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="description" content="T-068-v5 — 승인 데모 T-066 v3 에 대한 delta (v4 의 분할 집행 표기 정정): 현금 하한을 정보 표시로, 분할 매수 최대 4회(실제 집행 범위 표시), 손절가 도달 텔레그램 알림 안내·미리보기">
+<title>T-068-v5 리스크 정책 후속</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지) */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    /* 데모 주석 전용(앱 UI 아님) */
+    --note: #9fb3d1;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size: 14px; -webkit-text-size-adjust: 100%;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  a { color: inherit; text-decoration: none; }
+  code { font-size: 12px; background: var(--bg3); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+  .num { font-variant-numeric: tabular-nums; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  /* ── 데모 문서 틀 (앱 UI 아님) ── */
+  .page { max-width: 1280px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-bottom)); }
+  .page > header h1 { font-size: 17px; margin: 0 0 6px; line-height: 1.4; }
+  .page > header p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--note); color: var(--note); margin: 0 6px 4px 0; }
+  .sample-banner { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--warn); color: var(--warn); font-size: 13px; font-weight: 700; line-height: 1.5; }
+  section.block { margin-top: 32px; }
+  section.block > h2 { font-size: 15px; margin: 0 0 8px; }
+  section.block > p.lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .note { margin: 8px 0 4px; font-size: 11px; color: var(--note); border-left: 2px dashed var(--note); padding-left: 6px; line-height: 1.5; }
+  .newmark { display: inline-block; font-size: 11px; font-weight: 700; color: var(--note); border: 1px dashed var(--note); border-radius: 6px; padding: 0 6px; margin-left: 6px; vertical-align: middle; text-transform: none; letter-spacing: 0; }
+  .box { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; margin-top: 12px; }
+  ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  ul.plain li { margin-bottom: 4px; }
+  .frame-cap { font-size: 12px; font-weight: 700; color: var(--note); margin: 0 0 6px; }
+  .desk-scroll { overflow-x: auto; border: 1px dashed var(--border2); border-radius: 12px; padding: 8px; }
+
+  .controls { display: flex; flex-direction: column; gap: 10px; max-width: 760px; margin: 0 0 14px; }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 100px; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px;
+                  border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+  .compare { display: grid; grid-template-columns: 1fr; gap: 28px; }
+  @media (min-width: 900px) { .compare { grid-template-columns: minmax(0, 412px) minmax(0, 1fr); align-items: start; } }
+
+  /* ── 앱 화면 (여기부터 구현 대상) ── */
+  .phone { width: 100%; max-width: 412px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .desk { width: 1180px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .app { container-type: inline-size; }
+  .app-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* 기존 SettingsPage 패턴 */
+  .sec-h { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; padding: 8px 0 4px; }
+  .card { background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .linkrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 56px; padding: 12px 16px; background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); }
+  .linkrow .t { font-size: 14px; }
+  .linkrow .s, .row .s { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+  .chev { font-size: 18px; color: var(--muted); flex-shrink: 0; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: 0; }
+  .row .v { font-size: 14px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+  .onoff { font-size: 12px; font-weight: 600; }
+  .fake-toggle { width: 44px; height: 24px; border-radius: 12px; background: var(--ok); position: relative; flex-shrink: 0; display: inline-block; vertical-align: middle; }
+  .fake-toggle::after { content: ""; position: absolute; top: 2px; left: 22px; width: 20px; height: 20px; border-radius: 50%; background: #fff; }
+  .fake-toggle.off { background: var(--bg3); }
+  .fake-toggle.off::after { left: 2px; }
+  .tg { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+  /* 집행 중 / 표시 전용 구분 */
+  .mode { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; white-space: nowrap; line-height: 1.5; }
+  .mode.live { color: var(--ok); border: 1px solid rgba(34,197,94,.55); background: rgba(34,197,94,.10); }
+  .mode.disp { color: var(--muted); border: 1px dashed var(--muted); }
+  .strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .card.risk { border: 1px dashed var(--border2); }
+
+  /* 상태 어휘 — 색 + 기호 + 글자. 위험·미달·초과·오류는 amber. 빨강/파랑은 손익 뜻이라 쓰지 않는다 */
+  .st { display: inline-flex; align-items: baseline; gap: 4px; font-size: 12px; font-weight: 700; line-height: 1.45; }
+  .st i { font-style: normal; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 4px; font-size: 11px; flex-shrink: 0; transform: translateY(2px); }
+  .st.warn { color: var(--warn); } .st.warn i { background: rgba(245,158,11,.18); }
+  .st.ok { color: var(--ok); }     .st.ok i { background: rgba(34,197,94,.16); }
+  .st.na { color: var(--muted); font-weight: 600; } .st.na i { background: var(--bg3); }
+  .st.info { color: var(--text); font-weight: 600; } .st.info i { background: var(--bg4); }
+  .src { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; white-space: nowrap; line-height: 1.5; }
+  .src.user { color: var(--ok); border: 1px solid rgba(34,197,94,.55); }
+  .src.prop { color: var(--warn); border: 1px dashed rgba(245,158,11,.75); }
+  .src.doc  { color: var(--muted); border: 1px solid var(--border2); }
+
+  /* 리스크 카드 */
+  .rk-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 6px 16px; border-bottom: 1px solid var(--border); }
+  .rk-head h3 { margin: 0; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .fold { min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--muted); border: 1px solid var(--border2); flex-shrink: 0; }
+  .rk-sum { padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.5; }
+  .rk-sum .l1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .rk-sum .l1 .big { font-size: 15px; font-weight: 700; }
+  .rk-body { border-top: 1px solid var(--border); padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .rk-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .subh { margin: 0; font-size: 13px; font-weight: 700; }
+  .subh small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .meter .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .bar { position: relative; height: 12px; border-radius: 6px; background: var(--bg3); margin: 10px 0 6px; overflow: hidden; border: 1px solid var(--border2); }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; }
+  .bar .fill.okc { background: var(--ok); } .bar .fill.warnc { background: var(--warn); } .bar .fill.nc { background: var(--muted); }
+  .bar .unk { position: absolute; top: 0; bottom: 0; right: 0; background: repeating-linear-gradient(135deg, var(--bg4) 0 6px, var(--bg3) 6px 12px); }
+  .bar-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .meter p { margin: 8px 0 0; font-size: 13px; line-height: 1.6; }
+  .pv { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; border: 1px dashed var(--note); color: var(--note); }
+  .pv.saved { border-style: solid; border-color: var(--border2); color: var(--muted); }
+  .warnbox { padding: 10px 12px; border-radius: 8px; background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.40); font-size: 12px; line-height: 1.6; }
+  .warnbox b { color: var(--warn); }
+  .infobox { display: flex; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); font-size: 12px; line-height: 1.6; }
+  .infobox .ic { flex-shrink: 0; font-weight: 700; color: var(--muted); }
+
+  /* 손절가 행 */
+  .srows { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .srow { padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+  .srow:last-child { border-bottom: 0; }
+  .sr-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sr-top b { font-size: 14px; }
+  .sr-top .mk { font-size: 12px; color: var(--muted); margin-left: 6px; }
+  .sr-px { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .sr-px b { color: var(--text); font-weight: 700; }
+  .sr-in label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .sr-in .line { display: flex; gap: 8px; align-items: stretch; }
+  .inwrap { flex: 1; min-width: 0; display: flex; align-items: center; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; min-height: 44px; padding: 0 10px; }
+  .inwrap:focus-within { border-color: var(--accent); }
+  .inwrap.bad { border-color: var(--warn); border-width: 2px; }
+  .inwrap .cur { color: var(--muted); font-size: 14px; margin-right: 6px; flex-shrink: 0; }
+  .inwrap input { flex: 1; min-width: 0; background: none; border: 0; color: var(--text); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; outline: none; padding: 0; min-height: 42px; align-self: stretch; text-align: right; }
+  .inwrap input::placeholder { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .inwrap .unit { color: var(--muted); font-size: 13px; margin-left: 6px; flex-shrink: 0; }
+  .del { min-height: 44px; min-width: 72px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 600; border: 1px solid var(--border2); color: var(--text); }
+  .del:disabled { color: var(--muted); opacity: .45; }
+  .sr-calc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .sr-calc b { color: var(--text); }
+  .sr-msg { display: flex; flex-direction: column; gap: 2px; }
+  .orphan { margin-top: 0; }
+  .orphan .line { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+
+  /* 카드 안 저장 바 — 페이지 저장 바와 별개 */
+  .savebar { position: sticky; bottom: 8px; z-index: 5; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px;
+             background: #1b1f27; border: 1px solid rgba(245,158,11,.45); box-shadow: 0 4px 16px rgba(0,0,0,.45); }
+  .savebar.err { border-color: rgba(245,158,11,.8); }
+  .savebar.done { border-color: rgba(34,197,94,.45); }
+  .savebar .msg { font-size: 12px; font-weight: 600; line-height: 1.5; }
+  .savebar .sub { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .savebar .btns { display: flex; gap: 8px; justify-content: flex-end; }
+  .btn { min-height: 44px; padding: 0 16px; border-radius: 8px; font-size: 13px; font-weight: 700; }
+  .btn.pri { background: var(--accent); color: #000; }
+  .btn.sec { border: 1px solid var(--border2); color: var(--text); }
+  .btn:disabled { opacity: .45; }
+
+  /* 정책 표 (읽기 전용) */
+  table.pol { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; border: 1px solid var(--border); border-radius: 10px; }
+  table.pol caption { text-align: left; padding: 0 0 8px; font-size: 13px; font-weight: 700; }
+  table.pol caption small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+  table.pol th, table.pol td { padding: 9px 8px; border-top: 1px solid var(--border); vertical-align: top; text-align: left; line-height: 1.5; overflow-wrap: anywhere; }
+  table.pol thead th { font-size: 11px; font-weight: 700; color: var(--muted); }
+  table.pol .grp th { background: var(--bg3); font-size: 12px; font-weight: 700; color: var(--muted); padding-top: 5px; padding-bottom: 5px; }
+  table.pol .name { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  table.pol .v { font-weight: 700; }
+  table.pol .v small, table.pol .cur small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+  col.c-name { width: 34%; } col.c-val { width: 30%; } col.c-cur { width: 36%; }
+  .ro-foot { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .ro-foot b { color: var(--text); }
+
+  .skel { background: var(--bg3); border-radius: 6px; height: 14px; margin: 8px 0; }
+  .skel.m { width: 70%; } .skel.s { width: 45%; }
+  .tabs { display: flex; height: var(--nav-h); border-top: 1px solid var(--border); background: var(--bg2); padding-bottom: var(--safe-bottom); }
+  .tabs a { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; color: var(--muted); min-height: 44px; }
+  .tabs a[aria-current="page"] { color: var(--accent); }
+  .tabs .ico { font-size: 20px; line-height: 1; }
+
+  /* 넓은 화면(≥900px) — 데모는 container query 로 흉내, 실제 구현은 @media (min-width: 900px) */
+  @container (min-width: 900px) {
+    .app-body { padding: 20px 24px; }
+    .rk-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+    .srow { display: grid; grid-template-columns: 170px minmax(0, 1fr); column-gap: 14px; }
+    .srow .sr-top { grid-column: 1; }
+    .srow .sr-px { grid-column: 1; }
+    .srow .sr-in, .srow .sr-calc, .srow .sr-msg { grid-column: 2; }
+    .srow .sr-in { grid-row: 1 / span 2; }
+  }
+
+  /* 결정 필요 */
+  .decide { border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.06); border-radius: 10px; padding: 12px; margin-top: 12px; }
+  .decide h3 { margin: 0 0 8px; font-size: 14px; color: var(--warn); }
+  .ab { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 900px) { .ab { grid-template-columns: 1fr 1fr; } }
+  .opt { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.6; }
+  .opt h4 { margin: 0 0 4px; font-size: 13px; }
+  .opt.rec { border-color: var(--ok); }
+  .opt .rec-tag { font-size: 11px; font-weight: 700; color: var(--ok); margin-left: 6px; }
+
+  /* v2 추가 — 리스크 정책 화면(구조 A)·요약 행·실시간 표시 */
+  .rp-head { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-top)) 8px 8px; border-bottom: 1px solid var(--border); }
+  .back { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; padding: 0 8px; font-size: 14px; color: var(--muted); border-radius: 8px; }
+  .rp-head h2 { margin: 0; font-size: 16px; font-weight: 700; flex: 1; min-width: 0; }
+  .rp-head .mode { margin-right: 8px; }
+  .riskrow { display: block; background: var(--bg2); border: 1px dashed var(--border2); border-radius: 12px; overflow: hidden; }
+  .riskrow .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px 0; }
+  .riskrow .top b { font-size: 14px; }
+  .riskrow .go { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 8px 16px; border-top: 1px solid var(--border); font-size: 13px; font-weight: 600; color: var(--accent); }
+  .fresh { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .fresh .dot { font-weight: 700; }
+  .fresh .dot.live { color: var(--ok); } .fresh .dot.busy { color: var(--muted); } .fresh .dot.warn { color: var(--warn); }
+  .gaps { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .gaps h4 { margin: 0; padding: 10px 12px 6px; font-size: 13px; }
+  .gaps ul { list-style: none; margin: 0; padding: 0; }
+  .gaps li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
+  .gaps li .d { color: var(--muted); font-size: 12px; text-align: right; }
+  .sync .line { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .hide { display: none !important; }
+  .simbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .simbtns button { flex: 1 1 160px; min-height: 44px; padding: 4px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); border: 1px solid var(--border2); color: var(--text); line-height: 1.35; }
+  .compare2 { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 900px) { .compare2 { grid-template-columns: repeat(2, minmax(0, 412px)); align-items: start; } }
+
+  /* v3 — 정책 설정 3개 + 예상 손절가 표 */
+  .setcard { border: 1px solid var(--border2); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 14px; background: var(--bg2); }
+  .setcard h4 { margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .field label.fl, .field .fl { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .field .hint { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+  .field .inwrap { max-width: 220px; }
+  .field .msgs { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+  .seg2 { display: flex; gap: 6px; flex-wrap: wrap; border: 0; padding: 0; margin: 0; min-width: 0; }
+  .seg2 legend { font-size: 13px; font-weight: 600; margin-bottom: 4px; padding: 0; }
+  .seg2 label { flex: 1 1 140px; position: relative; min-width: 0; }
+  .seg2 input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg2 span { display: flex; flex-direction: column; justify-content: center; min-height: 52px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg3); font-size: 13px; font-weight: 600; line-height: 1.35; cursor: pointer; }
+  .seg2 span small { font-weight: 400; font-size: 11px; color: var(--muted); }
+  .seg2 input:checked + span { border: 2px solid var(--accent); background: rgba(245,158,11,.10); }
+  .seg2 input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+  .seg2 input:disabled + span { opacity: .5; cursor: not-allowed; }
+  .res { border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .res .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .res .big { font-size: 22px; font-weight: 800; }
+  .res p { margin: 0; font-size: 13px; line-height: 1.6; }
+  .inv { font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); line-height: 1.6; }
+  .hlist { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .hrow { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .hrow:last-child { border-bottom: 0; }
+  .hrow.below { background: rgba(245,158,11,.06); }
+  .hrow .t { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .hrow .t b { font-size: 14px; }
+  .hrow .t .mk { font-size: 12px; color: var(--muted); margin-left: 6px; }
+  .hrow dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 8px; margin: 8px 0 0; }
+  .hrow dt { font-size: 11px; color: var(--muted); }
+  .hrow dd { margin: 0; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .hrow dd small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+  .hrow .why { margin-top: 6px; font-size: 12px; line-height: 1.5; }
+  table.hold { width: 100%; border-collapse: collapse; font-size: 13px; border: 1px solid var(--border); }
+  table.hold caption { text-align: left; padding: 0 0 8px; font-size: 13px; font-weight: 700; }
+  table.hold th, table.hold td { padding: 8px; border-top: 1px solid var(--border); text-align: right; vertical-align: top; font-variant-numeric: tabular-nums; line-height: 1.45; }
+  table.hold th:first-child, table.hold td:first-child, table.hold td.l, table.hold th.l { text-align: left; }
+  table.hold thead th { font-size: 11px; color: var(--muted); font-weight: 700; }
+  table.hold td small { display: block; font-size: 11px; color: var(--muted); }
+  table.hold tr.below td { background: rgba(245,158,11,.06); }
+  .only-d { display: none; }
+  @container (min-width: 900px) { .only-d { display: block; } .only-m { display: none; } }
+
+  /* v4 — 배지가 길어져 412·360px 에서 줄바꿈 허용 */
+  .rp-head { flex-wrap: wrap; row-gap: 4px; }
+  .rp-head h2 { flex: 1 0 auto; white-space: nowrap; }
+  .rp-head .mode { margin-left: 8px; }
+  .riskrow .top { flex-wrap: wrap; row-gap: 4px; }
+  .riskrow .top b { flex: 1 0 auto; white-space: nowrap; }
+  .mode.disp { white-space: normal; }
+
+  /* v4 — 변경 요약 패널 (데모 문서 틀) */
+  .delta { border: 1px solid var(--note); border-radius: 10px; background: var(--bg2); padding: 12px; margin-top: 14px; }
+  .delta h2 { margin: 0 0 4px; font-size: 15px; }
+  .delta > p { margin: 0 0 10px; font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .dlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .dlist li { border: 1px solid var(--border2); border-radius: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.55; }
+  .dlist .w { display: block; font-size: 12px; font-weight: 700; color: var(--note); margin-bottom: 4px; }
+  .dlist .ba { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .dlist .ba > div { min-width: 0; overflow-wrap: anywhere; }
+  .dlist .k { display: inline-block; min-width: 40px; font-size: 11px; font-weight: 700; color: var(--muted); margin-right: 4px; }
+  .dlist del { color: var(--muted); }
+  .dlist ins { text-decoration: none; color: var(--text); font-weight: 600; }
+  @media (min-width: 900px) { .dlist .ba { grid-template-columns: 1fr 1fr; gap: 12px; } }
+  .fact { margin-top: 10px; font-size: 12px; line-height: 1.6; color: var(--muted); border-left: 2px dashed var(--note); padding-left: 8px; }
+  .fact b { color: var(--text); }
+
+  /* v4 — 손절가 도달 알림 안내 */
+  .alertbox { border: 1px solid var(--border2); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .alertbox h4 { margin: 0; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .alertbox ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  .alertbox ul li { margin-bottom: 2px; }
+  .alertbox .now { font-size: 12px; line-height: 1.6; padding: 8px 10px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); }
+  .tgprev { display: flex; flex-direction: column; gap: 6px; }
+  .tgprev .cap { font-size: 11px; color: var(--muted); }
+  .bubble { max-width: 340px; background: var(--bg4); border: 1px solid var(--border2); border-radius: 4px 12px 12px 12px; padding: 10px 12px; font-size: 13px; line-height: 1.55; }
+  .bubble .bt { font-weight: 700; margin-bottom: 4px; }
+  .bubble dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 0; }
+  .bubble dt { color: var(--muted); font-size: 12px; }
+  .bubble dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .bubble .foot { margin-top: 6px; font-weight: 600; }
+  .exl { display: flex; flex-direction: column; gap: 6px; }
+  .exl > small:first-child { margin: 0; }
+  .bubble .tm { display: block; text-align: right; font-size: 11px; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>T-068 데모 v5 — 리스크 정책 후속: 현금 하한은 정보 표시로, 분할 매수는 최대 4회, 손절가에 닿으면 텔레그램 알림</h1>
+    <p><span class="tag">judge: delta</span><span class="tag">v4 정정: 분할 집행 범위</span><span class="tag">기반: 승인 데모 T-066 v3 + 운영 배포본 문구</span><span class="tag">대표 폭 412px</span><span class="tag">≥900px 데스크톱 복원</span></p>
+    <p>사용자 지시: "현금 하한 규칙은 권고대로 처리" · "분할 횟수는 현재 시그널에서는 4분할까지 가능하도록 되어있어서 4회로해서 실제 집행하는 횟수도 맞춰줘" · "손절가도달시 텔레그램으로 알림 수신하도록 해줘."
+      편집 가능한 값 3개(손절폭 · 손절 합 한도 · 기준가), 계산 표시, 실시간 반영, 구조 A 는 v3 그대로다. 바뀌는 곳만 아래 요약에 모았다.</p>
+    <p class="sample-banner">숫자는 전부 합성 예시값이다(종목 AAA~EEE · 수량·평균단가·현재가·고점 · 환율 1,250원/USD · 총자산 약 2,000만원 · 시각 · 텔레그램 메시지). 실제 계좌 값이 아니다.</p>
+
+    <div class="delta" id="delta" role="region" aria-labelledby="delta-t">
+      <h2 id="delta-t">v3 대비 바뀐 곳 (5곳)</h2>
+      <p>"현재" = 지금 운영 중인 화면(T-066 배포본) 문구, "제안" = 이번 v5. 아래 미리보기 위의 <b>비교 보기</b>를 "현재"로 바꾸면 같은 화면에서 전후를 볼 수 있다.</p>
+      <p class="fact" style="margin:0 0 10px"><b>v4 → v5 정정 (②만 바뀜):</b> v4 는 분할 행에 "집행 중 한도 4회 (같은 종목 24시간 내 자동 매수 시그널)"라고 썼다. 코드로 다시 보니 이 한도는 <b>국내 룰 엔진의 자동 매수만</b> 막고, 세는 것도 시그널이 아니라 <b>24시간 내 체결·접수된 매수 주문</b>이다. 미국 자동 매수와 시나리오 확정은 거치지 않는다. 그래서 "분할 4회가 모든 경로에서 지켜진다"로 읽히지 않게 실제 집행 범위 두 가지(확정 1회당 조각 상한 · 국내 자동 매수 한도)와 아직 없는 것(여러 번 나눠 확정하는 누적 횟수 제한)을 따로 적었다. 나머지(①③④⑤)는 v4 와 같다.</p>
+      <ol class="dlist">
+        <li><span class="w">① 정책표 — 현금 행 (리스크 정책 화면 · 그 밖의 정책)</span><div class="ba">
+          <div><span class="k">현재</span><del>현금 하한 · § 문서 정책 · 총자산의 10% · ! 미달 — 3.0%</del></div>
+          <div><span class="k">제안</span><ins>현금 비중 (정보 표시, 하한 없음) · ✓ 사용자 확정 · 3.0% (경고 없음)</ins></div></div></li>
+        <li><span class="w">② 정책표 — 분할 매수 행</span><div class="ba">
+          <div><span class="k">현재</span><del>최대 3회 · 40 / 30 / 30 (비율은 제안) · 신규 진입 때 적용</del></div>
+          <div><span class="k">제안</span><ins>최대 4회 · ✓ 사용자 확정 · 비율 표기 없음 · 현재 상태 = 집행 중인 제한 2가지 — ⓘ 확정 1회당 조각 최대 4개(시장 무관) · ⓘ 국내 자동 매수 24시간 내 같은 종목 4건(국내 룰 엔진만) · "여러 번에 나눠 확정하는 누적 횟수는 아직 제한이 없습니다(후속 결정)."</ins></div></div></li>
+        <li><span class="w">③ 배지 (리스크 정책 화면 머리 + 안전장치 영역 요약 행)</span><div class="ba">
+          <div><span class="k">현재</span><del>◌ 표시·위험 계산 전용</del></div>
+          <div><span class="k">제안</span><ins>◌ 표시·위험 계산·알림 (주문·매도 없음)</ins></div></div></li>
+        <li><span class="w">④ 안내 문구 (저장 바 · 저장 완료 · 상단 띠 · 엔진 안내)</span><div class="ba">
+          <div><span class="k">현재</span><del>저장해도 매도 주문·알림은 만들지 않습니다.</del></div>
+          <div><span class="k">제안</span><ins>저장해도 매도 주문은 만들지 않습니다. 예상 손절가에 닿으면 텔레그램으로 알림만 보냅니다.</ins> 엔진 안내에 "알림은 엔진과 별개라 엔진이 꺼져 있어도 옵니다" 한 줄 추가.</div></div></li>
+        <li><span class="w">⑤ 새 영역 — 손절가 도달 알림 안내 + 메시지 미리보기 (손절 합 결과 바로 아래)</span><div class="ba">
+          <div><span class="k">현재</span><del>없음</del></div>
+          <div><span class="k">제안</span><ins>알림 규칙 4줄 · 지금 손절가 아래 종목 수로 "처음 켜질 때 요약 몇 건" · 텔레그램 말풍선 예시 2개(도달 알림 · 처음 요약)</ins></div></div></li>
+      </ol>
+      <p class="fact"><b>정정할 사실:</b> 작업 지시의 "정책과 다른 현재 상태 목록"과 요약 행의 "확인 필요 n건"은 <b>v3 데모와 운영 화면 어디에도 없다</b>(v1·v2 데모에만 있었고 v3 에서 빠졌다). 그래서 지울 목록이나 줄일 건수는 없다. 현금 경고가 나오던 곳은 정책표 한 칸뿐이고, 그 칸의 "! 미달"을 없앤다. 그 결과 정책표의 경고(!)는 합성 예시 기준 <b>2건 → 1건</b>(심볼당 최대 비중 초과만 남음)이 된다.<br>
+        <b>참고:</b> v3 데모의 분할 행은 "최대 2회 60/40"이지만, 운영 배포본은 사용자 승인 수정으로 "최대 3회 40/30/30"이다. 위 "현재"는 운영 배포본 기준이다.</p>
+    </div>
+  </header>
+
+  <section class="block" id="demo">
+    <h2>① 제안 — v3 화면에 바뀐 곳만 반영</h2>
+    <p class="lead">오른쪽(모바일은 아래) 리스크 정책 화면에서 정책표의 현금·분할 행, 배지, 저장 바 문구, 손절 합 결과 아래의 <b>알림 안내</b>를 보라. 손절폭을 바꾸면 알림 미리보기의 손절가도 같이 바뀐다. 저장·재조회 흐름은 v3 와 같다(서버 호출 없음).</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>비교 보기</legend><div class="seg-row">
+        <label><input type="radio" name="view" value="v4" checked><span>v5 제안</span></label>
+        <label><input type="radio" name="view" value="cur"><span>현재 운영 화면<br>(T-066 배포본 문구)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>집행 값 읽기 (제안 정책표 '분할 매수' 현재 상태 — 확정 상한 · 국내 자동 매수 한도)</legend><div class="seg-row">
+        <label><input type="radio" name="ex" value="4" checked><span>둘 다 4<br>(정책과 같음)</span></label>
+        <label><input type="radio" name="ex" value="5"><span>국내 한도 5<br>(WP-B 전·DB 덮어쓰기)</span></label>
+        <label><input type="radio" name="ex" value="cap3"><span>확정 상한 3<br>(코드 상수가 다름)</span></label>
+        <label><input type="radio" name="ex" value="unk"><span>국내 한도<br>읽기 실패</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>시장 상황 (합성 시나리오)</legend><div class="seg-row">
+        <label><input type="radio" name="mk" value="below" checked><span>모두 손절가 아래<br>(평가손 -6%~-50%)</span></label>
+        <label><input type="radio" name="mk" value="mixed"><span>일부만 아래</span></label>
+        <label><input type="radio" name="mk" value="above"><span>모두 손절가 위<br>(평가익)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>데이터 상태</legend><div class="seg-row">
+        <label><input type="radio" name="cd" value="ok" checked><span>정상</span></label>
+        <label><input type="radio" name="cd" value="stale"><span>스냅샷 오래됨</span></label>
+        <label><input type="radio" name="cd" value="empty"><span>정책 미저장<br>(처음 설정)</span></label>
+        <label><input type="radio" name="cd" value="loading"><span>로딩</span></label>
+        <label><input type="radio" name="cd" value="error"><span>조회 오류</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>다음 저장 결과 (저장 버튼을 누르면 이대로 흉내)</legend><div class="seg-row">
+        <label><input type="radio" name="so" value="ok" checked><span>성공</span></label>
+        <label><input type="radio" name="so" value="fail"><span>실패<br>(되돌림·입력값 유지)</span></label>
+        <label><input type="radio" name="so" value="conflict"><span>충돌 409<br>(다른 기기가 먼저 저장)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>실시간 시뮬레이션 (누르면 바로 일어남)</legend><div class="simbtns">
+        <button type="button" data-sim="snap">새 스냅샷 도착 (11:00)<br>AAA 현재가 -$3</button>
+        <button type="button" data-sim="pollfail">60초 재조회 실패</button>
+        <button type="button" data-sim="remote">다른 기기에서<br>손절폭 2.5% 저장</button>
+        <button type="button" data-sim="bad">입력 오류 예시<br>(손절폭 25)</button>
+      </div></fieldset>
+    </div>
+
+    <div class="compare2">
+      <div>
+        <p class="frame-cap">모바일 412px — 설정 › 안전장치 영역 (요약 행 배지만 바뀜)</p>
+        <div class="phone app" id="f-m" aria-label="설정 화면 모바일 미리보기"></div>
+      </div>
+      <div id="wrap-r">
+        <p class="frame-cap">모바일 412px — 리스크 정책 화면 (/settings/risk-policy, 구조 A)</p>
+        <div class="phone app" id="f-r" aria-label="리스크 정책 화면 모바일 미리보기"></div>
+      </div>
+    </div>
+    <p class="note">구조 A(v3 승인)는 그대로다. 왼쪽 요약 행은 오른쪽 화면과 같은 계산 함수를 쓴다. 알림 안내는 리스크 정책 화면 한 곳에만 둔다(설정 요약 행에는 배지만).</p>
+
+    <p class="frame-cap" style="margin-top:24px">데스크톱 복원 (≥900px, 1180px — 이 상자 안에서만 가로로 밀어 본다)</p>
+    <div class="desk-scroll"><div class="desk app" id="f-d" aria-label="데스크톱 미리보기"></div></div>
+  </section>
+
+  <section class="block" id="decide">
+    <h2>② 결정 필요</h2>
+    <div class="decide">
+      <h3>D3. 알림 켜짐·꺼짐을 화면에 보일까 — 토글은 이번 범위 밖</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 이번에는 안내만 (켜짐·꺼짐 표시 없음) <span class="rec-tag">✓ 권장(이번 범위)</span></h4>
+          알림은 설정이 없으면 켜져 있다. 끄는 화면이 없으므로 이번에는 규칙 안내와 미리보기만 둔다. 화면·API 추가가 없다.<br>
+          한계: 운영 DB 에서 알림을 꺼 두면 화면은 여전히 "보냅니다"라고 말한다(사실과 어긋남).</div>
+        <div class="opt"><h4>B. 읽기 전용 상태 줄 "알림: ● 켜짐 / ○ 꺼짐" 추가</h4>
+          안내 제목 옆에 지금 상태를 글자+기호로 보인다. 조회 API 응답에 필드 1개(켜짐 여부)가 늘어난다.<br>
+          한계: 끄고 켜는 버튼이 없으니 "꺼짐"을 보고도 화면에서 할 일이 없다. 토글을 넣는 후속 task 와 함께 하는 편이 낫다.</div>
+      </div>
+    </div>
+    <p class="note">D1(구조 A)·D2(평균단가 기준)는 v3 에서 결정됐다. 이번 데모에서 다시 묻지 않는다.</p>
+  </section>
+
+  <section class="block">
+    <h2>③ 설계 메모</h2>
+    <div class="box"><ul class="plain">
+      <li><b>현금 비중</b>은 규칙이 아니라 정보다. 그래서 경고 기호·"미달"·초록 "✓" 모두 쓰지 않고 숫자만 중립 글자로 보인다(✓ 를 쓰면 "기준을 통과했다"로 읽힌다).</li>
+      <li><b>분할 비율 표기를 뺐다.</b> 코드를 읽어 보니 시나리오 확정은 화면에서 넣은 구간별 수량(manualSlices)을 그대로 쓰고, 자동 분할 함수 <code>calcSplitSlices</code> 는 가격 구간만 같은 폭으로 나누며 금액은 넘겨받지 않는다(금액 인자 없음). "각 구간에 같은 금액"은 실제 동작이 아니므로 적지 않는다.</li>
+      <li><b>집행 중인 제한</b>은 정책 값과 같은 칸에 두되 초록 "● 집행 중" 배지는 쓰지 않는다. 그 배지는 안전장치 카드(실제 주문에 적용) 전용 표식이라, 여기서 쓰면 "리스크 정책이 주문을 막는다"로 오해된다. 대신 ⓘ 글자로 실제 집행 범위를 <b>경로별로</b> 쓴다 — 확정 1회당 조각 상한(시장 무관)과 국내 룰 엔진의 자동 매수 한도. 둘 중 하나라도 4가 아니면 그 줄만 "! 정책과 다름"으로 바꾼다.</li>
+      <li><b>없는 제한은 없다고 쓴다.</b> 여러 번에 나눠 확정하는 누적 횟수를 세는 장치는 아직 없다. 규칙처럼 보이지 않게 기호·색 없이 작은 글자 한 줄로 사실만 적는다(후속 결정 D17).</li>
+      <li><b>배지 문구가 길어져</b> 412·360px 에서 한 줄에 안 들어간다. 머리·요약 행에서 배지가 다음 줄로 내려가도록 줄바꿈을 허용했다(가로 넘침 0).</li>
+      <li><b>알림 안내는 결과 영역(손절 합) 바로 아래</b>에 둔다. "이미 손절가 아래 n종목" 경고와 손절 합을 본 직후에 "그래서 언제 알림이 오나"를 읽게 하는 순서다. 알림에는 주문·매도가 없다는 문장을 안내와 메시지 양쪽에 둔다.</li>
+      <li>위험·초과·오류는 amber + 기호 + 글자. 빨강·파랑은 이 앱에서 상승·하락 뜻이라 쓰지 않는다(메시지 제목의 🔻 는 텔레그램 본문 그대로 보여 주는 예시).</li>
+    </ul></div>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var FX = 1250, CASH = 600000;
+  var BASE = [
+    { id: 'AAA', us: true,  qty: 80, avg: 132.00, peak: 140.00, px: { below: 124.00, mixed: 130.50, above: 133.00 } },
+    { id: 'BBB', us: true,  qty: 20, avg: 60.00,  peak: 62.00,  px: { below: 48.00,  mixed: 59.00,  above: 61.00 } },
+    { id: 'CCC', us: false, qty: 50, avg: 72000,  peak: 75000,  px: { below: 60000,  mixed: 60000,  above: 73000 } },
+    { id: 'DDD', us: false, qty: 40, avg: 62500,  peak: 66000,  px: { below: 50000,  mixed: 61000,  above: 63000 } },
+    { id: 'EEE', us: false, qty: 20, avg: 80000,  peak: 82000,  px: { below: 40000,  mixed: 40000,  above: 81000 } }
+  ];
+  var FR = ['m', 'r', 'd'];
+  var M = {
+    lay: 'A', view: 'v4', ex: '4', mk: 'below', data: 'ok', outcome: 'ok', expanded: true,
+    saved: { stopPct: 3, heatCapPct: 2, basis: 'avg', version: 7, at: '10-22 09:40' },
+    draft: { stopPct: '3', heatCapPct: '2', basis: 'avg' },
+    adj: {}, save: 'idle', savedAt: '', backup: null, conflict: null, syncNote: '',
+    snap: '10:00', clock: 10 * 3600 + 12 * 60 + 30, lastCheck: '10:12:30', poll: 'live', countdown: 60, pollNote: ''
+  };
+
+  function el(id) { return document.getElementById(id); }
+  function won(n) { return (n < 0 ? '-' : '') + Math.round(Math.abs(n)).toLocaleString('ko-KR') + '원'; }
+  function swon(n) { return (n > 0 ? '+' : '') + won(n); }
+  function fmt(h, v) { return h.us ? '$' + v.toFixed(2) : Math.round(v).toLocaleString('ko-KR') + '원'; }
+  function p2(n) { return n.toFixed(2) + '%'; }
+  function sp(n) { return (n > 0 ? '+' : '') + n.toFixed(1) + '%'; }
+  function st(kind, icon, text) { return '<span class="st ' + kind + '"><i aria-hidden="true">' + icon + '</i><span>' + text + '</span></span>'; }
+  function src(k) { return k === 'user' ? '<span class="src user">✓ 사용자 확정</span>' : k === 'prop' ? '<span class="src prop">◇ 제안 · 승인 전</span>' : '<span class="src doc">§ 문서 정책</span>'; }
+  function hh(sec) { var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60; return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s; }
+  function num(s) { s = String(s).replace(/[%\s,]/g, ''); if (s === '') return NaN; var n = Number(s); return isFinite(n) ? n : NaN; }
+
+  function holdings() {
+    return BASE.map(function (b) { var c = b.px[M.mk] + (M.adj[b.id] || 0); return { id: b.id, us: b.us, qty: b.qty, avg: b.avg, peak: Math.max(b.peak, c), cur: c }; });
+  }
+
+  /* ── 입력 검증 (서버도 같은 규칙) ── */
+  function validate() {
+    var d = M.draft, out = { errs: 0, stop: { msgs: [] }, cap: { msgs: [] } };
+    var s = num(d.stopPct), c = num(d.heatCapPct);
+    if (isNaN(s)) { out.stop.err = '숫자를 넣어 주세요.'; }
+    else if (s < 0.5 || s > 20) { out.stop.err = '0.5% ~ 20% 사이로 넣어 주세요.'; }
+    else if (s > 10) { out.stop.warn = '10%보다 크면 손절이 늦어져 한 번에 잃는 돈이 커집니다.'; }
+    if (isNaN(c)) { out.cap.err = '숫자를 넣어 주세요.'; }
+    else if (c < 0.5 || c > 10) { out.cap.err = '0.5% ~ 10% 사이로 넣어 주세요.'; }
+    out.errs = (out.stop.err ? 1 : 0) + (out.cap.err ? 1 : 0);
+    var base = M.saved || { stopPct: 3, heatCapPct: 2, basis: 'avg' };
+    out.eff = { stopPct: out.stop.err ? base.stopPct : s, heatCapPct: out.cap.err ? base.heatCapPct : c, basis: d.basis };
+    out.usedFallback = out.errs > 0;
+    return out;
+  }
+  function dirtyCount() {
+    var s = M.saved, d = M.draft;
+    if (!s) return 3;
+    var n = 0;
+    if (num(d.stopPct) !== s.stopPct) n++;
+    if (num(d.heatCapPct) !== s.heatCapPct) n++;
+    if (d.basis !== s.basis) n++;
+    return n;
+  }
+
+  /* ── 공용 순수 함수가 될 계산: computeRisk(holdings, total, policy) ── */
+  function stopOf(h, pct, basis) { var ref = basis === 'peak' ? h.peak : h.avg; var v = ref * (1 - pct / 100); return h.us ? Math.round(v * 100) / 100 : Math.round(v); }
+  function heatAt(H, pct, basis) {
+    return H.reduce(function (a, h) { var s = stopOf(h, pct, basis); return a + Math.max(0, (h.avg - s)) * h.qty * (h.us ? FX : 1); }, 0);
+  }
+  function compute(policy) {
+    var H = holdings();
+    var total = CASH + H.reduce(function (a, h) { return a + h.cur * h.qty * (h.us ? FX : 1); }, 0);
+    var cost = H.reduce(function (a, h) { return a + h.avg * h.qty * (h.us ? FX : 1); }, 0);
+    var rows = H.map(function (h) {
+      var k = h.us ? FX : 1, s = stopOf(h, policy.stopPct, policy.basis);
+      var pnlAtStop = (s - h.avg) * h.qty * k;
+      return { h: h, ref: policy.basis === 'peak' ? h.peak : h.avg, stop: s, dist: (h.cur - s) / h.cur * 100, under: (s - h.cur) / s * 100, below: h.cur <= s,
+        pnlAtStop: pnlAtStop, pnlAtStopPct: (s - h.avg) / h.avg * 100, unreal: (h.cur - h.avg) * h.qty * k, unrealPct: (h.cur - h.avg) / h.avg * 100,
+        near: h.cur > s && (h.cur - s) / h.cur * 100 < 1, value: h.cur * h.qty * k };
+    });
+    var heat = rows.reduce(function (a, r) { return a + Math.max(0, -r.pnlAtStop); }, 0);
+    var cap = total * policy.heatCapPct / 100;
+    var below = rows.filter(function (r) { return r.below; });
+    var belowLoss = below.reduce(function (a, r) { return a + r.unreal; }, 0);
+    // 역산: 한도를 지키는 최대 손절폭(0.01% 단위 내림)
+    var x;
+    if (policy.basis === 'avg') x = Math.floor(policy.heatCapPct * total / cost * 100) / 100;
+    else { var lo = 0, hi = 20; if (heatAt(H, 20, 'peak') <= cap) x = 20; else { for (var i = 0; i < 40; i++) { var mid = (lo + hi) / 2; if (heatAt(H, mid, 'peak') <= cap) lo = mid; else hi = mid; } x = Math.floor(lo * 100) / 100; } }
+    var top = rows.slice().sort(function (a, b) { return b.value - a.value; })[0];
+    return { rows: rows, total: total, cost: cost, heat: heat, cap: cap, over: heat > cap, usage: cap > 0 ? heat / cap * 100 : 0,
+      below: below, belowLoss: belowLoss, x: Math.min(x, 20), top: top, cashPct: CASH / total * 100,
+      usPct: rows.filter(function (r) { return r.h.us; }).reduce(function (a, r) { return a + r.value; }, 0) / (total - CASH) * 100 };
+  }
+
+  /* ── 정적 틀 ── */
+  function enforcedCard() {
+    return '<div class="card">' +
+      '<div class="strip"><span class="mode live">● 집행 중</span><span>이 카드의 설정은 실제 주문에 바로 적용됩니다</span></div>' +
+      '<div class="row"><div><div>실거래 여부</div><div class="s">ON — 실제 주문 전송 중</div></div><span class="tg"><span class="onoff">ON</span><span class="fake-toggle" aria-hidden="true"></span></span></div>' +
+      '<div class="row"><div><div>KILL_SWITCH</div><div class="s">OFF — 주문 정상 처리</div></div><span class="tg"><span class="onoff">OFF</span><span class="fake-toggle off" aria-hidden="true"></span></span></div>' +
+      '<div class="row"><div><div>자동 청산 엔진</div><div class="s">OFF — 자동 손절·익절 매도 주문을 내지 않습니다</div></div><span class="tg"><span class="onoff">OFF</span><span class="fake-toggle off" aria-hidden="true"></span></span></div>' +
+      '<div class="row"><div><div>1회 주문 최대 (%)</div><div class="s">포트폴리오 평가총액 × pct%</div></div><span class="v">5% ›</span></div>' +
+      '<div class="row"><div><div>일일 누적 최대 (%)</div><div class="s">오늘 0시~자정 누적 상한</div></div><span class="v">10% ›</span></div>' +
+      '</div>';
+  }
+  function tabs() {
+    return '<nav class="tabs" aria-label="주 메뉴"><a href="#demo"><span class="ico" aria-hidden="true">🏠</span>대시보드</a><a href="#demo"><span class="ico" aria-hidden="true">⭐</span>즐겨찾기</a><a href="#demo"><span class="ico" aria-hidden="true">💡</span>추천</a><a href="#demo"><span class="ico" aria-hidden="true">📈</span>분석</a><a href="#demo" aria-current="page"><span class="ico" aria-hidden="true">⚙️</span>설정</a></nav>';
+  }
+  /* v4 — 배지·띠 문구 (비교 보기 '현재' 는 T-066 배포본 문구) */
+  function disp() { return M.view === 'cur' ? '<span class="mode disp">◌ 표시·위험 계산 전용</span>' : '<span class="mode disp">◌ 표시·위험 계산·알림 (주문·매도 없음)</span>'; }
+  function note() {
+    return '<div class="strip"><span>이 정책은 <b style="color:var(--text)">아직 주문을 막지 않습니다</b>. 예상 손절가는 ' + (M.view === 'cur' ? '계산·표시용' : '계산·표시·알림용') + '이고 <b style="color:var(--text)">자동으로 팔지 않습니다</b>.</span></div>';
+  }
+
+  function setCard(p) {
+    var d = M.draft;
+    return '<div class="setcard" role="group" aria-labelledby="' + p + '-set-t">' +
+      '<h4><span id="' + p + '-set-t">손절 설정 — 여기서만 변경</span><span id="' + p + '-setver" style="font-size:11px;font-weight:400;color:var(--muted)"></span></h4>' +
+      '<div class="field"><label class="fl" for="' + p + '-stop">① 손절폭 (모든 보유 종목 공통)</label>' +
+        '<div class="inwrap" id="' + p + '-w-stop"><input id="' + p + '-stop" data-k="stopPct" inputmode="decimal" autocomplete="off" value="' + d.stopPct + '" aria-describedby="' + p + '-stop-h ' + p + '-stop-m"><span class="unit" aria-hidden="true">%</span></div>' +
+        '<div class="hint" id="' + p + '-stop-h">0.5 ~ 20 · 제안 3% · 10 넘으면 경고</div><div class="msgs" id="' + p + '-stop-m"></div></div>' +
+      '<div class="field"><label class="fl" for="' + p + '-cap">② 손실 손절 합 한도 (한 번에 감내할 손실)</label>' +
+        '<div class="inwrap" id="' + p + '-w-cap"><input id="' + p + '-cap" data-k="heatCapPct" inputmode="decimal" autocomplete="off" value="' + d.heatCapPct + '" aria-describedby="' + p + '-cap-h ' + p + '-cap-m"><span class="unit" aria-hidden="true">%</span></div>' +
+        '<div class="hint" id="' + p + '-cap-h"></div><div class="msgs" id="' + p + '-cap-m"></div></div>' +
+      '<fieldset class="seg2"><legend>③ 손절 기준가</legend>' +
+        '<label><input type="radio" name="' + p + '-basis" value="avg" data-k="basis"' + (d.basis === 'avg' ? ' checked' : '') + '><span>평균단가 기준 (권고)<small>자동 청산 엔진·전략 문서와 같은 정의</small></span></label>' +
+        '<label><input type="radio" name="' + p + '-basis" value="peak" data-k="basis"' + (d.basis === 'peak' ? ' checked' : '') + '><span>고점 대비 (이동 손절)<small>보유 중 최고가에서 따라 내려옴</small></span></label>' +
+      '</fieldset>' +
+      '<div id="' + p + '-sync"></div>' +
+      '<div id="' + p + '-save"></div>' +
+      '</div>';
+  }
+  function riskBody(p) {
+    if (M.data === 'loading') return '<div class="rk-sum" aria-busy="true"><span class="sr" role="status">리스크 정책을 불러오는 중…</span><div class="skel m" aria-hidden="true"></div><div class="skel s" aria-hidden="true"></div><div class="skel" aria-hidden="true"></div><div class="skel m" aria-hidden="true"></div></div>';
+    if (M.data === 'error') return '<div class="rk-sum" role="alert">' + st('warn', '!', '리스크 정책·보유 종목을 불러오지 못했습니다') +
+      '<span style="color:var(--muted);font-size:12px">이 화면이 값을 받지 못했을 뿐, 저장된 정책이 없어진 것이 아닙니다. 오류: 서버 응답 503 (예시)</span>' +
+      '<div><button type="button" class="btn pri" data-act="nop">다시 시도</button></div></div>';
+    var empty = M.data === 'empty' ? '<div class="warnbox" role="note"><b>! 아직 저장된 리스크 정책이 없습니다.</b> 아래 값은 제안값(손절폭 3% · 한도 2% · 평균단가 기준)으로 미리 계산한 것입니다. 저장해야 정책이 됩니다.</div>' : '';
+    var stale = M.data === 'stale' ? '<div class="warnbox" role="note"><b>! 스냅샷이 18시간 전(10-21 16:00) 값입니다.</b> 현재가·총자산·금액 환산이 실제와 다를 수 있습니다.</div>' : '';
+    var left = '<div class="rk-col">' + empty + setCard(p) +
+      '<div class="fresh" id="' + p + '-fresh"></div>' + stale +
+      '<div id="' + p + '-belowbox"></div>' +
+      '<div class="res" id="' + p + '-res"></div>' +
+      '<div id="' + p + '-alert"></div>' +
+      '<div class="infobox" role="note"><span class="ic" aria-hidden="true">ⓘ</span><div>예상 손절가는 <b>' + (M.view === 'cur' ? '표시·위험 계산용' : '표시·위험 계산·알림용') + '</b>입니다. 자동 청산 엔진(지금 OFF, 기본 하드 손절 1.5%)의 값과 별개이며, 엔진을 켜면 이 손절가보다 먼저 팔릴 수 있습니다. 이 화면은 주문을 만들지 않습니다.' +
+        (M.view === 'cur' ? '' : '<br><b>손절가 도달 알림은 엔진과 별개라, 엔진이 꺼져 있어도 옵니다.</b>') + '</div></div>' +
+      '</div>';
+    var right = '<div class="rk-col"><div id="' + p + '-hold"></div><div id="' + p + '-ro"></div></div>';
+    return '<div class="rk-body">' + left + right + '</div>';
+  }
+  function riskRowA(p) {
+    return '<a class="riskrow" href="#wrap-r" aria-labelledby="' + p + '-rr-t ' + p + '-sum">' +
+      '<div class="top"><b id="' + p + '-rr-t">리스크 정책</b>' + disp() + '</div>' +
+      '<div class="rk-sum" id="' + p + '-sum"></div>' +
+      '<div class="go"><span>손절 설정·예상 손절가 보기</span><span class="chev" aria-hidden="true">›</span></div></a>';
+  }
+  function riskCardB(p) {
+    return '<section class="card risk" aria-labelledby="' + p + '-rk-t">' +
+      '<div class="rk-head"><h3 id="' + p + '-rk-t">리스크 정책 ' + disp() + '</h3>' +
+      '<button type="button" class="fold" data-act="fold" aria-expanded="' + M.expanded + '">' + (M.expanded ? '접기' : '펼치기') + '</button></div>' +
+      note() + '<div class="rk-sum" id="' + p + '-sum"></div>' + (M.expanded ? '<div style="border-top:1px solid var(--border);padding:12px 16px 16px">' + riskBody(p) + '</div>' : '') + '</section>';
+  }
+  function settingsFrame(p) {
+    return '<main class="app-body">' +
+      '<div class="sec-h">안전장치 (공통)</div>' + enforcedCard() +
+      (M.lay === 'A' ? riskRowA(p) : riskCardB(p)) +
+      '<div class="sec-h">거래 보호</div><div class="card"><div class="row"><div><div>국내·해외 거래 차단 종목</div><div class="s">등록된 종목은 시그널 단계에서 차단</div></div></div></div>' +
+      '</main>' + tabs();
+  }
+  function riskScreen(p) {
+    return '<div class="rp-head"><a class="back" href="#f-m" aria-label="설정으로 돌아가기">‹ 설정</a><h2>리스크 정책</h2>' + disp() + '</div>' +
+      note() + '<main class="app-body">' + riskBody(p) + '</main>' + tabs();
+  }
+
+  /* ── 파생 값 ── */
+  function sumHtml(c, v) {
+    if (M.data === 'loading') return '<span role="status">불러오는 중…</span>';
+    if (M.data === 'error') return st('warn', '!', '불러오지 못했습니다 — 눌러서 다시 확인');
+    var e = v.eff, dirty = dirtyCount() > 0;
+    var tag = M.save === 'saving' ? ' <span class="pv">저장 중</span>' : (dirty || M.data === 'empty') ? ' <span class="pv">저장 전 값</span>' : '';
+    var lines = [];
+    lines.push('<div class="l1"><span>손절폭 <b class="num">' + e.stopPct + '%</b> (' + (e.basis === 'avg' ? '평균단가' : '고점') + ' 기준) · 손절 합 한도 <b class="num">' + e.heatCapPct + '%</b></span>' + (M.data === 'empty' ? st('warn', '!', '정책 미저장') : '') + '</div>');
+    lines.push('<div aria-live="polite">' + (c.over ? st('warn', '!', '손절 합 ' + p2(c.heat / c.total * 100) + ' — 한도 초과') : st('ok', '✓', '손절 합 ' + p2(c.heat / c.total * 100) + ' — 한도 이내')) + ' <span class="num" style="color:var(--muted)">(≈' + won(c.heat) + ')</span>' + tag + '</div>');
+    if (c.below.length) lines.push('<div>' + st('warn', '!', '이미 손절가 아래 ' + c.below.length + '종목') + ' <span style="color:var(--muted)">평가손 ' + won(c.belowLoss) + '</span></div>');
+    lines.push('<div style="color:var(--muted)">현재가 기준 ' + (M.data === 'stale' ? '10-21 16:00 (오래됨)' : M.snap + ' 스냅샷') + '</div>');
+    return lines.join('');
+  }
+  function freshHtml() {
+    var snap = M.data === 'stale' ? '10-21 16:00 스냅샷' : M.snap + ' 스냅샷';
+    var dot = M.poll === 'busy' ? '<span class="dot busy">◌ 갱신 중…</span>' : M.poll === 'fail' ? '<span class="dot warn">! 재조회 실패 — 마지막 값 유지</span>' : M.data === 'stale' ? '<span class="dot warn">! 오래됨</span>' : '<span class="dot live">● 최신</span>';
+    return '<span>현재가·총자산 기준 <b class="num" style="color:var(--text)">' + snap + '</b> (포트폴리오 스냅샷 · 약 1시간마다 · 3시간 넘으면 오래됨 표시)</span>' +
+      '<span>' + dot + ' · ' + M.lastCheck + ' 확인 · 다음 확인 <span class="num">' + M.countdown + '</span>초</span>' +
+      (M.pollNote ? '<span style="color:var(--text)">' + M.pollNote + '</span>' : '');
+  }
+  function belowHtml(c) {
+    if (!c.below.length) return '';
+    return '<div class="warnbox" role="note"><b>! 이미 손절가 아래 ' + c.below.length + '종목 · 평가손 합계 ' + won(c.belowLoss) + ' (총자산의 ' + p2(-c.belowLoss / c.total * 100) + ')</b><br>' +
+      c.below.map(function (r) { return r.h.id; }).join(' · ') + ' — 현재가가 예상 손절가보다 낮습니다. 실제 손실이 이미 손절 기준보다 큽니다. <b>자동 매도는 없습니다 — 직접 판단하세요.</b></div>';
+  }
+  function resHtml(c, v) {
+    var e = v.eff, dirty = dirtyCount() > 0;
+    var tag = M.save === 'saving' ? '<span class="pv">◌ 저장 중 — 서버 확인 전</span>' : (dirty || M.data === 'empty' || v.usedFallback) ? '<span class="pv">◌ 저장 전 값 기준 미리보기</span>' : '<span class="pv saved">저장된 값 기준</span>';
+    var heatPct = c.heat / c.total * 100;
+    var w = Math.min(c.usage, 100);
+    var badge = c.over ? st('warn', '!', '한도 초과') : st('ok', '✓', '한도 이내');
+    var inv = e.basis === 'avg'
+      ? '한도 ' + e.heatCapPct + '%를 지키려면 <b>손절폭 ≤ ' + c.x.toFixed(2) + '%</b><br><span style="color:var(--muted);font-size:12px">= 한도 ' + e.heatCapPct + '% × 총자산 ' + won(c.total) + ' ÷ 취득원가 합 ' + won(c.cost) + '</span>'
+      : (c.x >= 20 ? '손절폭 20%까지 한도 ' + e.heatCapPct + '% 이내입니다(고점 기준).' : '한도 ' + e.heatCapPct + '%를 지키려면 <b>손절폭 ≤ ' + c.x.toFixed(2) + '%</b> (고점 기준, 수치 계산)');
+    return '<div class="head"><h4 class="subh">손절 합 — 모든 종목이 예상 손절가에 닿을 때 손실 합</h4>' + tag + '</div>' +
+      '<div aria-live="polite"><span class="big num">' + p2(heatPct) + '</span> <span class="num">(≈' + won(c.heat) + ')</span> ' + badge + '</div>' +
+      '<div class="bar" aria-hidden="true"><span class="fill ' + (c.over ? 'warnc' : 'okc') + '" style="width:' + w + '%"></span></div>' +
+      '<div class="bar-scale" aria-hidden="true"><span>0</span><span>한도 ' + e.heatCapPct + '% · ' + won(c.cap) + '</span></div>' +
+      '<p>한도 사용률 <b class="num">' + c.usage.toFixed(0) + '%</b>' + (c.over ? ' · 초과 <b class="num">' + won(c.heat - c.cap) + '</b>' : ' · 여유 <b class="num">' + won(c.cap - c.heat) + '</b>') + '</p>' +
+      (c.over ? '<div class="inv">' + st('warn', '!', '지금 보유 규모로는 한도를 넘습니다') + '<br>' + inv + '</div>' : '<div class="inv">' + inv + '</div>') +
+      (v.usedFallback ? '<p>' + st('warn', '!', '잘못된 입력값은 계산에 쓰지 않고 저장된 값으로 계산했습니다') + '</p>' : '');
+  }
+  function rowStatus(r) {
+    if (r.below) return st('warn', '!', '이미 손절가 아래');
+    if (r.near) return st('warn', '!', '손절가 근접');
+    return st('ok', '✓', '손절가 위');
+  }
+  function holdHtml(c, v, p) {
+    var e = v.eff, refLbl = e.basis === 'avg' ? '평균단가' : '고점';
+    var list = '<div class="only-m"><h4 class="subh" style="margin-bottom:8px">보유 종목 예상 손절가<small>' + refLbl + ' × (1 − ' + e.stopPct + '%) · 실시간 계산 · 읽기 전용</small></h4><div class="hlist">' +
+      c.rows.map(function (r) {
+        var h = r.h;
+        return '<div class="hrow' + (r.below ? ' below' : '') + '"><div class="t"><div><b>' + h.id + '</b><span class="mk">' + (h.us ? '미국' : '국내') + ' · ' + h.qty + '주</span></div>' + rowStatus(r) + '</div>' +
+          '<dl><div><dt>예상 손절가</dt><dd>' + fmt(h, r.stop) + '</dd></div>' +
+          '<div><dt>현재가</dt><dd>' + fmt(h, h.cur) + '</dd></div>' +
+          '<div><dt>손절가까지</dt><dd>' + (r.below ? '이미 아래<small>손절가보다 ' + r.under.toFixed(1) + '% 낮음</small>' : '-' + r.dist.toFixed(1) + '%<small>현재가에서 남은 폭</small>') + '</dd></div>' +
+          '<div><dt>' + refLbl + '</dt><dd>' + fmt(h, r.ref) + '</dd></div>' +
+          '<div><dt>손절 시 손익</dt><dd>' + swon(r.pnlAtStop) + '<small>' + sp(r.pnlAtStopPct) + '</small></dd></div>' +
+          '<div><dt>지금 평가손익</dt><dd>' + swon(r.unreal) + '<small>' + sp(r.unrealPct) + '</small></dd></div></dl>' +
+          (r.below ? '<div class="why">' + st('warn', '!', '현재가가 예상 손절가보다 낮습니다 — 자동 매도 없음, 직접 판단') + '</div>' : '') +
+          '</div>';
+      }).join('') + '</div></div>';
+    var table = '<div class="only-d"><table class="hold"><caption>보유 종목 예상 손절가 — ' + refLbl + ' × (1 − ' + e.stopPct + '%) · 실시간 계산 · 읽기 전용</caption>' +
+      '<thead><tr><th scope="col" class="l">종목</th><th scope="col">' + refLbl + '</th><th scope="col">예상 손절가</th><th scope="col">현재가</th><th scope="col">손절가까지</th><th scope="col">손절 시 손익</th><th scope="col" class="l">상태</th></tr></thead><tbody>' +
+      c.rows.map(function (r) {
+        var h = r.h;
+        return '<tr' + (r.below ? ' class="below"' : '') + '><td><b>' + h.id + '</b><small>' + (h.us ? '미국' : '국내') + ' · ' + h.qty + '주</small></td>' +
+          '<td>' + fmt(h, r.ref) + '</td><td><b>' + fmt(h, r.stop) + '</b></td><td>' + fmt(h, h.cur) + '</td>' +
+          '<td>' + (r.below ? '이미 아래<small>손절가보다 ' + r.under.toFixed(1) + '% 낮음</small>' : '-' + r.dist.toFixed(1) + '%<small>남은 폭</small>') + '</td>' +
+          '<td>' + swon(r.pnlAtStop) + '<small>' + sp(r.pnlAtStopPct) + '</small></td>' +
+          '<td class="l">' + rowStatus(r) + (r.below ? '<small>평가손익 ' + sp(r.unrealPct) + ' · 자동 매도 없음</small>' : '') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    return list + table;
+  }
+  /* v5 — 실제로 집행 중인 분할 관련 제한 2가지(읽기 전용) + 아직 없는 것 1줄
+     ① 확정 요청 1회당 조각 상한 MAX_SCENARIO_SPLITS (시장 무관, 서버 검사)
+     ② 국내 룰 엔진 자동 매수: 같은 종목 24시간 내 체결·접수 매수 주문 수 한도 maxPositionsPerSymbol */
+  function execHtml() {
+    var cap = M.ex === 'cap3' ? 3 : 4;
+    var l1 = (cap === 4 ? st('info', 'ⓘ', '확정 1회당 조각 최대 4개') : st('warn', '!', '확정 1회당 조각 최대 ' + cap + '개 — 정책(4회)과 다름')) +
+      '<small>시나리오 확정 요청마다 서버가 검사 · 시장 무관</small>';
+    var l2 = M.ex === 'unk' ? st('na', '—', '국내 자동 매수 한도 확인 불가') + '<small>엔진 설정을 읽지 못했습니다</small>'
+      : (M.ex === '5' ? st('warn', '!', '국내 자동 매수 같은 종목 24시간 내 5건 — 정책(4회)과 다름') : st('info', 'ⓘ', '국내 자동 매수 같은 종목 24시간 내 4건')) +
+        '<small>국내 룰 엔진만 · 체결·접수된 매수 주문 수</small>';
+    var l3 = '<small>여러 번에 나눠 확정하는 누적 횟수는 아직 제한이 없습니다(후속 결정).</small>';
+    return '<div class="exl"><small>집행 중인 제한</small><div>' + l1 + '</div><div>' + l2 + '</div>' + l3 + '</div>';
+  }
+  function roHtml(c) {
+    function row(name, k, val, cu) { return '<tr><th scope="row"><div class="name">' + name + '</div>' + src(k) + '</th><td class="v num">' + val + '</td><td class="cur">' + cu + '</td></tr>'; }
+    function grp(t) { return '<tr class="grp"><th colspan="3" scope="colgroup">' + t + '</th></tr>'; }
+    function na(t) { return st('na', '—', t); }
+    var topPct = c.top.value / c.total * 100, t = c.total;
+    return '<table class="pol"><caption>그 밖의 정책 (읽기 전용)<small>기준 총자산 ' + won(t) + '(예시)으로 환산</small></caption>' +
+      '<colgroup><col class="c-name"><col class="c-val"><col class="c-cur"></colgroup>' +
+      '<thead><tr><th scope="col">항목 · 출처</th><th scope="col">정책값</th><th scope="col">현재 상태</th></tr></thead><tbody>' +
+      grp('손실 한도') +
+      row('거래당 리스크', 'prop', '총자산의 0.25%<small>≈' + won(t * 0.0025) + ' · 손절폭으로 매수 금액 산출</small>', na('신규 진입 때 적용')) +
+      row('주간 손실 한도', 'doc', '-3%<small>≈' + won(t * 0.03) + '</small>', na('주간 기준선 미산출')) +
+      row('월간 / 연간 손실 한도', 'doc', '-5% / -15%<small>≈' + won(t * 0.05) + ' / ' + won(t * 0.15) + '</small>', na('미산출')) +
+      grp('포지션 구성') +
+      row('보유 종목 최대 수', 'user', '10종목', st('ok', '✓', c.rows.length + '종목') + '<small>' + (10 - c.rows.length) + '개 더 가능</small>') +
+      row('심볼당 최대 비중', 'prop', '15%<small>문서 정책은 30%</small>', topPct > 15 ? st('warn', '!', '초과 — ' + c.top.h.id + ' ' + topPct.toFixed(1) + '%') : st('ok', '✓', '최대 ' + topPct.toFixed(1) + '%')) +
+      (M.view === 'cur'
+        ? row('현금 하한', 'doc', '총자산의 10%<small>≈' + won(t * 0.1) + '</small>', c.cashPct < 10 ? st('warn', '!', '미달 — ' + c.cashPct.toFixed(1) + '%') : st('ok', '✓', c.cashPct.toFixed(1) + '%')) +
+          row('분할 매수', 'user', '최대 3회<small>40 / 30 / 30 (비율은 제안)</small>', na('신규 진입 때 적용'))
+        : row('현금 비중 (정보 표시, 하한 없음)', 'user', '하한 없음<small>규칙 아님 · 표시만</small>', '<span class="num" style="font-weight:700">' + c.cashPct.toFixed(1) + '%</span><small>총자산 대비 현금</small>') +
+          row('분할 매수', 'user', '최대 4회<small>비율 고정 없음 · 구간·수량은 시나리오에서 정함</small>', execHtml())) +
+      grp('시장') +
+      row('시장 우선순위', 'user', '미국 → 국내', st('info', 'ⓘ', '미국 ' + c.usPct.toFixed(0) + '% · 국내 ' + (100 - c.usPct).toFixed(0) + '%') + '<small>주식 평가액 기준 · 예시</small>') +
+      '</tbody></table>' +
+      '<p class="ro-foot"><b>위 정책 값은 읽기 전용입니다. 변경은 사용자 승인 후 반영됩니다.</b> 이 화면에서 바꿀 수 있는 것은 손절 설정 3개뿐입니다.</p>';
+  }
+  /* v4 — 손절가 도달 알림 안내 + 텔레그램 메시지 미리보기 (합성) */
+  function alertHtml(c, v, p) {
+    if (M.view === 'cur') return '';
+    var e = v.eff;
+    var bu = c.below.filter(function (r) { return r.h.us; }).length, bk = c.below.length - bu;
+    var first = c.below.length
+      ? '지금 손절가 아래 <b class="num">' + c.below.length + '</b>종목(미국 ' + bu + ' · 국내 ' + bk + '). 알림이 처음 켜지면 종목마다 보내지 않고 <b>시장별 요약 ' + ((bu ? 1 : 0) + (bk ? 1 : 0)) + '건</b>만 한 번 보냅니다.'
+      : '지금 손절가 아래 종목은 없습니다. 손절가에 처음 닿는 종목부터 1건씩 알립니다.';
+    // 미리보기: AAA 가 방금 예상 손절가에 닿은 상황(현재가 = 손절가 - $0.10)
+    var a = holdings()[0], stp = stopOf(a, e.stopPct, e.basis), cur = Math.round((stp - 0.10) * 100) / 100;
+    var ref = e.basis === 'avg' ? a.avg : a.peak;
+    var unrPct = (cur - a.avg) / a.avg * 100, atStop = (stp - a.avg) * a.qty * FX;
+    var sumUs = bu ? bu : 2;
+    return '<section class="alertbox" aria-labelledby="' + p + '-al-t">' +
+      '<h4><span id="' + p + '-al-t">🔔 손절가 도달 알림 — 텔레그램</span><span class="mode disp">주문·매도 없음</span></h4>' +
+      '<ul>' +
+        '<li>보유 종목 현재가가 <b>예상 손절가에 닿거나 아래로</b> 내려가면 텔레그램으로 알립니다(장이 열린 시장만, 약 1분마다 확인).</li>' +
+        '<li>처음 켜질 때 이미 손절가 아래인 종목은 <b>요약 1건</b>으로 한 번만 알립니다(시장별).</li>' +
+        '<li>같은 종목은 <b>60분 안에 다시 알리지 않습니다</b> · 하루 최대 <b>20건</b>.</li>' +
+        '<li>손절 설정을 저장한 직후 첫 확인은 알림 없이 기준만 새로 맞춥니다.</li>' +
+      '</ul>' +
+      '<div class="now" aria-live="polite">' + first + '</div>' +
+      '<div class="tgprev"><span class="cap">메시지 예시 — AAA 가 손절가 위에 있다가 막 닿은 경우 (합성값 · 지금 입력한 손절폭 ' + e.stopPct + '% 기준)</span>' +
+        '<div class="bubble" role="img" aria-label="텔레그램 손절가 도달 알림 예시">' +
+          '<div class="bt">🔻 손절가 도달 — AAA (미국)</div>' +
+          '<dl><dt>현재가</dt><dd>$' + cur.toFixed(2) + '</dd>' +
+          '<dt>예상 손절가</dt><dd>$' + stp.toFixed(2) + ' <span style="color:var(--muted)">(' + (e.basis === 'avg' ? '평균단가' : '고점') + ' $' + ref.toFixed(2) + ' − ' + e.stopPct + '%)</span></dd>' +
+          '<dt>평균단가</dt><dd>$' + a.avg.toFixed(2) + '</dd>' +
+          '<dt>평가손익</dt><dd>' + sp(unrPct) + '</dd>' +
+          '<dt>손절 시 손익</dt><dd>' + swon(atStop) + '</dd></dl>' +
+          '<div class="foot">주문은 자동으로 나가지 않습니다. 직접 판단하세요.</div>' +
+          '<span class="tm">10:31</span></div>' +
+        '<div class="bubble" role="img" aria-label="텔레그램 처음 켜질 때 요약 알림 예시">' +
+          '<div class="bt">🔻 손절가 아래 — 미국 ' + sumUs + '종목</div>' +
+          '<div>알림이 처음 켜졌을 때 이미 예상 손절가 아래인 종목입니다: ' + (bu ? c.below.filter(function (r) { return r.h.us; }).map(function (r) { return r.h.id; }).join(' · ') : 'AAA · BBB') + '</div>' +
+          '<div class="foot">종목별 알림은 손절가 위로 회복했다가 다시 닿을 때 보냅니다. 주문은 자동으로 나가지 않습니다.</div>' +
+          '<span class="tm">09:31</span></div>' +
+      '</div></section>';
+  }
+  function saveHtml(v) {
+    var n = dirtyCount(), sub = M.view === 'cur'
+      ? '<div class="sub">저장해도 매도 주문·알림은 만들지 않습니다. 이 저장은 안전장치 저장과 별개입니다.</div>'
+      : '<div class="sub">저장해도 매도 주문은 만들지 않습니다. 예상 손절가에 닿으면 텔레그램으로 알림만 보냅니다. 이 저장은 안전장치 저장과 별개입니다.</div>';
+    if (M.save === 'saving') return '<div class="savebar" aria-busy="true"><div class="msg" role="status">저장 중… 화면에는 먼저 반영했습니다(서버 확인 전).</div>' + sub + '<div class="btns"><button type="button" class="btn sec" disabled>취소</button><button type="button" class="btn pri" disabled>저장 중…</button></div></div>';
+    if (M.save === 'failed') return '<div class="savebar err"><div class="msg" role="alert">' + st('warn', '!', '저장하지 못했습니다 — 서버 응답 500 (예시)') + '<br><span style="color:var(--text)">저장된 값으로 되돌렸고, 입력한 값은 그대로 있습니다.</span></div>' + sub + '<div class="btns"><button type="button" class="btn sec" data-act="cancel">입력 취소</button><button type="button" class="btn pri" data-act="save"' + (v.errs ? ' disabled' : '') + '>다시 시도</button></div></div>';
+    if (M.save === 'conflict') return '<div class="savebar err"><div class="msg" role="alert">' + st('warn', '!', '저장하지 않았습니다 — 다른 기기에서 먼저 바뀌었습니다') + '<br><span style="color:var(--text)">최신 저장값(손절폭 2.5%, 버전 ' + M.saved.version + ')을 불러왔습니다. 내 입력은 그대로 있으니 확인 뒤 다시 저장하면 덮어씁니다.</span></div>' + sub + '<div class="btns"><button type="button" class="btn sec" data-act="cancel">서버 값 쓰기</button><button type="button" class="btn pri" data-act="save"' + (v.errs ? ' disabled' : '') + '>내 값으로 저장</button></div></div>';
+    if (M.save === 'saved' && n === 0) return '<div class="savebar done"><div class="msg" role="status">' + st('ok', '✓', '저장됨 ' + M.savedAt) + ' 서버 확정값(버전 ' + M.saved.version + ')으로 갱신했습니다.</div><div class="sub">' + (M.view === 'cur' ? '매도 주문·알림은 만들지 않았습니다.' : '매도 주문은 만들지 않았습니다. 바뀐 손절가로 첫 확인 때는 알림 없이 기준만 새로 맞추고, 그다음부터 새 손절가에 닿으면 알립니다.') + '</div></div>';
+    if (n === 0) return '';
+    return '<div class="savebar"><div class="msg">' + (M.saved ? '변경 <span class="num">' + n + '</span>건' : '정책을 처음 저장합니다') + ' · 아래 값은 저장 전 값 기준입니다' +
+      (v.errs ? '<br>' + st('warn', '!', '잘못된 값 ' + v.errs + '건을 고쳐야 저장할 수 있습니다') : '') + '</div>' + sub +
+      '<div class="btns">' + (M.saved ? '<button type="button" class="btn sec" data-act="cancel">취소</button>' : '') + '<button type="button" class="btn pri" data-act="save"' + (v.errs ? ' disabled aria-disabled="true"' : '') + '>저장</button></div></div>';
+  }
+  function syncHtml() {
+    if (M.conflict) return '<div class="warnbox sync" role="alert"><b>! 다른 기기에서 손절폭이 2.5%로 저장됐습니다(버전 ' + M.conflict.version + ').</b> 지금 바꾸는 값을 저장하면 그 값을 덮어씁니다.' +
+      '<div class="line"><button type="button" class="btn sec" data-act="takeServer">서버 값 쓰기</button><button type="button" class="btn sec" data-act="keepMine">내 값 유지</button></div></div>';
+    if (M.syncNote) return '<div class="infobox sync" role="status"><span class="ic" aria-hidden="true">ⓘ</span><div>' + M.syncNote + '</div></div>';
+    return '';
+  }
+
+  function update() {
+    var v = validate(), c = compute(v.eff);
+    FR.forEach(function (p) {
+      var x;
+      if ((x = el(p + '-sum'))) x.innerHTML = sumHtml(c, v);
+      if ((x = el(p + '-fresh'))) x.innerHTML = freshHtml();
+      if ((x = el(p + '-belowbox'))) x.innerHTML = belowHtml(c);
+      if ((x = el(p + '-res'))) x.innerHTML = resHtml(c, v);
+      if ((x = el(p + '-hold'))) x.innerHTML = holdHtml(c, v, p);
+      if ((x = el(p + '-ro'))) x.innerHTML = roHtml(c);
+      if ((x = el(p + '-alert'))) x.innerHTML = alertHtml(c, v, p);
+      if ((x = el(p + '-save'))) x.innerHTML = saveHtml(v);
+      if ((x = el(p + '-sync'))) x.innerHTML = syncHtml();
+      if ((x = el(p + '-setver'))) x.textContent = M.saved ? '저장된 버전 ' + M.saved.version + ' · ' + M.saved.at : '아직 저장 안 됨';
+      if ((x = el(p + '-cap-h'))) x.innerHTML = '0.5 ~ 10 · 사용자 확정 2% · 지금 총자산 기준 <span class="num">≈' + won(c.total * v.eff.heatCapPct / 100) + '</span>';
+      [['stop', v.stop], ['cap', v.cap]].forEach(function (f) {
+        var m = el(p + '-' + f[0] + '-m'); if (!m) return;
+        m.innerHTML = (f[1].err ? st('warn', '!', f[1].err) : '') + (f[1].warn ? st('warn', '!', f[1].warn) : '');
+        el(p + '-w-' + f[0]).className = 'inwrap' + (f[1].err ? ' bad' : '');
+        var i = el(p + '-' + f[0]); i.setAttribute('aria-invalid', f[1].err ? 'true' : 'false'); i.disabled = M.save === 'saving';
+      });
+      document.querySelectorAll('input[name="' + p + '-basis"]').forEach(function (r) { r.disabled = M.save === 'saving'; });
+    });
+  }
+  function render() {
+    el('f-m').innerHTML = settingsFrame('m');
+    el('wrap-r').classList.toggle('hide', M.lay !== 'A');
+    el('f-r').innerHTML = M.lay === 'A' ? riskScreen('r') : '';
+    el('f-d').innerHTML = M.lay === 'A' ? riskScreen('d') : settingsFrame('d');
+    update();
+  }
+  function syncInputs() {
+    FR.forEach(function (p) {
+      var a = el(p + '-stop'), b = el(p + '-cap');
+      if (a && document.activeElement !== a) a.value = M.draft.stopPct;
+      if (b && document.activeElement !== b) b.value = M.draft.heatCapPct;
+      document.querySelectorAll('input[name="' + p + '-basis"]').forEach(function (r) { r.checked = r.value === M.draft.basis; });
+    });
+  }
+  function draftFromSaved() { var s = M.saved || { stopPct: 3, heatCapPct: 2, basis: 'avg' }; M.draft = { stopPct: String(s.stopPct), heatCapPct: String(s.heatCapPct), basis: s.basis }; }
+  function resetData(v) {
+    M.data = v; M.save = 'idle'; M.conflict = null; M.syncNote = ''; M.pollNote = ''; M.poll = 'live';
+    M.saved = v === 'empty' ? null : { stopPct: 3, heatCapPct: 2, basis: 'avg', version: 7, at: '10-22 09:40' };
+    draftFromSaved();
+  }
+
+  /* ── 저장: 낙관적 반영 → 서버 확정 / 실패 되돌림 / 409 ── */
+  function doSave() {
+    var v = validate(); if (v.errs || dirtyCount() === 0) return;
+    M.backup = M.saved ? JSON.parse(JSON.stringify(M.saved)) : null;
+    var sent = JSON.parse(JSON.stringify(M.draft));
+    var ver = M.saved ? M.saved.version : 0;
+    M.saved = { stopPct: num(sent.stopPct), heatCapPct: num(sent.heatCapPct), basis: sent.basis, version: ver, at: '저장 중' };
+    M.save = 'saving'; M.conflict = null; update();
+    setTimeout(function () {
+      if (M.outcome === 'fail') { M.saved = M.backup; M.draft = sent; M.save = 'failed'; }
+      else if (M.outcome === 'conflict') { M.saved = { stopPct: 2.5, heatCapPct: M.backup ? M.backup.heatCapPct : 2, basis: M.backup ? M.backup.basis : 'avg', version: ver + 1, at: '10-22 ' + hh(M.clock).slice(0, 5) }; M.draft = sent; M.save = 'conflict'; }
+      else {
+        M.saved = { stopPct: Math.round(num(sent.stopPct) * 100) / 100, heatCapPct: Math.round(num(sent.heatCapPct) * 100) / 100, basis: sent.basis, version: ver + 1, at: '10-22 ' + hh(M.clock).slice(0, 5) };
+        if (M.data === 'empty') M.data = 'ok';
+        draftFromSaved(); M.save = 'saved'; M.savedAt = hh(M.clock).slice(0, 5);
+      }
+      syncInputs(); update();
+    }, 1500);
+  }
+
+  /* ── 60초 재조회 시뮬레이션 (DB 스냅샷만, 증권사 시세 API 없음) ── */
+  function pollOnce(kind) {
+    M.poll = 'busy'; FR.forEach(function (p) { var x = el(p + '-fresh'); if (x) x.innerHTML = freshHtml(); });
+    setTimeout(function () {
+      M.lastCheck = hh(M.clock); M.countdown = 60;
+      if (kind === 'fail') M.poll = 'fail';
+      else {
+        M.poll = 'live';
+        if (kind === 'snap') { M.snap = '11:00'; M.adj.AAA = (M.adj.AAA || 0) - 3; M.pollNote = st('ok', '↻', '갱신됨') + ' 기준 시각 → 11:00 · AAA 현재가 -$3.00'; }
+        if (kind === 'remote' && M.saved) {
+          var nv = M.saved.version + 1;
+          if (dirtyCount() > 0) { M.conflict = { version: nv }; M.pendingRemote = { stopPct: 2.5, heatCapPct: M.saved.heatCapPct, basis: M.saved.basis, version: nv, at: '10-22 ' + hh(M.clock).slice(0, 5) }; }
+          else { M.saved = { stopPct: 2.5, heatCapPct: M.saved.heatCapPct, basis: M.saved.basis, version: nv, at: '10-22 ' + hh(M.clock).slice(0, 5) }; draftFromSaved(); M.syncNote = '다른 기기에서 저장한 값을 반영했습니다 — 손절폭 2.5% (버전 ' + nv + ').'; }
+        }
+      }
+      syncInputs(); update();
+    }, 700);
+  }
+  setInterval(function () {
+    M.clock++;
+    if (M.data === 'loading' || M.data === 'error') return;
+    if (M.poll !== 'busy') M.countdown = Math.max(0, M.countdown - 1);
+    if (M.countdown === 0 && M.poll !== 'busy') { pollOnce('none'); return; }
+    FR.forEach(function (p) { var x = el(p + '-fresh'); if (x) x.innerHTML = freshHtml(); });
+  }, 1000);
+
+  /* ── 이벤트 ── */
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.name === 'lay') { M.lay = t.value; render(); return; }
+    if (t.name === 'view') { M.view = t.value; render(); return; }
+    if (t.name === 'ex') { M.ex = t.value; update(); return; }
+    if (t.name === 'mk') { M.mk = t.value; M.adj = {}; M.snap = '10:00'; M.pollNote = ''; update(); return; }
+    if (t.name === 'cd') { resetData(t.value); render(); return; }
+    if (t.name === 'so') { M.outcome = t.value; return; }
+    if (t.getAttribute && t.getAttribute('data-k') === 'basis') { M.draft.basis = t.value; if (M.save === 'saved') M.save = 'idle'; syncInputs(); update(); }
+  });
+  document.addEventListener('input', function (e) {
+    var t = e.target, k = t.getAttribute && t.getAttribute('data-k');
+    if (!k || k === 'basis') return;
+    M.draft[k] = t.value; if (M.save === 'saved') M.save = 'idle';
+    syncInputs(); update();
+  });
+  document.addEventListener('click', function (e) {
+    var sim = e.target.closest && e.target.closest('button[data-sim]');
+    if (sim) {
+      var s = sim.getAttribute('data-sim');
+      if (s === 'bad') { M.draft.stopPct = '25'; M.save = 'idle'; syncInputs(); update(); return; }
+      pollOnce(s === 'pollfail' ? 'fail' : s); return;
+    }
+    var b = e.target.closest && e.target.closest('button[data-act]');
+    if (!b || b.disabled) return;
+    var act = b.getAttribute('data-act');
+    if (act === 'fold') { M.expanded = !M.expanded; render(); return; }
+    if (act === 'cancel') { draftFromSaved(); M.save = 'idle'; M.conflict = null; syncInputs(); update(); return; }
+    if (act === 'takeServer') { M.saved = M.pendingRemote; M.conflict = null; draftFromSaved(); syncInputs(); update(); return; }
+    if (act === 'keepMine') { M.saved = M.pendingRemote; M.conflict = null; M.syncNote = '내 입력값을 유지합니다. 저장하면 다른 기기의 값(손절폭 2.5%)을 덮어씁니다.'; update(); return; }
+    if (act === 'save') doSave();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>

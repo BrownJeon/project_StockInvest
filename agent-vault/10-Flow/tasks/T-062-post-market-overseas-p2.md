@@ -391,6 +391,14 @@ post-market 시나리오 카드(다음 거래일용 AI 시나리오)는 지금 *
 - **롤백**: 이전 릴리스 `20261021-154632-7cd47e75` 로 blue/green 되돌리기(사용자 지시 시) — 표시만 옛 상태로 돌아가고 데이터 영향 0.
 - [05:32] **WP-S 로컬 커밋 `89edff3`**(14개 파일: 서버 13 + 이 문서, push 없음). 커밋 훅 `Reviewer 감사 기록 확인: T-062` 통과(마지막 판정 줄 [00:10] [WP-S] PASS, scope 가 staged 안전 파일 전부 포함). 로컬 `origin/main...HEAD` = `0 1`. **WP-S 는 사용자 확인 후 오후 창(KST 15:40~22:00)에만 push**, 스위치 `post_market_overseas_enabled` 는 키 없음(꺼짐) 그대로.
 
+### WP-S 서버 + 문서 — 2026-10-22 16:37 push·배포 (예약 크론 `944c3039`)
+- [16:36] **사전 점검 전부 통과**: 시각 16:36(창 15:40~22:00 안) · 원격 `main`=`0e9991c`, 로컬 `0 2`(`a71b300` 문서·`89edff3` WP-S 두 커밋뿐), staged 0 · 국내 post-market 완료(`post-market-domestic-last-date`=2026-10-22, 오늘 카드 1건 16:01 생성) · pm2 두 앱 online·재시작 0·health 200 · `deploy.sh --status` 정상(현재 `20261022-052828-0e9991c6`) · 최근 30분 새 executing/approved 시그널 없음 · 안전 설정 기록만: `safety_dry_run=false`·`safety_kill_switch=false` · `post_market_overseas_enabled` 키 없음.
+- [16:37] **push** `0e9991c..a71b300` 16:37:23. **같은 push 에 실린 것**: `89edff3`(WP-S 서버 13개 파일 + T-062 문서) + `a71b300`(T-058·T-059·T-060·T-062 기록 — 문서 전용). T-066 변경은 작업 트리에 미커밋 상태라 포함되지 않았다.
+- [16:39] **배포 결과**: webhook blue/green `RELEASE_RESULT {"status":"ok","release":"20261022-163736-a71b3005","sha":"a71b300591c21acc19d572f63c4cce5868fd4e94","previous":".../20261022-052828-0e9991c6","migrated":false}`.
+- [16:40] **확인한 것**: `deploy.sh --status` current=새 릴리스·pm2 두 앱 online(cwd 새 릴리스)·재시작 0 · health 200 · 핵심 파일 4개 해시가 저장소=릴리스(cron-runner.sh `679fcdc852f7` · post-market-overseas.ts `277bb5f72c74` · post-market-engine.ts `783931c82aa1` · cron route `b403fffd1613`, 모두 이전에 기록한 값과 동일) · cron 러너 16:38:05 재시작 후 `entry-watcher`·`holding-checker`·`strategy-eval`·`signal-*`·`portfolio-snapshot`·`trade-report` OK, 이후 1분 틱 계속(16:39·16:40) · `cron-err.log` 비어 있음 · 서버 오류 로그는 자동 청산 엔진 OFF 부팅 안내뿐 · `post_market_overseas_enabled` 키 여전히 없음. 참고: 16:38:04 의 `trade-report HTTP=000` 한 줄은 이전 러너가 전환 순간에 남긴 것이고 새 러너의 `trade-report` 는 16:38:12 OK.
+- **미확인(미실행)**: 내일 08:00 KST 해외 post-market 호출이 스위치 꺼짐 상태에서 호출 0회·HTTP 200 으로 끝나는지 · 해외 카드 생성 자체(스위치 OFF) · 로그인한 실제 화면.
+- **롤백**: 직전 릴리스 `20261022-052828-0e9991c6` 으로 blue/green 되돌리기(사용자 지시 시에만). 데이터 영향 없음(마이그레이션 없음).
+- **스위치를 켜기 전 남은 조건**: 카드 금액 현실성(10만원이면 후보 약 5종), IR 확정일 입력(confirmed=0 → 블랙아웃 무력), 08:00 KST KIS 일봉에 미국 당일 봉이 있는지 확인(KIS 읽기 조회 승인 필요). 스위치 값은 따옴표 없는 JSON `true` 이며 켜면 post-market 카드는 `createSignal` 을 거치지 않아 텔레그램 승인 알림이 가지 않고 실주문이 가능하다(`safety_dry_run=false`).
 
 ## 최종 요약
 

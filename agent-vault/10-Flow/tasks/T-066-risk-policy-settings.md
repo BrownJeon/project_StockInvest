@@ -1,7 +1,7 @@
 ---
 task_id: T-066
 title: 설정 > 리스크 정책 — 손절 기준 한 번에 설정 + 보유 종목별 예상 손절가 실시간 표시 + 손절 합 한도 설정
-status: doing
+status: done
 priority: high
 roles_involved: [leader, designer, developer, reviewer, qa]
 related_tasks: [T-064]
@@ -221,6 +221,21 @@ KIS/외부 호출, `position_state`·`orders`·`signals` 쓰기, `exit-engine`·
 - [14:45] 배포 후 점검 제안(post_deploy_checks): 로그인 후 `/settings` 의 안전장치 카드 상단 `● 집행 중` 띠와 '리스크 정책' 요약 행(손절 합·이미 아래 5종목), `/settings/risk-policy` 에서 값 변경 → 저장 → '저장됨 버전 1' → 새로고침 후 유지, 두 탭 충돌 시 409 안내, `curl /api/settings/risk-policy`(무인증) 401, `pm2` cron 앱이 정확히 1개인지.
 - [14:45] 산출물 정리: QA 브라우저 산출물 4개(스냅샷 2·콘솔 로그 1·스크린샷 1) 삭제, 임시 로컬 서버(127.0.0.1:8765) 종료·브라우저 닫음. 격리 사본·시험 파일은 스크래치패드에만 있고 repo 에는 없다.
 - [14:45] **QA 판정: PASS (결함 Critical 0·High 0·Medium 0, Low/Info 3건 비차단 — 격리 사본 tsc 0·jest 4,621/4,621·next build exit 0, 차등 시험 불일치 0, 실 DB 읽기 독립 손계산 일치, 운영 쓰기 경로 실행·실제 브라우저 상호작용은 NOT_VERIFIED)**
+
+## 배포 기록
+
+- [17:12] **사전 점검 전부 통과**: 시각 17:12(창 안) · `origin/main`==HEAD==`a71b300`(앞선 커밋 0개 = 16:36 WP-S 예약 push 완료) · WP-S `RELEASE_RESULT ok`·pm2 online 34분·재시작 0·health 200·cron 틱 정상·cron-err.log 0줄 · staged 0 · **파일 지문 32/32 일치** · 최근 30분 새 executing/approved 없음 · 안전 설정 기록만: `safety_dry_run=false`·`safety_kill_switch=false` · `risk_policy` 키 없음.
+- [17:12] **커밋** `6c7e751c9badeeabdbbcbdb1e91da0502143065f`: 명시 경로 34개(코드 29 + task 문서 + 20-Log + 데모 v1~v3), staged 목록==지정 목록, 훅 통과(`--no-verify` 미사용), 앞선 커밋 `0 1`.
+- [17:13] **push** `a71b300..6c7e751` 17:13:07 (이 커밋 하나뿐, 다른 세션 변경 미포함).
+- [17:14] **배포 결과**: webhook blue/green `RELEASE_RESULT {"status":"ok","release":"20261022-171317-6c7e751c","sha":"6c7e751c9badeeabdbbcbdb1e91da0502143065f","previous":".../20261022-163736-a71b3005","migrated":false}`.
+- [17:16] **확인한 것**: `deploy.sh --status` current=새 릴리스·pm2 두 앱 online(cwd 새 릴리스)·재시작 0 · health 200 · 새 릴리스에 `.next/server/app/api/settings/risk-policy/route.js`·`settings/risk-policy.html/.rsc/.meta` 산출물 존재 · 핵심 파일 5개 해시 저장소=릴리스(compute.ts `c0e468f11d3a` · policy-store.ts `912fe6a6009e` · route.ts `71222d10baf0` · defaults.ts `3ee921483512` · policy-state.ts `ae71db78aae4`) · **무인증** `GET /api/settings/risk-policy` → 401 `{"error":"unauthorized","detail":"session missing"}` (`/api/settings/safety` 와 동일, 로그인 시도 없음) · `risk_policy` 키 여전히 없음(배포가 DB 를 바꾸지 않음) · cron 러너 17:13:46 재시작 후 모든 잡 OK, 이후 1분 틱 계속(17:14·15·16) · `cron-err.log` 0줄 · 서버 오류 로그는 자동 청산 엔진 OFF 부팅 안내뿐.
+- **미확인(미실행)**: 로그인한 실제 `/settings`·`/settings/risk-policy` 화면 · 실제 브라우저의 저장·재조회 겹침 · **운영 DB 쓰기(첫 PUT = INSERT, 두 번째 = UPDATE, 두 탭 충돌 409)** — 사용자가 첫 저장 때 처음 일어난다 · 실기기(갤럭시 S25+).
+- **롤백**: 코드 — 직전 릴리스 `20261022-163736-a71b3005` 로 blue/green 되돌리기(사용자 지시 시에만; 마이그레이션 없음). 저장값 — `system_config` 의 `risk_policy` 행 삭제(사용자 지시 시에만 실행; 되돌린 뒤 열려 있는 화면은 새로고침).
+- **첫 화면 경고색 이유**: 현재 보유 기준 손절 합 3.67%(한도 2% 사용률 183%)·5/5 이미 예상 손절가 아래·평가손 합 약 -525만원. 표시 전용이며 자동 매도·주문 변경 없음.
+- **사용자 결정 대기(표시값에 영향)**: 현금 하한을 규칙으로 둘지(권고: 없음+정보 표시; 지금은 10% '문서 정책' 으로 표시) · 분할 횟수(화면 표시 3회 vs 집행 중 `maxPositionsPerSymbol` 5) · 손절가 도달 알림.
+- [10-22 17:37] **사용자 첫 저장 확인(17:32:59 KST, 사용자 보고) → Leader 가 운영 DB 를 읽기 전용으로 검증**: `risk_policy` 행 생성, `version 1`·`stopPct 3`·`heatCapPct 2`·`stopBasis avg`, 저장 키는 설계대로 `version,updatedAt,stopPct,heatCapPct,stopBasis,history` 뿐(읽기 전용 값 미저장), history 1건. 독립 검산(스냅샷 16:38 기준): 총자산 20,525,411원 · 취득원가 합 25,700,483원 · 손절 합 771,014원(총자산의 3.76%) · 한도 금액 410,508원 · 사용률 188%(초과) · 이미 손절가 아래 5/5 · 한도를 지키는 손절폭 상한 ≈1.60% — 설계값과 일치. 서버 오류 로그에 risk-policy 관련 오류 없음.
+- **운영에서 검증된 것**: 첫 저장(INSERT) · 로그인한 실제 화면 접근/저장. **아직 검증 안 된 것(선택)**: 두 번째 저장(UPDATE → 버전 2) · 두 탭 충돌(409) · 실기기 반응 확인.
+- 상태 `done`. 남은 사용자 결정(현금 하한·분할 횟수·알림)과 Low 후속(L-1 환율 시점·L-2·L-6·L-7·L-8·L-9, QA Info 2)은 [[HANDOFF-2026-10-22]] 에 정리.
 
 ## 데모 검토 (demo gate)
 
