@@ -30,16 +30,22 @@ NAS MariaDB에 `tradinginvest` DB를 생성해 사용한다. 테이블 생성은
 | account_id | INT FK | |
 | client_order_id | VARCHAR(64) UNIQUE | 멱등성 키 |
 | exchange_order_id | VARCHAR(64) | 거래소 응답 ID |
-| symbol | VARCHAR(32) | `KRW-BTC` 등 |
+| asset_class | VARCHAR(16) | 기본 `stock` |
+| symbol | VARCHAR(32) | 국내 6자리(`005930`)·해외 `NAS:AAPL` |
 | side | ENUM('buy','sell') | |
-| type | ENUM('limit','market') | |
-| price | DECIMAL(36,8) NULL | |
-| quantity | DECIMAL(36,18) NULL | |
+| type | ENUM('limit','market') | **요청 유형.** 해외는 브로커에 항상 지정가로 나간다(`market` = ±0.5% 마케터블 지정가) — 체결 판정은 `order-sync.brokerOrderType` 기준 (T-071) |
+| price | DECIMAL(36,8) NULL | 원화 기준가(해외도 송신 시 환율로 USD 환산) |
+| quantity | DECIMAL(36,18) NULL | 요청 원본(해외 송신 수량은 정수로 버림 — `submittedQuantity`) |
 | amount_krw | DECIMAL(18,2) NULL | 시장가 매수 등 |
-| status | ENUM('pending','accepted','partially_filled','filled','cancelled','rejected','failed','dry_run') | |
+| status | ENUM('pending','accepted','partially_filled','filled','cancelled','rejected','failed','dry_run','blocked') | 새 값 추가는 DDL(사용자 승인) |
 | blocked_by | VARCHAR(32) NULL | safety 거부 사유 |
+| source | ENUM('manual','signal','auto') | 기본 `manual` |
+| market | ENUM('domestic','overseas') | 생성 시 심볼에서 유도한 사본 |
 | created_at | DATETIME | |
 | updated_at | DATETIME | |
+
+- `filled` + `executions` 수량 < 송신 수량 = **부분체결로 종결**(잔량은 브로커에서 취소·만료, `trade_logs.partial_fill_settled`). 해외 행의 `executions.price` 는 WP-2 전까지 `orders.price`(원화 기준가, 근사)다 (T-019·T-071).
+- order-sync 가 부재 추론으로 쓴 `cancelled` 는 `trade_logs.cancel_inferred` 가 근거다(브로커 확인 아님). 해외 market 은 연속 2회차 부재 뒤에만 쓴다 (T-071).
 
 ### executions — 개별 체결
 | 컬럼 | 타입 | 비고 |
@@ -102,7 +108,7 @@ NAS MariaDB에 `tradinginvest` DB를 생성해 사용한다. 테이블 생성은
 ## 상태 머신
 
 ```
-pending → accepted → partially_filled → filled
+pending → accepted → partially_filled → filled   (해외 market 도 지정가 규칙 — T-071)
        ↘ rejected (거래소 거부)
        ↘ failed   (네트워크/예외)
        ↘ cancelled

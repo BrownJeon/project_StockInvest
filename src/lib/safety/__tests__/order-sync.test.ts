@@ -50,7 +50,8 @@ function setupPool(rows: PendingRow[]) {
     }
     if (/UPDATE orders/i.test(sql)) {
       updates.push({ sql, params });
-      return [{}];
+      // T-071 R-03 — 상태 쓰기가 조건부(CAS)라 affectedRows 로 성공을 판정한다
+      return [{ affectedRows: 1 }];
     }
     return [[]];
   });
@@ -103,7 +104,7 @@ describe('syncPendingOrders', () => {
     expect(r.synced).toBe(1);
     expect(updates).toHaveLength(1);
     expect(updates[0].sql).toMatch(/SET status='filled'/);
-    expect(updates[0].params).toEqual([2]);
+    expect(updates[0].params).toEqual([2, 'accepted']);   // T-071 R-03 — CAS: 읽은 상태도 함께 넘긴다
   });
 
   test('active·completed 모두 없음 + limit → cancelled 마킹', async () => {
@@ -121,7 +122,7 @@ describe('syncPendingOrders', () => {
     expect(r.synced).toBe(1);
     expect(updates).toHaveLength(1);
     expect(updates[0].sql).toMatch(/SET status='cancelled'/);
-    expect(updates[0].params).toEqual([3]);
+    expect(updates[0].params).toEqual([3, 'accepted']);   // T-071 R-03 — CAS: 읽은 상태도 함께 넘긴다
     expect(r.complete).toBe(true);
   });
 

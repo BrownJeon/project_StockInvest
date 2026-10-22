@@ -1,9 +1,11 @@
-import type { RowDataPacket } from 'mysql2';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import {
   getActiveOrdersDetailed, getCompletedOrders, overseasActiveOrderExchanges,
 } from '@/lib/exchanges/kis';
-import { getMarketFromSymbol, isOverseasSymbol, parseOverseas, type Market } from '@/lib/exchanges/kis-symbols';
+import {
+  getMarketFromSymbol, isDomesticSymbol, isOverseasSymbol, parseOverseas, type Market,
+} from '@/lib/exchanges/kis-symbols';
 import { submittedQuantity } from '@/lib/exchanges/order-quantity';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import {
@@ -65,7 +67,14 @@ export type UnreconciledReason =
    * 반영되지 않았을 수 있다. 실패가 아니라 **의도된 대기**다 (아래 §유예 기간).
    * 정체 시계에 올리지 않는다 — 올리면 건강한 새 주문마다 30분 critical 알림이 울린다.
    */
-  | 'too_fresh';
+  | 'too_fresh'
+  /**
+   * T-071 — **해외 market 주문**이 두 목록 모두에서 사라진 것을 **처음** 관측했다.
+   * 마케터블 지정가는 정의상 곧 체결되는 주문이라, 체결조회 지연·누락 한 번으로 `cancelled` 를
+   * 쓰면 실제로 체결된 주문을 취소로 만든다. 그래서 **연속 2회차** 부재를 확인한 뒤에만 취소로
+   * 추론한다. `too_fresh` 와 같은 "의도된 대기"라 정체 시계에 올리지 않고 `complete` 를 깎지 않는다.
+   */
+  | 'cancel_confirming';
 
 export interface UnreconciledOrder {
   /** orders.id */
@@ -219,7 +228,9 @@ export interface OrderSyncResult {
  * | 미체결 목록 신뢰 가능 + 그 안에 **없다** + 체결수량 < 송신수량 | `filled` **＋ `executions` 기록** | 종결이지만 **전량이 아니다** (아래 §부분체결 종결) |
  * | 미체결 목록 신뢰 불가 + 체결수량 ≥ 주문수량 | `filled` | **수량이라는 양성 증거** — 부재 추론이 필요 없다 |
  * | 미체결 목록 신뢰 불가 + 그 외 | `partially_filled` | 완결을 단정하지 않는다. 비종결 상태라 다음 회차에 스스로 교정된다 |
- * | `market` 주문 | `filled` | 미체결 목록에 **원래** 나타나지 않으므로 그 부재는 아무 정보도 아니다 |
+ * | **국내** `market` 주문 | `filled` | 미체결 목록에 나타나지 않는다고 보므로(실응답 미확인 [추측]) 그 부재는 아무 정보도 아니다 |
+ * | **해외** `market` 주문 | 지정가와 같은 규칙 | 🔴 T-071 — 브로커에서 지정가(`ORD_DVSN:'00'`, ±0.5%)라 미체결 목록에 나타난다 |
+ * | 신뢰 가능 + 없음 + 수량 미달 + **생성 후 유예 전** | `partially_filled` | 🔴 T-071 R-06 — 방금 낸 주문은 아직 목록에 안 실렸을 수 있다 |
  *
  * `filled` 를 잘못 쓰면 "포지션이 닫혔다"고 알리는 것이라 중복 진입으로 이어진다.
  * `partially_filled` 를 잘못 쓰면 다음 회차에 교정된다. **오류의 비용이 비대칭**이므로
@@ -277,8 +288,116 @@ export interface OrderSyncResult {
  *     (`complete=false`, `skipped>0`, `unreconciled[]`, grep 토큰 `ORDER_SYNC_UNRECONCILED`).
  *
  * 2026-04-28: KIS 국내·해외 어댑터의 getActiveOrders/getCompletedOrders 정상 구현됨.
+ *
+ * ## 🔴 T-071 — 해외 `market` 은 브로커에서 **지정가**다 (F01)
+ *
+ * KIS 해외는 시장가를 지원하지 않아 모든 주문이 `ORD_DVSN:'00'`(지정가)으로 나가고, `market`
+ * 요청은 가격만 ±0.5% 공격적으로 잡는다(`kis-overseas.createOrder`). DB 에는 요청 원본
+ * `type='market'` 이 남는다. 예전 코드는 이 값을 그대로 믿고 ① 체결목록에 주문번호만 있으면
+ * 수량·잔량을 보지 않고 `filled`(10주 중 1주 체결·잔량 작동 중에도 종결) ② 체결목록에 없으면
+ * 영원히 `accepted` 로 두었다. 그래서 판정은 요청 유형이 아니라 **브로커가 실제로 받은 유형**
+ * ({@link brokerOrderType})으로 한다. 국내 market 은 진짜 시장가라 기존 규칙 그대로다.
+ * 해외 market 이 새로 들어오는 취소 추론 경로에는 **연속 2회차 부재** 확인을 더한다
+ * (`cancel_confirming`). 추론한 취소는 `trade_logs.cancel_inferred` 로 근거를 남긴다 —
+ * 브로커가 확인한 취소가 아니라 "두 목록에 없다"는 추론이다.
+ *
+ * ## 🔴 T-071 — 상태 쓰기는 조건부(CAS) + 프로세스 내 single-flight
+ *
+ * 이 함수는 `strategy-eval` 에서 `void` 로 응답과 분리돼 돈다. KIS 가 느리면 다음 회차와 겹칠 수
+ * 있고, blue/green 전환 순간에는 두 프로세스가 같은 행을 본다. 그래서 상태는 **이번 회차가 읽은
+ * 그 상태일 때만** 쓰고(`WHERE id=? AND status=?`), 같은 프로세스 안의 중복 호출은 진행 중인
+ * 회차의 결과를 그대로 돌려준다. 진행 중 회차가 {@link INFLIGHT_STALE_MS} 넘게 끝나지 않으면
+ * 멈춘 것으로 보고 경고 후 새 회차를 허용한다(겹침은 CAS 가 막는다).
  */
-export async function syncPendingOrders(): Promise<OrderSyncResult> {
+export function syncPendingOrders(): Promise<OrderSyncResult> {
+  const now = Date.now();
+  if (inFlight !== null) {
+    const ageMs = now - inFlight.startedAt;
+    if (ageMs < INFLIGHT_STALE_MS) {
+      console.warn(
+        `[order-sync] ORDER_SYNC_SKIPPED_INFLIGHT — 진행 중인 회차(${Math.round(ageMs / 1000)}초 경과)가 있어 `
+        + '새 KIS 조회 없이 그 결과를 함께 기다린다',
+      );
+      return inFlight.promise;
+    }
+    console.warn(
+      `[order-sync] ⚠️ ORDER_SYNC_INFLIGHT_STALE — 진행 중 회차 run=${inFlight.id}가 ${Math.round(ageMs / 60_000)}분째 `
+      + '끝나지 않았다(KIS·DB 응답 정지 의심). 그 회차를 무효(superseded)로 표시하고 새 회차를 허용한다 — '
+      + '옛 회차는 재개되더라도 펜스에 걸려 아무것도 쓰지 않는다',
+    );
+    // T-071 C2 지적1 — 새 회차를 만들기 **전에** 옛 회차를 무효로 표시한다(펜싱 보조 신호).
+    inFlight.superseded = true;
+  }
+  const entry: SyncRun = {
+    id: ++runSeq,
+    startedAt: now,
+    superseded: false,
+    promise: Promise.resolve(emptyResult()),
+  };
+  entry.promise = runSyncPendingOrders(entry).finally(() => {
+    // 멈춘 회차가 뒤늦게 끝났을 때 **새 회차의 표식**을 지우지 않는다.
+    if (inFlight === entry) inFlight = null;
+  });
+  inFlight = entry;
+  return entry.promise;
+}
+
+/** 진행 중 회차를 "멈췄다"고 보는 시간. 5분 주기의 3배 — 정상 회차가 이만큼 걸릴 이유가 없다. */
+export const INFLIGHT_STALE_MS = 15 * 60_000;
+
+/**
+ * 회차가 스스로를 무효로 보는 경과 시간 (T-071 C2 지적1, 펜싱의 **본체**).
+ *
+ * 워치독 임계(15분)보다 작게 둔다 — 정상 회차는 수십 초라 10분이면 충분히 넉넉하고, 낮출수록
+ * "임계 미만이지만 낡은" 스냅샷으로 쓰는 창이 줄어든다. 표식(`superseded`)만으로는 부족하다:
+ * 정지에서 풀릴 때 옛 회차의 continuation 이 새 호출보다 **먼저** 돌 수 있어 그 순간엔 표식이 없다.
+ */
+export const RUN_FENCE_MS = 10 * 60_000;
+
+interface SyncRun {
+  id: number;
+  startedAt: number;
+  /** 워치독이 새 회차를 허용하면서 이 회차를 무효로 표시했다 */
+  superseded: boolean;
+  promise: Promise<OrderSyncResult>;
+}
+
+let runSeq = 0;
+let inFlight: SyncRun | null = null;
+
+/** 펜스에 걸린 회차 — 주문별 catch 가 삼키지 않고 회차 밖으로 올린다. */
+class FencedRunError extends Error {
+  constructor(readonly runId: number, readonly runAgeMs: number, readonly superseded: boolean) {
+    super(`order-sync run ${runId} fenced (age ${Math.round(runAgeMs / 1000)}s, superseded=${superseded})`);
+    this.name = 'FencedRunError';
+  }
+}
+
+/** 이 회차가 아직 쓸 자격이 있는가 — 없으면 던진다. 모든 쓰기·맵 변경·알림 **직전**에 부른다. */
+type Fence = () => void;
+function makeFence(run: SyncRun): Fence {
+  return () => {
+    const age = Date.now() - run.startedAt;
+    if (run.superseded || age > RUN_FENCE_MS) throw new FencedRunError(run.id, age, run.superseded);
+  };
+}
+
+async function runSyncPendingOrders(run: SyncRun): Promise<OrderSyncResult> {
+  const fence = makeFence(run);
+  try {
+    return await runSyncBody(fence);
+  } catch (e) {
+    if (!(e instanceof FencedRunError)) throw e;
+    // 낡은 스냅샷으로는 아무것도 쓰지 않는다 — 보류·감사·알림도 남기지 않고 부분 결과만 돌려준다.
+    console.warn(
+      `[order-sync] ⚠️ ORDER_SYNC_RUN_FENCED run=${e.runId} runAgeSec=${Math.round(e.runAgeMs / 1000)} `
+      + `superseded=${e.superseded} — 정지했다 재개된 회차가 낡은 스냅샷으로 쓰려 해 중단했다(쓰기·알림·맵 변경 없음)`,
+    );
+    return { ...emptyResult(), complete: false, errors: ['fenced'] };
+  }
+}
+
+async function runSyncBody(fence: Fence): Promise<OrderSyncResult> {
   const pool = getPool();
   const [rows] = await pool.query<PendingOrder[]>(
     `SELECT id, exchange_order_id, symbol, side, type, status, price, quantity, created_at
@@ -286,6 +405,7 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
      WHERE status IN ('pending','accepted','partially_filled')
        AND exchange_order_id IS NOT NULL`,
   );
+  fence();
 
   if (rows.length === 0) {
     // "판정할 게 없었다" — 판정 실패와 명확히 다른 상태다.
@@ -296,6 +416,7 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
 
   const now = Date.now();
   const graceMs = await cancelGraceMs(pool);
+  fence();
   let synced = 0;
   let completenessUnverified = 0;
   const errors: string[] = [];
@@ -316,8 +437,9 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
     console.error('[order-sync] active orders lookup threw unexpectedly:', msg);
     active = { orders: [], ok: [], failed: [{ market: 'domestic', error: msg }, { market: 'overseas', error: msg }], complete: false };
   }
+  fence();   // C2 — 미체결 조회에서 오래 멈췄다면 이 스냅샷으로 판정하지 않는다
 
-  const activeOrderIds  = new Set(active.orders.map(o => o.orderId));
+  const activeKeys      = buildActiveKeys(active.orders);
   const activeOkMarkets = new Set<Market>(active.ok);
   const activeFailErr   = new Map<Market, string>(active.failed.map(f => [f.market, f.error]));
   for (const f of active.failed) errors.push(`active_orders ${f.market}: ${f.error}`);
@@ -371,6 +493,7 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
       completedErr = errMsg(e);
       errors.push(`completed_orders ${symbol}: ${completedErr}`);
     }
+    fence();   // C2 — 체결조회에서 오래 멈췄다면 이 스냅샷으로 판정하지 않는다
 
     // 이 시장의 미체결 조회를 신뢰할 수 있는가.
     const activeOk = activeOkMarkets.has(market);
@@ -386,11 +509,20 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
 
     for (const order of orders) {
       const eid = order.exchange_order_id!;
+      /** T-071 — 브로커가 실제로 받은 유형. 해외는 항상 지정가다. */
+      const bType = brokerOrderType(order.type, market);
+      /** 해외 market(=마케터블 지정가) — 새 경로 발화를 로그 토큰으로 드러내고 취소 추론에 2회차 확인을 건다 */
+      const overseasMarket = market === 'overseas' && order.type === 'market';
+      /** Codex C1 #1 — 주문번호만이 아니라 시장까지 같은 미체결 주문이 있어야 "살아 있다" */
+      const live = activeKeys.has(activeKey(market, eid));
+      const ageMs = now - new Date(order.created_at).getTime();
+      fence();   // C2 — 주문마다: 앞 주문의 await 에서 오래 멈췄다면 여기서 멈춘다
       try {
         // ── 증거 양성: 체결 조회가 성공했고 그 안에 있다 ─────────────────────
         // 최소한 일부는 체결됐다. 전량인지 잔량이 남았는지는 §부분체결 규칙으로 가른다.
         if (completedOk && completedOrderIds.has(eid)) {
-          const decision = settleDecision(order, market, eid, fills.get(eid), activeReliable, activeOrderIds);
+          absentSince.delete(order.id);   // 목록에 나타났다 — 부재 연속이 끊겼다
+          const decision = settleDecision(order, market, fills.get(eid), activeReliable, live, ageMs, graceMs);
           const next = decision.status;
 
           // ── 🔴 T-019 §부분체결 종결 — 상태를 쓰기 **전에** 체결 수량을 남긴다 ─────
@@ -401,8 +533,20 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
           // executions 를 먼저 쓰고 죽으면 다음 회차가 같은 결론에 다시 도달하고, 아래
           // 멱등 가드가 중복 INSERT 를 막는다.
           const rec = decision.partial
-            ? await recordSettledFill(pool, order, decision.partial)
+            ? await recordSettledFill(pool, order, market, decision.partial, now, fence)
             : null;
+          fence();
+          if (rec !== null && rec.statusChanged) {
+            // C2 지적2 — 행을 넣기 전에 상태가 이미 바뀌었다(다른 회차·사용자 취소). 낡은 스냅샷이므로
+            // executions 도 상태도 쓰지 않았다 — CAS 를 시도하지 않고 이 주문을 건너뛴다.
+            console.warn(
+              `[order-sync] ⚠️ ORDER_SYNC_CAS_LOST id=${order.id} ${order.symbol} expected=${order.status} `
+              + 'stage=executions_insert — 행을 넣기 전에 상태가 바뀌어 기록·전이를 모두 건너뛰었다',
+            );
+            if (overseasMarket) logOverseasMarketAsLimit(order, 'cas_lost');
+            reconciled(order.id);
+            continue;
+          }
           if (decision.unverified !== undefined) {
             completenessUnverified++;
             // 알림까지 올리지는 않는다 — 조치할 대상이 없고 빈도도 낮다. 다만 grep 가능한
@@ -417,12 +561,27 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
           // 이미 그 상태면 쓰지 않는다 — `partially_filled` 는 비종결 상태라 다음 회차에도
           // 다시 여기 오므로, 무조건 쓰면 매 회차 UPDATE 가 나가고 `synced` 가 부풀려진다.
           if (next !== order.status) {
-            await pool.query(SET_STATUS_SQL[next], [order.id]);
+            // T-071 R-03 — 이번 회차가 읽은 상태일 때만 쓴다. 다른 회차가 먼저 바꿨다면
+            // 덮어쓰지 않고, 이 회차의 결과(알림·감사·partialSettlements)도 남기지 않는다.
+            // 이미 들어간 executions 행은 멱등 가드가 있어 무해하다.
+            const won = await casSetStatus(pool, next, order, fence);
+            fence();
+            if (!won) {
+              if (overseasMarket) logOverseasMarketAsLimit(order, 'cas_lost');
+              reconciled(order.id);
+              continue;
+            }
             synced++;
           }
+          if (overseasMarket) logOverseasMarketAsLimit(order, decision.partial ? 'partial_settled' : next);
           // 결과 목록·감사기록은 **상태 전이가 실제로 성립한 뒤**에 남긴다. 위 UPDATE 가
           // 던지면 아래 per-order catch 가 이 주문을 미판정으로 처리하고, 다음 회차가 같은
           // 결론에 다시 도달한다 — 그때는 멱등 가드 덕에 executions 가 늘지 않는다.
+          if (next === 'partially_filled') {
+            // 진행 중 체결 수량의 흔적(감사 전용) — 값이 바뀔 때만 1행. 실패해도 판정을 막지 않는다.
+            await recordFillProgress(pool, order, market, fills.get(eid), live, fence);
+            fence();
+          }
           if (decision.partial && rec !== null) {
             partialSettlements.push({
               id: order.id,
@@ -435,7 +594,8 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
               executionRecorded: rec.recorded,
               note: rec.note,
             });
-            await auditPartialSettlement(pool, order, market, eid, decision.partial, errors);
+            await auditPartialSettlement(pool, order, market, eid, decision.partial, errors, fence);
+            fence();
           }
           // ── 🔴 H-4(B) — 확인 불가능한 부분체결이 조용히 갇히지 않게 ──────────
           // `partially_filled` 는 비종결 상태다. 잔량이 아직 작동 중인지 확인할 방법이
@@ -468,32 +628,42 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
 
         // 여기부터는 "체결 목록에 없다"가 전제다 — 체결 조회가 실패했다면 그 전제부터 없다.
         if (!completedOk) {
+          absentSince.delete(order.id);   // 깨끗한 회차가 아니다 — 부재 연속을 인정하지 않는다
+          if (overseasMarket) logOverseasMarketAsLimit(order, 'held:completed_query_failed');
           unreconciled.push(track(order, market, now,
             activeOk ? 'completed_query_failed' : 'both_queries_failed',
             activeOk ? completedErr : `completed: ${completedErr} / active: ${activeErr}`));
           continue;
         }
 
-        // ── market 주문 ────────────────────────────────────────────────────
-        // 애초에 미체결 목록에 나타나지 않으므로 취소 추론 대상이 아니다.
-        // 체결 조회가 성공했고 거기 없다 = "아직 체결 전" 이라는 **판정된** 상태다.
-        if (order.type === 'market') {
+        // ── 국내 market 주문 ───────────────────────────────────────────────
+        // 진짜 시장가라 미체결 목록에 나타나지 않는다고 보고(실응답으로 확인된 적은 없다 [추측])
+        // 취소 추론 대상에서 뺀다. 체결 조회가 성공했고 거기 없다 = "아직 체결 전" 이라는 **판정된**
+        // 상태다. 🔴 T-071 — 해외 market 은 브로커에서 지정가라(`brokerOrderType`) 여기 오지 않고
+        // 아래 지정가 규칙(+ 2회차 부재 확인)을 탄다. 예전에는 여기서 영원히 `accepted` 였다.
+        if (bType === 'market') {
           reconciled(order.id);
           continue;
         }
 
         // ── 증거 음성: 취소 추론. 근거 축이 모두 성립해야 한다 ───────────────
         if (!activeOk) {
+          absentSince.delete(order.id);
+          if (overseasMarket) logOverseasMarketAsLimit(order, 'held:active_query_failed');
           unreconciled.push(track(order, market, now, 'active_query_failed', activeErr));
           continue;
         }
         if (coverageGap) {
+          absentSince.delete(order.id);
+          if (overseasMarket) logOverseasMarketAsLimit(order, 'held:active_coverage_gap');
           unreconciled.push(track(order, market, now, 'active_coverage_gap',
             `미체결 조회 커버리지=${[...coveredExchanges].join(',')} — 이 심볼의 거래소는 조회 대상이 아니다`));
           continue;
         }
 
-        if (activeOrderIds.has(eid)) {
+        if (live) {
+          absentSince.delete(order.id);
+          if (overseasMarket) logOverseasMarketAsLimit(order, order.status);
           reconciled(order.id);   // 아직 살아 있다 — 정상 판정, 변경 없음
           continue;
         }
@@ -504,31 +674,77 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
         // 이유가 이것이다 — 목록에 보이는 주문(양성 증거)까지 붙잡아 두면, 정상 주문마다
         // 보류가 쌓여 유예 기간이 스스로 소음원이 된다.
         // 실패가 아니라 의도된 대기이므로 정체 시계에 올리지 않는다.
-        const ageMs = now - new Date(order.created_at).getTime();
         if (ageMs < graceMs) {
+          absentSince.delete(order.id);
+          if (overseasMarket) logOverseasMarketAsLimit(order, 'held:too_fresh');
           unreconciled.push(hold(order, market, 'too_fresh',
             `생성 ${Math.max(0, Math.round(ageMs / 1000))}초 경과 — 취소 판정 유예 ${Math.round(graceMs / 1000)}초 미경과`));
           continue;
         }
 
-        // 미체결에도 없고 체결에도 없다 + 근거 축이 모두 성립 + 유예 경과 → 취소된 주문
-        await pool.query(SET_STATUS_SQL.cancelled, [order.id]);
-        synced++;
+        // ── 🔴 T-071 R-05 — 해외 market 은 연속 2회차 부재를 확인한 뒤에만 취소로 추론한다 ──
+        // 마케터블 지정가는 정의상 곧 체결되는 주문이다. 체결조회 지연·누락 한 번으로 취소를 쓰면
+        // **실제로 체결된 주문이 cancelled** 가 된다(원가 소실·일일 합산 해제). 첫 관측은 기록만
+        // 하고 보류하며, 최소 {@link CANCEL_CONFIRM_MIN_GAP_MS} 뒤의 다른 회차에서 다시 깨끗하게
+        // 부재가 확인될 때만 진행한다. 재시작으로 맵이 비면 1회차를 더 기다릴 뿐이다(안전 방향).
+        let absentRounds = 1;
+        let firstAbsentAt = now;
+        if (overseasMarket) {
+          const prev = absentSince.get(order.id);
+          // T-071 V-08 — "연속"에 간격 상한. 첫 관측이 너무 오래됐다면(사이에 실행 전체가 실패한
+          // 회차·프로세스 정지 등이 끼었을 수 있다) 그 관측을 재사용하지 않고 처음부터 다시 센다.
+          if (prev === undefined || now - prev.firstAt > CANCEL_CONFIRM_MAX_GAP_MS) {
+            absentSince.set(order.id, { firstAt: now, rounds: 1 });
+            logOverseasMarketAsLimit(order, 'cancel_confirming');
+            unreconciled.push(hold(order, market, 'cancel_confirming',
+              '두 목록 모두에 없음을 처음 관측 — 다음 회차에 다시 확인한 뒤에만 취소로 추론한다'));
+            continue;
+          }
+          if (now - prev.firstAt < CANCEL_CONFIRM_MIN_GAP_MS) {
+            // 같은 회차 근처의 재호출(수동 트리거 등)은 "다른 회차"로 세지 않는다
+            logOverseasMarketAsLimit(order, 'cancel_confirming');
+            unreconciled.push(hold(order, market, 'cancel_confirming',
+              `첫 부재 관측 ${Math.round((now - prev.firstAt) / 1000)}초 뒤 — 확인 간격 미달`));
+            continue;
+          }
+          absentRounds = prev.rounds + 1;
+          firstAbsentAt = prev.firstAt;
+        }
+
+        // 미체결에도 없고 체결에도 없다 + 근거 축이 모두 성립 + 유예 경과 → 취소로 **추론**
+        absentSince.delete(order.id);
+        const won = await casSetStatus(pool, 'cancelled', order, fence);
+        fence();
+        if (won) {
+          synced++;
+          if (overseasMarket) logOverseasMarketAsLimit(order, 'cancelled');
+          await auditCancelInferred(pool, order, market, bType, {
+            absentRounds, firstAbsentAt, ageMs, graceMs,
+          }, errors, fence);
+          fence();
+        } else if (overseasMarket) {
+          logOverseasMarketAsLimit(order, 'cas_lost');
+        }
         reconciled(order.id);
       } catch (e) {
+        // 🔴 C2 — 펜스는 "판정 못 함"이 아니라 "이 회차는 더 쓸 자격이 없다"다. 여기서 삼키면
+        // 미판정으로 track(맵 변경)하게 되므로 그대로 회차 밖으로 올린다.
+        if (e instanceof FencedRunError) throw e;
         // DB 쓰기 실패 등 — 이 주문은 이번 회차에 판정되지 못한 것으로 센다.
+        absentSince.delete(order.id);
         errors.push(`order ${order.id}: ${errMsg(e)}`);
         unreconciled.push(track(order, market, now, 'both_queries_failed', `update failed: ${errMsg(e)}`));
       }
     }
   }
 
+  fence();   // C2 — 맵 정리·보고·알림 전에 마지막으로 확인한다
   pruneTracker(pendingIds);
 
   const staleCount = unreconciled.filter(u => u.unreconciledForMs >= STALE_MS).length;
   const oldestUnreconciledMs = unreconciled.reduce((m, u) => Math.max(m, u.unreconciledForMs), 0);
-  // `too_fresh` 는 "판정 못 함"이 아니라 "아직 판정할 때가 아님"이다 — complete 를 깎지 않는다.
-  const blocking = unreconciled.filter(u => u.reason !== 'too_fresh');
+  // `too_fresh`·`cancel_confirming` 은 "판정 못 함"이 아니라 "아직 판정할 때가 아님"이다 — complete 를 깎지 않는다.
+  const blocking = unreconciled.filter(u => !QUIET_HOLD_REASONS.has(u.reason));
 
   const result: OrderSyncResult = {
     synced,
@@ -544,7 +760,8 @@ export async function syncPendingOrders(): Promise<OrderSyncResult> {
     completenessUnverified,
   };
 
-  await reportUnreconciled(result);
+  await reportUnreconciled(result, fence);
+  fence();
   reportPartialSettlements(result);
   return result;
 }
@@ -627,11 +844,198 @@ function pruneTracker(pendingIds: Set<number>): void {
   for (const id of unreconciledSince.keys()) {
     if (!pendingIds.has(id)) unreconciledSince.delete(id);
   }
+  // T-071 C2 — 비종결 집합에서 사라진 주문의 부재 관측도 지운다
+  for (const id of absentSince.keys()) {
+    if (!pendingIds.has(id)) absentSince.delete(id);
+  }
 }
 
-/** 테스트/진단용 — 미판정 추적 상태 초기화. */
+/** 테스트/진단용 — 미판정 추적 상태 초기화 (T-071: 부재 관측 맵·single-flight 표식 포함). */
 export function resetUnreconciledTracker(): void {
   unreconciledSince.clear();
+  absentSince.clear();
+  inFlight = null;
+}
+
+/** 테스트/진단용 — 해외 market 부재 관측 맵의 크기 (prune 검증용). */
+export function absentTrackerSize(): number {
+  return absentSince.size;
+}
+
+// ── T-071 — 해외 market 판정 보조 ────────────────────────────────────────────
+
+/**
+ * 브로커가 **실제로 받은** 주문 유형.
+ *
+ * KIS 해외는 시장가를 지원하지 않아 모든 주문이 `ORD_DVSN:'00'`(지정가)으로 나간다
+ * (`kis-overseas.createOrder`). `market` 요청은 가격만 ±0.5% 공격적으로 잡은 **마케터블 지정가**다.
+ * 그러니 미체결 목록에 다른 지정가와 똑같이 나타나고, 판정도 지정가 규칙을 따라야 한다.
+ * 국내는 진짜 시장가(`ORD_DVSN:'01'`)라 값을 그대로 돌려준다 — 국내 판정은 바뀌지 않는다.
+ */
+export function brokerOrderType(type: string, market: Market): string {
+  return market === 'overseas' ? 'limit' : type;
+}
+
+/** 활성 주문 집합의 키 — 시장이 다르면 같은 주문번호라도 다른 주문이다 (Codex C1 #1). */
+function activeKey(market: Market, orderId: string): string {
+  return `${market}:${orderId}`;
+}
+
+/**
+ * 미체결 목록 → `시장:주문번호` 집합.
+ *
+ * 심볼이 국내(6자리)·해외(`EXC:TICKER`) 어느 엄격 패턴에도 맞지 않으면 **두 시장 키를 모두**
+ * 넣는다. 이 집합은 "살아 있다"의 근거라서, 시장을 잘못 판정해 살아 있는 주문을 "없다"로 읽는
+ * 쪽(→ 취소·종결 오판)이 반대쪽(→ 보류)보다 훨씬 비싸기 때문이다.
+ */
+function buildActiveKeys(orders: { orderId: string; symbol: string }[]): Set<string> {
+  const keys = new Set<string>();
+  for (const o of orders) {
+    const sym = String(o.symbol ?? '');
+    if (isOverseasSymbol(sym)) keys.add(activeKey('overseas', o.orderId));
+    else if (isDomesticSymbol(sym)) keys.add(activeKey('domestic', o.orderId));
+    else {
+      keys.add(activeKey('overseas', o.orderId));
+      keys.add(activeKey('domestic', o.orderId));
+    }
+  }
+  return keys;
+}
+
+/**
+ * 해외 market 주문이 두 목록 모두에서 사라진 것을 **처음 관측한 시각**과 관측 횟수 (R-05).
+ *
+ * 프로세스 메모리인 이유는 `unreconciledSince` 와 같다. 재시작으로 비면 1회차를 더 기다릴 뿐이라
+ * 안전 방향이다. 깨끗하지 않은 회차(조회 실패·커버리지 밖·유예 중)나 목록에 다시 나타나면 지운다.
+ */
+const absentSince = new Map<number, { firstAt: number; rounds: number }>();
+
+/**
+ * 첫 부재 관측과 확정 사이 최소 간격. 동기화 주기는 5분이지만 수동 트리거가 수 초 뒤에 다시
+ * 돌 수 있다 — 그런 재호출을 "다른 회차"로 세면 2회차 확인이 1회차와 다를 게 없어진다.
+ */
+export const CANCEL_CONFIRM_MIN_GAP_MS = 60_000;
+
+/**
+ * 첫 부재 관측을 "연속"으로 인정하는 최대 간격 (T-071 V-08). 동기화 주기 5분의 6배.
+ * 이보다 오래된 첫 관측은 버리고 이번 관측을 새 1회차로 센다 — 맵 리셋은 회차가 실제로 돌아
+ * 이 주문을 판정할 때만 일어나므로, 실행 전체가 실패한 회차가 끼면 옛 관측이 남을 수 있다.
+ */
+export const CANCEL_CONFIRM_MAX_GAP_MS = 30 * 60_000;
+
+/** 판정 실패가 아니라 "아직 판정할 때가 아님" — complete 를 깎지 않고 경고 토큰도 찍지 않는다. */
+const QUIET_HOLD_REASONS: ReadonlySet<UnreconciledReason> = new Set<UnreconciledReason>(['too_fresh', 'cancel_confirming']);
+
+/**
+ * 새 경로 발화를 보이게 한다 (R-14). 해외 market 을 지정가 규칙으로 판정한 **모든** 회차에 1줄.
+ * 5분 주기라 양이 작고, 운영 관측의 "새 경로가 실제로 쓰였는가"는 이 토큰으로만 답할 수 있다.
+ */
+function logOverseasMarketAsLimit(order: PendingOrder, decision: string): void {
+  console.info(
+    `[order-sync] ORDER_SYNC_OVERSEAS_MARKET_AS_LIMIT id=${order.id} sym=${order.symbol} `
+    + `eid=${order.exchange_order_id} status=${order.status} decision=${decision}`,
+  );
+}
+
+/**
+ * 추론한 취소의 근거를 남긴다 (R-05 ② / Codex C1 #6).
+ *
+ * `cancelled` 는 브로커가 확인한 취소가 아니라 "두 목록 모두에 없다"는 **추론**이다. 리포트·대조는
+ * 이 행을 보고 사실이 아니라 추론으로 다뤄야 한다. 기록 실패는 이미 성공한 전이를 되돌리지 않는다.
+ */
+async function auditCancelInferred(
+  pool: ReturnType<typeof getPool>,
+  order: PendingOrder,
+  market: Market,
+  bType: string,
+  basis: { absentRounds: number; firstAbsentAt: number; ageMs: number; graceMs: number },
+  errors: string[],
+  fence: Fence,
+): Promise<void> {
+  fence();   // C2 — 감사 쓰기 직전(아래 catch 가 삼키지 않도록 try 밖에서)
+  console.warn(
+    `[order-sync] ORDER_SYNC_CANCEL_INFERRED id=${order.id} ${order.symbol}(${market}) `
+    + `eid=${order.exchange_order_id} rounds=${basis.absentRounds} — 두 목록 모두에 없어 취소로 추론`,
+  );
+  try {
+    await pool.query(
+      `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
+      [order.id, 'cancel_inferred', JSON.stringify({
+        basis: 'absent_both_lists',
+        exchangeOrderId: order.exchange_order_id,
+        symbol: order.symbol,
+        market,
+        requestedType: order.type,
+        brokerOrderType: bType,
+        previousStatus: order.status,
+        activeOk: true,
+        completedOk: true,
+        coverage: 'ok',
+        absentRounds: basis.absentRounds,
+        firstAbsentAt: new Date(basis.firstAbsentAt).toISOString(),
+        ageSec: Math.round(basis.ageMs / 1000),
+        graceSec: Math.round(basis.graceMs / 1000),
+        source: 'order-sync',
+      })],
+    );
+  } catch (e) {
+    errors.push(`cancel_inferred audit ${order.id}: ${errMsg(e)}`);
+    console.error(`[order-sync] cancel_inferred 감사 기록 실패 order=${order.id}:`, errMsg(e));
+  }
+}
+
+/**
+ * 진행 중(`partially_filled`) 체결 수량의 흔적 (설계 v2-7 (c), 감사 전용).
+ *
+ * 컬럼이 없어(DDL 은 WP-2) 수량을 원장에 즉시 반영할 수는 없으므로 `trade_logs` 에만 남긴다.
+ * "바뀔 때만" 쓰기 위해 직전 값을 **DB 의 마지막 `fill_progress` 행**에서 읽는다 — 재시작해도
+ * 같은 수량으로 행이 늘지 않는다. 진단이지 판정이 아니므로 실패는 경고만 남기고 삼킨다.
+ */
+async function recordFillProgress(
+  pool: ReturnType<typeof getPool>,
+  order: PendingOrder,
+  market: Market,
+  fill: FillEvidence | undefined,
+  residualListed: boolean,
+  fence: Fence,
+): Promise<void> {
+  if (fill === undefined || !(fill.qty > 0)) return;
+  fence();
+  let prev: number | null = null;
+  try {
+    const [rows] = await pool.query<(RowDataPacket & { payload: unknown })[]>(
+      `SELECT payload FROM trade_logs WHERE order_id = ? AND event = 'fill_progress' ORDER BY id DESC LIMIT 1`,
+      [order.id],
+    );
+    if (Array.isArray(rows) && rows.length > 0) {
+      const raw = rows[0].payload;
+      const obj = (typeof raw === 'string' ? JSON.parse(raw) : raw) as { filledQty?: unknown } | null;
+      const n = Number(obj?.filledQty);
+      prev = Number.isFinite(n) ? n : null;
+    }
+  } catch (e) {
+    console.warn(`[order-sync] fill_progress 조회 실패 order=${order.id}: ${errMsg(e)} — 판정에는 영향 없음`);
+    return;
+  }
+  if (prev !== null && Math.abs(prev - fill.qty) <= QTY_EPSILON) return;
+  // C2 — 쓰기 직전. 이 catch 바깥에서 부르므로 펜스 예외는 삼켜지지 않는다.
+  fence();
+  try {
+    await pool.query(
+      `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
+      [order.id, 'fill_progress', JSON.stringify({
+        exchangeOrderId: order.exchange_order_id,
+        symbol: order.symbol,
+        market,
+        filledQty: fill.qty,
+        submittedQty: submittedQuantity(market, Number(order.quantity)),
+        residualListed,
+        source: 'order-sync',
+      })],
+    );
+  } catch (e) {
+    console.warn(`[order-sync] fill_progress 기록 실패 order=${order.id}: ${errMsg(e)} — 판정에는 영향 없음`);
+  }
 }
 
 // ── 체결 상태 판정 (§부분체결) ───────────────────────────────────────────────
@@ -642,10 +1046,38 @@ export function resetUnreconciledTracker(): void {
  * 쓰였는지 SQL 문자열만 보고 판별할 수 있어야 한다.
  */
 const SET_STATUS_SQL = {
-  filled:           `UPDATE orders SET status='filled' WHERE id=?`,
-  partially_filled: `UPDATE orders SET status='partially_filled' WHERE id=?`,
-  cancelled:        `UPDATE orders SET status='cancelled' WHERE id=?`,
+  // T-071 R-03 — 조건부(CAS): 두 번째 인자는 **이번 회차가 읽은 상태**다.
+  filled:           `UPDATE orders SET status='filled' WHERE id=? AND status=?`,
+  partially_filled: `UPDATE orders SET status='partially_filled' WHERE id=? AND status=?`,
+  cancelled:        `UPDATE orders SET status='cancelled' WHERE id=? AND status=?`,
 } as const;
+
+/**
+ * 이번 회차가 읽은 상태일 때만 상태를 바꾼다 (T-071 R-03).
+ *
+ * "비종결 상태 IN (…)" 조건으로는 두 회차가 모두 `accepted` 를 읽고 하나가 `partially_filled` 로
+ * 쓴 뒤 늦은 쪽이 `cancelled` 로 덮는 경우를 막지 못한다. 정확한 이전 상태 비교는 그것까지 막는다.
+ *
+ * `affectedRows` 가 숫자가 아니면 **성공으로 보지 않는다** — 쓰였는지 모르는 전이를 근거로
+ * 알림·감사·`partialSettlements` 를 남기면 그 기록이 거짓일 수 있다. 다음 회차가 실제 상태를
+ * 다시 읽어 판정하므로 보수 방향이다.
+ */
+async function casSetStatus(
+  pool: ReturnType<typeof getPool>,
+  next: keyof typeof SET_STATUS_SQL,
+  order: PendingOrder,
+  fence: Fence,
+): Promise<boolean> {
+  fence();
+  const [res] = await pool.query<ResultSetHeader>(SET_STATUS_SQL[next], [order.id, order.status]);
+  const n = (res as { affectedRows?: unknown } | undefined)?.affectedRows;
+  if (typeof n === 'number' && n > 0) return true;
+  console.warn(
+    `[order-sync] ⚠️ ORDER_SYNC_CAS_LOST id=${order.id} ${order.symbol} expected=${order.status} next=${next} `
+    + `affectedRows=${typeof n === 'number' ? n : 'unknown'} — 다른 회차가 먼저 상태를 바꿨다. 덮어쓰지 않았다`,
+  );
+  return false;
+}
 
 /**
  * 부동소수 비교 허용오차. `trade-report.ts` 가 LIFO 재고 차감에 이미 `1e-12` 를 쓰고 있어
@@ -684,20 +1116,25 @@ interface SettleDecision {
 function settleDecision(
   order: PendingOrder,
   market: Market,
-  eid: string,
   fill: FillEvidence | undefined,
   activeReliable: boolean,
-  activeOrderIds: Set<string>,
+  live: boolean,
+  ageMs: number,
+  graceMs: number,
 ): SettleDecision {
-  // 🔴 D-4 — market 주문은 여기서 **수량 검증을 하지 않는다.**
+  // 🔴 D-4 — **국내** market 주문은 여기서 **수량 검증을 하지 않는다.**
   //
   // 이 함수가 "부분체결로 종결됐다"고 말할 수 있는 근거는 오직 "잔량이 신뢰할 수 있는
-  // 미체결 목록에서 사라졌다"이다. market 주문은 그 목록에 **원래** 나타나지 않으므로
-  // 그 근거를 얻을 방법이 구조적으로 없다. 그런데도 수량만 보고 종결시키면, 5분 주기
+  // 미체결 목록에서 사라졌다"이다. 국내 시장가는 그 목록에 나타나지 않는다고 보므로(실응답으로
+  // 확인된 적은 없다 [추측]) 그 근거를 얻을 방법이 없다. 그런데도 수량만 보고 종결시키면, 5분 주기
   // 동기화가 **체결 진행 중인 스냅샷**을 잡았을 때 그 중간값이 `executions` 에 영구히
   // 박히고 상태는 종결된다 — 드문 과대계상을 없애려다 매 회차의 과소계상을 만드는 셈이다.
-  // 시장가 부분체결은 실재하지만, 그것은 잔량 확인 수단이 생긴 뒤에 다뤄야 한다.
-  if (order.type === 'market') return { status: 'filled' };
+  //
+  // 🔴 T-071 (F01) — 이 전제는 **해외에는 틀렸다.** 해외 market 은 브로커에서 지정가
+  // (`ORD_DVSN:'00'`, 가격 ±0.5%)라 미체결 목록에 지정가와 똑같이 나타난다. 예전에는 해외 market 도
+  // 여기서 곧장 `filled` 가 되어 10주 중 1주 체결·잔량 작동 중인 주문이 종결되고 추적이 끊겼다.
+  // 그래서 요청 유형이 아니라 `brokerOrderType` 으로 가른다 — 해외는 아래 지정가 규칙을 탄다.
+  if (brokerOrderType(order.type, market) === 'market') return { status: 'filled' };
 
   // 🔴 H-4 — 비교 대상은 `orders.quantity` 가 **아니라** 브로커가 실제로 받은 수량이다.
   // DB 는 자르지 않은 원본(예: 1.7)을 갖고 있고 해외 주문은 잘린 값(1)으로 나간다.
@@ -707,7 +1144,15 @@ function settleDecision(
 
   if (activeReliable) {
     // 두 목록에 동시에 있다 = 일부 체결 + 잔량이 아직 브로커에서 작동 중
-    if (activeOrderIds.has(eid)) return { status: 'partially_filled' };
+    if (live) return { status: 'partially_filled' };
+
+    // 🔴 T-071 R-06 — 주문 나이 가드. 여기부터의 "종결"은 **활성 목록에 없다**는 부재 추론인데,
+    // 방금 낸 주문은 아직 그 목록에 실리지 않았을 수 있다(실측 #3137: 생성 6초 뒤 목록에 없었다).
+    // 그때 1/10 체결을 종결로 쓰면 잔량 추적이 끊긴다. 그래서 수량으로 **전량이 증명되지 않는 한**
+    // 유예 전에는 종결하지 않고 `partially_filled` 로 둔다(다음 회차에 교정된다).
+    // 수량을 모르는 경우(아래 unverified 두 분기)도 같은 부재 추론이라 함께 가드한다.
+    const provenFull = ordered > 0 && fill !== undefined && fill.qty >= ordered - QTY_EPSILON;
+    if (!provenFull && ageMs < graceMs) return { status: 'partially_filled' };
 
     // 여기부터 "잔량이 신뢰할 수 있는 목록에서 사라졌다" = **종결**이다.
     // 남은 질문은 하나뿐: 전량이었나?
@@ -798,41 +1243,90 @@ function settleDecision(
 async function recordSettledFill(
   pool: ReturnType<typeof getPool>,
   order: PendingOrder,
+  market: Market,
   partial: PartialFill,
-): Promise<{ recorded: boolean; note?: string }> {
+  now: number,
+  fence: Fence,
+): Promise<{ recorded: boolean; note?: string; statusChanged?: boolean }> {
   const orderPrice = numOrZero(order.price);
-  const price = partial.price > 0 ? partial.price : orderPrice;
+  // 🔴 T-071 R-07 (Leader 결정 1안) — 해외는 `orders.price`(송신 기준 **원화**가)로 고정한다.
+  // 해외 체결조회의 단가는 **USD**(`ft_ccld_unpr3`)인데 `trade-report` 는 `COALESCE(e.price, o.price)`
+  // 를 원화 계산에 쓴다 — USD 단가를 넣으면 손익이 약 1/1,400 로 왜곡된다. 원래 USD 단가·시각은
+  // `partial_fill_settled` 감사 payload 에 보존하고, 환율 환산은 출처를 구분할 수 있게 되는 WP-2 에서
+  // 한다(여기서 환율을 부르지 않는다 — `fetchUsdKrwRate` 는 실패 시 1 을 돌려준다).
+  const price = market === 'overseas'
+    ? orderPrice
+    : (partial.price > 0 ? partial.price : orderPrice);
   if (!(price > 0)) {
     return {
       recorded: false,
-      note: '체결가·지정가를 모두 알 수 없어 executions 에 기록하지 못했다 — 이 주문의 손익은 여전히 주문 수량 기준이다',
+      note: market === 'overseas'
+        ? '해외 주문의 원화 기준가(orders.price)가 없어 executions 에 기록하지 못했다 — 이 주문의 손익은 여전히 주문 수량 기준이다'
+        : '체결가·지정가를 모두 알 수 없어 executions 에 기록하지 못했다 — 이 주문의 손익은 여전히 주문 수량 기준이다',
     };
   }
 
+  fence();   // C2 — 읽기·쓰기 전에
   const [existing] = await pool.query<RowDataPacket[]>(
     'SELECT id FROM executions WHERE order_id = ? LIMIT 1',
     [order.id],
   );
+  fence();
   if (Array.isArray(existing) && existing.length > 0) {
     // 이미 체결 기록이 있다 — 두 번째 행을 넣으면 `GROUP BY o.id` 의 임의 선택이
     // 비결정적이 된다. 덮어쓰지도 않는다(기존 기록이 더 정확할 수 있다).
     return { recorded: false, note: '이미 executions 행이 있어 추가 기록하지 않았다' };
   }
 
-  const executedAt = partial.ts > 0 ? new Date(partial.ts) : new Date();
-  await pool.query(
+  const executedAt = settledExecutedAt(market, partial.ts, order.created_at, now);
+  /*
+   * 🔴 T-071 C2 지적2 — **상태 조건부 단일 INSERT.** 이 회차가 읽은 상태(`order.status`)가 지금도
+   * 그대로일 때만 한 행을 넣는다. 읽은 뒤 다른 회차·사용자 취소가 상태를 바꿨다면 0행 삽입이라
+   * 낡은 스냅샷 수량의 고아 행이 생기지 않는다. 순서(행 먼저 → CAS)는 T-019 크래시 안전 그대로다.
+   *
+   * 하지 않은 것(위험해서 기각): CAS 를 먼저 하는 순서 변경(크래시 시 체결 수량 영구 유실),
+   * CAS 를 잃었을 때 내 행을 지우는 보상 삭제(이긴 쪽이 멱등 가드로 이 행에 기대고 있을 수 있다).
+   * 남는 창: INSERT 성공 직후 다른 회차가 상태를 바꿔 CAS 만 지는 ms 단위 경합 — 트랜잭션은 WP-2.
+   */
+  fence();
+  const [ins] = await pool.query<ResultSetHeader>(
     `INSERT INTO executions (order_id, price, quantity, fee, executed_at)
-     VALUES (?, ?, ?, 0, ?)`,
-    [order.id, price, partial.filledQty, executedAt],
+     SELECT ?, ?, ?, 0, ? FROM orders WHERE id = ? AND status = ?`,
+    [order.id, price, partial.filledQty, executedAt, order.id, order.status],
   ).catch((e: unknown) => {
     // 여기서 실패하면 상태를 `filled` 로 넘기면 안 된다 — 넘기는 순간 이 주문은 다음
     // 회차 조회 대상에서 사라지고 실제 체결 수량이 영구히 유실된다. 호출부의 per-order
     // catch 로 올려 **이번 회차 미판정**으로 처리하고 다음 회차에 다시 시도하게 한다.
     throw new Error(`executions insert failed (order ${order.id}): ${errMsg(e)}`);
   });
+  // `affectedRows` 가 **0 일 때만** "상태가 바뀌어 안 넣었다"로 본다. 값이 없으면(드라이버 이상)
+  // **성공으로 취급**한다 — `casSetStatus` 의 "모르면 실패"와 반대 방향인 이유: 여기서 실패로 보면
+  // 기록이 됐을 수도 있는데 CAS 를 건너뛰어 종결이 미뤄지고, 반대로 성공으로 보면 최악이 여분 행 1개다.
+  // 이 경로에서는 **빠진 행이 여분 행보다 나쁘다**(T-019 편향).
+  const insAffected = (ins as { affectedRows?: unknown } | undefined)?.affectedRows;
+  if (typeof insAffected === 'number' && insAffected === 0) {
+    return { recorded: false, note: 'status_changed', statusChanged: true };
+  }
+  fence();
 
   const dup = await detectDuplicateExecutions(pool, order.id);
   return dup === null ? { recorded: true } : { recorded: true, note: dup };
+}
+
+/**
+ * `executions.executed_at` (T-071 C3).
+ *
+ * 국내는 기존 그대로(브로커 시각, 없으면 지금). 해외 체결조회의 시각은 **주문 시각**
+ * (`dmst_ord_dt`+`ord_tmd`)이고 그 시간대가 실응답으로 확인되지 않았다. `trade-report` 는
+ * `MAX(executed_at)` 으로 LIFO 순서를 잡으므로, 시간대가 틀린 값이 주문 생성 전이나 미래로 가면
+ * 재고 순서가 어긋난다 → 해외는 [주문 생성 시각, 지금] 범위로 자른다. 없으면 지금.
+ */
+function settledExecutedAt(market: Market, ts: number, createdAt: Date, now: number): Date {
+  if (market !== 'overseas') return ts > 0 ? new Date(ts) : new Date();
+  if (!(ts > 0)) return new Date(now);
+  const lo = new Date(createdAt).getTime();
+  const clamped = Math.min(now, Number.isFinite(lo) ? Math.max(lo, ts) : ts);
+  return new Date(clamped);
 }
 
 /**
@@ -884,7 +1378,9 @@ async function auditPartialSettlement(
   eid: string,
   partial: PartialFill,
   errors: string[],
+  fence: Fence,
 ): Promise<void> {
+  fence();   // C2 — 감사 쓰기 직전(아래 catch 가 삼키지 않도록 try 밖에서)
   try {
     await pool.query(
       `INSERT INTO trade_logs (order_id, event, payload) VALUES (?, ?, ?)`,
@@ -897,6 +1393,18 @@ async function auditPartialSettlement(
         filledQty: partial.filledQty,
         shortfallQty: partial.orderedQty - partial.filledQty,
         price: partial.price > 0 ? partial.price : null,
+        // T-071 R-07 — executions.price 가 무엇을 근거로 쓰였는지. 해외는 원화 기준가(근사)이고
+        // 브로커의 원래 USD 단가·시각(=주문 시각, 시간대 미확인)을 WP-2 재계산용으로 보존한다.
+        priceBasis: market === 'overseas'
+          ? 'order_price_krw'
+          : (partial.price > 0 ? 'broker_fill' : 'order_price'),
+        ...(market === 'overseas' ? {
+          brokerPriceNative: partial.price > 0 ? partial.price : null,
+          brokerCurrency: 'USD',
+          brokerTs: partial.ts > 0 ? new Date(partial.ts).toISOString() : null,
+          brokerTsBasis: 'order_time_dmst_ord_dt_ord_tmd',
+          orderPriceKrw: numOrZero(order.price) > 0 ? numOrZero(order.price) : null,
+        } : {}),
         source: 'order-sync',
       })],
     );
@@ -1018,7 +1526,7 @@ const COVERAGE_ALERT_TTL_MS = 6 * 60 * 60_000;
  * 호출부가 반환값을 버려도 최소한 로그와 알림은 남는다. 이 작업의 요점이 조용한 실패의
  * 제거이므로, 새로 만든 신호가 다시 조용해지면 안 된다.
  */
-async function reportUnreconciled(r: OrderSyncResult): Promise<void> {
+async function reportUnreconciled(r: OrderSyncResult, fence: Fence = () => {}): Promise<void> {
   // 🔴 Fix1(I1) — 이 호출도 에스컬레이션 추적 DB 호출이다. 실패해도 뒤따르는 판정 보고·알림
   // 로직(및 호출부의 reportPartialSettlements)이 죽으면 안 되므로 여기서 삼킨다.
   try {
@@ -1026,11 +1534,15 @@ async function reportUnreconciled(r: OrderSyncResult): Promise<void> {
   } catch (e) {
     reportEscalationTrackingFailure(e);
   }
+  // T-071 C2 — 정리 쿼리에서 오래 멈췄다면 낡은 회차의 알림을 내보내지 않는다.
+  // (아래 에스컬레이션 try 안에서는 부르지 않는다 — 그 catch 가 펜스 예외를 삼키기 때문이다.)
+  fence();
 
   if (r.unreconciled.length === 0) return;
   // `too_fresh` 만 있는 회차는 정상 운영 상태다 — 새 주문을 낼 때마다 경고를 찍으면
   // 이 토큰이 흔해져서 진짜 보류를 가린다. (유예를 넘겨도 안 풀리면 아래 사유로 승격된다.)
-  if (r.unreconciled.every(u => u.reason === 'too_fresh')) return;
+  // T-071 C2 — `cancel_confirming`(해외 market 부재 2회차 확인 대기)도 같은 "의도된 대기"다.
+  if (r.unreconciled.every(u => QUIET_HOLD_REASONS.has(u.reason))) return;
 
   const byReason = new Map<UnreconciledReason, number>();
   for (const u of r.unreconciled) byReason.set(u.reason, (byReason.get(u.reason) ?? 0) + 1);
@@ -1052,6 +1564,7 @@ async function reportUnreconciled(r: OrderSyncResult): Promise<void> {
     u => u.reason !== 'active_coverage_gap'
       // 시계에 오르지 않으므로 원래 걸릴 수 없지만, 의도를 명시한다
       && u.reason !== 'too_fresh'
+      && u.reason !== 'cancel_confirming'
       // 체결 사실은 기록됐다 — 긴급도가 다르다
       && u.reason !== 'partial_fill_unconfirmable'
       && u.unreconciledForMs >= STALE_MS,

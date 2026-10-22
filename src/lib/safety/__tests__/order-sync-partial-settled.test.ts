@@ -127,7 +127,8 @@ function setupPool(rows: PendingRow[], opts: PoolOpts = {}): Captured {
     if (/SELECT[\s\S]*FROM orders/i.test(sql)) return [rows];
     if (/UPDATE orders/i.test(sql)) {
       cap.updates.push({ sql, params });
-      return [{}];
+      // T-071 R-03 — 상태 쓰기가 조건부(CAS)라 affectedRows 로 성공을 판정한다
+      return [{ affectedRows: 1 }];
     }
     return [[]];
   });
@@ -171,7 +172,7 @@ describe('🔴 잔량이 사라졌다고 해서 "전량 체결"이 되지는 않
     // 상태는 종결돼야 한다 — partially_filled 로 두면 5분마다 영원히 재조회된다
     expect(cap.updates).toHaveLength(1);
     expect(cap.updates[0].sql).toMatch(/status='filled'/);
-    expect(cap.updates[0].params).toEqual([100]);
+    expect(cap.updates[0].params).toEqual([100, 'accepted']);   // T-071 R-03 — CAS: 읽은 상태도 함께 넘긴다
 
     // 🔴 그러나 수량의 진실은 executions 가 들고 있어야 한다
     expect(cap.execInserts).toEqual([
@@ -300,7 +301,9 @@ describe('정상 판정 무회귀', () => {
     expect(cap.execInserts).toEqual([]);
   });
 
-  test('🔴 market 주문에는 수량 검증을 걸지 않는다 (잔량 확인 수단이 구조적으로 없다)', async () => {
+  // T-071 R-15 — 제목 정정: 이 전제는 **국내** market 에만 성립한다(해외 market 은 브로커에서 지정가 →
+  // order-sync-overseas-market.test.ts). 행 생성기 기본 심볼이 국내(005930)라 단언은 그대로다.
+  test('🔴 국내 market 주문에는 수량 검증을 걸지 않는다 (잔량 확인 수단이 구조적으로 없다)', async () => {
     const cap = setupPool([row({ id: 114, type: 'market', exchange_order_id: 'MKT', quantity: 10 })]);
     (getActiveOrdersDetailed as jest.Mock).mockResolvedValue(bothOk([]));
     (getCompletedOrders as jest.Mock).mockResolvedValue(completed({ orderId: 'MKT', qty: 3 }));
@@ -338,7 +341,11 @@ describe('소수점 수량 주문에서도 비교 기준은 송신 수량이다'
     const r = await syncPendingOrders();
     expect(cap.updates[0].sql).toMatch(/status='filled'/);
     expect(r.partialSettlements[0]).toMatchObject({ orderedQty: 5, filledQty: 2 });
-    expect(cap.execInserts[0]).toMatchObject({ orderId: 120, quantity: 2, price: 201 });
+    // T-071 R-07 (Leader 결정 1안) — 해외 executions.price 는 브로커 USD 체결가(201)가 아니라
+    // orders.price(원화 기준가, 여기선 200)다. 리포트가 이 값을 원화로 읽기 때문이다. USD 원값은 감사 payload 에 남는다.
+    expect(cap.execInserts[0]).toMatchObject({ orderId: 120, quantity: 2, price: 200 });
+    const log = cap.tradeLogs.find(l => l.event === 'partial_fill_settled');
+    expect(log!.payload).toMatchObject({ priceBasis: 'order_price_krw', brokerPriceNative: 201, brokerCurrency: 'USD' });
   });
 
   test('🔴 해외 1.7주가 1주 전량 체결되면 부분체결로 오판하지 않는다 (T-018 H-4)', async () => {

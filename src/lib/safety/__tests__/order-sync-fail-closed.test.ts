@@ -59,7 +59,8 @@ function setupPool(rows: PendingRow[], opts: { graceConfigSec?: number } = {}) {
     if (/SELECT[\s\S]*FROM orders/i.test(sql)) return [rows];
     if (/UPDATE orders/i.test(sql)) {
       updates.push({ sql, params: paramsArg ?? [] });
-      return [{}];
+      // T-071 R-03 — 상태 쓰기가 조건부(CAS)라 affectedRows 로 성공을 판정한다
+      return [{ affectedRows: 1 }];
     }
     return [[]];
   });
@@ -236,7 +237,7 @@ describe('두 조회가 모두 성공하면 진짜 취소된 주문은 여전히
 
     const r = await syncPendingOrders();
     expect(cancelledUpdates(updates)).toHaveLength(1);
-    expect(updates[0].params).toEqual([10]);
+    expect(updates[0].params).toEqual([10, 'accepted']);   // T-071 R-03 — CAS: 읽은 상태도 함께 넘긴다
     expect(r.synced).toBe(1);
     expect(r.complete).toBe(true);
     expect(r.staleCount).toBe(0);
@@ -267,7 +268,7 @@ describe('완결성은 시장 단위 — 한 시장의 실패가 다른 시장�
 
     // 국내는 두 축이 모두 성립 → 취소 판정
     expect(cancelledUpdates(updates)).toHaveLength(1);
-    expect(updates[0].params).toEqual([20]);
+    expect(updates[0].params).toEqual([20, 'accepted']);   // T-071 R-03 — CAS: 읽은 상태도 함께 넘긴다
     // 해외는 자기 시장 조회가 실패 → 보류
     expect(r.skipped).toBe(1);
     expect(r.unreconciled[0].id).toBe(21);
@@ -286,7 +287,7 @@ describe('완결성은 시장 단위 — 한 시장의 실패가 다른 시장�
 
     const r = await syncPendingOrders();
     expect(cancelledUpdates(updates)).toHaveLength(1);
-    expect(updates[0].params).toEqual([23]);
+    expect(updates[0].params).toEqual([23, 'accepted']);   // T-071 R-03 — CAS: 읽은 상태도 함께 넘긴다
     expect(r.unreconciled.map(u => u.id)).toEqual([22]);
   });
 
@@ -650,7 +651,7 @@ describe('🔴 HIGH-3 부분체결 — 두 목록에 동시에 있으면 아직 
     const r = await syncPendingOrders();
     expect(updates).toHaveLength(1);
     expect(updates[0].sql).toMatch(/status='filled'/);
-    expect(updates[0].params).toEqual([63]);
+    expect(updates[0].params).toEqual([63, 'partially_filled']);   // T-071 R-03 — CAS: 읽은 상태도 함께 넘긴다
     expect(r.synced).toBe(1);
   });
 
@@ -713,7 +714,8 @@ describe('🔴 HIGH-3 부분체결 — 두 목록에 동시에 있으면 아직 
     expect(updates[0].sql).toMatch(/status='partially_filled'/);
   });
 
-  test('market 주문은 미체결 목록과 무관하게 filled (그 목록에 원래 없다)', async () => {
+  // T-071 R-15 — 제목 정정: **국내** market 한정(해외 market 은 브로커에서 지정가 → order-sync-overseas-market.test.ts)
+  test('국내 market 주문은 미체결 목록과 무관하게 filled (그 목록에 원래 없다)', async () => {
     const { updates } = setupPool([row({ id: 69, type: 'market', exchange_order_id: 'M1', quantity: 5 })]);
     (getActiveOrdersDetailed as jest.Mock).mockResolvedValue(allFailed());
     (getCompletedOrders as jest.Mock).mockResolvedValue([

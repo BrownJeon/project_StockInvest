@@ -802,7 +802,25 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
  *
  * `getActiveOrders` 와 같은 이유. 이쪽은 심볼 하나를 그 심볼의 거래소로 조회하므로
  * 커버리지 문제는 없고, 실패만 전파하면 된다.
+ *
+ * ## 🔴 연속조회(페이지네이션) 처리 (T-071 WP-1, 설계 v2-3 / reviewer R-04)
+ *
+ * 예전에는 **첫 페이지만** 읽었다. 대상 주문이 2페이지에 있으면 `order-sync` 에는
+ * "체결목록에 없다"로 보이고, 지정가(그리고 T-071 이후로는 해외 market 도)는 그 부재를
+ * 근거로 **실제로 체결된 주문을 `cancelled` 로 오판**할 수 있었다.
+ *
+ * `getActiveOrders` 와 같은 프로토콜로 다음 페이지를 **따라간다**: 응답 헤더 `tr_cont` 가
+ * `M`/`F` 이면 `ctx_area_fk200/nk200` 을 넘겨 `tr_cont:'N'` 으로 다시 요청하고 행을 합친다.
+ * "다음 페이지 신호면 바로 실패"로 하지 않은 이유: `tr_cont` 의미가 미체결 조회와 다르면
+ * (상시 `M` 등 — 실응답 미확인) 모든 해외 심볼이 영구 보류에 빠진다. 대신 **상한
+ * ({@link MAX_COMPLETED_ORDERS_PAGES})을 넘을 때만** 던진다 — 잘린 목록을 성공으로
+ * 위장하지 않는다(→ `order-sync` 의 `completed_query_failed` 보류). 중간 페이지 하나라도
+ * 실패하면 전체 실패다(부분 결과로 판정하지 않는다).
+ *
+ * 토큰 만료 1회 재발급은 **페이지 단위**로 유지한다(첫 페이지 동작 불변).
  */
+export const MAX_COMPLETED_ORDERS_PAGES = 10;
+
 export async function getCompletedOrders(
   symbol: string, fromTs: number, toTs: number, _limit: number,
 ): Promise<{ orderId: string; side: string; price: number; qty: number; ts: number }[]> {
@@ -830,28 +848,37 @@ export async function getCompletedOrders(
     CTX_AREA_FK200: '',
     CTX_AREA_NK200: '',
   });
-  let attempt = 0;
-  for (;;) {
-    const headers = await kisHeaders(trId);
-    const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-ccnl?${params}`;
-    const res = await kisFetch(url, { headers }, { label: 'overseas getCompletedOrders' });
-    if (!res.ok) {
-      const body = kisBodyText(res) ?? await res.text().catch(() => '');
-      if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-        console.warn('[kis-overseas getCompletedOrders] token expired, re-issuing');
-        await invalidateKisToken();
-        attempt++;
-        continue;
+  const allRows: Record<string, string>[] = [];
+  let trCont = '';
+  for (let page = 0; ; page++) {
+    let attempt = 0;
+    let res: Response;
+    for (;;) {
+      // 첫 페이지는 예전과 똑같은 헤더(연속조회 헤더 없음), 이후 페이지만 `tr_cont:'N'`.
+      const headers = await kisHeaders(trId, trCont ? { tr_cont: trCont } : undefined);
+      const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-ccnl?${params}`;
+      res = await kisFetch(url, { headers }, { label: 'overseas getCompletedOrders' });
+      if (!res.ok) {
+        const body = kisBodyText(res) ?? await res.text().catch(() => '');
+        if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
+          console.warn('[kis-overseas getCompletedOrders] token expired, re-issuing');
+          await invalidateKisToken();
+          attempt++;
+          continue;
+        }
+        throw new Error(
+          `KIS overseas getCompletedOrders ${symbol}: ${res.status} body=${body.slice(0, 300)}`
+          + (page > 0 ? ` (연속조회 page=${page})` : '')
+          + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
+        );
       }
-      throw new Error(
-        `KIS overseas getCompletedOrders ${symbol}: ${res.status} body=${body.slice(0, 300)}`
-        + (isKisRateLimited(res) ? ' (레이트리밋 — 백오프 재시도 소진)' : ''),
-      );
+      break;
     }
     const data = await res.json();
     if (process.env.KIS_OVERSEAS_DEBUG === '1') {
       console.log('[kis-overseas getCompletedOrders raw] rt_cd=', data.rt_cd,
-        'symbol=', symbol, 'output[0]=', JSON.stringify(data.output?.[0] ?? null));
+        'symbol=', symbol, 'page=', page, 'tr_cont=', res.headers.get('tr_cont') ?? '',
+        'output[0]=', JSON.stringify(data.output?.[0] ?? null));
     }
     if (data.rt_cd !== '0') {
       throw new Error(
@@ -860,27 +887,42 @@ export async function getCompletedOrders(
       );
     }
     const rows = data.output;
-    if (rows == null) return [];   // rt_cd='0' + 목록 없음 = 체결 0건
-    if (!Array.isArray(rows)) {
+    if (rows == null) {
+      // rt_cd='0' + 목록 없음 = 이 페이지 0건 (첫 페이지면 체결 0건 — 기존 동작)
+    } else if (!Array.isArray(rows)) {
       throw new Error(`KIS overseas getCompletedOrders ${symbol}: output 형식 이상 (${typeof rows}) — 0건과 구분 불가`);
+    } else {
+      allRows.push(...(rows as Record<string, string>[]));
     }
-    return (rows as Record<string, string>[])
-      .filter(o => Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0) > 0)
-      .map(o => {
-        const dt = String(o.dmst_ord_dt ?? o.ord_dt ?? '');
-        const tm = String(o.ord_tmd ?? '000000').padStart(6, '0');
-        let ts = 0;
-        if (dt.length === 8) {
-          ts = new Date(`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${tm.slice(0,2)}:${tm.slice(2,4)}:${tm.slice(4,6)}+09:00`).getTime();
-        }
-        return {
-          orderId: String(o.odno ?? ''),
-          side:    o.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
-          price:   Number(o.ft_ccld_unpr3 ?? o.ccld_unpr ?? o.ord_unpr ?? 0),
-          qty:     Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0),
-          ts,
-        };
-      })
-      .filter(o => o.orderId);
+
+    const respTrCont = res.headers.get('tr_cont') ?? '';
+    if (respTrCont !== 'M' && respTrCont !== 'F') break;
+    if (page >= MAX_COMPLETED_ORDERS_PAGES - 1) {
+      throw new Error(
+        `KIS overseas getCompletedOrders ${symbol}: 페이지 상한(${MAX_COMPLETED_ORDERS_PAGES})에 `
+        + `도달했는데 tr_cont=${respTrCont}(계속) — ${allRows.length}건만 모은 채 불완전하여 실패로 처리`,
+      );
+    }
+    params.set('CTX_AREA_FK200', String(data.ctx_area_fk200 ?? ''));
+    params.set('CTX_AREA_NK200', String(data.ctx_area_nk200 ?? ''));
+    trCont = 'N';
   }
+  return allRows
+    .filter(o => Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0) > 0)
+    .map(o => {
+      const dt = String(o.dmst_ord_dt ?? o.ord_dt ?? '');
+      const tm = String(o.ord_tmd ?? '000000').padStart(6, '0');
+      let ts = 0;
+      if (dt.length === 8) {
+        ts = new Date(`${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}T${tm.slice(0,2)}:${tm.slice(2,4)}:${tm.slice(4,6)}+09:00`).getTime();
+      }
+      return {
+        orderId: String(o.odno ?? ''),
+        side:    o.sll_buy_dvsn_cd === '01' ? 'sell' : 'buy',
+        price:   Number(o.ft_ccld_unpr3 ?? o.ccld_unpr ?? o.ord_unpr ?? 0),
+        qty:     Number(o.ft_ccld_qty ?? o.ccld_qty ?? 0),
+        ts,
+      };
+    })
+    .filter(o => o.orderId);
 }
