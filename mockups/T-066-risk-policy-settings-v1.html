@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="demo-version" content="T-066-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="description" content="T-066-v1 — 설정 허브에 '리스크 정책' 요약 행 추가 + 읽기 전용 하위 페이지 /settings/risk-policy (delta)">
+<title>T-066-v1 리스크 정책 (설정)</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지) */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    /* 데모 주석 전용(앱 UI 아님) */
+    --note: #9fb3d1;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size: 14px; -webkit-text-size-adjust: 100%;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  a { color: inherit; text-decoration: none; }
+  code { font-size: 12px; background: var(--bg3); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+  .num { font-variant-numeric: tabular-nums; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  /* ── 데모 문서 틀 (앱 UI 아님) ── */
+  .page { max-width: 1280px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-bottom)); }
+  .page > header h1 { font-size: 17px; margin: 0 0 6px; line-height: 1.4; }
+  .page > header p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--note); color: var(--note); margin: 0 6px 4px 0; }
+  .sample-banner { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--warn); color: var(--warn); font-size: 13px; font-weight: 700; line-height: 1.5; }
+  section.block { margin-top: 32px; }
+  section.block > h2 { font-size: 15px; margin: 0 0 8px; }
+  section.block > p.lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .note { margin: 8px 0 4px; font-size: 11px; color: var(--note); border-left: 2px dashed var(--note); padding-left: 6px; line-height: 1.5; }
+  .cf { font-size: 11px; font-weight: 700; color: var(--note); }
+  .newmark { display: inline-block; font-size: 11px; font-weight: 700; color: var(--note); border: 1px dashed var(--note); border-radius: 6px; padding: 0 6px; margin-left: 6px; vertical-align: middle; }
+  .box { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; margin-top: 12px; }
+  .box h3 { font-size: 13px; margin: 0 0 6px; }
+  ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  ul.plain li { margin-bottom: 4px; }
+
+  /* 데모 조작 패널 */
+  .controls { max-width: 640px; margin: 0 0 14px; }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 140px; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px;
+                  border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  .compare { display: grid; grid-template-columns: 1fr; gap: 28px; }
+  @media (min-width: 900px) { .compare { grid-template-columns: repeat(2, minmax(0, 412px)); align-items: start; } }
+  .frame-cap { font-size: 12px; font-weight: 700; color: var(--note); margin: 0 0 6px; }
+  .desk-scroll { overflow-x: auto; border: 1px dashed var(--border2); border-radius: 12px; padding: 8px; }
+
+  /* ── 앱 화면 (여기부터 구현 대상) ── */
+  .phone { width: 100%; max-width: 412px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .desk { width: 1180px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .app { container-type: inline-size; }
+  .app-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* 기존 SettingsPage 패턴 그대로 */
+  .sec-h { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; padding: 8px 0 4px; }
+  .card { background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .linkrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 56px; padding: 12px 16px;
+             background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); }
+  .linkrow:hover { border-color: var(--border2); }
+  .linkrow .t { font-size: 14px; }
+  .linkrow .s { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+  .chev { font-size: 18px; color: var(--muted); flex-shrink: 0; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: 0; }
+  .row .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .fake-toggle { width: 44px; height: 24px; border-radius: 12px; background: var(--ok); position: relative; flex-shrink: 0; }
+  .fake-toggle::after { content: ""; position: absolute; top: 2px; left: 22px; width: 20px; height: 20px; border-radius: 50%; background: #fff; }
+  .fake-toggle.off { background: var(--bg3); }
+  .fake-toggle.off::after { left: 2px; }
+
+  /* 상태 어휘 — 색 + 기호 + 글자(색만으로 전달하지 않는다). 위험·미달·초과는 amber,
+     빨강/파랑은 손익(상승/하락) 의미라 이 화면에서 쓰지 않는다. */
+  .st { display: inline-flex; align-items: baseline; gap: 4px; font-size: 12px; font-weight: 700; line-height: 1.45; }
+  .st i { font-style: normal; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 4px; font-size: 11px; flex-shrink: 0; transform: translateY(2px); }
+  .st.warn { color: var(--warn); } .st.warn i { background: rgba(245,158,11,.18); }
+  .st.ok { color: var(--ok); }     .st.ok i { background: rgba(34,197,94,.16); }
+  .st.na { color: var(--muted); font-weight: 600; } .st.na i { background: var(--bg3); }
+  .st.info { color: var(--text); font-weight: 600; } .st.info i { background: var(--bg4); }
+
+  /* 출처 배지 */
+  .src { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; white-space: nowrap; line-height: 1.5; }
+  .src.user { color: var(--ok); border: 1px solid rgba(34,197,94,.55); }
+  .src.prop { color: var(--warn); border: 1px dashed rgba(245,158,11,.75); }
+  .src.doc  { color: var(--muted); border: 1px solid var(--border2); }
+
+  /* 하위 페이지 헤더 */
+  .rp-head { display: flex; align-items: center; gap: 8px; padding: calc(8px + var(--safe-top)) 8px 8px; border-bottom: 1px solid var(--border); background: var(--bg); }
+  .back { display: inline-flex; align-items: center; gap: 2px; min-height: 44px; min-width: 44px; padding: 0 8px; font-size: 14px; color: var(--muted); border-radius: 8px; }
+  .rp-head h2 { margin: 0; font-size: 16px; font-weight: 700; flex: 1; min-width: 0; }
+  .ro-pill { font-size: 11px; font-weight: 700; color: var(--muted); border: 1px solid var(--border2); border-radius: 6px; padding: 2px 8px; margin-right: 8px; white-space: nowrap; }
+
+  .enforce { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); font-size: 12px; line-height: 1.55; }
+  .enforce b { color: var(--text); }
+  .enforce .ic { flex-shrink: 0; font-weight: 700; color: var(--muted); }
+
+  /* 핵심 카드 */
+  .hero { padding: 14px 16px 16px; }
+  .hero .lbl { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
+  .hero .big { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+  .hero .big .pct { font-size: 30px; font-weight: 800; letter-spacing: -.5px; }
+  .hero .big .krw { font-size: 15px; font-weight: 700; }
+  .hero .def { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.55; }
+  .hero .basis { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+  .usage { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .usage .head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .usage .head .k { font-size: 13px; font-weight: 700; }
+  .bar { position: relative; height: 12px; border-radius: 6px; background: var(--bg3); margin: 10px 0 6px; overflow: hidden; border: 1px solid var(--border2); }
+  .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--muted); }
+  .bar .fill.okc { background: var(--ok); }
+  .bar .fill.warnc { background: var(--warn); }
+  .bar .unk { position: absolute; top: 0; bottom: 0; right: 0;
+              background: repeating-linear-gradient(135deg, var(--bg4) 0 6px, var(--bg3) 6px 12px); }
+  .bar-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .usage p { margin: 8px 0 0; font-size: 13px; line-height: 1.6; }
+  .usage .warnbox { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.40); font-size: 12px; line-height: 1.6; }
+  .usage .warnbox b { color: var(--warn); }
+  .hold-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .hold-list li { font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--bg3); border: 1px solid var(--border2); }
+  .hold-list li b { font-weight: 700; margin-left: 4px; color: var(--warn); }
+  details.contrib { margin-top: 10px; }
+  details.contrib summary { min-height: 44px; display: flex; align-items: center; font-size: 13px; color: var(--muted); cursor: pointer; }
+  table.mini { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.mini th, table.mini td { padding: 6px 4px; border-bottom: 1px solid var(--border); text-align: right; }
+  table.mini th:first-child, table.mini td:first-child { text-align: left; }
+  table.mini th { color: var(--muted); font-weight: 600; }
+
+  /* 확인 필요 */
+  .gaps { padding: 4px 0; }
+  .gaps h3 { margin: 0; padding: 10px 16px 6px; font-size: 13px; font-weight: 700; }
+  .gaps ul { list-style: none; margin: 0; padding: 0; }
+  .gaps li a { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 48px; padding: 8px 16px; border-top: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
+  .gaps li a .d { color: var(--muted); font-size: 12px; }
+
+  /* 정책 표 — 모바일 3열(항목+출처 | 정책값 | 현재), 넓으면 4열 */
+  table.pol { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+  table.pol caption { text-align: left; padding: 12px 16px 8px; font-size: 13px; font-weight: 700; }
+  table.pol caption small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+  table.pol th, table.pol td { padding: 10px 8px; border-top: 1px solid var(--border); vertical-align: top; text-align: left; line-height: 1.5; overflow-wrap: anywhere; }
+  table.pol th:first-child, table.pol td:first-child { padding-left: 16px; }
+  table.pol th:last-child, table.pol td:last-child { padding-right: 16px; }
+  table.pol thead th { font-size: 11px; font-weight: 700; color: var(--muted); padding-top: 8px; padding-bottom: 8px; }
+  table.pol .grp th { background: var(--bg3); font-size: 12px; font-weight: 700; color: var(--muted); padding-top: 6px; padding-bottom: 6px; }
+  table.pol .name { font-size: 13px; font-weight: 600; }
+  table.pol .name { margin-bottom: 4px; }
+  table.pol .v { font-weight: 700; }
+  table.pol .v small, table.pol .cur small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+  table.pol tr:target td, table.pol tr:target th { background: rgba(245,158,11,.08); }
+  col.c-name { width: 34%; } col.c-val { width: 30%; } col.c-cur { width: 36%; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 10px 16px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); align-items: center; }
+  .foot { padding: 12px 14px; font-size: 12px; color: var(--muted); line-height: 1.7; background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; }
+  .foot b { color: var(--text); }
+
+  /* 상태: 빈·로딩·오류 */
+  .empty, .err { padding: 20px 16px; text-align: left; }
+  .empty h3, .err h3 { margin: 0 0 6px; font-size: 15px; }
+  .empty p, .err p { margin: 0 0 8px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+  .err { border-color: rgba(245,158,11,.45); }
+  .retry { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 8px; font-size: 13px; font-weight: 700; background: var(--accent); color: #000; margin-top: 4px; }
+  .skel { background: var(--bg3); border-radius: 6px; height: 14px; margin: 8px 0; }
+  .skel.l { height: 30px; width: 40%; } .skel.m { width: 70%; } .skel.s { width: 50%; }
+  .skel-card { padding: 16px; }
+
+  /* 하단 탭 (BottomTabs 현재 구성) */
+  .tabs { display: flex; height: var(--nav-h); border-top: 1px solid var(--border); background: var(--bg2); padding-bottom: var(--safe-bottom); }
+  .tabs a { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; color: var(--muted); min-height: 44px; }
+  .tabs a[aria-current="page"] { color: var(--accent); }
+  .tabs .ico { font-size: 20px; line-height: 1; }
+
+  /* 넓은 화면(≥900px) 복원 — 데모는 한 페이지에 두 폭을 보이려고 container query 로 흉내낸다.
+     실제 구현은 @media (min-width: 900px) 로 같은 규칙을 쓴다. */
+  .rp-grid { display: flex; flex-direction: column; gap: 12px; }
+  .rp-left { display: flex; flex-direction: column; gap: 12px; }
+  @container (min-width: 900px) {
+    .app-body { padding: 20px 24px; }
+    .rp-grid { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .rp-left { display: flex; flex-direction: column; gap: 12px; }
+    col.c-name { width: 36%; } col.c-val { width: 30%; } col.c-cur { width: 34%; }
+  }
+
+  /* 결정 필요 */
+  .decide { border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.06); border-radius: 10px; padding: 12px; margin-top: 12px; }
+  .decide h3 { margin: 0 0 8px; font-size: 14px; color: var(--warn); }
+  .ab { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 900px) { .ab { grid-template-columns: 1fr 1fr; } }
+  .opt { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.6; }
+  .opt h4 { margin: 0 0 4px; font-size: 13px; }
+  .opt.rec { border-color: var(--ok); }
+  .opt .rec-tag { font-size: 11px; font-weight: 700; color: var(--ok); margin-left: 6px; }
+  .wire { margin: 8px 0; border: 1px dashed var(--border2); border-radius: 6px; padding: 6px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .wire div { border: 1px solid var(--border2); border-radius: 4px; padding: 3px 6px; margin: 3px 0; }
+  .wire .hl { border-color: var(--warn); color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>T-066 데모 v1 — 설정에서 리스크 정책 보기 (읽기 전용)</h1>
+    <p>
+      <span class="tag">judge: delta</span><span class="tag">대표 폭 412px (갤럭시 S25+ 크롬)</span><span class="tag">≥900px 데스크톱 복원</span>
+    </p>
+    <p>사용자 요구: "한번에 감내할 손해는 2%로 잡아주고 해당내역에 대해서 설정메뉴에서 볼수있도록 해줘". 이 데모는 <b>보여 주기만</b> 하는 화면이다. 값을 바꾸는 컨트롤은 만들지 않았다.</p>
+    <p class="sample-banner">숫자는 전부 합성 예시값이다(총자산 20,000,000원·종목 AAA~EEE·비중·현금·시각). 실제 계좌 값이 아니다. 정책 값(2%·10종목·미국 → 국내·0.25%·15%·10%·-3%·-5%·-15%·분할 2회)만 실제 정책이다. 상태 버튼 중 "예시"가 붙은 것은 손절가가 설정됐다고 더 가정한 값이다.</p>
+  </header>
+
+  <!-- ① 현재 vs 제안 : 설정 허브 -->
+  <section class="block" id="hub">
+    <h2>① 설정 허브 — 현재 vs 제안</h2>
+    <p class="lead">설정 첫 화면 위쪽만 보인다. "내 계정" 바로 아래에 <b>리스크 정책 요약 행</b>을 넣는다. 지금 화면은 "승인 방식" 카드가 길어서(412px 에서 약 350px) 그 아래에 두면 첫 화면 밖으로 밀린다.</p>
+    <div class="compare">
+      <div>
+        <p class="frame-cap">현재 (/settings)</p>
+        <div class="phone app" aria-label="현재 설정 화면 미리보기">
+          <div class="app-body">
+            <div class="sec-h">내 계정</div>
+            <a class="linkrow" href="#hub"><div><div class="t">내 계정 · 증권계좌 연결</div><div class="s">비밀번호 변경 · KIS 키 연결 · 회원별 매매 설정</div></div><span class="chev" aria-hidden="true">›</span></a>
+            <div class="sec-h">승인 방식</div>
+            <div class="card"><div class="row"><div><div>승인 후 진입 감시 (하이브리드)</div><div class="s">OFF — 승인하면 즉시 주문 · 안내문 3단락 (생략)</div></div><span class="fake-toggle off" aria-hidden="true"></span></div></div>
+            <div class="sec-h">안전장치 (공통)</div>
+            <div class="card"><div class="row"><div><div>실거래 여부</div><div class="s">ON — 실제 주문 전송 중</div></div><span class="fake-toggle" aria-hidden="true"></span></div></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="frame-cap">제안 — 상태는 아래 ② 의 버튼과 같이 바뀐다</p>
+        <div class="phone app" aria-label="제안 설정 화면 미리보기">
+          <div class="app-body">
+            <div class="sec-h">내 계정</div>
+            <a class="linkrow" href="#hub"><div><div class="t">내 계정 · 증권계좌 연결</div><div class="s">비밀번호 변경 · KIS 키 연결 · 회원별 매매 설정</div></div><span class="chev" aria-hidden="true">›</span></a>
+            <div class="sec-h">리스크 정책 <span class="newmark">새 항목</span></div>
+            <div id="hub-row"></div>
+            <div class="sec-h">승인 방식</div>
+            <div class="card"><div class="row"><div><div>승인 후 진입 감시 (하이브리드)</div><div class="s">OFF — 승인하면 즉시 주문 · 안내문 3단락 (생략)</div></div><span class="fake-toggle off" aria-hidden="true"></span></div></div>
+          </div>
+        </div>
+        <p class="note">요약 행은 정책값(2%·원화 환산)과 "확인 필요" 건수를 한 줄씩 보여 준다. 누르면 ② 의 하위 페이지로 간다. 기존 "내 계정" 행과 같은 모양(56px, ›)이다.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ② 하위 페이지 -->
+  <section class="block" id="page">
+    <h2>② 제안 — 하위 페이지 <code>/settings/risk-policy</code></h2>
+    <p class="lead">상태를 바꿔 보면서 확인한다. 기본 선택은 <b>지금 실제 계좌 상태</b>(손절가 5/5 미설정)다.</p>
+    <div class="controls">
+      <fieldset class="seg">
+        <legend>화면 상태</legend>
+        <div class="seg-row" id="state-radios">
+          <label><input type="radio" name="st" value="unknown" checked><span>사용량 계산 불가<br>(지금 실제)</span></label>
+          <label><input type="radio" name="st" value="partial"><span>손절가 일부만<br>(예시)</span></label>
+          <label><input type="radio" name="st" value="ok"><span>정상 · 한도 내<br>(예시)</span></label>
+          <label><input type="radio" name="st" value="over"><span>한도 초과<br>(예시)</span></label>
+          <label><input type="radio" name="st" value="stale"><span>총자산 스냅샷<br>오래됨</span></label>
+          <label><input type="radio" name="st" value="empty"><span>정책 값 없음<br>(저장 전)</span></label>
+          <label><input type="radio" name="st" value="loading"><span>로딩</span></label>
+          <label><input type="radio" name="st" value="error"><span>조회 오류</span></label>
+        </div>
+      </fieldset>
+    </div>
+    <p class="frame-cap">모바일 412px</p>
+    <div class="phone app" id="rp-mobile" aria-label="리스크 정책 화면 모바일 미리보기"></div>
+
+    <p class="frame-cap" style="margin-top:24px">데스크톱 복원 (≥900px, 1180px 로 표시 — 이 상자 안에서만 가로로 밀어 본다)</p>
+    <div class="desk-scroll"><div class="desk app" id="rp-desktop" aria-label="리스크 정책 화면 데스크톱 미리보기"></div></div>
+    <p class="note">넓은 화면: 왼쪽에 핵심 한도·확인 필요, 오른쪽에 정책 표. 표는 모든 폭에서 3열(항목+출처 · 정책값 · 현재 상태)로 같다. 하단 탭은 현재 앱처럼 계속 보인다.</p>
+  </section>
+
+  <!-- ③ 결정 필요 -->
+  <section class="block" id="decide">
+    <h2>③ 결정 필요</h2>
+    <div class="decide">
+      <h3>D1. 리스크 정책을 설정 메뉴의 어디에 둘까</h3>
+      <div class="ab">
+        <div class="opt rec">
+          <h4>A. 허브 요약 행 + 하위 페이지 <span class="rec-tag">✓ 권장</span></h4>
+          <div class="wire"><div>내 계정 ›</div><div class="hl">리스크 정책 2% · 확인 필요 3건 ›</div><div>승인 방식 …</div></div>
+          핵심 값과 경고는 설정 첫 화면에서 바로 보이고, 표 12행은 따로 연다.<br>
+          설정 페이지는 이미 섹션 10개짜리 긴 화면이다. 그리고 그 화면은 <b>고칠 수 있는 값 + 저장 바</b> 구조라, 읽기 전용 값을 섞으면 "이것도 저장되나?" 하는 혼동이 생긴다.<br>
+          단점: 표를 보려면 한 번 더 눌러야 한다.
+        </div>
+        <div class="opt">
+          <h4>B. 설정 페이지 안 카드로 전부 펼침</h4>
+          <div class="wire"><div>내 계정 ›</div><div class="hl">리스크 정책 카드 (핵심 + 표 12행 전부)</div><div>승인 방식 …</div></div>
+          누를 필요 없이 한 화면에서 전부 보인다.<br>
+          단점: 412px 에서 약 900px 길이가 늘어나 아래쪽 안전장치·킬스위치가 더 멀어진다. 편집 가능한 행과 읽기 전용 행이 같은 페이지에 섞인다.
+        </div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D2. 손절가가 없는 종목은 사용량을 어떻게 보여 줄까</h3>
+      <div class="ab">
+        <div class="opt rec">
+          <h4>A. "계산 불가"로만 표시 <span class="rec-tag">✓ 권장</span></h4>
+          손절가가 없는 종목이 하나라도 있으면 숫자를 지어내지 않는다. 일부만 있으면 "최소 n%"(하한)로 보여 준다(② "손절가 일부만" 상태).<br>
+          지금 자동 청산이 꺼져 있어서, 정해진 손절 % 가 있어도 실제로는 걸리지 않는다.
+        </div>
+        <div class="opt">
+          <h4>B. 기본 하드손절 % 를 가정해 추정치를 같이 보여 줌</h4>
+          예: "추정 2.9% (기본 손절 3% 가정)". 숫자 하나로 감이 온다.<br>
+          위험: 자동 청산이 꺼진 지금은 그 손절이 실제로 걸리지 않는데도 "한도 안에 있다"는 거짓 안심을 줄 수 있다.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>④ 설계 메모 (구현 가이드 요약은 task 이력서에)</h2>
+    <div class="box">
+      <ul class="plain">
+        <li><b>상태 표현</b>: 미달·초과·계산 불가는 모두 amber + 기호(!, ?) + 글자. 빨강/파랑은 이 앱에서 상승/하락 뜻이라 이 화면에서는 쓰지 않는다.</li>
+        <li><b>출처 배지</b>: <span class="src user">✓ 사용자 확정</span> 실선 초록 · <span class="src prop">◇ 제안 · 승인 전</span> 점선 amber · <span class="src doc">§ 문서 정책</span> 회색 실선. 모양(실선/점선/기호)으로도 구분된다.</li>
+        <li><b>집행 상태 띠</b>를 맨 위에 항상 둔다: 이 정책은 아직 주문을 막지 않는다. 없으면 사용자가 "2% 한도가 지켜 주고 있다"고 오해한다(자동 청산 OFF 문구와 같은 원칙).</li>
+        <li><b>정책 값 없음</b>일 때 기본값을 지어내 보여 주지 않는다. <b>조회 오류</b>일 때 "정책 없음"처럼 보이지 않게 따로 말한다.</li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var TOTAL = 20000000;          // 합성 예시 총자산
+  var LIMIT_KRW = 400000;           // 2%
+  var ONE_PCT = TOTAL / 100;        // 200,000
+
+  function won(n) { return Math.round(n).toLocaleString('ko-KR') + '원'; }
+  function esc(s) { return String(s); }
+
+  var HOLDINGS = ['AAA (미국)', 'BBB (미국)', 'CCC (국내)', 'DDD (국내)', 'EEE (국내)'];
+
+  // 예시 상태용 종목별 손실 기여(비중 × 손절폭). 예시 값이다.
+  var CONTRIB = {
+    ok:      [['AAA', 62.0, 1.0], ['BBB', 6.0, 3.0], ['CCC', 15.0, 2.0], ['DDD', 10.0, 2.0], ['EEE', 4.0, 3.0]],
+    over:    [['AAA', 62.0, 3.0], ['BBB', 6.0, 3.0], ['CCC', 15.0, 2.0], ['DDD', 10.0, 2.0], ['EEE', 4.0, 3.0]],
+    partial: [['AAA', 62.0, 1.0], ['BBB', 6.0, null], ['CCC', 15.0, 2.0], ['DDD', 10.0, 2.0], ['EEE', 4.0, null]]
+  };
+  var USED = { ok: 1.42, over: 2.66, partial: 1.12 };
+
+  function st(kind, icon, text) {
+    return '<span class="st ' + kind + '"><i aria-hidden="true">' + icon + '</i><span>' + text + '</span></span>';
+  }
+  function src(kind) {
+    if (kind === 'user') return '<span class="src user">✓ 사용자 확정</span>';
+    if (kind === 'prop') return '<span class="src prop">◇ 제안 · 승인 전</span>';
+    return '<span class="src doc">§ 문서 정책</span>';
+  }
+
+  function gapCount(state) {
+    // 현금 미달 + AAA 비중 초과는 모든 계좌 상태에서 사실. 손절가 미설정은 상태에 따라.
+    if (state === 'ok') return { n: 2, text: '현금 미달 · AAA 비중 초과' };
+    if (state === 'partial') return { n: 3, text: '손절가 2종목 없음 · 현금 미달 · AAA 비중 초과' };
+    if (state === 'over') return { n: 3, text: '손실 한도 초과 · 현금 미달 · AAA 비중 초과' };
+    return { n: 3, text: '손절가 미설정 · 현금 미달 · AAA 비중 초과' };
+  }
+
+  // ── 허브 요약 행 ──
+  function hubRow(state) {
+    if (state === 'loading') {
+      return '<a class="linkrow" href="#page" aria-busy="true"><div><div class="t">리스크 정책</div><div class="s" role="status">불러오는 중…</div></div><span class="chev" aria-hidden="true">›</span></a>';
+    }
+    if (state === 'error') {
+      return '<a class="linkrow" href="#page"><div><div class="t">리스크 정책</div><div class="s">' + st('warn', '!', '불러오지 못했습니다 — 눌러서 다시 확인') + '</div></div><span class="chev" aria-hidden="true">›</span></a>';
+    }
+    if (state === 'empty') {
+      return '<a class="linkrow" href="#page"><div><div class="t">리스크 정책</div><div class="s">' + st('warn', '!', '정책이 아직 저장되지 않았습니다 — 한도 없음') + '</div></div><span class="chev" aria-hidden="true">›</span></a>';
+    }
+    var g = gapCount(state);
+    var usage = '';
+    if (state === 'ok') usage = st('ok', '✓', '사용 1.42% / 2% (한도 내)') + '<br>';
+    else if (state === 'over') usage = st('warn', '!', '한도 초과 — 사용 2.66% / 2%') + '<br>';
+    else if (state === 'partial') usage = st('warn', '?', '사용 최소 1.12% / 2% (일부 미확인)') + '<br>';
+    else usage = st('warn', '?', '사용량 계산 불가 (손절가 미설정 5/5)') + '<br>';
+    return '<a class="linkrow" href="#page"><div style="min-width:0">' +
+      '<div class="t">한 번에 감내할 손실 <b class="num">2%</b> · <span class="num">≈' + won(LIMIT_KRW) + '</span></div>' +
+      '<div class="s">' + usage + st('warn', '!', '확인 필요 ' + g.n + '건') + ' <span>' + g.text + '</span></div>' +
+      '</div><span class="chev" aria-hidden="true">›</span></a>';
+  }
+
+  // ── 하위 페이지 ──
+  function head() {
+    return '<div class="rp-head"><a class="back" href="#hub" aria-label="설정으로 돌아가기">‹ 설정</a><h2>리스크 정책</h2><span class="ro-pill">읽기 전용</span></div>';
+  }
+  function tabs() {
+    return '<nav class="tabs" aria-label="주 메뉴"><a href="#hub"><span class="ico" aria-hidden="true">🏠</span>대시보드</a><a href="#hub"><span class="ico" aria-hidden="true">⭐</span>즐겨찾기</a><a href="#hub"><span class="ico" aria-hidden="true">💡</span>추천</a><a href="#hub"><span class="ico" aria-hidden="true">📈</span>분석</a><a href="#hub" aria-current="page"><span class="ico" aria-hidden="true">⚙️</span>설정</a></nav>';
+  }
+  function enforceStrip() {
+    return '<div class="enforce" role="note"><span class="ic" aria-hidden="true">ⓘ</span><div><b>지금은 표시만 합니다 — 이 정책은 아직 주문을 막지 않습니다.</b><br>한도를 넘는 신규 매수 차단은 후속 작업에서 켭니다. 그전까지는 이 화면을 보고 직접 판단해야 합니다.</div></div>';
+  }
+
+  function usageBlock(state, pfx) {
+    var html = '<div class="usage">';
+    if (state === 'unknown' || state === 'stale') {
+      html += '<div class="head"><span class="k">현재 사용량</span>' + st('warn', '?', '계산 불가') + '</div>' +
+        '<div class="bar" aria-hidden="true"><span class="unk" style="left:0"></span></div>' +
+        '<div class="bar-scale" aria-hidden="true"><span>0%</span><span>한도 2%</span></div>' +
+        '<p>보유 <b>5종목 모두 손절가가 없습니다 (5/5 미설정).</b> 손절가가 없으면 열린 손실이 한도 2% 안에 드는지 알 수 없습니다.</p>' +
+        '<ul class="hold-list" aria-label="손절가 설정 현황">' + HOLDINGS.map(function (h) { return '<li>' + h + '<b>? 손절가 없음</b></li>'; }).join('') + '</ul>' +
+        '<div class="warnbox"><b>! 자동 청산 엔진도 꺼져 있습니다.</b> 손절이 어디에도 걸려 있지 않아, 지금은 보유 평가액 약 1,940만원(예시) 전체가 손실에 열려 있습니다. 자동 청산 설정은 <a href="#hub" style="text-decoration:underline">설정 › 안전장치 (공통)</a>에 있습니다.</div>';
+    } else {
+      var used = USED[state];
+      var pctW = Math.min(used / 2, 1) * 100;
+      var fillCls = state === 'ok' ? 'okc' : 'warnc';
+      var head = '', body = '';
+      if (state === 'ok') {
+        head = st('ok', '✓', '한도 내');
+        body = '<p><b class="num">' + used.toFixed(2) + '%</b> <span class="num">(≈' + won(used * ONE_PCT) + ')</span> / 2% 사용 · 여유 <b class="num">0.58%</b> <span class="num">(≈' + won(LIMIT_KRW - Math.round(used * ONE_PCT)) + ')</span></p>';
+      } else if (state === 'over') {
+        head = st('warn', '!', '한도 초과');
+        var usedKrw = Math.round(used * ONE_PCT);
+        body = '<p><b class="num">' + used.toFixed(2) + '%</b> <span class="num">(≈' + won(usedKrw) + ')</span> / 2% · 초과 <b class="num">0.66%</b> <span class="num">(≈' + won(usedKrw - LIMIT_KRW) + ')</span></p>' +
+          '<div class="warnbox"><b>! 정책대로라면 신규 매수를 멈춰야 하는 상태입니다.</b> 지금은 표시만 하므로 주문은 막히지 않습니다.</div>';
+      } else {
+        head = st('warn', '?', '일부 미확인');
+        body = '<p>최소 <b class="num">' + used.toFixed(2) + '%</b> <span class="num">(≈' + won(used * ONE_PCT) + ')</span> / 2%</p>' +
+          '<p><b>2종목(BBB · EEE)에 손절가가 없습니다.</b> 실제 사용량은 이보다 큽니다 — 한도 안이라고 판단하지 마세요.</p>';
+      }
+      html += '<div class="head"><span class="k">현재 사용량</span>' + head + '</div>' +
+        '<div class="bar" aria-hidden="true"><span class="fill ' + fillCls + '" style="width:' + pctW + '%"></span>' +
+        (state === 'partial' ? '<span class="unk" style="left:' + pctW + '%"></span>' : '') + '</div>' +
+        '<div class="bar-scale" aria-hidden="true"><span>0%</span><span>한도 2%</span></div>' + body;
+      var rows = CONTRIB[state].map(function (r) {
+        var c = r[2] === null ? '<td>' + st('warn', '?', '없음') + '</td><td>?</td>' :
+          '<td class="num">-' + r[2].toFixed(1) + '%</td><td class="num">' + (r[1] * r[2] / 100).toFixed(2) + '%</td>';
+        return '<tr><td>' + r[0] + '</td><td class="num">' + r[1].toFixed(1) + '%</td>' + c + '</tr>';
+      }).join('');
+      html += '<details class="contrib"><summary>종목별 손실 기여 보기 (예시 값)</summary>' +
+        '<table class="mini"><caption class="sr">종목별 손실 기여 — 비중 × 손절폭</caption><thead><tr><th scope="col">종목</th><th scope="col">비중</th><th scope="col">손절폭</th><th scope="col">기여</th></tr></thead><tbody>' + rows + '</tbody></table></details>';
+    }
+    return html + '</div>';
+  }
+
+  function hero(state, pfx) {
+    var basis = state === 'stale'
+      ? '기준 총자산 <span class="num">20,000,000원</span>(예시) · 2026-10-21 16:00 스냅샷 ' + st('warn', '!', '18시간 전 — 오래됨') + '<br>원화 환산은 최신 총자산과 다를 수 있습니다.'
+      : '기준 총자산 <span class="num">20,000,000원</span>(예시) · 2026-10-22 10:00 스냅샷';
+    return '<section class="card hero" aria-labelledby="' + pfx + '-h1">' +
+      '<div class="lbl"><span id="' + pfx + '-h1">한 번에 감내할 손실 한도</span>' + src('user') + '</div>' +
+      '<div class="big"><span class="pct num">2%</span><span class="krw num">≈ ' + won(LIMIT_KRW) + '</span></div>' +
+      '<div class="def">보유 종목 전체가 <b>동시에</b> 손절가까지 떨어질 때 잃는 돈의 합(열린 손절폭 합)의 상한. 한 종목 손절 한도가 아닙니다.</div>' +
+      '<div class="basis">' + basis + '</div>' + usageBlock(state, pfx) + '</section>';
+  }
+
+  function gaps(state, pfx) {
+    var items = [];
+    if (state === 'unknown' || state === 'stale') items.push(['heat', st('warn', '?', '손절가 미설정 5/5'), '사용량 계산 불가']);
+    if (state === 'partial') items.push(['heat', st('warn', '?', '손절가 미설정 2/5'), '사용량 하한만 표시']);
+    if (state === 'over') items.push(['heat', st('warn', '!', '손실 한도 초과'), '2.66% / 2%']);
+    items.push(['cash', st('warn', '!', '현금 하한 미달'), '3.0% / 하한 10%']);
+    items.push(['sym', st('warn', '!', '심볼당 비중 초과'), 'AAA 62.0% / 15%']);
+    return '<div class="card gaps"><h3>정책과 다른 현재 상태 <span class="num">' + items.length + '</span>건</h3><ul>' +
+      items.map(function (it) { return '<li><a href="#' + pfx + '-r-' + it[0] + '">' + it[1] + '<span class="d">' + it[2] + ' ›</span></a></li>'; }).join('') +
+      '</ul></div>';
+  }
+
+  function heatCur(state) {
+    if (state === 'ok') return st('ok', '✓', '사용 1.42%') + '<small>여유 0.58%</small>';
+    if (state === 'over') return st('warn', '!', '초과 — 2.66%') + '<small>한도보다 0.66% 많음</small>';
+    if (state === 'partial') return st('warn', '?', '최소 1.12%') + '<small>손절가 미설정 2/5</small>';
+    return st('warn', '?', '계산 불가') + '<small>손절가 미설정 5/5</small>';
+  }
+
+  function polTable(state, pfx) {
+    function row(id, name, srcKind, val, cur) {
+      return '<tr id="' + pfx + '-r-' + id + '"><th scope="row"><div class="name">' + name + '</div>' + src(srcKind) + '</th>' +
+        '<td class="v num">' + val + '</td><td class="cur">' + cur + '</td></tr>';
+    }
+    function grp(t) { return '<tr class="grp"><th colspan="3" scope="colgroup">' + t + '</th></tr>'; }
+    var na = function (t) { return st('na', '—', t); };
+    return '<div class="card"><table class="pol"><caption>정책 값과 현재 계좌<small>기준 총자산 20,000,000원(예시)으로 환산 · 정책은 읽기 전용</small></caption>' +
+      '<colgroup><col class="c-name"><col class="c-val"><col class="c-cur"></colgroup>' +
+      '<thead><tr><th scope="col">항목 · 출처</th><th scope="col">정책값</th><th scope="col">현재 상태</th></tr></thead><tbody>' +
+      grp('손실 한도') +
+      row('heat', '한 번에 감내할 손실', 'user', '총자산의 2%<small>≈400,000원</small>', heatCur(state)) +
+      row('trade', '거래당 리스크', 'prop', '총자산의 0.25%<small>≈50,000원 · 손절폭으로 매수 금액 산출</small>', na('신규 진입 때 적용')) +
+      row('week', '주간 손실 한도', 'doc', '-3%<small>≈600,000원</small>', na('주간 기준선 미산출')) +
+      row('month', '월간 / 연간 손실 한도', 'doc', '-5% / -15%<small>≈1,000,000원 / 3,000,000원</small>', na('미산출')) +
+      grp('포지션 구성') +
+      row('count', '보유 종목 최대 수', 'user', '10종목', st('ok', '✓', '5종목') + '<small>5개 더 가능</small>') +
+      row('sym', '심볼당 최대 비중', 'prop', '15%<small>문서 정책은 30%</small>', st('warn', '!', '초과 — AAA 62.0%') + '<small>15%·30% 모두 넘음 · 같은 업종(AAA·CCC·DDD) 합 87%</small>') +
+      row('cash', '현금 하한', 'doc', '총자산의 10%<small>≈2,000,000원</small>', st('warn', '!', '미달 — 3.0%') + '<small>≈60만원</small>') +
+      row('split', '분할 매수', 'prop', '최대 2회<small>60 / 40</small>', na('신규 진입 때 적용')) +
+      grp('시장') +
+      row('mkt', '시장 우선순위', 'user', '미국 → 국내', st('info', 'ⓘ', '미국 70% · 국내 30%') + '<small>주식 평가액 기준 · 예시</small>') +
+      '</tbody></table>' +
+      '<div class="legend" aria-label="출처 배지 설명"><span>출처:</span>' + src('user') + src('prop') + src('doc') + '</div></div>';
+  }
+
+  function foot() {
+    return '<div class="foot"><b>이 값은 읽기 전용입니다. 변경은 사용자 승인 후 반영됩니다.</b><br>' +
+      '"제안" 값은 아직 승인되지 않은 값이라 참고용입니다. 정책 저장 2026-10-22 · 근거 T-064 §7.</div>';
+  }
+
+  function page(state, pfx) {
+    var body;
+    if (state === 'loading') {
+      body = '<div aria-busy="true"><p class="sr" role="status">리스크 정책을 불러오는 중…</p>' +
+        '<div class="card skel-card" aria-hidden="true"><div class="skel s"></div><div class="skel l"></div><div class="skel m"></div><div class="skel"></div></div>' +
+        '<div class="card skel-card" aria-hidden="true" style="margin-top:12px"><div class="skel m"></div><div class="skel"></div><div class="skel"></div><div class="skel s"></div></div></div>';
+    } else if (state === 'error') {
+      body = '<div class="card err" role="alert"><h3>' + st('warn', '!', '리스크 정책을 불러오지 못했습니다') + '</h3>' +
+        '<p>이 화면이 값을 받지 못했을 뿐입니다. <b>정책이 없다는 뜻이 아닙니다.</b></p>' +
+        '<p class="num" style="font-size:12px">오류: 서버 응답 503 (예시)</p>' +
+        '<button type="button" class="retry">다시 시도</button></div>' + enforceStrip();
+    } else if (state === 'empty') {
+      body = enforceStrip() + '<div class="card empty"><h3>저장된 리스크 정책이 없습니다</h3>' +
+        '<p>"한 번에 감내할 손실 2%" 같은 확정 값이 아직 서버에 저장되지 않았습니다. 저장 전까지 이 화면은 기본값을 지어내 보여 주지 않습니다.</p>' +
+        '<p>저장은 사용자 승인 후 반영됩니다. 이 화면에서는 값을 바꿀 수 없습니다.</p></div>';
+    } else {
+      body = '<div class="rp-grid"><div class="rp-left">' + enforceStrip() + hero(state, pfx) + gaps(state, pfx) + '</div>' +
+        '<div class="rp-left">' + polTable(state, pfx) + foot() + '</div></div>';
+    }
+    return head() + '<main class="app-body">' + body + '</main>' + tabs();
+  }
+
+  var mob = document.getElementById('rp-mobile');
+  var desk = document.getElementById('rp-desktop');
+  var hub = document.getElementById('hub-row');
+  function render(state) {
+    mob.innerHTML = page(state, 'm');
+    desk.innerHTML = page(state, 'd');
+    hub.innerHTML = hubRow(state);
+  }
+  document.getElementById('state-radios').addEventListener('change', function (e) {
+    if (e.target && e.target.name === 'st') render(e.target.value);
+  });
+  render('unknown');
+})();
+</script>
+</body>
+</html>

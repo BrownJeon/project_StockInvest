@@ -7,6 +7,8 @@ import { requestJson, type RequestFailure } from '@/lib/http';
 import { LlmProviderSection } from './LlmProviderSection';
 import { ExchangeAccountSection } from './ExchangeAccountSection';
 import { NotifyChannelSection } from './NotifyChannelSection';
+import { RiskPolicySummaryRow } from './RiskPolicySummaryRow';
+import { EnforcedStrip } from '@/components/risk/EnforcedStrip';
 
 interface StrategyItem {
   id: string;
@@ -445,6 +447,9 @@ export function SettingsPage() {
       <SectionHeader title="안전장치 (공통)" />
       <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
 
+        {/* T-066 — 이 카드는 실제 주문에 적용된다(집행 중). 아래 '리스크 정책' 행은 표시·위험 계산 전용이라 구분한다. */}
+        <EnforcedStrip />
+
         {/* 실거래 여부 toggle (내부 dryRun 의미를 반전해 노출) */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
@@ -575,6 +580,9 @@ export function SettingsPage() {
         </div>
 
       </div>
+
+      {/* T-066 리스크 정책 요약 — 값 변경은 /settings/risk-policy 에서만 (자체 조회·자체 저장, 이 페이지 저장 바와 무관) */}
+      <RiskPolicySummaryRow />
 
       {/* 거래 보호 — 종목별 거래 차단 */}
       <SectionHeader title="거래 보호" />
