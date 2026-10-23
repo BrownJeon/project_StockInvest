@@ -5,9 +5,27 @@
 #   bash scripts/test-git-hooks.sh          # 요약만
 #   bash scripts/test-git-hooks.sh -v       # 훅 출력까지 전부 표시
 #
-# ⚠ 이 스크립트는 실제 커밋을 만들지 않고, 워킹트리와 실제 index 도 건드리지 않는다.
-#   GIT_INDEX_FILE 로 임시 index 를 만들어 거기에만 가짜 blob 을 stage 한 뒤
-#   훅을 직접 호출한다. (임시 blob 은 dangling object 로 남고 `git gc` 로 정리된다)
+# ⚠ 실제 저장소에 미치는 영향 — 2026-10-23 T-075 정정. 이전 머리말의 "실제 커밋을 만들지 않고,
+#   워킹트리와 실제 index 도 건드리지 않는다"는 사실이 아니었다. 실제 동작은 아래와 같다.
+#
+#   1) 로직 시나리오 단계 — GIT_INDEX_FILE 로 만든 **임시 index** 에만 가짜 blob 을 stage 하고 훅을
+#      직접 호출한다. 이 단계는 실제 index 를 건드리지 않는다. 다만
+#        · 판정 fixture(agent-vault/10-Flow/tasks/T-983~998-hooktest-*.md)를 **실제 작업 트리에** 잠시
+#          썼다가 EXIT trap 으로 지운다(kill -9 같은 강제 종료면 남을 수 있다). 실행 중 다른 세션이
+#          `git add -A` 하면 그 커밋에 섞일 수 있다.
+#        · 가짜 blob 은 .git/objects 에 dangling object 로 남는다(`git gc` 로 정리된다).
+#   2) [E2E] 단계 — 로직 시나리오가 전부 통과하고 core.hooksPath 가 설정돼 있을 때만 돈다.
+#      **실제 index** 에 가짜 blob(src/lib/safety/dry-run.ts)을 올리고 실제 `git commit` 을 시도한다
+#      (훅이 막아야 정상). 끝나면 `git read-tree HEAD` 로 되돌리는데, 이 명령은 index 전체를 HEAD 로
+#      덮어쓴다 → **그 시점에 어느 세션이 stage 해 둔 변경이든 전부 지운다**(작업 트리 파일 내용은
+#      그대로이고 stage 만 사라진다). 시작 전에 stage 가 비어 있지 않으면 E2E 를 건너뛰지만, 그 확인과
+#      되돌리기 사이(수 초)에 다른 세션이 stage 하면 그 stage 가 지워지고, 그 사이 다른 세션이 커밋하면
+#      가짜 dry-run.ts 내용이 그 커밋에 실릴 수 있다. 훅이 fail-open 이어서 커밋이 실제로 생기면
+#      `git reset --soft` 로 HEAD 를 되돌린다.
+#
+#   ⇒ **다른 세션이 stage 중이거나 커밋 직전일 때는 실행하지 말 것.** 실행 전에 index 가 비었는지 확인:
+#        git diff --cached --quiet && echo "stage 비어 있음 — 실행 가능" || git diff --cached --name-only
+#      파일 목록이 나오면 누군가 stage 중이다 — 그 세션과 조율한 뒤 실행한다.
 #
 set -u
 
@@ -57,11 +75,21 @@ stage_and_run() {
   out="$(GIT_INDEX_FILE="$idx" bash "$HOOK" "$msgfile" 2>&1)"
   rc=$?
 
-  if [ "$rc" -eq "$expected" ]; then
+  # (T-075) 선택 단언 — EXPECT_OUT 이 비어 있지 않으면 훅 출력에 그 문자열도 있어야 통과.
+  # 비어 있으면(기존 시나리오 전부) 종료코드만 본다 — 기존 동작 그대로다.
+  local out_ok=1
+  if [ -n "$EXPECT_OUT" ]; then
+    case "$out" in *"$EXPECT_OUT"*) ;; *) out_ok=0 ;; esac
+  fi
+
+  if [ "$rc" -eq "$expected" ] && [ "$out_ok" -eq 1 ]; then
     printf '  ✅ %-62s (exit %d, 기대 %d)\n' "$label" "$rc" "$expected"
     PASS_N=$((PASS_N + 1))
   else
     printf '  ❌ %-62s (exit %d, 기대 %d)\n' "$label" "$rc" "$expected"
+    if [ "$out_ok" -eq 0 ]; then
+      printf '       └ 훅 출력에 기대 문자열이 없음: %s\n' "$EXPECT_OUT"
+    fi
     FAIL_N=$((FAIL_N + 1))
     VERBOSE=1
   fi
@@ -72,6 +100,18 @@ stage_and_run() {
 }
 
 msg() { printf '%s\n' "$1" > "$WORK/msg"; printf '%s' "$WORK/msg"; }
+
+# stage_and_run_expect <훅 출력에 있어야 할 문자열> <expected_exit> <label> <commit_msg_file> <staged_path>...
+# (T-075) 통과(exit 0) 시나리오는 종료코드만으로 "안전경로가 아니라 조용히 통과"와
+# "안전경로로 인식된 뒤 유효 판정으로 통과"를 구분하지 못한다. 후자를 고정할 때 쓴다.
+# 함수 앞 임시 대입(VAR=x func) 대신 명시 대입·해제를 쓴다 — POSIX 모드에서는 임시 대입이
+# 호출 뒤에도 남아 이후 시나리오를 오염시키기 때문이다.
+EXPECT_OUT=""
+stage_and_run_expect() {
+  EXPECT_OUT="$1"; shift
+  stage_and_run "$@"
+  EXPECT_OUT=""
+}
 
 SAFETY_FILE="src/lib/safety/dry-run.ts"
 
@@ -466,6 +506,223 @@ stage_and_run 1 "(ad) 신형식+구형식 동시 참조, 구형식 몫 파일 �
   "$SAFETY_FILE" "src/lib/exchanges/kis.ts"
 
 echo ""
+echo "[T-075 — 전략 검증 입구 · 공유 DDL · 부팅 DDL 경로 추가]"
+
+# 경로마다 ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과 ③scope 밖 → 차단.
+# 각 시나리오는 새 경로 파일 **하나만** stage 한다 — 그래야 목록에서 그 경로 하나만 빠져도
+# 그 경로의 ①·②·③ 이 실패한다(경로별 변이 감지). ② 는 종료코드 0 만으로는 "안전경로가 아니라
+# 조용히 통과"와 구분되지 않으므로 훅의 통과 문구까지 확인한다(stage_and_run_expect).
+T075_STRAT="src/app/api/strategies/[id]/route.ts"          # 실제 PATCH 입구
+T075_MIG="scripts/migrations/T-999-hooktest-new.sql"        # 신규 SQL 파일(디렉토리 전체 매치)
+T075_DB="src/lib/db.ts"                                     # 부팅 DDL(setupDB)
+T075_OK="Reviewer 감사 기록 확인"                           # 훅이 유효 판정 통과 때만 내는 문구
+
+cat > "agent-vault/10-Flow/tasks/T-985-hooktest-t075-scoped.md" <<'EOF'
+---
+task_id: T-985
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/app/api/strategies/, scripts/migrations/, src/lib/db.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-985-hooktest-t075-scoped.md")
+
+# ③ 용 — 이름이 비슷한 '이웃' 경로만 검토한 판정. 새 3경로 어느 것도 덮지 않아야 한다.
+#    settings/strategies/ ≠ strategies/ · cron-runner.sh ≠ migrations/ · 디렉토리 src/lib/db/ ≠ 파일 src/lib/db.ts
+cat > "agent-vault/10-Flow/tasks/T-984-hooktest-t075-nearmiss.md" <<'EOF'
+---
+task_id: T-984
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/app/api/settings/strategies/, scripts/cron-runner.sh, src/lib/db/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-984-hooktest-t075-nearmiss.md")
+
+stage_and_run 1 "(t075-a1) strategies/[id]/route.ts + 판정 미기록(T-993) → 차단" \
+  "$(msg 'fix(T-993): 전략 PATCH 필드 추가')" "$T075_STRAT"
+stage_and_run_expect "$T075_OK" 0 "(t075-a2) strategies/[id]/route.ts + T-985(scope 포함) → 통과" \
+  "$(msg 'fix(T-985): 전략 PATCH 필드 추가')" "$T075_STRAT"
+stage_and_run 1 "(t075-a3) strategies/[id]/route.ts + T-984(이웃 경로 scope) → 차단" \
+  "$(msg 'fix(T-984): 전략 PATCH 필드 추가')" "$T075_STRAT"
+
+stage_and_run 1 "(t075-b1) scripts/migrations/ 신규 SQL + 판정 미기록(T-993) → 차단" \
+  "$(msg 'feat(T-993): 테이블 추가 DDL')" "$T075_MIG"
+stage_and_run_expect "$T075_OK" 0 "(t075-b2) scripts/migrations/ 신규 SQL + T-985(scope 포함) → 통과" \
+  "$(msg 'feat(T-985): 테이블 추가 DDL')" "$T075_MIG"
+stage_and_run 1 "(t075-b3) scripts/migrations/ 신규 SQL + T-984(이웃 경로 scope) → 차단" \
+  "$(msg 'feat(T-984): 테이블 추가 DDL')" "$T075_MIG"
+
+stage_and_run 1 "(t075-c1) src/lib/db.ts + 판정 미기록(T-993) → 차단" \
+  "$(msg 'fix(T-993): setupDB 컬럼 추가')" "$T075_DB"
+stage_and_run_expect "$T075_OK" 0 "(t075-c2) src/lib/db.ts + T-985(scope 포함) → 통과" \
+  "$(msg 'fix(T-985): setupDB 컬럼 추가')" "$T075_DB"
+stage_and_run 1 "(t075-c3) src/lib/db.ts + T-984(이웃 경로 scope) → 차단" \
+  "$(msg 'fix(T-984): setupDB 컬럼 추가')" "$T075_DB"
+
+# 사용자 결정(2026-10-23 "권고대로")으로 넣지 않은 경로 — 계속 비차단이어야 한다(과도차단 회귀 방지)
+stage_and_run 0 "(t075-x) settings/risk-policy·lib/reports → 여전히 통과(미포함 결정)" \
+  "$(msg 'chore: 리스크 정책·리포트 수정')" \
+  "src/app/api/settings/risk-policy/route.ts" "src/lib/reports/trade-report.ts"
+
+echo ""
+echo "[T-075 Stage 2 — 인접 경로 비차단 · 하위 경로 차단 (Reviewer 지적 1)]"
+
+# 이름만 비슷한 이웃 경로는 감사 대상이 아니다 — task ID 없이도 통과해야 한다.
+# 통과 기대 시나리오는 묶어도 약해지지 않는다(하나라도 잘못 매치되면 exit 1 로 실패).
+# 줄마다 겨냥하는 변이: 끝 `$` 삭제(db.ts.bak) · `^` 삭제(앞에 디렉토리가 붙은 경로) · `.` 이스케이프
+# 누락(db_ts) · `^src/lib/db` 확대(db.test.ts) · 끝 `/` 삭제(-foo/·-old/) · `^scripts/` 확대(other.sh).
+stage_and_run 0 "(t075-n1) db.ts 이웃(db.ts.bak·db.test.ts·db_ts·foo/src/lib/db.ts) → 통과" \
+  "$(msg 'chore: 이웃 파일 정리')" \
+  "src/lib/db.ts.bak" "src/lib/db.test.ts" "src/lib/db_ts" "foo/src/lib/db.ts"
+stage_and_run 0 "(t075-n2) strategies 이웃(strategies-foo/·mockups/…/strategies/) → 통과" \
+  "$(msg 'chore: 이웃 라우트 정리')" \
+  "src/app/api/strategies-foo/x.ts" "mockups/src/app/api/strategies/route.ts"
+stage_and_run 0 "(t075-n3) migrations 이웃(migrations-old/·other.sh·docs/scripts/migrations/) → 통과" \
+  "$(msg 'chore: 이웃 스크립트 정리')" \
+  "scripts/migrations-old/x.sql" "scripts/other.sh" "docs/scripts/migrations/x.sql"
+
+# 하위 경로·대괄호 경로·비 .sql 파일도 디렉토리 전체 매치로 감사 대상이다.
+# 차단 기대 시나리오는 묶으면 하나만 새도 다른 하나가 막아 가려지므로 경로 하나씩 둔다.
+# 겨냥 변이: migrations 를 최상위 `.sql` 로 축소 · strategies 를 최상위 파일로 축소.
+stage_and_run 1 "(t075-p1) strategies/[id]/__tests__/route.test.ts (하위·대괄호) → 차단" \
+  "$(msg 'test: 전략 PATCH 시험 수정')" "src/app/api/strategies/[id]/__tests__/route.test.ts"
+stage_and_run 1 "(t075-p2) scripts/migrations/sub/rollback.sh (하위 폴더·비 .sql) → 차단" \
+  "$(msg 'chore: 롤백 스크립트 추가')" "scripts/migrations/sub/rollback.sh"
+
+echo ""
+echo "[T-075 Stage 2 — 비 ASCII·특수문자 파일명 우회 차단 (Reviewer 지적 2)]"
+
+# git 기본값(core.quotePath=true)은 비 ASCII 이름을 따옴표·8진수로 인용해 `^src/…` 앵커가 빗나갔다.
+# 따옴표(")가 든 이름은 core.quotePath=false 여도 인용되므로 k4 가 그 차이를 고정한다.
+T075_KO="src/lib/safety/한글.ts"
+stage_and_run 1 "(t075-k1) 안전경로 한글 파일명 + task ID 없음 → 차단" \
+  "$(msg 'fix: 한글 이름 모듈')" "$T075_KO"
+stage_and_run_expect "$T075_OK" 0 "(t075-k2) 안전경로 한글 파일명 + T-995(scope 포함) → 통과" \
+  "$(msg 'fix(T-995): 한글 이름 모듈')" "$T075_KO"
+stage_and_run 1 "(t075-k3) 새 경로 아래 한글 파일명(scripts/migrations/) → 차단" \
+  "$(msg 'feat: 한글 이름 DDL')" "scripts/migrations/한글.sql"
+stage_and_run 1 "(t075-k4) 안전경로 따옴표 든 파일명(quotePath=false 로는 못 막음) → 차단" \
+  "$(msg 'fix: 특수문자 이름')" 'src/lib/safety/a"b.ts'
+
+# (t075-k5) 목록을 파이프(-z | tr)로 읽게 바꾼 뒤에도 git 실패는 차단(fail-closed)이어야 한다.
+#   깨진 index 를 주어 git diff 를 실패시킨다. stage_and_run 은 정상 index 를 만들어 쓰므로 여기만 직접 호출한다.
+printf 'not an index\n' > "$WORK/broken.index"
+k5_out="$(GIT_INDEX_FILE="$WORK/broken.index" bash "$HOOK" "$(msg 'fix: 아무거나')" 2>&1)"
+k5_rc=$?
+k5_label="(t075-k5) git 이 목록을 못 읽으면(깨진 index) → 차단·안내 문구"
+case "$k5_out" in *"staged 파일 목록을 읽지 못했습니다"*) k5_msg=1 ;; *) k5_msg=0 ;; esac
+if [ "$k5_rc" -eq 1 ] && [ "$k5_msg" -eq 1 ]; then
+  printf '  ✅ %-62s (exit %d, 기대 %d)\n' "$k5_label" "$k5_rc" 1
+  PASS_N=$((PASS_N + 1))
+else
+  printf '  ❌ %-62s (exit %d, 기대 %d)\n' "$k5_label" "$k5_rc" 1
+  [ "$k5_msg" -eq 0 ] && printf '       └ 훅 출력에 기대 문자열이 없음: %s\n' "staged 파일 목록을 읽지 못했습니다"
+  FAIL_N=$((FAIL_N + 1))
+  VERBOSE=1
+fi
+if [ "$VERBOSE" -eq 1 ]; then
+  printf '%s\n' "$k5_out" | sed 's/^/       │ /'
+  echo ""
+fi
+
+echo ""
+echo "[T-075 Stage 3 — 안전 경로 판별 grep 의 오류·비 UTF-8 이름 (Codex C2 지적 1)]"
+
+# (t075-k6) 안전 경로 판별 grep 이 오류(rc 2·127·137)로 끝나도 "안전 경로 없음"으로 읽혀 통과하면 안 된다.
+#   항상 실패하는 grep 대역을 PATH 맨 앞에 둔다. 훅은 이 판별 전에 grep 을 부르지 않으므로 대역이 닿는
+#   첫 지점이 바로 그 판별이다. 안전 파일 1개 + task ID 없음 → 차단 + 안내 문구.
+#   (WORK 가 noexec 마운트면 대역이 실행되지 않아 진짜 grep 이 쓰이고, 안내 문구가 없어 이 시나리오가
+#    **실패**한다 — 조용히 통과하지 않는다.)
+mkdir -p "$WORK/fakegrep"
+for k6_rc in 2 127 137; do
+  printf '#!/bin/sh\nexit %s\n' "$k6_rc" > "$WORK/fakegrep/grep"; chmod +x "$WORK/fakegrep/grep"
+  k6_idx="$WORK/k6.index"; rm -f "$k6_idx"
+  GIT_INDEX_FILE="$k6_idx" git read-tree HEAD
+  k6_blob="$(printf 'dummy change for hook test\n' | git hash-object -w --stdin)"
+  GIT_INDEX_FILE="$k6_idx" git update-index --add --cacheinfo "100644,$k6_blob,$SAFETY_FILE"
+  k6_out="$(PATH="$WORK/fakegrep:$PATH" GIT_INDEX_FILE="$k6_idx" bash "$HOOK" "$(msg 'fix: 아무거나')" 2>&1)"
+  k6_rc_hook=$?
+  k6_label="(t075-k6) grep 오류(rc=$k6_rc) → 안전 경로 없음으로 읽지 않고 차단"
+  case "$k6_out" in *"안전 경로 판별(grep)"*) k6_msg=1 ;; *) k6_msg=0 ;; esac
+  if [ "$k6_rc_hook" -eq 1 ] && [ "$k6_msg" -eq 1 ]; then
+    printf '  ✅ %-62s (exit %d, 기대 %d)\n' "$k6_label" "$k6_rc_hook" 1
+    PASS_N=$((PASS_N + 1))
+  else
+    printf '  ❌ %-62s (exit %d, 기대 %d)\n' "$k6_label" "$k6_rc_hook" 1
+    if [ "$k6_msg" -eq 0 ]; then
+      printf '       └ 훅 출력에 기대 문자열이 없음: %s\n' "안전 경로 판별(grep)"
+    fi
+    FAIL_N=$((FAIL_N + 1))
+    VERBOSE=1
+  fi
+  if [ "$VERBOSE" -eq 1 ]; then
+    printf '%s\n' "$k6_out" | sed 's/^/       │ /'
+    echo ""
+  fi
+done
+rm -rf "$WORK/fakegrep"
+
+# (t075-k7) 비 UTF-8 바이트 이름(EUC-KR "가" = 0xB0 0xA1)은 UTF-8 로케일의 grep 이 "binary file matches"
+#   만 내고 출력을 지워 통과했다. 로케일을 UTF-8 로 고정해 환경과 무관하게 재현한다.
+#   함수 앞 임시 대입(LC_ALL=… stage_and_run)을 쓰지 않는다 — POSIX 모드에서는 대입이 호출 뒤에도 남는다
+#   (stage_and_run_expect 와 같은 이유). 명시적으로 export 하고 원래 값으로 되돌린다.
+k7_had_lc="${LC_ALL+set}"; k7_prev_lc="${LC_ALL:-}"
+export LC_ALL=C.UTF-8
+stage_and_run 1 "(t075-k7) 안전경로 비 UTF-8 파일명(UTF-8 로케일) → 차단" \
+  "$(msg 'fix: 비 UTF-8 이름')" "src/lib/safety/$(printf '\260\241').ts"
+if [ "$k7_had_lc" = "set" ]; then export LC_ALL="$k7_prev_lc"; else unset LC_ALL; fi
+
+echo ""
+echo "[T-075 Stage 3b — 혼합 목록: 안전 파일의 위치와 무관하게 검사 (Reviewer 이전 MINOR)]"
+
+# git 은 staged 목록을 경로 순(바이트 순)으로 내보낸다. 목록의 첫 줄이나 마지막 줄만 보는 회귀
+# (`| head -n 1`·`| tail -n 1`)는 기존 시나리오 대부분이 파일 1개라서 드러나지 않았다.
+# 안전 파일이 앞·뒤·가운데에 있는 세 가지 순서마다 ①판정 미기록 → 차단 ②scope 포함 → 통과
+# ③scope 가 안전 파일을 빠뜨림 → 차단을 확인한다. (stage 순서는 의미가 없다 — git 이 정렬한다.)
+#   앞: src/lib/safety/aaa.ts < zzz/notes.md       뒤: docs/aaa.md < src/lib/safety/zzz.ts
+#   가운데: README.md < docs/a.md < src/lib/safety/mid.ts < zzz/b.md   (대문자가 소문자보다 앞)
+T075_MIX_TAIL=( "docs/aaa.md" "src/lib/safety/zzz.ts" )
+T075_MIX_HEAD=( "src/lib/safety/aaa.ts" "zzz/notes.md" )
+T075_MIX_MID=( "README.md" "docs/a.md" "src/lib/safety/mid.ts" "zzz/b.md" )
+
+stage_and_run 1 "(t075-m1) [비안전, 안전] 판정 미기록(T-993) → 차단" \
+  "$(msg 'fix(T-993): 혼합 커밋')" "${T075_MIX_TAIL[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t075-m2) [비안전, 안전] T-995(scope 포함) → 통과" \
+  "$(msg 'fix(T-995): 혼합 커밋')" "${T075_MIX_TAIL[@]}"
+stage_and_run 1 "(t075-m3) [비안전, 안전] T-984(scope 가 안전 파일 빠뜨림) → 차단" \
+  "$(msg 'fix(T-984): 혼합 커밋')" "${T075_MIX_TAIL[@]}"
+
+stage_and_run 1 "(t075-m4) [안전, 비안전] 판정 미기록(T-993) → 차단" \
+  "$(msg 'fix(T-993): 혼합 커밋')" "${T075_MIX_HEAD[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t075-m5) [안전, 비안전] T-995(scope 포함) → 통과" \
+  "$(msg 'fix(T-995): 혼합 커밋')" "${T075_MIX_HEAD[@]}"
+stage_and_run 1 "(t075-m6) [안전, 비안전] T-984(scope 가 안전 파일 빠뜨림) → 차단" \
+  "$(msg 'fix(T-984): 혼합 커밋')" "${T075_MIX_HEAD[@]}"
+
+stage_and_run 1 "(t075-m7) [비안전×2, 안전, 비안전] 판정 미기록(T-993) → 차단" \
+  "$(msg 'fix(T-993): 혼합 커밋')" "${T075_MIX_MID[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t075-m8) [비안전×2, 안전, 비안전] T-995(scope 포함) → 통과" \
+  "$(msg 'fix(T-995): 혼합 커밋')" "${T075_MIX_MID[@]}"
+stage_and_run 1 "(t075-m9) [비안전×2, 안전, 비안전] T-984(scope 가 안전 파일 빠뜨림) → 차단" \
+  "$(msg 'fix(T-984): 혼합 커밋')" "${T075_MIX_MID[@]}"
+
+# 안전 파일이 2개일 때 scope 가 그중 하나만 덮으면 차단 — 판정 대조가 첫/마지막 안전 파일만 보는 회귀를 잡는다.
+#   안전 파일 정렬: src/lib/safety/aaa.ts < src/lib/strategy/zzz.ts
+#   m10: T-995(scope src/lib/safety/) 는 첫 파일만 덮는다 · m11: T-983(scope src/lib/strategy/) 는 마지막 파일만 덮는다
+cat > "agent-vault/10-Flow/tasks/T-983-hooktest-t075-strategyscope.md" <<'EOF'
+---
+task_id: T-983
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/strategy/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-983-hooktest-t075-strategyscope.md")
+T075_MIX_TWO=( "docs/aaa.md" "src/lib/safety/aaa.ts" "src/lib/strategy/zzz.ts" "zzz/notes.md" )
+stage_and_run 1 "(t075-m10) 안전 2개 중 첫 파일만 scope(T-995) → 차단" \
+  "$(msg 'fix(T-995): 혼합 커밋')" "${T075_MIX_TWO[@]}"
+stage_and_run 1 "(t075-m11) 안전 2개 중 마지막 파일만 scope(T-983) → 차단" \
+  "$(msg 'fix(T-983): 혼합 커밋')" "${T075_MIX_TWO[@]}"
+
+echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
 printf '결과: %d 통과 / %d 실패\n' "$PASS_N" "$FAIL_N"
 echo ""
@@ -543,7 +800,7 @@ if [ "$VERBOSE" -eq 1 ]; then
 fi
 
 echo ""
-echo "워킹트리 영향 확인 (T-989~998 테스트 fixture 가 남아 있지 않아야 함):"
+echo "워킹트리 영향 확인 (T-983~998 테스트 fixture 가 남아 있지 않아야 함):"
 git status --short | sed 's/^/  /'
 echo ""
 echo "✅ 전체 검증 통과."

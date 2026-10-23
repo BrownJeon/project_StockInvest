@@ -1,7 +1,7 @@
 ---
 task_id: T-072
 title: 검증 상태 관문(D5) — 검증 안 된 전략의 신규 매수 실주문 차단 + 합격 기준 사전 등록
-status: in-progress
+status: review
 priority: high
 roles_involved: [leader, analyst, developer, reviewer, qa, deployer, judge, codex]
 related_tasks: [T-064, T-067, T-070, T-073]
@@ -766,3 +766,42 @@ ALTER TABLE strategies
 - [04:29] 못 확인한 것: MariaDB **10.11 에서의 실제 실행**(로컬은 11.8.8, 이미지 새로 받기 금지) · 타 세션 변경과 합친 상태의 jest/tsc(위 INFO ⓐ로 불가) · 장중 실제 `entry-watcher`·엔진·텔레그램 렌더링·웹 승인 화면 토스트(`ApprovalQueue.tsx` 가 거절 응답을 읽지 않음 — T-073 몫)·KIS 실제 응답 · F-14 의 "폐장 시간대에는 거래소로 나가는 트리거가 없다" 가정의 실측(코드에 장 시간 차단은 없음을 재확인했을 뿐) · blue/green 구·신 프로세스 공존 구간 · eslint(저장소에 설정 없음) · 운영 DB 쓰기 경로(금지). 배포 후에만 볼 수 있는 항목은 task 의 '배포 체크리스트' 5번 그대로다.
 - [04:29] 배포 전 Leader 가 알아야 할 것: (1) 위 Q5(e) 대로 명시 경로로만 커밋하고 board.md 는 hunk 를 나눈다. (2) 마이그레이션은 D-3 승인 범위이고 적용기는 드라이런 3문장으로 확인했다 — 권한 분류기가 거부하면 사용자가 `mysql … < scripts/migrations/T-072-validation-gate.sql` 로 직접(파일 헤더 안내, 위에서 CLI 경로 검증함). (3) 배포 직전 `t072-predeploy.sql` 을 다시 실행해 위 기준선(대기·감시 0, 진행 중 주문 0, 최근 30분 주문 0)을 재확인하고, 배포 후 고아 탐지 쿼리 기대값 0·`strategies` 16행 전부 `unvalidated`·`paper_fills` 존재를 확인. (4) 사용자 고지: 배포 직후 신규 매수는 앱 경로 전부 불가, post-market 카드는 전부 `skipped`(대시보드 '내일'·추천 탭에서 사라짐), 승인 큐 화면은 거절 문구를 못 보여 줌(텔레그램은 한국어 문구), D-2 가상 체결은 시그널이 있는 G1·G2 만 대상. (5) 롤백(코드 revert)은 관문을 없애 신규 매수를 다시 연다(`safety_dry_run=false`) — 롤백 판단 때 킬스위치/DRY_RUN 을 함께 정한다. (6) 열린 결정: `SAFETY_PATHS` 에 `^src/app/api/strategies/` 추가(권고: 추가), 첫 승급 전 전략 ID 불일치(`oversold-bounce-v1` ↔ `oversold-bounce-daily-v1`)·`POST /api/signals` 의 `body.strategyId` 신뢰 경계 정리.
 - [04:29] **QA 판정: PASS (범위: Q1 tsc·시험 포함 tsc·jest 전체(DB 포함 222/222)·next build·시간대 2종 재현, Q2 운영 DB 읽기 전용 스키마 대조(SQL 전수), Q3 적용기 드라이런+일회용 DB 멱등·롤백·CLI 경로, Q4 실 DB 독립 시험 65/65+변이 대조, Q5 범위·scope·훅 모사·시크릿·vault 혼입 확인, Q6 문서·고아 탐지 쿼리, Q7 운영 읽기 전용 기준선 / 미실행: MariaDB 10.11 실행·타 세션 합친 상태 시험·장중 실운영 관측·화면 검증(화면 변경 없음))**
+
+## 배포 기록
+
+| 항목 | 값 |
+|---|---|
+| 마이그레이션 | 2026-10-23 05:09 KST · 사용자 승인 D-3 범위에서 Leader 실행 · `scripts/migrations/T-072-validation-gate.sql` 3문장 모두 OK · 운영 MariaDB 10.11.11 · `strategies` 16행 전부 `unvalidated`, `paper_fills` 생성 |
+| 커밋 | `fa0669c` (58파일, +5,705/-86, 커밋 훅 통과) |
+| push | 2026-10-23 05:10:17 KST · `1163fe2..fa0669c` |
+| 릴리스 | `20261023-051045-fa0669c9` · `RELEASE_RESULT ok` · `migrated:false`(웹훅 배포는 DDL 을 돌리지 않음 — 마이그레이션은 별도로 먼저 적용) · 롤백 대상 `20261022-225754-1163fe2d` |
+| 같은 배포에 실린 다른 작업 | 없음(커밋 1개 — T-072 코드·시험·마이그레이션 SQL·docs + T-072/T-073 문서·인수인계 정정·20-Log) |
+| 배포 후 확인 (05:11~05:13, 읽기 전용) | `current` 링크=새 릴리스 · pm2 `stockinvest`·`stockinvest-cron` online·재시작 0·새 릴리스 경로, **프로세스 정확히 2개(구 프로세스 공존 없음)** · 핵심 파일 해시 4개 커밋과 일치 · `/api/health` 200 · 인증 없는 `/api/signals`·`/api/strategies` 401 · 앱 기동 로그 정상(텔레그램 폴러 락 획득·환율 수집) · cron 틱 5종 OK(05:12:14) · 고아 탐지 0행 · 새 오류 0 · 배포 이후 시그널·주문 0건 |
+
+## 최종 요약
+
+### [T-072] 검증 안 된 전략의 신규 매수 전부 차단 + 차단분 가상 체결 기록 (D5)
+
+- **상태**: ✅ 운영 반영 · ⏳ 첫 장중 관측 대기(국내 09:00 이후, 미국 22:30 이후)
+- **무엇이 바뀌었나**: 앱이 내보내는 모든 신규 매수는 `validated`(backtested·paper_validated) 전략 귀속 없이는 거래소로 나가지 않는다. 지금 16개 전략이 전부 `unvalidated` 라 **앱을 통한 신규 매수 실주문은 0건**이다. 매도·손절은 영향 없음. 막힌 룰 시그널은 승인 불가 감사 행(`skipped`)과 `paper_fills` 로 기록되고, 승인 요청 알림은 가지 않는다. post-market 카드는 `skipped` 로 기록되어 '내일'·추천 탭에서 사라진다.
+- **배포**: ✅ 운영 반영 — 커밋 `fa0669c` · 2026-10-23 05:10 KST · push(webhook) · 결과 ok · 마이그레이션 05:09 선적용. 같은 배포에 실린 다른 작업: 없음.
+- **AI 가 검증한 것**: 독립 감사 3회 pass(변이 독립 재현), Codex C1·C2 지적 판정 반영, QA 독립 재현(격리 사본 tsc 0·jest 222/222·5,441, `next build` 통과, 시나리오 65/65), **운영 10.11.11 스키마와 새 SQL 전수 대조 불일치 0**, 운영 마이그레이션 실제 적용 성공, 배포 후 위 확인 전부.
+  - 검증 못 한 것: 실제 장중 동작(룰 시그널이 막혀 `skipped`·`paper_fills` 가 쌓이는 모습), 텔레그램·웹 화면 렌더링, 거래소의 장 시간 외 주문 거절 동작, 타 세션 변경과 합친 상태의 전체 jest(작업 트리 tsc 는 타 세션 `@workspace/api-usage` 미설치로 4오류 — T-072 와 무관).
+- **👉 사용자가 확인할 것**:
+  1. 오늘 09:05 이후 텔레그램: 국내 룰 시그널 **승인 요청 알림이 오지 않는 것**이 정상(이전엔 승인 가능 시그널이 생기면 왔음).
+  2. 오늘 16:05 이후 대시보드 '내일' 탭·추천 탭: **신규 카드가 없는 것**이 정상(의도된 결과 — 카드는 `skipped` 로 기록됨).
+  3. 보유 종목 수동 매도·손절 알림은 평소대로 동작해야 한다(이상하면 알려 주세요).
+- **👉 사용자가 결정할 것**:
+  1. 커밋 훅 `SAFETY_PATHS` 에 `src/app/api/strategies/` 추가 여부 — AI 권고: 추가(누가 PATCH 에 검증 상태 필드를 넣어도 감사 없이 커밋되는 것을 막음). 훅 변경이라 사용자 결정.
+  2. T-073(대시보드 개편) 착수 시점 — AI 권고: 지금 analyst 설계부터(읽기 전용 자문, 화면 코드는 데모 승인 전 금지).
+- **남은 일**: 첫 장중 관측(국내 09:05·post-market 16:05·미국 22:35) 결과 기록 / 승급 전 선행 조건(전략 ID 불일치 정리·`body.strategyId` 신뢰 경계·승급 SQL 절차)과 `paper_fills` 첫 소비 전 고아 재조정 — 위 '후속·승급 전 선행 조건' 정본 / T-064·T-070 후속.
+- **이슈·위험**: 새 검증 엔진이 승급 증거를 낼 때까지 신규 매수 실주문 0건(의도). **코드 revert 롤백은 신규 매수를 다시 연다**(`safety_dry_run=false`) — 롤백 시 킬스위치 판단 동반. 컬럼·테이블은 존치. 서브에이전트 문서의 시각 표기가 실제와 어긋난 곳이 있다(Reviewer 판정 줄 [04:07] 등 — 실제는 04:04 전후, 판정 내용 영향 없음).
+
+## 첫 장중 관측 기록 (읽기 전용, Leader)
+
+### 2026-10-23 국내 09:05~09:07 — ✅ 새 관문이 운영에서 의도대로 동작
+- 09:06:13 룰 엔진이 `030200`(`rsi-oversold-v1`) 매수 시그널을 만들려다 G1 에서 막힘 → **승인 가능한 시그널 없음**, 승인 불가 감사 행 `#19346`(`status=skipped`, `indicators.gate=validation_gate`) + 가상 체결 `paper_fills #1`(국내·KRW·지정가 47,285.25·수량 2·의도 금액 122,079원·수수료율 0.014%·`signal_limit_immediate`·사유 `unvalidated`·`origin=engine`) + 진입 쿨다운(entry/030200/buy, 11:06:13 까지 120분, 사유 `validation_gate`).
+- `eval_funnel`: `validation_gate` skip ×1(`validation_lookup_error` 0), `run` pass ×1. 09:00 이후 `orders` 0건, 승인 대기·진입 감시 시그널 0건, **고아 탐지 0행**. 새 관문 관련 오류 로그 0건.
+- 같은 시각 정상 동작 확인: 09:00:06 손절가 도달 요약(`summary:domestic 2종목 → sent`, T-068), 09:04:09 매도 제안 요약 sent(텔레그램 delivered), cron 틱(진입 감시·보유 점검·손절 알림) 매분 OK.
+- 별개 관찰(T-072 무관, 기존 현상으로 추정): 09:05:50 이후 `kis-throttle` 대기 30초 초과 경고(bulk lane, 5req/s)와 `[kis-domestic] minute API unavailable … falling back to daily` 다수 — 장 시작 직후 후보 캔들 대량 수집 시 요청 대기열 포화. 감사 F03(일봉 대체가 장중 룰로 조용히 실행) 과 같은 계열. 후속 후보.
+- 달러 불일치(H1 증거금 vs H2 애프터마켓 체결) 판별용 09시대 스냅샷은 09:06 시점에 아직 없음 → 이후 확인.
