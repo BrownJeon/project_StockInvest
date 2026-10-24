@@ -205,3 +205,52 @@ pending → accepted → partially_filled → filled   (해외 market 도 지정
 > - **탐지(읽기 전용, 기대값 0)**:
 >   `SELECT s.id, s.symbol, s.scenario_source, JSON_UNQUOTE(JSON_EXTRACT(s.indicators,'$.validation_gate.origin')) AS origin FROM signals s LEFT JOIN paper_fills p ON p.signal_id = s.id WHERE s.status = 'skipped' AND JSON_UNQUOTE(JSON_EXTRACT(s.indicators,'$.gate')) = 'validation_gate' AND p.id IS NULL`
 > - **재조정**: 감사 행이 재조정에 필요한 정보를 모두 갖고 있어 멱등 재조정이 가능하다. 재조정 작업은 이 테이블을 처음 소비하는 task(T-064/T-070 후속)의 **착수 조건**이다.
+
+---
+
+## 자금 이동 원장 — `cash_flow_ledger` + `system_config` 키 2개 (T-074, 2026-10-23)
+
+> **부팅 DDL 이 아니다.** 앱 시작 때 자동으로 만들지 않는다(`src/lib/db.ts` `setupDB()` 에 넣지 않았다 — 정적 시험 고정). 정본 DDL 은
+> [`scripts/migrations/T-074-cash-flow-ledger.sql`](../scripts/migrations/T-074-cash-flow-ledger.sql) 이고 **사용자 명시 승인 후 오프아워에 사람이 직접 적용**한다
+> (`CREATE TABLE IF NOT EXISTS` — 멱등, MariaDB 10.2+ 의 CHECK·PERSISTENT 생성열). 적용 전에는 `/api/cash-ledger/*` 가 503 `not_migrated`(원장 표가 없을 때만 —
+> 다른 표의 1146 은 500)로 답하고 화면은 중립 '준비 중'이다. 새 테이블 1개 추가뿐이라 기존 테이블·행은 바뀌지 않는다. 롤백 SQL 은 파일 끝 주석(표 삭제 + 키 2개 삭제).
+> 쓰기 경로는 `src/lib/ledger/store.ts` 하나이고 주문·시그널·안전장치 경로는 이 테이블을 모른다.
+
+### `cash_flow_ledger` — 사용자가 직접 적는 입금·출금·환전 기록
+"입출금 뺀 투자 손익"(`src/lib/ledger/compute.ts`)의 순입금 원천. **추가 전용** — 금액·종류·통화·시각·메모는 UPDATE 하지 않는다(정정 = 새 행 + 원래 행 소프트 삭제, 취소 = 소프트 삭제·복구 가능). 앱이 UPDATE 하는 열은 `deleted_*`(취소·복구)와 `anchor_*`·`fx_rate_used`·`fx_source`·`krw_equiv`(스냅샷 매칭 파생값)뿐이다(정적 시험 고정).
+
+| 컬럼 | 타입 | 비고 |
+|------|------|------|
+| id | BIGINT PK AUTO | |
+| account_id | INT NOT NULL DEFAULT 1 | FK → `accounts(id)`. 계좌 1 전역(회원별 아님 — 회원 1명 전제, Reviewer L3) |
+| client_entry_id | VARCHAR(36) NOT NULL **UNIQUE** | 폼이 만든 이중 제출 멱등키(8~36자). 같은 키로 **같은 내용**이 다시 오면 저장된 기록을 돌려주고(`replayed`), 내용이 다르면 409 `client_entry_conflict` |
+| kind | ENUM('deposit','withdrawal','exchange') NOT NULL | 방향은 이 값(금액은 항상 양수) |
+| occurred_at | DATETIME NOT NULL | KST 벽시계(`portfolio_snapshots.ts` 와 같은 규약), **분 단위**(CHECK) |
+| currency | CHAR(3) NOT NULL | `KRW`·`USD`(CHECK). 환전은 낸 통화 |
+| amount | DECIMAL(18,2) NOT NULL | > 0(CHECK), 원화는 정수(CHECK) |
+| counter_currency / counter_amount | CHAR(3) / DECIMAL(18,2) NULL | 환전 전용 받은 쪽(양수, 낸 통화와 달라야 함, 원화는 정수). 입출금이면 둘 다 NULL(CHECK). 환율은 저장하지 않고 원화 ÷ 달러로 유도 |
+| fx_rate_used | DECIMAL(12,4) NULL | USD 입출금 원화 환산 환율(반영 스냅샷 USD 행 `price`, 불일치면 기록 뒤 첫 스냅샷) / 환전은 비용 추정용 |
+| fx_source | ENUM('snapshot','user') NULL | |
+| krw_equiv | DECIMAL(18,2) NULL | 순입금용 원화 환산. KRW = 금액, USD = 금액 × `fx_rate_used`, 환전 = NULL |
+| anchor_snapshot_id / anchor_snapshot_ts | BIGINT / DATETIME NULL | 처음 반영된 `portfolio_snapshots` 행(FK 없음 — 정리된 적 있는 로그 테이블) |
+| anchor_status | ENUM('pending','matched','unmatched') NOT NULL DEFAULT 'pending' | 반영 대기(순입금 제외) · 반영됨 · 불일치(기록대로 포함). 조회 때 지연 매칭으로 바뀐다(크론 무관) |
+| anchor_detail | VARCHAR(200) NULL | 반영 근거·불일치 사유(한국어 문장) |
+| memo | VARCHAR(200) NULL | |
+| source | ENUM('user','import') NOT NULL DEFAULT 'user' | `import` = 향후 KIS 입출금 조회 자리 |
+| supersedes_id | BIGINT NULL **UNIQUE** | 정정: 이 행이 대체한 행(FK 자기 참조). 한 기록은 한 번만 정정 |
+| created_at | DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP | |
+| created_by_user_id / deleted_by_user_id | INT UNSIGNED NULL | 감사 열(`users.id` 타입, FK 없음) |
+| deleted_at / delete_reason | DATETIME / VARCHAR(200) NULL | 소프트 삭제(복구 = NULL), 마지막 취소 사유 |
+| live | TINYINT AS (IF(deleted_at IS NULL, 1, NULL)) PERSISTENT | 살아 있는 행만 중복 검사(삭제 행 = NULL 은 충돌 안 함) |
+
+- **CHECK 5개**: `chk_cfl_amount`(amount > 0) · `chk_cfl_ccy`(KRW·USD) · `chk_cfl_krw_int`(원화 정수) · `chk_cfl_minute`(초 = 0) · `chk_cfl_exch`(환전이면 counter_* 필수·다른 통화·양수·원화 정수 — `IS NOT NULL` 명시로 NULL 통과 구멍을 막았다 / 입출금이면 counter_* NULL).
+- **UNIQUE 3개**: `uq_cfl_client_entry(client_entry_id)` · `uq_cfl_live_dup(account_id, kind, currency, amount, occurred_at, live)` — 살아 있는 같은 (종류·통화·금액·분) 기록 중복 금지(409 `duplicate`) · `uq_cfl_supersedes(supersedes_id)`.
+- **인덱스**: `idx_cfl_account_time(account_id, deleted_at, occurred_at)`, `idx_cfl_anchor(anchor_snapshot_id)`.
+- **FK 2개**: `fk_cfl_account → accounts(id)`, `fk_cfl_super → cash_flow_ledger(id)`. 이 표를 참조하는 다른 객체는 없다(표 삭제 한 문장으로 되돌려진다).
+- 콜레이션 `utf8mb4_general_ci` 명시(운영 서버 기본은 utf8mb3 — 운영 테이블과 맞춤). 마이그레이션을 바꾸면 일회용 DB 시험(`T074_TEST_DB_PORT` 를 준 `t074-disposable-mariadb.test.ts`, 24건)을 반드시 돌린다 — 기본 `npm test` 에서는 건너뛴다(Reviewer L6).
+
+### `system_config` 새 키 2개 (DDL 없음, 첫 저장 때 생긴다)
+| 키 | 값(JSON) | 쓰는 곳 |
+|------|------|------|
+| `cash_ledger_baseline` | 손익 기준: `version`·`updatedAt`·`baselineAt`(기준 스냅샷 ts)·`snapshotId`·`snapshot{totalKrw,krwCash,usdCash,fx}`(동결)·`confirmed{krwCash,usdCash,at,note}`(사용자 확인 현금, 없으면 null)·`baselineTotalKrw`·`history[]`(최근 20) | `PUT /api/cash-ledger/baseline` — `version` 낙관적 잠금(불일치 409 `version`). 손상되면 조회가 500 + 복구 안내("키를 삭제한 뒤 기준을 다시 정하세요") |
+| `cash_ledger_candidate_marks` | '입출금 아님' 표시: `version`·`marks{"<스냅샷 id>-<통화>": {state,reason,at,byUserId}}`(최대 1,000)·`log[]`(최대 200) | `POST /api/cash-ledger/candidates/:key/{dismiss,reopen}` — 낙관적 잠금 + 재시도 3회 |

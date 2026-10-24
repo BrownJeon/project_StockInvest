@@ -8,6 +8,7 @@ import { LlmProviderSection } from './LlmProviderSection';
 import { ExchangeAccountSection } from './ExchangeAccountSection';
 import { NotifyChannelSection } from './NotifyChannelSection';
 import { RiskPolicySummaryRow } from './RiskPolicySummaryRow';
+import { CashLedgerSummaryRow } from './CashLedgerSummaryRow';
 import { EnforcedStrip } from '@/components/risk/EnforcedStrip';
 
 interface StrategyItem {
@@ -375,6 +376,10 @@ export function SettingsPage() {
         </div>
         <span style={{ fontSize: 18, color: 'var(--muted)' }} aria-hidden>›</span>
       </Link>
+
+      {/* T-074 자산 기록 — 입출금 기록 요약 행. 기록·계산 전용(주문·계좌 이동 없음), 자체 조회라 이 페이지 저장 바와 무관 */}
+      <SectionHeader title="자산 기록" />
+      <CashLedgerSummaryRow />
 
       {/* 승인 방식 — 두 상태 모두 "사람 승인 후 주문"이다 (자율성과 무관) */}
       <SectionHeader title="승인 방식" />

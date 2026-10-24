@@ -1,0 +1,1364 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="demo-version" content="T-074-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="description" content="T-074-v1 — 설정 하위 화면 '입출금 기록': 입금·출금·환전을 직접 기록하고, 넣고 뺀 돈을 뺀 투자 손익을 보여 주는 새 화면 (합성값)">
+<title>T-074-v1 입출금 기록</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지) */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    /* 데모 주석 전용(앱 UI 아님) */
+    --note: #9fb3d1;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size: 14px; -webkit-text-size-adjust: 100%;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  a { color: inherit; text-decoration: none; }
+  .num { font-variant-numeric: tabular-nums; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .muted { color: var(--muted); }
+  .hide, [hidden] { display: none !important; }
+
+  /* ── 데모 문서 틀 (앱 UI 아님) ── */
+  .page { max-width: 1280px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-bottom)); }
+  .page > header h1 { font-size: 17px; margin: 0 0 6px; line-height: 1.4; }
+  .page > header p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .page > header p b { color: var(--text); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--note); color: var(--note); margin: 0 6px 4px 0; }
+  .sample-banner { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--warn); color: var(--warn) !important; font-size: 13px; font-weight: 700; line-height: 1.5; }
+  section.block { margin-top: 32px; }
+  section.block > h2 { font-size: 15px; margin: 0 0 8px; }
+  section.block > p.lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .note { margin: 8px 0 4px; font-size: 11px; color: var(--note); border-left: 2px dashed var(--note); padding-left: 6px; line-height: 1.5; }
+  .newmark { display: inline-block; font-size: 11px; font-weight: 700; color: var(--note); border: 1px dashed var(--note); border-radius: 6px; padding: 0 6px; margin-left: 6px; vertical-align: middle; text-transform: none; letter-spacing: 0; }
+  .box { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; margin-top: 12px; }
+  ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  ul.plain li { margin-bottom: 4px; }
+  .frame-cap { font-size: 12px; font-weight: 700; color: var(--note); margin: 0 0 6px; }
+  .desk-scroll { position: relative; overflow-x: auto; border: 1px dashed var(--border2); border-radius: 12px; padding: 8px; }
+  .controls { display: flex; flex-direction: column; gap: 10px; max-width: 760px; margin: 0 0 14px; }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 100px; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px;
+                  border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+  .simbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .simbtns button { flex: 1 1 150px; min-height: 44px; padding: 4px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); border: 1px solid var(--border2); color: var(--text); line-height: 1.35; }
+  .compare2 { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 900px) { .compare2 { grid-template-columns: repeat(2, minmax(0, 412px)); align-items: start; } }
+  .decide { border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.06); border-radius: 10px; padding: 12px; margin-top: 12px; }
+  .decide h3 { margin: 0 0 8px; font-size: 14px; color: var(--warn); }
+  .ab { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 900px) { .ab { grid-template-columns: 1fr 1fr; } }
+  .opt { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.6; }
+  .opt h4 { margin: 0 0 4px; font-size: 13px; }
+  .opt.rec { border-color: var(--ok); }
+  .opt .rec-tag { font-size: 11px; font-weight: 700; color: var(--ok); margin-left: 6px; }
+
+  /* ── 앱 화면 (여기부터 구현 대상) ── */
+  .phone { position: relative; width: 100%; max-width: 412px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .phone.w360 { max-width: 360px; }
+  .desk { position: relative; width: 1180px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .app { container-type: inline-size; }
+  .app-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* 기존 SettingsPage·리스크 정책 패턴 (T-066/T-068 승인 데모와 같은 클래스) */
+  .sec-h { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; padding: 8px 0 4px; }
+  .card { background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .linkrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 56px; padding: 12px 16px; background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); }
+  .linkrow .t { font-size: 14px; }
+  .linkrow .s, .row .s { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+  .chev { font-size: 18px; color: var(--muted); flex-shrink: 0; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: 0; }
+  .onoff { font-size: 12px; font-weight: 600; }
+  .fake-toggle { width: 44px; height: 24px; border-radius: 12px; background: var(--ok); position: relative; flex-shrink: 0; display: inline-block; vertical-align: middle; }
+  .fake-toggle::after { content: ""; position: absolute; top: 2px; left: 22px; width: 20px; height: 20px; border-radius: 50%; background: #fff; }
+  .fake-toggle.off { background: var(--bg3); }
+  .fake-toggle.off::after { left: 2px; }
+  .tg { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+  .mode { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; white-space: nowrap; line-height: 1.5; }
+  .mode.live { color: var(--ok); border: 1px solid rgba(34,197,94,.55); background: rgba(34,197,94,.10); }
+  .mode.disp { color: var(--muted); border: 1px dashed var(--muted); white-space: normal; }
+  .strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .strip b { color: var(--text); }
+  .st { display: inline-flex; align-items: baseline; gap: 4px; font-size: 12px; font-weight: 700; line-height: 1.45; }
+  .st i { font-style: normal; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 4px; font-size: 11px; flex-shrink: 0; transform: translateY(2px); }
+  .st.warn { color: var(--warn); } .st.warn i { background: rgba(245,158,11,.18); }
+  .st.ok { color: var(--ok); }     .st.ok i { background: rgba(34,197,94,.16); }
+  .st.na { color: var(--muted); font-weight: 600; } .st.na i { background: var(--bg3); }
+  .st.info { color: var(--text); font-weight: 600; } .st.info i { background: var(--bg4); }
+  .warnbox { padding: 10px 12px; border-radius: 8px; background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.40); font-size: 12px; line-height: 1.6; }
+  .warnbox b { color: var(--warn); }
+  .infobox { display: flex; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); font-size: 12px; line-height: 1.6; }
+  .infobox .ic { flex-shrink: 0; font-weight: 700; color: var(--muted); }
+  .btn { min-height: 44px; padding: 0 16px; border-radius: 8px; font-size: 13px; font-weight: 700; }
+  .btn.pri { background: var(--accent); color: #000; }
+  .btn.sec { border: 1px solid var(--border2); color: var(--text); }
+  .btn.warnline { border: 1px solid var(--warn); color: var(--warn); }
+  .btn.wide { width: 100%; }
+  .btn:disabled { opacity: .45; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btns .btn { flex: 1 1 130px; }
+  .rp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 4px; padding: calc(8px + var(--safe-top)) 8px 8px; border-bottom: 1px solid var(--border); }
+  .back { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; padding: 0 8px; font-size: 14px; color: var(--muted); border-radius: 8px; }
+  .rp-head h2 { margin: 0; font-size: 16px; font-weight: 700; flex: 1 0 auto; white-space: nowrap; }
+  .rp-head .mode { margin: 0 8px; }
+  .riskrow { display: block; background: var(--bg2); border: 1px dashed var(--border2); border-radius: 12px; overflow: hidden; }
+  .riskrow .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; row-gap: 4px; padding: 10px 16px 0; }
+  .riskrow .top b { font-size: 14px; flex: 1 0 auto; white-space: nowrap; }
+  .riskrow .go { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 8px 16px; border-top: 1px solid var(--border); font-size: 13px; font-weight: 600; color: var(--accent); }
+  .rk-sum { padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 1.5; }
+  .rk-sum .chips { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .skel { background: var(--bg3); border-radius: 6px; height: 14px; margin: 8px 0; }
+  .skel.m { width: 70%; } .skel.s { width: 45%; } .skel.big { height: 30px; width: 55%; }
+  .tabs { display: flex; height: var(--nav-h); border-top: 1px solid var(--border); background: var(--bg2); padding-bottom: var(--safe-bottom); }
+  .tabs a { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; color: var(--muted); min-height: 44px; }
+  .tabs a[aria-current="page"] { color: var(--accent); }
+  .tabs .ico { font-size: 20px; line-height: 1; }
+
+  /* ── T-074 입출금 기록 ── */
+  .pl { font-variant-numeric: tabular-nums; }
+  .pl.up { color: var(--up); } .pl.down { color: var(--down); } .pl.flat { color: var(--text); }
+  .ptag { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; border: 1px dashed rgba(245,158,11,.75); color: var(--warn); white-space: nowrap; }
+  .lg-body { display: flex; flex-direction: column; gap: 12px; }
+  .lg-top, .lg-bot, .lg-list { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+  .sumcard { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .sc-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .sc-top h3 { margin: 0; font-size: 14px; font-weight: 700; }
+  .sc-big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .sc-big .pl { font-size: 26px; font-weight: 800; line-height: 1.2; }
+  .sc-big .w { font-size: 13px; font-weight: 700; }
+  .sc-r { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+  .sc-r b { font-size: 14px; }
+  .sc-sub { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .formula { font-size: 12px; line-height: 1.6; padding: 8px 10px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); overflow-wrap: anywhere; }
+  .formula b { color: var(--text); }
+  .sc-dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin: 0; }
+  .sc-dl dt { font-size: 11px; color: var(--muted); }
+  .sc-dl dd { margin: 2px 0 0; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .sc-dl dd small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+  .sc-dl dd small .st { font-size: 11px; }
+  details.mini { font-size: 12px; color: var(--muted); }
+  details.mini summary { display: inline-flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--muted); font-weight: 600; list-style: none; }
+  details.mini summary::-webkit-details-marker { display: none; }
+  details.mini summary::before { content: "ⓘ "; margin-right: 2px; }
+  details.mini p { margin: 4px 0 0; line-height: 1.6; }
+
+  .cand { border: 1px solid rgba(245,158,11,.55); background: rgba(245,158,11,.07); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .cand h3 { margin: 0; font-size: 14px; color: var(--warn); display: flex; gap: 6px; align-items: baseline; }
+  .cand p { margin: 0; font-size: 13px; line-height: 1.6; }
+  .cand .rule { font-size: 12px; color: var(--muted); }
+  .cand.done { border-style: dashed; background: none; }
+  .cand.done p { font-size: 12px; color: var(--muted); }
+  .sigs { display: flex; flex-direction: column; gap: 8px; }
+  .sigs .lnk { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+
+  .lh { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .lh h3 { margin: 0; font-size: 14px; outline: none; }
+  .tgl { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border2); font-size: 12px; font-weight: 600; color: var(--muted); }
+  .tgl.on { color: var(--text); border-color: var(--muted); background: var(--bg3); }
+  @media (hover: hover) {
+    .btn:hover:not(:disabled), .tgl:hover, .rowbtn:hover, .sh-x:hover:not(:disabled) { filter: brightness(1.12); }
+    .erow-h:hover, details.guide summary:hover, .riskrow:hover, .linkrow:hover { background: var(--bg3); }
+  }
+  .elist { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg2); }
+  .erow { border-top: 1px solid var(--border); }
+  .erow:first-child { border-top: 0; }
+  .erow-h { width: 100%; text-align: left; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 16px; min-height: 56px; }
+  .erow-h .k { display: flex; align-items: center; gap: 6px; }
+  .erow-h .id { font-size: 11px; color: var(--muted); }
+  .erow-h .a { font-size: 15px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .erow-h .m { font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+  .erow-h .s { text-align: right; }
+  .erow-h .x { grid-column: 1 / -1; font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+  .erow-h .chv { display: none; }
+  .erow.void .erow-h .a, .etable tr.void td.amt { text-decoration: line-through; color: var(--muted); }
+  .erow.void { background: rgba(0,0,0,.18); }
+  .erow-d { padding: 0 16px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .kchip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border2); background: var(--bg3); white-space: nowrap; }
+  .kchip i { font-style: normal; color: var(--muted); }
+  .kd { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 6px 10px; margin: 0; font-size: 12px; line-height: 1.55; }
+  .kd dt { color: var(--muted); }
+  .kd dd { margin: 0; overflow-wrap: anywhere; }
+  .emptyl { border: 1px dashed var(--border2); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; line-height: 1.6; }
+  .emptyl p { margin: 0; color: var(--muted); }
+  .basecard .bc-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 0; }
+  .basecard h3 { margin: 0; font-size: 14px; }
+  .basecard .kd { padding: 10px 16px; font-size: 13px; grid-template-columns: 96px minmax(0, 1fr); }
+  .basecard .btns { padding: 0 16px 12px; }
+  details.guide { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; }
+  details.guide summary { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; font-weight: 700; font-size: 13px; padding: 0 16px; list-style: none; }
+  details.guide summary::-webkit-details-marker { display: none; }
+  details.guide summary::after { content: "펼치기 ▾"; font-size: 12px; font-weight: 600; color: var(--muted); flex-shrink: 0; }
+  details.guide[open] summary::after { content: "접기 ▴"; }
+  details.guide ul { margin: 0; padding: 0 16px 14px 32px; font-size: 13px; line-height: 1.6; }
+  details.guide li { margin-bottom: 6px; }
+  .nobase { padding: 16px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 1.6; }
+  .nobase h3 { margin: 0; font-size: 15px; }
+  .nobase p { margin: 0; }
+
+  table.etable { width: 100%; border-collapse: collapse; font-size: 13px; border: 1px solid var(--border); background: var(--bg2); }
+  table.etable th, table.etable td { padding: 9px 8px; border-top: 1px solid var(--border); text-align: left; vertical-align: top; line-height: 1.5; }
+  table.etable thead th { font-size: 11px; font-weight: 700; color: var(--muted); }
+  table.etable td.r, table.etable th.r { text-align: right; font-variant-numeric: tabular-nums; }
+  table.etable td.nw { white-space: nowrap; }
+  table.etable td small { display: block; font-size: 11px; color: var(--muted); }
+  table.etable tr.void td { color: var(--muted); }
+  table.etable tr.dt td { background: var(--bg); padding: 12px 16px; }
+  .rowbtn { min-height: 44px; min-width: 64px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border2); font-size: 12px; font-weight: 600; }
+  .only-d { display: none; }
+
+  /* 시트(모바일: 아래에서 올라오는 시트 / 넓은 화면: 가운데 대화상자) */
+  .sheet-root { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.62); display: flex; align-items: flex-end; justify-content: center; }
+  .sheet-root.d { align-items: center; padding: 16px; }
+  .sheet { width: 100%; max-width: 412px; max-height: 92vh; display: flex; flex-direction: column; background: var(--bg2); border: 1px solid var(--border2); border-bottom: 0; border-radius: 14px 14px 0 0; box-shadow: 0 -8px 24px rgba(0,0,0,.5); }
+  .sheet-root.d .sheet { max-width: 520px; border-radius: 14px; border-bottom: 1px solid var(--border2); max-height: 88vh; }
+  .sh-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 6px 6px 16px; border-bottom: 1px solid var(--border); }
+  .sh-head h2 { margin: 0; font-size: 16px; outline: none; }
+  .sh-x { min-height: 44px; min-width: 56px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .sh-body { overflow-y: auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 14px; overscroll-behavior: contain; }
+  .sh-foot { display: flex; flex-direction: column; gap: 6px; padding: 10px 16px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--border); }
+  .sh-foot .btns .btn { flex: 1 1 0; }
+  .sh-why { font-size: 12px; color: var(--muted); line-height: 1.5; min-height: 0; }
+  .sh-why:empty { display: none; }
+  .demo-only { font-size: 11px; color: var(--note); }
+  fieldset.kseg { border: 0; padding: 0; margin: 0; min-width: 0; }
+  fieldset.kseg legend, .fl { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; padding: 0; }
+  .kseg .opts { display: flex; gap: 6px; }
+  .kseg .opts > label { flex: 1 1 0; position: relative; min-width: 0; }
+  .kseg .opts input[type="radio"] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .kseg .opts > label > span { display: flex; flex-direction: column; justify-content: center; min-height: 52px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg3); font-size: 14px; font-weight: 700; line-height: 1.3; cursor: pointer; text-align: center; }
+  .kseg .opts > label > span small { font-weight: 400; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .kseg .opts input[type="radio"]:checked + span { border: 2px solid var(--accent); background: rgba(245,158,11,.10); }
+  .kseg .opts input[type="radio"]:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+  .kseg .opts input[type="radio"]:disabled + span { opacity: .5; cursor: not-allowed; }
+  .kseg.list .opts { flex-direction: column; }
+  .kseg.list .opts > label > span { text-align: left; font-size: 13px; min-height: 48px; }
+  .kseg.list .opts .ln { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .field .hint { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.5; }
+  .field .msgs { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+  .inrow { display: flex; gap: 8px; }
+  .inrow > * { flex: 1 1 0; min-width: 0; }
+  .dtin { width: 100%; min-height: 48px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg3); color: var(--text); font: inherit; font-size: 15px; color-scheme: dark; }
+  .dtin:focus { border-color: var(--accent); outline: none; }
+  .dtin[aria-invalid="true"] { border: 2px solid var(--warn); }
+  .inwrap { display: flex; align-items: center; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; min-height: 52px; padding: 0 12px; }
+  .inwrap:focus-within { border-color: var(--accent); }
+  .inwrap.bad { border-color: var(--warn); border-width: 2px; }
+  .inwrap .cur { color: var(--muted); font-size: 15px; margin-right: 6px; flex-shrink: 0; }
+  .inwrap input { flex: 1; min-width: 0; background: none; border: 0; color: var(--text); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; outline: none; padding: 0; min-height: 50px; text-align: right; }
+  .inwrap input::placeholder { color: var(--muted); font-weight: 400; font-size: 14px; }
+  .inwrap .unit { color: var(--muted); font-size: 14px; margin-left: 6px; flex-shrink: 0; }
+  .inwrap.txt input { font-size: 15px; font-weight: 400; text-align: left; }
+  .read { font-size: 13px; line-height: 1.5; margin-top: 6px; }
+  .read b { font-variant-numeric: tabular-nums; }
+  .blockbox { border: 2px solid var(--warn); background: rgba(245,158,11,.10); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.6; }
+  .blockbox b { color: var(--warn); }
+  .derived { font-size: 13px; line-height: 1.6; padding: 10px 12px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); }
+  .derived .big { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .cbig { font-size: 16px; line-height: 1.6; font-weight: 600; margin: 0; }
+  .cbig b { color: var(--accent); }
+  .csub { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.6; }
+  .impact { font-size: 13px; line-height: 1.6; padding: 10px 12px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); }
+  .impact b { font-variant-numeric: tabular-nums; }
+  .errbox { padding: 10px 12px; border-radius: 8px; background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.7); font-size: 13px; line-height: 1.6; }
+  .errbox b { color: var(--warn); }
+  .rtext { width: 100%; min-height: 44px; margin-top: 6px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg3); color: var(--text); font: inherit; }
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--nav-h) + 16px + var(--safe-bottom)); width: calc(100% - 32px); max-width: 380px; background: #1b1f27; border: 1px solid var(--border2); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.5; z-index: 60; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+  .toast:empty { display: none; }
+
+  /* 넓은 화면(≥900px) — 데모는 container query 로 흉내, 실제 구현은 @media (min-width: 900px) */
+  @container (min-width: 900px) {
+    .app-body { padding: 20px 24px; }
+    .lg-body { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); grid-template-rows: auto 1fr; grid-template-areas: "top list" "bot list"; column-gap: 20px; row-gap: 12px; align-items: start; }
+    .lg-top { grid-area: top; } .lg-list { grid-area: list; } .lg-bot { grid-area: bot; }
+    .only-d { display: block; } .only-m { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page" id="page">
+  <header>
+    <h1>T-074 데모 v1 — 입출금 기록: 넣고 뺀 돈을 적어 두고, 투자로 늘어난 돈만 따로 보기</h1>
+    <p><span class="tag">judge: full (신규 화면)</span><span class="tag">진입: 설정 › 하위 화면</span><span class="tag">대표 폭 412px · 경계 360px</span><span class="tag">≥900px 데스크톱 복원</span><span class="tag">대시보드(T-073) 변경 없음</span></p>
+    <p>사용자 요구(요지): 시스템이 입출금을 모르니, <b>앱에서 입출금을 직접 기록해 자산 손익을 다시 계산</b>할 수 있게 해 달라.</p>
+    <p>계산(분석가 Q1 MVP): <b>입출금 뺀 손익 = (현재 총자산 − 기준 총자산) − 순입금</b>. 순입금 = 기준 시각 뒤 넣은 돈 − 뺀 돈 중 <b>스냅샷에 반영된 것만</b>(반영 대기는 빼 둠). 수익률(근사) = 손익 ÷ (기준 총자산 + 기간 가중 순입금, Modified Dietz). 환전은 계좌 안 이동이라 순입금에 넣지 않는다.</p>
+    <p class="sample-banner">숫자·날짜·시각은 전부 합성 예시값이다(기준 2026-09-01 07:10 · 기준 총자산 2,000만원 · 입금 100만원 · 환율 1,250원/$ 등). 실제 계좌 잔고·입출금·환율이 아니다.</p>
+  </header>
+
+  <section class="block" id="demo">
+    <h2>① 제안 화면 — 설정 › 입출금 기록 (/settings/cash-ledger)</h2>
+    <p class="lead">왼쪽(모바일은 위) 설정 화면의 새 줄을 누르면 오른쪽 화면으로 간다. 아래 컨트롤로 상태를 바꾸고, 화면 안 버튼(기록 추가 · 기록 펼치기 · 정정 · 취소 · 기준 바꾸기)을 직접 눌러 볼 수 있다. 저장은 서버 없이 흉내만 낸다.</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>화면 상태</legend><div class="seg-row">
+        <label><input type="radio" name="data" value="ok" checked><span>정상<br>(기록 7건)</span></label>
+        <label><input type="radio" name="data" value="empty"><span>빈 상태<br>(기준만 있음)</span></label>
+        <label><input type="radio" name="data" value="nobase"><span>기준 없음<br>(처음 들어옴)</span></label>
+        <label><input type="radio" name="data" value="loading"><span>로딩</span></label>
+        <label><input type="radio" name="data" value="error"><span>조회 오류</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>신뢰도 표지 (정상·빈 상태에 겹쳐 보기)</legend><div class="seg-row">
+        <label><input type="radio" name="trust" value="none" checked><span>없음</span></label>
+        <label><input type="radio" name="trust" value="unconfirmed"><span>기준 현금<br>미확정</span></label>
+        <label><input type="radio" name="trust" value="stale"><span>스냅샷<br>오래됨</span></label>
+        <label><input type="radio" name="trust" value="night"><span>밤 스냅샷<br>(달러 일부 안 보임)</span></label>
+        <label><input type="radio" name="trust" value="unmatched"><span>불일치 기록<br>예시</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>기록 안 된 입출금 같은 변화 (자동 탐지 후보)</legend><div class="seg-row">
+        <label><input type="radio" name="cand" value="on" checked><span>있음</span></label>
+        <label><input type="radio" name="cand" value="off"><span>없음</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>다음 저장 결과 (한 번 적용 뒤 '성공'으로 돌아감)</legend><div class="seg-row">
+        <label><input type="radio" name="so" value="ok" checked><span>성공</span></label>
+        <label><input type="radio" name="so" value="fail"><span>실패<br>(서버 오류)</span></label>
+        <label><input type="radio" name="so" value="conflict"><span>충돌 409<br>(다른 곳에서 먼저 바뀜)</span></label>
+        <label><input type="radio" name="so" value="dup"><span>중복<br>(같은 기록 있음)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>보기 설정</legend><div class="seg-row">
+        <label><input type="radio" name="w" value="412" checked><span>모바일 412px</span></label>
+        <label><input type="radio" name="w" value="360"><span>모바일 360px</span></label>
+        <label><input type="radio" name="sv" value="prop" checked><span>설정: 제안<br>(새 줄 있음)</span></label>
+        <label><input type="radio" name="sv" value="cur"><span>설정: 현재<br>(운영 화면)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>흐름 바로 보기 (모바일 화면에서 열림)</legend><div class="simbtns">
+        <button type="button" id="q-add" data-q="add">기록 추가 폼</button>
+        <button type="button" id="q-pre" data-q="pre">기준 이전 날짜<br>입력 → 차단</button>
+        <button type="button" id="q-big" data-q="big">자릿수 실수<br>(200만 → 2천만 출금)</button>
+        <button type="button" id="q-exch" data-q="exch">환전 입력<br>(양쪽 금액)</button>
+        <button type="button" id="q-cand" data-q="cand">기록 안 된 변화<br>→ 입금으로 기록</button>
+        <button type="button" id="q-cancel" data-q="cancel">#1 기록 취소<br>(확인 대화상자)</button>
+        <button type="button" id="q-corr" data-q="corr">#4 → #5 정정 이력<br>펼쳐 보기</button>
+        <button type="button" id="q-base" data-q="base">기준 현금 확인<br>(달러 두 값 안내)</button>
+      </div></fieldset>
+    </div>
+
+    <div class="compare2">
+      <div>
+        <p class="frame-cap">모바일 — 설정 화면 (진입 위치: 내 계정 바로 아래)</p>
+        <div class="phone app" id="f-s" aria-label="설정 화면 모바일 미리보기"></div>
+      </div>
+      <div id="wrap-lg">
+        <p class="frame-cap">모바일 — 입출금 기록 화면</p>
+        <div class="phone app" id="f-m" aria-label="입출금 기록 화면 모바일 미리보기"></div>
+      </div>
+    </div>
+    <p class="note">입출금 기록 화면은 계좌의 돈을 움직이지 않고 주문도 만들지 않는다(기록·계산 전용). 기존 화면의 숫자(대시보드 손익 등)는 이 task 에서 바꾸지 않는다.</p>
+
+    <p class="frame-cap" style="margin-top:24px">데스크톱 복원 (≥900px, 1180px — 이 상자 안에서만 가로로 밀어 본다)</p>
+    <div class="desk-scroll"><div class="desk app" id="f-d" aria-label="입출금 기록 화면 데스크톱 미리보기"></div></div>
+  </section>
+
+  <section class="block" id="decide">
+    <h2>② 결정 필요</h2>
+    <div class="decide">
+      <h3>D1. '현재 총자산'을 무엇으로 보일까</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 최신 스냅샷 + 밤 시간대 표지 <span class="rec-tag">✓ 권장(분석가 권고)</span></h4>
+          약 1시간마다 바뀌는 최신 값을 그대로 쓴다. 밤(16~06시) 스냅샷처럼 일부 달러 현금이 빠져 보이는 때는 손익 아래에 표지를 띄운다(신뢰도 표지 → '밤 스냅샷' 참고).<br>한계: 밤에 열면 손익이 실제보다 작게 보이고, 표지를 읽어야 안다.</div>
+        <div class="opt"><h4>B. 매일 아침 07~09시 첫 스냅샷으로 고정</h4>
+          하루 한 번만 바뀌어 밤 착시가 없다.<br>한계: 오늘 넣은 돈·장중 변화가 다음 날 아침까지 손익에 안 보이고, '반영 대기'가 하루 가까이 길어진다.</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D2. 기준 시각 이전의 입출금</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 입력 차단 + 이유 설명 <span class="rec-tag">✓ 권장(분석가 권고)</span></h4>
+          그 전에 오간 돈은 기준 총자산에 이미 들어 있으므로 넣으면 같은 돈을 두 번 빼게 된다. 흐름 버튼 '기준 이전 날짜 입력'에서 실제 문구를 볼 수 있다.<br>한계: 참고용으로 남기고 싶은 옛 입출금은 메모로만 둘 곳이 없다.</div>
+        <div class="opt"><h4>B. '기준 이전(참고)'으로 저장은 허용, 계산에서는 제외</h4>
+          옛 입출금을 메모처럼 남길 수 있다.<br>한계: 목록에 계산 안 되는 행이 섞여 헷갈리고, 상태가 하나 늘어난다(기준을 바꿨을 때 생기는 '기준 이전 · 계산 제외' 표시와 같은 모양).</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D3. 수익률(%)도 함께 보일까</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 원 단위 손익이 주 숫자, 수익률은 '근사' 라벨로 보조 <span class="rec-tag">✓ 권장</span></h4>
+          입금 시점을 반영한 근사값(Modified Dietz)이라 '근사'를 붙이고, 뜻은 ⓘ 를 펼쳐 읽는다. 기간·자산 규모가 달라도 비교할 수 있다.<br>한계: 일반 금융 공식이며 이 프로젝트 데이터로 검증하기 전이다.</div>
+        <div class="opt"><h4>B. 원 단위만 보이고 수익률은 나중(확장)</h4>
+          설명할 숫자가 하나 줄어 가장 단순하다.<br>한계: '100만원 벌었다'가 큰지 작은지 판단하기 어렵다.</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D4. 발생 시각 입력</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 날짜 + 시각(분) 필수, 기본값 '지금', "모르면 조금 이르게" 안내 <span class="rec-tag">✓ 권장</span></h4>
+          그 시각 뒤 스냅샷에서 맞는 현금 변화를 찾는다(36시간 안). 실제보다 늦게 넣으면 못 찾으므로 이르게 넣으라고 안내한다.<br>한계: 시각까지 넣는 수고가 있다.</div>
+        <div class="opt"><h4>B. 날짜만 필수, 시각은 선택(비우면 그날 00:00)</h4>
+          입력이 쉽다.<br>한계: 기준일 당일 기록은 00:00 이 기준 시각보다 앞이라 막히고, 같은 날 같은 금액 두 건을 구분하기 어렵다.</div>
+      </div>
+    </div>
+    <p class="note">진입 위치(설정 하위 화면 vs 대시보드 쪽 링크)는 task 기록 Designer 절에서 비교했다. 대시보드는 T-073 보류 중이라 이 데모에서 그리지 않는다.</p>
+  </section>
+
+  <section class="block" id="memo">
+    <h2>③ 설계 메모</h2>
+    <div class="box"><ul class="plain">
+      <li><b>이름</b>: 주 숫자는 "입출금 뺀 투자 손익". 앱의 기존 '오늘 변동'·'평가손익'은 입출금을 빼지 않은 값이라 같은 이름을 쓰지 않는다. "순입금"은 처음 나오는 곳마다 "(넣은 돈 − 뺀 돈)"으로 풀어 쓴다.</li>
+      <li><b>색</b>: 빨강·파랑은 손익(상승·하락)에만 쓴다. 입금·출금 금액은 중립색 + 부호 + 종류 칩이다 — 입금이 '번 돈'처럼 빨갛게 보이지 않게. 경고·차단은 amber + 기호 + 글자.</li>
+      <li><b>오입력 막기</b>: 부호를 입력받지 않고 종류로 방향을 정한다 · 금액 바로 아래 '만 단위 읽기'(예: 205만 6,912원) · 저장 전 확인 단계에서 "들어온/빠져나간" 문장과 반영 뒤 손익 변화를 먼저 보인다 · 총자산보다 큰 금액, 24시간 안 같은 금액은 경고 · 기준 이전은 차단.</li>
+      <li><b>지우지 않는다(추가 전용)</b>: 삭제 버튼이 없다. 취소는 '취소됨'으로 남기고(사유 필수·되살리기 가능), 정정은 새 기록을 더하고 원래 기록을 '정정됨 → #n'으로 남긴다. 목록 기본값은 살아 있는 기록만이고, 취소·정정된 기록은 버튼 하나로 펼친다.</li>
+      <li><b>반영 상태</b>: 기록은 스냅샷에 맞는 현금 변화가 보여야 계산에 들어간다(◌ 반영 대기 · ✓ 반영됨 · ! 불일치). 반영 대기는 손익에서 빠져 있다고 바로 그 자리에 적는다.</li>
+      <li><b>기록 안 된 변화</b>는 자동으로 기록하지 않는다. "입금으로 기록"은 폼을 채워 줄 뿐이고, 저장은 사용자가 확인한 뒤에만 한다. "입출금 아님"은 사유와 함께 남기고 되돌릴 수 있다. 알림 기준(5만원·$50)을 카드에 그대로 적는다.</li>
+      <li><b>환전</b>은 양쪽 금액을 받고 환율을 계산해 보인다. 앱 환율 대비 %와 비용은 '추정'이다(기준 = 앱 환율, KIS 고시환율 아님). 손익 영향이 없다는 것을 폼과 목록 양쪽에 적는다.</li>
+      <li><b>달러 현금 두 값</b>: 기준 현금 확인 칸 도움말 + 기록 안내 1줄만 둔다. 사용자 답(분석가 Q5 질문 1)에 따라 문구가 바뀔 수 있다.</li>
+      <li><b>정확도 라벨</b>: 수익률은 '근사', 환전 비용은 '추정', 반영 전 달러 기록의 원화 환산은 '임시'. 확률·예측·예상 수익은 없다.</li>
+    </ul></div>
+  </section>
+</div>
+
+<div id="sheet-root" class="sheet-root hide"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── 형식 ── */
+  function z(n) { return (n < 10 ? '0' : '') + n; }
+  function tm(s) { var m = /(\d+)-(\d+)-(\d+)[ T](\d+):(\d+)/.exec(s); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) / 60000 : NaN; }
+  function iso(t) { var d = new Date(t * 60000); return d.getUTCFullYear() + '-' + z(d.getUTCMonth() + 1) + '-' + z(d.getUTCDate()) + ' ' + z(d.getUTCHours()) + ':' + z(d.getUTCMinutes()); }
+  function md(t) { return iso(t).slice(5); }
+  function ago(mins) { mins = Math.max(0, Math.round(mins)); var h = Math.floor(mins / 60), m = mins % 60; return h ? h + '시간 ' + (m ? m + '분 ' : '') + '전' : m + '분 전'; }
+  function n0(n) { return Math.round(Math.abs(n)).toLocaleString('ko-KR'); }
+  function won(n) { return (n < 0 ? '−' : '') + n0(n) + '원'; }
+  function swon(n) { return (n > 0 ? '+' : n < 0 ? '−' : '') + n0(n) + '원'; }
+  function usd(n) { return '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function rt(n) { return n.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function spct(n, d) { return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n).toFixed(d == null ? 1 : d) + '%'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function amtOf(ccy, a) { return ccy === 'USD' ? usd(a) : won(a); }
+  function krRead(n) {
+    n = Math.round(n); if (!n) return '0원';
+    var eok = Math.floor(n / 1e8), man = Math.floor(n % 1e8 / 1e4), rest = n % 1e4, out = [];
+    if (eok) out.push(eok.toLocaleString('ko-KR') + '억');
+    if (man) out.push(man.toLocaleString('ko-KR') + '만');
+    if (rest) out.push(rest.toLocaleString('ko-KR'));
+    return out.join(' ') + '원';
+  }
+  function st(kind, icon, text) { return '<span class="st ' + kind + '"><i aria-hidden="true">' + icon + '</i><span>' + text + '</span></span>'; }
+  function el(id) { return document.getElementById(id); }
+  function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
+  function setHtml(id, h) { var x = el(id); if (!x || x._h === h) return; x._h = h; x.innerHTML = h; }
+
+  var KIND = {
+    dep: { label: '입금', icon: '+', desc: '계좌로 들어온 돈' },
+    wd: { label: '출금', icon: '−', desc: '계좌에서 나간 돈' },
+    exch: { label: '환전', icon: '⇄', desc: '원화↔달러 · 손익 영향 없음' }
+  };
+  var RULE = { krw: 50000, usd: 50, tolKrw: 1000, tolUsd: 1, windowH: 36, bigPct: 50, fxWarnPct: 3 };
+
+  /* ── 합성 데이터 (실제 계좌 값 아님) ── */
+  var BASE0 = { at: tm('2026-09-01 07:10'), id: 1001, total: 20000000, krw: 1200000, usd: 1500, fx: 1240, version: 3,
+    confirmed: { krw: 1200000, usd: 1500, at: tm('2026-09-01 08:05') } };
+  var SNAP0 = { id: 1342, ts: tm('2026-09-15 09:40'), v: 21780000, fx: 1250, gapUsd: 0, stale: false };
+  var SEED = [
+    { id: 1, kind: 'dep', at: tm('2026-09-03 10:00'), cat: tm('2026-09-03 10:05'), ccy: 'KRW', amt: 1000000, memo: '월급 일부', st: 'matched', anc: tm('2026-09-03 10:40'), det: '원화 현금 +1,000,000원 확인 (허용 ±1,000원)' },
+    { id: 2, kind: 'dep', at: tm('2026-09-03 10:01'), cat: tm('2026-09-03 10:06'), ccy: 'KRW', amt: 1000000, memo: '', st: 'pending', void: { type: 'cancel', reason: '중복 입력', at: tm('2026-09-03 10:12') } },
+    { id: 3, kind: 'exch', at: tm('2026-09-05 13:00'), cat: tm('2026-09-05 13:10'), ccy: 'KRW', amt: 1260000, cc: 'USD', camt: 1000, memo: '', st: 'matched', anc: tm('2026-09-05 13:40'), afx: 1256.2, det: '같은 스냅샷에서 원화 −1,260,000원 · 달러 +$1,000.00 확인' },
+    { id: 4, kind: 'wd', at: tm('2026-09-10 14:00'), cat: tm('2026-09-10 14:20'), ccy: 'KRW', amt: 3000000, memo: '카드값', st: 'unmatched', det: '맞는 현금 변화 없음', void: { type: 'super', by: 5, reason: '자릿수 잘못 입력', at: tm('2026-09-10 15:02') } },
+    { id: 5, kind: 'wd', at: tm('2026-09-10 14:00'), cat: tm('2026-09-10 15:02'), ccy: 'KRW', amt: 300000, memo: '카드값', st: 'matched', anc: tm('2026-09-10 14:40'), sup: 4, det: '원화 현금 −300,000원 확인 (허용 ±1,000원)' },
+    { id: 6, kind: 'dep', at: tm('2026-09-12 21:30'), cat: tm('2026-09-12 21:45'), ccy: 'USD', amt: 200, memo: '해외 계좌에서', st: 'matched', anc: tm('2026-09-12 22:00'), afx: 1250, det: '달러 현금 +$200.00 확인 (허용 ±$1)' },
+    { id: 7, kind: 'dep', at: tm('2026-09-15 09:50'), cat: tm('2026-09-15 09:52'), ccy: 'KRW', amt: 500000, memo: '', st: 'pending' }
+  ];
+  var CAND0 = { ts: tm('2026-09-14 22:20'), prev: tm('2026-09-14 21:10'), ccy: 'KRW', d: 700000, state: 'open', reason: '' };
+  var BASE_OPTS = [
+    { id: 1338, ts: tm('2026-09-15 07:10'), v: 21760000, krw: 2410000, usd: 2700, fx: 1249.5, tag: '오늘 아침 · 권장' },
+    { id: 1342, ts: tm('2026-09-15 09:40'), v: 21780000, krw: 2410000, usd: 2700, fx: 1250, tag: '최신' },
+    { id: 1316, ts: tm('2026-09-14 07:12'), v: 21050000, krw: 1710000, usd: 2700, fx: 1246, tag: '어제 아침' }
+  ];
+
+  var M = { data: 'ok', trust: 'none', candOn: true, outcome: 'ok', width: 412, sv: 'prop', showVoid: false, open: {},
+    base: null, snap: null, now: 0, entries: [], cand: null, nextId: 8, sheet: null, lastDraft: null, toastT: 0 };
+
+  function byId(id) { for (var i = 0; i < M.entries.length; i++) if (M.entries[i].id === id) return M.entries[i]; return null; }
+  function load() {
+    M.open = {}; M.showVoid = false; M.lastDraft = null;
+    var d = M.data;
+    M.base = d === 'nobase' ? null : clone(BASE0);
+    M.snap = clone(SNAP0);
+    M.entries = d === 'ok' ? clone(SEED) : [];
+    if (d === 'empty') M.snap.v = 20420000;
+    M.now = M.snap.ts + 15;
+    if (M.base && M.trust === 'unconfirmed') M.base.confirmed = { krw: null, usd: null, at: null };
+    if (M.trust === 'stale') { M.snap.ts = tm('2026-09-15 07:10'); M.snap.id = 1338; M.snap.stale = true; M.now = tm('2026-09-15 10:30'); }
+    if (M.trust === 'night') {
+      M.snap.ts = tm('2026-09-15 02:40'); M.snap.id = 1335; M.snap.v -= 312500; M.snap.gapUsd = 250; M.now = M.snap.ts + 15;
+      M.entries = M.entries.filter(function (e) { return e.at <= M.now; });
+    }
+    if (M.trust === 'unmatched') {
+      var e6 = byId(6);
+      if (e6) { e6.st = 'unmatched'; e6.anc = null; e6.afx = null; e6.suggest = true;
+        e6.det = '이 시각 뒤 스냅샷에서 달러 +$200.00 변화를 찾지 못했습니다. 같은 스냅샷에서 원화가 250,600원 줄었습니다 — 환전이었다면 환전으로 정정하세요.'; }
+    }
+    M.cand = (M.candOn && M.base && d !== 'loading' && d !== 'error') ? clone(CAND0) : null;
+    M.nextId = 8;
+  }
+
+  /* ── 계산 (src/lib/ledger/compute.ts 가 될 순수 함수 — 분석가 Q1 MVP) ── */
+  function baseTotal(B) {
+    var c = B.confirmed || {};
+    return Math.round(B.total + (c.usd != null ? (c.usd - B.usd) * B.fx : 0) + (c.krw != null ? c.krw - B.krw : 0));
+  }
+  function baseUnconfirmed(B) { var c = B.confirmed || {}; return c.krw == null || c.usd == null; }
+  function keq(e) { return e.ccy === 'KRW' ? e.amt : e.amt * (e.afx || M.snap.fx); }
+  function calc() {
+    var S = M.snap, B = M.base; if (!B) return null;
+    var b0 = baseTotal(B), flows = [], inflow = 0, outflow = 0, pend = { n: 0, amt: 0 }, unm = 0, pre = 0, live = 0;
+    M.entries.forEach(function (e) {
+      if (e.void) return;
+      live++;
+      if (e.at <= B.at) { pre++; return; }
+      if (e.kind === 'exch') return;
+      var k = keq(e), sg = e.kind === 'dep' ? 1 : -1;
+      if (e.st === 'pending') { pend.n++; pend.amt += sg * k; return; }
+      if (e.st === 'unmatched') unm++;
+      flows.push({ t: e.st === 'matched' && e.anc ? e.anc : e.at, cf: sg * k });
+      if (sg > 0) inflow += k; else outflow += k;
+    });
+    var net = inflow - outflow, P = S.v - b0 - net, T = S.ts - B.at, den = b0;
+    flows.forEach(function (f) { var w = T > 0 ? Math.max(0, Math.min(1, (S.ts - f.t) / T)) : 0; den += w * f.cf; });
+    var last = M.entries.filter(function (e) { return !e.void; }).sort(function (a, b) { return b.at - a.at; })[0] || null;
+    var voids = M.entries.filter(function (e) { return e.void; }).length;
+    return { b0: b0, v: S.v, net: net, inflow: inflow, outflow: outflow, P: P, R: den > 0 ? P / den * 100 : null, pend: pend, unm: unm, pre: pre,
+      last: last, live: live, voids: voids, days: Math.floor(T / 1440), unconf: baseUnconfirmed(B) };
+  }
+  function simCalc(mut) {
+    var saved = M.entries; M.entries = clone(saved);
+    try { mut(); return calc(); } finally { M.entries = saved; }
+  }
+  function candOpen() { return M.cand && M.cand.state === 'open' && M.base && M.cand.ts > M.base.at; }
+
+  /* ── 공용 조각 ── */
+  function plCls(n) { return n > 0 ? 'up' : n < 0 ? 'down' : 'flat'; }
+  function plWord(n) { return n > 0 ? '늘어남' : n < 0 ? '줄어듦' : '변화 없음'; }
+  function tabs() {
+    return '<nav class="tabs" aria-label="주 메뉴"><a href="#demo"><span class="ico" aria-hidden="true">🏠</span>대시보드</a><a href="#demo"><span class="ico" aria-hidden="true">⭐</span>즐겨찾기</a><a href="#demo"><span class="ico" aria-hidden="true">💡</span>추천</a><a href="#demo"><span class="ico" aria-hidden="true">📈</span>분석</a><a href="#demo" aria-current="page"><span class="ico" aria-hidden="true">⚙️</span>설정</a></nav>';
+  }
+  function kchip(e) { var k = KIND[e.kind]; return '<span class="kchip"><i aria-hidden="true">' + k.icon + '</i>' + k.label + '</span>'; }
+  function entryAmt(e) {
+    if (e.kind === 'exch') return amtOf(e.ccy, e.amt) + ' → ' + amtOf(e.cc, e.camt);
+    return (e.kind === 'dep' ? '+' : '−') + amtOf(e.ccy, e.amt);
+  }
+  function entryOne(e) { return KIND[e.kind].label + ' ' + entryAmt(e).replace(/^[+−]/, ''); }
+  function exRate(e) { var krw = e.ccy === 'KRW' ? e.amt : e.camt, u = e.ccy === 'KRW' ? e.camt : e.amt; return krw / u; }
+  function exCost(e) { var app = e.afx || M.snap.fx; return e.ccy === 'KRW' ? e.amt - e.camt * app : e.amt * app - e.camt; }
+  function statusParts(e) {
+    if (e.void) return e.void.type === 'cancel' ? ['na', '×', '취소됨'] : ['na', '↻', '정정됨 → #' + e.void.by];
+    if (M.base && e.at <= M.base.at) return ['na', '—', '기준 이전 · 계산 제외'];
+    if (e.st === 'pending') return ['na', '◌', '반영 대기'];
+    if (e.st === 'unmatched') return ['warn', '!', '불일치'];
+    return ['ok', '✓', '반영됨'];
+  }
+  function entryStatus(e) { var s = statusParts(e); return st(s[0], s[1], s[2]); }
+  function entryMeta(e) {
+    var c = e.kind === 'exch' ? (e.ccy === 'KRW' ? '원화→달러' : '달러→원화') : (e.ccy === 'KRW' ? '원화' : '달러');
+    return md(e.at) + ' · ' + c + (e.memo ? ' · ' + esc(e.memo) : '');
+  }
+  function entryExtra(e) {
+    if (e.kind === 'exch') return '환율 ' + rt(exRate(e)) + '원/$ · 비용(추정) ' + won(exCost(e)) + ' · 손익 영향 없음';
+    if (e.ccy === 'USD') return '원화 환산 ' + won(keq(e)) + (e.afx ? ' (반영 시점 환율 ' + rt(e.afx) + ')' : ' (임시 · 최신 환율 ' + rt(M.snap.fx) + ')');
+    if (e.sup) return '#' + e.sup + ' 를 정정한 기록';
+    return '';
+  }
+  function reflectText(e) {
+    if (e.void) return '계산에서 빠져 있습니다.';
+    if (M.base && e.at <= M.base.at) return '기준 시각(' + md(M.base.at) + ') 이전 기록이라 계산에서 빠져 있습니다.';
+    if (e.st === 'pending') return '최신 스냅샷(' + md(M.snap.ts) + ')보다 뒤라 다음 스냅샷을 기다립니다. <b>지금 손익에는 빠져 있습니다.</b>';
+    if (e.st === 'unmatched') return st('warn', '!', '불일치') + ' ' + esc(e.det || '이 시각 뒤 스냅샷에서 맞는 현금 변화를 찾지 못했습니다.') + ' 기록대로 계산에 넣었습니다.';
+    return md(e.anc) + ' 스냅샷 · ' + esc(e.det || '');
+  }
+  function entryDetail(e, p) {
+    var rows = [
+      ['발생 시각', iso(e.at) + ' (KST)'],
+      ['기록한 시각', md(e.cat)],
+      ['반영', reflectText(e)]
+    ];
+    if (e.kind === 'exch') {
+      var r = exRate(e), app = e.afx || M.snap.fx;
+      rows.push(['환율·비용', '적용 ' + rt(r) + '원/$ · 앱 환율 ' + rt(app) + ' 대비 ' + spct((r - app) / app * 100, 2) + ' · 비용(추정) ' + won(exCost(e)) + '<br><span class="muted">추정: 기준 = 앱 환율(스냅샷), KIS 고시환율 아님. 계좌 안 이동이라 순입금·손익에 넣지 않습니다.</span>']);
+    }
+    if (e.kind !== 'exch' && e.ccy === 'USD') rows.push(['원화 환산', won(keq(e)) + (e.afx ? ' — 반영된 스냅샷의 환율 ' + rt(e.afx) + '원/$' : ' — 임시(최신 환율 ' + rt(M.snap.fx) + '), 반영되면 그 스냅샷 환율로 다시 환산')]);
+    rows.push(['메모', e.memo ? esc(e.memo) : '<span class="muted">없음</span>']);
+    if (e.sup) rows.push(['정정', '#' + e.sup + ' 를 대신하는 기록']);
+    if (e.void) rows.push([e.void.type === 'cancel' ? '취소' : '정정됨', esc(e.void.reason) + ' · ' + md(e.void.at) + (e.void.type === 'super' ? ' · 새 기록 #' + e.void.by : '')]);
+    var dl = '<dl class="kd">' + rows.map(function (r) { return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>'; }).join('') + '</dl>';
+    var act = '';
+    if (!e.void) {
+      act = '<div class="btns">' +
+        (e.suggest ? '<button type="button" class="btn sec" id="' + p + '-ac-' + e.id + '-cx" data-act="corrExch" data-id="' + e.id + '">환전으로 정정</button>' : '') +
+        '<button type="button" class="btn sec" id="' + p + '-ac-' + e.id + '-cor" data-act="corr" data-id="' + e.id + '">정정하기</button>' +
+        '<button type="button" class="btn warnline" id="' + p + '-ac-' + e.id + '-can" data-act="cancel" data-id="' + e.id + '">기록 취소</button></div>';
+    } else if (e.void.type === 'cancel') {
+      act = '<div class="btns"><button type="button" class="btn sec" id="' + p + '-ac-' + e.id + '-res" data-act="restore" data-id="' + e.id + '">되살리기</button></div>';
+    } else {
+      act = '<p class="muted" style="margin:0;font-size:12px">정정으로 대체된 기록은 되살리지 않습니다. 바꾸려면 새 기록 #' + e.void.by + ' 를 정정하세요.</p>';
+    }
+    return dl + act;
+  }
+  function visibleEntries() {
+    return M.entries.filter(function (e) { return M.showVoid || !e.void; }).sort(function (a, b) { return b.at - a.at || b.id - a.id; });
+  }
+
+  /* ── 입출금 기록 화면 ── */
+  function summaryHtml(c, p) {
+    var B = M.base, S = M.snap, unconf = c.unconf;
+    var tag = unconf ? '<span class="ptag">임시 · 기준 미확정</span>' : '';
+    var R = c.R == null ? '<b>계산 불가</b>' : '<b class="num">' + spct(c.R, 2) + '</b>';
+    var last = c.last ? md(c.last.at) + '<small>' + entryOne(c.last) + ' · ' + statusParts(c.last)[2] + '</small>' : '없음<small>아직 기록이 없습니다</small>';
+    var baseCash = unconf ? st('warn', '!', '현금 미확정 — 스냅샷 값') : st('ok', '✓', '현금 확인됨');
+    var snapAge = ago(M.now - S.ts);
+    return '<section class="sumcard" aria-labelledby="' + p + '-sum-t">' +
+      '<div class="sc-top"><h3 id="' + p + '-sum-t" tabindex="-1" style="outline:none">입출금 뺀 투자 손익</h3>' + tag + '</div>' +
+      '<div class="sc-big" aria-live="polite" aria-atomic="true"><span class="pl ' + plCls(c.P) + '">' + swon(c.P) + '</span><span class="w">' + plWord(c.P) + '</span></div>' +
+      '<div class="sc-r"><span class="muted">수익률(근사)</span>' + R + '<span class="muted">· ' + (c.days > 0 ? '기준부터 ' + c.days + '일' : '기준 당일') + '</span></div>' +
+      '<details class="mini"><summary>이 숫자의 뜻</summary><p>기준 시각 뒤 <b>넣은 돈과 뺀 돈을 빼고</b> 투자로 늘어나거나 줄어든 돈입니다. 원화 기준이라 환율 변동이 함께 들어 있습니다. 수익률(근사)은 기간 중 평균적으로 투자돼 있던 돈 대비 값으로, 입금 시점을 반영한 근사 계산입니다. 반영 대기 기록은 아직 빠져 있습니다.</p></details>' +
+      '<div class="formula">현재 총자산 ' + won(c.v) + ' − 기준 총자산 ' + won(c.b0) + ' − 순입금(넣은 돈 − 뺀 돈) ' + won(c.net) + ' = <b class="num">' + swon(c.P) + '</b></div>' +
+      '<dl class="sc-dl">' +
+        '<div><dt>기준일</dt><dd>' + md(B.at) + '<small>스냅샷 #' + B.id + '</small></dd></div>' +
+        '<div><dt>기준 총자산</dt><dd>' + won(c.b0) + '<small>' + baseCash + '</small></dd></div>' +
+        '<div><dt>현재 총자산</dt><dd>' + won(c.v) + '<small>' + md(S.ts) + ' 스냅샷 · ' + snapAge + '</small></dd></div>' +
+        '<div><dt>순입금</dt><dd>' + swon(c.net) + '<small>넣은 돈 ' + won(c.inflow) + ' · 뺀 돈 ' + won(c.outflow) + '</small></dd></div>' +
+        '<div><dt>마지막 기록</dt><dd>' + last + '</dd></div>' +
+        '<div><dt>기록</dt><dd>' + c.live + '건<small>' + (c.voids ? '취소·정정 ' + c.voids + '건 별도' : '취소·정정 없음') + '</small></dd></div>' +
+      '</dl></section>';
+  }
+  function candHtml(c, p) {
+    if (!M.cand || !M.base || M.cand.ts <= M.base.at) return '';
+    var C = M.cand, dir = C.d > 0 ? 'dep' : 'wd';
+    if (C.state === 'dismissed') {
+      return '<div class="cand done"><p>' + st('na', '—', '입출금 아님으로 표시한 변화 1건') + ' ' + md(C.ts) + ' · 원화 ' + swon(C.d) + ' · 사유: ' + esc(C.reason) + '</p>' +
+        '<div><button type="button" class="btn sec" id="' + p + '-cand-undo" data-act="candUndo">되돌리기</button></div></div>';
+    }
+    if (C.state !== 'open') return '';
+    return '<section class="cand" aria-labelledby="' + p + '-cd-t">' +
+      '<h3 id="' + p + '-cd-t"><span aria-hidden="true">!</span>기록 안 된 입출금 같은 변화 1건</h3>' +
+      '<p><b>' + md(C.ts) + ' 스냅샷 · 원화 현금 ' + swon(C.d) + '</b><br><span class="muted">직전 ' + iso(C.prev).slice(11) + ' 스냅샷 대비 · 보유 종목 수량 변화 없음</span></p>' +
+      '<p>' + (C.d > 0 ? '입금' : '출금') + '이었다면 기록해 주세요. 기록하기 전까지 이 돈은 위 손익(' + swon(c.P) + ')에 <b>투자로 ' + (C.d > 0 ? '번' : '잃은') + ' 돈처럼 섞여 있습니다.</b></p>' +
+      '<div class="btns"><button type="button" class="btn pri" id="' + p + '-cand-rec" data-act="candRecord">' + KIND[dir].label + '으로 기록</button>' +
+        '<button type="button" class="btn sec" id="' + p + '-cand-dis" data-act="candDismiss">입출금 아님</button></div>' +
+      '<p class="rule">알림 기준: 보유 수량이 그대로인데 원화 현금이 ' + n0(RULE.krw) + '원 이상, 또는 달러 현금이 $' + RULE.usd + ' 이상 바뀐 스냅샷. 매매·배당·이자일 수도 있어 자동으로 기록하지 않습니다.</p>' +
+      '</section>';
+  }
+  function signalsHtml(c, p) {
+    var out = [], S = M.snap;
+    if (c.unconf) out.push('<div class="warnbox" role="note"><b>! 기준 미확정</b> — 기준 시각의 현금을 아직 확인하지 않아, 지금 손익은 스냅샷 값으로 낸 <b>임시 계산</b>입니다.<div class="btns" style="margin-top:8px"><button type="button" class="btn sec" id="' + p + '-sig-base" data-act="baseConfirm">기준 현금 확인</button></div></div>');
+    if (S.stale) out.push('<div class="warnbox" role="note"><b>! 현재 총자산이 ' + ago(M.now - S.ts) + '(' + md(S.ts) + ') 스냅샷 값입니다.</b> 그 뒤 변화는 아직 손익에 없습니다. 스냅샷은 보통 1시간마다 생기고, 3시간이 넘으면 이 표시가 뜹니다.</div>');
+    if (S.gapUsd) out.push('<div class="warnbox" role="note"><b>! 이 시각(' + iso(S.ts).slice(11) + ') 스냅샷은 달러 현금 약 $' + S.gapUsd + '이 빠져 보이는 시간대입니다(16~06시).</b> 손익이 약 ' + won(S.gapUsd * S.fx) + ' 작게 보일 수 있습니다. 아침 07~09시 값과 비교하세요.</div>');
+    if (c.pend.n) out.push('<div class="infobox" role="note"><span class="ic" aria-hidden="true">◌</span><div><b>반영 대기 ' + c.pend.n + '건 · ' + swon(c.pend.amt) + '</b> — 다음 스냅샷(보통 1시간 안)에서 맞는 현금 변화가 보이면 계산에 넣습니다. <b>지금 손익에는 빠져 있습니다.</b></div></div>');
+    if (c.unm) {
+      var u = M.entries.filter(function (e) { return !e.void && e.st === 'unmatched' && (!M.base || e.at > M.base.at); })[0];
+      out.push('<div class="warnbox" role="note"><b>! 불일치 ' + c.unm + '건</b> — 기록한 금액과 맞는 현금 변화를 스냅샷에서 찾지 못했습니다. 기록대로 계산에 넣었으니 금액·시각을 확인하세요.' +
+        (u ? ' <button type="button" class="lnk" id="' + p + '-sig-un" data-act="goEntry" data-id="' + u.id + '">#' + u.id + ' 기록 보기</button>' : '') + '</div>');
+    }
+    return out.length ? '<div class="sigs">' + out.join('') + '</div>' : '';
+  }
+  function baseCardHtml(c, p) {
+    var B = M.base, cf = B.confirmed || {};
+    var krw = cf.krw != null ? won(cf.krw) + ' ' + st('ok', '✓', '확인') : won(B.krw) + ' ' + st('warn', '!', '스냅샷 값');
+    var u = cf.usd != null ? usd(cf.usd) + ' ' + st('ok', '✓', '확인 (외화예수금)') : usd(B.usd) + ' ' + st('warn', '!', '스냅샷 값');
+    return '<section class="card basecard" aria-labelledby="' + p + '-bs-t"><div class="bc-h"><h3 id="' + p + '-bs-t">손익 기준</h3><span class="muted" style="font-size:12px">버전 ' + B.version + '</span></div>' +
+      '<dl class="kd"><dt>기준 시각</dt><dd>' + iso(B.at) + ' <span class="muted">(스냅샷 #' + B.id + ')</span></dd>' +
+      '<dt>기준 총자산</dt><dd><b class="num">' + won(c.b0) + '</b></dd>' +
+      '<dt>원화 현금</dt><dd>' + krw + '</dd><dt>달러 현금</dt><dd>' + u + '</dd>' +
+      '<dt>환율</dt><dd>' + rt(B.fx) + '원/$ <span class="muted">(그 스냅샷의 앱 환율)</span></dd></dl>' +
+      '<div class="btns"><button type="button" class="btn sec" id="' + p + '-bs-conf" data-act="baseConfirm">기준 현금 확인</button><button type="button" class="btn sec" id="' + p + '-bs-chg" data-act="baseChange">기준 바꾸기</button></div></section>';
+  }
+  function guideHtml() {
+    return '<details class="guide"><summary>기록 안내 — 무엇을 넣고, 무엇을 넣지 않나요</summary><ul>' +
+      '<li><b>넣는 것</b>: 계좌에 넣은 돈(입금)과 뺀 돈(출금). 원화든 달러든 그 통화 그대로.</li>' +
+      '<li><b>넣지 않는 것</b>: 배당·이자·수수료·세금, 주식 매매. 이미 투자 손익이라, 넣으면 번 돈이 입금으로 빠져 손익이 틀어집니다.</li>' +
+      '<li><b>환전은 선택</b>: 계좌 안에서 돈의 종류만 바뀌어 손익 숫자는 그대로입니다. 넣으면 환전 비용(추정)을 볼 수 있습니다.</li>' +
+      '<li><b>시각을 모르면 조금 이르게</b>: 그 시각 뒤 ' + RULE.windowH + '시간 안 스냅샷에서 맞는 현금 변화를 찾습니다. 실제보다 늦게 넣으면 찾지 못할 수 있습니다.</li>' +
+      '<li><b>기준 시각 이전은 넣지 않습니다</b>: 그 전에 오간 돈은 기준 총자산에 이미 들어 있습니다.</li>' +
+      '<li><b>달러 현금</b>: 이 앱은 KIS 앱의 ‘외화예수금’ 기준입니다. ‘주문가능금액’은 아직 체결되지 않은 주문에 묶인 돈이 빠져 더 작게 보일 수 있습니다.</li>' +
+      '</ul></details>';
+  }
+  function listHtml(c, p) {
+    var vis = visibleEntries();
+    var head = '<div class="lh"><h3 id="' + p + '-list-t" tabindex="-1">기록 <span class="num">' + c.live + '</span>건</h3>' +
+      (c.voids ? '<button type="button" class="tgl' + (M.showVoid ? ' on' : '') + '" id="' + p + '-tgl" data-act="toggleVoid">취소·정정된 기록 ' + c.voids + '건 ' + (M.showVoid ? '숨기기' : '보기') + '</button>' : '') + '</div>';
+    if (!M.entries.length) {
+      return head + '<div class="emptyl"><b>아직 기록이 없습니다</b><p>기준(' + md(M.base.at) + ') 뒤 계좌에 넣거나 뺀 돈이 없다면 그대로 두어도 손익이 맞습니다. 있었다면 기록하세요.</p>' +
+        '<div><button type="button" class="btn pri" id="' + p + '-add2" data-act="add">+ 첫 기록 추가</button></div></div>';
+    }
+    if (!vis.length) return head + '<div class="emptyl"><b>살아 있는 기록이 없습니다</b><p>모든 기록이 취소·정정됐습니다. 위 버튼으로 이력을 볼 수 있습니다.</p></div>';
+    var list = '<ul class="elist only-m" aria-labelledby="' + p + '-list-t">' + vis.map(function (e) {
+      var open = !!M.open[e.id], x = entryExtra(e);
+      return '<li class="erow' + (e.void ? ' void' : '') + '"><button type="button" class="erow-h" id="' + p + '-eh-' + e.id + '" data-act="toggle" data-id="' + e.id + '" aria-expanded="' + open + '" aria-controls="' + p + '-ed-' + e.id + '">' +
+        '<span class="k">' + kchip(e) + '<span class="id">#' + e.id + '</span></span><span class="a">' + (e.kind === 'exch' ? amtOf(e.ccy, e.amt) + ' →<br>' + amtOf(e.cc, e.camt) : entryAmt(e)) + '</span>' +
+        '<span class="m">' + entryMeta(e) + '</span><span class="s">' + entryStatus(e) + '</span>' +
+        (x ? '<span class="x">' + x + '</span>' : '') + '</button>' +
+        '<div class="erow-d" id="' + p + '-ed-' + e.id + '"' + (open ? '' : ' hidden') + '>' + entryDetail(e, p) + '</div></li>';
+    }).join('') + '</ul>';
+    var table = '<div class="only-d"><table class="etable"><caption class="sr">입출금 기록 목록</caption><thead><tr>' +
+      '<th scope="col">#</th><th scope="col">발생 시각</th><th scope="col">종류</th><th scope="col" class="r">금액</th><th scope="col" class="r">원화 환산 · 환율</th><th scope="col">상태</th><th scope="col">메모</th><th scope="col"><span class="sr">자세히</span></th></tr></thead><tbody>' +
+      vis.map(function (e) {
+        var open = !!M.open[e.id];
+        var conv = e.kind === 'exch' ? rt(exRate(e)) + '원/$<small>비용(추정) ' + won(exCost(e)) + '</small>' : e.ccy === 'USD' ? won(keq(e)) + '<small>' + (e.afx ? '환율 ' + rt(e.afx) : '임시') + '</small>' : '—';
+        return '<tr' + (e.void ? ' class="void"' : '') + '><td class="num">' + e.id + '</td><td class="num nw">' + md(e.at) + '</td><td>' + kchip(e) + '</td><td class="r amt">' + entryAmt(e) + '</td><td class="r">' + conv + '</td><td class="nw">' + entryStatus(e) + '</td><td>' + (e.memo ? esc(e.memo) : '<span class="muted">—</span>') + '</td>' +
+          '<td><button type="button" class="rowbtn" id="' + p + 't-eh-' + e.id + '" data-act="toggle" data-id="' + e.id + '" aria-expanded="' + open + '" aria-controls="' + p + 't-ed-' + e.id + '" aria-label="#' + e.id + ' 기록 ' + (open ? '접기' : '자세히') + '">' + (open ? '접기' : '자세히') + '</button></td></tr>' +
+          '<tr class="dt" id="' + p + 't-ed-' + e.id + '"' + (open ? '' : ' hidden') + '><td colspan="8">' + entryDetail(e, p + 't') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    return head + list + table;
+  }
+  function ledgerBody(p) {
+    if (M.data === 'loading') {
+      return '<div class="sumcard" aria-busy="true"><span class="sr" role="status">입출금 기록을 불러오는 중…</span><div class="skel s" aria-hidden="true"></div><div class="skel big" aria-hidden="true"></div><div class="skel m" aria-hidden="true"></div><div class="skel" aria-hidden="true"></div><div class="skel m" aria-hidden="true"></div></div>' +
+        '<div class="sumcard" aria-hidden="true"><div class="skel m"></div><div class="skel s"></div><div class="skel m"></div></div>';
+    }
+    if (M.data === 'error') {
+      return '<div class="sumcard" role="alert">' + st('warn', '!', '입출금 기록을 불러오지 못했습니다') +
+        '<span class="muted" style="font-size:12px">이 화면이 값을 받지 못했을 뿐, 기록이 없어진 것이 아닙니다. 오류: 서버 응답 503 (예시)</span>' +
+        '<div><button type="button" class="btn pri" id="' + p + '-retry" data-act="reload">다시 시도</button></div></div>';
+    }
+    if (!M.base) {
+      return '<section class="card nobase" aria-labelledby="' + p + '-nb-t"><h3 id="' + p + '-nb-t">손익 기준이 아직 없습니다</h3>' +
+        '<p>입출금을 빼고 계산하려면 먼저 <b>언제부터 셀지</b> 정해야 합니다. 그 시각의 총자산이 ‘기준 총자산’이 되고, 그 뒤에 넣고 뺀 돈만 기록합니다.</p>' +
+        '<button type="button" class="btn pri wide" id="' + p + '-nb-set" data-act="baseSet">기준 정하기</button>' +
+        '<p class="muted" style="font-size:12px">기준을 정하기 전에는 기록을 추가할 수 없습니다. 지금 총자산: ' + won(M.snap.v) + ' (' + md(M.snap.ts) + ' 스냅샷)</p></section>' + guideHtml();
+    }
+    var c = calc();
+    return '<div class="lg-body">' +
+      '<div class="lg-top">' + summaryHtml(c, p) + candHtml(c, p) + signalsHtml(c, p) +
+        '<button type="button" class="btn pri wide" id="' + p + '-add" data-act="add">+ 입출금 기록 추가</button></div>' +
+      '<div class="lg-list">' + listHtml(c, p) + '</div>' +
+      '<div class="lg-bot">' + baseCardHtml(c, p) + guideHtml() + '</div></div>';
+  }
+  function ledgerScreen(p) {
+    return '<div class="rp-head"><a class="back" href="#f-s" aria-label="설정으로 돌아가기">‹ 설정</a><h2>입출금 기록</h2><span class="mode disp">◌ 기록·계산 전용</span></div>' +
+      '<div class="strip"><span>이 화면은 <b>계좌의 돈을 움직이지 않고 주문도 만들지 않습니다</b>. 넣고 뺀 돈을 적어 손익을 바르게 계산하는 기록장입니다.</span></div>' +
+      '<main class="app-body">' + ledgerBody(p) + '</main>' + tabs();
+  }
+
+  /* ── 설정 화면 (진입) ── */
+  function rowSummary() {
+    if (M.data === 'loading') return '<span role="status">불러오는 중…</span>';
+    if (M.data === 'error') return st('warn', '!', '불러오지 못했습니다 — 눌러서 다시 확인');
+    if (!M.base) return st('na', '—', '손익 기준이 아직 없습니다') + '<span class="muted">눌러서 기준을 정하면 입출금을 기록할 수 있습니다</span>';
+    var c = calc(), chips = [];
+    if (candOpen()) chips.push(st('warn', '!', '기록 안 된 변화 1건'));
+    if (c.unm) chips.push(st('warn', '!', '불일치 ' + c.unm + '건'));
+    if (c.pend.n) chips.push(st('na', '◌', '반영 대기 ' + c.pend.n + '건'));
+    if (c.unconf) chips.push(st('warn', '!', '기준 미확정'));
+    return '<div>입출금 뺀 손익 <b class="pl ' + plCls(c.P) + '">' + swon(c.P) + '</b>' + (c.R != null ? ' <span class="num">(' + spct(c.R, 1) + ')</span>' : '') + ' <span class="muted" style="white-space:nowrap">· ' + md(M.base.at).slice(0, 5) + '부터</span>' + (c.unconf ? ' <span class="ptag">임시</span>' : '') + '</div>' +
+      (chips.length ? '<div class="chips">' + chips.join('') + '</div>' : '') +
+      '<div class="muted" style="font-size:12px">기록 ' + c.live + '건' + (c.last ? ' · 마지막 ' + md(c.last.at) : '') + '</div>';
+  }
+  function settingsFrame() {
+    var row = M.sv === 'cur' ? '' :
+      '<div class="sec-h">자산 기록<span class="newmark">새로 추가</span></div>' +
+      '<a class="riskrow" id="s-row" href="#wrap-lg" aria-labelledby="s-row-t s-row-sum"><div class="top"><b id="s-row-t">입출금 기록</b><span class="mode disp">◌ 기록·계산 전용</span></div>' +
+      '<div class="rk-sum" id="s-row-sum">' + rowSummary() + '</div>' +
+      '<div class="go"><span>입출금 기록 · 손익 보기</span><span class="chev" aria-hidden="true">›</span></div></a>';
+    return '<main class="app-body">' +
+      '<div class="sec-h">내 계정</div>' +
+      '<a class="linkrow" href="#demo"><div><div class="t">내 계정 · 증권계좌 연결</div><div class="s">비밀번호 변경 · KIS 키 연결 · 회원별 매매 설정</div></div><span class="chev" aria-hidden="true">›</span></a>' +
+      row +
+      '<div class="sec-h">승인 방식</div>' +
+      '<div class="card"><div class="row"><div><div>하이브리드 승인</div><div class="s">승인 후 진입 감시 (예시)</div></div><span class="tg"><span class="onoff">ON</span><span class="fake-toggle" aria-hidden="true"></span></span></div></div>' +
+      '<div class="sec-h">안전장치 (공통)</div>' +
+      '<div class="card"><div class="strip"><span class="mode live">● 집행 중</span><span>이 카드의 설정은 실제 주문에 바로 적용됩니다</span></div>' +
+      '<div class="row"><div><div>실거래 여부</div><div class="s">예시 값</div></div><span class="tg"><span class="onoff">ON</span><span class="fake-toggle" aria-hidden="true"></span></span></div>' +
+      '<div class="row"><div><div>KILL_SWITCH</div><div class="s">OFF — 주문 정상 처리 (예시)</div></div><span class="tg"><span class="onoff">OFF</span><span class="fake-toggle off" aria-hidden="true"></span></span></div></div>' +
+      '<p class="muted" style="font-size:12px;margin:0">… 리스크 정책 · 거래 보호 · 변동폭 가드 등 (변경 없음)</p>' +
+      '</main>' + tabs();
+  }
+
+  /* ── 렌더 ── */
+  function render() {
+    ['f-s', 'f-m'].forEach(function (id) { el(id).classList.toggle('w360', M.width === 360); });
+    el('f-s').innerHTML = settingsFrame();
+    el('f-m').innerHTML = ledgerScreen('m');
+    el('f-d').innerHTML = ledgerScreen('d');
+  }
+
+  /* ── 시트(대화상자) ── */
+  var root = el('sheet-root');
+  function frameOf(node) { var f = node && node.closest ? node.closest('.app') : null; return f && f.id === 'f-d' ? 'd' : 'm'; }
+  function openSheet(s, trigger) {
+    s.trigger = trigger && trigger.id ? trigger.id : null;
+    s.frame = s.frame || frameOf(trigger);
+    M.sheet = s;
+    el('page').inert = true;
+    document.body.style.overflow = 'hidden';
+    renderSheet(null, true);
+  }
+  function closeSheet() {
+    var s = M.sheet; if (!s) return;
+    if (s.type === 'entry' && s.step === 'form' && !s.done) M.lastDraft = clone(s.draft);
+    M.sheet = null;
+    root.className = 'sheet-root hide'; root.innerHTML = '';
+    el('page').inert = false;
+    document.body.style.overflow = '';
+    render();
+    var t = s.trigger && el(s.trigger);
+    if (!t) t = el((s.frame === 'd' ? 'd' : 'm') + '-list-t') || el((s.frame === 'd' ? 'd' : 'm') + '-add');
+    if (t) t.focus();
+  }
+  function sheetShell(title, body, foot, sub) {
+    return '<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-t"' + (sub ? ' aria-describedby="sh-sub"' : '') + '>' +
+      '<div class="sh-head"><h2 id="sh-t" tabindex="-1">' + title + '</h2><button type="button" class="sh-x" data-act="close"' + (M.sheet.saving ? ' disabled' : '') + '>닫기</button></div>' +
+      '<div class="sh-body">' + (sub ? '<p id="sh-sub" class="csub">' + sub + '</p>' : '') + body + '</div>' +
+      '<div class="sh-foot">' + foot + '</div></div>';
+  }
+  function renderSheet(focusId, first) {
+    var s = M.sheet; if (!s) return;
+    root.className = 'sheet-root' + (s.frame === 'd' ? ' d' : '');
+    var h = s.type === 'entry' ? (s.step === 'form' ? entryForm(s) : entryConfirm(s))
+      : s.type === 'cancel' ? cancelSheet(s) : s.type === 'restore' ? restoreSheet(s)
+      : s.type === 'base' ? baseSheet(s) : dismissSheet(s);
+    root.innerHTML = h;
+    if (s.type === 'entry' && s.step === 'form') refreshEntry();
+    if (s.type === 'base') refreshBase();
+    var f = focusId && el(focusId);
+    if (!f && first && s.type === 'entry' && s.step === 'form') f = el('sh-amt') || el('sh-from');
+    if (!f) f = el('sh-t');
+    if (f) f.focus();
+  }
+  function errBox(s) {
+    if (!s.err) return '';
+    var m = s.err.msg;
+    return '<div class="errbox" role="alert">' + m + '</div>';
+  }
+  function busyFoot(label) { return '<div class="btns"><button type="button" class="btn sec" disabled>‹ 고치기</button><button type="button" class="btn pri" id="sh-primary" disabled aria-busy="true">' + label + '</button></div>'; }
+
+  /* ── 기록 추가·정정 폼 ── */
+  function nowDate() { return iso(M.now).slice(0, 10); }
+  function nowTime() { return iso(M.now).slice(11); }
+  function newDraft(mode, over) {
+    var d = { mode: mode, kind: 'dep', date: nowDate(), time: nowTime(), ccy: 'KRW', amt: '', dir: 'ku', from: '', to: '', memo: '', target: null, cid: 'c' + Math.random().toString(16).slice(2, 10) };
+    for (var k in over) d[k] = over[k];
+    return d;
+  }
+  function parseAmt(s, ccy) {
+    var raw = String(s || '').replace(/[\s,]/g, '');
+    if (raw === '') return { empty: true };
+    if (/^[-−]/.test(raw)) return { err: '부호는 넣지 않습니다. 나간 돈이면 위에서 종류를 ‘출금’으로 고르세요.' };
+    if (!/^\d+(\.\d+)?$/.test(raw)) return { err: '숫자만 넣어 주세요.' };
+    var v = Number(raw);
+    if (!(v > 0)) return { err: '0보다 큰 금액을 넣어 주세요.' };
+    if (ccy === 'KRW' && raw.indexOf('.') >= 0) return { err: '원화는 1원 단위로 넣어 주세요(소수점 없음).' };
+    if (ccy === 'USD' && /\.\d{3,}$/.test(raw)) return { err: '달러는 센트(소수 둘째 자리)까지만 넣어 주세요.' };
+    return { v: v };
+  }
+  function validateEntry(d) {
+    var o = { errs: {}, warns: [], block: false, t: NaN };
+    var t = d.date && d.time ? tm(d.date + ' ' + d.time) : NaN;
+    o.t = t;
+    if (isNaN(t)) o.errs.when = '날짜와 시각을 넣어 주세요.';
+    else if (t > M.now) o.errs.when = '아직 오지 않은 시각입니다. 지금(' + md(M.now) + ') 이전으로 넣어 주세요.';
+    else if (M.base && t <= M.base.at) o.block = true;
+    if (d.kind === 'exch') {
+      var fromC = d.dir === 'ku' ? 'KRW' : 'USD', toC = fromC === 'KRW' ? 'USD' : 'KRW';
+      var a = parseAmt(d.from, fromC), b = parseAmt(d.to, toC);
+      if (a.empty) o.errs.from = '낸 금액을 넣어 주세요.'; else if (a.err) o.errs.from = a.err;
+      if (b.empty) o.errs.to = '받은 금액을 넣어 주세요.'; else if (b.err) o.errs.to = b.err;
+      o.fromC = fromC; o.toC = toC; o.a = a.v; o.b = b.v;
+      if (a.v && b.v) {
+        var krw = fromC === 'KRW' ? a.v : b.v, u = fromC === 'KRW' ? b.v : a.v;
+        o.rate = krw / u; o.diff = (o.rate - M.snap.fx) / M.snap.fx * 100;
+        o.cost = fromC === 'KRW' ? krw - u * M.snap.fx : u * M.snap.fx - krw;
+        if (Math.abs(o.diff) > RULE.fxWarnPct) o.warns.push('적용 환율이 앱 환율(' + rt(M.snap.fx) + '원/$)과 ' + Math.abs(o.diff).toFixed(1) + '% 다릅니다. 두 금액의 자릿수를 확인하세요.');
+      }
+    } else {
+      var p = parseAmt(d.amt, d.ccy);
+      if (p.empty) o.errs.amt = '금액을 넣어 주세요.'; else if (p.err) o.errs.amt = p.err;
+      o.v = p.v;
+      if (p.v) {
+        o.krw = d.ccy === 'KRW' ? p.v : p.v * M.snap.fx;
+        if (o.krw >= M.snap.v * RULE.bigPct / 100) o.warns.push('현재 총자산(' + won(M.snap.v) + ')의 절반이 넘는 금액입니다. 자릿수와 통화(원·달러)를 확인하세요.');
+        if (!isNaN(t)) {
+          var dup = M.entries.filter(function (e) { return !e.void && e.kind === d.kind && e.ccy === d.ccy && e.amt === p.v && Math.abs(e.at - t) <= 1440 && e.id !== d.target; })[0];
+          if (dup) o.warns.push('24시간 안에 같은 금액 기록이 있습니다(#' + dup.id + ' · ' + md(dup.at) + ' ' + entryOne(dup) + '). 같은 돈을 두 번 넣지 않았는지 확인하세요.');
+        }
+      }
+    }
+    o.n = Object.keys(o.errs).length + (o.block ? 1 : 0);
+    return o;
+  }
+  function kindSeg(d) {
+    return '<fieldset class="kseg"><legend>종류</legend><div class="opts">' + ['dep', 'wd', 'exch'].map(function (k) {
+      return '<label><input type="radio" name="sh-kind" id="sh-k-' + k + '" value="' + k + '"' + (d.kind === k ? ' checked' : '') + '><span>' + KIND[k].label + '<small>' + KIND[k].desc + '</small></span></label>';
+    }).join('') + '</div></fieldset>';
+  }
+  function entryForm(s) {
+    var d = s.draft, title = d.mode === 'correct' ? '기록 정정 — #' + d.target : '입출금 기록 추가';
+    var pre = '';
+    if (d.mode === 'correct') { var o = byId(d.target); pre = '<div class="infobox" role="note"><span class="ic" aria-hidden="true">ⓘ</span><div>원래 기록 <b>#' + o.id + ' ' + entryOne(o) + '</b>은 지우지 않고 <b>‘정정됨’</b>으로 남깁니다. 아래 새 기록이 대신 계산에 들어갑니다.</div></div>'; }
+    if (d.mode === 'cand') pre = '<div class="infobox" role="note"><span class="ic" aria-hidden="true">ⓘ</span><div>' + md(M.cand.ts) + ' 스냅샷의 <b>원화 ' + swon(M.cand.d) + '</b> 변화로 채웠습니다. 실제와 다르면 고치세요. 시각은 직전 스냅샷(' + iso(M.cand.prev).slice(11) + ')과 이 스냅샷 사이면 됩니다.</div></div>';
+    if (d.mode === 'new' && s.restored) pre = '<div class="infobox" role="status"><span class="ic" aria-hidden="true">ⓘ</span><div>닫기 전에 쓰던 내용을 이어서 씁니다.</div></div>';
+    var minD = M.base ? iso(M.base.at).slice(0, 10) : '';
+    var when = '<fieldset class="kseg field"><legend>발생 날짜·시각 (한국 시간)</legend><div class="inrow">' +
+      '<div><label class="sr" for="sh-date">날짜</label><input class="dtin" type="date" id="sh-date" value="' + d.date + '" min="' + minD + '" max="' + nowDate() + '" aria-describedby="sh-when-h sh-when-m"></div>' +
+      '<div><label class="sr" for="sh-time">시각</label><input class="dtin" type="time" id="sh-time" step="60" value="' + d.time + '" aria-describedby="sh-when-h sh-when-m"></div></div>' +
+      '<div class="hint" id="sh-when-h">기준 ' + (M.base ? md(M.base.at) : '—') + ' 뒤만 기록합니다. KIS 거래내역의 시각을 넣고, 모르면 조금 이르게 넣으세요.</div>' +
+      '<div class="msgs" id="sh-when-m" aria-live="polite"></div></fieldset><div id="sh-block"></div>';
+    var money;
+    if (d.kind === 'exch') {
+      var fromC = d.dir === 'ku' ? 'KRW' : 'USD', toC = fromC === 'KRW' ? 'USD' : 'KRW';
+      money = '<fieldset class="kseg"><legend>방향</legend><div class="opts">' +
+        '<label><input type="radio" name="sh-dir" id="sh-d-ku" value="ku"' + (d.dir === 'ku' ? ' checked' : '') + '><span>원화 → 달러</span></label>' +
+        '<label><input type="radio" name="sh-dir" id="sh-d-uk" value="uk"' + (d.dir === 'uk' ? ' checked' : '') + '><span>달러 → 원화</span></label></div></fieldset>' +
+        moneyField('from', '낸 ' + (fromC === 'KRW' ? '원화' : '달러'), fromC, d.from) +
+        moneyField('to', '받은 ' + (toC === 'KRW' ? '원화' : '달러'), toC, d.to) +
+        '<div id="sh-derived" aria-live="polite"></div>' +
+        '<div class="infobox" role="note"><span class="ic" aria-hidden="true">ⓘ</span><div>환전은 계좌 안 이동이라 순입금·손익에 넣지 않습니다. 기록하지 않아도 손익은 맞고, 기록하면 환전 비용(추정)을 볼 수 있습니다.</div></div>';
+    } else {
+      money = '<fieldset class="kseg"><legend>통화</legend><div class="opts">' +
+        '<label><input type="radio" name="sh-ccy" id="sh-c-KRW" value="KRW"' + (d.ccy === 'KRW' ? ' checked' : '') + '><span>원화 (원)</span></label>' +
+        '<label><input type="radio" name="sh-ccy" id="sh-c-USD" value="USD"' + (d.ccy === 'USD' ? ' checked' : '') + '><span>달러 ($)</span></label></div></fieldset>' +
+        moneyField('amt', '금액', d.ccy, d.amt, true);
+    }
+    var memo = '<div class="field"><label class="fl" for="sh-memo">메모 <span class="muted" style="font-weight:400">(선택 · 200자)</span></label>' +
+      '<div class="inwrap txt"><input id="sh-memo" type="text" maxlength="200" autocomplete="off" value="' + esc(d.memo) + '" placeholder="예: 생활비 통장에서"></div>' +
+      '<div class="hint">배당·이자·수수료는 투자 손익이라 여기 기록하지 않습니다.</div></div>';
+    var foot = '<div class="sh-why" id="sh-why" aria-live="polite"></div><div class="btns"><button type="button" class="btn sec" data-act="close">닫기</button><button type="button" class="btn pri" id="sh-next" data-act="next">확인하기</button></div>';
+    return sheetShell(title, pre + kindSeg(d) + when + money + '<div id="sh-warn"></div>' + memo, foot);
+  }
+  function moneyField(key, label, ccy, val, withRead) {
+    return '<div class="field"><label class="fl" for="sh-' + key + '">' + label + '</label>' +
+      '<div class="inwrap" id="sh-w-' + key + '"><span class="cur" aria-hidden="true">' + (ccy === 'USD' ? '$' : '₩') + '</span>' +
+      '<input id="sh-' + key + '" type="text" inputmode="' + (ccy === 'USD' ? 'decimal' : 'numeric') + '" autocomplete="off" enterkeyhint="done" value="' + esc(val) + '" placeholder="' + (ccy === 'USD' ? '0.00' : '0') + '" aria-describedby="sh-' + key + '-r sh-' + key + '-m">' +
+      '<span class="unit" aria-hidden="true">' + (ccy === 'USD' ? '달러' : '원') + '</span></div>' +
+      '<div class="read" id="sh-' + key + '-r" aria-live="polite"></div><div class="msgs" id="sh-' + key + '-m"></div></div>';
+  }
+  function readLine(ccy, v) {
+    if (!v) return '';
+    if (ccy === 'USD') return '= <b>' + usd(v) + '</b> <span class="muted">· 참고 ≈ ' + won(v * M.snap.fx) + '(앱 환율 ' + rt(M.snap.fx) + ', 반영되면 그 시각 환율로 다시 환산)</span>';
+    return '= <b>' + won(v) + '</b> <span class="muted">· ' + krRead(v) + '</span>';
+  }
+  function refreshEntry() {
+    var s = M.sheet; if (!s || s.type !== 'entry' || s.step !== 'form') return;
+    var d = s.draft, v = validateEntry(d);
+    setHtml('sh-when-m', v.errs.when ? st('warn', '!', v.errs.when) : '');
+    ['sh-date', 'sh-time'].forEach(function (id) { var x = el(id); if (x) x.setAttribute('aria-invalid', v.errs.when || v.block ? 'true' : 'false'); });
+    setHtml('sh-block', v.block ? '<div class="blockbox" role="alert"><b>! 기준 시각(' + md(M.base.at) + ') 이전이라 기록할 수 없습니다.</b><br>그 전에 넣고 뺀 돈은 기준 총자산 ' + won(baseTotal(M.base)) + '에 이미 들어 있습니다. 여기 다시 넣으면 같은 돈을 두 번 빼게 되어 손익이 그만큼 틀어집니다.<br><span class="muted">더 이른 때부터 세고 싶다면 화면 아래 ‘손익 기준’에서 기준을 바꾸세요.</span></div>' : '');
+    if (d.kind === 'exch') {
+      [['from', v.fromC, v.a], ['to', v.toC, v.b]].forEach(function (f) {
+        var e = v.errs[f[0]], raw = d[f[0]];
+        setHtml('sh-' + f[0] + '-m', e && raw !== '' ? st('warn', '!', e) : '');
+        setHtml('sh-' + f[0] + '-r', readLine(f[1], f[2]));
+        var w = el('sh-w-' + f[0]); if (w) w.className = 'inwrap' + (e && raw !== '' ? ' bad' : '');
+        var i = el('sh-' + f[0]); if (i) i.setAttribute('aria-invalid', e && raw !== '' ? 'true' : 'false');
+      });
+      setHtml('sh-derived', v.rate ? '<div class="derived">적용 환율 <span class="big">' + rt(v.rate) + '원/$</span> <span class="muted">(원화 ÷ 달러)</span><br>앱 환율 ' + rt(M.snap.fx) + '원/$ 대비 <b>' + spct(v.diff, 2) + '</b> · 환전 비용(추정) 약 <b>' + won(Math.max(0, v.cost)) + '</b><br><span class="muted">추정: 기준 = 앱 환율(최신 스냅샷), KIS 고시환율 아님.</span></div>' : '<div class="derived muted">두 금액을 넣으면 적용 환율과 환전 비용(추정)을 계산해 보여 드립니다.</div>');
+    } else {
+      var e = v.errs.amt, raw = d.amt;
+      setHtml('sh-amt-m', e && raw !== '' ? st('warn', '!', e) : '');
+      setHtml('sh-amt-r', readLine(d.ccy, v.v));
+      var w = el('sh-w-amt'); if (w) w.className = 'inwrap' + (e && raw !== '' ? ' bad' : '');
+      var i = el('sh-amt'); if (i) i.setAttribute('aria-invalid', e && raw !== '' ? 'true' : 'false');
+    }
+    setHtml('sh-warn', v.warns.length ? '<div class="warnbox" role="note">' + v.warns.map(function (w) { return '<div>' + st('warn', '!', w) + '</div>'; }).join('') + '</div>' : '');
+    var why = v.block ? '기준 시각 이전 날짜는 기록할 수 없습니다.' : v.n ? '채우거나 고칠 곳 ' + v.n + '곳 — ' + Object.keys(v.errs).map(function (k) { return { when: '날짜·시각', amt: '금액', from: '낸 금액', to: '받은 금액' }[k]; }).join(' · ') : '';
+    setHtml('sh-why', why);
+    var nx = el('sh-next'); if (nx) { nx.disabled = v.n > 0; if (v.n) nx.setAttribute('aria-describedby', 'sh-why'); else nx.removeAttribute('aria-describedby'); }
+  }
+  function predict(d, v) {
+    if (d.kind === 'exch') return { st: v.t > M.snap.ts ? 'pending' : 'unmatched', anc: null };
+    var C = M.cand, tol = Math.max(d.ccy === 'KRW' ? RULE.tolKrw : RULE.tolUsd, v.v * 0.001);
+    var hit = C && C.state === 'open' && d.ccy === C.ccy && d.kind === (C.d > 0 ? 'dep' : 'wd') && Math.abs(v.v - Math.abs(C.d)) <= tol && v.t > C.prev && v.t <= C.ts;
+    if (hit) return { st: 'matched', anc: C.ts };
+    return { st: v.t > M.snap.ts ? 'pending' : 'unmatched', anc: null };
+  }
+  function buildEntry(d, v, pr, id) {
+    var e = { id: id, cat: M.now, at: v.t, memo: d.memo.trim(), st: pr.st, anc: pr.anc };
+    if (d.kind === 'exch') { e.kind = 'exch'; e.ccy = v.fromC; e.amt = v.a; e.cc = v.toC; e.camt = v.b; }
+    else { e.kind = d.kind; e.ccy = d.ccy; e.amt = v.v; if (pr.st === 'matched' && d.ccy === 'USD') e.afx = M.snap.fx; }
+    if (pr.st === 'matched') e.det = (d.ccy === 'KRW' ? '원화 현금 ' : '달러 현금 ') + swon(M.cand.d) + ' 확인 (허용 ±1,000원)';
+    if (pr.st === 'unmatched') e.det = '이 시각 뒤 스냅샷에서 맞는 현금 변화를 찾지 못했습니다.';
+    if (d.mode === 'correct') e.sup = d.target;
+    return e;
+  }
+  function applyDraft(d, v, pr, id) {
+    var e = buildEntry(d, v, pr, id);
+    if (d.mode === 'correct') { var o = byId(d.target); o.void = { type: 'super', by: id, reason: '정정', at: M.now }; }
+    M.entries.push(e);
+    return e;
+  }
+  function entryConfirm(s) {
+    var d = s.draft, v = validateEntry(d), pr = predict(d, v), c0 = calc();
+    var c1 = simCalc(function () { applyDraft(d, v, pr, 999); });
+    var title = d.mode === 'correct' ? '정정 확인 — #' + d.target : '기록 확인';
+    var stmt, sub;
+    if (d.kind === 'exch') {
+      stmt = '<b>' + amtOf(v.fromC, v.a) + '</b>을 내고 <b>' + amtOf(v.toC, v.b) + '</b>를 받은 <b>환전</b>으로 기록합니다.';
+      sub = '계좌 안 이동이라 손익 숫자는 바뀌지 않습니다. 환전 비용(추정) 약 ' + won(Math.max(0, v.cost)) + '.';
+    } else {
+      var a = amtOf(d.ccy, v.v) + (d.ccy === 'KRW' ? '(' + krRead(v.v) + ')' : '(참고 ≈ ' + won(v.krw) + ')');
+      stmt = d.kind === 'dep' ? '계좌에 <b>' + a + '</b>이 <b>들어온</b> 것으로 기록합니다.' : '계좌에서 <b>' + a + '</b>이 <b>빠져나간</b> 것으로 기록합니다.';
+      sub = d.kind === 'dep' ? '총자산이 이만큼 늘어난 것은 투자로 번 돈으로 보지 않고 손익에서 뺍니다.' : '총자산이 이만큼 줄어든 것은 투자 손실로 보지 않습니다.';
+    }
+    var rows = [['종류', KIND[d.kind].label], ['발생 시각', iso(v.t) + ' (KST)']];
+    if (d.kind !== 'exch') rows.push(['통화', d.ccy === 'KRW' ? '원화' : '달러']);
+    rows.push(['메모', d.memo ? esc(d.memo) : '<span class="muted">없음</span>']);
+    if (d.mode === 'correct') { var o = byId(d.target); rows.push(['대체할 기록', '#' + o.id + ' ' + entryOne(o) + ' → ‘정정됨’으로 남김']); }
+    var imp;
+    if (d.kind === 'exch') imp = '손익 변화 없음 (환전은 순입금에 넣지 않음)';
+    else if (pr.st === 'matched') imp = '<b>바로 반영</b> — ' + md(pr.anc) + ' 스냅샷의 변화와 맞습니다.<br>순입금 ' + won(c0.net) + ' → <b>' + won(c1.net) + '</b> · 입출금 뺀 손익 ' + swon(c0.P) + ' → <b>' + swon(c1.P) + '</b>';
+    else if (pr.st === 'pending') imp = '<b>반영 대기</b> — 최신 스냅샷(' + md(M.snap.ts) + ')보다 뒤라 다음 스냅샷을 기다립니다. 반영되면 총자산도 같이 바뀌어 손익은 거의 그대로입니다.' + (d.mode === 'correct' ? '<br>원래 기록이 빠지면서: 입출금 뺀 손익 ' + swon(c0.P) + ' → <b>' + swon(c1.P) + '</b>' : '');
+    else imp = '<b>스냅샷과 맞춰 봅니다</b> — 맞는 현금 변화를 찾지 못하면 ‘불일치’로 표시하고 기록대로 계산에 넣습니다.<br>그 경우 순입금 ' + won(c0.net) + ' → <b>' + won(c1.net) + '</b> · 입출금 뺀 손익 ' + swon(c0.P) + ' → <b>' + swon(c1.P) + '</b>';
+    var warn = v.warns.length ? '<div class="warnbox" role="note">' + v.warns.map(function (w) { return '<div>' + st('warn', '!', w) + '</div>'; }).join('') + '</div>' : '';
+    var body = errBox(s) + '<p class="cbig">' + stmt + '</p><p class="csub">' + sub + '</p>' +
+      '<dl class="kd">' + rows.map(function (r) { return '<dt>' + r[0] + '</dt><dd>' + r[1] + '</dd>'; }).join('') + '</dl>' +
+      '<div class="impact">' + imp + '</div>' + warn +
+      '<p class="csub" style="font-size:12px">‘기록하기’를 두 번 눌러도 한 번만 기록됩니다.</p>';
+    var foot;
+    if (s.saving) foot = busyFoot('기록 중…');
+    else if (s.err && s.err.kind === 'dup') foot = '<div class="btns"><button type="button" class="btn sec" id="sh-back" data-act="back">‹ 고치기</button><button type="button" class="btn pri" id="sh-primary" data-act="close">목록으로</button></div>';
+    else if (s.err && s.err.kind === 'conflictClose') foot = '<div class="btns"><button type="button" class="btn pri" id="sh-primary" data-act="close">닫고 최신 목록 보기</button></div>';
+    else if (s.err && s.err.kind === 'conflict') foot = '<div class="btns"><button type="button" class="btn sec" id="sh-back" data-act="back">‹ 고치기</button><button type="button" class="btn pri" id="sh-primary" data-act="commit">새 기준으로 기록하기</button></div>';
+    else foot = '<div class="btns"><button type="button" class="btn sec" id="sh-back" data-act="back">‹ 고치기</button><button type="button" class="btn pri" id="sh-primary" data-act="commit">' + (s.err ? '다시 시도' : d.mode === 'correct' ? '정정 기록하기' : '기록하기') + '</button></div>';
+    return sheetShell(title, body, foot);
+  }
+
+  /* ── 취소·되살리기 ── */
+  function cancelSheet(s) {
+    var e = byId(s.target), c0 = calc(), c1 = simCalc(function () { byId(s.target).void = { type: 'cancel', reason: 'x', at: M.now }; });
+    var imp = e.kind === 'exch' ? '환전 기록이라 손익 숫자는 바뀌지 않습니다.'
+      : (M.base && e.at <= M.base.at) ? '기준 이전 기록이라 손익 숫자는 바뀌지 않습니다.'
+      : e.st === 'pending' ? '반영 대기 중인 기록이라 지금 손익은 바뀌지 않습니다(다음 스냅샷 뒤에도 계산에 넣지 않습니다).'
+      : '취소하면 계산에서 빠집니다: 순입금 ' + won(c0.net) + ' → <b>' + won(c1.net) + '</b> · 입출금 뺀 손익 ' + swon(c0.P) + ' → <b>' + swon(c1.P) + '</b>';
+    var reasons = ['잘못 입력', '중복 입력', '기타'];
+    var body = errBox(s) +
+      '<div class="infobox" role="note"><span class="ic" aria-hidden="true">#' + e.id + '</span><div><b>' + entryOne(e) + '</b><br>' + entryMeta(e) + '</div></div>' +
+      '<div class="impact">' + imp + '</div>' +
+      '<fieldset class="kseg list"><legend>취소 사유 (필수)</legend><div class="opts">' + reasons.map(function (r, i) {
+        return '<label><input type="radio" name="sh-reason" id="sh-r-' + i + '" value="' + r + '"' + (s.reason === r ? ' checked' : '') + (s.saving ? ' disabled' : '') + '><span>' + r + '</span></label>';
+      }).join('') + '</div>' +
+      (s.reason === '기타' ? '<label class="sr" for="sh-etc">기타 사유</label><input class="rtext" id="sh-etc" type="text" maxlength="200" placeholder="사유를 적어 주세요" value="' + esc(s.etc || '') + '">' : '') + '</fieldset>' +
+      '<p class="csub">지우지 않습니다. 목록에 <b>‘취소됨’</b>으로 남고 사유·시각이 함께 기록되며, 언제든 되살릴 수 있습니다.</p>';
+    var ok = s.reason && (s.reason !== '기타' || (s.etc || '').trim());
+    var foot = s.saving ? busyFoot('표시 중…')
+      : s.err && s.err.kind === 'conflictClose' ? '<div class="btns"><button type="button" class="btn pri" id="sh-primary" data-act="close">닫고 최신 목록 보기</button></div>'
+      : '<div class="sh-why" id="sh-why">' + (ok ? '' : '취소 사유를 골라 주세요.') + '</div><div class="btns"><button type="button" class="btn sec" data-act="close">돌아가기</button><button type="button" class="btn warnline" id="sh-primary" data-act="commit"' + (ok ? '' : ' disabled aria-describedby="sh-why"') + '>' + (s.err ? '다시 시도' : '취소로 표시') + '</button></div>';
+    return sheetShell('기록 취소 — #' + e.id, body, foot);
+  }
+  function restoreSheet(s) {
+    var e = byId(s.target), c0 = calc(), c1 = simCalc(function () { byId(s.target).void = null; });
+    var imp = (e.kind === 'exch' || e.st === 'pending' || (M.base && e.at <= M.base.at)) ? '지금 손익 숫자는 바뀌지 않습니다.' : '되살리면 다시 계산에 들어갑니다: 입출금 뺀 손익 ' + swon(c0.P) + ' → <b>' + swon(c1.P) + '</b>';
+    var body = errBox(s) + '<div class="infobox" role="note"><span class="ic" aria-hidden="true">#' + e.id + '</span><div><b>' + entryOne(e) + '</b><br>' + entryMeta(e) + '<br><span class="muted">취소 사유: ' + esc(e.void.reason) + '</span></div></div><div class="impact">' + imp + '</div>' +
+      '<p class="csub">같은 돈이 다른 기록으로 이미 들어가 있지 않은지 확인하세요(중복이면 두 번 빠집니다).</p>';
+    var foot = s.saving ? busyFoot('되살리는 중…')
+      : s.err && s.err.kind === 'conflictClose' ? '<div class="btns"><button type="button" class="btn pri" id="sh-primary" data-act="close">닫고 최신 목록 보기</button></div>'
+      : '<div class="btns"><button type="button" class="btn sec" data-act="close">돌아가기</button><button type="button" class="btn pri" id="sh-primary" data-act="commit">' + (s.err ? '다시 시도' : '되살리기') + '</button></div>';
+    return sheetShell('기록 되살리기 — #' + e.id, body, foot);
+  }
+
+  /* ── 입출금 아님 표시 ── */
+  function dismissSheet(s) {
+    var C = M.cand, reasons = ['매매·배당·이자 등 투자 손익', '증권사 표시 차이(일시적)', '기타'];
+    var body = errBox(s) + '<div class="infobox" role="note"><span class="ic" aria-hidden="true">!</span><div><b>' + md(C.ts) + ' 스냅샷 · 원화 현금 ' + swon(C.d) + '</b><br>보유 종목 수량 변화 없음</div></div>' +
+      '<fieldset class="kseg list"><legend>사유 (필수)</legend><div class="opts">' + reasons.map(function (r, i) {
+        return '<label><input type="radio" name="sh-reason" id="sh-r-' + i + '" value="' + r + '"' + (s.reason === r ? ' checked' : '') + '><span>' + r + '</span></label>';
+      }).join('') + '</div>' + (s.reason === '기타' ? '<label class="sr" for="sh-etc">기타 사유</label><input class="rtext" id="sh-etc" type="text" maxlength="200" placeholder="사유를 적어 주세요" value="' + esc(s.etc || '') + '">' : '') + '</fieldset>' +
+      '<p class="csub">숫자는 바뀌지 않습니다. 이 변화가 실제로 입출금이었다면 손익에 그대로 섞입니다. 표시한 뒤에도 되돌릴 수 있습니다.</p>';
+    var ok = s.reason && (s.reason !== '기타' || (s.etc || '').trim());
+    var foot = s.saving ? busyFoot('표시 중…')
+      : s.err && s.err.kind === 'conflictClose' ? '<div class="btns"><button type="button" class="btn pri" id="sh-primary" data-act="close">닫기</button></div>'
+      : '<div class="sh-why" id="sh-why">' + (ok ? '' : '사유를 골라 주세요.') + '</div><div class="btns"><button type="button" class="btn sec" data-act="close">돌아가기</button><button type="button" class="btn pri" id="sh-primary" data-act="commit"' + (ok ? '' : ' disabled aria-describedby="sh-why"') + '>' + (s.err ? '다시 시도' : '입출금 아님으로 표시') + '</button></div>';
+    return sheetShell('입출금이 아닌 변화로 표시', body, foot);
+  }
+
+  /* ── 기준 정하기·바꾸기·현금 확인 ── */
+  function baseOpts() { return BASE_OPTS.filter(function (o) { return o.ts <= M.snap.ts; }); }
+  function baseRef(s) {
+    if (s.mode === 'confirm') return { ts: M.base.at, id: M.base.id, v: M.base.total, krw: M.base.krw, usd: M.base.usd, fx: M.base.fx };
+    var o = baseOpts().filter(function (x) { return x.id === s.snapId; })[0];
+    return o || baseOpts()[0];
+  }
+  function baseSheet(s) {
+    var title = s.mode === 'set' ? '기준 정하기' : s.mode === 'change' ? '기준 바꾸기' : '기준 현금 확인';
+    var body = errBox(s);
+    if (s.mode !== 'confirm') {
+      body += '<p class="csub">이 시각부터 손익을 셉니다. 이 시각의 총자산이 ‘기준 총자산’이 되고, 그 뒤에 넣고 뺀 돈만 기록합니다.</p>';
+      if (s.mode === 'change') {
+        var cnt = M.entries.filter(function (e) { return !e.void; }).length;
+        body += '<div class="warnbox" role="note"><b>! 기준을 바꾸면 새 기준 이전 기록은 계산에서 빠집니다(지우지 않음).</b> 지금 기준(' + iso(M.base.at) + ', 버전 ' + M.base.version + ')은 이력으로 남습니다. 살아 있는 기록 ' + cnt + '건 중 새 기준 이전 기록은 ‘기준 이전 · 계산 제외’로 표시됩니다.</div>';
+      }
+      body += '<fieldset class="kseg list"><legend>기준 스냅샷</legend><div class="opts">' + baseOpts().map(function (o) {
+        return '<label><input type="radio" name="sh-bsnap" id="sh-b-' + o.id + '" value="' + o.id + '"' + (s.snapId === o.id ? ' checked' : '') + '><span><span class="ln"><b>' + md(o.ts) + '</b><span class="muted">' + o.tag + '</span></span><span class="ln"><span>총자산 ' + won(o.v) + '</span><span class="muted">#' + o.id + '</span></span></span></label>';
+      }).join('') + '</div><div class="hint">아침 07~09시 스냅샷을 권장합니다. 밤 스냅샷에는 일부 달러 현금이 빠져 보일 때가 있습니다.</div></fieldset>';
+    }
+    var r = baseRef(s);
+    body += '<fieldset class="kseg field"><legend>기준 시각의 현금 확인 ' + (s.mode === 'confirm' ? '' : '<span class="muted" style="font-weight:400">(선택)</span>') + '</legend>' +
+      '<p class="csub" style="font-size:12px;margin:0 0 8px">KIS 앱에서 본 값을 넣습니다. 기준 시각 뒤 입출금·매매가 없었다면 지금 보이는 값과 같습니다. 비워 두면 스냅샷 값을 쓰고 ‘기준 미확정’으로 표시합니다.</p>' +
+      '<div class="field"><label class="fl" for="sh-bkrw">원화 현금</label><div class="inwrap"><span class="cur" aria-hidden="true">₩</span><input id="sh-bkrw" type="text" inputmode="numeric" autocomplete="off" value="' + esc(s.krw) + '" placeholder="' + n0(r.krw) + '" aria-describedby="sh-bkrw-h sh-bkrw-m"><span class="unit" aria-hidden="true">원</span></div>' +
+        '<div class="hint" id="sh-bkrw-h">스냅샷 값 ' + won(r.krw) + ' · KIS 앱 ‘원화 예수금’</div><div class="msgs" id="sh-bkrw-m"></div></div>' +
+      '<div class="field" style="margin-top:10px"><label class="fl" for="sh-busd">달러 현금</label><div class="inwrap"><span class="cur" aria-hidden="true">$</span><input id="sh-busd" type="text" inputmode="decimal" autocomplete="off" value="' + esc(s.usd) + '" placeholder="' + r.usd.toFixed(2) + '" aria-describedby="sh-busd-h sh-busd-m"><span class="unit" aria-hidden="true">달러</span></div>' +
+        '<div class="hint" id="sh-busd-h">스냅샷 값 ' + usd(r.usd) + ' · KIS 앱 <b>‘외화예수금’</b>을 넣으세요. ‘주문가능금액’은 아직 체결되지 않은 주문에 묶인 돈이 빠져 더 작게 보일 수 있습니다.</div><div class="msgs" id="sh-busd-m"></div></div>' +
+      '</fieldset><div id="sh-bprev" aria-live="polite"></div>';
+    var foot = s.saving ? busyFoot('저장 중…')
+      : s.err && s.err.kind === 'baseConflict' ? '<div class="btns"><button type="button" class="btn sec" id="sh-take" data-act="takeServer">최신 기준 쓰기</button><button type="button" class="btn pri" id="sh-primary" data-act="commit">내 값으로 저장</button></div>'
+      : '<div class="sh-why" id="sh-why" aria-live="polite"></div><div class="btns"><button type="button" class="btn sec" data-act="close">닫기</button><button type="button" class="btn pri" id="sh-primary" data-act="commit">' + (s.err ? '다시 시도' : '기준 저장') + '</button></div>';
+    return sheetShell(title, body, foot);
+  }
+  function baseVals(s) {
+    var k = parseAmt(s.krw, 'KRW'), u = parseAmt(s.usd, 'USD');
+    return { k: k, u: u, errs: (k.err ? 1 : 0) + (u.err ? 1 : 0) };
+  }
+  function refreshBase() {
+    var s = M.sheet; if (!s || s.type !== 'base') return;
+    var r = baseRef(s), bv = baseVals(s);
+    setHtml('sh-bkrw-m', bv.k.err ? st('warn', '!', bv.k.err) : '');
+    setHtml('sh-busd-m', bv.u.err ? st('warn', '!', bv.u.err) : '');
+    var b1 = Math.round(r.v + (bv.u.v != null ? (bv.u.v - r.usd) * r.fx : 0) + (bv.k.v != null ? bv.k.v - r.krw : 0));
+    var parts = [];
+    if (bv.u.v != null && bv.u.v !== r.usd) parts.push('달러 ' + (bv.u.v - r.usd > 0 ? '+' : '−') + usd(bv.u.v - r.usd) + ' × ' + rt(r.fx) + '원/$');
+    if (bv.k.v != null && bv.k.v !== r.krw) parts.push('원화 ' + swon(bv.k.v - r.krw));
+    var unc = bv.k.v == null || bv.u.v == null;
+    setHtml('sh-bprev', '<div class="impact">기준 총자산 <b>' + won(r.v) + (b1 !== r.v ? ' → ' + won(b1) : '') + '</b>' + (parts.length ? '<br><span class="muted">' + parts.join(' · ') + '</span>' : '') +
+      '<br>' + (unc ? st('warn', '!', '비운 칸은 스냅샷 값 — 저장하면 ‘기준 미확정’') : st('ok', '✓', '두 값 모두 확인 — 저장하면 ‘현금 확인됨’')) + '</div>');
+    var pr = el('sh-primary'); if (pr && !s.saving && !(s.err && s.err.kind === 'baseConflict')) pr.disabled = bv.errs > 0;
+    setHtml('sh-why', bv.errs ? '금액 형식을 고쳐 주세요.' : '');
+  }
+
+  /* ── 저장 흉내 (성공·실패·충돌·중복) ── */
+  function takeOutcome() { var o = M.outcome; M.outcome = 'ok'; var r = document.querySelector('input[name="so"][value="ok"]'); if (r) r.checked = true; return o; }
+  function toast(msg) {
+    var t = el('toast'); t.innerHTML = msg;
+    clearTimeout(M.toastT); M.toastT = setTimeout(function () { t.innerHTML = ''; }, 7000);
+  }
+  function commit() {
+    var s = M.sheet; if (!s || s.saving) return;
+    if (s.type === 'entry' && validateEntry(s.draft).n) return;
+    s.saving = true; renderSheet('sh-primary');
+    setTimeout(function () {
+      if (M.sheet !== s) return;
+      s.saving = false;
+      var o = takeOutcome();
+      if (o === 'fail') {
+        s.err = { kind: 'fail', msg: st('warn', '!', '저장하지 못했습니다 — 서버 응답 500 (예시)') + '<br>입력한 내용은 그대로 있습니다.' + (s.type === 'entry' ? ' 다시 눌러도 두 번 기록되지 않습니다.' : '') };
+        renderSheet('sh-primary'); return;
+      }
+      if (o === 'dup' && s.type === 'entry' && s.draft.kind !== 'exch') {
+        var dv = validateEntry(s.draft);
+        var same = M.entries.filter(function (e) { return !e.void && e.kind === s.draft.kind && e.ccy === s.draft.ccy && e.amt === dv.v; })[0];
+        s.err = { kind: 'dup', msg: st('warn', '!', '기록하지 않았습니다 — 같은 종류·통화·금액·시각(분)의 기록이 이미 있습니다' + (same ? '(#' + same.id + ')' : '(예시)')) + '<br>같은 돈이면 더 넣지 않아도 됩니다. 다른 돈이면 시각을 1분 이상 다르게 넣으세요.' };
+        renderSheet('sh-primary'); return;
+      }
+      if (o === 'conflict') { conflict(s); return; }
+      success(s);
+    }, 1100);
+  }
+  function conflict(s) {
+    var tgt = s.target || (s.draft && s.draft.target);
+    if ((s.type === 'entry' && s.draft.mode === 'correct') || s.type === 'cancel') {
+      var e = byId(tgt); e.void = { type: 'cancel', reason: '다른 기기에서 취소', at: M.now };
+      s.err = { kind: 'conflictClose', msg: st('warn', '!', (s.type === 'cancel' ? '표시하지' : '정정하지') + ' 않았습니다 — 이 기록(#' + tgt + ')은 다른 기기에서 먼저 취소됐습니다') + '<br>최신 목록을 불러왔습니다. 필요하면 되살리거나 새로 기록하세요.' };
+      render(); renderSheet('sh-primary'); return;
+    }
+    if (s.type === 'restore') {
+      byId(tgt).void = null;
+      s.err = { kind: 'conflictClose', msg: st('warn', '!', '이미 다른 기기에서 되살렸습니다') + '<br>최신 목록을 불러왔습니다. 두 번 되살아나지 않습니다.' };
+      render(); renderSheet('sh-primary'); return;
+    }
+    if (s.type === 'dismiss') {
+      M.cand.state = 'dismissed'; M.cand.reason = '다른 기기에서 처리';
+      s.err = { kind: 'conflictClose', msg: st('warn', '!', '다른 기기에서 이미 처리한 변화입니다') + '<br>최신 상태를 불러왔습니다.' };
+      render(); renderSheet('sh-primary'); return;
+    }
+    if (s.type === 'base') {
+      M.base.version += 1;
+      s.err = { kind: 'baseConflict', msg: st('warn', '!', '저장하지 않았습니다 — 다른 기기에서 기준이 먼저 바뀌었습니다(버전 ' + M.base.version + ')') + '<br>최신 기준을 불러왔습니다. 입력한 값은 그대로 있으니 확인 뒤 다시 저장하면 덮어씁니다.' };
+      render(); renderSheet('sh-primary'); return;
+    }
+    M.base.version += 1;
+    s.err = { kind: 'conflict', msg: st('warn', '!', '기록하지 않았습니다 — 다른 기기에서 기준이 먼저 바뀌었습니다(버전 ' + M.base.version + ')') + '<br>입력은 그대로 있습니다. 새 기준으로 아래 내용을 다시 확인한 뒤 기록하세요.' };
+    render(); renderSheet('sh-primary');
+  }
+  function success(s) {
+    var c0 = calc(), msg = '';
+    if (s.type === 'entry') {
+      var d = s.draft, v = validateEntry(d), pr = predict(d, v), id = M.nextId++;
+      var e = applyDraft(d, v, pr, id);
+      if (pr.st === 'matched') M.cand.state = 'recorded';
+      var c1 = calc();
+      msg = st('ok', '✓', (d.mode === 'correct' ? '정정했습니다' : '기록했습니다') + ' (#' + id + ')') + ' ' +
+        (pr.st === 'matched' ? md(pr.anc) + ' 스냅샷과 맞아 바로 반영했습니다. 손익 ' + swon(c0.P) + ' → ' + swon(c1.P)
+          : pr.st === 'pending' ? '다음 스냅샷에서 반영 여부를 확인합니다.' + (d.mode === 'correct' ? ' 손익 ' + swon(c0.P) + ' → ' + swon(c1.P) : '')
+          : e.kind === 'exch' ? '맞는 스냅샷 변화를 찾지 못해 ‘불일치’로 표시했습니다(손익 영향 없음).'
+          : '맞는 현금 변화를 찾지 못해 ‘불일치’로 표시했고, 기록대로 계산에 넣었습니다. 손익 ' + swon(c0.P) + ' → ' + swon(c1.P));
+      s.done = true; M.lastDraft = null;
+    } else if (s.type === 'cancel') {
+      byId(s.target).void = { type: 'cancel', reason: s.reason === '기타' ? s.etc.trim() : s.reason, at: M.now };
+      var c2 = calc();
+      msg = st('ok', '✓', '#' + s.target + ' 을 취소로 표시했습니다') + (c2.P !== c0.P ? ' 손익 ' + swon(c0.P) + ' → ' + swon(c2.P) : ' 손익 변화 없음');
+    } else if (s.type === 'restore') {
+      byId(s.target).void = null;
+      var c3 = calc();
+      msg = st('ok', '✓', '#' + s.target + ' 을 되살렸습니다') + (c3.P !== c0.P ? ' 손익 ' + swon(c0.P) + ' → ' + swon(c3.P) : '');
+    } else if (s.type === 'dismiss') {
+      M.cand.state = 'dismissed'; M.cand.reason = s.reason === '기타' ? s.etc.trim() : s.reason;
+      msg = st('ok', '✓', '입출금 아님으로 표시했습니다') + ' 같은 변화로 다시 알리지 않습니다.';
+    } else if (s.type === 'base') {
+      var r = baseRef(s), bv = baseVals(s), ver = M.base ? M.base.version + 1 : 1;
+      M.base = { at: r.ts, id: r.id, total: r.v, krw: r.krw, usd: r.usd, fx: r.fx, version: ver,
+        confirmed: { krw: bv.k.v != null ? bv.k.v : null, usd: bv.u.v != null ? bv.u.v : null, at: M.now } };
+      if (M.data === 'nobase') { M.data = 'empty'; syncControls(); }
+      msg = st('ok', '✓', '기준을 저장했습니다 (버전 ' + ver + ')') + ' 기준 총자산 ' + won(baseTotal(M.base)) + (baseUnconfirmed(M.base) ? ' · 기준 미확정' : '');
+    }
+    var fr = s.frame;
+    closeSheet();
+    toast(msg);
+    if (s.type === 'entry') { var hd = el((fr === 'd' ? 'd' : 'm') + '-list-t'); if (hd) hd.focus(); }
+  }
+
+  /* ── 열기 ── */
+  function openEntry(mode, trigger, over) {
+    var d;
+    if (mode === 'new' && M.lastDraft && M.lastDraft.mode === 'new' && !over) { d = M.lastDraft; openSheet({ type: 'entry', step: 'form', draft: d, restored: true }, trigger); return; }
+    d = newDraft(mode, over || {});
+    openSheet({ type: 'entry', step: 'form', draft: d }, trigger);
+  }
+  function openCorrect(id, trigger, toExch) {
+    var e = byId(id), over = { target: id, memo: e.memo || '' };
+    if (toExch) { over.kind = 'exch'; over.dir = 'ku'; over.from = '250600'; over.to = '200'; over.date = iso(e.at).slice(0, 10); over.time = iso(e.at).slice(11); }
+    else if (e.kind === 'exch') { over.kind = 'exch'; over.dir = e.ccy === 'KRW' ? 'ku' : 'uk'; over.from = String(e.amt); over.to = String(e.camt); over.date = iso(e.at).slice(0, 10); over.time = iso(e.at).slice(11); }
+    else { over.kind = e.kind; over.ccy = e.ccy; over.amt = String(e.amt); over.date = iso(e.at).slice(0, 10); over.time = iso(e.at).slice(11); }
+    openSheet({ type: 'entry', step: 'form', draft: newDraft('correct', over) }, trigger);
+  }
+  function openBase(mode, trigger) {
+    var first = baseOpts()[0];
+    openSheet({ type: 'base', mode: mode, snapId: first ? first.id : null, krw: '', usd: '' }, trigger);
+  }
+
+  /* ── 컨트롤 동기화 ── */
+  function syncControls() {
+    [['data', M.data], ['trust', M.trust], ['cand', M.candOn ? 'on' : 'off']].forEach(function (p) {
+      var r = document.querySelector('input[name="' + p[0] + '"][value="' + p[1] + '"]'); if (r) r.checked = true;
+    });
+  }
+  function ensureOk() {
+    if (M.data === 'ok' && M.trust === 'none' && M.base) return;
+    M.data = 'ok'; M.trust = 'none'; M.candOn = true; load(); syncControls(); render();
+  }
+
+  /* ── 이벤트 ── */
+  document.addEventListener('change', function (ev) {
+    var t = ev.target, n = t.name;
+    if (n === 'data') { M.data = t.value; M.candOn = t.value === 'ok'; syncControls(); load(); render(); return; }
+    if (n === 'trust') { M.trust = t.value; load(); render(); return; }
+    if (n === 'cand') { M.candOn = t.value === 'on'; M.cand = M.candOn && M.base ? clone(CAND0) : null; render(); return; }
+    if (n === 'so') { M.outcome = t.value; return; }
+    if (n === 'w') { M.width = +t.value; render(); return; }
+    if (n === 'sv') { M.sv = t.value; render(); return; }
+    var s = M.sheet; if (!s) return;
+    if (n === 'sh-kind') { s.draft.kind = t.value; renderSheet(t.id); return; }
+    if (n === 'sh-ccy') { s.draft.ccy = t.value; renderSheet(t.id); return; }
+    if (n === 'sh-dir') { var d = s.draft, f = d.from; d.dir = t.value; d.from = d.to; d.to = f; renderSheet(t.id); return; }
+    if (n === 'sh-reason') { s.reason = t.value; renderSheet(t.value === '기타' ? 'sh-etc' : t.id); return; }
+    if (n === 'sh-bsnap') { s.snapId = +t.value; renderSheet(t.id); return; }
+  });
+  document.addEventListener('input', function (ev) {
+    var s = M.sheet, t = ev.target; if (!s) return;
+    var map = { 'sh-date': 'date', 'sh-time': 'time', 'sh-amt': 'amt', 'sh-from': 'from', 'sh-to': 'to', 'sh-memo': 'memo' };
+    if (s.type === 'entry' && map[t.id]) { s.draft[map[t.id]] = t.value; refreshEntry(); return; }
+    if (t.id === 'sh-etc') { s.etc = t.value; var ok = (s.etc || '').trim(); var b = el('sh-primary'); if (b) { b.disabled = !ok; } setHtml('sh-why', ok ? '' : '사유를 적어 주세요.'); return; }
+    if (s.type === 'base' && (t.id === 'sh-bkrw' || t.id === 'sh-busd')) { s[t.id === 'sh-bkrw' ? 'krw' : 'usd'] = t.value; refreshBase(); }
+  });
+  document.addEventListener('click', function (ev) {
+    var q = ev.target.closest && ev.target.closest('button[data-q]');
+    if (q) { quick(q.getAttribute('data-q'), q); return; }
+    var b = ev.target.closest && ev.target.closest('button[data-act]');
+    if (!b || b.disabled) return;
+    var act = b.getAttribute('data-act'), id = +b.getAttribute('data-id'), p = frameOf(b);
+    switch (act) {
+      case 'add': openEntry('new', b); break;
+      case 'toggle': M.open[id] = !M.open[id]; render(); var hb = el(b.id); if (hb) hb.focus(); break;
+      case 'toggleVoid': M.showVoid = !M.showVoid; render(); if (el(b.id)) el(b.id).focus(); break;
+      case 'goEntry': M.open[id] = true; render(); var g = el((p === 'd' ? 'dt' : p) + '-eh-' + id); if (g) { g.scrollIntoView({ block: 'center' }); g.focus(); } break;
+      case 'corr': openCorrect(id, b, false); break;
+      case 'corrExch': openCorrect(id, b, true); break;
+      case 'cancel': openSheet({ type: 'cancel', target: id, reason: '', etc: '' }, b); break;
+      case 'restore': openSheet({ type: 'restore', target: id }, b); break;
+      case 'candRecord': openEntry('cand', b, { kind: M.cand.d > 0 ? 'dep' : 'wd', ccy: M.cand.ccy, amt: String(Math.abs(M.cand.d)), date: iso(M.cand.ts).slice(0, 10), time: iso(M.cand.ts).slice(11) }); break;
+      case 'candDismiss': openSheet({ type: 'dismiss', reason: '', etc: '' }, b); break;
+      case 'candUndo': M.cand.state = 'open'; M.cand.reason = ''; render(); var cu = el(p + '-cand-rec'); if (cu) cu.focus(); break;
+      case 'baseSet': openBase('set', b); break;
+      case 'baseChange': openBase('change', b); break;
+      case 'baseConfirm': openBase('confirm', b); break;
+      case 'reload': M.data = 'loading'; syncControls(); render(); setTimeout(function () { M.data = 'ok'; M.candOn = true; syncControls(); load(); render(); var h = el('m-sum-t'); if (h) h.focus(); }, 900); break;
+      case 'close': if (!M.sheet || !M.sheet.saving) closeSheet(); break;
+      case 'next': { var s = M.sheet, v = validateEntry(s.draft); if (v.n) return; s.step = 'confirm'; s.err = null; renderSheet('sh-t'); break; }
+      case 'back': M.sheet.step = 'form'; M.sheet.err = null; renderSheet('sh-next'); break;
+      case 'commit': commit(); break;
+      case 'takeServer': closeSheet(); toast(st('ok', '✓', '최신 기준(버전 ' + M.base.version + ')을 그대로 씁니다.')); break;
+    }
+  });
+  /* 포커스 가두기 — 라디오 묶음은 선택된 하나만 탭 순서에 넣는다(브라우저 기본 동작과 같음) */
+  function focusables() {
+    var seen = {}, out = [];
+    Array.prototype.forEach.call(root.querySelectorAll('button, input, select, textarea, a[href]'), function (x) {
+      if (x.disabled || x.offsetParent === null) return;
+      if (x.type === 'radio') {
+        if (seen[x.name]) return;
+        seen[x.name] = 1;
+        var c = root.querySelector('input[name="' + x.name + '"]:checked');
+        out.push(c && !c.disabled ? c : x); return;
+      }
+      out.push(x);
+    });
+    return out;
+  }
+  root.addEventListener('keydown', function (ev) {
+    if (!M.sheet) return;
+    if (ev.key === 'Escape') { if (!M.sheet.saving) { ev.preventDefault(); closeSheet(); } return; }
+    if (ev.key !== 'Tab') return;
+    var f = focusables(); if (!f.length) return;
+    var i = f.indexOf(document.activeElement);
+    if (ev.shiftKey && i <= 0) { ev.preventDefault(); f[f.length - 1].focus(); }
+    else if (!ev.shiftKey && (i === -1 || i === f.length - 1)) { ev.preventDefault(); f[0].focus(); }
+  });
+
+  function quick(k, btn) {
+    if (k === 'base') { ensureOk(); openBase('confirm', btn); return; }
+    ensureOk();
+    if (k === 'add') { M.lastDraft = null; openEntry('new', btn); return; }
+    if (k === 'pre') { openEntry('new', btn, { date: '2026-08-30', time: '15:00', amt: '2000000' }); return; }
+    if (k === 'big') { openEntry('new', btn, { kind: 'wd', amt: '20000000' }); return; }
+    if (k === 'exch') { openEntry('new', btn, { kind: 'exch', dir: 'ku', from: '1300000', to: '1032.50', time: iso(M.now - 30).slice(11) }); return; }
+    if (k === 'cand') { if (!M.cand) { M.candOn = true; M.cand = clone(CAND0); syncControls(); render(); } if (M.cand.state !== 'open') { M.cand.state = 'open'; render(); } var cb = el('m-cand-rec'); if (cb) cb.click(); return; }
+    if (k === 'cancel') { var e1 = byId(1); if (e1 && !e1.void) openSheet({ type: 'cancel', target: 1, reason: '', etc: '' }, btn); return; }
+    if (k === 'corr') { M.showVoid = true; M.open[4] = true; M.open[5] = true; render(); var h4 = el('m-eh-4'); if (h4) { h4.scrollIntoView({ block: 'center' }); h4.focus(); } return; }
+  }
+
+  load();
+  render();
+})();
+</script>
+</body>
+</html>

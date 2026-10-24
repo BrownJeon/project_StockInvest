@@ -69,6 +69,10 @@ const ALLOWED: Record<string, number> = {
   'lib/safety/order-limits.ts': 1,
   // 목표가 표시 통화 인자 — 잔고와 무관.
   'lib/research/pattern/price-targets.ts': 1,
+  // T-074 원장 통화(닫힌 유니온 'KRW' | 'USD') 판별 단일 함수 `isUsd` — 원장 기록·검증·표기의 USD 분기가 모두 이 한 곳을 거친다. 잔고 배열 아님.
+  'lib/ledger/rules.ts': 1,
+  // T-074 크론이 기록한 스냅샷 `positions` 의 USD 행(달러 예수금) 판독 — `kill-switch.ts` 와 같은 성격, `Balance[]` 가 아니다.
+  'lib/ledger/snapshots.ts': 1,
 };
 
 describe('🔴 USD 예수금 경계 — 잔고 배열에서 USD 를 골라 읽는 새 지점이 생기면 실패한다', () => {
