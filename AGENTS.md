@@ -1,10 +1,10 @@
-﻿<!-- Generated from CLAUDE.md by cc-sync-codex/sync-projects.ps1. Preserve project facts in the source. -->
+<!-- Generated from CLAUDE.md by cc-sync-codex/sync-projects.ps1. Edit CLAUDE.md, then run the script. -->
 
 # StockInvest 프로젝트
 
-**국내주식 분석·매매·수익화 웹앱 — "주식으로 돈벌자"**
+**미국(해외)주식 주력·국내주식 병행 — 분석·매매·수익화 웹앱 — "주식으로 돈벌자"**
 
-한국투자증권(KIS) OpenAPI 기반 국내주식 자동매매. 분석 → 시그널 승인 → 실매매 → 수익 분석을 통해 실질 수익 창출을 목적으로 한다. (자매 프로젝트: 암호화폐 `TradingInvest` — 코인원 실매매, 공통 인프라 공유.)
+한국투자증권(KIS) OpenAPI 기반 미국(해외)주식 주력·국내주식 병행 자동매매. 분석 → 시그널 승인 → 실매매 → 수익 분석을 통해 실질 수익 창출을 목적으로 한다. (2026-10-20 사용자 지시로 주력을 국내에서 미국주식으로 전환 — 설계 `T-057`. 종래의 "해외 보류" 결정(2026-08-02)은 대체됐다.) (자매 프로젝트: 암호화폐 `TradingInvest` — 코인원 실매매, 공통 인프라 공유.)
 
 ## 기술 스택
 
@@ -12,13 +12,13 @@
 |------|------|
 | 프론트엔드·API | Next.js 14 (App Router) + TypeScript |
 | 데이터베이스 | MariaDB (NAS 호스팅, mysql2/promise) |
-| 거래소·증권사 | 코인원 REST(현재) → 업비트(확장) → 바이낸스(선택) → KIS OpenAPI |
+| 증권사 | 한국투자증권 KIS OpenAPI — 국내(`kis-domestic`)·해외(`kis-overseas`), 진입점 `src/lib/exchanges/kis.ts` |
 | 지표 | 자체 구현 (순수 함수) — TA-Lib 값과 대조 |
 
 ## 디렉토리 구조
 
 ```
-TradingInvest/
+StockInvest/
 ├── .claude/
 │   ├── settings.json              # Agent Teams 활성화
 │   ├── settings.local.json
@@ -35,7 +35,7 @@ TradingInvest/
 │   ├── components/
 │   ├── lib/
 │   │   ├── db.ts                  # MariaDB Pool + Retry
-│   │   ├── exchanges/             # coinone / upbit(확장) / binance / kis 어댑터
+│   │   ├── exchanges/             # kis(진입점)·kis-auth·kis-http·kis-throttle·kis-domestic·kis-overseas·kis-master·kis-symbols·fx
 │   │   └── safety/                # Kill Switch / 주문 한도 / DRY_RUN
 │   └── types/
 ├── public/
@@ -57,7 +57,7 @@ TradingInvest/
 cp .env.example .env
 # 값 입력 후
 npm install
-npm run dev   # http://localhost:3000
+npm run dev   # http://localhost:3003
 ```
 
 ### 안전장치 환경변수 (필수)
@@ -68,11 +68,13 @@ npm run dev   # http://localhost:3000
 | `KILL_SWITCH` | `false` | `true`면 모든 주문 송신 즉시 차단 |
 | `ORDER_MAX_KRW` | `100000` | 1회 주문 최대 KRW |
 | `DAILY_ORDER_MAX_KRW` | `500000` | 1일 누적 주문 최대 KRW |
-| `ALLOWED_SYMBOLS` | `KRW-BTC,KRW-ETH` | 허용 심볼 화이트리스트 |
+| `ALLOWED_SYMBOLS` | (코드에서 읽지 않음) | 초기 복사본 항목 — 현재 `src/lib/symbols.ts` `isAllowedSymbol()` 은 항상 허용, 국내 6자리·해외 `NAS:AAPL` 형식 |
 
 ## 에이전트 팀
 
-Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다. 프로젝트 전용 팀은 **6인** (역할별 모델 차등):
+> **Codex 세션 주의 (cc-sync-codex 가 추가):** 이 파일은 Claude Code 용 `CLAUDE.md` 에서 생성된다. Codex 에는 `codex` 역할이 없다(Codex 안에서 Codex 를 다시 부르는 순환). judge 접수 분류와 `codex_gate` 판정·기록은 아래 절차 그대로 하되, `codex_required: true` 여서 codex 를 호출해야 하는 단계는 호출하지 않고 task 이력서 `## 판단 기록 (judge)` 에 `override: codex_unavailable_in_codex` 를 남긴 뒤 진행한다. judge 의 `developer_model`(sonnet/opus)과 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 는 Claude Code 용 설정이라 Codex 에서는 적용하지 않는다. Codex 역할 정의는 `.codex/agents/*.toml` 이다.
+
+Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다. 프로젝트 전용 팀은 **8인** (역할별 모델 차등):
 
 | 역할 | 모델 | 담당 |
 |------|------|------|
@@ -82,20 +84,15 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 | analyst | **Fable** | 지표·전략·백테스트 설계, 수치 검증 |
 | reviewer | **Sonnet** | 안전장치 우회 경로·아키텍처·보안 독립 감사 |
 | deployer | **Haiku** | 운영 배포 실행·`RELEASE_RESULT` 판정·롤백 — 절차서 [`docs/deploy-order.md`](docs/deploy-order.md) |
+| judge | **Haiku** | Jev 판정 도구 실행 — 작업 접수 분류·developer 모델·Codex 개입 판정(C1·C2·C3). 직접 추론·코드 수정 금지 (2026-09-28 팀 프로젝트 확산) |
+| codex | **Haiku** | judge 개입 판정 시에만 Codex CLI 읽기 전용 검토 실행·기록. 실패해도 작업 진행 후 실패 내역 보고 |
 
-자세한 역할은 `.codex/agents/*.md` 참고.
+자세한 역할은 `.codex/agents/*.toml` 참고.
 
 ## Phase 로드맵
 
-| Phase | 내용 | 상태 |
-|-------|------|------|
-| 01 | 기본 골격 구성 | ✅ |
-| 02 | 코인원 시세·포트폴리오 조회 | ⬜ |
-| 03 | 코인원 실매매(수동 주문) + 안전장치 | ⬜ |
-| 04 | 기술 지표 엔진 (MA/RSI/MACD/볼린저) | ⬜ |
-| 05 | 지표 기반 자동매매 실행 | ⬜ |
-| 06 | 백테스팅·수익 분석 | ⬜ |
-| 07 | KIS API 미국주식 확장 | ⬜ |
+> 이 표는 프로젝트 생성 때 TradingInvest(코인원)에서 복사된 초기 로드맵이라 실제 진행과 다르다(2026-09-28 정정). **현재 진행 상황은 `agent-vault/10-Flow/board.md`·`00-Context/ACTIVE.md` 가 정본이다.**
+
 
 ## 실매매 원칙 (중요)
 
@@ -124,7 +121,7 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 - **네비게이션**: 하단 5-탭 고정 바 (🏠 대시보드 / 📝 주문 / 🎯 전략 / 📈 분석 / ⚙️ 설정). 탭별 라우트·화면 목록·Phase 매핑은 [`docs/screens.md`](./docs/screens.md) 참조
 - **색상**: 한국 관습 — 상승 빨강 / 하락 파랑
 - **차트 라이브러리**: lightweight-charts 표준
-- 상세 규칙은 [`.codex/agents/developer.md`](./.codex/agents/developer.md) "화면 디자인 워크플로우" 참조
+- 상세 규칙은 [`.codex/agents/developer.toml`](./.codex/agents/developer.toml) "화면 디자인 워크플로우" 참조
 
 ## 금기 사항
 
@@ -132,7 +129,7 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 - safety 레이어 우회 코드 금지
 - `.env` 커밋 금지
 - 백테스트 미검증 전략의 실매매 운용 금지
-- **UI 목업 합의 없이 화면을 즉흥 구현 금지** (developer.md 워크플로우 참조)
+- **UI 데모(목업) 승인 없이 화면을 즉흥 구현 금지** — 데모는 designer 담당, 워크스페이스 [`docs/demo-review-gate.md`](../docs/demo-review-gate.md) 데모 검토 게이트(2026-09-28)
 - **Reviewer 독립감사 없이 안전 관련 코드를 커밋 금지** (아래 커밋 안전장치 참조)
 
 ## 커밋 안전장치 — commit-msg git 훅 (T-025)
@@ -218,7 +215,7 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
 | 항목 | 값 |
 |---|---|
 | 배포 명령 | `scripts/deploy.sh StockInvest` |
-| 실행 주체 | `.codex/agents/deployer.md` (QA PASS 이후에만 기동) |
+| 실행 주체 | `.codex/agents/deployer.toml` (QA PASS 이후에만 기동) |
 | 대상 프로세스 | stockinvest + stockinvest-cron |
 | 현재 상태 | ✅ **blue/green 컷오버 완료 (2026-09-19, 릴리스 `20260919-225120-31f4ea26`)**. push 하면 webhook 이 release.sh 로 blue/green 배포한다 — NFS 트리에 빌드해도 운영에 반영되지 않는다 |
 
@@ -238,15 +235,37 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
 프로젝트: 주식 자동매매 (StockInvest)
 팀 구성:
   - leader   (Opus)   — 요구사항 분석·작업 분배·최종 보고
+  - designer  (Opus)   — 화면 데모(mockups/)·사용자 승인·구현 가이드 (데모 검토 게이트: 워크스페이스 docs/demo-review-gate.md)
   - developer (Opus)   — Next.js·KIS OpenAPI·DB 코드 구현
   - analyst  (Fable)  — 지표·전략·백테스트 설계 및 실매매 시그널 실행
   - reviewer (Sonnet) — 안전장치 우회 경로·아키텍처·보안 독립 감사
   - qa       (Haiku)  — 실매매 안전장치·엣지케이스 전담 검증
   - deployer (Haiku)  — 운영 배포 실행(scripts/deploy.sh StockInvest, 앱 2개)·결과 판정·롤백
+  - judge     (Haiku)  — Jev 판정: 작업 접수 분류·developer 모델·Codex 개입(C1 설계·C2 리뷰 후·C3 재발)
+  - codex     (Haiku)  — judge 판정 시에만 Codex 읽기 전용 외부 검토, 실패는 보고 후 진행
 
-워크플로우: Leader → Analyst → Developer → Reviewer → QA → Deployer → Leader
+워크플로우: Leader(→Judge 접수) → Analyst → [화면 작업: Designer 데모 → 사용자 승인] → [Judge C1 → Codex?] → Developer → Reviewer → [Judge C2 → Codex? → Reviewer 판정] → QA → Deployer → Leader
 작업 지시 방법:
   → leader에게 직접 요청하면 팀이 역할별로 분담해서 처리합니다.
   → 팀 정리 시: "팀 정리해줘" 또는 "Clean up the team"
 ---
 ```
+
+## AI 대화·작업 공통 원칙 (할루시네이션 방지·명확한 소통)
+
+> 워크스페이스 `AGENTS.md`의 같은 이름 절과 동일한 내용이다(2026-10-05 사용자 지시). 정본은 워크스페이스 쪽이며, 바꿀 때는 정본을 먼저 고치고 이 절을 맞춘다. 메인 세션과 서브에이전트 모두에 적용한다.
+
+1. **동의로 시작하지 않는다.** 첫 문장에서 사용자의 가정에 의문을 제기하거나, 놓친 점을 짚거나, 생각의 허점을 드러내는 질문을 한다.
+2. **확신 수준을 표시한다.** 주장 앞에 `[확실]`(근거가 확실) · `[가능성 높음]`(강한 추론) · `[추측]`(빈틈을 추측으로 메우는 중)을 붙인다. 답변 대부분이 추측이면 먼저 그렇게 밝힌다.
+3. **금지 표현:** '좋은 질문이에요', '전적으로 맞아요', '말씀하신 게 맞습니다', '정말 그렇습니다', '분명히 그렇습니다'. 쓰려는 걸 알아차리면 지우고 다시 쓴다.
+4. **반대는 논리적으로 설명한다.** 사용자가 틀렸다면 "이런 이유로 동의하기 어렵습니다. 대신 이 방법을 권합니다: [대안]. 지금 접근법의 구체적인 위험은 [단점]입니다." 형태로 말한다.
+5. **중요한 답부터, 불편한 사실도 먼저.** 사용자가 듣고 싶어 하지 않을 사실은 세 번째 문단에 숨기지 않고 앞에 둔다.
+6. **서론을 길게 쓰지 않는다.** "여러 관점에서 볼 수 있습니다" 류는 건너뛰고 가장 유용한 내용부터 시작한다.
+7. **쉽게 입장을 바꾸지 않는다.** 사용자가 새로운 정보를 제시하지 않는 한 근거를 유지한다. "그래도 제 생각은…"은 새로운 정보가 아니다.
+
+**적용 범위:**
+- 고정 형식 출력(세션 시작 목록, 팀 소집 문구, 에이전트 간 메시지 스키마, Agent Vault task 이력서·최종 요약 양식, 코드·JSON·로그)은 형식을 그대로 따르고, 그 안의 판단·근거 서술에만 규칙을 적용한다.
+- 규칙 1은 의견·설계·제안·판단이 오가는 대화에 적용한다. 단순 실행 결과 보고·확인 질문에는 억지 반론을 만들지 않으며, 반론은 구체적 근거(코드·로그·문서·수치)가 있을 때만 한다.
+- 규칙 2의 `[확실]`은 이번 세션에서 직접 읽거나 실행해 확인한 것에만 쓴다. 명령 출력을 그대로 인용하는 단순 사실 전달에는 태그를 생략해도 된다.
+- 규칙 7은 의견 철회 금지이지 지시 실행 거부가 아니다. 사용자가 위험을 듣고도 결정하면 위험을 한 번 명시한 뒤 지시대로 진행하고 같은 반론을 반복하지 않는다. 배포·삭제·비활성 프로젝트 등 별도로 확인을 요구하는 작업은 기존 규칙대로 한다.
+- 앱이 최종 사용자에게 보여 주는 런타임 LLM 출력(페르소나·프롬프트 결과)과 앱 코드·프롬프트의 내용에는 적용하지 않는다. 이 원칙은 개발 작업 중 AI↔사용자 소통에 대한 것이다.
