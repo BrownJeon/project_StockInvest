@@ -144,7 +144,7 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 - **웹 변경 = 웹 배포**(push=blue/green). **네이티브 변경** — `android/**`·`capacitor.config.ts`·`AndroidManifest.xml`·Gradle 설정·`@capacitor/*` 추가·버전 변경·`public/app-shell/index.html`(연결 실패 화면)·아이콘 리소스 — 은 웹 배포로 반영되지 않는다: **APK 재빌드 + `versionCode` 증가 + 사용자 재설치**.
 - 앱/웹 분기는 `window.Capacitor`(`src/lib/native/bridge.ts`)로 하는 **화면 표시 전용**이다. 웹 코드(`src/**`)는 `@capacitor/*` 를 import 하지 않는다.
 - **앱 로그인(T-088, 1.0.1~)**: Google(Chrome 창 + 딥링크 `stockinvest://auth/callback` + 60초 1회용 코드·PKCE → `POST /api/auth/app-exchange`)과 이메일. Google 은 WebView 안 로그인을 거부(`disallowed_useragent`)하므로 **앱 WebView 가 `/api/auth/google` 로 이동하는 코드를 만들지 않는다**. 1회용 코드는 테이블 `app_auth_code`(`scripts/migrations/T-088-app-auth-code.sql`)에 `sha256(code:challenge)` 로만 저장하고, 세션 발급은 기존 `signSession`·`setSessionCookie` 를 그대로 쓴다. 현재 공개 버전은 **1.0.1(versionCode 2)** — 정본 task `agent-vault/10-Flow/tasks/T-088-app-google-login.md`.
-- ⚠ 세션을 발급하는 `src/app/api/auth/app-exchange/`·`src/app/api/auth/[provider]/**` 는 **커밋 훅 `SAFETY_PATHS` 밖**이다(추가 여부는 사용자 결정 보류 중). 이 경로를 바꿀 때는 훅이 막아 주지 않으므로 **Reviewer 독립 감사를 직접 요청**한다.
+- 세션을 발급하는 `src/app/api/auth/` 전체(`app-exchange/`·`[provider]/**`·`login`·`signup` 등)는 **T-090(2026-10-26)부터 커밋 훅 `SAFETY_PATHS` 가 감시한다** — Reviewer 판정 줄(`최종 판정: PASS (scope: src/app/api/auth/…)`) 없이는 커밋되지 않는다(아래 "커밋 안전장치" 절). 로그인 화면(`src/app/login/`)은 UI 라 감시 밖이다.
 - 정본: [`docs/mobile-app-procedure.md`](docs/mobile-app-procedure.md)(구조·결정·마일스톤 M1~M4) · [`docs/deploy-order.md`](docs/deploy-order.md) 「앱(APK) 배포」 절 · [`docs/screens.md`](docs/screens.md) §5(앱 전용 화면) · 워크스페이스 [`../docs/app-conversion-guide.md`](../docs/app-conversion-guide.md)(공통 체크리스트·실기기 확인).
 
 ## 금기 사항

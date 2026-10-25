@@ -10,7 +10,7 @@
 #
 #   1) 로직 시나리오 단계 — GIT_INDEX_FILE 로 만든 **임시 index** 에만 가짜 blob 을 stage 하고 훅을
 #      직접 호출한다. 이 단계는 실제 index 를 건드리지 않는다. 다만
-#        · 판정 fixture(agent-vault/10-Flow/tasks/T-981~998-hooktest-*.md)를 **실제 작업 트리에** 잠시
+#        · 판정 fixture(agent-vault/10-Flow/tasks/T-979~998-hooktest-*.md)를 **실제 작업 트리에** 잠시
 #          썼다가 EXIT trap 으로 지운다(kill -9 같은 강제 종료면 남을 수 있다). 실행 중 다른 세션이
 #          `git add -A` 하면 그 커밋에 섞일 수 있다.
 #        · 가짜 blob 은 .git/objects 에 dangling object 로 남는다(`git gc` 로 정리된다).
@@ -22,6 +22,9 @@
 #      되돌리기 사이(수 초)에 다른 세션이 stage 하면 그 stage 가 지워지고, 그 사이 다른 세션이 커밋하면
 #      가짜 dry-run.ts 내용이 그 커밋에 실릴 수 있다. 훅이 fail-open 이어서 커밋이 실제로 생기면
 #      `git reset --soft` 로 HEAD 를 되돌린다.
+#   3) [T-090 임시 저장소 E2E] — 로직 시나리오 단계 끝에서 `mktemp -d` 아래에 **일회용 저장소**를 만들어 진짜
+#      `git commit` 으로 이 작업 트리의 훅($ROOT/scripts/git-hooks/commit-msg)을 호출한다. 실제 저장소의 index·HEAD·
+#      설정은 건드리지 않는다(위 2) 의 [E2E] 는 *설치된* 훅을, 이쪽은 *이 작업 트리의* 훅을 시험한다).
 #
 #   ⇒ **다른 세션이 stage 중이거나 커밋 직전일 때는 실행하지 말 것.** 실행 전에 index 가 비었는지 확인:
 #        git diff --cached --quiet && echo "stage 비어 있음 — 실행 가능" || git diff --cached --name-only
@@ -770,6 +773,167 @@ stage_and_run 0 "(t085-n1) ledger/·broker-ledger 이웃·scripts/broker-ledger/
   "$(msg 'chore: 이웃 파일 정리')" \
   "src/lib/ledger/compute.ts" "src/lib/broker-ledger-old/x.ts" "src/lib/broker-ledger.ts" \
   "mockups/src/lib/broker-ledger/x.ts" "scripts/broker-ledger/refingerprint.mjs"
+
+echo ""
+echo "[T-090 — 인증 입구 라우트 경로(src/app/api/auth/) 추가]"
+
+# T-075·T-085 와 같은 형식: ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과(통과 문구까지 확인) ③scope 밖 → 차단.
+# 새 경로 파일 **하나만** stage 한다 — 목록에서 이 항목만 빠져도 ①·③ 이 실패한다(②는 문구 단언으로 실패).
+# 경로 이름은 실제 입구 라우트를 쓴다(app-exchange = 세션 발급 입구, login, `[provider]/callback` = 대괄호 경로).
+T090_EX="src/app/api/auth/app-exchange/route.ts"
+T090_LOGIN="src/app/api/auth/login/route.ts"
+T090_PROV="src/app/api/auth/[provider]/callback/route.ts"
+
+cat > "agent-vault/10-Flow/tasks/T-980-hooktest-t090-scoped.md" <<'EOF'
+---
+task_id: T-980
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/app/api/auth/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-980-hooktest-t090-scoped.md")
+
+# ③ 용 — 이름이 비슷한 '이웃' 경로만 검토한 판정. src/lib/auth/oauth/(lib ≠ api)·profile/kis/·authx/(접두 이름만 같음)와,
+#    슬래시를 빠뜨린 `src/app/api/auth`(= 그 이름의 파일 하나만 뜻함)는 어느 것도 auth/ 아래 라우트를 덮지 않아야 한다.
+cat > "agent-vault/10-Flow/tasks/T-979-hooktest-t090-nearmiss.md" <<'EOF'
+---
+task_id: T-979
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/oauth/, src/app/api/profile/kis/, src/app/api/authx/, src/app/api/auth)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-979-hooktest-t090-nearmiss.md")
+
+stage_and_run 1 "(t090-a1) auth/app-exchange/route.ts + 판정 미기록(T-993) → 차단" \
+  "$(msg 'fix(T-993): 앱 코드 교환 수정')" "$T090_EX"
+stage_and_run_expect "$T075_OK" 0 "(t090-a2) auth/app-exchange/route.ts + T-980(scope 포함) → 통과" \
+  "$(msg 'fix(T-980): 앱 코드 교환 수정')" "$T090_EX"
+stage_and_run 1 "(t090-a3) auth/app-exchange/route.ts + T-979(이웃 경로 scope) → 차단" \
+  "$(msg 'fix(T-979): 앱 코드 교환 수정')" "$T090_EX"
+stage_and_run 1 "(t090-a4) auth/app-exchange/route.ts + task ID 없음 → 차단" \
+  "$(msg 'fix: 앱 코드 교환 수정')" "$T090_EX"
+# 디렉토리 scope 는 auth/ 아래만 연다 — 같은 커밋의 다른 안전 경로(src/lib/auth/oauth/)까지 열어 주지 않는다(차용 방지).
+stage_and_run 1 "(t090-a5) auth/ 라우트 + 다른 안전파일(oauth/names.ts), T-980 은 auth/ 만 → 차단" \
+  "$(msg 'fix(T-980): 인증 입구 수정 (names.ts 는 검토 안 됨)')" "$T090_EX" "src/lib/auth/oauth/names.ts"
+
+# 디렉토리 전체 매치 — 파일 하나만 적은 목록이었다면 새는 경로들. 차단 기대는 경로 하나씩(하나만 새도 다른 하나가 가려지지 않게).
+stage_and_run 1 "(t090-b1) auth/login/route.ts (디렉토리 전체) → 차단" \
+  "$(msg 'fix: 로그인 라우트 수정')" "$T090_LOGIN"
+stage_and_run_expect "$T075_OK" 0 "(t090-b2) auth/login/route.ts + T-980(scope 포함) → 통과" \
+  "$(msg 'fix(T-980): 로그인 라우트 수정')" "$T090_LOGIN"
+stage_and_run 1 "(t090-c1) auth/[provider]/callback/route.ts (대괄호 경로) → 차단" \
+  "$(msg 'fix: OAuth 콜백 수정')" "$T090_PROV"
+stage_and_run_expect "$T075_OK" 0 "(t090-c2) auth/[provider]/callback/route.ts + T-980(디렉토리 scope) → 통과" \
+  "$(msg 'fix(T-980): OAuth 콜백 수정')" "$T090_PROV"
+stage_and_run 1 "(t090-d1) auth/signup-request/__tests__/route.test.ts (하위·테스트) → 차단" \
+  "$(msg 'test: 가입 요청 시험 수정')" "src/app/api/auth/signup-request/__tests__/route.test.ts"
+stage_and_run 1 "(t090-d2) auth/ 아래 신규 라우트(brand-new/) → 차단(신규 라우트 누수 방지)" \
+  "$(msg 'feat: 신규 인증 라우트')" "src/app/api/auth/brand-new/route.ts"
+
+# 과도 차단 방지 — 로그인 화면(UI)은 걸리지 않는다. 화면과 라우트를 한 커밋에 담으면 라우트 때문에 걸린다(혼합 목록).
+stage_and_run 0 "(t090-e1) src/app/login/page.tsx (화면) → task ID 없어도 통과" \
+  "$(msg 'feat: 로그인 화면 문구')" "src/app/login/page.tsx"
+stage_and_run 1 "(t090-e2) [화면, 라우트] 판정 미기록(T-993) → 라우트 때문에 차단" \
+  "$(msg 'feat(T-993): 로그인 화면 + 라우트')" "src/app/login/page.tsx" "$T090_LOGIN"
+stage_and_run_expect "$T075_OK" 0 "(t090-e3) [화면, 라우트] T-980(scope 포함) → 통과" \
+  "$(msg 'feat(T-980): 로그인 화면 + 라우트')" "src/app/login/page.tsx" "$T090_LOGIN"
+
+# 이름만 비슷한 이웃은 접두 `auth/` 가 아니므로 감사 대상이 아니다 — 통과 기대는 묶어도 약해지지 않는다(하나라도 잘못 매치되면 실패).
+# 줄마다 겨냥하는 변이: 끝 `/` 삭제(authx/·auth-foo/) · `^` 삭제(앞에 디렉토리가 붙은 경로 2건).
+stage_and_run 0 "(t090-n1) authx/·auth-foo/·foo/…/auth/·mockups/…/auth/ 이웃 → 통과" \
+  "$(msg 'chore: 이웃 라우트 정리')" \
+  "src/app/api/authx/route.ts" "src/app/api/auth-foo/route.ts" \
+  "foo/src/app/api/auth/login/route.ts" "mockups/src/app/api/auth/route.ts"
+
+# 인증 계열이지만 이번 승인(T-090) 범위 밖인 경로 — T-090 이 auth/ 밖으로 넓어지지 않았음을 고정한다(과도차단 회귀 방지).
+# 별개 사용자 결정 대기 항목이라 "영구 제외"가 아니다: 나중에 사용자가 이 경로를 목록에 넣기로 하면 이 시나리오를 함께 고친다.
+stage_and_run 0 "(t090-x) 범위 밖: profile/password·middleware-public-paths 시험 → 통과" \
+  "$(msg 'chore: 비밀번호 변경·공개경로 시험 수정')" \
+  "src/app/api/profile/password/route.ts" "src/__tests__/middleware-public-paths.test.ts"
+
+echo ""
+echo "[T-090 — 실 커밋 E2E: 일회용 임시 저장소에서 git 이 새 훅을 실제로 호출하는가]"
+
+# 위 로직 시나리오는 훅을 `bash $HOOK` 로 직접 부른다. 여기서는 일회용 저장소($WORK 아래)에서 진짜 `git commit` 을
+# 해 보고, 그 저장소의 core.hooksPath shim 이 **이 작업 트리의 훅**($ROOT/$HOOK)을 실행하게 한다. 실제 저장소의
+# index·HEAD·설정은 건드리지 않는다(아래 [E2E] 는 설치된 훅을, 이쪽은 이 작업 트리의 훅을 시험한다 — 새 경로는
+# main 에 병합돼 설치된 훅이 바뀌기 전에도 여기서 검증된다).
+# 판정 근거는 종료코드만이 아니라 HEAD 이동 여부 + 훅 출력 문구다 — $WORK 가 noexec 마운트면 git 이 훅을 조용히
+# 무시해 차단 시나리오가 **실패**한다(통과 시나리오도 훅의 통과 문구를 요구하므로 조용히 통과하지 않는다).
+E2E_REPO="$WORK/t090-e2e-repo"
+E2E_HOOKS="$WORK/t090-e2e-hooks"
+e2e_git() {
+  env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    git -C "$E2E_REPO" "$@"
+}
+mkdir -p "$E2E_HOOKS"
+printf '#!/usr/bin/env bash\nexec bash %q "$@"\n' "$ROOT/$HOOK" > "$E2E_HOOKS/commit-msg"
+chmod +x "$E2E_HOOKS/commit-msg"
+env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+  git init -q "$E2E_REPO"
+e2e_git config user.name "hooktest"
+e2e_git config user.email "hooktest@example.invalid"
+e2e_git config commit.gpgsign false
+e2e_git config core.hooksPath "$E2E_HOOKS"
+mkdir -p "$E2E_REPO/agent-vault/10-Flow/tasks" "$E2E_REPO/src/app/api/auth/app-exchange" \
+  "$E2E_REPO/src/app/login" "$E2E_REPO/src/app/api/authx"
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-980-hooktest-t090-scoped.md" <<'EOF'
+---
+task_id: T-980
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/app/api/auth/)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-979-hooktest-t090-nearmiss.md" <<'EOF'
+---
+task_id: T-979
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/oauth/, src/app/api/authx/)**
+EOF
+e2e_git commit -q --allow-empty -m 'init (임시 저장소)' >/dev/null 2>&1
+
+# e2e_commit <label> <block|commit> <훅 출력에 있어야 할 문자열(빈 값이면 생략)> <커밋 메시지>
+e2e_commit() {
+  local label="$1" want="$2" expect_out="$3" cmsg="$4" before after out rc ok=1
+  before="$(e2e_git rev-parse HEAD 2>/dev/null)"
+  out="$(e2e_git commit -q -m "$cmsg" 2>&1)"; rc=$?
+  after="$(e2e_git rev-parse HEAD 2>/dev/null)"
+  case "$want" in
+    block)  { [ "$rc" -ne 0 ] && [ "$before" = "$after" ]; } || ok=0 ;;
+    commit) { [ "$rc" -eq 0 ] && [ "$before" != "$after" ]; } || ok=0 ;;
+  esac
+  if [ -n "$expect_out" ]; then
+    case "$out" in *"$expect_out"*) ;; *) ok=0 ;; esac
+  fi
+  if [ "$ok" -eq 1 ]; then
+    printf '  ✅ %-62s (commit rc %d, %s)\n' "$label" "$rc" "$want"
+    PASS_N=$((PASS_N + 1))
+  else
+    printf '  ❌ %-62s (commit rc %d, 기대 %s)\n' "$label" "$rc" "$want"
+    [ -n "$expect_out" ] && printf '       └ 훅 출력에 있어야 할 문자열: %s\n' "$expect_out"
+    FAIL_N=$((FAIL_N + 1))
+    VERBOSE=1
+  fi
+  if [ "$VERBOSE" -eq 1 ]; then
+    printf '%s\n' "$out" | sed 's/^/       │ /'
+    echo ""
+  fi
+}
+
+printf 'v1\n' > "$E2E_REPO/src/app/api/auth/app-exchange/route.ts"
+e2e_git add src/app/api/auth/app-exchange/route.ts
+e2e_commit "(t090-g1) 실 커밋: auth/app-exchange 라우트 + task ID 없음 → 차단" block "커밋 차단" \
+  'fix: 앱 코드 교환 수정'
+e2e_commit "(t090-g2) 실 커밋: 같은 변경 + T-979(이웃 경로 scope) → 차단" block "커밋 차단" \
+  'fix(T-979): 앱 코드 교환 수정'
+e2e_commit "(t090-g3) 실 커밋: 같은 변경 + T-980(auth/ scope) → 통과·HEAD 이동" commit "$T075_OK" \
+  'fix(T-980): 앱 코드 교환 수정'
+printf 'page\n' > "$E2E_REPO/src/app/login/page.tsx"
+printf 'x\n' > "$E2E_REPO/src/app/api/authx/route.ts"
+e2e_git add src/app/login/page.tsx src/app/api/authx/route.ts
+e2e_commit "(t090-g4) 실 커밋: 로그인 화면·authx/ 이웃(task ID 없음) → 통과" commit "" \
+  'feat: 로그인 화면 문구'
 
 echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
