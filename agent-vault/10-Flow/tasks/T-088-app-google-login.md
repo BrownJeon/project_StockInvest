@@ -1,0 +1,406 @@
+---
+task_id: T-088
+title: 앱 "주식캐기" 에서 Google 로그인 — Chrome 창 로그인 + 딥링크 복귀 + 1회용 코드 교환(PKCE)
+status: doing
+priority: high
+project: StockInvest
+created: 2026-10-25
+updated: 2026-10-25
+base_ref: da35af79e4e176bab0f4172de17d44deb84bfba7
+risk_level: pending
+roles_involved: [leader, judge, designer, developer, reviewer, qa, deployer]
+related_tasks: [T-084-mobile-app-m1-shell]
+tags:
+  - type/task
+  - domain/mobile
+  - domain/auth
+  - domain/security
+aliases:
+  - 앱구글로그인
+  - 앱OAuth
+waiting: [user_confirmation]
+demo_gate:
+  required: true
+  level: "delta"
+  status: "approved"
+  version: 2
+  repo_path: "mockups/T-088-app-login-v2.html"
+  artifact_url: "https://claude.ai/artifact/GdkVc4oGoLh1oVe3LKjsTx"
+  content_sha256: "eff12e36f2121550fed9b341d88775d046e321f71e3424de582dc9a0a627c20e"
+  decided_by: "judge"
+  rule_id: "DM-user-required"
+  approved_by: "user"
+  approved_at: "2026-10-25T23:49:06+09:00"
+  approval_quote: "권고대로 작업 진행해줘"
+  waived_by: ""
+  waived_at: ""
+  waiver_quote: ""
+  active: true
+---
+
+# T-088 — 앱에서 Google 로그인
+
+> 선행: [[T-084-mobile-app-m1-shell]](M1 앱 배포 완료). 정본 절차서 `docs/mobile-app-procedure.md` §4-3 "앱 OAuth" 행·D-3 b안. 참조 구현: TheKaiwa(`src/modules/infra/native/appLogin.ts`·`src/modules/infra/auth/oauth/app-code.ts`·`src/app/api/auth/app-exchange/route.ts`·`google/callback/route.ts`), VoiceVault(같은 구조).
+
+## 목표
+
+- **사용자 요청(2026-10-25 22:5x, 앱 로그인 화면 스크린샷과 함께)**: "이메일로 로그인하려고하니까 구글로그인으로 하라고 나오는데 이렇게되면 앱에서 로그인할 방법이 없어. 구글로그인듀 가능하도록 해줘"
+- 사실: 사용자 소유자 계정이 **Google 전용 가입**(비밀번호 없음 — `/api/profile/password` 가 소셜 전용 계정의 비밀번호 설정을 거부)이라 M1 앱(v1.0.0, 이메일·비밀번호만)으로는 로그인할 수단이 없다. T-084 절차서 D-3 에서 "소셜 전용 계정이면 앱 로그인 방식을 다시 정해야 한다"고 짚어 둔 경우가 실제로 발생했다. 사용자가 10-22 에 "이메일·비밀번호로 로그인 (Recommended 확인)"이라고 답했던 것과 실제 계정 종류가 달랐다 — 웹(Chrome)에서는 계속 로그인된다.
+- 방식: Google 은 WebView 안 로그인을 거부(`disallowed_useragent`)하므로 **Chrome 창(Custom Tab)에서 로그인 → 서버 콜백이 세션 대신 60초·1회용 코드를 만들어 `stockinvest://auth/callback?code=` 로 앱 복귀 → 앱이 코드+PKCE verifier 를 `POST /api/auth/app-exchange` 로 보내 세션 쿠키 발급**.
+
+## Leader 기본 방침(사용자가 이의 제기 가능 — 데모·결정 단계에서 확인)
+
+1. **로그인은 Google + 이메일 두 가지만, 웹·앱이 같은 화면**(**2026-10-25 23:22 사용자 수정 요청으로 개정** — 처음 방침은 "앱은 Google 만, GitHub 는 앱에서 숨김"이었다). GitHub 버튼은 화면 코드에서 뺀다. 사실: 운영 웹 `GET /api/auth/oauth-providers` 는 이미 `["google"]` 뿐이고(GitHub OAuth 앱 미설정) 운영 계정은 1개(Google 전용)라 **웹의 보이는 모습은 변하지 않고 잠기는 계정도 없다**(23:2x 실측, 집계만). 서버 `[provider]` 라우트·`OAUTH_PROVIDERS` 의 `github` 는 이번에 건드리지 않는다(안전 경로 `auth/oauth/` 변경 최소화 — 완전 제거는 별도 정리 후보).
+2. **앱에서는 기존 계정 로그인만** — Google 계정이 이미 연결된/이메일이 일치하는 기존 사용자일 때만 코드를 발급한다. **신규 가입(초대코드 흐름)·가입 요청은 웹에서만** 하고, 앱 흐름에서 신규 가입이 필요한 결과가 나오면 `signup_requires_web` 오류로 앱에 안내한다(범위·위험 최소화).
+3. **웹의 기존 OAuth 동작은 한 줄도 바꾸지 않는다** — 앱 분기는 서명된 `state` 안의 `platform=app` 일 때만.
+4. 앱 버전 **1.0.1(versionCode 2)** — 네이티브 변경(Manifest 딥링크). 사용자는 웹(Chrome)에서 새 APK 를 받아 **덮어쓰기 설치**(같은 서명 키 — 로그인 정보는 앱에 없어 다시 로그인).
+5. 새 테이블 `app_auth_code`(1회용 코드, DB 마이그레이션 — **적용은 사용자 별도 명시 승인**, T-084 의 "DB 관련 승인"은 이 적용의 승인으로 세지 않는다). push(배포)·APK 공개·`app_release` INSERT 도 각각 별도 승인.
+6. 이번에 잠복 결함 2건(T-084 후속)도 같이 정리: `android/gradlew` git 모드 100644, 기본 APK 작업 디렉터리의 옛 빌드 캐시.
+
+## 관련 과거 이력 요약
+
+- [[T-084-mobile-app-m1-shell]]: M1 앱·APK 배포·`app_release` 테이블 적용 완료(2026-10-25 20:53). 앱 로그인에서 OAuth 버튼을 숨기고 `oauth_account` 오류를 앱 문구로 바꿨다(D-3 a안). 서명 키는 StockInvest 전용(지문 `6fa5ad6f…0f08`), 빌드 `scripts/build-apk.sh`, 공개 `/app/download/`, 작업 방식은 격리 worktree → 승인 전 main 미병합.
+- TheKaiwa task-003f C1-1(PKCE 결속 — 딥링크 탈취 대비)·REV-021(교환을 POST JSON 으로, 쿼리스트링 금지)·task-003f 화면 §11-3(Chrome 창 대기 카드·[Chrome 창 다시 열기]). `docs/screens.md`(TheKaiwa) §11-0 11번·§11-3.
+- StockInvest 소셜 로그인 T-009: 세션은 HttpOnly 쿠키, **URL 에 세션 토큰을 싣지 않는다**(T-009 B2) — 1회용 코드(60초·소각·PKCE 결속)는 세션 토큰이 아니라 이 원칙과 양립하지만 Reviewer 확인 지점.
+- `/이슈기록 관련` 승인 교훈: **0건**(로그인·앱·딥링크·소셜·쿠키 키워드, 2026-10-25).
+
+## 설계 (Leader — TheKaiwa 구현을 StockInvest 구조에 맞춰 정리, Developer 는 참조 구현을 읽고 어긋나는 점을 보고)
+
+**1. 흐름·계약**
+1. **시작(앱 WebView)**: 앱 로그인 화면의 [Google로 계속하기] → `prepareAppLogin(next)` 가 PKCE 쌍을 만든다(verifier = 32바이트 랜덤 base64url 43자, challenge = S256(verifier)). verifier 는 **WebView 메모리 + sessionStorage**(Chrome 창에서 돌아올 때 WebView 가 다시 그려져도 남게)에 두고 **꺼내면서 지운다**(1회용·10분). challenge 만 서버 경로에 실어 `/api/auth/google?next=<같은 출처 경로>&platform=app&challenge=<43자>` 를 `openExternal`(Custom Tab)로 연다.
+2. **서버 시작 라우트** `src/app/api/auth/[provider]/route.ts`: `platform=app` 이면 challenge 형식(43자 base64url)이 **필수**, provider 는 `google` 만(앱에서 GitHub 는 거부), 서명된 `state` 에 `platform`·`challenge` 를 포함(`state.ts` — 기존 웹 state 와 호환되게 필드만 추가, 서명 대상에 포함 → 변조하면 검증 실패).
+3. **콜백** `src/app/api/auth/[provider]/callback/route.ts`: state 검증 뒤 `platform==='app'` 이면 — **기존 사용자**(OAuth 연결 있음, 또는 `decideOAuthOutcome` 이 기존 계정 로그인으로 판정)일 때만 `issueAppAuthCode(userId, challenge)` 로 코드를 만들고 `stockinvest://auth/callback?code=<code_r>` 로 302(커스텀 스킴이라 `NextResponse.redirect()` 가 아니라 TheKaiwa `deepLinkRedirect` 방식). 신규 가입·초대 필요·이메일 미인증·기타 실패는 `stockinvest://auth/callback?error=<코드>`(`signup_requires_web`·`email_unverified`·`failed`…; 기존 `oauth_error` 코드와 대응). state 쿠키는 항상 지운다. **웹 분기(platform 없음) 코드 경로·응답은 바이트 단위로 불변** — 테스트로 고정.
+4. **교환** `POST /api/auth/app-exchange`(**공개 경로** — `src/middleware.ts` 의 공개 목록(`PUBLIC_EXACT`/`OAUTH_PUBLIC_PATHS`)에 **정확 일치 1개** 추가; 인증 이전 단계라 자격증명은 코드+verifier): 같은 출처 JSON(Origin·Content-Type)·본문 크기 상한·형식 검사 → `consumeAppAuthCode(code_r, verifier)`(`sha256(code_r + ":" + S256(verifier))` 로 조회, `UPDATE … SET used_at=now WHERE code=? AND used_at IS NULL AND expires_at>now` **한 방**, 영향 행 정확히 1 일 때만 통과) → 사용자 조회 → 기존 `signSession`+`setSessionCookie`(세션 코드 불변) → `{ok:true,next}`(같은 출처 경로만). **모든 실패(형식·출처·verifier 불일치·만료·재사용·미존재)는 같은 400 `app_code_invalid`**, GET 은 405, IP별 요청 제한(코드 추측 방지, 메모리·한계 주석).
+5. **앱 복귀**: 딥링크 수신(`appUrlOpen` + 콜드 스타트 `getLaunchUrl`) → `AppDeepLink`: `code` 면 verifier 를 꺼내 교환 → 성공 시 `location.replace(next)`, `error` 면 `/login?oauth_error=<코드>`, 교환 실패·verifier 분실(앱 프로세스가 죽은 경우)은 안내 + **[Chrome 창 다시 열기]**.
+6. **DB** `scripts/migrations/T-088-app-auth-code.sql`: 테이블 `app_auth_code`(`id` BIGINT PK, `code` CHAR(64) UNIQUE `ascii_bin` = 결속 sha256 hex, `user_id` — `users.id` 의 실제 타입과 일치(운영 `SHOW CREATE TABLE users` 로 확인, FK 는 두지 않음), `created_at`, `expires_at`, `used_at` NULL, CHECK code 형식). 가산 전용·멱등(`CREATE TABLE IF NOT EXISTS`)·**백슬래시 없음(기본·NO_BACKSLASH_ESCAPES 두 sql_mode)**·`COLLATE utf8mb4_general_ci`·T-074/T-084 머리 주석 관례·부팅 때 실행 안 함(T-084 `app_release` 선례). 만료+1시간 지난 행은 발급 시점에 청소. **운영 적용은 사용자 별도 명시 승인**.
+7. **네이티브**: `AndroidManifest.xml` 에 `stockinvest://auth/callback` intent-filter(VIEW·DEFAULT·BROWSABLE — 이미 `singleTask`), `versionCode 2`·`versionName "1.0.1"`(`android/app/build.gradle`), `capacitor.config.ts` 불변. `scripts/build-apk.sh` 의 Manifest 검사(권한 화이트리스트·export 컴포넌트)가 딥링크 intent-filter 를 막지 않는지 확인·필요하면 허용 규칙만 최소 변경.
+8. **잠복 결함 정리**: `build-apk.sh` 가 작업 사본에서 `gradlew` 를 `chmod +x`, git 인덱스 모드를 100755 로(`git update-index --chmod=+x android/gradlew` — NFS `core.fileMode=false`), 기본 작업 디렉터리의 옛 `android/app/build` 캐시가 리소스·Manifest 변경 뒤 빌드를 깨뜨리는 문제(변경 감지 시 `clean` 또는 새 작업 디렉터리 강제) + `docs/deploy-order.md` 앱 절 ③ 전 점검에 한 줄.
+9. **앱 로그인 화면(웹 코드)**: 앱에서도 Google 버튼과 "또는 이메일로" 구분선을 보인다(GitHub 는 숨김). 앱의 `oauth_account` 오류 문구는 T-084 에서 만든 앱 전용 문구("앱에서는 Google 로그인을 지원하지 않습니다")를 버리고 웹과 같은 문구("아래 Google로 계속하기를 눌러 로그인하세요")로 되돌린다(이제 버튼이 있으므로). 대기 카드(Chrome 창에서 로그인하는 중 + [Chrome 창 다시 열기]·[취소])·마무리 중·실패 상태는 데모 승인 후 구현.
+
+**2. 보안 요구(Reviewer·QA 가 확인)**: 세션 토큰·verifier 를 URL·로그·DB 에 남기지 않음(딥링크에는 권한 없는 `code_r` 만) · 코드 TTL 60초·1회용·PKCE 결속(딥링크를 가로챈 다른 앱은 verifier 가 없어 교환 불가) · `next` 는 같은 출처 경로만(open redirect 금지) · state 변조·`platform=app` 위조로는 코드가 발급되지 않음(서명) · 모든 실패 동일 응답 · 앱 흐름에서 신규 가입 불가(`signup_requires_web`) · 웹 OAuth 응답 불변(회귀 테스트) · 인증 전 단계 라우트의 공개 범위는 정확 일치 1개 · 교환 요청 제한.
+
+**3. 안전 경로**: `src/middleware.ts`·`src/lib/auth/oauth/**`(state·names·app-code·pkce)·`src/lib/auth/session*.ts`(호출만, 불변)·`scripts/migrations/` — Reviewer 판정·R2. 변경 범위가 인증 관문이라 judge C1·C2 에서 Codex 가 요구될 수 있다.
+
+## 역할별 지시사항
+
+- Designer: 앱 로그인 화면 데모 v1(델타) — 상태 목록과 문구는 위 설계 ⑨·승인 후 구현. 참조: TheKaiwa `docs/screens.md` §11-0 11번·§11-3, T-084 데모 v1 D.
+- Developer: 설계 1~8 중 화면이 아닌 것(서버·DB·네이티브·앱 로그인 로직 모듈·`bridge.ts` 확장)은 데모 승인 전에도 격리 worktree `~/.node-local/stockinvest-app-auth`(브랜치 `mobile-app-auth-t088`)에서 진행, 화면 파일(`login/page.tsx`·`OAuthButtons.tsx`·`AppLoginArea.tsx`·`AppDeepLink.tsx`)은 데모 승인·`activate` 전에 쓰지 않는다.
+
+## 진행 기록
+
+- 2026-10-25 23:01: Leader 착수. 번호 T-088(T-087 까지 사용 중). main `da35af7`(origin 대비 문서 전용 로컬 1커밋), 운영 릴리스 `20261025-210643-7f7b0384`, cron 1행. 기존 worktree `stockinvest-app`(브랜치 `mobile-app-t084`)은 병합 끝난 상태 — 이 task 는 새 worktree 에서.
+- 2026-10-25 23:03: 새 worktree `~/.node-local/stockinvest-app-auth`(브랜치 `mobile-app-auth-t088`, base `da35af7`, `npm ci` 성공) 생성. judge 접수(1차 none → Leader 보정 `demo_pref: require` → 2차 delta/designer) → 데모 게이트 `init`(drafting). **base_ref 정정**: 처음에 짧은 해시에서 전체 해시를 임의로 채워 적었다가(`da35af7a3a1b…` — 실재하지 않는 값) 같은 분에 `git rev-parse HEAD` 의 실제 값 `da35af79e4e176bab0f4172de17d44deb84bfba7` 로 바로잡음.
+- 2026-10-25 23:05: judge C1(설계) `codex_required=false`(CX-limit-unknown-r2) → Codex 설계 검토 생략. 병렬 기동 — Designer(`t088-designer`, 앱 로그인 상태 데모 v1 델타) / Dev-S(`t088-dev-server`, 서버·DB·네이티브·앱 로직 모듈·잠복 결함 정리; 화면 파일 금지).
+
+- 2026-10-25 23:22: 사용자 수정 요청("웹과 앱의 로그인화면이 별도의 소스로 구현되는거야? … 구글로그인과 이메일 로그인만 남겨두는 방식으로 수정 후 앱에서도 함께 사용할 수 있도록 해줘") → 데모 게이트 v1 `changes_requested`(승인 아님 — `approve` 하지 않음). 사실 확인: 웹·앱은 이미 같은 `src/app/login/page.tsx` 한 파일이고, v1 은 앱에서만 Google 버튼 자리에 별도 컴포넌트(`AppLoginArea`)를 끼우는 안이었다. 사용자 의도 = **화면 하나를 웹·앱이 그대로 공유**(분리 컴포넌트 최소화) + GitHub 제거. v2 에서 `AppLoginArea` 를 없애고 Google 버튼 컴포넌트를 공용으로 하며 앱 차이는 클릭 동작·대기/오류 상태로만 한정하도록 Designer 재작업. Dev-S 는 영향 없음(서버·DB·네이티브·로직 모듈).
+
+- 2026-10-25 23:40: ① Dev-S 완료 보고 수신 → Leader 독립 확인(변경 파일·화면 파일 0개·APK sha256·운영 `OAUTH_CALLBACK_BASE`·오픈 리다이렉트 재현, `## Developer` 참조). ② Designer v2 완료 보고 수신 → Leader 가 데모 전체를 읽고 lint 재실행, **머리말 한 문장 정정**("웹 글자 변경 두 군데뿐" → G 절의 설정 › 앱 설치 안내 ③ 까지 세 군데) — 이 수정으로 v2 sha256 앞 12자가 `725590d5b214` → `eff12e36f212` 로 바뀜(lint `DEMO_LINT_PASSED`). ③ v2 Artifact 게시 https://claude.ai/artifact/GdkVc4oGoLh1oVe3LKjsTx, 데모 게이트 v2 `review_requested`. ④ Reviewer R1(`t088-reviewer-r1`, Sonnet) 기동 — 서버·DB·네이티브 범위(화면 제외), 화면 구현 후 별도 라운드.
+- 알려진 정정: Designer 가 v2 구현 가이드에 추가한 영향 범위 `src/app/settings/AppSection.tsx` 158행 문구(웹에서도 보임)와 시험(`app-shell-render.test.ts` 134행 등) 변경은 사용자에게 데모 G 절로 알림 — 결정 없이 적용하는 기본값.
+- 2026-10-25 23:42~23:49: **Leader 인수.** 앞서 T-088 Leader 를 겸하던 다른 세션(`[3839b7]` — Reviewer R1 기동·v2 게시·board 줄·`## Developer`·`## Designer` 기록을 수행)이 23:42 교신 뒤 세션 목록에서 사라져 연락이 되지 않는다. 사용자 답이 이 세션(ce147a)에 입력됐으므로 이후 T-088 사용자 보고·task 쓰기는 이 세션이 맡는다. **Reviewer R1 의 생존은 미확인**(하위 에이전트 출력 파일 수정 시각이 현재 시각보다 미래로 찍혀 판단 불가, `## Reviewer` 는 비어 있음) — 화면 구현 뒤 전체 범위를 한 번에 독립 감사하도록 하고, R1 결과가 `## Reviewer` 에 들어오면 그것도 반영한다.
+- 2026-10-25 23:49: **사용자 답** "권고대로 작업 진행해줘" → 해석(사용자에게 알림): 데모 결정 D1~D5 = 전부 권고 A + 데모 v2 승인 + 구현 착수. `check.mjs approve` 통과(`approved_at 23:49:06`, 훅 발화 기록 대조). 결정 값: **D1 A** 앱 `/signup` 의 Google 버튼 숨김 유지 · **D2 A** `signup_requires_web` 안내에 [Chrome에서 가입 화면 열기] 둠 · **D3 A** 대기 카드 [취소] 둠 · **D4 A** 창 닫힘 1.5초 안에 딥링크 없으면 닫힘 안내 + 10분 만료 시 한 줄 안내 · **D5 A** `oauth_account` 안내 문구 "아래"→"위의"(웹에서도 보이는 글자 변경). 데모 G 절의 설정 › 앱 설치 안내 ③ 문구 변경(`AppSection.tsx` 158행·시험 `app-shell-render.test.ts`)도 같은 답에 포함해 적용. **이 답은 DDL(`app_auth_code`) 적용·push·APK 공개·`app_release` INSERT 의 승인이 아니다** — 각각 별도 명시 승인.
+- 2026-10-25 23:49: 사용자가 "기존 웹 오픈 리다이렉트는 별도 task"(권고)를 수용 → 별도 task 로 분리(이 task 의 `login/page.tsx` 화면 구현은 그 두 줄의 `next` 검사 로직을 건드리지 않는다).
+- 2026-10-26 01:15: Codex C2 완료(`status=done`·64초·`base_source=task_file`) — 지적 1건(medium, `callback/route.ts:153`): 앱 state 가 만료되거나 `si_oauth_state` 쿠키가 유실·불일치한 채 콜백이 오면 앱 분기에 못 들어가고 웹 `invalid_state` 로 가서 딥링크 오류가 안 나감. 세션 우회·코드 재사용·웹 응답 변화·토큰 노출은 지적 없음(`## Codex 검토`).
+- 2026-10-26 01:24: **Codex 지적 처리.** Leader 가 코드로 사실 확인(앱 분기는 `appState.ok && appState.app` 일 때만, 실패는 185행 웹 `failRedirect`) → R-S 가 별도 사본에서 재현·시제품 검증 후 판정(`## Reviewer` [01:21]): **채택(사실)·low(UX)·보안 영향 없음·비차단**, 권고 = **후속 후보 + QA 실기기 체크 항목**(복구 수단 [다시 열기]·[취소]·10분 만료가 있고, 정상 사용에서는 쿠키 유실·창 겹침 때만 발생). **Leader 결정: 후속으로 둔다**(고치면 안전 경로 `state.ts`·`callback/route.ts` 가 바뀌어 재감사·QA 재순환이 필요한데 보안 이득이 없음). R-S 가 만든 시제품(`state.ts` 의 `probeSignedAppState` + 콜백 분기, 시험 14건·변이 6종 검출)이 `~/.node-local/stockinvest-t088-review-S` 에 있어 나중에 그대로 반영 가능. 실기기에서 이 상황이 실제로 걸리면 그때 고친다.
+- 2026-10-26 01:24: **`app-flow.ts` 30행 주석 정정**(R-S 지적 — `invalid_state` 를 "서버가 앱에 돌려주는 코드"로 적었으나 어느 콜백 경로도 보내지 않는 죽은 코드): 주석만 고쳐 "서버는 아직 이 코드를 딥링크로 보내지 않는다"로 바꿈. **동작 불변 증명**: 감사본(R-D 사본)과 수정본의 달라진 줄이 30행 하나, 주석 제거 TypeScript 변환 출력이 2998자로 완전히 같음. 안전 경로 파일이지만 주석 한 줄이고 R-S 판정 줄의 scope 에 이미 있는 경로 — 이 변경으로 R-S 판정은 달라지지 않는다. 변경 뒤 `npx jest src/lib/auth src/lib/native src/components src/__tests__/middleware-public-paths.test.ts` 43 스위트·1158 통과·20 건너뜀 rc 0, typecheck rc 0.
+
+## 판단 기록 (judge)
+
+- [2026-10-25 23:02] intake(1차) engine=rules → risk=R2 / developer_model=opus / next=assign / demo=**none** / actions=assign_developer | fallback=budget_window_closed. **Leader 보정**: 규칙 엔진은 새 페이지 경로·키워드만 본다 — 기존 로그인 화면에 앱 전용 상태(Google 버튼 복원·대기 카드·실패 안내)가 새로 생기는 것은 "화면 구조 변경"이라 데모 게이트 대상으로 판단해 `demo_pref: require` 로 재접수.
+- [2026-10-25 23:03] intake(2차, `demo_pref: require`) engine=rules → risk=R2 / developer_model=opus / next=**demo_first** / demo=**delta/designer**(rule DM-user-required, publish=artifact+repo) / actions=prepare_demo,request_demo_approval,assign_developer / blocking_gate=demo | overrides=없음 | fallback=budget_window_closed. 데모 게이트 `init`(drafting). Leader 보강: 인증 관문(`middleware.ts`)·`src/lib/auth/oauth/`·`scripts/migrations/` 가 SAFETY_PATHS 라 R2 로 다룬다. 데모 게이트는 **화면 코드**만 막으므로(T-084 와 같은 해석) 서버·DB·네이티브·로직 모듈은 승인 전에도 진행, 화면 파일은 승인·`activate` 전에 쓰지 않는다.
+- [2026-10-25 23:04] codex_gate/C1 engine=rules → codex_required=false / mode=null / focus=null / budget_rule=CX-limit-unknown-r2 / codex_switch=on | overrides=없음 | fallback=budget_window_closed. C1 입력 요약은 기능 수준(코드·비밀 없음).
+- [2026-10-26 01:13] codex_gate/C2(리뷰 라운드 pass 직후 — R-S pass·R-U conditional→수정→R-D pass) engine=rules → **codex_required=true** / mode=review / focus=none / budget_rule=CX-limit-unknown-r2 / codex_switch=on | overrides=없음 | fallback=budget_window_closed. 입력 요약은 기능 수준(코드·비밀 없음). → `codex` 역할 호출(차수 1/4, 저장소=T-088 worktree, base_ref `da35af7`). Codex 지적은 Reviewer 가 채택·오탐 판정.
+
+## Designer
+
+승인 데모: 없음 — **v2**(mockups/T-088-app-login-v2.html, `DEMO_LINT_PASSED`)가 작성돼 사용자 검토 전이다. v1(mockups/T-088-app-login-v1.html)은 10-25 23:22 사용자 수정 요청으로 폐기(파일은 보존·수정 없음). 아래 가이드는 **v2 초안 — 승인·결정(D1~D5) 전에는 developer 에게 넘기지 않는다.**
+
+- [23:14] 데모 v1(델타) 작성·lint `DEMO_LINT_PASSED`(sha256 앞 12자 `25b4fcf18b76`). 412·360px 가로 넘침 0(전 상태 B 7종·C 6종 실측), 1280px 넘침 0. 결정 필요 D1~D6 은 데모 `#decide` 에 A/B 로 둠. **아래 가이드는 사용자 승인 전 초안 — 승인 버전·결정 결과가 확정되기 전에는 developer 에게 넘기지 않는다.**
+- [23:14] 디자인 스킬: page-layout-designer · ui-component-builder · project-ui-system(부분) · ui-design-reviewer · ui-accessibility-reviewer / 자체 점검 P0 0·P1 0·P2 2, a11y Critical 0·Major 0·Minor 1
+  - P2-1 오류 상자 `authStyles.note` 에 `word-break: keep-all` 이 없어 360px 에서 낱말 중간이 끊김 → 데모는 반영, 구현 때 note/noteDanger 에 `wordBreak:'keep-all', overflowWrap:'anywhere'` 추가(웹에도 적용되지만 표시 개선뿐).
+  - P2-2 대기 카드 [취소]는 텍스트 버튼(44px)이라 눈에 덜 띈다 — 의도(주 행동은 [다시 열기]). D1 이 B 면 제거.
+  - a11y Minor-1 "회원가입"·"가입 요청" 인라인 링크 자체 높이 < 44px(행은 44px) — 기존 화면 그대로, 이번 범위 밖.
+  - 마무리 중 덮개 뒤 내용이 Tab 으로 잡히던 문제 → 데모에서 덮개 동안 본문 `inert` 로 수정(가이드 반영).
+- [23:37] 데모 v2(델타) 작성·lint `DEMO_LINT_PASSED`(sha256 앞 12자 `725590d5b214`). 사용자 수정 요청("웹과 앱의 로그인화면이 별도의 소스로 구현되는거야? … 구글로그인과 이메일 로그인만 남겨두는 방식으로 수정 후 앱에서도 함께 사용할 수 있도록 해줘")을 반영: 웹·앱이 같은 `login/page.tsx` + 같은 Google 버튼 컴포넌트(`OAuthButtons`), v1 `AppLoginArea` 폐기, GitHub 제거, 앱 전용 `oauth_account` 문구 폐기. 데모는 웹·앱 화면을 **같은 한 함수**로 그리고 두 HTML 이 같은지 직접 비교해 보인다(웹·앱 일치 ✓). 로컬 서버(Playwright)로 412·360px 가로 넘침 0(앱 상태 8종·오류 6종 전부)·1280px 넘침 0, 흐름(여는 중→대기→취소/마무리) 동작 확인. 결정 D1~D5(권고 모두 A)는 데모 `#decide`.
+- [23:37] 디자인 스킬: page-layout-designer · ui-component-builder · project-ui-system(부분) · ui-design-reviewer · ui-accessibility-reviewer / 자체 점검 P0 0·P1 0·P2 4, a11y Critical 0·Major 0·Minor 2
+  - P2-1 서버 문구 "**아래** Google로 계속하기"는 실제로는 위쪽 버튼을 가리킨다(웹에서도 이미 그랬음 — 오류 줄은 비밀번호 칸 아래, 버튼은 카드 위). 소유자(Google 전용 계정)가 가장 자주 만날 문구 → 결정 D5 로 올림(A 권고: 화면이 "위의"로 조립, 서버 응답 불변).
+  - P2-2 대기 카드 [취소]는 텍스트 버튼(44px)이라 눈에 덜 띈다 — 의도(주 행동은 [다시 열기]). D3 가 B 면 제거.
+  - P2-3 로그인 오류 상자 간격: 현재 `authStyles.note` 는 margin `14px 0 4px`(flex 열이라 위 32px·아래 4px) → 로그인 화면에서는 `0 0 16px`(noteDanger 와 같음)로 통일, 데모 반영. v1 의 낱말 끊김 대책(`keep-all`·`anywhere`)은 유지.
+  - P2-4 360px 에서 대기 카드 제목이 2줄(가로 스크롤 0, 허용).
+  - a11y Minor-1 "회원가입"·"가입 요청" 인라인 링크 자체 높이 21px(행은 44px) — 기존 화면 그대로, 이번 범위 밖.
+  - a11y Minor-2 `inert` 는 일부 구형 WebView 에서 무시될 수 있다(지원 최소 버전 [추측 — 미확인]) → 마무리 덮개 동안 본문에 `inert` 와 `aria-hidden="true"` 를 함께 건다.
+- 데모에 새로 넣은 것(구현 영향): ① A 절 웹·앱 HTML 자동 비교 ② B 절 차이 표(① Google 클릭 동작 ② 앱에서만 생기는 상태) ③ F 절 앱 `/signup` 비교 ④ **G 절 — 로그인 화면 밖에서 함께 바뀌는 문구**: `src/app/settings/AppSection.tsx` 158행 설치 3단계 ③ "…앱에서는 Google·GitHub 로그인을 지원하지 않습니다."가 앱 Google 로그인 후에는 거짓이 되므로 고쳐야 한다(Leader 확인: v1 가이드에는 없던 영향 범위).
+
+### (폐기 — v1) 앱 로그인 화면 구현 가이드
+v1 가이드(앱 전용 `AppLoginArea`·앱에서 GitHub 숨김 유지·`appOauthAccountText` GitHub 한정 존치)는 v2 로 대체되어 삭제했다. 유지되는 것(대기 카드 문구·상태 전이·접근성 처리)은 아래 v2 가이드로 옮겼다.
+
+### 로그인 화면(웹·앱 공용) 구현 가이드 — v2 초안 (승인·결정 후 확정)
+승인 데모: mockups/T-088-app-login-v2.html (v2 — **사용자 승인 전**) · 적용 토큰: `--bg`, `--bg2`, `--bg3`, `--bg4`, `--border`, `--border2`, `--text`, `--muted`, `--accent`, `--danger`, `--safe-top`, `--safe-bottom` (새 토큰 없음. Google 버튼 `#fff/#1f1f1f/#dadce0`·noteDanger `#2a1416/#4a2226/#fca5a5` 는 기존 값 재사용. `ti-spin` 키프레임은 `globals.css` 기존)
+
+#### 0. 레이아웃 설계
+- **목표**: 웹·앱이 같은 로그인 화면에서 Google 또는 이메일로 들어온다. 앱에서만 Google 을 누른 뒤 Chrome 창 왕복 동안 "지금 무슨 일이 일어나는지·다음에 무엇을 누르는지"를 버튼 바로 아래 한 자리에서 보인다.
+- **주요 위계**: ① 오류 안내 상자(있을 때, 카드 맨 위) ② Google 버튼(+ 앱 전용 상태 영역) ③ "또는 이메일로" + 이메일 폼(모든 상태에서 사용 가능) ④ 회원가입·가입 요청·30일 안내.
+- **영역**: 기존 `AuthShell` 카드 하나. 새 영역은 Google 버튼 바로 아래 상태 영역 1곳(+ 마무리 중 전체 덮개). 웹·앱 마크업 동일, 차이는 클릭 동작·상태뿐.
+- **컴포넌트**: `OAuthButtons`(Google 전용으로 단순화 + 앱 분기), `AppDeepLink`(화면 없음, 마무리 덮개만). 앱 전용 분리 컴포넌트 없음.
+- **상태**: 기본 · 서버 목록 로딩(아무것도 안 그림) · 빈(Google 미설정 → 구분선까지 없음) · 여는 중 · 대기 · 창 닫힘 · 10분 지남 · 취소 · 열기 실패 · 마무리 중 · 오류 6종(데모 D).
+- **행동**: 주 = [Google로 계속하기] / 대기 중 [Chrome 창 다시 열기], 보조 = [취소](D3), [Chrome에서 가입 화면 열기](D2). 위험 행동 없음(로그인 전).
+- **반응형**: 360~412px 단일 열, ≥900px 도 가운데 카드(최대 380px) — 바뀌는 것 없음.
+
+#### 1. 화면 개요
+- `/login` — **웹·앱 한 화면.** Google 버튼(서버 `GET /api/auth/oauth-providers` 목록에 `google` 이 있을 때만) + "또는 이메일로" + 이메일 폼. 웹의 보이는 모습은 변하지 않는다(운영 목록이 이미 `["google"]`). 서버 라우트 `[provider]`·`OAUTH_PROVIDERS`·서버 `login/route.ts` 문구는 **이번 범위 밖 — 건드리지 않는다.**
+- 웹에서 글자가 바뀌는 곳: ① `email_unverified` 안내의 "Google/GitHub" → "Google" ② D5 A 일 때 `oauth_account` 문구의 "아래" → "위의".
+- `/signup` — 웹은 지금 그대로. 앱은 **D1 A(권고)**: Google 버튼 숨김 유지, 가입 페이지 코드는 바꾸지 않는다(버튼 컴포넌트의 기본값이 "앱에서는 null", 로그인 페이지만 켠다). **D1 B**: 가입 페이지도 켠다. 앱의 이메일 가입 폼은 지금 그대로(범위 밖).
+- 안전장치 표시: 로그인 전 화면이라 DRY_RUN·KILL_SWITCH·업데이트 띠 해당 없음. 거짓 안심 문구("안전하게…") 금지.
+
+#### 2. UI 구조 (데모 `#sa`·`#sc`·`#sd` 인용)
+```
+LoginPage (src/app/login/page.tsx)
+  AuthShell(title "주식 자동매매", subtitle "계속하려면 로그인하세요")
+    OAuthErrorNote(oauthError)         ← 기존 블록. 로그인 화면에서는 margin '0 0 16px'(note·noteDanger 둘 다, page 에서 style 덮어쓰기 — AuthShell 기본값은 /signup 용으로 둠)
+                                          앱에서 오류가 있으면 tabIndex=-1 + 마운트 시 focus(이메일 칸 자동 포커스 생략). 웹은 지금처럼 이메일 칸 포커스
+    <OAuthButtons nextPath appLogin />  ← 웹·앱 같은 컴포넌트(앱 허용 prop 은 가칭 appLogin, 기본 false)
+    form(이메일·비밀번호·오류 줄·로그인)    ← 불변. 어느 상태에서도 잠그지 않음
+    회원가입 · SignupRequestLink · hint(30일)   ← 불변(앱 전용 안내 줄 없음 — v1 의 appHint 삭제)
+    <AppDeepLink nextPath />            ← 그리는 것 없음. 마무리 중에만 전체 덮개
+
+OAuthButtons({ nextPath, appLogin = false })   // 'use client'
+  providers: 'google'[] | null    ← GET /api/auth/oauth-providers (웹·앱 모두 조회, 'github' 는 무시). 로딩(null)·빈 목록 → return null(구분선까지)
+  native = isNativeApp()          ← 마운트 뒤 effect 에서만. native && !appLogin → return null (D1 A: 앱 /signup 숨김)
+  <div style={oauthStyles.list}>
+    <button Google style(#fff/#1f1f1f/#dadce0, minHeight 48, radius 9, 14.5px 600) onClick=start>  ← 웹·앱 같은 모양·문구 "Google로 계속하기"
+      disabled = native && phase ∈ {opening, waiting, exchanging} · aria-busy = (phase==='opening')
+  <div role="status" aria-live="polite">…</div>    ← **항상 그린다**(웹은 빈 채 — 첫 렌더 웹·앱 동일, 수화 불일치 없음). 안에는 짧은 문장만
+  {phase==='waiting' && <WaitCard/>}                ← live 영역 밖(버튼이 live 안에 들어가 통째로 읽히지 않게). 같은 파일 내부 함수, export 안 함
+  <div aria-hidden style={oauthStyles.divider}>또는 이메일로</div>
+```
+- `start()`: **웹**(`!native`) = 지금처럼 `window.location.href = '/api/auth/google' + (next ? '?next=…' : '')`. **앱** = `prepareAppLogin(next)`(가칭, Dev-S) → `openExternal(url)` → 성공 시 `waiting`, 실패 시 `idle` + 안내 줄 `openFailed`. **앱에서 WebView 안으로 `/api/auth/google` 이동하는 대체 동작 금지**(Google `disallowed_useragent`).
+- **상태 영역 내용**(앱만, 문구 상수 `APP_LOGIN_COPY` export — 테스트용):
+  - opening: live 안에 스피너(16px, `ti-spin`, 움직임 줄이기면 정지) + "Chrome 창을 여는 중…"
+  - waiting: live 안에는 시각적 숨김 문장 "Chrome 창에서 로그인하는 중입니다", 카드는 live 밖: `bg3`·`border2`·radius 12·padding 14, 제목(15px 600, `tabIndex=-1`, 나타날 때 focus, 스피너 동반) "Chrome 창에서 로그인하는 중입니다" · 본문(13px muted, keep-all) "Google 로그인을 마치면 이 앱으로 자동으로 돌아옵니다." · 힌트(12px muted) "창을 닫았다면 아래에서 다시 열 수 있습니다. 10분 안에 마치지 못하면 처음부터 다시 눌러야 합니다." · [Chrome 창 다시 열기](48px, `bg2`·`border2`·15px 600) · [취소](44px, 텍스트 muted 13px 600, D3 A 일 때만)
+  - closed "로그인 창이 닫혔습니다. 다시 눌러 주세요." · expired "로그인 요청 시간(10분)이 지났습니다. 다시 눌러 주세요." · cancelled "소셜 로그인을 취소했습니다.(웹의 기존 `cancelled` 문구와 같은 글자)" · openFailed "Chrome 창을 열지 못했습니다. 잠시 후 다시 눌러 주세요." — 모두 live 안 한 줄(`p`, 12.5px muted, margin-top 10, 앞에 원 안 "i"/"!" 기호 16px — 색만으로 구분 금지) 후 Google 버튼 포커스 복귀
+  - 간격: 상태 줄·카드는 `margin-top: 10px`, 상태 영역이 비면 높이 0(`:empty` 대신 조건부 렌더 또는 `display:none`).
+- **`AppDeepLink`(화면 없음)**: 딥링크 수신(`appUrlOpen` + 콜드 스타트 `getLaunchUrl` — Dev-S 모듈 호출) → `code` 면 verifier 를 꺼내 교환 → 마무리 덮개(아래) → 성공 시 `location.replace(next)`. `error=<코드>` 면 `location.replace('/login?oauth_error=<코드>' [+ next])`. 교환 400 → `app_code_invalid`, verifier 없음 → 서버에 보내지 않고 `app_verifier_lost`. 덮개: `position:fixed; inset:0; z-index` 큰 값, `bg`, 가운데 스피너 24px + "로그인 마무리 중…"(15px) / "잠시만 기다려 주세요."(12px muted), `role="status" aria-busy tabIndex=-1`(나타날 때 focus), 덮개 동안 페이지 본문에 `inert`+`aria-hidden`, 이동할 때까지 유지.
+- **`OAUTH_ERROR_TEXT`(page.tsx)** 추가 키: `app_code_invalid` "로그인을 마무리하지 못했습니다. 아래 Google로 계속하기를 다시 눌러 주세요." · `app_verifier_lost` "앱이 다시 시작됐거나 시간이 오래 지나 로그인을 이어 갈 수 없습니다. 아래 Google로 계속하기를 다시 눌러 주세요." · `signup_requires_web` 은 note 상자(noteDanger 아님)로 굵은 첫 줄 "이 Google 계정으로 가입된 계정이 없습니다." + "앱에서는 새로 가입할 수 없습니다 — 휴대폰이나 PC 의 브라우저에서 먼저 가입(초대코드 필요)한 뒤 앱에서 로그인해 주세요. 다른 이메일로 가입했다면 그 이메일로 아래에서 로그인하세요." + (D2 A) [Chrome에서 가입 화면 열기](44px `al-ghost`, `openExternal('<절대 주소>/signup')`, 실패하면 아무것도 안 함). 기존 `cancelled`·`invalid_state`·`not_configured`·`failed` 문구 불변. `email_unverified` 는 "Google/GitHub" → "Google" 만 변경.
+  - 참고: 오류 상자는 카드 맨 위, Google 버튼은 그 바로 아래라 위 문구들의 "아래 Google로 계속하기"는 방향이 맞다. 방향이 어긋나는 것은 이메일 폼 맨 아래 오류 줄의 `oauth_account` 문구뿐이다(D5).
+
+#### 3. API·브리지 호출 계획
+| 대상 | 방식 | 시점 | 사용 | 실패 처리 |
+|---|---|---|---|---|
+| `GET /api/auth/oauth-providers`(공개) | 기존 | OAuthButtons 마운트(웹·앱 공통) | `providers` 에 `google` 포함 여부 | 실패·없음 → 렌더 안 함(이메일 폼만) |
+| `/api/auth/google?next=` | 웹: `location.href` | 웹에서 Google 클릭 | — | — |
+| `prepareAppLogin(next)`(가칭, Dev-S 모듈) | 앱 | idle→opening | 검증값 생성·보관 + 열 주소(`platform=app&challenge=`) | 실패 → idle + openFailed |
+| `openExternal(url)`(`bridge.ts` 기존) | 앱 | opening·[다시 열기] | `true` → waiting | `false` → idle + openFailed. WebView 안 이동 폴백 없음 |
+| 창 닫힘 이벤트·창 닫기(`bridge.ts` 확장 — Dev-S, 이름 가칭) | 앱 | waiting 중 / [취소]·딥링크 수신 | 닫힘 뒤 1.5초 안에 딥링크 없으면 closed(D4 A) | 이벤트가 안 오는 기기 → [취소](D3)·10분(D4) |
+| 딥링크 수신 → `POST /api/auth/app-exchange` | AppDeepLink | 코드 수신 | `{ok, next}` → `location.replace(next)` | 400 → `/login?oauth_error=app_code_invalid`, verifier 없음 → `app_verifier_lost`(서버 호출 없음) |
+
+#### 4. 상태 관리 (`OAuthButtons` phase: idle · opening · waiting · exchanging + 안내 줄 kind: closed · expired · cancelled · openFailed)
+| 지금 | 사건 | 다음 |
+|---|---|---|
+| idle | [Google] | 앱: opening(검증값 새로 생성) / 웹: 페이지 이동 |
+| opening | 창 열림 / 못 엶 | waiting / idle+openFailed |
+| waiting | 딥링크(code) | exchanging(창 닫기 시도, 1회만 처리 — 따뜻한 리스너·콜드 스타트 중복 방지) |
+| waiting | 딥링크(error) | `/login?oauth_error=<코드>` replace |
+| waiting | [다시 열기] | opening → waiting (같은 주소·같은 검증값) |
+| waiting | [취소] (D3 A) | idle+cancelled, 검증값 삭제, 창 닫기 시도 |
+| waiting | 창 닫힘 + 1.5초 딥링크 없음 (D4 A) | idle+closed |
+| waiting | 대기 시작 후 10분 (D4 A) | idle+expired, 검증값 삭제 |
+| (앱 콜드 스타트) | 딥링크로 깨어남 | 바로 exchanging(`AppDeepLink` 덮개) |
+- 상태 소유: phase·안내 줄은 `OAuthButtons`, 교환·덮개는 `AppDeepLink`. 둘의 연결(대기 해제 신호)은 Dev-S 모듈의 구독(가칭 `subscribeAppLogin`) 등 **구현 재량** — 바깥에서 보이는 동작은 데모 C 표와 같아야 한다. 순수 전이는 `appLoginReducer`(가칭, 같은 파일 export)로 두면 DOM 없이 시험할 수 있다.
+- 포커스: waiting 진입 → 카드 제목, idle 복귀 → Google 버튼, exchanging → 덮개, 앱의 오류 진입 → 오류 상자.
+- 값 노출 금지: 코드·검증값을 state·화면·console·주소 표시 어디에도 그리지 않는다(검증값은 모듈 안에서만).
+- 결정 의존: D1(앱 가입 화면 prop) · D2([가입 화면 열기] 버튼) · D3([취소]) · D4(타이머 두 개 on/off) · D5(oauth_account 문구) — **승인 기록의 결정 값을 그대로 따른다.**
+
+#### 5. 생성/수정 파일 목록
+- 수정 `src/components/auth/OAuthButtons.tsx` — Google 전용으로 단순화(`ProviderName='google'`, `GithubIcon`·`BUTTONS.github`·`ORDER` 삭제), 앱 분기(누르기 동작·상태 영역·`WaitCard`·`appLoginReducer`·`APP_LOGIN_COPY`), `visibleProviders(list)` 시그니처에서 `native` 인자 제거(앱 게이트는 컴포넌트가 `appLogin` 으로 판단), `oauthStyles` 확장, 머리 주석 갱신(T-084 "앱에서는 아무것도 그리지 않는다" 제거).
+- 신규 `src/components/auth/AppDeepLink.tsx` — 딥링크 수신·교환·오류 이동·마무리 덮개(그리는 것은 덮개뿐). 교환·검증값 로직은 Dev-S 모듈 호출만.
+- 수정 `src/app/login/page.tsx` — `<OAuthButtons appLogin>`·`<AppDeepLink>`, 오류 코드 추가·`email_unverified` 문구, 오류 상자 간격, 앱 오류 시 상자 포커스(이메일 칸 자동 포커스 생략), `loginFailureText` 호출에서 `native` 제거, 머리 주석.
+- 수정 `src/components/auth/login-failure.ts` — **`native` 분기 제거 가능**: `native` 는 `oauth_account` 줄 하나에서만 쓰이고(현재 30행) 앱에 Google 버튼이 생기면 존재 이유가 없다. `appOauthAccountText` 삭제, `loginFailureText(f)` 로 시그니처 단순화(호출부 page.tsx 한 곳). D5 A: `error==='oauth_account' && provider==='google'` → "Google로 가입된 계정입니다. 위의 Google로 계속하기를 눌러 로그인하세요."(그 밖 provider 는 서버 `detail` — GitHub 계정은 운영에 0개라 도달 불가). D5 B: 서버 `detail` 그대로(웹 현재 동작). 서버 응답·`login/route.ts` 는 건드리지 않는다.
+- 수정 `src/components/auth/AuthShell.tsx` — `note`·`noteDanger` 에 `wordBreak:'keep-all'`, `overflowWrap:'anywhere'`(360px 낱말 끊김 — 웹·가입 화면에도 적용되는 표시 개선).
+- 수정 `src/app/settings/AppSection.tsx` 158행 — 설치 3단계 ③ "설치 후 로그인": "홈 화면의 주식캐기를 열고 Google 또는 이메일·비밀번호로 로그인합니다. Google 로그인은 Chrome 창이 잠깐 열렸다가 앱으로 돌아옵니다."
+- 수정(시험) `src/components/app/__tests__/app-shell-render.test.ts` — `visibleProviders`·`loginFailureText`·`appOauthAccountText`·"판별이 목록 조회보다 먼저"(255행 소스 문자열 검사)·로그인 페이지 검사(278행~)·설치 3단계 문구(134행) 갱신. 신규 시험: 웹 첫 렌더에 앱 요소 0개·Google 버튼 마크업 단일(웹·앱 같은 컴포넌트), `appLoginReducer` 전이표, `APP_LOGIN_COPY` 문구, GitHub 버튼 부재.
+- 수정 `docs/screens.md` — §1 로그인 행(285행 "D 로그인 앱 분기")과 §5 D 절을 아래로 교체, 변경 이력 1줄: "로그인 — 웹·앱 한 화면(Google + 이메일). 앱: Google 은 Chrome 창(Custom Tab) 왕복, 버튼 아래 여는 중·대기 카드(다시 열기·취소)·닫힘·10분·취소·열기 실패 안내, 마무리 중 덮개, 오류 코드 app_code_invalid·app_verifier_lost·signup_requires_web. GitHub 버튼·앱 전용 oauth_account 문구 삭제. 앱 /signup 은 Google 버튼 숨김(D1 결정 값)."
+- 건드리지 않음: `public/app-shell/index.html`·`android/**`(Dev-S), 서버 라우트·`OAUTH_PROVIDERS`·`middleware.ts`(Dev-S), `docs/mobile-app-procedure.md`(Leader 가 필요 시).
+
+#### 6. 구현 순서
+1) `login-failure.ts`+시험(D5 값 반영) → 2) `AuthShell` note 줄바꿈 → 3) `OAuthButtons` Google 전용 정리(웹 동작 불변 확인: 웹 클릭·구분선·빈 상태) → 4) `appLoginReducer`·상태 영역·`WaitCard`(가짜 bridge 시험) → 5) `AppDeepLink`(Dev-S 모듈 연결) → 6) `page.tsx` 배치·오류 코드·포커스 → 7) `AppSection` 문구 → 8) 412/360 가짜 `window.Capacitor`(`isNativePlatform`·Browser 플러그인)로 상태 캡처, 웹 회귀(웹에서 앱 요소 DOM 0개) → 9) `docs/screens.md`.
+
+#### 7. 주의사항
+- **앱 판별은 표시·클릭 동작 전용** — 서버는 서명된 state 의 `platform=app` 으로만 분기한다(설계 ③). 마운트 뒤에만 판별하고 첫 렌더는 웹과 같다. 웹 번들은 `@capacitor/*` import 금지(`window.Capacitor` 전역만).
+- WebView 안에서 `/api/auth/google` 로 이동하는 폴백 금지(Google `disallowed_useragent` 화면에 갇힌다).
+- 대기 중에도 이메일 폼 사용 가능 — 이메일 로그인이 성공하면 페이지 이동으로 대기는 자연 소멸. Google 버튼이 잠긴 동안에도 이메일 폼·가입 링크는 눌린다.
+- 360px: 대기 카드 제목 2줄 허용, 가로 스크롤 0(데모 실측). 터치: Google·다시 열기 48px, 취소·가입 화면 열기 44px.
+- `oauth-providers` 조회는 이제 앱에서도 한다(v1.0.0 앱은 조회하지 않았음). 공개 경로이고(`middleware.ts` 공개 목록) 앱 요청에 쿠키가 없어도 응답한다 — 문제 없음.
+- **위험·불확실[추측]**: (a) Chrome 창이 닫혔다는 신호가 기기·Custom Tab 구현에 따라 안 올 수 있다 → [취소]·10분이 탈출구, 실기기 확인 필요 (b) 구형 WebView 의 `inert` 지원 (c) 앱의 이메일 가입 폼은 지금도 열려 있어 "신규 가입은 웹에서만"은 Google 흐름에만 해당(방침 2 의 범위) (d) GitHub 로 가입한 계정이 생기면 서버 `oauth_account` 문구가 없는 GitHub 버튼을 가리킨다 — 운영 계정 1개(Google)라 현재는 도달 불가, 서버 정리 때 함께 정리할 후보 (e) 로그인 화면 변경이 웹 사용자에게는 글자 한두 개(위 §1)만 보인다.
+
+## Developer
+
+> Dev-S(서버·DB·네이티브·앱 로직, 화면 제외) 기록. 시각은 Dev-S 자체 기록이며 Leader 가 파일 수정 시각(23:02~23:29)·검증 로그(~23:34)와 대조했다. 작업 위치 worktree `~/.node-local/stockinvest-app-auth`(브랜치 `mobile-app-auth-t088`, base `da35af7`), **전부 미커밋**, 화면 파일 변경 0개(Leader 가 `git status` 로 확인).
+
+- [23:05] Dev-S 착수 — 기준선 jest: 스위트 257 통과·3 건너뜀, 시험 6508 통과·75 건너뜀.
+- [23:12] 웹 OAuth 회귀 고정 시험(`oauth-web-regression-t088.test.ts` 27건)을 **변경 전 코드에서 먼저 27/27 통과**시켜 기대값 확정(상태·Location·헤더·Set-Cookie 속성·본문·웹 state 키).
+- [23:20] 서버: `pkce.ts`·`app-flow.ts`·`app-code.ts`(결속 sha256(code_r:challenge), DB 시계 TTL 60초, 조건부 UPDATE 1회 소각)·`app-exchange.ts`·`app-response.ts` 신규, `state.ts`(앱 표지 pl·ch 서명, 웹 형식 불변), 시작·콜백 라우트 앱 분기(Google 만·challenge 필수·기존 회원만 코드·신규 가입은 signup_requires_web), `POST /api/auth/app-exchange`(같은 출처 JSON·2KB 상한·모든 실패 동일 400·GET 405·IP 분당 10건). `middleware.ts` PUBLIC_EXACT +1(정확 일치).
+- [23:24] DB: `scripts/migrations/T-088-app-auth-code.sql`(가산·멱등·백슬래시 없음·code ascii_bin·user_id INT UNSIGNED·CHECK 4: 형식/user/수명 10분 상한/used). **운영 적용 안 함.**
+- [23:27] 앱 로직: `src/lib/native/appLogin.ts` 신규, `bridge.ts` 에 `addAppUrlOpenListener`·`getLaunchUrl` 추가(@capacitor import 없음). 네이티브: Manifest 딥링크 intent-filter, versionCode 2/1.0.1, `build-apk.sh`(chmod +x·소스 해시로 옛 산출물 삭제·딥링크 정확히 1개 검사), `git update-index --chmod=+x android/gradlew`(stage 됨), `deploy-order.md` ③ 한 줄.
+- [23:33] 검증(Dev-S 실행): tsc rc 0, 전체 jest rc 0(스위트 263 통과·3 건너뜀, 시험 6678 통과·95 건너뜀, 실패 0), 일회용 MariaDB 두 sql_mode 25/25(동시 20건 중 1건만 성공 포함), 변이 14종 모두 해당 시험 실패 후 원복(sha256 일치), 별도 사본 `npm ci`·`next build` rc 0·번들에 `@capacitor` 0건, 실서버 스모크(교환 성공→세션 쿠키→보호 API 미들웨어 통과, 재사용 400, 로그에 코드·verifier 0건), APK rc 0 ×2(`~/.node-local/stockinvest-apk-t088/out/stockinvest-1.0.1-2.apk`, 2,990,866 B, sha256 `58d8b210…bbdc`, 지문 `6fa5ad6f…0f08`, debuggable no, deeplink 1). `--publish` 없음. **Leader 독립 확인**: APK sha256·크기 일치, 화면 파일 0개, 운영 `OAUTH_CALLBACK_BASE` = `https://stock.xn--lh0b87pnudm10a4vd.com`(앱 `server.url` 과 같은 출처 — Dev-S 의 [추측] 위험 해소).
+- [23:35] Dev-S 발견 → Leader 처리: ① **기존 웹 오픈 리다이렉트**(T-088 이전부터) — `sanitizeNextPath`(`src/lib/auth/oauth/config.ts:73`)가 `/<TAB>/evil.com` 을 통과시켜 `new URL()` 이 `https://evil.com/` 으로 해석(Leader 가 node 로 재현, 콜백 `callback/route.ts:269` 가 이 값으로 리다이렉트). 이메일 로그인 화면 `login/page.tsx:76` 도 같은 형태 검사라 같은 우회 가능성([가능성 높음], 브라우저 미실행). 웹 불변 지시로 이번엔 미수정 → **별도 task 권고**(사용자 결정 대기). 앱 흐름의 `sanitizeAppNextPath` 는 이 결함이 없다. ② 커스텀 스킴 구조 한계(같은 기기 악성 앱이 스스로 PKCE 흐름을 시작하는 경우) — M2 App Links 로만 해소, 문서화만. ③ 교환·`[provider]` 라우트가 커밋 훅 SAFETY_PATHS 밖 — 목록 변경은 사용자 결정(이번 변경 중 SAFETY 해당은 `middleware.ts`·`oauth/{state,pkce,app-code,app-exchange,app-flow,app-response}.ts`·마이그레이션 SQL).
+- 설계와 다르게 한 점(모두 더 엄격): 출처 검사 Origin 필수+`OAUTH_CALLBACK_BASE` 출처 일치 · verifier 43자만 · next 는 URL 파서 기반 · 교환 본문 키 제한 · `consumeAppAuthCode` 는 회원 id 반환 · 딥링크 중복 처리(launch 지문·code 1회) · 요청 제한 초과 429 · state 검증 실패는 웹 `invalid_state`.
+- 못 한 것: 실기기 확인 전부(Custom Tab 복귀·`appUrlOpen`/`getLaunchUrl`·sessionStorage·WebView Origin 헤더), Google 실토큰 교환 콜백, 운영 sql_mode, 화면 단계(데모 승인 뒤).
+
+### Dev-UI (로그인 화면 — 승인 데모 v2 기준)
+
+> Dev-UI(Opus) 기록을 Leader 가 옮겨 적음. 시각은 Dev-UI 자체 기록. 같은 worktree `~/.node-local/stockinvest-app-auth`, **전부 미커밋**, Dev-S 변경은 건드리지 않음(Leader 가 안전 경로 해당 파일이 모두 Dev-S 것임을 대조 — Dev-UI 가 새로 건드린 안전 경로 0).
+
+- [00:14] Dev-UI 완료 — 데모 게이트 `DEMO_GATE_PASSED`(approved v2, `eff12e36f212`). 기준선 tsc rc 0·jest 263 스위트/6678 통과·95 건너뜀 → 변경 후 tsc rc 0·jest 264 스위트/6752 통과·95 건너뜀·실패 0(+74건).
+- 구현: `OAuthButtons.tsx`(Google 전용·웹앱 공용, `appLoginReducer`·`APP_LOGIN_COPY`·대기 카드·앱 상태 영역), `AppDeepLink.tsx`(딥링크 교환·마무리 덮개), `OAuthErrorNote.tsx`(오류 상자·`signup_requires_web` 가입 열기 버튼), `appLoginSignal.ts`(값 없는 신호), `bridge.ts`(`addBrowserFinishedListener`·`closeExternalBrowser` 추가), `login/page.tsx`(`appLogin`·포커스), `login-failure.ts`(앱 전용 문구 삭제·D5 A 문구), `AuthShell.tsx`(note 줄바꿈), `AppSection.tsx`(설치 ③ 문구), `docs/screens.md`, 시험 신규 `login-screen-t088.test.ts` + `app-shell-render.test.ts` 갱신.
+- 검증(Dev-UI 실행): `next build` rc 0(별도 사본, 번들 `@capacitor` 0·"GitHub로 계속하기" 0·옛 앱 전용 문구 0). Playwright(`next dev`·`window.Capacitor` 스텁·https 별칭): 웹·앱 idle `<main>` 해시 동일 · 412/360px 가로 넘침 0 · 앱 클릭 → `Browser.open` 에 `…/api/auth/google?platform=app&challenge=<43자>` 만 전달(WebView 이동 없음, verifier 는 URL 에 없고 sessionStorage 에만) · 대기(버튼 잠김·포커스·이메일 입력 가능)·다시 열기·취소·창 닫힘 1.5초·10분 만료·딥링크 교환(POST JSON·쿼리 없음)·덮개 `inert`+`aria-hidden`·오류 3종·콜드 스타트 verifier 분실(서버 호출 0)·앱 `/signup` Google 버튼 숨김·웹 클릭은 같은 창 이동.
+- 데모와 다른 점(의미 동일): `OAuthErrorNote` 파일 분리(App Router `page.tsx` 는 default 외 export 불가) · live 영역 `display:none` 미사용 · 덮개는 `createPortal` · [Chrome에서 가입 화면 열기]는 앱에서만 · `#login-error` 에만 `lineHeight 1.5` · 10분 타이머는 로그인 시작(클릭)부터 · 앱 `/signup` 은 목록 조회 없이 빈 목록 · `app_login_invalid` 코드는 `failed` 문구.
+- 못 한 것: 실기기·APK(`browserFinished` 신호·Android `Browser.close`·`getLaunchUrl`·구형 WebView `inert`) [추측] · 린트(설정 없음). 임시물 `~/.node-local/stockinvest-ui-t088-build/`·worktree `.next/`(gitignored).
+- **Dev-UI 보고의 위생 문제(Leader 확인)**: 첫 `next dev` 가 `CRON_WATCHDOG_ENABLED` 를 막지 않은 채 약 12초 떠 워치독이 운영 하트비트 경로를 읽었고, `pkill -f` 가 자기 셸을 종료시킴(다른 프로젝트 프로세스는 무사). Leader 가 코드를 읽어 영향 없음 판단 — 워치독 `bootGraceMs` 기본 600초라 12초는 `boot_grace`(상태 판정 안 함·알림 없음), 텔레그램 승인 폴러는 30초 지연 시작에 DB 스위치 기본 꺼짐이고 이후 서버는 가짜 DB(`127.0.0.1:1`)·`CRON_WATCHDOG_ENABLED=false`. **교훈**: 에이전트가 띄우는 로컬 서버는 `src/instrumentation.ts` 로 워치독·폴러가 같이 켜진다 → 이후 모든 브리프에 차단 env 를 명시(T-089 QA 에는 진행 중 추가 지시함).
+- **Leader 독립 확인(00:16)**: ⓐ worktree 변경 파일 대조 — 안전 경로 해당 8개(`middleware.ts`·`oauth/{state,pkce,app-code,app-exchange,app-flow,app-response}.ts`·마이그레이션 SQL)는 모두 Dev-S 것, Dev-UI 가 새로 건드린 것 없음 ⓑ `login/page.tsx` 48·76행 `next` 검사 줄이 원문 그대로(T-089 병합 충돌 지점 보존) ⓒ 전체 시험·타입 검사 독립 실행(00:17) — `npm run typecheck` rc 0, 전체 jest rc 0: 264 스위트 통과(3 건너뜀)·6752 통과·95 건너뜀·실패 0 — Dev-UI 보고와 숫자가 일치. 건너뜀 95는 일회용 DB 시험(환경변수가 없으면 건너뜀)이며 Dev-S 가 일회용 MariaDB 로 25/25 통과를 따로 보고함(Reviewer R-S 가 로그 확인).
+- [00:19] Leader: **독립 감사 2갈래 기동** — R-S(서버·DB·네이티브·앱 로직, 안전 경로 8개 포함, `## Reviewer` 에 직접 기록·최종 판정 줄 작성) / R-U(화면·클라이언트·데모 충실도, task 파일에 쓰지 않고 Leader 에게만 보고 — 훅이 마지막 `최종 판정` 줄 하나만 읽으므로 쓰기 권한은 한 명에게만 줌). 두 감사자 모두 worktree 수정 금지·변이 시험은 별도 사본. Reviewer R1(앞 세션이 기동)은 여전히 결과 없음.
+- [00:53] **Dev-UI 감사 수정 라운드**(R-U F1·F2 + 값싼 시험 보강, 같은 worktree·미커밋): 기준선 tsc rc 0·jest 264 스위트/6752 통과·95 건너뜀 → 수정 후 tsc rc 0·jest 265 스위트/6769 통과·95 건너뜀·실패 0(+17건). 변경 5개 파일뿐(Leader 가 수정 시각으로 확인 — 00:40 이후 수정된 비-산출물 파일이 정확히 이 5개, 안전 경로 8개는 23:12~23:23 이후 무수정, `login/page.tsx` 의 `next` 검사 두 줄 원문 유지):
+  - `src/lib/native/appLogin.ts`(F1): `APP_EXCHANGE_TIMEOUT_MS = 15_000`, `exchangeAppCode` 가 `AbortController` + 타이머 Promise 경합(`Promise.race`, 본문 읽는 시간 포함) + `finally` 타이머 해제 — `AbortSignal.timeout` 단독 미사용(신호를 무시하는 `fetch`·`AbortController` 없는 환경에서도 15초에 끝남). 시간 초과·네트워크 오류·중단은 기존 `null` → `exchange_failed` → `app_code_invalid` 경로. 요청 모양(POST·same-origin·JSON·본문 키 `code`·`verifier`·`next`·쿼리 없음) 불변, init 에 `signal` 만 추가.
+  - `src/components/auth/OAuthButtons.tsx`(F2): `pickStartMode(nativeNow)` export, `onStart` 가 클릭 시점 `isNativeApp()` 로 시작 방식 선택 — 마운트 때의 `native` 상태는 그리기(`isOAuthVisible`) 전용. UA 방어·새 문구 없음.
+  - 시험: 신규 `appLogin-timeout-t088.test.ts`(13건 fake timers) + `login-screen-t088.test.ts`·`app-shell-render.test.ts` 핀 강화 + `appLogin.ts`·`bridge.ts`·`appLoginSignal.ts`·`AppDeepLink.tsx`·`OAuthButtons.tsx`·`OAuthErrorNote.tsx` 비시험 코드 no-console 가드.
+  - 변이(매번 원복·sha256 일치): ① timeout 경합 제거 6건 실패 ② `onStart` 가 마운트 상태 사용 2건 실패(소스 pin — 동작 시험 아님) ③ `console.log(code)` 1건 실패 ④ 타이머 해제 제거 6건 실패 ⑤ `abort()` 제거 1건 실패 ⑥ `pickStartMode` 뒤집기 1건 실패.
+  - Playwright 재현→수정(`next dev`·`CRON_WATCHDOG_ENABLED=false`·가짜 DB·PID 종료): ⓐ F1 — timeout 제거 변이에서는 20초에도 덮개·inert 유지 → 수정 후 약 15.4초에 `/login?oauth_error=app_code_invalid` 이동·덮개와 inert 0·오류 상자 포커스·Google 버튼 enabled ⓑ F2 — 브리지를 클릭 직전에 주입: 변이에서는 `Browser.open` 0회·`/api/auth/google` 이동 → 수정 후 `Browser.open` 호출·이동 없음·대기 카드.
+  - **Dev-UI 가 밝힌 잔여 위험**: (1) F1 의 덮개 걷힘은 "실패 뒤 페이지 이동"에 의존 — 이동 자체가 멈추면 덮개가 남는다(안전망 후보) (2) F2 는 클릭 경로만 고침 — 브리지가 마운트 뒤에 생기면 `AppDeepLink` 의 `onAuthDeepLink` 구독(마운트 시점 판별)이 비어 복귀 딥링크를 못 받을 수 있음 [추측, 실제 Capacitor 는 문서 시작 때 주입] (3) 나머지 생존 변이 8종은 후속(효과 로직 분리+fake timers, 저장소용 Playwright 스모크) (4) 실기기·APK 미확인.
+  - **Leader 독립 확인(00:55)**: 전체 시험·타입 검사 독립 실행 — tsc rc 0, jest rc 0, 265 스위트 통과(3 건너뜀)·6769 통과·95 건너뜀·실패 0 — Dev-UI 보고와 숫자 일치. `exchangeAppCode`·`pickStartMode`·`onStart` 코드를 직접 읽어 설명과 일치함을 확인.
+- [00:56] Leader: 델타 재감사(`t088-reviewer-delta`) 기동 — 수정 5개 파일만, task 파일에 쓰지 않고 Leader 에게만 보고(판정 줄 단독 유지). 잔여 위험 (1)(2)의 심각도·이번에 고칠지 판단 요청.
+
+## Reviewer
+
+> R-S(서버·DB·네이티브·앱 로직 감사, Sonnet) 기록. 화면 파일(`OAuthButtons`·`AppDeepLink`·`OAuthErrorNote`·`login/page.tsx`·`login-failure`·`AppSection`·`AuthShell`)은 R-U 몫이라 깊이 보지 않았고 서버 계약(교환 본문·오류 코드·딥링크 형식)과의 대조만 했다. worktree 는 읽기만 했다(감사 전후 `git status` 36줄 동일). 변이·base 대조는 별도 사본(`~/.node-local/stockinvest-t088-review-S`·`-base`)에서만 했고 일회용 MariaDB 컨테이너(127.0.0.1:33471)는 끝나고 제거했다. 운영 DB·.env·하트비트·텔레그램 접근 0.
+
+- [00:33] 독립 실행: 요청 명령 `npx jest src/lib/auth src/lib/native src/__tests__/middleware-public-paths.test.ts` 23 스위트 519 통과·20 건너뜀(DB 시험)·rc 0, 확장 범위(+`src/components/auth`) 24 스위트 590 통과, `npm run typecheck` rc 0. 일회용 MariaDB 10.11.19 에서 `t088-disposable-mariadb` 직접 실행 25/25(서버 기본 sql_mode·NO_BACKSLASH_ESCAPES 두 번, 동시 소각 20건 중 1건·TTL 만료·CHECK 거부 포함). 로그는 scratchpad `t088-rs/`. 시험 파일 중 `oauth-web-regression`·`oauth-app-code`·`t088-disposable-mariadb`·`appLogin` 은 실행과 변이 시험은 직접 했지만 전체를 줄 단위로 읽지는 않아 판정 scope 에서 뺐다(`oauth-app-routes`·`manifest-deeplink`·`middleware-public-paths` 추가분은 전부 읽음).
+- [00:33] PKCE·1회용 코드(코드 읽기 + 직접 공격): 저장값은 `sha256(code_r:challenge)` 뿐이고 구분자 `:` 는 두 알파벳(hex·base64url)에 없어 모호성 없음. 소각은 조건부 UPDATE 한 방(`used_at IS NULL AND expires_at > NOW(3)`), 시계는 DB 하나. 형식 오류·다른 verifier·다른 challenge·만료·재사용·미존재·회원 삭제·서명키 없음·DB 오류 전부 같은 400(상태·본문·헤더·쿠키 22종 동일 — 시험 + 코드 확인). 코드·verifier·세션 토큰은 로그에 없음(`console.` 전수 grep: 회원 id·마스킹 이메일·오류 이름만). 조회 키가 verifier 와 code_r 둘 다 있어야 계산되므로 처리 시간으로 코드 존재를 캐는 오라클은 성립하지 않음(형식 실패만 DB 없이 빨리 끝남 — 형식은 공개 정보).
+- [00:33] state 위조: `pl`·`ch` 는 서명 payload 안(웹 state 에는 키 자체가 없음), 쿼리 `platform` 은 시작 라우트 분기에만 쓰이고 콜백 분기는 서명된 state 만 본다. 서명 후 모양 불일치(`pl` 만·`ch` 만·`pl≠app`)는 malformed 로 웹에도 못 넘어감, nonce 쿠키 없는 앱 state 는 웹 `invalid_state`. 웹 응답 불변: 커밋된 `oauth-web-regression-t088` 은 base `da35af7` 에서 **그대로는 실행 불가**(가상 모킹 `app-code` 가 moduleNameMapper 때문에 base 에서 "모듈 없음" 으로 실패 — 시험 머리 주석의 "base 에서도 무해" 는 틀림). 가상 모킹 블록만 뺀 사본을 base 에 올려 27/27 통과, 같은 시험이 새 코드에서도 통과 → 웹 응답 불변 성립(Dev-S 의 `tmpbase` 사본 결과와 일치).
+- [00:33] 교환 라우트·미들웨어: 공개 경로는 `PUBLIC_EXACT` Set 정확 일치 1줄(접두 목록 `PUBLIC_PREFIX` 4개 불변). 하위·슬래시·대소문자·점·인코딩·`;`·`%00` 변형은 전부 보호(시험 ⑤ 와 코드 대조) — 인코딩 변형은 미들웨어가 보호 쪽으로만 틀어져 반대 방향(공개로 새는) 위험 없음. Origin 필수+`OAUTH_CALLBACK_BASE` 출처와 문자열 동일: `null`·대소문자·`:443`·후행 `/`·`http`·`@evil`·`.evil.com`·백슬래시 변형·Origin 없음·Sec-Fetch-Site 없음+Origin 없음 모두 거부, JSON 아닌 Content-Type 거부(직접 시험, Headers 가 앞뒤 공백을 지워 공백 변형은 같은 값). 본문 2KB 상한은 선언 길이·chunked 스트림 둘 다, 키 제한(`__proto__` 포함), GET 405. IP 키는 `clientIpKey`(기존 관례), 운영 nginx 가 `X-Real-IP $remote_addr` 로 덮어써 위조 불가(HOME-SERVER 설정 파일 읽기로 확인), 직결 :3003 은 헤더 위조로 키를 돌릴 수 있으나 코드 추측(256비트)에는 의미 없고 메모리는 `maxKeys 5000` 에서 비움. 세션은 `signSession`+`setSessionCookie` 그대로(HttpOnly·SameSite=Lax·Secure(https)·30일 — 시험이 속성 문자열까지 고정).
+- [00:33] `next`(앱 흐름): `sanitizeAppNextPath` 를 직접 41종 입력으로 쳐 봄 — 탭·개행·` `·` `·`\u0085`·`\u001f`·백슬래시·`//`·`///`·`/..//evil.com`·`/.//evil.com`·`/%2e%2e//evil.com`·절대 URL·`javascript:` 가 모두 `/` 로 수렴하거나 같은 출처 경로로만 나옴(`/%09/…`·`/%5C…`·`/@evil.com` 은 퍼센트 인코딩/`@` 가 경로 안에 머물러 같은 출처). `/login`·`/signup`·`/oauth`·`/api` 정확·하위만 `/` 로 보내고 `/loginx`·`/apix` 같은 이웃은 통과해 정상 경로를 막지 않음. `//` 시작 검사와 URL 파서 출처 검사는 서로 중복 방어라 하나씩 빼면 시험이 못 잡지만 둘 다 빼면 잡힘(변이 R19·R20·R1920). 교환 응답의 `next` 는 서버가 한 번 더 sanitize, 클라이언트도 `n === body.next` 일 때만 사용.
+- [00:33] 콜백 앱 분기: 기존 회원(소셜 신원 일치·검증 이메일 연결·다른 소셜에 묶인 기존 계정)만 코드, `need_invite`·`create` → `signup_requires_web`(대기 쿠키 안 심음), 미검증 → `email_unverified`, 제공자 취소 → `cancelled`, 기타 → `failed`, 테이블 없음 → `not_configured`(웹 콜백은 같은 상태에서 세션 발급 — 시험). 딥링크 URL 에는 64 hex 코드 또는 고정 7종 오류만(`buildAppCallbackDeepLink` 가 형식 밖이면 던짐, 파서는 형식 밖을 `failed` 로 수렴·대문자 스킴/호스트/userinfo/포트/후행 슬래시/`#code=` 는 무시·거부). state 쿠키는 모든 앱 응답에서 삭제, `no-store`·`Referrer-Policy: no-referrer`. `link_and_login` 이 계정에 소셜 신원을 연결하는 부작용은 웹과 같은 판정 함수(`decideOAuthOutcome`)를 그대로 써서 신뢰 모델 동일.
+- [00:33] DB 마이그레이션: 가산 전용(CREATE TABLE IF NOT EXISTS 하나+세션 변수 하나)·멱등·백슬래시 없음·`user_id INT UNSIGNED` = `users.id`(`src/lib/db.ts` 실측 일치)·`code CHAR(64) ascii_bin`+정규식 CHECK·TTL 10분 상한 CHECK 포함 4개 모두 MariaDB 10.11.19 에서 유효(운영은 10.11.11 — 같은 계열 [가능성 높음], sql_mode 는 운영 미확인). 앱 코드가 쓰는 값은 전부 형식 검증(64 hex·정수) 뒤라 클라이언트 쪽 이스케이프(`pool.query`)가 NO_BACKSLASH_ESCAPES 에서도 주입 면이 없음. 부팅 때 실행되는 경로·`--with-migrate` 자동 적용 경로 없음(grep). 테이블이 없으면 발급 `not_configured`·교환 400 으로 안전하게 떨어지고 웹 로그인은 이 테이블을 모른다 → 코드 배포와 DDL 순서는 자유, 적용은 사용자 승인 사항 그대로.
+- [00:33] 네이티브·빌드: 소스 매니페스트 intent-filter 는 LAUNCHER + `stockinvest://auth/callback` 정확히 2개(`<data>` 1개, pathPrefix·pathPattern·autoVerify 없음), exported=true 는 MainActivity 하나(소스). Dev-S 가 빌드한 APK 를 `aapt2`·`apksigner` 로 직접 점검: sha256 `58d8b210…bbdc`·2,990,866 B·versionCode 2/1.0.1·권한 INTERNET+앱 전용 1·debuggable 없음·서명 지문 `6fa5ad6f…0f08`(기대값과 일치)·`<data>` 1개·`autoVerify` 없음·exported 컴포넌트는 MainActivity 와 androidx `ProfileInstallReceiver`(라이브러리 기본, 이전 빌드부터)뿐. 동일 소스 두 번 빌드가 같은 sha256(재현성). `git diff --cached` = `android/gradlew` 모드 100644→100755 한 건. 약점은 아래 후속 후보 3건(둘 다 가드가 약해진 것은 아님).
+- [00:33] 변이 시험(별도 사본, 48종 직접 실행 — 앵커가 안 맞은 2종은 수정판 R25b·R37b 로 대체, 전부 원복·sha 일치): 소각 `used_at IS NULL` 제거·`expires_at` 제거·결속에서 challenge 제거·영향 행 검사 제거·TTL 60→3600·verifier 불필요화·접두 일치 공개·`/api/auth/` 통째 공개·Origin 필수 해제·Origin 검사 전부 제거·Sec-Fetch-Site 제거·Content-Type 검사 제거·chunked 상한 제거·키 제한 제거·요청 제한 제거·`next` 제어문자·`/api` 매핑·정규화 뒤 `//` 검사 제거·앱 분기를 쿼리 `platform` 으로·신규 가입 코드 발급·미검증 이메일 코드 발급·GitHub 허용·state 앱 표지 검사 완화·nonce 대조 제거·state 쿠키 삭제 제거·`no-store` 제거·세션 쿠키 미발급·오류 본문 구분·회원 조회 제거·code_r 원문 저장·소각 전 출처 검사 순서 뒤집기·요청 제한 키 상수화·챌린지 고정값 사용·딥링크 파서/빌더 검사 제거·클라이언트 verifier 미삭제 등 **42종 사망**. 생존 6종은 모두 동치 또는 중복 방어: R5(영향 행 `!==1`→`<1`, UNIQUE 라 0·1 행뿐), R11(Origin 문자열 동일 검사 제거 — 정규화 비교가 남아 같은 출처만 통과), R19·R20(`next` 의 중복 방어 둘 중 하나씩 — 둘 다 빼면 사망), R34(회원 재조회 `if` 만 제거 — 널 역참조 예외가 같은 400 으로 떨어짐, 조회 자체 제거는 사망), R42(`content-length` 선검사 — 스트림 상한이 같은 일을 함). 시험이 못 고정한 방어는 없음.
+- [00:33] 못 한 확인(`[추측]` 구분): ① 실기기 — Custom Tab 의 302→`stockinvest://` 복귀·`appUrlOpen`/`getLaunchUrl`·sessionStorage 보존·WebView `fetch` 의 `Origin` 헤더(Chromium 은 같은 출처 POST 에 붙인다 [가능성 높음])·`Browser.close` 안드로이드 동작 ② Google 실토큰 교환 콜백 ③ HTTP 계층에서 `Location: stockinvest://…` 302 가 그대로 나가는지(jest 는 Response 객체까지만 — 서버 미기동, 지시대로) ④ 운영 sql_mode·운영 MariaDB 10.11.11 에서의 CHECK ⑤ 같은 기기 악성 앱의 흐름 직접 시작은 알려진 한계(RFC 8252 §8.6, M2 App Links) — 새 결함으로 세지 않음, 문서·시험(PKCE 결속·1회용·60초)은 적절.
+- [00:33] 이슈(심각도): 없음 — critical 0 · high 0 · medium 0 · low 6(모두 비차단). L1 base 에서 못 도는 웹 회귀 시험(위 `virtual` 모킹, 머리 주석 오류) · L2 `build-apk.sh` 금지 속성 루프의 `autoVerify` 는 값이 따옴표 없는 불리언(`=true`)이라 `manifest_attr_values` sed 에 안 걸려 사실상 무효(직접 재현) — 스킴 검사가 https 를 막아 실영향 없음 · L3 `native_src_hash` 머리 주석은 루트 `package.json` 의 `@capacitor` 버전도 해시한다고 적었으나 함수는 `android/`·`capacitor.config.ts`·`public/app-shell` 만 해시 · L4 `rm` 가드(`""`·`/`·`$HOME`·`$PROJECT_ROOT` 정확 문자열)는 `$HOME/` 등 표기 변형을 못 막지만 `rm` 대상이 `$WORK/android/app/build`·`$WORK/android/build` 로 고정돼 피해 반경이 이미 제한됨(그 앞의 `rsync --delete "$WORK/android/"` 는 기존 구조) · L5 딥링크 수신(`code`·`error`)이 대기 중인 verifier 를 꺼내 지우므로 외부 웹 페이지가 만든 `stockinvest://auth/callback` 링크가 진행 중인 로그인을 끊을 수 있음(권한 상승 없음, 재시도로 복구) — 화면 쪽(R-U 몫) 동작이라 후속 후보로만 · L6 앱 흐름의 `providerError` 원문을 로그에 그대로 남김(웹 경로 170행과 같은 기존 관례, 유효 state 가 있어야 도달).
+- [00:33] 후속 후보: ① `src/app/api/auth/app-exchange/`·`src/app/api/auth/[provider]/**` 를 커밋 훅 `SAFETY_PATHS` 에 넣을지(사용자 결정 — 세션을 발급하는 라우트인데 지금은 밖; 이번 감사는 안전 경로에 준해 했고 이 두 경로 변경은 훅이 reviewer 판정 없이 통과시킨다) ② L1~L3 정리(시험 모킹 제거 또는 가드, `autoVerify` 검사를 불리언 정규식으로, 해시 주석 정정) ③ 딥링크 수신 때 verifier 를 성공·10분 만료 때까지 보존하는 안(L5) ④ 앱 교환 요청 제한을 nginx `limit_req`(HOME-SERVER) 로 올릴지 ⑤ M2 App Links 로 알려진 한계 해소 ⑥ QA: 실기기 순회에서 위 못 한 확인 ①을 우선.
+- [00:33] **최종 판정: PASS (scope: src/middleware.ts, src/lib/auth/oauth/state.ts, src/lib/auth/oauth/pkce.ts, src/lib/auth/oauth/app-code.ts, src/lib/auth/oauth/app-exchange.ts, src/lib/auth/oauth/app-flow.ts, src/lib/auth/oauth/app-response.ts, scripts/migrations/T-088-app-auth-code.sql, src/app/api/auth/[provider]/route.ts, src/app/api/auth/[provider]/callback/route.ts, src/app/api/auth/app-exchange/route.ts, src/lib/native/appLogin.ts, android/app/src/main/AndroidManifest.xml, android/app/build.gradle, scripts/build-apk.sh, docs/deploy-order.md, src/__tests__/middleware-public-paths.test.ts, src/lib/auth/__tests__/oauth-app-routes-t088.test.ts, src/lib/native/__tests__/manifest-deeplink-t088.test.ts)**
+- [00:42] **화면 감사(R-U) 결과를 Leader 가 옮김**(R-U 는 task 파일에 직접 쓰지 않고 Leader 에게만 보고 — 훅이 마지막 판정 줄 하나만 읽으므로 위 R-S 줄을 그대로 둠). 화면 범위 판정: **conditional**(critical 0·high 0·MEDIUM 1·LOW 2·INFO). 데모 v2 충실도는 상대 좌표·크기·글자·색·radius 와 문구(데모 `COPY` 12·`OAUTH_TEXT` 4·오류 상자·D5·설정 ③)를 프로그램으로 대조해 일치 — 재승인이 필요한 material 차이 없음(Dev-UI 의 "데모와 다른 점 8개"는 모두 implementation 허용으로 판단).
+- [00:42] **F1(MEDIUM)** 교환 중 마무리 덮개에 시간 제한·탈출구가 없다 — 교환 `fetch` 가 응답 없이 멈추면 25초 뒤에도 덮개 유지·덮개 안 버튼 0·본문 inert(앱 강제 종료 말고 탈출 불가, 직접 재현). `appLogin.ts:147` fetch 에 timeout 없음·`AppDeepLink.tsx:129-132`. 권고: `AbortSignal.timeout(약 15초)` → 실패 시 기존 `app_code_invalid` 상자(새 화면 없음 → 데모 재승인 불필요).
+- [00:42] **F2(LOW, 하드닝)** 앱 판별이 마운트 시점 상태 한 번(`OAuthButtons.tsx:259-260` `setNative`)에만 의존 — 브리지가 마운트 뒤에 주입되면 Google 클릭이 웹 경로로 가 WebView 가 `/api/auth/google` 로 이동(직접 재현 1건·`Browser.open` 0회). 실제 Capacitor 7.6.9 는 문서 시작 때 브리지를 주입(`Bridge.java:266-270` 확인)해 현실 가능성은 낮음. 권고: 클릭 시점에 `isNativeApp()` 재평가(새 UI·문구 없음).
+- [00:42] **F3(LOW)** 시험 공백 — 변이 24종 중 생존: `setNative(nat)` 삭제(M1d)·리터럴 회피한 `startWeb()` 호출(M1b)·10분 타이머 무력화(M2)·`lockBackground` 미호출(M3b)·중복 가드 삭제(M5)·오류 딥링크 verifier 미삭제(M6)·연타 가드 삭제(M7)·닫힘 유예 0(M8)·`exchangeAppCode` 의 `console.log(code)`(M11 — `appLogin.ts`·`bridge.ts` 에 no-console 가드 없음)·대기 카드 포커스 삭제(M19)·`browserFinished` 구독 삭제(M22). 컴포넌트 시험이 `renderToStaticMarkup`·소스 문자열 pin 뿐(jest `testEnvironment: node`). 권고: 효과 로직을 순수 함수로 분리해 fake timers 시험, 저장소용 Playwright 스모크는 후속.
+- [00:42] **F4(LOW/INFO)** 검증값 정리 틈 두 가지는 수용 가능(`prepareAppLogin` 의 `new URL` 예외는 사실상 도달 불가 / 대기 중 페이지 이탈 때 10분 타이머가 사라져 sessionStorage 에 검증값이 남으나 다음 `takeAppLoginVerifier` 가 TTL 로 거부·삭제, 코드 없이는 무용). **F5(INFO)** 같은 기기의 다른 앱이 `stockinvest://auth/callback?code=<64hex>` 를 쏘면 진행 중 로그인의 verifier 가 소모되어 `app_verifier_lost` 안내로 감 — PKCE 라 탈취 불가·DoS 와 오안내만, M2 App Links 로만 해소(Dev-S 가 이미 문서화).
+- [00:42] **웹 사용자에게 보이는 변화(R-U 가 `git diff` 로 직접 확인)** — 의도된 3곳(`email_unverified` 의 "GitHub" 삭제·D5 문구·설정 앱 설치 ③) **외에도**: ① 로그인 소셜 오류 상자 간격 `14px 0 4px → 0 0 16px`·`keep-all` 줄바꿈·`tabIndex=-1` ② `authStyles.note`·`noteDanger` 의 `word-break: keep-all; overflow-wrap: anywhere` — `/signup`·`/signup/request`·`/oauth/invite` 안내 상자의 줄바꿈이 바뀜 ③ `/login` 이메일 오류 줄 `line-height: 1.5` ④ 웹 `/login` DOM 에 앱 CSS `<style>`(약 3KB, 시각 영향 없음)와 빈 `role="status"` 영역 추가 ⑤ `?oauth_error=signup_requires_web|app_code_invalid|app_verifier_lost` 를 웹에서 직접 열면 전용 문구(서버는 웹에서 이 코드를 만들지 않음). 데모 CSS 주석·`docs/screens.md` 에는 공개돼 있으나 데모 머리말·사용자 고지("글자 3곳")에는 빠져 있었다 → **사용자 고지 정정 필요**(Leader 가 다음 보고에 명시).
+- [00:42] R-U 직접 실행: `npx jest src/components src/lib/native` 22 스위트·678 시험 통과, `npm run typecheck` rc 0, Playwright(`next dev` 사본·`window.Capacitor` 스텁·외부 요청 차단 로그 0·`CRON_WATCHDOG_ENABLED=false DB_HOST=127.0.0.1 DB_PORT=1`·PID 로 종료) — 웹·앱 idle·클릭·대기·다시 열기·취소·닫힘·늦은 딥링크·덮개·오류·콜드 스타트·교환 400·열기 실패·10분 만료·교환 정지·늦은 브리지·`/signup` 웹·앱, 412·360px 가로 넘침 0. 데모 게이트 `check` 통과이며 `evidence.jsonl` 의 승인 줄이 훅이 기록한 실제 발화(23:46:47, 세션 b8b8f031 = Leader 세션)와 일치 — 에이전트의 자체 승인 흔적 없음.
+- [00:42] **조건 처리 계획**: ① F1·F2 는 수정(작은 변경, 새 화면·문구 없음) + F3 중 값싼 것(no-console 가드·클릭 시점 판별 시험·timeout 시험)만 보강, 나머지 생존 변이는 후속 후보로 기록 ② 수정 뒤 변경분만 재감사(델타) ③ 사용자 고지 정정. 안전 경로 파일은 이 수정에 포함되지 않으므로 위 R-S 판정 줄의 scope 는 그대로 유효.
+- [01:12] **수정분 델타 재감사(R-D)를 Leader 가 옮김**(R-D 는 task 파일에 직접 쓰지 않음 — 위 R-S 판정 줄 단독 유지). 델타 범위 판정: **pass** — F1·F2 해결, 수정이 만든 새 결함 없음. 시험 공백 LOW 1·INFO 3, 모두 비차단.
+- [01:12] 델타 경계: R-U 의 수정 전 사본과 worktree 를 `diff -rq` 로 대조해 다른 파일이 정확히 5개(`appLogin.ts`·`OAuthButtons.tsx`·`login-screen-t088.test.ts`·`app-shell-render.test.ts`·신규 `appLogin-timeout-t088.test.ts`), `AppDeepLink`·`bridge.ts`·`OAuthErrorNote`·`login/page.tsx`(48·76행 원문 유지)는 동일, 서버·안전 경로는 23:17 이후·`android/**`·`capacitor.config.ts` 는 23:28 이후 무변경, `@capacitor` import 0, 새 문구·새 화면 없음. 직접 실행: `npx jest src/lib/native src/components` 23 스위트·695 시험 rc 0, `npm run typecheck` rc 0.
+- [01:12] F1: 영원히 대기하는 fetch·헤더 뒤 본문 정지·신호를 무시하는 fetch 모두 15초에 `null`(fake timers 시험·실제 undici 실험에서 15.00~15.01초, unhandledRejection 0) · 타이머는 성공·`!ok`·throw·JSON 깨짐·형식 오류 경로에서 모두 해제 · 요청 모양은 `signal` 하나만 추가(서버 `parseAppExchangeBody` 허용 키와 일치, 변이 M7~M9 가 잡음) · 시간 초과 뒤 서버가 코드를 이미 소각했을 수 있으나 안내가 오류이고 사용자가 다시 누르면 새 PKCE 쌍 — "안내는 실패인데 실제 로그인됨"은 헤더 도착·쿠키 저장 직후 본문 읽기 전 마이크로 단위 창에 15초 경계가 걸려야 해 INFO · 실패는 `completeAppLogin` → `exchange_failed` → `AppDeepLink.tsx:131` `loginErrorHref('app_code_invalid')` 이동으로 이어지고 문서가 바뀌어 덮개가 사라짐. F2: `onStart` 가 클릭 시점 `pickStartMode(isNativeApp())`(388행), 마운트 상태 `native` 는 선언·`isOAuthVisible` 정의·호출 3곳뿐, `startWeb` 호출처는 `onStart` 하나.
+- [01:12] 변이(별도 사본·매번 원복·sha 일치) 17종 중 16종 시험이 잡음(timeout 경합 제거·`clearTimeout` 삭제·`abort()` 삭제·`signal` 미전달·15→150초·쿼리/키/`credentials` 변경·`onStart` 마운트 상태 복귀·`console.log(code)`·`bridge.ts` console 등). **생존 1종 M14**: `startApp` 이 마운트 상태 `native` 로 조기 반환하도록 되돌려도 시험이 실패하지 않음 → L-1(LOW).
+- [01:12] 발견: **L-1(LOW)** 위 M14 — 권고: `app-shell-render.test.ts` 에 "주석을 뺀 `OAuthButtons` 코드에서 `native` 상태 식별자는 선언·`isOAuthVisible` 정의·호출 3곳뿐" 같은 pin 한두 줄(이번에 해도 후속도 무방) · **I-1** `pickStartMode` 시험은 순수 함수 항등이라 배선은 소스 pin 이 전부(`testEnvironment: node` 라 수용) · **I-2** 시험 제목 "처리되지 않은 거부도 없다"에 대응 단언 없음(사실은 성립) · **I-3** no-console 가드의 줄 끝 주석 정규식·`console['log']` 우회 한계(현재 해당 사례 없음).
+- [01:12] 잔여 위험 판단(R-D): (1) 늦게 주입된 브리지 → `AppDeepLink` 구독이 마운트 시점 판별이라 복귀 딥링크를 못 받는 비대칭 — 보안 영향 없음, 수정 전의 `disallowed_useragent` 막다른 길보다 악화 아님, 실제 Capacitor 7.6.9 는 문서 시작 때 브리지 주입(`Bridge.java:266-270`)이라 가능성 낮음 → **이번에 고치지 않고 후속**(구독 수명 변경은 "구독자 하나뿐"·중복 제거와 얽혀 새 위험이 큼. 최소안은 `prepareAppLogin` 성공 직후 값 없는 신호로 `AppDeepLink` 가 한 번만 구독, 약 15줄+시험), QA 실기기 체크에 "콜드 스타트 직후 Google 클릭 → 복귀" 포함 (2) 교환 실패 뒤 `location.replace` 정지로 덮개가 남는 위험 — LOW→INFO(서버가 내려가 있으면 `capacitor.config.ts` 의 `errorPath: 'index.html'` 로 APK 안 연결 실패 화면으로 대체됨), 실기기 순회에 "서버 중단 상태에서 로그인 시도" 1회. Leader 판단: R-D 권고대로 둘 다 후속.
+- [01:12] **리뷰 라운드 종합**: R-S pass(안전 경로 8개 포함 — 훅이 읽는 판정 줄은 위의 R-S 한 줄) + R-U conditional(F1·F2 → 수정) + R-D pass(수정분). 안전 경로 파일은 R-S 감사 이후 무변경이라 R-S 판정 줄의 scope 가 그대로 유효.
+- [01:21] **Codex C2 지적(callback 153행 부근, 앱 state 의 만료·쿠키 불일치가 앱 딥링크가 아니라 웹 invalid_state 로 감) — R-S 판정: 사실로 채택, 심각도는 low(UX)로 조정, 보안 영향 없음, 비차단.** 재현(별도 사본 `~/.node-local/stockinvest-t088-review-S`, 운영 코드 무변경, 현재 worktree 의 callback 도 같은 코드임을 확인): 서명이 유효한 앱 state 를 ① 11분 전 발급(만료)+맞는 nonce ② nonce 쿠키 없음 ③ nonce 불일치 로 넣으면 셋 다 `307 {BASE}/login?oauth_error=invalid_state&provider=google`(앱 딥링크 아님), ④ 만료 state+`error=access_denied` 도 웹 `cancelled`. 코드·세션·제공자 호출은 없음(fail-closed).
+- [01:21] 버그냐 설계 한계냐: **설계 한계이면서 선언과 구현이 어긋난 곳이 있다.** TheKaiwa 도 같다(`callback/route.ts` 105행 "state 검증 전에는 platform 을 알 수 없다", 실패는 `platform='web'` 으로 수렴) — Dev-S 는 그것을 옮겼다. 다만 그 근거는 **위조·파싱 불가 state 에만** 맞다: 서명이 유효하면 앱 표지의 진위는 이미 확정이고(HMAC 이 만료 검사보다 먼저) 만료·nonce 는 표지의 진위와 무관하다. 그런데 `app-flow.ts` 30행 주석은 `invalid_state` 를 "만료·다른 브라우저·변조"에 앱이 받는 코드로 적고 클라이언트(`OAUTH_ERROR_TEXT.invalid_state`)도 받을 준비가 돼 있으나 서버는 어떤 콜백 경로에서도 이 코드를 내보내지 않는다(7종 중 죽은 코드). 내 이전 감사도 이 동작을 "웹 invalid_state"로만 적고 대기 UX 문제로 짚지 못했다.
+- [01:21] 실제 영향·발생 가능성: 사용자가 겪는 것은 Custom Tab 이 웹 로그인 화면(오류 안내 포함)에 머물고 앱은 대기 카드에 남는 것. **막다른 길은 아니다** — 대기 카드의 [Chrome 창 다시 열기]·[취소]가 항상 있고, 창을 닫으면 `browserFinished`(실기기 미확인 [추측]) 후 1.5초에 "창이 닫혔습니다" 안내가 뜨며, 아니면 10분 만료. 만료 사례는 사실상 영향 없음: 클라이언트 verifier·대기 타이머가 클릭 시점부터 10분이라 서버 state(시작 라우트 시점+10분)보다 먼저 같은 시각에 이미 "10분 지남" 안내를 낸다. 실질 대상은 **쿠키 유실·불일치뿐**이고 정상 사용에서는 드물다(Custom Tab 은 Chrome 쿠키 저장소를 쓰고 Lax 쿠키는 Google 에서 돌아오는 최상위 이동에 실림 — 해당 원인은 사용자가 쿠키를 지움·Custom Tab 제공자가 다른 브라우저·[다시 열기]로 둘이 겹쳐 nonce 가 덮임·같은 Chrome 에서 웹 Google 로그인을 동시에 함 정도). 겹친 흐름에서는 옛 탭 완료가 공유 쿠키를 지워 살아 있는 탭을 죽이는데 이것은 웹 `failRedirect` 가 이미 쿠키를 지우는 기존 동작이고 수정안이 악화시키지도 개선하지도 않는다. 보안 영향 없음(현재 동작은 fail-closed).
+- [01:21] 권고 수정안의 안전성(별도 사본에 시제품을 만들어 직접 검증, worktree 무변경): **전제가 지켜지면 새 위험을 만들지 않는다.** 전제 = 서명 유효 + provider 일치 + `pl:'app'` + `ch` 형식, 이 넷이 모두 확인된 state 만 앱으로 인정하고 그 분기는 **코드·세션·제공자 호출·DB 접근 없이 즉시 `stockinvest://auth/callback?error=invalid_state`(또는 취소면 `cancelled`) 302 로만 끝난다.** 위험별: 오류 딥링크 위조 — 서명 유효 state 는 공개 시작 라우트로 누구나 얻을 수 있어 "위조 불가"가 방어가 아니지만, 딥링크가 권한 없는 고정 코드이고 같은 능력(외부 웹 페이지가 `stockinvest://…?error=` 링크를 직접 만들기, 시작 라우트가 challenge 없는 요청에 `app_login_invalid` 딥링크를 302 하는 것 — 위 사본에서 재현)이 이미 있어 한계 위험은 0, 다만 대기 중 로그인을 끊는 경로가 서버발로 하나 늘어나므로 L5(딥링크 수신 때 verifier 보존)와 같이 보는 것이 좋다. 정보 노출 없음(고정 코드). 웹 응답 변화 없음(앱 서명 state 가 아닌 모든 입력 — 웹 state 의 만료·쿠키 없음·불일치, 변조·다른 비밀·파싱 불가·빈 state, provider 불일치, 앱 표지 모양 불량, 서명키 없음 — 은 웹 경로로 그대로, 변하는 것은 "인증된 앱 state 의 실패"뿐이고 이 입력을 가진 웹 사용자는 없다). 로그인 CSRF 없음(nonce 실패에서 절대 코드 교환·발급으로 내려가지 않는다).
+- [01:21] 최소 설계(시제품 검증): `state.ts` 에 **`verifyOAuthState` 는 건드리지 않고**(실패 결과 모양을 `toEqual` 로 고정한 기존 시험이 있고 웹 결과 불변이 목적) 순수 함수 `probeSignedAppState(state, nonce, provider, secret, now)` → `{kind:'not_app'}` | `{kind:'app', failure:'expired'|'missing'|'nonce_mismatch'|null}` 를 추가 — `verifyToken(..., nowMs=0)` 로 서명·형식만 확인(만료는 통과시킴)하고 `pl`·`ch`·`p===provider` 를 보고 만료·nonce 는 직접 비교(`timingSafeEqualStr`). 만료를 직접 비교하는 방식이 미덥지 않으면 `verifyToken` 에 기본값 꺼짐의 옵션을 더하는 쪽도 가능(대신 token.ts 변경이 하나 더). `callback/route.ts` 는 기존 `appState.ok && appState.app` 분기 **바로 뒤에** `if (!appState.ok) { probe … kind==='app' 이면 appDeepLinkRedirect({error: 제공자 error==='access_denied' ? 'cancelled' : 'invalid_state'}) }` 를 둔다 — 그 밖은 아래 기존 웹 경로가 한 줄도 안 바뀐 채 처리. 시제품: 타입 검사 rc 0, `src/lib/auth`·`src/lib/native`·미들웨어 시험 전부 통과(웹 회귀 27건 포함)이고 실패한 것은 옛 동작을 고정한 `oauth-app-routes-t088` 의 "앱 state 라도 nonce 쿠키가 없으면 … 웹 invalid_state" 1건뿐(의도된 반전). 선택 개선: nonce 불일치일 때는 딥링크 응답에서 상태 쿠키를 지우지 않는 변형(그 쿠키는 다른 흐름의 것) — 필수 아님.
+- [01:21] 수정 시 필요한 시험(시제품에서 14건 작성·통과, 변이 6종 모두 사망 — HMAC 생략·provider 검사 제거·앱 표지 검사 제거·not_app 도 앱 딥링크·앱 실패 분기가 제공자 호출까지 내려감·만료 검사 제거): ① 서명 유효 앱 state 의 만료 / 쿠키 없음 / nonce 불일치 → 302 `stockinvest://…?error=invalid_state`, 세션 쿠키 없음, `findUserByOAuth`·`fetchOAuthProfile`·DB 호출 0(기존 회원이어도) ② 만료+`access_denied` → `cancelled`, 그 밖 제공자 오류 → `invalid_state` ③ 웹으로 남아야 하는 입력: 서명 변조(웹 state 에 `pl:app` 끼움), 다른 비밀로 서명한 앱 state, 파싱 불가·빈 state, 웹 state 의 만료·쿠키 없음·불일치, provider 불일치(github 세그먼트), 서명은 맞고 앱 표지 모양이 불량한 state, 서명키 없음 → 변경 전과 같은 웹 응답 ④ 유효한 앱 state 는 기존대로 코드 발급(회귀) ⑤ `probeSignedAppState` 표 ⑥ 옛 동작을 고정한 기존 시험 1건을 새 기대로 교체. 기존 웹 회귀(`oauth-web-regression-t088` 27건·`oauth-state`·`oauth-callback-session`)는 그대로 통과해야 한다.
+- [01:21] **R-S 권고(결정은 Leader): 후속 후보로 기록하고 QA 실기기 체크 항목으로 둔다(비차단).** 이유: 보안 영향이 없고, 발생이 드물며(만료는 클라이언트가 이미 처리, 실질은 쿠키 유실뿐), [다시 열기]·[취소]·10분 만료로 복구되는 반면, 고치면 안전 경로 `state.ts`·`callback/route.ts` 가 바뀌어 내 재감사와 QA 재순환이 따라붙는다. 단 **이미 다른 사유로 Developer 수정 루프가 열리거나 QA 실기기에서 이 상황(쿠키 유실·창 겹침)이 실제로 걸리면 그때 위 설계를 그대로 넣는 것을 권고**한다(시제품·시험 목록이 준비돼 있어 비용이 작다). 어느 쪽이든 두 가지는 해 두자: (a) 지금 고치지 않으면 `app-flow.ts` 30행 주석을 "서버는 이 코드를 내보내지 않는다(서명 유효한 앱 state 의 실패도 웹 invalid_state — 후속 T-…)"로 바로잡고(안전 경로 주석 변경이라 한 줄 재확인) (b) QA 항목에 "Custom Tab 에서 로그인 완료 전 쿠키 삭제 또는 [다시 열기] 겹침 후 옛 탭 완료 → 앱이 대기에 머무는 시간·[취소]·[다시 열기]·`browserFinished` 안내 확인"을 넣는다. 이 지적은 수정을 선행 조건으로 요구하지 않으므로 새 판정 줄은 쓰지 않는다 — 00:33 의 판정 줄과 scope 가 그대로 유효하다(그 scope 의 안전 파일은 이번에 무변경, 시제품은 별도 사본에만 있음). 수정을 채택하면 그 변경분에 대해 재감사 뒤에 새 판정 줄을 쓴다.
+
+## QA
+
+- [01:42] QA(종단 실행 검증) 완료 — 클라이언트와 서버를 실제로 이어 붙여 실행. 대상 = worktree `~/.node-local/stockinvest-app-auth`(미커밋, base `da35af7`)의 현재 내용을 새 사본 `~/.node-local/stockinvest-app-auth-qa` 로 복사(.git·.next·.env*·agent-vault 제외)해 빌드·기동. **worktree 는 수정하지 않음**(소스 1105개 파일 sha256 목록을 실행 전후 대조 — 차이 0).
+- [01:42] 환경(값 없음): `next build` rc 0 → `next start -H 127.0.0.1 -p 50763`. 일회용 MariaDB `mariadb:10.11.19`(127.0.0.1:31131 전용, 운영 sql_mode 문서값 STRICT·utf8mb3, 임의 비밀번호는 컨테이너 env 로만 — 파일·출력에 없음). 서버 env 는 `env -i` 후 `AUTH_SESSION_SECRET`·`GOOGLE_CLIENT_ID`·`GOOGLE_CLIENT_SECRET`(더미)·`OAUTH_CALLBACK_BASE=https://stock.test`·`DB_HOST/DB_PORT/DB_USER/DB_PWD/DB_NAME`·`CRON_WATCHDOG_ENABLED=false`·PATH/HOME/NODE_ENV 뿐(자식 프로세스 environ 키를 직접 확인 — 텔레그램·KIS·운영 변수 없음). 스키마는 앱이 첫 DB 접근 때 스스로 만든 것(`users.id INT UNSIGNED` 확인) + `T-088-app-auth-code.sql` 2회 적용(2회 모두 rc 0, 구조 동일 → 멱등) + `T-084-app-release.sql`(B2 의 `/api/app/version` 용). 쿠키 처리: 앱 시작 로직이 `https` 만 `Browser.open` 하므로(`openExternal`) `http://127.0.0.1` 로는 앱 흐름이 시작되지 않아 **`https://stock.test` 별칭**을 썼다 — 자체서명 TLS 역프록시(127.0.0.1:33403 → 서버, nginx 처럼 `X-Forwarded-Proto: https`·`X-Real-IP` 부여, 요청 경로만 로깅) + Chrome 147(시스템, 헤드리스) `--host-resolver-rules=MAP stock.test 127.0.0.1:33403, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1`. 그래서 세션 쿠키 `Secure` 가 브라우저에서 실제로 저장·전송됨을 확인. HTTP 시험(B)은 서버에 직접 `Origin: https://stock.test`·`X-Forwarded-Proto: https`·요청마다 다른 `X-Real-IP`(요청 제한 회피 — 제한 자체는 B-rate 에서 따로 시험).
+- [01:42] A(시작 라우트, 직접 HTTP·리다이렉트 미추적) 10/10 통과: 웹(A1) 307·state payload `{n,p,r,exp}`(앱 표지 `pl`·`ch` 없음)·`si_oauth_state`(HttpOnly·SameSite=lax·Secure) · 앱(A2) 307·payload 에 `pl:'app'`·`ch`=내 challenge·`r:/orders`·쿠키 · A3 challenge 없음 / A4 길이 42·44 / A5 문자 범위 밖(`+`·`=`·공백) / A6 `github` 제공자 → 전부 `302 stockinvest://auth/callback?error=app_login_invalid`·`Cache-Control: no-store`·`Referrer-Policy: no-referrer`·nonce 쿠키 삭제 · A7 웹 github → 503 `provider_not_configured`(기존 응답) · 추가: A8 `platform=APP`(대문자)·A9 `platform=web&platform=app` 중복 → 웹 경로(앱 표지 없음), A10 알 수 없는 제공자는 미들웨어 401(기존 동작).
+- [01:42] B(교환 라우트 HTTP) 26/26 통과: B0 마이그레이션 전(테이블 없음) 교환 → 400 `app_code_invalid`·서버 로그엔 오류 이름만 · B1 정상 200 `{"ok":true,"next":"/orders"}`·`si_session`(113자) `Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=lax`·`no-store` · **로그 점검**: 서버 로그 전체에서 코드·verifier·세션 토큰·결속 해시·challenge 값 검색 → 0건(일반 패턴 64-hex·40자+ 토큰·`si_session=`·`code=` 도 0건), DB 에는 결속 sha256 만(원문 code_r·verifier 0행) · B2 그 쿠키로 `/api/app/version` 200 `{ok:true,latest:null}`·쿠키 없음 401·서명 변조 401 · `/api/profile` 200 = 시드 사용자 · B3 재사용 400 · B4 다른 verifier 400 **이어서 올바른 verifier 는 200**(추측이 코드를 소각하지 않음) · B5 다른 challenge 로 만든 코드 400 · B6 만료(DB 시각 기준 120초 전 발급) 400·미소각 · **B6b 실제 62초 대기** 후 400 · B7 미존재 400 · B8 형식 오류 15종(63/65자·대문자·비hex·숫자형·null·verifier 42/44자·`+`·누락·next 숫자·배열·문자열·깨진 JSON) 전부 400 · B9 Origin 없음 400 · B10 Origin 변형 8종(evil·null·http·포트·뒤 `/`·대문자·하위도메인·`@evil`)+`Sec-Fetch-Site` cross-site/same-site 400 · B11 Content-Type 4종 400 · B12 알 수 없는 키·`__proto__` 400 · B13 본문 3KB(길이 헤더)·3KB(chunked) 400 · B13b 위 거부 요청들이 코드를 태우지 않음(같은 코드 정상 200) · B14 GET 405 `Allow: POST` 본문 없음(쿼리에 코드 실어도)·PUT/DELETE/PATCH 405·OPTIONS 204 CORS 헤더 없음 · **B15 실패 응답 38종(B3~B13)의 상태·헤더(Date 제외)·본문 비교 → 단 1종**(`400`·`cache-control: no-store`·`{"ok":false,"error":"app_code_invalid"}`) · B16 정확 일치 외 경로 20종(`/x`·`s`·대소문자·`/`·`%2F`·`//`·`;x`·`%00`·`.json`·`%61`·`/./`·`/../` 등)에 유효 코드 POST → 401/308(정확 경로로 되돌림)/307(로그인)/404, **교환 라우트 도달 0건·코드 미소각**, 정확 경로(쿼리스트링 포함)만 교환(※ 1차 시도는 `?x=` 변형을 정확 경로와 구분하지 않은 내 시험 설계 오류로 FAIL 표시 — 설계 수정 후 재실행 통과, 결함 아님) · B17 동시 20요청(IP 20개) 정확히 1건 200·19건 400·세션 쿠키 1개 + **5회 반복 매회 1건** · B-rate 같은 IP 12회 → 1~10회 400·11회부터 429 `Retry-After: 60` · B-next 교환 `next` 16종(`//evil.com`·탭·백슬래시·절대 URL·`javascript:`·`/login`·`/api/…`·`/..//evil.com`·`\u0085`·600자 등)이 전부 `/` 로 수렴(`/%09/evil.com`·`/@evil.com` 은 경로 안에 머무는 같은 출처 경로 — 브라우저에서 `location.replace('/%09/evil.com')` 후 호스트 `stock.test` 유지 확인), 시작 라우트 state 의 `r` 도 같은 규칙. **B18**(코드 발급 시 신규 가입 안 됨)은 콜백이 실제 Google 필요 → **못 함**.
+- [01:42] C(실제 서버에 붙은 앱 화면, Chrome 147·412×915·DSF 2.625·isMobile·touch·ko-KR·Asia/Seoul·dark·reducedMotion=reduce·`document.fonts.ready` 대기·네트워크 fixture 없음(실서버, 교환 응답만 1.2초 지연 — 덮개 관찰용)) 18/18 통과: C1 Google 클릭 → `Browser.open` 정확히 1회 `https://stock.test/api/auth/google?platform=app&challenge=<43자>&next=%2Forders`(키 3개뿐), WebView 이동 없음, 대기 카드, `sha256(sessionStorage verifier)=challenge` 확인·URL 에 verifier 없음, 버튼 잠김 · **C2 캡처한 challenge 로 시드 → `appUrlOpen` 같은 링크 2회 연속 → 서버 POST 정확히 1건**(JSON 키 `code,next,verifier`, 쿼리 없음, `Origin: https://stock.test`, `application/json`) → 덮개(`role=status`·`aria-busy`·포커스·본문 13개 `inert`+`aria-hidden`, 대기 카드 사라짐) → `si_session` **HttpOnly·Secure·SameSite=Lax·남은 30.00일**, `document.cookie` 미노출 → `next` 로 이동, `/api/profile` 200=시드 사용자·DB 소각 · C2b 성공 후 같은 링크 재전달(해당 페이지·`/login` 재방문의 `appUrlOpen`+`getLaunchUrl`) 추가 교환 0건(`app_verifier_lost` 안내) · C2c 실제 보호 페이지 `/strategy` 착지(로그인 폼 아님, 문서 200) · C3 `error=signup_requires_web` → 오류 상자(포커스)+[Chrome에서 가입 화면 열기](44px)가 `Browser.open(https://stock.test/signup)`·교환 0 · C4 콜드 스타트 verifier 분실 → 서버 호출 0·`app_verifier_lost`·2.5초 뒤 안정(내비게이션 2회) · C5a 대기 중 이메일 입력 가능·[다시 열기]가 같은 주소 재오픈(48px)·[취소] 44px · C5b 취소 → 안내·verifier 삭제·`Browser.close` 시도·버튼 포커스·입력값 유지, 재클릭은 새 challenge · C5c `browserFinished` → 1.0초 아직 대기·1.8초 "로그인 창이 닫혔습니다" · C5d 닫힘 0.5초 뒤 딥링크 → 닫힘 안내 없이 로그인 · C5e 가상 시계 10:02 → "10분이 지났습니다"·verifier 삭제 · **C6** Chrome 창이 웹 로그인에 머무는 상황: 서버는 앱 state(`pl:'app'`)의 콜백을 **쿠키 없음/nonce 불일치/서명 변조** 모두 `307 https://stock.test/login?oauth_error=invalid_state&provider=google`(딥링크 아님, 코드 발급 0, 서버 로그 `state 검증 실패: missing|nonce_mismatch|bad_signature`)로 처리 = 알려진 동작과 일치(**실패로 세지 않음**), 앱 쪽 C6a 는 3초 후에도 대기에 남되 [다시 열기]·[취소]가 있고 취소 후 재로그인 가능 · C7 웹 모드(스텁 없음) 클릭 → 같은 창으로 `/api/auth/google?next=%2Forders` 이동(platform·challenge 없음), `Browser.open` 0, verifier 저장 0 · C8 /login 웹·앱 idle × 412/360/1280px 가로 넘침 0(scrollW=clientW), Google 버튼 높이 48px, **웹·앱 idle `<main>` outerHTML sha256 동일(`9cbfef2495ce`, 6559자) 6조합 전부**, 앱 대기 카드 360px 넘침 0(C8b) · C9 `oauth_error=<img src=x onerror=…>` → img 0·스크립트 미실행·고정 문구. 스크린샷 6장(대기 412·덮개·가입 안내 상자·idle 412/360·대기 360)을 육안 확인 후 삭제(`/tmp/qa-artifacts/StockInvest/T-088/` — 산출물 정리 6개 삭제).
+- [01:42] **외부 요청**: 서버·프록시 프로세스의 TCP 연결은 전부 127.0.0.1 뿐, 서버 로그에 Google·텔레그램 호출 없음(로그인 세션으로 연 대시보드류 화면의 KIS 어댑터는 `KIS_APP_KEY not set` 으로 네트워크 호출 전에 실패). 브라우저는 실제 콜백을 열지 않았고, 콜백 URL 시험(C6)은 nonce 쿠키를 일부러 보내지 않아 제공자 호출 단계에 가지 않음. **단 C7(웹 모드)에서 서버가 돌려준 `307 → accounts.google.com` 을 브라우저가 따라가려다 `net::ERR_NAME_NOT_RESOLVED`(`--host-resolver-rules MAP * ~NOTFOUND`)로 이름 해석 단계에서 막힘 — 실제 연결·요청 전송 0, 이 이동 시도 1건이 웹 클릭의 정상 동작이라 전송 전 차단으로 기록.**
+- [01:42] D 빌드·번들 2/2: `npm run build` rc 0(`/api/auth/app-exchange` 라우트 생성) · `.next/static`(153개 파일)에서 `@capacitor` 0건·"GitHub로 계속하기" 0건·옛 문구("앱에서는 Google 로그인을 지원하지 않습니다") 0건, 새 문구("Chrome 창에서 로그인하는 중입니다"·"로그인 마무리 중"·"Chrome에서 가입 화면 열기") 존재, `.next/server` 에도 `@capacitor`·"GitHub로 계속하기" 0건.
+- [01:42] E APK(읽기 전용, 새로 빌드·공개 안 함) 1/1: `stockinvest-1.0.1-2.apk` sha256 `58d8b210…bbdc`·2,990,866 B 일치 · `aapt2 dump badging` package `com.miraclepenguin.stockinvest`·versionCode 2·versionName 1.0.1·권한 INTERNET + 앱 전용 1 · `debuggable` 속성 0건 · `apksigner verify` v2 서명 통과·서명 SHA-256 `6fa5ad6f…0f08` 이 `StockInvest/CLAUDE.md` 대문자 콜론 지문과 전체 일치(프로그램 대조) · 딥링크 intent-filter = VIEW+DEFAULT+BROWSABLE `stockinvest://auth/callback`(`<data>` 1개, `path=/callback`, `autoVerify` 없음) 하나뿐(나머지 intent-filter 는 LAUNCHER 와 androidx ProfileInstaller 리시버) · `exported=true` = MainActivity·ProfileInstallReceiver(라이브러리 기본).
+- [01:42] F 회귀 3/3 + 데모 게이트: `npm run typecheck` rc 0(증분 끄고도 rc 0) · 전체 `jest` rc 0 — **265 스위트 통과(3 건너뜀)·6769 통과·95 건너뜀·0 실패**(Leader 기준 수치와 일치) · 일회용 MariaDB(별도 DB `t088`)에서 `t088-disposable-mariadb` **25/25**(정적 5 + 두 sql_mode × 10, 동시 소각 20건 중 1건 포함) · `check.mjs check` = `DEMO_GATE_PASSED`·approved v2·hash verified(레포 `mockups/T-088-app-login-v2.html` sha256 `eff12e36…c20e` 일치, `docs/screens.md` D 절이 v2 근거).
+- [01:42] **못 한 것(G, 표에 "못 함")**: 실제 Google 동의·콜백(코드 발급 앱 분기의 종단·기존 회원 판정·신규 가입 거부·`not_configured`) · 실기기·실제 Custom Tab·`browserFinished`·`getLaunchUrl`·WebView `fetch` 의 `Origin` 헤더(Chrome 147 은 같은 출처 POST 에 `Origin` 을 붙임을 확인했으나 WebView 는 미확인) · 운영 DB·운영 sql_mode(운영 10.11.11 미확인) · B15 의 타이밍 차이(단순 시험 불가) · 신규 가입 불가의 HTTP 종단(B18) · 앱 설치·덮어쓰기 설치.
+- [01:42] 관찰·후속 후보(결함 아님, 판정에 영향 없음): ① [Low·미관] 360px 대기 카드 제목이 "중입니/다" 로 **단어 중간에서 줄바꿈**(`.oal-hd span:last-child` 에 `word-break: keep-all` 없음 — 다른 `.oal-*` 문구는 keep-all, 데모는 "제목 2줄 허용"이라 범위 안) → Designer 확인 후보 ② 지시서 예시 `next=/orders` 는 앱에 없는 경로(실제 `/order` 는 307→`/strategy`)라 착지가 404 화면(세션은 유효) — `next` 가 경로 존재를 검증하지 않는 것은 기존 웹과 같은 동작이므로 시험은 `/strategy` 로 따로 통과 ③ C6 알려진 동작 재현 확인(Codex C2 지적, 후속 후보로 결정된 그대로) ④ A10 알 수 없는 제공자·B16 변형 경로는 미들웨어가 401/307 로 막음(교환 경로 공개는 정확 일치 1개) ⑤ 임시물: 서버·프록시 PID 로 종료(`pkill` 미사용), 컨테이너 `docker rm -f` 제거, 포트 50763/33403/31131 해제 확인. 사본 `~/.node-local/stockinvest-app-auth-qa`(빌드 포함)는 `rm -rf` 금지 지시에 따라 남김 — 사용자 판단으로 삭제.
+- [01:42] **QA 판정: pass** (실행 62건 중 통과 62건, 못 한 것: 실제 Google 콜백·코드 발급 앱 분기 종단(B18 포함), 실기기·실제 Custom Tab·`browserFinished`·`getLaunchUrl`·WebView `fetch` Origin 헤더, 운영 DB·sql_mode, B15 타이밍 오라클)
+
+## 배포 기록
+
+> 이 task 와 [[T-089-open-redirect-next-path]] 의 운영 반영은 같은 승인으로 같은 순서에 따라 Leader 가 deployer 절차(`docs/deploy-order.md` §2~§6·「앱(APK) 배포」)대로 직접 실행한다(deployer 역할은 `git push` 금지라 push 는 Leader 가 하고 판정·확인은 절차대로).
+
+### 승인과 해석
+- 승인 원문(사용자 발화 그대로, 10-26 05:1x): **"구글로그인 작업에 대하여 승인하니 작업진행해줘"**. 직전 Leader 보고(2026-10-26 01:5x)가 제시한 **권고 계획**에 대한 승인으로 해석한다 — ① T-089 push(운영 배포) ② 운영 DB `app_auth_code` 테이블 적용 ③ T-088 push(운영 배포) ④ `build-apk.sh --publish` 와 `app_release` INSERT(1.0.1·versionCode 2, `min_supported` 0 = 필수 업데이트 아님). 보고에서 이 네 가지를 승인 대상 4개로 명시했고 순서 권고까지 적었다. **이 승인에 포함하지 않는 것**: 롤백 DELETE/DROP(그 시점에 별도 승인) · 커밋 훅 `SAFETY_PATHS` 에 `^src/app/api/auth/` 추가(별개 결정 — 보류) · 임시 사본 정리(`rm -rf`).
+- 배포 창: 월요일 05:20 KST — 미국장(22:30~05:00 KST, 서머타임)은 05:00 에 닫혔고 한국장은 09:00 개장 전. `docs/deploy-order.md` 의 양시장 폐장 창 **05:10~08:30 KST 안**(08:30 까지 약 3시간 남음). 창이 닫히기 전에 끝내지 못하면 중단하고 15:40 이후로 미룬다. 킬스위치는 켜진 상태(주문·청산 차단)라 배포 중 주문 위험이 더 낮다.
+- 배포 전 기준선(05:2x, 읽기 전용, 스크래치패드 `deploy/pre2-*.tsv`): MariaDB `10.11.11-MariaDB-log`·`sql_mode` 에 `NO_BACKSLASH_ESCAPES` 없음 · `safety_kill_switch=true`·`safety_dry_run=false`·`exit_engine_enabled=false`·`safety_order_max_pct=4`·`safety_daily_order_max_pct=10`·`telegram_approval_enabled=true`·`telegram_poller_enabled=true`·차단 종목 목록 비어 있음(`system_config` 에서 자격증명 `cred_*` 제외 79키 저장) · 감사 로그 최신 id `orders 3229 / trade_logs 8305 / signals 19409` · `app_auth_code` 미존재.
+
+### 배포 실행 기록 (Leader 가 deployer 절차대로 직접 실행)
+- **① T-089 push — 05:21:41 KST** → `RELEASE_RESULT ok`(릴리스 `20261026-052150-6d6efc09`) — 상세·운영 확인은 [[T-089-open-redirect-next-path]] `## 배포 기록`.
+- **② DDL — 05:24:23~26 KST.** 커밋된 브랜치의 `scripts/migrations/T-088-app-auth-code.sql`(sha256 `aee40c34268aa280c34deae86a9b0bd7848d10e923b79d9dab8a36b622515e1e`·백슬래시 0줄·`CREATE TABLE IF NOT EXISTS`·가산 전용)을 `dbq.py -f` 로 **1회** 적용, rc 0. 적용 전 `app_auth_code` 미존재. **구조 검증**: `chk_app_auth_code_{code,ttl,used,user}` **CHECK 4개**(ttl = `expires_at > created_at and expires_at <= created_at + interval 10 minute`) · `UNIQUE KEY uq_app_auth_code_code` · `code` = `char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL` · `user_id` = `int(10) unsigned` · 0행 · 기존 `users` 1행 그대로. (롤백: 행이 없을 때 `DROP TABLE app_auth_code` — 별도 승인.)
+- **③ T-088 push — 05:25:51 KST.** 브랜치를 배포된 main(`6d6efc0`) 위로 rebase(충돌 0, 커밋 `be66800`·`1b379ac` — 내용은 감사·QA 받은 것과 동일) → rebase 한 트리에서 `tsc` rc 0·전체 jest 278 스위트 **7086 통과·0 실패**(시험 병합 때와 같은 수치) → main 에 ff-only 병합 → `git push --dry-run` 후 push `6d6efc0..1b379ac`(커밋 2개·37개 파일·+4691/−155). 원격 `main` 은 push 직전 `6d6efc0`(= 방금 배포한 커밋)임을 `ls-remote` 로 확인.
+- **webhook 로그**: `START project_StockInvest sha=1b379ac` → `RELEASE_RESULT {"status":"ok","release":"20261026-052603-1b379acc","previous":"…20261026-052150-6d6efc09","migrated":false}` → `END exit=0`(05:25:57~05:27:03 KST).
+- **④ 배포 후 확인(05:27)**: `stockinvest-cron` **정확히 1행** · 두 프로세스 모두 새 릴리스 cwd·재시작 0 · `current`=새 릴리스 · `/api/health` 200 · **안전장치 스위치 배포 전후 diff 없음**(79키) · 감사 로그 최신 id 불변(`orders 3229 / trade_logs 8305 / signals 19409`) · `app_auth_code` 0행 · 앱 로그에 `app_auth`/`app-exchange`/`not_configured`/SQL 오류 없음.
+- **⑤ 운영 기능 확인(공개 도메인·nginx 경유, 05:28 — 유효한 자격증명 없이 거부 동작만)**: 앱 시작 `GET /api/auth/google?platform=app&challenge=<유효 43자>&next=%2F` → **307 Google**, 서명 state 에 `pl=app`·`ch`=내 challenge·`r=/`, `si_oauth_state` 쿠키 `Secure; HttpOnly; SameSite`·`Max-Age=600` · challenge 없음 → **`302 stockinvest://auth/callback?error=app_login_invalid`**(`cache-control: no-store`·`referrer-policy: no-referrer`) · `POST /api/auth/app-exchange` 존재하지 않는 코드 → **400 `{"ok":false,"error":"app_code_invalid"}`**, 다른 `Origin` → 같은 400, `GET` → **405 `Allow: POST`** · 공개 경로 정확 일치: `/api/auth/app-exchange/x`·`/api/auth/app-exchanges`·`/api/auth/App-Exchange` → **401**.
+- **같은 배포에 함께 실린 작업**: 없음(T-089 는 직전 배포 `6d6efc0` 에 별도로 나감).
+- **⑥ APK 빌드·공개 — 05:28:18~51 KST.** 사전 점검: `HEAD=1b379ac`(배포 커밋과 같음)·네이티브 입력(`android`·`capacitor.config.ts`·`public/app-shell`·`package*.json`·`scripts/build-apk.sh`) 미커밋 변경 0. `STOCKINVEST_APK_WORK=~/.node-local/stockinvest-apk-publish2`(새 작업 디렉터리) 로 `bash scripts/build-apk.sh --publish > 로그` → **rc 0**. 로그: 서명자 SHA-256 `6fa5ad6f…0f08`(기대 지문과 일치)·debuggable no·권한 화이트리스트·비밀 검사 통과·딥링크 `stockinvest://auth/callback` 정확히 하나·공개 위치 `/home/brownjeon/apps/stockinvest/shared/app-releases/stockinvest-1.0.1.apk`.
+  - **공개 APK 독립 검증**: `apksigner verify` 통과(v2 서명·서명자 1명·인증서 SHA-256 이 `CLAUDE.md` 지문과 전체 일치) · `aapt2` `versionCode='2' versionName='1.0.1'`·`application-debuggable` 0건 · sha256 `a8c49729502d775bd6aa0c438e659d559f191a9d589d8e93fc15af95ee26cfaa`·2,990,866 B.
+  - **Dev-S 가 빌드해 QA 가 점검한 APK(`58d8b210…bbdc`)와 해시가 다른 이유를 확인**: 크기·ZIP 항목 419개의 이름과 CRC32 가 전부 같고, 항목 영역·중앙 디렉터리·EOCD 는 **바이트 단위로 동일**하며 **APK 서명 블록(8192 B)만 다르다** — 서명 대상 내용은 같고 서명 값만 매번 다른 것. 즉 QA 가 점검한 내용 = 공개본. (앞서 감사 보고의 "같은 소스를 두 번 빌드하면 sha256 이 같다"는 같은 작업 디렉터리의 증분 빌드에서만 성립 — 새 디렉터리에서 다시 빌드하면 서명 블록 때문에 해시가 달라진다. 해시로 "같은 빌드"를 판정하지 말고 항목 CRC 로 대조한다.)
+- **⑦ INSERT — 05:30:05 KST.** `build-apk.sh` 가 출력한 SQL 을 로그에서 **그대로 추출**(옮겨 적기 오류 방지)해 실행: INSERT 1문. 실행 전 조건 — 파일 sha256 = SQL 의 sha256 · `MAX(version_code)`=1 < 2. `app_release` id 2·versionCode 2·`1.0.1`·`stockinvest-1.0.1.apk`·sha256 위 값·size 2990866·`min_supported` 0(필수 업데이트 아님)·notes `주식캐기 1.0.1`(스크립트 기본값 — 사용자 승인에 notes 변경이 없어 바꾸지 않음)·cert `6fa5ad6f…`. 읽어 보니 값 일치.
+- **⑧ 공개 확인 — 공개 도메인(nginx·ModSecurity 경유, 05:30).** `https://stock.xn--lh0b87pnudm10a4vd.com/app/download/latest.apk` **200**(`Server: nginx`)·`Content-Length 2990866`·`application/vnd.android.package-archive`·`Content-Disposition attachment; filename="stockinvest-1.0.1.apk"`·`no-store`·`nosniff`·`accept-ranges: none`·**내려받은 본문 sha256 `a8c49729…cfaa` = 등록값**·내려받은 파일의 서명자 `6fa5ad6f…`·`versionCode 2 / 1.0.1`. 직접 파일명 `stockinvest-1.0.1.apk` 200(2990866 B)·`stockinvest-1.0.0.apk` 200(2990678 B, 그대로)·`foo.apk` 404. **공개 범위 불변**: `/app/download` 307·`/app/downloads` 307·`/api/app/version` 무인증 401·`/app/download/../api/orders`(path-as-is) 307.
+- **⑨ 최종 대조(05:30).** `system_config` 79키 **배포 전과 동일**(`safety_kill_switch=true`·`safety_dry_run=false`·`exit_engine_enabled=false` 등) · 감사 로그 최신 id 불변(`orders 3229 / trade_logs 8305 / signals 19409`) · `stockinvest-cron` 정확히 1행 · `current`=`20261026-052603-1b379acc` · `/api/health` 200 · `app_auth_code` 0행 · 공개 폴더에 APK 2개(`1.0.0`·`1.0.1`).
+- **미검증(AI 가 할 수 없는 것)**: **실기기 전부** — 폰에서 새 APK 내려받기·덮어쓰기 설치, Chrome Custom Tab 에서 Google 로그인 후 `stockinvest://auth/callback` 으로 앱 복귀, 앱이 코드를 교환해 로그인되는 것, `browserFinished`·`getLaunchUrl` 동작. 운영의 실제 Google 로그인 완료(콜백의 코드 발급 앱 분기 종단 — 기존 회원 판정)는 Google 계정이 필요해 실행하지 않았다. 로그인 세션을 쓴 운영 `/api/app/version` 새 버전 응답도 세션이 없어 보지 않음.
+- **롤백 정보.** 웹: `scripts/deploy.sh StockInvest --rollback`(직전 릴리스 `20261026-052150-6d6efc09`, 그 앞 `20261025-232833-b6cd82fe`) 또는 `git revert 1b379ac be66800` 후 push — 코드 롤백이면 앱 교환 경로가 사라지고 테이블은 남지만 옛 코드는 읽지 않아 무해. APK 공개 철회: `DELETE FROM app_release WHERE version_code = 2;`(**롤백 시점에 사용자 별도 승인**, APK 파일은 지우지 않음 — 행이 없으면 최신이 다시 1.0.0 을 가리킨다). 이미 설치된 1.0.1 은 더 낮은 versionCode 로 덮어쓸 수 없다(이전 소스를 더 높은 versionCode 로 다시 빌드해 공개하거나 삭제 후 재설치). DDL 되돌림: 행이 없을 때 `DROP TABLE app_auth_code`(별도 승인). 롤백 DELETE·DROP 은 이번 승인에 포함되지 않는다.
+- **사용자 설치 안내**(`mobile-app-procedure.md` §9-C 요지): 폰 **Chrome** 으로 로그인한 `stock.미라클펭귄.com` → 설정 › 앱(안드로이드) → [APK 내려받기](1.0.1). 앱 안의 업데이트 띠는 1.0.0 앱이 로그인할 수 없어 뜨지 않으므로 웹에서 받는다. 네이티브 변경(딥링크)이라 **새 APK 설치 필요** — 같은 키로 서명돼 **덮어쓰기 설치**된다(기존 앱을 먼저 지우지 말 것). "앱이 설치되지 않았습니다"가 나오면 삭제 후 재설치·재로그인. Chrome 이 **"유해할 수 있는 파일입니다"** 라고 물으면 [다운로드](플레이스토어 밖 앱이라 매번 뜸).
+
+## Codex 검토
+
+### [2026-10-26 01:15] C2 review focus=none — done
+- judge 판정: codex_required=true (CX-limit-unknown-r2) / 호출 차수: 1/4
+- 대상: repo=/home/brownjeon/.node-local/stockinvest-app-auth base=da35af7(task_file) snapshot=1927e51
+- 지적 1건: [medium] `src/app/api/auth/[provider]/callback/route.ts:153` — 앱 시작 OAuth state 가 만료되거나 si_oauth_state 쿠키가 유실·불일치한 상태로 콜백이 도착하면, 첫 verifyOAuthState 실패 시 앱 표지를 보존하지 않고 웹 흐름으로 내려가며(185행에서 웹 /login?oauth_error=invalid_state) 앱 오류 목록의 invalid_state 는 어떤 콜백 경로에서도 딥링크로 전송되지 않음 → Custom Tab 이 웹 로그인 화면에 머물고 딥링크가 나오지 않아 앱은 최대 10분 대기 (권고: 서명이 유효하고 provider·pl:'app' 표지가 확인된 state 는 만료·nonce 불일치여도 stockinvest://auth/callback?error=invalid_state 로 돌려보내고, 위조·파싱 불가 state 만 웹 실패 경로 유지)
+- 검토하지 못한 범위: 실기기 Custom Tab·appUrlOpen·getLaunchUrl·browserFinished 동작 / 운영 MariaDB 마이그레이션 적용 상태의 통합 동작 / 실 Google OAuth 종단간 로그인
+- 요약(Codex): 60초 조건부 소각·PKCE 결속·동일 출처 JSON 교환·기존 세션 발급 경로·웹 OAuth 기본 흐름에서 명백한 인증 우회는 찾지 못함.
+- 원본: /home/brownjeon/NFS/homes/brownjeon/project/.claude/state/codex-review/runs/20261025T161426Z-T-088-C2/raw.txt
+
+## 최종 요약
+
+### [T-088] 앱 "주식캐기"에서 Google 로그인 — Chrome 창에서 로그인하고 앱으로 돌아옴, 웹·앱이 같은 로그인 화면
+
+- **상태**: ⏳ **사용자 실기기 확인 대기** — 구현·독립 감사·Codex·QA 후 사용자 승인("구글로그인 작업에 대하여 승인하니 작업진행해줘", 10-26 05:1x)을 받아 **운영 반영을 마쳤다**(DDL·웹 배포·APK 1.0.1 공개·`app_release` INSERT, 10-26 05:24~05:30 KST). 폰에서 새 APK 를 설치해 Google 로그인이 되는지 확인하기 전에는 "완료"가 아니다.
+- **무엇이 바뀌었나**:
+  - 앱 로그인 화면에 **Google로 계속하기**가 생긴다. 누르면 Chrome 창이 열려 Google 에 로그인하고, 끝나면 앱으로 돌아와 자동으로 로그인된다(Google 은 앱 안 WebView 에서의 로그인을 막아서 Chrome 창을 쓴다). 사용자 계정이 Google 전용이라 지금 앱(1.0.0)으로는 로그인할 방법이 없던 문제가 풀린다.
+  - 로그인 화면은 **웹과 앱이 같은 화면**(Google + 이메일). GitHub 버튼은 화면 코드에서 뺐다(운영 웹에는 원래 보이지 않았다). 앱 전용으로는 "Chrome 창에서 로그인하는 중" 대기 카드·마무리 덮개·오류 안내가 생긴다.
+  - 서버: 새 테이블 `app_auth_code` + 새 API `POST /api/auth/app-exchange`(60초 1회용 코드를 세션으로 바꿔 줌). 웹 로그인 응답은 그대로다(회귀 시험으로 고정).
+  - **웹에도 보이는 작은 변화**(데모 승인 때 "글자 3곳"이라 고지했으나 실제로는 더 있다 — 감사자가 코드 diff 로 확인): `email_unverified` 안내의 "GitHub" 삭제, 소셜 전용 계정 안내 "아래"→"위의", 설정 › 앱 설치 안내 ③ 문구 + 소셜 오류 상자 간격·한글 줄바꿈(keep-all)·이메일 오류 줄 줄 간격, `/signup`·`/oauth/invite` 안내 상자의 줄바꿈 방식. 유지를 권고한다.
+  - 앱 버전: **1.0.1(versionCode 2)** — 네이티브 변경(딥링크). 설치된 1.0.0 위에 덮어쓰기 설치해야 한다(같은 서명 키).
+- **배포**: ✅ 운영 반영 — 웹 커밋 `be66800`(구현)·`1b379ac`(시험 가드 보정) · 2026-10-26 05:25:51 KST · push(webhook blue/green) · 결과 `ok`(릴리스 `20261026-052603-1b379acc`). 앞서 05:24 에 운영 DB `app_auth_code` 적용, 05:28~05:30 에 APK 1.0.1 공개·`app_release` INSERT. 승인과 단계별 기록은 `## 배포 기록`.
+  - 같은 배포에 함께 실린 작업: 없음. T-089 는 직전 배포(`6d6efc0`, 05:21:41, 릴리스 `20261026-052150-6d6efc09`)로 따로 나갔다 — [[T-089-open-redirect-next-path]]. 문서 전용 커밋 `dee03b2`(T-087 원장 작업 일시 중지 기록)는 T-089 배포에 동승했다.
+- **AI 가 검증한 것**:
+  - 독립 감사 3회: 서버·DB·네이티브 pass(세션 발급 우회·코드 재사용·PKCE 결속 우회·웹 응답 변화·비밀 노출 경로 없음, 일회용 MariaDB 에서 DB 시험 25/25·동시 소각 20건 중 1건만 성공, 변이 48종 중 42종 검출·생존 6종은 동치·중복 방어) / 화면 conditional → 두 결함 수정(교환 무응답 시 덮개 영구 유지 → 15초 제한, 앱 판별 시점 의존 → 클릭 시점 재평가) 후 델타 pass.
+  - Codex 외부 검토 C2: 지적 1건(medium → R-S 판정 low·UX·보안 영향 없음)을 후속으로 결정.
+  - **QA 종단 62건 통과**(운영 빌드 + 일회용 MariaDB + 앱 화면을 실제 서버에 연결): 앱이 만든 challenge 로 코드를 넣고 딥링크를 쏘면 실서버에서 교환 → `si_session`(HttpOnly·Secure·30일) 발급 → `next` 로 이동, 같은 코드 재사용·다른 verifier·만료·Origin 변형·본문 변형 모두 같은 400, 같은 코드 병렬 20요청 중 정확히 1건 성공(5회 반복), 공개 경로는 정확 일치 1개, 웹 모드 Google 클릭은 기존 그대로.
+  - 전체 jest 6769 통과·0 실패(95 건너뜀은 DB 시험), typecheck 0, `next build` 통과·번들에 `@capacitor` 0건, APK(미공개) 점검 — versionCode 2·서명 지문 일치·딥링크 1개·debuggable 아님.
+  - **합칠 때 문제**: git 은 T-088 과 T-089 를 충돌 없이 자동 병합하지만 합친 결과에서 시험 1건이 실패했다 — T-088 의 가드가 `login/page.tsx` 의 `next` 두 줄을 "바꾸지 않았다"로 고정했는데 T-089 가 그 두 줄을 고치기 때문. 가드를 "원문이거나 T-089 형태"로 보정(`04e2d71`)하고 일회용 작업 폴더에서 T-088+main+T-089 를 시험 병합해 전체 jest 7086 통과·0 실패를 확인했다.
+  - **검증 못 한 것**: 실제 Google 동의→콜백(코드 발급 앱 분기·기존 회원 판정·신규 가입 거부의 종단), **실기기**(Chrome Custom Tab 복귀·`appUrlOpen`·`getLaunchUrl`·`browserFinished`·WebView 의 Origin 헤더), 운영 DB(sql_mode·MariaDB 10.11.11)에서의 DDL, 타이밍 오라클.
+- **👉 사용자가 확인할 것**(배포·APK 공개 뒤, 실기기):
+  1. 폰 Chrome 으로 `stock.미라클펭귄.com` 로그인 → 설정 › 앱 → APK(1.0.1) 받아 **덮어쓰기 설치**(1.0.0 삭제하지 말 것 — 같은 서명 키라 덮어써짐)
+  2. 앱 실행 → 로그인 화면에서 **Google로 계속하기** → Chrome 창에서 계정 선택 → 앱으로 돌아와 대시보드가 보이면 정상(로그인 후 앱을 완전히 종료했다 다시 열어도 로그인이 유지되는지)
+  3. 이상 시 확인할 것: Chrome 창이 안 닫히거나 앱이 대기 카드에 머무는지([취소]·[Chrome 창 다시 열기]로 복구되는지), "로그인 마무리 중" 덮개가 15초 넘게 남는지
+  4. 추가 실기기 항목: 앱을 완전히 종료한 직후 Google 클릭→복귀(콜드 스타트), 서버를 멈춘 상태에서의 로그인 시도, Chrome 창에서 로그인 중 쿠키 삭제·창 겹침
+- **👉 사용자가 결정할 것**:
+  1. ~~운영 반영 승인 4개와 순서~~ — **승인받아 권고 순서대로 실행 완료**(① T-089 push → ② DDL → ③ T-088 push → ④ APK 공개·INSERT, 허용 창 05:10~08:30 안인 05:21~05:30).
+  2. **커밋 훅 `SAFETY_PATHS` 에 `^src/app/api/auth/` 추가 여부.** 세션을 발급하는 `app-exchange` 와 `[provider]` 라우트가 지금 훅 감시 밖이라 이 경로 변경은 Reviewer 판정 없이도 커밋된다(이번에는 감사자가 안전 경로에 준해 봤다). AI 권고: 추가. **이번 승인에 포함되지 않아 보류 중.**
+  3. 웹에도 보이는 작은 변화(위) 유지 여부 — AI 권고: 유지(한글 단어 중간 끊김을 막는 개선). 사용자가 되돌리라고 하지 않으면 유지로 둔다(이미 배포됨).
+- **남은 일**(모두 비차단 후속 후보): ① **Codex 지적**: 앱 state 가 만료되거나 쿠키가 유실되면 Chrome 창이 웹 `invalid_state` 에 머물고 앱은 대기 — 시제품·시험 14건이 `~/.node-local/stockinvest-t088-review-S` 에 있어 실기기에서 걸리면 반영 ② R-S low 6건(웹 회귀 시험 머리 주석 오류·`build-apk.sh` 의 `autoVerify` 검사 무효·해시 주석·`rm` 가드 표기 변형·딥링크 수신 때 verifier 소모(L5)·제공자 오류 원문 로그) ③ 화면 시험 공백(10분 타이머·`lockBackground` 호출·중복 가드·오류 딥링크 verifier 삭제·연타 가드·닫힘 유예·포커스·`browserFinished` 구독, 클릭 경로 앱 판별 재도입 변이 M14) — 효과 로직 분리+fake timers, 저장소용 Playwright 스모크 ④ 늦게 주입된 브리지에서 복귀 딥링크 구독이 비는 비대칭·교환 실패 뒤 이동이 멈추면 덮개가 남는 경우 ⑤ 360px 대기 카드 제목 "중입니/다" 줄바꿈(Designer 확인) ⑥ M2(App Links)·M3(앱 잠금)·M4(푸시)
+- **이슈·위험**: 같은 기기의 악성 앱이 `stockinvest://` 를 가로채 **스스로 PKCE 쌍을 만들어 흐름을 시작**하면 코드를 얻을 수 있다(RFC 8252 §8.6, 구조적 한계 — M2 App Links 로만 해소). 실기기 미확인이라 실제 Chrome Custom Tab 동작은 가정에 기댄다. **롤백**: 코드는 `git revert` 후 push, DB 테이블은 `DROP TABLE app_auth_code`(웹 로그인은 이 테이블을 모르므로 영향 없음), APK 는 `app_release` 행으로 최신 버전 안내가 결정되므로 1.0.1 공개를 되돌리려면 INSERT 한 행 삭제.
+- **정리 요청**(`rm -rf` 가 필요해 에이전트가 못 지운 임시물, 사용자 승인 후 메인 세션이 정리): `~/.node-local/stockinvest-{t088-review-S,t088-review-U,t088-review-D,t088-review-base,app-auth-qa,ui-t088-build,next-t089-qa,next-t089-qa-base,next-t089-build,t088-devs-check,apk-t088}` 등 — 감사·QA 용 사본.
+
+## 데모 검토 (demo gate)
+
+> 실행 판정 정본은 frontmatter `demo_gate` 이다. 이 표는 check.mjs 가 함께 기록하는 사람용 이력이다(docs/demo-review-gate.md).
+
+| 버전 | 상태 | 저장소 파일 | Artifact | 사용자 결정 | 일시 |
+|---|---|---|---|---|---|
+| - | 해당없음 | - | - | judge: none | 10-25 23:02 |
+| - | 작성중 | - | - | judge: delta (DM-user-required) | 10-25 23:03 |
+| v1 | 검토요청 | mockups/T-088-app-login-v1.html | https://claude.ai/artifact/V6PdFoxYpa7pSHb9JyBo18 | 사용자 검토 요청 | 10-25 23:16 |
+| v1 | 수정요청 | mockups/T-088-app-login-v1.html | https://claude.ai/artifact/V6PdFoxYpa7pSHb9JyBo18 | "제안대로라면 웹과 앱의 로그인화면이 별도의 소스로 구현되는거야? 이번에 로그인화면을 제안한 방식의 구글로그인과 이메일 로그인만 남겨두는 방식으로 수정 후 앱에서도 함께 사용할 수 있도록 해줘" | 10-25 23:22 |
+| v2 | 검토요청 | mockups/T-088-app-login-v2.html | https://claude.ai/artifact/GdkVc4oGoLh1oVe3LKjsTx | 사용자 검토 요청 | 10-25 23:40 |
+| v2 | 승인 | mockups/T-088-app-login-v2.html | https://claude.ai/artifact/GdkVc4oGoLh1oVe3LKjsTx | "권고대로 작업 진행해줘" | 10-25 23:49 |

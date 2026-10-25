@@ -277,7 +277,9 @@ tags:
 
 ## Doing
 
+- ⏳ **[T-088, 2026-10-25, R2] 앱 "주식캐기" Google 로그인 — Chrome 창 로그인 + 딥링크 복귀 + 1회용 코드(PKCE), 웹·앱 한 화면(Google+이메일)** → [[T-088-app-google-login]] — **운영 반영 완료**(10-26 05:24 DDL `app_auth_code` · 05:25:51 웹 `1b379ac` 릴리스 `20261026-052603-1b379acc` ok · 05:30 APK 1.0.1(versionCode 2, sha256 `a8c49729…`) 공개 + `app_release` INSERT, 사용자 승인 "구글로그인 작업에 대하여 승인하니 작업진행해줘"). **사용자 실기기 확인 대기**(폰 Chrome 에서 새 APK 덮어쓰기 설치 → 앱에서 Google 로그인). 안전장치 스위치·감사 로그 배포 전후 불변, cron 1행. 후속 후보: Codex 지적(앱 state 만료·쿠키 유실 시 웹 invalid_state)·훅 SAFETY_PATHS 에 `^src/app/api/auth/` 추가(사용자 결정 보류)·화면 시험 공백·M2 App Links
 - ⏳ **[T-084, 2026-10-25, R2] 모바일 앱 "주식캐기" M1 — Capacitor 안드로이드 앱 + APK 다운로드·업데이트 안내** → [[T-084-mobile-app-m1-shell]] — **배포·APK 공개 완료**(커밋 `46d4148`·`b435399`, 20:53 KST, 릴리스 `20261025-205329-b4353994`, `app_release` DDL·INSERT 완료), **사용자 실기기 확인 대기**(설치→로그인 유지→키보드·하단 탭·비행기 모드 등). 매매·safety 코드 변경 0. 후속 M2(텔레그램 링크→앱)·M3(앱 잠금)·M4(푸시 FCM)·잠복 결함 2건(`gradlew` git 모드·옛 빌드 캐시)
+- ✅ **[T-089, 2026-10-25, R2] 웹 로그인 `next` 오픈 리다이렉트 차단 — 탭·줄바꿈 우회(`sanitizeNextPath`)와 이메일 로그인 화면의 같은 형태 검사** → [[T-089-open-redirect-next-path]] — **운영 반영 완료**(10-26 05:21:41 `6d6efc0`, 릴리스 `20261026-052150-6d6efc09` ok). 운영 공개 도메인에서 탭·LF·`//`·`/\` 를 낀 `next` 가 `/` 로 바뀌고 정상 경로는 원본 유지됨을 확인. 사용자 확인(선택): 로그인 화면·이메일 로그인 후 첫 화면
 - 🟡 **[T-074, 2026-10-23, R1] 자금 이동(입금·출금·환전) 원장 — 앱에서 기록하고 순입금을 반영해 자산 손익 재계산** → [[T-074-cash-flow-ledger]] (사용자 요청 10-23 · 데모 full(designer) · analyst 회계 자문 중 · **달러 예수금 불일치 사용자 재확인 대기**: KIS 앱 $118.60 vs 시스템 ≈$1,918.6, 차이 정확히 $1,800)
 - 🟡 **[T-075, 2026-10-23, R2] 커밋 안전장치 SAFETY_PATHS 확장 — `^src/app/api/strategies/`·`^scripts/migrations/`·`^src/lib/db.ts` 추가** → [[T-075-safety-paths-extension]] (사용자 "권고대로 추가" · Developer 구현 중)
 - 🟡 **[T-076, 2026-10-23, R2] 비상 전체 취소 확장 — 부분체결 잔량도 취소 요청(T-071 WP-4)** → [[T-076-emergency-cancel-partial-fills]] (사용자 "수용…작업진행"을 구현 승인으로 해석 — **해석 확인 필요** · Stage 0 읽기 전용 조사 중)
