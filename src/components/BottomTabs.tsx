@@ -18,8 +18,9 @@ const TABS = [
  *
  * ⚠️ 정확히 일치하는 경로만 숨긴다. 새 인증 전 화면을 추가하면 **여기에도 등록**해야 한다.
  *    (T-010 에서 `/signup/request` 와, 누락돼 있던 `/oauth/invite`(T-009)를 함께 등록했다.)
+ *    T-084: 앱 업데이트 띠(`components/app/AppUpdateBanner.tsx`)도 이 목록을 그대로 써서 인증 전 화면에서 숨는다.
  */
-const HIDDEN_PATHS = ['/login', '/signup', '/signup/request', '/oauth/invite'];
+export const HIDDEN_PATHS = ['/login', '/signup', '/signup/request', '/oauth/invite'];
 
 export function BottomTabs() {
   const pathname = usePathname();

@@ -8,9 +8,14 @@
  * 하나도 없으면 구분선까지 통째로 사라져 기존 이메일 폼만 남는다.
  *
  * 목업 수치 그대로: 높이 48 / radius 9 / gap 10 / 14.5px 600.
+ *
+ * T-084 — **안드로이드 앱(WebView) 안에서는 아무것도 그리지 않는다**(구분선 포함, 승인 데모 v1 D). 앱은 이메일·비밀번호 로그인만 지원한다.
+ * 판별은 목록 조회 전에 끝나므로(이 컴포넌트는 목록을 받기 전까지 원래 아무것도 그리지 않는다) 앱에서 버튼이 잠깐 보였다 사라지지 않는다.
+ * 앱에서는 목록 조회도 하지 않는다. ⚠ 판별은 화면 표시 전용 — 서버의 OAuth 경로·권한 판단은 그대로다.
  */
 import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
+import { isNativeApp } from '@/lib/native/bridge';
 
 type ProviderName = 'google' | 'github';
 
@@ -44,17 +49,28 @@ const BUTTONS: Record<ProviderName, { label: string; icon: () => JSX.Element; st
 
 const ORDER: ProviderName[] = ['google', 'github'];
 
+/** 서버 목록 → 그릴 버튼(순서 고정). 앱이면 빈 목록(구분선까지 안 그림). */
+export function visibleProviders(list: unknown, native: boolean): ProviderName[] {
+  if (native) return [];
+  const arr = Array.isArray(list) ? list : [];
+  return ORDER.filter((p) => arr.includes(p));
+}
+
 export function OAuthButtons({ nextPath }: { nextPath?: string }) {
   const [providers, setProviders] = useState<ProviderName[] | null>(null);
 
   useEffect(() => {
     let alive = true;
+    // T-084: 앱이면 조회하지 않고 빈 목록 — 렌더 없음.
+    if (isNativeApp()) {
+      setProviders([]);
+      return () => { alive = false; };
+    }
     fetch('/api/auth/oauth-providers')
       .then((r) => r.json())
       .then((d: { providers?: unknown }) => {
         if (!alive) return;
-        const list = Array.isArray(d.providers) ? d.providers : [];
-        setProviders(ORDER.filter((p) => list.includes(p)));
+        setProviders(visibleProviders(d.providers, false));
       })
       .catch(() => { if (alive) setProviders([]); });
     return () => { alive = false; };

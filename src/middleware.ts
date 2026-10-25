@@ -63,6 +63,7 @@ const PUBLIC_PREFIX = [
   '/_next/',
   '/__nextjs',   // dev overlay
   '/static/',
+  '/app/download/', // T-084: APK 내려받기(Custom Tab 은 세션 쿠키 없음). 라우트가 등록된 sha256 일치 파일만 내보낸다
 ];
 
 function isPublicPath(pathname: string): boolean {

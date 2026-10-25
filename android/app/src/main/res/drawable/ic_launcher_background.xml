@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T-084 앱 아이콘 ② "지층형 + 금덩이"(2026-10-25 사용자 확정). 원본: mockups/T-084-app-icon-v1.html 의 SRC.o2. 적응형 아이콘 배경 레이어(108dp, 전면 채움).
+  rect·polygon 은 pathData 로 옮겼고(rx = 원호 A), 좌표·색·순서는 원본 그대로다. 직접 고치지 말고 시안 소스를 고친 뒤 다시 변환한다.
+  색 = 토큰 hex: #171a21=bg2 · #1f2430=bg3 · #262b36=bg4 · #f59e0b=accent · #ef4444=up.
+  ⚠ 이 파일을 바꾸는 것은 네이티브 변경이다 — APK 재빌드 + versionCode 증가(android/app/build.gradle).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#171a21"
+        android:pathData="M0,0H108V108H0Z" />
+    <path
+        android:fillColor="#1f2430"
+        android:pathData="M0 60 Q27 55 54 59 T108 57 V108 H0 Z" />
+    <path
+        android:fillColor="#262b36"
+        android:pathData="M0 82 Q30 77 60 81 T108 79 V108 H0 Z" />
+</vector>

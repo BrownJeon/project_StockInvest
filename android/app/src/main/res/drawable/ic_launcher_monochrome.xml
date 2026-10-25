@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T-084 앱 아이콘 ② "지층형 + 금덩이"(2026-10-25 사용자 확정). 원본: mockups/T-084-app-icon-v1.html 의 SRC.o2. 안드로이드 13+ 테마 아이콘(단색) 레이어 — 시스템이 모양(알파)만 쓰고 색을 칠한다.
+  rect·polygon 은 pathData 로 옮겼고(rx = 원호 A), 좌표·색·순서는 원본 그대로다. 직접 고치지 말고 시안 소스를 고친 뒤 다시 변환한다.
+  색 = 토큰 hex: #171a21=bg2 · #1f2430=bg3 · #262b36=bg4 · #f59e0b=accent · #ef4444=up.
+  ⚠ 이 파일을 바꾸는 것은 네이티브 변경이다 — APK 재빌드 + versionCode 증가(android/app/build.gradle).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M27,69.4L36,65.4L46,67.8L58,65.3L70,68.4L81,68.4L81,69.6L70,73.6L58,71.7L46,74.2L36,70.6L27,70.6Z" />
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M36,48H36A1.2,1.2 0,0 1,37.2,49.2V61.3A1.2,1.2 0,0 1,36,62.5H36A1.2,1.2 0,0 1,34.8,61.3V49.2A1.2,1.2 0,0 1,36,48Z" />
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M33,51H39A1.5,1.5 0,0 1,40.5,52.5V58.5A1.5,1.5 0,0 1,39,60H33A1.5,1.5 0,0 1,31.5,58.5V52.5A1.5,1.5 0,0 1,33,51Z" />
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M48,37H48A1.2,1.2 0,0 1,49.2,38.2V63.3A1.2,1.2 0,0 1,48,64.5H48A1.2,1.2 0,0 1,46.8,63.3V38.2A1.2,1.2 0,0 1,48,37Z" />
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M45,41H51A1.5,1.5 0,0 1,52.5,42.5V57.5A1.5,1.5 0,0 1,51,59H45A1.5,1.5 0,0 1,43.5,57.5V42.5A1.5,1.5 0,0 1,45,41Z" />
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M60,27H60A1.2,1.2 0,0 1,61.2,28.2V61.8A1.2,1.2 0,0 1,60,63H60A1.2,1.2 0,0 1,58.8,61.8V28.2A1.2,1.2 0,0 1,60,27Z" />
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M57,31H63A1.5,1.5 0,0 1,64.5,32.5V55.5A1.5,1.5 0,0 1,63,57H57A1.5,1.5 0,0 1,55.5,55.5V32.5A1.5,1.5 0,0 1,57,31Z" />
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M68,36L73,31.5L78.5,34.5L80,40.5L75,44.5L69,42Z" />
+</vector>

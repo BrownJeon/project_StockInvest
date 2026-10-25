@@ -9,6 +9,7 @@ import { ExchangeAccountSection } from './ExchangeAccountSection';
 import { NotifyChannelSection } from './NotifyChannelSection';
 import { RiskPolicySummaryRow } from './RiskPolicySummaryRow';
 import { CashLedgerSummaryRow } from './CashLedgerSummaryRow';
+import { AppSection } from './AppSection';
 import { EnforcedStrip } from '@/components/risk/EnforcedStrip';
 
 interface StrategyItem {
@@ -883,6 +884,10 @@ export function SettingsPage() {
           </div>
         </>
       )}
+
+      {/* T-084 앱 (안드로이드) — 맨 아래 안내 상자 바로 위. 머리글(id="app", 업데이트 띠의 이동 목표)은 섹션이 직접 그린다.
+          자체 조회라 이 페이지의 조회·저장 바와 무관 */}
+      <AppSection />
 
       <div style={{ background: 'var(--bg2)', borderRadius: 12, padding: 14, border: '1px solid var(--border)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
         실거래 여부 / KILL_SWITCH / 주문 한도는 DB에 저장되어 서버 재시작 없이 즉시 반영됩니다.

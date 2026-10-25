@@ -32,6 +32,14 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# 안드로이드 앱(T-084) — APK·서명 키·서명 설정은 저장소 밖(~/.android/, 빌드 작업 디렉터리)에만 둔다.
+# android/ 의 빌드 산출물·local.properties·cap sync 생성물은 android/.gitignore 가 막는다.
+*.apk
+*.aab
+*.keystore
+*.jks
+*signing.env
+
 # NFS silly-rename 잔재 (2026-08-27) — 열려있는 파일 위에 rename/delete가 걸리면 NFS가
 # 만드는 임시 유령 파일. git add -A 시 실수로 딸려 들어갈 수 있어 명시적으로 제외한다.
 .nfs*

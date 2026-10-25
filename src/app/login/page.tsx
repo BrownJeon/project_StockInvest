@@ -6,12 +6,17 @@
  *
  * 실패 문구는 **어느 쪽이 틀렸는지 구분하지 않는다** — 구분해서 알려주면 가입된 이메일을
  * 남에게 알려주는 셈이 된다(서버도 동일한 응답을 준다).
+ *
+ * T-084 — 안드로이드 앱(WebView)에서는 `OAuthButtons` 가 아무것도 그리지 않고, 소셜 전용 계정 오류(`oauth_account`)는
+ * 앱용 문구로 바꿔 보인다(`loginFailureText`). 제목은 그대로 "주식 자동매매"(D6 A). 앱 판별은 표시 전용·수화 뒤.
  */
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AuthShell, authStyles } from '@/components/auth/AuthShell';
 import { OAuthButtons } from '@/components/auth/OAuthButtons';
 import { SignupRequestLink } from '@/components/auth/SignupRequestLink';
+import { loginFailureText } from '@/components/auth/login-failure';
+import { isNativeApp } from '@/lib/native/bridge';
 
 /**
  * 콜백이 실패했을 때 붙여 보내는 고정 코드 → 사용자 문구.
@@ -31,6 +36,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [nextPath, setNextPath] = useState<string | undefined>(undefined);
+  const [native, setNative] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { emailRef.current?.focus(); }, []);
@@ -40,6 +46,7 @@ export default function LoginPage() {
     setOauthError(params.get('oauth_error'));
     const n = params.get('next');
     setNextPath(n && n.startsWith('/') && !n.startsWith('//') ? n : undefined);
+    setNative(isNativeApp());
   }, []);
 
   const canSubmit = email.trim().length > 0 && password.length > 0 && !busy;
@@ -55,15 +62,11 @@ export default function LoginPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-      const data = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; detail?: string };
+      const data = await res.json().catch(() => ({})) as { ok?: boolean; error?: string; detail?: string; provider?: string | null };
       if (!res.ok || !data.ok) {
         setPassword('');
-        if (res.status === 429) setError(data.detail ?? '시도가 많습니다. 잠시 후 다시 시도하세요');
-        else if (res.status === 503) setError(data.detail ?? '서버 인증 설정(AUTH_SESSION_SECRET)이 없습니다');
-        // OAuth 전용 계정 — 비밀번호가 없으므로 어느 쪽으로 로그인해야 하는지 알려준다.
-        // 이 문구가 없으면 사용자는 비밀번호를 계속 틀리다 계정이 잠긴다.
-        else if (data.error === 'oauth_account' && data.detail) setError(data.detail);
-        else setError('이메일 또는 비밀번호가 올바르지 않습니다');
+        // 429·503·oauth_account(앱이면 앱용 문구)·그 밖 — 분기 순서·문구는 login-failure.ts 에 그대로 옮겼다.
+        setError(loginFailureText({ status: res.status, error: data.error, detail: data.detail, provider: data.provider }, native));
         setBusy(false);
         return;
       }

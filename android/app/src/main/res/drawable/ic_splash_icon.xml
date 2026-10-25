@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T-084 스플래시 아이콘 — 적응형 아이콘 ②의 배경+전경 합성을 원(지름 72/108)으로 자른 모양(시안 "스플래시" 미리보기와 같다).
+  288dp 캔버스 + 지름 192dp 원 = 안드로이드 12+ 시스템 스플래시 아이콘 규격(windowSplashScreenAnimatedIcon, 아이콘 배경 없음).
+  원 밖은 마지막 고리(evenOdd)가 스플래시 바탕색 #0f1115(= @color/splash_background = themeColor)로 덮는다 — 12 미만(core-splashscreen
+  호환 경로·Capacitor 예전 방식 @drawable/splash)에서도 같은 원 모양이 되게. 바탕색을 바꾸면 이 고리 색도 같이 바꾼다.
+  경로는 ic_launcher_background.xml·ic_launcher_foreground.xml 과 같은 변환 결과를 그대로 이어 붙였다(직접 고치지 않는다).
+  ⚠ 이 파일을 바꾸는 것은 네이티브 변경이다 — APK 재빌드 + versionCode 증가.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#171a21"
+        android:pathData="M0,0H108V108H0Z" />
+    <path
+        android:fillColor="#1f2430"
+        android:pathData="M0 60 Q27 55 54 59 T108 57 V108 H0 Z" />
+    <path
+        android:fillColor="#262b36"
+        android:pathData="M0 82 Q30 77 60 81 T108 79 V108 H0 Z" />
+    <path
+        android:fillColor="#f59e0b"
+        android:pathData="M27,69.4L36,65.4L46,67.8L58,65.3L70,68.4L81,68.4L81,69.6L70,73.6L58,71.7L46,74.2L36,70.6L27,70.6Z" />
+    <path
+        android:fillColor="#ef4444"
+        android:pathData="M36,48H36A1.2,1.2 0,0 1,37.2,49.2V61.3A1.2,1.2 0,0 1,36,62.5H36A1.2,1.2 0,0 1,34.8,61.3V49.2A1.2,1.2 0,0 1,36,48Z" />
+    <path
+        android:fillColor="#ef4444"
+        android:pathData="M33,51H39A1.5,1.5 0,0 1,40.5,52.5V58.5A1.5,1.5 0,0 1,39,60H33A1.5,1.5 0,0 1,31.5,58.5V52.5A1.5,1.5 0,0 1,33,51Z" />
+    <path
+        android:fillColor="#ef4444"
+        android:pathData="M48,37H48A1.2,1.2 0,0 1,49.2,38.2V63.3A1.2,1.2 0,0 1,48,64.5H48A1.2,1.2 0,0 1,46.8,63.3V38.2A1.2,1.2 0,0 1,48,37Z" />
+    <path
+        android:fillColor="#ef4444"
+        android:pathData="M45,41H51A1.5,1.5 0,0 1,52.5,42.5V57.5A1.5,1.5 0,0 1,51,59H45A1.5,1.5 0,0 1,43.5,57.5V42.5A1.5,1.5 0,0 1,45,41Z" />
+    <path
+        android:fillColor="#ef4444"
+        android:pathData="M60,27H60A1.2,1.2 0,0 1,61.2,28.2V61.8A1.2,1.2 0,0 1,60,63H60A1.2,1.2 0,0 1,58.8,61.8V28.2A1.2,1.2 0,0 1,60,27Z" />
+    <path
+        android:fillColor="#ef4444"
+        android:pathData="M57,31H63A1.5,1.5 0,0 1,64.5,32.5V55.5A1.5,1.5 0,0 1,63,57H57A1.5,1.5 0,0 1,55.5,55.5V32.5A1.5,1.5 0,0 1,57,31Z" />
+    <path
+        android:fillColor="#f59e0b"
+        android:pathData="M68,36L73,31.5L78.5,34.5L80,40.5L75,44.5L69,42Z" />
+    <path
+        android:strokeColor="#171a21"
+        android:strokeWidth="1.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M69 42 L72.5 38 L80 40.5 M72.5 38 L73 31.5" />
+    <path
+        android:fillColor="#0f1115"
+        android:fillType="evenOdd"
+        android:pathData="M0,0H108V108H0Z M54,18A36,36 0,1 0,54,90A36,36 0,1 0,54,18Z" />
+</vector>

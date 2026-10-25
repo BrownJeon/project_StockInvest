@@ -13,6 +13,11 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
+    "@capacitor/app": "7.1.2",
+    "@capacitor/browser": "7.0.5",
+    "@capacitor/core": "7.6.9",
+    "@capacitor/splash-screen": "7.0.5",
+    "@capacitor/status-bar": "7.0.6",
     "@workspace/api-usage": "file:../shared/api-usage",
     "@workspace/auth-oauth": "file:../shared/auth-oauth",
     "adm-zip": "^0.5.17",
@@ -25,6 +30,8 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@capacitor/android": "7.6.9",
+    "@capacitor/cli": "7.6.9",
     "@swc/jest": "0.2.37",
     "@types/adm-zip": "^0.5.8",
     "@types/jest": "29.5.13",

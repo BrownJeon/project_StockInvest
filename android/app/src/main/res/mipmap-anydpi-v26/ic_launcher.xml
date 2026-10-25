@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T-084 앱 아이콘 ② "지층형 + 금덩이" — 적응형 아이콘(minSdk 26 이라 항상 이 파일이 쓰인다. 밀도별 PNG 는 두지 않는다).
+  ic_launcher.xml 과 ic_launcher_round.xml 은 같은 내용이다(AndroidManifest android:icon·roundIcon).
+  monochrome 은 안드로이드 13+ 테마 아이콘용이며 그 미만에서는 무시된다.
+  ⚠ 이 파일을 바꾸는 것은 네이티브 변경이다 — APK 재빌드 + versionCode 증가(android/app/build.gradle).
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background"/>
+    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome"/>
+</adaptive-icon>

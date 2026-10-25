@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <!-- Customize your theme here. -->
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
+    </style>
+
+
+    <!--
+        T-084 스플래시 — 바탕 #0f1115(웹 토큰 bg = themeColor) 가운데 앱 아이콘 ②(원).
+        - 안드로이드 12+: 시스템이 windowSplashScreenBackground·windowSplashScreenAnimatedIcon 으로 그린다(core-splashscreen
+          Theme.SplashScreen 의 기본값은 ?android:colorBackground·sym_def_app_icon 이라 지정하지 않으면 안드로이드 기본 아이콘이 뜬다).
+          아이콘만 그릴 수 있다 — 앱 이름은 windowSplashScreenBrandingImage(이미지) 로만 넣을 수 있어 넣지 않았다.
+        - 12 미만: core-splashscreen 호환 창 배경이 같은 두 값을 쓰고, android:background(@drawable/splash)가 같은 그림을 덮는다.
+        ⚠ 바꾸면 네이티브 변경 — APK 재빌드 + versionCode 증가.
+    -->
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_icon</item>
+        <item name="android:background">@drawable/splash</item>
+    </style>
+</resources>

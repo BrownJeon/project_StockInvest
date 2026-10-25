@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        allowBackup="false" + dataExtractionRules(전부 제외) — 로그인 자격증명은 30일 HttpOnly 세션 쿠키(si_session)이고
+        WebView 는 그것을 app_webview/ 에 영속한다. 자동 백업(클라우드)·기기 간 이전(Android 12+ 는 allowBackup=false 만으로는
+        기기 이전이 안 막힌다)으로 세션이 기기 밖에 복사되지 않게 한다. 복원할 로컬 상태가 없는 셸 앱이라 잃는 것이 없다
+        (TheKaiwa·VoiceVault 와 같은 설정).
+
+        usesCleartextTraffic="false" — 운영 서버는 https 만 쓴다.
+
+        권한은 INTERNET 하나뿐이다(T-084 M1). 푸시(M4)에서 POST_NOTIFICATIONS 가 추가될 수 있다 — 권한을 더하면 versionCode 를 올린다.
+    -->
+    <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:usesCleartextTraffic="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!--
+            launchMode="singleTask" — 아이콘을 다시 눌러도 이미 떠 있는 이 화면으로 돌아온다(화면이 쌓이지 않는다).
+            M2 의 앱 링크(https)가 도착할 때도 같은 화면이 받는다.
+
+            windowSoftInputMode="adjustResize" — 입력창이 키보드에 가리지 않게. edge-to-edge(targetSdk 35) 아래에서는
+            이것만으로 창이 줄지 않아 MainActivity.fitAboveKeyboard 가 함께 맡는다(app-conversion-guide §1-2).
+
+            intent-filter 는 LAUNCHER 하나뿐이다 — 딥링크·App Links 는 M2 에서 추가한다.
+        -->
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <!--
+            FileProvider — 이 앱의 코드(MainActivity·웹)는 쓰지 않지만 **Capacitor 코어가 이름으로 참조**한다:
+            BridgeWebChromeClient.createImageFileUri() 가 웹 페이지의 <input type="file" capture accept="image/*"> 를 처리할 때
+            "<패키지 이름>.fileprovider" 권한 이름으로 카메라 촬영 임시 파일 URI 를 만든다(@capacitor/android 7.6.9 소스 확인).
+            지우면 그 경로는 예외를 잡고 일반 파일 선택기로 물러나지만, 원격 웹이 바뀌면 동작이 달라지므로 provider 는 남기고
+            공유 범위만 그 임시 파일 위치(getExternalFilesDir(Pictures))로 줄였다(T-084 R1, res/xml/file_paths.xml).
+            exported="false"·grantUriPermissions="true" 는 FileProvider 의 필수 조건이다(다르면 시작 때 예외).
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

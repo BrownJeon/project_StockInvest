@@ -33,6 +33,8 @@
 > **webhook 도 release.sh 위임으로 교체했다** — 이제 `git push` 가 곧 blue/green 배포다
 > (종전 스크립트는 `webhook-deploy/pre-bluegreen-backup-20260919/` 에 보관).
 > NFS 편집 트리에 빌드해도 운영에 반영되지 않는다.
+>
+> **안드로이드 앱 "주식캐기"(T-084~)** 의 APK 공개·`app_release` 기록은 웹 배포와 별개 경로다 — §9 와 §10 사이의 「앱(APK) 배포」 절. 사용자 승인 게이트가 따로 있다.
 
 ---
 
@@ -324,6 +326,7 @@ RELEASE_RESULT {"status":"health_failed", ... ,"rolled_back_to":"none"}
 - ❌ cron 앱을 "어차피 스케줄러니까" 하고 검증에서 빼지 않는다
 - ❌ 중복 기동한 cron 중 하나를 임의로 지우지 않는다 — 어느 쪽이 정상인지는 사용자 판단이다
 - ❌ 장중 임의 배포 — 사용자 합의 없이 하지 않는다
+- ❌ 앱 APK `--publish`·`app_release` INSERT·DDL 을 사용자 승인 없이 — 「앱(APK) 배포」 절의 하지 말 것 참고
 
 ---
 
@@ -345,6 +348,16 @@ RELEASE_RESULT {"status":"health_failed", ... ,"rolled_back_to":"none"}
 - /api/health:
 - 메인 화면 렌더링: 예/아니오
 - 두 앱의 pm2 재시작 횟수 변화:
+
+[앱(APK) — 이번 배포에 APK 공개가 있을 때만, 없으면 "해당 없음"]
+- apk_version: (versionName / versionCode)
+- apk_sha256: (64자 전체)
+- 크기(바이트):
+- reinstall_required: (true/false — 사용자가 새 APK 를 설치해야 하는가) · 삭제 후 재설치 필요: (예/아니오 — 서명 키가 바뀌었을 때만 예, 원칙상 없어야 한다)
+- app_release INSERT: (사용자 승인 원문·실행 시각 / 미실행)
+- /app/download/latest.apk 무인증 200·sha256 일치: 예/아니오/미확인
+- 보호 경로 유지(/app/download·/app/downloads·/app/download/../api/orders·/api/app/version 무인증): 결과
+- 실기기 확인: (사용자 확인 전이면 "대기" — 이 전에는 "완료"라고 쓰지 않는다)
 
 [이상 징후]
 - 로그의 ERROR·스택트레이스:
@@ -419,6 +432,65 @@ blue/green 으로 컷오버하면서 이 훅을 그대로 두면 **push 한 번�
 
 ---
 
+## 앱(APK) 배포 — 주식캐기 (T-084)
+
+> 앱은 운영 웹(`server.url`)을 띄우는 껍데기라 **웹 변경 = 웹 배포**(위 §2~§6)다. APK 는 **네이티브 변경**
+> (`android/**`·`capacitor.config.ts`·`AndroidManifest.xml`·Gradle 설정·`@capacitor/*` 추가·버전·`public/app-shell/index.html`·아이콘 리소스)이
+> 있거나 처음 공개할 때만 만든다. 구조·결정은 [`mobile-app-procedure.md`](./mobile-app-procedure.md), 실행 주체는 [`deployer.md`](../.claude/agents/deployer.md) `<apk_release>`.
+> 이 절의 승인 게이트(DDL·`--publish`·INSERT)는 **각각 사용자 명시 승인**이 필요하다 — QA PASS 나 웹 배포 승인으로 대신하지 않는다.
+
+### 순서 (첫 공개 기준 — 이후 공개는 ③부터)
+
+| # | 단계 | 게이트 | 확인 |
+|---|---|---|---|
+| ① | `scripts/migrations/T-084-app-release.sql` 적용 — **장외 창, 웹 코드 배포보다 먼저** | 사용자 명시 승인(실행: Leader 또는 deployer, 승인 원문을 task 에 기록). `--with-migrate` 는 `deploy.yml` 에 migrate 가 없어 거부되므로 사람이 `mysql … < scripts/migrations/T-084-app-release.sql` 로 적용 | `CREATE TABLE IF NOT EXISTS` 라 멱등. 적용 뒤 `SHOW CREATE TABLE app_release` — CHECK **9개**(`chk_app_release_*`) — 개수만으로는 옛 DDL 로 만든 테이블과 구별되지 않으니 `chk_app_release_code` 식이 **`version_code <= 2100000000`**, `chk_app_release_size` 식이 **`size_bytes <= 9007199254740991`** 을 포함하는지도 본다(R4)·UNIQUE 2개(`uq_app_release_code`·`uq_app_release_file`)·`apk_file`·`sha256`·`cert_sha256` **3열이 `ascii_bin`**, `SELECT COUNT(*) FROM app_release` = 0 |
+| ② | 웹 코드 배포(push = blue/green, 위 §2~§6) | 기존 웹 배포 게이트(QA PASS·장외) | 순서를 어겨 새 코드가 테이블보다 먼저 떠도 `/api/app/version` 503 `not_migrated`·`/app/download/*` 404 라 무해하다 — 그래도 ①→② 를 지킨다 |
+| ③ | `bash scripts/build-apk.sh --publish > <로그> 2>&1; echo $?` — **우분투**, 배포한 커밋과 같은 내용에서 | 사용자 명시 승인 | 종료 코드 0. 로그에 서명 지문 일치·debuggable no·권한 화이트리스트·비밀 검사 통과. APK 는 저장소 밖 `APP_RELEASE_DIR`(기본 `/home/brownjeon/apps/stockinvest/shared/app-releases`, 없으면 이 명령이 만든다)에 `stockinvest-<versionName>.apk` 로 복사되고, **같은 이름·다른 내용이면 거부**된다. 마지막에 INSERT SQL 이 **출력만** 된다 |
+| ④ | 출력된 `INSERT INTO app_release …` 실행 | **사용자 명시 승인**(③ 승인과 별개). `min_supported`(필수 업데이트 기준, 출력 기본 0)·`notes` 를 바꿀지도 이때 사용자에게 확인 | 실행 전 `sha256sum $APP_RELEASE_DIR/stockinvest-<v>.apk` = SQL 의 sha256, `SELECT MAX(version_code) FROM app_release` < 새 versionCode |
+| ⑤ | 공개 확인(아래 명령) | — | 전 항목 기대값과 같을 때만 다음으로 |
+| ⑥ | 사용자 설치 안내 → **실기기 확인** | 사용자 | [`mobile-app-procedure.md`](./mobile-app-procedure.md) §9-C. 사용자 확인 전에는 "완료"라고 보고하지 않는다 |
+
+③ 전에 확인할 것:
+- 빌드할 트리가 배포한 커밋과 같은가 — `git rev-parse HEAD` = 배포 커밋, `git status --short -- android capacitor.config.ts public/app-shell package.json package-lock.json scripts/build-apk.sh` 가 비어 있는가(다른 세션의 미커밋 네이티브 변경이 APK 에 섞이지 않게).
+- `android/app/build.gradle` 의 `stockVersionCode` 가 직전 공개본보다 크고 `stockVersionName` 도 새 값인가(같으면 developer 반송).
+- 연결 실패 화면(`public/app-shell/index.html`)·아이콘·스플래시가 **승인된 디자인**인가 — 자리표시자 화면·Capacitor 기본 아이콘이 든 APK 는 공개하지 않는다(`--publish` 는 이것을 막지 못한다).
+- 운영 `shared/.env` 에 `APP_RELEASE_DIR` 를 따로 두었다면 ③ 에도 같은 값을 준다(서버와 빌드 스크립트의 기본값은 같다). 현재 운영 값은 **미확인**.
+
+⑤ 공개 확인(무인증 요청, `B=https://stock.xn--lh0b87pnudm10a4vd.com`):
+
+```bash
+curl -sS -D /tmp/apk.h -o /tmp/apk.bin "$B/app/download/latest.apk"; head -1 /tmp/apk.h; grep -i '^content-length' /tmp/apk.h; sha256sum /tmp/apk.bin
+#   기대: 200 · Content-Length = app_release.size_bytes · sha256 = app_release.sha256
+for p in /app/download /app/downloads /api/app/version; do printf '%s ' "$p"; curl -s -o /dev/null -w '%{http_code}\n' "$B$p"; done
+curl -s --path-as-is -o /dev/null -w '%{http_code}\n' "$B/app/download/../api/orders"
+#   기대: 페이지 경로는 307(로그인), /api/* 는 401 — 200·파일 본문이 나오면 즉시 중단·보고(공개 범위가 넓어진 것)
+```
+
+- 로그인한 화면에서 설정 › 앱 (안드로이드)에 새 버전·sha256 앞 8자가 보이는지(웹), 낮은 versionCode 앱에서 업데이트 띠가 뜨는지(실기기) 확인한다.
+- nginx(ModSecurity)를 거친 실서비스 다운로드는 T-084 감사에서 재현하지 못했다 — 첫 공개 때 위 `curl` 결과가 그 첫 확인이다.
+
+⑥ 사용자 안내에 넣을 것: 받을 곳(휴대폰 Chrome → 설정 › 앱 (안드로이드) → [APK 내려받기], 앱 안이면 업데이트 띠 [받기]) · 버전·바뀐 점 · **재설치 필요 여부**(네이티브 변경이면 새 APK 를 설치해야 한다 — 같은 키로 서명돼 있어 덮어 설치되고 로그인은 남는다. "앱이 설치되지 않았습니다"가 나오면 삭제 후 재설치·재로그인) · Chrome 이 **"유해할 수 있는 파일입니다"** 라고 물으면 [다운로드](플레이스토어 밖 앱이라 매번 뜬다 — 이 확인에서 멈춘 듯 보일 수 있다, TheKaiwa 실측) · 처음 한 번 "출처를 알 수 없는 앱 설치" 허용.
+
+### 롤백
+
+| 대상 | 방법 |
+|---|---|
+| 배포본(업데이트 띠·`latest.apk`) | 최신 `app_release` 행 삭제 — `DELETE FROM app_release WHERE version_code = <되돌릴 코드>;`(**INSERT 때 받은 승인과 별도로 롤백 시점에 사용자 명시 승인**). 그 아래 행이 다시 최신이 되어 띠·`latest.apk` 가 이전 배포본을 가리킨다. **APK 파일은 지우지 않는다**(행이 없으면 `/app/download` 는 404) |
+| 이미 설치된 앱 | 더 낮은 versionCode 는 덮어 설치되지 않는다 — 이전 소스를 **더 높은 versionCode** 로 다시 빌드해 공개하거나, 삭제 후 재설치 |
+| 웹 | 기존 절차(§6, `--rollback` 은 사용자 지시 시). 코드 롤백이면 `/app/download/` 공개도 함께 사라진다(정상). `app_release` 테이블은 되돌아가지 않지만 옛 코드는 읽지 않아 무해 |
+| 테이블 자체 | 앱 기능을 통째로 철회할 때만 `DROP TABLE IF EXISTS app_release;`(사용자 승인) |
+
+### 하지 말 것
+
+- ❌ 자리표시자 화면·미승인 아이콘이 든 APK 공개
+- ❌ `versionCode` 증가 없이 네이티브 변경을 배포·공개(웹 배포로는 앱에 반영되지 않는다)
+- ❌ 디버그 키로 서명, 서명 비밀(`stockinvest-signing.env`·키스토어 비밀번호)을 출력·로그·문서에 남기기
+- ❌ 사용자 승인 없이 `--publish`, 사용자 승인 없이 `app_release` INSERT·DELETE·DDL
+- ❌ APK·키스토어를 저장소 안에 두거나 커밋
+- ❌ 실기기 확인 전에 "앱 배포 완료" 보고
+
+---
+
 ## 10. 부록 — 경로·값 표
 
 | 용도 | 값 |
@@ -437,3 +509,6 @@ blue/green 으로 컷오버하면서 이 훅을 그대로 두면 **push 한 번�
 | DB | `192.168.219.154:3306` — **개발과 운영이 공유** |
 | 매니페스트 | [`../deploy.yml`](../deploy.yml) |
 | 실행 주체 | [`../.claude/agents/deployer.md`](../.claude/agents/deployer.md) |
+| 앱 APK 공개 위치 | `/home/brownjeon/apps/stockinvest/shared/app-releases/`(`APP_RELEASE_DIR` 기본값, 릴리스 prune 과 무관) |
+| 앱 APK 빌드 작업 디렉터리 | `~/.node-local/stockinvest-apk`(로그 `logs/`, 산출물 `out/stockinvest-<versionName>-<versionCode>.apk`) |
+| 앱 서명 키(경로만) | `~/.android/stockinvest-release.keystore` · `~/.android/stockinvest-signing.env`(600) · 백업 `NFS/homes/brownjeon/backup/android-signing/stockinvest/` |
