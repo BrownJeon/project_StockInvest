@@ -355,6 +355,9 @@ OAuthButtons({ nextPath, appLogin = false })   // 'use client'
   - **`.git/refs/heads/@eaDir/main@SynoEAStream`(163 B)과 빈 디렉터리 `@eaDir`**: Synology 가 만든 확장 속성 스트림 파일(유효한 git ref 아님)이 `망가진 레퍼런스` 경고를 내고 있었다. 스크래치패드에 백업 후 삭제 → 경고가 사라졌고 **배포 중 오류를 냈던 `git fetch origin` 이 오류 없이(rc 0) 끝난다**(원인으로 추정, 재발 가능 — NAS 가 다시 만들 수 있음). `.git/@eaDir`·`.git/logs/@eaDir` 의 같은 종류 파일은 ref 가 아니라 두었다.
   - 결과: 디스크 여유 418GB → 432GB. **그대로 둔 것**: 운영 `~/apps/stockinvest`(릴리스 `20261026-052603-1b379acc`·헬스 200·APK 2개 공개 폴더), 서명 키·백업(`~/.android/stockinvest-*`, `NFS/homes/brownjeon/backup/android-signing/stockinvest/`), 개발 미러 `~/.node-local/stockinvest`(지금도 사용), 기본 APK 작업 디렉터리 `~/.node-local/stockinvest-apk`, docker 이미지.
   - **이번 작업이 만든 것이 아니라 건드리지 않은 것(약 9GB, 사용자 판단)**: `stockinvest-buildfix`(8/27)·`stockinvest-sdd`(8/12)·`stockinvest-t036-build`·`-t036-qa-build`·`-t036-reviewer-build`(8/27)·`stockinvest-upgrade`(8/05)·`stockinvest-np-base`·`-np-new`(10/07)·`stockinvest-t040`·`-t040rv`(10/18) — 다른 작업의 흔적으로 보이며(저장소에 등록된 worktree 아님) 그 작업이 끝났는지 확인하지 못했다.
+- **⑫ 운영 DB 증거 — 마무리 push 뒤 배포 후 확인 중 발견(06:59 KST, 읽기 전용).** `app_auth_code` 가 05:30 의 0행에서 **2행**이 됐다(코드 해시 열은 조회하지 않고 시각·소각만 봄): ① id 1 — `user_id 1`(유일한 Google 연결 계정)·발급 **05:47:01**·TTL 60초·`used_at` **NULL(소각되지 않음)** ② id 2 — `user_id 1`·발급 **05:52:45**·TTL 60초·**0.9초 뒤 소각(05:52:46)** = 앱이 코드를 교환해 세션을 받은 로그인.
+  - **의미 1 — 앞서 "운영에서 검증 못 함"으로 남긴 항목이 해소됐다**: 운영 서버의 Google 콜백 앱 분기가 실제 Google 로그인 뒤 기존 회원에게 1회용 코드를 발급하고(2건), 앱이 그 코드를 교환했다(1건) — 위 "미검증" 중 *실제 Google 로그인 완료(콜백의 코드 발급 앱 분기 종단)* 은 이 기록으로 확인됨(사용자의 실기기 검증 결과와 일치).
+  - **의미 2 — 05:47 첫 시도의 코드는 교환되지 않았다**: 서버는 코드를 발급해 `stockinvest://auth/callback?code=…` 로 돌려보냈지만 앱이 교환하지 않았다(코드는 60초 뒤 만료). 원인은 모른다 — **[추측]** 사용자가 첫 시도를 중간에 닫았거나 딥링크가 앱에 전달되지 않아 다시 시도했을 수 있다(05:52 의 두 번째 시도는 0.9초 만에 성공). 사용자에게 첫 시도에서 겪은 일이 있었는지 확인하면 딥링크 복귀 신뢰성(콜드 스타트·`appUrlOpen`)을 판단하는 단서가 된다. 이 행들은 다음 코드 발급 때 만료 1시간 뒤 청소된다.
 
 ## Codex 검토
 
