@@ -1,0 +1,34 @@
+{
+  "schema": "judge-result@2",
+  "engine": "rules",
+  "kind": "codex_gate",
+  "checkpoint": "C2",
+  "task_id": "T-080",
+  "project": "StockInvest",
+  "spec_version": "dev-judge@0.2.0",
+  "rules_version": "dev-rules@0.5.0",
+  "model": null,
+  "decision": {
+    "codex_required": true,
+    "wanted_before_budget": true,
+    "mode": "review",
+    "focus": "none",
+    "budget_rule": "CX-limit-unknown-r2",
+    "codex_calls_used": 0,
+    "codex_switch": "on"
+  },
+  "signals": {
+    "codex_calls_used": 0
+  },
+  "rule_overrides": [
+    {
+      "field": "codex_required",
+      "value": true,
+      "rule_id": "CX-r2-post-review"
+    }
+  ],
+  "fallback": "budget_window_closed",
+  "input_tokens": 0,
+  "cost_usd": 0,
+  "latency_ms": 361
+}

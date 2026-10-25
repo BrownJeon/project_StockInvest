@@ -63,6 +63,10 @@ const ALLOWED: Record<string, number> = {
   'lib/strategy/engine.ts': 1,
   // 스냅샷 `positions` 의 USD 행 판별(전환 규칙 E) — `Balance[]` 가 아니라 크론이 기록한 행이다.
   'lib/safety/kill-switch.ts': 1,
+  // T-080 — 크론이 기록한 스냅샷 `positions` 의 USD 행 판별(가려진 USD 이월 보정 순수 모듈의 `isUsd`). `kill-switch.ts` 의 `isUsdRow` 와
+  // 같은 식이며 `Balance[]` 가 아니다. 둘을 합치지 않는 이유: 순수 모듈은 db·notify 를 import 하는 `kill-switch.ts` 에서 가져올 수 없고,
+  // 감사가 끝난 규칙 E 코드를 이 task 에서 옮기지 않기 위해서다(hidden-usd-carry.ts `isUsd` 주석).
+  'lib/safety/hidden-usd-carry.ts': 1,
   // `/api/portfolio` 응답(위에서 합성한 행)의 표시 라벨 두 곳.
   'components/dashboard/Dashboard.tsx': 2,
   // 주문 요청(`OrderRequest.currency`)의 통화 — 잔고와 무관.

@@ -5,6 +5,10 @@ import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { checkSnapshotFreshness } from './volatility-guard';
 import { parseBoolFlag, shouldReportUnparsable } from './flags';
 import { assessDrawdownComposition, parseSnapshotPositions, type CompositionPosition } from './snapshot-composition';
+import {
+  assessHiddenUsdCarry, describeHiddenSides, hasHiddenUsdRow,
+  HIDDEN_USD_CARRY_HISTORY_LIMIT, HIDDEN_USD_CARRY_WINDOW_HOURS, type CarryPrior,
+} from './hidden-usd-carry';
 
 /**
  * (T-056) **전환 규칙 E — USD 행 대칭 제거.**
@@ -173,6 +177,7 @@ export type DrawdownCheckResult =
         | 'baseline_missing'    // 24h 전 창이 비어 있음
         | 'baseline_invalid'    // 기준 자본 0 이하
         | 'composition_change_suspected' // 임계 초과이나 보유 종목이 현금 이동 없이 사라진 탓 (T-041) — 발동 보류 + critical 알림
+        | 'hidden_usd_carry_suspected'   // 임계 초과이나 qty 0 으로 가려진 USD 를 이월하면 손실이 임계의 절반보다 얕음 (T-080) — 발동 보류 + critical 알림
         | 'error';
       detail?: string;
     }
@@ -287,8 +292,8 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     }
 
     // ── ③ 현재 자본 — ①에서 나이를 검증한 바로 그 최신 행 ──────────────────
-    const [curRows] = await pool.query<(RowDataPacket & { total_krw: number; positions?: unknown })[]>(
-      'SELECT total_krw, positions FROM portfolio_snapshots ORDER BY ts DESC LIMIT 1',
+    const [curRows] = await pool.query<(RowDataPacket & { total_krw: number; positions?: unknown; ts?: Date })[]>(
+      'SELECT total_krw, positions, ts FROM portfolio_snapshots ORDER BY ts DESC LIMIT 1',
     );
 
     if (curRows.length === 0) {
@@ -322,6 +327,83 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
 
     if (drawdownPct > -thresholdPct) {
       return { status: 'evaluated', drawdownPct, triggered: false, ...usdFlag }; // 손실 미달 — 발동 불필요
+    }
+
+    // ── ③-c (T-080) 발동 후보 — qty 0 으로 가려진 USD 를 직전 20h 양수 값으로 이월하면 손실이 남는가 ──────
+    //
+    // 2026-10-23 자동 발동: 기준선·현재 모두 USD 행이 있고 qty 0(평일 야간 가려짐)이라 규칙 E 가 적용되지 않았고,
+    // 그 사이의 KRW→USD 환전분이 총액에서 사라져 거짓 손실이 됐다. 또 현재만 가려진 시간대이면 USD 비중만큼 손실로 보인다.
+    //
+    //  - 규칙 E 가 적용됐으면(한쪽 USD 행 부재) 이 단계는 건너뛴다 — 그 경우는 E 가 다룬다.
+    //  - 가려진 행이 없으면 조회조차 하지 않는다(기존 경로 그대로).
+    //  - 보류는 보정 손실률이 임계의 **절반보다 엄격히 얕을 때만**(assessHiddenUsdCarry.suppress). 그 밖은 아래 기존 경로.
+    //  - **검증 불가는 발동 쪽**: 조회 실패·시각 불명·파싱 실패·예외는 보류 근거가 되지 않는다(T-041 원칙).
+    let carryNote = '';
+    // `!usdNorm.applied` 는 규칙 E 가 이미 USD 행을 뺀 positions 에서 가려진 행이 나올 수 없으므로 의미상 중복(동치)이지만,
+    // 이 단계가 E 의 영역을 건드리지 않는다는 의도를 코드에 남기려고 둔다. 가려짐 판별도 try 안에서 한다(L-1: 던지면 발동 쪽).
+    if (!usdNorm.applied) {
+      try {
+        if (hasHiddenUsdRow(usdNorm.basePositions) || hasHiddenUsdRow(usdNorm.curPositions)) {
+          const baseTs = snapRows[0].ts;
+          const curTs = curRows[0].ts;
+          if (!(baseTs instanceof Date) || !Number.isFinite(baseTs.getTime())
+            || !(curTs instanceof Date) || !Number.isFinite(curTs.getTime())) {
+            throw new Error('기준선·현재 스냅샷 시각을 읽을 수 없음');
+          }
+          const priors: CarryPrior[] = [];
+          for (const t of [baseTs, curTs]) {
+            const [rows] = await pool.query<(RowDataPacket & { ts: Date; total_krw: number; positions?: unknown })[]>(
+              `SELECT ts, total_krw, positions FROM portfolio_snapshots
+               WHERE ts < ? AND ts >= DATE_SUB(?, INTERVAL ? HOUR)
+               ORDER BY ts DESC
+               LIMIT ?`,
+              [t, t, HIDDEN_USD_CARRY_WINDOW_HOURS, HIDDEN_USD_CARRY_HISTORY_LIMIT],
+            );
+            if (!Array.isArray(rows)) throw new Error('직전 스냅샷 조회 결과가 배열이 아님');
+            for (const r of rows) priors.push({ ts: r.ts, positions: r.positions });
+          }
+          const carry = assessHiddenUsdCarry({
+            baseline: { ts: baseTs, total: baseline, positions: usdNorm.basePositions },
+            current: { ts: curTs, total: current, positions: usdNorm.curPositions },
+            priors,
+            thresholdPct,
+          });
+          const sidesText = describeHiddenSides(carry);
+          if (carry.suppress && carry.adjustedDrawdownPct != null) {
+            const detail =
+              `24h ${drawdownPct.toFixed(1)}% 이지만 USD 예수금 행이 수량 0 으로 가려진 쪽[${sidesText}]에 `
+              + `직전 ${HIDDEN_USD_CARRY_WINDOW_HOURS}시간 안의 마지막 양수 값을 이월하면 ${carry.adjustedDrawdownPct.toFixed(1)}% `
+              + `(임계 -${thresholdPct}% 의 절반보다 얕음)`;
+            console.error(`[kill-switch:drawdown] 자동 발동 보류 — ${detail}`);
+            try {
+              sendAlertThrottled(
+                // 사건(가려진 쪽 + 마지막으로 보인 시각)마다 키를 달리한다
+                `kill-switch:hidden-usd-carry:${carry.hiddenSides.map(n => `${n}=${(n === 'baseline' ? carry.baseline : carry.current).lastSeenMs ?? 'na'}`).join(',')}`,
+                'critical',
+                '⚠️ Kill Switch 자동 발동 보류 — USD 예수금 가려짐 의심',
+                `원시 24h 손실률 ${drawdownPct.toFixed(1)}% · 보정 손실률 ${carry.adjustedDrawdownPct.toFixed(1)}%\n`
+                + `가려진 쪽: ${sidesText}\n`
+                + 'USD 예수금 행이 수량 0 으로 기록돼(평일 야간 가려짐 의심) 손실이 부풀었을 수 있어 자동 발동을 보류했습니다.\n'
+                + '단, 가려진 동안 USD 를 원화로 환전·출금했다면 보정값이 낡았을 수 있습니다(주식 매수 정황이 보이면 이미 보정하지 않습니다).\n'
+                + '**실제 손실이라면 설정 > 안전장치에서 킬스위치를 수동으로 켜세요.**',
+                12 * 60 * 60 * 1000,
+              );
+            } catch (alertErr) {
+              // 알림 실패는 판정을 바꾸지 않는다 — 로그로 남긴다
+              console.error(`[kill-switch:drawdown] USD 가려짐 보류 알림 실패: ${alertErr instanceof Error ? alertErr.message : String(alertErr)}`);
+            }
+            return { status: 'skipped', reason: 'hidden_usd_carry_suspected', detail };
+          }
+          if (carry.hiddenSides.length > 0) {
+            carryNote = carry.carried && carry.adjustedDrawdownPct != null
+              ? ` · USD 가려짐[${sidesText}] 이월 보정 시 ${carry.adjustedDrawdownPct.toFixed(1)}%(보류 기준 미달 — 발동)`
+              : ` · USD 가려짐[${sidesText}] — ${carry.reason}`;
+          }
+        }
+      } catch (e) {
+        console.error(`[kill-switch:drawdown] USD 가려짐 점검 실패 — 보정 없이 기존 경로: ${e instanceof Error ? e.message : String(e)}`);
+        carryNote = ' · USD 가려짐 점검 실패(보정 없이 발동)';
+      }
     }
 
     // ── ④ 임계 초과 — 그 손실이 "시장 손실"인가, 소실된 보유가 관측에서 사라진 것인가 (T-041) ──────────
@@ -404,7 +486,7 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     );
 
     const lostKRW = current - baseline;
-    const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과${compositionNote}${usdNote}`;
+    const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과${compositionNote}${carryNote}${usdNote}`;
     console.error(`[kill-switch:drawdown] 자동 발동: ${msg}`);
     sendAlert('critical', 'Kill Switch 자동 발동', msg);
     return { status: 'evaluated', drawdownPct, triggered: true, ...usdFlag };
