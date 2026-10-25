@@ -11,7 +11,7 @@
  *
  * 이 모듈은 **평문을 절대 로그에 남기지 않는다.** 예외 메시지에도 평문·키를 넣지 않는다.
  */
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 
 const FORMAT_TAG = 'gcm1';
 const IV_BYTES = 12;
@@ -80,4 +80,31 @@ export function decryptSecret(blob: string): string {
   const decipher = createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
+}
+
+/** (T-087) 지문 키 파생 라벨 — 설계 §2.3 `broker-ledger/account-fp`. 바꾸면 모든 지문이 바뀌어 수집기가 account_changed 로 멈춘다. */
+const FINGERPRINT_HKDF_INFO = 'broker-ledger/account-fp';
+const FINGERPRINT_HEX_LEN = 16;
+
+/**
+ * (T-087 · T-081 WP-D1a) 서버 비밀 HMAC 지문 — 계좌 식별 문자열(`${CANO}-${ACNT_PRDT_CD}`) → 16자리 소문자 hex.
+ *
+ *  - 키: `CREDENTIALS_ENCRYPTION_KEY` 에서 HKDF-SHA256(salt 없음, info = `broker-ledger/account-fp`)으로 파생한 32바이트.
+ *    암복호화 키를 그대로 HMAC 에 쓰지 않는다(용도 분리). `readKey()` 는 계속 비공개다.
+ *  - 출력: `HMAC-SHA256(파생키, input)` 의 앞 16 hex(DDL `account_fingerprint CHAR(16)`).
+ *  - **익명화가 아니다** — 키를 가진 쪽은 계좌번호 후보를 대조할 수 있다. 키가 없는 쪽이 역산할 수 없다는 뜻이다(설계 §2.3 M-D).
+ *  - 키가 없거나 형식이 틀리면 **`null`**(fail-closed — 호출자는 `failed(fingerprint_key_missing)` 로 다루고 KIS 를 부르지 않는다).
+ *  - 입력이 비었거나 문자열이 아니면 TypeError(프로그램 오류). 오류 메시지에 입력·키를 넣지 않는다.
+ *  - 기존 encryptSecret/decryptSecret/isEncryptionConfigured 의 동작은 바꾸지 않았다(이 함수만 추가).
+ */
+export function fingerprintSecret(input: string): string | null {
+  if (typeof input !== 'string' || input.length === 0) throw new TypeError('fingerprintSecret: 입력이 비었다');
+  let key: Buffer;
+  try {
+    key = readKey();
+  } catch {
+    return null;
+  }
+  const derived = Buffer.from(hkdfSync('sha256', key, Buffer.alloc(0), FINGERPRINT_HKDF_INFO, 32));
+  return createHmac('sha256', derived).update(input, 'utf8').digest('hex').slice(0, FINGERPRINT_HEX_LEN);
 }

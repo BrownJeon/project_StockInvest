@@ -229,11 +229,17 @@ export const EXPECTED_OUTCOMES: Record<string, Outcome> = {
   },
 };
 
-/** 현재 문자열 label 22종(2026-10-18 HEAD 21종 + 2026-10-25 HEAD 에서 늘어난 `overseas priceDetail`(T-059) — `grep -oE "label: '[^']+'" src`). 새 label 이 생기면 여기에 더한다. */
+/**
+ * 현재 문자열 label 28종(2026-10-18 HEAD 21종 + 2026-10-25 HEAD 에서 늘어난 `overseas priceDetail`(T-059) + T-087 브로커 원장 읽기 전용 조회 6종
+ * `domestic|overseas ledger{DailyFills,PeriodProfit,Positions}` — `grep -oE "label: '[^']+'" src`). 새 label 이 생기면 여기에 더한다.
+ */
 export const KIS_LABELS = [
   'domestic cancelOrder', 'domestic createOrder', 'domestic getActiveOrders', 'domestic getBalances',
   'domestic getCompletedOrders', 'domestic getDailyCandles', 'domestic getMinuteCandles', 'domestic getTicker',
   'domestic marketCapRanking', 'overseas cancelOrder', 'overseas createOrder', 'overseas getActiveOrders',
   'overseas getBalances', 'overseas getCompletedOrders', 'overseas getDailyCandles', 'overseas getTicker',
   'overseas priceDetail', 'overseas usdCash', 'search-info(lookup)', 'search-info(search)', 'search-info(ticker/all)', 'tokenP',
+  // T-087 — 브로커 원장 수집(조회 TR 만, priority 'bulk')
+  'domestic ledgerDailyFills', 'domestic ledgerPeriodProfit', 'domestic ledgerPositions',
+  'overseas ledgerDailyFills', 'overseas ledgerPeriodProfit', 'overseas ledgerPositions',
 ];

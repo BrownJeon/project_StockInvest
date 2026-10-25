@@ -96,8 +96,8 @@ eq "🔴 첫 틱 순서 entry-watcher → holding-checker → stop-alert → str
 prev_hc=$(awk '{print $2}' "$RO/calls" | grep -A1 '/api/cron/holding-checker' | grep -c '/api/cron/stop-alert')
 eq "매 틱 holding-checker 바로 다음이 stop-alert" "$prev_hc" "$TICKS"
 eq "🔴 stop-alert 호출마다 --max-time 20" "$(grep -c '^/api/cron/stop-alert max-time=20$' "$RO/maxtime")" "$TICKS"
-eq "🔴 다른 잡에는 --max-time 이 새지 않는다(해외 post-market 120 만 예외)" \
-   "$(grep -v '^/api/cron/stop-alert ' "$RO/maxtime" | sort -u | tr '\n' ' ')" "/api/cron/post-market-analysis?market=overseas max-time=120 "
+eq "🔴 다른 잡에는 --max-time 이 새지 않는다(해외 post-market 120 · 브로커 원장 수집 90(T-087) 만 예외)" \
+   "$(grep -v '^/api/cron/stop-alert ' "$RO/maxtime" | sort -u | tr '\n' ' ')" "/api/cron/broker-fills max-time=90 /api/cron/post-market-analysis?market=overseas max-time=120 "
 
 echo "C. 늘어짐·실패 격리"
 grep -q 'stop-alert HTTP=000' "$RH/stdout" && ok "상한 초과는 HTTP=000 로그" || bad "HTTP=000 로그 없음"

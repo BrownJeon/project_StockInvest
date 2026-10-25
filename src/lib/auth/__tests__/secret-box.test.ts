@@ -1,8 +1,8 @@
 /**
  * KIS 자격증명 AES-256-GCM 암복호화 왕복 테스트 (T-008 §테스트 전략 단계 1).
  */
-import { randomBytes } from 'node:crypto';
-import { decryptSecret, encryptSecret, isEncryptionConfigured } from '../secret-box';
+import { createHmac, hkdfSync, randomBytes } from 'node:crypto';
+import { decryptSecret, encryptSecret, fingerprintSecret, isEncryptionConfigured } from '../secret-box';
 
 const ORIG = process.env.CREDENTIALS_ENCRYPTION_KEY;
 const KEY_A = randomBytes(32).toString('base64');
@@ -91,5 +91,66 @@ describe('키 검증', () => {
     } catch (e) {
       expect(String((e as Error).message)).not.toContain(key);
     }
+  });
+});
+
+// ── T-087 (T-081 WP-D1a) 계좌 지문 — 서버 비밀 HMAC(HKDF 파생 키). 계좌 값은 전부 합성 ──
+describe('fingerprintSecret (T-087)', () => {
+  const ID = '00000000-01';   // 합성 계좌 식별 문자열
+  /** 독립 재계산 — 설계 §2.3: HKDF-SHA256(key, salt 없음, info 'broker-ledger/account-fp', 32B) → HMAC-SHA256 → 앞 16 hex */
+  const expected = (b64: string, input: string) => {
+    const k = Buffer.from(hkdfSync('sha256', Buffer.from(b64, 'base64'), Buffer.alloc(0), 'broker-ledger/account-fp', 32));
+    return createHmac('sha256', k).update(input, 'utf8').digest('hex').slice(0, 16);
+  };
+
+  test('형식: 16자리 소문자 hex', () => {
+    expect(fingerprintSecret(ID)).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  test('결정적 — 같은 키·같은 입력이면 같은 값, 독립 재계산과 일치(라벨·길이 고정)', () => {
+    expect(fingerprintSecret(ID)).toBe(fingerprintSecret(ID));
+    expect(fingerprintSecret(ID)).toBe(expected(KEY_A, ID));
+    const fixed = Buffer.alloc(32, 7).toString('base64');
+    process.env.CREDENTIALS_ENCRYPTION_KEY = fixed;
+    expect(fingerprintSecret(ID)).toBe(expected(fixed, ID));
+  });
+
+  test('키가 다르면 다른 값 · 입력이 다르면 다른 값', () => {
+    const a = fingerprintSecret(ID);
+    expect(fingerprintSecret('00000001-01')).not.toBe(a);
+    expect(fingerprintSecret('00000000-22')).not.toBe(a);
+    process.env.CREDENTIALS_ENCRYPTION_KEY = KEY_B;
+    expect(fingerprintSecret(ID)).not.toBe(a);
+  });
+
+  test('솔트 없는 sha256 앞 16자와 다르다(HMAC — 키 없이 역산 불가, M-D)', () => {
+    const { createHash } = jest.requireActual('node:crypto') as typeof import('node:crypto');
+    expect(fingerprintSecret(ID)).not.toBe(createHash('sha256').update(ID).digest('hex').slice(0, 16));
+  });
+
+  test('파생 키를 쓴다 — 원 키로 바로 HMAC 한 값과 다르다(용도 분리)', () => {
+    const raw = createHmac('sha256', Buffer.from(KEY_A, 'base64')).update(ID).digest('hex').slice(0, 16);
+    expect(fingerprintSecret(ID)).not.toBe(raw);
+  });
+
+  test('🔴 키 없음·길이 오류 → null(fail-closed), 던지지 않는다', () => {
+    delete process.env.CREDENTIALS_ENCRYPTION_KEY;
+    expect(fingerprintSecret(ID)).toBeNull();
+    process.env.CREDENTIALS_ENCRYPTION_KEY = randomBytes(16).toString('base64');
+    expect(fingerprintSecret(ID)).toBeNull();
+    process.env.CREDENTIALS_ENCRYPTION_KEY = '   ';
+    expect(fingerprintSecret(ID)).toBeNull();
+  });
+
+  test('빈 입력·문자열 아님 → TypeError, 메시지에 입력·키 없음', () => {
+    expect(() => fingerprintSecret('')).toThrow(TypeError);
+    expect(() => fingerprintSecret(undefined as unknown as string)).toThrow(TypeError);
+    try { fingerprintSecret(''); } catch (e) { expect(String((e as Error).message)).not.toContain(KEY_A); }
+  });
+
+  test('기존 함수 동작 불변 — 지문 계산 뒤에도 암복호화 왕복·키 판정 그대로', () => {
+    fingerprintSecret(ID);
+    expect(decryptSecret(encryptSecret('still-works'))).toBe('still-works');
+    expect(isEncryptionConfigured()).toBe(true);
   });
 });

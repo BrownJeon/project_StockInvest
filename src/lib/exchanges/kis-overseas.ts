@@ -926,3 +926,7 @@ export async function getCompletedOrders(
     })
     .filter(o => o.orderId);
 }
+
+// ── T-087 (T-081 WP-D1a) 브로커 원장 조회(읽기 전용 GET) — 구현은 kis-overseas-ledger.ts ──
+// 위 함수들(getCompletedOrders·getBalances·getUsdCash 등)의 동작·시그니처는 바꾸지 않았다. 원장 조회는 order-sync·킬스위치·스냅샷 경로에서 쓰지 않는다.
+export { getDailyOrderFills, getPeriodProfit, getPositionSnapshot } from './kis-overseas-ledger';

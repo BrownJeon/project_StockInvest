@@ -20,6 +20,8 @@
 #  - edgar-sync        : 매일 07:00 KST — SEC EDGAR 공시·XBRL 재무 읽기 전용 수집 (T-059, 주문·시그널 없음)
 #  - kis-fundamentals-snapshot: 매일 08:00 KST — KIS 해외 현재가상세(PER·PBR 등) 원값 스냅샷 (T-059, 읽기 전용 GET)
 #  - stop-alert        : 1분 — 손절가 도달 텔레그램 알림 (T-068, 알림만, curl 상한 STOP_ALERT_CURL_MAX_TIME)
+#  - broker-fills      : 매일 07:20 KST 이후 첫 틱 — 브로커 체결 원장 "앞으로 수집" (T-087, KIS 읽기 전용 GET·주문 없음, 스위치 기본 꺼짐,
+#                        curl 상한 BROKER_FILLS_CURL_MAX_TIME, research-cycle-overseas·edgar-sync 가 같은 틱에 돌면 다음 틱으로 미룸)
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -74,6 +76,9 @@ PMO_CURL_MAX_TIME=120
 # 방어선이다. 하트비트 최악(위 PMO 계산에 더함): 120 + 60 + 30 + 20 + 60(sleep) = 290초 < 300초(순찰 재시작 기준).
 # 상한에 걸리면 curl 이 000 으로 끝나고 다음 분에 다시 부른다(서버 쪽 실행은 single-flight 라 겹치지 않는다).
 STOP_ALERT_CURL_MAX_TIME=20
+# (T-087 D1a) 브로커 체결 원장 수집(broker-fills) 호출 한 번의 curl 전체 시간 상한(초). 라우트 자체 예산 75초보다 길고, 하트비트 최악은
+# 90 + 매 분 잡 약 30 + sleep 60 = 180초 < 300초(순찰 재시작 기준). 07시 틱(research·edgar)과는 아래 yield 규칙으로 같은 틱에 겹치지 않는다.
+BROKER_FILLS_CURL_MAX_TIME=90
 CALL_MAX_TIME=""
 # 시도 기록 파일 한 줄: "<YYYY-MM-DD> <그날 시도 횟수> <마지막 시도 시각 epoch 초(시작에 기록, 끝나면 종료 시각으로 갱신)>"
 # pmo_due TODAY NOW DONE_FILE ATTEMPT_FILE → 0(지금 부를 차례) / 1(부르지 않음)
@@ -151,6 +156,7 @@ RESEARCH_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-
 RESEARCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-overseas-last-date"
 EDGAR_SYNC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/edgar-sync-last-date"
 KIS_FUNDAMENTALS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/kis-fundamentals-snapshot-last-date"
+BROKER_FILLS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/broker-fills-last-date"   # (T-087 D1a)
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
 # (T-036) M4 뉴스 fetch용 AI_API_BASE/M4_ADMIN_TOKEN 플럼빙은 여기서 제거했다 —
@@ -269,6 +275,27 @@ while true; do
     call "/api/cron/edgar-sync" "edgar-sync"
     echo "$TODAY" > "$EDGAR_SYNC_LAST_RUN_FILE"
   fi
+  # >>> broker-fills-daily (T-087 D1a) — src/app/api/cron/broker-fills/__tests__/cron-runner-block.test.ts 가 이 블록(과 위 07시 두 블록)을 잘라 시험한다
+  # 매일 07:20 KST 이후 첫 틱: 브로커 체결 원장 "앞으로 수집"(KIS 읽기 전용 GET, 주문 없음). 스위치(broker_fills_cron_enabled, 기본 꺼짐)·
+  # single-flight·run 당 호출 12·예산 75초는 라우트가 지킨다. `HH_MM="07:20"` 정확 일치는 틱이 분을 건너뛰면 그날을 놓쳐 쓰지 않는다(분 ≥ 20).
+  # 날짜파일은 호출했으면 성공·실패 무관 기록(T-036) — 하루 1회.
+  # (설계 §3.7 L-9·N-2) 러너가 07:20 이후 재기동되면 위 research-cycle-overseas·edgar-sync 가 **이 틱에** 돈다. 두 블록이 틱 시작에 읽어 둔
+  # LAST_RESEARCH_OVS·LAST_EDGAR(호출 **전** 값)가 오늘이 아니면 "이 틱에 방금 돌았다"는 뜻이라 수집을 다음 틱으로 미룬다(yield_tick, 날짜파일 안 씀).
+  # 날짜파일을 다시 읽으면 두 블록이 이미 오늘로 써 두어 미루기가 발동하지 않는다 — 그래서 변수로 판단한다.
+  BF_MM=$(date '+%M')
+  case "$BF_MM" in [0-5][0-9]) ;; *) BF_MM=00 ;; esac   # 읽을 수 없으면 이 틱은 돌지 않는다
+  LAST_BROKER_FILLS=$(cat "$BROKER_FILLS_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "07" ] && [ "$BF_MM" -ge 20 ] && [ "$LAST_BROKER_FILLS" != "$TODAY" ]; then
+    if [ "$LAST_RESEARCH_OVS" != "$TODAY" ] || [ "$LAST_EDGAR" != "$TODAY" ]; then
+      echo "[$(date '+%F %T')] broker-fills yield_tick — research-cycle-overseas/edgar-sync 가 이 틱에 돌아 다음 틱으로 미룸"
+    else
+      CALL_MAX_TIME="$BROKER_FILLS_CURL_MAX_TIME"   # 이 호출에만 시간 상한
+      call "/api/cron/broker-fills" "broker-fills"
+      CALL_MAX_TIME=""
+      echo "$TODAY" > "$BROKER_FILLS_LAST_RUN_FILE"
+    fi
+  fi
+  # <<< broker-fills-daily
   # 매일 16:00 KST: 국내 리서치 사이클 재계산 (T-032) — 15:30 마감 후 30분 데이터 반영 대기.
   # post-market-domestic(16:00)과 **독립된 블록**이다 — 같은 시각이지만 합치지 않는다.
   LAST_RESEARCH_DOM=$(cat "$RESEARCH_DOMESTIC_LAST_RUN_FILE" 2>/dev/null || echo "")

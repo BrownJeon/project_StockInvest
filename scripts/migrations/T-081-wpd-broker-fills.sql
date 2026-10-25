@@ -1,0 +1,387 @@
+-- ============================================================================================================
+-- T-081 WP-D (T-087 D1a) — 브로커 체결 원장 DDL (가산 전용: 새 테이블 5개. 기존 테이블·행·인덱스 변경 없음)
+-- ============================================================================================================
+-- 상태  : 설계 초안 v3.1 `docs/design/drafts/T-081-wpd-broker-fills.sql.draft`(sha256 앞 16자 229af23a6735ea08, 385줄)을 T-087 Dev-1 이 승격했다(2026-10-25).
+--         **DDL 본문(SET 이후 전부)은 초안과 한 글자도 다르지 않다** — 바뀐 것은 이 머리의 상태 문구(2·4~8행)뿐이다. 일회용 MariaDB 시험:
+--         `src/lib/broker-ledger/__tests__/t087-migration-disposable-mariadb.test.ts`(2회 적용 멱등·되돌리기·재적용·CHECK 42개).
+-- ⚠ 이 파일은 **앱 부팅 때 실행되지 않는다**(src/lib/db.ts 의 setupDB 에 넣지 않았다 — T-059·T-070·T-072·T-074 선례). 적용은 Leader 가 사용자 승인
+--   범위 안에서(2026-10-25 "DDL적용 승인") D1a 코드 배포 직전에 스크립트로 한다. `--with-migrate` 금지.
+-- 설계  : docs/design/2026-10-25-wpd-broker-fills-design.md (결정·근거·대안·검증 계획)
+-- v3→v3.1: (N-1) chk_bfr_complete 를 분기 — 체결·기간손익(연속 TR)은 last_tr_cont D/E 명시 필수 유지, 잔고 스냅샷(비연속 TR: CTRP6504R 은 캡처 실측 헤더가 빈 값)은
+--         NULL 또는 D/E 허용(M/F 거부, sum_check 는 그대로 요구). 분기마다 IS NULL / IS NOT NULL 을 명시해 NULL IN(...) 함정 없음 /
+--         (L-3) chk_bfr_3m_tr 92일 → 85일(달력 3개월 89~92일의 최댓값인 92 는 연중 약 41% 날짜에서 KIS 한도보다 느슨할 수 있어 7일 여유) /
+--         (L-c) 85일 밖 청크는 run 행을 쓰지 않고 건너뜀(CHECK 가 failed 포함 거부) / (L-d) 지문 키 교체·개발/운영 키 차이 절차 주석 / (L-e) positive_check 판정은 D2 소유 주석
+-- v2→v3 : (L-1) 짝 CHECK — kind↔source_tr, market↔source_tr, `unavailable` 은 해외 체결 창만, 3개월 TR 창 범위, complete 는 pages·kis_calls ≥ 1,
+--         finished_at ≥ started_at, position_snapshot 은 하루 창 / (M-B) runs.positive_check 열(양성 대조 결과) + "확정이면 complete" CHECK /
+--         (M-A) 쓰기 계약에 1213·1205 롤백 후 재시도 명시, "갭 락 직렬화" 주장 철회 / (M-D) 계좌 지문 = 서버 비밀 HMAC(열 정의 CHAR(16) 유지) /
+--         (L-4) settle_state 단방향·(L-5) fee_* 는 D2 소유(수집기는 unknown/estimated 일 때만 estimated 기록) 문안 / (L-7) baseline 절단 규칙 주석
+-- v1→v2 : (H-1) runs 에 last_tr_cont·sum_check·effective_to(생성열)·date_basis·account_fingerprint·kis_calls·duplicate_keys, complete CHECK 강화 /
+--         (H-2) fills 에 derived_for_revision·account_fingerprint, 열 소유 구분 / (L) 날짜 범위 CHECK·utf8mb4_bin 통화 / (M1) position_seeds → position_snapshots
+-- 원칙  : 가산 전용 — 새 테이블 5개만 만든다. 기존 테이블(orders·executions·cash_flow_ledger·portfolio_snapshots …)의 컬럼·행·인덱스는 바꾸지 않는다.
+--         코드 롤백(revert)은 DB 에 영향이 없고, 구 코드 + 새 테이블은 읽는 코드가 없어 무해하다.
+-- 대상  : 운영 MariaDB 10.11.11 (2026-10-25 읽기 전용 실측: sql_mode = IGNORE_SPACE,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,
+--         NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION — NO_ZERO_DATE 없음 · innodb_strict_mode=1 · 서버 기본 utf8mb3_general_ci →
+--         테이블마다 utf8mb4 명시 · 서버 TZ=KST → DATETIME 은 KST 벽시계(기존 테이블 규약과 같다)).
+-- 적용  : 순서는 **격리 DB 시험 → Reviewer → 사용자 승인 → 오프아워 적용(국내·미국 모두 폐장, KST 16:00~22:00) → 코드 배포**.
+--         `--with-migrate` 금지(docs/deploy-order.md).   mysql -h <DB_HOST> -u <DB_USER> -p <DB_NAME> < scripts/migrations/T-081-wpd-broker-fills.sql
+--         전부 `CREATE TABLE IF NOT EXISTS` 라 두 번 실행해도 안전하다(멱등). FK 때문에 **생성 순서**(runs → fills → revisions / realized_pnl / position_snapshots)를 지킨다.
+--         마이그레이션은 **코드 배포보다 먼저**(T-071 R-12 — 새 코드가 없는 테이블에 쓰면 수집기가 매 회차 실패한다).
+-- 호환  : 새 코드 + 테이블 없음 → 수집 라우트는 503 `not_migrated`, 소비자(ledger)는 모든 단계를 coverage_gap 으로 다룬다(예외 아님). 쓰기 0.
+-- 민감  : 이 파일에는 실제 계좌 값이 없다. 아래 예시 값은 전부 합성이다. 계좌번호 **원문**은 저장하지 않는다 — 지문은 서버 비밀 키 HMAC 의 앞 16 hex 라
+--         키 없이는 역산할 수 없다(키 보유자는 대조할 수 있다 — 익명화가 아니라 "변경 감지용 태그"다). 솔트 없는 sha256 은 8자리 계좌 공간을 분 단위로 역산할 수 있어 쓰지 않는다(M-D).
+--
+-- 그레인(중요): KIS 체결 조회(국내 TTTC0081R · 해외 TTTS3035R)는 **체결 건별 시각을 주지 않는다.** 한 행 = 브로커 주문번호 하나의 누적 체결 집계
+--   (총 체결수량·평균 체결가·주문 시각). 그래서 broker_fills 의 1행 = (계좌, 브로커, 시장, KST 주문일, 브로커 주문번호).
+--   같은 주문이 다음 조회에서 체결 수량이 늘어 있으면 같은 행을 UPDATE 하고 이전 원문은 broker_fill_revisions 에 남긴다.
+--   체결 0 인 행(미체결·취소 확정)도 저장한다 — "취소 요청/확정 상태 유지"(절차서 S01)의 근거가 그 행이다. 소비자는 filled_qty > 0 으로 거른다.
+-- 열 타입 원칙: 앱이 소유한 상태(market·side·fee_kind·settle_state·status …)는 ENUM, 브로커가 준 코드(ord_dvsn_cd·rvse_cncl_dvsn·prcs_stat_name …)는
+--   VARCHAR 원문 보존 + CHECK 없음(우리가 소유하지 않은 값 집합에 STRICT 거부를 걸면 KIS 가 새 코드를 보내는 날 수집이 멈춘다).
+--   CHECK 는 앱 불변식(수량·금액 ≥ 0, 통화 집합, 수수료 종류와 값의 짝, 날짜 범위, complete 조건, kind·market↔TR 짝)에만 둔다. source_tr 은 앱이 고르는 값이라 짝 CHECK 대상이다.
+-- 열 소유 구분(H-2 ②, L-5 정정): [원문열] = KIS 원문에서 바로 매핑, 수집기 upsert 가 raw_hash 변경 시 교체 / [수집기 파생열] = settle_state·amount_krw_est(KRW 행) —
+--   raw_hash 변경 시 재계산 / [D2 파생열] = fee_native·fee_kind·fee_rate_pct·tax_native·fx_*·amount_krw_est(USD 행)·app_order_id·reconcile_state·derived_for_revision.
+--   **fee_* 는 D2 소유다.** 수집기는 현재 fee_kind 가 unknown/estimated 일 때만 estimated(0.25%×체결대금)를 쓰고, allocated/actual 이면 건드리지 않는다(앱 규칙 — DB 가 아니라 시험으로 고정).
+-- ============================================================================================================
+
+SET SESSION lock_wait_timeout = 5;
+
+-- ------------------------------------------------------------------------------------------------------------
+-- 1) broker_fill_runs — 수집 실행 기록 = "어느 창(window)을 끝까지 받았나"의 증명 + (M-B) 양성 대조 결과.
+--    커버리지 판정(H-1·L-2·L-6): (account_id, market, kind) 별 status='complete' 행들의 [TIMESTAMP(window_from), effective_to] 구간을 **effective_to 기준으로**
+--    병합(다음 창의 TIMESTAMP(window_from) ≤ 앞 창의 effective_to 일 때만 이어진다 — "window_to+1일 = 다음 window_from" 날짜 인접 병합은 틈을 메우므로 금지)한
+--    합집합에 단계 [prev.ts − L, cur.ts](L = 체결 매칭 여유, 제안 1일)가 통째로 들어갈 때만 "커버됨".
+--    (M-B) complete 는 "받은 행은 사실이고 창을 끝까지 봤다"일 뿐 **"없음"의 증거가 아니다** — 같은 날 캡처된 A06 형 구형 TR 응답(rt_cd 0·tr_cont E·행 0·요약 전부 0)이
+--    complete 조건을 전부 만족하면서 실제 체결 2건을 숨겼다. "이 창에 그 주문/체결이 없다"는 주장은 positive_check='confirmed' 인 창에서만 허용한다.
+-- ------------------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS broker_fill_runs (
+  id                  BIGINT        NOT NULL AUTO_INCREMENT,
+  account_id          INT           NOT NULL DEFAULT 1,            -- accounts(id). orders·cash_flow_ledger 와 같은 범위(현재 1행)
+  account_fingerprint CHAR(16)      NOT NULL,                      -- (M7·M-D) HMAC-SHA256(key = 서버 비밀 CREDENTIALS_ENCRYPTION_KEY 에서 HKDF 파생, msg = CANO||'-'||ACNT_PRDT_CD) 앞 16 hex.
+                                                                   --      키가 없으면(isEncryptionConfigured()=false) 수집기는 실행하지 않는다(failed, error='fingerprint_key_missing').
+                                                                   --      같은 account_id 의 **직전 성공(complete/incomplete) run** 지문과 다르면 쓰지 않고 status='failed', error='account_changed'(fail-closed)
+                                                                   --      (L-d) 키 교체·개발/운영 키 차이도 같은 중단으로 나타난다: 교체 전 수집 스위치 OFF → 교체 뒤 사용자 승인으로 재설정 스크립트가
+                                                                   --      runs·fills·pnl·snapshots 의 지문을 새 값으로 일괄 갱신(별도 작업·Reviewer). 수집기는 운영 서버에서만 돌린다(개발 키로 띄우면 즉시 중단)
+  broker              VARCHAR(8)    NOT NULL DEFAULT 'kis',
+  market              ENUM('domestic','overseas') NOT NULL,
+  kind                ENUM('fills','realized_pnl','position_snapshot') NOT NULL,   -- 어떤 조회의 실행인가
+  source_tr           VARCHAR(12)   NOT NULL,                      -- 실전/모의: _TTC0081R·_TTS3035R·CTSC9215R(체결) / _TTC8708R·_TTS3039R(기간손익) / _TTC8434R·_TRP6504R(잔고). kind·market 과 짝 CHECK
+  window_from         DATE          NOT NULL,                      -- 커버리지 주장 창(KST 날짜, 양끝 포함). position_snapshot 은 from=to=조회일(CHECK)
+  window_to           DATE          NOT NULL,
+  query_from          DATE          NOT NULL,                      -- 실제 KIS 에 보낸 날짜 범위(해외는 ±1일 여유 — M5). 커버리지 주장은 window_* 로만 한다
+  query_to            DATE          NOT NULL,
+  date_basis          ENUM('kst','local','unknown') NOT NULL DEFAULT 'unknown',   -- (M5) 이 TR 의 조회 날짜 기준. 첫 라이브에서 확정되기 전까지 unknown
+  trigger_kind        ENUM('cron','manual','backfill') NOT NULL,
+  started_at          DATETIME      NOT NULL,
+  finished_at         DATETIME      NULL,                          -- started_at 이상(CHECK). running 이 아니면 필수
+  status              ENUM('running','complete','incomplete','failed') NOT NULL DEFAULT 'running',
+  -- complete   = 모든 페이지를 받았고(마지막 페이지 tr_cont 가 D 또는 E 로 **명시**), 행 합계가 응답 요약과 허용치 안에서 일치(sum_check=match; 요약 블록이 없는 해외 체결 TR 만 unavailable),
+  --              창 안 자연키 중복 0, 실제로 호출을 했다(pages·kis_calls ≥ 1). 아래 chk_bfr_complete 가 강제한다. 헤더가 비어 있으면 complete 가 아니다(fail-closed).
+  --              ⚠ complete ≠ "없음" 증거(M-B). 부재 주장은 positive_check='confirmed' 창에서만.
+  -- incomplete = 페이지 상한·중간 페이지 실패·합계 불일치·자연키 중복·시간 예산 초과 등으로 창 전체를 확신할 수 없다. 받은 행은 사실이므로 저장하되 이 창에서 "없음"을 주장할 수 없다.
+  -- failed     = 첫 응답부터 실패(rt_cd≠0·HTTP 오류·레이트리밋 소진·계좌 지문 변경·지문 키 없음). 행 0.
+  last_tr_cont        CHAR(1)       COLLATE utf8mb4_bin NULL,      -- 마지막 응답 헤더 tr_cont 원문('D'·'E'·'M'·'F', 빈 헤더는 '' 가 아니라 NULL).
+                                                                   --      (N-1) 잔고 조회 TR(CTRP6504R·TTTC8434R)은 비연속 TR 이라 헤더가 빌 수 있다(캡처: CTRP6504R 빈 값, TTTC8434R 'D') → position_snapshot 만 NULL 로 complete 허용
+  sum_check           ENUM('pending','match','mismatch','unavailable') NOT NULL DEFAULT 'pending',
+  -- 행 합계 vs 응답 요약(L-3 정정): 국내 체결 output2.tot_ccld_qty/tot_ccld_amt(정확) · 국내 기간손익 output2.tot_rlzt_pfls/tot_fee/tot_tltx(정확) ·
+  -- 해외 기간손익 output2.ovrs_rlzt_pfls_tot_amt/stck_sll_amt_smtl(전 페이지 합, 정확) · 국내 잔고 TTTC8434R Σevlu_amt = output2.evlu_amt_smtl_amt(정확) ·
+  -- 해외 잔고 CTRP6504R Σfrcr_evlu_amt2 = **output3.evlu_amt_smtl**(상대 허용치 1e-3 — 캡처 실측 상대차 4e-5; frcr_evlu_tota 는 달러 예수금 줄이라 대상이 아니다).
+  -- 해외 체결 TTTS3035R 은 요약 블록이 없다(캡처 실측) → unavailable 만 허용(해외 체결 창에 한정, CHECK).
+  positive_check      ENUM('pending','confirmed','unconfirmed','n/a') NOT NULL DEFAULT 'pending',
+  -- (M-B) 양성 대조: 이 창의 체결/기간손익 행이 **다른 TR·다른 원천**과 맞는가. confirmed = (a) fills 창의 Σ매도 체결수량 = 같은 창 realized_pnl 의 Σ매도 수량(종목별, 해외) /
+  -- 일별 Σ(국내) **이고 그 합이 0 이 아닐 때**(L-a: 0=0 은 증거가 아니다 — 매도 합 0 이면 (a) 대신 (b)·보유 대사로) 또는 (b) 두 TR 모두 행 0 이고 창 양끝 보유 수량이 같음(세 원천 합의).
+  -- (b) 의 보유 수량 출처(L-b): D1a 이후 창 = broker_position_snapshots, 백필 창·#2107(5월) = portfolio_snapshots(04-26~, 시간당; 소수 보유 없음 → '보조 확정'). 그 외 unconfirmed(짝 창 없음 = pending).
+  -- 쓰는 주체: 수집기는 pending(또는 n/a)만, confirmed/unconfirmed 판정은 D2(reconcile)가 쓴다(L-e). 부재 주장(WP-E #2107 "이 창에 없다", D3 의 "체결 없음 → unexplained")은 confirmed 창에서만. position_snapshot 은 n/a.
+  effective_to        DATETIME AS (LEAST(TIMESTAMP(window_to) + INTERVAL 1 DAY, started_at)) PERSISTENT,
+  -- (H-1) 커버리지의 유효 끝 = min(window_to 의 24:00, 실행 시작 시각). 실행 뒤에 생긴 체결은 이 창이 보증하지 않는다. 생성열이라 앱이 틀리게 쓸 수 없다.
+  pages               INT           NOT NULL DEFAULT 0,
+  kis_calls           INT           NOT NULL DEFAULT 0,            -- 이 run 이 보낸 KIS GET 수(run 당 상한 12, 초과 시 incomplete — L-8 통일: 상한은 run 당)
+  rows_seen           INT           NOT NULL DEFAULT 0,
+  rows_inserted       INT           NOT NULL DEFAULT 0,            -- 사전 SELECT(FOR UPDATE)로 "없던 키" 를 세어 산출(affectedRows 로는 구분 불가 — 검토 재현)
+  rows_updated        INT           NOT NULL DEFAULT 0,            -- raw_hash 가 바뀌어 revision 이 오른 행 수(last_seen_at 만 갱신한 행은 세지 않는다)
+  rows_stale_skipped  INT           NOT NULL DEFAULT 0,            -- 단조 가드(수량 감소·closed→open 역전)에 걸려 쓰지 않은 행
+  duplicate_keys      INT           NOT NULL DEFAULT 0,            -- 한 응답 안에서 자연키가 겹친 건수(메모리 검사). 0 이 아니면 complete 불가
+  error               VARCHAR(500)  NULL,                          -- 실패·불완전 사유(메시지 앞 500자). 계좌번호·키는 수집기가 넣지 않는다
+  PRIMARY KEY (id),
+  KEY idx_bfr_coverage (account_id, market, kind, status, window_from, window_to),
+  CONSTRAINT fk_bfr_account    FOREIGN KEY (account_id) REFERENCES accounts (id),
+  CONSTRAINT chk_bfr_window    CHECK (window_from <= window_to AND query_from <= window_from AND window_to <= query_to),
+  CONSTRAINT chk_bfr_dates     CHECK (window_from >= '2000-01-01' AND window_to <= '2100-12-31' AND query_from >= '2000-01-01' AND query_to <= '2100-12-31'),
+  CONSTRAINT chk_bfr_fp        CHECK (CHAR_LENGTH(account_fingerprint) = 16),
+  CONSTRAINT chk_bfr_finished  CHECK ((status = 'running' AND finished_at IS NULL) OR (status <> 'running' AND finished_at IS NOT NULL AND finished_at >= started_at)),
+  CONSTRAINT chk_bfr_complete  CHECK (status <> 'complete'
+                                  OR (finished_at IS NOT NULL AND sum_check IN ('match','unavailable') AND duplicate_keys = 0 AND pages >= 1 AND kis_calls >= 1
+                                      AND (   (kind <> 'position_snapshot' AND last_tr_cont IS NOT NULL AND last_tr_cont IN ('D','E'))          -- 연속 TR(체결·기간손익): 마지막 페이지 D/E 명시 필수
+                                           OR (kind =  'position_snapshot' AND (last_tr_cont IS NULL OR last_tr_cont IN ('D','E'))) ))),      -- (N-1) 비연속 TR(잔고): 빈 헤더(NULL) 허용, M/F 는 거부
+  -- ↑ 모든 분기에서 `last_tr_cont` 를 IS NULL / IS NOT NULL 로 먼저 묶는다 — `NULL IN (...)` = NULL 은 CHECK 를 **통과**하기 때문(SQL 의 CHECK 는 FALSE 만 거부 — T-074 QA 가 찾은 함정, v2 시험 R2 에서 재현).
+  --   체결·기간손익 창에 빈 헤더 → `IS NOT NULL` 이 FALSE 이고 스냅샷 분기도 FALSE 라 거부된다(v3.1 시험으로 확인).
+  CONSTRAINT chk_bfr_kind_tr   CHECK ((kind = 'fills'             AND (source_tr LIKE '_TTC0081R' OR source_tr LIKE '_TTS3035R' OR source_tr = 'CTSC9215R'))
+                                   OR (kind = 'realized_pnl'      AND (source_tr LIKE '_TTC8708R' OR source_tr LIKE '_TTS3039R'))
+                                   OR (kind = 'position_snapshot' AND (source_tr LIKE '_TTC8434R' OR source_tr LIKE '_TRP6504R'))),
+  CONSTRAINT chk_bfr_market_tr CHECK ((market = 'domestic' AND (source_tr LIKE '_TTC%' OR source_tr LIKE 'CTSC%'))
+                                   OR (market = 'overseas' AND (source_tr LIKE '_TTS%' OR source_tr LIKE '_TRP%'))),
+  CONSTRAINT chk_bfr_sum_unav  CHECK (sum_check <> 'unavailable' OR (market = 'overseas' AND kind = 'fills' AND source_tr LIKE '_TTS3035R')),
+  CONSTRAINT chk_bfr_3m_tr     CHECK (source_tr NOT LIKE '_TTC0081R' OR query_from >= DATE(started_at) - INTERVAL 85 DAY),
+  -- ↑ (L-3) 3개월 이내 TR 로 그 밖의 창을 "봤다"고 기록 금지. 85일 = 달력 3개월(89~92일)에 7일 여유(KIS 한도 정의 미확인). 85일 밖 청크는 수집기가 KIS 를 부르지도
+  --   run 행을 쓰지도 않고 건너뛴다(L-c — failed 행도 이 CHECK 가 거부한다). 그 창은 CTSC9215R 로 따로 수집한다.
+  CONSTRAINT chk_bfr_snapshot  CHECK (kind <> 'position_snapshot' OR (window_from = window_to AND query_from = window_from AND query_to = window_to)),
+  CONSTRAINT chk_bfr_positive  CHECK (((kind = 'position_snapshot') = (positive_check = 'n/a')) AND (positive_check <> 'confirmed' OR status = 'complete')),
+  CONSTRAINT chk_bfr_counts    CHECK (pages >= 0 AND kis_calls >= 0 AND rows_seen >= 0 AND rows_inserted >= 0 AND rows_updated >= 0 AND rows_stale_skipped >= 0 AND duplicate_keys >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ------------------------------------------------------------------------------------------------------------
+-- 2) broker_fills — "브로커가 말한 체결" 현재값. 1행 = 브로커 주문번호별 누적 체결 집계. 앱 orders/executions 와 분리(소프트 링크만).
+--    쓰기 계약(H-2·M-A·L-4·L-5): 한 응답을 일괄 쓰기 전에 메모리에서 자연키 중복을 검사한다(겹치면 그 키는 쓰지 않고 run.duplicate_keys++).
+--    행마다 트랜잭션: SELECT … FOR UPDATE(자연키) → 없으면 INSERT / 있으면 raw_hash 비교 → 같으면 last_seen_at·last_run_id 만,
+--    다르면 단조 가드(① 새 filled_qty < 현재 filled_qty 이고 취소·정정 신호가 없음 ② 현재 settle_state='closed' 인데 새 응답이 'open' 이고 취소·정정 신호가 없음 → 낡은 응답으로 보고 쓰지 않음)
+--    → 이전 원문을 broker_fill_revisions 에 INSERT → 원문열·수집기 파생열 UPDATE(fee_* 는 fee_kind IN ('unknown','estimated') 일 때만 estimated 재계산),
+--    revision+1, raw_hash 는 **마지막에** 대입 → COMMIT.
+--    **1213(교착)·1205(락 대기 초과)는 ROLLBACK 뒤 같은 행을 1~2회 재시도한다(지터 10~50ms).** "SELECT … FOR UPDATE 뒤 행이 없으면 INSERT" 구조는 연결 2개만 겹쳐도
+--    매회 한쪽이 교착한다(독립 재검토 25회 재현, v3 일회용 DB 시험으로 재확인) — v2 의 "갭 락이 직렬화해 오류 0" 관측은 우연이었고 철회한다. 재시도 뒤에도 실패하면 그 행만 건너뛰고 run.error 에 메모.
+--    단일문 ON DUPLICATE KEY UPDATE 를 쓸 때도 raw_hash 대입은 반드시 마지막 — 앞에 두면 값은 안 바뀌고 해시만 전진해 변경이 영구 유실된다(검토 재현).
+-- ------------------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS broker_fills (
+  id                   BIGINT        NOT NULL AUTO_INCREMENT,
+  account_id           INT           NOT NULL DEFAULT 1,
+  account_fingerprint  CHAR(16)      NOT NULL,                 -- (M7·M-D) run 과 같은 HMAC 지문. 자연키에는 넣지 않는다(지문이 바뀌면 수집기가 멈춘다)
+  broker               VARCHAR(8)    NOT NULL DEFAULT 'kis',
+  market               ENUM('domestic','overseas') NOT NULL,
+  -- ── 원문열 ──────────────────────────────────────────────────────────────────────────────────────────
+  order_date           DATE          NOT NULL,                 -- KST 주문일: 국내 ord_dt / 해외 dmst_ord_dt. 스냅샷(KST)과 같은 자로 잰다
+  local_order_date     DATE          NULL,                     -- 해외 ord_dt(현지 주문일). 국내 NULL
+  broker_order_no      VARCHAR(20)   NOT NULL,                 -- odno 원문(앞자리 0 보존, 앱이 trim + ^[0-9A-Za-z]{1,20}$ 검증). orders.exchange_order_id 와 조인하므로 콜레이션은 테이블 기본 유지
+  orig_order_no        VARCHAR(20)   NULL,                     -- orgn_odno: 정정·취소로 새 번호가 나왔을 때의 원 주문번호
+  order_time           TIME          NULL,                     -- ord_tmd(KST). ⚠ 주문 시각이다 — 체결 시각이 아니다(KIS 가 체결 시각을 주지 않는다)
+  symbol               VARCHAR(32)   NOT NULL,                 -- 앱 규약: 국내 6자리 / 해외 'NAS:TICKER'·'NYS:…'·'AMS:…'(ovrs_excg_cd NASD/NYSE/AMEX 를 기존 kis-overseas 규칙으로 매핑)
+  broker_symbol        VARCHAR(20)   NOT NULL,                 -- pdno 원문
+  exchange_code        VARCHAR(8)    NULL,                     -- 국내 excg_id_dvsn_cd(KRX·NXT·SOR …) / 해외 ovrs_excg_cd. 원문, CHECK 없음
+  side                 ENUM('buy','sell') NOT NULL,            -- sll_buy_dvsn_cd '01'=sell, '02'=buy
+  currency             CHAR(3)       COLLATE utf8mb4_bin NOT NULL,   -- 국내 'KRW' 고정 / 해외 tr_crcy_cd(현재 'USD'). bin 콜레이션이라 'usd' 는 CHECK 에서 거부된다
+  order_qty            DECIMAL(24,8) NULL,                     -- ord_qty / ft_ord_qty
+  filled_qty           DECIMAL(24,8) NOT NULL,                 -- 누적 체결수량 tot_ccld_qty / ft_ccld_qty. 소수 허용(미니스탁). 0 = 체결 없음(취소·미체결 행)
+  remaining_qty        DECIMAL(24,8) NULL,                     -- rmn_qty / nccs_qty
+  cancelled_qty        DECIMAL(24,8) NULL,                     -- 국내 cncl_cfrm_qty. 해외 NULL(필드 없음 — revise_cancel_code 로만 안다)
+  rejected_qty         DECIMAL(24,8) NULL,                     -- 국내 rjct_qty
+  avg_fill_price       DECIMAL(24,8) NOT NULL,                 -- 원통화 평균 체결가 avg_prvs / ft_ccld_unpr3. 체결 0 이면 0
+  fill_amount          DECIMAL(24,4) NOT NULL,                 -- 원통화 체결대금 tot_ccld_amt / ft_ccld_amt3 (수수료·세금 제외)
+  order_type_code      VARCHAR(8)    NULL,                     -- 국내 ord_dvsn_cd 원문
+  revise_cancel_code   VARCHAR(4)    NULL,                     -- 해외 rvse_cncl_dvsn 원문 / 국내 cncl_yn 원문
+  broker_status_name   VARCHAR(40)   NULL,                     -- 해외 prcs_stat_name / 국내 ccld_cndt_name 원문(표시용)
+  reject_reason        VARCHAR(100)  NULL,                     -- 해외 rjct_rson_name
+  fractional_hint      VARCHAR(40)   NULL,                     -- 해외 splt_buy_attr_name 원문(미니스탁 표지 후보 — 첫 라이브에서 확인). 국내 NULL
+  -- ── 수집기 파생열(raw_hash 변경 시 수집기가 재계산) ───────────────────────────────────────────────────
+  settle_state         ENUM('open','closed','unknown') NOT NULL DEFAULT 'unknown',
+  -- open = 잔량 > 0 (브로커에 아직 살아 있는 주문) / closed = 잔량 0 또는 취소·거부로 종결 / unknown = 잔량 필드를 읽을 수 없음(가짜 0 금지)
+  -- (L-4) 전이는 단방향: closed → open 은 취소·정정 신호가 있을 때만. 같은 수량의 낡은 'open' 응답이 닫힌 행을 되돌리지 못한다(앱 규칙, 시험으로 고정)
+  -- ── D2 파생열(upsert 가 건드리지 않음, derived_for_revision 으로 유효 revision 표시; fee_* 만 수집기가 unknown/estimated 상태에서 estimated 를 기록) ──
+  fee_native           DECIMAL(18,6) NULL,                     -- 원통화 수수료. fee_kind 와 짝(아래 CHECK). estimated 는 수집기가, allocated/actual 은 D2 가 쓴다
+  fee_kind             ENUM('unknown','estimated','allocated','actual') NOT NULL DEFAULT 'unknown',
+  -- unknown   = 아직 모름(NULL). 0 을 넣지 않는다.
+  -- estimated = 사용자 확정 요율 × 체결대금(미국 매수·매도 각 0.25% — T-067 §8.4). fee_rate_pct 필수. 수집기가 fee_kind IN ('unknown','estimated') 일 때만 revision 마다 재계산
+  -- allocated = 브로커 확정 합계(국내 일별 fee=매수+매도 합 → 그날 전체 체결대금 비례 / 국내 tl_tax=매도만 → 매도 대금 비례 / 해외 매도 제비용)를 배분한 값(D2) — 수집기는 덮어쓰지 않는다
+  -- actual    = 브로커가 그 주문에 대해 직접 준 확정값(현재 KIS 체결 조회에는 없다 — 자리만)
+  fee_rate_pct         DECIMAL(8,5)  NULL,                     -- estimated 일 때 적용 요율(%). 예 0.25000
+  tax_native           DECIMAL(18,6) NULL,                     -- 원통화 제세금(국내 매도 거래세 배분). 미상 NULL. 매수 행에는 쓰지 않는다
+  fx_usdkrw            DECIMAL(12,4) NULL,                     -- 원화 환산에 쓴 환율. 모르면 NULL — 1 이나 1380 폴백을 절대 넣지 않는다
+  fx_source            ENUM('none','kis_period_profit','app_snapshot','manual') NOT NULL DEFAULT 'none',
+  amount_krw_est       DECIMAL(18,2) NULL,                     -- fill_amount × fx_usdkrw (KRW 행은 = fill_amount, 수집기가 채움). 환율 없으면 NULL
+  app_order_id         BIGINT        NULL,                     -- 대사로 연결된 orders.id. FK 없음(소프트 링크). 2026-05-27 이후 거래는 전부 NULL 이 정상(앱 밖 거래)
+  reconcile_state      ENUM('unlinked','linked','conflict') NOT NULL DEFAULT 'unlinked',
+  -- linked = exchange_order_id·시장·주문일이 맞는 orders 행과 연결 / conflict = 연결됐지만 수량·단가가 executions 와 허용치 밖(보고만, 덮어쓰지 않음)
+  derived_for_revision INT           NULL,                     -- D2 파생열이 어느 revision 의 원문 기준인지. revision 과 다르면 낡은 파생값(D2 가 재계산 대상으로 집는다)
+  -- ── 수집 메타 ───────────────────────────────────────────────────────────────────────────────────────
+  source_tr            VARCHAR(12)   NOT NULL,                 -- 이 행을 마지막으로 쓴 TR
+  raw_hash             CHAR(64)      NOT NULL,                 -- 정규화 원문(키 정렬 JSON, 민감 필드 제거 후) SHA-256 — 변경 감지·멱등 upsert 기준. 대입은 항상 마지막
+  raw_json             JSON          NOT NULL,                 -- 원문 행(재파생용). 수집기가 ctac_tlno·inqr_ip_addr·ordr_empno 등 개인·단말 필드를 제거한 뒤 저장
+  revision             INT           NOT NULL DEFAULT 1,       -- raw_hash 가 바뀔 때마다 +1. 이전 원문은 broker_fill_revisions
+  first_seen_at        DATETIME      NOT NULL,
+  last_seen_at         DATETIME      NOT NULL,
+  first_run_id         BIGINT        NOT NULL,
+  last_run_id          BIGINT        NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_bf_natural (account_id, broker, market, order_date, broker_order_no),   -- 자연키: 재수집 멱등 upsert 의 기준(FOR UPDATE 대상)
+  KEY idx_bf_symbol_date (account_id, market, symbol, order_date),                      -- 종목별 원가·실현손익 계산
+  KEY idx_bf_order_time (account_id, order_date, order_time),                           -- 스냅샷 단계(prev→cur) 매칭
+  KEY idx_bf_app_order (app_order_id),
+  KEY idx_bf_stale_derived (derived_for_revision, revision),                            -- D2 가 낡은 파생값을 찾는 용도
+  CONSTRAINT fk_bf_account    FOREIGN KEY (account_id)   REFERENCES accounts (id),
+  CONSTRAINT fk_bf_first_run  FOREIGN KEY (first_run_id) REFERENCES broker_fill_runs (id),
+  CONSTRAINT fk_bf_last_run   FOREIGN KEY (last_run_id)  REFERENCES broker_fill_runs (id),
+  CONSTRAINT chk_bf_ccy       CHECK (currency IN ('KRW','USD')),
+  CONSTRAINT chk_bf_dates     CHECK (order_date >= '2000-01-01' AND order_date <= '2100-12-31'
+                                 AND (local_order_date IS NULL OR (local_order_date >= '2000-01-01' AND local_order_date <= '2100-12-31'))),
+  CONSTRAINT chk_bf_fp        CHECK (CHAR_LENGTH(account_fingerprint) = 16),
+  CONSTRAINT chk_bf_qty       CHECK (filled_qty >= 0 AND (order_qty IS NULL OR order_qty >= 0) AND (remaining_qty IS NULL OR remaining_qty >= 0)),
+  CONSTRAINT chk_bf_amount    CHECK (fill_amount >= 0 AND avg_fill_price >= 0),
+  CONSTRAINT chk_bf_fee       CHECK ((fee_kind = 'unknown' AND fee_native IS NULL AND fee_rate_pct IS NULL)
+                                  OR (fee_kind = 'estimated' AND fee_native IS NOT NULL AND fee_rate_pct IS NOT NULL)
+                                  OR (fee_kind IN ('allocated','actual') AND fee_native IS NOT NULL)),
+  CONSTRAINT chk_bf_tax_sell  CHECK (tax_native IS NULL OR side = 'sell'),
+  CONSTRAINT chk_bf_fx        CHECK ((fx_source = 'none' AND fx_usdkrw IS NULL AND (currency = 'KRW' OR amount_krw_est IS NULL))
+                                  OR (fx_source <> 'none' AND fx_usdkrw IS NOT NULL AND fx_usdkrw > 0)),
+  CONSTRAINT chk_bf_derived   CHECK (derived_for_revision IS NULL OR (derived_for_revision >= 1 AND derived_for_revision <= revision)),
+  CONSTRAINT chk_bf_derived2  CHECK ((fee_kind IN ('unknown','estimated') AND fx_source = 'none' AND tax_native IS NULL AND app_order_id IS NULL AND reconcile_state = 'unlinked')
+                                  OR derived_for_revision IS NOT NULL),   -- D2 파생값이 하나라도 있으면 유효 revision 표지가 있어야 한다
+  CONSTRAINT chk_bf_hash      CHECK (CHAR_LENGTH(raw_hash) = 64),
+  CONSTRAINT chk_bf_rev       CHECK (revision >= 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ------------------------------------------------------------------------------------------------------------
+-- 3) broker_fill_revisions — broker_fills 행의 원문이 바뀔 때(부분체결 진행·정정·취소 확정) 교체된 이전 원문. 추가 전용, UPDATE·DELETE 없음.
+--    v1 범위 판단: 소비자는 아직 없지만 "부분체결 상태 유지"(S01)의 유일한 증거라 포함한다. D1a 를 더 줄여야 하면 이 테이블만 빼도 다른 테이블은 영향이 없다.
+-- ------------------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS broker_fill_revisions (
+  id             BIGINT        NOT NULL AUTO_INCREMENT,
+  fill_id        BIGINT        NOT NULL,
+  revision       INT           NOT NULL,                     -- 교체된(이전) revision 번호
+  raw_hash       CHAR(64)      NOT NULL,
+  raw_json       JSON          NOT NULL,
+  filled_qty     DECIMAL(24,8) NOT NULL,                     -- 이전 값(빠른 대조용 — raw_json 에도 있다)
+  avg_fill_price DECIMAL(24,8) NOT NULL,
+  seen_from      DATETIME      NOT NULL,                     -- 이 원문이 처음 보인 시각
+  seen_until     DATETIME      NOT NULL,                     -- 이 원문이 마지막으로 보인 시각(교체 직전)
+  run_id         BIGINT        NOT NULL,                     -- 교체를 일으킨 실행
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_bfrv_fill_rev (fill_id, revision),
+  CONSTRAINT fk_bfrv_fill FOREIGN KEY (fill_id) REFERENCES broker_fills (id),
+  CONSTRAINT fk_bfrv_run  FOREIGN KEY (run_id)  REFERENCES broker_fill_runs (id),
+  CONSTRAINT chk_bfrv_hash CHECK (CHAR_LENGTH(raw_hash) = 64),
+  CONSTRAINT chk_bfrv_rev  CHECK (revision >= 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ------------------------------------------------------------------------------------------------------------
+-- 4) broker_realized_pnl — KIS 기간손익 조회 결과(브로커가 계산한 실현손익·확정 수수료·세금). 앱 계산의 **교차검증 정본** + (M-B) fills 창의 양성 대조 짝.
+--    그레인이 시장마다 다르다(캡처 실측): 국내 TTTC8708R = **일별 합산**(종목 없음, fee=매수+매도 합, tl_tax=매도만) / 해외 TTTS3039R = **종목·일별 매도 집계**(원가·환율 포함).
+--    symbol 은 NULL 대신 '' 를 쓴다 — MariaDB 의 UNIQUE 는 NULL 끼리를 다른 값으로 보므로 NULL 이면 일별 합산 행의 중복을 막지 못한다.
+-- ------------------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS broker_realized_pnl (
+  id                   BIGINT        NOT NULL AUTO_INCREMENT,
+  account_id           INT           NOT NULL DEFAULT 1,
+  account_fingerprint  CHAR(16)      NOT NULL,
+  broker               VARCHAR(8)    NOT NULL DEFAULT 'kis',
+  market               ENUM('domestic','overseas') NOT NULL,
+  trade_date           DATE          NOT NULL,               -- 국내 trad_dt / 해외 trad_day
+  grain                ENUM('day','day_symbol') NOT NULL,    -- day = 국내 일별 합산 / day_symbol = 해외 종목·일별
+  symbol               VARCHAR(32)   NOT NULL DEFAULT '',    -- day_symbol 이면 앱 규약 심볼, day 이면 ''
+  broker_symbol        VARCHAR(20)   NOT NULL DEFAULT '',    -- ovrs_pdno 원문, day 이면 ''
+  exchange_code        VARCHAR(8)    NULL,                   -- 해외 ovrs_excg_cd
+  currency             CHAR(3)       COLLATE utf8mb4_bin NOT NULL,   -- 국내 KRW / 해외 원통화(USD)
+  sell_qty             DECIMAL(24,8) NULL,                   -- sll_qty1 / slcl_qty
+  buy_qty              DECIMAL(24,8) NULL,                   -- 국내 buy_qty1
+  sell_amount_native   DECIMAL(24,4) NULL,                   -- sll_amt / frcr_sll_amt_smtl1
+  buy_amount_native    DECIMAL(24,4) NULL,                   -- 국내 buy_amt(그날 매수대금) / 해외 frcr_pchs_amt1(매도분 원가 — 의미가 다르다, 소비자 주의)
+  avg_sell_price       DECIMAL(24,8) NULL,                   -- 해외 avg_sll_unpr
+  avg_buy_price        DECIMAL(24,8) NULL,                   -- 해외 pchs_avg_pric(매도분 평균 매입단가 = 원가 미상 매도의 원가 원천)
+  realized_pnl_native  DECIMAL(24,4) NOT NULL,               -- rlzt_pfls / ovrs_rlzt_pfls_amt
+  fee_native           DECIMAL(18,6) NULL,                   -- 국내 fee(일별 확정, 매수+매도 합) / 해외 stck_sll_tlex(매도 제비용 확정)
+  tax_native           DECIMAL(18,6) NULL,                   -- 국내 tl_tax(일별 확정, 매도만)
+  loan_interest_native DECIMAL(18,6) NULL,                   -- 국내 loan_int
+  pnl_rate_pct         DECIMAL(10,4) NULL,                   -- pfls_rt / pftrt
+  fx_usdkrw            DECIMAL(12,4) NULL,                   -- 해외 exrt
+  fx_first_notice      DECIMAL(12,4) NULL,                   -- 해외 frst_bltn_exrt(최초 고시 환율)
+  source_tr            VARCHAR(12)   NOT NULL,
+  raw_hash             CHAR(64)      NOT NULL,
+  raw_json             JSON          NOT NULL,
+  revision             INT           NOT NULL DEFAULT 1,     -- 원문이 바뀌면 +1 (revisions 테이블은 두지 않는다 — 정산 후 거의 바뀌지 않으며 바뀌면 run.error 로 드러낸다)
+  first_seen_at        DATETIME      NOT NULL,
+  last_seen_at         DATETIME      NOT NULL,
+  first_run_id         BIGINT        NOT NULL,
+  last_run_id          BIGINT        NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_brp_natural (account_id, broker, market, trade_date, grain, symbol),
+  -- ⚠ 같은 (날, 종목) 에 KIS 가 행을 둘 이상 돌려주면(주문별로 쪼개는 경우 — 라이브 미확인) 수집기는 메모리 중복 검사에서 그 키를 **쓰지 않고**
+  --   run.duplicate_keys++ → status='incomplete'(덮어써서 사실을 잃는 것보다 비어 있는 쪽이 낫다). 첫 라이브 확인 목록 항목.
+  KEY idx_brp_symbol_date (account_id, market, symbol, trade_date),
+  CONSTRAINT fk_brp_account   FOREIGN KEY (account_id)   REFERENCES accounts (id),
+  CONSTRAINT fk_brp_first_run FOREIGN KEY (first_run_id) REFERENCES broker_fill_runs (id),
+  CONSTRAINT fk_brp_last_run  FOREIGN KEY (last_run_id)  REFERENCES broker_fill_runs (id),
+  CONSTRAINT chk_brp_ccy    CHECK (currency IN ('KRW','USD')),
+  CONSTRAINT chk_brp_dates  CHECK (trade_date >= '2000-01-01' AND trade_date <= '2100-12-31'),
+  CONSTRAINT chk_brp_fp     CHECK (CHAR_LENGTH(account_fingerprint) = 16),
+  CONSTRAINT chk_brp_grain  CHECK ((grain = 'day' AND symbol = '' AND broker_symbol = '') OR (grain = 'day_symbol' AND symbol <> '')),
+  CONSTRAINT chk_brp_hash   CHECK (CHAR_LENGTH(raw_hash) = 64),
+  CONSTRAINT chk_brp_rev    CHECK (revision >= 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ------------------------------------------------------------------------------------------------------------
+-- 5) broker_position_snapshots — **조회일(오늘) 기준** 보유·평균매입가(KIS 잔고 TTTC8434R·CTRP6504R). 과거 기준일 조회는 이 TR 들에 없다(M1).
+--    쓰임: ① 수집 시작일의 첫 스냅샷(is_baseline=1) = 그날 이후 체결과 합쳐 보유 수량·원가를 앞으로 대사하는 출발점
+--         ② 매일 1행씩 쌓여 "baseline + 누적 체결 = 오늘 잔고" 대사(불일치 = 수집 누락·앱 밖 거래 신호) ③ (M-B) 두 TR 모두 행 0 인 창의 양성 대조(창 양끝 보유 수량 동일)
+--    (L-7) baseline 절단 규칙: 잔고는 조회 시점까지의 당일 체결을 이미 포함한다(TTTC8434R thdt_buyqty/thdt_sll_qty · CTRP6504R thdt_buy_ccld_qty1/thdt_sll_ccld_qty1 — raw_json 에 보존).
+--         대사식: (baseline.qty − 당일 매수 + 당일 매도) + Σ(order_date ≥ as_of 인 체결의 ±filled_qty) = 비교 대상 스냅샷의 (qty − 그 날 당일 매수 + 당일 매도).
+--         즉 "그날 0시 기준 수량"으로 양끝을 맞추고 그 사이 체결을 주문일 기준으로 더한다. 첫 실행의 7일 창 체결 중 as_of 이전 주문일 행은 baseline 에 이미 반영돼 있으므로 더하지 않는다.
+-- ------------------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS broker_position_snapshots (
+  id                      BIGINT        NOT NULL AUTO_INCREMENT,
+  account_id              INT           NOT NULL DEFAULT 1,
+  account_fingerprint     CHAR(16)      NOT NULL,
+  broker                  VARCHAR(8)    NOT NULL DEFAULT 'kis',
+  market                  ENUM('domestic','overseas') NOT NULL,
+  as_of                   DATE          NOT NULL,            -- 조회일(KST). 잔고 TR 에는 기준일 파라미터가 없어 항상 "조회 시점의 잔고"다
+  is_baseline             TINYINT(1)    NOT NULL DEFAULT 0,  -- 1 = 수집 시작(또는 재기준) 스냅샷. 사용자·Leader 가 정한 날의 행에만 1
+  symbol                  VARCHAR(32)   NOT NULL,            -- 앱 규약
+  broker_symbol           VARCHAR(20)   NOT NULL,            -- pdno 원문
+  exchange_code           VARCHAR(8)    NULL,
+  currency                CHAR(3)       COLLATE utf8mb4_bin NOT NULL,
+  qty                     DECIMAL(24,8) NOT NULL,            -- hldg_qty / cblc_qty13 (소수 허용 — 미니스탁)
+  avg_price_native        DECIMAL(24,8) NOT NULL,            -- pchs_avg_pric / avg_unpr3
+  purchase_amount_native  DECIMAL(24,4) NULL,                -- pchs_amt / frcr_pchs_amt
+  cost_includes_fee       ENUM('unknown','yes','no') NOT NULL DEFAULT 'unknown',   -- KIS 매입금액에 수수료가 포함되는지 — 미확인이라 unknown 으로 시작(D2 에서 판별)
+  source_tr               VARCHAR(12)   NOT NULL,            -- TTTC8434R / CTRP6504R
+  raw_hash                CHAR(64)      NOT NULL,
+  raw_json                JSON          NOT NULL,            -- 당일 매수/매도 체결 수량 필드 포함(L-7 절단 규칙의 입력)
+  captured_at             DATETIME      NOT NULL,
+  run_id                  BIGINT        NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_bps_natural (account_id, broker, market, as_of, symbol),
+  KEY idx_bps_baseline (account_id, market, is_baseline, as_of),
+  CONSTRAINT fk_bps_account FOREIGN KEY (account_id) REFERENCES accounts (id),
+  CONSTRAINT fk_bps_run     FOREIGN KEY (run_id)     REFERENCES broker_fill_runs (id),
+  CONSTRAINT chk_bps_ccy    CHECK (currency IN ('KRW','USD')),
+  CONSTRAINT chk_bps_dates  CHECK (as_of >= '2000-01-01' AND as_of <= '2100-12-31'),
+  CONSTRAINT chk_bps_fp     CHECK (CHAR_LENGTH(account_fingerprint) = 16),
+  CONSTRAINT chk_bps_qty    CHECK (qty >= 0 AND avg_price_native >= 0),
+  CONSTRAINT chk_bps_flag   CHECK (is_baseline IN (0,1)),
+  CONSTRAINT chk_bps_hash   CHECK (CHAR_LENGTH(raw_hash) = 64)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ============================================================================================================
+-- 적용 후 확인(읽기 전용):
+--   SHOW CREATE TABLE broker_fill_runs;        -- effective_to 생성열(PERSISTENT), chk_bfr_complete·chk_bfr_kind_tr·chk_bfr_market_tr·chk_bfr_sum_unav·chk_bfr_3m_tr·chk_bfr_positive
+--   SHOW CREATE TABLE broker_fills;            -- uq_bf_natural, FK 3개, CHECK 12개, currency utf8mb4_bin, COLLATE utf8mb4_general_ci
+--   SHOW CREATE TABLE broker_realized_pnl;     -- uq_brp_natural (symbol NOT NULL DEFAULT '')
+--   SELECT COUNT(*) FROM broker_fill_runs;     -- 0 (수집기 첫 실행 전)
+--   SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE 'broker_%';
+--
+-- 커버리지 질의 모양(참고 — D3 소비자가 쓸 문장, 여기서 실행하지 않는다). 단계 [prev_ts − L, cur_ts] 가 어느 complete 창 하나에 통째로 들어가는가:
+--   SELECT 1 FROM broker_fill_runs
+--    WHERE account_id = ? AND market = ? AND kind = 'fills' AND status = 'complete'
+--      AND TIMESTAMP(window_from) <= ? /* prev_ts − L */ AND effective_to >= ? /* cur_ts */
+--    LIMIT 1;
+--   창 둘 이상을 이어야 덮이는 단계는 앱이 구간 합집합으로 판정한다 — 병합 조건은 **다음 창의 TIMESTAMP(window_from) ≤ 앞 창의 effective_to** (L-2).
+--   날짜 인접(window_to+1일 = 다음 window_from)만으로 병합하면 앞 창이 당일 07:25 에 돌았을 때 그날 오후가 "커버됨"으로 읽힌다(검토 재현) — 금지.
+--   테이블이 없으면(1146) 모든 단계는 coverage_gap. "없음" 주장(부재)은 positive_check='confirmed' 창에서만(M-B).
+--
+-- 수집기 쓰기 계약(참고 — 코드가 쓸 문장, 여기서 실행하지 않는다):
+--   for attempt in 1..3:
+--     BEGIN;
+--     SELECT id, revision, raw_hash, filled_qty, settle_state, revise_cancel_code, cancelled_qty, fee_kind, first_seen_at, last_seen_at, raw_json, avg_fill_price
+--       FROM broker_fills WHERE account_id=? AND broker=? AND market=? AND order_date=? AND broker_order_no=? FOR UPDATE;
+--     -- 없음 → INSERT (rows_inserted++)
+--     -- 있음 & raw_hash 같음 → UPDATE last_seen_at=?, last_run_id=? (세지 않음)
+--     -- 있음 & raw_hash 다름 & [새 filled_qty < 현재 filled_qty  또는  현재 settle_state='closed' 이고 새 settle_state='open'] & 취소·정정 신호 없음
+--     --        → 쓰지 않음(rows_stale_skipped++, run.error 에 주문번호 메모)                                                       (단조 가드, L-4)
+--     -- 있음 & raw_hash 다름 → INSERT broker_fill_revisions(이전 행) ; UPDATE 원문열·settle_state·(KRW 면 amount_krw_est),
+--     --        fee_native/fee_kind/fee_rate_pct 는 현재 fee_kind IN ('unknown','estimated') 일 때만 estimated 재계산(allocated/actual 보존, L-5),
+--     --        revision=revision+1, last_seen_at, last_run_id, raw_hash=?  ← **반드시 마지막 대입**(D2 파생열·derived_for_revision 은 건드리지 않는다) (rows_updated++)
+--     COMMIT; break;
+--   catch 1213(ER_LOCK_DEADLOCK) | 1205(ER_LOCK_WAIT_TIMEOUT): ROLLBACK; sleep 10~50ms 지터; 재시도(최대 2회). 그 뒤에도 실패면 이 행만 건너뛰고 run.error 메모.   (M-A)
+--   ※ 단일문 ON DUPLICATE KEY UPDATE 를 쓰더라도 `raw_hash = VALUES(raw_hash)` 는 목록의 마지막이어야 한다(검토 재현: 앞에 두면 변경 영구 유실).
+--   ※ fee_kind 는 actual > allocated > estimated > unknown 순으로 강한 근거만 덮어쓴다(앱 규칙, 시험으로 고정). fx_source 도 kis_period_profit > app_snapshot > manual 순.
+-- ============================================================================================================
+
+-- 되돌리기(데이터 함께 삭제 — 사용자 승인 사항. 코드 revert 와 무관하게 존치해도 무해하다. FK 역순):
+-- DROP TABLE IF EXISTS broker_fill_revisions;
+-- DROP TABLE IF EXISTS broker_position_snapshots;
+-- DROP TABLE IF EXISTS broker_realized_pnl;
+-- DROP TABLE IF EXISTS broker_fills;
+-- DROP TABLE IF EXISTS broker_fill_runs;
+-- (system_config 키는 이 DDL 이 만들지 않는다 — 크론 스위치 `broker_fills_cron_enabled` 는 코드가 읽는 키이며 사용자가 운영 설정으로 넣는다. 수집 상태는 전부 broker_fill_runs 에 있다.)
