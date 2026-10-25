@@ -277,6 +277,7 @@ tags:
 
 ## Doing
 
+
 - 🟡 **[T-074, 2026-10-23, R1] 자금 이동(입금·출금·환전) 원장 — 앱에서 기록하고 순입금을 반영해 자산 손익 재계산** → [[T-074-cash-flow-ledger]] (사용자 요청 10-23 · 데모 full(designer) · analyst 회계 자문 중 · **달러 예수금 불일치 사용자 재확인 대기**: KIS 앱 $118.60 vs 시스템 ≈$1,918.6, 차이 정확히 $1,800)
 - 🟡 **[T-075, 2026-10-23, R2] 커밋 안전장치 SAFETY_PATHS 확장 — `^src/app/api/strategies/`·`^scripts/migrations/`·`^src/lib/db.ts` 추가** → [[T-075-safety-paths-extension]] (사용자 "권고대로 추가" · Developer 구현 중)
 - 🟡 **[T-076, 2026-10-23, R2] 비상 전체 취소 확장 — 부분체결 잔량도 취소 요청(T-071 WP-4)** → [[T-076-emergency-cancel-partial-fills]] (사용자 "수용…작업진행"을 구현 승인으로 해석 — **해석 확인 필요** · Stage 0 읽기 전용 조사 중)
@@ -393,6 +394,7 @@ tags:
 
 ## Done
 
+- ✅ **[2026-10-26] [[T-090-hook-safety-paths-auth-routes]] — 커밋 훅 `SAFETY_PATHS` 에 인증 API 디렉토리 `^src/app/api/auth/` 추가(R2)** — 사용자 결정(10-26 "'^src/app/api/auth/ 추가 여부'에 대해서는 추가작업 진행해줘"). 세션 발급 입구 라우트(`app-exchange`·`[provider]`·`login`·`signup` 등 새로 걸리는 파일 11개)를 Reviewer 판정 없이는 커밋하지 못하게 했다. 훅 로직 diff 0·목록 1줄 + 근거 주석 + 시험 + CLAUDE.md 문구. Reviewer 통과(조건 1회 반영)·Codex C2 지적 1건 오탐·QA 51/0. **로컬 커밋 `53509bd`, 08:18 main 병합(훅 활성화 완료, 08:19 설치된 shim 에서 auth 라우트 차단 확인), push 는 사용자 승인 대기**(미push — origin 은 `3cc7418`). 앱 런타임 코드 변경 없음
 - ✅ **[2026-10-26] [[T-084-mobile-app-m1-shell]] — 모바일 앱 "주식캐기" M1(Capacitor 안드로이드 앱 + APK 다운로드·업데이트 안내)** — **사용자 실기기 확인 완료**(사용자 발화 그대로: "T-084에 대한 확인도 완료했어", 10-26 06:52 이전 — 항목별 결과는 받지 않음). 배포·APK 공개 10-25 20:53(`46d4148`·`b435399`, 릴리스 `20261025-205329-b4353994`, v1.0.0), 이후 [[T-088-app-google-login]] 로 1.0.1(앱 Google 로그인) 공개. 잠복 결함 2건(`gradlew` git 모드·옛 빌드 캐시)은 T-088 에서 수정 완료. 후속(별도 task): M2 App Links(텔레그램 링크→앱)·M3 앱 잠금·M4 푸시(FCM)
 
 - ✅ **[2026-10-26] [[T-088-app-google-login]] — 앱 "주식캐기" Google 로그인(Chrome 창 로그인 + 딥링크 복귀 + 1회용 코드 PKCE, 웹·앱 한 화면)** — **사용자 실기기 검증 완료**(사용자 발화 그대로: "실기기에서 앱설치해서 로그인 검증완료했어", 10-26 06:03 이전). 운영 반영: 05:24 DB `app_auth_code` 적용 · 05:25:51 웹 `1b379ac`(릴리스 `20261026-052603-1b379acc` ok) · 05:30 APK 1.0.1(versionCode 2, sha256 `a8c49729…`) 공개와 `app_release` INSERT. 안전장치 스위치·감사 로그 배포 전후 불변. 후속 후보(비차단): Codex 지적(앱 state 만료·쿠키 유실 시 웹 invalid_state)·훅 `SAFETY_PATHS` 에 `^src/app/api/auth/` 추가(사용자 결정 보류)·화면 시험 공백·M2 App Links

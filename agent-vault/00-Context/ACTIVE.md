@@ -6,11 +6,18 @@ tags:
 ---
 # 현재 상태
 
+## 2026-10-26 08:21 — T-090 완료: 커밋 훅이 인증 API(`src/app/api/auth/`)를 감시 — 로컬 병합까지, push 승인 대기
+
+- **[[T-090-hook-safety-paths-auth-routes]]**: `SAFETY_PATHS` 에 `'^src/app/api/auth/'` 추가(새로 걸리는 파일 11개) — 이제 `app-exchange`·`[provider]`·`login`·`signup` 등 세션 발급 입구 수정은 Reviewer 판정 줄이 없으면 커밋이 막힌다. 로컬 커밋 `53509bd` 를 08:18 main 에 병합했고 **이 서버에서는 이미 활성**(설치된 shim 이 메인 트리 훅을 실행 — 08:19 확인). **origin 에는 없다(push 대기: `53509bd` + 문서 전용 커밋)** — push 는 곧 배포라 사용자 승인 사항, 오늘 15:40 KST 이후 창 권고. 앱·웹 동작 변화 없음.
+- **새 task 번호는 T-091 이상**(T-090 사용). 이전 "T-090 이상" 안내를 담은 아래 항목들은 이 줄로 대체된다.
+- **새 사용자 결정(T-090 에서 파생)**: 훅 밖에 남은 인증 관련 파일 — `src/lib/auth/signup-gate.ts`·`signup-request.ts`·`src/lib/mail/send.ts`·`src/lib/safe-next-path.ts`·`src/app/api/profile/password/`·`src/__tests__/middleware-public-paths.test.ts` 를 별도 task 로 넣을지(권고: 앞 셋은 검토, 나머지 보류).
+- **T-091 후보(미착수)**: 옛 앱 버전(1.0.0)이 새 웹을 받는 버전 어긋남 방지 — 웹이 먼저 배포돼 옛 앱에도 Google 버튼이 보였고 딥링크 수신 설정이 없어 첫 로그인이 무응답이었다([[T-088-app-google-login]] ⑫ 의미 3). 권고: M2(App Links) 때 같이 처리.
+
 ## 2026-10-26 06:52 — 앱 런칭 완료: T-084 M1·T-088 앱 Google 로그인·T-089 오픈 리다이렉트 차단 (사용자 실기기 확인 완료)
 
 - **운영 반영(05:21~05:30 KST)**: T-089 `6d6efc0`(릴리스 `20261026-052150-6d6efc09`) → 운영 DB `app_auth_code` 적용 → T-088 `1b379ac`(릴리스 `20261026-052603-1b379acc`) → APK **1.0.1(versionCode 2)** 공개와 `app_release` INSERT. 안전장치 스위치·감사 로그 배포 전후 불변, cron 1행. 사용자 검증: "실기기에서 앱설치해서 로그인 검증완료했어"([[T-088-app-google-login]]) · "T-084에 대한 확인도 완료했어"([[T-084-mobile-app-m1-shell]]). T-089 는 [[T-089-open-redirect-next-path]].
-- **앞선 원장 작업 일시 중지의 재개 조건("앱 런칭 뒤")이 충족됐다.** 재개 문구 "StockInvest 작업 이어서 진행해줘", 진입점 [[RESUME]] — 제일 먼저 10-26 07:20 이후 `broker_fill_runs` 의 cron run 확인. 새 task 번호는 T-090 이상.
-- **사용자 결정 보류**: 커밋 훅 `SAFETY_PATHS` 에 `^src/app/api/auth/`(세션 발급 `app-exchange`·`[provider]`) 추가 여부 · 이번 작업 것이 아닌 `~/.node-local/stockinvest-*` 10개(약 9GB) 삭제 여부. 후속: T-084 의 M2 App Links→M3 앱 잠금→M4 푸시 · T-088 후속 후보(Codex 지적: 앱 state 만료·쿠키 유실 시 웹 `invalid_state`, 화면 시험 공백).
+- **앞선 원장 작업 일시 중지의 재개 조건("앱 런칭 뒤")이 충족됐다.** 재개 문구 "StockInvest 작업 이어서 진행해줘", 진입점 [[RESUME]] — 제일 먼저 10-26 07:20 이후 `broker_fill_runs` 의 cron run 확인. 새 task 번호는 T-091 이상(08:21 정정 — T-090 은 훅 작업이 사용).
+- **사용자 결정 보류**: ~~커밋 훅 `SAFETY_PATHS` 에 `^src/app/api/auth/` 추가 여부~~(해소 — [[T-090-hook-safety-paths-auth-routes]] 로 추가됨) · 이번 작업 것이 아닌 `~/.node-local/stockinvest-*` 10개(약 9GB) 삭제 여부. 후속: T-084 의 M2 App Links→M3 앱 잠금→M4 푸시 · T-088 후속 후보(Codex 지적: 앱 state 만료·쿠키 유실 시 웹 `invalid_state`, 화면 시험 공백).
 - 정리(06:08): 임시 복사본 25개·worktree 3개·브랜치 3개·깨진 Synology ref 삭제 — 저장소 worktree 는 메인 트리 하나(다음 작업은 새 worktree 로).
 
 
