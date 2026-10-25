@@ -14,6 +14,7 @@
  */
 import type { DailyCandle } from '../types';
 import { toYahooPathSegment } from './symbol-validation';
+import { trackCall } from '@/lib/api-usage';
 
 const HOSTS = ['https://query1.finance.yahoo.com', 'https://query2.finance.yahoo.com'];
 
@@ -125,10 +126,11 @@ export async function fetchYahooDailyHistory(
   for (const host of HOSTS) {
     const url = `${host}/v8/finance/chart/${seg}?range=${encodeURIComponent(range)}&interval=1d&events=div%2Csplit`;
     try {
-      const res = await doFetch(url, {
+      // T-040 호출 기록 — 종목·URL 은 남기지 않는다(op 는 상수). 호스트별 시도 1번 = 한 줄.
+      const res = await trackCall('yahoo-finance', 'chart.daily', () => doFetch(url, {
         headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
-      });
+      }));
       if (!res.ok) {
         lastErr = `HTTP ${res.status} from ${host}`;
         continue;

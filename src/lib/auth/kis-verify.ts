@@ -29,6 +29,8 @@
  *    위에 이미 적힌 **토큰 무효화**이며, 그쪽이 지배적이다.
  */
 
+import { trackCall } from '@/lib/api-usage';
+
 /** 모의투자는 별도 도메인 — 토큰도 환경별로 따로 발급된다. */
 export function kisBaseUrlForMock(mock: boolean): string {
   return mock
@@ -97,12 +99,13 @@ export async function verifyKisCredentials(
   const base = kisBaseUrlForMock(mock);
   let res: Response;
   try {
-    res = await fetchImpl(`${base}/oauth2/tokenP`, {
+    // T-040 호출 기록 — 한 줄에는 api·op·성공 여부·상태·시간만 남는다(앱키·본문·URL 없음).
+    res = await trackCall('kis', 'verify.token-p', () => fetchImpl(`${base}/oauth2/tokenP`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'client_credentials', appkey: appKey, appsecret: appSecret }),
       signal: AbortSignal.timeout(15_000),
-    });
+    }));
   } catch {
     // 예외 객체에는 요청 본문이 담길 수 있으므로 절대 그대로 로그하지 않는다.
     console.error('[kis-verify] KIS 토큰 요청 실패 — 네트워크 오류');

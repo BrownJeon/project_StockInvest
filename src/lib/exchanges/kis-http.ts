@@ -46,11 +46,23 @@
  *
  * 반환된 `Response` 도 표준 스펙대로 **본문은 한 번만** 읽을 수 있다. 이미 읽은 뒤 원문이 다시
  * 필요하면 {@link kisBodyText} 로 얻는다 (진단 로그·에러 메시지용).
+ *
+ * ## §호출 기록 (T-040)
+ *
+ * 실제 HTTP 시도 1번마다 `api-usage` 한 줄(`api:'kis'`, `op` = `label` 변환)을 남긴다.
+ *  - 레이트리밋 재시도도 KIS 에 실제로 간 호출이므로 **시도마다** 한 줄, 실패(`err:'http'`, 실제 상태 — 보통 500).
+ *    드물게 HTTP 2xx + 레이트리밋 본문이면 아래 rt_cd 규칙과 같게 `err:'other'`, status 그대로.
+ *  - HTTP 2xx 인데 본문 `rt_cd` 가 `'0'` 이 아니면(업무 실패) 실패(`err:'other'`, `status` 200 그대로).
+ *    `rt_cd` 값 자체는 남기지 않는다 — 판정은 불리언으로만 반영한다.
+ *  - 유량 대기열 초과·대기 시간초과(`KisThrottle*Error`)는 KIS 에 가지 않았으므로 기록하지 않는다.
+ *  - 시간은 **토큰을 받은 뒤**부터 잰다(대기열 시간 제외 — 타임아웃과 같은 기준).
+ * 기록은 `@/lib/api-usage` 를 거치며 **던지지 않는다** — 반환값·예외·재시도·스로틀 동작은 기록 전과 같다.
  */
 
 import {
   acquireKisSlot, currentKisPriority, DEFAULT_MAX_QUEUE_WAIT_MS, type KisPriority,
 } from './kis-throttle';
+import { logUsage, opOf, usageClock, usageErrKind } from '@/lib/api-usage';
 
 export interface KisFetchOptions {
   /** 미지정 시 {@link currentKisPriority} — 즉 `withKisPriority` 컨텍스트를 따른다. */
@@ -126,6 +138,60 @@ function backoffFor(attempt: number): number {
 
 const sleep = (ms: number) => new Promise<void>(r => { const t = setTimeout(r, ms); t.unref?.(); });
 
+/**
+ * KIS 업무 결과 코드 `rt_cd`(최상위 키). `'0'` 이 성공. 없으면(`tokenP` 등) `null`.
+ * 본문 전체를 JSON 파싱하지 않고 키 하나만 찾는다(대량 응답에서도 비용이 작게). 던지지 않는다.
+ */
+const RT_CD_PATTERN = /"rt_cd"\s*:\s*"([^"]*)"/;
+function rtCdOf(body: string): string | null {
+  try {
+    const m = RT_CD_PATTERN.exec(body);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 시도 1번의 기록. 던지지 않는다. op 는 코드 상수 label 에서만 만든다. */
+function logKisAttempt(label: string, t0: number, res: Response, body: string, rateLimited: boolean): void {
+  try {
+    const op = opOf(label);
+    const ms = usageClock() - t0;
+    if (!res.ok) {
+      // HTTP 실패(레이트리밋 HTTP 500 포함 — 사용자 결정 2026-10-10: 시도마다 http/실제 상태).
+      logUsage({ api: 'kis', op, ok: false, status: res.status, ms, err: 'http' });
+      return;
+    }
+    if (rateLimited) {
+      // HTTP 2xx 인데 본문이 레이트리밋 — HTTP 상태는 성공이므로 rt_cd 업무 실패와 같은 규칙(other/200).
+      // (KIS 는 실제로 500 으로 주므로 드문 경우다. Leader 결정 2026-10-18, Reviewer L-2)
+      logUsage({ api: 'kis', op, ok: false, status: res.status, ms, err: 'other' });
+      return;
+    }
+    const rtCd = rtCdOf(body);
+    if (rtCd !== null && rtCd !== '0') {
+      // HTTP 200 + 업무 실패(사용자 결정 2026-10-10): 실패로 센다. err 는 전송 계층이 아니므로 'http' 가 아니다.
+      logUsage({ api: 'kis', op, ok: false, status: res.status, ms, err: 'other' });
+      return;
+    }
+    logUsage({ api: 'kis', op, ok: true, status: res.status, ms });
+  } catch {
+    /* 기록 실패는 본 흐름을 바꾸지 않는다 */
+  }
+}
+
+/** fetch 자체가 던진 시도의 기록. 자체 타이머 abort 는 timeout. 던지지 않는다. */
+function logKisThrown(label: string, t0: number, e: unknown, timedOut: boolean): void {
+  try {
+    logUsage({
+      api: 'kis', op: opOf(label), ok: false, status: 0, ms: usageClock() - t0,
+      err: timedOut ? 'timeout' : usageErrKind(e),
+    });
+  } catch {
+    /* 기록 실패는 본 흐름을 바꾸지 않는다 */
+  }
+}
+
 /** 본문을 가질 수 없는 상태코드 — `new Response(body, {status})` 가 던진다. */
 const NULL_BODY_STATUS = new Set([101, 103, 204, 205, 304]);
 
@@ -181,15 +247,20 @@ export async function kisFetch(
       timer.unref?.();
     }
 
+    const t0 = usageClock();   // §호출 기록 — 토큰을 받은 뒤부터 잰다
     let res: Response;
     try {
       res = await fetch(url, ctrl ? { ...init, signal: ctrl.signal } : init);
+    } catch (e) {
+      logKisThrown(label, t0, e, ctrl?.signal.aborted === true);
+      throw e;
     } finally {
       if (timer) clearTimeout(timer);
     }
 
     const body = await res.text().catch(() => '');
     const rateLimited = isKisRateLimitBody(body);
+    logKisAttempt(label, t0, res, body, rateLimited);
     const replay = replayResponse(res, body);
     META.set(replay, { rateLimited, attempts: attempt + 1, priority, body });
 

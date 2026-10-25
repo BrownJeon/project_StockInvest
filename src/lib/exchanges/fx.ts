@@ -11,6 +11,7 @@
  */
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
+import { trackCall, type Op } from '@/lib/api-usage';
 
 const PAIR = 'USD_KRW';
 const TTL_MS = 5 * 60 * 1000;
@@ -30,6 +31,8 @@ function fallbackRate(): number {
 
 interface FxSource {
   name: string;
+  /** T-040 호출 기록용 작업 이름 — 코드 상수 */
+  op: Op;
   url: string;
   parse: (data: unknown) => number | null;
 }
@@ -38,6 +41,7 @@ const FX_SOURCES: FxSource[] = [
   // ECB 일중 환율, 키 불필요
   {
     name: 'frankfurter',
+    op: 'latest.frankfurter',
     url: 'https://api.frankfurter.app/latest?from=USD&to=KRW',
     parse: (d) => {
       const data = d as { rates?: { KRW?: number } };
@@ -47,6 +51,7 @@ const FX_SOURCES: FxSource[] = [
   // open.er-api.com — 키 불필요, 일 1회 갱신
   {
     name: 'open.er-api',
+    op: 'latest.open-er-api',
     url: 'https://open.er-api.com/v6/latest/USD',
     parse: (d) => {
       const data = d as { rates?: { KRW?: number } };
@@ -56,6 +61,7 @@ const FX_SOURCES: FxSource[] = [
   // exchangerate.host — 최근 무료 정책 변경되어 신뢰도 낮음, 마지막 시도
   {
     name: 'exchangerate.host',
+    op: 'latest.exchangerate-host',
     url: 'https://api.exchangerate.host/latest?base=USD&symbols=KRW',
     parse: (d) => {
       const data = d as { rates?: { KRW?: number } };
@@ -67,7 +73,8 @@ const FX_SOURCES: FxSource[] = [
 async function fetchExternal(): Promise<number | null> {
   for (const src of FX_SOURCES) {
     try {
-      const res = await fetch(src.url, { signal: AbortSignal.timeout(5000) });
+      // T-040 호출 기록 — op 는 소스별 코드 상수(URL·환율 값은 남기지 않는다).
+      const res = await trackCall('fx', src.op, () => fetch(src.url, { signal: AbortSignal.timeout(5000) }));
       if (!res.ok) continue;
       const data = await res.json();
       const rate = src.parse(data);

@@ -12,6 +12,10 @@ import githubProvider from '@workspace/auth-oauth/providers/github';
 import { getJson, postForm } from '@workspace/auth-oauth/core/exchange';
 import type { OAuthProviderName } from '@/lib/auth/oauth/names';
 import type { OAuthProfile, SharedOAuthProvider } from '@/lib/auth/oauth/provider-types';
+import { trackCall, type ApiId } from '@/lib/api-usage';
+
+/** T-040 호출 기록용 API id — 제공자 이름(코드 상수)에서만 고른다. */
+const USAGE_API: Record<OAuthProviderName, ApiId> = { google: 'google-oauth', github: 'github-oauth' };
 
 const SHARED: Record<OAuthProviderName, SharedOAuthProvider> = {
   google: googleProvider,
@@ -54,18 +58,23 @@ export async function fetchOAuthProfile(args: {
   redirectUri: string;
 }): Promise<OAuthProfile> {
   const shared = getSharedProvider(args.provider);
-  const tokenData = await postForm(shared.tokenUrl, {
+  const api = USAGE_API[args.provider];
+  // T-040 호출 기록 — 코드·토큰·프로필은 남기지 않는다. 공용 패키지 함수는 HTTP 실패를 던지므로
+  // 성공 판정은 예외 여부로만 한다(ok 를 true 로 고정). 단, 반환 객체에 정수 `status`(100..599)
+  // 필드가 있으면 그 숫자는 status 로 남는다(패키지 해석 규칙) — Google·GitHub 응답엔 그런 필드가 없다.
+  const tokenData = await trackCall(api, 'token.exchange', () => postForm(shared.tokenUrl, {
     client_id: args.clientId,
     client_secret: args.clientSecret,
     code: args.code,
     redirect_uri: args.redirectUri,
     grant_type: 'authorization_code',
-  });
+  }), { ok: () => true });
   const accessToken = tokenData?.access_token;
   if (typeof accessToken !== 'string' || accessToken.length === 0) {
     throw new Error('토큰 응답에 access_token 이 없습니다');
   }
-  const rawProfile = await shared.getProfile(accessToken, tokenData, { getJson });
+  const rawProfile = await trackCall(api, 'profile.get',
+    () => shared.getProfile(accessToken, tokenData, { getJson }), { ok: () => true });
   return normalizeSharedProfile(args.provider, rawProfile);
 }
 

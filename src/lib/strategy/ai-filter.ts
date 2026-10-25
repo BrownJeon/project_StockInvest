@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
+import { trackChild } from '@/lib/api-usage';
 import type { Candle, Ticker } from '@/lib/exchanges/types';
 import type { SignalInput } from '@/lib/signals/router';
 import type { StyleConfig, AnalystStyle } from './style';
@@ -430,6 +431,8 @@ function runClaudeOnce(prompt: string, timeoutMs: number): Promise<string> {
       // stdin을 ignore로 차단 — PM2에서 부모 pipe가 열려있으면 CLI가 입력 대기로 hang.
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    // T-040 호출 기록 — close/error 때 한 줄(종료 코드만, 프롬프트·출력 없음). spawn timeout 으로 죽으면 timeout.
+    trackChild('claude-cli', 'ai-filter.select', proc, { err: (info) => (info.killed ? 'timeout' : undefined) });
 
     let out = '';
     let err = '';

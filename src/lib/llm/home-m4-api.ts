@@ -1,4 +1,5 @@
 import type { LlmCallOptions, LlmCaller } from './types';
+import { trackCall } from '@/lib/api-usage';
 
 /**
  * home-m4-api 호출자 — Mac M4 FastAPI 허브.
@@ -48,7 +49,8 @@ export class HomeM4ApiCaller implements LlmCaller {
     }
 
     try {
-      const res = await fetch(`${this.base}/v1/chat`, {
+      // T-040 호출 기록 — 프롬프트·응답은 남기지 않는다. 자체 타이머 abort 는 timeout.
+      const res = await trackCall('m4', 'chat', () => fetch(`${this.base}/v1/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -61,7 +63,7 @@ export class HomeM4ApiCaller implements LlmCaller {
         }),
         signal: ctrl.signal,
         cache: 'no-store',
-      });
+      }), { err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });
 
       if (!res.ok) {
         const body = await res.text().catch(() => '');

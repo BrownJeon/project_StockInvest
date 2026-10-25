@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { kis } from '@/lib/exchanges/kis';
 import { getKisToken } from '@/lib/exchanges/kis-auth';
 import { getCredential } from '@/lib/credentials';
+import { trackCall, type ApiId, type Op } from '@/lib/api-usage';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,14 +48,16 @@ async function testExchange(): Promise<TestResult> {
   }
 }
 
-async function fetchWithRetry(url: string, init: RequestInit, attempts = 3, backoffMs = 500): Promise<Response> {
+/** `api`·`op` 는 T-040 호출 기록용 코드 상수 — 시도 1번 = 한 줄. URL(토큰·웹훅 주소 포함)은 기록되지 않는다. */
+async function fetchWithRetry(api: ApiId, op: Op, url: string, init: RequestInit, attempts = 3, backoffMs = 500): Promise<Response> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 10_000);
       try {
-        const res = await fetch(url, { ...init, signal: ctrl.signal });
+        const res = await trackCall(api, op, () => fetch(url, { ...init, signal: ctrl.signal }),
+          { err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });
         return res;
       } finally {
         clearTimeout(timer);
@@ -87,7 +90,7 @@ async function testTelegram(): Promise<TestResult> {
   const project = projectTag.trim() || 'StockInvest';
   try {
     const text = `<b>[${project}] 🔌 연결 테스트</b>\n알람 연동 성공\n🕐 ${new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} KST`;
-    const res = await fetchWithRetry(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const res = await fetchWithRetry('telegram', 'test.send-message', `https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, parse_mode: 'HTML', text }),
@@ -107,7 +110,7 @@ async function testTelegram(): Promise<TestResult> {
     // 메시지 발송 실패 시 getMe 로 진단 시도 (Bot Token 자체는 유효한지 빠르게 확인)
     let diag = '';
     try {
-      const probe = await fetchWithRetry(`https://api.telegram.org/bot${token}/getMe`, { method: 'GET' }, 2, 300);
+      const probe = await fetchWithRetry('telegram', 'test.get-me', `https://api.telegram.org/bot${token}/getMe`, { method: 'GET' }, 2, 300);
       if (probe.ok) {
         const j = (await probe.json().catch(() => null)) as { result?: { username?: string } } | null;
         diag = ` (Bot Token 검증 OK${j?.result?.username ? ` — @${j.result.username}` : ''}, 메시지 발송만 실패)`;
@@ -145,7 +148,7 @@ async function testSlack(): Promise<TestResult> {
         ],
       }],
     };
-    const res = await fetchWithRetry(url, {
+    const res = await fetchWithRetry('slack', 'test.webhook', url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

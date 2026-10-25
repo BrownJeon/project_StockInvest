@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
+    "@workspace/api-usage": "file:../shared/api-usage",
     "@workspace/auth-oauth": "file:../shared/auth-oauth",
     "adm-zip": "^0.5.17",
     "iconv-lite": "^0.7.2",

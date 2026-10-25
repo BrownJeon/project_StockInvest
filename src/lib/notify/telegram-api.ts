@@ -12,6 +12,7 @@
  */
 import { getCredential } from '@/lib/credentials';
 import { causeCodeOf, isTransientNetworkError, readBodySnippet, redactSecrets } from './result';
+import { logUsage, usageClock, usageErrKind, type ErrKind, type Op } from '@/lib/api-usage';
 
 export interface InlineButton {
   text: string;
@@ -49,6 +50,16 @@ export type BotCallResult<T> =
 
 const API = 'https://api.telegram.org';
 
+/** 이 파일이 부르는 Bot API 메서드 — 코드 상수만. T-040 호출 기록의 op 로 1:1 변환한다. */
+type BotMethod = 'sendMessage' | 'answerCallbackQuery' | 'editMessageText' | 'editMessageReplyMarkup' | 'getUpdates';
+const BOT_OP: Record<BotMethod, Op> = {
+  sendMessage: 'bot.send-message',
+  answerCallbackQuery: 'bot.answer-callback-query',
+  editMessageText: 'bot.edit-message-text',
+  editMessageReplyMarkup: 'bot.edit-message-reply-markup',
+  getUpdates: 'bot.get-updates',
+};
+
 interface CallOpts {
   /** 요청 전체 제한(ms). `getUpdates` 는 롱폴링 시간보다 길게 */
   timeoutMs?: number;
@@ -56,7 +67,7 @@ interface CallOpts {
   retries?: number;
 }
 
-async function callBot<T>(method: string, payload: Record<string, unknown>, opts: CallOpts = {}): Promise<BotCallResult<T>> {
+async function callBot<T>(method: BotMethod, payload: Record<string, unknown>, opts: CallOpts = {}): Promise<BotCallResult<T>> {
   const token = await getCredential('TELEGRAM_BOT_TOKEN');
   if (!token) return { ok: false, skipped: true, error: 'telegram_not_configured' };
 
@@ -67,6 +78,15 @@ async function callBot<T>(method: string, payload: Record<string, unknown>, opts
   for (let i = 0; i < attempts; i++) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
+    // T-040 호출 기록 — 시도 1번 = 한 줄. 토큰이 든 URL·본문·오류 원문은 남기지 않는다. logUsage 는 던지지 않는다.
+    const t0 = usageClock();
+    let httpStatus = 0;
+    let logged = false;
+    const mark = (ok: boolean, err?: ErrKind) => {
+      if (logged) return;
+      logged = true;
+      logUsage({ api: 'telegram', op: BOT_OP[method], ok, status: httpStatus, ms: usageClock() - t0, err });
+    };
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -74,7 +94,9 @@ async function callBot<T>(method: string, payload: Record<string, unknown>, opts
         body: JSON.stringify(payload),
         signal: ac.signal,
       });
+      httpStatus = res.status;
       if (!res.ok) {
+        mark(false, 'http');
         const snippet = redactSecrets(await readBodySnippet(res, 300), token);
         let retryAfterSec: number | undefined;
         const m = /"retry_after":\s*(\d+)/.exec(snippet);
@@ -88,9 +110,14 @@ async function callBot<T>(method: string, payload: Record<string, unknown>, opts
         };
       }
       const body = await res.json() as { ok?: boolean; result?: T; description?: string };
-      if (body.ok !== true) return { ok: false, error: redactSecrets(`api_not_ok ${body.description ?? ''}`.trim(), token) };
+      if (body.ok !== true) {
+        mark(false, 'other');   // HTTP 2xx + 본문 ok:false — 전송 계층 실패가 아니므로 http 가 아니다(KIS rt_cd 와 같은 규칙)
+        return { ok: false, error: redactSecrets(`api_not_ok ${body.description ?? ''}`.trim(), token) };
+      }
+      mark(true);
       return { ok: true, result: body.result as T };
     } catch (e) {
+      mark(false, ac.signal.aborted ? 'timeout' : usageErrKind(e));
       const msg = redactSecrets(e instanceof Error ? e.message : String(e), token);
       if (i < attempts - 1 && isTransientNetworkError(msg)) {
         await new Promise((r) => setTimeout(r, 500));

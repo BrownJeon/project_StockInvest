@@ -10,6 +10,7 @@
  *
  * 실패(timeout / HTTP 에러 / AI_API_BASE 미설정) 시 null 반환 — 분석 차단 없음.
  */
+import { trackCall } from '@/lib/api-usage';
 
 export type MarketSentiment = 'bullish' | 'neutral' | 'bearish';
 
@@ -59,7 +60,8 @@ export async function fetchMarketContext(
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${base}/v1/market-context`, {
+    // T-040 호출 기록 — 자체 타이머 abort 는 timeout 으로 분류한다.
+    const res = await trackCall('m4', 'market-context', () => fetch(`${base}/v1/market-context`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -68,7 +70,7 @@ export async function fetchMarketContext(
       body: JSON.stringify({ market }),
       signal: ctrl.signal,
       cache: 'no-store',
-    });
+    }), { err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');

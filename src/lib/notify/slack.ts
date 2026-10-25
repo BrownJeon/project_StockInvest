@@ -1,4 +1,5 @@
 import { getCredential } from '@/lib/credentials';
+import { trackCall } from '@/lib/api-usage';
 import {
   type NotifyResult, NOTIFY_OK, NOTIFY_SKIPPED, notifyFailed,
   isTransientNetworkError, redactSecrets, readBodySnippet, causeCodeOf,
@@ -61,7 +62,8 @@ export async function sendSlackAlert(
   };
   for (let i = 0; i < 2; i++) {
     try {
-      const res = await fetch(url, init);
+      // T-040 호출 기록 — 시도 1번 = 한 줄(웹훅 URL 은 기록되지 않는다).
+      const res = await trackCall('slack', 'webhook.send', () => fetch(url, init));
       if (!res.ok) {
         // HTTP 레벨 거절(400 invalid_payload 등)은 재시도해도 동일하므로 즉시 실패 반환.
         const snippet = redactSecrets(await readBodySnippet(res), url);

@@ -10,6 +10,7 @@
  *
  * 실패 정책: 모든 메서드는 throw 가능. 호출자(retrieval.ts)가 try/catch로 fallback 처리.
  */
+import { trackCall } from '@/lib/api-usage';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 /** upsert 전용 — bge-m3 200건 임베딩에 시간 걸림 */
@@ -54,13 +55,14 @@ export class M4KbClient {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), UPSERT_TIMEOUT_MS);
     try {
-      const res = await fetch(url, {
+      // T-040 호출 기록 — collection 이름·본문은 남기지 않는다(op 는 상수).
+      const res = await trackCall('m4', 'kb.upsert', () => fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
         body: JSON.stringify({ items }),
         signal: ctrl.signal,
         cache: 'no-store',
-      });
+      }), { err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         throw new Error(`KB upsert HTTP ${res.status}: ${body.slice(0, 200)}`);
@@ -85,13 +87,13 @@ export class M4KbClient {
       if (opts.topK != null) body.top_k = opts.topK;
       if (opts.filter) body.filter = opts.filter;
 
-      const res = await fetch(url, {
+      const res = await trackCall('m4', 'kb.search', () => fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
         body: JSON.stringify(body),
         signal: ctrl.signal,
         cache: 'no-store',
-      });
+      }), { err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });
       if (!res.ok) {
         const errBody = await res.text().catch(() => '');
         throw new Error(`KB search HTTP ${res.status}: ${errBody.slice(0, 200)}`);
@@ -115,13 +117,14 @@ export class M4KbClient {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
     try {
-      const res = await fetch(url, {
+      // 409(이미 존재)는 이 함수에서 성공이므로 기록도 성공으로 센다.
+      const res = await trackCall('m4', 'kb.ensure-collection', () => fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': this.adminToken },
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Token': this.adminToken! },
         body: JSON.stringify({ name, model: effectiveModel }),
         signal: ctrl.signal,
         cache: 'no-store',
-      });
+      }), { ok: (r) => r.ok || r.status === 409, err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });
       // 200 OK 또는 409 Conflict(이미 존재) 모두 성공
       if (!res.ok && res.status !== 409) {
         const body = await res.text().catch(() => '');

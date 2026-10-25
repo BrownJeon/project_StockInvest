@@ -1,5 +1,6 @@
 import AdmZip from 'adm-zip';
 import iconv from 'iconv-lite';
+import { trackCall, type Op } from '@/lib/api-usage';
 
 /**
  * KIS 종목 마스터(.mst) 파일 다운로드·파싱.
@@ -19,10 +20,11 @@ export interface MasterRow {
   name: string;
 }
 
-async function downloadMst(url: string): Promise<Buffer> {
-  const res = await fetch(url, {
+async function downloadMst(url: string, op: Op): Promise<Buffer> {
+  // T-040 호출 기록 — 응답 헤더 수신까지(ZIP 본문 수신 시간은 제외). op 는 호출부 상수.
+  const res = await trackCall('kis-master', op, () => fetch(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 StockInvest-bot' },
-  });
+  }));
   if (!res.ok) throw new Error(`download ${url} HTTP ${res.status}`);
   const zipBuf = Buffer.from(await res.arrayBuffer());
   const zip = new AdmZip(zipBuf);
@@ -54,12 +56,12 @@ function parseMst(buf: Buffer): MasterRow[] {
 }
 
 export async function fetchKospiMaster(): Promise<MasterRow[]> {
-  const buf = await downloadMst(KOSPI_URL);
+  const buf = await downloadMst(KOSPI_URL, 'download.kospi');
   return parseMst(buf);
 }
 
 export async function fetchKosdaqMaster(): Promise<MasterRow[]> {
-  const buf = await downloadMst(KOSDAQ_URL);
+  const buf = await downloadMst(KOSDAQ_URL, 'download.kosdaq');
   return parseMst(buf);
 }
 

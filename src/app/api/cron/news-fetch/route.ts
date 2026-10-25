@@ -28,6 +28,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { checkCronAuth } from '@/lib/cron-auth';
+import { trackCall } from '@/lib/api-usage';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 
 export const dynamic = 'force-dynamic';
@@ -67,13 +68,14 @@ async function fetchNewsOnce(base: string, adminToken: string, market: Market): 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(`${base}/v1/news/fetch`, {
+    // T-040 호출 기록 — 시도 1번 = 한 줄(재시도 루프 안쪽). 자체 타이머 abort 는 timeout.
+    const res = await trackCall('m4', 'news.fetch', () => fetch(`${base}/v1/news/fetch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
       body: JSON.stringify({ market, limit: NEWS_FETCH_LIMIT }),
       signal: ctrl.signal,
       cache: 'no-store',
-    });
+    }), { err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);

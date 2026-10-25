@@ -30,6 +30,7 @@
  */
 import { getAdminNotifyEmail, getSmtpConfig, MAIL_FROM_NAME } from '@/lib/mail/config';
 import { sanitizeHeaderText } from '@/lib/mail/header-safe';
+import { trackCall } from '@/lib/api-usage';
 import {
   NOTIFY_OK, NOTIFY_SKIPPED, notifyFailed, redactSecrets,
   isTransientNetworkError, type NotifyResult,
@@ -98,7 +99,10 @@ export async function sendAdminMail(content: AdminMailContent): Promise<NotifyRe
       socketTimeout: SOCKET_TIMEOUT_MS,
     });
 
-    const info = await transporter.sendMail({
+    // T-040 호출 기록 — 수신자·제목·본문은 남기지 않는다. SMTP 응답은 HTTP 가 아니므로
+    // 성공 판정은 예외 없음 + 거절 주소 0건(아래 rejected 판정과 같은 기준)으로 한다.
+    const tx = transporter;
+    const info = await trackCall('smtp', 'send-mail', () => tx.sendMail({
       // 표시 이름은 상수, 주소는 env. 둘 다 요청과 무관하다.
       from: `${MAIL_FROM_NAME} <${smtp.user}>`,
       // 🔒 수신자 — env 에서 읽은 값. 이 줄이 이 기능의 보안 경계다.
@@ -106,7 +110,7 @@ export async function sendAdminMail(content: AdminMailContent): Promise<NotifyRe
       subject,
       text: content.text,
       ...(content.html ? { html: content.html } : {}),
-    });
+    }), { ok: (r) => !(Array.isArray(r?.rejected) && r.rejected.length > 0) });
 
     // SMTP 가 응답했어도 주소를 거절했으면 배달되지 않았다 — 성공이라 부르지 않는다.
     const rejected = Array.isArray(info?.rejected) ? info.rejected : [];

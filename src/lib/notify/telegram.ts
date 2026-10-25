@@ -1,5 +1,6 @@
 import type { AlertLevel } from './slack';
 import { getCredential } from '@/lib/credentials';
+import { trackCall } from '@/lib/api-usage';
 import { escapeAlertText } from './escape';
 import {
   type NotifyResult, NOTIFY_OK, NOTIFY_SKIPPED, notifyFailed,
@@ -86,7 +87,8 @@ export async function sendTelegramAlert(
   };
   for (let i = 0; i < 2; i++) {
     try {
-      const res = await fetch(url, init);
+      // T-040 호출 기록 — 시도 1번 = 한 줄(토큰이 든 URL 은 기록되지 않는다).
+      const res = await trackCall('telegram', 'alert.send-message', () => fetch(url, init));
       if (!res.ok) {
         // 400(파싱 실패·본문 초과) / 401(토큰 폐기) 등은 재시도해도 동일 — 즉시 실패 반환.
         // 본문에 담긴 description 은 진단에 결정적이므로 함께 남긴다(비밀값 없음).
