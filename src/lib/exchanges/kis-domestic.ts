@@ -542,8 +542,13 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
 }
 
 /**
- * 국내 일별 주문체결 조회 — TTTC8001R(실전)/VTTC8001R(모의) inquire-daily-ccld.
+ * 국내 일별 주문체결 조회 — TTTC0081R(실전)/VTTC0081R(모의) inquire-daily-ccld (3개월 이내 조회 현행 TR).
  * order-sync에서 체결된 주문 매칭에 사용.
+ *
+ * 구 `TTTC8001R`/`VTTC8001R` 은 쓰지 않는다 — 2026-10-25 라이브 비교(T-081 A06): 같은 조건(계정·기간·
+ * 종목·체결만)에서 구 TR 호출은 rt_cd=0 + "조회할 내용이 없습니다"(빈 목록), 현행 TR + `EXCG_ID_DVSN_CD=ALL`
+ * 호출은 체결 2건이었다. TR ID 와 파라미터가 함께 달라 둘 중 무엇이 원인인지는 분리하지 못했다.
+ * 현행 TR 은 `EXCG_ID_DVSN_CD`(거래소 구분)가 추가로 필요하다: 실전 'ALL', 모의 'KRX'(모의는 KRX 만 지원).
  *
  * 응답 필드:
  *  - odno: 주문번호 (cancel·정정 시 새 odno 발급되지만 원 odno는 orgn_odno에 보존)
@@ -563,7 +568,8 @@ export async function getActiveOrders(): Promise<{ orderId: string; symbol: stri
 export async function getCompletedOrders(
   symbol: string, fromTs: number, toTs: number, _limit: number,
 ): Promise<{ orderId: string; side: string; price: number; qty: number; ts: number }[]> {
-  const trId = isMock() ? 'VTTC8001R' : 'TTTC8001R';
+  const mock = isMock();
+  const trId = mock ? 'VTTC0081R' : 'TTTC0081R';
   const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
   const fmtDate = (ts: number): string => {
     const d = new Date(ts);
@@ -588,6 +594,7 @@ export async function getCompletedOrders(
     INQR_DVSN_1:        '',
     CTX_AREA_FK100:     '',
     CTX_AREA_NK100:     '',
+    EXCG_ID_DVSN_CD:    mock ? 'KRX' : 'ALL',  // 현행 TR 필수 — 모의는 KRX 만 지원
   });
   let attempt = 0;
   for (;;) {
@@ -617,6 +624,17 @@ export async function getCompletedOrders(
       throw new Error(
         `KIS getCompletedOrders ${symbol}: rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
         + `msg=${String(data.msg1 ?? '').trim().slice(0, 200)}`,
+      );
+    }
+    // 연속조회는 구현하지 않는다(종목 지정·짧은 기간 호출). 다음 페이지 신호(M/F)가 오면 fail-closed 로 던진다 —
+    // order-sync 의 "체결 목록에도 없다 → cancelled" 추론은 완전한 목록이 전제이므로, 첫 페이지만으로
+    // 반환하면 후속 페이지의 체결이 취소로 오기록될 수 있다(T-018 "실패를 빈 배열로 바꾸지 않는다"와 같은 이유).
+    // D/E(마지막 페이지)·헤더 없음은 통과.
+    const respTrCont = res.headers?.get?.('tr_cont') ?? '';
+    if (respTrCont === 'M' || respTrCont === 'F') {
+      throw new Error(
+        `KIS getCompletedOrders ${symbol}: 연속조회 신호(tr_cont=${respTrCont}) — 첫 페이지만으로는 `
+        + `체결 부재를 판정할 수 없다 (기간 ${params.get('INQR_STRT_DT')}~${params.get('INQR_END_DT')})`,
       );
     }
     // KIS는 output1(주문체결 목록) + output2(요약) 구조
