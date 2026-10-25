@@ -1,11 +1,11 @@
 ---
 task_id: T-084
 title: 모바일 앱 "주식캐기" M1 — Capacitor 셸 APK + 다운로드 페이지·업데이트 띠
-status: doing
+status: done
 priority: medium
 project: StockInvest
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-26
 base_ref: cddc05ef4a75bd822dcd22a623a1ba6d7d3adf03
 risk_level: R2
 roles_involved: [leader, judge, designer, developer, reviewer, qa, deployer]
@@ -18,7 +18,7 @@ tags:
 aliases:
   - 주식캐기앱
   - 모바일앱M1
-waiting: [user_confirmation]
+waiting: []
 demo_gate:
   required: true
   level: "full"
@@ -408,7 +408,7 @@ Leader 해석(사용자가 명시하지 않은 부분 — 틀리면 정정 요�
 
 ### [T-084] 모바일 앱 "주식캐기" M1 — 폰에 설치하는 안드로이드 앱 + 앱 업데이트 안내
 
-- **상태**: ⏳ 사용자 확인 대기 — 배포·공개는 끝났고, 실기기 확인(아래)이 끝나야 M1 을 완료로 본다.
+- **상태**: ✅ **완료 — 사용자 실기기 확인 완료**(사용자 발화 그대로: "T-084에 대한 확인도 완료했어", 10-26 06:52 이전). 배포·공개(10-25 20:53) 뒤 [[T-088-app-google-login]] 로 앱 Google 로그인이 추가된 1.0.1 이 공개돼(10-26 05:30) 사용자가 설치·로그인을 검증했고(06:03 이전), 이어서 이 task 의 확인도 마쳤다고 알려 왔다. **항목별 결과(키보드·하단 탭·비행기 모드·스플래시·아이콘 등)는 따로 받지 않았다** — 발화 그대로 완료로 기록한다.
 - **무엇이 바뀌었나**: 운영 웹(`stock.미라클펭귄.com`)을 그대로 띄우는 안드로이드 앱 "주식캐기"(v1.0.0)가 생겼고, 설정 맨 아래 "앱 (안드로이드)" 섹션과 `/app/download/latest.apk` 로 내려받는다. 앱 안에서는 새 버전이 있으면 화면 맨 위에 업데이트 띠가 뜨고(닫으면 그날은 숨김, 필수 업데이트는 닫기 없음·화면을 가리지 않음), 서버에 못 닿으면 연결 실패 화면이 뜬다. 앱의 로그인 화면에서는 Google/GitHub 버튼이 숨고 이메일·비밀번호만 남는다. 아이콘은 사용자가 고른 ② 지층형+금덩이. 웹 화면·매매 기능은 그대로.
 - **배포**: ✅ 운영 반영 — 커밋 `46d4148`(앱 코드)·`b435399`(문서) · 2026-10-25 20:53 KST · push(webhook blue/green) · 결과 ok(릴리스 `20261025-205329-b4353994`)
   - 함께 한 운영 작업(사용자 승인 원문 "DDL 적용, push, APK 공개와 INSERT 모두 승인"): 운영 DB `app_release` 테이블 생성(20:51) · APK 공개 파일 복사와 `app_release` 행 INSERT(20:59)
@@ -416,7 +416,7 @@ Leader 해석(사용자가 명시하지 않은 부분 — 틀리면 정정 요�
   - **실매매 영향**: 없음 — 주문·청산·승인·cron·safety·exchanges·signals·strategy 코드 변경 0, 바뀐 안전 경로는 `src/middleware.ts` 1줄(공개 경로 `/app/download/` 추가)과 새 테이블 DDL 뿐(Reviewer 판정 PASS). 배포 전후 스위치 실측 동일: 킬스위치 ON·`safety_dry_run=false`·`exit_engine_enabled=false`·`telegram_approval_enabled=true`, 감사 로그 최신 id 불변(orders 3229·trade_logs 8305·signals 19409), cron 1행
 - **AI 가 검증한 것**: 전체 jest 256 스위트/6486 통과(실패 0)·`tsc`·`next build` 통과 · Reviewer R1~R4 독립 감사(최종 PASS, 변이 시험·일회용 DB 두 sql_mode·실서버 우회 시도) · Codex 외부 검토(지적 1건 → Low 로 부분 채택·수정) · QA S1~S12 전부 실행 · 운영: webhook `START→END exit=0`·cron 1행·스위치 동일·nginx 경유 보호 경로 307/401·**요청 제한이 위조 `X-Real-IP` 로 우회되지 않음 실측**·공개 도메인에서 `latest.apk` 200·**본문 sha256 과 서명 지문이 등록값·기대값과 일치**(내려받은 파일을 `apksigner` 로 직접 확인)
   - 검증 못 한 것: **실기기 전부**(아래) · 로그인 세션으로 본 운영 `/api/app/version`(QA 가 일회용 환경에서 확인)
-- **👉 사용자가 확인할 것** (지금부터 가능 — 장 시간과 무관, 한국·미국 장 모두 닫힌 일요일 밤):
+- **👉 사용자가 확인할 것**: ✅ **확인 완료**("T-084에 대한 확인도 완료했어", 10-26). 아래는 확인 절차(참고):
   1. **설치**: 폰 Chrome 에서 `https://stock.미라클펭귄.com/app/download/latest.apk` 를 열거나, 웹에 로그인 → 설정 맨 아래 "앱 (안드로이드)" 의 [APK 내려받기] → Chrome 이 "유해할 수 있는 파일입니다"라고 물으면 **다운로드**(플레이스토어 밖 앱이라 매번 뜨는 정상 확인) → 받은 파일을 열고 "출처를 알 수 없는 앱 설치"를 Chrome 에 허용(처음 한 번) → 설치. 홈 화면에 "주식캐기" 아이콘이 생기면 정상. 설치가 막히면(Play Protect 경고 등) 화면을 알려 주세요.
   2. **로그인 유지**: 앱에서 이메일·비밀번호 로그인 → 앱을 **완전히 종료**(최근 앱에서 밀어내기) 후 다시 열기 → 로그인 화면이 아니라 바로 대시보드가 보이면 정상(쿠키 저장).
   3. **화면**: 하단 5개 탭이 시스템 내비게이션 바와 겹치지 않고, 상단이 상태바 밑으로 들어가지 않으면 정상.

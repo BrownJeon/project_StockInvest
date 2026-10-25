@@ -6,7 +6,15 @@ tags:
 ---
 # 현재 상태
 
-## ⏸ 2026-10-25 23:45 — StockInvest 원장 작업 일시 중지(앱 런칭 뒤 재개) — 재개 지점은 [[RESUME]] 맨 위
+## 2026-10-26 06:52 — 앱 런칭 완료: T-084 M1·T-088 앱 Google 로그인·T-089 오픈 리다이렉트 차단 (사용자 실기기 확인 완료)
+
+- **운영 반영(05:21~05:30 KST)**: T-089 `6d6efc0`(릴리스 `20261026-052150-6d6efc09`) → 운영 DB `app_auth_code` 적용 → T-088 `1b379ac`(릴리스 `20261026-052603-1b379acc`) → APK **1.0.1(versionCode 2)** 공개와 `app_release` INSERT. 안전장치 스위치·감사 로그 배포 전후 불변, cron 1행. 사용자 검증: "실기기에서 앱설치해서 로그인 검증완료했어"([[T-088-app-google-login]]) · "T-084에 대한 확인도 완료했어"([[T-084-mobile-app-m1-shell]]). T-089 는 [[T-089-open-redirect-next-path]].
+- **앞선 원장 작업 일시 중지의 재개 조건("앱 런칭 뒤")이 충족됐다.** 재개 문구 "StockInvest 작업 이어서 진행해줘", 진입점 [[RESUME]] — 제일 먼저 10-26 07:20 이후 `broker_fill_runs` 의 cron run 확인. 새 task 번호는 T-090 이상.
+- **사용자 결정 보류**: 커밋 훅 `SAFETY_PATHS` 에 `^src/app/api/auth/`(세션 발급 `app-exchange`·`[provider]`) 추가 여부 · 이번 작업 것이 아닌 `~/.node-local/stockinvest-*` 10개(약 9GB) 삭제 여부. 후속: T-084 의 M2 App Links→M3 앱 잠금→M4 푸시 · T-088 후속 후보(Codex 지적: 앱 state 만료·쿠키 유실 시 웹 `invalid_state`, 화면 시험 공백).
+- 정리(06:08): 임시 복사본 25개·worktree 3개·브랜치 3개·깨진 Synology ref 삭제 — 저장소 worktree 는 메인 트리 하나(다음 작업은 새 worktree 로).
+
+
+## ⏸ 2026-10-25 23:45 — StockInvest 원장 작업 일시 중지(앱 런칭 뒤 재개 → 위 06:52 항목: 재개 가능) — 재개 지점은 [[RESUME]] 맨 위
 
 - T-081 WP-D D1a 까지 운영 반영 완료([[T-085-safety-paths-broker-ledger]]·[[T-086-d0-unmatched-sell-cost-basis]]·[[T-087-wpd-d1a-broker-fills-collect]]). **수집 스위치는 ON 으로 두었다** — 매일 07:20 KST 이후 읽기 전용 자동 수집이 돈다(멈추는 방법은 RESUME). 킬스위치 ON·주문 0건 불변.
 
@@ -18,11 +26,11 @@ tags:
 - 다음: 첫 크론 실행 확인 → 사용자 결정(D1b 백필·실패 알림) → D2 교차검증. 킬스위치 ON 유지(10-26 17:10 캡처 후 T-080 Phase 2).
 
 
-## 2026-10-25 — 모바일 앱 "주식캐기" M1 배포·APK 공개 완료, 실기기 확인 대기 ([[T-084-mobile-app-m1-shell]])
+## 2026-10-25 — 모바일 앱 "주식캐기" M1 배포·APK 공개 완료, 사용자 실기기 확인 완료(10-26) ([[T-084-mobile-app-m1-shell]])
 
 - 운영 웹을 그대로 띄우는 Capacitor 안드로이드 앱(appId `com.miraclepenguin.stockinvest`, v1.0.0)과 앱 업데이트 안내를 배포했다. 코드 `46d4148`·문서 `b435399`, 20:53 KST push(webhook blue/green), 릴리스 `20261025-205329-b4353994`, `RELEASE_RESULT ok`. 정본 절차서는 [`docs/mobile-app-procedure.md`](../../docs/mobile-app-procedure.md)(v3), 배포 절은 [`docs/deploy-order.md`](../../docs/deploy-order.md) "앱(APK) 배포".
 - 운영 DB 에 `app_release` 테이블 생성(DDL 20:51, 사용자 승인)·APK 공개 파일 `shared/app-releases/stockinvest-1.0.0.apk`(2,990,678 B, sha256 `ab7d5901…a225`)·`app_release` 1행 INSERT(20:59). 공개 도메인 `…/app/download/latest.apk` 200·sha·서명 지문 일치 확인. **실매매 영향 없음**(주문·청산·승인·cron·safety 코드 변경 0, 배포 전후 스위치 동일 — 킬스위치 ON·`safety_dry_run=false`·`exit_engine_enabled=false`, 감사 로그 id 불변).
-- **다음 재개 지점**: ① 사용자 실기기 확인(설치·로그인 유지·키보드·하단 탭·비행기 모드·스플래시) ② 후속 M2(텔레그램 링크→앱 App Links, 서명 지문 `6fa5ad6f…0f08` 확정됨)→M3(앱 잠금)→M4(푸시 FCM — `/신규도입` 검토·Firebase 준비·DB 마이그레이션 승인 필요) ③ 잠복 결함 2건(`android/gradlew` git 모드 100644, 기본 APK 작업 디렉터리의 옛 빌드 캐시) ④ 미들웨어 공개 경로 시험의 SAFETY_PATHS 편입(사용자 결정, 훅 수정은 타 세션 작업이 끝난 뒤).
+- **다음 재개 지점**: ① ~~사용자 실기기 확인~~ — **완료(10-26)** ② 후속 M2(텔레그램 링크→앱 App Links, 서명 지문 `6fa5ad6f…0f08` 확정됨)→M3(앱 잠금)→M4(푸시 FCM — `/신규도입` 검토·Firebase 준비·DB 마이그레이션 승인 필요) ③ ~~잠복 결함 2건(`android/gradlew` git 모드 100644, 기본 APK 작업 디렉터리의 옛 빌드 캐시)~~ — T-088 에서 수정 완료 ④ 미들웨어 공개 경로 시험의 SAFETY_PATHS 편입(사용자 결정, 훅 수정은 타 세션 작업이 끝난 뒤).
 - 서명 키(전용): `~/.android/stockinvest-release.keystore`·`stockinvest-signing.env`(권한 600), 백업 `NFS/homes/brownjeon/backup/android-signing/stockinvest/`. **분실 시 덮어쓰기 설치 불가.**
 
 ## 2026-10-24 — T-064·T-077 통합 작업절차서 완료 (T-078)
