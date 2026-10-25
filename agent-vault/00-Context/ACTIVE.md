@@ -6,6 +6,11 @@ tags:
 ---
 # 현재 상태
 
+## ⏸ 2026-10-25 23:45 — StockInvest 원장 작업 일시 중지(앱 런칭 뒤 재개) — 재개 지점은 [[RESUME]] 맨 위
+
+- T-081 WP-D D1a 까지 운영 반영 완료([[T-085-safety-paths-broker-ledger]]·[[T-086-d0-unmatched-sell-cost-basis]]·[[T-087-wpd-d1a-broker-fills-collect]]). **수집 스위치는 ON 으로 두었다** — 매일 07:20 KST 이후 읽기 전용 자동 수집이 돈다(멈추는 방법은 RESUME). 킬스위치 ON·주문 0건 불변.
+
+
 ## 2026-10-25 23:30 — T-081 WP-D D1a 브로커 체결 원장 수집 가동 ([[T-087-wpd-d1a-broker-fills-collect]])
 
 - 국내·해외 일별 체결·기간 실현손익·보유 잔고를 KIS 조회 API(읽기 전용)에서 매일 07:20 KST 이후 받아 새 테이블 5개(`broker_*`)에 쌓는다. 어디에도 연결하지 않았다(표시·판정 불변). 스위치 ON(23:24), 첫 자동 실행은 10-26 07:20 이후.
