@@ -644,10 +644,18 @@ describe('⑦ 소스 가드', () => {
     expect(fs.existsSync(path.join(SRC, 'components/auth/AppLoginArea.tsx'))).toBe(false);
   });
 
-  test('로그인 페이지의 next 검사 두 줄은 이 task 에서 한 글자도 바꾸지 않았다(별도 task 의 대상)', () => {
+  test('로그인 페이지의 next 검사 두 줄은 이 task 가 바꾸지 않았다 — 원문이거나 별도 task(T-089)가 고친 형태(어느 쪽이 먼저 합쳐져도 통과)', () => {
     const page = read('app/login/page.tsx');
-    expect(page).toContain("setNextPath(n && n.startsWith('/') && !n.startsWith('//') ? n : undefined);");
-    expect(page).toContain("const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';");
+    // 이 task(T-088)는 이 두 줄을 건드리지 않는다. 별도 task T-089 가 같은 두 줄을 `sanitizeInternalPath` 로 고치므로 두 모양 중 하나여야 한다.
+    // 두 줄이 서로 다른 모양(한쪽만 고쳐짐)이거나 임의의 제3의 모양이면 실패한다.
+    const ORIGINAL_NEXT = "setNextPath(n && n.startsWith('/') && !n.startsWith('//') ? n : undefined);";
+    const ORIGINAL_DEST = "const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';";
+    const FIXED_NEXT = 'setNextPath(sanitizeInternalPath(n) ?? undefined);';
+    const FIXED_DEST = "const dest = sanitizeInternalPath(next) ?? '/';";
+    const original = page.includes(ORIGINAL_NEXT) && page.includes(ORIGINAL_DEST);
+    const fixed = page.includes(FIXED_NEXT) && page.includes(FIXED_DEST);
+    expect(original || fixed).toBe(true);
+    expect(original && fixed).toBe(false);
   });
 
   test('앱 판별은 마운트 뒤 effect 에서만 · 오류 상자 포커스는 앱에서만(웹은 이메일 칸 자동 포커스 그대로)', () => {
