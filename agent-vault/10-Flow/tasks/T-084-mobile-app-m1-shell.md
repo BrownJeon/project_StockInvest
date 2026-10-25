@@ -18,7 +18,7 @@ tags:
 aliases:
   - 주식캐기앱
   - 모바일앱M1
-waiting: []
+waiting: [user_confirmation]
 demo_gate:
   required: true
   level: "full"
@@ -382,6 +382,18 @@ Leader 해석(사용자가 명시하지 않은 부분 — 틀리면 정정 요�
 - 승인 원문(사용자 발화 그대로): **"DDL 적용, push, APK 공개와 INSERT 모두 승인"**. 이 승인은 직전 Leader 가 제시한 세 게이트 — ① 운영 DB `CREATE TABLE IF NOT EXISTS app_release`(새 테이블만, 멱등, 롤백은 DROP) ② push = webhook blue/green 웹 배포(이번 커밋 1개만, main==origin/main) ③ `build-apk.sh --publish` 와 `app_release` INSERT(롤백은 그 행 DELETE — 롤백 시점에 별도 승인) — 를 가리킨다. 롤백 DELETE 는 이 승인에 포함되지 않는다.
 - 승인 응답이 제시(19:31) 후 약 80분 뒤에 와서 배포 창을 `date` 로 다시 확인: 일요일 20:50 KST(뉴욕 07:50 일요일) — 한국·미국 장 모두 닫힘, 다음 장 월 09:00 KST. 창 열려 있음.
 
+### 배포 실행 기록 (Leader 가 deployer 절차대로 직접 실행)
+- **① DDL — 20:51 KST.** 사전 기준선(읽기 전용): MariaDB `10.11.11-MariaDB-log`, `sql_mode`=`STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`(`NO_BACKSLASH_ESCAPES` 없음 → 우리 시험의 기본 모드와 같음, **R2·R4 의 "운영 sql_mode 미확인" 해소**), `app_release` 미존재. 안전장치 스냅샷(배포 전): `safety_kill_switch=true`·`safety_dry_run=false`·`exit_engine_enabled=false`·`safety_order_max_pct=4`·`safety_daily_order_max_pct=10`·`telegram_approval_enabled=true` 등 19키(스크래치패드 `deploy/pre-switches.tsv`), 감사 로그 최신 id `orders 3229 / trade_logs 8305 / signals 19409`. SQL sha256 `be9b49ae…6b6b`(R4 판정 본·브랜치 커밋 본과 일치 확인) 적용 → 사후 확인: 테이블 생성·**CHECK 9개**·`chk_app_release_code` 식 `<= 2100000000`·`chk_app_release_size` 식 `<= 9007199254740991`·`apk_file`/`sha256`/`cert_sha256` **ascii_bin 3열**·UNIQUE 2개·0행. 접속은 비밀번호를 출력·저장하지 않는 도우미(`MYSQL_PWD` 환경변수 전달)로.
+- **② push — 20:53:10 KST.** 브랜치 `mobile-app-t084` 를 최신 main(`aa51dd0`) 위로 rebase → main 에 ff-only 병합(`46d4148` 앱 코드) + 문서 커밋 `b435399`(절차서 v3·승인 데모 2종·task 이력서, 제 파일만 명시 경로로 스테이징 — 같은 시각 다른 세션이 `main` 작업 트리에서 `scripts/git-hooks/commit-msg`·`scripts/test-git-hooks.sh`·`src/app/api/cron/trade-report/route.ts` 등을 수정 중이었으나 push 에 불포함, 겹침 0). `git push --dry-run` 후 push `aa51dd0..b435399`. **webhook 로그**: `START project_StockInvest sha=b435399` → `RELEASE_RESULT {"status":"ok","release":"20261025-205329-b4353994","previous":"…20261025-185645-aa51dd05","migrated":false}` → `END exit=0`(로그 시각 UTC 11:53:23→11:55:00 = 20:53→20:55 KST). 같은 배포에 실린 다른 작업: 없음(main==origin/main 이었음).
+- **③ 배포 후 확인 — 20:55.** cron **정확히 1행**·`stockinvest`/`stockinvest-cron` 모두 새 릴리스 cwd·재시작 0·`current`=새 릴리스·로컬 `/api/health` 200·**안전장치 스위치 배포 전후 diff 없음**·orders/trade_logs/signals 최신 id 불변(이상 신규 행 없음)·`app_release` 0행. **nginx(ModSecurity) 경유 실서버**: `/api/health` 200, `/api/app/version` 무인증 401, `/app/download`·`/app/downloads`·`/app/download/../api/orders`·`/app/download/%2e%2e/api/orders` 307(로그인), `..%5c` 변형 404, `latest.apk`·`HEAD`·`foo.apk` 404(행 없음 단계), 로그인 화면 Capacitor 문자열 0, 응답 헤더에 서버 내부 정보 없음(`Server: nginx`·`no-store`·`nosniff`). **요청 제한의 IP 판정(QA·Dev-W 미확인 항목) 해소**: 요청마다 다른 `X-Real-IP` 를 위조한 25회 HEAD 가 404 ×16 후 **429 ×9**로 같은 버킷에 묶임 → **nginx 가 `X-Real-IP` 를 덮어쓰며 헤더 위조로 제한을 우회할 수 없다**. 부작용: 이 서버 IP 의 `/app/download/*` 가 약 21:06 까지 429(고정 창 10분).
+- **④ APK — 빌드 3회 중 3회차 성공.** ⑴ 20:56 `gradle 실패 rc=126`: `android/gradlew` 가 git 에 모드 **100644**(실행 비트 없음)로 기록됨 — NFS `core.fileMode=false` 라 기록 못 함, 개발 중 빌드는 `cap add` 가 만든 사본(755)이라 드러나지 않았고 rebase 로 파일이 다시 풀리며 664 가 됨. 아무것도 공개되지 않음. 원본 트리에서 `chmod +x`(git 은 모드 변화를 못 봄·내용 불변)로 우회. ⑵ 20:57 `gradle 실패 rc=1` `AAPT: resource drawable/ic_launcher_foreground not found`: 기본 작업 디렉터리 `~/.node-local/stockinvest-apk` 의 `android/app/build` 가 16:54 의 **옛 개발 빌드 캐시**라 새 리소스 구성에서 증분 처리가 꼬임(소스·리소스 파일은 NFS·작업 사본·worktree 모두 정상, 깨끗한 작업 디렉터리를 쓴 Dev-I·R3·QA 빌드는 통과). 아무것도 공개되지 않음. ⑶ 20:58~20:59 **새 작업 디렉터리** `STOCKINVEST_APK_WORK=~/.node-local/stockinvest-apk-publish` 로 `bash scripts/build-apk.sh --publish` rc 0(빌드 트리 HEAD `b435399` = 배포 커밋, 네이티브 파일 미커밋 0): package `com.miraclepenguin.stockinvest`·versionCode **1**/`1.0.0`·권한 `INTERNET` + 앱 전용 signature 1개·debuggable no·서명자 지문 **`6fa5ad6f…0f08` 기대값 일치**·비밀 검사 통과·크기 **2,990,678 B**·sha256 **`ab7d5901ba3c6784236957670e79688c1985542e1bf26392e0faa7de4be5a225`**. 공개 파일 `/home/brownjeon/apps/stockinvest/shared/app-releases/stockinvest-1.0.0.apk`(디렉터리 775) — **공개 파일에서 다시 계산한 sha256·크기가 SQL·작업 사본 산출물과 일치함을 INSERT 전에 확인**. 운영 `.env` 에 `APP_RELEASE_DIR` 없음 → 코드 기본값 사용.
+- **⑤ INSERT — 20:59:51.** `build-apk.sh` 가 출력한 SQL 을 로그에서 **그대로 추출**해 실행(옮겨 적기 오류 방지): `app_release` id 1·versionCode 1·`1.0.0`·`stockinvest-1.0.0.apk`·sha256 위 값·size 2990678·min_supported 0·notes `주식캐기 1.0.0`·cert 지문 `6fa5ad6f…`. 읽어 보니 값 일치.
+- **⑥ 공개 확인 — 로컬 직접(21:00).** `/app/download/latest.apk` **200**·본문 sha256 = 등록값·`Content-Length 2990678`·`Content-Type application/vnd.android.package-archive`·`Content-Disposition attachment; filename="stockinvest-1.0.0.apk"`·`no-store`·`nosniff`·`accept-ranges: none`·서버 경로 노출 0, `stockinvest-1.0.0.apk` 200, HEAD 200, `/api/app/version` 무인증 401, `/app/download` 307. 공개 도메인(nginx 경유) 확인은 요청 제한 창이 풀린 21:07 에 실행(아래 ⑦).
+- **⑦ 공개 확인 — 공개 도메인(nginx·ModSecurity 경유, 21:07).** `https://stock.xn--lh0b87pnudm10a4vd.com/app/download/latest.apk` **200**(`Server: nginx`)·`Content-Length 2990678`·`Content-Type application/vnd.android.package-archive`·`Content-Disposition attachment; filename="stockinvest-1.0.0.apk"`·`no-store`·`nosniff`·`accept-ranges: none`·**내려받은 본문 sha256 `ab7d5901…a225` = 등록값**·**내려받은 파일을 `apksigner` 로 직접 확인: 서명자 `CN=StockInvest, OU=Personal, O=miraclepenguin, C=KR`·인증서 SHA-256 `6fa5ad6f…0f08` = 기대 지문**. `HEAD` 200, `stockinvest-1.0.0.apk` 200 2990678. 보호·거부 재확인: `/api/app/version` 무인증 401, `/app/download`·`/app/downloads`·`/app/download/../api/orders` 307(로그인), `foo.apk`·`latest.apk.exe` 404. 요청 제한 창이 풀려 정상 응답.
+- **미검증(AI 가 할 수 없는 것)**: 로그인 세션을 쓴 운영의 `/api/app/version`(`latest` 7필드) — 일회용 환경에서 QA 가 `signSession` 쿠키로 확인했고 운영에서는 세션이 없어 보지 않음 · 실기기 전부(쿠키 flush·키보드 인셋·edge-to-edge·Custom Tab 다운로드→설치·스플래시·런처 아이콘 마스크·테마 아이콘·뒤로가기·비행기 모드 복구·업데이트 띠 실동작).
+- **롤백 정보.** 웹: `scripts/deploy.sh StockInvest --rollback`(직전 릴리스 `20261025-185645-aa51dd05`). APK 공개 철회: `DELETE FROM app_release WHERE version_code = 1;`(**사용자 별도 승인 필요**, 파일은 지우지 않음 — 행이 없으면 `/app/download` 404). DDL 되돌림: `DROP TABLE app_release`(행 없을 때만, 별도 승인).
+- **후속 항목(잠복 결함 2건, M2 착수 때 Reviewer 를 거쳐 수정).** ① `android/gradlew` 의 git 모드가 100644 — `build-apk.sh` 가 작업 사본에서 `chmod +x` 하거나 git 인덱스에 100755 로 기록(NFS 에서는 `git update-index --chmod=+x`). 신선한 clone 에서의 첫 빌드가 rc 126 으로 실패한다. ② 기본 작업 디렉터리의 오래된 `android/app/build` 캐시가 리소스 변경 뒤 빌드를 깨뜨린다 — 네이티브 리소스를 바꾼 뒤에는 새 `STOCKINVEST_APK_WORK` 를 쓰거나 `build-apk.sh` 가 리소스 변경을 감지해 `clean` 을 하도록 보강, `docs/deploy-order.md` 앱 절 ③ 전 점검에 한 줄 추가. 둘 다 이번 공개물(APK 내용)에는 영향 없음.
+
 ## Codex 검토
 
 ### [2026-10-25 18:46] C2 review focus=none — done
@@ -394,7 +406,38 @@ Leader 해석(사용자가 명시하지 않은 부분 — 틀리면 정정 요�
 
 ## 최종 요약
 
-(M1 완료 시 Leader 가 작성)
+### [T-084] 모바일 앱 "주식캐기" M1 — 폰에 설치하는 안드로이드 앱 + 앱 업데이트 안내
+
+- **상태**: ⏳ 사용자 확인 대기 — 배포·공개는 끝났고, 실기기 확인(아래)이 끝나야 M1 을 완료로 본다.
+- **무엇이 바뀌었나**: 운영 웹(`stock.미라클펭귄.com`)을 그대로 띄우는 안드로이드 앱 "주식캐기"(v1.0.0)가 생겼고, 설정 맨 아래 "앱 (안드로이드)" 섹션과 `/app/download/latest.apk` 로 내려받는다. 앱 안에서는 새 버전이 있으면 화면 맨 위에 업데이트 띠가 뜨고(닫으면 그날은 숨김, 필수 업데이트는 닫기 없음·화면을 가리지 않음), 서버에 못 닿으면 연결 실패 화면이 뜬다. 앱의 로그인 화면에서는 Google/GitHub 버튼이 숨고 이메일·비밀번호만 남는다. 아이콘은 사용자가 고른 ② 지층형+금덩이. 웹 화면·매매 기능은 그대로.
+- **배포**: ✅ 운영 반영 — 커밋 `46d4148`(앱 코드)·`b435399`(문서) · 2026-10-25 20:53 KST · push(webhook blue/green) · 결과 ok(릴리스 `20261025-205329-b4353994`)
+  - 함께 한 운영 작업(사용자 승인 원문 "DDL 적용, push, APK 공개와 INSERT 모두 승인"): 운영 DB `app_release` 테이블 생성(20:51) · APK 공개 파일 복사와 `app_release` 행 INSERT(20:59)
+  - 같은 배포에 함께 실린 다른 작업: 없음(main==origin/main 이었음)
+  - **실매매 영향**: 없음 — 주문·청산·승인·cron·safety·exchanges·signals·strategy 코드 변경 0, 바뀐 안전 경로는 `src/middleware.ts` 1줄(공개 경로 `/app/download/` 추가)과 새 테이블 DDL 뿐(Reviewer 판정 PASS). 배포 전후 스위치 실측 동일: 킬스위치 ON·`safety_dry_run=false`·`exit_engine_enabled=false`·`telegram_approval_enabled=true`, 감사 로그 최신 id 불변(orders 3229·trade_logs 8305·signals 19409), cron 1행
+- **AI 가 검증한 것**: 전체 jest 256 스위트/6486 통과(실패 0)·`tsc`·`next build` 통과 · Reviewer R1~R4 독립 감사(최종 PASS, 변이 시험·일회용 DB 두 sql_mode·실서버 우회 시도) · Codex 외부 검토(지적 1건 → Low 로 부분 채택·수정) · QA S1~S12 전부 실행 · 운영: webhook `START→END exit=0`·cron 1행·스위치 동일·nginx 경유 보호 경로 307/401·**요청 제한이 위조 `X-Real-IP` 로 우회되지 않음 실측**·공개 도메인에서 `latest.apk` 200·**본문 sha256 과 서명 지문이 등록값·기대값과 일치**(내려받은 파일을 `apksigner` 로 직접 확인)
+  - 검증 못 한 것: **실기기 전부**(아래) · 로그인 세션으로 본 운영 `/api/app/version`(QA 가 일회용 환경에서 확인)
+- **👉 사용자가 확인할 것** (지금부터 가능 — 장 시간과 무관, 한국·미국 장 모두 닫힌 일요일 밤):
+  1. **설치**: 폰 Chrome 에서 `https://stock.미라클펭귄.com/app/download/latest.apk` 를 열거나, 웹에 로그인 → 설정 맨 아래 "앱 (안드로이드)" 의 [APK 내려받기] → Chrome 이 "유해할 수 있는 파일입니다"라고 물으면 **다운로드**(플레이스토어 밖 앱이라 매번 뜨는 정상 확인) → 받은 파일을 열고 "출처를 알 수 없는 앱 설치"를 Chrome 에 허용(처음 한 번) → 설치. 홈 화면에 "주식캐기" 아이콘이 생기면 정상. 설치가 막히면(Play Protect 경고 등) 화면을 알려 주세요.
+  2. **로그인 유지**: 앱에서 이메일·비밀번호 로그인 → 앱을 **완전히 종료**(최근 앱에서 밀어내기) 후 다시 열기 → 로그인 화면이 아니라 바로 대시보드가 보이면 정상(쿠키 저장).
+  3. **화면**: 하단 5개 탭이 시스템 내비게이션 바와 겹치지 않고, 상단이 상태바 밑으로 들어가지 않으면 정상.
+  4. **키보드**: 주문 수량 입력창·AI 채팅 입력창을 눌러 키보드가 입력창을 가리지 않으면 정상.
+  5. **로그인 화면**: 로그아웃하면 Google/GitHub 버튼 없이 이메일·비밀번호만 보이면 정상(웹 브라우저에서는 버튼이 그대로 보여야 함).
+  6. **차트·뒤로가기**: 차트를 만지면 차트가 움직이고 페이지가 같이 밀리지 않는지, 뒤로가기가 이전 화면으로 가고 최상위 화면에서는 앱이 종료되는지.
+  7. **비행기 모드**: 켜고 앱을 열면 "서버에 연결하지 못했습니다"(연결 실패 화면)가 보이고, 끈 뒤 [다시 시도]를 누르면 정상 화면으로 돌아오면 정상.
+  8. **스플래시·아이콘**: 앱 실행 때 어두운 배경에 지층형 아이콘이 보이는지(안드로이드 12+ 는 이름 없이 아이콘만 뜸 — 정상), 홈 화면 아이콘이 잘리지 않는지, 테마 아이콘 켰을 때 단색으로 알아볼 수 있는지.
+  9. **(선택) 업데이트 띠**: 지금은 v1.0.0 이 최신이라 띠가 안 보이는 것이 정상. 설정 › 앱에서 "최신"으로 보이면 정상.
+  - 이상이 있으면 어느 번호에서 무엇이 보였는지(가능하면 화면 캡처)를 알려 주세요. 설치 직후 "너무 많은 요청"(429)이 보이면 10분 뒤 다시(요청 제한 창, 21:07 에 이미 풀림).
+- **👉 사용자가 결정할 것**:
+  1. 미들웨어 공개 경로 시험(`src/__tests__/middleware-public-paths.test.ts`)을 커밋 훅의 안전 경로 목록에 넣을지 — 권고: 넣는다(인증 관문의 공개 범위를 고정하는 시험이라 무검토로 바뀌면 안 됨). 단 목록이 있는 `scripts/git-hooks/commit-msg` 를 지금 **다른 세션이 수정 중**이라 그 작업이 끝난 뒤에 하는 것이 안전.
+  2. M2(텔레그램 링크로 앱 열기)→M3(앱 잠금)→M4(푸시) 착수 — 권고: 실기기 확인이 끝난 뒤 M2 부터. M4 는 Firebase 계정·`/신규도입` 검토가 먼저(사용자 작업 포함).
+  3. 서명 키 비밀번호 보관 — 권고: 비밀번호 관리자로 옮기고 백업 폴더의 `stockinvest-signing.env` 사본은 지우기(키스토어 파일만 남겨도 복구 가능).
+- **남은 일**: M2~M4(별도 task, 번호는 착수 때 부여) · 잠복 결함 2건 수정(M2 착수 때 Reviewer 거쳐: ① `android/gradlew` 의 git 모드 100644 — 신선한 clone 에서 첫 빌드가 rc 126 으로 실패 ② 기본 APK 작업 디렉터리의 옛 빌드 캐시가 리소스 변경 뒤 빌드를 깨뜨림) · 실기기 확인 뒤 워크스페이스 `CLAUDE.md` 의 "앱여부"·앱 구현 현황 표 갱신(저장소 밖 사용자 지침이라 이번엔 건드리지 않음 — 그 표의 StockInvest "Next.js 14" 도 실제 15.5.27) · roadmap 갱신 · 임시 사본 정리
+- **이슈·위험**:
+  - APK 빌드가 배포 중 두 번 실패(① `gradlew` 실행 권한 ② 기본 작업 디렉터리의 옛 캐시)했으나 **둘 다 공개 전에 멈췄고** 공개물에는 영향 없음 — 새 작업 디렉터리로 처음부터 빌드해 공개
+  - **다른 세션이 `main` 작업 트리에서 안전 경로(`scripts/git-hooks/commit-msg`·`scripts/test-git-hooks.sh`·`src/app/api/cron/trade-report/route.ts`)를 수정 중**(미커밋) — 이번 push 와 겹치지 않았고 내 커밋은 명시 경로만 스테이징
+  - 승인 응답이 제시 후 약 80분 뒤에 와서 배포 창(일요일, 양시장 폐장)을 다시 확인한 뒤 진행
+  - 이 task 의 vault 후속 기록은 로컬 커밋만 하고 **따로 push 하지 않는다**(push=배포라 다음 코드 push 에 동승)
+  - 롤백: 웹 `scripts/deploy.sh StockInvest --rollback`(직전 `20261025-185645-aa51dd05`) · APK 공개 철회 `DELETE FROM app_release WHERE version_code = 1;`(별도 승인 필요, 파일은 유지) · DDL `DROP TABLE app_release`(행 없을 때만, 별도 승인)
 
 ## 데모 검토 (demo gate)
 

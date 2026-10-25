@@ -6,6 +6,13 @@ tags:
 ---
 # 현재 상태
 
+## 2026-10-25 — 모바일 앱 "주식캐기" M1 배포·APK 공개 완료, 실기기 확인 대기 ([[T-084-mobile-app-m1-shell]])
+
+- 운영 웹을 그대로 띄우는 Capacitor 안드로이드 앱(appId `com.miraclepenguin.stockinvest`, v1.0.0)과 앱 업데이트 안내를 배포했다. 코드 `46d4148`·문서 `b435399`, 20:53 KST push(webhook blue/green), 릴리스 `20261025-205329-b4353994`, `RELEASE_RESULT ok`. 정본 절차서는 [`docs/mobile-app-procedure.md`](../../docs/mobile-app-procedure.md)(v3), 배포 절은 [`docs/deploy-order.md`](../../docs/deploy-order.md) "앱(APK) 배포".
+- 운영 DB 에 `app_release` 테이블 생성(DDL 20:51, 사용자 승인)·APK 공개 파일 `shared/app-releases/stockinvest-1.0.0.apk`(2,990,678 B, sha256 `ab7d5901…a225`)·`app_release` 1행 INSERT(20:59). 공개 도메인 `…/app/download/latest.apk` 200·sha·서명 지문 일치 확인. **실매매 영향 없음**(주문·청산·승인·cron·safety 코드 변경 0, 배포 전후 스위치 동일 — 킬스위치 ON·`safety_dry_run=false`·`exit_engine_enabled=false`, 감사 로그 id 불변).
+- **다음 재개 지점**: ① 사용자 실기기 확인(설치·로그인 유지·키보드·하단 탭·비행기 모드·스플래시) ② 후속 M2(텔레그램 링크→앱 App Links, 서명 지문 `6fa5ad6f…0f08` 확정됨)→M3(앱 잠금)→M4(푸시 FCM — `/신규도입` 검토·Firebase 준비·DB 마이그레이션 승인 필요) ③ 잠복 결함 2건(`android/gradlew` git 모드 100644, 기본 APK 작업 디렉터리의 옛 빌드 캐시) ④ 미들웨어 공개 경로 시험의 SAFETY_PATHS 편입(사용자 결정, 훅 수정은 타 세션 작업이 끝난 뒤).
+- 서명 키(전용): `~/.android/stockinvest-release.keystore`·`stockinvest-signing.env`(권한 600), 백업 `NFS/homes/brownjeon/backup/android-signing/stockinvest/`. **분실 시 덮어쓰기 설치 불가.**
+
 ## 2026-10-24 — T-064·T-077 통합 작업절차서 완료 (T-078)
 
 - 실행 정본은 `docs/design/2026-10-24-integrated-execution-procedure.md`다. [[T-078-integrated-execution-procedure]]에서 기존 연구·검증과 최신 계좌 운용 정책을 S00~S09 한 순서로 합쳤다. T-064/T-077 원문은 근거/이력이며 Phase/A 단계를 별도 실행하지 않는다.
