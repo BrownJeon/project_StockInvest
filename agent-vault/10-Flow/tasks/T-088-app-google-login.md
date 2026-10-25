@@ -1,11 +1,11 @@
 ---
 task_id: T-088
 title: 앱 "주식캐기" 에서 Google 로그인 — Chrome 창 로그인 + 딥링크 복귀 + 1회용 코드 교환(PKCE)
-status: doing
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-26
 base_ref: da35af79e4e176bab0f4172de17d44deb84bfba7
 risk_level: pending
 roles_involved: [leader, judge, designer, developer, reviewer, qa, deployer]
@@ -18,7 +18,7 @@ tags:
 aliases:
   - 앱구글로그인
   - 앱OAuth
-waiting: [user_confirmation]
+waiting: []
 demo_gate:
   required: true
   level: "delta"
@@ -348,6 +348,13 @@ OAuthButtons({ nextPath, appLogin = false })   // 'use client'
 - **미검증(AI 가 할 수 없는 것)**: **실기기 전부** — 폰에서 새 APK 내려받기·덮어쓰기 설치, Chrome Custom Tab 에서 Google 로그인 후 `stockinvest://auth/callback` 으로 앱 복귀, 앱이 코드를 교환해 로그인되는 것, `browserFinished`·`getLaunchUrl` 동작. 운영의 실제 Google 로그인 완료(콜백의 코드 발급 앱 분기 종단 — 기존 회원 판정)는 Google 계정이 필요해 실행하지 않았다. 로그인 세션을 쓴 운영 `/api/app/version` 새 버전 응답도 세션이 없어 보지 않음.
 - **롤백 정보.** 웹: `scripts/deploy.sh StockInvest --rollback`(직전 릴리스 `20261026-052150-6d6efc09`, 그 앞 `20261025-232833-b6cd82fe`) 또는 `git revert 1b379ac be66800` 후 push — 코드 롤백이면 앱 교환 경로가 사라지고 테이블은 남지만 옛 코드는 읽지 않아 무해. APK 공개 철회: `DELETE FROM app_release WHERE version_code = 2;`(**롤백 시점에 사용자 별도 승인**, APK 파일은 지우지 않음 — 행이 없으면 최신이 다시 1.0.0 을 가리킨다). 이미 설치된 1.0.1 은 더 낮은 versionCode 로 덮어쓸 수 없다(이전 소스를 더 높은 versionCode 로 다시 빌드해 공개하거나 삭제 후 재설치). DDL 되돌림: 행이 없을 때 `DROP TABLE app_auth_code`(별도 승인). 롤백 DELETE·DROP 은 이번 승인에 포함되지 않는다.
 - **사용자 설치 안내**(`mobile-app-procedure.md` §9-C 요지): 폰 **Chrome** 으로 로그인한 `stock.미라클펭귄.com` → 설정 › 앱(안드로이드) → [APK 내려받기](1.0.1). 앱 안의 업데이트 띠는 1.0.0 앱이 로그인할 수 없어 뜨지 않으므로 웹에서 받는다. 네이티브 변경(딥링크)이라 **새 APK 설치 필요** — 같은 키로 서명돼 **덮어쓰기 설치**된다(기존 앱을 먼저 지우지 말 것). "앱이 설치되지 않았습니다"가 나오면 삭제 후 재설치·재로그인. Chrome 이 **"유해할 수 있는 파일입니다"** 라고 물으면 [다운로드](플레이스토어 밖 앱이라 매번 뜸).
+- **⑩ 사용자 실기기 검증 — 완료(10-26 06:03 이전).** 사용자 발화 그대로: **"실기기에서 앱설치해서 로그인 검증완료했어"**. 새 APK(1.0.1)를 설치하고 앱에서 로그인하는 것까지 확인됨. 이 발화가 구체적으로 다루지 않은 것: 대기 카드 복구·덮개 15초·콜드 스타트 직후 클릭·서버 중단 상태·쿠키 삭제·창 겹침(Codex 지적 재현 여부)·T-084 의 나머지 실기기 항목(키보드·하단 탭·비행기 모드·스플래시·아이콘) — 확인 여부 미기록. 이 확인으로 이 task 를 완료 처리하고(`status: done`, `waiting` 해제), 실기기에서 이상이 보이면 새 task 로 다룬다.
+- **⑪ 임시 파일 정리 — 06:03~06:09 KST**(사용자 지시 그대로: **"정리필요한 파일은 확인해서 삭제해줘"**). 먼저 읽기 전용으로 점검: `~/.node-local/stockinvest*` 39개 디렉터리의 크기·수정 시각·종류, 그 경로를 cwd 로 쓰는 프로세스 없음, QA 용 docker 컨테이너 잔존 없음(모두 제거됨), worktree 3개의 미커밋 변경은 task 파일 사본뿐·세 브랜치 끝 커밋이 모두 `origin/main` 에 포함. 이번 작업(T-084·T-088·T-089)이 만든 것만 골라 삭제했다:
+  - **임시 복사본 25개(약 15GB)**: `stockinvest-t084-{devn-check,devu-check,qa,review,review2,review3,review4}`·`stockinvest-icon-{verify,work}`·`stockinvest-apk-{icon,publish,publish2,qa,review3,t088}`·`stockinvest-app-auth-qa`·`stockinvest-t088-{devs-check,review-D,review-S,review-U,review-base}`·`stockinvest-ui-t088-build`·`stockinvest-next-t089-{build,qa,qa-base}` — 각 경로를 리터럴 절대 경로로 읽기 전용 검증(디렉터리·링크 아님·`.git` 없음·등록된 worktree 아님·사용 중 프로세스 없음) 후 삭제. 안에 있던 `node_modules` 심볼릭 링크 5개(→ app-auth worktree)는 먼저 링크만 끊고 원본(471개 패키지)이 온전함을 확인했다.
+  - **병합된 worktree 3개와 로컬 브랜치 3개(약 2.5GB)**: `stockinvest-app`·`mobile-app-t084`(`46d4148`), `stockinvest-app-auth`·`mobile-app-auth-t088`(`1b379ac`), `stockinvest-next-t089`·`open-redirect-t089`(`6d6efc0`) — 세 커밋 모두 `origin/main` 에 포함, `git branch -d`(병합 안 되면 거부하는 안전 삭제)로 지움. 이후 저장소의 worktree 는 메인 트리 하나, 브랜치는 `main` 하나.
+  - **`.git/refs/heads/@eaDir/main@SynoEAStream`(163 B)과 빈 디렉터리 `@eaDir`**: Synology 가 만든 확장 속성 스트림 파일(유효한 git ref 아님)이 `망가진 레퍼런스` 경고를 내고 있었다. 스크래치패드에 백업 후 삭제 → 경고가 사라졌고 **배포 중 오류를 냈던 `git fetch origin` 이 오류 없이(rc 0) 끝난다**(원인으로 추정, 재발 가능 — NAS 가 다시 만들 수 있음). `.git/@eaDir`·`.git/logs/@eaDir` 의 같은 종류 파일은 ref 가 아니라 두었다.
+  - 결과: 디스크 여유 418GB → 432GB. **그대로 둔 것**: 운영 `~/apps/stockinvest`(릴리스 `20261026-052603-1b379acc`·헬스 200·APK 2개 공개 폴더), 서명 키·백업(`~/.android/stockinvest-*`, `NFS/homes/brownjeon/backup/android-signing/stockinvest/`), 개발 미러 `~/.node-local/stockinvest`(지금도 사용), 기본 APK 작업 디렉터리 `~/.node-local/stockinvest-apk`, docker 이미지.
+  - **이번 작업이 만든 것이 아니라 건드리지 않은 것(약 9GB, 사용자 판단)**: `stockinvest-buildfix`(8/27)·`stockinvest-sdd`(8/12)·`stockinvest-t036-build`·`-t036-qa-build`·`-t036-reviewer-build`(8/27)·`stockinvest-upgrade`(8/05)·`stockinvest-np-base`·`-np-new`(10/07)·`stockinvest-t040`·`-t040rv`(10/18) — 다른 작업의 흔적으로 보이며(저장소에 등록된 worktree 아님) 그 작업이 끝났는지 확인하지 못했다.
 
 ## Codex 검토
 
@@ -363,7 +370,7 @@ OAuthButtons({ nextPath, appLogin = false })   // 'use client'
 
 ### [T-088] 앱 "주식캐기"에서 Google 로그인 — Chrome 창에서 로그인하고 앱으로 돌아옴, 웹·앱이 같은 로그인 화면
 
-- **상태**: ⏳ **사용자 실기기 확인 대기** — 구현·독립 감사·Codex·QA 후 사용자 승인("구글로그인 작업에 대하여 승인하니 작업진행해줘", 10-26 05:1x)을 받아 **운영 반영을 마쳤다**(DDL·웹 배포·APK 1.0.1 공개·`app_release` INSERT, 10-26 05:24~05:30 KST). 폰에서 새 APK 를 설치해 Google 로그인이 되는지 확인하기 전에는 "완료"가 아니다.
+- **상태**: ✅ **완료 — 사용자 실기기 검증 완료**(사용자 발화 그대로: "실기기에서 앱설치해서 로그인 검증완료했어", 10-26 06:03 이전). 구현·독립 감사·Codex·QA 후 사용자 승인("구글로그인 작업에 대하여 승인하니 작업진행해줘", 10-26 05:1x)으로 **운영 반영**(DDL·웹 배포·APK 1.0.1 공개·`app_release` INSERT, 10-26 05:24~05:30 KST)했고, 사용자가 폰에 새 APK 를 설치해 앱 Google 로그인이 되는 것을 확인했다.
 - **무엇이 바뀌었나**:
   - 앱 로그인 화면에 **Google로 계속하기**가 생긴다. 누르면 Chrome 창이 열려 Google 에 로그인하고, 끝나면 앱으로 돌아와 자동으로 로그인된다(Google 은 앱 안 WebView 에서의 로그인을 막아서 Chrome 창을 쓴다). 사용자 계정이 Google 전용이라 지금 앱(1.0.0)으로는 로그인할 방법이 없던 문제가 풀린다.
   - 로그인 화면은 **웹과 앱이 같은 화면**(Google + 이메일). GitHub 버튼은 화면 코드에서 뺐다(운영 웹에는 원래 보이지 않았다). 앱 전용으로는 "Chrome 창에서 로그인하는 중" 대기 카드·마무리 덮개·오류 안내가 생긴다.
@@ -379,7 +386,7 @@ OAuthButtons({ nextPath, appLogin = false })   // 'use client'
   - 전체 jest 6769 통과·0 실패(95 건너뜀은 DB 시험), typecheck 0, `next build` 통과·번들에 `@capacitor` 0건, APK(미공개) 점검 — versionCode 2·서명 지문 일치·딥링크 1개·debuggable 아님.
   - **합칠 때 문제**: git 은 T-088 과 T-089 를 충돌 없이 자동 병합하지만 합친 결과에서 시험 1건이 실패했다 — T-088 의 가드가 `login/page.tsx` 의 `next` 두 줄을 "바꾸지 않았다"로 고정했는데 T-089 가 그 두 줄을 고치기 때문. 가드를 "원문이거나 T-089 형태"로 보정(`04e2d71`)하고 일회용 작업 폴더에서 T-088+main+T-089 를 시험 병합해 전체 jest 7086 통과·0 실패를 확인했다.
   - **검증 못 한 것**: 실제 Google 동의→콜백(코드 발급 앱 분기·기존 회원 판정·신규 가입 거부의 종단), **실기기**(Chrome Custom Tab 복귀·`appUrlOpen`·`getLaunchUrl`·`browserFinished`·WebView 의 Origin 헤더), 운영 DB(sql_mode·MariaDB 10.11.11)에서의 DDL, 타이밍 오라클.
-- **👉 사용자가 확인할 것**(배포·APK 공개 뒤, 실기기):
+- **👉 사용자가 확인할 것**: ✅ **확인 완료** — "실기기에서 앱설치해서 로그인 검증완료했어"(아래 1~2 절차). **사용자 발화가 구체적으로 말한 것은 설치와 로그인뿐**이라 아래 3~4(대기 카드 복구·덮개 15초·콜드 스타트·서버 중단·쿠키 삭제·창 겹침)는 확인 여부가 기록되지 않았다 — 이상이 보이면 그때 알리는 선택 항목으로 둔다. 절차(참고):
   1. 폰 Chrome 으로 `stock.미라클펭귄.com` 로그인 → 설정 › 앱 → APK(1.0.1) 받아 **덮어쓰기 설치**(1.0.0 삭제하지 말 것 — 같은 서명 키라 덮어써짐)
   2. 앱 실행 → 로그인 화면에서 **Google로 계속하기** → Chrome 창에서 계정 선택 → 앱으로 돌아와 대시보드가 보이면 정상(로그인 후 앱을 완전히 종료했다 다시 열어도 로그인이 유지되는지)
   3. 이상 시 확인할 것: Chrome 창이 안 닫히거나 앱이 대기 카드에 머무는지([취소]·[Chrome 창 다시 열기]로 복구되는지), "로그인 마무리 중" 덮개가 15초 넘게 남는지
