@@ -98,6 +98,24 @@ describe('createOAuthState / verifyOAuthState', () => {
     }
   });
 
+  // T-089 — 탭·줄바꿈·NUL 을 끼운 경로는 URL 해석기가 그 문자를 지워 `//evil.com` 이 된다.
+  it('★ T-089 탭·줄바꿈·제어문자를 낀 경로는 next 로 통과하지 못한다 (URL 해석기가 지워 `//` 가 되는 우회)', () => {
+    const vectors = ['/\t/evil.com', '/\n/evil.com', '/\r/evil.com', '/\u0000/evil.com', '/\u001f/x', '/\u007f/x', '/a\\b', '/ /x'];
+    for (const evil of vectors) {
+      const { state, nonce } = createOAuthState(SECRET, 'google', evil, NOW);
+      const r = verifyOAuthState(state, nonce, 'google', SECRET, NOW);
+      expect({ evil, next: r.ok && r.nextPath }).toEqual({ evil, next: '/' });
+    }
+  });
+
+  it('T-089 정상 경로·쿼리·해시는 원본 그대로 state 에 실려 돌아온다', () => {
+    for (const ok of ['/', '/orders', '/a/b?x=1&y=2#h', '/search?q=%EC%82%BC%EC%84%B1', '/%09/evil.com']) {
+      const { state, nonce } = createOAuthState(SECRET, 'google', ok, NOW);
+      const r = verifyOAuthState(state, nonce, 'google', SECRET, NOW);
+      expect(r.ok && r.nextPath).toBe(ok);
+    }
+  });
+
   it('서명 키가 없으면 통과시키지 않는다 (fail-closed)', () => {
     const { state, nonce } = createOAuthState(SECRET, 'google', '/', NOW);
     expect(verifyOAuthState(state, nonce, 'google', undefined, NOW).ok).toBe(false);
@@ -132,6 +150,17 @@ describe('signPendingSignup / verifyPendingSignup', () => {
   it('★ state 토큰을 대기 토큰으로 재사용할 수 없다 (용도별 서브키 분리)', () => {
     const { state } = createOAuthState(SECRET, 'google', '/', NOW);
     expect(verifyPendingSignup(state, SECRET, NOW)).toEqual({ ok: false, reason: 'bad_signature' });
+  });
+
+  it('★ T-089 탭·줄바꿈을 낀 next 는 대기 토큰에서도 `/` 로 떨어진다', () => {
+    for (const evil of ['/\t/evil.com', '/\n/evil.com', '//evil.com']) {
+      const t = signPendingSignup(SECRET, 'google', profile, evil, NOW);
+      const r = verifyPendingSignup(t, SECRET, NOW);
+      expect(r.ok && r.pending.nextPath).toBe('/');
+    }
+    const ok = signPendingSignup(SECRET, 'google', profile, '/a/b?x=1#h', NOW);
+    const r = verifyPendingSignup(ok, SECRET, NOW);
+    expect(r.ok && r.pending.nextPath).toBe('/a/b?x=1#h');
   });
 });
 

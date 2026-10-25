@@ -17,6 +17,7 @@ import { OAuthButtons } from '@/components/auth/OAuthButtons';
 import { SignupRequestLink } from '@/components/auth/SignupRequestLink';
 import { loginFailureText } from '@/components/auth/login-failure';
 import { isNativeApp } from '@/lib/native/bridge';
+import { sanitizeInternalPath } from '@/lib/safe-next-path';
 
 /**
  * 콜백이 실패했을 때 붙여 보내는 고정 코드 → 사용자 문구.
@@ -45,7 +46,7 @@ export default function LoginPage() {
     const params = new URLSearchParams(window.location.search);
     setOauthError(params.get('oauth_error'));
     const n = params.get('next');
-    setNextPath(n && n.startsWith('/') && !n.startsWith('//') ? n : undefined);
+    setNextPath(sanitizeInternalPath(n) ?? undefined);
     setNative(isNativeApp());
   }, []);
 
@@ -73,7 +74,7 @@ export default function LoginPage() {
       const params = new URLSearchParams(window.location.search);
       const next = params.get('next');
       // open redirect 방지 — 같은 오리진 내부 경로만 허용
-      const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';
+      const dest = sanitizeInternalPath(next) ?? '/';
       window.location.replace(dest);
     } catch {
       setError('네트워크 오류 — 다시 시도하세요');

@@ -13,6 +13,7 @@
  * 프로세스가 옛 값을 계속 들고 있게 된다.
  */
 import { OAUTH_PROVIDERS, type OAuthProviderName } from '@/lib/auth/oauth/names';
+import { sanitizeInternalPath } from '@/lib/safe-next-path';
 
 export interface OAuthCredentials {
   clientId: string;
@@ -67,12 +68,15 @@ export function buildRedirectUri(base: string, provider: OAuthProviderName): str
 
 /**
  * 로그인 후 돌아갈 내부 경로 검증 (open redirect 방지).
- * `//evil.com` 은 프로토콜 상대 URL 이라 `/` 로 시작해도 외부로 나간다 — 별도로 막는다.
- * `/\` 도 일부 브라우저가 `//` 처럼 해석하므로 함께 막는다.
+ *
+ * 판정은 `src/lib/safe-next-path.ts` 의 `sanitizeInternalPath` 한 곳에서 한다(T-089, 2026-10-25) —
+ * 이메일 로그인 화면(`/login`)도 같은 함수를 쓴다. 통과하면 입력을 그대로, 거부되면 `/` 를 돌려준다.
+ *
+ * 막는 것: `//evil.com`(프로토콜 상대 URL)·`/\`(일부 브라우저가 `//` 로 해석)에 더해,
+ * 탭·줄바꿈 같은 **제어문자·백슬래시·줄 구분 문자를 낀 경로**와 해석 결과의 출처가 달라지는 경로.
+ * URL 해석기는 탭·줄바꿈을 지우므로 `/<TAB>/evil.com` 이 `//evil.com` 이 되어 외부로 나갔다
+ * (옛 검사는 앞 두 글자만 봤다).
  */
 export function sanitizeNextPath(raw: unknown): string {
-  if (typeof raw !== 'string') return '/';
-  if (!raw.startsWith('/')) return '/';
-  if (raw.startsWith('//') || raw.startsWith('/\\')) return '/';
-  return raw;
+  return sanitizeInternalPath(raw) ?? '/';
 }
