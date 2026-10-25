@@ -24,12 +24,13 @@
 
         <!--
             launchMode="singleTask" — 아이콘을 다시 눌러도 이미 떠 있는 이 화면으로 돌아온다(화면이 쌓이지 않는다).
-            M2 의 앱 링크(https)가 도착할 때도 같은 화면이 받는다.
+            M2 의 앱 링크(https)가 도착할 때도 같은 화면이 받는다. T-088 로그인 딥링크(stockinvest://auth/callback)도 이 화면이 받아
+            위에 떠 있던 Chrome 창(Custom Tab)이 정리되고 새 화면이 쌓이지 않는다.
 
             windowSoftInputMode="adjustResize" — 입력창이 키보드에 가리지 않게. edge-to-edge(targetSdk 35) 아래에서는
             이것만으로 창이 줄지 않아 MainActivity.fitAboveKeyboard 가 함께 맡는다(app-conversion-guide §1-2).
 
-            intent-filter 는 LAUNCHER 하나뿐이다 — 딥링크·App Links 는 M2 에서 추가한다.
+            intent-filter 는 LAUNCHER + T-088 로그인 딥링크 두 개다 — https App Links 는 M2 에서 추가한다.
         -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
@@ -43,6 +44,22 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!--
+                T-088 Google 로그인 복귀 딥링크. Google 은 WebView 안 로그인을 막으므로 로그인만 Chrome 창(Custom Tab)에서 하고, 서버 콜백이
+                끝에 stockinvest://auth/callback?code=… (또는 ?error=…) 로 302 한다. 서버가 실제로 내는 주소(스킴·호스트·경로)만 **정확히**
+                주장한다 — 다른 딥링크가 로그인 수신부를 깨우지 않게(pathPrefix·pathPattern 금지). 값은 src/lib/auth/oauth/app-flow.ts 의
+                APP_DEEP_LINK_* 와 같아야 한다(manifest-deeplink-t088.test.ts 가 대조, build-apk.sh 가 빌드된 APK 에서 다시 확인).
+                커스텀 스킴은 다른 앱도 등록할 수 있다 → 딥링크의 코드는 60초·1회용이고 PKCE verifier(WebView 안에만 있음)에 결속돼
+                가로채도 교환할 수 없다. App Links(autoVerify)가 아니므로 assetlinks 는 필요 없다.
+                이 intent-filter 추가는 네이티브 변경이다 → versionCode 2 / 1.0.1(android/app/build.gradle).
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="stockinvest" android:host="auth" android:path="/callback" />
             </intent-filter>
 
         </activity>

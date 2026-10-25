@@ -453,6 +453,7 @@ blue/green 으로 컷오버하면서 이 훅을 그대로 두면 **push 한 번�
 ③ 전에 확인할 것:
 - 빌드할 트리가 배포한 커밋과 같은가 — `git rev-parse HEAD` = 배포 커밋, `git status --short -- android capacitor.config.ts public/app-shell package.json package-lock.json scripts/build-apk.sh` 가 비어 있는가(다른 세션의 미커밋 네이티브 변경이 APK 에 섞이지 않게).
 - `android/app/build.gradle` 의 `stockVersionCode` 가 직전 공개본보다 크고 `stockVersionName` 도 새 값인가(같으면 developer 반송).
+- `git ls-files -s android/gradlew` 의 모드가 `100755` 인가(NFS `core.fileMode=false` 라 작업 트리 권한으로는 드러나지 않는다 — `build-apk.sh` 는 작업 사본에서 `chmod +x` 하고, 네이티브 소스가 직전 성공 빌드와 다르면 작업 디렉터리의 옛 `android/app/build`·`android/build` 를 지운 뒤 빌드한다 — 그런 빌드의 로그에는 "옛 빌드 산출물(…)을 지운다" 가 한 번 나온다, T-088).
 - 연결 실패 화면(`public/app-shell/index.html`)·아이콘·스플래시가 **승인된 디자인**인가 — 자리표시자 화면·Capacitor 기본 아이콘이 든 APK 는 공개하지 않는다(`--publish` 는 이것을 막지 못한다).
 - 운영 `shared/.env` 에 `APP_RELEASE_DIR` 를 따로 두었다면 ③ 에도 같은 값을 준다(서버와 빌드 스크립트의 기본값은 같다). 현재 운영 값은 **미확인**.
 

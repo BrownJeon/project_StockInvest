@@ -36,6 +36,12 @@ import { OAUTH_PUBLIC_PATHS } from '@/lib/auth/oauth/names';
  * T-010: 가입 요청 경로가 추가됐다. 초대코드가 **없는** 외부인이 쓰는 화면이므로 공개여야 한다.
  *   - `/signup/request`             : 가입 요청 폼
  *   - `/api/auth/signup-request`    : 폼 제출(POST) + 기능 활성 여부 조회(GET)
+ *
+ * T-088: 앱(주식캐기) Google 로그인의 코드 교환 경로가 추가됐다 — 로그인 **전** 앱 WebView 가 부르므로 공개여야 한다.
+ *   - `/api/auth/app-exchange`      : 딥링크 1회용 코드 + PKCE verifier → 세션 쿠키(POST JSON, 같은 출처만, 모든 실패 동일 400)
+ *   정확 일치 1개다(하위 경로·대소문자 변형은 보호 유지 — middleware-public-paths.test.ts). OAuth 프로바이더 목록에서 펼쳐지는
+ *   `OAUTH_PUBLIC_PATHS`(names.ts) 에 넣지 않고 여기 문자열로 둔다: 그 목록은 프로바이더마다 경로를 만드는 규칙이고, 교환 경로는
+ *   프로바이더와 무관한 한 줄이라 관문 파일에서 바로 보이는 쪽이 감사하기 쉽다.
  */
 const PUBLIC_EXACT = new Set<string>([
   '/api/health',
@@ -50,6 +56,7 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/oauth-providers',
   '/api/auth/oauth-pending',
   '/api/auth/oauth-complete',
+  '/api/auth/app-exchange', // T-088 — 정확 일치. POST 만 의미가 있고(GET 405) 실패는 전부 같은 400
   '/oauth/invite',
   '/favicon.ico',
   '/robots.txt',

@@ -133,3 +133,72 @@ describe('③ 기존 판정 불변', () => {
     expect((await verdict('/api/orders')).v).toBe('other:503');
   });
 });
+
+/**
+ * T-088 — 앱 Google 로그인의 코드 교환 경로 `/api/auth/app-exchange` 를 **정확 일치 1개**로 공개한다.
+ * 위 ①~③ 의 기존 단언은 그대로 두고 이어 쓴다. 이웃 경로·대소문자·점 구간·인코딩 변형은 여전히 보호돼야 하고,
+ * 공개 목록을 넓히는 변이(접두어로 바꾸기·`/api/auth/` 통째 공개)는 아래 ⑤ 가 잡는다.
+ */
+describe('④ T-088 /api/auth/app-exchange — 정확 일치만 무인증 통과', () => {
+  test.each(['POST', 'GET', 'HEAD'])('%s /api/auth/app-exchange → public(메서드 판정은 라우트 몫: GET 405)', async (m) => {
+    expect((await verdict('/api/auth/app-exchange', m)).v).toBe('public');
+  });
+
+  test('공개 경로 문자열이 app-flow 상수와 같다', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { APP_EXCHANGE_PATH } = require('@/lib/auth/oauth/app-flow') as { APP_EXCHANGE_PATH: string };
+    expect(APP_EXCHANGE_PATH).toBe('/api/auth/app-exchange');
+  });
+
+  test('세션 서명 키가 없어도 공개(라우트가 같은 400 으로 처리)', async () => {
+    delete process.env.AUTH_SESSION_SECRET;
+    expect((await verdict('/api/auth/app-exchange', 'POST')).v).toBe('public');
+  });
+});
+
+describe('⑤ T-088 이웃 경로는 여전히 보호', () => {
+  test.each([
+    ['/api/auth/app-exchange/', 'api401'],
+    ['/api/auth/app-exchange/x', 'api401'],
+    ['/api/auth/app-exchange/../../orders', 'api401'],
+    ['/api/auth/app-exchanges', 'api401'],
+    ['/api/auth/app-exchange.json', 'api401'],
+    ['/api/auth/app-exchange-x', 'api401'],
+    ['/api/auth/app-exchang', 'api401'],
+    ['/api/auth/App-Exchange', 'api401'],
+    ['/api/auth/APP-EXCHANGE', 'api401'],
+    ['/api/auth/app_exchange', 'api401'],
+    ['/api/auth/app', 'api401'],
+    ['/api/auth/app-code', 'api401'],
+    ['/api/auth/google/app-exchange', 'api401'],
+    ['/api/auth/x/app-exchange', 'api401'],
+    ['/api/auth/', 'api401'],
+    ['/api/auth', 'api401'],
+    ['/api/app-exchange', 'api401'],
+    ['/app-exchange', 'login'],
+    ['/auth/app-exchange', 'login'],
+  ])('%s → %s', async (p, want) => {
+    expect((await verdict(p, 'POST')).v).toBe(want);
+  });
+
+  test.each([
+    ['/api/auth/app-exchange/../../api/orders', '/api/api/orders'],
+    ['/api/auth/app-exchange/%2e%2e/%2e%2e/orders', '/api/orders'],
+    ['/api/auth/app-exchange/..%2f..%2forders', null],
+    ['/api/auth/app-exchange%2f..%2f..%2forders', null],
+    ['/api/auth/app-exchange%2Fx', null],
+    ['/api/auth/app-exchange;x', null],
+    ['/api/auth/app-exchange%00', null],
+    ['/api/auth/app%2Dexchange', null],
+  ])('변형 %s → 보호', async (p, normalized) => {
+    const r = await verdict(p, 'POST');
+    if (normalized !== null) expect(r.pathname).toBe(normalized);
+    expect(r.v).not.toBe('public');
+  });
+
+  test('다른 인증 라우트의 하위 경로도 그대로 보호(공개 목록이 넓어지지 않음)', async () => {
+    for (const p of ['/api/auth/login/x', '/api/auth/google/x', '/api/auth/me', '/api/auth/oauth-complete/x', '/api/auth/session']) {
+      expect((await verdict(p, 'POST')).v).toBe('api401');
+    }
+  });
+});

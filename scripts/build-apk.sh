@@ -19,6 +19,10 @@
 # - 배포본은 release 만: `aapt2` 로 debuggable 이 없음을, `apksigner` 로 서명을 확인하고 **서명 인증서 SHA-256 이 기대 지문과
 #   다르면 실패**한다(키가 바뀐 APK 는 기존 설치본 위에 덮어써지지 않고, M2 App Links 지문과도 어긋난다).
 # - 권한은 INTERNET(+ androidx 가 스스로 선언하는 앱 전용 DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION)만 허용한다.
+# - 딥링크(intent-filter <data>)는 T-088 로그인 콜백 stockinvest://auth/callback **정확히 하나**만 허용한다(다른 스킴·호스트·경로·
+#   pathPrefix/pathPattern 이 생기면 실패 — M2 App Links 를 더할 때 이 검사도 함께 바꾼다).
+# - 작업 디렉터리 android/ 의 옛 빌드 산출물(app/build·build)은 저장소 쪽 네이티브 소스가 바뀌면 지우고 다시 빌드한다(T-088 ⑧ —
+#   리소스·Manifest 를 바꾼 뒤 옛 중간 산출물이 남아 빌드가 깨지던 문제). 판단은 소스 해시로 하고, 빌드가 성공했을 때만 해시를 기록한다.
 # - APK 안에 .env·키스토어·서명 설정·비밀 문자열이 없는지 검사한다.
 # - APK·키스토어는 저장소 밖(작업 디렉터리·APP_RELEASE_DIR·~/.android)에만 둔다.
 # - app_release 행은 이 스크립트가 넣지 않는다 — --publish 가 INSERT SQL 을 **출력만** 하고, deployer 가 사용자 승인 후 실행한다.
@@ -83,6 +87,35 @@ rsync -a --delete \
 mkdir -p "$WORK/public"
 rsync -a --delete "$PROJECT_ROOT/public/app-shell/" "$WORK/public/app-shell/"
 cp "$PROJECT_ROOT/capacitor.config.ts" "$WORK/capacitor.config.ts"
+
+# gradlew 실행 권한 — 저장소의 NFS 는 noexec·core.fileMode=false 라 git 모드(100755)가 작업 사본에 그대로 오지 않을 수 있다(T-088 ⑧).
+chmod +x "$WORK/android/gradlew"
+
+# 네이티브 소스 해시 — 저장소 android/(산출물·기계별 값 제외)·capacitor.config.ts·public/app-shell·루트 package.json 의 @capacitor 버전.
+# 직전 **성공한** 빌드의 해시와 다르면 작업 디렉터리의 옛 산출물(app/build·build)을 지운다. .gradle(의존성 캐시)은 남긴다.
+native_src_hash() {
+  (
+    cd "$PROJECT_ROOT"
+    find android -type f \
+      -not -path 'android/build/*' -not -path 'android/app/build/*' -not -path 'android/.gradle/*' \
+      -not -path 'android/.idea/*' -not -path 'android/capacitor-cordova-android-plugins/*' \
+      -not -path 'android/app/src/main/assets/*' -not -name 'local.properties' \
+      -not -name '*.keystore' -not -name '*.jks' -not -name '*signing.env' -print0 \
+      | LC_ALL=C sort -z | xargs -0 -r sha256sum
+    sha256sum capacitor.config.ts
+    find public/app-shell -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum
+  ) | sha256sum | cut -d' ' -f1
+}
+SRC_HASH="$(native_src_hash)"
+[[ "$SRC_HASH" =~ ^[0-9a-f]{64}$ ]] || fail "네이티브 소스 해시 계산 실패"
+SRC_HASH_FILE="$WORK/.native-src-hash"
+if [ "$(cat "$SRC_HASH_FILE" 2>/dev/null || true)" != "$SRC_HASH" ]; then
+  log "네이티브 소스가 직전 성공 빌드와 다르다 — 작업 디렉터리의 옛 빌드 산출물(android/app/build·android/build)을 지운다"
+  case "$WORK" in
+    ""|"/"|"$HOME"|"$PROJECT_ROOT") fail "작업 디렉터리 값이 이상하다: '$WORK'" ;;
+  esac
+  rm -rf -- "$WORK/android/app/build" "$WORK/android/build"
+fi
 
 # package.json: 루트의 @capacitor/* 와 TypeScript(capacitor.config.ts 로드용)만 같은 버전으로 옮긴다(루트는 정확 버전 고정).
 node - "$PROJECT_ROOT/package.json" "$WORK/package.json" <<'NODE'
@@ -201,6 +234,21 @@ UNEXPECTED_PERMS="$(grep -v -x -e 'android.permission.INTERNET' -e "${EXPECTED_A
 [ -z "$UNEXPECTED_PERMS" ] || fail "허용하지 않은 권한: $(tr '\n' ' ' <<<"$UNEXPECTED_PERMS")"
 grep -q -x 'android.permission.INTERNET' <<<"$PERMS" || fail "INTERNET 권한이 없다"
 
+# 딥링크(T-088): Manifest 의 <data> 속성은 stockinvest://auth/callback 하나뿐이어야 한다. 출력은 변수에서 sed 로 뽑는다(파이프 SIGPIPE 회피).
+#   aapt2 xmltree 형식: `A: http://schemas.android.com/apk/res/android:scheme(0x01010027)="stockinvest" (Raw: "stockinvest")`
+manifest_attr_values() {
+  sed -n "s/.*android:$1([^)]*)=\"\([^\"]*\)\".*/\1/p" <<<"$MANIFEST_TREE" | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+DL_SCHEMES="$(manifest_attr_values scheme)"
+DL_HOSTS="$(manifest_attr_values host)"
+DL_PATHS="$(manifest_attr_values path)"
+[ "$DL_SCHEMES" = "stockinvest" ] || fail "딥링크 스킴이 기대와 다르다: '$DL_SCHEMES' (기대 'stockinvest' 하나 — T-088)"
+[ "$DL_HOSTS" = "auth" ] || fail "딥링크 호스트가 기대와 다르다: '$DL_HOSTS' (기대 'auth' 하나)"
+[ "$DL_PATHS" = "/callback" ] || fail "딥링크 경로가 기대와 다르다: '$DL_PATHS' (기대 '/callback' 하나)"
+for attr in pathPrefix pathPattern pathAdvancedPattern pathSuffix ssp sspPrefix sspPattern port mimeType autoVerify; do
+  [ -z "$(manifest_attr_values "$attr")" ] || fail "딥링크에 허용하지 않은 속성이 있다: android:$attr"
+done
+
 # 서명: apksigner 검증 + 인증서 지문이 기대값과 같아야 한다.
 set +e
 CERTS="$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" 2>&1)"
@@ -266,6 +314,9 @@ log "sha256     : $APK_SHA"
 log "signer     : SHA-256 $CERT_SHA (기대 지문과 일치)"
 log "debuggable : no"
 log "secrets    : 없음(파일 이름·assets 목록·문자열 패턴·서명 비밀번호 검사 통과)"
+log "deeplink   : $DL_SCHEMES://$DL_HOSTS$DL_PATHS (정확히 하나)"
+# 검사까지 통과한 빌드의 소스 해시만 기록한다(다음 빌드가 옛 산출물을 재사용해도 되는지 판단).
+echo "$SRC_HASH" > "$SRC_HASH_FILE"
 
 # ── 5. 배포본(선택, deployer 전용) ────────────────────────────────────────────
 if [ "$PUBLISH" -eq 1 ]; then

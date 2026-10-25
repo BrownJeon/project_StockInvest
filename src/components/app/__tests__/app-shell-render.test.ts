@@ -2,6 +2,9 @@
  * T-084 — 승인 데모 v1(mockups/T-084-app-shell-v1.html) 기준 상태별 마크업 고정.
  * B 업데이트 띠(AppUpdateBannerView) · C 설정 › 앱 섹션(AppSectionView + deriveSectionModel) · 배치(layout·SettingsPage) ·
  * D 로그인 앱 분기(OAuthButtons 목록·loginFailureText). 숫자는 데모 합성값.
+ *
+ * T-088 — D 절은 승인 데모 v2(mockups/T-088-app-login-v2.html)로 바뀌었다: 웹·앱 같은 로그인 화면(Google + 이메일), 앱 전용 `oauth_account` 문구 삭제,
+ * 설정 › 앱 설치 3단계 ③ 문구(앱에서 Google 로그인이 된다). 로그인 화면의 상태별 마크업·전이표는 `components/auth/__tests__/login-screen-t088.test.ts`.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -17,7 +20,7 @@ import { AppSection, AppSectionView, deriveSectionModel, type SectionModel } fro
 import { INITIAL_STATE, type AppUpdateState } from '@/components/app/useAppUpdate';
 import { AppIcon } from '@/components/app/AppStyles';
 import { OAuthButtons, visibleProviders } from '@/components/auth/OAuthButtons';
-import { appOauthAccountText, GENERIC_LOGIN_FAILURE, loginFailureText } from '@/components/auth/login-failure';
+import { GENERIC_LOGIN_FAILURE, GOOGLE_ACCOUNT_TEXT, loginFailureText } from '@/components/auth/login-failure';
 import { HIDDEN_PATHS } from '@/components/BottomTabs';
 
 const SRC = path.resolve(__dirname, '../../..');
@@ -131,7 +134,10 @@ describe('C. 설정 › 앱 — 마크업 (데모 webCard·appCard)', () => {
     expect(html).toContain('<ol class="steps" id="ap-steps" aria-label="설치 순서">');
     expect(t).toContain('내려받기Chrome 이 "유해할 수 있는 파일입니다"라고 물으면 다운로드를 누릅니다.');
     expect(t).toContain('설치 허용받은 파일을 열고, "출처를 알 수 없는 앱 설치"를 물으면 Chrome 을 허용합니다(처음 한 번만).');
-    expect(t).toContain('설치 후 로그인홈 화면의 주식캐기를 열고 이메일·비밀번호로 로그인합니다. 앱에서는 Google·GitHub 로그인을 지원하지 않습니다.');
+    // T-088(데모 v2 G 절): 앱에서 Google 로그인이 되므로 "지원하지 않습니다" 문구는 거짓이 됐다 — 고친 문구로 고정
+    expect(t).toContain('설치 후 로그인홈 화면의 주식캐기를 열고 Google 또는 이메일·비밀번호로 로그인합니다. Google 로그인은 Chrome 창이 잠깐 열렸다가 앱으로 돌아옵니다.');
+    expect(t).not.toContain('지원하지 않습니다');
+    expect(t).not.toContain('GitHub');
     expect(html).toContain('<summary>받은 파일이 맞는지 확인하려면</summary>');
     expect(html).toContain('파일 이름 <code>stockinvest-1.0.1.apk</code>');
     expect(html).toContain(`<code class="full">${SHA}</code>`);
@@ -244,43 +250,65 @@ describe('배치 — 띠는 레이아웃 흐름 안 맨 위, 앱 섹션은 설�
   });
 });
 
-describe('D. 로그인 앱 분기', () => {
-  test('OAuth 버튼: 앱이면 빈 목록(구분선까지 렌더 없음) · 웹은 서버 목록 그대로(순서 고정)', () => {
-    expect(visibleProviders(['google', 'github'], true)).toEqual([]);
-    expect(visibleProviders(['github', 'google'], false)).toEqual(['google', 'github']);
-    expect(visibleProviders(['github', 'x'], false)).toEqual(['github']);
-    expect(visibleProviders(undefined, false)).toEqual([]);
+describe('D. 로그인 — 웹·앱 같은 화면 (T-088 데모 v2)', () => {
+  test('OAuth 버튼: Google 만(GitHub·모르는 값 무시) · 목록이 없거나 비면 아무것도 그리지 않는다', () => {
+    expect(visibleProviders(['google', 'github'])).toEqual(['google']);
+    expect(visibleProviders(['github', 'google'])).toEqual(['google']);
+    expect(visibleProviders(['github', 'x'])).toEqual([]);
+    expect(visibleProviders(undefined)).toEqual([]);
+    expect(visibleProviders('google')).toEqual([]);
+    // 실제 컴포넌트 SSR(목록을 받기 전·판별 전) = 웹과 같다 — 렌더 없음(수화 불일치 없음)
     expect(renderToStaticMarkup(h(OAuthButtons, {}))).toBe('');
+    expect(renderToStaticMarkup(h(OAuthButtons, { appLogin: true }))).toBe('');
   });
-  test('OAuthButtons: 판별이 목록 조회보다 먼저(앱에서는 조회 없음)', () => {
+  test('OAuthButtons: 판별은 마운트 뒤 effect 에서만 · 앱의 가입 화면(appLogin 아님)은 조회 없이 빈 목록', () => {
     const src = read('components/auth/OAuthButtons.tsx');
-    const eff = src.slice(src.indexOf('useEffect(() => {'));
-    expect(eff.indexOf('if (isNativeApp())')).toBeGreaterThan(0);
-    expect(eff.indexOf('if (isNativeApp())')).toBeLessThan(eff.indexOf("fetch('/api/auth/oauth-providers')"));
+    const eff = src.slice(src.indexOf('// 앱 판별은 마운트 뒤에만'));
+    expect(eff.indexOf('const nat = isNativeApp();')).toBeGreaterThan(0);
+    expect(eff.indexOf('if (nat && !appLogin)')).toBeGreaterThan(eff.indexOf('const nat = isNativeApp();'));
+    expect(eff.indexOf('if (nat && !appLogin)')).toBeLessThan(eff.indexOf("fetch('/api/auth/oauth-providers')"));
+    // 렌더 본문(훅 바깥)에서 직접 isNativeApp() 를 부르지 않는다 — 첫 렌더는 웹과 같다.
+    // 부르는 곳은 정확히 둘: 마운트 effect 의 `const nat = isNativeApp();`(그리기 전용 상태) · 클릭 핸들러 안의 `pickStartMode(isNativeApp())`(F2, 클릭 시점 재평가).
+    const render = src.slice(src.indexOf('export function OAuthButtons('), src.indexOf('export const oauthStyles'));
+    expect(render.match(/isNativeApp\(\)/g)).toHaveLength(2);
+    const rest = render
+      .replace('const nat = isNativeApp();', '')
+      .replace("onStart={() => { if (pickStartMode(isNativeApp()) === 'app')", '');
+    expect(rest).not.toMatch(/isNativeApp\(\)/);
   });
-  test('웹: 기존 분기·문구 그대로', () => {
-    expect(loginFailureText({ status: 429, detail: '잠시 후' }, false)).toBe('잠시 후');
-    expect(loginFailureText({ status: 429 }, false)).toBe('시도가 많습니다. 잠시 후 다시 시도하세요');
-    expect(loginFailureText({ status: 503 }, false)).toBe('서버 인증 설정(AUTH_SESSION_SECRET)이 없습니다');
+  test('웹: 기존 분기·문구 그대로(oauth_account 의 "아래"만 D5 A 로 "위의")', () => {
+    expect(loginFailureText({ status: 429, detail: '잠시 후' })).toBe('잠시 후');
+    expect(loginFailureText({ status: 429 })).toBe('시도가 많습니다. 잠시 후 다시 시도하세요');
+    expect(loginFailureText({ status: 503 })).toBe('서버 인증 설정(AUTH_SESSION_SECRET)이 없습니다');
     const detail = 'Google로 가입된 계정입니다. 아래 Google로 계속하기를 눌러 로그인하세요.';
-    expect(loginFailureText({ status: 401, error: 'oauth_account', detail, provider: 'google' }, false)).toBe(detail);
-    expect(loginFailureText({ status: 401, error: 'oauth_account' }, false)).toBe(GENERIC_LOGIN_FAILURE);
-    expect(loginFailureText({ status: 401, error: 'invalid' }, false)).toBe('이메일 또는 비밀번호가 올바르지 않습니다');
+    expect(loginFailureText({ status: 401, error: 'oauth_account', detail, provider: 'google' }))
+      .toBe('Google로 가입된 계정입니다. 위의 Google로 계속하기를 눌러 로그인하세요.');
+    expect(GOOGLE_ACCOUNT_TEXT).toBe('Google로 가입된 계정입니다. 위의 Google로 계속하기를 눌러 로그인하세요.');
+    expect(loginFailureText({ status: 401, error: 'oauth_account' })).toBe(GENERIC_LOGIN_FAILURE);
+    expect(loginFailureText({ status: 401, error: 'invalid' })).toBe('이메일 또는 비밀번호가 올바르지 않습니다');
   });
-  test('앱 + oauth_account: 막다른 "아래 …로 계속하기" 대신 앱 문구(데모 D)', () => {
-    const detail = 'Google로 가입된 계정입니다. 아래 Google로 계속하기를 눌러 로그인하세요.';
-    expect(loginFailureText({ status: 401, error: 'oauth_account', detail, provider: 'google' }, true))
-      .toBe('Google로 가입된 계정입니다. 앱에서는 Google 로그인을 지원하지 않습니다 — 휴대폰이나 PC 의 브라우저에서 로그인해 주세요.');
-    expect(appOauthAccountText('github')).toBe('GitHub로 가입된 계정입니다. 앱에서는 GitHub 로그인을 지원하지 않습니다 — 휴대폰이나 PC 의 브라우저에서 로그인해 주세요.');
-    expect(loginFailureText({ status: 401, error: 'invalid' }, true)).toBe(GENERIC_LOGIN_FAILURE);
-    expect(loginFailureText({ status: 429 }, true)).toBe('시도가 많습니다. 잠시 후 다시 시도하세요');
+  test('앱 + oauth_account: 웹과 같은 문구 — T-084 의 앱 전용 문구("앱에서는 … 지원하지 않습니다")는 없다', () => {
+    // 주석(고친 이력 설명)은 빼고 코드만 본다
+    const src = read('components/auth/login-failure.ts').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(src).not.toContain('appOauthAccountText');
+    expect(src).not.toContain('지원하지 않습니다');
+    expect(src).not.toMatch(/native/);
+    // 시그니처에 앱 판별 인자가 없다 — 웹·앱이 같은 함수·같은 결과
+    expect(loginFailureText.length).toBe(1);
+    // Google 이 아닌 제공자는 서버 문구 그대로(운영에는 없음)
+    expect(loginFailureText({ status: 401, error: 'oauth_account', detail: '서버 문구', provider: 'github' })).toBe('서버 문구');
   });
-  test('로그인 페이지: 제목 그대로 · loginFailureText 에 앱 판별값을 넘김 · 판별은 수화 뒤', () => {
+  test('로그인 페이지: 제목 그대로 · 같은 OAuthButtons(appLogin) · AppDeepLink · 오류 상자 · 앱 전용 분리 컴포넌트 없음', () => {
     const src = read('app/login/page.tsx');
     expect(src).toContain('<AuthShell title="주식 자동매매" subtitle="계속하려면 로그인하세요">');
-    expect(src).toContain('provider: data.provider }, native)');
+    expect(src).toContain('<OAuthButtons nextPath={nextPath} appLogin />');
+    expect(src).toContain('<AppDeepLink nextPath={nextPath} />');
+    expect(src).toContain('<OAuthErrorNote code={oauthError} native={native} noteRef={noteRef} />');
+    expect(src).toContain('provider: data.provider }));');
+    expect(src).not.toMatch(/loginFailureText\([^)]*native/);
     expect(src).toContain('const [native, setNative] = useState(false);');
     expect(src).toContain('setNative(isNativeApp());');
+    expect(fs.existsSync(path.join(SRC, 'components/auth/AppLoginArea.tsx'))).toBe(false);
   });
 });
 
@@ -288,6 +316,8 @@ describe('웹 번들은 @capacitor/* 를 import 하지 않는다 (window.Capacit
   test.each([
     'components/app/AppUpdateBanner.tsx', 'components/app/useAppUpdate.ts', 'components/app/app-update-logic.ts', 'components/app/AppStyles.tsx',
     'app/settings/AppSection.tsx', 'components/auth/OAuthButtons.tsx', 'components/auth/login-failure.ts', 'app/login/page.tsx', 'app/layout.tsx',
+    // T-088
+    'components/auth/AppDeepLink.tsx', 'components/auth/OAuthErrorNote.tsx', 'lib/native/appLoginSignal.ts',
   ])('%s', (rel) => {
     expect(read(rel)).not.toMatch(/from ['"]@capacitor\//);
     expect(read(rel)).not.toMatch(/require\(['"]@capacitor\//);

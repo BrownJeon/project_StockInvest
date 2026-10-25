@@ -74,12 +74,15 @@ export const authStyles: Record<string, CSSProperties> = {
     background: 'var(--bg3)', border: '1px solid var(--border2)', borderLeft: '3px solid var(--accent)',
     borderRadius: 8, padding: '11px 12px', fontSize: 12, color: 'var(--muted)',
     lineHeight: 1.55, margin: '14px 0 4px',
+    // T-088: 360px 에서 낱말 중간이 끊기지 않게(데모 v2 `.au-note`) — 가입 화면 안내 상자에도 같이 적용되는 표시 개선
+    wordBreak: 'keep-all', overflowWrap: 'anywhere',
   },
   /** 경고용 note (T-009 목업 `.note.red`) — 미검증 이메일 거부처럼 반드시 읽혀야 하는 안내. */
   noteDanger: {
     background: '#2a1416', border: '1px solid #4a2226', borderLeft: '3px solid var(--danger)',
     borderRadius: 8, padding: '11px 12px', fontSize: 12, color: 'var(--muted)',
     lineHeight: 1.55, margin: '0 0 16px',
+    wordBreak: 'keep-all', overflowWrap: 'anywhere', // T-088: note 와 같은 줄바꿈
   },
   /** 초대코드 화면의 "인증 완료" 칩 (T-009 목업 `.prov`) */
   provider: {

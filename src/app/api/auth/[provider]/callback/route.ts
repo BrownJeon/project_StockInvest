@@ -14,6 +14,12 @@
  *
  *   → **여기서 기존 `signSession` + `setSessionCookie` 를 그대로 호출한다.**
  *     T-008 의 세션 코드는 한 줄도 바뀌지 않았다. URL 에는 아무것도 싣지 않는다.
+ *
+ * T-088(앱 "주식캐기" Google 로그인): **서명된 state 에 앱 표지(`pl:'app'`)가 있을 때만** 아래 `handleAppCallback` 으로 갈라진다.
+ *   앱 흐름의 이 응답을 받는 것은 Chrome 창(Custom Tab)이라 세션 쿠키를 심어도 앱 WebView 로 가지 않는다 → 세션 대신
+ *   60초·1회용 코드(PKCE 결속)를 만들고 `stockinvest://auth/callback?code=` 로 302 한다. 코드는 세션 토큰이 아니다(위 B2 와 양립):
+ *   교환 라우트에서 verifier 와 짝이 맞을 때 한 번만 세션으로 바뀐다. 앱 흐름은 **기존 계정만** — 신규 가입·초대는 웹에서만
+ *   (`signup_requires_web`). state 가 검증되지 않거나 앱 표지가 없으면 아래 웹 경로가 변경 전과 똑같이 처리한다.
  */
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
@@ -27,6 +33,8 @@ import { OAUTH_PENDING_COOKIE, OAUTH_PENDING_MAX_AGE_SEC, signPendingSignup } fr
 import { fetchOAuthProfile } from '@/lib/auth/oauth/providers';
 import { decideOAuthOutcome } from '@/lib/auth/oauth/decide';
 import { findUserByEmail, findUserByOAuth, linkOAuthToUser, maskEmail } from '@/lib/auth/users';
+import { issueAppAuthCode, isAppAuthCodeNotMigrated } from '@/lib/auth/oauth/app-code';
+import { appDeepLinkRedirect } from '@/lib/auth/oauth/app-response';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,6 +62,82 @@ function failRedirect(req: NextRequest, code: string, provider?: string): NextRe
   return res;
 }
 
+/**
+ * T-088 — 앱 흐름 콜백(서명된 state 가 이미 검증됐고 앱 표지가 있는 경우만 온다). 모든 결과는 앱 딥링크로 돌려준다.
+ * 세션 쿠키는 심지 않는다. 회원 판정(`decideOAuthOutcome`)·계정 연결은 웹과 같은 함수를 쓴다.
+ */
+async function handleAppCallback(
+  req: NextRequest,
+  provider: OAuthProviderName,
+  challenge: string,
+): Promise<NextResponse> {
+  // state 를 만드는 시작 라우트가 Google 만 허용하지만, 서명된 state 와 URL 세그먼트가 같은지까지 verifyOAuthState 가 봤다 — 이중 방어.
+  if (provider !== 'google') return appDeepLinkRedirect({ error: 'app_login_invalid' });
+
+  const base = getCallbackBase();
+  const creds = getProviderCredentials(provider);
+  if (base === null || creds === null) return appDeepLinkRedirect({ error: 'not_configured' });
+
+  const sp = req.nextUrl.searchParams;
+  const providerError = sp.get('error');
+  if (providerError) {
+    console.warn(`[oauth] app ${provider} 제공자 오류/취소: ${providerError}`);
+    return appDeepLinkRedirect({ error: providerError === 'access_denied' ? 'cancelled' : 'failed' });
+  }
+  const code = sp.get('code');
+  if (!code) return appDeepLinkRedirect({ error: 'failed' });
+
+  let userId: number;
+  try {
+    const profile = await fetchOAuthProfile({
+      provider,
+      code,
+      clientId: creds.clientId,
+      clientSecret: creds.clientSecret,
+      redirectUri: buildRedirectUri(base, provider),
+    });
+    const [byOAuth, byEmail] = await Promise.all([
+      findUserByOAuth(provider, profile.providerId),
+      findUserByEmail(profile.email),
+    ]);
+    const outcome = decideOAuthOutcome({ provider, profile, byOAuth, byEmail, inviteRequired: isInviteRequired() });
+
+    if (outcome.kind === 'reject_unverified') {
+      console.warn(`[oauth] app ${provider} 미검증 이메일 거부 (${maskEmail(profile.email)})`);
+      return appDeepLinkRedirect({ error: 'email_unverified' });
+    }
+    // 신규 가입(초대 필요·가입 개방 모두)은 앱에서 하지 않는다 — 대기 쿠키도 심지 않는다(Leader 방침 2).
+    if (outcome.kind === 'need_invite' || outcome.kind === 'create') {
+      console.log(`[oauth] app ${provider} 연결된 계정 없음 — 웹 가입 안내 (${maskEmail(profile.email)})`);
+      return appDeepLinkRedirect({ error: 'signup_requires_web' });
+    }
+    if (outcome.kind === 'link_and_login') {
+      const linked = await linkOAuthToUser(outcome.userId, provider, profile.providerId);
+      console.log(`[oauth] app ${provider} 기존 계정 연결 user=${outcome.userId} (${maskEmail(profile.email)}) linked=${linked}`);
+    } else if (outcome.kind === 'login_without_relink') {
+      console.log(`[oauth] app ${provider} 로그인 — 기존 소셜 연결 유지 user=${outcome.userId} (${maskEmail(profile.email)})`);
+    }
+    userId = outcome.userId;
+  } catch (e) {
+    console.error(`[oauth] app ${provider} 콜백 실패:`, e instanceof Error ? e.message : String(e));
+    return appDeepLinkRedirect({ error: 'failed' });
+  }
+
+  try {
+    // 딥링크에는 code_r 만 — DB 에는 challenge 로 결속한 sha256 값만 들어간다. 코드 값은 로그에 남기지 않는다.
+    const codeR = await issueAppAuthCode(userId, challenge);
+    console.log(`[oauth] app ${provider} 1회용 코드 발급 user=${userId}`);
+    return appDeepLinkRedirect({ code: codeR });
+  } catch (e) {
+    if (isAppAuthCodeNotMigrated(e)) {
+      console.error('[oauth] app 로그인 불가 — app_auth_code 테이블 없음(scripts/migrations/T-088-app-auth-code.sql 미적용)');
+      return appDeepLinkRedirect({ error: 'not_configured' });
+    }
+    console.error(`[oauth] app ${provider} 코드 발급 실패:`, e instanceof Error ? e.message : String(e));
+    return appDeepLinkRedirect({ error: 'failed' });
+  }
+}
+
 export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: string }> }) {
   const { provider: raw } = await ctx.params;
   if (!isOAuthProviderName(raw)) {
@@ -63,6 +147,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ provider: s
 
   const secret = getSessionSecret();
   if (!secret) return failRedirect(req, 'not_configured', provider);
+
+  // T-088: 서명된 state 에 앱 표지가 있으면 앱 흐름으로. 검증 실패·표지 없음은 아래 웹 경로가 변경 전과 똑같이 처리한다
+  //   (verifyOAuthState 는 순수 함수라 여기서 한 번 더 불러도 웹 응답이 달라지지 않는다).
+  const appState = verifyOAuthState(
+    req.nextUrl.searchParams.get('state'),
+    req.cookies.get(OAUTH_STATE_COOKIE)?.value ?? null,
+    provider,
+    secret,
+  );
+  if (appState.ok && appState.app) return handleAppCallback(req, provider, appState.app.challenge);
 
   const base = getCallbackBase();
   const creds = getProviderCredentials(provider);

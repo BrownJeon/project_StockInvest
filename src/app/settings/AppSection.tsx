@@ -155,7 +155,7 @@ function WebCard({ m, onRetry }: { m: WebModel } & SectionHandlers) {
           <ol className="steps" id="ap-steps" aria-label="설치 순서">
             <li><b>내려받기</b><span>Chrome 이 &quot;유해할 수 있는 파일입니다&quot;라고 물으면 <b style={{ display: 'inline', color: 'var(--text)' }}>다운로드</b>를 누릅니다. 플레이스토어 밖에서 받는 앱이라 매번 뜨는 확인입니다.</span></li>
             <li><b>설치 허용</b><span>받은 파일을 열고, &quot;출처를 알 수 없는 앱 설치&quot;를 물으면 Chrome 을 허용합니다(처음 한 번만).</span></li>
-            <li><b>설치 후 로그인</b><span>홈 화면의 주식캐기를 열고 이메일·비밀번호로 로그인합니다. 앱에서는 Google·GitHub 로그인을 지원하지 않습니다.</span></li>
+            <li><b>설치 후 로그인</b><span>홈 화면의 주식캐기를 열고 Google 또는 이메일·비밀번호로 로그인합니다. Google 로그인은 Chrome 창이 잠깐 열렸다가 앱으로 돌아옵니다.</span></li>
           </ol>
         </div>
       </div>

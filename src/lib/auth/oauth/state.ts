@@ -11,6 +11,7 @@ import { OAUTH_PROVIDERS, type OAuthProviderName, isOAuthProviderName } from '@/
 import { sanitizeNextPath } from '@/lib/auth/oauth/config';
 import { timingSafeEqualStr } from '@/lib/auth/signup-gate';
 import { createNonce, signToken, verifyToken, type SignedPayload } from '@/lib/auth/oauth/token';
+import { isPkceChallenge } from '@/lib/auth/oauth/pkce';
 
 /** state nonce 를 담는 쿠키. 콜백에서 1회 쓰고 즉시 지운다. */
 export const OAUTH_STATE_COOKIE = 'si_oauth_state';
@@ -25,6 +26,14 @@ interface StatePayload extends SignedPayload {
   p: OAuthProviderName;
   /** 로그인 후 돌아갈 내부 경로 */
   r: string;
+  /**
+   * T-088: 앱(주식캐기) 로그인 흐름 표지 — **앱 흐름일 때만** 있고 값은 `'app'` 하나다. 웹 state 에는 이 키가 없다(웹 형식 불변).
+   * 쿼리가 아니라 서명된 state 안에 두는 이유: 콜백 URL 은 사용자가 조작할 수 있다. 앱 분기(세션 대신 1회용 코드를 딥링크로)는
+   * "이 흐름이 앱 로그인으로 시작했다" 는 사실에 기대므로 위조할 수 없는 곳에 둔다.
+   */
+  pl?: 'app';
+  /** T-088: 앱 흐름의 PKCE challenge(43자). `pl` 과 함께만 있다 — 서명 안에 있어야 콜백까지 바뀌지 않고 운반된다. */
+  ch?: string;
 }
 
 export interface CreatedState {
@@ -50,6 +59,30 @@ export function createOAuthState(
   return { state: signToken(secret, 'oauth-state-v1', payload), nonce };
 }
 
+/**
+ * T-088 — 앱(주식캐기) 로그인용 state. 웹 state 와 같은 서명·nonce·유효기간에 `pl:'app'`·`ch:<challenge>` 만 더한다.
+ * challenge 형식(43자 base64url)이 아니면 던진다 — 시작 라우트가 먼저 거르므로 정상 흐름에서는 일어나지 않는다.
+ */
+export function createAppOAuthState(
+  secret: string,
+  provider: OAuthProviderName,
+  nextPath: string,
+  challenge: string,
+  nowMs: number = Date.now(),
+): CreatedState {
+  if (!isPkceChallenge(challenge)) throw new Error('createAppOAuthState: PKCE challenge 형식 오류');
+  const nonce = createNonce();
+  const payload: StatePayload = {
+    n: nonce,
+    p: provider,
+    r: sanitizeNextPath(nextPath),
+    exp: nowMs + OAUTH_STATE_MAX_AGE_SEC * 1000,
+    pl: 'app',
+    ch: challenge,
+  };
+  return { state: signToken(secret, 'oauth-state-v1', payload), nonce };
+}
+
 export type StateCheckFail =
   | 'missing'      // state 파라미터 또는 쿠키 없음
   | 'malformed'
@@ -58,8 +91,11 @@ export type StateCheckFail =
   | 'nonce_mismatch'   // 다른 브라우저에서 시작된 흐름 (로그인 CSRF 시도)
   | 'provider_mismatch';
 
+/**
+ * 성공 결과. `app` 은 **앱 흐름일 때만** 있다(웹은 키 자체가 없다 — 기존 호출부·시험이 보는 모양 `{ ok, nextPath }` 그대로).
+ */
 export type StateCheckResult =
-  | { ok: true; nextPath: string }
+  | { ok: true; nextPath: string; app?: { challenge: string } }
   | { ok: false; reason: StateCheckFail };
 
 /**
@@ -93,6 +129,14 @@ export function verifyOAuthState(
   if (!timingSafeEqualStr(nonce, payload.n)) {
     return { ok: false, reason: 'nonce_mismatch' };
   }
+
+  // T-088: 앱 표지 검사 — 서명이 맞아도 모양이 어긋나면 malformed(웹으로 낮춰 받지 않는다).
+  //   pl 이 있으면 정확히 'app' + 형식에 맞는 ch 가 있어야 하고, pl 이 없는데 ch 만 있는 state 도 거부한다.
+  if (payload.pl !== undefined) {
+    if (payload.pl !== 'app' || !isPkceChallenge(payload.ch)) return { ok: false, reason: 'malformed' };
+    return { ok: true, nextPath: sanitizeNextPath(payload.r), app: { challenge: payload.ch } };
+  }
+  if (payload.ch !== undefined) return { ok: false, reason: 'malformed' };
 
   return { ok: true, nextPath: sanitizeNextPath(payload.r) };
 }

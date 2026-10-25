@@ -282,7 +282,7 @@
 | A 서버 연결 실패 화면 | `public/app-shell/index.html`(APK 안 독립 파일) | 앱이 운영 웹을 불러오지 못했을 때(`server.errorPath`) | 없음 |
 | B 업데이트 띠 | 루트 레이아웃 `{children}` 바로 앞(`AppUpdateBanner`) | 앱 + 인증 뒤 화면 + 버전 조회 성공 + 새 버전/필수 | 렌더·요청 없음 |
 | C 설정 › 앱 (안드로이드) | `/settings` 맨 아래(`AppSection`, `id="app"`) | 늘 | 설치 안내 |
-| D 로그인 앱 분기 | `/login`·`/signup` 의 `OAuthButtons`, `/login` 실패 문구 | 앱 | 기존 그대로 |
+| D 로그인 — 웹·앱 한 화면 | `/login` 의 `OAuthButtons`(`appLogin`)·`OAuthErrorNote`·`AppDeepLink`, `/signup` 의 `OAuthButtons`(앱에서 숨김) | 앱: Chrome 창 왕복 상태(Google 버튼 아래) · 마무리 덮개 · 앱 전용 오류 3종 | 같은 화면(Google + 이메일) — 앱 상태만 없음 |
 | E 아이콘·스플래시 | `android/app/src/main/res/**` | 앱 | 없음 |
 
 ### A. 서버 연결 실패 화면 — `public/app-shell/index.html`
@@ -312,7 +312,7 @@
 ### C. 설정 › 앱 (안드로이드) — `src/app/settings/AppSection.tsx`
 
 - 설정 맨 아래 안내 상자 바로 위 섹션 1개(새 라우트·공개 안내 페이지 없음). 머리글은 섹션이 직접 그리고 `id="app"` 을 단다(띠의 이동 목표 — `/settings#app` 으로 들어오면 섹션이 마운트된 뒤 그 자리로 스크롤). 자체 조회라 설정 페이지의 저장 바와 섞이지 않는다.
-- **웹**: 최신 버전 · 크기(1000 단위, 안드로이드 "내 파일"과 같은 숫자) · 파일 확인값 sha256 **앞 8자** · [APK 내려받기] · 설치 3단계(① 내려받기 — Chrome 이 **"유해할 수 있는 파일입니다"** 라고 물으면 [다운로드], 플레이스토어 밖 앱이라 매번 뜨는 확인 ② 설치 허용 — "출처를 알 수 없는 앱 설치"에서 Chrome 허용(처음 한 번) ③ 설치 후 이메일·비밀번호 로그인) · 접힌 "받은 파일이 맞는지 확인하려면"(파일 이름·크기·전체 sha256). 안드로이드가 아닌 기기(UA 판별)에는 휴대폰에서 받으라는 한 줄을 더한다.
+- **웹**: 최신 버전 · 크기(1000 단위, 안드로이드 "내 파일"과 같은 숫자) · 파일 확인값 sha256 **앞 8자** · [APK 내려받기] · 설치 3단계(① 내려받기 — Chrome 이 **"유해할 수 있는 파일입니다"** 라고 물으면 [다운로드], 플레이스토어 밖 앱이라 매번 뜨는 확인 ② 설치 허용 — "출처를 알 수 없는 앱 설치"에서 Chrome 허용(처음 한 번) ③ 설치 후 Google 또는 이메일·비밀번호 로그인 — Google 은 Chrome 창이 잠깐 열렸다가 앱으로 돌아온다(T-088)) · 접힌 "받은 파일이 맞는지 확인하려면"(파일 이름·크기·전체 sha256). 안드로이드가 아닌 기기(UA 판별)에는 휴대폰에서 받으라는 한 줄을 더한다.
 - **앱**: 설치된 버전(versionName·versionCode) · 최신 버전 + 상태 · [업데이트 받기 (크기)](새 버전·필수일 때) · 바뀐 점(`notes` 줄 목록) · "마지막 확인 … [다시 확인]" · 접힌 "업데이트 설치 방법".
 - 상태 목록:
 
@@ -323,10 +323,18 @@
 
 - 상태는 기호+글자로 함께 표시한다. 버튼 44px·내려받기 48px 이상, 900px 이상은 왼쪽(버전·버튼)/오른쪽(설치 3단계) 두 칸.
 
-### D. 로그인 앱 분기
+### D. 로그인 — 웹·앱 한 화면 (T-088, 승인 데모 v2)
 
-- 앱이면 `OAuthButtons` 가 **아무것도 그리지 않는다**(Google/GitHub 버튼·구분선 모두 — `/login`·`/signup` 공통). 앱에서는 OAuth 목록 조회도 하지 않으며, 판별이 조회보다 먼저라 버튼이 잠깐 보였다 사라지지 않는다. 제목("주식 자동매매")은 그대로.
-- 앱 + 서버 오류 `oauth_account`(소셜 전용 계정 — 비밀번호 없음)이면 서버 문구("아래 Google로 계속하기를 눌러…")가 버튼 없는 막다른 문구가 되므로 앱 문구로 바꾼다: "{Google|GitHub}로 가입된 계정입니다. 앱에서는 {…} 로그인을 지원하지 않습니다 — 휴대폰이나 PC 의 브라우저에서 로그인해 주세요."(`src/components/auth/login-failure.ts`). 웹의 분기 순서·문구는 기존과 같다. 서버·API 변경 없음.
+> 근거: 승인 데모 [`mockups/T-088-app-login-v2.html`](../mockups/T-088-app-login-v2.html)(v2, 사용자 승인 2026-10-25 23:49 · 결정 D1~D5 모두 권고 A). T-084 의 "앱에서는 OAuth 버튼을 그리지 않는다"(v1.0.0)는 이 절로 **대체**됐다.
+
+- **화면은 하나다.** 웹·앱이 같은 `src/app/login/page.tsx` + 같은 `OAuthButtons`(Google 전용 — GitHub 버튼·아이콘 삭제) + "또는 이메일로" 구분선 + 이메일 폼을 쓴다. 앱 전용 분리 컴포넌트는 없다. 서버가 Google 을 "설정됨"으로 알려 줄 때만 버튼·구분선을 그리고(웹·앱 같음, 로딩 중·빈 목록은 아무것도 안 그림), 앱 판별은 마운트 뒤에만 본다(첫 렌더는 웹과 같다).
+- **앱만 다른 것은 두 가지다.** ① Google 클릭 — 웹은 같은 창에서 `/api/auth/google` 로 이동, 앱은 PKCE 준비 후 **Chrome 창(Custom Tab)** 으로 연다(Google 이 WebView 안 로그인을 `disallowed_useragent` 로 막으므로 WebView 안 이동 폴백은 없다). ② 그 뒤의 상태 — 모두 Google 버튼 **바로 아래** 한 자리: 여는 중("Chrome 창을 여는 중…"·버튼 잠김) · 대기 카드(제목·본문·힌트·[Chrome 창 다시 열기] 48px·[취소] 44px, 이메일 폼은 계속 사용 가능) · 창 닫힘(창이 닫히고 1.5초 안에 결과가 안 오면) · 10분 지남(로그인 시작 후 10분 — 서버 state 유효시간과 같다) · 취소 · 열기 실패(안내 한 줄: 기호 i/! + 글자). 마무리 중은 화면 전체 덮개("로그인 마무리 중…", 본문 `inert`+`aria-hidden`, 이동할 때까지 유지).
+- **딥링크 수신**은 `AppDeepLink`(화면 요소는 덮개뿐)가 맡는다: `stockinvest://auth/callback?code=` → 검증값을 꺼내 `POST /api/auth/app-exchange` → 성공이면 `location.replace(착지 경로)`, 실패 `app_code_invalid`, 검증값 없음(앱이 다시 시작됨·10분 지남) `app_verifier_lost`(서버에 묻지 않음) / `?error=<고정 코드>` → `/login?oauth_error=<코드>`. 코드·검증값은 화면·콘솔·주소 어디에도 그리지 않는다. 대기 카드를 푸는 `OAuthButtons` 에는 값 없는 신호(`appLoginSignal`)만 보낸다.
+- **오류 안내 상자**(`OAuthErrorNote` — 웹·앱 같은 상자·문구, `role="alert"` `tabIndex=-1`, 로그인 화면 간격 `0 0 16px`): `app_code_invalid`·`app_verifier_lost`(앱 전용, "아래 Google로 계속하기를 다시 눌러 주세요") · `signup_requires_web`(앱 전용 — 굵은 첫 줄 + 앱에서는 새로 가입할 수 없다는 안내 + 앱일 때만 [Chrome에서 가입 화면 열기] 44px: Chrome 창으로 `/signup`) · `email_unverified`(빨강 막대, "Google/GitHub" → "Google") · `cancelled`·`failed`·`invalid_state`·`not_configured`(기존 문구 그대로, 모르는 코드는 `failed`). 앱에서 오류가 있으면 이메일 칸 대신 오류 상자로 포커스를 옮긴다(웹은 이메일 칸 자동 포커스 그대로).
+- **이메일 로그인 `oauth_account`**(소셜로 가입된 계정): T-084 의 앱 전용 문구는 삭제 — 웹·앱 공통 "Google로 가입된 계정입니다. 위의 Google로 계속하기를 눌러 로그인하세요."(서버 문구의 "아래"는 실제로는 위쪽 버튼을 가리켜 화면이 "위의"로 조립, 결정 D5 A). 서버 응답·`login/route.ts` 는 그대로.
+- **`/signup`**: 웹은 그대로. 앱은 Google 버튼 숨김 유지(결정 D1 A — 앱 Google 로그인은 기존 계정만 들어오므로 가입 화면에 두면 새 사람에게 막다른 길). 가입 페이지 코드는 바뀌지 않았고 `OAuthButtons` 의 기본값(`appLogin=false`)이 앱에서 아무것도 그리지 않는다.
+- **웹에서 글자가 바뀌는 곳**: ① `email_unverified` 안내 "Google/GitHub" → "Google" ② `oauth_account` "아래" → "위의" ③ 설정 › 앱 설치 3단계 ③ 문구. 안내 상자·가입 화면 안내 상자는 360px 에서 낱말이 끊기지 않게 `word-break: keep-all` 을 받는다(표시 개선).
+- 미확인(실기기): Chrome 창 닫힘 신호(`browserFinished`)가 오는 기기·Custom Tab 구현 · `Browser.close()` 가 안드로이드에서 창을 닫는지(플러그인 문서는 Web·iOS 전용으로 적었다) · 구형 WebView 의 `inert` · `getLaunchUrl()` 이 같은 프로세스에서 새 딥링크로 바뀌는지.
 
 ### E. 아이콘·스플래시
 
@@ -365,3 +373,4 @@
 | 2026-10-18 | T-049: 내 결정 → 대시보드 맨 아래로 이동(분석 탭에는 6월부터 없었음 — 커밋 `605f438`). executing 표시를 주문 기록 상태 기준으로 정정("주문 실행됨" 폐지) |
 | 2026-10-23 | T-074: 설정에 '자산 기록 — 입출금 기록 행' 추가(내 계정 다음), 서브 화면 `/settings/cash-ledger`(입출금 뺀 투자 손익·기록 안 된 변화·신뢰도 표지·기록 목록/표·손익 기준·시트 5종, 추가 전용·반영 상태 3종). 공용 `Sheet` 대화상자 추가 |
 | 2026-10-25 | T-084: §5 앱(안드로이드 "주식캐기") 전용 화면 신설 — 연결 실패 화면·업데이트 띠·설정 › 앱 (안드로이드)·로그인 앱 분기·아이콘(② 지층형+금덩이). 설정 카드 목록에 "앱 (안드로이드)" 추가, 기존 §5·§6 을 §6·§7 로 |
+| 2026-10-26 | T-088: 로그인 — 웹·앱 한 화면(Google + 이메일). 앱: Google 은 Chrome 창(Custom Tab) 왕복, 버튼 아래 여는 중·대기 카드(다시 열기·취소)·닫힘·10분·취소·열기 실패 안내, 마무리 중 덮개, 오류 코드 app_code_invalid·app_verifier_lost·signup_requires_web. GitHub 버튼·앱 전용 oauth_account 문구 삭제. 앱 /signup 은 Google 버튼 숨김(D1 결정 값). §5 D·설정 › 앱 설치 3단계 ③ 갱신 |
