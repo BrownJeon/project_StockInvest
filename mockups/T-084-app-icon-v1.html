@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="description" content="T-084 앱 아이콘 혼합안 시안 — '금맥 차트 + 오르는 캔들' 두 가지 구성 비교(적응형 레이어·마스크·48px·스플래시·테마 아이콘 단색·알림 아이콘). 데모 게이트 대상 아님(v1 데모는 이미 승인됨).">
+<title>T-084 앱 아이콘 혼합안</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지). globals.css sha256 앞 12자 04e7b5bc8394 */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    /* 데모 주석 전용(앱 UI 아님) */
+    --note: #9fb3d1;
+  }
+  * { box-sizing: border-box; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif; font-size: 14px; -webkit-text-size-adjust: 100%; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .muted { color: var(--muted); }
+
+  .page { max-width: 1320px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-bottom)); }
+  .page > header h1 { font-size: 17px; margin: 0 0 6px; line-height: 1.4; }
+  .page > header p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .page > header p b { color: var(--text); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--note); color: var(--note); margin: 0 6px 4px 0; }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+  nav.toc a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg2); font-size: 12px; font-weight: 600; color: inherit; text-decoration: none; }
+  section.block { margin-top: 36px; }
+  section.block > h2 { font-size: 15px; margin: 0 0 8px; }
+  section.block > p.lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .box { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; }
+  ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  ul.plain li { margin-bottom: 4px; }
+  .frame-cap { font-size: 12px; font-weight: 700; color: var(--note); margin: 0 0 6px; }
+  .controls { display: flex; flex-direction: column; gap: 10px; max-width: 760px; margin: 0 0 14px; }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 100px; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px;
+                  border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+  .compare2 { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 900px) { .compare2 { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+  .decide { border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.06); border-radius: 10px; padding: 12px; margin-top: 12px; }
+  .decide h3 { margin: 0 0 8px; font-size: 14px; color: var(--warn); }
+  .ab { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 900px) { .ab { grid-template-columns: 1fr 1fr; } }
+  .opt { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.6; }
+  .opt h4 { margin: 0 0 4px; font-size: 13px; }
+  .opt.rec { border-color: var(--ok); }
+  .rec-tag { font-size: 11px; font-weight: 700; color: var(--ok); margin-left: 6px; }
+
+  /* ── 아이콘 카드 (v1 E 절과 같은 형식) ── */
+  .guide { fill: none; stroke: var(--note); stroke-dasharray: 3 3; stroke-width: .8; }
+  .no-guides .guide { display: none; }
+  .icard { border: 1px solid var(--border2); background: var(--bg2); border-radius: 12px; padding: 12px; min-width: 0; }
+  .icard.rec { border-color: var(--ok); }
+  .icard h3 { font-size: 14px; margin: 0 0 4px; }
+  .icard h4 { font-size: 12px; color: var(--muted); font-weight: 700; margin: 14px 0 8px; }
+  .ivars { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .ivars figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .ivars figcaption { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.4; }
+  .ivars .lay { width: 120px; height: 120px; border: 1px solid var(--border2); border-radius: 4px; }
+  .ivars .lay.sm { width: 88px; height: 88px; }
+  .chk { background-color: #2b2f3a; background-image: linear-gradient(45deg, #353a47 25%, transparent 25%, transparent 75%, #353a47 75%), linear-gradient(45deg, #353a47 25%, transparent 25%, transparent 75%, #353a47 75%); background-size: 12px 12px; background-position: 0 0, 6px 6px; }
+  .wall { padding: 8px; border-radius: 8px; background: var(--border2); line-height: 0; }
+  .wall.light { background: var(--text); }
+  .home { background: #2a3142; border-radius: 10px; padding: 10px 8px 8px; }
+  .home .lbl { font-size: 11px; color: var(--text); }
+  .idesc { font-size: 12px; color: var(--muted); line-height: 1.55; margin: 10px 0 0; }
+  .idesc b { color: var(--text); }
+  .sbar { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 6px; font-size: 12px; font-weight: 600; line-height: 0; }
+  .sbar.dark { background: #000; color: #fff; }
+  .sbar.light { background: #f1f3f7; color: #3a3f4b; }
+  .sbar .tm { line-height: 1; margin-right: 4px; }
+  .zoom { width: 96px; height: 96px; border: 1px solid var(--border2); border-radius: 4px; background: #000; }
+  .zoom .grid { fill: none; stroke: #2c3240; stroke-width: .06; }
+  .zoom .pad { fill: none; stroke: var(--note); stroke-dasharray: .5 .5; stroke-width: .12; }
+
+  /* 스플래시 */
+  .phone { position: relative; width: 100%; max-width: 280px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .spl { height: 420px; position: relative; display: grid; place-items: center; background: var(--bg); }
+  .spl .brand { position: absolute; left: 0; right: 0; bottom: calc(32px + var(--safe-bottom)); text-align: center; font-size: 15px; font-weight: 700; color: var(--text); }
+  .spl .brand small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+  .spl-row { display: flex; flex-wrap: wrap; gap: 16px; }
+  .spl-row > div { flex: 1 1 240px; min-width: 0; max-width: 280px; }
+
+  /* 실제 앱 안 사용처 */
+  .inuse { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+  .inuse .cell { display: flex; align-items: center; gap: 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; min-width: 0; }
+  .inuse .nm { font-size: 15px; font-weight: 700; }
+  .inuse .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  details.src { border: 1px solid var(--border2); border-radius: 8px; background: var(--bg2); margin-top: 10px; }
+  details.src summary { min-height: 44px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  details.src pre { margin: 0; padding: 10px 12px 12px; overflow-x: auto; white-space: pre; color: var(--text); border-top: 1px solid var(--border); line-height: 1.5; }
+  .selfcheck { font-size: 12px; line-height: 1.6; }
+  .selfcheck .okc { color: var(--ok); font-weight: 700; }
+  .selfcheck .bad { color: #fca5a5; font-weight: 700; }
+</style>
+</head>
+<body>
+<!-- 미리보기용 정의 (화면 밖). 마스크 미리보기의 clipPath 는 "런처가 자르는 모양"을 흉내 내는 데모 장치일 뿐, 최종 아이콘 소스에는 없다. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs id="defs">
+    <clipPath id="m-c"><circle cx="54" cy="54" r="36"/></clipPath>
+    <clipPath id="m-s"><rect x="18" y="18" width="72" height="72" rx="16"/></clipPath>
+    <clipPath id="m-n"><rect x="0" y="0" width="24" height="24"/></clipPath>
+  </defs>
+</svg>
+
+<div class="page" id="page">
+  <header>
+    <h1>T-084 앱 아이콘 혼합안 — "금맥 차트 + 오르는 캔들" (시안 2종)</h1>
+    <p><span class="tag">데모 v1 승인 뒤 후속 시안 · 게이트 대상 아님</span><span class="tag">곡괭이 없음</span><span class="tag">VectorDrawable 로 옮길 수 있는 단색 도형만</span></p>
+    <p>사용자 지시: <b>"앱 아이콘은 금맥 차트 + 오르는 캔들"</b>. 승인된 v1 데모의 시안 B(<b>금맥 차트</b> + 금덩이)에서 <b>금덩이 자리를 시안 A 의 오르는 캔들(빨강 = 한국 관습 상승)로 바꾼 것</b>으로 읽었다. 금빛 광맥이 어두운 암석층을 가로지르며 추세선 역할을 하고, 그 위로 캔들이 오른다. 곡괭이는 넣지 않았다.</p>
+    <p>두 시안은 구성이 다르다. <b>① 추세선형</b>: 광맥이 대각선으로 올라가는 추세선이고 캔들 3개가 그 선을 따라 계단처럼 오른다(금덩이 없음). <b>② 지층형</b>: 광맥이 가로로 누운 지층이고 캔들 3개가 그 위로 솟으며 정점에 금덩이가 있다.</p>
+    <nav class="toc" aria-label="목차">
+      <a href="#cards">시안 비교</a><a href="#inuse">앱 안 사용처</a><a href="#splash">스플래시</a><a href="#decide">결정 필요</a><a href="#source">레이어 소스</a><a href="#memo">구현 메모</a>
+    </nav>
+  </header>
+
+  <section class="block" id="cards">
+    <h2>시안 비교 — 적응형 아이콘 · 마스크 · 48px · 테마 아이콘(단색) · 알림 아이콘</h2>
+    <p class="lead">안드로이드 적응형 아이콘: 108dp 레이어 중 런처가 보여 주는 곳은 가운데 72dp(점선 네모), 어떤 마스크에서도 잘리지 않는 곳은 지름 66dp 원(점선 원). 전경은 그 원 안에만 그렸다(아래 자체 점검 참고). 배경은 앱 다크 <code>--bg2</code> 위에 암석층 <code>--bg3 · --bg4</code>, 광맥은 <code>--accent</code>(금), 캔들은 <code>--up</code>(빨강).</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>보조선</legend><div class="seg-row">
+        <label><input type="radio" name="g" value="on" checked><span>안전영역 점선 보이기</span></label>
+        <label><input type="radio" name="g" value="off"><span>숨기기</span></label>
+      </div></fieldset>
+    </div>
+    <div class="compare2" id="icons"></div>
+    <div class="box selfcheck" id="selfcheck" style="margin-top:12px" aria-live="polite">자체 점검 계산 중…</div>
+  </section>
+
+  <section class="block" id="inuse">
+    <h2>앱 안 사용처 — 연결 실패 화면 로고(72px) · 설정 › 앱 섹션(44px)</h2>
+    <p class="lead">v1 승인 화면에서 아이콘이 다시 쓰이는 두 곳. 웹·HTML 안에서는 배경+전경을 합쳐 둥근 사각으로 자른다(이 경우 clipPath 사용은 무방 — 웹 화면이다).</p>
+    <div class="compare2" id="inuse-rows"></div>
+  </section>
+
+  <section class="block" id="splash">
+    <h2>스플래시 — 아이콘 + "주식캐기"</h2>
+    <p class="lead">배경 <code>--bg</code>(#0f1115 = themeColor). [가능성 높음] 안드로이드 12+ 시스템 스플래시는 가운데 아이콘만 그리고 이름은 하단 브랜딩 이미지로 넣어야 한다 — 지원 안 되는 기기에서는 이름 없이 아이콘만 보일 수 있다(실기기 확인 항목, v1 메모와 같음).</p>
+    <div class="spl-row" id="splashes"></div>
+  </section>
+
+  <section class="block" id="decide">
+    <h2>결정 필요</h2>
+    <div class="decide">
+      <h3>D1′. 아이콘 혼합안</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>① 추세선형 (금덩이 없음)<span class="rec-tag">✓ 권장</span></h4>
+          광맥(금) = 추세선, 그 위로 캔들 3개가 계단처럼 오른다. 요소가 두 종류(광맥·캔들)뿐이라 48px·테마 아이콘·알림 아이콘에서 덩어리가 가장 또렷하다.
+          <br><b>금덩이를 뺀 이유</b>: ① 사용자 문구가 v1 의 "금맥 차트 + <u>금덩이</u>"에서 금덩이 자리를 "오르는 캔들"로 바꾼 형태다 ② 금빛은 이미 광맥이 맡고 있어 금덩이는 같은 뜻을 반복한다 ③ 48px 에서 금덩이는 캔들 옆 작은 점으로 줄어 형태를 알아보기 어렵다(렌더 확인).
+        </div>
+        <div class="opt"><h4>② 지층형 + 정점 금덩이</h4>
+          가로 광맥층에서 캔들 3개가 솟고 오른쪽 위에 금덩이. "캐낸 결과"가 그림으로 남는 장점. 한계: 요소가 세 종류라 48px 에서 오른쪽 위가 복잡하고, 알림 아이콘(24px)에서는 금덩이를 뺄 수밖에 없어 앱 아이콘과 모양이 갈린다.
+          <br>②에서 금덩이만 빼는 변형, ①에 금덩이를 더하는 변형도 요청하면 시안을 만든다.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="source">
+    <h2>레이어 소스 — developer 가 VectorDrawable 로 옮길 원본</h2>
+    <p class="lead">위 미리보기는 아래 문자열을 그대로 그린 것이다(같은 문자열을 화면과 이 상자에 넣는다). 모든 레이어 <code>viewBox="0 0 108 108"</code>(알림 아이콘만 24), 단색 채움·<code>&lt;rect&gt;·&lt;path&gt;·&lt;polygon&gt;</code>만, <code>&lt;text&gt;·&lt;filter&gt;·&lt;mask&gt;·&lt;clipPath&gt;</code>·그라디언트·CSS 클래스 없음.</p>
+    <div id="sources"></div>
+  </section>
+
+  <section class="block" id="memo">
+    <h2>구현 메모</h2>
+    <div class="box"><ul class="plain">
+      <li>파일: <code>res/drawable/ic_launcher_foreground.xml</code> · <code>ic_launcher_background.xml</code> · <code>ic_launcher_monochrome.xml</code>(각 108×108dp, viewport 108) → <code>res/mipmap-anydpi-v26/ic_launcher.xml</code>·<code>ic_launcher_round.xml</code> 에 <code>&lt;background&gt;</code>·<code>&lt;foreground&gt;</code>·<code>&lt;monochrome&gt;</code>. minSdk 26 이라 적응형 아이콘이 항상 쓰인다.</li>
+      <li>VectorDrawable 은 <code>&lt;path&gt;</code> 만 있으므로 <code>rect</code>(둥근 모서리 포함)·<code>polygon</code> 은 Android Studio Vector Asset 가져오기 또는 수작업으로 <code>pathData</code> 로 바꾼다. 배경의 <code>Q · T</code> 곡선 명령은 <code>pathData</code> 가 그대로 지원한다. 색은 토큰 hex 그대로: <code>#171a21</code>=--bg2 · <code>#1f2430</code>=--bg3 · <code>#262b36</code>=--bg4 · <code>#f59e0b</code>=--accent · <code>#ef4444</code>=--up.</li>
+      <li>단색(monochrome) 레이어는 안드로이드가 <b>모양(알파)만</b> 쓰고 색은 시스템이 칠한다 — 그래서 광맥과 캔들 사이를 2.5dp 이상 띄워 실루엣이 붙지 않게 했다. 광맥 위 금 알갱이 2개(①)와 금덩이 결 선(②)은 단색에서 뺐다.</li>
+      <li>알림 아이콘(M4 푸시용 후보): <code>res/drawable/ic_stat_notify.xml</code>(24dp, 흰색 단색, 바깥 2dp 여백). 지금(M1)은 만들지 않아도 된다.</li>
+      <li>연결 실패 화면(<code>public/app-shell/index.html</code>)·설정 앱 섹션의 아이콘은 배경+전경 합성 SVG 를 인라인으로 넣고 둥근 사각으로 자른다(웹이라 clipPath 가능). 연결 실패 화면을 바꾸면 네이티브 변경(APK 재빌드·versionCode 증가) — v1 가이드 §7 과 같음.</li>
+      <li>미확인: 실제 런처(One UI)의 마스크 모양·테마 아이콘 색, 상태바의 알림 아이콘 크기 — 실기기 확인 항목.</li>
+    </ul></div>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // ── 최종 레이어 소스 (이 문자열이 그대로 화면에 그려지고, task 이력서에 복사된다) ──
+  var SRC = {
+    o1: {
+      name: '① 추세선형',
+      bg: [
+        '<rect width="108" height="108" fill="#171a21"/>',
+        '<path d="M0 50 Q27 44 54 49 T108 46 V108 H0 Z" fill="#1f2430"/>',
+        '<path d="M0 70 Q30 64 60 69 T108 66 V108 H0 Z" fill="#262b36"/>',
+        '<path d="M0 90 Q30 85 60 89 T108 87 V108 H0 Z" fill="#1f2430"/>'
+      ].join('\n'),
+      fg: [
+        '<polygon points="29,71 39,59.4 47,63 59,47.8 66,51.4 80,38.4 80,39.6 66,56.6 59,54.2 47,69 39,64.6 29,72" fill="#f59e0b"/>',
+        '<polygon points="41,74 42.6,75.6 41,77.2 39.4,75.6" fill="#f59e0b"/>',
+        '<polygon points="64,62 65.4,63.4 64,64.8 62.6,63.4" fill="#f59e0b"/>',
+        '<rect x="36.8" y="43" width="2.4" height="14.5" rx="1.2" fill="#ef4444"/>',
+        '<rect x="33.5" y="46.5" width="9" height="8.5" rx="1.5" fill="#ef4444"/>',
+        '<rect x="50.8" y="32.5" width="2.4" height="21" rx="1.2" fill="#ef4444"/>',
+        '<rect x="47.5" y="36" width="9" height="12.5" rx="1.5" fill="#ef4444"/>',
+        '<rect x="64.8" y="25" width="2.4" height="23" rx="1.2" fill="#ef4444"/>',
+        '<rect x="61.5" y="29" width="9" height="15" rx="1.5" fill="#ef4444"/>'
+      ].join('\n'),
+      mono: [
+        '<polygon points="29,71 39,59.4 47,63 59,47.8 66,51.4 80,38.4 80,39.6 66,56.6 59,54.2 47,69 39,64.6 29,72" fill="#ffffff"/>',
+        '<rect x="36.8" y="43" width="2.4" height="14.5" rx="1.2" fill="#ffffff"/>',
+        '<rect x="33.5" y="46.5" width="9" height="8.5" rx="1.5" fill="#ffffff"/>',
+        '<rect x="50.8" y="32.5" width="2.4" height="21" rx="1.2" fill="#ffffff"/>',
+        '<rect x="47.5" y="36" width="9" height="12.5" rx="1.5" fill="#ffffff"/>',
+        '<rect x="64.8" y="25" width="2.4" height="23" rx="1.2" fill="#ffffff"/>',
+        '<rect x="61.5" y="29" width="9" height="15" rx="1.5" fill="#ffffff"/>'
+      ].join('\n'),
+      notify: [
+        '<polygon points="2,20.2 22,10.4 22,12.2 2,22" fill="#ffffff"/>',
+        '<rect x="5.4" y="10.2" width="1.2" height="6.8" rx=".6" fill="#ffffff"/>',
+        '<rect x="4.2" y="11.8" width="3.6" height="4.2" rx=".6" fill="#ffffff"/>',
+        '<rect x="11.4" y="5.6" width="1.2" height="8.4" rx=".6" fill="#ffffff"/>',
+        '<rect x="10.2" y="7" width="3.6" height="5" rx=".6" fill="#ffffff"/>',
+        '<rect x="17.4" y="2" width="1.2" height="9.2" rx=".6" fill="#ffffff"/>',
+        '<rect x="16.2" y="3.4" width="3.6" height="5.6" rx=".6" fill="#ffffff"/>'
+      ].join('\n'),
+      desc: '광맥이 왼쪽 아래 → 오른쪽 위로 오르는 <b>추세선</b>이고, 캔들 3개가 그 선 위를 계단처럼 오른다. 금빛은 광맥 하나뿐이라 "금맥 = 차트"가 바로 읽힌다. 48px 에서도 금 사선 1개 + 빨간 막대 3개로 갈린다. 한계: 사선 구도가 흔한 "상승 차트" 아이콘과 닮을 수 있다(암석층·광맥 모양으로 구분).'
+    },
+    o2: {
+      name: '② 지층형 + 금덩이',
+      bg: [
+        '<rect width="108" height="108" fill="#171a21"/>',
+        '<path d="M0 60 Q27 55 54 59 T108 57 V108 H0 Z" fill="#1f2430"/>',
+        '<path d="M0 82 Q30 77 60 81 T108 79 V108 H0 Z" fill="#262b36"/>'
+      ].join('\n'),
+      fg: [
+        '<polygon points="27,69.4 36,65.4 46,67.8 58,65.3 70,68.4 81,68.4 81,69.6 70,73.6 58,71.7 46,74.2 36,70.6 27,70.6" fill="#f59e0b"/>',
+        '<rect x="34.8" y="48" width="2.4" height="14.5" rx="1.2" fill="#ef4444"/>',
+        '<rect x="31.5" y="51" width="9" height="9" rx="1.5" fill="#ef4444"/>',
+        '<rect x="46.8" y="37" width="2.4" height="27.5" rx="1.2" fill="#ef4444"/>',
+        '<rect x="43.5" y="41" width="9" height="18" rx="1.5" fill="#ef4444"/>',
+        '<rect x="58.8" y="27" width="2.4" height="36" rx="1.2" fill="#ef4444"/>',
+        '<rect x="55.5" y="31" width="9" height="26" rx="1.5" fill="#ef4444"/>',
+        '<polygon points="68,36 73,31.5 78.5,34.5 80,40.5 75,44.5 69,42" fill="#f59e0b"/>',
+        '<path d="M69 42 L72.5 38 L80 40.5 M72.5 38 L73 31.5" fill="none" stroke="#171a21" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+      ].join('\n'),
+      mono: [
+        '<polygon points="27,69.4 36,65.4 46,67.8 58,65.3 70,68.4 81,68.4 81,69.6 70,73.6 58,71.7 46,74.2 36,70.6 27,70.6" fill="#ffffff"/>',
+        '<rect x="34.8" y="48" width="2.4" height="14.5" rx="1.2" fill="#ffffff"/>',
+        '<rect x="31.5" y="51" width="9" height="9" rx="1.5" fill="#ffffff"/>',
+        '<rect x="46.8" y="37" width="2.4" height="27.5" rx="1.2" fill="#ffffff"/>',
+        '<rect x="43.5" y="41" width="9" height="18" rx="1.5" fill="#ffffff"/>',
+        '<rect x="58.8" y="27" width="2.4" height="36" rx="1.2" fill="#ffffff"/>',
+        '<rect x="55.5" y="31" width="9" height="26" rx="1.5" fill="#ffffff"/>',
+        '<polygon points="68,36 73,31.5 78.5,34.5 80,40.5 75,44.5 69,42" fill="#ffffff"/>'
+      ].join('\n'),
+      notify: [
+        '<polygon points="2,19.8 7,18.6 12,20 17,18.6 22,19.4 22,21.2 17,20.4 12,21.8 7,20.4 2,21.6" fill="#ffffff"/>',
+        '<rect x="5.4" y="11" width="1.2" height="6.4" rx=".6" fill="#ffffff"/>',
+        '<rect x="4.2" y="12.4" width="3.6" height="3.8" rx=".6" fill="#ffffff"/>',
+        '<rect x="11.4" y="6.5" width="1.2" height="12" rx=".6" fill="#ffffff"/>',
+        '<rect x="10.2" y="8" width="3.6" height="7.6" rx=".6" fill="#ffffff"/>',
+        '<rect x="17.4" y="2" width="1.2" height="15" rx=".6" fill="#ffffff"/>',
+        '<rect x="16.2" y="3.5" width="3.6" height="10.5" rx=".6" fill="#ffffff"/>'
+      ].join('\n'),
+      desc: '가로로 누운 <b>광맥층</b>에서 캔들 3개가 솟고, 정점 오른쪽 위에 <b>금덩이</b>. "캐서 금을 얻는다"는 이야기가 가장 잘 보인다. 한계: 광맥이 가로라 "차트" 느낌은 캔들이 혼자 맡고, 오른쪽 위 금덩이가 48px 에서는 캔들 옆 작은 금색 점으로 줄어 덩어리가 하나 더 생긴다. 알림 아이콘에서는 금덩이를 뺐다.'
+    }
+  };
+  var ORDER = ['o1', 'o2'];
+  var THEME = { // 안드로이드 13 테마 아이콘 — 시스템이 배경화면에서 뽑는 색(예시값, 앱 토큰 아님)
+    light: { bg: '#d7e3ff', fg: '#1b2c55' },
+    dark:  { bg: '#2b3444', fg: '#c6d4f2' }
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var NS = 'http://www.w3.org/2000/svg';
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  // 정의 주입: 레이어별 symbol + 합성(배경+전경) + 테마 색 단색
+  var defs = $('defs');
+  var buf = '';
+  function sym(id, vb, body) { buf += '<symbol id="' + id + '" viewBox="' + vb + '">' + body + '</symbol>'; }
+  ORDER.forEach(function (k) {
+    var s = SRC[k];
+    sym(k + '-bg', '0 0 108 108', s.bg);
+    sym(k + '-fg', '0 0 108 108', s.fg);
+    sym(k + '-mono', '0 0 108 108', s.mono);
+    sym(k + '-full', '0 0 108 108', s.bg + s.fg);
+    sym(k + '-th-l', '0 0 108 108', '<rect width="108" height="108" fill="' + THEME.light.bg + '"/>' + s.mono.split('#ffffff').join(THEME.light.fg));
+    sym(k + '-th-d', '0 0 108 108', '<rect width="108" height="108" fill="' + THEME.dark.bg + '"/>' + s.mono.split('#ffffff').join(THEME.dark.fg));
+    sym(k + '-nt-w', '0 0 24 24', s.notify);
+    sym(k + '-nt-g', '0 0 24 24', s.notify.split('#ffffff').join('#3a3f4b'));
+  });
+  defs.insertAdjacentHTML('beforeend', buf);
+
+  var GUIDE = '<rect class="guide" x="18" y="18" width="72" height="72"/><circle class="guide" cx="54" cy="54" r="33"/>';
+  function lay(id, label, cls) {
+    return '<svg class="lay' + (cls ? ' ' + cls : '') + '" viewBox="0 0 108 108" role="img" aria-label="' + label + '"><use href="#' + id + '" width="108" height="108"/>' + GUIDE + '</svg>';
+  }
+  function masked(id, mask, size, label) {
+    return '<svg viewBox="18 18 72 72" width="' + size + '" height="' + size + '" role="img" aria-label="' + label + '"><g clip-path="url(#' + mask + ')"><use href="#' + id + '" width="108" height="108"/></g></svg>';
+  }
+  function nt(id, size, label) {
+    return '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size + '" role="img" aria-label="' + label + '"><use href="#' + id + '" width="24" height="24"/></svg>';
+  }
+  function zoom(k, label) {
+    var g = '';
+    for (var i = 1; i < 24; i++) g += '<line class="grid" x1="' + i + '" y1="0" x2="' + i + '" y2="24"/><line class="grid" x1="0" y1="' + i + '" x2="24" y2="' + i + '"/>';
+    return '<svg class="zoom" viewBox="0 0 24 24" role="img" aria-label="' + label + '">' + g + '<use href="#' + k + '-nt-w" width="24" height="24"/><rect class="pad guide" x="2" y="2" width="20" height="20"/></svg>';
+  }
+
+  // 카드
+  $('icons').innerHTML = ORDER.map(function (k, i) {
+    var s = SRC[k], n = s.name;
+    return '<article class="icard' + (i === 0 ? ' rec' : '') + '" aria-labelledby="' + k + '-t">' +
+      '<h3 id="' + k + '-t">' + n + (i === 0 ? ' <span class="rec-tag">✓ 권장</span>' : '') + '</h3>' +
+      '<h4>적응형 아이콘 레이어 (108dp · 네모 72 · 원 66)</h4><div class="ivars">' +
+        '<figure>' + lay(k + '-full', n + ' 레이어 합성, 점선은 보이는 영역과 안전영역') + '<figcaption>합성<br>배경 + 전경</figcaption></figure>' +
+        '<figure>' + lay(k + '-bg', n + ' 배경 레이어', 'sm') + '<figcaption>background</figcaption></figure>' +
+        '<figure>' + lay(k + '-fg', n + ' 전경 레이어(투명 바탕)', 'sm chk') + '<figcaption>foreground</figcaption></figure>' +
+        '<figure>' + lay(k + '-mono', n + ' 단색 레이어(투명 바탕)', 'sm chk') + '<figcaption>monochrome</figcaption></figure>' +
+      '</div>' +
+      '<h4>마스크 · 홈 화면</h4><div class="ivars">' +
+        '<figure><div class="wall">' + masked(k + '-full', 'm-c', 96, n + ' 원형 마스크') + '</div><figcaption>원형 · 어두운 배경화면</figcaption></figure>' +
+        '<figure><div class="wall light">' + masked(k + '-full', 'm-s', 96, n + ' 둥근 사각 마스크') + '</div><figcaption>둥근 사각 · 밝은 배경화면</figcaption></figure>' +
+        '<figure class="home">' + masked(k + '-full', 'm-c', 48, n + ' 홈 화면 48px 원형') + '<span class="lbl">주식캐기</span></figure>' +
+        '<figure class="home">' + masked(k + '-full', 'm-s', 48, n + ' 홈 화면 48px 둥근 사각') + '<span class="lbl">주식캐기</span></figure>' +
+      '</div>' +
+      '<h4>안드로이드 13 테마 아이콘 (monochrome — 색은 시스템이 칠함, 예시색)</h4><div class="ivars">' +
+        '<figure><div class="wall light">' + masked(k + '-th-l', 'm-c', 96, n + ' 테마 아이콘 밝은 테마') + '</div><figcaption>밝은 테마</figcaption></figure>' +
+        '<figure><div class="wall">' + masked(k + '-th-d', 'm-c', 96, n + ' 테마 아이콘 어두운 테마') + '</div><figcaption>어두운 테마</figcaption></figure>' +
+        '<figure class="home">' + masked(k + '-th-d', 'm-c', 48, n + ' 테마 아이콘 48px') + '<span class="lbl">주식캐기</span></figure>' +
+      '</div>' +
+      '<h4>알림 아이콘 후보 (24dp 단색 — M4 푸시용)</h4><div class="ivars">' +
+        '<figure>' + zoom(k, n + ' 알림 아이콘 4배 확대, 점선은 2dp 여백') + '<figcaption>4배 확대<br>점선 = 2dp 여백</figcaption></figure>' +
+        '<figure><div class="sbar dark"><span class="tm">9:41</span>' + nt(k + '-nt-w', 24, n + ' 알림 아이콘 어두운 상태바 24px') + '</div><figcaption>상태바(어두운) 24px</figcaption></figure>' +
+        '<figure><div class="sbar light"><span class="tm">9:41</span>' + nt(k + '-nt-g', 24, n + ' 알림 아이콘 밝은 상태바 24px') + '</div><figcaption>상태바(밝은) 24px</figcaption></figure>' +
+      '</div>' +
+      '<p class="idesc">' + s.desc + '</p>' +
+    '</article>';
+  }).join('');
+
+  // 앱 안 사용처
+  $('inuse-rows').innerHTML = ORDER.map(function (k) {
+    var n = SRC[k].name;
+    return '<div><p class="frame-cap">' + n + '</p><div class="inuse">' +
+      '<div class="cell" style="flex-direction:column;padding:16px 24px">' + masked(k + '-full', 'm-s', 72, n + ' 연결 실패 화면 로고 72px') + '<span class="nm">주식캐기</span></div>' +
+      '<div class="cell">' + masked(k + '-full', 'm-s', 44, n + ' 설정 앱 섹션 44px') + '<div><div class="nm">주식캐기 <span class="muted" style="font-weight:400">v1.0.0</span></div><div class="s">이 휴대폰에 설치된 앱</div></div></div>' +
+    '</div></div>';
+  }).join('');
+
+  // 스플래시
+  $('splashes').innerHTML = ORDER.map(function (k) {
+    var n = SRC[k].name;
+    return '<div><p class="frame-cap">' + n + '</p><div class="phone" role="region" aria-label="' + n + ' 스플래시 미리보기"><div class="spl">' +
+      masked(k + '-full', 'm-c', 112, '주식캐기 아이콘') +
+      '<div class="brand">주식캐기<small>주식 자동매매</small></div></div></div></div>';
+  }).join('');
+
+  // 소스
+  function wrap(vb, body) { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + vb + '">\n' + body.split('\n').map(function (l) { return '  ' + l; }).join('\n') + '\n</svg>'; }
+  $('sources').innerHTML = ORDER.map(function (k, i) {
+    var s = SRC[k];
+    return '<details class="src"' + (i === 0 ? ' open' : '') + '><summary>' + s.name + (i === 0 ? ' (권장)' : '') + ' — background · foreground · monochrome · 알림</summary><pre>' +
+      esc('<!-- ic_launcher_background -->\n' + wrap('0 0 108 108', s.bg) + '\n\n<!-- ic_launcher_foreground -->\n' + wrap('0 0 108 108', s.fg) +
+          '\n\n<!-- ic_launcher_monochrome -->\n' + wrap('0 0 108 108', s.mono) + '\n\n<!-- ic_stat_notify (M4 후보, 24dp) -->\n' + wrap('0 0 24 24', s.notify)) +
+      '</pre></details>';
+  }).join('');
+
+  // 보조선
+  document.querySelectorAll('input[name="g"]').forEach(function (r) {
+    r.addEventListener('change', function () { $('page').classList.toggle('no-guides', r.value === 'off' && r.checked); });
+  });
+
+  // ── 자체 점검: 금지 요소 · 토큰 색 일치 · 전경/단색이 안전영역(원 r=33) 안 · 알림 아이콘 2dp 여백 ──
+  var tokens = ['--bg2', '--bg3', '--bg4', '--accent', '--up'].map(function (t) { return getComputedStyle(document.documentElement).getPropertyValue(t).trim().toLowerCase(); });
+  var allowed = tokens.concat(['#ffffff']);
+  var lines = [];
+  var probe = document.createElementNS(NS, 'svg');
+  probe.setAttribute('width', '0'); probe.setAttribute('height', '0'); probe.style.position = 'absolute';
+  document.body.appendChild(probe);
+  function corners(el) { // 요소 외곽 점 목록(스트로크는 반폭만큼 부풀림)
+    var pts = [], sw = parseFloat(el.getAttribute('stroke-width') || 0) / 2;
+    if (el.tagName === 'polygon') {
+      el.getAttribute('points').trim().split(/\s+/).forEach(function (p) { var a = p.split(','); pts.push([+a[0], +a[1]]); });
+    } else if (el.tagName === 'rect') {
+      var x = +el.getAttribute('x') || 0, y = +el.getAttribute('y') || 0, w = +el.getAttribute('width'), h = +el.getAttribute('height');
+      pts.push([x, y], [x + w, y], [x, y + h], [x + w, y + h]);
+    } else if (el.tagName === 'path') {
+      var len = el.getTotalLength();
+      for (var i = 0; i <= 60; i++) { var q = el.getPointAtLength(len * i / 60); pts.push([q.x, q.y]); }
+    }
+    return { pts: pts, sw: sw };
+  }
+  function check(kind, body, vb) {
+    var bad = [];
+    if (/<(text|filter|mask|clipPath|linearGradient|radialGradient|image|use|style)\b|class=|url\(/i.test(body)) bad.push('금지 요소');
+    (body.match(/#[0-9a-f]{6}/gi) || []).forEach(function (c) { if (allowed.indexOf(c.toLowerCase()) < 0) bad.push('토큰 밖 색 ' + c); });
+    probe.innerHTML = body;
+    var maxR = 0, minPad = 99;
+    Array.prototype.forEach.call(probe.children, function (el) {
+      var c = corners(el);
+      c.pts.forEach(function (p) {
+        if (vb === 108) maxR = Math.max(maxR, Math.hypot(p[0] - 54, p[1] - 54) + c.sw);
+        else minPad = Math.min(minPad, p[0] - c.sw, p[1] - c.sw, 24 - p[0] - c.sw, 24 - p[1] - c.sw);
+      });
+    });
+    if (vb === 108 && kind !== 'bg' && maxR > 33) bad.push('안전영역 밖(r ' + maxR.toFixed(1) + ')');
+    if (vb === 24 && minPad < 2 - 1e-9) bad.push('2dp 여백 침범(' + minPad.toFixed(2) + ')');
+    var info = vb === 108 ? (kind === 'bg' ? '전면 채움' : '최대 반지름 ' + maxR.toFixed(1) + ' / 33') : '최소 여백 ' + minPad.toFixed(1) + 'dp / 2';
+    return { ok: bad.length === 0, txt: kind + ': ' + info + (bad.length ? ' — ' + bad.join(', ') : '') };
+  }
+  ORDER.forEach(function (k) {
+    var s = SRC[k];
+    var r = [check('bg', s.bg, 108), check('fg', s.fg, 108), check('mono', s.mono, 108), check('notify', s.notify, 24)];
+    lines.push('<div><b>' + s.name + '</b> · ' + r.map(function (x) { return '<span class="' + (x.ok ? 'okc' : 'bad') + '">' + (x.ok ? '✓' : '✗') + '</span> ' + x.txt; }).join(' · ') + '</div>');
+  });
+  probe.remove();
+  $('selfcheck').innerHTML = '<b>자체 점검</b>(이 페이지가 위 소스를 직접 계산) — 금지 요소(text·filter·mask·clipPath·그라디언트·class) 없음, 색은 토큰 hex·단색 흰색만, 전경·단색은 지름 66 원 안, 알림 아이콘은 2dp 여백 안:' + lines.join('');
+})();
+</script>
+</body>
+</html>

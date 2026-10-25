@@ -1,7 +1,7 @@
 # StockInvest 모바일 앱(Android) 전환 — 작업절차서
 
-> **상태: 🟡 v2 — 사용자 결정 4건 반영(2026-10-22). 착수(Phase 0 이후) 승인 대기. 승인 전에는 구현(코드·의존성·`android/` 생성)을 하지 않는다.**
-> 작성 2026-10-22 · 본체 task 번호 제안 **T-067** (T-065 는 T-064 가 예약, T-066 사용 중 — 후속 3개 번호는 착수 시 빈 번호 확인 후 부여) · 작성 주체: 메인 세션(Leader 역할 겸임, 읽기 전용 조사만 수행)
+> **상태: 🟢 v3 — 2026-10-25 착수. M1 = task [[T-084-mobile-app-m1-shell]] 진행 중(결정 반영·격리 worktree 작업). M2~M4 는 M1 배포·실기기 확인 뒤 별도 task.**
+> 작성 2026-10-22, 개정 2026-10-25 · 본체 task **T-084**(원안의 T-067 은 3일 사이 다른 작업[수익성 감사]이 사용해 변경 — T-083 까지 사용 중이었음) · 후속 3개 번호는 착수 시 빈 번호 확인 후 부여 · 작성 주체: 메인 세션(Leader 역할 겸임)
 > 선례: 일본어교육(TheKaiwa) · 공통 정본: [`../../docs/app-conversion-guide.md`](../../docs/app-conversion-guide.md)
 > 확신 표기: **[확실]** 이번 조사에서 파일·명령으로 직접 확인 · **[가능성 높음]** 강한 추론 · **[추측]** 확인 못 함
 
@@ -13,9 +13,16 @@
 
 **사용자 결정(2026-10-22)**: 로그인은 이메일·비밀번호 / 앱 파일은 **루트**(TheKaiwa 방식) / **텔레그램 앱 열기·앱 잠금·푸시 알림까지 모두** / APK 전달은 **다운로드 페이지+업데이트 띠**(TheKaiwa 방식).
 
+**추가 결정(2026-10-25)**: 서명 키는 사용자가 만들지 않음(Leader 가 생성) · 앱 이름 **주식캐기** · **DB 관련 승인**(AppRelease 테이블) · "기존 일본어교육 방식과 동일하게". 해석한 부분: appId `com.miraclepenguin.stockinvest`, 서명 키는 **전용 키스토어**(Kaiwa 는 공유 디버그 키 — D-5), AppRelease 는 **테이블**(D-12). 틀리면 정정 요청.
+
+**착수 시 바뀐 것(2026-10-25 재확인)**
+- 이 프로젝트가 3일 사이 S00~S09 통합 실행 절차(T-078)와 T-079~T-083 으로 크게 움직였고 **여러 세션이 같은 `main` 에 커밋·배포한다.** 그래서 앱 코드는 **격리 worktree**(`~/.node-local/stockinvest-app`, 브랜치 `mobile-app-t084`)에서 작업하고, 통합은 Reviewer·QA 통과 뒤 rebase → fast-forward 로 한다. (이 절차서 파일도 다른 세션 문서 커밋 `7f92b7e` 에 휩쓸려 들어간 전례가 있다.)
+- `SAFETY_PATHS` 가 38개로 늘었다(T-075): **`scripts/migrations/`·`src/lib/db.ts`·`src/app/api/strategies/` 추가.** → AppRelease SQL 도 Reviewer 판정이 필요하다.
+- 통합 실행 절차서에 앱 작업을 막는 제약은 없다(grep 확인).
+
 **이 결정이 만든 변화 — 불편한 사실부터**
 1. **[확실]** 범위가 "껍데기 앱"에서 "기능 4개짜리 프로젝트"로 커졌다. 한 번에 만들지 않고 **마일스톤 4개**(§0-1)로 나눈다. 각 마일스톤마다 APK 재빌드·`versionCode` 증가·사용자 재설치가 따른다.
-2. **[확실]** 안전 경로(`SAFETY_PATHS`, Reviewer 판정 필수)를 **건드린다.** M1 에서 `src/middleware.ts`(다운로드 경로 공개), M2 에서 같은 파일(`assetlinks.json` 공개), M4 에서 `src/lib/signals/approval-notify.ts` 와 `src/lib/credentials.ts` 주변(승인 요청 푸시·FCM 비밀키). 앞선 "안전 경로 0건" 권고는 범위 확대로 무효가 됐다.
+2. **[확실]** 안전 경로(`SAFETY_PATHS`, Reviewer 판정 필수)를 **건드린다.** M1 에서 `src/middleware.ts`(다운로드 경로 공개)와 `scripts/migrations/`(AppRelease 테이블), M2 에서 같은 `middleware.ts`(`assetlinks.json` 공개), M4 에서 `src/lib/signals/approval-notify.ts` 와 `src/lib/credentials.ts` 주변(승인 요청 푸시·FCM 비밀키). 앞선 "안전 경로 0건" 권고는 범위 확대로 무효가 됐다.
 3. **[확실]** 푸시(FCM)는 **데이터 외부 전송이 있는 외부 서비스 도입**이다. 워크스페이스 규칙상 `/신규도입` 검토와 사용자 결정을 거쳐야 하고, Firebase 프로젝트·서비스 계정 키는 **사용자만 만들 수 있다.**
 4. **[가능성 높음]** 텔레그램 링크로 앱 열기는 **안 될 수도 있다.** 텔레그램 인앱 브라우저가 Android App Links 를 가로챌 수 있다. 만들기 전에 실기기 시험(M2-0)으로 먼저 확인한다.
 5. 루트 배치(결정)는 `tsconfig.json` 이 `**/*.ts` 를 포함해 `capacitor.config.ts` 가 웹 빌드·타입체크에 걸리는 문제를 만든다. 질문에서 이 영향을 밝혔고 사용자가 루트를 택했으므로 **완화책(§6)을 넣어 진행**한다.
@@ -56,7 +63,7 @@
 | 알림 구조 | 발송 분배층 `src/lib/notify/index.ts` — 채널 `none\|telegram\|slack\|both`(`system_config.notify_channel`), 설정 API `api/settings/notify-channel`. **승인 요청은 분배층을 거치지 않고** `signals/approval-notify.ts` 가 `sendTelegramMessage` 로 버튼 메시지를 직접 보낸다. "앱에서 자세히" 링크는 `system_config.app_public_url` | `notify/index.ts:11,94-134`, `approval-notify.ts:17-20`, `docs/telegram-approval.md:25` |
 | DB 변경 | `scripts/migrations/*.sql` 을 **사람이 적용**, `--with-migrate` 는 사용자 승인 사항. `system_config`(key/value) 테이블은 이미 있음 | `deploy-order.md:150,210` |
 | 타입체크 범위 | `tsconfig.json` `include: ["**/*.ts","**/*.tsx"]`, `exclude` 는 `node_modules`·테스트뿐 | `tsconfig.json` |
-| 커밋 훅 | `SAFETY_PATHS` 에 `src/middleware.ts`·`src/lib/auth/*`·`src/lib/auth/oauth/`·`src/lib/signals/`·`src/lib/credentials.ts`·`src/lib/notify/telegram-api.ts`·`src/app/api/cron/`·`src/app/api/signals/` 등. 걸리면 task 의 Reviewer `최종 판정` 줄과 scope 필요 | `scripts/git-hooks/commit-msg` |
+| 커밋 훅 | `SAFETY_PATHS` 에 `src/middleware.ts`·`src/lib/auth/*`·`src/lib/auth/oauth/`·`src/lib/signals/`·`src/lib/credentials.ts`·`src/lib/notify/telegram-api.ts`·`src/app/api/cron/`·`src/app/api/signals/` 등. 걸리면 task 의 Reviewer `최종 판정` 줄과 scope 필요. **2026-10-25 재확인: 38개 — T-075 로 `src/lib/db.ts`·`src/app/api/strategies/`·`scripts/migrations/` 추가** | `scripts/git-hooks/commit-msg` |
 | 빌드 환경(우분투) | Android SDK `~/.node-local/android-sdk`(build-tools 34·35), JDK 21, `~/.android/debug.keystore`, 키 백업 폴더 존재. 기존 APK 보관 `NFS/homes/brownjeon/apk/`(VoiceVault 2개) | `ls` 실측 |
 | 작업 트리 | `main` 이 `origin/main` 보다 2커밋 앞섬 + **타 세션 미커밋 변경 다수** | `git status` |
 
@@ -100,7 +107,7 @@
 | 수정 | `package.json`·`package-lock.json` | `@capacitor/{core,cli,android,app,browser,splash-screen,status-bar}` 정확 버전 고정 | — |
 | 수정 | `tsconfig.json` | `exclude` 에 `android` 추가 | — |
 | 수정 | `.gitignore`, `CLAUDE.md`(앱 절·Next 버전 정정), `docs/deploy-order.md`(APK 절), `.claude/agents/deployer.md`(APK 절차) | 문서·역할 | — |
-| 저장소 | AppRelease 정보(최신 `versionCode`·`versionName`·`sha256`·파일명·`minSupported`·notes) | **D-12**: `system_config` 키 1개(마이그레이션 불필요, 권고) vs 신규 테이블(SQL 마이그레이션=사용자 승인) | 테이블이면 마이그레이션 |
+| 신규 | `scripts/migrations/T-084-app-release.sql` — `app_release` 테이블(`version_code`·`version_name`·`apk_file`·`sha256`·`size_bytes`·`min_supported`·`notes`·`cert_sha256`) | **D-12 확정: 테이블**(사용자 DB 승인) | ✅ **SAFETY**(`scripts/migrations/`, T-075 로 추가) — Reviewer 판정 필요 |
 
 ### 4-2. M2 / M3 / M4
 
@@ -124,14 +131,14 @@
 | D-2 | 저장소 배치 | ✅ **루트** (권고는 `mobile/` 이었음) | 완화책: ① 정확 버전 고정 ② `tsconfig.json exclude: android` ③ **push 전에 격리 클론에서 `npm ci && npm run typecheck && npm run build` 통과 확인** ④ 웹 코드에서 `@capacitor/*` import 금지 ⑤ 릴리스의 `npm ci` 영향은 `release.sh` 확인(미조사) |
 | D-3 | 로그인 | ✅ 이메일·비밀번호 | 앱에서 OAuth 버튼 숨김. 서버 인증 로직은 불변 |
 | D-4 | APK 전달 | ✅ 다운로드 페이지+업데이트 띠 | 상세는 D-12·D-13 |
-| D-5 | 서명 키 | ⏳ **M1 착수 전 필요** | 권고: **StockInvest 전용 키스토어**. 근거: Kaiwa 는 디버그 키스토어를 의도적으로 재사용했고 비밀번호 `android` 가 SDK 공개 기본값이라 보호가 파일 접근에만 의존한다고 `build.gradle` 주석이 적는다. 학습 앱에는 합리적이나 실매매 앱은 파일 유출 시 같은 서명의 위조 업데이트가 가능 **[가능성 높음]**. 키는 저장소 밖+백업 폴더, **분실 시 덮어쓰기 불가** |
-| D-6 | appId·이름 | ⏳ **M1 착수 전 필요** | 제안: appId `com.miraclepenguin.stockinvest`(확정 후 변경 불가), 이름 "주식 자동매매"(현 `<title>`). 아이콘은 designer |
+| D-5 | 서명 키 | ✅ **2026-10-25 생성 완료(Leader)** — 전용 키스토어, 인증서 SHA-256 `6F:A5:AD:6F:65:43:F2:2E:5F:42:21:AA:10:14:0E:77:A4:BD:41:78:05:04:A4:DE:10:49:45:50:61:51:0F:08`(M2 App Links 지문). 사용자는 만들 필요 없음. 위치 `~/.android/`(권한 600), 백업 `NFS/homes/brownjeon/backup/android-signing/stockinvest/` | (원 권고 기록) 권고: **StockInvest 전용 키스토어**. 근거: Kaiwa 는 디버그 키스토어를 의도적으로 재사용했고 비밀번호 `android` 가 SDK 공개 기본값이라 보호가 파일 접근에만 의존한다고 `build.gradle` 주석이 적는다. 학습 앱에는 합리적이나 실매매 앱은 파일 유출 시 같은 서명의 위조 업데이트가 가능 **[가능성 높음]**. 키는 저장소 밖+백업 폴더, **분실 시 덮어쓰기 불가** |
+| D-6 | appId·이름 | ✅ 이름 **"주식캐기"**(사용자 2026-10-25) · appId `com.miraclepenguin.stockinvest`(Leader 제안대로, 사용자 이의 없음 — **첫 APK 설치 후에는 변경 불가**) | 아이콘은 designer 시안 3종 중 사용자 선택 |
 | D-7 | minSdk·ABI | 🟡 기본값 | `arm64-v8a` 전용, minSdk 26(Kaiwa 와 통일) |
 | D-9 | push(배포) 시점 | 🟡 기본값 | 장외 창, push 직전 `date` 확인, 장중은 사용자 명시 지시일 때만 |
 | D-10 | 푸시 범위 (M4) | ⏳ M4 전 | 어떤 이벤트(승인 요청·체결·킬스위치·일일 리포트·cron 이상)를 보낼지, 본문에 종목·금액을 넣을지(권고: 잠금화면 비공개+본문 최소). 알림 탭 → 앱 열기만, **알림에서 승인/거절 금지** |
 | D-11 | 앱 잠금 정책 (M3) | ⏳ M3 전 | 잠금 시점(콜드 스타트+백그라운드 N초), 생체 실패 시 기기 PIN 허용, 백그라운드 전환 시 최근 앱 화면 가림(`FLAG_SECURE` 를 `onPause` 에서 켜고 `onResume` 에서 끄면 사용 중 스크린샷은 가능) |
-| D-12 | AppRelease 저장소 | ⏳ M1 전 | 권고 `system_config` 키 1개(JSON). 단점: 이력 조회 불가 → 이력은 vault task 에 기록 |
-| D-13 | 다운로드 보호 수준 | ⏳ M1 전 | Kaiwa 방식(공개 경로, **등록된 sha256 과 일치하는 `.apk` 만**, 경로 이탈 차단) 권고. APK 에 비밀이 없음을 빌드 때 검사. 강화안(로그인 후 발급하는 단기 서명 링크)은 Reviewer 판단 |
+| D-12 | AppRelease 저장소 | ✅ **테이블** `app_release`(사용자 "DB 관련 승인" 2026-10-25, Kaiwa 와 동일) | 가산 전용 DDL(`scripts/migrations/T-084-app-release.sql`, SAFETY 경로 → Reviewer 판정). 적용은 Reviewer·QA 통과 뒤 Leader 가 장외에, 코드 배포보다 먼저. 앱은 읽기만, INSERT 는 deployer(`build-apk.sh --publish` 가 SQL 출력) |
+| D-13 | 다운로드 보호 수준 | ✅ Kaiwa 방식(사용자 "동일하게") | 공개 경로 `/app/download/`, **등록된 행의 파일 이름·sha256 과 일치하는 `.apk` 만** 스트리밍, 경로 이탈 차단, 요청 제한. APK 보관은 저장소 밖 `/home/brownjeon/apps/stockinvest/shared/app-releases/`(릴리스 prune 과 무관). APK 에 비밀이 없음을 빌드 때 검사 |
 | D-14 | FCM 도입 (M4) | ⏳ M4 전 | `/신규도입` 절차: 외부 서비스·데이터 외부 전송(기기 토큰+알림 본문)·신규 비밀키 → 시범 전 보안 검토·사용자 결정 |
 
 ---
@@ -164,7 +171,7 @@
 ### Phase 0 — 승인·접수 (Leader, 구현 없음)
 | # | 작업 | 산출물 |
 |---|---|---|
-| 0-1 | 이 문서 승인 + **D-5·D-6·D-12·D-13 답변** | 승인·결정 기록 |
+| 0-1 | ✅ 문서 승인·결정(2026-10-22 4건 + 2026-10-25 D-5·D-6·D-12·D-13) | 승인·결정 기록은 task T-084 "사용자 결정" 표 |
 | 0-2 | `/이슈기록 관련 앱 안드로이드 배포 인증 쿠키` 재조회 | 이번 조사는 **승인된 교훈 0건** |
 | 0-3 | T-067 task 이력서(`base_ref`, 과거 이력: Kaiwa task-003f·003h·021, 가이드 §1~§4). `board.md` 는 타 세션 미커밋이 있어 편집 전 확인 | `agent-vault/10-Flow/tasks/T-067-*.md` |
 | 0-4 | judge intake — 복잡도·`developer_model`·데모 수준·Codex 필요(M1 은 `middleware.ts` 때문에 R2 취급) | judge 결과, `demo_gate` 초기화 |

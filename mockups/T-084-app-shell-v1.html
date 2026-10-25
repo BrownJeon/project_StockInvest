@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="demo-version" content="T-084-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="description" content="T-084-v1 — 안드로이드 앱 '주식캐기' M1 화면: 서버 연결 실패 화면 · 앱 업데이트 띠 · 설정의 앱 설치/업데이트 섹션 · 로그인 화면 앱 분기 · 앱 아이콘 시안 3종과 스플래시 (합성값)">
+<title>T-084-v1 앱 셸 화면</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지) */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    /* 데모 주석 전용(앱 UI 아님) */
+    --note: #9fb3d1;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size: 14px; -webkit-text-size-adjust: 100%;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  a { color: inherit; text-decoration: none; }
+  .num { font-variant-numeric: tabular-nums; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .muted { color: var(--muted); }
+  .hide, [hidden] { display: none !important; }
+  @keyframes ti-spin { to { transform: rotate(360deg); } }
+
+  /* ── 데모 문서 틀 (앱 UI 아님) ── */
+  .page { max-width: 1320px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-bottom)); }
+  .page > header h1 { font-size: 17px; margin: 0 0 6px; line-height: 1.4; }
+  .page > header p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .page > header p b { color: var(--text); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--note); color: var(--note); margin: 0 6px 4px 0; }
+  .sample-banner { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--warn); color: var(--warn) !important; font-size: 13px; font-weight: 700; line-height: 1.5; }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+  nav.toc a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg2); font-size: 12px; font-weight: 600; }
+  section.block { margin-top: 36px; }
+  section.block > h2 { font-size: 15px; margin: 0 0 8px; }
+  section.block > p.lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .note { margin: 8px 0 4px; font-size: 11px; color: var(--note); border-left: 2px dashed var(--note); padding-left: 6px; line-height: 1.5; }
+  .newmark { display: inline-block; font-size: 11px; font-weight: 700; color: var(--note); border: 1px dashed var(--note); border-radius: 6px; padding: 0 6px; margin-left: 6px; vertical-align: middle; text-transform: none; letter-spacing: 0; }
+  .box { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; margin-top: 12px; }
+  ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  ul.plain li { margin-bottom: 4px; }
+  .frame-cap { font-size: 12px; font-weight: 700; color: var(--note); margin: 0 0 6px; }
+  .desk-scroll { position: relative; overflow-x: auto; border: 1px dashed var(--border2); border-radius: 12px; padding: 8px; }
+  .controls { display: flex; flex-direction: column; gap: 10px; max-width: 760px; margin: 0 0 14px; }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 100px; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px;
+                  border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+  .simbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .simbtns button { flex: 1 1 150px; min-height: 44px; padding: 4px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); border: 1px solid var(--border2); color: var(--text); line-height: 1.35; }
+  .compare2 { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 900px) { .compare2 { grid-template-columns: repeat(2, minmax(0, 412px)); align-items: start; } }
+  .compare3 { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 900px) { .compare3 { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; } }
+  .decide { border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.06); border-radius: 10px; padding: 12px; margin-top: 12px; }
+  .decide h3 { margin: 0 0 8px; font-size: 14px; color: var(--warn); }
+  .ab { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 900px) { .ab { grid-template-columns: 1fr 1fr; } .ab.three { grid-template-columns: 1fr 1fr 1fr; } }
+  .opt { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.6; }
+  .opt h4 { margin: 0 0 4px; font-size: 13px; }
+  .opt.rec { border-color: var(--ok); }
+  .opt.no { border-style: dashed; opacity: .9; }
+  .rec-tag { font-size: 11px; font-weight: 700; color: var(--ok); margin-left: 6px; }
+  .no-tag { font-size: 11px; font-weight: 700; color: var(--danger); margin-left: 6px; }
+
+  /* ── 앱 화면 공통 (여기부터 구현 대상) ── */
+  .phone { position: relative; width: 100%; max-width: 412px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .phone.w360 { max-width: 360px; }
+  .phone.mini { max-width: 280px; }
+  .desk { position: relative; width: 1280px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .app { container-type: inline-size; }
+  .frm { display: flex; flex-direction: column; height: 640px; }
+  .phone.mini .frm { height: 420px; }
+  .desk .frm { height: 720px; }
+  .scrl { flex: 1; min-height: 0; overflow-y: auto; position: relative; }
+  .app-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .tabs { display: flex; height: var(--nav-h); flex-shrink: 0; border-top: 1px solid var(--border); background: var(--bg2); padding-bottom: var(--safe-bottom); }
+  .tabs a { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; font-weight: 600; color: var(--muted); min-height: 44px; }
+  .tabs a[aria-current="page"] { color: var(--accent); }
+  .tabs .ico { font-size: 20px; line-height: 1; }
+  .scr-h { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 10px; background: var(--bg); border-bottom: 1px solid var(--border); }
+  .scr-h .h { font-size: 17px; font-weight: 700; }
+  .sec-h { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; padding: 8px 0 4px; }
+  .card { background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+  .linkrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 56px; padding: 12px 16px; background: var(--bg2); border-radius: 12px; border: 1px solid var(--border); }
+  .linkrow .t { font-size: 14px; }
+  .s { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.5; }
+  .chev { font-size: 18px; color: var(--muted); flex-shrink: 0; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); min-height: 48px; }
+  .row:last-child { border-bottom: 0; }
+  .row .l { font-size: 14px; min-width: 0; }
+  .row .v { font-size: 14px; font-weight: 700; flex-shrink: 0; text-align: right; }
+  .skip { border: 1px dashed var(--border2); border-radius: 12px; padding: 12px 16px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .footbox { background: var(--bg2); border-radius: 12px; padding: 14px; border: 1px solid var(--border); font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .st { display: inline-flex; align-items: baseline; gap: 4px; font-size: 12px; font-weight: 700; line-height: 1.45; white-space: nowrap; }
+  .st.ok { color: var(--ok); } .st.warn { color: var(--warn); } .st.bad { color: #fca5a5; } .st.na { color: var(--muted); }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border2); white-space: nowrap; line-height: 1.5; }
+  .chip.ok { color: var(--ok); border-color: rgba(34,197,94,.45); background: rgba(34,197,94,.10); }
+  .strip { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .btn-pri { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; width: 100%; border-radius: 10px; background: var(--accent); color: #221a05; font-size: 15px; font-weight: 700; }
+  .btn-pri:disabled { opacity: .6; }
+  .btn-ghost { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg3); font-size: 13px; font-weight: 600; }
+  .btn-danger { min-height: 44px; padding: 0 14px; border-radius: 8px; border: 1px solid rgba(239,68,68,.45); background: rgba(239,68,68,.12); color: #fca5a5; font-size: 13px; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: ti-spin .8s linear infinite; }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; border-right-color: currentColor; opacity: .6; } }
+
+  /* ── A. 서버 연결 실패 화면 (public/app-shell/index.html — 독립 파일, 인라인만) ── */
+  .sh { height: 640px; display: grid; place-items: center; text-align: center; background: var(--bg);
+        padding: max(24px, var(--safe-top)) 24px max(24px, var(--safe-bottom)); overflow-y: auto; }
+  .sh .in { width: 100%; max-width: 320px; }
+  .sh .logo { display: block; width: 72px; height: 72px; margin: 0 auto 10px; }
+  .sh .nm { margin: 0; font-size: 20px; font-weight: 700; color: var(--text); }
+  .sh h1 { font-size: 17px; font-weight: 700; margin: 22px 0 6px; line-height: 1.4; }
+  .sh p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+  .sh .stt { display: inline-flex; align-items: center; gap: 6px; margin-top: 14px; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; border: 1px solid var(--border2); color: var(--muted); }
+  .sh .stt.warn { color: var(--warn); border-color: rgba(245,158,11,.45); }
+  .sh .retry { margin-top: 20px; min-height: 48px; width: 200px; max-width: 100%; border-radius: 10px; background: var(--accent); color: #221a05; font-size: 15px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+  .sh .retry:disabled { opacity: .65; }
+  .sh .hint { font-size: 12px; margin-top: 14px; }
+  .sh .foot { font-size: 11px; margin-top: 22px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+  /* ── B. 앱 업데이트 띠 (AppUpdateBanner) ── */
+  .aub { display: flex; align-items: center; gap: 4px; min-height: 56px; padding: var(--safe-top) 4px 0 16px; background: var(--bg2); border-bottom: 1px solid var(--border); }
+  .aub .bar { flex: none; width: 3px; height: 32px; border-radius: 2px; background: var(--accent); }
+  .aub .txt { flex: 1; min-width: 0; min-height: 44px; padding: 6px 8px; text-align: left; display: flex; flex-direction: column; justify-content: center; }
+  .aub .t { display: block; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .aub .ss { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .aub .get { flex: none; min-height: 44px; padding: 0 14px; border-radius: 8px; background: var(--accent); color: #221a05; font-size: 13px; font-weight: 700; }
+  .aub .x { flex: none; width: 44px; height: 44px; display: grid; place-items: center; color: var(--muted); border-radius: 8px; }
+  .aub.forced { background: rgba(239,68,68,.12); border-bottom-color: rgba(239,68,68,.45); padding-right: 12px; align-items: center; }
+  .aub.forced .bar { background: var(--danger); align-self: stretch; height: auto; margin: 10px 0; }
+  .aub.forced .t { color: #fca5a5; white-space: normal; }
+  .aub.forced .ss { color: var(--text); white-space: normal; line-height: 1.45; }
+  .stick { position: sticky; top: 0; z-index: 12; }
+  .stick .scr-h { position: static; }
+  .modal-dim { position: absolute; inset: 0; z-index: 30; background: rgba(0,0,0,.66); display: grid; place-items: center; padding: 16px; }
+  .modal-dim .dlg { background: var(--bg2); border: 1px solid var(--border2); border-radius: 12px; padding: 16px; text-align: center; font-size: 13px; line-height: 1.5; }
+  .xmark { position: absolute; left: 8px; right: 8px; bottom: 70px; z-index: 31; font-size: 11px; font-weight: 700; color: #fca5a5; background: var(--bg); border: 1px dashed var(--danger); border-radius: 6px; padding: 4px 6px; text-align: center; }
+  .hold { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 56px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+  .hold:last-child { border-bottom: 0; }
+  .sig { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+  .sig .btns { display: flex; gap: 8px; }
+  .sig .btns button { flex: 1; min-height: 44px; border-radius: 8px; font-weight: 700; font-size: 14px; }
+  .sig .ok-b { background: var(--accent); color: #221a05; }
+  .sig .no-b { background: var(--bg3); border: 1px solid var(--border2); }
+
+  /* ── C. 설정 › 앱 섹션 (AppSection) ── */
+  .apc .ap-top { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .apc .ap-top svg { flex: none; width: 44px; height: 44px; }
+  .apc .ap-top .nm { font-size: 15px; font-weight: 700; }
+  .apc .ap-main { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .apc .meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+  .apc .meta b { color: var(--text); font-weight: 600; }
+  .apc ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: st; display: flex; flex-direction: column; gap: 10px; }
+  .apc ol.steps li { counter-increment: st; position: relative; padding-left: 32px; font-size: 13px; line-height: 1.55; }
+  .apc ol.steps li::before { content: counter(st); position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; background: var(--bg3); border: 1px solid var(--border2); font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+  .apc ol.steps li b { display: block; font-size: 13px; }
+  .apc ol.steps li span { color: var(--muted); }
+  .apc details.guide { border-top: 1px solid var(--border); }
+  .apc details.guide summary { list-style: none; display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 0 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .apc details.guide summary::-webkit-details-marker { display: none; }
+  .apc details.guide summary::after { content: "›"; color: var(--muted); font-size: 18px; transition: transform .2s; }
+  .apc details.guide[open] summary::after { transform: rotate(90deg); }
+  .apc details.guide .gbody { padding: 0 16px 14px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .apc .nt { background: var(--bg3); border: 1px solid var(--border2); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 12px; font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .apc .nt.red { background: #2a1416; border-color: #4a2226; border-left-color: var(--danger); }
+  .apc .nt.red b { color: #fca5a5; }
+  .apc .ldg { padding: 18px 16px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .apc .hash { font-size: 12px; color: var(--muted); }
+  .apc .hash code { color: var(--text); background: var(--bg3); border: 1px solid var(--border2); border-radius: 4px; padding: 1px 6px; }
+  .apc .chk { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 16px 4px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); min-height: 52px; }
+  .apc ul.notes { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  @container (min-width: 900px) {
+    .app-body { padding: 20px 24px; max-width: 1100px; }
+    .apc .ap-cols { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); }
+    .apc .ap-cols > .ap-main + .ap-main { border-left: 1px solid var(--border); }
+  }
+
+  /* ── D. 로그인 (AuthShell 수치 그대로) ── */
+  .au-wrap { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: calc(var(--safe-top) + 20px) 16px calc(var(--safe-bottom) + 24px); }
+  .au-card { width: 100%; max-width: 380px; background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 22px; display: flex; flex-direction: column; }
+  .au-logo { font-size: 32px; line-height: 1; text-align: center; margin-bottom: 8px; }
+  .au-title { font-size: 19px; font-weight: 700; margin: 0; text-align: center; }
+  .au-sub { font-size: 13px; color: var(--muted); margin: 6px 0 18px; text-align: center; }
+  .oa-list { display: flex; flex-direction: column; gap: 10px; }
+  .oa-btn { min-height: 48px; border-radius: 9px; border: 1px solid var(--border2); display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 14.5px; font-weight: 600; width: 100%; }
+  .oa-btn.g { background: #fff; color: #1f1f1f; border-color: #dadce0; }
+  .oa-btn.gh { background: #1b1f26; color: #e6e8ee; border-color: #3a4150; }
+  .oa-div { display: flex; align-items: center; gap: 12px; margin: 20px 0 16px; color: var(--muted); font-size: 11.5px; }
+  .oa-div i { flex: 1; height: 1px; background: var(--border2); }
+  .au-field { display: flex; flex-direction: column; margin-bottom: 12px; }
+  .au-field label { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+  .au-input { min-height: 46px; border-radius: 10px; border: 1px solid var(--border2); background: var(--bg3); color: var(--muted); padding: 0 14px; font-size: 16px; display: flex; align-items: center; }
+  .au-input.bad { border-color: var(--danger); }
+  .au-err { min-height: 18px; font-size: 12px; color: var(--danger); margin: 6px 0 4px; word-break: break-word; line-height: 1.5; }
+  .au-submit { min-height: 48px; border-radius: 10px; background: var(--accent); color: #221a05; font-size: 15px; font-weight: 700; width: 100%; margin-top: 4px; }
+  .au-alt { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 16px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .au-alt a { color: var(--accent); border-bottom: 1px solid var(--accent); padding-bottom: 1px; font-weight: 600; }
+  .au-hint { font-size: 11px; color: var(--muted); margin-top: 4px; text-align: center; }
+  .gone { border: 1px dashed var(--note); border-radius: 9px; padding: 8px 10px; font-size: 11px; color: var(--note); text-align: center; margin-bottom: 16px; line-height: 1.5; }
+
+  /* ── E. 아이콘 ── */
+  .f-bg2 { fill: var(--bg2); } .f-bg3 { fill: var(--bg3); } .f-bg4 { fill: var(--bg4); } .f-bg { fill: var(--bg); }
+  .f-acc { fill: var(--accent); } .f-up { fill: var(--up); } .f-mut { fill: var(--muted); }
+  .s-up { fill: none; stroke: var(--up); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
+  .s-facet { fill: none; stroke: var(--bg2); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+  .f-txt { fill: var(--accent); font-weight: 800; font-family: "Noto Sans KR", ui-sans-serif, system-ui, sans-serif; }
+  .guide { fill: none; stroke: var(--note); stroke-dasharray: 3 3; stroke-width: .8; }
+  .no-guides .guide { display: none; }
+  .icons { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 900px) { .icons { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .icard { border: 1px solid var(--border2); background: var(--bg2); border-radius: 12px; padding: 12px; }
+  .icard.rec { border-color: var(--ok); }
+  .icard h3 { font-size: 14px; margin: 0 0 10px; }
+  .ivars { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .ivars figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .ivars figcaption { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.4; }
+  .ivars .lay { width: 120px; height: 120px; border: 1px solid var(--border2); border-radius: 4px; }
+  .home { background: var(--bg3); border-radius: 10px; padding: 10px 8px 8px; }
+  .wall { padding: 8px; border-radius: 8px; background: var(--border2); line-height: 0; }
+  .wall.light { background: var(--text); }
+  .home .lbl { font-size: 11px; color: var(--text); }
+  .idesc { font-size: 12px; color: var(--muted); line-height: 1.55; margin: 10px 0 0; }
+  .spl { height: 640px; position: relative; display: grid; place-items: center; background: var(--bg); }
+  .spl .brand { position: absolute; left: 0; right: 0; bottom: calc(40px + var(--safe-bottom)); text-align: center; font-size: 15px; font-weight: 700; color: var(--text); }
+  .spl .brand small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + var(--safe-bottom)); width: calc(100% - 32px); max-width: 380px; background: #1b1f27; border: 1px solid var(--border2); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.5; z-index: 60; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+  .toast:empty { display: none; }
+  @media (hover: hover) {
+    .linkrow:hover, .apc details.guide summary:hover, .btn-ghost:hover { background: var(--bg3); }
+    .aub .x:hover { background: var(--bg3); }
+  }
+</style>
+</head>
+<body>
+<!-- 아이콘 정의 (화면 밖) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <clipPath id="m-c"><circle cx="54" cy="54" r="36"/></clipPath>
+    <clipPath id="m-s"><rect x="18" y="18" width="72" height="72" rx="16"/></clipPath>
+    <symbol id="ic-bg" viewBox="0 0 108 108">
+      <rect class="f-bg2" width="108" height="108"/>
+      <path class="f-bg3" d="M0 80 Q27 74 54 79 T108 76 V108 H0 Z"/>
+      <path class="f-bg4" d="M0 93 Q30 88 60 92 T108 90 V108 H0 Z"/>
+    </symbol>
+    <symbol id="ic-a" viewBox="0 0 108 108">
+      <use href="#ic-bg" width="108" height="108"/>
+      <g transform="rotate(-38 50 56)">
+        <rect class="f-mut" x="47.5" y="36" width="5" height="44" rx="2.5"/>
+        <path class="f-acc" d="M28 41 Q50 25 72 41 L70 45.5 Q50 33 30 45.5 Z"/>
+      </g>
+      <rect class="f-up" x="71.5" y="38" width="3" height="36" rx="1.5"/>
+      <rect class="f-up" x="67" y="46" width="12" height="20" rx="2"/>
+    </symbol>
+    <symbol id="ic-b" viewBox="0 0 108 108">
+      <use href="#ic-bg" width="108" height="108"/>
+      <polyline class="s-up" points="27,68 38,59 47,65 60,49"/>
+      <polygon class="f-acc" points="63,37 73,33 81,41 78,51 68,53 60,45"/>
+      <path class="s-facet" d="M68 53 L70 43 L81 41 M70 43 L63 37"/>
+      <path class="f-acc" d="M50 24 L51.4 28.6 L56 30 L51.4 31.4 L50 36 L48.6 31.4 L44 30 L48.6 28.6 Z"/>
+    </symbol>
+    <symbol id="ic-c" viewBox="0 0 108 108">
+      <rect class="f-bg2" width="108" height="108"/>
+      <text class="f-txt" x="51" y="71" font-size="42" text-anchor="middle">캐</text>
+      <polygon class="f-up" points="67,38 73.5,28 80,38"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="page" id="page">
+  <header>
+    <h1>T-084 데모 v1 — 안드로이드 앱 "주식캐기" M1: 연결 실패 화면 · 업데이트 띠 · 설치/업데이트 안내 · 로그인 앱 분기 · 아이콘</h1>
+    <p><span class="tag">judge: full (DM-new-route · DM-kw-risky-cta)</span><span class="tag">대표 폭 412px · 경계 360px</span><span class="tag">≥900px 데스크톱 복원(설정)</span><span class="tag">매매·안전장치 동작 변경 없음</span></p>
+    <p>앱은 <b>껍데기(Capacitor)</b>이고 화면은 운영 서버(stock.미라클펭귄.com)를 그대로 불러온다. 그래서 새로 그릴 화면은 ① 서버를 못 불러올 때만 보이는 <b>연결 실패 화면</b>(APK 안 독립 파일) ② 앱에서만 보이는 <b>업데이트 띠</b> ③ 설정 탭의 <b>앱 섹션</b>(웹: 설치 안내 / 앱: 버전·업데이트) ④ <b>로그인 화면 앱 분기</b>(Google·GitHub 버튼 숨김) ⑤ <b>아이콘·스플래시</b> 다섯 가지다.</p>
+    <p class="sample-banner">버전·크기·날짜·확인값·종목·금액은 전부 합성 예시값이다(설치본 v1.0.0, 최신 v1.0.1, 9.8MB, sha256 앞 8자 3f9a1c7e, "예시종목" 등). 실제 계좌·보유 종목·배포본이 아니다.</p>
+    <nav class="toc" aria-label="데모 목차">
+      <a href="#sa">A. 연결 실패</a><a href="#sb">B. 업데이트 띠</a><a href="#sc">C. 설정 › 앱</a><a href="#sd">D. 로그인</a><a href="#se">E. 아이콘·스플래시</a><a href="#decide">결정 필요</a><a href="#memo">설계 메모</a>
+    </nav>
+    <div class="controls" style="margin-top:12px">
+      <fieldset class="seg"><legend>모든 모바일 미리보기 폭</legend><div class="seg-row">
+        <label><input type="radio" name="w" value="412" checked><span>412px (갤럭시 S25+)</span></label>
+        <label><input type="radio" name="w" value="360"><span>360px (경계)</span></label>
+      </div></fieldset>
+    </div>
+  </header>
+
+  <!-- A -->
+  <section class="block" id="sa">
+    <h2>A. 서버 연결 실패 화면 — <code>public/app-shell/index.html</code> (APK 안, 외부 자원 없음)</h2>
+    <p class="lead">앱이 운영 서버를 불러오지 못했을 때만 보인다(Capacitor <code>server.errorPath</code>). 휴대폰 인터넷이 끊겼는지(<code>navigator.onLine</code>) 서버가 응답하지 않는지만 나눠 말하고, 할 수 있는 일(다시 시도·PC 로 확인)을 준다. 매매가 "안전하다"는 약속은 하지 않는다 — 서버가 멈춘 경우일 수도 있기 때문이다.</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>상태</legend><div class="seg-row">
+        <label><input type="radio" name="a" value="offline" checked><span>휴대폰 인터넷 끊김</span></label>
+        <label><input type="radio" name="a" value="server"><span>인터넷은 됨 ·<br>서버 응답 없음</span></label>
+        <label><input type="radio" name="a" value="retry"><span>다시 시도 중</span></label>
+      </div></fieldset>
+    </div>
+    <div class="compare2">
+      <div>
+        <p class="frame-cap">모바일 — 연결 실패 화면 (화면 안 [다시 시도]도 눌러 볼 수 있다)</p>
+        <div class="phone app" id="f-a" role="region" aria-label="연결 실패 화면 미리보기"></div>
+      </div>
+      <div>
+        <p class="frame-cap">구현 메모</p>
+        <div class="box"><ul class="plain">
+          <li>한 파일 HTML, <b>인라인 CSS·JS 만</b>(폰트·이미지·스크립트 외부 참조 0). 로고는 인라인 SVG.</li>
+          <li>색은 <code>globals.css</code> 와 같은 이름의 변수(<code>--bg --bg2 --border --text --muted --accent --warn</code>)를 <code>:root</code> 에 hex 로 복사한다(서버에 못 닿는 화면이라 링크 불가). 파일 머리 주석에 "원본 globals.css sha256 앞 12자"를 남겨 어긋남을 찾게 한다.</li>
+          <li>다크 한 벌만(앱이 다크 전용, <code>themeColor #0f1115</code>).</li>
+          <li>[다시 시도] = 운영 주소로 <code>location.replace</code>. 누르면 버튼이 "연결 중…"으로 잠기고 약 8초 뒤 풀린다(실패하면 Capacitor 가 이 화면을 다시 띄운다). 휴대폰이 다시 온라인이 되면(<code>online</code> 이벤트) 한 번 자동 시도. 주기적 자동 재시도는 하지 않는다(배터리·서버 부하).</li>
+          <li>상태 문장은 <code>aria-live="polite"</code> 영역. 제목은 <code>h1</code>, 버튼 48px.</li>
+          <li>이 파일을 바꾸면 <b>네이티브 변경</b>이다(APK 재빌드·versionCode 증가).</li>
+          <li>데스크톱 복원 해당 없음 — 휴대폰 앱에서만 뜨는 화면.</li>
+        </ul></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- B -->
+  <section class="block" id="sb">
+    <h2>B. 앱 업데이트 띠 — 앱 안에서만, 화면 맨 위 (AppUpdateBanner)</h2>
+    <p class="lead">웹 브라우저에서는 그리지 않는다(요청도 하지 않음). 로그인 뒤 버전 조회(<code>GET /api/app/version</code>)가 "내 versionCode &lt; 최신"이면 <b>새 버전 안내</b>, "&lt; 최소 지원"이면 <b>필수 업데이트</b>. 둘 다 <b>화면을 덮지 않고 문서 흐름 맨 위에 끼워 넣는</b> 띠다 — 스크롤하면 지나가고, 아래 화면(비상 청산·승인 버튼·안전장치 표시)은 그대로 누를 수 있다. 화면 안 띠의 [받기]·✕·글자를 눌러 보라.</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>띠 상태</legend><div class="seg-row">
+        <label><input type="radio" name="b" value="rec" checked><span>새 버전 안내<br>(닫을 수 있음)</span></label>
+        <label><input type="radio" name="b" value="forced"><span>필수 업데이트<br>(닫기 없음)</span></label>
+        <label><input type="radio" name="b" value="none"><span>없음<br>(최신 · 웹 · 조회 실패)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>아래 화면</legend><div class="seg-row">
+        <label><input type="radio" name="bs" value="dash" checked><span>대시보드<br>(안전장치·비상 청산)</span></label>
+        <label><input type="radio" name="bs" value="rec"><span>추천<br>(시그널 승인)</span></label>
+      </div></fieldset>
+      <div class="simbtns"><button type="button" data-act="band-reset">닫은 띠 다시 보이기 (다음 날 · 더 새 버전 흉내)</button></div>
+    </div>
+    <div class="compare2">
+      <div>
+        <p class="frame-cap">모바일 — 띠 + 기존 화면 (상단 머리는 기존처럼 sticky)</p>
+        <div class="phone app" id="f-b" role="region" aria-label="업데이트 띠 미리보기"></div>
+      </div>
+      <div>
+        <p class="frame-cap">상태·동작 표</p>
+        <div class="box"><ul class="plain">
+          <li><b>새 버전</b>: 글자 "주식캐기 v1.0.1 / 새 버전이 나왔습니다 · 눌러서 설치 방법 보기"(둘 다 한 줄 말줄임 — 360px 에서도 버전이 첫 줄 앞에 있어 안 잘림). 글자 → 설정 › 앱 섹션(<code>/settings#app</code>). [받기] → 시스템 브라우저(Chrome)로 <code>/app/download/latest.apk</code>. ✕(<code>aria-label="오늘은 그만 보기"</code>) → <b>D2</b>.</li>
+          <li><b>필수</b>: 빨강 톤 + ⚠ + 글자(색만으로 구분하지 않음), 닫기 없음, 본문은 줄바꿈 허용(말줄임 금지 — 이유를 다 읽어야 함). [업데이트] → 설정 › 앱 섹션. 표현 방식은 <b>D3</b>.</li>
+          <li><b>숨김</b>: 웹 · 앱 정보 없음 · 조회 실패(조용히 숨김, 오류 띠를 따로 띄우지 않음) · 최신. 로그인 화면 등 인증 전 화면(<code>BottomTabs</code> 의 <code>HIDDEN_PATHS</code>)에서도 숨김 — 버전 조회가 로그인 필요라 알 수 없다.</li>
+          <li>조회 시점: 첫 진입 1회 + 앱이 다시 앞으로 올 때 마지막 확인이 6시간 넘었으면 다시(TheKaiwa 와 같음).</li>
+          <li>안전영역: 띠가 페이지 맨 위 요소이므로 <code>padding-top: var(--safe-top)</code> 를 띠가 가진다(edge-to-edge 'auto' 여백이 들어가면 0 일 가능성이 높음 — 실기기 확인).</li>
+          <li><code>role="status"</code>(필수도 status — 화면 이동마다 alert 가 반복 낭독되지 않게). 버튼·✕ 44px.</li>
+          <li>데스크톱 복원 해당 없음 — 앱 안에서만 뜬다.</li>
+        </ul></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- C -->
+  <section class="block" id="sc">
+    <h2>C. 앱 설치·업데이트 안내 — 기존 설정 탭 맨 아래 "앱" 섹션 (새 라우트 없음)</h2>
+    <p class="lead">설정 화면의 기존 섹션(내 계정 · 자산 기록 · 승인 방식 · 안전장치 … · 정기 거래 리포트) 순서는 그대로 두고, 맨 아래 안내 상자 바로 위에 <b>앱 (안드로이드)</b> 섹션 하나를 더한다(<code>id="app"</code> — 업데이트 띠가 여기로 보낸다). 같은 섹션이 <b>웹 브라우저에서는 설치 안내</b>, <b>앱 안에서는 버전·업데이트</b>를 보인다. 새 페이지 대신 섹션을 권하는 이유는 <b>D4</b>.</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>보는 곳</legend><div class="seg-row">
+        <label><input type="radio" name="cv" value="web" checked><span>웹 브라우저<br>(설치 전)</span></label>
+        <label><input type="radio" name="cv" value="app"><span>앱 안<br>(설치 후)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>설정 화면 비교</legend><div class="seg-row">
+        <label><input type="radio" name="cc" value="prop" checked><span>설정: 제안<br>(앱 섹션 있음)</span></label>
+        <label><input type="radio" name="cc" value="cur"><span>설정: 현재<br>(운영 화면)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>웹 브라우저 상태</legend><div class="seg-row">
+        <label><input type="radio" name="cw" value="ok" checked><span>정상</span></label>
+        <label><input type="radio" name="cw" value="empty"><span>올라온 앱 없음</span></label>
+        <label><input type="radio" name="cw" value="loading"><span>로딩</span></label>
+        <label><input type="radio" name="cw" value="error"><span>조회 오류</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>로그인한 계정 종류 (웹 보기)</legend><div class="seg-row">
+        <label><input type="radio" name="ca" value="email" checked><span>이메일 계정</span></label>
+        <label><input type="radio" name="ca" value="social"><span>소셜 전용 계정<br>(D7)</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>앱 안 상태</legend><div class="seg-row">
+        <label><input type="radio" name="cp" value="rec" checked><span>새 버전 있음</span></label>
+        <label><input type="radio" name="cp" value="forced"><span>업데이트 필요</span></label>
+        <label><input type="radio" name="cp" value="latest"><span>최신</span></label>
+        <label><input type="radio" name="cp" value="loading"><span>확인 중</span></label>
+        <label><input type="radio" name="cp" value="error"><span>확인 실패</span></label>
+      </div></fieldset>
+    </div>
+    <div class="compare2">
+      <div>
+        <p class="frame-cap">모바일 — 설정 탭 (중간 기존 섹션은 접어서 표시)</p>
+        <div class="phone app" id="f-c" role="region" aria-label="설정 화면 모바일 미리보기"></div>
+      </div>
+      <div>
+        <p class="frame-cap">문구 원칙</p>
+        <div class="box"><ul class="plain">
+          <li><b>설치 3단계</b>: 내려받기 → "출처를 알 수 없는 앱 설치" 허용 → 설치 후 이메일·비밀번호 로그인. Chrome 의 <b>"유해할 수 있는 파일입니다"</b> 경고는 1단계 안에서 미리 말한다(TheKaiwa 실측: 이 확인에서 멈춘 듯 보임).</li>
+          <li><b>받은 파일 확인</b>: 파일 이름·크기·sha256 앞 8자를 보인다. 전체 64자는 접은 설명 안에서만(복사용).</li>
+          <li>PC 등 안드로이드가 아닌 기기에서 열면 "휴대폰 Chrome 에서 이 화면을 여세요" 한 줄을 더한다(데스크톱 미리보기 참고). 버튼은 그대로 둔다.</li>
+          <li>앱 안에서는 설치 단계 대신 <b>설치된 버전 · 최신 버전 · [업데이트 받기] · 마지막 확인 [다시 확인]</b>. 업데이트 방법(덮어쓰기, 로그인 유지)은 접어 둔다.</li>
+          <li>버전·확인값은 <code>.num</code>/고정폭, 상태는 기호+글자(✓ 최신 · ◆ 새 버전 · ⚠ 업데이트 필요 · ! 확인 실패).</li>
+        </ul></div>
+      </div>
+    </div>
+    <p class="frame-cap" style="margin-top:24px">데스크톱 복원 (≥900px, 1280px — 이 상자 안에서만 가로로 밀어 본다 · 웹 브라우저 보기, 안드로이드 아닌 기기 안내 포함)</p>
+    <div class="desk-scroll"><div class="desk app" id="f-cd" role="region" aria-label="설정 화면 데스크톱 미리보기"></div></div>
+  </section>
+
+  <!-- D -->
+  <section class="block" id="sd">
+    <h2>D. 로그인 화면 앱 분기 — 현재(웹) vs 제안(앱)</h2>
+    <p class="lead">현재 <code>src/app/login/page.tsx</code> + <code>AuthShell</code> + <code>OAuthButtons</code> 구조 그대로다. 앱에서는 <b>Google/GitHub 버튼과 "또는 이메일로" 구분선이 통째로 사라진다</b>(<code>OAuthButtons</code> 가 앱이면 null — 회원가입 화면도 같은 컴포넌트라 함께 처리됨). 나머지(제목·이메일·비밀번호·회원가입·가입 요청·30일 안내)는 같다. 웹 화면은 바뀌지 않는다.</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>오류 상태</legend><div class="seg-row">
+        <label><input type="radio" name="d" value="none" checked><span>없음</span></label>
+        <label><input type="radio" name="d" value="wrong"><span>비밀번호 틀림</span></label>
+        <label><input type="radio" name="d" value="oauth"><span>소셜로 가입된 계정<br>(oauth_account)</span></label>
+      </div></fieldset>
+    </div>
+    <div class="compare2">
+      <div>
+        <p class="frame-cap">웹 브라우저 — 현재 그대로 (변경 없음)</p>
+        <div class="phone app" id="f-dw" role="region" aria-label="웹 로그인 화면 미리보기"></div>
+      </div>
+      <div>
+        <p class="frame-cap">앱 — 제안 (OAuth 버튼·구분선 없음)</p>
+        <div class="phone app" id="f-da" role="region" aria-label="앱 로그인 화면 미리보기"></div>
+      </div>
+    </div>
+    <p class="note">⚠ 발견: 소셜 전용 계정이 앱에서 로그인하면 서버가 "아래 Google로 계속하기를 눌러 로그인하세요"를 돌려준다 — 앱에는 그 버튼이 없어 <b>막다른 문구</b>가 된다. 앱 분기에서는 <code>error === 'oauth_account'</code> 일 때 앱용 문구로 바꿔 보인다(서버 응답은 그대로). 소셜 전용 계정은 비밀번호를 만들 수도 없어(<code>/api/profile/password</code> 가 거부) <b>앱 로그인 자체가 불가능</b>하다 — D7.</p>
+    <p class="note">데스크톱: 로그인은 가운데 카드(최대 380px)라 넓은 화면에서도 같은 모양이다 — 바뀌는 것 없음.</p>
+  </section>
+
+  <!-- E -->
+  <section class="block" id="se">
+    <h2>E. 앱 아이콘 시안 3종 + 스플래시 — "주식캐기"</h2>
+    <p class="lead">안드로이드 적응형 아이콘: 108dp 레이어 중 런처가 보이는 곳은 가운데 72dp, 어떤 마스크에서도 잘리지 않는 곳은 지름 66dp 원(점선). 전경은 그 원 안에만 그렸다. 배경은 앱 다크(<code>--bg2</code>) + 땅 층(<code>--bg3 · --bg4</code>, "캐는" 느낌). 금색은 <code>--accent</code>(금 = 캐낸 것), 오르는 것은 한국 관습 <code>--up</code> 빨강.</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>보조선</legend><div class="seg-row">
+        <label><input type="radio" name="g" value="on" checked><span>안전영역 점선 보이기</span></label>
+        <label><input type="radio" name="g" value="off"><span>숨기기</span></label>
+      </div></fieldset>
+    </div>
+    <div class="icons" id="icons">
+      <article class="icard rec" aria-labelledby="ia-t">
+        <h3 id="ia-t">A. 곡괭이 + 오르는 캔들 <span class="rec-tag">✓ 권장</span></h3>
+        <div class="ivars">
+          <figure><svg class="lay" viewBox="0 0 108 108" role="img" aria-label="A 시안 레이어 전체, 점선은 보이는 영역과 안전영역"><use href="#ic-a" width="108" height="108"/><rect class="guide" x="18" y="18" width="72" height="72"/><circle class="guide" cx="54" cy="54" r="33"/></svg><figcaption>레이어 108dp<br>네모 72 · 원 66</figcaption></figure>
+          <figure><div class="wall"><svg viewBox="18 18 72 72" width="96" height="96" role="img" aria-label="A 시안 원형 마스크"><g clip-path="url(#m-c)"><use href="#ic-a" width="108" height="108"/></g></svg></div><figcaption>원형 · 어두운 배경화면</figcaption></figure>
+          <figure><div class="wall light"><svg viewBox="18 18 72 72" width="96" height="96" role="img" aria-label="A 시안 둥근 사각 마스크"><g clip-path="url(#m-s)"><use href="#ic-a" width="108" height="108"/></g></svg></div><figcaption>둥근 사각 · 밝은 배경화면</figcaption></figure>
+          <figure class="home"><svg viewBox="18 18 72 72" width="48" height="48" role="img" aria-label="A 시안 홈 화면 크기"><g clip-path="url(#m-c)"><use href="#ic-a" width="108" height="108"/></g></svg><span class="lbl">주식캐기</span></figure>
+        </div>
+        <p class="idesc">이름의 "캐기"를 그대로 그림으로 — 곡괭이(금색 머리)가 빨간 상승 캔들 옆을 찍는다. 48px 에서도 곡괭이 머리와 캔들 두 덩어리로 읽힌다. 한계: 요소가 둘이라 B 보다 조금 복잡.</p>
+      </article>
+      <article class="icard" aria-labelledby="ib-t">
+        <h3 id="ib-t">B. 금맥 차트 + 금덩이</h3>
+        <div class="ivars">
+          <figure><svg class="lay" viewBox="0 0 108 108" role="img" aria-label="B 시안 레이어 전체"><use href="#ic-b" width="108" height="108"/><rect class="guide" x="18" y="18" width="72" height="72"/><circle class="guide" cx="54" cy="54" r="33"/></svg><figcaption>레이어 108dp<br>네모 72 · 원 66</figcaption></figure>
+          <figure><div class="wall"><svg viewBox="18 18 72 72" width="96" height="96" role="img" aria-label="B 시안 원형 마스크"><g clip-path="url(#m-c)"><use href="#ic-b" width="108" height="108"/></g></svg></div><figcaption>원형 · 어두운 배경화면</figcaption></figure>
+          <figure><div class="wall light"><svg viewBox="18 18 72 72" width="96" height="96" role="img" aria-label="B 시안 둥근 사각 마스크"><g clip-path="url(#m-s)"><use href="#ic-b" width="108" height="108"/></g></svg></div><figcaption>둥근 사각 · 밝은 배경화면</figcaption></figure>
+          <figure class="home"><svg viewBox="18 18 72 72" width="48" height="48" role="img" aria-label="B 시안 홈 화면 크기"><g clip-path="url(#m-c)"><use href="#ic-b" width="108" height="108"/></g></svg><span class="lbl">주식캐기</span></figure>
+        </div>
+        <p class="idesc">오르는 선이 금덩이에 닿는다(캐낸 결과). 모양이 가장 단순해 작은 크기에 강하다. 한계: "곡괭이"가 없어 이름의 익살은 약하고, 흔한 주식 앱 아이콘과 비슷해 보일 수 있다.</p>
+      </article>
+      <article class="icard" aria-labelledby="ic-t">
+        <h3 id="ic-t">C. 글자 마크 "캐"</h3>
+        <div class="ivars">
+          <figure><svg class="lay" viewBox="0 0 108 108" role="img" aria-label="C 시안 레이어 전체"><use href="#ic-c" width="108" height="108"/><rect class="guide" x="18" y="18" width="72" height="72"/><circle class="guide" cx="54" cy="54" r="33"/></svg><figcaption>레이어 108dp<br>네모 72 · 원 66</figcaption></figure>
+          <figure><div class="wall"><svg viewBox="18 18 72 72" width="96" height="96" role="img" aria-label="C 시안 원형 마스크"><g clip-path="url(#m-c)"><use href="#ic-c" width="108" height="108"/></g></svg></div><figcaption>원형 · 어두운 배경화면</figcaption></figure>
+          <figure><div class="wall light"><svg viewBox="18 18 72 72" width="96" height="96" role="img" aria-label="C 시안 둥근 사각 마스크"><g clip-path="url(#m-s)"><use href="#ic-c" width="108" height="108"/></g></svg></div><figcaption>둥근 사각 · 밝은 배경화면</figcaption></figure>
+          <figure class="home"><svg viewBox="18 18 72 72" width="48" height="48" role="img" aria-label="C 시안 홈 화면 크기"><g clip-path="url(#m-c)"><use href="#ic-c" width="108" height="108"/></g></svg><span class="lbl">주식캐기</span></figure>
+        </div>
+        <p class="idesc">금색 "캐" + 빨간 ▲. 한글 이름과 바로 연결되고 그리기 쉽다. 한계: 글자 아이콘은 뜻(주식)이 안 보이고, 최종 파일은 글꼴이 아니라 윤곽선으로 바꿔야 한다(이 데모는 기기 글꼴로 그림).</p>
+      </article>
+    </div>
+    <div class="compare2" style="margin-top:20px">
+      <div>
+        <p class="frame-cap">모바일 — 스플래시 (아이콘 A + 이름)</p>
+        <div class="phone app" role="region" aria-label="스플래시 미리보기">
+          <div class="spl">
+            <svg viewBox="18 18 72 72" width="120" height="120" role="img" aria-label="주식캐기 아이콘"><g clip-path="url(#m-c)"><use href="#ic-a" width="108" height="108"/></g></svg>
+            <div class="brand">주식캐기<small>주식 자동매매</small></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p class="frame-cap">스플래시·아이콘 구현 메모</p>
+        <div class="box"><ul class="plain">
+          <li>배경 <code>--bg</code>(#0f1115 = <code>themeColor</code>) — 스플래시 → 웹 화면 전환 때 색이 튀지 않는다.</li>
+          <li>[가능성 높음] 안드로이드 12+ 는 시스템 스플래시가 <b>아이콘만</b> 가운데에 그린다. 이름은 하단 "브랜딩 이미지"(<code>windowSplashScreenBrandingImage</code>)로 넣어야 하고, 지원 안 되는 기기에서는 이름 없이 아이콘만 보일 수 있다 — 실기기 확인 항목.</li>
+          <li>아이콘 최종 산출: <code>ic_launcher_foreground</code>(전경 벡터) + <code>ic_launcher_background</code>(배경색/벡터) + 안드로이드 13 테마 아이콘용 <code>monochrome</code>(전경 한 색). 글자(C안)는 윤곽선 변환 필수.</li>
+          <li>표시 이름 "주식캐기"(4자) — 홈 화면 라벨에서 잘리지 않는다.</li>
+        </ul></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 결정 -->
+  <section class="block" id="decide">
+    <h2>결정 필요</h2>
+    <div class="decide">
+      <h3>D1. 아이콘 시안</h3>
+      <div class="ab three">
+        <div class="opt rec"><h4>A. 곡괭이 + 오르는 캔들 <span class="rec-tag">✓ 권장</span></h4>"캐기"를 바로 보여 주는 유일한 시안. 48px 에서도 두 덩어리로 읽힌다.</div>
+        <div class="opt"><h4>B. 금맥 차트 + 금덩이</h4>가장 단순·작은 크기에 강함. 이름 익살은 약함.</div>
+        <div class="opt"><h4>C. 글자 "캐"</h4>한글 이름과 직결. 주식 앱이라는 뜻이 안 보이고 윤곽선 작업 필요.</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D2. 새 버전 띠의 ✕(닫기)</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 오늘(KST) 하루 숨김 — 더 새 버전이 나오면 다시 보임 <span class="rec-tag">✓ 권장</span></h4>TheKaiwa 와 같은 동작(사용자 지시 "일본어교육 방식과 동일"). 다음 날 한 번 더 알려 줘 업데이트를 잊지 않게 한다. 저장이 막히면 이번 실행 동안만 숨김.<br>한계: 매일 아침 한 번씩 보인다.</div>
+        <div class="opt"><h4>B. 이 버전은 다시 안 보임 — 다음 버전까지</h4>한 번 닫으면 조용하다.<br>한계: 깜빡하고 계속 옛 버전을 쓸 수 있다(설정 › 앱에서만 보임).</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D3. 필수 업데이트 표현 — 화면을 막을까</h3>
+      <p class="muted" style="font-size:12px;margin:0 0 10px;line-height:1.55">근거: 이 앱의 화면·매매 기능은 전부 서버에서 온다. 옛 앱(껍데기)으로도 최신 웹 화면이 뜨므로 "필수"가 막아야 할 기능 위험은 쿠키 유지·다운로드 같은 <b>앱 기능</b>뿐이다. 반면 화면을 막으면 급할 때 <b>비상 청산·킬스위치·시그널 승인</b>에 닿지 못한다(Priority Rule 1: 실매매 안전 표시·조작 우선). 아래 세 작은 화면은 실제로 스크롤해 볼 수 있다.</p>
+      <div class="compare3">
+        <div><p class="frame-cap">A. 흐름 안 맨 위 띠 (스크롤하면 지나감)</p><div class="phone app mini" id="o-flow" role="region" aria-label="A 흐름 안 띠"></div></div>
+        <div><p class="frame-cap">B. 상단 고정(sticky) 띠</p><div class="phone app mini" id="o-stick" role="region" aria-label="B 상단 고정 띠"></div></div>
+        <div><p class="frame-cap">C. 전체 화면 모달 (참고용)</p><div class="phone app mini" id="o-modal" role="region" aria-label="C 전체 화면 모달"></div></div>
+      </div>
+      <div class="ab three" style="margin-top:10px">
+        <div class="opt rec"><h4>A. 흐름 안 띠, 닫기 없음 <span class="rec-tag">✓ 권장</span></h4>어떤 화면도 가리지 않는다. 모든 화면 맨 위에 다시 나타나고 설정 › 앱에도 "⚠ 업데이트 필요"가 남는다. 다른 화면의 sticky 머리를 건드리지 않아 구현이 가장 작다.<br>한계: 스크롤하면 잠시 안 보인다.</div>
+        <div class="opt"><h4>B. 상단 고정 띠</h4>늘 보인다.<br>한계: 412px 화면 세로 56~80px 를 상시 차지하고, 기존 sticky 머리 3곳(추천·추천 만들기·대시보드 탭)의 <code>top</code> 을 띠 높이만큼 내려야 한다(다른 화면 수정).</div>
+        <div class="opt no"><h4>C. 전체 화면 모달 <span class="no-tag">✗ 비권장</span></h4>업데이트 전까지 앱을 못 쓴다 — 급한 순간 비상 청산·킬스위치에 닿지 못한다. 서버 쪽 위험이 없는데 조작만 막는다.</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D4. 설치·업데이트 안내 위치</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 기존 설정 탭 맨 아래 "앱" 섹션 <span class="rec-tag">✓ 권장</span></h4>새 라우트·공개 페이지가 없다(설정은 로그인 필요, 공개되는 건 파일 경로 <code>/app/download/</code> 하나뿐 — 인증 관문 변경 최소). 웹·앱 둘 다 같은 자리에서 본다. 내용이 짧다(버전 줄 + 버튼 + 3단계).<br>한계: 설정이 이미 길어 맨 아래까지 내려야 한다 → 띠가 <code>#app</code> 으로 바로 보낸다.</div>
+        <div class="opt"><h4>B. 설정 › 새 하위 화면 <code>/settings/app</code></h4>입출금 기록(T-074)처럼 요약 줄 + 하위 화면. 위쪽에 둘 수 있다.<br>한계: 라우트·파일이 늘고, 한 번 설치하면 거의 안 보는 화면에 요약 줄이 상시 자리 차지. (절차서 초안의 공개 <code>/app/download</code> 안내 페이지는 공개 경로를 하나 더 늘려 제외했다.)</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D5. 띠의 글자 · 필수 [업데이트]를 눌렀을 때</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 설정 › 앱 섹션으로 이동 <span class="rec-tag">✓ 권장</span></h4>설치 방법을 한 곳(C)에만 둔다 — 새 컴포넌트 없음.<br>한계: 보던 화면을 떠난다(뒤로가기로 복귀).</div>
+        <div class="opt"><h4>B. 아래에서 올라오는 시트 (TheKaiwa 방식)</h4>보던 화면 위에서 바로 본다.<br>한계: 시트 컴포넌트·포커스 가두기가 하나 더 늘고 설치 안내가 두 곳이 된다.</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D6. 앱 로그인 화면의 제목·로고</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 지금 그대로 "📈 주식 자동매매" <span class="rec-tag">✓ 권장</span></h4>M1 범위를 셸에 한정. 앱 이름은 아이콘·스플래시·홈 라벨에서 보인다.<br>한계: 앱 이름(주식캐기)과 화면 제목이 다르다.</div>
+        <div class="opt"><h4>B. 앱에서만 "주식캐기" + 새 아이콘</h4>이름이 일관된다.<br>한계: <code>AuthShell</code> 에 아이콘 받는 자리를 더해야 하고 웹·앱 이름이 갈린다(웹 제목 변경은 별건).</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D7. 소셜 전용 계정 (앱 로그인 불가) — Leader 확인 필요</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 로그인 오류 문구만 앱용으로 교체 <span class="rec-tag">✓ 권장(운영 계정이 이메일 계정이면)</span></h4>막다른 문구만 없앤다(필수 수정). 서버·API 변경 없음.</div>
+        <div class="opt"><h4>B. A + 설정 › 앱(웹 보기)에 "이 계정은 앱에서 로그인할 수 없습니다" 경고</h4>설치 전에 미리 안다(데모 '소셜 전용 계정' 상태).<br>한계: 현재 사용자의 비밀번호 유무를 내려 주는 API 필드가 필요 — 사양은 Leader 판단. 운영 계정이 소셜 전용이면 B 가 아니라 M1 범위 자체(앱 로그인 방법)를 다시 정해야 한다.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 메모 -->
+  <section class="block" id="memo">
+    <h2>설계 메모</h2>
+    <div class="box"><ul class="plain">
+      <li><b>안전 표시 우선</b>: 새 요소 어느 것도 화면을 덮지 않는다. 띠는 흐름 안, 연결 실패 화면은 서버를 못 불러올 때만, 설정 섹션은 맨 아래. 안전장치·주문·승인 화면 코드는 바꾸지 않는다.</li>
+      <li><b>거짓 안심 금지</b>: 연결 실패 화면은 "매매는 안전합니다" 같은 말을 하지 않는다(서버가 멈춘 경우일 수 있음). "주문·승인은 서버에 연결된 뒤에만 할 수 있습니다"만 적는다.</li>
+      <li><b>색</b>: 금색(<code>--accent</code>)은 행동 버튼·새 버전 막대, 빨강 톤은 필수 업데이트·오류(기존 <code>noteDanger</code> 값 재사용), 빨강·파랑 손익 색은 아이콘의 상승 캔들 외에는 쓰지 않는다. 모든 상태는 기호+글자를 함께 쓴다.</li>
+      <li><b>앱 판별은 화면 표시만</b>: 앱/웹 분기는 버튼 숨김·띠 표시에만 쓰고 서버 권한 판단에 쓰지 않는다. 웹 번들은 <code>@capacitor/*</code> 를 import 하지 않고 <code>window.Capacitor</code> 전역만 본다.</li>
+      <li><b>깜빡임</b>: <code>OAuthButtons</code> 는 원래 목록을 받기 전까지 아무것도 그리지 않으므로, 앱 판별을 그 전에 하면 앱에서 버튼이 잠깐 보였다 사라지는 일이 없다.</li>
+      <li><b>360px</b>: 띠 첫 줄은 "주식캐기 v버전"만(말줄임돼도 버전이 앞), 설정 앱 줄은 줄바꿈 허용, 확인값은 8자만. 가로 스크롤 0.</li>
+    </ul></div>
+  </section>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+  var REL = { name: '1.0.1', code: 2, size: '9.8MB', date: '10월 25일', sha: '3f9a1c7e', file: 'stockinvest-1.0.1.apk',
+              notes: ['키보드가 주문 수량 입력창을 가리던 문제 수정', '연결 실패 화면 문구 정리'] };
+  var MINE = { name: '1.0.0', code: 1 };
+  var M = { w: '412', a: 'offline', b: 'rec', bs: 'dash', bHidden: false, cv: 'web', cc: 'prop', cw: 'ok', ca: 'email', cp: 'rec', d: 'none', g: 'on' };
+  var retryTimer = null;
+  function $(id) { return document.getElementById(id); }
+  function toast(msg) {
+    var t = $('toast'); t.textContent = msg;
+    clearTimeout(toast._t); toast._t = setTimeout(function () { t.textContent = ''; }, 3200);
+  }
+  function icon(size, id) {
+    return '<svg viewBox="18 18 72 72" width="' + size + '" height="' + size + '" aria-hidden="true" focusable="false"><g clip-path="url(#m-s)"><use href="#' + (id || 'ic-a') + '" width="108" height="108"/></g></svg>';
+  }
+  var XSVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+  function tabs(cur) {
+    var T = [['dash', '🏠', '대시보드'], ['fav', '⭐', '즐겨찾기'], ['rec', '💡', '추천'], ['ana', '📈', '분석'], ['set', '⚙️', '설정']];
+    return '<nav class="tabs" aria-label="주 메뉴">' + T.map(function (t) {
+      return '<a href="#sb"' + (t[0] === cur ? ' aria-current="page"' : '') + '><span class="ico" aria-hidden="true">' + t[1] + '</span>' + t[2] + '</a>';
+    }).join('') + '</nav>';
+  }
+
+  /* ── A ── */
+  function shell(st) {
+    var h1, p, stt, hint = '';
+    if (st === 'offline') {
+      h1 = '인터넷에 연결되어 있지 않습니다';
+      p = '와이파이나 모바일 데이터를 켠 뒤 다시 시도해 주세요. 연결되면 자동으로 한 번 다시 불러옵니다.';
+      stt = '<span class="stt warn"><span aria-hidden="true">!</span>휴대폰 인터넷: 연결 안 됨</span>';
+    } else {
+      h1 = '서버에 연결하지 못했습니다';
+      p = '휴대폰 인터넷은 연결되어 있지만 서버가 응답하지 않습니다. 점검이나 재시작 중일 수 있습니다.';
+      stt = st === 'retry'
+        ? '<span class="stt"><span class="spin" aria-hidden="true"></span>다시 불러오는 중…</span>'
+        : '<span class="stt"><span aria-hidden="true">✓</span>휴대폰 인터넷: 연결됨</span>';
+      hint = '<p class="hint">계속 안 되면 PC 브라우저로 stock.미라클펭귄.com 을 열어 보세요. PC 에서도 열리지 않으면 서버 문제입니다.</p>';
+    }
+    var busy = st === 'retry';
+    return '<main class="sh"><div class="in">' +
+      '<svg class="logo" viewBox="18 18 72 72" aria-hidden="true" focusable="false"><g clip-path="url(#m-s)"><use href="#ic-a" width="108" height="108"/></g></svg>' +
+      '<p class="nm">주식캐기</p>' +
+      '<h1>' + h1 + '</h1><p>' + p + '</p>' +
+      '<div aria-live="polite">' + stt + '</div>' +
+      '<div><button type="button" class="retry" data-act="retry"' + (busy ? ' disabled' : '') + '>' + (busy ? '<span class="spin" aria-hidden="true"></span>연결 중…' : '다시 시도') + '</button></div>' +
+      hint +
+      '<p class="foot">이 화면은 앱 안에 들어 있는 안내 화면입니다. 주문·승인은 서버에 연결된 뒤에만 할 수 있습니다.</p>' +
+      '</div></main>';
+  }
+
+  /* ── B ── */
+  function band(kind) {
+    if (kind === 'rec' && !M.bHidden) {
+      return '<div class="aub" role="status"><span class="bar" aria-hidden="true"></span>' +
+        '<button type="button" class="txt" data-act="band-open"><span class="t num">주식캐기 v' + REL.name + '</span><span class="ss">새 버전이 나왔습니다 · 눌러서 설치 방법 보기</span></button>' +
+        '<button type="button" class="get" data-act="band-get">받기</button>' +
+        '<button type="button" class="x" data-act="band-x" aria-label="오늘은 그만 보기">' + XSVG + '</button></div>';
+    }
+    if (kind === 'forced') {
+      return '<div class="aub forced" role="status"><span class="bar" aria-hidden="true"></span>' +
+        '<div class="txt"><span class="t"><span aria-hidden="true">⚠ </span>앱 업데이트가 필요합니다</span>' +
+        '<span class="ss">이 버전(v' + MINE.name + ')은 더 이상 지원하지 않습니다. 화면은 계속 쓸 수 있지만 앱 기능 일부가 멈출 수 있습니다.</span></div>' +
+        '<button type="button" class="get" data-act="band-open">업데이트</button></div>';
+    }
+    return '';
+  }
+  function dashBody() {
+    var rows = [['예시종목 A', '+1.8%', 'up'], ['예시종목 B', '−0.6%', 'down'], ['예시종목 C', '+0.4%', 'up'], ['예시종목 D', '−1.2%', 'down'], ['예시종목 E', '+2.1%', 'up']];
+    return '<div class="app-body">' +
+      '<div class="card"><div class="strip"><span class="chip ok">✓ DRY_RUN ON</span><span class="chip ok">✓ KILL OFF</span><span>정상 · 예시</span></div>' +
+      '<div class="row"><span class="l">🚨 비상 청산 <span class="s" style="display:block">진행 중인 주문 전체 취소</span></span><button type="button" class="btn-danger" data-act="kill">비상 청산</button></div></div>' +
+      '<div class="card"><div class="row"><span class="l">총자산 (예시)</span><span class="v num">12,345,000원</span></div><div class="row"><span class="l">오늘 변동</span><span class="v num" style="color:var(--up)">+56,000원</span></div></div>' +
+      '<div class="card">' + rows.map(function (r) {
+        return '<div class="hold"><span>' + r[0] + '</span><span class="num" style="font-weight:700;color:var(--' + r[2] + ')">' + r[1] + '</span></div>';
+      }).join('') + '</div><div style="height:120px"></div></div>';
+  }
+  function recBody() {
+    var sig = function (n, side) {
+      return '<div class="card"><div class="sig"><div style="display:flex;justify-content:space-between;gap:8px"><b>' + n + '</b><span class="chip">' + side + ' 시그널</span></div>' +
+        '<div class="s">진입 구간·수량은 예시값 · 승인하면 안전장치 확인 뒤 주문</div>' +
+        '<div class="btns"><button type="button" class="ok-b" data-act="approve">승인</button><button type="button" class="no-b" data-act="reject">거절</button></div></div></div>';
+    };
+    return '<div class="app-body">' + sig('예시종목 F', '매수') + sig('예시종목 G', '매수') + sig('예시종목 H', '매도') + '<div style="height:120px"></div></div>';
+  }
+  function head(kind) { return '<div class="scr-h"><span class="h">' + (kind === 'rec' ? '💡 AI 추천' : '🏠 대시보드') + '</span>' + (kind === 'rec' ? '<button type="button" class="btn-ghost" aria-label="새로고침" style="min-height:34px;width:34px;padding:0">↻</button>' : '') + '</div>'; }
+  function bandFrame() {
+    return '<div class="frm"><div class="scrl">' + band(M.b) + head(M.bs) + (M.bs === 'rec' ? recBody() : dashBody()) + '</div>' + tabs(M.bs === 'rec' ? 'rec' : 'dash') + '</div>';
+  }
+  function optFrame(o) {
+    var b = band('forced');
+    var inner;
+    if (o === 'stick') inner = '<div class="stick">' + b + head('dash') + '</div>' + dashBody();
+    else if (o === 'modal') inner = head('dash') + dashBody();
+    else inner = b + head('dash') + dashBody();
+    var extra = o === 'modal'
+      ? '<div class="modal-dim"><div class="dlg" role="presentation"><b style="color:#fca5a5">⚠ 앱 업데이트가 필요합니다</b><br>업데이트 전에는 앱을 쓸 수 없습니다<div style="margin-top:10px"><span class="btn-pri" style="min-height:40px;font-size:13px">업데이트</span></div></div></div><div class="xmark">✗ 비상 청산·킬스위치에 닿을 수 없음</div>'
+      : '';
+    return '<div class="frm"><div class="scrl">' + inner + '</div>' + tabs('dash') + extra + '</div>';
+  }
+
+  /* ── C ── */
+  function webCard(desk) {
+    var st = M.cw;
+    var top = '<div class="ap-top">' + icon(44) + '<div style="min-width:0"><div class="nm">주식캐기</div><div class="s">안드로이드 앱 · 주식 자동매매를 휴대폰 홈 화면에서</div></div></div>';
+    if (st === 'loading') return '<div class="card apc">' + top + '<div class="ldg" role="status"><span class="spin" aria-hidden="true"></span>앱 정보를 불러오는 중…</div></div>';
+    if (st === 'error') return '<div class="card apc">' + top + '<div class="ap-main"><span class="st warn" role="alert"><span aria-hidden="true">!</span>앱 정보를 불러오지 못했습니다</span><button type="button" class="btn-ghost" data-act="toast-retry" style="align-self:flex-start">다시 시도</button></div></div>';
+    if (st === 'empty') return '<div class="card apc">' + top + '<div class="ap-main"><span class="st na"><span aria-hidden="true">—</span>아직 올라온 앱이 없습니다</span><span class="s" style="margin:0">첫 배포가 끝나면 이곳에 내려받기 버튼이 생깁니다.</span></div></div>';
+    var warn = M.ca === 'social'
+      ? '<div class="nt red" role="note"><b>! 이 계정은 Google 로그인으로 가입해 비밀번호가 없습니다.</b><br>앱은 이메일·비밀번호 로그인만 지원하므로 지금 계정으로는 앱에 로그인할 수 없습니다.</div>' : '';
+    var nonAndroid = desk ? '<div class="nt" role="note">이 기기는 안드로이드 휴대폰이 아닙니다. 휴대폰 Chrome 에서 <b style="color:var(--text)">설정 › 앱</b>을 열어 내려받으세요.</div>' : '';
+    var left = '<div class="ap-main">' + warn + nonAndroid +
+      '<div class="meta"><span>최신 <b class="num">v' + REL.name + '</b></span><span class="num">' + REL.size + '</span><span>' + REL.date + ' 올라옴</span></div>' +
+      '<div class="hash">파일 확인값(sha256) 앞 8자 <code>' + REL.sha + '</code></div>' +
+      '<button type="button" class="btn-pri" data-act="dl" aria-describedby="ap-steps">APK 내려받기</button></div>';
+    var right = '<div class="ap-main"><ol class="steps" id="ap-steps" aria-label="설치 순서">' +
+      '<li><b>내려받기</b><span>Chrome 이 "유해할 수 있는 파일입니다"라고 물으면 <b style="display:inline;color:var(--text)">다운로드</b>를 누릅니다. 플레이스토어 밖에서 받는 앱이라 매번 뜨는 확인입니다.</span></li>' +
+      '<li><b>설치 허용</b><span>받은 파일을 열고, "출처를 알 수 없는 앱 설치"를 물으면 Chrome 을 허용합니다(처음 한 번만).</span></li>' +
+      '<li><b>설치 후 로그인</b><span>홈 화면의 주식캐기를 열고 이메일·비밀번호로 로그인합니다. 앱에서는 Google·GitHub 로그인을 지원하지 않습니다.</span></li>' +
+      '</ol></div>';
+    return '<div class="card apc">' + top + '<div class="ap-cols">' + left + right + '</div>' +
+      '<details class="guide"><summary>받은 파일이 맞는지 확인하려면</summary><div class="gbody">파일 이름 <code>' + REL.file + '</code> · 크기 ' + REL.size + '. 휴대폰 "내 파일"에서 같은 이름·크기인지 보면 충분합니다. 전체 sha256 은 여기에서 복사할 수 있습니다: <code>' + REL.sha + '…</code>(64자, 구현 시 전체 표시). 다른 곳에서 받은 APK 는 설치하지 마세요.</div></details>' +
+      '</div>';
+  }
+  function appCard() {
+    var st = M.cp;
+    var top = '<div class="ap-top">' + icon(44) + '<div style="min-width:0"><div class="nm">주식캐기 <span class="num">v' + MINE.name + '</span></div><div class="s">이 휴대폰에 설치된 앱</div></div></div>';
+    if (st === 'loading') return '<div class="card apc">' + top + '<div class="ldg" role="status"><span class="spin" aria-hidden="true"></span>최신 버전을 확인하는 중…</div></div>';
+    var latestV, badge, action = '';
+    if (st === 'error') { latestV = '—'; badge = '<span class="st warn"><span aria-hidden="true">!</span>확인 실패</span>'; }
+    else if (st === 'latest') { latestV = 'v' + MINE.name; badge = '<span class="st ok"><span aria-hidden="true">✓</span>최신</span>'; }
+    else if (st === 'forced') { latestV = 'v' + REL.name; badge = '<span class="st bad"><span aria-hidden="true">⚠</span>업데이트 필요</span>'; }
+    else { latestV = 'v' + REL.name; badge = '<span class="st warn"><span aria-hidden="true">◆</span>새 버전</span>'; }
+    if (st === 'rec' || st === 'forced') {
+      action = '<div class="ap-main">' +
+        (st === 'forced' ? '<div class="nt red" role="note"><b>⚠ 이 버전은 더 이상 지원하지 않습니다.</b> 화면은 계속 쓸 수 있지만 로그인 유지 같은 앱 기능이 멈출 수 있습니다.</div>' : '') +
+        '<button type="button" class="btn-pri" data-act="dl">업데이트 받기 <span class="num" style="font-weight:600">(' + REL.size + ')</span></button>' +
+        '<div><div class="s" style="margin:0 0 4px">바뀐 점</div><ul class="notes">' + REL.notes.map(function (n) { return '<li>' + n + '</li>'; }).join('') + '</ul></div></div>';
+    }
+    var errLine = st === 'error' ? '<div class="ap-main" style="padding-top:0"><span class="s" style="margin:0">최신 버전을 확인하지 못했습니다. 설치된 앱은 그대로 쓸 수 있습니다.</span></div>' : '';
+    return '<div class="card apc">' + top +
+      '<div class="row"><span class="l">설치된 버전</span><span class="v num">v' + MINE.name + ' <span class="muted" style="font-weight:400">(' + MINE.code + ')</span></span></div>' +
+      '<div class="row"><span class="l">최신 버전</span><span class="v num">' + latestV + ' ' + badge + '</span></div>' +
+      action + errLine +
+      '<div class="chk"><span>마지막 확인 <span class="num">10월 25일 17:20</span></span><button type="button" class="btn-ghost" data-act="toast-retry">다시 확인</button></div>' +
+      (st === 'rec' || st === 'forced' ? '<details class="guide"><summary>업데이트 설치 방법</summary><div class="gbody">① [업데이트 받기]를 누르면 Chrome 창에서 파일을 받습니다. ② 다 받으면 알림(또는 Chrome "다운로드")에서 파일을 엽니다. ③ [업데이트]를 누르면 끝 — 지금 앱 위에 덮어 설치되어 로그인이 그대로 남습니다. "앱이 설치되지 않았습니다"가 나오면 기존 앱을 지우고 다시 설치한 뒤 다시 로그인해야 합니다.</div></details>' : '') +
+      '</div>';
+  }
+  function settingsFrame(desk) {
+    var body = '<div class="sec-h">내 계정</div>' +
+      '<a class="linkrow" href="#sc"><div><div class="t">내 계정 · 증권계좌 연결</div><div class="s">비밀번호 변경 · KIS 키 연결 · 회원별 매매 설정</div></div><span class="chev" aria-hidden="true">›</span></a>' +
+      '<div class="skip">… 자산 기록 · 승인 방식 · 안전장치 (공통) · 거래 보호 · 변동폭 가드 · 전략 설정 · AI 제공자 · 거래소 계정 · 알람 · 정기 거래 리포트 — <b style="color:var(--text)">변경 없음</b> …</div>';
+    if (M.cc === 'prop') {
+      body += '<div class="sec-h" id="' + (desk ? 'app-d' : 'app-m') + '">앱 (안드로이드)<span class="newmark">새 섹션</span></div>' +
+        (desk || M.cv === 'web' ? webCard(desk) : appCard());
+    }
+    body += '<div class="footbox">실거래 여부 / KILL_SWITCH / 주문 한도는 DB에 저장되어 서버 재시작 없이 즉시 반영됩니다. 거래소 API 키·알람 자격은 위 카드에서 등록·수정 시 평문으로 DB에 저장되며 즉시 반영됩니다.</div><div style="height:16px"></div>';
+    var bnd = (!desk && M.cv === 'app' && (M.cp === 'rec' || M.cp === 'forced')) ? band(M.cp) : '';
+    return '<div class="frm"><div class="scrl">' + bnd + '<main class="app-body">' + body + '</main></div>' + tabs('set') + '</div>';
+  }
+
+  /* ── D ── */
+  var GICON = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" focusable="false"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.76c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84z"/><path fill="#EA4335" d="M12 4.75c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 1.46 14.97.5 12 .5A11 11 0 0 0 2.18 7.05l3.66 2.84c.87-2.6 3.3-4.14 6.16-4.14z"/></svg>';
+  var GHICON = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12 .5a12 12 0 0 0-3.79 23.4c.6.1.82-.26.82-.58v-2.2c-3.34.72-4.04-1.4-4.04-1.4-.55-1.4-1.34-1.77-1.34-1.77-1.09-.75.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.49 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.11-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.69.83.58A12 12 0 0 0 12 .5z"/></svg>';
+  function login(kind) {
+    var app = kind === 'app';
+    var err = '';
+    if (M.d === 'wrong') err = '이메일 또는 비밀번호가 올바르지 않습니다';
+    if (M.d === 'oauth') err = app
+      ? 'Google로 가입된 계정입니다. 앱에서는 Google 로그인을 지원하지 않습니다 — 휴대폰이나 PC 의 브라우저에서 로그인해 주세요.'
+      : 'Google로 가입된 계정입니다. 아래 Google로 계속하기를 눌러 로그인하세요.';
+    var oauth = app
+      ? '<div class="gone" aria-hidden="true">(앱: Google·GitHub 버튼과 "또는 이메일로" 구분선이 그려지지 않음)</div>'
+      : '<div class="oa-list"><button type="button" class="oa-btn g" data-act="oauth">' + GICON + 'Google로 계속하기</button><button type="button" class="oa-btn gh" data-act="oauth">' + GHICON + 'GitHub로 계속하기</button></div><div class="oa-div" aria-hidden="true"><i></i><span>또는 이메일로</span><i></i></div>';
+    var id = app ? 'la' : 'lw';
+    return '<div class="frm"><div class="scrl"><main class="au-wrap"><div class="au-card">' +
+      '<div class="au-logo" aria-hidden="true">📈</div><h1 class="au-title">주식 자동매매</h1><p class="au-sub">계속하려면 로그인하세요</p>' +
+      oauth +
+      '<div class="au-field"><label id="' + id + '-el">이메일</label><div class="au-input" role="textbox" aria-readonly="true" aria-labelledby="' + id + '-el" tabindex="0">you@example.com</div></div>' +
+      '<div class="au-field"><label id="' + id + '-pl">비밀번호</label><div class="au-input' + (err ? ' bad' : '') + '" role="textbox" aria-readonly="true" aria-labelledby="' + id + '-pl" tabindex="0"' + (err ? ' aria-invalid="true" aria-describedby="' + id + '-err"' : '') + '>••••••••</div></div>' +
+      '<div class="au-err" id="' + id + '-err" role="alert">' + (err || '&nbsp;') + (app && M.d === 'oauth' ? ' <span class="newmark">앱 문구</span>' : '') + '</div>' +
+      '<button type="button" class="au-submit" data-act="login">로그인</button>' +
+      '<div class="au-alt"><span>처음이신가요?</span><a href="#sd">회원가입</a></div>' +
+      '<p class="au-hint">세션은 30일간 유지됩니다. 비밀번호를 잊으면 서버 관리자가 직접 재설정해야 합니다.</p>' +
+      '</div></main></div></div>';
+  }
+
+  function render() {
+    $('f-a').innerHTML = shell(M.a);
+    $('f-b').innerHTML = bandFrame();
+    $('f-c').innerHTML = settingsFrame(false);
+    $('f-cd').innerHTML = settingsFrame(true);
+    $('f-dw').innerHTML = login('web');
+    $('f-da').innerHTML = login('app');
+    $('o-flow').innerHTML = optFrame('flow');
+    $('o-stick').innerHTML = optFrame('stick');
+    $('o-modal').innerHTML = optFrame('modal');
+    var phones = document.querySelectorAll('.phone:not(.mini)');
+    for (var i = 0; i < phones.length; i++) phones[i].classList.toggle('w360', M.w === '360');
+    $('icons').classList.toggle('no-guides', M.g === 'off');
+  }
+
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t && t.name && Object.prototype.hasOwnProperty.call(M, t.name)) {
+      M[t.name] = t.value;
+      if (t.name === 'b') M.bHidden = false;
+      render();
+    }
+  });
+  function setRadio(name, value) {
+    var r = document.querySelector('input[name="' + name + '"][value="' + value + '"]');
+    if (r) r.checked = true;
+    M[name] = value;
+  }
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest ? e.target.closest('[data-act]') : null;
+    if (!el) return;
+    var act = el.getAttribute('data-act');
+    if (el.tagName === 'A') e.preventDefault();
+    switch (act) {
+      case 'retry':
+        setRadio('a', 'retry'); render();
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(function () { setRadio('a', 'server'); render(); toast('(데모) 연결 실패 — 화면이 다시 떴습니다. 실제로는 Capacitor 가 이 화면을 다시 불러옵니다.'); }, 2200);
+        break;
+      case 'band-x':
+        M.bHidden = true; render();
+        toast('오늘은 이 띠를 숨깁니다. 설정 › 앱에서 언제든 업데이트할 수 있습니다.');
+        break;
+      case 'band-reset': M.bHidden = false; render(); toast('띠가 다시 보입니다(다음 날 또는 더 새 버전).'); break;
+      case 'band-get': case 'dl': toast('(데모) Chrome 창에서 ' + REL.file + ' 를 받습니다. 앱 안 WebView 에서 받지 않습니다.'); break;
+      case 'band-open':
+        setRadio('cv', 'app'); setRadio('cp', M.b === 'forced' ? 'forced' : 'rec'); setRadio('cc', 'prop'); render();
+        var tgt = $('app-m'); if (tgt) tgt.scrollIntoView({ block: 'start' });
+        $('sc').scrollIntoView({ block: 'start' });
+        toast('설정 › 앱 섹션으로 이동합니다(/settings#app).');
+        break;
+      case 'kill': toast('(데모) 비상 청산 확인 단계 — 띠와 무관하게 그대로 동작합니다.'); break;
+      case 'approve': case 'reject': toast('(데모) 시그널 ' + (act === 'approve' ? '승인' : '거절') + ' — 띠가 버튼을 가리지 않습니다.'); break;
+      case 'toast-retry': toast('(데모) 다시 확인합니다.'); break;
+      case 'oauth': toast('(데모) 웹에서만 보이는 소셜 로그인 버튼입니다.'); break;
+      case 'login': toast('(데모) 로그인 요청 — 서버 동작은 웹과 같습니다.'); break;
+    }
+  });
+  render();
+})();
+</script>
+</body>
+</html>
