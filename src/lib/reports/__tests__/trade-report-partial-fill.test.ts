@@ -103,10 +103,14 @@ describe('🔴 부분체결 주문은 실제 체결 수량으로 계산된다', 
       { symbol: '005930', side: 'sell', price: 110, quantity: 10, amount_krw: 1100, fee: 0, ts: T0 + 2 * HOUR },
       { symbol: '005930', side: 'sell', price: 90,  quantity: 7,  amount_krw: 630,  fee: 0, ts: T0 + 26 * HOUR },
     ];
-    const { totalKRW } = computeLifoPnl(corrupted, rangeStart);
-    // 첫 매도가 +100 으로 잡히고, 재고가 비어 두 번째 매도의 **원가가 0** 이 된다 → +630
-    expect(totalKRW).toBeCloseTo(100 + 630, 6);
-    // 참값(−40)과 770 이나 벌어진다 — 이 격차가 T-019 가 없애려는 손해다
+    const { totalKRW, unmatchedSellCount, unmatched } = computeLifoPnl(corrupted, rangeStart);
+    // 첫 매도가 +100 으로 잡히고, 재고가 비어 두 번째 매도는 원가를 모른다.
+    // T-086 이전에는 그 매도의 원가를 0 으로 읽어 +630(대금 전액)을 더했다 → +730.
+    // T-086 이후에는 원가 미상으로 따로 센다 → +100, 미상 1건·7주.
+    expect(totalKRW).toBeCloseTo(100, 6);
+    expect(unmatchedSellCount).toBe(1);
+    expect(unmatched.get('005930')?.quantity).toBeCloseTo(7, 9);
+    // 참값(−40)과 여전히 벌어진다 — 이 격차가 T-019 가 없애려는 손해다(재고 고갈 자체는 T-019 몫)
     expect(totalKRW).not.toBeCloseTo(-40, 6);
   });
 

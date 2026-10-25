@@ -246,7 +246,10 @@ export async function POST(req: NextRequest) {
       rangeCapped,
       buys: report.buys, sells: report.sells,
       headerPnlKRW: Math.round(report.headerPnlKRW),
+      // T-086 — lifoPnlKRW 는 원가를 아는 매도분만의 합이다. 부분합인지 아래 두 값으로 함께 드러낸다.
       lifoPnlKRW: Math.round(report.lifoPnlKRW),
+      unmatchedSellCount: report.unmatchedSellCount,
+      matchedSellCount: report.matchedSellCount,
     });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

@@ -139,6 +139,8 @@ export const EMPTY_RESEARCH_DIGEST: ResearchDigest = {
  *  - headerPnl  : 단순 합산 (sells_krw - buys_krw). 미체결 매수·페어 미완성 영향 받음.
  *  - lifoPnl    : LIFO 페어링 실현 손익. 분석 기간 시작 시점 보유 stack 을 build 한 뒤
  *                 기간 내 sell 발생 시 stack top 부터 차감해 cost basis 산출.
+ *                 🔴 T-086 — **원가를 아는 부분(재고와 매칭된 수량)만의 합**이다. 재고가 모자라
+ *                 매칭 못 한 수량은 이익도 손실도 아닌 "원가 미상"으로 `unmatchedSellCount` 에 따로 센다.
  */
 
 export interface OrderRow {
@@ -153,9 +155,14 @@ export interface OrderRow {
 
 export interface SymbolPnl {
   symbol: string;
+  /** 🔴 T-086 — 원가를 아는(재고와 매칭된) 수량만의 실현손익. 원가 미상 수량은 아래 두 필드에 따로 센다. */
   realizedKRW: number;
   cycles: number;              // min(buys, sells) — 회전매매 판정용
   sellCount: number;           // 분석 기간 내 매도 건수 — UI 표기용
+  /** T-086 — 이 종목의 기간 내 매도 중 재고가 모자라 원가를 모르는 수량이 있던 건수 (부분 매칭 포함) */
+  unmatchedSellCount: number;
+  /** T-086 — 이 종목의 원가 미상 매도 수량 합 (`realizedKRW` 에 들어가지 않았다) */
+  unmatchedQty: number;
 }
 
 export interface TradeReport {
@@ -166,9 +173,39 @@ export interface TradeReport {
   buysAmountKRW: number;
   sellsAmountKRW: number;
   headerPnlKRW: number;
+  /**
+   * 🔴 T-086 — **원가를 아는 부분만의 실현손익 합**이다(재고와 매칭된 수량).
+   * `unmatchedSellCount > 0` 이면 이 값은 부분합이다 — 읽는 쪽은 반드시 그 사실을 함께 드러낸다.
+   * `matchedSellCount === 0 && unmatchedSellCount > 0` 이면 숫자 대신 "원가 미상"으로 표시한다.
+   */
   lifoPnlKRW: number;
+  /** T-086 — 기간 내 매도 중 원가 미상 수량이 있던 건수 (부분 매칭 포함). `lifoPnlKRW` 에서 그 수량은 빠졌다 */
+  unmatchedSellCount: number;
+  /** T-086 — 기간 내 매도 중 원가를 아는 수량이 조금이라도 있던 건수 */
+  matchedSellCount: number;
   perSymbol: SymbolPnl[];
   churnSymbols: string[];      // cycles ≥ 2 종목
+}
+
+/** T-086 — 종목별 원가 미상 매도 집계 */
+export interface LifoUnmatched {
+  /** 재고가 모자라 원가를 모르는 매도 수량 합 */
+  quantity: number;
+  /** 원가 미상 수량이 있던 매도 건수 (부분 매칭 포함) */
+  sellCount: number;
+}
+
+export interface LifoPnlResult {
+  /** 🔴 원가를 아는 부분(재고와 매칭된 수량)만의 실현손익 합 */
+  totalKRW: number;
+  /** 종목별 — 역시 원가를 아는 부분만. 원가를 하나도 모르는 종목은 키가 없다 */
+  perSymbol: Map<string, number>;
+  /** 종목별 원가 미상 매도 — 이익도 손실도 아니다 */
+  unmatched: Map<string, LifoUnmatched>;
+  /** 기간 내 매도 중 원가 미상 수량이 있던 건수 (부분 매칭 포함) */
+  unmatchedSellCount: number;
+  /** 기간 내 매도 중 원가를 아는 수량이 조금이라도 있던 건수 */
+  matchedSellCount: number;
 }
 
 const FEE_THRESHOLD_CYCLES = 2;
@@ -179,15 +216,26 @@ export type Market = 'domestic' | 'overseas' | 'all';
  * 시간 ASC OrderRow 들을 받아 LIFO 매칭으로 종목별 실현 손익 산출.
  * `rangeStart` 이전 row 는 stack 만 빌드 (cost basis 준비).
  * `rangeStart` 이후 row 는 PnL 누적.
+ *
+ * ## 🔴 T-086 — 원가를 모르는 수량은 이익으로 세지 않는다 ("불명 우선")
+ *
+ * 예전에는 재고가 비어 `costBasis = 0` 인 매도가 `amount_krw` 폴백으로 **매도대금 전액 이익**이
+ * 됐다(감사 F02). 앱 밖에서 산 종목을 앱으로 팔면 매번 그렇게 된다.
+ * 지금은 재고와 매칭된 수량만 손익에 넣는다 — 매도대금·수수료를 매칭 비율만큼 배분하고,
+ * 매칭 못 한 수량은 `unmatched`·`unmatchedSellCount` 에 따로 센다.
+ * 재고가 충분한(전량 매칭) 매도는 예전 계산과 **완전히 같은 식**을 탄다.
  */
 export function computeLifoPnl(
   rows: OrderRow[],
   rangeStart: Date,
-): { totalKRW: number; perSymbol: Map<string, number> } {
+): LifoPnlResult {
   const stacks = new Map<string, Array<{ price: number; qty: number }>>();
   const perSymbol = new Map<string, number>();
+  const unmatched = new Map<string, LifoUnmatched>();
   const startMs = rangeStart.getTime();
   let total = 0;
+  let unmatchedSellCount = 0;
+  let matchedSellCount = 0;
 
   for (const r of rows) {
     const stack = stacks.get(r.symbol) ?? [];
@@ -217,17 +265,35 @@ export function computeLifoPnl(
 
       // 분석 기간 내 sell 만 PnL 에 합산
       if (r.ts >= startMs) {
-        const matchedQty = r.quantity - toRemove;
-        const sellRevenue = matchedQty > 0 && r.price != null
-          ? r.price * matchedQty
-          : r.amount_krw;  // price 없으면 amount_krw fallback
-        const pnl = sellRevenue - costBasis - r.fee;
-        total += pnl;
-        perSymbol.set(r.symbol, (perSymbol.get(r.symbol) ?? 0) + pnl);
+        // 수량이 양수가 아니면(0·음수·NaN) 매칭 비율을 정의할 수 없다 — 원가 미상으로 센다.
+        const validQty = Number.isFinite(r.quantity) && r.quantity > 0;
+        const matchedQty = validQty ? r.quantity - toRemove : 0;
+        const unmatchedQty = validQty ? Math.max(0, toRemove) : 0;
+        const fullyMatched = validQty && toRemove <= 1e-12;
+
+        if (!fullyMatched) {
+          unmatchedSellCount++;
+          const u = unmatched.get(r.symbol) ?? { quantity: 0, sellCount: 0 };
+          u.quantity += unmatchedQty;
+          u.sellCount += 1;
+          unmatched.set(r.symbol, u);
+        }
+
+        if (validQty && matchedQty > 1e-12) {
+          matchedSellCount++;
+          // 전량 매칭이면 비율 1 — 예전 식(`price × matchedQty`·`amount_krw`·`fee`)과 동일하게 떨어진다.
+          const ratio = fullyMatched ? 1 : matchedQty / r.quantity;
+          const sellRevenue = r.price != null
+            ? r.price * matchedQty
+            : r.amount_krw * ratio;  // price 없으면 amount_krw 를 매칭 비율만큼만
+          const pnl = sellRevenue - costBasis - r.fee * ratio;
+          total += pnl;
+          perSymbol.set(r.symbol, (perSymbol.get(r.symbol) ?? 0) + pnl);
+        }
       }
     }
   }
-  return { totalKRW: total, perSymbol };
+  return { totalKRW: total, perSymbol, unmatched, unmatchedSellCount, matchedSellCount };
 }
 
 interface FetchOptions {
@@ -337,11 +403,14 @@ export async function buildTradeReport(opts: BuildOptions): Promise<TradeReport>
   // 분석 기간 내 **매도가 발생한 종목만** 리스트 — buy-only 종목(미실현 평가 대상)은 제외.
   const perSymbol: SymbolPnl[] = [];
   for (const sym of symbolSellCnt.keys()) {
+    const um = lifo.unmatched.get(sym);
     perSymbol.push({
       symbol: sym,
       realizedKRW: lifo.perSymbol.get(sym) ?? 0,
       cycles: Math.min(symbolBuyCnt.get(sym) ?? 0, symbolSellCnt.get(sym) ?? 0),
       sellCount: symbolSellCnt.get(sym) ?? 0,
+      unmatchedSellCount: um?.sellCount ?? 0,
+      unmatchedQty: um?.quantity ?? 0,
     });
   }
   perSymbol.sort((a, b) => Math.abs(b.realizedKRW) - Math.abs(a.realizedKRW));
@@ -358,6 +427,8 @@ export async function buildTradeReport(opts: BuildOptions): Promise<TradeReport>
     sellsAmountKRW: sellsAmt,
     headerPnlKRW: sellsAmt - buysAmt,
     lifoPnlKRW: lifo.totalKRW,
+    unmatchedSellCount: lifo.unmatchedSellCount,
+    matchedSellCount: lifo.matchedSellCount,
     perSymbol,
     churnSymbols,
   };
@@ -497,6 +568,25 @@ function formatDisplayAmount(d: DisplayAmount | null | undefined, fallbackKRW: n
   return main;
 }
 
+/**
+ * LIFO 실현손익 줄 (T-086). 🔴 **부분합임을 숨기지 않는다.**
+ *  - 원가 미상 매도 0건      → 예전과 같은 한 줄 `• 실현 손익: ±₩N`
+ *  - 일부만 원가 미상        → 숫자는 그대로 두고 아래에 `원가 미상 매도 N건 — 실현손익에서 제외`
+ *  - 모든 매도가 원가 미상   → 숫자 대신 `원가 미상` (0원으로 적으면 "본전"으로 읽힌다)
+ */
+function formatLifoPnlLines(rep: TradeReport): string[] {
+  const unknown = rep.unmatchedSellCount > 0 ? rep.unmatchedSellCount : 0;
+  if (unknown === 0) return [`• 실현 손익: ${fmtKRW(rep.lifoPnlKRW)}`];
+  const allUnknown = !(rep.matchedSellCount > 0);
+  return [
+    `• 실현 손익: ${allUnknown ? '원가 미상' : fmtKRW(rep.lifoPnlKRW)}`,
+    `• ${UNMATCHED_SELL_NOTE(unknown)}`,
+  ];
+}
+
+/** 원가 미상 매도 표지 문구 — 문구를 한 곳에서만 만든다 (시험이 이 문구를 고정한다). */
+export const UNMATCHED_SELL_NOTE = (n: number): string => `원가 미상 매도 ${n}건 — 실현손익에서 제외`;
+
 /** 리서치 요약 문단 (T-033). 추적 0종목·활성 0종목도 조용히 생략하지 않고 명시한다. */
 function formatResearchSection(research: ResearchDigest, nameOf: (s: string) => string): string {
   const lines: string[] = [];
@@ -586,7 +676,7 @@ export function formatReportMessage(
       lines.push(`${icon} ${nameOf(p.symbol)} ${fmtKRW(p.pnlKRW)} (${sign}${p.pnlPct.toFixed(2)}%) [${kind}]`);
     }
   } else if (rep.sells > 0) {
-    lines.push(`• 실현 손익: ${fmtKRW(rep.lifoPnlKRW)}`);
+    lines.push(...formatLifoPnlLines(rep));
   } else {
     lines.push('');
     lines.push('*매도 없음*');

@@ -1,0 +1,63 @@
+{
+  "schema": "judge-result@2",
+  "engine": "rules",
+  "kind": "intake",
+  "checkpoint": null,
+  "task_id": "T-086",
+  "project": "StockInvest",
+  "spec_version": "dev-judge@0.2.0",
+  "rules_version": "dev-rules@0.5.0",
+  "model": null,
+  "decision": {
+    "task_type": null,
+    "complexity": null,
+    "needs_info": false,
+    "risk": "R2",
+    "developer_model": "opus",
+    "roles": [],
+    "demo": {
+      "required": true,
+      "level": "delta",
+      "owner": "designer",
+      "publish": "artifact+repo",
+      "source": "rules",
+      "rule_id": "DM-kw-risky-cta",
+      "rule_ids": [
+        "DM-kw-risky-cta"
+      ],
+      "waiver_requested": false,
+      "configuration_error": null
+    },
+    "next": "demo_first",
+    "next_actions": [
+      "prepare_demo",
+      "request_demo_approval",
+      "assign_developer"
+    ],
+    "blocking_gate": "demo"
+  },
+  "signals": {
+    "ui_detect": "listed"
+  },
+  "rule_overrides": [
+    {
+      "field": "risk",
+      "value": "R2",
+      "rule_id": "R2-kw-payment"
+    },
+    {
+      "field": "developer_model",
+      "value": "opus",
+      "rule_id": "MD-judge-failed-opus"
+    },
+    {
+      "field": "demo.level",
+      "value": "delta",
+      "rule_id": "DM-kw-risky-cta"
+    }
+  ],
+  "fallback": "budget_window_closed",
+  "input_tokens": 0,
+  "cost_usd": 0,
+  "latency_ms": 5
+}
