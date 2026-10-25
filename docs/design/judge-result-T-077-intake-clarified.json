@@ -1,0 +1,79 @@
+{
+  "schema": "judge-result@2",
+  "engine": "jev",
+  "kind": "intake",
+  "checkpoint": null,
+  "task_id": "T-077",
+  "project": "StockInvest",
+  "spec_version": "dev-judge@0.2.0",
+  "rules_version": "dev-rules@0.5.0",
+  "model": "jev-1.13.0",
+  "decision": {
+    "task_type": "docs",
+    "complexity": 1.16,
+    "needs_info": true,
+    "risk": "R0",
+    "developer_model": "sonnet",
+    "roles": [
+      "developer",
+      "reviewer"
+    ],
+    "demo": {
+      "required": false,
+      "level": "none",
+      "owner": null,
+      "publish": "artifact+repo",
+      "source": "jev",
+      "rule_id": null,
+      "rule_ids": [],
+      "waiver_requested": false,
+      "configuration_error": null
+    },
+    "next": "ask_user",
+    "next_actions": [
+      "clarify_requirements",
+      "assign_developer"
+    ],
+    "blocking_gate": "requirements"
+  },
+  "signals": {
+    "task_type": {
+      "choice": "docs",
+      "confidence": 0.99
+    },
+    "complexity": {
+      "score": 1.16,
+      "confidence": 0.68
+    },
+    "needs_info": {
+      "noul": 0.68
+    },
+    "risk": {
+      "choice": "low",
+      "probabilities": {
+        "low": 0.96,
+        "normal": 0.03,
+        "high": 0.01
+      }
+    },
+    "ui_detect": "listed",
+    "ui_change": {
+      "valid": true,
+      "choice": "none",
+      "confidence": 1,
+      "probabilities": {
+        "none": 1,
+        "minor_visual": 0,
+        "partial_restructure": 0,
+        "behavior_change": 0,
+        "overhaul": 0,
+        "new_screen": 0
+      }
+    }
+  },
+  "rule_overrides": [],
+  "fallback": null,
+  "input_tokens": 1447,
+  "cost_usd": 0.000061,
+  "latency_ms": 274
+}

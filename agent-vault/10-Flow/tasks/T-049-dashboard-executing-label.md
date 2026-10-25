@@ -1,7 +1,7 @@
 ---
 task_id: T-049
 title: 대시보드 "주문 실행됨" 표시 문구 정정 — 주문 번호 없는 executing 을 "처리 중/확인 필요"로 (T-043 감사 R-7, T-046 에서 분리)
-status: todo
+status: done
 priority: normal
 roles_involved: [leader, designer, developer, reviewer, qa]
 related_tasks: [T-043, T-046, T-042]
@@ -28,7 +28,7 @@ demo_gate:
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
-  active: true
+  active: false
 ---
 
 # T-049 — "주문 실행됨" 표시 문구 정정 (화면 작업 · 데모 검토 게이트 대상)
@@ -217,6 +217,9 @@ Leader 해석(틀리면 사용자가 바로잡는다):
 
 - [10-18 21:50] Developer 구현 → Reviewer 1차 PASS(R-1 MAJOR 감지 창·R-3) → 수정 → judge C2 → Codex medium(병합 최신성) → 순차화 수정 → Reviewer 3차 최종 PASS(해시 8/8 일치). **승인 데모 대비 material 차이 0건**(Reviewer 가 12개 카드를 데모·구현에서 같은 합성 데이터로 렌더해 계산된 스타일 비교, 360·412px). 커밋은 T-049 파일만 선택 스테이징(보류 중인 T-050 변경 `custom/confirm/*`·`src/lib/time.ts` 제외). 다음: 커밋 → push → 운영 배포 → 배포 후 검증(QA 겸임) → `check.mjs deactivate`.
 - [10-18] **승인 해석 재확인 요청(Reviewer 의견):** 승인 원문이 선택 없는 "진행해줘"였으므로 사용자에게 "접힘 + 7건·페이저로 해석했다"를 최종 보고에 명시해 확인받는다.
+
+- [10-18 21:46] **커밋 `22aa440` → push → webhook 배포 `20261018-214601-22aa4409` `RELEASE_RESULT ok`·exit 0**(마이그레이션 없음). 배포 후 검증(Leader 직접 실행, QA 역할 겸임 — **인증이 필요한 대시보드 전체 화면은 확인하지 못했다**: 서명된 세션 쿠키가 필요하고 시크릿으로 쿠키를 만들어 우회하지 않았다): pm2 `stockinvest`·`stockinvest-cron` online·restarts 0·cwd 새 릴리스 · 배포된 소스 7개 해시가 감사 버전과 일치 · 인증 동작 불변(`/` 307, `/api/signals` 401, 새 파라미터 포함 호출도 401, `/api/health` 200) · 새 섹션 코드가 대시보드 번들(`app/page-a433aa50….js`)에 포함 · T-050 보류 코드 미배포 확인 · cron 틱 정상·신규 오류 없음. **남은 확인(사용자 폰/브라우저):** 대시보드 맨 아래 "내 결정" 접힘 요약 줄이 보이는지, 펼쳤을 때 만료 카드 중심 목록·기간 토글, 하단 탭에 가려지지 않는지.
+- [10-18 21:5x] `check.mjs deactivate` — 화면 구현 종료 표시.
 
 ## 데모 검토 (demo gate)
 

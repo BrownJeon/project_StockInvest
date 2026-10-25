@@ -229,6 +229,8 @@ RSI 과매도 반등 — RSI 37.4 &lt; 38, 현재가가 MA20 아래
   - critical — entry-watcher 가 주문 전 선점 없이 submitOrder 를 호출(동시 실행 시 실주문 중복 가능). **Leader 검증: 코드상 사실.** 선점 없음·주문 뒤 `executing` 갱신에 상태 조건 없음·`client_order_id` 는 호출마다 랜덤이라 DB 멱등성 없음. 다만 `cron-runner.sh` 가 단일 루프에서 curl 을 동기 호출해 정상 운영(cron 앱 1개)에서는 틱이 겹치지 않고, 겹치는 조건은 cron 앱 2개 동시 기동·수동 호출·배포 중 요청 끊김. **T-042 이전부터 있던 구조.**
   - medium — 폴러가 롱폴링 반환 뒤 락 소유를 재확인하지 않고 offset 저장에 단조 조건이 없음. 시그널 전이가 원자적이라 이중 주문은 아니고 콜백 응답·감사 로그 중복, offset 퇴행 시 재전달(핸들러 멱등).
   - 두 건의 차단 여부는 Leader 가 정하지 않고 Reviewer 에게 분류를 맡겼다(재개 요청 10-12). 답을 받기 전에는 커밋하지 않는다.
+- [10-12] Reviewer 5라운드(Codex 지적 분류): 두 건 모두 T-042 를 막지 않음. entry-watcher 선점 부재는 T-042 이전부터 있던 구조(HEAD 동일)로 **T-043 분리**(우선순위 높음), 폴러 fencing 은 Low 로 T-043 에 묶음. 분리의 전제 2가지 이행: ① T-043 작업서·board 등록 ② `docs/telegram-approval.md` §7 에 한계·수동 curl 금지·배포 직후 점검 SQL 기록. 코드 변경 없음.
+- [10-12 03:26 KST] 커밋 `c3a14f1`(39 파일, T-042·T-043 문서 포함, 다른 세션 변경 미포함) → push → webhook 배포 `20261012-032615-c3a14f12` `RELEASE_RESULT ok`·exit 0. 푸시 직전 재검증: tsc 0, jest 141 suites/2,875, 훅 52/52. 배포 후: pm2 `stockinvest`·`stockinvest-cron` online(cron 1행), `/api/health` ok·killSwitch false·safety green, 핵심 6파일 해시가 커밋과 일치, 중복 주문 쌍 0, `system_config` 에 `telegram_*` 키 없음(= 스위치 전부 꺼짐). 폴러 루프는 꺼져 있으면 무로그라 실제 기동은 자가 점검에서 처음 관측된다.
 - [10-12] 문서 `docs/telegram-approval.md` §6.1 정정(코드 변경 아님): 접수 확인 시 복구 SQL 을 경로별로 구분(즉시 주문 경로 성공 상태 `approved`, 진입 감시 경로 성공 상태 `executing`), 경로 구분 근거를 `price_zone` 유무에서 알림 제목으로 정정(구간이 있어도 하이브리드 꺼짐·시나리오 수정 승인이면 즉시 주문 경로), "알림 정리 전 배포 금지" 문장 추가. 감사자가 남긴 해시(035f8ac3399d)는 이 수정으로 바뀌었다.
 
 ## Developer

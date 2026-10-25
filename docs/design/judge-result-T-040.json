@@ -1,0 +1,92 @@
+{
+  "schema": "judge-result@2",
+  "engine": "jev",
+  "kind": "intake",
+  "checkpoint": null,
+  "task_id": "T-040",
+  "project": "StockInvest",
+  "spec_version": "dev-judge@0.2.0",
+  "rules_version": "dev-rules@0.5.0",
+  "model": "jev-1.13.0",
+  "decision": {
+    "task_type": "feature",
+    "complexity": 2.59,
+    "needs_info": true,
+    "risk": "R2",
+    "developer_model": "opus",
+    "roles": [
+      "designer",
+      "prompt-engineer?",
+      "developer",
+      "reviewer",
+      "qa"
+    ],
+    "demo": {
+      "required": true,
+      "level": "delta",
+      "owner": "designer",
+      "publish": "artifact+repo",
+      "source": "jev",
+      "rule_id": "DM-kw-risky-cta",
+      "rule_ids": [
+        "DM-kw-risky-cta"
+      ],
+      "waiver_requested": false,
+      "configuration_error": null
+    },
+    "next": "ask_user",
+    "next_actions": [
+      "clarify_requirements",
+      "prepare_demo",
+      "request_demo_approval",
+      "assign_developer"
+    ],
+    "blocking_gate": "requirements"
+  },
+  "signals": {
+    "task_type": {
+      "choice": "feature",
+      "confidence": 0.51
+    },
+    "complexity": {
+      "score": 2.59,
+      "confidence": 0.59
+    },
+    "needs_info": {
+      "noul": 0.62
+    },
+    "risk": {
+      "choice": "high",
+      "probabilities": {
+        "low": 0.01,
+        "normal": 0.04,
+        "high": 0.95
+      }
+    },
+    "ui_detect": "listed",
+    "ui_change": {
+      "valid": true,
+      "choice": "none",
+      "confidence": 1,
+      "probabilities": {
+        "none": 1,
+        "minor_visual": 0,
+        "partial_restructure": 0,
+        "behavior_change": 0,
+        "overhaul": 0,
+        "new_screen": 0
+      }
+    }
+  },
+  "rule_overrides": [
+    {
+      "field": "demo.level",
+      "value": "delta",
+      "rule_id": "DM-kw-risky-cta"
+    }
+  ],
+  "fallback": null,
+  "input_tokens": 1434,
+  "cost_usd": 0.00006,
+  "latency_ms": 253
+}

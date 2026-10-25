@@ -46,3 +46,6 @@ next-env.d.ts
 
 # T-069 보유 점검 리포트 — 실제 계좌 수치가 들어 있어 커밋하지 않는다(스크립트로 언제든 재생성)
 agent-vault/10-Flow/reports/T-069-holdings-report-*.md
+
+# S00 현황·계좌 대조의 민감 상세(실제 보유·금액·잔고) — 커밋하지 않는다
+agent-vault/10-Flow/reports/S00-*-local.md

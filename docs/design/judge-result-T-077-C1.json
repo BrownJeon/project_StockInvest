@@ -1,0 +1,42 @@
+{
+  "schema": "judge-result@2",
+  "engine": "jev",
+  "kind": "codex_gate",
+  "checkpoint": "C1",
+  "task_id": "T-077",
+  "project": "StockInvest",
+  "spec_version": "dev-judge@0.2.0",
+  "rules_version": "dev-rules@0.5.0",
+  "model": "jev-1.13.0",
+  "decision": {
+    "codex_required": false,
+    "wanted_before_budget": false,
+    "mode": null,
+    "focus": null,
+    "budget_rule": "CX-limit-unknown-hold",
+    "codex_calls_used": 0,
+    "codex_switch": "on"
+  },
+  "signals": {
+    "codex_calls_used": 0,
+    "focus": {
+      "choice": "concurrency",
+      "confidence": 0.51
+    },
+    "design_uncertainty": {
+      "score": 1.32,
+      "confidence": 0.5
+    }
+  },
+  "rule_overrides": [
+    {
+      "field": "codex_required",
+      "value": false,
+      "rule_id": "CX-r0-skip"
+    }
+  ],
+  "fallback": null,
+  "input_tokens": 910,
+  "cost_usd": 0.000038,
+  "latency_ms": 680
+}
