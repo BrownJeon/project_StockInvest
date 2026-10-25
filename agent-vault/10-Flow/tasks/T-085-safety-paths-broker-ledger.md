@@ -1,7 +1,7 @@
 ---
 task_id: T-085
 title: 커밋 안전장치(SAFETY_PATHS)에 src/lib/broker-ledger/ 추가 (T-081 WP-D U-5)
-status: todo
+status: done
 priority: high
 roles_involved: [leader, developer, reviewer, qa, judge, codex]
 related_tasks: [T-075, T-081, T-087]
@@ -122,3 +122,16 @@ Developer → Reviewer(`scope: scripts/git-hooks/commit-msg, scripts/test-git-ho
 - [21:21] QA 판정: 통과
 
 ## 최종 요약
+
+### [T-085] 커밋 안전장치에 브로커 체결 원장 코드 경로 추가
+
+- **상태**: ✅ 완료
+- **무엇이 바뀌었나**: 앞으로 들어올 브로커 체결 원장 수집기·대사 코드(`src/lib/broker-ledger/`)가 독립 감사(Reviewer) 판정 없이 커밋되지 않도록 커밋 훅의 감시 목록에 그 경로를 추가했다. 사용자 화면·운영 동작은 바뀌지 않는다.
+- **배포**: ✅ 운영 반영 — 커밋 `21f84c3` · 2026-10-25 21:06 KST · push(webhook) · 결과 ok(릴리스 `20261025-210643-7f7b0384`)
+  - 같은 배포에 함께 실린 작업: T-086(`7f7b038`)
+- **AI 가 검증한 것**: 격리 저장소에서 훅 시험 93 통과/0 실패, 독립 감사 통과(옛 훅+옛 시험 87/0 과 새 훅+옛 시험 87/0 동일, 정규식 전수 대조 차이는 합성 경로뿐, 변이 훅 8종 전부 포착), QA 통과(같은 index 에서 옛 훅은 통과·새 훅은 차단으로 구멍 폐쇄 실증), 이후 T-086·T-087 실제 커밋에서 훅이 정상 작동.
+  - 검증 못 한 것: 실제 저장소에서 `test-git-hooks.sh` 직접 실행(병행 작업이 있어 실제 index 보호를 위해 격리 저장소에서만 실행).
+- **👉 사용자가 확인할 것**: 없음
+- **👉 사용자가 결정할 것**: 없음
+- **남은 일**: 후속 A14(시험 fixture 존재 확인 없이 덮어씀 — Codex medium, 기존 fixture 와 같은 방식이라 기록만), A15(`scripts/broker-ledger/` 는 훅 밖 — 지문 일괄 갱신 스크립트가 생길 때 Reviewer scope 명시), A17(월 −5% 판정이 `ledger/` 에 연결되면 그 경로의 훅 제외 근거 재결정)
+- **이슈·위험**: 없음. 롤백: `git revert 21f84c3` 후 push

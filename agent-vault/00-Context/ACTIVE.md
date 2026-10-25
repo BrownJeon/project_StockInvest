@@ -6,6 +6,13 @@ tags:
 ---
 # 현재 상태
 
+## 2026-10-25 23:30 — T-081 WP-D D1a 브로커 체결 원장 수집 가동 ([[T-087-wpd-d1a-broker-fills-collect]])
+
+- 국내·해외 일별 체결·기간 실현손익·보유 잔고를 KIS 조회 API(읽기 전용)에서 매일 07:20 KST 이후 받아 새 테이블 5개(`broker_*`)에 쌓는다. 어디에도 연결하지 않았다(표시·판정 불변). 스위치 ON(23:24), 첫 자동 실행은 10-26 07:20 이후.
+- 함께 반영: [[T-085-safety-paths-broker-ledger]](커밋 훅이 `src/lib/broker-ledger/` 감시) · [[T-086-d0-unmatched-sell-cost-basis]](거래 리포트가 원가 모르는 매도를 이익으로 세지 않음 — 앱이 다시 매도할 때까지 눈에 띄는 변화 없음).
+- 다음: 첫 크론 실행 확인 → 사용자 결정(D1b 백필·실패 알림) → D2 교차검증. 킬스위치 ON 유지(10-26 17:10 캡처 후 T-080 Phase 2).
+
+
 ## 2026-10-25 — 모바일 앱 "주식캐기" M1 배포·APK 공개 완료, 실기기 확인 대기 ([[T-084-mobile-app-m1-shell]])
 
 - 운영 웹을 그대로 띄우는 Capacitor 안드로이드 앱(appId `com.miraclepenguin.stockinvest`, v1.0.0)과 앱 업데이트 안내를 배포했다. 코드 `46d4148`·문서 `b435399`, 20:53 KST push(webhook blue/green), 릴리스 `20261025-205329-b4353994`, `RELEASE_RESULT ok`. 정본 절차서는 [`docs/mobile-app-procedure.md`](../../docs/mobile-app-procedure.md)(v3), 배포 절은 [`docs/deploy-order.md`](../../docs/deploy-order.md) "앱(APK) 배포".

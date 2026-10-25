@@ -4,6 +4,9 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-25 23:30 — T-081 WP-D D1a 브로커 체결 원장 "앞으로 수집" 가동**: [[T-085-safety-paths-broker-ledger]](훅 감시 경로 추가, `21f84c3`)·[[T-086-d0-unmatched-sell-cost-basis]](거래 리포트 원가 미상 분리, `7f7b038`) 21:06 배포 ok(릴리스 `20261025-210643-7f7b0384`) → [[T-087-wpd-d1a-broker-fills-collect]] DDL(새 테이블 5개) 23:19 적용·코드 `1b6fc08` 23:21 배포 ok(릴리스 `20261025-232107-1b6fc082`)·첫 manual 7 run 전부 complete·수집 스위치 ON(23:24). 첫 자동 실행은 10-26 07:20 이후. 사용자 결정 대기: D1b 백필 승인·수집 실패 알림 여부. 킬스위치는 ON 유지. 후속 A13~A17은 실행 원장 §5.1.
+
+
 > **2026-10-25 11:00 — 3커밋 push·배포 완료**(`e0aadad..34ab66d`, 릴리스 `20261025-105456-34ab66dd` ok, health 200, cron 1행): S00 문서·원장·[[T-077-portfolio-restructure-handoff]]~[[T-083-s00-follow-up-hygiene]] 접수, Codex/에이전트 동기화, **[[T-040-api-usage-log]] 운영 반영**(현 HEAD 기준 Reviewer 재감사 PASS). 킬스위치는 계속 ON. **[[T-080-killswitch-usd-misread]] Phase 1 배포 완료**(`294f7e0`+`30ae50b`, 릴리스 `20261025-140926-30ae50bd` ok; Reviewer 3회·Judge C2+Codex·QA 통과(주의 있음), 실데이터 4,752쌍 재생: 보류 변경 2건 모두 USD 가림 허상). 남은 한계 2가지(환전·출금·스냅샷 사이 왕복 시 약 −16.5% 까지 보류 가능 / 기준선 가려짐 반대 방향 편향 A07)는 T-080 최종 요약에 명시 — 해제 판단 전 필독.
 
 > **2026-10-25 — [[T-079-s00-baseline-and-ledger]] S00 기준선·단일 실행 원장 완료(문서 범위, 독립 검토·QA 반영)**: `docs/design/2026-10-24-s00-baseline-report.md`·`2026-10-24-execution-ledger.md`. **킬스위치가 10-23 22:42 에 자동 발동해 지금 ON** (−12.1% 중 약 76% 는 환전 달러의 집계 누락, 대칭 반영 실제 약 −2.8%) — 사용자 결정 D-1~D-5 대기. 후속 접수: [[T-080-killswitch-usd-misread]]·[[T-081-s01-ledger-cost-monthly-metric]]·[[T-082-s02-daily-bars-universe-remaining]]·[[T-083-s00-follow-up-hygiene]]. 코드·운영 설정·배포 변경 없음(`.gitignore` 에 S00 로컬 보고서 제외 규칙 1줄만 추가).
