@@ -4,6 +4,8 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-25 11:00 — 3커밋 push·배포 완료**(`e0aadad..34ab66d`, 릴리스 `20261025-105456-34ab66dd` ok, health 200, cron 1행): S00 문서·원장·[[T-077-portfolio-restructure-handoff]]~[[T-083-s00-follow-up-hygiene]] 접수, Codex/에이전트 동기화, **[[T-040-api-usage-log]] 운영 반영**(현 HEAD 기준 Reviewer 재감사 PASS). 킬스위치는 계속 ON. **[[T-080-killswitch-usd-misread]] Phase 1 코드 완료·커밋 `294f7e0`**(Reviewer 3회·Judge C2+Codex·QA 통과(주의 있음), 실데이터 4,752쌍 재생: 보류 변경 2건 모두 USD 가림 허상) — 이 문서 커밋과 함께 push·배포. 남은 한계 2가지(환전·출금·스냅샷 사이 왕복 시 약 −16.5% 까지 보류 가능 / 기준선 가려짐 반대 방향 편향 A07)는 T-080 최종 요약에 명시 — 해제 판단 전 필독.
+
 > **2026-10-25 — [[T-079-s00-baseline-and-ledger]] S00 기준선·단일 실행 원장 완료(문서 범위, 독립 검토·QA 반영)**: `docs/design/2026-10-24-s00-baseline-report.md`·`2026-10-24-execution-ledger.md`. **킬스위치가 10-23 22:42 에 자동 발동해 지금 ON** (−12.1% 중 약 76% 는 환전 달러의 집계 누락, 대칭 반영 실제 약 −2.8%) — 사용자 결정 D-1~D-5 대기. 후속 접수: [[T-080-killswitch-usd-misread]]·[[T-081-s01-ledger-cost-monthly-metric]]·[[T-082-s02-daily-bars-universe-remaining]]·[[T-083-s00-follow-up-hygiene]]. 코드·운영 설정·배포 변경 없음(`.gitignore` 에 S00 로컬 보고서 제외 규칙 1줄만 추가).
 
 > **2026-10-24 — [[T-078-integrated-execution-procedure]] 통합 절차서 완료**: T-064와 T-077을 `docs/design/2026-10-24-integrated-execution-procedure.md`로 합쳤다. 실행은 S00~S09만 사용하고 D1~D20은 통합 §9로 이관한다. 다음은 Claude에서 S00 최신 현황·계좌/정책 대조와 실행 원장 작성. H 기존 보유 관리/N 신규 매수 검증의 관문은 별도이며 문서 완료는 실제 구현/운영 완료가 아니다.
@@ -248,7 +250,7 @@ tags:
 
 ## Todo
 
-- 🔴 **[T-080, 2026-10-25, R2] 킬스위치 24h 손실 판정의 USD 행 오집계 방지(S05 안전 경계)** → [[T-080-killswitch-usd-misread]] (사용자 결정 D-1·착수 승인 대기 · 선행 없음 · 안전 경로 → Reviewer 필수)
+- 🟡 **[T-080, 2026-10-25, R2] 킬스위치 24h 손실 판정의 USD 행 오집계 방지(S05 안전 경계)** → [[T-080-killswitch-usd-misread]] (**Phase 1 코드 완료·커밋 `294f7e0`, 배포 대기→push 후 확인** · Phase 2 = 평일 저녁 KIS 조회 1회 + 반대 방향 편향 A07 · 킬스위치는 ON 유지)
 - **[T-081, 2026-10-25, R2] S01 체결 장부·원가·월 지표 기반 (T-071 WP-2/3 잔여 + 기준 정하기)** → [[T-081-s01-ledger-cost-monthly-metric]] (사용자 입력 D-2·KIS 읽기 D-3·DDL 승인 대기)
 - **[T-082, 2026-10-25, R1] S02 일봉 수집 잔여·후보군 원천(공식 원천 먼저)** → [[T-082-s02-daily-bars-universe-remaining]] (10-27 화 05:35 이후 증분 확인 · KIS 읽기 대기)
 - **[T-083, 2026-10-25, R0] S00 후속 — 상태 문서 동기화·저장소 위생(문서 전용)** → [[T-083-s00-follow-up-hygiene]] (사용자 결정 D-4: 미커밋 산출물 보존·T-040)

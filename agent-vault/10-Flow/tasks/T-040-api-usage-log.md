@@ -1,8 +1,8 @@
 ---
 task_id: T-040
 title: 외부 API 호출 기록(api-usage.jsonl) 적용 — 공용 패키지 @workspace/api-usage 시범(P7)
-status: review
-waiting: push_confirm
+status: done
+waiting: []
 roles_involved: [leader, judge, developer, reviewer, qa, deployer]
 related_tasks: []
 base_ref: ccc645bad808c99dc7630589b4ad735e00df969b
@@ -157,9 +157,15 @@ demo_gate:
 
 ## Deployer 기록
 
+- [2026-10-25 10:54~10:56 KST] 사용자 지시("미커밋에 대하여 모두 커밋 및 푸시처리 해줘")로 push `e0aadad..34ab66d`(3커밋: 문서 `7f92b7e` · 에이전트 동기화 `eaaa629` · **T-040 `34ab66d`**) → webhook 배포 → 릴리스 `20261025-105456-34ab66dd` `RELEASE_RESULT ok`(migrated false, 롤백 대상 `20261024-221601-e0aadadf`). 일요일 폐장 시간대 진행.
+- 배포 전: 공용 패키지 해시 `daeccec487bf89df` 일치(sha256sum 7파일 계산식), 현 HEAD 위 격리 사본 tsc 0 오류·jest 238 suite 통과, Reviewer 현 HEAD 기준 재감사 최종 판정 PASS(`npm ci`+`next build` 운영 레이아웃 재현 포함).
+- 배포 후 실측: health 200 · `stockinvest-cron` 1행 · 두 앱 online(재시작 0) · `current/logs` → `/home/brownjeon/apps/stockinvest/shared/logs`(ext4, NFS 아님) · `api-usage-2026-10-25.jsonl` 9줄 — 키 7개(`ts api op ok status ms err`)뿐, `https?:|Bearer|@` 0건, 파싱 불가 0줄. op 집계: `kis overseas.get-ticker`·`domestic.get-balances`·`overseas.usd-cash`·`overseas.get-balances`, `fx latest.frankfurter`, `telegram bot.get-updates`(교체 순간 timeout 2건, 정상 범위). 킬스위치 값·주문 불변.
+- 아직 안 본 것: 일봉 수집기의 새 op(`profit-engine.daily-bars.kr/us`)와 `overseas.price-detail` 첫 기록(해당 크론 실행 시각 이후).
+
 ## Leader 기록
 
 - 2026-10-10: 공용 패키지 `shared/api-usage` 3차 재검증 PASS. 데모 게이트 waive 를 위해 사용자 원문 "T-040 데모 생략" 대기(TheAdmin HANDOFF-2026-10-10 §3). 받으면 `node ../.claude/tools/demo-gate/check.mjs waive --task agent-vault/10-Flow/tasks/T-040-api-usage-log.md --quote "<원문>"` 후 Developer(opus) 착수. 미커밋(작업서·judge 결과만).
+- 2026-10-25: 사용자 "미커밋 모두 커밋·push" 지시에 따라 처리. 현 HEAD 에서 가드 시험 2건이 깨져(후속 호출 지점: T-059 `overseas priceDetail` 라벨, T-070 템플릿 라벨) 시험 파일 2개만 보정, 격리 사본 검증 후 Reviewer 재감사 PASS → 커밋 `34ab66d`(훅 통과) → push·배포. 후속(낮음, 다음 커밋): 시험 주석 정정(`KIS_DYNAMIC_LABELS` 를 시험 파일에 둔 이유는 격리 시험이 강제한 것이 아님) · SEC EDGAR 클라이언트 미기록 · 해외 시장가·취소 시나리오 시험 · jest setup 빈 임시 디렉터리 정리.
 - 2026-10-18: waive 기록(18:11) → Developer → Reviewer 1차 pass·지적 반영 → Reviewer 재확인 pass(scope 28) → judge C2 → Codex 2건 → Reviewer 기각(Leader 수용) → QA pass_with_notes 결함 0. **커밋 보류**: 같은 작업 트리 main 에 다른 세션이 오늘 push(운영 `releases/20261018-185504-216914c3`)하고 있어, 지금 로컬 커밋하면 다른 세션의 다음 push 에 T-040 이 사용자 확인 없이 실려 배포된다. 사용자 push 확인을 받은 때 28개 pathspec + 이 이력서·`docs/design/judge-result-T-040.json` 으로 커밋하고 곧바로 push(장 마감 후). 배포 직전 Deployer: 패키지 해시 `daeccec487bf89df` 재대조·배포 후 `shared/logs` 실측(Leader 지시사항 체크리스트).
 
 ## Codex 검토
@@ -177,6 +183,19 @@ demo_gate:
 - 소요 83초, exit 0. 채택·기각은 Reviewer 몫이며 이 절에는 판정을 적지 않았다.
 
 ## 최종 요약
+
+### [T-040] 외부 API 호출 기록(api-usage) — 호출마다 고정 7키 한 줄을 서버 로그로 남김
+
+- **상태**: ✅ 완료
+- **무엇이 바뀌었나**: KIS·M4·텔레그램·슬랙·메일·야후 등 외부 호출마다 `{시각, API, 동작, 성공, 상태, 소요, 오류종류}` 한 줄이 운영 `shared/logs/api-usage-날짜.jsonl` 에 쌓인다(계좌·종목·수량·금액·토큰·URL·본문 없음). 기록 실패·지연은 주문 흐름에 영향이 없다. TheAdmin API 탭이 이 로그를 읽을 수 있게 됐다.
+- **배포**: ✅ 운영 반영 — 커밋 `34ab66d` · 2026-10-25 10:56 KST · push(webhook) · 결과 ok(릴리스 `20261025-105456-34ab66dd`)
+  - 같은 배포에 함께 실린 작업: S00 문서·원장·T-077~T-083 접수(`7f92b7e`), Codex/에이전트 동기화(`eaaa629`) — 코드 변경은 T-040 뿐
+- **AI 가 검증한 것**: 현 HEAD 위 격리 사본 tsc 0 오류 · jest 238 suite·5,891 테스트 통과 · Reviewer 재감사 PASS(절대 조건 2개 유지, 운영 레이아웃 `npm ci`+`next build` 재현) · 공용 패키지 해시 일치 · 배포 후 health 200·cron 1행·로그 키 7개·금지 조각 0
+  - 검증 못 한 것: 일봉 수집기·가격상세 새 op 의 첫 기록(해당 크론 실행 후), TheAdmin 화면에서의 표시
+- **👉 사용자가 확인할 것**: 없음(TheAdmin API 탭에서 StockInvest 행이 보이면 정상 — 선택).
+- **👉 사용자가 결정할 것**: 없음.
+- **남은 일**: SEC EDGAR 호출 기록 추가 · 해외 시장가·취소 시험 시나리오 · 시험 주석 정정 · jest 임시 디렉터리 정리(모두 낮음)
+- **이슈·위험**: 코드 revert 롤백은 불필요 — 문제 시 이전 릴리스 `20261024-221601-e0aadadf` 로 되돌린다. 공용 패키지(`shared/api-usage`)가 NAS 상주라 바뀌면 다음 빌드에 그대로 번들되므로 배포 전 해시 대조를 계속 한다.
 
 ## 데모 검토 (demo gate)
 

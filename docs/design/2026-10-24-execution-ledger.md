@@ -31,7 +31,7 @@ tags: [type/ledger, domain/restructure, domain/safety]
 | **S02** 일봉·사건·후보군 (공통/N) | [T-082](../../agent-vault/10-Flow/tasks/T-082-s02-daily-bars-universe-remaining.md) (재사용: [T-070](../../agent-vault/10-Flow/tasks/T-070-daily-bars-phase0.md) Phase 0·[T-059](../../agent-vault/10-Flow/tasks/T-059-us-data-collector-p1.md)) | Developer·Analyst(Fable, 후보군 원천 판단)·Reviewer. 소유: `src/lib/profit-engine/`·`scripts/profit-engine/`(**훅 밖**), `src/app/api/cron/daily-bars/route.ts`(훅 대상) | 부분 | T-070 `34608e5`·DDL 10-24 05:15·`daily_bars` 70,965행, T-059 `a1e5c36`+`7cd47e7` | 증분 확인(10-27 화 05:35 이후), 이월 3건, 정기 cron 미등록, 지수 구성 원천·효력일 이력 0, PIT | 10-27 이후 증분 확인(KIS 읽기 권한) · C02 원천 확인(공식 원천 먼저) |
 | **S03** 순수 결정 함수·실험 계약 (N·H 일부) | — | Analyst(가설·점수 계약)·Developer. 소유 예정: 순수 함수 위치 미정(`strategy/` 이면 훅 대상) | 미착수 / 선행 미충족 | 설계 문서만([T-064](../../agent-vault/10-Flow/tasks/T-064-profit-engine-design.md)) | 선행: S01 비용 필드·S02 자료 계약, **C03·C04·C06·C09 사용자 검토**. 전략 코드 0줄 | C03/C06 정책안 검토 → H 보유 정책 함수를 먼저(N 합격과 분리) |
 | **S04** 후향·표본 외 판정 (N) | — | Analyst·Developer·Reviewer | 미착수 / 선행 미충족 | — | 선행: S02·S03. 기존 `backtest.ts` 는 F04 결함, 사전 등록·OOS 코드 0 | S02 품질 보고 후 최소 가설 등록(C09) |
-| **S05** 공동 자원·주문 경계 (공통/H/N) | [T-080](../../agent-vault/10-Flow/tasks/T-080-killswitch-usd-misread.md) (재사용: [T-058](../../agent-vault/10-Flow/tasks/T-058-signal-cash-gate.md)·[T-068](../../agent-vault/10-Flow/tasks/T-068-risk-policy-followups.md)·[T-071](../../agent-vault/10-Flow/tasks/T-071-ledger-fill-recovery.md) WP-1b·[T-072](../../agent-vault/10-Flow/tasks/T-072-validation-gate.md)·[T-076](../../agent-vault/10-Flow/tasks/T-076-emergency-cancel-partial-fills.md) 설계) | Developer(Opus)·Reviewer(필수, 훅 대상)·QA. 소유: `src/lib/safety/`·`src/lib/signals/`·`src/lib/strategy/`·`src/app/api/{orders,safety,signals}/`(전부 훅 대상) | 부분 | T-072 `fa0669c`(매수 관문), T-058 `8894416`(건별 현금 게이트), T-068 `b3572ed`·`add32cf` | **공동 예산·슬롯·매도 수량 예약 0(N01·N02)**, 누적 분할 게이트(D17), C6 캡처·카나리, T-076 해석 확인, 전략 ID 불일치, F03/F05/F12 | **T-080 은 선행 없음 → 먼저 가능.** 예약 설계(N01/N02)는 S01·S03 계약 후 |
+| **S05** 공동 자원·주문 경계 (공통/H/N) | [T-080](../../agent-vault/10-Flow/tasks/T-080-killswitch-usd-misread.md) (재사용: [T-058](../../agent-vault/10-Flow/tasks/T-058-signal-cash-gate.md)·[T-068](../../agent-vault/10-Flow/tasks/T-068-risk-policy-followups.md)·[T-071](../../agent-vault/10-Flow/tasks/T-071-ledger-fill-recovery.md) WP-1b·[T-072](../../agent-vault/10-Flow/tasks/T-072-validation-gate.md)·[T-076](../../agent-vault/10-Flow/tasks/T-076-emergency-cancel-partial-fills.md) 설계) | Developer(Opus)·Reviewer(필수, 훅 대상)·QA. 소유: `src/lib/safety/`·`src/lib/signals/`·`src/lib/strategy/`·`src/app/api/{orders,safety,signals}/`(전부 훅 대상) | 부분 | T-072 `fa0669c`(매수 관문), T-058 `8894416`(건별 현금 게이트), T-068 `b3572ed`·`add32cf`, **T-080 Phase 1 코드 `294f7e0`**(Reviewer 3회·Codex·QA 통과; 배포 확인 후 갱신) | **공동 예산·슬롯·매도 수량 예약 0(N01·N02)**, 누적 분할 게이트(D17), C6 캡처·카나리, T-076 해석 확인, 전략 ID 불일치, F03/F05/F12 | **T-080 은 선행 없음 → 먼저 가능.** 예약 설계(N01/N02)는 S01·S03 계약 후 |
 | **S06** 보유·월 손실·기간·승인 (H) | — (재사용: [T-055](../../agent-vault/10-Flow/tasks/T-055-sell-proposal-mode.md) 1단계·[T-066](../../agent-vault/10-Flow/tasks/T-066-risk-policy-settings.md)·T-068) | Analyst·Developer·Reviewer·QA. 소유 예정: 월 손실·축소 로직은 **훅 밖 `src/lib/risk/` 에 두지 말 것**(R40 결정 선행) | 미착수 / 선행 미충족 | T-055 `24a5440`(읽기 전용 시뮬레이션), T-065 문서 없음 | 재평가 사건·점수 축소·3개월 기산·연장 승인·재알림 전부 0(N03~N06). H 에 켤 코드 없음 | S01·S03·S05 후. R40(훅 범위) 결정이 로직 위치보다 먼저 |
 | **S07** 최소 화면·리포트 (공통) | — ([T-073](../../agent-vault/10-Flow/tasks/T-073-dashboard-direction.md) 보류) | Designer(데모→사용자 승인)·Developer. 소유: `src/components/dashboard/*` | 보류 | board.md: 사용자 "추후 지시" | 데모 `drafting`, "월간/연간 손실 한도" 등 문구 정정(M-14 성격) | S03 표시 계약 후, 데모 승인 전 화면 코드 금지 |
 | **S08** 전진 모의·결합 검증 (N/H) | — | Analyst·QA | 부분(관측만) | `paper_fills` 55건(`rsi-oversold-v1` 한 전략, 10-23 이후) | 합격 기준·종료일 사전 등록 0, 표본 서로 다른 주 20 도달 2027-03 초 추정 | 사전 등록(C09) 후. 기간 경과만으로 승급 금지 |
@@ -88,7 +88,7 @@ H 는 N 합격을 기다리지 않는다. 그러나 H 에 켤 코드가 아직 �
 
 ## 5. 남은 작업 — 배정과 대기 사유
 
-R01~R41(task 기원) + N01~N08(절차서 기원) + A01~A06(S00 실측 신규). 안전 경로 = 커밋 훅 `SAFETY_PATHS` 대상(대입 판정). 권한 약어: DDL · 운영설정 · 주문 · 알림 · 유료 · 배포(push) · KIS(읽기).
+R01~R41(task 기원) + N01~N08(절차서 기원) + A01~A07(S00 실측 신규). 안전 경로 = 커밋 훅 `SAFETY_PATHS` 대상(대입 판정). 권한 약어: DDL · 운영설정 · 주문 · 알림 · 유료 · 배포(push) · KIS(읽기).
 
 ### 5.1 후속 task 로 배정한 것 (선행 충족)
 
@@ -106,6 +106,7 @@ R01~R41(task 기원) + N01~N08(절차서 기원) + A01~A06(S00 실측 신규). �
 | A02 | #2107 브로커 번호 없는 `pending` — 어느 경로도 정리 못 함 | S01·S05 | YES | DB 쓰기(정리는 별도 승인) | T-081 (설계) |
 | A03 | USD 행 시간대 의존의 원인 | S01 | — | KIS + 사용자 답 | T-081 (D-2·D-3) |
 | A04 | 앱 밖 거래(05-27 이후 전부) → 원가·실현손익을 **KIS 체결·기간손익 조회**에서 가져오는 원천 설계. 국내 2종목 매도는 KIS 로 확인됨(10-25) | S01 | NO | KIS(읽기, 승인됨) | T-081 |
+| A07 | 킬스위치 **반대 방향 편향**(T-080 독립 감사 M-3, 이번 diff 밖의 기존 결함): 기준선 가려짐·현재 보임이면 원시 손실률이 USD 비중(약 11%p)만큼 부풀어 진짜 −10% 도 +수% 로 읽혀 **침묵**한다. 실데이터에서 주말(토 10:01 이후~일) 9틱 연속 +12~+15%. 미국 폐장 시간대라 영향은 작지만 월요일 이른 시간 등에서 재발 가능 | S05 공통 | YES(`safety/kill-switch.ts`) | 없음(Phase 2 = 평일 저녁 KIS 조회 뒤 모든 틱 대칭 보정 또는 USD 근본 수정) | T-080 Phase 2 |
 | A06 | 앱 국내 체결 조회(레거시 TR `TTTC8001R`)가 현행 TR(`TTTC0081R`)이 반환하는 체결을 못 가져옴 [가능성 높음] — `order-sync` 완료/취소 판정 영향 | S01·S05 | YES(`exchanges/kis-domestic.ts`) | KIS(읽기, 재현용) | T-081 |
 | R12 | T-070 증분 확인(10-27 05:35 이후) | S02 | n/a | KIS(수동 호출) | T-082 |
 | R13 | T-070 Phase 1 이월 3건 + 정기 증분 cron 등록 | S02 | 부분 YES | 운영설정(cron)·배포 | T-082 |
@@ -156,7 +157,7 @@ R01~R41(task 기원) + N01~N08(절차서 기원) + A01~A06(S00 실측 신규). �
 
 A05(킬스위치 발동 알림이 사용자에게 도착했는지)는 task 가 아니라 **사용자 확인** 항목이다(S05, 텔레그램 실패 로그는 그 시각에 없음).
 
-배정 집계: task 기원 41건 중 **17건 후속 task 배정**(T-081 7 · T-082 6 · T-083 4), **24건 선행 미충족/사용자 대기**. 절차서 기원 8건 중 N03(정의)·N08 배정, 6건 대기. 실측 신규 A01~A06 중 A01~A04·A06 배정, A05 사용자 확인.
+배정 집계: task 기원 41건 중 **17건 후속 task 배정**(T-081 7 · T-082 6 · T-083 4), **24건 선행 미충족/사용자 대기**. 절차서 기원 8건 중 N03(정의)·N08 배정, 6건 대기. 실측 신규 A01~A07 중 A01~A04·A06·A07 배정, A05 사용자 확인.
 
 ## 6. 파일 소유·충돌 방지·작업 순서
 
@@ -191,3 +192,5 @@ A05(킬스위치 발동 알림이 사용자에게 도착했는지)는 task 가 �
 | 2026-10-25 00:xx | v1 작성 — S00 상태 대조·task 25개 대조·잔여 작업 분리·T-080~T-083 접수(Judge) | [T-079](../../agent-vault/10-Flow/tasks/T-079-s00-baseline-and-ledger.md) |
 | 2026-10-25 00:5x | S00 `완료(문서 범위)` 표기 — 독립 Reviewer 2회 지적(M 4·L 12·R 5) 반영, 문서 QA(링크·ID·건수·민감정보) 통과. 킬스위치 −0.7% 오류를 −2.8% 로 정정 | T-079 `## Reviewer`·`## QA` |
 | 2026-10-25 10:5x | 사용자 답변 반영: D-1·D-5 권고대로, D-3 KIS 읽기 전용 조회 실행(§2.8 요약 · A06 신규 · #2107 은 브로커 미존재 · USD 행 일치), D-4 모두 커밋·push 진행 | T-079 |
+| 2026-10-25 11:0x | D-4 실행: 커밋 3개 push·배포 ok(릴리스 `20261025-105456-34ab66dd`). T-040 운영 반영(현 HEAD 기준 Reviewer 재감사 PASS) — S09 안전·R03 처리. 작업 트리 `@workspace/api-usage` 링크 복구. T-080 Developer 착수(설계 v1, Judge C1 Codex 불요) | T-079·T-040 |
+| 2026-10-25 12:0x | T-080 Phase 1 코드 커밋 `294f7e0`(독립 Reviewer 3회: 조건부→통과→통과, Codex high 1 채택·반영, QA 통과(주의 있음)). 남은 한계 R-1·반대 방향 편향 A07 명시. 킬스위치는 ON 유지 | T-080 |
