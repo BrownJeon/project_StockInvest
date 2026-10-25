@@ -216,8 +216,16 @@ export function checkOrderMax(req: OrderRequest, effectiveMax: number): LimitChe
  * 이번 주문을 포함했을 때 한도 초과 여부를 반환.
  *
  * 정책 (2026-04-27): 시장별 누적 분리 — orders.market 필터로 국내/해외 별도 카운트.
+ *
+ * 🔴 T-081 WP-B (F10) — `pending` 은 **다른 주문의 것이면 합산한다**(송신 중 = KIS 응답 대기도 예산을 쓴다). 예전에는 자기 행 이중 계산을
+ *    피하려고 `pending` 전부를 뺐는데, 그러면 거의 동시에 들어온 두 매수가 서로의 `pending` 을 못 보고 둘 다 통과해 한도를 넘었다
+ *    (일회용 MariaDB 재현: 남은 한도 40 에 동시 10건 × 15 → 150 통과). 이제 **자기 행만** 뺀다 — 자기 행을 INSERT 한 뒤 검사하는
+ *    `submitOrder` 순서와 합쳐 어떤 끼어들기에서도 통과 합계가 한도를 넘지 않는다(대신 동시 두 건이 서로를 보고 둘 다 거부될 수 있다 — 보수 방향).
+ * @param selfOrderId 호출자가 이미 INSERT 한 자기 `pending` 행 id(`submitOrder` 는 항상 넘긴다). 자기 행이 없는 호출(승인 알림의 사전 판정 —
+ *    `approval-context.ts`)은 생략 → 오늘 `pending` 전부를 합산한다. 양의 정수가 아니면 아무 행도 빼지 않는다(자기 행이 있다면 이중 계산 →
+ *    자기 주문 거부 = fail-closed).
  */
-export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number): Promise<LimitCheck> {
+export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number, selfOrderId?: number): Promise<LimitCheck> {
   // fail-safe (Phase 0): 한도 미설정(0)·비정상값이면 무제한이 아니라 전면 거부.
   if (!Number.isFinite(effectiveDailyMax) || effectiveDailyMax <= 0) {
     return { ok: false, reason: 'daily_limit', detail: 'daily limit not configured (0) — buy blocked' };
@@ -233,15 +241,17 @@ export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number
     const market = inferMarket(req);
     // 일일 한도 = 매수 capital deployment. 매도는 자본 회수 (checkOrderMax 와 일관).
     // cancelled = 자본 환불 → 한도에서 제외 (자동 취소가 한도 점유 못 하도록).
-    // pending = submitOrder INSERT 직후 자기 자신 self-double-count 방지.
+    // pending = 다른 주문의 송신 중 예약은 합산, **자기 행만** 제외(T-081 WP-B). id 0 은 AUTO_INCREMENT 에 없다 → 아무것도 빼지 않음.
+    const selfId = typeof selfOrderId === 'number' && Number.isSafeInteger(selfOrderId) && selfOrderId > 0 ? selfOrderId : 0;
     const [rows] = await pool.query<RowDataPacket[]>(
       `SELECT COALESCE(SUM(amount_krw), 0) AS sum_krw
        FROM orders
        WHERE created_at >= ?
          AND market = ?
          AND side = 'buy'
-         AND status NOT IN ('rejected','failed','blocked','cancelled','pending')`,
-      [start, market],
+         AND status NOT IN ('rejected','failed','blocked','cancelled')
+         AND NOT (status = 'pending' AND id = ?)`,
+      [start, market, selfId],
     );
     const already = Number(rows[0]?.sum_krw ?? 0);
     if (already + amount > effectiveDailyMax) {

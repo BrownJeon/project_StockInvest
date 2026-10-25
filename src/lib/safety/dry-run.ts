@@ -102,7 +102,7 @@ interface SubmitOptions {
  *  3. Kill Switch
  *  4. 심볼 화이트리스트
  *  5. 단계별 1회 한도
- *  6. 일일 누적 한도
+ *  6. 일일 누적 한도 (2에서 얻은 자기 orderId 만 합산에서 제외 — 다른 주문의 pending 은 합산, T-081 WP-B)
  *  6c. T-072 검증 상태 관문(G6) — 매수만. 미검증·미등록·귀속 없음·조회 실패 → blocked(validation_gate). DRY_RUN 과 무관(F-4)
  *  7. DRY_RUN: 실제 송신 생략 → status=dry_run
  *  8. 실 송신 → status=accepted (상세 상태는 거래소 응답에 따라 후속 업데이트). `realSubmit` 직전에 6c 를 한 번 더(F-15)
@@ -208,8 +208,9 @@ async function submitOrderInner(
 
   // sell은 포지션 청산이므로 일일 누적 한도도 제외 — 1회 한도·변동성 가드와 동일 원칙.
   // 이전: sell이 daily_limit에 걸려 청산 차단됨 (변동장 손절 불가 위험). 정책 일관성 회복.
+  // T-081 WP-B — 자기 `pending` 행(orderId)만 합산에서 뺀다. 다른 주문의 `pending`(송신 중)은 합산 → 동시 매수 경합 차단.
   if (req.side !== 'sell') {
-    const daily = await checkDailyMax(reqWithKrw, effDailyMax);
+    const daily = await checkDailyMax(reqWithKrw, effDailyMax, orderId);
     if (!daily.ok) {
       await markBlocked(orderId, daily.reason ?? 'daily_limit', daily.detail);
       return { ok: false, orderId, clientOrderId, blockedBy: daily.reason, error: daily.detail };
