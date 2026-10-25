@@ -10,7 +10,7 @@
 #
 #   1) 로직 시나리오 단계 — GIT_INDEX_FILE 로 만든 **임시 index** 에만 가짜 blob 을 stage 하고 훅을
 #      직접 호출한다. 이 단계는 실제 index 를 건드리지 않는다. 다만
-#        · 판정 fixture(agent-vault/10-Flow/tasks/T-983~998-hooktest-*.md)를 **실제 작업 트리에** 잠시
+#        · 판정 fixture(agent-vault/10-Flow/tasks/T-981~998-hooktest-*.md)를 **실제 작업 트리에** 잠시
 #          썼다가 EXIT trap 으로 지운다(kill -9 같은 강제 종료면 남을 수 있다). 실행 중 다른 세션이
 #          `git add -A` 하면 그 커밋에 섞일 수 있다.
 #        · 가짜 blob 은 .git/objects 에 dangling object 로 남는다(`git gc` 로 정리된다).
@@ -723,6 +723,55 @@ stage_and_run 1 "(t075-m11) 안전 2개 중 마지막 파일만 scope(T-983) →
   "$(msg 'fix(T-983): 혼합 커밋')" "${T075_MIX_TWO[@]}"
 
 echo ""
+echo "[T-085 — 브로커 체결 원장 경로(src/lib/broker-ledger/) 추가]"
+
+# T-075 와 같은 형식: ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과(통과 문구까지 확인) ③scope 밖 → 차단.
+# 새 경로 파일 **하나만** stage 한다 — 목록에서 이 항목만 빠져도 ①·③ 이 실패한다(②는 문구 단언으로 실패).
+# 2026-10-25 현재 디렉토리가 없으므로 T-087 이 만들 예정인 실제 파일 이름(collector.ts)을 쓴다.
+T085_BL="src/lib/broker-ledger/collector.ts"
+
+cat > "agent-vault/10-Flow/tasks/T-982-hooktest-t085-scoped.md" <<'EOF'
+---
+task_id: T-982
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/broker-ledger/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-982-hooktest-t085-scoped.md")
+
+# ③ 용 — 이웃 경로만 검토한 판정. 순수 함수 원장(src/lib/ledger/)·접두어만 겹치는 broker/·
+#    같은 이름의 scripts/ 디렉토리 어느 것도 src/lib/broker-ledger/ 를 덮지 않아야 한다.
+cat > "agent-vault/10-Flow/tasks/T-981-hooktest-t085-nearmiss.md" <<'EOF'
+---
+task_id: T-981
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/ledger/, src/lib/broker/, scripts/broker-ledger/, src/lib/broker-ledger)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-981-hooktest-t085-nearmiss.md")
+
+stage_and_run 1 "(t085-a1) broker-ledger/collector.ts + 판정 미기록(T-993) → 차단" \
+  "$(msg 'feat(T-993): 체결 수집기')" "$T085_BL"
+stage_and_run_expect "$T075_OK" 0 "(t085-a2) broker-ledger/collector.ts + T-982(scope 포함) → 통과" \
+  "$(msg 'feat(T-982): 체결 수집기')" "$T085_BL"
+stage_and_run 1 "(t085-a3) broker-ledger/collector.ts + T-981(이웃 경로 scope) → 차단" \
+  "$(msg 'feat(T-981): 체결 수집기')" "$T085_BL"
+stage_and_run 1 "(t085-a4) broker-ledger/collector.ts + task ID 없음 → 차단" \
+  "$(msg 'feat: 체결 수집기')" "$T085_BL"
+
+# 하위 경로(테스트 포함)도 디렉토리 전체 매치로 감사 대상 — 차단 기대는 경로 하나씩.
+stage_and_run 1 "(t085-p1) broker-ledger/__tests__/collector.test.ts (하위·테스트) → 차단" \
+  "$(msg 'test: 수집기 시험 수정')" "src/lib/broker-ledger/__tests__/collector.test.ts"
+
+# 넣지 않기로 한 경로·이름만 비슷한 이웃은 계속 비차단(과도차단 회귀 방지).
+# 줄마다 겨냥하는 변이: `^src/lib/` 아래 ledger 로 확대(ledger/compute.ts) · 끝 `/` 삭제(broker-ledger-old/·
+# broker-ledger.ts) · `^` 삭제(앞에 디렉토리가 붙은 경로) · `^scripts/` 쪽으로 확대(scripts/broker-ledger/).
+stage_and_run 0 "(t085-n1) ledger/·broker-ledger 이웃·scripts/broker-ledger/ → 통과(미포함)" \
+  "$(msg 'chore: 이웃 파일 정리')" \
+  "src/lib/ledger/compute.ts" "src/lib/broker-ledger-old/x.ts" "src/lib/broker-ledger.ts" \
+  "mockups/src/lib/broker-ledger/x.ts" "scripts/broker-ledger/refingerprint.mjs"
+
+echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
 printf '결과: %d 통과 / %d 실패\n' "$PASS_N" "$FAIL_N"
 echo ""
@@ -800,7 +849,7 @@ if [ "$VERBOSE" -eq 1 ]; then
 fi
 
 echo ""
-echo "워킹트리 영향 확인 (T-983~998 테스트 fixture 가 남아 있지 않아야 함):"
+echo "워킹트리 영향 확인 (T-981~998 테스트 fixture 가 남아 있지 않아야 함):"
 git status --short | sed 's/^/  /'
 echo ""
 echo "✅ 전체 검증 통과."
