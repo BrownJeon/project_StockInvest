@@ -12,7 +12,7 @@ tags:
 - **[[T-091-app-version-gate-and-m2]]**: 사용자 결정 "t-091은 권고대로 진행해줘"(M2 에 포함) + 데모 승인 "T-091 데모 v1 의 B. 옛 앱 로그인 화면은 B안으로 진행해줘"(대안 B: 화면 위 경고 띠 + Google 버튼 비활성). **WP-A(웹 전용)**: 앱이고 설치 build 가 필요 최소(2) 미만일 때만 로그인 화면 맨 위에 "앱 업데이트가 필요합니다" 띠 + 비활성 Google 버튼(웹·새 앱·버전 모름은 변화 없음) — 구현·Reviewer 2라운드·Codex 0건·QA(실제 브라우저 11시나리오) 통과, 로컬 커밋 `7844a91`(브랜치 `app-gate-t091`, worktree `~/.node-local/stockinvest-app-gate-t091`, **main 미병합·미push — 웹 push 가 곧 배포라 사용자 승인 대기, 장외 창 15:40~22:20 KST 권고**). 표 값 `googleLogin: 2` 가 공개 APK 1.0.1 과 일치해 지금 배포해도 막다른 길 없음. **WP-M2(App Links)는 미착수 — 사용자 결정 대기**(task T-091 "WP-M2 착수 전 사용자 결정·몫" 4항: M2-0 예측 시험·시험 APK 1.1.0·assetlinks 서빙 방식 middleware 권고·착수 시점/수익 연결).
 - **새 task 번호는 T-093 이상**(T-091·T-092 사용).
 - ⚠ **T-091 이 `src/middleware.ts` 를 고치게 되면(M2 assetlinks) Reviewer 판정 scope 에 `src/middleware.ts` 와 `src/__tests__/middleware-public-paths.test.ts` 를 둘 다 적어야 훅이 통과**(T-092 로 후자도 감시).
-- 정리 대상(승인 대기): worktree 2개(`~/.node-local/stockinvest-app-gate-t091` — `node_modules`(npm ci 설치 실제 디렉터리, 정리 때 `rm -r`)·`.next` 94MB 포함 — T-091 push 승인 전에는 보존, `~/.node-local/stockinvest-hook-t092` — T-092 병합 완료라 정리 가능)
+- worktree 상태(11:48): T-092 worktree·브랜치 `hook-auth-impl-t092` 는 병합 완료라 **정리했다**. **`~/.node-local/stockinvest-app-gate-t091`(브랜치 `app-gate-t091`, 커밋 `7844a91`)는 T-091 push 승인 전이라 보존** — `node_modules`(`npm ci` 로 설치한 실제 디렉터리, 정리 때 `rm -r`)·`.next` 94MB 포함. 저장소의 worktree 는 메인 트리 + 이것 하나.
 
 ## 2026-10-26 09:05 — T-090 완료: 커밋 훅이 인증 API(`src/app/api/auth/`)를 감시 — push·운영 배포 완료
 
