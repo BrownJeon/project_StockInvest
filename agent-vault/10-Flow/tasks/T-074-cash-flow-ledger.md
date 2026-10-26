@@ -1,7 +1,7 @@
 ---
 task_id: T-074
 title: 자금 이동(입금·출금·환전) 원장 — 앱에서 직접 기록하고 순입금을 반영해 자산 손익을 다시 계산
-status: in-progress
+status: done
 priority: high
 roles_involved: [leader, analyst, designer, developer, reviewer, qa, deployer, judge]
 related_tasks: [T-069, T-064, T-070, T-073, T-066]
@@ -13,11 +13,11 @@ aliases:
   - 입출금원장
   - cash-flow-ledger
 created: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-26
 base_ref: fa0669c9a651119e362100d1f711bd42eda9ec89
 risk_level: R1
 developer_model: opus
-waiting: [analyst 회계 방식 자문, 사용자 확인 — 달러 예수금 불일치, designer 데모 승인]
+waiting: []
 demo_gate:
   required: true
   level: "full"

@@ -13,8 +13,8 @@ aliases:
   - 보유기준정리
   - Phase0-0a
 created: 2026-10-22
-updated: 2026-10-22
-waiting: [사용자 입력 — 입출금 이력(기준 원장)]
+updated: 2026-10-26
+waiting: []
 demo_gate:
   required: false
   level: "none"

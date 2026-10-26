@@ -36,9 +36,9 @@ aliases:
 | D-1 | **[T-074] 손익 기준 정하기 실행** + KIS 앱 달러 $118.60 의 정체(외화예수금/주문가능/증거금 제외, 미체결 매수 유무) | [[T-074-cash-flow-ledger]] | 달러 칸은 비워 저장(채우면 ≈+238만원 가짜 수익) | 자산 손익 재계산 시작 |
 | D-2 | **[T-070 Analyst] ①rsi-oversold 가상 체결 유지+결정일 고정 ②자본·유니버스 정합 (b)"1주 ≤ 슬롯 종목만" ③T-064 Phase 2 백테스트 착수** | [[T-070-daily-bars-phase0]] `## Analyst 검토` | ①유지 ②(b) ③필요(없으면 양의 기대값 주장 불가) | 수익 경로 전체 |
 | D-3 | **[T-064] D4** 합격 기준 숫자(R-02 반영 뒤)·**D6** 승인 방식(건별→정책 수준)·**D7** §13 제안 1~3·**D19②** SEC/KRX 과거 유니버스 보강·**D20** 비용 가드(F05)·가격 정밀도(F12)·병렬 섀도우·결정일 기산점 | [[T-064-profit-engine-design]] §14 | D4 는 Phase 2 사전 등록 전, D6 은 Phase 3 이후 | Phase 2 시작 |
-| D-4 | **[T-076] 범위 a·b·c** (해외 취소 요청 형식+부분체결 잔량 / 매도 잔량 포함 / 검증은 문서 확인 우선) | [[T-076-emergency-cancel-partial-fills]] | ②안 / 제외 / 문서 우선+소액 실거래는 별도 승인 | 해외 비상 취소 정상화 |
+| D-4 | **[T-076] 범위 a·b·c** (해외 취소 요청 형식+부분체결 잔량 / 매도 잔량 포함 / 검증은 문서 확인 우선) | [[T-076-emergency-cancel-partial-fills]] | ②안 / 제외 / 문서 우선+소액 실거래는 별도 승인 | 해외 비상 취소 정상화 ⚠ **[정정 2026-10-26, S00 §5 M-03]** 위 "a·b·c"·"매도 잔량 제외"는 T-076 Stage 0 과 다르다 — T-076 Stage 0 §F 의 a/b/c 는 "원문 해석(한계 수용만 / 해외 취소 형식 수정 / 부분체결 잔량 추가)"이고, 질문 3(매도 잔량 포함) 권고는 **"포함"**. T-076 Stage 0 이 정본([[T-083-s00-follow-up-hygiene]]) |
 | D-5 | **[T-071] 읽기 전용 KIS 응답 캡처(C6)·카나리(실주문 1주) 시점** — 해외 market 주문 발생원(청산 엔진·sell-proposal 실행·price-breakout 매도)을 켜기 **전** 선결 | [[T-071-ledger-fill-recovery]] | 캡처 먼저 | 해외 부분체결 수정의 실측 검증 |
-| D-6 | **[T-055] 매도 제안 2단계 Q1~Q8** (손절 제안 임계값 −6% 등) — 기록상 답 없음 `[추측: 미확인]` | [[T-055-sell-proposal-mode]] §6 | Q1(b) −6%, Q2(a) 5건 일괄 | 보유 종목 매도 제안 실가동 |
+| D-6 | **[T-055] 매도 제안 2단계 Q1~Q8** (손절 제안 임계값 −6% 등) — 기록상 답 없음 `[추측: 미확인]` | [[T-055-sell-proposal-mode]] §6 | Q1(b) −6%, Q2(a) 5건 일괄 | 보유 종목 매도 제안 실가동 ⚠ **[정정 2026-10-26, S00 §5 M-02]** "기록상 답 없음"은 틀렸다 — [[T-055-sell-proposal-mode]] "사용자 결정과 착수 (2026-10-19 밤)" 표에 Q1~Q8 이 모두 확정돼 있다(Q1 (b) 진입가 대비 −6% · Q2 (a) 첫 거래일 5건 일괄·건별 결정 등). 이 항목은 정본으로 쓰지 말 것([[T-083-s00-follow-up-hygiene]]) |
 | D-7 | **[T-062] 해외 post-market 스위치** 켤 조건 3가지·시점(`system_config.post_market_overseas_enabled`, 기본 꺼짐) | [[T-062-post-market-overseas-p2]] Q-3 | 실적 일정(`confirmed`)이 쌓인 뒤 + D20 비용 가드 선행 | 미국 카드 생성 |
 | D-8 | **[T-069] 보유 정책 선택지 질문**(선택 1~6·10·12) → v0b(정책별 손실 분포) | [[T-069-holdings-baseline-report]] §7.3 | — | 보유 5→3종목 취급 규칙 |
 | D-9 | **커밋 훅 감시 경로**: `scripts/grant-*.sql` 추가 여부(Reviewer·Leader 모두 추가 권고), `src/lib/reports/`·`src/app/api/settings/risk-policy/` 추가 여부 | [[T-075-safety-paths-extension]] | 추가 | 안전 경로 감사 범위 |
@@ -57,7 +57,7 @@ aliases:
 | **T-057 미국 분석 체계** | P0 노트, P1 수집기(T-059), P2 post-market 해외(T-062, 스위치 꺼짐) | **P3** 런타임 AI 프롬프트에 P1 관측값 연결(선행: ADP-006 = hold) | [[T-057-us-stock-analysis-data-collection]] §5 |
 | **T-071 장부·체결 복구** | WP-1 해외 부분체결 오판(F01)·WP-1b 비상 취소 ok 검사 | **WP-2(F02)** 체결가·수수료·원가·통화 분리 · **WP-3(F10)** 일일 예산 경합 확증 · **D17** 누적 분할 게이트 · WP-4 = T-076 | [[T-071-ledger-fill-recovery]] |
 | **T-055 매도 제안** | 1단계 읽기 전용 시뮬레이션(10-20 배포) | **2단계** 실제 제안+건별 승인(안전 경로 4·화면 2, standard) · 3단계 | [[T-055-sell-proposal-mode]] |
-| **T-074 입출금 원장** | 전 단계·배포(10-24 09:02) | 사용자 사용 시작(D-1)·낮은 후속 13건 | [[T-074-cash-flow-ledger]] `## Leader 기록` |
+| **T-074 입출금 원장** | 전 단계·배포(10-24 09:02) | 사용자 사용 시작(D-1)·낮은 후속 13건 ⚠ **[정정 2026-10-26, S00 §5 M-08]** 열린 항목은 **12건**(Reviewer D4 는 Stage 7 에서 해소) | [[T-074-cash-flow-ledger]] `## Leader 기록` |
 | **T-072 검증 관문 후속** | 6곳 관문·가상 체결 | 전략 ID 불일치(`oversold-bounce-v1` vs `-daily-v1`)·`body.strategyId` 신뢰 경계·`paper_fills` 소비 전 고아 reconcile·T-064 D4/D6/D7/D20 | [[T-072-validation-gate]] |
 | **프로젝트 재구성 인터뷰(D-11)** | 요구 12개 확정 | 정식 설계: 후보/실행 시그널 분리·공유 예산 원자적 예약·판단 기록(가설·유효/무효 조건·점검일)·조건부 추천 재평가 | 인터뷰 기록 |
 
@@ -80,7 +80,7 @@ aliases:
 
 **4-3 신호·전략·분석** — `weekly-trend-follow` 룰 발화 불가 · 트레일링 활성화 기준값 단일 출처화 · 판단보류 구조적 상태 전이 경보 · 야간 검증 cron·룰별 검증 상태 · 시나리오 기반 손절 알람(자동 청산 대체, 미구현) · 정적 유니버스 `NYS:WMT`→`NAS:WMT`·`BRK.B` · 국내 post-market 결함(AI 파싱 실패 은폐·부분 INSERT·구간 검증 부재) · 반일장 D0 · 사후검증 리포트 결함 5건(Analyst 지적: `postmortem-core.js:284-291` 단위 불명 70 오표기·`:643` D+10 구간 없음·`:347-354` 당일 만료 반사실 미표기·H-D 다중비교·기준선 부재) · 미국 가격 환율 역산 약점(과거 시그널은 원화 가격만 저장 — USD 일봉 D+1 시가로 우회 가능, 스크립트 30~60줄).
 
-**4-4 화면·설정** — 내 설정을 매매 엔진에 반영(미구현) · `/recommend/build`·`/profile`·`/settings` 의 미구현 각 1건(roadmap) · 360px 이름 말줄임 · `OrderDetail`·`SkippedSignalLog` 문자열 `indicators` 파싱 · T-066 Low(L-1 평단/현재가 환율 시점 오차·L-2 저장 직후 응답 조립 실패·L-6~L-9) · T-074 낮은 후속 13건(Reviewer D1~D6·E1·E2·F1·F2, Codex 지적 2, QA D-3·D-5).
+**4-4 화면·설정** — 내 설정을 매매 엔진에 반영(미구현) · `/recommend/build`·`/profile`·`/settings` 의 미구현 각 1건(roadmap) · 360px 이름 말줄임 · `OrderDetail`·`SkippedSignalLog` 문자열 `indicators` 파싱 · T-066 Low(L-1 평단/현재가 환율 시점 오차·L-2 저장 직후 응답 조립 실패·L-6~L-9) · T-074 낮은 후속 13건(Reviewer D1~D6·E1·E2·F1·F2, Codex 지적 2, QA D-3·D-5) ⚠ **[정정 2026-10-26, S00 §5 M-08]** 열린 항목은 12건(Reviewer D4 는 [[T-074-cash-flow-ledger]] Stage 7 에서 해소).
 
 **4-5 안전·프로세스** — 훅 자가 점검(canary 패턴)·`test-git-hooks.sh` E2E 임시 인덱스 사용 · T-056 USD 예수금 울타리 허용 목록 정책(이번에 원장 2파일 추가로 선례 생김) · QA 가 지시 시나리오를 조용히 축소해도 모름(🟠 프로세스) · 커밋된 `scripts/grant-stockinvest-user.sql` 에 운영 DB 비밀번호 평문(사용자 결정: 교체 안 함 — 감시 범위만 D-9) · 워크스페이스 이슈 ISS-0003/0004/0008 점검일 경과(다른 프로젝트 관련, 참고).
 

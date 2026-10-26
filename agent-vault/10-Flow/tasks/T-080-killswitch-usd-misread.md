@@ -13,7 +13,7 @@ tags:
   - domain/restructure
 aliases:
   - 킬스위치 오집계
-waiting: [Phase 2 — 평일 저녁(16:40~06:30) KIS 읽기 조회 1회 뒤 USD 가림 원인 확정·반대 방향 편향(A07/M-3) 처리, 사용자 D-1 킬스위치 해제 시점]
+waiting: [Phase 2 USD 가림 원인 확정 — 평일 저녁(16:40~06:30) KIS 읽기 1회는 사용자 승인(10-26)이나 캡처 방식 재승인 대기(broker-fills 라우트는 output2 USD 행을 저장하지 않음), 사용자 D-1 킬스위치 해제 판단 = Phase 1 이후 약 4주 관측한 뒤(2026-11-23 경)]
 created: 2026-10-25
 updated: 2026-10-25
 ---
@@ -86,6 +86,8 @@ Leader(메인) → Developer(Opus) → Reviewer(Sonnet) → [Judge C2 → Codex?
 - 2026-10-25: 사용자 D-1 "권고대로"(킬스위치 유지·T-080 먼저)에 따라 진행. 순환: Developer 구현(설계 v1) → Reviewer 1차 조건부(M-1 낡은 이월이 구매 후 손실을 가림·M-2 환율 상하한 없음) → Developer 보강(구매 증거 가드·환율 band·변이 보강) → Reviewer 2차 통과 → Judge C2 → Codex review(high 1: 왕복 거래가 양 끝 수량 비교를 피함) → Developer 3차(S~H 중간 스냅샷 전체 검사) → Reviewer 3차 통과(Codex 채택, 심각도 M) → QA 통과(주의 있음). 판정 줄은 `## Reviewer` 마지막 줄만 유효.
 - **Leader 수용 기록(사용자 보고 의무):** ① 남은 한계 R-1 — 가려진 구간(마지막 양수 관측 뒤 최대 20h)에 비현금 매수 정황이 스냅샷에 남지 않은 채 USD 가 환전·출금되거나, 스냅샷 사이(실측 간격 중앙값 약 95~100분, 최근 14일 최대 147분, 크론 공백 시 수 시간)에서 시작·종료한 왕복 거래가 있으면 진짜 손실이 약 −(5+c)% (현 계좌 c≈11% → 약 −16.5%) 보다 얕을 때 보류될 수 있다. 남는 완충은 보류마다 나가는 critical 알림(수동 켜기 안내)뿐이다. 설계 v1 의 "알려진 한계(수용)" 와 사용자 "권고대로" 에 근거해 Leader 가 수용하고 이 문서와 최종 요약에 범위를 그대로 적는다. ② **M-3(기존 결함)** 은 Phase 1 밖 — 기준선 가려짐·현재 보임이면 원시가 약 +11~15%p 부풀어 진짜 −10% 도 침묵한다(실데이터 주말 9틱, 원장 A07). **"킬스위치 감시가 복구됐다" 는 주장은 하지 않는다.** ③ "절반 마진이 낡은 이월을 상쇄한다" 는 문구는 쓰지 않는다(전액 환전 경우 성립 안 함).
 - 비차단 완화 후보(Reviewer 3차): ㉠ 근거 행→중간 행→가려진 행 연속 간격 3시간 초과 시 이월 불가(관측 밀도 가드; 실제 보류 사건 둘의 최대 간격 136분) ㉡ 보류가 이어질 때 재알림 간격 12h→약 3h ㉢ 알림에 근거 행→가려진 행 사이 KRW 증가분·최대 스냅샷 간격 표시 ㉣ Phase 2 에서 T-081 의 KIS 체결내역으로 "마지막 양수 관측 뒤 체결 있음" 확인. 코드 머리 주석의 "연속된 두 시간당 스냅샷 사이" 표현은 실제 간격(중앙값 약 95~100분·크론 공백 가능)과 달라 다음 커밋에서 정정한다(로직 변경 없음 — 감사 후 주석 수정은 하지 않았다).
+
+- **2026-10-26 사용자 결정(15:30 이전, 발화 그대로) · 코드 대조는 15:3x**: ① "Q1: 승인" — Phase 2 의 평일 저녁 KIS 읽기 조회 1회 승인. 승인 당시 설명한 방식(운영 앱 `POST /api/cron/broker-fills?trigger=manual&market=overseas&kind=position_snapshot` 1회, KIS 읽기 약 1~2건, 쓰기는 `broker_*` 뿐)에는 **결함이 있다 [확실, 코드 대조]**: 이 라우트는 CTRP6504R 응답에서 보유 종목 행만 `broker_position_snapshots` 에 저장하고(`normalize.ts` `normalizeSnapshotRow`: output1 의 `pdno`·`cblc_qty13` 등) **USD 예수금 행(output2 `frcr_dncl_amt_2`)과 output3 합계는 저장하지 않으며** `broker_fill_runs` 에도 요약 값 컬럼이 없다 → 호출해도 "USD 가림 원인(응답값 자체가 0 인가·다른 필드에 값이 있는가)"을 알 수 없다. 그래서 **그 방식으로는 호출하지 않았다.** 대안(원시 응답 구조를 읽는 1회성 읽기 전용 캡처 스크립트, 같은 KIS 읽기 1회·DB 쓰기 0, 단 앱 모듈의 DB 부팅 설정이 한 번 도는 10-25 전례의 부수 효과 주의)은 사용자 재승인 후 진행한다. ② "Q2: 킬스위치는 페이즈1 이후에 4주정도 분석내역 지켜본 후에 결정하자" — 킬스위치는 **ON 유지**, 해제 판단은 Phase 1(10-25 14:10 배포) 이후 약 4주(**2026-11-23 경**) 관측한 뒤 사용자가 결정. Leader 해석(틀리면 정정): 그 사이 Phase 1 보류 알림·`safety_kill_switch` 상태·평일 야간 USD 가림 빈도 기록을 쌓아 그날 근거로 제시한다. 이 결정으로 Phase 2 는 킬스위치 해제의 선행 조건이 아니라 **USD 집계 정확도(T-081 기준 정하기 D-2 달러 칸·월 지표)** 의 선행 조건이 됐다.
 
 ## Developer 기록
 - [2026-10-25] 설계 v1 Phase 1 구현(로컬 작업 트리, 미커밋). 변경 파일: `src/lib/safety/kill-switch.ts`(수정), `src/lib/safety/hidden-usd-carry.ts`(신규 순수 모듈), `src/lib/safety/__tests__/hidden-usd-carry.test.ts`(신규 32건), `src/lib/safety/__tests__/kill-switch-hidden-usd.test.ts`(신규 21건). `snapshot-composition.ts`·호출부(`portfolio-snapshot/route.ts` — `drawdown` 을 JSON 으로 싣기만 함)는 변경 불필요.

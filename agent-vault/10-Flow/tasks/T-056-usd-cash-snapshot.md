@@ -1,7 +1,7 @@
 ---
 task_id: T-056
 title: 해외 USD 예수금을 포트폴리오 스냅샷에 수집 — 해외 매도 뒤 총자산 과소 표시(P) 해소 (T-055 2단계의 선행 조건)
-status: todo
+status: done
 priority: high
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-055, T-041, T-014, T-015]
@@ -13,7 +13,7 @@ aliases:
   - USD 예수금 스냅샷
   - P 해소
 created: 2026-10-19
-updated: 2026-10-19
+updated: 2026-10-26
 ---
 
 # T-056 — 해외 USD 예수금 스냅샷 수집

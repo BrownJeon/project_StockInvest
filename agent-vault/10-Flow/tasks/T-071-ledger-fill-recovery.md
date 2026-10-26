@@ -14,7 +14,7 @@ aliases:
   - F01
   - F02
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-26
 waiting: []
 demo_gate:
   required: false
@@ -411,6 +411,15 @@ demo_gate:
 - [22:31] **QA 판정: PASS** — 체크 1~8 모두 직접 실행·확인했고 결함 Critical·High·Medium 0건, 격리 사본(HEAD + T-071 파일 10개, sha 일치)에서 tsc 0·eslint 0·jest 201/4,819 통과·`next build` 종료 0, 스모크 (a)~(e) 통과(HEAD 로는 F01 과 cancel-all 결함 재현), 변이 44건 중 39건 killed·생존 5건은 LOW. 커밋은 T-071 파일 10개를 명시 경로로만(WP-1 / WP-1b 분리 가능) 하고, 배포 전 확인할 것은 ①~⑥(특히 C6 캡처 선행)이다.
 
 ## Leader 기록
+
+> 2026-10-26 문서 위생 담당이 배포 사실을 채웠다([[T-083-s00-follow-up-hygiene]] R01, S00 보고서 §5 M-05). 아래 사실은 git·웹훅 로그와 이 문서의 Reviewer·QA 절에서 직접 대조한 것이며, 이 task 를 진행한 Leader 의 당시 기록이 아니다(당시 Leader 기록은 비어 있었다).
+
+- **WP-1·WP-1b 운영 반영 [확실]**: 커밋 `54eb5a3`(WP-1 — 해외 부분체결 오판 F01 수정: 해외 시장가를 지정가로 판정·누적 체결수량 증거로만 종결·CAS 상태 쓰기)와 `a3aa6d1`(WP-1b — 긴급 전체 취소 결과 검사: `ok:true` 일 때만 `cancelled` 로 기록)는 릴리스 `20261022-225754-1163fe2d` 에 실려 **2026-10-22 22:57:54 KST** 운영 반영됐다 — 웹훅 로그 `RELEASE_RESULT {"status":"ok", … "migrated":false}`·`END exit=0`, 직전 릴리스 `20261022-211929-4c2b0e6d`, 두 커밋 모두 이 릴리스 sha(`1163fe2`)의 조상이다.
+  - 같은 배포에 함께 실린 작업: **T-070 Phase 0 코드**(`34608e5`, 일봉 저장소 최소판 수집기·수동 호출 라우트), 문서 커밋 `1163fe2`(10-22 밤 기록). 같은 push 의 직전 릴리스(T-069 `4c2b0e6`) 이후 코드 커밋은 이 3개뿐이다.
+  - **누가 push 를 지시했는지는 확인 못 함** — [[HANDOFF-2026-10-22]] 의 10-23 00:2x 정정 박스가 같은 사실("`origin/main`==`HEAD`==`1163fe2`, 릴리스가 22:57:54 KST 에 이미 배포, 이 세션은 푸시하지 않았고 누가 지시했는지는 확인 못 함")을 적었고, 그 전까지 HANDOFF 본문(§3b·§4)은 "푸시 안 됨"이었다.
+- **심사·검증 기록(이 문서 본문)**: Reviewer 최종 판정 `[22:15] PASS`(scope 9개 안전 파일) · QA `[22:31] PASS`(격리 사본 tsc 0·eslint 0·jest 201 스위트/4,819건·`next build` 종료 0, 변이 44건 중 39건 killed·생존 5건 LOW). Codex C1 [20:47]·C2 [21:56] 완료.
+- **운영 첫 발화·선결조건**: QA 가 "운영 첫 발화 — 미결 0건이라 배포 직후 새 경로가 발화하지 않을 가능성이 높다"고 적었고, 그 뒤 발화 관측 기록은 이 문서에 없다. Reviewer 의 **C6(읽기 전용 KIS 응답 캡처)은 해외 market 주문 발생원(청산 엔진·sell-proposal 실행·price-breakout 매도)을 켜기 전 선결조건**으로 남아 있으며 이행 기록은 이 문서에 없다. 비상 전체 취소의 부분체결 잔량 확장은 WP-4 로 이월(별도 task [[T-076-emergency-cancel-partial-fills]]).
+- **남은 단계**: WP-2(F02 체결 원장·원가)·WP-3(F10 일일 예산 경합)은 [[T-081-s01-ledger-cost-monthly-metric]] 이 이어받았다(T-081 본문 "새로" 항목 ②③). 이 task 의 status `in-progress` 는 위 이월을 반영한 값이다 — 닫을지(이월 완료 처리)는 Leader 판단.
 
 ## 데모 검토 (demo gate)
 

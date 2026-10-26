@@ -16,7 +16,7 @@ updated: 2026-10-25
 base_ref: aa51dd05cb1ee057f806f05b3578a0fc570cfdf7
 risk_level: R2
 developer_model: opus
-waiting: [user_decision]
+waiting: [1주 관측 뒤 사용자 결정(2026-11-02 이후) — D1b 백필·수집 실패 텔레그램 알림]
 demo_gate:
   required: false
   level: "none"
@@ -47,6 +47,8 @@ demo_gate:
 4. **U-4**: ② 일일 수집 크론 등록·스위치 켜기는 "D1a 배포 뒤"(권고대로 예) / ① 백필 35~42 GET 은 "D1b 착수 시"(이 task 범위 아님).
 5. **U-5 예**(T-085 가 별도 작업으로 수행). 6. U-6: 정량화 전 `ok` 희소화 정책 미연결 — D1a 는 월 −5% 판정에 **연결하지 않는다.**
 - **여전히 승인 없이 하지 않는 것**: 킬스위치 해제, 주문·취소, 백필(D1b) KIS 호출, 기존 테이블 DDL, 소비자 연결(D3), 알림 발송.
+
+- **2026-10-26 사용자 결정(15:30 이전, 발화 그대로)**: "Q4: 권고대로 1주 관측 후에 진행하자" → D1b 백필(KIS 읽기 약 35~42건)과 수집 실패·정지 텔레그램 알림은 **D1a 수집을 1주 관측한 뒤**(첫 자동 수집 10-26 07:20 기준 **2026-11-02(월) 이후**) 착수 여부를 사용자가 다시 결정한다. 그동안 수집 스위치 `broker_fills_cron_enabled` 는 켠 채로 둔다. 11-02 에 Leader 가 `broker_fill_runs` 7일치(일자별 6 run 의 상태·`error`·`account_changed`)를 읽기 전용으로 요약해 근거로 제시한다.
 
 ## 정본 (Developer 는 이 문서를 먼저 끝까지 읽는다)
 - 설계 `docs/design/2026-10-25-wpd-broker-fills-design.md` v3.1 — 특히 §0·§2(스키마 의미)·§3(수집 계약·완전성·upsert·크론)·§6(DDL)·§7(D1a 행)·§9(시험 계획)·§10(한계).

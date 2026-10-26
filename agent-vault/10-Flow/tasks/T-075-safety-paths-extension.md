@@ -1,7 +1,7 @@
 ---
 task_id: T-075
 title: 커밋 안전장치(SAFETY_PATHS) 확장 — 전략 검증 입구·마이그레이션·DB 부팅 코드를 감사 대상에 추가
-status: todo
+status: done
 priority: medium
 roles_involved: [leader, developer, reviewer, qa, judge, codex]
 related_tasks: [T-025, T-072]
@@ -11,7 +11,7 @@ tags:
 aliases:
   - SAFETY_PATHS확장
 created: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-26
 base_ref: fa0669c9a651119e362100d1f711bd42eda9ec89
 risk_level: R2
 developer_model: opus

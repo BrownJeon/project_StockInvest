@@ -1,7 +1,7 @@
 ---
 task_id: T-072
 title: 검증 상태 관문(D5) — 검증 안 된 전략의 신규 매수 실주문 차단 + 합격 기준 사전 등록
-status: review
+status: done
 priority: high
 roles_involved: [leader, analyst, developer, reviewer, qa, deployer, judge, codex]
 related_tasks: [T-064, T-067, T-070, T-073]
@@ -13,7 +13,7 @@ aliases:
   - D5
   - 검증관문
 created: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-26
 base_ref: 1163fe2d9a74e42d516d3f4340220498e9cdcfa9
 risk_level: R2
 developer_model: opus
