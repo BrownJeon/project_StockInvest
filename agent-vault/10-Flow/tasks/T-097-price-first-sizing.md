@@ -116,6 +116,12 @@ demo_gate:
 4. **승격 조건에 `typeof amountKRW === 'number'`**(F-9): 문자열 금액 `'100000'` + ON + MU 는 나눗셈 강제변환으로 1주로 올라가지만 `limitBasisKrw` 는 숫자가 아닌 목표를 그대로 돌려줘 ON 에서 fail-open 이다(현재 도달 불가: 배선 0, API `invalidNumericField` 와 DB `Number()` 가 거른다). 시험으로 고정.
 5. 별개 후속 후보(이번 범위 밖, base 와 동일): `POST /api/signals` 는 `quantity` 와 `amountKRW` 를 따로 받아 매수에서 수량이 크고 금액이 작으면 한도가 작은 쪽으로 판정된다(현재 T-072 관문이 먼저 막음) — 매수 요청 수량 주문의 한도 기준을 `max(amountKRW, 단가×수량)` 로 올리는 후속 task 후보.
 
+## Q-E 데모 승인 기록 (18:46 기록)
+
+- 사용자 발화 그대로: "1. 텔레그램 수량에 대하여 승인"(10-26 저녁, 데모 v1 = `mockups/T-097-telegram-sizing-line-v1.html` 을 보고 한 승인). Leader 는 이 발화를 근거로 Q-E 구현(표시 줄)을 시작했다.
+- **게이트 도구 기록은 보류**: `check.mjs approve --version 1 --quote "텔레그램 수량에 대하여 승인"` 이 `DEMO_GATE_REFUSED` — 발화 기록 `.claude/state/demo-gate/prompts.jsonl` 의 마지막 항목이 16:27 이라 이 메시지가 UserPromptSubmit 훅에 기록되지 않았다(원인 미상 — 훅이 이 메시지에서 돌지 않았다). 도구는 Leader 대리 승인을 막으므로 **임의로 기록하지 않았다.** `demo_gate.status` 는 `review_requested` 로 남아 있다. 다음 사용자 발화가 `prompts.jsonl` 에 기록되면 같은 원문으로 재시도한다. 화면 파일이 아니라(텔레그램 메시지 렌더러) 편집 훅이 막지 않는 영역이지만 절차상 기록이 비어 있다는 점을 보고에 명시한다.
+- T-042 데모 면제도 같은 사유 + "면제" 표현을 도구가 생략 요청으로 인식하지 않아(`isWaiverText`) 기록하지 못했다 — 사용자에게 "생략" 표현 한 줄을 요청.
+
 ## 하지 않는 것
 
 사용자 설계 결정 전 코드 변경, 한도 설정값 변경, 운영 DB 쓰기, KIS 호출, push·배포. 전략 승급(T-072 관문 해제)과 이 변경은 별개 — 이 변경은 관문을 풀지 않는다.
