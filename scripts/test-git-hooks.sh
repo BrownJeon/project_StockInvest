@@ -10,7 +10,7 @@
 #
 #   1) 로직 시나리오 단계 — GIT_INDEX_FILE 로 만든 **임시 index** 에만 가짜 blob 을 stage 하고 훅을
 #      직접 호출한다. 이 단계는 실제 index 를 건드리지 않는다. 다만
-#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998·T-967~969-hooktest-*.md)를 **실제 작업 트리에** 잠시
+#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998·T-963~969-hooktest-*.md)를 **실제 작업 트리에** 잠시
 #          썼다가 EXIT trap 으로 지운다(kill -9 같은 강제 종료면 남을 수 있다). 실행 중 다른 세션이
 #          `git add -A` 하면 그 커밋에 섞일 수 있다.
 #        · 가짜 blob 은 .git/objects 에 dangling object 로 남는다(`git gc` 로 정리된다).
@@ -1332,6 +1332,255 @@ e2e_commit "(t093-g8) 실 커밋: 속도 제한 게이트 시험·형제 시험�
   'chore: 시도제한 시험·화면 정리'
 
 echo ""
+echo "[T-098 — 사전 등록(백테스트) 코드: registry/·backtest/ 디렉토리·러너 2개·시험 접두·격리 시험 추가]"
+
+# T-096 P3 의 사전 등록 잠금. 디렉토리 항목 2(registry/·backtest/)·정확 일치 3(러너 2·isolation.test.ts)·접두 1(__tests__/backtest-).
+# 항목마다 ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과(통과 문구까지 확인) ③이름이 비슷한 이웃만 검토한 판정 → 차단.
+# 각 시나리오는 경로 **하나만** stage 한다 — 목록에서 그 항목 하나만 빠져도 그 항목의 ①·②·③ 이 실패한다.
+# isolation.test.ts 말고는 전부 아직 main 에 없는 경로다(P3 미커밋) — staged 이면 신규 파일도 걸리는지가 곧 이 절의 시험이다.
+# g1-record.json·oos-locks/*.lock 은 P3 작업 트리에도 아직 없다(러너·Leader 가 나중에 만든다).
+T098_ITEMS=(
+  "src/lib/profit-engine/registry/preregistration.json"            # a1  사전 등록 수치(§B 해시 고정)
+  "src/lib/profit-engine/registry/oos-ledger.json"                 # a2  OOS 원장(러너가 갱신)
+  "src/lib/profit-engine/registry/is-ledger.json"                  # a3  IS 원장(러너가 갱신)
+  "src/lib/profit-engine/registry/hash.ts"                         # a4  §B·H_r 해시 코드
+  "src/lib/profit-engine/registry/g1-record.json"                  # a5  아직 없는 G1 기록
+  "src/lib/profit-engine/registry/oos-locks/rsi-oversold-daily-US.lock"  # a6  아직 없는 잠금 파일(하위 디렉토리)
+  "src/lib/profit-engine/backtest/fill.ts"                         # a7  체결 모델
+  "src/lib/profit-engine/backtest/signals/rsi-oversold-daily.ts"   # a8  신호(하위 디렉토리)
+  "scripts/profit-engine/backtest-runner.mjs"                      # a9  실행기(정확 일치)
+  "scripts/profit-engine/backtest-runner-core.js"                  # a10 관문 본체(정확 일치)
+  "src/lib/profit-engine/__tests__/backtest-runner.test.ts"        # a11 시험(접두)
+  "src/lib/profit-engine/__tests__/backtest-fixtures.ts"           # a12 공용 합성 일봉(접두 — .test 아님)
+  "src/lib/profit-engine/__tests__/isolation.test.ts"              # a13 격리 방어선(정확 일치, 이미 추적 중)
+)
+
+# ② 용 — 새 항목 전부를 덮는 판정(디렉토리 2·러너 2·시험 파일 하나씩 — 접두 `…/backtest-` 는 scope 로 쓸 수 없다).
+cat > "agent-vault/10-Flow/tasks/T-964-hooktest-t098-scoped.md" <<'EOF'
+---
+task_id: T-964
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/profit-engine/registry/, src/lib/profit-engine/backtest/, scripts/profit-engine/backtest-runner.mjs, scripts/profit-engine/backtest-runner-core.js, src/lib/profit-engine/__tests__/backtest-baseline-parity.test.ts, src/lib/profit-engine/__tests__/backtest-fill.test.ts, src/lib/profit-engine/__tests__/backtest-fixtures.ts, src/lib/profit-engine/__tests__/backtest-metrics.test.ts, src/lib/profit-engine/__tests__/backtest-pipeline.test.ts, src/lib/profit-engine/__tests__/backtest-registry.test.ts, src/lib/profit-engine/__tests__/backtest-runner.test.ts, src/lib/profit-engine/__tests__/backtest-signals.test.ts, src/lib/profit-engine/__tests__/isolation.test.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-964-hooktest-t098-scoped.md")
+
+# ③ 용 — 이름이 비슷한 '이웃'만 검토한 판정. 어느 것도 새 항목을 덮지 않아야 한다:
+#    슬래시 없는 `…/registry`·`…/backtest`(= 그 이름의 파일 하나만) · 가짜 접두 디렉토리(registry-x/·backtestx/) · 확장자만 다른
+#    러너(.mjs.bak·-core.ts) · 같은 디렉토리의 사후검증 본체 · 접두를 scope 로 쓴 `…/__tests__/backtest-`(= 그 이름의 파일 하나만) ·
+#    위치·확장자만 다른 격리 시험 · 이웃 시험 · 일봉 수집 · 슬래시 없는 `scripts/profit-engine`.
+cat > "agent-vault/10-Flow/tasks/T-965-hooktest-t098-nearmiss.md" <<'EOF'
+---
+task_id: T-965
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/profit-engine/registry, src/lib/profit-engine/backtest, src/lib/profit-engine/registry-x/, src/lib/profit-engine/backtestx/, scripts/profit-engine/backtest-runner.mjs.bak, scripts/profit-engine/backtest-runner-core.ts, scripts/profit-engine/postmortem-core.js, scripts/profit-engine, src/lib/profit-engine/__tests__/backtest-, src/lib/profit-engine/__tests__/isolation.test.tsx, src/lib/profit-engine/isolation.test.ts, src/lib/profit-engine/__tests__/signal-postmortem-core.test.ts, src/lib/profit-engine/daily-bars-collector.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-965-hooktest-t098-nearmiss.md")
+
+# 차용 방지 용 — **다른 안전 경로**만 검토한 판정. 엔진이 부르는 지표(src/lib/strategy/ — 이미 감시 중)·시그널·전략 라우트·
+#    DDL·훅 자신·브로커 원장을 전부 적어도 사전 등록 코드 하나 열어 주지 않아야 한다(지표를 봤다고 신호·판정을 본 게 아니다).
+cat > "agent-vault/10-Flow/tasks/T-966-hooktest-t098-borrowed.md" <<'EOF'
+---
+task_id: T-966
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/strategy/, src/lib/signals/, src/app/api/strategies/, src/app/api/settings/strategies/, scripts/migrations/, scripts/git-hooks/, src/lib/broker-ledger/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-966-hooktest-t098-borrowed.md")
+
+# 구현만 검토한 판정 — registry/·backtest/·러너는 덮지만 시험(backtest-*·isolation)은 덮지 않는다(T-093 ④ 와 같은 처리).
+cat > "agent-vault/10-Flow/tasks/T-963-hooktest-t098-implonly.md" <<'EOF'
+---
+task_id: T-963
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/profit-engine/registry/, src/lib/profit-engine/backtest/, scripts/profit-engine/backtest-runner.mjs, scripts/profit-engine/backtest-runner-core.js)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-963-hooktest-t098-implonly.md")
+
+t098_i=0
+for t098_p in "${T098_ITEMS[@]}"; do
+  t098_i=$((t098_i + 1))
+  stage_and_run 1 "(t098-a${t098_i}.1) ${t098_p#src/lib/} + 판정 미기록(T-993) → 차단" \
+    "$(msg 'feat(T-993): 백테스트 수정')" "$t098_p"
+  stage_and_run_expect "$T075_OK" 0 "(t098-a${t098_i}.2) ${t098_p#src/lib/} + T-964(scope 포함) → 통과" \
+    "$(msg 'feat(T-964): 백테스트 수정')" "$t098_p"
+  stage_and_run 1 "(t098-a${t098_i}.3) ${t098_p#src/lib/} + T-965(이웃 경로 scope) → 차단" \
+    "$(msg 'feat(T-965): 백테스트 수정')" "$t098_p"
+done
+
+# task ID 없이 고친 경우 — 대표 3건(디렉토리·정확 일치 러너·추적 중인 격리 시험 각 1)
+stage_and_run 1 "(t098-b1) registry/preregistration.json + task ID 없음 → 차단" \
+  "$(msg 'chore: 합격 기준 수치 조정')" "src/lib/profit-engine/registry/preregistration.json"
+stage_and_run 1 "(t098-b2) backtest-runner-core.js + task ID 없음 → 차단" \
+  "$(msg 'fix: 러너 관문 정리')" "scripts/profit-engine/backtest-runner-core.js"
+stage_and_run 1 "(t098-b3) __tests__/isolation.test.ts + task ID 없음 → 차단" \
+  "$(msg 'test: 격리 시험 정리')" "src/lib/profit-engine/__tests__/isolation.test.ts"
+
+# 디렉토리 항목 — 지금 어디에도 없는 신규 파일(새 전략 신호·새 registry 파일)도 staged 이면 걸린다.
+stage_and_run 1 "(t098-c1) backtest/signals/new-strategy.ts (신규) + task ID 없음 → 차단" \
+  "$(msg 'feat: 새 전략 신호')" "src/lib/profit-engine/backtest/signals/new-strategy.ts"
+stage_and_run_expect "$T075_OK" 0 "(t098-c2) 같은 신규 파일 + T-964(디렉토리 scope) → 통과" \
+  "$(msg 'feat(T-964): 새 전략 신호')" "src/lib/profit-engine/backtest/signals/new-strategy.ts"
+stage_and_run 1 "(t098-c3) registry/preregistration-v2.json (신규) + task ID 없음 → 차단" \
+  "$(msg 'feat: 등록 v2 초안')" "src/lib/profit-engine/registry/preregistration-v2.json"
+stage_and_run 1 "(t098-c4) __tests__/backtest-portfolio.test.ts (신규, 접두) + task ID 없음 → 차단" \
+  "$(msg 'test: 포트폴리오 시험 추가')" "src/lib/profit-engine/__tests__/backtest-portfolio.test.ts"
+
+# 차용 방지 — 다른 안전 경로의 판정(T-966 다른 경로·T-995 safety/·T-969 T-093 시험)과 구현만 검토한 판정(T-963)으로는 못 연다.
+stage_and_run 1 "(t098-v1) registry/preregistration.json 을 T-966(다른 안전 경로 scope)로 통과 시도 → 차단" \
+  "$(msg 'chore(T-966): 등록 수치 조정')" "src/lib/profit-engine/registry/preregistration.json"
+stage_and_run 1 "(t098-v2) backtest/signals 신호를 T-966(지표 strategy/ scope)로 통과 시도 → 차단" \
+  "$(msg 'fix(T-966): RSI 신호 수정')" "src/lib/profit-engine/backtest/signals/rsi-oversold-daily.ts"
+stage_and_run 1 "(t098-v3) isolation.test.ts 를 T-995(safety/ scope)로 통과 시도 → 차단" \
+  "$(msg 'test(T-995): 격리 시험 수정')" "src/lib/profit-engine/__tests__/isolation.test.ts"
+stage_and_run 1 "(t098-v4) backtest-runner-core.js 를 T-969(T-093 scope)로 통과 시도 → 차단" \
+  "$(msg 'fix(T-969): 러너 관문 수정')" "scripts/profit-engine/backtest-runner-core.js"
+stage_and_run 1 "(t098-v5) backtest-runner.test.ts 를 T-963(구현만 scope)로 통과 시도 → 차단" \
+  "$(msg 'test(T-963): 러너 시험 수정')" "src/lib/profit-engine/__tests__/backtest-runner.test.ts"
+stage_and_run 1 "(t098-v6) isolation.test.ts 를 T-963(구현만 scope)로 통과 시도 → 차단" \
+  "$(msg 'test(T-963): 격리 시험 수정')" "src/lib/profit-engine/__tests__/isolation.test.ts"
+stage_and_run 1 "(t098-v7) backtest-fixtures.ts 를 T-963(구현만 scope)로 통과 시도 → 차단" \
+  "$(msg 'test(T-963): 합성 일봉 수정')" "src/lib/profit-engine/__tests__/backtest-fixtures.ts"
+stage_and_run_expect "$T075_OK" 0 "(t098-v8) registry/hash.ts + T-963(구현 scope 안) → 통과(대조군)" \
+  "$(msg 'fix(T-963): 해시 코드 수정')" "src/lib/profit-engine/registry/hash.ts"
+
+# 이웃은 감사 대상이 아니다 — task ID 없이도 통과해야 한다. 통과 기대는 묶어도 약해지지 않는다(하나라도 잘못 매치되면 exit 1).
+# 겨냥 변이: `^src/lib/profit-engine/__tests__/` 로 넓히기(daily-bars·signal-postmortem 시험·fake-bars-db) · isolation 의 `$` 삭제(.bak) ·
+# `\.test`·`\.ts` 이스케이프 누락(isolationxtest.ts·isolation.testxts) · 위치 무시(profit-engine/ 바로 아래) · `backtest-` 의 `-` 삭제
+# (backtest.test.ts·backtestx.test.ts) · `^` 삭제(foo/…) · `^src/lib/profit-engine/` 로 넓히기(daily-bars-*.ts).
+stage_and_run 0 "(t098-n1) profit-engine 이웃(일봉 수집·P1 시험·격리 시험 변형·backtest 무접두) → 통과" \
+  "$(msg 'chore: 일봉 수집 정리')" \
+  "src/lib/profit-engine/daily-bars-collector.ts" "src/lib/profit-engine/daily-bars-store.ts" \
+  "src/lib/profit-engine/__tests__/daily-bars-collector.test.ts" "src/lib/profit-engine/__tests__/fake-bars-db.ts" \
+  "src/lib/profit-engine/__tests__/signal-postmortem-core.test.ts" "src/lib/profit-engine/isolation.test.ts" \
+  "src/lib/profit-engine/__tests__/isolation.test.tsx" "src/lib/profit-engine/__tests__/isolation.test.ts.bak" \
+  "src/lib/profit-engine/__tests__/isolationxtest.ts" "src/lib/profit-engine/__tests__/isolation.testxts" \
+  "src/lib/profit-engine/__tests__/backtest.test.ts" "src/lib/profit-engine/__tests__/backtestx.test.ts" \
+  "foo/src/lib/profit-engine/__tests__/backtest-runner.test.ts" "foo/src/lib/profit-engine/__tests__/isolation.test.ts"
+# 디렉토리 접두 경계 — 겨냥 변이: 끝 `/` 삭제(registry-x/·registryx.ts·registry.json·backtest-x/·backtestx.ts·backtest.ts) ·
+# `^` 삭제(foo/…·mockups/…) · `profit-engine/` 위치 무시(src/lib/registry/·src/lib/backtest/).
+stage_and_run 0 "(t098-n2) 가짜 접두 디렉토리(registry-x/·backtestx 등)·위치만 다른 경로 → 통과" \
+  "$(msg 'chore: 이웃 경로 정리')" \
+  "src/lib/profit-engine/registry-x/preregistration.json" "src/lib/profit-engine/registryx.ts" \
+  "src/lib/profit-engine/registry.json" "src/lib/profit-engine/backtest-x/fill.ts" \
+  "src/lib/profit-engine/backtestx.ts" "src/lib/profit-engine/backtest.ts" \
+  "foo/src/lib/profit-engine/registry/preregistration.json" "mockups/src/lib/profit-engine/backtest/fill.ts" \
+  "src/lib/registry/preregistration.json" "src/lib/backtest/fill.ts"
+# 러너 이웃 — 겨냥 변이: `^scripts/profit-engine/` 로 넓히기(postmortem-core·signal-postmortem·holdings-*) · `$` 삭제(.bak) ·
+# `\.` 이스케이프 누락(backtest-runnerxmjs·backtest-runner-corexjs) · 확장자 혼동(.js·-core.mjs) · 위치 무시(scripts/ 바로 아래) · `^` 삭제.
+stage_and_run 0 "(t098-n3) 러너 이웃(사후검증·보유 리포트·.bak·xmjs·확장자·위치) → 통과" \
+  "$(msg 'chore: 사후검증 스크립트 정리')" \
+  "scripts/profit-engine/postmortem-core.js" "scripts/profit-engine/signal-postmortem.mjs" \
+  "scripts/profit-engine/holdings-core.mjs" "scripts/profit-engine/holdings-report.mjs" \
+  "scripts/profit-engine/holdings-report.test.mjs" "scripts/profit-engine/backtest-runner.mjs.bak" \
+  "scripts/profit-engine/backtest-runner-core.js.bak" "scripts/profit-engine/backtest-runnerxmjs" \
+  "scripts/profit-engine/backtest-runner-corexjs" "scripts/profit-engine/backtest-runner.js" \
+  "scripts/profit-engine/backtest-runner-core.mjs" "scripts/backtest-runner.mjs" \
+  "foo/scripts/profit-engine/backtest-runner.mjs" "foo/scripts/profit-engine/backtest-runner-core.js"
+# 문서 — 러너 출력 리포트·동결 문서는 훅 대상이 아니다(리포트는 g1-record.json 이 sha256 으로, 문서 §B 는 preregistration.json 이 고정).
+stage_and_run 0 "(t098-n4) 러너 리포트·동결 사전 등록 문서 → 통과" \
+  "$(msg 'docs: 백테스트 counts 리포트')" \
+  "agent-vault/10-Flow/reports/T-096-backtest-counts-US-20261026.json" \
+  "agent-vault/10-Flow/reports/T-096-backtest-counts-US-20261026.md" \
+  "docs/design/2026-10-26-strategy-validation-preregistration-v1.0.md"
+
+# 혼합 커밋 — 판정 합집합(요구사항4). T-964(새 항목)·T-966(지표 strategy/ 등) 이 각자 자기 몫만 덮는다.
+T098_MIX=( "README.md" "src/lib/profit-engine/registry/oos-ledger.json" "src/lib/profit-engine/backtest/fill.ts" \
+  "src/lib/strategy/indicators/rsi.ts" "docs/design/x.md" )
+stage_and_run 1 "(t098-m1) [문서, 원장, 체결, 지표] 판정 미기록(T-993) → 차단" \
+  "$(msg 'feat(T-993): 백테스트 정리')" "${T098_MIX[@]}"
+stage_and_run 1 "(t098-m2) 같은 묶음 + T-964 만 → 지표(strategy/)가 범위 밖, 차단" \
+  "$(msg 'feat(T-964): 백테스트 정리')" "${T098_MIX[@]}"
+stage_and_run 1 "(t098-m3) 같은 묶음 + T-966 만 → 원장·체결이 범위 밖, 차단" \
+  "$(msg 'feat(T-966): 백테스트 정리')" "${T098_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t098-m4) 같은 묶음 + T-964·T-966 합집합 → 통과" \
+  "$(msg 'feat(T-964,T-966): 백테스트 정리')" "${T098_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t098-m5) 새 항목 13개 전부 + 문서, T-964 → 통과" \
+  "$(msg 'feat(T-964): 사전 등록 일괄')" "${T098_ITEMS[@]}" "docs/x.md"
+# 러너 실행 뒤 원장 갱신 커밋(의도된 마찰) — 리포트(문서)와 함께 올려도 원장 때문에 판정이 필요하다.
+stage_and_run 1 "(t098-m6) [IS 원장, counts 리포트] task ID 없음 → 원장 때문에 차단" \
+  "$(msg 'chore: IS 실행 기록')" "src/lib/profit-engine/registry/is-ledger.json" \
+  "agent-vault/10-Flow/reports/T-096-backtest-counts-US-20261026.json"
+stage_and_run_expect "$T075_OK" 0 "(t098-m7) 같은 묶음 + T-964 → 통과(리포트는 안전 경로 아님)" \
+  "$(msg 'chore(T-964): IS 실행 기록')" "src/lib/profit-engine/registry/is-ledger.json" \
+  "agent-vault/10-Flow/reports/T-096-backtest-counts-US-20261026.json"
+# 일봉 수집 자체는 감시 밖이지만, 같은 커밋에서 격리 시험을 고치면 걸린다(알려진 영향).
+stage_and_run 1 "(t098-m8) [daily-bars-collector.ts, isolation.test.ts] task ID 없음 → 격리 시험 때문에 차단" \
+  "$(msg 'feat: 일봉 수집 + 격리 시험')" "src/lib/profit-engine/daily-bars-collector.ts" \
+  "src/lib/profit-engine/__tests__/isolation.test.ts"
+stage_and_run_expect "$T075_OK" 0 "(t098-m9) 같은 묶음 + T-964 → 통과(daily-bars 는 안전 경로 아님)" \
+  "$(msg 'feat(T-964): 일봉 수집 + 격리 시험')" "src/lib/profit-engine/daily-bars-collector.ts" \
+  "src/lib/profit-engine/__tests__/isolation.test.ts"
+
+echo ""
+echo "[T-098 — 실 커밋 E2E: 일회용 임시 저장소에서 git 이 새 항목을 실제로 거르는가]"
+
+# 위 T-090·T-092·T-093 실 커밋 E2E 와 같은 일회용 저장소·shim(이 작업 트리의 훅)을 그대로 쓴다. 실제 저장소는 건드리지 않는다.
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-964-hooktest-t098-scoped.md" <<'EOF'
+---
+task_id: T-964
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/profit-engine/registry/, src/lib/profit-engine/backtest/, scripts/profit-engine/backtest-runner.mjs, scripts/profit-engine/backtest-runner-core.js, src/lib/profit-engine/__tests__/backtest-runner.test.ts, src/lib/profit-engine/__tests__/isolation.test.ts)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-965-hooktest-t098-nearmiss.md" <<'EOF'
+---
+task_id: T-965
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/profit-engine/registry, src/lib/profit-engine/registry-x/, scripts/profit-engine/postmortem-core.js, src/lib/profit-engine/__tests__/backtest-)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-966-hooktest-t098-borrowed.md" <<'EOF'
+---
+task_id: T-966
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/strategy/, src/lib/signals/, scripts/git-hooks/)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-963-hooktest-t098-implonly.md" <<'EOF'
+---
+task_id: T-963
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/profit-engine/registry/, src/lib/profit-engine/backtest/, scripts/profit-engine/backtest-runner.mjs, scripts/profit-engine/backtest-runner-core.js)**
+EOF
+mkdir -p "$E2E_REPO/src/lib/profit-engine/registry" "$E2E_REPO/src/lib/profit-engine/registry-x" \
+  "$E2E_REPO/src/lib/profit-engine/__tests__" "$E2E_REPO/scripts/profit-engine" "$E2E_REPO/agent-vault/10-Flow/reports"
+# (fixture 는 커밋하지 않는다 — 훅은 작업 트리의 task 파일을 읽는다. 앞 절 fixture 와 같다.)
+
+printf '{"entries":[]}\n' > "$E2E_REPO/src/lib/profit-engine/registry/is-ledger.json"
+e2e_git add src/lib/profit-engine/registry/is-ledger.json
+e2e_commit "(t098-g1) 실 커밋: registry/is-ledger.json(신규) + task ID 없음 → 차단" block "커밋 차단" \
+  'chore: IS 원장 추가'
+e2e_commit "(t098-g2) 실 커밋: 같은 변경 + T-965(이웃 경로 scope) → 차단" block "커밋 차단" \
+  'chore(T-965): IS 원장 추가'
+e2e_commit "(t098-g3) 실 커밋: 같은 변경 + T-966(다른 안전 경로 scope) → 차단(차용 방지)" block "커밋 차단" \
+  'chore(T-966): IS 원장 추가'
+e2e_commit "(t098-g4) 실 커밋: 같은 변경 + T-964(scope 포함) → 통과·HEAD 이동" commit "$T075_OK" \
+  'chore(T-964): IS 원장 추가'
+
+printf 'v1\n' > "$E2E_REPO/scripts/profit-engine/backtest-runner-core.js"
+printf 'v1\n' > "$E2E_REPO/src/lib/profit-engine/__tests__/backtest-runner.test.ts"
+e2e_git add scripts/profit-engine/backtest-runner-core.js src/lib/profit-engine/__tests__/backtest-runner.test.ts
+e2e_commit "(t098-g5) 실 커밋: [러너 core, 러너 시험] + task ID 없음 → 차단" block "커밋 차단" \
+  'feat: 러너 관문'
+e2e_commit "(t098-g6) 실 커밋: 같은 변경 + T-963(구현만 검토) → 차단(시험이 범위 밖)" block "커밋 차단" \
+  'feat(T-963): 러너 관문'
+e2e_commit "(t098-g7) 실 커밋: 같은 변경 + T-964 → 통과·HEAD 이동" commit "$T075_OK" \
+  'feat(T-964): 러너 관문'
+
+printf 'x\n' > "$E2E_REPO/scripts/profit-engine/postmortem-core.js"
+printf 'x\n' > "$E2E_REPO/src/lib/profit-engine/daily-bars-collector.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/profit-engine/registry-x/a.json"
+printf 'x\n' > "$E2E_REPO/agent-vault/10-Flow/reports/T-096-backtest-counts-US-20261026.md"
+e2e_git add scripts/profit-engine/postmortem-core.js src/lib/profit-engine/daily-bars-collector.ts \
+  src/lib/profit-engine/registry-x/a.json agent-vault/10-Flow/reports/T-096-backtest-counts-US-20261026.md
+e2e_commit "(t098-g8) 실 커밋: 사후검증 본체·일봉 수집·registry-x/·리포트(task ID 없음) → 통과" commit "" \
+  'chore: 사후검증·일봉·리포트 정리'
+
+echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
 printf '결과: %d 통과 / %d 실패\n' "$PASS_N" "$FAIL_N"
 echo ""
@@ -1409,7 +1658,7 @@ if [ "$VERBOSE" -eq 1 ]; then
 fi
 
 echo ""
-echo "워킹트리 영향 확인 (T-977~998·T-967~969 테스트 fixture 가 남아 있지 않아야 함):"
+echo "워킹트리 영향 확인 (T-977~998·T-963~969 테스트 fixture 가 남아 있지 않아야 함):"
 git status --short | sed 's/^/  /'
 echo ""
 echo "✅ 전체 검증 통과."

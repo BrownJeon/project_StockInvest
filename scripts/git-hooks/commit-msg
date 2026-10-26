@@ -463,6 +463,57 @@ check_hook_sync || true
 #                               제목의 CR/LF 등 제어문자를 지우는 sanitizeHeaderText(send.ts·signup-request-mail.ts 가 부름)와
 #                               env 수신·발신 주소 검사 isSafeHeaderAddress(config.ts 만 부름)·본문용 escapeHtml 의 정의다.
 #                               자체 머리 주석이 "헤더 인젝션은 곧 코드 유출"(초대코드)이라 적는다 — 요청 유래 제목 정화가 더 큰 몫이다.
+#
+# T-098 추가 (2026-10-26, 사용자 결정 "V4 사전 등록 코드를 커밋 훅 감시 대상에 넣어줘" — T-096 v1.1 패치 §B-0 V4 권고 승인):
+#   T-096 P3(전략 합격 판정용 일봉 백테스트)의 사전 등록 잠금 — 등록 수치·원장·해시/판정 코드·엔진·러너 — 은 훅 밖이라 독립 감사
+#   판정 없이 커밋될 수 있었다. 잠금 일부는 에이전트가 쓸 수 있는 파일(원장 JSON·G1 기록)에 기대고, 러너는 원장을 git HEAD 와
+#   대조할 뿐이라 원장·잠금·G1 을 커밋까지 함께 되돌리면 그 대조도 통과한다(러너 머리 주석이 같은 한계를 적고 이 편입을 다음
+#   방어선으로 든다). 엔진 지문·G1 결속·원장 대조의 구체 범위는 코드가 정본이라 여기에 복제하지 않는다. 지문·G1·원장은 에이전트가
+#   다시 계산·작성할 수 있어 독립 감사를 대신하지 못한다 — 이 편입은 그런 변경이 커밋될 때 Reviewer 판정 줄(scope 일치)을 요구해
+#   이력에 남게 하는 보강이다. 막는 장치가 아니라 감사 기록을 강제하는 장치다("속이면 들킨다").
+#   (각 파일이 하는 일은 T-096 P3 작업 트리의 소스를 읽어 적었고, 바뀌기 쉬운 세부 — 건수·파일 수·지문 범위·수치 — 는 적지 않았다.
+#    편입 시점(2026-10-26)에 main 에 있던 것은 isolation.test.ts 뿐이었다 — 나머지 항목은 P3 코드의 첫 커밋부터 걸린다.)
+#   + src/lib/profit-engine/registry/   → 사전 등록의 기계 판독 정본과 그 검증 코드(디렉토리):
+#                               preregistration.json(판정 시장·유니버스·구간·합격 기준·비용 수치·전략 격자 — 동결 문서 §B 의 해시를
+#                               고정한다)·hash.ts(§B 해시와 registry 수치 해시를 문서와 대조)·registry.ts(registry 검증·격자 전개)·
+#                               evaluate-pass.ts(합격 판정·고원 선택 — 수치는 registry 에서 읽는다)·oos-ledger.ts(OOS 원장의 추가 전용
+#                               규칙)·IS/OOS 원장 JSON. 아직 없는 파일도 디렉토리 항목이라 생기는 즉시 걸린다 — G1 표본 충족 기록
+#                               (g1-record.json, 사용자 승인 뒤 Leader 가 만든다. 승인 필드를 누가 썼는지는 러너가 검증하지 못한다)과
+#                               러너가 OOS 실행 때 만드는 잠금 파일(oos-locks/) 등.
+#                               ⚠ 의도된 마찰: 러너를 is·oos 로 실행하면 원장 JSON 이 (추가 전용으로) 갱신된다. 그 갱신을 커밋할 때도
+#                               Reviewer 판정 줄이 필요하다 — 원장 커밋마다 감사 기록이 남는 것이 이 편입의 목적이다. 훅은 변경이
+#                               "추가만"인지 구분하지 않는다(그 대조는 러너가 한다).
+#   + src/lib/profit-engine/backtest/   → 백테스트 엔진(디렉토리): 신호(signals/)·체결 규칙(fill.ts)·비용 계산식(costs.ts)·기준선·지표·
+#                               포트폴리오·레짐·에피소드·처리 흐름·진입점(러너가 싣는 파일). DB·파일·네트워크·환경변수·시계를 쓰지 않는
+#                               순수 계산이다(isolation.test.ts 가 고정). 비용 계산식·체결 규칙 코드가 바뀌면 registry 수치를 건드리지
+#                               않고도 합격 판정이 바뀐다 — 비용 **수치**는 registry(preregistration.json) 출처이고 위 registry/ 항목이 감시한다.
+#                               엔진이 부르는 지표(@/lib/strategy/indicators/)는 이미 ^src/lib/strategy/ 로 감시 중이다.
+#   + scripts/profit-engine/backtest-runner-core.js·backtest-runner.mjs (정확 일치 2줄) → 러너. core 가 실행 관문(§B 해시·registry 수치 해시·
+#                               G1 기록·등록 기준일·원장 대조, OOS 1회 잠금·IS 재계산 대조)을 지고, .mjs 는 DB 읽기 전용 세션·원장 읽기·
+#                               엔진 로더를 연결한다. 관문 한 줄이 빠지면 OOS 재실행·결과 덮어쓰기가 가능해진다.
+#   + src/lib/profit-engine/__tests__/backtest-   (접두 — backtest-*.test.ts 와 공용 합성 일봉 backtest-fixtures.ts) → 위 셋의 회귀망.
+#                               예: registry 시험이 §B 해시를 문서에서 재계산하고 registry 수치를 §B 원문과 대조하며, 러너 시험이
+#                               우회 시나리오(수치 완화·기준일 절단·원장 되돌리기·동시 OOS·G1 위조 등)의 거부를 고정한다.
+#                               위 "테스트 파일 — 제외하지 않는다" 원칙. 이름이 `backtest-` 로 시작하지 않는 새 백테스트 시험
+#                               (예: backtest.test.ts)은 걸리지 않는다 — 만들면 여기 한 줄을 더한다.
+#   + src/lib/profit-engine/__tests__/isolation.test.ts (정확 일치) → profit-engine 격리 방어선(T-070, T-096 에서 확장): 매매 경로가
+#                               profit-engine 을 참조하지 않는다·엔진은 거래소·자격증명·DB 를 쓰지 않고 `@/lib/strategy` 중 허용된 지표
+#                               경로만 import 한다·러너는 읽기 전용이다. 알려진 영향: 이 파일은 일봉 수집(daily-bars-*)·사후검증 스크립트의
+#                               격리 단언도 담고 있어, 그 단언을 고치는 커밋도 이제 판정이 필요하다.
+#   대조(편입 시점, `git ls-files` 전수에 옛·새 목록을 이 훅과 같은 방식으로 적용): 옛 목록이 걸던 파일은 전부 그대로이고 새로 걸리는
+#   추적 파일은 isolation.test.ts 하나였다. P3 의 미커밋 코드는 전부 걸리고, 러너 리포트(agent-vault/10-Flow/reports/)는 문서라 안 걸린다.
+#   넣지 않은 것 (사용자 결정 범위 = 사전 등록 코드를 넓히지 않았다):
+#     - scripts/profit-engine/postmortem-core.js   P1 사후검증 본체. 러너가 읽기 전용 SQL 검사를 여기서 가져온다. 엔진 지문에는 포함되어
+#                               지문 변경으로 거부되지만, 그 변경의 커밋 자체는 훅 밖이다 — 다음 후보 1순위.
+#     - scripts/profit-engine/ 의 그 밖의 파일(signal-postmortem.mjs·holdings-*)   사후검증·보유 리포트.
+#     - src/lib/profit-engine/ 의 일봉 수집(daily-bars-*.ts + 시험)·__tests__/fake-bars-db.ts·__tests__/signal-postmortem-core.test.ts
+#                               백테스트 입력 데이터의 출처지만, 데이터 변경은 러너의 데이터 지문이 다룬다(정본은 코드).
+#     - 동결 문서(docs/design/…-preregistration-*.md)·러너 리포트   문서라 훅 대상이 아니다. 문서 §B 는 해시로 잠기고 그 해시는 감시 중인
+#                               preregistration.json 이 고정한다. G1 이 참조하는 counts 리포트는 G1 기록이 해시로 고정한다.
+#   (scope 표기 주의: Reviewer 판정 scope 는 '/' 로 끝나면 디렉토리, 아니면 파일 하나다 — `…/__tests__/backtest-` 같은 접두는 scope 로
+#    쓸 수 없으니 시험 파일은 하나씩 적는다.)
+#   이 편입이 막지 못하는 것: 미커밋 작업 트리에서의 러너 실행, `git commit --no-verify`, 훅 shim 비활성(설치 누락), 저장소 복사본에서의
+#   실행, 판정 작성자 미검증(self-attestation — 위 커밋 안전장치 일반 한계와 같다).
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
@@ -515,6 +566,12 @@ SAFETY_PATHS=(
   '^src/lib/auth/__tests__/oauth-web-regression-t088\.test\.ts$'
   '^src/components/auth/__tests__/login-screen-t088\.test\.ts$'
   '^src/lib/mail/config\.ts$'
+  '^src/lib/profit-engine/registry/'
+  '^src/lib/profit-engine/backtest/'
+  '^scripts/profit-engine/backtest-runner\.mjs$'
+  '^scripts/profit-engine/backtest-runner-core\.js$'
+  '^src/lib/profit-engine/__tests__/backtest-'
+  '^src/lib/profit-engine/__tests__/isolation\.test\.ts$'
   '^src/app/api/orders/'
   '^src/app/api/safety/'
   '^src/app/api/cron/'
