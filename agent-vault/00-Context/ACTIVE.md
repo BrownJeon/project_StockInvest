@@ -6,12 +6,20 @@ tags:
 ---
 # 현재 상태
 
+## 2026-10-26 11:45 — T-092 완료(훅 인증 구현 감시, 로컬 병합) · T-091 WP-A 완료(웹 전용, 격리 브랜치·미push) · WP-M2 미착수
+
+- **[[T-092-hook-safety-paths-auth-impl]]**: 훅 `SAFETY_PATHS` 에 인증 관련 구현 6곳(+시험) 정규식 10줄 추가 — 새로 걸리는 추적 파일 10개(`signup-gate`·`signup-request`·`mail/send`·`safe-next-path` 와 각 시험, `profile/password/`, 미들웨어 공개 경로 시험). 속도 제한 `*-gate.ts` 는 제외 유지. 로컬 커밋 `945ba0c` 가 11:43 main 에 병합돼 **이 서버에서는 이미 활성**(설치된 shim 경유 확인). **origin 에는 없다(push 대기 — 급하지 않음, 문서·스크립트뿐)**. 사용자 결정 대기: 아직 훅 밖인 후보(`auth/__tests__/` 시험 15개·`login-screen-t088.test.ts`·`mail/config.ts`·`header-safe`·`signup-request-mail`·`profile/route.ts`) — AI 권고는 시험 15개+`login-screen-t088`+`mail/config.ts` 를 묶어 다음 task 로, 나머지 보류.
+- **[[T-091-app-version-gate-and-m2]]**: 사용자 결정 "t-091은 권고대로 진행해줘"(M2 에 포함) + 데모 승인 "T-091 데모 v1 의 B. 옛 앱 로그인 화면은 B안으로 진행해줘"(대안 B: 화면 위 경고 띠 + Google 버튼 비활성). **WP-A(웹 전용)**: 앱이고 설치 build 가 필요 최소(2) 미만일 때만 로그인 화면 맨 위에 "앱 업데이트가 필요합니다" 띠 + 비활성 Google 버튼(웹·새 앱·버전 모름은 변화 없음) — 구현·Reviewer 2라운드·Codex 0건·QA(실제 브라우저 11시나리오) 통과, 로컬 커밋 `7844a91`(브랜치 `app-gate-t091`, worktree `~/.node-local/stockinvest-app-gate-t091`, **main 미병합·미push — 웹 push 가 곧 배포라 사용자 승인 대기, 장외 창 15:40~22:20 KST 권고**). 표 값 `googleLogin: 2` 가 공개 APK 1.0.1 과 일치해 지금 배포해도 막다른 길 없음. **WP-M2(App Links)는 미착수 — 사용자 결정 대기**(task T-091 "WP-M2 착수 전 사용자 결정·몫" 4항: M2-0 예측 시험·시험 APK 1.1.0·assetlinks 서빙 방식 middleware 권고·착수 시점/수익 연결).
+- **새 task 번호는 T-093 이상**(T-091·T-092 사용).
+- ⚠ **T-091 이 `src/middleware.ts` 를 고치게 되면(M2 assetlinks) Reviewer 판정 scope 에 `src/middleware.ts` 와 `src/__tests__/middleware-public-paths.test.ts` 를 둘 다 적어야 훅이 통과**(T-092 로 후자도 감시).
+- 정리 대상(승인 대기): worktree 2개(`~/.node-local/stockinvest-app-gate-t091` — `node_modules`(npm ci 설치 실제 디렉터리, 정리 때 `rm -r`)·`.next` 94MB 포함 — T-091 push 승인 전에는 보존, `~/.node-local/stockinvest-hook-t092` — T-092 병합 완료라 정리 가능)
+
 ## 2026-10-26 09:05 — T-090 완료: 커밋 훅이 인증 API(`src/app/api/auth/`)를 감시 — push·운영 배포 완료
 
 - **[[T-090-hook-safety-paths-auth-routes]]**: `SAFETY_PATHS` 에 `'^src/app/api/auth/'` 추가(새로 걸리는 파일 11개) — 이제 `app-exchange`·`[provider]`·`login`·`signup` 등 세션 발급 입구 수정은 Reviewer 판정 줄이 없으면 커밋이 막힌다. 로컬 커밋 `53509bd` 를 08:18 main 에 병합했고 **이 서버에서는 이미 활성**(설치된 shim 이 메인 트리 훅을 실행 — 08:19 확인). **09:02:57 사용자 지시("푸시 진행해줘")로 push·배포 완료**(`3cc7418..784151b`, 릴리스 `20261026-090312-784151b3` ok, migrated=false — 국내장 개장 직후였지만 킬스위치 ON·최근 3시간 주문 0건 확인 후 진행, cron 1행·79키·감사 로그 id 불변). 이 기록 갱신용 문서 전용 커밋은 origin 에 올리지 않았다(다음 코드 push 에 동승). 앱·웹 동작 변화 없음.
-- **새 task 번호는 T-091 이상**(T-090 사용). 이전 "T-090 이상" 안내를 담은 아래 항목들은 이 줄로 대체된다.
-- **새 사용자 결정(T-090 에서 파생)**: 훅 밖에 남은 인증 관련 파일 — `src/lib/auth/signup-gate.ts`·`signup-request.ts`·`src/lib/mail/send.ts`·`src/lib/safe-next-path.ts`·`src/app/api/profile/password/`·`src/__tests__/middleware-public-paths.test.ts` 를 별도 task 로 넣을지(권고: 앞 셋은 검토, 나머지 보류).
-- **T-091 후보(미착수)**: 옛 앱 버전(1.0.0)이 새 웹을 받는 버전 어긋남 방지 — 웹이 먼저 배포돼 옛 앱에도 Google 버튼이 보였고 딥링크 수신 설정이 없어 첫 로그인이 무응답이었다([[T-088-app-google-login]] ⑫ 의미 3). 권고: M2(App Links) 때 같이 처리.
+- **새 task 번호는 T-091 이상**(T-090 사용) — 11:45 정정: 지금은 **T-093 이상**(위 최신 절).
+- **~~새 사용자 결정(T-090 에서 파생)~~ — 해소(10-26: "나누지 말고" → [[T-092-hook-safety-paths-auth-impl]] 로 6곳 한 번에 추가)**: 훅 밖에 남은 인증 관련 파일 — `src/lib/auth/signup-gate.ts`·`signup-request.ts`·`src/lib/mail/send.ts`·`src/lib/safe-next-path.ts`·`src/app/api/profile/password/`·`src/__tests__/middleware-public-paths.test.ts` 를 별도 task 로 넣을지(권고: 앞 셋은 검토, 나머지 보류).
+- **~~T-091 후보(미착수)~~ — 착수됨(위 11:45 절: WP-A 완료·WP-M2 미착수)**: 옛 앱 버전(1.0.0)이 새 웹을 받는 버전 어긋남 방지 — 웹이 먼저 배포돼 옛 앱에도 Google 버튼이 보였고 딥링크 수신 설정이 없어 첫 로그인이 무응답이었다([[T-088-app-google-login]] ⑫ 의미 3). 권고: M2(App Links) 때 같이 처리.
 
 ## 2026-10-26 06:52 — 앱 런칭 완료: T-084 M1·T-088 앱 Google 로그인·T-089 오픈 리다이렉트 차단 (사용자 실기기 확인 완료)
 

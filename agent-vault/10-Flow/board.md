@@ -277,6 +277,8 @@ tags:
 
 ## Doing
 
+- 🟡 **[T-091, 2026-10-26, R2] 앱 버전 게이트(옛 앱에 업데이트 안내) + M2 텔레그램 링크로 앱 열기** → [[T-091-app-version-gate-and-m2]] — 사용자 결정(10-26 "t-091은 권고대로 진행해줘" = M2 에 포함). **WP-A(웹 전용) 완료: 구현·Reviewer 2라운드·Codex 0건·QA(실제 브라우저 11시나리오) 통과, 로컬 커밋 `7844a91`(브랜치 `app-gate-t091`, worktree `~/.node-local/stockinvest-app-gate-t091`) — main 미병합·미push(웹 push=배포라 사용자 승인 대기, 장외 창 15:40~ 권고).** 사용자 데모 승인(대안 B: 화면 위 경고 띠 + Google 버튼 비활성, 10:03) 후 구현. WP-M2(App Links·assetlinks·APK 1.1.0)는 미착수 — 사용자 결정 대기(M2-0 예측 시험·시험 APK 승인·assetlinks 서빙 방식·착수 시점)
+
 
 - 🟡 **[T-074, 2026-10-23, R1] 자금 이동(입금·출금·환전) 원장 — 앱에서 기록하고 순입금을 반영해 자산 손익 재계산** → [[T-074-cash-flow-ledger]] (사용자 요청 10-23 · 데모 full(designer) · analyst 회계 자문 중 · **달러 예수금 불일치 사용자 재확인 대기**: KIS 앱 $118.60 vs 시스템 ≈$1,918.6, 차이 정확히 $1,800)
 - 🟡 **[T-075, 2026-10-23, R2] 커밋 안전장치 SAFETY_PATHS 확장 — `^src/app/api/strategies/`·`^scripts/migrations/`·`^src/lib/db.ts` 추가** → [[T-075-safety-paths-extension]] (사용자 "권고대로 추가" · Developer 구현 중)
@@ -394,6 +396,7 @@ tags:
 
 ## Done
 
+- ✅ **[2026-10-26] [[T-092-hook-safety-paths-auth-impl]] — 커밋 훅 `SAFETY_PATHS` 에 훅 밖 인증 관련 구현 파일 6곳(+시험) 추가(R2, 나누지 않고 한 번에)** — 사용자 결정(10-26 "인증 관련파일은 나누지 말고"). 새로 걸리는 추적 파일 정확히 10개(초대코드 대조 `signup-gate`·`signup-request`·메일 발송 `mail/send`·웹 이동 경로 `safe-next-path` 와 각 시험, `profile/password/`, 미들웨어 공개 경로 시험), 속도 제한 `*-gate.ts` 는 제외 유지. 훅 로직 diff 0·정규식 10줄 + 근거 주석 + 시험 + CLAUDE.md 정정. Reviewer 2라운드(근거 주석 사실 오류 5건 정정)·Codex 0건·QA 306 시나리오 통과. **로컬 커밋 `945ba0c`, 11:43 main 병합(훅 활성화 완료, 설치된 shim 에서 확인), push 는 사용자 승인 대기**(급하지 않음). 사용자 결정 대기: 아직 훅 밖인 후보(감시 밖 auth 시험 15개·`login-screen-t088` 시험·`mail/config` 등). 앱 런타임 코드 변경 없음
 - ✅ **[2026-10-26] [[T-090-hook-safety-paths-auth-routes]] — 커밋 훅 `SAFETY_PATHS` 에 인증 API 디렉토리 `^src/app/api/auth/` 추가(R2)** — 사용자 결정(10-26 "'^src/app/api/auth/ 추가 여부'에 대해서는 추가작업 진행해줘"). 세션 발급 입구 라우트(`app-exchange`·`[provider]`·`login`·`signup` 등 새로 걸리는 파일 11개)를 Reviewer 판정 없이는 커밋하지 못하게 했다. 훅 로직 diff 0·목록 1줄 + 근거 주석 + 시험 + CLAUDE.md 문구. Reviewer 통과(조건 1회 반영)·Codex C2 지적 1건 오탐·QA 51/0. **커밋 `53509bd`, 08:18 main 병합(훅 활성화 완료, 08:19 설치된 shim 에서 auth 라우트 차단 확인) → 사용자 지시("푸시 진행해줘")로 09:02:57 KST push·배포 완료**(`3cc7418..784151b`, 릴리스 `20261026-090312-784151b3` ok, migrated=false, 장중이라 킬스위치 ON·최근 3시간 주문 0건 확인 후 진행, 배포 후 점검 전부 정상). 앱 런타임 코드 변경 없음
 - ✅ **[2026-10-26] [[T-084-mobile-app-m1-shell]] — 모바일 앱 "주식캐기" M1(Capacitor 안드로이드 앱 + APK 다운로드·업데이트 안내)** — **사용자 실기기 확인 완료**(사용자 발화 그대로: "T-084에 대한 확인도 완료했어", 10-26 06:52 이전 — 항목별 결과는 받지 않음). 배포·APK 공개 10-25 20:53(`46d4148`·`b435399`, 릴리스 `20261025-205329-b4353994`, v1.0.0), 이후 [[T-088-app-google-login]] 로 1.0.1(앱 Google 로그인) 공개. 잠복 결함 2건(`gradlew` git 모드·옛 빌드 캐시)은 T-088 에서 수정 완료. 후속(별도 task): M2 App Links(텔레그램 링크→앱)·M3 앱 잠금·M4 푸시(FCM)
 

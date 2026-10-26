@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="demo-version" content="T-091-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="description" content="T-091-v1 — 옛 앱(build 1)의 로그인 화면에서 Google 버튼 대신 '앱 업데이트가 필요합니다' 안내를 보이는 델타 데모. 웹·새 앱은 변화 없음 (합성 화면)">
+<title>T-091-v1 옛 앱 업데이트 안내</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지). 새 토큰 없음. */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size: 14px; -webkit-text-size-adjust: 100%;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  input { font: inherit; }
+  a { color: inherit; text-decoration: none; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  [tabindex="-1"]:focus { outline: none; }
+  [tabindex="-1"]:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  /* ── 데모 문서 틀 (앱 UI 아님 — 해설은 기존 토큰 --down 파랑 + 점선으로 구분, T-088 데모와 같은 표기) ── */
+  .page { max-width: 1320px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-bottom)); }
+  .page > header h1 { font-size: 17px; margin: 0 0 6px; line-height: 1.4; }
+  .page > header p { margin: 0 0 6px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .page > header p b { color: var(--text); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; border: 1px dashed var(--down); color: var(--down); margin: 0 6px 4px 0; }
+  .sample-banner { margin: 10px 0 0; padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--warn); color: var(--warn) !important; font-size: 13px; font-weight: 700; line-height: 1.5; }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+  nav.toc a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg2); font-size: 12px; font-weight: 600; }
+  section.block { margin-top: 36px; }
+  section.block > h2 { font-size: 15px; margin: 0 0 8px; line-height: 1.45; }
+  section.block > p.lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  section.block > p.lead b { color: var(--text); }
+  .note { margin: 8px 0 4px; font-size: 11px; color: var(--down); border-left: 2px dashed var(--down); padding-left: 6px; line-height: 1.5; overflow-wrap: anywhere; }
+  .box { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.6; margin-top: 12px; overflow-wrap: anywhere; }
+  .box h3 { margin: 0 0 6px; font-size: 13px; }
+  .box h4 { margin: 12px 0 4px; font-size: 13px; }
+  ul.plain, ol.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  ul.plain li, ol.plain li { margin-bottom: 4px; overflow-wrap: anywhere; }
+  .frame-cap { font-size: 12px; font-weight: 700; color: var(--down); margin: 0 0 6px; line-height: 1.45; overflow-wrap: anywhere; }
+  .controls { display: flex; flex-direction: column; gap: 10px; max-width: 760px; margin: 0 0 14px; }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 130px; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px;
+                  border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; overflow-wrap: anywhere; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+  .simbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .simbtns button { flex: 1 1 120px; min-height: 44px; padding: 4px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); border: 1px dashed var(--down); color: var(--text); line-height: 1.35; }
+  .simbtns button:disabled { opacity: .45; }
+  .compare3 { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 900px) { .compare3 { grid-template-columns: repeat(3, minmax(0, 412px)); align-items: start; } }
+  .compare2 { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 900px) { .compare2 { grid-template-columns: repeat(2, minmax(0, 412px)); align-items: start; } }
+  .split { display: grid; grid-template-columns: 1fr; gap: 24px; }
+  @media (min-width: 900px) { .split { grid-template-columns: minmax(0, 412px) minmax(0, 1fr); align-items: start; } }
+  .tbl-wrap { border: 1px solid var(--border2); border-radius: 8px; overflow-x: auto; }
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.5; }
+  table.tbl caption { text-align: left; font-size: 12px; font-weight: 700; color: var(--down); padding: 8px 10px; }
+  table.tbl th, table.tbl td { padding: 8px 10px; border-top: 1px solid var(--border); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+  table.tbl th { color: var(--muted); font-weight: 600; background: var(--bg2); }
+  table.tbl td code { color: var(--text); }
+  table.tbl tr.cur td, table.tbl tr.cur th { background: rgba(245,158,11,.08); }
+  .decide { border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.06); border-radius: 10px; padding: 12px; margin-top: 12px; }
+  .decide h3 { margin: 0 0 8px; font-size: 14px; color: var(--warn); line-height: 1.45; }
+  .decide > p { margin: 0 0 8px; font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .ab { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 900px) { .ab { grid-template-columns: 1fr 1fr; } }
+  .opt { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.6; min-width: 0; overflow-wrap: anywhere; }
+  .opt h4 { margin: 0 0 4px; font-size: 13px; }
+  .opt.rec { border-color: var(--ok); }
+  .rec-tag { font-size: 11px; font-weight: 700; color: var(--ok); margin-left: 6px; }
+  .why { margin: 8px 0 0; padding: 8px 12px; border-left: 3px solid var(--ok); background: var(--bg2); border-radius: 0 8px 8px 0; font-size: 12.5px; line-height: 1.6; }
+  .why ol { margin: 4px 0 0; padding-left: 18px; }
+  .guide { border: 1px solid var(--ok); border-radius: 10px; padding: 12px; margin-top: 12px; font-size: 13px; line-height: 1.6; background: var(--bg2); overflow-wrap: anywhere; }
+  .guide h3 { margin: 0 0 6px; font-size: 14px; color: var(--ok); }
+  .guide h4 { margin: 14px 0 4px; font-size: 13px; }
+  pre.code { margin: 8px 0 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border2); border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+
+  /* ── 폰 틀 ── */
+  .phone { position: relative; width: 100%; max-width: 412px; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); }
+  .w360 .phone { max-width: 360px; }
+  .frm { position: relative; display: flex; flex-direction: column; height: 760px; }
+  .scrl { flex: 1; min-height: 0; overflow-y: auto; position: relative; }
+  .chip { flex: none; display: block; text-align: right; font-size: 11px; font-weight: 700; color: var(--down); border-bottom: 1px dashed var(--down); padding: 3px 10px; background: var(--bg); }
+
+  /* ── 로그인 카드 (AuthShell·OAuthButtons 수치 그대로 — T-088 승인 데모 v2 와 같음) ── */
+  .au-wrap { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: calc(var(--safe-top) + 20px) 16px calc(var(--safe-bottom) + 24px); }
+  .au-card { width: 100%; max-width: 380px; background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 22px; display: flex; flex-direction: column; }
+  .au-logo { font-size: 32px; line-height: 1; text-align: center; margin-bottom: 8px; }
+  .au-title { font-size: 19px; font-weight: 700; margin: 0; text-align: center; }
+  .au-sub { font-size: 13px; color: var(--muted); margin: 6px 0 18px; text-align: center; }
+  .oa-list { display: flex; flex-direction: column; gap: 10px; }
+  .oa-btn { min-height: 48px; border-radius: 9px; border: 1px solid var(--border2); display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 14.5px; font-weight: 600; width: 100%; }
+  .oa-btn.g { background: #fff; color: #1f1f1f; border-color: #dadce0; }
+  .oa-btn:disabled { opacity: .7; }
+  .oa-btn .dim { font-weight: 400; font-size: 12.5px; color: #5f6368; }
+  .oa-div { display: flex; align-items: center; gap: 12px; margin: 20px 0 16px; color: var(--muted); font-size: 11.5px; }
+  .oa-div i { flex: 1; height: 1px; background: var(--border2); }
+  .au-field { display: flex; flex-direction: column; margin-bottom: 12px; }
+  .au-field label { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+  .au-input { min-height: 46px; width: 100%; border-radius: 10px; border: 1px solid var(--border2); background: var(--bg3); color: var(--text); padding: 0 14px; font-size: 16px; outline-color: var(--accent); }
+  .au-input::placeholder { color: var(--muted); }
+  .au-err { min-height: 18px; font-size: 12px; color: var(--danger); margin: 6px 0 4px; line-height: 1.5; }
+  .au-submit { min-height: 48px; border-radius: 10px; background: var(--accent); color: #221a05; font-size: 15px; font-weight: 700; width: 100%; margin-top: 4px; }
+  .au-submit:disabled { opacity: .5; }
+  .au-alt { text-align: center; font-size: 12.5px; color: var(--muted); margin-top: 16px; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; }
+  .au-alt a { color: var(--accent); border-bottom: 1px solid var(--accent); padding-bottom: 1px; font-weight: 600; }
+  .au-hint { font-size: 11px; color: var(--muted); margin: 4px 0 0; text-align: center; line-height: 1.55; }
+  .dead { font-size: 11px; color: var(--down); border: 1px dashed var(--down); border-radius: 8px; padding: 6px 8px; margin-top: 8px; line-height: 1.5; text-align: center; }
+
+  /* ── 신규: 업데이트 필요 안내 (Google 버튼 자리) — 기존 .oal-wait 카드 + authStyles.note 왼쪽 띠를 합친 모양, 새 토큰 없음 ── */
+  .ug { background: var(--bg3); border: 1px solid var(--border2); border-left: 3px solid var(--accent); border-radius: 12px; padding: 14px; }
+  .ug-hd { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.4; }
+  .ug-ic { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1.5px solid var(--accent); color: var(--accent); border-radius: 50%; font-size: 12px; font-weight: 700; line-height: 1; }
+  .ug-bd { margin: 6px 0 0; font-size: 13px; color: var(--muted); line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; }
+  .ug-bd b { color: var(--text); font-weight: 600; }
+  .ug-get { margin-top: 12px; min-height: 48px; width: 100%; border-radius: 10px; border: 1px solid var(--border2); background: var(--bg2); color: var(--text); font-size: 15px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .ug-get svg { flex: none; }
+  .ug-how { margin-top: 8px; font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+  .ug-how summary { min-height: 44px; display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text); font-weight: 600; font-size: 13px; list-style: none; border-radius: 8px; }
+  .ug-how summary::-webkit-details-marker { display: none; }
+  .ug-how summary::before { content: "▸"; color: var(--muted); font-size: 12px; }
+  .ug-how[open] summary::before { content: "▾"; }
+  .ug-how ol { margin: 0 0 4px; padding-left: 20px; word-break: keep-all; overflow-wrap: anywhere; }
+  .ug-how li { margin-bottom: 4px; }
+  .ug-how li b { color: var(--text); font-weight: 600; }
+  .ug-how .tail { margin: 4px 0 0; }
+  .ug-sm { margin: 4px 0 0; padding-top: 10px; border-top: 1px solid var(--border2); font-size: 12.5px; color: var(--muted); line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; }
+  .ug-sm b { color: var(--text); font-weight: 600; }
+  @media (hover: hover) { .ug-get:hover { background: var(--bg4); } }
+
+  /* ── 대안 B: 화면 위 경고 띠 (AppUpdateBanner forced 띠 수치 그대로) ── */
+  .aub { display: flex; align-items: center; gap: 4px; min-height: 56px; padding: var(--safe-top) 12px 0 16px; background: rgba(239,68,68,.12); border-bottom: 1px solid rgba(239,68,68,.45); }
+  .aub .bar { flex: none; width: 3px; align-self: stretch; margin: 10px 0; border-radius: 2px; background: var(--danger); }
+  .aub .txt { flex: 1; min-width: 0; padding: 6px 8px; display: flex; flex-direction: column; }
+  .aub .t { font-size: 14px; font-weight: 600; color: #fca5a5; }
+  .aub .ss { font-size: 12px; color: var(--text); line-height: 1.45; }
+  .aub .get { flex: none; min-height: 44px; padding: 0 14px; border-radius: 8px; background: var(--accent); color: #221a05; font-size: 13px; font-weight: 700; }
+
+  /* ── 시스템 화면(우리가 그리지 않음) 흉내 — 회색·점선으로 앱 화면과 구분 ── */
+  .sys { position: absolute; inset: 0; z-index: 10; display: flex; flex-direction: column; justify-content: flex-end; background: rgba(0,0,0,.55); }
+  .sys .sheet { background: #2b2d31; color: #e8eaed; border-top: 2px dashed var(--down); border-radius: 16px 16px 0 0; padding: 18px 18px calc(18px + var(--safe-bottom)); font-size: 14px; line-height: 1.5; }
+  .sys .sheet .k { font-size: 11px; color: var(--down); font-weight: 700; margin: 0 0 8px; }
+  .sys .sheet h3 { margin: 0 0 6px; font-size: 16px; }
+  .sys .sheet p { margin: 0 0 12px; color: #bdc1c6; font-size: 13px; }
+  .sys .sheet .row { display: flex; justify-content: flex-end; gap: 8px; }
+  .sys .sheet .row span { min-height: 40px; display: inline-flex; align-items: center; padding: 0 14px; border-radius: 20px; font-weight: 600; font-size: 13px; color: #8ab4f8; }
+  .sys .sheet .row span.p { background: #8ab4f8; color: #202124; }
+
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + var(--safe-bottom)); width: calc(100% - 32px); max-width: 380px; background: #1b1f27; border: 1px solid var(--border2); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.5; z-index: 60; box-shadow: 0 4px 16px rgba(0,0,0,.5); }
+  .toast:empty { display: none; }
+</style>
+</head>
+<body>
+<div class="page" id="page">
+  <header>
+    <h1>T-091 데모 v1 — 옛 앱(build 1)에서는 Google 버튼 대신 "앱 업데이트가 필요합니다" 안내</h1>
+    <p><span class="tag">judge: delta (DM-user-required)</span><span class="tag">대표 폭 412px · 경계 360px</span><span class="tag">1280px 데스크톱: 바뀌는 것 없음</span><span class="tag">매매·안전장치·서버 권한 변경 없음</span><span class="tag">웹 배포만 (APK 변경 없음)</span></p>
+    <p class="sample-banner">화면 모양만 보이는 합성 데모입니다. 버전 번호(v1.0.0 = build 1, v1.0.1 = build 2)는 공개 배포본 번호를 예시로 썼고, 다운로드·설치는 실제로 일어나지 않습니다. 이메일 칸의 you@example.com 은 입력란 안내 글자입니다. 안드로이드·Chrome 시스템 화면(C 절)은 모양 예시이며 실제 글자는 기기·Chrome 버전마다 다릅니다.</p>
+    <div class="box" aria-labelledby="top-h">
+      <h3 id="top-h">한눈에 — 무엇이 바뀌나</h3>
+      <ul class="plain">
+        <li><b>바뀌는 화면은 하나, 바뀌는 사람은 옛 앱 사용자뿐입니다.</b> 로그인 화면(<code>/login</code>)의 Google 버튼 자리만, 앱이면서 설치된 앱의 build 가 2 미만일 때 안내 상자로 바뀝니다.</li>
+        <li><b>웹 브라우저와 새 앱(build 2 이상)은 지금과 같습니다.</b> 이메일 로그인 폼은 옛 앱에서도 그대로 아래에 있습니다.</li>
+        <li><b>버전을 못 읽으면 막지 않습니다.</b> 모르는 값으로 기능을 막지 않는다는 기존 원칙 그대로 — 지금처럼 Google 버튼을 보입니다(D 절).</li>
+        <li>이 판단은 <b>화면 표시용</b>입니다. 서버 로그인 권한과 무관하고, 서버 코드는 바뀌지 않습니다.</li>
+      </ul>
+    </div>
+    <nav class="toc" aria-label="데모 목차">
+      <a href="#sa">A. 세 상태 비교</a><a href="#sb">B. 옛 앱: 현재 vs 제안</a><a href="#sc">C. 새 버전 받기 흐름</a><a href="#sd">D. 동작 규칙</a><a href="#se">E. 접근성·포커스</a><a href="#decide">결정 필요</a><a href="#sg">구현 가이드</a>
+    </nav>
+    <div class="controls" style="margin-top:12px">
+      <fieldset class="seg"><legend>모든 미리보기 폭</legend><div class="seg-row">
+        <label><input type="radio" name="w" value="412" checked><span>412px (갤럭시 S25+)</span></label>
+        <label><input type="radio" name="w" value="360"><span>360px (경계)</span></label>
+      </div></fieldset>
+    </div>
+  </header>
+
+  <!-- A -->
+  <section class="block" id="sa">
+    <h2>A. 세 상태 나란히 — 웹 · 새 앱 · 옛 앱</h2>
+    <p class="lead">왼쪽 두 화면은 <b>지금과 같습니다</b>(기준선). 오른쪽 옛 앱 화면만 Google 버튼 자리에 안내 상자가 들어갑니다(권고안 A). 이메일 폼·가입 링크·안내 문구는 세 화면 모두 같습니다.</p>
+    <div class="compare3">
+      <div><p class="frame-cap">① 웹 브라우저 — 변화 없음</p><div class="phone" id="f-web" role="region" aria-label="웹 로그인 화면 미리보기"></div></div>
+      <div><p class="frame-cap">② 앱 새 버전 (v1.0.1 · build 2 이상) — 변화 없음</p><div class="phone" id="f-new" role="region" aria-label="새 앱 로그인 화면 미리보기"></div></div>
+      <div><p class="frame-cap">③ 앱 옛 버전 (v1.0.0 · build 1) — 제안</p><div class="phone" id="f-old" role="region" aria-label="옛 앱 로그인 화면 미리보기"></div></div>
+    </div>
+    <p class="note">③ 의 [새 버전 받기]·[업데이트 설치 방법]은 눌러 볼 수 있습니다(데모라 실제 다운로드는 없음). 누르면 설치 방법이 저절로 펼쳐집니다 — Chrome 창에서 돌아왔을 때 다음에 할 일이 바로 보이게.</p>
+    <p class="note">데스크톱(1280px): 로그인은 가운데 카드(최대 380px)라 넓은 화면에서도 모양이 같습니다. 그리고 옛 앱 안내는 앱에서만 나오므로 데스크톱 브라우저에는 나타나지 않습니다.</p>
+  </section>
+
+  <!-- B -->
+  <section class="block" id="sb">
+    <h2>B. 옛 앱 로그인 화면 — 현재 vs 제안 (권고 A · 대안 B)</h2>
+    <p class="lead">현재는 옛 앱에도 Google 버튼이 보이지만 <b>눌러도 아무 반응이 없습니다</b>(옛 앱은 Chrome 창에서 앱으로 돌아오는 연결을 받지 못함 — T-088 사용자 확인). 제안은 그 자리에서 이유와 해결 방법을 함께 보입니다. 아래 토글로 권고 A 와 대안 B 를 바꿔 보세요.</p>
+    <div class="controls">
+      <fieldset class="seg"><legend>제안 화면에 보일 안</legend><div class="seg-row">
+        <label><input type="radio" name="alt" value="A" checked><span>A. Google 버튼 자리를 안내 상자로 대체 (권고)</span></label>
+        <label><input type="radio" name="alt" value="B"><span>B. 화면 위 경고 띠 + Google 버튼 비활성 (대안)</span></label>
+      </div></fieldset>
+    </div>
+    <div class="compare2">
+      <div><p class="frame-cap">현재 — 옛 앱 v1.0.0 (문제)</p><div class="phone" id="f-cur" role="region" aria-label="옛 앱 현재 로그인 화면 미리보기"></div></div>
+      <div><p class="frame-cap" id="cap-prop">제안 — 권고 A</p><div class="phone" id="f-prop" role="region" aria-label="옛 앱 제안 로그인 화면 미리보기"></div></div>
+    </div>
+    <div class="why" id="why">
+      <b>A 를 권하는 이유</b>
+      <ol>
+        <li>막힌 기능이 있던 바로 그 자리에서 이유와 해결(새 버전 받기)을 함께 보여, "눌러도 무반응" 혼란을 거기서 끝냅니다.</li>
+        <li>B 의 비활성 버튼은 여전히 "안 눌리는 버튼"이고, 포커스·읽기 장치에서 빠져 이유가 전달되지 않습니다(대비도 3:1 안팎으로 떨어짐).</li>
+        <li>바뀌는 곳이 Google 버튼 자리 한 곳뿐이라 제목·이메일 폼 위치가 그대로이고, B 처럼 화면 위·버튼 두 곳에 같은 말을 나눠 두지 않습니다.</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- C -->
+  <section class="block" id="sc">
+    <h2>C. [새 버전 받기]를 누른 뒤 — 흐름 한 바퀴</h2>
+    <p class="lead">새 화면은 만들지 않습니다. 버튼은 업데이트 띠의 [받기]와 같은 방식으로 <b>Chrome 창(Custom Tab)</b>에서 <code>/app/download/latest.apk</code> 를 엽니다(같은 출처 공개 경로). 2·3단계는 안드로이드·Chrome 시스템 화면이라 우리가 그리지 않습니다 — 그래서 안내 상자의 "업데이트 설치 방법"이 그 단계를 미리 알려 줍니다(기존 설정 › 앱 섹션 문구 재사용).</p>
+    <div class="split">
+      <div>
+        <div class="simbtns" style="margin-bottom:10px">
+          <button type="button" id="st-prev">◀ 이전 단계</button>
+          <button type="button" id="st-next">다음 단계 ▶</button>
+        </div>
+        <p class="frame-cap" id="st-cap" aria-live="polite"></p>
+        <div class="phone" id="f-flow" role="region" aria-label="새 버전 받기 흐름 미리보기"></div>
+      </div>
+      <div class="box" style="margin-top:0">
+        <h3>단계</h3>
+        <ol class="plain" id="st-list">
+          <li><b>로그인 화면</b> — [새 버전 받기]를 누릅니다. 안내 상자의 "업데이트 설치 방법"이 저절로 펼쳐집니다.</li>
+          <li><b>Chrome 창 (시스템)</b> — "유해할 수 있는 파일입니다" 확인에서 [다운로드]. 플레이스토어 밖에서 받는 앱이라 매번 뜨는 확인입니다(설정 › 앱 문구와 같음).</li>
+          <li><b>설치 화면 (시스템)</b> — 받은 파일을 열면 [업데이트]. 같은 서명 키라 지금 앱 위에 덮어 설치됩니다. 이 기기는 1.0.0 을 Chrome 으로 설치했으므로 "출처를 알 수 없는 앱" 허용은 대개 이미 되어 있습니다 [가능성 높음].</li>
+          <li><b>앱을 다시 열면</b> — build 2 로 읽혀 안내 상자 대신 Google 버튼이 보입니다(② 와 같은 화면).</li>
+        </ol>
+        <p class="note">Chrome 창을 그냥 닫고 돌아오면 1단계 화면(설치 방법 펼친 채)으로 돌아옵니다 — 별도 상태 없음. 다운로드 진행률은 앱이 알 수 없어 표시하지 않습니다(Chrome·알림이 보여 줌).</p>
+        <p class="note">Chrome 창을 열지 못하면(Browser 플러그인 없음 등) 업데이트 띠와 같은 폴백: 같은 화면에서 일반 이동 → 앱(MainActivity)의 다운로드 처리. 새 오류 문구는 만들지 않습니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- D -->
+  <section class="block" id="sd">
+    <h2>D. 동작 규칙 — 언제 안내 상자가 나오나</h2>
+    <div class="tbl-wrap"><table class="tbl">
+      <caption>로그인 화면의 Google 자리 (가입 화면 <code>/signup</code> 은 지금 그대로 — 앱에서는 아무것도 그리지 않음)</caption>
+      <thead><tr><th scope="col">상황</th><th scope="col">Google 자리에 보이는 것</th><th scope="col">비고</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">웹 브라우저</th><td>Google 버튼</td><td>버전 읽기 자체를 하지 않음. 변화 없음</td></tr>
+        <tr><th scope="row">서버에 Google 설정 없음 (목록 빈 값)</th><td>아무것도 없음 (구분선도 없음)</td><td>지금과 같음 — 안내 상자도 그리지 않음(막을 기능이 없으므로)</td></tr>
+        <tr><th scope="row">앱, 버전 읽는 중</th><td>아무것도 없음</td><td>지금의 "목록 받기 전에는 그리지 않음"과 같은 처리 — 눌러도 안 되는 버튼이 잠깐 보였다 바뀌는 깜빡임 방지</td></tr>
+        <tr><th scope="row">앱, build ≥ 2</th><td>Google 버튼</td><td>변화 없음</td></tr>
+        <tr class="cur"><th scope="row">앱, build = 1 (2 미만)</th><td><b>안내 상자</b> (권고 A)</td><td>이메일 폼은 그대로 아래에. 구분선 "또는 이메일로"도 그대로</td></tr>
+        <tr><th scope="row">앱, 버전을 읽지 못함 (App 플러그인 없음·값 이상)</th><td>Google 버튼</td><td><b>막지 않습니다</b> — 모르는 값으로는 강제하지 않는 기존 원칙. (그 기기에서는 지금과 같은 위험이 남음 — 구현 가이드 ⑦)</td></tr>
+      </tbody>
+    </table></div>
+    <div class="box"><b>필요 최소 build 는 한 곳에서 관리합니다.</b> 예: <code>googleLogin: 2</code>. 앞으로 네이티브에 기대는 기능(M2 앱 링크 등)이 생기면 그 표에 한 줄을 더하고, 같은 안내 상자를 그 기능 자리에 재사용합니다(제목은 같고, 본문의 "Google 로그인" 부분만 기능 이름으로 바뀜).</div>
+  </section>
+
+  <!-- E -->
+  <section class="block" id="se">
+    <h2>E. 접근성 · 포커스 · 키보드</h2>
+    <div class="tbl-wrap"><table class="tbl">
+      <caption>안내 상자 접근성 설계</caption>
+      <thead><tr><th scope="col">항목</th><th scope="col">설계</th><th scope="col">이유</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">역할</th><td><code>role="note"</code> + <code>aria-labelledby</code>(제목). 제목은 <code>&lt;h2&gt;</code></td><td>읽기 장치가 화면 진입 때 끼어들어 읽지 않고(<code>status</code>·<code>alert</code> 는 로그인 화면마다 알림이 떠 과함), 읽는 순서상 이메일 폼보다 먼저 나옵니다. 제목 단위 이동으로도 찾을 수 있습니다.</td></tr>
+        <tr><th scope="row">포커스</th><td>권고: 옛 앱이면 <b>이메일 칸 자동 포커스를 하지 않습니다</b>(결정 D2)</td><td>앱에서 이메일 칸에 포커스가 가면 키보드가 올라와 화면 위쪽 안내가 밀려 올라갈 수 있습니다 — 기존 <code>oauth_error</code> 처리(앱이면 이메일 칸 대신 안내로)와 같은 이유. 안내 상자로 포커스를 옮기지도 않습니다(눈으로 보이는 위치라 충분).</td></tr>
+        <tr><th scope="row">키보드 순서</th><td>[새 버전 받기] → [업데이트 설치 방법] → 이메일 → 비밀번호 → [로그인] → 회원가입</td><td>화면에 보이는 순서와 같음</td></tr>
+        <tr><th scope="row">터치 영역</th><td>[새 버전 받기] 높이 48px, [업데이트 설치 방법] 44px</td><td>최소 44px</td></tr>
+        <tr><th scope="row">색만으로 표현 금지</th><td>"!" 아이콘 + 제목 글자 "앱 업데이트가 필요합니다"</td><td>노란 띠·아이콘은 보조</td></tr>
+        <tr><th scope="row">대비 (계산값)</th><td>제목 #e6e8ee / #1f2430 = 12.7:1 · 본문 #8b93a7 / #1f2430 = 5.1:1 · 버튼 글자 #e6e8ee / #171a21 = 14.2:1</td><td>모두 4.5:1 이상. 대안 B 의 비활성 Google 버튼 안 회색 글자는 약 3:1 로 미달</td></tr>
+        <tr><th scope="row">설치 방법 펼치기</th><td>기본 <code>&lt;details&gt;/&lt;summary&gt;</code> — [새 버전 받기]를 누르면 펼침(포커스는 버튼에 그대로)</td><td>펼침 상태를 읽기 장치가 스스로 알림. 별도 ARIA 불필요</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <!-- 결정 필요 -->
+  <section class="block" id="decide">
+    <h2>결정 필요 — 두 가지 (둘 다 권고값이 있어 "권고대로"라고만 답하셔도 됩니다)</h2>
+    <div class="decide">
+      <h3>D1. 안내의 위치·강도</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. Google 버튼 자리를 안내 상자로 대체 <span class="rec-tag">✓ 권장</span></h4>제목 + 이유 한두 문장 + [새 버전 받기] + 설치 방법(접힘) + "이메일 로그인은 이 버전에서도 그대로". 이메일 폼은 아래 그대로.<br>한계: 안내 상자가 Google 버튼(48px)보다 높아(설치 방법 접힌 상태 412px 에서 약 283px, 360px 에서 약 303px) 이메일 폼이 그만큼 아래로 내려갑니다 — 데모 틀(높이 760px) 기준 412px 에서 [로그인] 버튼 아래끝이 약 724px 로 첫 화면 안, 360px 에서는 약간 스크롤(실기기 높이는 확인 전).</div>
+        <div class="opt"><h4>B. 화면 위 경고 띠 + Google 버튼 비활성</h4>업데이트 띠(필수 업데이트 모양)를 로그인 화면 맨 위에 두고, Google 버튼은 회색으로 잠급니다.<br>한계: 안 눌리는 버튼이 남아 이유가 버튼에서 떨어져 있고, 비활성 요소는 포커스·읽기 장치에서 빠집니다. 띠는 지금 로그인 전 화면에 쓰지 않는 요소라 새 경우가 하나 늘어납니다.</div>
+      </div>
+    </div>
+    <div class="decide">
+      <h3>D2. 옛 앱에서 첫 포커스</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A. 옛 앱이면 이메일 칸 자동 포커스 안 함 <span class="rec-tag">✓ 권장</span></h4>키보드가 올라오지 않아 안내 상자가 온전히 보입니다. 이메일 로그인을 하려면 칸을 한 번 누르면 됩니다. 웹·새 앱·버전 모름은 지금처럼 이메일 칸 포커스.<br>한계: 앱에서는 버전을 읽은 뒤(수 ms) 포커스를 정하므로 지금보다 아주 조금 늦게 포커스가 갑니다.</div>
+        <div class="opt"><h4>B. 지금처럼 항상 이메일 칸 포커스</h4>코드 변경이 가장 적습니다.<br>한계: 키보드가 올라오면 화면이 이메일 칸 쪽으로 밀려 안내 상자가 위로 잘릴 수 있습니다 [추측 — 앱 WebView 가 코드로 준 포커스에 키보드를 올리는지는 실기기 확인 전].</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 구현 가이드 -->
+  <section class="block" id="sg">
+    <h2>구현 가이드 (developer 용) — 승인 뒤에만 착수</h2>
+    <div class="guide">
+      <h3>요약: OAuthButtons 의 Google 자리에서 앱 build 가 모자라면 안내 상자를 그린다</h3>
+      <p style="margin:0">적용 토큰(이름): <code>--bg2</code> <code>--bg3</code> <code>--bg4</code> <code>--border2</code> <code>--text</code> <code>--muted</code> <code>--accent</code>. 새 토큰 없음. 수치는 데모 <code>.ug*</code> 클래스 그대로(카드 radius 12·padding 14·왼쪽 띠 3px, 제목 15px/600, 본문 13px, 버튼 48px — 기존 <code>.oal-wait</code>·<code>.oal-reopen</code> 와 같은 값).</p>
+
+      <h4>① 바뀌는 파일 (예상)</h4>
+      <ul class="plain">
+        <li><code>src/components/auth/OAuthButtons.tsx</code> — <code>appLogin</code> 일 때: 앱이면 마운트 뒤 설치 build 를 읽고, 다 읽기 전에는 그리지 않음(목록 로딩 중과 같은 처리). 앱이고 build 가 필요 최소보다 작으면 Google 버튼 대신 새 안내 컴포넌트 + 기존 구분선. 그 밖에는 지금 그대로. 판단 함수는 <code>isOAuthVisible</code> 처럼 순수 함수로 꺼내 시험.</li>
+        <li>새 <code>src/components/auth/AppUpdateRequiredNote.tsx</code>(이름은 developer 판단) — 그리기 전용. props: 설치 버전 이름, [새 버전 받기] 동작. 문구 상수도 이 파일 한 곳.</li>
+        <li>새 필요 최소 build 표 + 헬퍼 — 예: <code>src/lib/app-release/</code> 아래 <code>APP_FEATURE_MIN_BUILD = { googleLogin: 2 }</code>, <code>appMeetsBuild(native, build, min)</code>: 앱 아님 → true, build 모름(null) → true, build &lt; min → false. Node 모듈 import 없는 순수 파일(웹 번들에 들어감).</li>
+        <li><code>src/app/login/page.tsx</code> — D2 A 를 고르면 첫 포커스 effect: 앱이면 build 판단이 끝난 뒤 "옛 앱이 아니면" 이메일 칸 포커스. 기존 <code>oauth_error</code> 분기는 그대로 우선.</li>
+        <li><code>docs/screens.md</code> §5(앱 전용 화면)에 로그인 화면 "옛 앱 업데이트 안내" 한 줄. 일반화 규칙 단락은 task 설계대로 <code>docs/mobile-app-procedure.md</code>·<code>docs/deploy-order.md</code>.</li>
+      </ul>
+
+      <h4>② 입력</h4>
+      <ul class="plain">
+        <li>설치 build: <code>src/lib/native/bridge.ts</code> 의 <code>getAppVersion()</code> → <code>{ version, build }</code> 또는 null. 이미 같은 값을 읽는 <code>src/components/app/useAppUpdate.ts</code> 의 저장소(<code>current</code>·<code>currentLoaded</code>)를 재사용할 수 있는지 먼저 확인(로그인 전 화면에서 <code>/api/app/version</code> 을 부르지 않는지가 조건 — 그 API 는 로그인 필요).</li>
+        <li>로그인 전이라 최신 버전 이름·크기는 쓰지 않습니다(안내에 넣지 않음).</li>
+      </ul>
+
+      <h4>③ [새 버전 받기] 동작</h4>
+      <ul class="plain">
+        <li>업데이트 띠와 같은 <code>openDownload('/app/download/latest.apk')</code>(Custom Tab → 실패 시 같은 화면 이동). <code>&lt;button&gt;</code> 으로 만들고 <code>&lt;a href&gt;</code> 로 만들지 않습니다(띠와 같은 경로·같은 폴백). 누른 뒤 설치 방법 <code>&lt;details&gt;</code> 를 펼침 — 포커스는 버튼에 둠.</li>
+        <li>경로는 상수 하나. <code>/app/download/</code> 아래 새 라우트를 만들지 않습니다(금기).</li>
+      </ul>
+
+      <h4>④ 문구 (한 곳에서 관리 — 시험이 글자까지 고정)</h4>
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th scope="col">키</th><th scope="col">문구</th><th scope="col">출처</th></tr></thead>
+        <tbody>
+          <tr><td><code>title</code></td><td>앱 업데이트가 필요합니다</td><td>기존 필수 업데이트 띠 제목과 같은 글자(<code>AppUpdateBanner</code>)</td></tr>
+          <tr><td><code>body</code></td><td>지금 설치된 앱(v{version})에서는 Google 로그인을 쓸 수 없습니다. 새 버전을 설치하면 Google로 로그인할 수 있습니다.</td><td>신규</td></tr>
+          <tr><td><code>get</code></td><td>새 버전 받기</td><td>신규(Leader 지정)</td></tr>
+          <tr><td><code>howSummary</code></td><td>업데이트 설치 방법</td><td>설정 › 앱 섹션과 같음</td></tr>
+          <tr><td><code>how1</code></td><td>[새 버전 받기]를 누르면 Chrome 창에서 파일을 받습니다. Chrome 이 "유해할 수 있는 파일입니다"라고 물으면 다운로드를 누릅니다. 플레이스토어 밖에서 받는 앱이라 매번 뜨는 확인입니다.</td><td>설정 › 앱 ①(버튼 이름만 [업데이트 받기]→[새 버전 받기]) + 웹 설치 1단계 문장</td></tr>
+          <tr><td><code>how2</code></td><td>다 받으면 알림(또는 Chrome "다운로드")에서 파일을 엽니다.</td><td>설정 › 앱 ② 그대로</td></tr>
+          <tr><td><code>how3</code></td><td>[업데이트]를 누르면 끝 — 지금 앱 위에 덮어 설치됩니다.</td><td>설정 › 앱 ③ 에서 "로그인이 그대로 남습니다" 삭제(로그인 전 화면이라 해당 없음)</td></tr>
+          <tr><td><code>howFail</code></td><td>"앱이 설치되지 않았습니다"가 나오면 기존 앱을 지우고 다시 설치해야 합니다.</td><td>설정 › 앱 마지막 문장에서 "뒤 다시 로그인" 삭제(같은 이유)</td></tr>
+          <tr><td><code>email</code></td><td>이메일 로그인은 이 버전에서도 그대로 쓸 수 있습니다.</td><td>신규 — 기존 앱 문구에 맞춰 합니다체</td></tr>
+        </tbody>
+      </table></div>
+
+      <h4>⑤ 시험 포인트</h4>
+      <ul class="plain">
+        <li>순수 로직: <code>appMeetsBuild</code> — 앱 아님 / build 모름(null) / 1 / 2 / 3 → true·true·false·true·true. 표에 없는 기능 키는 막지 않음(true).</li>
+        <li>렌더: 웹 → Google 버튼, 안내 없음 · 앱 build 2 → Google 버튼 · 앱 build 1 → 안내(<code>role="note"</code>·제목·[새 버전 받기]), Google 버튼 없음, 이메일 폼·구분선 있음 · 앱 build 모름 → Google 버튼 · 앱 버전 읽는 중 → Google 자리에 아무것도 없음 · 서버 목록 빈 값 + 앱 build 1 → 아무것도 없음 · 앱 <code>/signup</code> → 지금처럼 아무것도 없음.</li>
+        <li>문구 글자 고정, [새 버전 받기]가 <code>/app/download/latest.apk</code> 로 <code>openDownload</code> 를 부르는지, 누른 뒤 설치 방법이 펼쳐지는지.</li>
+        <li>D2 A: 앱 build 1 → 이메일 칸에 포커스가 가지 않음 · 웹·build 2·모름 → 이메일 칸 포커스 · <code>oauth_error</code> 있음 → 기존 동작.</li>
+        <li>412px·360px 에서 가로 넘침 0, 버튼 48px·summary 44px.</li>
+      </ul>
+
+      <h4>⑥ 하지 말 것</h4>
+      <ul class="plain">
+        <li>앱 판별·build 를 서버 권한 판단에 쓰지 않습니다(표시 전용). 서버·인증 라우트는 이 작업에서 바뀌지 않습니다.</li>
+        <li>WebView 가 <code>/api/auth/google</code> 로 이동하는 코드를 만들지 않습니다(기존 금기 그대로 — 옛 앱 폴백으로도 금지).</li>
+        <li>업데이트를 강제하지 않습니다 — 이메일 로그인은 막지 않습니다.</li>
+      </ul>
+
+      <h4>⑦ 확인할 사실 (구현 전)</h4>
+      <ul class="plain">
+        <li>옛 APK(1.0.0)에 App 플러그인 <code>getInfo()</code> 가 있어 build 1 을 읽을 수 있는지(task 설계의 읽기 전용 확인). 못 읽으면 규칙상 Google 버튼이 그대로 보이므로 이 안내는 그 기기에서 작동하지 않습니다 — 그때는 Leader 에게 대안(서버가 다른 신호로 앱 build 를 아는 방법) 검토 요청.</li>
+        <li>옛 APK 에 Browser 플러그인이 있는지(없으면 [새 버전 받기]가 같은 화면 이동 폴백으로 동작 — 다운로드가 되는지 실기기 확인 필요).</li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+  var OLD = { name: '1.0.0', build: 1 };
+  var COPY = {
+    title: '앱 업데이트가 필요합니다',
+    body: function (v) { return '지금 설치된 앱(<b class="num">v' + v + '</b>)에서는 Google 로그인을 쓸 수 없습니다. 새 버전을 설치하면 Google로 로그인할 수 있습니다.'; },
+    get: '새 버전 받기',
+    howSummary: '업데이트 설치 방법',
+    how1: '<b>[새 버전 받기]</b>를 누르면 Chrome 창에서 파일을 받습니다. Chrome 이 "유해할 수 있는 파일입니다"라고 물으면 <b>다운로드</b>를 누릅니다. 플레이스토어 밖에서 받는 앱이라 매번 뜨는 확인입니다.',
+    how2: '다 받으면 알림(또는 Chrome "다운로드")에서 파일을 엽니다.',
+    how3: '<b>[업데이트]</b>를 누르면 끝 — 지금 앱 위에 덮어 설치됩니다.',
+    howFail: '"앱이 설치되지 않았습니다"가 나오면 기존 앱을 지우고 다시 설치해야 합니다.',
+    email: '<b>이메일 로그인</b>은 이 버전에서도 그대로 쓸 수 있습니다.'
+  };
+
+  var G_ICON = '<svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" focusable="false"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.76c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.11a6.6 6.6 0 0 1 0-4.22V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84z"/><path fill="#EA4335" d="M12 4.75c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 1.46 14.97.5 12 .5A11 11 0 0 0 2.18 7.05l3.66 2.84c.87-2.6 3.3-4.14 6.16-4.14z"/></svg>';
+  var DL_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>';
+
+  function gate(p, open) {
+    return '<div class="ug" role="note" aria-labelledby="' + p + '-ug-t">' +
+      '<h2 class="ug-hd" id="' + p + '-ug-t"><span class="ug-ic" aria-hidden="true">!</span><span>' + COPY.title + '</span></h2>' +
+      '<p class="ug-bd">' + COPY.body(OLD.name) + '</p>' +
+      '<button type="button" class="ug-get" data-act="get">' + DL_ICON + '<span>' + COPY.get + '</span></button>' +
+      '<details class="ug-how"' + (open ? ' open' : '') + '><summary>' + COPY.howSummary + '</summary>' +
+        '<ol><li>' + COPY.how1 + '</li><li>' + COPY.how2 + '</li><li>' + COPY.how3 + '</li></ol>' +
+        '<p class="tail">' + COPY.howFail + '</p></details>' +
+      '<p class="ug-sm">' + COPY.email + '</p>' +
+    '</div>';
+  }
+
+  function google(disabled) {
+    return '<div class="oa-list"><button type="button" class="oa-btn g" data-act="google"' + (disabled ? ' disabled aria-describedby="alt-band"' : '') + '>' + G_ICON + 'Google로 계속하기' +
+      (disabled ? ' <span class="dim">(업데이트 후)</span>' : '') + '</button></div>';
+  }
+
+  /* slot: google | dead | gate | gateB */
+  function login(p, slot, opts) {
+    opts = opts || {};
+    var top = '';
+    if (slot === 'gateB') {
+      top = '<div class="aub" id="alt-band" role="status"><span class="bar" aria-hidden="true"></span><div class="txt"><span class="t"><span aria-hidden="true">⚠ </span>' + COPY.title + '</span>' +
+        '<span class="ss">이 버전(v' + OLD.name + ')에서는 Google 로그인을 쓸 수 없습니다.</span></div><button type="button" class="get" data-act="get">업데이트</button></div>';
+    }
+    var oauth;
+    if (slot === 'gate') oauth = gate(p, opts.open);
+    else if (slot === 'gateB') oauth = google(true);
+    else oauth = google(false) + (slot === 'dead' ? '<p class="dead">눌러도 아무 반응 없음 — 옛 앱은 Chrome 창에서 앱으로 돌아오는 연결을 받지 못합니다</p>' : '');
+    return top + '<div class="au-wrap"><div class="au-card">' +
+      '<div class="au-logo" aria-hidden="true">📈</div>' +
+      '<h1 class="au-title">주식 자동매매</h1>' +
+      '<p class="au-sub">계속하려면 로그인하세요</p>' +
+      oauth +
+      '<div class="oa-div" aria-hidden="true"><i></i><span>또는 이메일로</span><i></i></div>' +
+      '<form onsubmit="return false">' +
+        '<div class="au-field"><label for="' + p + '-em">이메일</label><input id="' + p + '-em" class="au-input" type="email" inputmode="email" autocomplete="off" placeholder="you@example.com"></div>' +
+        '<div class="au-field"><label for="' + p + '-pw">비밀번호</label><input id="' + p + '-pw" class="au-input" type="password" autocomplete="off" placeholder="••••••••"></div>' +
+        '<div class="au-err" role="alert"> </div>' +
+        '<button type="submit" class="au-submit" disabled>로그인</button>' +
+      '</form>' +
+      '<div class="au-alt"><span>처음이신가요?</span><a href="#" data-act="noop">회원가입</a></div>' +
+      '<p class="au-hint">세션은 30일간 유지됩니다. 비밀번호를 잊으면 서버 관리자가 직접 재설정해야 합니다.</p>' +
+    '</div></div>';
+  }
+
+  function frame(id, chip, inner) {
+    var el = document.getElementById(id);
+    el.innerHTML = '<div class="frm"><span class="chip" aria-hidden="true">데모 표시: ' + chip + '</span><div class="scrl">' + inner + '</div></div>';
+  }
+
+  function renderA() {
+    frame('f-web', '웹', login('web', 'google'));
+    frame('f-new', '앱 build 2', login('new', 'google'));
+    frame('f-old', '앱 build 1', login('old', 'gate'));
+  }
+  function renderB() {
+    var alt = document.querySelector('input[name="alt"]:checked').value;
+    frame('f-cur', '앱 build 1 · 현재', login('cur', 'dead'));
+    frame('f-prop', alt === 'A' ? '권고 A' : '대안 B', login('prop', alt === 'A' ? 'gate' : 'gateB'));
+    document.getElementById('cap-prop').textContent = alt === 'A' ? '제안 — 권고 A (Google 버튼 자리를 안내 상자로)' : '제안 — 대안 B (위 경고 띠 + Google 버튼 비활성)';
+  }
+
+  /* ── C. 흐름 ── */
+  var step = 0;
+  var CAPS = ['1/4 로그인 화면 — [새 버전 받기]를 누릅니다', '2/4 Chrome 창 (시스템 화면 예시) — [다운로드]', '3/4 설치 화면 (시스템 화면 예시) — [업데이트]', '4/4 앱을 다시 열면 — Google 버튼이 보입니다'];
+  function sysSheet(k, h, p, a, b) {
+    return '<div class="sys" aria-hidden="false"><div class="sheet" role="group" aria-label="' + k + '"><p class="k">' + k + ' — 우리가 그리지 않음, 글자는 예시</p><h3>' + h + '</h3><p>' + p + '</p><div class="row"><span>' + a + '</span><span class="p">' + b + '</span></div></div></div>';
+  }
+  function renderFlow() {
+    var inner;
+    if (step === 0) inner = login('fl', 'gate');
+    else if (step === 1) inner = login('fl', 'gate', { open: true }) + sysSheet('Chrome 시스템 화면', '유해할 수 있는 파일입니다', '그래도 latest.apk 을(를) 다운로드하시겠습니까?', '취소', '다운로드');
+    else if (step === 2) inner = login('fl', 'gate', { open: true }) + sysSheet('안드로이드 설치 화면', '주식캐기', '이 앱을 업데이트하시겠습니까?', '취소', '업데이트');
+    else inner = login('fl', 'google');
+    frame('f-flow', step === 3 ? '앱 build 2' : '앱 build 1', inner);
+    document.getElementById('st-cap').textContent = CAPS[step];
+    document.getElementById('st-prev').disabled = step === 0;
+    document.getElementById('st-next').disabled = step === 3;
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.textContent = ''; }, 3200);
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-act');
+    if (act === 'noop') { e.preventDefault(); toast('데모: 회원가입 화면은 이번 변경과 무관합니다.'); return; }
+    if (act === 'google') { toast('데모: Google 버튼 — 지금과 같은 동작(이번 변경 없음).'); return; }
+    if (act === 'get') {
+      var card = btn.closest('.ug');
+      if (card) { var d = card.querySelector('details'); if (d) d.open = true; }
+      if (btn.closest('#f-flow') && step === 0) { step = 1; renderFlow(); return; }
+      toast('데모: Chrome 창에서 /app/download/latest.apk 내려받기가 시작됩니다(실제 다운로드 없음). 설치 방법을 펼쳤습니다.');
+    }
+  });
+
+  document.getElementById('st-prev').addEventListener('click', function () { if (step > 0) { step--; renderFlow(); } });
+  document.getElementById('st-next').addEventListener('click', function () { if (step < 3) { step++; renderFlow(); } });
+
+  document.querySelectorAll('input[name="alt"]').forEach(function (r) { r.addEventListener('change', renderB); });
+  document.querySelectorAll('input[name="w"]').forEach(function (r) {
+    r.addEventListener('change', function () { document.getElementById('page').classList.toggle('w360', r.value === '360' && r.checked); });
+  });
+
+  renderA();
+  renderB();
+  renderFlow();
+})();
+</script>
+</body>
+</html>
