@@ -16,7 +16,7 @@ tags:
   - domain/auth
 aliases:
   - 훅인증라우트감시
-waiting: [push_confirm]
+waiting: []
 demo_gate:
   required: false
   level: "none"
@@ -141,9 +141,11 @@ demo_gate:
 
 ## 배포 기록
 
-- **미배포(push 보류).** 로컬 커밋 `53509bd`(훅·시험·CLAUDE.md)를 2026-10-26 08:18:42 KST worktree `hook-auth-t090` 에 만들고 08:18:50 main 에 fast-forward 병합했다(`3cc7418..53509bd`). origin 에는 아직 없다 — push 는 곧 webhook blue/green 배포라 사용자 승인 사항이고 이번 요청에 push 지시가 없었다.
+- **push·배포 완료(2026-10-26 09:02:57 KST, 사용자 승인 "푸시 진행해줘").** 로컬 커밋 `53509bd`(훅·시험·CLAUDE.md)를 08:18:42 worktree `hook-auth-t090` 에 만들고 08:18:50 main 에 fast-forward 병합했으며, 문서 커밋 `784151b` 와 함께 `3cc7418..784151b` 를 push 했다. webhook 결과: `RELEASE_RESULT ok`, 릴리스 `20261026-090312-784151b3`(직전 `20261026-070037-3cc7418b`), `migrated=false`, 09:03:04~09:04:16 KST(로그 시각은 UTC 표기 00:03~00:04).
+- **장중 배포 주의(절차서 「장중 임의 배포는 사용자 합의 없이 하지 않는다」)**: 권고했던 장외 창(05:10~08:30·15:40~22:20)이 아니라 국내장 개장 직후(09:03)에 나갔다 — 사용자가 권고를 들은 뒤 "푸시 진행해줘" 로 지시해 합의로 보았고, 배포 직전 읽기 전용으로 확인했다: 킬스위치 ON(`safety_kill_switch=true`)·최근 3시간 주문 0건·배포 전 health 200·pm2 두 프로세스 online. 그래서 진행 중 주문·자동 매매에 닿을 위험이 없었다.
+- **배포 후 점검(09:04 KST, 읽기 전용)**: pm2 `stockinvest`·`stockinvest-cron` 모두 online, cwd 가 새 릴리스 `20261026-090312-784151b3`, `stockinvest-cron` 정확히 1행, `/api/health` 200(`db:true`·`safetyStatus:green`·`killSwitch:true`·`dryRun:false` 불변), `system_config` 79개 키(`cred_*` 제외)가 배포 전 기준선과 동일, 감사 로그 최대 id(orders 3229·trade_logs 8305·signals 19409) 불변, 공개 도메인 `/login` 200·`/app/download/latest.apk` 200.
 - **로컬 훅 활성화는 이미 끝났다**(push·배포와 무관): 설치된 shim 이 메인 트리의 훅 파일을 `exec` 하므로 병합 직후부터 이 서버의 모든 커밋에 새 목록이 적용된다. 08:19:01 임시 index 로 확인 — `src/app/api/auth/app-exchange/route.ts`·`src/app/api/auth/[provider]/callback/route.ts` 는 판정 없이 커밋 차단(rc 1), `docs/` 문서와 `src/app/api/authx/foo.ts` 는 통과(rc 0). 실제 index·작업 트리·HEAD 는 변동 없음.
-- push 시 나갈 것: `53509bd` + 이 문서 갱신 커밋(문서 전용). `src/**` 변경이 없어 사용자 화면·앱 동작은 달라지지 않는다.
+- 이 배포에 실린 것: `53509bd`(훅·시험·CLAUDE.md)와 문서 전용 커밋 `784151b`. `src/**` 변경이 없어 사용자 화면·앱 동작은 달라지지 않았다. 이 기록을 남기는 문서 전용 커밋은 origin 에 올리지 않았다(다음 코드 push 에 동승 — 문서만을 위한 배포는 하지 않는다).
 
 ## Codex 검토
 
@@ -159,15 +161,16 @@ demo_gate:
 
 ### [T-090] 로그인·가입·구글 로그인 처리 코드(`src/app/api/auth/`)를 고치면 Reviewer 기록 없이는 커밋이 막힘
 
-- **상태**: ✅ 완료(로컬 커밋·main 병합·활성화 확인까지) · ⏳ push 승인 대기
+- **상태**: ✅ 완료(로컬 커밋·main 병합·활성화 확인·push·운영 배포 확인까지)
 - **무엇이 바뀌었나**: 커밋 안전장치 훅의 감시 목록에 `src/app/api/auth/` 디렉토리 전체(11개 파일 — 앱 교환 `app-exchange`·`[provider]` 구글 시작·콜백·`login`·`signup`·`logout`·`oauth-*`·`signup-request`)를 넣었다. 이제 이 파일을 고치는 커밋은 Reviewer 독립 감사 판정 줄이 task 이력서에 없으면 훅이 막는다. 이전에는 세션(로그인 상태)을 발급하는 입구가 감시 밖이라 감사 없이도 커밋될 수 있었다(T-088 에서 발견). 앱·웹 동작은 바뀌지 않는다 — 훅 목록 1줄·근거 주석·시험·CLAUDE.md 안내 문구뿐이다.
-- **배포**: ⏸ 미배포 — 커밋 `53509bd` 를 2026-10-26 08:18 KST main 에 로컬 병합, origin 에는 없음(push=배포라 승인 대기). 같은 배포에 함께 실린 작업: 없음(미배포). push 하면 이 커밋과 문서 전용 커밋이 함께 나간다.
-  - 로컬 훅 활성화는 push 와 무관하게 이미 적용됐다(08:19 확인: auth 라우트 차단·문서 통과).
+- **배포**: ✅ 운영 반영 — 커밋 `53509bd`·`784151b` · 2026-10-26 09:02:57 KST push(webhook) · 결과 ok(릴리스 `20261026-090312-784151b3`, migrated=false). 같은 배포에 함께 실린 작업: 없음(T-090 문서 전용 커밋 `784151b` 만).
+  - 로컬 훅 활성화는 push 와 무관하게 08:18 에 이미 적용됐다(08:19 확인: auth 라우트 차단·문서 통과).
+  - 장중(국내장 개장 직후) 배포였다 — 킬스위치 ON·최근 3시간 주문 0건을 먼저 확인했고 배포 후 점검 전부 정상(상세 `## 배포 기록`).
 - **AI 가 검증한 것**: Reviewer(Sonnet) 독립 감사 — 새로 걸리는 파일이 정확히 11개이고 기존 355개 판정은 불변(전수 대조)·변이 13종을 시험이 모두 검출·훅 로직 diff 0. 로직 시험 113 통과/0 실패. Codex C2 지적 1건은 오탐(래퍼 스냅샷에 task 사본이 섞인 것). QA 가 일회용 저장소 실 커밋 51개 시나리오 51/0, 옛 훅 대조군에서는 같은 커밋이 통과해 구멍이 실재했음을 재현. 병합 후 설치된 shim 경유 차단 확인.
   - 검증 못 한 것: 전체 `scripts/test-git-hooks.sh` 의 `# [E2E]` 단계(실제 index 를 건드려 실행하지 않음) · 대소문자 구분 없는 파일시스템(맥)의 `Auth/` 경로 · NFS `noexec` 경로에서 훅 직접 실행.
 - **👉 사용자가 확인할 것**: 없음(화면·앱 변화 없음).
 - **👉 사용자가 결정할 것**:
-  1. push 시점 — 권고: 급하지 않으니 오늘 15:40 KST 이후 배포 창에서 다른 변경과 함께(문서·스크립트뿐이라 서비스 영향은 없다). 지금(08:2x)은 국내장 개장(09:00) 직전이라 권하지 않는다.
+  1. (해소) push 시점 — 사용자가 "푸시 진행해줘" 로 지시해 09:02 에 push·배포 완료.
   2. 이번에 훅 밖에 남긴 인증 관련 파일을 따로 넣을지 — `src/lib/auth/signup-gate.ts`(초대코드 대조)·`signup-request.ts`·`src/lib/mail/send.ts`(초대코드 수신자 고정)·`src/lib/safe-next-path.ts`(T-089 오픈 리다이렉트 단일 관문)·`src/app/api/profile/password/`·`src/__tests__/middleware-public-paths.test.ts`. 권고: `safe-next-path.ts`·`signup-gate.ts`·`mail/send.ts` 는 이번 라우트와 같은 위험군이라 별도 task 로 추가 검토, 나머지는 보류.
 - **남은 일**: 앞 결정 2 의 후속 task(번호 T-091 이상). ACTIVE·RESUME 인수인계 문구는 이 task 로 갱신 완료.
 - **이슈·위험**: ① 새 항목이 세션을 만들지 않는 파일(`logout`·`oauth-providers`·`oauth-pending`)까지 걸어 사소한 수정에도 판정이 필요하다 — 근거 주석에 "마찰이 반복되면 Leader 재검토"로 기록(선제 완화 안 함). ② CLAUDE.md 문구 "세션을 발급하는 `src/app/api/auth/` 전체"는 디렉토리 전체가 감시된다는 뜻으로는 맞지만 일부 파일은 세션을 발급하지 않는다(Reviewer·QA 지적, 동작 영향 없음). ③ `docs/mobile-app-procedure.md` 66행 훅 항목 수 "38개"는 T-090 이전부터 낡았다(병합 후 40개) — 숫자를 쓰지 않는 쪽이 낫다. 롤백: `git revert 53509bd`(로컬 즉시 적용).
