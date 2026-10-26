@@ -10,7 +10,7 @@
 #
 #   1) 로직 시나리오 단계 — GIT_INDEX_FILE 로 만든 **임시 index** 에만 가짜 blob 을 stage 하고 훅을
 #      직접 호출한다. 이 단계는 실제 index 를 건드리지 않는다. 다만
-#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998-hooktest-*.md)를 **실제 작업 트리에** 잠시
+#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998·T-967~969-hooktest-*.md)를 **실제 작업 트리에** 잠시
 #          썼다가 EXIT trap 으로 지운다(kill -9 같은 강제 종료면 남을 수 있다). 실행 중 다른 세션이
 #          `git add -A` 하면 그 커밋에 섞일 수 있다.
 #        · 가짜 blob 은 .git/objects 에 dangling object 로 남는다(`git gc` 로 정리된다).
@@ -1020,9 +1020,12 @@ stage_and_run 0 "(t092-n1) 속도 제한 gate·signup-gate 이웃(-foo·.bak·xt
   "src/lib/auth/request-limits.ts" "src/lib/auth/signup-gate-foo.ts" "src/lib/auth/signup-gate.ts.bak" \
   "src/lib/auth/signup-gatexts" "foo/src/lib/auth/signup-gate.ts" "src/lib/auth/signup-request.tsx"
 # 겨냥 변이: `^src/lib/mail/` 디렉토리로 확대 · `send` 접두로 축약(sender.ts) · `$` 삭제(send.ts.bak) · 시험 위치 확대 · `^` 삭제(foo/…).
-stage_and_run 0 "(t092-n2) mail 이웃(header-safe·config·signup-request-mail·sender·send.ts.bak) → 통과" \
+# (T-093 갱신) 원래 묶음에 있던 src/lib/mail/config.ts 는 T-093 에서 목록에 들어갔다 → 이 통과 묶음에서 뺐다. 이 시나리오의
+#   겨냥 변이(`^src/lib/mail/` 확대 등)는 남은 header-safe·signup-request-mail 등이 그대로 잡는다. config.ts 가 이제 걸린다는
+#   단언은 아래 '[T-093 …]' 절(t093-a17.*)에 있다.
+stage_and_run 0 "(t092-n2) mail 이웃(header-safe·signup-request-mail·sender·send.ts.bak) → 통과" \
   "$(msg 'chore: 이웃 파일 정리')" \
-  "src/lib/mail/header-safe.ts" "src/lib/mail/config.ts" "src/lib/mail/signup-request-mail.ts" \
+  "src/lib/mail/header-safe.ts" "src/lib/mail/signup-request-mail.ts" \
   "src/lib/mail/sender.ts" "src/lib/mail/send.ts.bak" "src/lib/mail/__tests__/header-safe.test.ts" \
   "src/lib/mail/__tests__/send.test.ts.snap" "src/types/nodemailer.d.ts" "foo/src/lib/mail/send.ts"
 # 겨냥 변이: `\.ts$` 삭제(safe-next-path-x.ts·.tsx·-old.test.ts) · 디렉토리 위치 무시(auth/safe-next-path.ts) · `^` 삭제(mockups/…).
@@ -1038,9 +1041,12 @@ stage_and_run 0 "(t092-n4) profile 이웃(password-reset/·passwordx·route.ts·
   "src/app/api/profile/route.ts" "src/app/api/profile/settings/route.ts" \
   "src/app/profile/ProfilePage.tsx" "src/app/login/page.tsx" "mockups/src/app/api/profile/password/route.ts"
 # 겨냥 변이: 시험 항목의 `\.ts$` 삭제(.tsx·.bak) · `__tests__/` 전체로 확대(다른 시험들) · `^` 삭제(foo/…).
-stage_and_run 0 "(t092-n5) 시험 이웃(oauth-invite-gate·login-gate·app-download 시험 등) → 통과" \
+# (T-093 갱신) 원래 묶음에 있던 src/lib/auth/__tests__/oauth-invite-gate.test.ts 는 T-093 에서 목록에 들어갔다(T-092 '후보')
+#   → 이 통과 묶음에서 뺐다. `__tests__/` 전체 확대 변이는 남은 login-gate·request-limits 시험이 그대로 잡는다. 이제 걸린다는
+#   단언은 아래 '[T-093 …]' 절(t093-a12.*)에 있다.
+stage_and_run 0 "(t092-n5) 시험 이웃(login-gate·request-limits·app-download 시험 등) → 통과" \
   "$(msg 'test: 이웃 시험 정리')" \
-  "src/lib/auth/__tests__/oauth-invite-gate.test.ts" "src/lib/auth/__tests__/login-gate.test.ts" \
+  "src/lib/auth/__tests__/login-gate.test.ts" \
   "src/lib/auth/__tests__/request-limits.test.ts" "src/__tests__/app-download-public-surface.test.ts" \
   "src/__tests__/middleware-public-paths.test.tsx" "src/lib/auth/__tests__/signup-gate.test.ts.bak" \
   "foo/src/__tests__/middleware-public-paths.test.ts"
@@ -1117,6 +1123,213 @@ printf 'x\n' > "$E2E_REPO/src/lib/mail/header-safe.ts"
 e2e_git add src/lib/auth/login-gate.ts src/lib/auth/signup-request-gate.ts src/lib/mail/header-safe.ts
 e2e_commit "(t092-g9) 실 커밋: 속도 제한 gate·header-safe 이웃(task ID 없음) → 통과" commit "" \
   'chore: 시도제한 임계값·헤더 정리'
+
+echo ""
+echo "[T-093 — 감시 밖 인증 시험 15개·로그인 화면 시험·메일 수신자 설정(정확 일치 17줄) 추가]"
+
+# 전부 정확 일치(`^…\.ts$`)다. 항목마다 ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과(통과 문구까지 확인)
+# ③이름이 비슷한 이웃만 검토한 판정 → 차단 ④**구현만 검토한 옛 인접 판정**(시험 대상 구현·auth/ 라우트·oauth/) → 차단.
+# 각 시나리오는 새 경로 파일 **하나만** stage 한다 — 목록에서 그 줄 하나만 빠져도 그 항목의 ①·②·③·④ 가 실패한다.
+T093_ITEMS=(
+  "src/lib/auth/__tests__/session.test.ts"                    # a1  session.ts 의 시험
+  "src/lib/auth/__tests__/password.test.ts"                   # a2
+  "src/lib/auth/__tests__/users.test.ts"                      # a3
+  "src/lib/auth/__tests__/secret-box.test.ts"                 # a4
+  "src/lib/auth/__tests__/kis-verify.test.ts"                 # a5
+  "src/lib/auth/__tests__/owner-kis-migration.test.ts"        # a6
+  "src/lib/auth/__tests__/t088-disposable-mariadb.test.ts"    # a7  oauth/app-code.ts + T-088 마이그레이션
+  "src/lib/auth/__tests__/oauth-app-code-t088.test.ts"        # a8
+  "src/lib/auth/__tests__/oauth-app-routes-t088.test.ts"      # a9  auth/ 라우트 + oauth/
+  "src/lib/auth/__tests__/oauth-callback-session.test.ts"     # a10
+  "src/lib/auth/__tests__/oauth-decide.test.ts"               # a11
+  "src/lib/auth/__tests__/oauth-invite-gate.test.ts"          # a12 (T-092 후보 → 포함)
+  "src/lib/auth/__tests__/oauth-providers.test.ts"            # a13
+  "src/lib/auth/__tests__/oauth-state.test.ts"                # a14
+  "src/lib/auth/__tests__/oauth-web-regression-t088.test.ts"  # a15
+  "src/components/auth/__tests__/login-screen-t088.test.ts"   # a16 로그인 화면 시험(화면 자체는 감시 밖)
+  "src/lib/mail/config.ts"                                    # a17 관리자 메일 수신자의 유일한 출처
+)
+
+cat > "agent-vault/10-Flow/tasks/T-969-hooktest-t093-scoped.md" <<'EOF'
+---
+task_id: T-969
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/__tests__/session.test.ts, src/lib/auth/__tests__/password.test.ts, src/lib/auth/__tests__/users.test.ts, src/lib/auth/__tests__/secret-box.test.ts, src/lib/auth/__tests__/kis-verify.test.ts, src/lib/auth/__tests__/owner-kis-migration.test.ts, src/lib/auth/__tests__/t088-disposable-mariadb.test.ts, src/lib/auth/__tests__/oauth-app-code-t088.test.ts, src/lib/auth/__tests__/oauth-app-routes-t088.test.ts, src/lib/auth/__tests__/oauth-callback-session.test.ts, src/lib/auth/__tests__/oauth-decide.test.ts, src/lib/auth/__tests__/oauth-invite-gate.test.ts, src/lib/auth/__tests__/oauth-providers.test.ts, src/lib/auth/__tests__/oauth-state.test.ts, src/lib/auth/__tests__/oauth-web-regression-t088.test.ts, src/components/auth/__tests__/login-screen-t088.test.ts, src/lib/mail/config.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-969-hooktest-t093-scoped.md")
+
+# ③ 용 — 이름이 비슷한 '이웃'만 검토한 판정. 어느 것도 새 17개를 덮지 않아야 한다:
+#    속도 제한 게이트 시험(같은 디렉토리의 다른 파일) · 슬래시 없는 `src/lib/auth/__tests__`·`src/components/auth/__tests__`
+#    (= 그 이름의 파일 하나만) · 확장자·위치만 다른 파일(session.test.tsx·lib/auth/session.test.ts·config.tsx) · 형제 시험
+#    (app-version-gate-t091) · 로그인 화면 본체 · header-safe(config 가 부르는 같은 디렉토리의 다른 파일).
+cat > "agent-vault/10-Flow/tasks/T-968-hooktest-t093-nearmiss.md" <<'EOF'
+---
+task_id: T-968
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/__tests__/login-gate.test.ts, src/lib/auth/__tests__/request-limits.test.ts, src/lib/auth/__tests__, src/lib/auth/__tests__/session.test.tsx, src/lib/auth/session.test.ts, src/components/auth/__tests__, src/components/auth/__tests__/app-version-gate-t091.test.ts, src/app/login/page.tsx, src/lib/mail/header-safe.ts, src/lib/mail/config.tsx, src/lib/mail)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-968-hooktest-t093-nearmiss.md")
+
+# ④ 용 — 시험이 기대는 **구현만** 검토한 판정(옛 인접 판정 차용). 시험 대상 구현 파일(정확 일치)·oauth/·auth/ 라우트·
+#    send.ts·safe-next-path·login 화면을 전부 적어도 시험 파일 하나 열어 주지 않아야 한다(구현을 봤다고 시험을 본 게 아니다).
+cat > "agent-vault/10-Flow/tasks/T-967-hooktest-t093-implonly.md" <<'EOF'
+---
+task_id: T-967
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/session.ts, src/lib/auth/session-cookie.ts, src/lib/auth/password.ts, src/lib/auth/users.ts, src/lib/auth/secret-box.ts, src/lib/auth/kis-verify.ts, src/lib/auth/owner-kis-migration.ts, src/lib/auth/signup-gate.ts, src/lib/auth/oauth/, src/app/api/auth/, scripts/migrations/, src/lib/mail/send.ts, src/lib/safe-next-path.ts, src/app/login/, src/components/auth/OAuthButtons.tsx)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-967-hooktest-t093-implonly.md")
+
+t093_i=0
+for t093_p in "${T093_ITEMS[@]}"; do
+  t093_i=$((t093_i + 1))
+  stage_and_run 1 "(t093-a${t093_i}.1) ${t093_p#src/} + 판정 미기록(T-993) → 차단" \
+    "$(msg 'test(T-993): 인증 시험 수정')" "$t093_p"
+  stage_and_run_expect "$T075_OK" 0 "(t093-a${t093_i}.2) ${t093_p#src/} + T-969(scope 포함) → 통과" \
+    "$(msg 'test(T-969): 인증 시험 수정')" "$t093_p"
+  stage_and_run 1 "(t093-a${t093_i}.3) ${t093_p#src/} + T-968(이웃 경로 scope) → 차단" \
+    "$(msg 'test(T-968): 인증 시험 수정')" "$t093_p"
+  stage_and_run 1 "(t093-a${t093_i}.4) ${t093_p#src/} + T-967(구현만 검토한 scope) → 차단" \
+    "$(msg 'test(T-967): 인증 시험 수정')" "$t093_p"
+done
+
+# task ID 없이 고친 경우 — 대표 3건(auth 시험·화면 시험·메일 설정 각 1)
+stage_and_run 1 "(t093-b1) session.test.ts + task ID 없음 → 차단" \
+  "$(msg 'test: 세션 시험 정리')" "src/lib/auth/__tests__/session.test.ts"
+stage_and_run 1 "(t093-b2) login-screen-t088.test.ts + task ID 없음 → 차단" \
+  "$(msg 'test: 로그인 화면 시험 문구 갱신')" "src/components/auth/__tests__/login-screen-t088.test.ts"
+stage_and_run 1 "(t093-b3) mail/config.ts + task ID 없음 → 차단" \
+  "$(msg 'fix: 관리자 메일 주소 읽기 수정')" "src/lib/mail/config.ts"
+
+# 차용 방지 — 앞 라운드들의 판정 fixture 로 새 항목을 통과시킬 수 없다.
+#   T-988(scope: src/lib/auth/session.ts = 구현 파일 하나) · T-980(scope: src/app/api/auth/) · T-978(T-092 의 10개 —
+#   signup-gate.test.ts 등 이웃 시험과 send.ts 는 있지만 새 17개는 없다).
+stage_and_run 1 "(t093-v1) session.test.ts 를 T-988(session.ts 구현 scope)로 통과 시도 → 차단" \
+  "$(msg 'test(T-988): 세션 시험 수정')" "src/lib/auth/__tests__/session.test.ts"
+stage_and_run 1 "(t093-v2) oauth-app-routes 시험을 T-980(auth/ 라우트 scope)로 통과 시도 → 차단" \
+  "$(msg 'test(T-980): 앱 라우트 시험 수정')" "src/lib/auth/__tests__/oauth-app-routes-t088.test.ts"
+stage_and_run 1 "(t093-v3) oauth-invite-gate 시험을 T-978(T-092 scope)로 통과 시도 → 차단" \
+  "$(msg 'test(T-978): 초대 게이트 시험 수정')" "src/lib/auth/__tests__/oauth-invite-gate.test.ts"
+stage_and_run 1 "(t093-v4) [send.ts, config.ts] T-978 만(send.ts 만 덮음) → config.ts 가 범위 밖, 차단" \
+  "$(msg 'fix(T-978): 메일 발송·설정 수정')" "src/lib/mail/send.ts" "src/lib/mail/config.ts"
+stage_and_run 1 "(t093-v5) [signup-gate.test.ts, session.test.ts] T-978 만 → session.test.ts 범위 밖, 차단" \
+  "$(msg 'test(T-978): 인증 시험 정리')" \
+  "src/lib/auth/__tests__/signup-gate.test.ts" "src/lib/auth/__tests__/session.test.ts"
+
+# 이웃은 감사 대상이 아니다 — task ID 없이도 통과해야 한다. 통과 기대는 묶어도 약해지지 않는다(하나라도 잘못 매치되면 exit 1).
+# 겨냥 변이: 디렉토리 `^src/lib/auth/__tests__/` 로 넓히기(속도 제한 게이트 시험 2개·신규 시험) · `oauth-` 접두로 넓히기
+# (oauth-state-extra) · `$` 삭제(.bak·.tsx) · `\.ts` 의 `.` 이스케이프 누락(session.testxts) · `\.test` 의 이스케이프 누락
+# (sessionxtest.ts) · 위치 무시(lib/auth/ 바로 아래·중첩 oauth/) · `^` 삭제(앞에 디렉토리가 붙은 경로).
+stage_and_run 0 "(t093-n1) 속도 제한 게이트 시험·신규·이름 비슷한 시험·위치만 다른 시험 → 통과" \
+  "$(msg 'test: 이웃 시험 정리')" \
+  "src/lib/auth/__tests__/login-gate.test.ts" "src/lib/auth/__tests__/request-limits.test.ts" \
+  "src/lib/auth/__tests__/brand-new.test.ts" "src/lib/auth/__tests__/session-extra.test.ts" \
+  "src/lib/auth/__tests__/oauth-state-extra.test.ts" "src/lib/auth/__tests__/session.test.ts.bak" \
+  "src/lib/auth/__tests__/session.test.tsx" "src/lib/auth/__tests__/session.testxts" \
+  "src/lib/auth/__tests__/sessionxtest.ts" "src/lib/auth/session.test.ts" \
+  "src/lib/auth/__tests__/oauth/state.test.ts" "foo/src/lib/auth/__tests__/session.test.ts"
+# 겨냥 변이: `^src/components/auth/__tests__/` 로 넓히기(app-version-gate-t091) · `$` 삭제(.bak) · `^` 삭제(mockups/…).
+# 로그인 화면 본체(page.tsx)와 화면 컴포넌트는 UI 라 감시 밖이다.
+stage_and_run 0 "(t093-n2) 로그인 화면 본체·화면 컴포넌트·형제 시험(app-version-gate-t091) → 통과" \
+  "$(msg 'feat: 로그인 화면 문구')" \
+  "src/app/login/page.tsx" "src/components/auth/OAuthButtons.tsx" \
+  "src/components/auth/__tests__/app-version-gate-t091.test.ts" \
+  "src/components/auth/__tests__/login-screen-t088.test.ts.bak" \
+  "mockups/src/components/auth/__tests__/login-screen-t088.test.ts"
+# 겨냥 변이: `^src/lib/mail/` 로 넓히기(header-safe·signup-request-mail) · `$` 삭제(config.ts.bak) · `.` 이스케이프 누락
+# (configxts) · 시험 위치로 넓히기(mail/__tests__/) · `^` 삭제(foo/…). nodemailer 타입 선언도 감시 밖(T-092 후보 보류).
+stage_and_run 0 "(t093-n3) mail 이웃(header-safe·signup-request-mail·config.tsx·.bak·시험) → 통과" \
+  "$(msg 'chore: 메일 이웃 정리')" \
+  "src/lib/mail/header-safe.ts" "src/lib/mail/signup-request-mail.ts" "src/lib/mail/config.tsx" \
+  "src/lib/mail/config.ts.bak" "src/lib/mail/configxts" "src/lib/mail/__tests__/header-safe.test.ts" \
+  "src/lib/mail/__tests__/config.test.ts" "src/types/nodemailer.d.ts" "foo/src/lib/mail/config.ts"
+
+# 혼합 커밋 — 판정 합집합(요구사항4). T-969(새 17개)·T-967(구현)·T-978(T-092 10개)이 각자 자기 몫만 덮는다.
+T093_MIX=( "README.md" "src/lib/auth/__tests__/session.test.ts" "src/lib/auth/password.ts" "src/lib/mail/config.ts" )
+stage_and_run 1 "(t093-m1) [문서, 시험, 구현(password.ts), config] 판정 미기록(T-993) → 차단" \
+  "$(msg 'feat(T-993): 인증 정리')" "${T093_MIX[@]}"
+stage_and_run 1 "(t093-m2) 같은 묶음 + T-969 만 → password.ts 가 범위 밖, 차단" \
+  "$(msg 'feat(T-969): 인증 정리')" "${T093_MIX[@]}"
+stage_and_run 1 "(t093-m3) 같은 묶음 + T-967 만 → 시험·config 가 범위 밖, 차단" \
+  "$(msg 'feat(T-967): 인증 정리')" "${T093_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t093-m4) 같은 묶음 + T-969·T-967 합집합 → 통과" \
+  "$(msg 'feat(T-969,T-967): 인증 정리')" "${T093_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t093-m5) 새 17개 전부 + 문서, T-969 → 통과" \
+  "$(msg 'test(T-969): 인증 시험 일괄')" "${T093_ITEMS[@]}" "docs/x.md"
+# 화면 본체(page.tsx)는 감시 밖이지만 같은 커밋의 화면 시험 때문에 걸린다.
+stage_and_run 1 "(t093-m6) [login/page.tsx, 화면 시험] task ID 없음 → 시험 때문에 차단" \
+  "$(msg 'feat: 로그인 화면 + 시험')" "src/app/login/page.tsx" "src/components/auth/__tests__/login-screen-t088.test.ts"
+stage_and_run_expect "$T075_OK" 0 "(t093-m7) 같은 묶음 + T-969 → 통과(page.tsx 는 안전 경로 아님)" \
+  "$(msg 'feat(T-969): 로그인 화면 + 시험')" "src/app/login/page.tsx" "src/components/auth/__tests__/login-screen-t088.test.ts"
+stage_and_run_expect "$T075_OK" 0 "(t093-m8) [send.ts, config.ts] T-969·T-978 합집합 → 통과" \
+  "$(msg 'fix(T-969,T-978): 메일 발송·설정 수정')" "src/lib/mail/send.ts" "src/lib/mail/config.ts"
+# 속도 제한 게이트 시험은 감시 밖이라 끼어 있어도 결과를 바꾸지 않는다(제외 유지).
+stage_and_run_expect "$T075_OK" 0 "(t093-m9) [session.test.ts, login-gate.test.ts] T-969 → 통과(login-gate 시험은 감시 밖)" \
+  "$(msg 'test(T-969): 세션·시도제한 시험')" \
+  "src/lib/auth/__tests__/session.test.ts" "src/lib/auth/__tests__/login-gate.test.ts"
+
+echo ""
+echo "[T-093 — 실 커밋 E2E: 일회용 임시 저장소에서 git 이 새 항목을 실제로 거르는가]"
+
+# 위 T-090·T-092 실 커밋 E2E 와 같은 일회용 저장소·shim(이 작업 트리의 훅)을 그대로 쓴다. 실제 저장소는 건드리지 않는다.
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-969-hooktest-t093-scoped.md" <<'EOF'
+---
+task_id: T-969
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/__tests__/session.test.ts, src/lib/auth/__tests__/oauth-invite-gate.test.ts, src/components/auth/__tests__/login-screen-t088.test.ts, src/lib/mail/config.ts)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-968-hooktest-t093-nearmiss.md" <<'EOF'
+---
+task_id: T-968
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/__tests__/login-gate.test.ts, src/lib/auth/__tests__, src/lib/mail/header-safe.ts)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-967-hooktest-t093-implonly.md" <<'EOF'
+---
+task_id: T-967
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/session.ts, src/lib/auth/oauth/, src/app/api/auth/, src/lib/mail/send.ts, src/app/login/)**
+EOF
+mkdir -p "$E2E_REPO/src/lib/auth/__tests__" "$E2E_REPO/src/components/auth/__tests__" "$E2E_REPO/src/lib/mail"
+# (fixture 는 커밋하지 않는다 — 훅은 작업 트리의 task 파일을 읽는다. T-090·T-092 fixture 와 같다.)
+
+printf 'v1\n' > "$E2E_REPO/src/lib/auth/__tests__/session.test.ts"
+e2e_git add src/lib/auth/__tests__/session.test.ts
+e2e_commit "(t093-g1) 실 커밋: session.test.ts + task ID 없음 → 차단" block "커밋 차단" \
+  'test: 세션 시험 정리'
+e2e_commit "(t093-g2) 실 커밋: 같은 변경 + T-968(이웃 경로 scope) → 차단" block "커밋 차단" \
+  'test(T-968): 세션 시험 정리'
+e2e_commit "(t093-g3) 실 커밋: 같은 변경 + T-967(구현만 검토) → 차단(차용 방지)" block "커밋 차단" \
+  'test(T-967): 세션 시험 정리'
+e2e_commit "(t093-g4) 실 커밋: 같은 변경 + T-969(scope 포함) → 통과·HEAD 이동" commit "$T075_OK" \
+  'test(T-969): 세션 시험 정리'
+
+printf 'v1\n' > "$E2E_REPO/src/lib/mail/config.ts"
+printf 'v1\n' > "$E2E_REPO/src/components/auth/__tests__/login-screen-t088.test.ts"
+printf 'v2\n' > "$E2E_REPO/src/app/login/page.tsx"
+e2e_git add src/lib/mail/config.ts src/components/auth/__tests__/login-screen-t088.test.ts src/app/login/page.tsx
+e2e_commit "(t093-g5) 실 커밋: [config.ts, 화면 시험, 화면 본체] + task ID 없음 → 차단" block "커밋 차단" \
+  'feat: 로그인 화면·메일 설정'
+e2e_commit "(t093-g6) 실 커밋: 같은 변경 + T-967(화면·send.ts 만) → 차단" block "커밋 차단" \
+  'feat(T-967): 로그인 화면·메일 설정'
+e2e_commit "(t093-g7) 실 커밋: 같은 변경 + T-969 → 통과·HEAD 이동" commit "$T075_OK" \
+  'feat(T-969): 로그인 화면·메일 설정'
+
+printf 'x\n' > "$E2E_REPO/src/lib/auth/__tests__/login-gate.test.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/auth/__tests__/request-limits.test.ts"
+printf 'x\n' > "$E2E_REPO/src/components/auth/__tests__/app-version-gate-t091.test.ts"
+printf 'y\n' > "$E2E_REPO/src/lib/mail/header-safe.ts"
+printf 'v3\n' > "$E2E_REPO/src/app/login/page.tsx"
+e2e_git add src/lib/auth/__tests__/login-gate.test.ts src/lib/auth/__tests__/request-limits.test.ts \
+  src/components/auth/__tests__/app-version-gate-t091.test.ts src/lib/mail/header-safe.ts src/app/login/page.tsx
+e2e_commit "(t093-g8) 실 커밋: 속도 제한 게이트 시험·형제 시험·header-safe·화면(task ID 없음) → 통과" commit "" \
+  'chore: 시도제한 시험·화면 정리'
 
 echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
@@ -1196,7 +1409,7 @@ if [ "$VERBOSE" -eq 1 ]; then
 fi
 
 echo ""
-echo "워킹트리 영향 확인 (T-977~998 테스트 fixture 가 남아 있지 않아야 함):"
+echo "워킹트리 영향 확인 (T-977~998·T-967~969 테스트 fixture 가 남아 있지 않아야 함):"
 git status --short | sed 's/^/  /'
 echo ""
 echo "✅ 전체 검증 통과."

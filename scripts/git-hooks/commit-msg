@@ -335,6 +335,9 @@ check_hook_sync || true
 #                               **구조적 보증**(자체 머리 주석). 이 파일이 지는 것은 그 시그니처와 `to:` 줄이다 —
 #                               인자에 `to` 하나만 추가돼도 보증이 사라진다. env(`ADMIN_NOTIFY_EMAIL`) 읽기와 주소 형식
 #                               검사(isSafeHeaderAddress)는 훅 밖 mail/config.ts 에 있다(아래 '넣지 않은 것' 후보).
+#                               ⚠ T-093(2026-10-26) 정정 — mail/config.ts 는 T-093 에서 포함됐다(아래 'T-093 추가').
+#                               또 isSafeHeaderAddress 는 config.ts 가 *부르는* 함수이고 정의는 mail/header-safe.ts 에
+#                               있다(그 파일은 여전히 훅 밖 — 후보).
 #                               T-090 이 잠근 signup-request 라우트 시험은 이 함수를 모킹하므로 보증 자체는 이 파일이 진다.
 #   + src/lib/safe-next-path.ts         → 로그인 후 이동 경로 검사(sanitizeInternalPath) — T-089 오픈 리다이렉트에서
 #                               **웹 `next`** 의 단일 관문. 서버(oauth/config.ts 의 sanitizeNextPath)와 로그인 화면이
@@ -361,13 +364,105 @@ check_hook_sync || true
 #     - src/lib/mail/header-safe.ts·config.ts·signup-request-mail.ts(+ 시험)·src/types/nodemailer.d.ts
 #                               메일 헤더 인젝션 방지·수신자 env 읽기·본문 조립·cc/bcc 미선언 타입. send.ts 의 보증과
 #                               맞물려 있어 후보로만 남긴다.
+#                               ⚠ T-093(2026-10-26)에서 이 중 config.ts 만 포함됐다(아래 'T-093 추가'). header-safe.ts·
+#                               signup-request-mail.ts(+ 시험)·nodemailer.d.ts 는 여전히 미포함(사용자 권고 보류).
 #     - src/lib/auth/__tests__/oauth-invite-gate.test.ts   이미 감시 중인 oauth/complete-gate.ts 의 시험인데 위치가
 #                               oauth/ 밖이다 — 후보.
+#                               ⚠ T-093(2026-10-26)에서 포함됐다(아래 'T-093 추가').
 #     - src/lib/auth/{attempt,login,signup-request}-gate.ts·request-limits.ts   시도 속도·본문 크기 제한(제외 유지).
 #     - src/app/login/ 화면·profile/settings/   UI·아직 매매에 배선되지 않은 회원별 설정 저장(자체 주석 engineWired:false).
 #     - src/app/api/profile/route.ts   KIS 계좌번호를 decryptSecret(secret-box.ts, 감시 중)로 복호화해 마스킹만 내려주는
 #                               GET 이다(머리 주석 불변식: KIS App Key/Secret 은 어떤 경우에도 응답에 담지 않는다).
 #                               사용자 결정 범위(6곳) 밖이라 넣지 않았다 — 후보.
+#
+# T-093 추가 (2026-10-26, 사용자 결정 "지금 진행해주고 지금 정의되어있는 작업들 모두 진행 후 결과 알려줘" — T-092 최종
+#   요약 결정 1 의 권고안): T-092 로 signup-gate.test.ts 는 감시 안인데 같은 디렉토리의 session.test.ts·password.test.ts 는
+#   밖인 비대칭이 생겼다. 위 "테스트 파일 — 제외하지 않는다" 원칙(안전 경로의 시험 = 그 경로의 회귀망)대로 이미 감시
+#   중인 인증 구현의 시험 15개, 로그인 화면 시험 1개, 관리자 메일 수신자의 출처 mail/config.ts 1개 — 17개를 넣는다.
+#   전부 정확 일치(`^…\.ts$`) 한 줄씩이다(이름 묶음 한 줄보다 길지만, 줄마다 눈으로 대조할 수 있다 — 위 ③과 같은 이유).
+#   **`^src/lib/auth/__tests__/` 디렉토리 항목은 쓰지 않는다** — 그러면 제외 유지인 속도 제한 게이트의 시험
+#   (login-gate.test.ts·request-limits.test.ts)과 앞으로 그 디렉토리에 생길 무관한 시험까지 걸린다. 신규 시험 파일은
+#   이 목록에 저절로 들어오지 않는다(누수 방지보다 정확성을 택했다 — 새 인증 시험을 만들면 여기 한 줄을 더한다).
+#   (각 시험이 무엇을 고정하는지는 2026-10-26 base 9a03245 에서 파일 본문의 실제 단언을 읽어 적었다. 머리 주석만
+#    있고 단언이 없는 주장은 적지 않았다 — 예: password.test.ts 머리 주석의 "Node 내장 crypto 만 쓰는지도 고정",
+#    session.test.ts 머리 주석의 "node:crypto import 금지" 는 소스 검사 단언이 없다.)
+#   src/lib/auth/__tests__/ — 이미 감시 중인 구현(src/lib/auth/ 의 정확 일치 항목·oauth/·src/app/api/auth/)의 시험 15개:
+#   + session.test.ts        → session.ts: 서명 왕복·payload/서명 변조 거부·만료(경계 포함)·서명 키 없음 = no_secret
+#                               (fail-closed)·sub 타입 혼동(문자열·불리언·객체·0·음수·소수 → malformed)·AUTH_PIN 을 세션
+#                               키로 쓰지 않음·쿠키 이름 상수.
+#   + password.test.ts       → password.ts: `scrypt$<salt>$<hash>` 포맷·검증 왕복·salt 무작위·손상 해시는 예외 없이
+#                               false·더미 해시(계정 열거 방지)·8자 미만·과도 길이 거부·로그인 경로 길이 상한(scrypt 자원고갈).
+#   + users.test.ts          → users.ts(DB 미접속 순수 함수): 이메일 정규화·마스킹·user_settings 기본값 시드(dry_run=true 로
+#                               시작 = 실주문 차단이 기본)·결손·타입 불일치 키는 fail-safe 기본값·validatePct·중복 이메일 판별.
+#   + secret-box.test.ts     → secret-box.ts: AES-256-GCM 왕복·`gcm1.` 포맷에 평문 없음·IV 무작위·변조 거부·다른 키로 복호
+#                               불가·키 길이 검증·예외 메시지에 키 값 없음·fingerprintSecret(T-087, 키 없으면 null).
+#   + kis-verify.test.ts     → kis-verify.ts(fetch 주입): 실패는 어떤 경로로도 ok:true 가 안 된다(토큰 없음·빈 토큰·403·
+#                               네트워크 예외)·키가 비면 KIS 를 부르지 않음·App Key/Secret 이 실패 메시지·로그에 안 남음·
+#                               계좌번호·상품코드 검증·마스킹. ⚠ 위 '라운드4'가 kis-verify.ts 포함 근거로 든 "토큰을 전역
+#                               캐시에 쓰지 않는다" 불변식은 이 시험에 단언이 없다(시험 안에 cache·캐시 문자열 0건).
+#   + owner-kis-migration.test.ts → owner-kis-migration.ts(검증·DB 주입, 실제 KIS 호출 없음): 발동 가드(회원 0행·2행 이상·
+#                               이미 자격증명·KIS 설정 결손·KIS_MOCK 미설정/해석 불가·계좌 형식·암호화 키 없음 → skip, 쓰기 없음)·
+#                               실검증 실패·타임아웃·예외 → 쓰기 0건·평문 로그 스크러빙·평문이 SQL 파라미터에 없음·결손 설정은
+#                               거래 중단 방향(dry_run=true·kill_switch=true·0%)·저장 실패 시 마커 미기록(재시도)·멱등.
+#   + t088-disposable-mariadb.test.ts → oauth/app-code.ts + scripts/migrations/T-088-app-auth-code.sql(둘 다 감시 중):
+#                               평소 jest 에서는 DB 없이 정적 검사 5개(DDL 백슬래시 없음·가산 전용·열 타입·되돌리기 문장·
+#                               앱 SQL 의 열 이름)만 돈다. 환경변수 T088_TEST_DB_PORT 가 있을 때만 일회용 MariaDB 로 CHECK·
+#                               UNIQUE·동시 소각(20건 중 1건만 성공)·만료·청소·DROP 후 재적용을 실증한다.
+#   + oauth-app-code-t088.test.ts → oauth/app-code.ts·pkce.ts·app-flow.ts(운영 풀은 던지는 가짜): PKCE S256(RFC 7636
+#                               시험 벡터)·결속값·1회용 코드 TTL 60초·1회 소각·다른 verifier 로 교환 불가·SQL 저장소의 조건부
+#                               UPDATE 소각 문장·딥링크 형식·앱 착지 경로 sanitizeAppNextPath(무작위 2만 건 속성 시험).
+#   + oauth-app-routes-t088.test.ts → 실제 라우트 auth/[provider]/route·[provider]/callback/route·app-exchange/route
+#                               (T-090 이 감시하는 입구)와 oauth/state·app-code: 앱 표지는 서명된 state 안에만·콜백 앱 분기는
+#                               세션 쿠키 없이 딥링크 코드만·교환은 모든 실패가 같은 응답·본문 상한(chunked 포함)·GET 405·
+#                               IP별 분당 제한 429·코드·verifier 가 서버 로그에 안 남음.
+#   + oauth-callback-session.test.ts → [provider]/callback/route: 세션은 si_session HttpOnly 쿠키로만 내고 리다이렉트
+#                               URL 에 토큰이 없다(JWT 쿼리 방식 비채택의 회귀 방지선)·미검증 이메일·신규 가입은 세션 미발급·
+#                               nonce 쿠키 없음/다른 흐름 nonce 거부(로그인 CSRF)·제공자 원문 오류가 URL 로 새지 않음.
+#   + oauth-decide.test.ts   → oauth/decide.ts: 미검증 이메일은 기존 계정 연결도 신규 생성도 거부(계정 탈취 차단)·다른
+#                               제공자에 묶인 링크를 덮어쓰지 않음·초대코드가 설정되면 신규는 초대 화면으로·outcomeUserId.
+#   + oauth-invite-gate.test.ts → oauth/complete-gate.ts(+ pending·signup-gate): 초대코드가 틀리면 계정이 만들어지지
+#                               않는다·대기 토큰 없음/위조/만료 거부·미검증 이메일은 완료 단계에서 다시 막힘(T-092 후보 → 포함).
+#   + oauth-providers.test.ts → oauth/providers.ts 의 normalizeSharedProfile 과 저장소 밖 공유 패키지
+#                               `@workspace/auth-oauth`(package.json `file:../shared/auth-oauth`)의 google·github 정규화:
+#                               emailVerified 는 `=== true` 일 때만(필드 없음·문자열 "true" → false)·github 폴백 주소는
+#                               emailVerified false(계정 탈취 차단의 근거). 머리 주석대로 공유 패키지의 유일한 자동 회귀망이다.
+#   + oauth-state.test.ts    → oauth/state.ts·pending.ts·token.ts: state nonce 를 쿠키와 대조(로그인 CSRF)·길이 다른 nonce·
+#                               다른 제공자 state 재사용 불가·10분 만료·외부 URL/T-089 탭·줄바꿈 우회 next 거부·서명 키 없음
+#                               fail-closed·대기 토큰 15분·용도별 서브키(state 를 대기 토큰으로 못 씀)·exp 없는 토큰 거부.
+#   + oauth-web-regression-t088.test.ts → [provider]/route·[provider]/callback/route: platform 없는 웹 요청의 응답 전체
+#                               (상태·Location·헤더·Set-Cookie 속성·본문)가 T-088 변경 전(base da35af7)과 같다·쿼리에
+#                               platform=app 을 붙여도 웹 응답 그대로(앱 코드 발급 모듈은 불리면 던지는 가짜).
+#   src/components/auth/__tests__/login-screen-t088.test.ts — 로그인 화면(src/app/login/page.tsx, UI 라 감시 밖)의 시험:
+#   +                        → 본문 대부분(① 상태 전이표·② 문구·마크업·③ 오류 상자·④ 딥링크 마무리·⑤ 브리지·⑥ 신호 모듈)은
+#                               OAuthButtons·OAuthErrorNote·AppDeepLink·lib/native/* 등 **감시 밖 UI·브리지** 시험이다. 넣는
+#                               이유는 그 안의 인증 관련 소스 단언이다 — ④: onAuthDeepLink 를 부르는 곳은 소스 전체에서
+#                               AppDeepLink 하나(구독자가 둘이면 코드를 가로챈다)·⑦: 앱 시작 경로는 WebView 안 이동 금지(startApp
+#                               에 location·/api/auth/ 없음)·앱 로그인 경로 비시험 코드 6파일에 console 호출 없음(코드·verifier·
+#                               세션 값 로그 유출 방지)·login/page.tsx 의 next 두 줄 검사·오류 상자 포커스는 앱에서만.
+#                               ⚠ next 두 줄 단언은 T-089 수정형(`sanitizeInternalPath(next) ?? '/'`)만 고정하지 **않는다** —
+#                               T-089 이전 원문(`startsWith('/') && !startsWith('//')`)이어도 두 줄이 같은 모양이면 통과한다
+#                               (원문·수정형 중 하나이고 섞이지 않았는지만 본다). 원문으로 되돌리는 회귀는 이 시험으로 안 잡힌다.
+#                               알려진 영향(과도 차단 후보): OAuthButtons 등 UI 를 고치며 이 시험의 문구·치수 단언을 함께
+#                               고치는 커밋도 이제 Reviewer 판정이 필요하다. 마찰이 반복되면 Leader 판단으로 재검토한다.
+#   + src/lib/mail/config.ts → 관리자 수신 주소 getAdminNotifyEmail() 의 유일한 출처. `ADMIN_NOTIFY_EMAIL` 만 읽고 SMTP_USER
+#                               로 암묵 폴백하지 않으며, 헤더에 안전하지 않은 주소면 null(기능 꺼짐). 이 모듈에는 요청 본문을
+#                               인자로 받는 함수가 없다(자체 머리 주석 불변식) — 감시 중인 send.ts 의 "수신자는 config 에서만"
+#                               보증이 이 파일에 기대므로 여기서 env 이름 하나·폴백 하나만 바뀌어도 보증이 사라진다.
+#                               isMailEnabled()(가입 요청 라우트의 기능 스위치)·getSmtpConfig()도 여기 있다.
+#                               전용 시험 파일은 없다(src/lib/mail/__tests__/config.test.ts 미존재) — 실제 동작은 이미 감시 중인
+#                               mail/__tests__/send.test.ts 가 진짜 config 를 거쳐 확인한다(nodemailer 만 모킹).
+#   새로 걸리는 추적 파일(2026-10-26 base 9a03245, `git ls-files` 전수에 옛·새 목록을 이 훅과 같은 방식 — `|` 결합 +
+#   `LC_ALL=C grep -aE` — 으로 적용해 대조): 정확히 17개 — 위 15·1·1. 옛 목록이 걸던 파일은 전부 그대로.
+#   넣지 않은 것 (17개 밖 — 사용자 결정 범위를 넓히지 않았다):
+#     - src/lib/auth/__tests__/login-gate.test.ts·request-limits.test.ts   시도 속도·본문 크기 제한 게이트의 시험(제외 유지 —
+#                               구현이 제외인 것과 같은 이유). test-git-hooks.sh 가 "안 걸린다"를 고정한다.
+#     - src/components/auth/__tests__/app-version-gate-t091.test.ts   옛 앱 버전 게이트 화면(T-091) 시험 — 인증 관문이 아니라
+#                               화면 안내라 넣지 않았다.
+#     - src/lib/mail/header-safe.ts·signup-request-mail.ts(+ 시험)·src/types/nodemailer.d.ts·src/app/api/profile/route.ts
+#                               T-092 후보 중 사용자 권고 보류분. header-safe.ts 가 다음 후보 1순위다 — 요청에서 온 메일
+#                               제목의 CR/LF 등 제어문자를 지우는 sanitizeHeaderText(send.ts·signup-request-mail.ts 가 부름)와
+#                               env 수신·발신 주소 검사 isSafeHeaderAddress(config.ts 만 부름)·본문용 escapeHtml 의 정의다.
+#                               자체 머리 주석이 "헤더 인젝션은 곧 코드 유출"(초대코드)이라 적는다 — 요청 유래 제목 정화가 더 큰 몫이다.
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
@@ -403,6 +498,23 @@ SAFETY_PATHS=(
   '^src/lib/__tests__/safe-next-path\.test\.ts$'
   '^src/app/api/profile/password/'
   '^src/__tests__/middleware-public-paths\.test\.ts$'
+  '^src/lib/auth/__tests__/session\.test\.ts$'
+  '^src/lib/auth/__tests__/password\.test\.ts$'
+  '^src/lib/auth/__tests__/users\.test\.ts$'
+  '^src/lib/auth/__tests__/secret-box\.test\.ts$'
+  '^src/lib/auth/__tests__/kis-verify\.test\.ts$'
+  '^src/lib/auth/__tests__/owner-kis-migration\.test\.ts$'
+  '^src/lib/auth/__tests__/t088-disposable-mariadb\.test\.ts$'
+  '^src/lib/auth/__tests__/oauth-app-code-t088\.test\.ts$'
+  '^src/lib/auth/__tests__/oauth-app-routes-t088\.test\.ts$'
+  '^src/lib/auth/__tests__/oauth-callback-session\.test\.ts$'
+  '^src/lib/auth/__tests__/oauth-decide\.test\.ts$'
+  '^src/lib/auth/__tests__/oauth-invite-gate\.test\.ts$'
+  '^src/lib/auth/__tests__/oauth-providers\.test\.ts$'
+  '^src/lib/auth/__tests__/oauth-state\.test\.ts$'
+  '^src/lib/auth/__tests__/oauth-web-regression-t088\.test\.ts$'
+  '^src/components/auth/__tests__/login-screen-t088\.test\.ts$'
+  '^src/lib/mail/config\.ts$'
   '^src/app/api/orders/'
   '^src/app/api/safety/'
   '^src/app/api/cron/'
