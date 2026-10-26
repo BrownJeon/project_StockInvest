@@ -38,7 +38,7 @@ demo_gate:
 
 # T-098 커밋 훅 감시에 사전 등록(백테스트) 코드 편입 (V4)
 
-## 사용자 결정 ({T} 기록, 발화 그대로)
+## 사용자 결정 (10-26 21:38 발화, 그대로)
 
 "V4 사전 등록 코드를 커밋 훅 감시 대상에 넣어줘"(10-26 21:38) — [[T-096-strategy-validation-p2-p3]] v1.1 패치 §B-0 V4 의 권고(편입)를 승인.
 
@@ -77,7 +77,9 @@ Developer(Opus, 격리 worktree `stockinvest-hook-t098`)·Reviewer(Sonnet)·QA. 
 
 ## 진행 기록
 
-- 2026-10-26 {T}: 사용자 V4 승인 → Leader 착수.
+- 2026-10-26 21:41: 사용자 V4 승인(21:38 발화) → Leader 가 task 문서 작성·커밋(`a2d2d5a`).
+
+- 2026-10-26 21:46: judge intake R1·developer opus·demo none, worktree `stockinvest-hook-t098`(브랜치 hook-t098, base a2d2d5a) 생성, Developer(opus) 착수. 범위 결정(Leader): 러너가 가져오는 `scripts/profit-engine/postmortem-core.js` 는 이번 편입에서 **제외**(T-096 R2-C2 로 엔진 지문에 들어가 변경이 지문·G1 결속으로 거부됨 → 훅 중복 불필요, 후보로만 기록).
 
 ## Developer
 

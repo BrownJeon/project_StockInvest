@@ -216,6 +216,8 @@ demo_gate:
 - [19:11] 발견 목록 — critical 0 · high 0 · medium 0 · low 6 · **차단 1(절차)**. **F-Q1 (차단, 절차)** 데모 게이트 `DEMO_GATE_BLOCKED`(승인 미기록). **F-Q2 (low)** 국내 버튼 서명 입력 시험 공백(A18·B19). **F-Q3 (low~medium, 사용자 결정)** 해외 단가는 알림 시점 환율 기준이라 승인 때 환율이 움직이면 $1 어긋날 수 있음, 국내는 추격 설정이 바뀌면 어긋남. **F-Q4 (low, 문서)** 목업 안내 문구가 코드와 다름(위 9). **F-Q5 (low)** 시험 머리말 "독립" 과장·진입 구간 시그널의 불필요한 환율 `SELECT` 1회·새 시험 tsc 대상 밖.
 - [19:11] 확인하지 못한 것: 운영 DB·KIS·텔레그램 실발송(금지), 실제 텔레그램에서의 렌더(클라이언트 표시), `next build`, 커밋 훅 동작. 이 fail 은 코드 결함이 아니라 게이트 기록 때문이므로, 사용자 승인이 게이트 도구에 기록된 뒤(Leader 가 사용자 발화를 `prompts.jsonl` 에 남기고 `approve` 를 실행해 `check` 가 pass 가 되면) 알려 주면 위 5개 파일 sha256 이 같은지와 `check` 결과만 다시 확인해 판정 줄을 추가한다(코드 재감사 불필요). 에이전트가 `approve`·`waive` 를 대신 실행하는 것은 금지다.
 - [19:11] **최종 판정: FAIL (scope: src/lib/exchanges/kis-domestic.ts, src/lib/signals/approval-message.ts, src/lib/signals/approval-notify.ts, src/lib/signals/__tests__/t097-approval-qty-line.test.ts, src/lib/signals/__tests__/t097-domestic-tick-parity.test.ts)**
+- [21:41] Q-E 재확인(코드 재감사 없음 — 19:11 판정이 fail 이던 유일한 사유인 데모 게이트 기록이 채워진 뒤 확인만). ① 직접 실행한 `check.mjs check --task agent-vault/10-Flow/tasks/T-097-price-first-sizing.md` 결과 `DEMO_GATE_PASSED`(status approved·approved_version v1·demo `mockups/T-097-telegram-sizing-line-v1.html`·hash verified) [확실]. `evidence.jsonl` 마지막 T-097 줄은 kind approve·version 1·prompt_ts 21:38:17·session `b8b8f031`(이 세션)이고, `prompts.jsonl` 에 같은 시각(21:38:17)의 훅 기록이 있으며 그 프롬프트에 "텔레그램 수량 데모 승인"이 들어 있다 — 승인 줄이 훅이 남긴 사용자 발화에 묶여 있고 에이전트가 대신 쓴 흔적은 없다(같은 발화의 T-042 생략 waive 줄도 별도 존재, 이번 scope 와 무관). ② worktree `~/.node-local/stockinvest-qe-t097` 의 5개 파일 sha256 앞 12자가 19:11 에 기록한 값과 **전부 동일**: `kis-domestic.ts` `eba2778e093a`·`approval-message.ts` `331258cd4296`·`approval-notify.ts` `b6dafd7074dd`·`t097-approval-qty-line.test.ts` `366fcbd6288a`·`t097-domestic-tick-parity.test.ts` `d891a4cc23f8` [확실]. `git status` 도 수정 3(`kis-domestic.ts`·`approval-message.ts`·`approval-notify.ts`)·신규 2뿐이고 `git diff -- '*.test.ts'` 비어 있다(기존 시험 수정 0줄 유지). 따라서 19:11 의 확인 1~9 결론(코드 critical 0·high 0, 어댑터 diff `export` 한 단어, 목업 문자 단위 일치, 서명 입력 `amount_krw` 불변, 전체 jest 7,466 pass·tsc 0)이 그대로 유효하다. 사용자가 두 고지(해외 단가는 알림 시점 환율 기준 예상값·목업 안내 문구 오류)를 받은 뒤 승인했다는 것은 Leader 보고이며 나는 task `## Q-E 구현 결과와 Reviewer 판정 요약` 의 내용을 사실로 확인하지 않았다. 비차단 보강 3건(국내 버튼 서명 시험 A18·B19, `renderQuantityLine(null)` 가드 A19, 시험 머리말 "독립" 표현)은 Leader 결정대로 이번 커밋에서 제외하고 후속으로 남긴다 — 이 파일들이 바뀌면 재감사가 필요하다.
+- [21:41] **최종 판정: PASS (scope: src/lib/exchanges/kis-domestic.ts, src/lib/signals/approval-message.ts, src/lib/signals/approval-notify.ts, src/lib/signals/__tests__/t097-approval-qty-line.test.ts, src/lib/signals/__tests__/t097-domestic-tick-parity.test.ts)**
 
 ## QA
 
@@ -240,6 +242,15 @@ demo_gate:
   - [low] `src/lib/signals/sizing-snapshot.ts:98` — 옵션 OFF 지정가 주문에서 targetKrw·unitPriceKrw가 매우 커서 IEEE-754 곱셈 오차가 고정 허용치 0.005원을 넘을 때 → `limitBasisKrw` 가 `realizedKrw` 를 골라 `service.ts:371` 의 `req.amountKRW` 가 base 의 `input.amountKRW` 와 비트 단위로 달라진다(예: targetKrw=383614116660319.2, unitPriceKrw=42623790740035.47 → 0.0625원 증가). 금액이 늘어나므로 한도 약화는 아니고 정상 운영 금액에서는 발생 가능성 낮음. (권고: 옵션 OFF 기본 경로에서는 `req.amountKRW` 를 항상 `input.amountKRW` 로 유지하고, 실현액 기반 상향은 옵션이 실제 적용된 경우에만 수행)
 - 검토하지 못한 범위: 전체 Jest·tsc 는 재실행하지 않음(제공된 실행 결과 전제, 정적 검토와 경계값 재현만). 한도 약화·fail-open·송신 우회·선행 읽기 영구 실패 경로는 확인되지 않았다고 Codex 가 보고(요약 기준).
 - 원본: /home/brownjeon/NFS/homes/brownjeon/project/.claude/state/codex-review/runs/20261026T080858Z-T-097-C2/raw.txt
+
+### [2026-10-26 21:45] C2 review focus=none — done, Q-E 대상(지적 1건, 중간)
+- judge 판정: 2026-10-26 21:43 `codex_required: true`(`budget_rule: CX-limit-unknown-r2`, Codex 스위치 on) / 이 task 호출 차수 2회째(Q-E 1회)
+- 대상: repo=/home/brownjeon/.node-local/stockinvest-qe-t097 base=e2a7206(--base 지정) snapshot=b0fb84f(worktree 기준 임시 커밋) — 인계 묶음 `scratchpad/codex-handoff-T-097-QE-C2.md`, 실행 59초·exit 0
+- 지적 1건:
+  - [medium] `src/lib/signals/approval-notify.ts:93` — `buildQuantityLine` 입력에 `orderType` 이 없어 **시장가 매수**(명시 수량 + 양수 단가가 `indicators.sizing` 에 기록된 경우)에도 수량 줄을 만든다. 국내 어댑터는 시장가에서 `ORD_UNPR` 을 0 으로 송신하고 해외는 시장가를 지정가로 바꾸며 표시에 없는 ±0.5% 조정을 더한다 → 표시 단가·실현금액이 실제 송신가와 다를 수 있다.
+  - Leader 판정: **채택**. 시장가 매수 시그널은 `/api/signals`·analyst·전략 후보(`cand.orderType`)로 생길 수 있고(`service.ts` 입력 `orderType: 'limit'|'market'`), 시장가 매도는 수량 줄 대상이 아니다(매도는 줄 없음). 사용자가 데모에서 승인한 것은 지정가 매수의 줄이다. 조치(보수적): `orderType==='limit'` 일 때만 줄을 만들고 시장가·미전달은 줄 생략(표시 전용 fail-closed). `service.ts` 호출부 **한 줄**(`orderType: input.orderType`)이 안전 경로 파일에 걸리므로 Reviewer scope 에 `service.ts` 가 추가된다 → Developer 보완(21:46 착수) → Reviewer 재확인 → 재커밋 순서.
+- 검토하지 못한 범위(Codex 보고): 실제 텔레그램 전송 화면·Telegram API 동작, 실제 KIS 주문 송신 경로, 운영 DB 환율 행·실시간 환율 변동에 따른 표시 차이.
+- 원본: /home/brownjeon/NFS/homes/brownjeon/project/.claude/state/codex-review/runs/20261026T124439Z-T-097-C2/raw.txt
 
 ## 최종 요약
 
