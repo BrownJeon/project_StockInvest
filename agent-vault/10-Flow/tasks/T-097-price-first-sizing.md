@@ -123,6 +123,13 @@ demo_gate:
 - T-042 데모 면제도 같은 사유 + "면제" 표현을 도구가 생략 요청으로 인식하지 않아(`isWaiverText`) 기록하지 못했다 — 사용자에게 "생략" 표현 한 줄을 요청.
 - **19:13 재시도·원인 확인**: 사용자 발화 그대로 "T-097 텔레그램 수량 데모 승인, T-042 데모 생략" 을 받아 `approve`·`waive` 를 다시 시도했으나 `DEMO_GATE_REFUSED`(발화 기록에서 못 찾음). **원인 확정 [확실, `hook.mjs` 읽음]**: UserPromptSubmit 훅 `recordPrompt` 는 `isInjectedPrompt` 로 `/<agent-message\s+from=/i`·`/<task-notification>/i` 등이 **프롬프트 안 어디든** 있으면 그 입력 전체를 "하네스 주입"으로 보고 기록하지 않는다(서브에이전트 보고문으로 승인을 위조하지 못하게 하는 의도적 fail-closed). 사용자 메시지가 서브에이전트 보고(`<agent-message from=…>`)와 같은 입력으로 도착한 두 건(저녁 승인 메시지·이 메시지)이 걸러졌고, 보고가 붙지 않은 깨끗한 메시지(18:55)는 기록됐다. **우회(prompts.jsonl 직접 추가 등)는 하지 않는다.** 해결: 모든 서브에이전트가 멈춘 조용한 시점에 사용자가 같은 문장을 다시 보내면 기록된다 — Leader 가 그 시점을 알려 준다. 그 사이 `demo_gate.status` 는 `review_requested` 로 남는다(편집 훅은 이 영역을 막지 않는 warn 단계).
 
+## Q-E 구현 결과와 Reviewer 판정 요약 (19:14 기록)
+
+- Developer(2라운드): `kis-domestic.ts` `roundToTick` 에 `export` 한 단어(로직 변경 0), `approval-message.ts`(`renderQuantityLine`, "금액" 바로 아래)·`approval-notify.ts`(`buildQuantityLine`·`NotifyDeps.fxRate?`)·새 시험 2파일(117개). 국내 단가는 어댑터가 실제 송신하는 호가단위 반올림가(`Math.round(price/tick)*tick`)와 같다. 해외는 정수 달러 단가(`overseasLimitUnitUsd`, 어댑터와 같은 계산)·환율은 현금 게이트와 같은 `fx_rates` 행·`judgeFxRow`(1시간 신선도). 환율 못 얻으면 해외 줄만 생략, 알림·버튼은 그대로.
+- **Reviewer 판정 = FAIL(절차 사유)**: 코드 감사는 critical 0·high 0(어댑터 diff 산출 JS 가 `export` 한 단어만 다름, 목업과 문자 단위 일치, 버튼·서명 불변, 호가 표·송신 본문 3,000건 불일치 0, 해외 21만 건 불일치 0, 변이 44종 중 34 사망·7 동치·실질 공백 3(국내 버튼 서명 시험·`renderQuantityLine(null)`), 전체 jest 7,466 pass·tsc 0·기존 시험 수정 0줄). 그러나 `reviewer.md` 규칙상 데모 게이트 `DEMO_GATE_BLOCKED`(승인 미기록) 이면 fail 이다. **게이트 기록(위 사유로 보류)이 채워지면 Reviewer 가 5개 파일 sha256 12자(kis-domestic `eba2778e093a`·approval-message `331258cd4296`·approval-notify `b6dafd7074dd`·t097-approval-qty-line `366fcbd6288a`·t097-domestic-tick-parity `d891a4cc23f8`)만 대조해 PASS 줄을 추가한다**(코드 재감사 불필요 — 파일이 바뀌면 재감사).
+- **사용자에게 알릴 고지 2건(Reviewer F-Q3·F-Q4)**: ① 해외 단가는 **알림 시점 환율 기준 예상값**이다 — 승인 때 환율이 움직이면 정수 달러 단가가 $1 어긋날 수 있다(수량은 원화 기준이라 불변; 같은 환율이면 불일치 0; 환율 ±0.1% 이동 시 단가가 달라질 확률은 $1~50 1.3%·$50~200 6%·$200~500 18%·$500~1,000 37%, 환율 캐시 5분·승인 TTL 30분). ② **승인된 목업 안내 문구 "1주 가격이 금액보다 크면 … 시그널 자체가 만들어지지 않습니다(변화 없음)" 는 코드와 다르다** — 수량 0 이면 현금 게이트가 모름(`quantity_zero`)으로 두어 승인 대기 시그널은 만들어지고, 알림은 수량 줄 없이 나가며, 승인하면 `quantity_below_min` 으로 거절된다(줄 규칙 "수량 줄 없음"은 목업과 맞다). 구현은 바꾸지 않고 정정만 고지(목업 HTML 은 승인 해시에 묶여 있어 수정하지 않는다).
+- 비차단 보강: 국내 버튼 서명 시험 적용·`renderQuantityLine(null)` 가드 시험·시험 머리말 "독립" 표현 정정(파일이 바뀌면 재감사).
+
 ## 하지 않는 것
 
 사용자 설계 결정 전 코드 변경, 한도 설정값 변경, 운영 DB 쓰기, KIS 호출, push·배포. 전략 승급(T-072 관문 해제)과 이 변경은 별개 — 이 변경은 관문을 풀지 않는다.
