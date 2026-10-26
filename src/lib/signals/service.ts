@@ -42,6 +42,12 @@ import {
 } from './approval-transitions';
 import { getStyleConfig } from '@/lib/strategy/style';
 import { evaluateSignalCashGate, observeSignalCashGate } from './signal-cash-gate';
+import {
+  type SizingQuantitySource,
+  type SizingSnapshot,
+  attachSizingSnapshot,
+  computeSizingSnapshot,
+} from './sizing-snapshot';
 
 /** safety_limit_chase_disabled = true 면 chasePct 0 강제 (즉시 무력화 스위치). */
 async function getEffectiveChasePct(stylePct: number): Promise<number> {
@@ -203,6 +209,26 @@ export interface SizedQuantity {
   quantity: number | undefined;
   /** 정수화 이전 값. 로그·집계에서 "얼마가 잘렸는가"를 설명하는 데 쓴다 */
   raw: number | undefined;
+  /**
+   * T-097 — `minOneShare` 옵션이 **켜졌을 때만** 들어가는 필드(옵션을 안 켜면 키 자체가 없다 → 기존 결과 객체와 같다).
+   * true = 내림 결과가 0주였는데 옵션 때문에 1주로 올렸다(실현액이 목표금액보다 크다 — 한도 기준은 {@link limitBasisKrw} 가 실현액으로 올린다).
+   */
+  minOneShareApplied?: boolean;
+}
+
+/** T-097 — `sizeOrderQuantity` 옵션. 기본값은 모두 꺼짐(= T-020 동작 그대로). */
+export interface SizeOrderOptions {
+  /**
+   * 금액에서 수량을 정할 때(지정가 + 수량 미지정) 내림 결과가 0주면 1주로 올린다(`max(1, floor)`).
+   * 🔴 2026-10-26 기준 **어떤 호출부도 켜지 않는다** — 한도 정책(1회 4%·일일 10%)을 정한 뒤 별도 task 에서 배선한다(T-097 확정 설계 1).
+   * 켜면 1주 가격이 목표금액보다 큰 주문이 만들어진다. 한도 판정이 실현액 기준(설계 2 `max(목표, 실현액)`)으로 막히는 것은
+   * **`buildOrderRequest` 를 거칠 때만**이다 — `entry-watcher/route.ts`(:441 `amountKRW: Number(row.amount_krw)`)·`api/orders/route.ts`
+   * (`body.amountKRW`)는 `buildOrderRequest` 없이 목표금액으로 주문 요청을 만들므로, 거기서 이 옵션만 켜면 한도가 열린다(Reviewer F-1).
+   * `approval-context.ts`(:140)는 승인 알림의 사전 판정일 뿐이라 실제 한도는 `submitOrder` 가 판정한다 — 거기서는 사전 판정이 낙관적이 될 뿐이다.
+   * ON 배선 task 필수 조건: ① 한도 기준 = max(목표, 원화 환산 실현액, 수량 × 정수 달러 단가(`overseasLimitUnitUsd`) × 환율)
+   * ② 환율은 송신 시점 어댑터와 같은 출처·값 ③ `entry-watcher`·`api/orders`·`approval-context` 도 같은 기준 ④ `quantitySource` 를 `sizeOrderQuantity` 와 한 곳에서 계산.
+   */
+  minOneShare?: boolean;
 }
 
 /**
@@ -245,7 +271,7 @@ export function sizeOrderQuantity(args: {
   amountKRW: number;
   /** 호가 추격까지 반영된 최종 지정가 */
   price?: number | null;
-}): SizedQuantity {
+}, opts: SizeOrderOptions = {}): SizedQuantity {
   const { market, orderType, requestedQuantity, amountKRW, price } = args;
 
   // ① 요청에 수량이 이미 있으면 그것을 정수화한다.
@@ -260,7 +286,14 @@ export function sizeOrderQuantity(args: {
   //    동기 함수라 KRW 가정 (기존 동작 그대로 — 이번 변경 대상이 아니다).
   if (orderType === 'limit' && price != null && Number.isFinite(price) && price > 0) {
     const raw = amountKRW / price;
-    return { quantity: toWholeShares(market, raw), raw };
+    const quantity = toWholeShares(market, raw);
+    // T-097 — 옵션이 꺼져 있으면(기본) 여기서 끝 — 결과 객체도 예전과 같은 두 키뿐이다.
+    if (opts.minOneShare !== true) return { quantity, raw };
+    // 옵션 ON: 목표금액이 유효한 양수인데 내림이 0주였을 때만 1주로 올린다. 금액이 NaN·0·음수면 올리지 않는다(주문 불성립 유지).
+    if (quantity === 0 && Number.isFinite(raw) && raw > 0) {
+      return { quantity: submittedQuantity(market, 1), raw, minOneShareApplied: true };
+    }
+    return { quantity, raw, minOneShareApplied: false };
   }
 
   // ③ 시장가 등 — 여기서 확정하지 않는다. 어댑터가 금액에서 파생하며 그 경로는 이미
@@ -273,7 +306,18 @@ function toWholeShares(market: Market, raw: number): number {
   return submittedQuantity(market, Math.floor(raw));
 }
 
-function buildOrderRequest(input: SignalInput, chasePct = 0): { req: OrderRequest; sized: SizedQuantity } {
+/**
+ * 시그널 입력 → 주문 요청(사이징 + 호가 추격). `createSignal` 자동 제출·`approveSignal`·T-058 현금 게이트·T-072 가상 체결이 같은 함수를 쓴다.
+ *
+ * T-097: `sizing` 을 함께 돌려준다(시그널 생성 시 `indicators.sizing` 기록용). `opts` 는 기본 `{}` — 2026-10-26 기준
+ * 어떤 호출부도 넘기지 않는다(옵션 OFF = 주문 요청이 T-097 이전과 같다. `t097-sizing-golden.test.ts` 가 고정).
+ * export 는 골든 시험용이다.
+ */
+export function buildOrderRequest(
+  input: SignalInput,
+  chasePct = 0,
+  opts: SizeOrderOptions = {},
+): { req: OrderRequest; sized: SizedQuantity; sizing: SizingSnapshot } {
   // 시장 추정 (input.symbol 형태로)
   const { getMarketFromSymbol } = require('@/lib/exchanges/kis-symbols') as typeof import('@/lib/exchanges/kis-symbols');
   const market = getMarketFromSymbol(input.symbol);
@@ -292,6 +336,22 @@ function buildOrderRequest(input: SignalInput, chasePct = 0): { req: OrderReques
     requestedQuantity: input.quantity,
     amountKRW: input.amountKRW,
     price: chasedPrice,
+  }, opts);
+
+  // T-097 — 수량 출처. `sizeOrderQuantity` 의 분기(① 요청 수량 → ② 지정가 금액 ÷ 가격 → ③ 미확정)와 같은 조건이다.
+  const quantitySource: SizingQuantitySource =
+    input.quantity != null && Number.isFinite(input.quantity) ? 'requested'
+      : sized.raw !== undefined ? 'amount'
+        : 'unresolved';
+  const sizing = computeSizingSnapshot({
+    market,
+    targetKrw: input.amountKRW,
+    quantity: sized.quantity,
+    unitPriceKrw: chasedPrice,
+    quantitySource,
+    minOneShareApplied: sized.minOneShareApplied,
+    chasePct,
+    // 환율 없음 — 이 함수는 동기라 해외 실현액은 원화 환산 단가 × 수량이다(sizing-snapshot.ts `computeRealizedKrw` 주석).
   });
 
   return {
@@ -302,14 +362,20 @@ function buildOrderRequest(input: SignalInput, chasePct = 0): { req: OrderReques
       type: input.orderType,
       price: chasedPrice,
       quantity: sized.quantity,
-      // `amountKRW` 는 **재계산하지 않는다.** 안전 한도(`checkOrderMax`/`checkDailyMax`)가
-      // 이 값을 쓰므로 정수화 뒤의 (더 작은) 실집행액으로 낮추면 한도가 느슨해진다.
-      // 기록의 정합성보다 한도의 보수성이 우선이다 (T-020 D-1 판단 기준 ②).
-      amountKRW: input.amountKRW,
+      // `amountKRW` = 안전 한도(`checkOrderMax`/`checkDailyMax`)가 보는 금액 = `sizing.limitBasisKrw` (T-097 Q-C).
+      //  - 최소 1주 옵션이 **적용되지 않았으면**(옵션 OFF 기본 경로 포함) 값 비교 없이 `input.amountKRW` 그대로다 — T-097 이전과 모든 입력에서 같다.
+      //    실집행액(정수화 뒤 수량 × 단가)이 목표보다 작아도 그 값으로 낮추지 않는다 — 낮추면 한도가 느슨해진다(T-020 D-1 판단 기준 ②,
+      //    "기록의 정합성보다 한도의 보수성이 우선").
+      //  - 옵션이 **적용됐을 때만**(내림 0주를 1주로 올린 경우) `max(목표금액, 실현액)` = 실현액으로 올린다. 실현액 = 수량 × 호가 추격 지정가(원).
+      //    해외는 **원화 환산 단가** 기준이라 어댑터가 정수 달러로 반올림해 실제로 송신하는 금액과 주당 최대 ±$0.5 다르다(T-097 Reviewer F-2).
+      //  - 수량을 들고 온 주문(`requested`)·시장가(`unresolved`)는 목표금액 그대로(현행).
+      //  - 해외도 **원화로 직접 채운다.** 비워 두면 `resolveOrderAmountKRWAsync` 가 원화 환산 단가를 USD 로 보고 환율을 또 곱한다(약 1,300배).
+      amountKRW: sizing.limitBasisKrw,
       market,
       currency: market === 'overseas' ? 'USD' : 'KRW',
     },
     sized,
+    sizing,
   };
 }
 
@@ -573,6 +639,19 @@ export async function createSignal(
       return { ok: false, signalId: dupId, autoSubmitted: false, error: 'duplicate_active_signal', errorCode: 'duplicate_active_signal' };
     }
   }
+
+  // 🔴 T-097 — `indicators.sizing` 기록(수량·단가·실현액·한도 기준 금액). 주문 경로와 **같은** `buildOrderRequest`(옵션 없음)로 계산한다.
+  //    기록 전용이다: 실패해도 시그널 생성·`amount_krw`·이후 주문 경로는 그대로이고 `sizing` 키만 빠진다.
+  //    승인 시점 주문은 그때의 호가 추격 설정으로 다시 계산되므로, 이 값은 "생성 시점 예상"이다.
+  try {
+    const sizingStyle = await getStyleConfig();
+    const sizingChasePct = await getEffectiveChasePct(sizingStyle.limitChasePct);
+    const { sizing } = buildOrderRequest(input, sizingChasePct);
+    enrichedIndicators = attachSizingSnapshot(enrichedIndicators, sizing);
+  } catch (e) {
+    console.warn(`[signal-sizing] indicators.sizing 기록 생략 ${input.symbol}:`, e instanceof Error ? e.message : String(e));
+  }
+
   const [ins] = await pool.query<ResultSetHeader>(
     `INSERT INTO signals
      (strategy_id, symbol, side, order_type, price, quantity, amount_krw,
