@@ -2,7 +2,12 @@
 // T-070 과거 시그널 사후검증 실행기 — **읽기 전용**. 계산은 같은 폴더 postmortem-core.js(시험 대상), 여기는 연결·파일 쓰기만.
 //
 // 사용: node scripts/profit-engine/signal-postmortem.mjs [--days 90] [--episode-days 5] [--out <경로.md>] [--json <경로.json>] [--env <.env 경로>] [--stdout]
-//   기본 출력: agent-vault/10-Flow/reports/T-070-signal-postmortem-<KST YYYYMMDD>.md (폴더가 없으면 만든다, 같은 날 재실행은 원자적으로 덮어쓴다)
+//        [--entry-model legacy|d1open|d0close] [--as-of 'YYYY-MM-DD HH:MM:SS'] [--bars-until YYYY-MM-DD] [--no-compare]   (T-095, `--키=값` 도 된다)
+//   기본 출력: agent-vault/10-Flow/reports/T-070-signal-postmortem-<KST YYYYMMDD>.md (legacy, 폴더가 없으면 만든다, 같은 날 재실행은 원자적으로 덮어쓴다)
+//              일봉 진입 모델은 T-095-signal-postmortem-v2-<모델>-<KST YYYYMMDD>.md (v1 파일을 덮어쓰지 않는다)
+//   --entry-model : legacy(기본, v1 과 같은 질의·계산·리포트) | d1open(D+1 시가 진입, 환율 무관) | d0close(D0 종가 진입, 환율 무관, 가격 없음 포함)
+//   --as-of       : 시그널·주문 창의 끝을 KST 시각으로 고정(v1 재현용 — v1 은 2026-10-24 05:50 KST 생성)
+//   --bars-until  : 이 날짜 뒤 일봉을 쓰지 않는다(새 봉 때문에 바뀐 수치를 가려내는 용도)
 //
 // 안전:
 //   - DB 세션을 `SET SESSION TRANSACTION READ ONLY` 로 연 뒤 SELECT 만 보낸다. 모든 질의는 assertReadOnlySql 을 통과해야 나간다(이중 방어).
@@ -18,21 +23,31 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
 
 function parseArgs(argv) {
-  const o = { days: 90, episodeDays: 5, out: null, json: null, env: path.join(ROOT, '.env'), stdout: false };
+  const o = { days: 90, episodeDays: 5, out: null, json: null, env: path.join(ROOT, '.env'), stdout: false, entryModel: 'legacy', asOf: null, barsUntil: null, compare: true };
   for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    const val = () => { const v = argv[++i]; if (v === undefined) throw new Error(`${a} 값 없음`); return v; };
+    let a = argv[i];
+    let inline;
+    const eq = a.startsWith('--') ? a.indexOf('=') : -1;
+    if (eq > 0) { inline = a.slice(eq + 1); a = a.slice(0, eq); }
+    const val = () => { if (inline !== undefined) return inline; const v = argv[++i]; if (v === undefined) throw new Error(`${a} 값 없음`); return v; };
     if (a === '--days') o.days = Number(val());
     else if (a === '--episode-days') o.episodeDays = Number(val());
     else if (a === '--out') o.out = path.resolve(val());
     else if (a === '--json') o.json = path.resolve(val());
     else if (a === '--env') o.env = path.resolve(val());
     else if (a === '--stdout') o.stdout = true;
+    else if (a === '--entry-model') o.entryModel = val();
+    else if (a === '--as-of') o.asOf = val();
+    else if (a === '--bars-until') o.barsUntil = val();
+    else if (a === '--no-compare') o.compare = false;
     else if (a === '-h' || a === '--help') { o.help = true; }
     else throw new Error(`알 수 없는 인자: ${a}`);
   }
   if (!Number.isInteger(o.days) || o.days < 1 || o.days > 365) throw new Error('--days 는 1..365 정수');
   if (!Number.isInteger(o.episodeDays) || o.episodeDays < 1 || o.episodeDays > 30) throw new Error('--episode-days 는 1..30 정수');
+  if (!core.ENTRY_MODELS.includes(o.entryModel)) throw new Error(`--entry-model 은 ${core.ENTRY_MODELS.join('|')}`);
+  if (o.asOf && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(o.asOf)) throw new Error("--as-of 는 'YYYY-MM-DD HH:MM:SS' (KST)");
+  if (o.barsUntil && !/^\d{4}-\d{2}-\d{2}$/.test(o.barsUntil)) throw new Error('--bars-until 은 YYYY-MM-DD');
   return o;
 }
 
@@ -55,7 +70,8 @@ function writeAtomic(file, text) {
 async function main() {
   const o = parseArgs(process.argv.slice(2));
   if (o.help) {
-    console.log('node scripts/profit-engine/signal-postmortem.mjs [--days 90] [--episode-days 5] [--out <md>] [--json <json>] [--env <.env>] [--stdout]');
+    console.log('node scripts/profit-engine/signal-postmortem.mjs [--days 90] [--episode-days 5] [--out <md>] [--json <json>] [--env <.env>] [--stdout]'
+      + " [--entry-model legacy|d1open|d0close] [--as-of 'YYYY-MM-DD HH:MM:SS'] [--bars-until YYYY-MM-DD] [--no-compare]");
     return;
   }
   loadEnv(o.env);
@@ -74,13 +90,18 @@ async function main() {
       return rows;
     };
     const now = new Date();
-    const { md, sum, verdicts, rec } = await core.runPostmortem(q, { days: o.days, episodeDays: o.episodeDays, now });
+    const runOpts = { days: o.days, episodeDays: o.episodeDays, now };
+    if (o.entryModel !== 'legacy') { runOpts.entryModel = o.entryModel; runOpts.compare = o.compare; }
+    if (o.asOf) runOpts.asOf = o.asOf;
+    if (o.barsUntil) runOpts.barsUntil = o.barsUntil;
+    const { md, sum, verdicts, rec } = await core.runPostmortem(q, runOpts);
     const stamp = new Date(now.getTime() + 9 * 3_600_000).toISOString().slice(0, 10).replace(/-/g, '');
-    const out = o.out ?? path.join(ROOT, 'agent-vault/10-Flow/reports', `T-070-signal-postmortem-${stamp}.md`);
+    const base = o.entryModel === 'legacy' ? `T-070-signal-postmortem-${stamp}.md` : `T-095-signal-postmortem-v2-${o.entryModel}-${stamp}.md`;
+    const out = o.out ?? path.join(ROOT, 'agent-vault/10-Flow/reports', base);
     if (o.stdout) process.stdout.write(md);
     else writeAtomic(out, md);
     if (o.json) writeAtomic(o.json, JSON.stringify({ sum, verdicts, rec }, null, 2));
-    console.error(`[signal-postmortem] 시그널 ${sum.totals.raw}건 · 에피소드 ${sum.totals.episodes}건 · 일봉 있는 에피소드 ${sum.states.ok || 0}건`
+    console.error(`[signal-postmortem] 모델 ${o.entryModel}${o.asOf ? ` · as-of ${o.asOf}` : ''} · 시그널 ${sum.totals.raw}건 · 에피소드 ${sum.totals.episodes}건 · 일봉 있는 에피소드 ${sum.states.ok || 0}건`
       + ` · 지배적 후보 ${verdicts.dominant.join(',') || '없음'} · rsi-oversold ${rec.verdict}${o.stdout ? '' : ` → ${path.relative(ROOT, out)}`}`);
   } finally {
     await conn.end();
