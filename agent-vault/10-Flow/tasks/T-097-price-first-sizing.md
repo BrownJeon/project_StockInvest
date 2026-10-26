@@ -1,7 +1,7 @@
 ---
 task_id: T-097
 title: 주문 사이징 — "금액 먼저"에서 "주가(수량) 먼저, 결과 금액으로 처리"로 변경 (P4) — 설계 질문 확정 전 구현 금지
-status: todo
+status: doing
 priority: medium
 project: StockInvest
 created: 2026-10-26
@@ -17,17 +17,17 @@ tags:
 aliases:
   - 주가기준사이징
   - P4
-waiting: [사용자 설계 결정 Q-A~Q-E(아래), judge 접수]
+waiting: [judge 접수, Developer 구현, Reviewer 독립 감사, QA]
 demo_gate:
-  required: false
-  level: "none"
-  status: "not_required"
-  version: 0
-  repo_path: ""
+  required: true
+  level: "delta"
+  status: "review_requested"
+  version: 1
+  repo_path: "mockups/T-097-telegram-sizing-line-v1.html"
   artifact_url: ""
-  content_sha256: ""
+  content_sha256: "cd57b7247905332b53eb0ffbdc3f4a4e80e94f815c7e0595600ced5ef5344ccd"
   decided_by: "judge"
-  rule_id: ""
+  rule_id: "DM-kw-risky-cta"
   approved_by: ""
   approved_at: ""
   approval_quote: ""
@@ -89,6 +89,20 @@ demo_gate:
 - (참고) **T-070 P4 (a)(b)(c) 와의 관계**: 이 지시는 "수량을 어떻게 정하나", P4 는 "예산이 얼마인가"의 답이라 서로 대체되지 않는다. **권고 (b) "1주 ≤ 슬롯인 종목만 시그널"을 유지**하고 수량 우선은 기록·한도 정합용으로 한정.
 - (참고) **`paper_fills` 표본 연속성**: 규칙 변경 시점을 `fill_model` 에 규칙 버전으로 남겨 T-072 승급 표본이 섞이지 않게 한다(권고).
 
+## 사용자 설계 결정 (2026-10-26 16:30 이전, 발화 그대로) 와 확정 설계
+
+- "4. Q-A: 권고대로 진행해줘" → **(i) 를 기본 구현 + (ii) 최소 1주는 옵션(기본 OFF, 호출부가 고름)으로 코드만 준비.**
+- "5. Q-B: 한도는 그대로 두고 설정에서 변경할께" → **1회 한도(4%)·일일 한도(10%) 코드·DB 설정 모두 건드리지 않는다.** 한도 변경은 사용자가 설정 화면에서 직접 한다(설정 API 에 상한 검증이 없다는 점은 별도 위험으로 기록만).
+- "6. Q-C,D, E: 권고대로 진행해줘" → **Q-C** 한도 판정 기준 = `max(목표금액, 실현액)`(보수적), **Q-D** 카드 금액 10만 원 유지(카드 생성 코드·금액 불변), **Q-E** 텔레그램 승인 메시지에 "N주 × 단가" 줄 추가.
+
+**Leader 확정 설계(해석을 명시 — 틀리면 사용자가 정정)**: 사용자 결정 전체를 모으면 이 변경은 **동작을 바꾸지 않는 기록·표시 변경 + 나중을 위한 보수적 옵션**이다(수량은 지금처럼 내림, 한도는 그대로, 카드 불변). 조사로 확인한 대로 한도를 올리지 않는 한 비싼 종목은 풀리지 않는다.
+1. **수량 규칙 불변**: `sizeOrderQuantity` 의 기본 동작(`floor(금액 ÷ 가격)`, 0 이면 불성립)은 그대로. 옵션 `{ minOneShare?: boolean }`(기본 false)를 추가해 true 일 때만 `max(1, floor)`. **이번 task 에서는 어떤 호출부도 이 옵션을 켜지 않는다**(배선 안 함 — 한도 정책을 정한 뒤 별도 task). 옵션이 켜졌을 때의 결과 구조(`minOneShareApplied`·`realizedKrw`)와 시험까지만 준비.
+2. **한도 기준 금액 = `max(목표, 실현액)`**: `buildOrderRequest` 가 `amountKRW` 를 만들 때 명시적으로 `max(input.amountKRW, 실현액)` 을 쓴다. 내림 규칙에서는 실현액 ≤ 목표라 **현행과 결과가 같고**(T-020 D-1 보수성 유지, 번복 아님), 옵션이 켜지는 날 한도가 자동으로 보수적이 된다. 해외는 **원화로 직접 채운다**(조사의 함정 ①: `amountKRW` 가 비면 해외 가격을 USD 로 보고 환율을 또 곱함) — 실현액은 `overseasLimitUnitUsd`(`signal-cash-gate.ts:192`)와 같은 계산으로(정수 달러 반올림, 함정 ②).
+3. **기록**: 시그널 생성 시(`signals/service.ts` INSERT 부근) `indicators.sizing` JSON 에 `{rule:'qty_first_v1', targetKrw, quantity, unitPriceKrw, realizedKrw, limitBasisKrw}` 를 남긴다(DDL 불필요, 사후검증 H-G "1주 가격 > 시그널 금액" 정의가 사라지지 않게). `signals.amount_krw`·`orders.amount_krw` 컬럼의 의미(한도·일일 합산·텔레그램 버튼 서명 기준)는 **그대로**. 카드(post-market)·`entry-watcher`·`api/orders`·`api/signals/custom/confirm` 은 건드리지 않는다.
+4. **표시(Q-E)**: 텔레그램 승인 요청 메시지(`approval-message.ts`·`approval-notify.ts`)에 `indicators.sizing` 이 있을 때 "수량·단가" 줄 추가(예: `수량 N주 × 단가 ₩X ≈ ₩Y`). 없으면(옛 시그널·카드) 줄 없음. **HTML 이스케이프 필수**(T-042: `<` 미이스케이프가 승인 요청 78% 유실 원인이었다). 텔레그램 버튼 서명 검증 입력(`amount_krw` 반올림)은 불변.
+5. **수용 기준(핵심)**: (a) 옵션 OFF(기본)에서 **주문 요청이 현행과 비트 단위로 같다** — 가격 격자(미국 $50·$200·$880, 국내 5만·50만 원, 추격가 포함)에 대해 변경 전/후 `buildOrderRequest`·`sizeOrderQuantity` 출력 일치를 골든 시험으로 고정 (b) 기존 시험은 **수정 없이 통과**해야 하며, 텔레그램 메시지 정확 문자열을 단언하는 시험만 추가 줄을 반영해 고친다(고친 시험 목록을 보고) (c) 옵션 ON 시험: 1주가 목표보다 큰 경우 `limitBasisKrw` 가 실현액이고 1회 한도에서 막힌다 (d) 해외 원화 직접 채움 시험(환율 이중 곱 재현·방지) (e) 텔레그램 메시지 이스케이프·길이·줄 순서 시험 (f) 전체 jest·tsc 통과 (g) Reviewer 판정(scope: 건드린 안전 경로 파일 전부) → judge C2 → QA.
+6. **하지 않는 것(재확인)**: 한도 설정값·코드 변경, 카드 금액·카드 생성 변경, 호출부 배선, DB DDL, 운영 DB 쓰기, KIS 호출, push·배포. 전략 승급 관문(T-072)은 그대로.
+
 ## 구현 방식(사용자 결정 뒤 — 권고)
 
 `sizeOrderQuantity` 를 전역으로 바꾸지 말고 옵션(예: `minOneShare`)으로 호출부가 고르게 한다(전역 변경이면 카드의 "수량 0 필터" `cardBuysZeroShares` 가 무력화). 원래 슬롯은 `indicators.sizing`(JSON, DDL 불필요)에 남겨 사후검증 H-G 정의가 사라지지 않게 한다. 텔레그램 버튼 서명은 DB `amount_krw` 로 검증하므로 금액은 생성 시 한 번 고정해 저장한다.
@@ -136,3 +150,5 @@ demo_gate:
 | 버전 | 상태 | 저장소 파일 | Artifact | 사용자 결정 | 일시 |
 |---|---|---|---|---|---|
 | - | 해당없음(판정은 사용자 답 뒤 judge) | - | - | - | - |
+| - | 작성중 | - | - | judge: delta (DM-kw-risky-cta) | 10-26 16:32 |
+| v1 | 검토요청 | mockups/T-097-telegram-sizing-line-v1.html | - | 사용자 검토 요청 | 10-26 16:32 |

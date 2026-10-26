@@ -1,8 +1,8 @@
 ---
 task_id: T-044
 title: 현금 부족 "실행 불가 매수 시그널 요약" 알림 제거 — 실행 가능한 시그널의 승인 요청 알림만 남긴다
-status: doing
-waiting: user_decision
+status: done
+waiting: []
 priority: medium
 risk_level: R2
 roles_involved: [leader, developer, reviewer, qa]
@@ -16,7 +16,7 @@ aliases:
   - 실행 불가 요약 알림 제거
   - drop unexecutable summary
 created: 2026-10-12
-updated: 2026-10-12
+updated: 2026-10-26
 demo_gate:
   required: true
   level: "delta"
@@ -33,7 +33,7 @@ demo_gate:
   waived_by: "user"
   waived_at: "2026-10-12T11:57:22+09:00"
   waiver_quote: "해석대로 맞고 데모는 생략"
-  active: true
+  active: false
 ---
 
 # T-044 — "📭 실행 불가 매수 시그널 요약" 알림 제거
@@ -136,6 +136,19 @@ demo_gate:
 - 원본: /home/brownjeon/NFS/homes/brownjeon/project/.claude/state/codex-review/runs/20261012T030737Z-T-044-C2/raw.txt
 
 ## 최종 요약
+
+> 2026-10-26 16:29 상태 정리(T-083 R01 후속) — 사용자 발화 그대로: "2. T-042·T-044 상태는 권고대로 진행해줘 / 3. T-038, T-039도 권고대로 진행해줘"(10-26 16:29 이전, T-083 `## Leader 기록` 4개 task 대조표의 권고에 대한 답).
+
+### [T-044] 현금 부족으로 실행 못 하는 매수는 승인 요청 알림을 보내지 않는다 (T-058 에 흡수·배포됨)
+
+- **상태**: ✅ 완료(운영 반영)
+- **무엇이 바뀌었나**: 지금 실행할 수 없는 매수(현금 부족·한도 소진·1회 한도)는 텔레그램 승인 요청도 시간당 요약도 보내지 않는다(서버 로그에 한 줄만). 실행 가능한 시그널의 승인 요청은 그대로. 매도·판정 실패는 항상 보낸다. 동작은 T-058 에 흡수됐다.
+- **배포**: ✅ 커밋 `8894416` · 2026-10-21 14:38 KST · push(webhook) · 결과 ok(릴리스 `20261021-143838-88944165`). 같은 배포: T-058·T-060·T-056 문서
+- **AI 가 검증한 것**: 코드(`approval-notify.ts` — `tallyUnexecutable`·`sendSummary` 없음, 생략 로그 L123, `notify_skip_unexecutable` 은 키 없음 또는 JSON `true` 일 때만 생략)와 `docs/telegram-approval.md` L24·L28~31 의 서술이 일치(T-083 대조표). 사용자 결정(10-12 11:57 "해석대로 맞고 데모는 생략")은 이미 해소.
+- **👉 사용자가 확인할 것**: 없음
+- **👉 사용자가 결정할 것**: 없음
+- **남은 일**: **한도 사유(일 한도·1회 한도)로 알림이 생략된 시그널은 유효시간 30분 안에 한도가 풀려도 다시 알리지 않는다**(알려진 한계, T-058 최종 요약 이슈 ③) — 필요해지면 별도 task
+- **이슈·위험**: 없음 (되돌리기: `notify_skip_unexecutable` 키에 JSON `false`)
 
 (완료 시 Leader 작성)
 

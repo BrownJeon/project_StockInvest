@@ -2,6 +2,7 @@
 task_id: T-039
 title: 재배포 때 '자동 청산 OFF' 알림 2건 중복 + 텔레그램 간헐 ETIMEDOUT 으로 승인 요청 유실
 status: todo
+waiting: [보류 — 사용자 10-26 "권고대로"; 재개 조건: 텔레그램 실패 빈도 재상승 또는 사용자 지시]
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-037, T-038-llm-base-url-setting]
 tags:
@@ -13,7 +14,7 @@ aliases:
   - 텔레그램 ETIMEDOUT
   - 승인 요청 유실
 created: 2026-09-22
-updated: 2026-09-22
+updated: 2026-10-26
 ---
 
 ## 배경 (사용자 보고, 2026-09-22)
@@ -71,6 +72,9 @@ updated: 2026-09-22
 - [ ] 알림 경로 실패가 strategy-eval·entry-watcher 등 주문 경로를 막지 않는다
 
 ## Leader 기록
+
+- **2026-10-26 16:29 상태 정리(T-083 R01 후속)** — 사용자 발화 그대로: "2. T-042·T-044 상태는 권고대로 진행해줘 / 3. T-038, T-039도 권고대로 진행해줘"(10-26 16:29 이전, T-083 `## Leader 기록` 4개 task 대조표의 권고에 대한 답). **결정: 보류**(Leader 권고 수용). 사실(T-083 대조표): (A) 스로틀 영속화 미착수 — `src/lib/notify/throttle.ts` 는 여전히 프로세스 메모리 `Map`, 이중 기동은 HOME-SERVER 소관. (B) 텔레그램 전송 실패는 10-10 하루 12건에서 10-16 3·10-22 1·10-23 1건으로 줄었으나 지속, 재시도는 1회(500ms), 큐·백오프 없음. 재개 시 범위 후보: 스로틀 영속화 + IPv4 우선 실험(좁힌 범위). 승인 요청이 앱 링크(M2)와 연결된 지금 유실이 다시 늘면 우선순위를 올린다. frontmatter `status` 는 todo 로 두고 `waiting` 에 보류 사유·재개 조건을 적었다.
+
 
 - [09-22] 워크스페이스 세션이 사실 조사·작업서 작성. 코드·DB 변경 없음.
 

@@ -2,6 +2,7 @@
 task_id: T-038
 title: Hybrid 모드에서 M4 API 주소를 볼 수도 고칠 수도 없다 — 1단계 AI 필터가 죽은 주소(163:8001)를 호출 중
 status: todo
+waiting: [보류 — 화면·알림 후속(요구 1·2·4)은 사용자 10-26 "권고대로" 보류, 즉시 복구(요구 3)는 완료]
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-037]
 tags:
@@ -12,7 +13,7 @@ aliases:
   - LLM 주소 설정
   - home_m4_api_base 옛 주소
 created: 2026-09-22
-updated: 2026-09-22
+updated: 2026-10-26
 ---
 
 ## 배경 (사용자 요청, 2026-09-22)
@@ -64,6 +65,9 @@ StockInvest `AI_API_KEY` 가 게이트웨이에 **미등록(401)** 인 것을 �
 - [ ] M4 게이트웨이 사용량(새 stockinvest 키)이 증가한다 — 관리자 `GET /admin/usage/<key>`
 
 ## Leader 기록
+
+- **2026-10-26 16:29 상태 정리(T-083 R01 후속)** — 사용자 발화 그대로: "2. T-042·T-044 상태는 권고대로 진행해줘 / 3. T-038, T-039도 권고대로 진행해줘"(10-26 16:29 이전, T-083 `## Leader 기록` 4개 task 대조표의 권고에 대한 답). **완료와 미완을 분리해 기록한다.** ✅ 완료: 요구 3 "즉시 복구" — DB `system_config.home_m4_api_base` 가 이미 `http://192.168.219.100:8000` 로 교체됨(updated_at 2026-10-11 18:13:21; 누가·어떤 승인으로 바꿨는지는 이 task 에 기록 없음 [확인 못 함]). ⏸ 미완·**보류**: 요구 1·2 설정 화면 — `LlmProviderSection.tsx` 의 `API Base URL` 칸은 `provider === 'home-m4-api'` 일 때만(L197), 연결 테스트도 home-m4-api 만(L106), hybrid 에서 주소를 보거나 고칠 수 없다. 요구 4(조용히 legacy 로 떨어진 상태 알림)도 보류. 재개 조건: M4 주소가 다시 바뀌어 hybrid 1단계가 죽을 때 또는 사용자 지시. 근거: [[T-083-s00-follow-up-hygiene]] 대조표. frontmatter `status` 는 todo 로 두고 `waiting` 에 보류 사유를 적었다.
+
 
 - [09-22] 워크스페이스 세션이 사실 조사·작업서 작성. 코드·DB 변경 없음.
 
