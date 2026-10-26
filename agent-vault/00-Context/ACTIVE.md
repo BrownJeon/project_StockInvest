@@ -6,11 +6,11 @@ tags:
 ---
 # 현재 상태
 
-## 2026-10-26 14:17 — T-091(앱 1.1.0)·T-092·T-093 모두 운영 반영, 사용자 실기기 확인만 남음
+## 2026-10-26 14:50 — T-091(앱 1.1.0)·T-092·T-093 모두 운영 반영·사용자 실기기 확인 완료
 
 - **운영 상태**: main `92b86ac` = origin 동기(push 14:07 KST) · 릴리스 `20261026-140750-92b86ac7` ok · 킬스위치 `true`(10-23 22:42 자동 발동 이후 유지, 해제는 사용자 전용) · `safety_dry_run=false` · 주문·거래 로그 id 불변(3229/8305). 로컬에는 **문서 전용 미커밋/미push 변경**(이 기록·task 최종 요약·CLAUDE.md 공개 버전·AGENTS.md 재생성)이 있고 다음 push 에 동승한다 — 문서만을 위한 push 는 불필요한 배포라 하지 않는다.
-- **[[T-091-app-version-gate-and-m2]] 완료(`waiting: device_verify`)**: WP-A(옛 앱 로그인 화면 "업데이트 필요" 띠, 웹 `9a03245` 12:23 배포) + WP-M2(텔레그램 "앱에서 자세히" 링크 → 앱 열기, 웹 `92b86ac` 14:07 배포·`/.well-known/assetlinks.json` 공개) + **APK 1.1.0(versionCode 3) 14:11 공개**(`app_release` id 3) + 운영 설정 `system_config.app_public_url` = `https://stock.xn--lh0b87pnudm10a4vd.com/`(끝 슬래시 필수, 14:12) + 텔레그램 자가 점검 메시지 14:12 발송(messageId 3840). **이제 실제 승인 요청 메시지에도 "앱에서 자세히" 버튼이 붙는다**(끄려면 `app_public_url` 행 삭제).
-- **사용자 확인 대기**: ① 폰에 1.1.0 덮어쓰기 설치 ② 텔레그램 14:12 시험 메시지의 "🔗 앱에서 자세히" 탭 → 앱이 열리는지(브라우저로 열리면 M2 의 핵심 불확실점 — 알려 달라) ③ 선택: `adb shell pm get-app-links com.miraclepenguin.stockinvest` → `verified`. 결과에 따라 T-091 `waiting` 해제.
+- **[[T-091-app-version-gate-and-m2]] 완료(실기기 확인 완료, `waiting` 해제)**: WP-A(옛 앱 로그인 화면 "업데이트 필요" 띠, 웹 `9a03245` 12:23 배포) + WP-M2(텔레그램 "앱에서 자세히" 링크 → 앱 열기, 웹 `92b86ac` 14:07 배포·`/.well-known/assetlinks.json` 공개) + **APK 1.1.0(versionCode 3) 14:11 공개**(`app_release` id 3) + 운영 설정 `system_config.app_public_url` = `https://stock.xn--lh0b87pnudm10a4vd.com/`(끝 슬래시 필수, 14:12) + 텔레그램 자가 점검 메시지 14:12 발송(messageId 3840). **이제 실제 승인 요청 메시지에도 "앱에서 자세히" 버튼이 붙는다**(끄려면 `app_public_url` 행 삭제).
+- **사용자 실기기 확인 완료(14:50)**: 1.1.0 설치 → 텔레그램 점검 확인 통과 → 재발송한 시험 메시지(3841)의 "🔗 앱에서 자세히" 탭 → 앱이 열리고 대시보드 정상. T-091 `waiting` 해제. 남은 잠재 위험: 안드로이드 15+ 주기적 재검증(풀리면 링크가 브라우저로 열림 → `adb shell pm verify-app-links --re-verify com.miraclepenguin.stockinvest`). adb 출력 확인은 사용자가 생략.
 - **[[T-093-hook-safety-paths-auth-tests]] 완료**: 훅 SAFETY_PATHS 에 감시 밖 인증 시험 15개 + `login-screen-t088` 시험 + `mail/config.ts`(정확 일치 17줄, 50→67항목), 커밋 `eba6610` 13:58 main(훅 즉시 활성, 14:15 설치된 훅 확인), push 14:07 와 함께 반영. 한계: login-screen 시험은 T-089 이전 원문 회귀를 못 잡음.
 - **후속 후보(T-094 이상, 권고: 실기기 결과를 본 뒤 결정)**: ① `login-screen-t088` 시험 조이기 + `mail/header-safe.ts` 훅 감시(훅 후보 1순위) ② 앱 `getInfo` 조회 시간 제한(끝내 응답 없으면 Google 자리가 비어 있음) ③ `build-apk.sh` 의 부모 activity·exported·launchMode 검사(Codex low) ④ T-091 Reviewer N1(소스 가드 `code()` 한 줄)·N2(deploy-order 순서 문장 분리) 비차단 보강.
 - **사용자 결정 대기(이전부터)**: 원장 D1b 백필(KIS 약 35~42건 읽기, 새 task) · 수집 실패 텔레그램 알림 · 훅 `SAFETY_PATHS` 추가 후보 4개(보류 권고).
