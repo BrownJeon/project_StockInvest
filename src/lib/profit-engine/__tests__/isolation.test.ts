@@ -6,6 +6,9 @@
  *  3. profit-engine 의 쓰기 SQL 은 daily_bars 뿐, DDL 없음. 라우트는 SQL 을 직접 쓰지 않는다.
  *  4. 라우트는 cron-runner 에 등록하지 않는다(정기 증분은 Phase 1).
  *  5. 사후검증 스크립트(scripts/profit-engine/)는 읽기 전용 — 쓰기·DDL SQL 없음, READ ONLY 세션, KIS·주문 호출 없음.
+ *  6. (T-096) 백테스트 엔진(backtest/·registry/)은 순수 계산 — 거래소·자격증명·DB·mysql2 도 쓰지 않는다. `@/lib/strategy` 금지는 그대로이고,
+ *     **예외는 지표 5개 모듈(`@/lib/strategy/indicators/(rsi|sma|ema|bollinger|atr)`)의 정확한 경로 import 하나뿐**(사용자 승인 허용 목록).
+ *     허용한 5개 모듈은 순수(입출력·환경변수·시계·난수·외부 import 0, 서로 간 상대 import 만)임을 같은 파일에서 단언한다.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -32,6 +35,16 @@ const ROUTE_TESTS = /^app\/api\/cron\/daily-bars\/__tests__\//;
 const engineFiles = ALL.filter((f) => OWN.test(rel(f)) && !isTest(rel(f)));
 const read = (f: string) => fs.readFileSync(f, 'utf8');
 const importsOf = (src: string) => [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
+
+/** (T-096) 백테스트 엔진 파일 — 순수 계산 폴더 둘. */
+const PURE = /^lib\/profit-engine\/(backtest|registry)\//;
+const pureFiles = engineFiles.filter((f) => PURE.test(rel(f)));
+/** (T-096) `@/lib/strategy` 금지의 유일한 예외 — 지표 5개 모듈의 정확한 경로(끝 고정). index·macd·volume-profile·다른 strategy 모듈은 여전히 금지. */
+const INDICATOR_ALLOW = /^@\/lib\/strategy\/indicators\/(rsi|sma|ema|bollinger|atr)$/;
+const INDICATOR_ALLOW_QUOTED = /(['"])@\/lib\/strategy\/indicators\/(rsi|sma|ema|bollinger|atr)\1/g;
+const INDICATOR_FILES = ['rsi', 'sma', 'ema', 'bollinger', 'atr'].map((n) => path.join(SRC, `lib/strategy/indicators/${n}.ts`));
+/** 바늘 검사용: 허용된 지표 import 문자열만 지운 본문(그 밖의 '@/lib/strategy' 는 그대로 걸린다). */
+const scrubAllowed = (src: string) => src.replace(INDICATOR_ALLOW_QUOTED, "'<allowed-indicator>'");
 /** (T-2) `import { a, b } from '<모듈>'` 의 이름 목록 — 따옴표 종류(' ")·줄바꿈과 무관하게. moduleRe 는 모듈 경로 정규식 원문. */
 function namedImports(src: string, moduleRe: string): Array<{ mod: string; name: string }> {
   const re = new RegExp(`import\\s*(?:type\\s*)?\\{([^}]*)\\}\\s*from\\s*['"](${moduleRe})['"]`, 'g');
@@ -42,6 +55,20 @@ function namedImports(src: string, moduleRe: string): Array<{ mod: string; name:
 describe('profit-engine → 주문·안전장치 경로를 쓰지 않는다', () => {
   test('검사 대상 존재', () => {
     expect(engineFiles.map(rel).sort()).toEqual([
+      'lib/profit-engine/backtest/baseline.ts',
+      'lib/profit-engine/backtest/costs.ts',
+      'lib/profit-engine/backtest/episodes.ts',
+      'lib/profit-engine/backtest/fill.ts',
+      'lib/profit-engine/backtest/frames.ts',
+      'lib/profit-engine/backtest/index.ts',
+      'lib/profit-engine/backtest/metrics.ts',
+      'lib/profit-engine/backtest/pipeline.ts',
+      'lib/profit-engine/backtest/portfolio.ts',
+      'lib/profit-engine/backtest/regime.ts',
+      'lib/profit-engine/backtest/signals/control-spike-contraction.ts',
+      'lib/profit-engine/backtest/signals/index.ts',
+      'lib/profit-engine/backtest/signals/rsi-oversold-daily.ts',
+      'lib/profit-engine/backtest/types.ts',
       'lib/profit-engine/daily-bars-collector.ts',
       'lib/profit-engine/daily-bars-kis.ts',
       'lib/profit-engine/daily-bars-paginate.ts',
@@ -49,17 +76,33 @@ describe('profit-engine → 주문·안전장치 경로를 쓰지 않는다', ()
       'lib/profit-engine/daily-bars-request.ts',
       'lib/profit-engine/daily-bars-store.ts',
       'lib/profit-engine/daily-bars-time.ts',
+      'lib/profit-engine/registry/evaluate-pass.ts',
+      'lib/profit-engine/registry/hash.ts',
+      'lib/profit-engine/registry/oos-ledger.ts',
+      'lib/profit-engine/registry/registry.ts',
     ]);
   });
 
-  test('import 대상은 허용 목록뿐(상대경로는 같은 폴더만)', () => {
+  test('import 대상은 허용 목록뿐(상대경로는 같은 폴더만 — 백테스트 엔진은 backtest/·registry/ 안에서만)', () => {
     const allowed = new Set([
       '@/lib/exchanges/kis-auth', '@/lib/exchanges/kis-http', '@/lib/exchanges/kis-throttle', '@/lib/exchanges/kis-symbols',
       '@/lib/credentials', '@/lib/time', 'mysql2',
     ]);
-    const bad = engineFiles.flatMap((f) => importsOf(read(f))
-      .filter((m) => !(allowed.has(m) || /^\.\/[\w-]+$/.test(m)))
-      .map((m) => `${rel(f)} → ${m}`));
+    const bad = engineFiles.flatMap((f) => {
+      const r = rel(f);
+      return importsOf(read(f)).filter((m) => {
+        if (!PURE.test(r)) return !(allowed.has(m) || /^\.\/[\w-]+$/.test(m));
+        // 백테스트 엔진: 상대경로는 해석 결과가 backtest/·registry/ 안, 지표 5개 정확한 경로, crypto(registry/hash.ts 만)
+        if (m.startsWith('./') || m.startsWith('../')) {
+          if (!/^(\.{1,2}\/)+[\w-]+(\/[\w-]+)*$/.test(m)) return true;
+          const target = rel(path.resolve(path.dirname(f), m));
+          return !PURE.test(`${target}/`) && !PURE.test(target);
+        }
+        if (INDICATOR_ALLOW.test(m)) return false;
+        if (m === 'crypto') return r !== 'lib/profit-engine/registry/hash.ts';
+        return true;
+      }).map((m) => `${r} → ${m}`);
+    });
     expect(bad).toEqual([]);
   });
 
@@ -103,7 +146,8 @@ describe('profit-engine → 주문·안전장치 경로를 쓰지 않는다', ()
     'submitOrder', 'createOrder', 'cancelOrder', 'getBalances', 'invalidateKisToken', 'oauth2/tokenP', 'getUsdKrwRate',
     'setCredential', 'deleteCredentialOverride', 'trading/', 'order-rvsecncl', 'inquire-balance', 'TTTT', 'VTTT',
   ])('%p 참조 0건', (needle) => {
-    const hits = engineFiles.filter((f) => read(f).includes(needle)).map(rel);
+    // (T-096) 허용된 지표 5개 import 문자열만 지우고 검사한다 — 그 밖의 '@/lib/strategy'(index·macd·engine 등)는 그대로 걸린다
+    const hits = engineFiles.filter((f) => scrubAllowed(read(f)).includes(needle)).map(rel);
     expect(hits).toEqual([]);
   });
 
@@ -212,5 +256,85 @@ describe('사후검증 스크립트 — 읽기 전용', () => {
     const main = read(files[0]);
     expect(main).toMatch(/SET SESSION TRANSACTION READ ONLY/);
     expect(main).toMatch(/assertReadOnlySql/);
+  });
+});
+
+describe('(T-096) 백테스트 엔진 — 순수 계산 · 지표 허용 목록 · 허용 지표의 순수성', () => {
+  test('검사 대상 존재(엔진 18개)', () => {
+    expect(pureFiles.length).toBe(18);
+  });
+
+  test("'@/lib/strategy' 로 시작하는 import 는 전부 지표 5개 정확한 경로뿐(index·macd·volume-profile·engine 등 0건)", () => {
+    const strat = pureFiles.flatMap((f) => importsOf(read(f)).filter((m) => m.startsWith('@/lib/strategy')).map((m) => ({ f: rel(f), m })));
+    expect(strat.length).toBeGreaterThan(0);
+    expect(strat.filter((x) => !INDICATOR_ALLOW.test(x.m))).toEqual([]);
+    // 따옴표·공백을 바꿔 쓴 우회(문자열 안 '@/lib/strategy')도 허용 문자열을 지운 뒤 하나도 남지 않아야 한다
+    for (const f of pureFiles) expect(scrubAllowed(read(f))).not.toMatch(/@\/lib\/strategy/);
+  });
+
+  test('허용 목록 정규식 자체 점검 — 끝 고정·이름 고정', () => {
+    for (const ok of ['@/lib/strategy/indicators/rsi', '@/lib/strategy/indicators/sma', '@/lib/strategy/indicators/ema', '@/lib/strategy/indicators/bollinger', '@/lib/strategy/indicators/atr'])
+      expect(INDICATOR_ALLOW.test(ok)).toBe(true);
+    for (const bad of ['@/lib/strategy/indicators', '@/lib/strategy/indicators/index', '@/lib/strategy/indicators/macd', '@/lib/strategy/indicators/volume-profile',
+      '@/lib/strategy/engine', '@/lib/strategy/indicators/rsi/../../engine', '@/lib/strategy/indicators/rsi.ts', '@/lib/strategy/indicators/rsix', '@/lib/strategy'])
+      expect(INDICATOR_ALLOW.test(bad)).toBe(false);
+    expect(scrubAllowed("import { a } from '@/lib/strategy/indicators/rsi';\nimport { b } from '@/lib/strategy/engine';")).toMatch(/@\/lib\/strategy\/engine/);
+    expect(scrubAllowed('import { a } from "@/lib/strategy/indicators/macd";')).toMatch(/@\/lib\/strategy/);
+  });
+
+  test('허용한 지표 5개 모듈은 순수: import 는 서로 간 상대경로뿐, 입출력·DB·네트워크·환경변수·시계·난수·동적 import 0', () => {
+    for (const f of INDICATOR_FILES) {
+      expect(fs.existsSync(f)).toBe(true);
+      const src = read(f);
+      expect(importsOf(src).filter((m) => !/^\.\/(rsi|sma|ema|bollinger|atr)$/.test(m))).toEqual([]);
+      expect(src).not.toMatch(/\brequire\(|\bimport\(|process\.env|\bfetch\(|Date\.now|new Date\(|Math\.random|setTimeout|setInterval|console\./);
+      expect(src).not.toMatch(/['"](fs|node:fs|path|node:path|http|https|net|child_process|mysql2|mysql2\/promise|next\/[\w/]+)['"]/);
+      expect(src).not.toMatch(/@\/lib\//);
+      expect(src).not.toMatch(/\b(SELECT|INSERT|UPDATE|DELETE)\b/);
+    }
+  });
+
+  test('엔진은 거래소·자격증명·DB·mysql2·시간 모듈을 쓰지 않는다(daily-bars 보다 좁다)', () => {
+    for (const f of pureFiles) {
+      const src = read(f);
+      expect(src).not.toMatch(/@\/lib\/(exchanges|credentials|db|time|safety|orders|signals|notify|llm|analyst|strategy\/(?!indicators\/(rsi|sma|ema|bollinger|atr)['"]))/);
+      expect(src).not.toMatch(/['"](mysql2|mysql2\/promise|fs|node:fs|path|node:path|http|https|child_process|next\/[\w/]+)['"]/);
+      expect(src).not.toMatch(/process\.env|\bfetch\(|Date\.now\(|new Date\(\)|Math\.random|\bimport\(|\brequire\(/);
+    }
+  });
+
+  test('매매 경로(src 의 profit-engine 밖)는 backtest·registry 를 참조하지 않는다', () => {
+    const others = ALL.filter((f) => !OWN.test(rel(f)) && !isTest(rel(f)));
+    expect(others.filter((f) => /profit-engine\/(backtest|registry)/.test(read(f))).map(rel)).toEqual([]);
+  });
+});
+
+describe('(T-096) 백테스트 러너 — 읽기 전용', () => {
+  const dir = path.join(ROOT, 'scripts/profit-engine');
+  const files = ['backtest-runner.mjs', 'backtest-runner-core.js'].map((n) => path.join(dir, n));
+
+  test('쓰기·DDL SQL 없음, KIS·주문·앱 모듈 없음', () => {
+    const src = files.map(read).join('\n');
+    expect(src).not.toMatch(/\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|REPLACE\s+INTO|TRUNCATE)\b/i);
+    const ddl = ['CREATE', 'ALTER', 'DR' + 'OP'].join('|');
+    expect(src).not.toMatch(new RegExp(`\\b(${ddl})\\s+(TABLE|DATABASE|INDEX)\\b`, 'i'));
+    expect(src).not.toMatch(/koreainvestment|openapi|submitOrder|createOrder|kis_access_token|\bfetch\(/);
+  });
+
+  test('실행기는 READ ONLY 세션 + assertReadOnlySql, 본체는 P1 의 assertReadOnlySql 를 그대로 쓴다', () => {
+    expect(read(files[0])).toMatch(/SET SESSION TRANSACTION READ ONLY/);
+    expect(read(files[0])).toMatch(/core\.assertReadOnlySql\(sql\)/);
+    expect(read(files[1])).toMatch(/const \{ assertReadOnlySql \} = require\('\.\/postmortem-core\.js'\);/);
+  });
+
+  test('엔진 로더 허용 목록은 격리 시험의 허용 목록과 같다(지표 5개·backtest·registry 만)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const core = require(path.join(dir, 'backtest-runner-core.js'));
+    const srcs = core.ENGINE_ALLOWED.map((re: RegExp) => re.source).join('\n');
+    expect(srcs).toMatch(/strategy\\\/indicators\\\/\(rsi\|sma\|ema\|bollinger\|atr\)/);
+    expect(core.ENGINE_ALLOWED).toHaveLength(4);
+    for (const f of pureFiles) expect(core.ENGINE_ALLOWED.some((re: RegExp) => re.test(rel(f)))).toBe(true);
+    for (const bad of ['lib/strategy/engine.ts', 'lib/strategy/indicators/macd.ts', 'lib/safety/dry-run.ts', 'lib/profit-engine/daily-bars-kis.ts', 'lib/db.ts'])
+      expect(core.ENGINE_ALLOWED.some((re: RegExp) => re.test(bad))).toBe(false);
   });
 });

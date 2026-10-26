@@ -1,0 +1,446 @@
+{
+  "schema": "t096-preregistration@1",
+  "task": "T-096",
+  "document": {
+    "path": "docs/design/2026-10-26-strategy-validation-preregistration-v1.1.md",
+    "version": "v1.1",
+    "frozen_at": "2026-10-27 00:30 KST",
+    "approved_by": "user",
+    "approval_quote": "V1~V3 권고대로 진행해줘",
+    "section_b_sha256": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+    "hash_rule": "'## B. 사전 등록 본문' 제목 줄부터 '## C. P3 구현 명세' 제목 줄 직전까지 줄바꿈(\\n)으로 이어 붙이고 끝의 공백과 '---' 를 제거한 UTF-8 문자열의 sha256"
+  },
+  "markets": {
+    "judged": "US",
+    "reportedOnly": [
+      "KR"
+    ],
+    "judgeCurrency": "USD"
+  },
+  "universe": {
+    "pit": false,
+    "limitation": "현재 시점 대형주 정적 목록(US SP500_TOP50+SMH 50종목, KR 최근 90일 시그널 43종목) — PIT 유니버스 아님(§B-0·§E-1)",
+    "expectedSymbols": {
+      "US": 50,
+      "KR": 43
+    },
+    "excludeSymbols": [
+      "AMS:SPY",
+      "069500"
+    ]
+  },
+  "benchmarks": {
+    "US": "AMS:SPY",
+    "KR": "069500"
+  },
+  "asOf": "2026-10-23",
+  "splits": {
+    "US": {
+      "warmupFrom": "2023-08-17",
+      "isFrom": "2024-02-01",
+      "isTo": "2025-09-30",
+      "oosFrom": "2025-10-01",
+      "oosTo": "2026-10-23",
+      "forwardFrom": "2026-10-24",
+      "folds": [
+        {
+          "trainTo": "2024-12-31",
+          "testFrom": "2025-01-01",
+          "testTo": "2025-03-31"
+        },
+        {
+          "trainTo": "2025-03-31",
+          "testFrom": "2025-04-01",
+          "testTo": "2025-06-30"
+        },
+        {
+          "trainTo": "2025-06-30",
+          "testFrom": "2025-07-01",
+          "testTo": "2025-09-30"
+        }
+      ]
+    },
+    "KR": {
+      "warmupFrom": "2023-10-25",
+      "isFrom": "2024-05-01",
+      "isTo": "2025-09-30",
+      "oosFrom": "2025-10-01",
+      "oosTo": "2026-10-23",
+      "forwardFrom": "2026-10-24",
+      "folds": [
+        {
+          "trainTo": "2024-12-31",
+          "testFrom": "2025-01-01",
+          "testTo": "2025-03-31"
+        },
+        {
+          "trainTo": "2025-03-31",
+          "testFrom": "2025-04-01",
+          "testTo": "2025-06-30"
+        },
+        {
+          "trainTo": "2025-06-30",
+          "testFrom": "2025-07-01",
+          "testTo": "2025-09-30"
+        }
+      ]
+    }
+  },
+  "costs": {
+    "US": {
+      "feeRoundTrip": 0.005,
+      "slippage": 0.0015,
+      "stopSlippage": 0.0025
+    },
+    "KR": {
+      "feeRoundTrip": 0.0018,
+      "slippage": 0.0015,
+      "stopSlippage": 0.0025
+    },
+    "sensitivity": {
+      "passMultiplier": 1.5,
+      "reportMultipliers": [
+        2.0
+      ]
+    }
+  },
+  "execution": {
+    "judgeModel": "d1open",
+    "sensitivityModel": "limit",
+    "limitChasePct": 0.005,
+    "gapUp": 0.02,
+    "gapDown": 0.03,
+    "gapBoundary": "skip",
+    "adtvWindow": 20,
+    "adtvMaxShare": 0.001
+  },
+  "episodes": {
+    "windowDays": 5,
+    "cooldownAppliesToPortfolio": true
+  },
+  "regime": {
+    "ma": 100
+  },
+  "portfolio": {
+    "capital": {
+      "US": 15000,
+      "KR": 20000000
+    },
+    "slots": 10,
+    "slotPct": 0.1,
+    "integerShares": true
+  },
+  "bootstrap": {
+    "iters": 2000,
+    "seed": 20261026,
+    "auxSeeds": [
+      1,
+      2
+    ],
+    "cluster": "week_monday_of_d0",
+    "prng": "mulberry32",
+    "interval": "percentile95"
+  },
+  "data": {
+    "barGapDays": 9,
+    "universeBaselineMinN": 10,
+    "tradingDaysPerYear": 252
+  },
+  "trials": {
+    "tierA": 56,
+    "control": 2,
+    "tierB": 20,
+    "perMarket": 78,
+    "total": 156
+  },
+  "criteria": {
+    "tierATrialsForT": 56,
+    "tThresholds": {
+      "nLe100": 2.5,
+      "nGt100": 3.0
+    },
+    "is": {
+      "minEpisodes": 150,
+      "minWeeks": 40,
+      "minSymbols": 15,
+      "maxSymbolShare": 0.15,
+      "excessLoGt": 0,
+      "minNetAfterDelta": 0.004,
+      "minPf": 1.4,
+      "minPayoff": 1.5,
+      "stressMinNet": 0,
+      "foldsMinPositive": 2,
+      "foldMaxProfitShare": 0.6,
+      "minSharpe": 1.0,
+      "maxMdd": 0.12
+    },
+    "oos": {
+      "minEpisodes": 80,
+      "minWeeks": 20,
+      "minSymbols": 10,
+      "maxSymbolShare": 0.15,
+      "excessLoGt": 0,
+      "minNetAfterDelta": 0.003,
+      "minPf": 1.3,
+      "minPayoff": 1.5,
+      "stressMinNet": 0,
+      "minSharpe": 0.7,
+      "sharpeMustBeatBenchmark": true,
+      "maxMdd": 0.12,
+      "mddMustBeatBenchmark": true,
+      "minWfe": 0.5
+    }
+  },
+  "interpretation": {
+    "version": "v1.1",
+    "symbolShareDenominator": "total_net",
+    "plateauMembershipRequiresSample": true,
+    "plateauMedianFallback": "nearest_l1",
+    "plateauRegimeTie": "off",
+    "plateauEvenMedian": "low",
+    "plateauTieOrder": [
+      "th",
+      "lo",
+      "L",
+      "k",
+      "r",
+      "b",
+      "stop",
+      "hold",
+      "regime"
+    ],
+    "g1Rule": "any_combo_meets_u5_after_filters",
+    "pendingUserConfirmation": []
+  },
+  "decisionDate": "2026-12-07",
+  "rsiOversoldV1DecisionDate": "min(S1 OOS report date, 2027-03-09)",
+  "strategies": [
+    {
+      "label": "S1",
+      "id": "rsi-oversold-daily",
+      "tier": "A",
+      "implemented": true,
+      "rank": "rsi_asc",
+      "minBars": 22,
+      "grid": {
+        "th": [
+          30,
+          35,
+          38
+        ],
+        "hold": [
+          5,
+          10
+        ],
+        "stop": [
+          0.03,
+          0.05
+        ],
+        "regime": [
+          false,
+          true
+        ]
+      },
+      "fixed": {
+        "maMult": 1.005,
+        "rsiPeriod": 14,
+        "maPeriod": 20
+      },
+      "live": {
+        "th": 38
+      }
+    },
+    {
+      "label": "S2",
+      "id": "pullback-trend-daily",
+      "tier": "A",
+      "implemented": false,
+      "rank": "ma20_distance_asc",
+      "minBars": 65,
+      "grid": {
+        "lo": [
+          35,
+          40,
+          45
+        ],
+        "hold": [
+          5,
+          10
+        ],
+        "stop": [
+          0.03,
+          0.05
+        ],
+        "regime": [
+          false,
+          true
+        ]
+      },
+      "fixed": {
+        "lookback": 5,
+        "band": 10
+      },
+      "live": {
+        "lo": 40
+      }
+    },
+    {
+      "label": "S4",
+      "id": "xs-momentum",
+      "tier": "A",
+      "implemented": false,
+      "rank": "momentum_desc",
+      "grid": {
+        "L": [
+          6,
+          12
+        ],
+        "k": [
+          10,
+          15
+        ],
+        "regime": [
+          false,
+          true
+        ]
+      },
+      "fixed": {
+        "rebalance": "monthly",
+        "holdMonths": 1,
+        "stop": null,
+        "skipRecentMonths": 1
+      }
+    },
+    {
+      "label": "S7",
+      "id": "control-spike-contraction",
+      "tier": "control",
+      "implemented": true,
+      "rank": "none",
+      "minBars": 27,
+      "grid": {
+        "hold": [
+          5,
+          10
+        ]
+      },
+      "fixed": {
+        "stop": 0.05,
+        "spike": 0.15,
+        "regime": false,
+        "atrPeriod": 5
+      }
+    },
+    {
+      "label": "S3",
+      "id": "bb-squeeze-breakout-daily",
+      "tier": "B",
+      "implemented": false,
+      "grid": {
+        "r": [
+          1.2,
+          1.5,
+          2.0
+        ],
+        "hold": [
+          10,
+          20
+        ]
+      },
+      "fixed": {
+        "stop": 0.05
+      }
+    },
+    {
+      "label": "S5",
+      "id": "high52-trend",
+      "tier": "B",
+      "implemented": false,
+      "grid": {
+        "b": [
+          0.02,
+          0.03,
+          0.05
+        ],
+        "hold": [
+          10,
+          20
+        ]
+      },
+      "fixed": {
+        "stop": 0.05
+      }
+    },
+    {
+      "label": "S6",
+      "id": "oversold-bounce-daily-v1",
+      "tier": "B",
+      "implemented": false,
+      "grid": {
+        "hold": [
+          5,
+          10
+        ]
+      },
+      "fixed": {
+        "stop": 0.03
+      }
+    },
+    {
+      "label": "S8",
+      "id": "weekly-trend-follow-v1",
+      "tier": "B",
+      "implemented": false,
+      "grid": {
+        "hold": [
+          10,
+          20
+        ]
+      },
+      "fixed": {
+        "stop": 0.05,
+        "warmupBars": 200
+      }
+    },
+    {
+      "label": "S9",
+      "id": "eod-high-close-v1",
+      "tier": "B",
+      "implemented": false,
+      "grid": {
+        "hold": [
+          5,
+          10
+        ]
+      },
+      "fixed": {
+        "stop": 0.03
+      }
+    },
+    {
+      "label": "S10",
+      "id": "inside-bar-v1",
+      "tier": "B",
+      "implemented": false,
+      "grid": {
+        "hold": [
+          5,
+          10
+        ]
+      },
+      "fixed": {
+        "stop": 0.03
+      }
+    }
+  ],
+  "excludedStrategies": [
+    {
+      "id": "dividend-quality-buyback-v1",
+      "reason": "재무 데이터(배당·자사주)가 daily_bars 에 없음"
+    },
+    {
+      "id": "rsi-overbought-exit-v1",
+      "reason": "매도 전용"
+    }
+  ]
+}

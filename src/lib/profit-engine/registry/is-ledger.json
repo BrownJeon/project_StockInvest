@@ -1,0 +1,5 @@
+{
+  "schema": "t096-is-ledger@1",
+  "note": "추가 전용(append-only). IS 실행마다 한 줄(seq·시각·문서 해시·지문 4종·전략별 결과 해시). 줄 삭제·수정 금지 — 러너가 실행 전에 git HEAD 본과 접두 관계를 대조한다.",
+  "entries": []
+}

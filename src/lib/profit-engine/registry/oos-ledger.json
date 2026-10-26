@@ -1,0 +1,6 @@
+{
+  "schema": "t096-oos-ledger@1",
+  "section_b_sha256": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+  "note": "추가 전용(append-only). 전략당 OOS 1회 — 실행 전에 줄을 먼저 쓰고(잠금), 결과는 같은 줄의 result 에만 채운다. 줄 삭제·수정 금지.",
+  "entries": []
+}
