@@ -334,6 +334,7 @@
 - **이메일 로그인 `oauth_account`**(소셜로 가입된 계정): T-084 의 앱 전용 문구는 삭제 — 웹·앱 공통 "Google로 가입된 계정입니다. 위의 Google로 계속하기를 눌러 로그인하세요."(서버 문구의 "아래"는 실제로는 위쪽 버튼을 가리켜 화면이 "위의"로 조립, 결정 D5 A). 서버 응답·`login/route.ts` 는 그대로.
 - **`/signup`**: 웹은 그대로. 앱은 Google 버튼 숨김 유지(결정 D1 A — 앱 Google 로그인은 기존 계정만 들어오므로 가입 화면에 두면 새 사람에게 막다른 길). 가입 페이지 코드는 바뀌지 않았고 `OAuthButtons` 의 기본값(`appLogin=false`)이 앱에서 아무것도 그리지 않는다.
 - **웹에서 글자가 바뀌는 곳**: ① `email_unverified` 안내 "Google/GitHub" → "Google" ② `oauth_account` "아래" → "위의" ③ 설정 › 앱 설치 3단계 ③ 문구. 안내 상자·가입 화면 안내 상자는 360px 에서 낱말이 끊기지 않게 `word-break: keep-all` 을 받는다(표시 개선).
+- **옛 앱 업데이트 안내(T-091, 승인 데모 [`mockups/T-091-app-version-gate-v1.html`](../mockups/T-091-app-version-gate-v1.html) v1 대안 B)**: 앱이고 설치 build 가 Google 로그인 최소 build(`APP_FEATURE_MIN_BUILD.googleLogin` = 2) 미만이면 로그인 화면 맨 위(카드 위)에 필수 업데이트 띠 모양 "앱 업데이트가 필요합니다 / 이 버전(v…)에서는 Google 로그인을 쓸 수 없습니다. [업데이트]"(→ `/app/download/latest.apk`)를 두고 Google 버튼은 같은 자리에서 비활성 "Google로 계속하기 (업데이트 후)". 이메일 폼·구분선·첫 포커스는 그대로, 웹·build 2 이상·버전 모름·버전 읽는 중·서버 Google 설정 없음은 띠 없음, `/signup` 그대로.
 - 미확인(실기기): Chrome 창 닫힘 신호(`browserFinished`)가 오는 기기·Custom Tab 구현 · `Browser.close()` 가 안드로이드에서 창을 닫는지(플러그인 문서는 Web·iOS 전용으로 적었다) · 구형 WebView 의 `inert` · `getLaunchUrl()` 이 같은 프로세스에서 새 딥링크로 바뀌는지.
 
 ### E. 아이콘·스플래시
@@ -373,4 +374,5 @@
 | 2026-10-18 | T-049: 내 결정 → 대시보드 맨 아래로 이동(분석 탭에는 6월부터 없었음 — 커밋 `605f438`). executing 표시를 주문 기록 상태 기준으로 정정("주문 실행됨" 폐지) |
 | 2026-10-23 | T-074: 설정에 '자산 기록 — 입출금 기록 행' 추가(내 계정 다음), 서브 화면 `/settings/cash-ledger`(입출금 뺀 투자 손익·기록 안 된 변화·신뢰도 표지·기록 목록/표·손익 기준·시트 5종, 추가 전용·반영 상태 3종). 공용 `Sheet` 대화상자 추가 |
 | 2026-10-25 | T-084: §5 앱(안드로이드 "주식캐기") 전용 화면 신설 — 연결 실패 화면·업데이트 띠·설정 › 앱 (안드로이드)·로그인 앱 분기·아이콘(② 지층형+금덩이). 설정 카드 목록에 "앱 (안드로이드)" 추가, 기존 §5·§6 을 §6·§7 로 |
+| 2026-10-26 | T-091: 로그인 — 옛 앱(build < 2)에 "앱 업데이트가 필요합니다" 띠(카드 위) + Google 버튼 비활성("(업데이트 후)"). §5 D 한 줄 |
 | 2026-10-26 | T-088: 로그인 — 웹·앱 한 화면(Google + 이메일). 앱: Google 은 Chrome 창(Custom Tab) 왕복, 버튼 아래 여는 중·대기 카드(다시 열기·취소)·닫힘·10분·취소·열기 실패 안내, 마무리 중 덮개, 오류 코드 app_code_invalid·app_verifier_lost·signup_requires_web. GitHub 버튼·앱 전용 oauth_account 문구 삭제. 앱 /signup 은 Google 버튼 숨김(D1 결정 값). §5 D·설정 › 앱 설치 3단계 ③ 갱신 |

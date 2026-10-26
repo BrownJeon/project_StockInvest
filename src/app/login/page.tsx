@@ -11,11 +11,15 @@
  * 앱 차이는 Google 을 누른 뒤의 동작(Chrome 창)과 그 대기·오류 상태뿐이고, 앱 전용 분리 컴포넌트는 없다. `AppDeepLink` 는 앱이 Chrome 창에서
  * 돌아올 때(딥링크) 로그인을 마무리하며 화면 요소는 마무리 중 덮개뿐이다. 오류 안내 상자는 `OAuthErrorNote`(웹·앱 같은 문구),
  * 소셜 전용 계정 오류(`oauth_account`)는 웹·앱 공통 문구(`loginFailureText`). 제목은 그대로 "주식 자동매매". 앱 판별은 표시 전용·수화 뒤.
+ *
+ * T-091 — 옛 앱(설치 build 가 Google 로그인 최소 build 미만)이면 `OAuthButtons` 가 Google 버튼을 비활성으로 두고 `onAppGate` 로 알려,
+ * 이 화면이 **AuthShell 카드 위**(문서 흐름 맨 위)에 `AppUpdateRequiredBand` 를 그린다(승인 데모 v1 대안 B). 이메일 폼·첫 포커스(이메일 칸)는 그대로.
  */
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AuthShell, authStyles } from '@/components/auth/AuthShell';
 import { AppDeepLink } from '@/components/auth/AppDeepLink';
+import { AppUpdateRequiredBand } from '@/components/auth/AppUpdateRequiredBand';
 import { OAuthButtons } from '@/components/auth/OAuthButtons';
 import { OAuthErrorNote } from '@/components/auth/OAuthErrorNote';
 import { SignupRequestLink } from '@/components/auth/SignupRequestLink';
@@ -31,6 +35,7 @@ export default function LoginPage() {
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [nextPath, setNextPath] = useState<string | undefined>(undefined);
   const [native, setNative] = useState(false);
+  const [appGateVersion, setAppGateVersion] = useState<string | null>(null); // T-091 — 옛 앱 띠에 보일 설치 버전 이름(없으면 띠 없음)
   const emailRef = useRef<HTMLInputElement>(null);
   const noteRef = useRef<HTMLDivElement>(null);
 
@@ -83,65 +88,69 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthShell title="주식 자동매매" subtitle="계속하려면 로그인하세요">
-      {oauthError !== null && <OAuthErrorNote code={oauthError} native={native} noteRef={noteRef} />}
+    <>
+      {/* T-091 — 옛 앱 업데이트 띠: 카드 위 전폭(전역 업데이트 띠 자리). 로그인 화면에서 전역 띠는 그리지 않으므로 둘이 겹치지 않는다. */}
+      {appGateVersion !== null && <AppUpdateRequiredBand version={appGateVersion} />}
+      <AuthShell title="주식 자동매매" subtitle="계속하려면 로그인하세요">
+        {oauthError !== null && <OAuthErrorNote code={oauthError} native={native} noteRef={noteRef} />}
 
-      <OAuthButtons nextPath={nextPath} appLogin />
+        <OAuthButtons nextPath={nextPath} appLogin onAppGate={setAppGateVersion} />
 
-      <form onSubmit={onSubmit}>
-        <div style={authStyles.field}>
-          <label htmlFor="email" style={authStyles.label}>이메일</label>
-          <input
-            id="email"
-            ref={emailRef}
-            type="email"
-            inputMode="email"
-            autoComplete="email"
-            autoCapitalize="none"
-            spellCheck={false}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            style={authStyles.input}
-          />
+        <form onSubmit={onSubmit}>
+          <div style={authStyles.field}>
+            <label htmlFor="email" style={authStyles.label}>이메일</label>
+            <input
+              id="email"
+              ref={emailRef}
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              style={authStyles.input}
+            />
+          </div>
+
+          <div style={authStyles.field}>
+            <label htmlFor="password" style={authStyles.label}>비밀번호</label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? 'login-error' : undefined}
+              style={{ ...authStyles.input, borderColor: error ? 'var(--danger)' : 'var(--border2)' }}
+            />
+          </div>
+
+          <div id="login-error" role="alert" style={{ ...authStyles.error, lineHeight: 1.5 }}>{error ?? ' '}</div>
+
+          <button type="submit" disabled={!canSubmit} style={{ ...authStyles.submit, opacity: canSubmit ? 1 : 0.5 }}>
+            {busy ? '확인 중…' : '로그인'}
+          </button>
+        </form>
+
+        <div style={authStyles.alt}>
+          <span>처음이신가요?</span>
+          <Link href="/signup" style={authStyles.altLink}>회원가입</Link>
         </div>
 
-        <div style={authStyles.field}>
-          <label htmlFor="password" style={authStyles.label}>비밀번호</label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            aria-invalid={error ? true : undefined}
-            aria-describedby={error ? 'login-error' : undefined}
-            style={{ ...authStyles.input, borderColor: error ? 'var(--danger)' : 'var(--border2)' }}
-          />
-        </div>
+        {/* T-010 — SMTP 미설정이면 렌더되지 않는다(서버 판정). */}
+        <SignupRequestLink />
 
-        <div id="login-error" role="alert" style={{ ...authStyles.error, lineHeight: 1.5 }}>{error ?? ' '}</div>
+        <p style={{ ...authStyles.hint, textAlign: 'center', marginTop: 4 }}>
+          세션은 30일간 유지됩니다. 비밀번호를 잊으면 서버 관리자가 직접 재설정해야 합니다.
+        </p>
 
-        <button type="submit" disabled={!canSubmit} style={{ ...authStyles.submit, opacity: canSubmit ? 1 : 0.5 }}>
-          {busy ? '확인 중…' : '로그인'}
-        </button>
-      </form>
-
-      <div style={authStyles.alt}>
-        <span>처음이신가요?</span>
-        <Link href="/signup" style={authStyles.altLink}>회원가입</Link>
-      </div>
-
-      {/* T-010 — SMTP 미설정이면 렌더되지 않는다(서버 판정). */}
-      <SignupRequestLink />
-
-      <p style={{ ...authStyles.hint, textAlign: 'center', marginTop: 4 }}>
-        세션은 30일간 유지됩니다. 비밀번호를 잊으면 서버 관리자가 직접 재설정해야 합니다.
-      </p>
-
-      {/* T-088 — 앱이 Chrome 창에서 돌아올 때(딥링크) 로그인을 마무리한다. 웹에서는 아무것도 그리지·구독하지 않는다. */}
-      <AppDeepLink nextPath={nextPath} />
-    </AuthShell>
+        {/* T-088 — 앱이 Chrome 창에서 돌아올 때(딥링크) 로그인을 마무리한다. 웹에서는 아무것도 그리지·구독하지 않는다. */}
+        <AppDeepLink nextPath={nextPath} />
+      </AuthShell>
+    </>
   );
 }

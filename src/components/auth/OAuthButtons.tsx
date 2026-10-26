@@ -19,11 +19,19 @@
  * `appLogin` — 앱에서 이 버튼을 보일 화면인가(기본 false). 로그인 화면만 켠다. 앱의 가입 화면(`/signup`)은 기본값 그대로 **앱에서는 아무것도 그리지 않는다**
  * (T-084 와 같음 — 결정 D1 A: 앱 Google 로그인은 기존 계정만 들어오므로 가입 화면에 두면 새 사람에게는 막다른 길이다).
  *
+ * T-091 — **옛 앱 버전 게이트**(승인 데모 `mockups/T-091-app-version-gate-v1.html` 대안 B): `appLogin` 이고 앱이면 설치 build 를 읽고
+ * (`appUpdateStore` — 전역 업데이트 띠와 같은 값, 서버 조회 없이 `getAppVersion()` 만), 다 읽기 전에는 Google 자리에 아무것도 그리지 않는다(목록 로딩 중과 같은 처리).
+ * build 가 `APP_FEATURE_MIN_BUILD.googleLogin` 보다 낮으면 같은 자리에 **비활성** Google 버튼("(업데이트 후)")을 두고, 로그인 화면이 카드 위에
+ * `AppUpdateRequiredBand` 를 그리도록 `onAppGate(설치 버전 이름)` 로 알린다. 웹·새 앱·버전 모름은 지금 그대로(모르는 값으로는 막지 않는다). 이메일 폼은 늘 그대로.
+ *
  * 목업 수치 그대로: 높이 48 / radius 9 / gap 10 / 14.5px 600.
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode, RefObject } from 'react';
 import { addBrowserFinishedListener, closeExternalBrowser, isNativeApp } from '@/lib/native/bridge';
+import { appMeetsFeature } from '@/lib/app-release/feature-gate';
+import { appUpdateStore, useAppUpdateState, type AppUpdateState } from '@/components/app/useAppUpdate';
+import { APP_UPDATE_BAND_ID } from '@/components/auth/AppUpdateRequiredBand';
 import { APP_LOGIN_TTL_MS, cancelAppLogin, openAppLogin, prepareAppLogin } from '@/lib/native/appLogin';
 import { subscribeAppLoginLink } from '@/lib/native/appLoginSignal';
 
@@ -63,6 +71,51 @@ export function isOAuthVisible(providers: readonly ProviderName[] | null, native
   if (providers === null || providers.length === 0) return false;
   return !(native && !appLogin);
 }
+
+/** T-091 — Google 자리의 버전 게이트: open = 지금처럼 버튼 · gated = 비활성 버튼 + 화면 위 띠 · reading = 앱 버전을 읽는 중(아무것도 그리지 않음). */
+export type GoogleGate = 'open' | 'gated' | 'reading';
+
+/**
+ * 웹이면 늘 open(버전을 읽지도 않는다). 앱이면 설치 build 를 다 읽은 뒤에만 정하고, build 를 모르면(null) open — 막지 않는다.
+ * `isOAuthVisible` 을 통과한 뒤에만 의미가 있다(목록 빈 값·앱 가입 화면은 그 전에 아무것도 그리지 않는다 — 띠도 없음).
+ */
+export function googleLoginGate(native: boolean, versionReady: boolean, build: number | null): GoogleGate {
+  if (!native) return 'open';
+  if (!versionReady) return 'reading';
+  return appMeetsFeature(true, build, 'googleLogin') ? 'open' : 'gated';
+}
+
+/** 로그인 화면이 띠를 그릴 설치 버전 이름 — Google 이 보일 화면이고 게이트에 걸렸을 때만, 그 밖은 null(띠 없음). */
+export function gatedAppVersion(visible: boolean, gate: GoogleGate, version: string | null | undefined): string | null {
+  return visible && gate === 'gated' && typeof version === 'string' && version.length > 0 ? version : null;
+}
+
+/** T-091 — Google 자리에 그릴 것: none = 아무것도(구분선 포함) · button = 지금처럼 · gated = 비활성 버튼. */
+export type GoogleSlot = 'none' | 'button' | 'gated';
+
+export interface GoogleSlotInput {
+  providers: readonly ProviderName[] | null;
+  /** 컴포넌트의 그리기 전용 `native` 상태(마운트 effect 의 isNativeApp()) */
+  native: boolean;
+  appLogin: boolean;
+  /** `appUpdateStore` 스냅샷 — 판별·설치 버전 읽기를 마쳤는지와 그 값 */
+  app: Pick<AppUpdateState, 'detected' | 'currentLoaded' | 'current'>;
+}
+
+/**
+ * T-091 — Google 자리 조립(컴포넌트와 시험이 **같은 함수**를 쓴다): `isOAuthVisible` → `googleLoginGate` → 띠 버전.
+ * 버전 읽기 완료 = 판별을 마치고(`detected`) 설치 버전 읽기도 마침(`currentLoaded`). build 를 모르면 null 그대로 넘긴다(막지 않는다).
+ * `bandVersion` 이 null 이 아닐 때만 로그인 화면이 카드 위 띠를 그린다.
+ */
+export function deriveGoogleSlot({ providers, native, appLogin, app }: GoogleSlotInput): { slot: GoogleSlot; bandVersion: string | null } {
+  const visible = isOAuthVisible(providers, native, appLogin);
+  const gate = googleLoginGate(native, app.detected && app.currentLoaded, app.current?.build ?? null);
+  const slot: GoogleSlot = !visible || gate === 'reading' ? 'none' : gate === 'gated' ? 'gated' : 'button';
+  return { slot, bandVersion: gatedAppVersion(visible, gate, app.current?.version) };
+}
+
+/** T-091 — 비활성 Google 버튼 라벨에 붙는 말(데모 B `.dim`). 시험이 글자까지 고정한다. */
+export const GOOGLE_GATED_SUFFIX = '(업데이트 후)';
 
 // ── 앱에서만 생기는 상태 (데모 C 절 전이표) ─────────────────────────────────────────
 
@@ -178,6 +231,8 @@ export interface OAuthButtonsViewProps {
   onCancel: () => void;
   googleRef?: RefObject<HTMLButtonElement>;
   titleRef?: RefObject<HTMLParagraphElement>;
+  /** T-091 — 옛 앱(build 모자람): Google 버튼을 비활성으로 두고 이유는 화면 위 띠(`APP_UPDATE_BAND_ID`)가 말한다. 기본 false. */
+  gated?: boolean;
 }
 
 /**
@@ -185,9 +240,9 @@ export interface OAuthButtonsViewProps {
  * 안내 영역(`role="status"`)은 **항상 그린다**(웹은 빈 채) — 읽기 장치가 글자가 바뀌는 걸 알려면 먼저 있어야 한다. 비면 높이 0 이다.
  * 대기 카드는 이 영역 **밖**이다(버튼이 안내 영역에 들어가 통째로 읽히지 않게).
  */
-export function OAuthButtonsView({ state, onStart, onReopen, onCancel, googleRef, titleRef }: OAuthButtonsViewProps) {
+export function OAuthButtonsView({ state, onStart, onReopen, onCancel, googleRef, titleRef, gated = false }: OAuthButtonsViewProps) {
   const { phase, notice } = state;
-  const locked = phase === 'opening' || phase === 'waiting' || phase === 'exchanging';
+  const locked = gated || phase === 'opening' || phase === 'waiting' || phase === 'exchanging';
   let live: ReactNode = null;
   if (phase === 'opening') {
     live = (
@@ -219,10 +274,12 @@ export function OAuthButtonsView({ state, onStart, onReopen, onCancel, googleRef
           onClick={onStart}
           disabled={locked}
           aria-busy={phase === 'opening' ? true : undefined}
+          aria-describedby={gated ? APP_UPDATE_BAND_ID : undefined}
           style={{ ...oauthStyles.button, ...GOOGLE_BUTTON_STYLE, ...(locked ? oauthStyles.buttonLocked : null) }}
         >
           <GoogleIcon />
           Google로 계속하기
+          {gated && <>{' '}<span style={oauthStyles.gatedSuffix}>{GOOGLE_GATED_SUFFIX}</span></>}
         </button>
       </div>
       <div role="status" aria-live="polite">{live}</div>
@@ -247,9 +304,19 @@ export function OAuthButtonsView({ state, onStart, onReopen, onCancel, googleRef
   );
 }
 
-export function OAuthButtons({ nextPath, appLogin = false }: { nextPath?: string; appLogin?: boolean }) {
+export function OAuthButtons({
+  nextPath,
+  appLogin = false,
+  onAppGate,
+}: {
+  nextPath?: string;
+  appLogin?: boolean;
+  /** T-091 — 옛 앱 게이트에 걸리면 설치 버전 이름, 풀리면 null. 로그인 화면이 카드 위 띠(`AppUpdateRequiredBand`)를 그리는 데 쓴다. */
+  onAppGate?: (version: string | null) => void;
+}) {
   const [providers, setProviders] = useState<ProviderName[] | null>(null);
   const [native, setNative] = useState(false);
+  const app = useAppUpdateState(); // T-091 — 설치 build(전역 업데이트 띠와 같은 저장소). 서버 조회(ensureLoaded)는 하지 않는다
   const [state, dispatch] = useReducer(appLoginReducer, INITIAL_APP_LOGIN);
   const aliveRef = useRef(true);
   const startingRef = useRef(false); // 연타 방지 — 상태가 다시 그려지기 전의 두 번째 탭
@@ -283,6 +350,14 @@ export function OAuthButtons({ nextPath, appLogin = false }: { nextPath?: string
       .catch(() => { if (alive) setProviders([]); });
     return () => { alive = false; };
   }, [appLogin]);
+
+  // T-091 — 설치 버전 읽기 시작(이미 했으면 아무 일도 없음). 웹은 판별만 하고 버전을 읽지 않는다.
+  // ⚠ `ensureLoaded()`(GET /api/app/version — 로그인 필요)는 부르지 않는다 — 로그인 전 화면이다.
+  useEffect(() => { appUpdateStore.detect(); }, []);
+
+  // 조립은 순수 함수 하나(deriveGoogleSlot — 시험이 같은 함수를 쓴다). 띠 버전이 바뀔 때마다 로그인 화면에 알린다(시험이 이 두 줄을 글자 그대로 고정).
+  const { slot, bandVersion } = deriveGoogleSlot({ providers, native, appLogin, app });
+  useEffect(() => { onAppGate?.(bandVersion); }, [onAppGate, bandVersion]);
 
   // `AppDeepLink` 가 딥링크를 받으면 알려 준다 — 대기 카드를 풀고(성공) Chrome 창 닫기를 시도한다.
   useEffect(
@@ -381,10 +456,13 @@ export function OAuthButtons({ nextPath, appLogin = false }: { nextPath?: string
   // 로딩 중에도, 하나도 없을 때도, 앱의 가입 화면에서도 아무것도 그리지 않는다 —
   // 빈 버튼이나 자리표시자가 잠깐 보이면 "눌러도 안 되는 버튼"으로 오해된다.
   if (!isOAuthVisible(providers, native, appLogin)) return null;
+  // T-091 — 앱 버전을 읽는 동안도 그리지 않는다(눌러도 안 되는 버튼이 잠깐 보였다 바뀌는 깜빡임 방지 — slot 'none').
+  if (slot === 'none') return null;
 
   return (
     <OAuthButtonsView
       state={state}
+      gated={slot === 'gated'}
       onStart={() => { if (pickStartMode(isNativeApp()) === 'app') void startApp(); else startWeb(); }}
       onReopen={() => { void reopen(); }}
       onCancel={cancel}
@@ -403,6 +481,8 @@ export const oauthStyles: Record<string, CSSProperties> = {
   },
   /** 대기·여는 중·마무리 중에는 잠긴다(같은 일을 하는 버튼이 둘이 되지 않게 — 데모 C) */
   buttonLocked: { opacity: 0.7, cursor: 'not-allowed' },
+  /** T-091 — 비활성 Google 버튼의 "(업데이트 후)" (데모 B `.oa-btn .dim`) */
+  gatedSuffix: { fontWeight: 400, fontSize: 12.5, color: '#5f6368' },
   divider: {
     display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 16px',
     color: 'var(--muted)', fontSize: 11.5,

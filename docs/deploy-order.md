@@ -439,6 +439,8 @@ blue/green 으로 컷오버하면서 이 훅을 그대로 두면 **push 한 번�
 > 있거나 처음 공개할 때만 만든다. 구조·결정은 [`mobile-app-procedure.md`](./mobile-app-procedure.md), 실행 주체는 [`deployer.md`](../.claude/agents/deployer.md) `<apk_release>`.
 > 이 절의 승인 게이트(DDL·`--publish`·INSERT)는 **각각 사용자 명시 승인**이 필요하다 — QA PASS 나 웹 배포 승인으로 대신하지 않는다.
 
+**네이티브에 기대는 화면·기능은 웹 배포 전에 앱 버전 게이트를 둔다(T-091).** 웹은 즉시, APK 는 사용자 설치 때 바뀐다 — T-088 때 옛 앱 1.0.0 이 Google 버튼을 보았으나 딥링크 수신 설정이 없어 무응답이었다. 필요 최소 build 는 `APP_FEATURE_MIN_BUILD`(`src/lib/app-release/feature-gate.ts`) 한 곳에서 관리한다 — 새 네이티브 의존 기능의 웹 코드를 배포하기 전에 그 표에 한 줄(새 APK 의 versionCode)을 더했는지 확인한다. **순서: APK 공개(위 ③·④, `app_release` INSERT) → 그다음 표 값을 올리는 웹 배포.** 거꾸로 하면 안내 띠의 [업데이트]가 옛 APK(`latest.apk`)를 내려주는 막다른 길이 생긴다(M2 가 `appLinks` 를 build 3 으로 올릴 때 바로 해당).
+
 ### 순서 (첫 공개 기준 — 이후 공개는 ③부터)
 
 | # | 단계 | 게이트 | 확인 |

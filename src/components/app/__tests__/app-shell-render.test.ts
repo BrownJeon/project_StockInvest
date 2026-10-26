@@ -301,7 +301,8 @@ describe('D. 로그인 — 웹·앱 같은 화면 (T-088 데모 v2)', () => {
   test('로그인 페이지: 제목 그대로 · 같은 OAuthButtons(appLogin) · AppDeepLink · 오류 상자 · 앱 전용 분리 컴포넌트 없음', () => {
     const src = read('app/login/page.tsx');
     expect(src).toContain('<AuthShell title="주식 자동매매" subtitle="계속하려면 로그인하세요">');
-    expect(src).toContain('<OAuthButtons nextPath={nextPath} appLogin />');
+    // T-091: 옛 앱 게이트 알림(onAppGate)만 더해졌다 — 같은 컴포넌트·같은 appLogin
+    expect(src).toContain('<OAuthButtons nextPath={nextPath} appLogin onAppGate={setAppGateVersion} />');
     expect(src).toContain('<AppDeepLink nextPath={nextPath} />');
     expect(src).toContain('<OAuthErrorNote code={oauthError} native={native} noteRef={noteRef} />');
     expect(src).toContain('provider: data.provider }));');
