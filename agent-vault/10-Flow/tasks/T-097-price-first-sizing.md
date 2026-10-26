@@ -21,16 +21,16 @@ waiting: [demo_review — Q-E 텔레그램 "수량" 줄 데모 v1(mockups/T-097-
 demo_gate:
   required: true
   level: "delta"
-  status: "review_requested"
+  status: "approved"
   version: 1
   repo_path: "mockups/T-097-telegram-sizing-line-v1.html"
   artifact_url: ""
   content_sha256: "cd57b7247905332b53eb0ffbdc3f4a4e80e94f815c7e0595600ced5ef5344ccd"
   decided_by: "judge"
   rule_id: "DM-kw-risky-cta"
-  approved_by: ""
-  approved_at: ""
-  approval_quote: ""
+  approved_by: "user"
+  approved_at: "2026-10-26T21:39:01+09:00"
+  approval_quote: "T-097 텔레그램 수량 데모 승인"
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
@@ -129,6 +129,10 @@ demo_gate:
 - **Reviewer 판정 = FAIL(절차 사유)**: 코드 감사는 critical 0·high 0(어댑터 diff 산출 JS 가 `export` 한 단어만 다름, 목업과 문자 단위 일치, 버튼·서명 불변, 호가 표·송신 본문 3,000건 불일치 0, 해외 21만 건 불일치 0, 변이 44종 중 34 사망·7 동치·실질 공백 3(국내 버튼 서명 시험·`renderQuantityLine(null)`), 전체 jest 7,466 pass·tsc 0·기존 시험 수정 0줄). 그러나 `reviewer.md` 규칙상 데모 게이트 `DEMO_GATE_BLOCKED`(승인 미기록) 이면 fail 이다. **게이트 기록(위 사유로 보류)이 채워지면 Reviewer 가 5개 파일 sha256 12자(kis-domestic `eba2778e093a`·approval-message `331258cd4296`·approval-notify `b6dafd7074dd`·t097-approval-qty-line `366fcbd6288a`·t097-domestic-tick-parity `d891a4cc23f8`)만 대조해 PASS 줄을 추가한다**(코드 재감사 불필요 — 파일이 바뀌면 재감사).
 - **사용자에게 알릴 고지 2건(Reviewer F-Q3·F-Q4)**: ① 해외 단가는 **알림 시점 환율 기준 예상값**이다 — 승인 때 환율이 움직이면 정수 달러 단가가 $1 어긋날 수 있다(수량은 원화 기준이라 불변; 같은 환율이면 불일치 0; 환율 ±0.1% 이동 시 단가가 달라질 확률은 $1~50 1.3%·$50~200 6%·$200~500 18%·$500~1,000 37%, 환율 캐시 5분·승인 TTL 30분). ② **승인된 목업 안내 문구 "1주 가격이 금액보다 크면 … 시그널 자체가 만들어지지 않습니다(변화 없음)" 는 코드와 다르다** — 수량 0 이면 현금 게이트가 모름(`quantity_zero`)으로 두어 승인 대기 시그널은 만들어지고, 알림은 수량 줄 없이 나가며, 승인하면 `quantity_below_min` 으로 거절된다(줄 규칙 "수량 줄 없음"은 목업과 맞다). 구현은 바꾸지 않고 정정만 고지(목업 HTML 은 승인 해시에 묶여 있어 수정하지 않는다).
 - 비차단 보강: 국내 버튼 서명 시험 적용·`renderQuantityLine(null)` 가드 시험·시험 머리말 "독립" 표현 정정(파일이 바뀌면 재감사).
+
+## Q-E 데모 승인 기록 완료 (21:39)
+
+- 사용자 발화 그대로 "T-097 텔레그램 수량 데모 승인, T-042 데모 생략"(21:38 — 발화 기록 `prompts.jsonl` 에 정상 기록, 서브에이전트 보고가 붙지 않은 입력) → `check.mjs approve --version 1`(approved_at 21:39:01, sha256 `cd57b724…44ccd`). 사용자는 앞선 고지(해외 단가 환율 오차·목업 안내 문구 오류)를 받은 뒤 승인했다. 위 "Q-E 데모 승인 기록" 절의 "게이트 도구 기록 보류" 는 이로써 해소.
 
 ## 하지 않는 것
 
@@ -261,3 +265,4 @@ demo_gate:
 | - | 해당없음(판정은 사용자 답 뒤 judge) | - | - | - | - |
 | - | 작성중 | - | - | judge: delta (DM-kw-risky-cta) | 10-26 16:32 |
 | v1 | 검토요청 | mockups/T-097-telegram-sizing-line-v1.html | - | 사용자 검토 요청 | 10-26 16:32 |
+| v1 | 승인 | mockups/T-097-telegram-sizing-line-v1.html | - | "T-097 텔레그램 수량 데모 승인" | 10-26 21:39 |
