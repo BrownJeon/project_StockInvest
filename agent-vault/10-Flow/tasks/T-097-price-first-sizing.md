@@ -34,7 +34,7 @@ demo_gate:
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
-  active: false
+  active: true
 ---
 
 # T-097 주문 사이징: 주가 기준 수량 → 결과 금액으로 처리 (P4)
