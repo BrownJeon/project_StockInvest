@@ -1,0 +1,620 @@
+{
+  "head": {
+    "task": "T-096",
+    "phase": "counts",
+    "market": "US",
+    "generatedAt": "2026-10-27 00:38 KST",
+    "asOf": "2026-10-23",
+    "docPath": "docs/design/2026-10-26-strategy-validation-preregistration-v1.1.md",
+    "docVersion": "v1.1",
+    "sectionB": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+    "actualHash": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+    "hashOk": true,
+    "numericOk": true,
+    "numericReason": null,
+    "fingerprints": {
+      "registryFull": "55a358ee377162da9ae4de9baaa9908e261bbdacd66b056882adf202519df070",
+      "registryNumeric": "543d1f4cd4cd5e7140a1e208ea7851a0ecd284fcc6887a2428e686d8867391fc",
+      "engine": "engine-78a3ef6b29365b1d26d821169ac7109e7be5da05816f2ce26b1a2e7fcac59592",
+      "data": {
+        "until": "2025-09-30",
+        "rows": 26749,
+        "sha256": "23f2f0f7e489b197e9ab432a1336e3b9d49d6ae290541fc29b2e1f90cdfe66a1"
+      },
+      "universe": {
+        "n": 50,
+        "sha256": "c796de8cf06ea454d854ea89a19bdce4408c5b8805b5e24c4929bddda97ab854"
+      }
+    },
+    "universeLimitation": "현재 시점 대형주 정적 목록(US SP500_TOP50+SMH 50종목, KR 최근 90일 시그널 43종목) — PIT 유니버스 아님(§B-0·§E-1)",
+    "pit": false,
+    "decisionDate": "2026-12-07",
+    "rsiOversoldV1DecisionDate": "min(S1 OOS report date, 2027-03-09)",
+    "judgeCurrency": "USD",
+    "interpretation": {
+      "version": "v1.1",
+      "symbolShareDenominator": "total_net",
+      "plateauMembershipRequiresSample": true,
+      "plateauMedianFallback": "nearest_l1",
+      "plateauRegimeTie": "off",
+      "plateauEvenMedian": "low",
+      "plateauTieOrder": [
+        "th",
+        "lo",
+        "L",
+        "k",
+        "r",
+        "b",
+        "stop",
+        "hold",
+        "regime"
+      ],
+      "g1Rule": "any_combo_meets_u5_after_filters",
+      "pendingUserConfirmation": []
+    },
+    "bootstrap": {
+      "iters": 2000,
+      "seed": 20261026,
+      "auxSeeds": [
+        1,
+        2
+      ],
+      "cluster": "week_monday_of_d0",
+      "prng": "mulberry32",
+      "interval": "percentile95"
+    }
+  },
+  "result": {
+    "phase": "counts",
+    "market": "US",
+    "window": {
+      "from": "2024-02-01",
+      "to": "2025-09-30",
+      "barsUntil": "2025-09-30",
+      "dataMin": "2023-08-17",
+      "dataMax": "2025-09-30",
+      "rows": 26218
+    },
+    "universe": {
+      "symbols": 50,
+      "expected": 50,
+      "excluded": [
+        "AMS:SPY",
+        "069500"
+      ],
+      "errors": []
+    },
+    "u5": {
+      "minEpisodes": 150,
+      "minWeeks": 40,
+      "minSymbols": 15
+    },
+    "filters": {
+      "gapUp": 0.02,
+      "gapDown": 0.03,
+      "gapBoundary": "skip",
+      "adtvWindow": 20,
+      "adtvMaxShare": 0.001,
+      "slotAmount": 1500
+    },
+    "g1Rule": "any_combo_meets_u5_after_filters",
+    "strategies": [
+      {
+        "id": "rsi-oversold-daily",
+        "label": "S1",
+        "tier": "A",
+        "combos": [
+          {
+            "params": {
+              "th": 30,
+              "hold": 5,
+              "regime": false
+            },
+            "counts": {
+              "candidates": 254,
+              "episodes": 126,
+              "closableEpisodes": 126,
+              "weeks": 51,
+              "symbols": 46,
+              "afterFilters": {
+                "entered": 95,
+                "gapSkip": 31,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 47,
+                "symbols": 43
+              }
+            },
+            "meetsU5Upper": false,
+            "shortfall": [
+              "에피소드 126<150"
+            ],
+            "meetsU5AfterFilters": false,
+            "shortfallAfterFilters": [
+              "에피소드 95<150"
+            ]
+          },
+          {
+            "params": {
+              "th": 35,
+              "hold": 5,
+              "regime": false
+            },
+            "counts": {
+              "candidates": 703,
+              "episodes": 281,
+              "closableEpisodes": 280,
+              "weeks": 73,
+              "symbols": 50,
+              "afterFilters": {
+                "entered": 233,
+                "gapSkip": 47,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 71,
+                "symbols": 47
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": true,
+            "shortfallAfterFilters": []
+          },
+          {
+            "params": {
+              "th": 38,
+              "hold": 5,
+              "regime": false
+            },
+            "counts": {
+              "candidates": 1177,
+              "episodes": 467,
+              "closableEpisodes": 463,
+              "weeks": 82,
+              "symbols": 50,
+              "afterFilters": {
+                "entered": 418,
+                "gapSkip": 45,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 82,
+                "symbols": 50
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": true,
+            "shortfallAfterFilters": []
+          },
+          {
+            "params": {
+              "th": 30,
+              "hold": 5,
+              "regime": true
+            },
+            "counts": {
+              "candidates": 152,
+              "episodes": 73,
+              "closableEpisodes": 73,
+              "weeks": 43,
+              "symbols": 32,
+              "afterFilters": {
+                "entered": 68,
+                "gapSkip": 5,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 40,
+                "symbols": 31
+              }
+            },
+            "meetsU5Upper": false,
+            "shortfall": [
+              "에피소드 73<150"
+            ],
+            "meetsU5AfterFilters": false,
+            "shortfallAfterFilters": [
+              "에피소드 68<150"
+            ]
+          },
+          {
+            "params": {
+              "th": 35,
+              "hold": 5,
+              "regime": true
+            },
+            "counts": {
+              "candidates": 451,
+              "episodes": 189,
+              "closableEpisodes": 188,
+              "weeks": 64,
+              "symbols": 44,
+              "afterFilters": {
+                "entered": 177,
+                "gapSkip": 11,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 63,
+                "symbols": 44
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": true,
+            "shortfallAfterFilters": []
+          },
+          {
+            "params": {
+              "th": 38,
+              "hold": 5,
+              "regime": true
+            },
+            "counts": {
+              "candidates": 801,
+              "episodes": 336,
+              "closableEpisodes": 332,
+              "weeks": 72,
+              "symbols": 49,
+              "afterFilters": {
+                "entered": 315,
+                "gapSkip": 17,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 72,
+                "symbols": 48
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": true,
+            "shortfallAfterFilters": []
+          },
+          {
+            "params": {
+              "th": 30,
+              "hold": 10,
+              "regime": false
+            },
+            "counts": {
+              "candidates": 254,
+              "episodes": 110,
+              "closableEpisodes": 109,
+              "weeks": 45,
+              "symbols": 46,
+              "afterFilters": {
+                "entered": 82,
+                "gapSkip": 27,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 42,
+                "symbols": 42
+              }
+            },
+            "meetsU5Upper": false,
+            "shortfall": [
+              "에피소드 109<150"
+            ],
+            "meetsU5AfterFilters": false,
+            "shortfallAfterFilters": [
+              "에피소드 82<150"
+            ]
+          },
+          {
+            "params": {
+              "th": 35,
+              "hold": 10,
+              "regime": false
+            },
+            "counts": {
+              "candidates": 703,
+              "episodes": 220,
+              "closableEpisodes": 215,
+              "weeks": 64,
+              "symbols": 50,
+              "afterFilters": {
+                "entered": 178,
+                "gapSkip": 37,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 63,
+                "symbols": 48
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": true,
+            "shortfallAfterFilters": []
+          },
+          {
+            "params": {
+              "th": 38,
+              "hold": 10,
+              "regime": false
+            },
+            "counts": {
+              "candidates": 1177,
+              "episodes": 344,
+              "closableEpisodes": 336,
+              "weeks": 79,
+              "symbols": 50,
+              "afterFilters": {
+                "entered": 301,
+                "gapSkip": 35,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 78,
+                "symbols": 50
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": true,
+            "shortfallAfterFilters": []
+          },
+          {
+            "params": {
+              "th": 30,
+              "hold": 10,
+              "regime": true
+            },
+            "counts": {
+              "candidates": 152,
+              "episodes": 63,
+              "closableEpisodes": 62,
+              "weeks": 39,
+              "symbols": 32,
+              "afterFilters": {
+                "entered": 58,
+                "gapSkip": 4,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 36,
+                "symbols": 31
+              }
+            },
+            "meetsU5Upper": false,
+            "shortfall": [
+              "에피소드 62<150",
+              "주 39<40"
+            ],
+            "meetsU5AfterFilters": false,
+            "shortfallAfterFilters": [
+              "에피소드 58<150",
+              "주 36<40"
+            ]
+          },
+          {
+            "params": {
+              "th": 35,
+              "hold": 10,
+              "regime": true
+            },
+            "counts": {
+              "candidates": 451,
+              "episodes": 149,
+              "closableEpisodes": 144,
+              "weeks": 54,
+              "symbols": 44,
+              "afterFilters": {
+                "entered": 138,
+                "gapSkip": 6,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 54,
+                "symbols": 44
+              }
+            },
+            "meetsU5Upper": false,
+            "shortfall": [
+              "에피소드 144<150"
+            ],
+            "meetsU5AfterFilters": false,
+            "shortfallAfterFilters": [
+              "에피소드 138<150"
+            ]
+          },
+          {
+            "params": {
+              "th": 38,
+              "hold": 10,
+              "regime": true
+            },
+            "counts": {
+              "candidates": 801,
+              "episodes": 255,
+              "closableEpisodes": 247,
+              "weeks": 67,
+              "symbols": 49,
+              "afterFilters": {
+                "entered": 236,
+                "gapSkip": 11,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 66,
+                "symbols": 48
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": true,
+            "shortfallAfterFilters": []
+          }
+        ],
+        "combosTotal": 12,
+        "combosMeetingU5": 7,
+        "combosMeetingU5AfterFilters": 7,
+        "g1Candidate": true,
+        "shortCombosAfterFilters": [
+          {
+            "th": 30,
+            "hold": 5,
+            "regime": false
+          },
+          {
+            "th": 30,
+            "hold": 5,
+            "regime": true
+          },
+          {
+            "th": 30,
+            "hold": 10,
+            "regime": false
+          },
+          {
+            "th": 30,
+            "hold": 10,
+            "regime": true
+          },
+          {
+            "th": 35,
+            "hold": 10,
+            "regime": true
+          }
+        ]
+      },
+      {
+        "id": "control-spike-contraction",
+        "label": "S7",
+        "tier": "control",
+        "combos": [
+          {
+            "params": {
+              "hold": 5,
+              "regime": false
+            },
+            "counts": {
+              "candidates": 315,
+              "episodes": 183,
+              "closableEpisodes": 183,
+              "weeks": 63,
+              "symbols": 38,
+              "afterFilters": {
+                "entered": 173,
+                "gapSkip": 10,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 62,
+                "symbols": 38
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": true,
+            "shortfallAfterFilters": []
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": false
+            },
+            "counts": {
+              "candidates": 315,
+              "episodes": 158,
+              "closableEpisodes": 157,
+              "weeks": 60,
+              "symbols": 38,
+              "afterFilters": {
+                "entered": 148,
+                "gapSkip": 9,
+                "haltSkip": 0,
+                "liquiditySkip": 0,
+                "windowBroken": 0,
+                "weeks": 59,
+                "symbols": 38
+              }
+            },
+            "meetsU5Upper": true,
+            "shortfall": [],
+            "meetsU5AfterFilters": false,
+            "shortfallAfterFilters": [
+              "에피소드 148<150"
+            ]
+          }
+        ],
+        "combosTotal": 2,
+        "combosMeetingU5": 2,
+        "combosMeetingU5AfterFilters": 1,
+        "g1Candidate": true,
+        "shortCombosAfterFilters": [
+          {
+            "hold": 10,
+            "regime": false
+          }
+        ]
+      }
+    ],
+    "notImplemented": [
+      {
+        "id": "pullback-trend-daily",
+        "label": "S2",
+        "tier": "A",
+        "implemented": false
+      },
+      {
+        "id": "xs-momentum",
+        "label": "S4",
+        "tier": "A",
+        "implemented": false
+      },
+      {
+        "id": "bb-squeeze-breakout-daily",
+        "label": "S3",
+        "tier": "B",
+        "implemented": false
+      },
+      {
+        "id": "high52-trend",
+        "label": "S5",
+        "tier": "B",
+        "implemented": false
+      },
+      {
+        "id": "oversold-bounce-daily-v1",
+        "label": "S6",
+        "tier": "B",
+        "implemented": false
+      },
+      {
+        "id": "weekly-trend-follow-v1",
+        "label": "S8",
+        "tier": "B",
+        "implemented": false
+      },
+      {
+        "id": "eod-high-close-v1",
+        "label": "S9",
+        "tier": "B",
+        "implemented": false
+      },
+      {
+        "id": "inside-bar-v1",
+        "label": "S10",
+        "tier": "B",
+        "implemented": false
+      }
+    ],
+    "excludedStrategies": [
+      {
+        "id": "dividend-quality-buyback-v1",
+        "reason": "재무 데이터(배당·자사주)가 daily_bars 에 없음"
+      },
+      {
+        "id": "rsi-overbought-exit-v1",
+        "reason": "매도 전용"
+      }
+    ],
+    "note": "closable = 보유 창이 IS 봉 안에 있는 에피소드(필터 전 상한). afterFilters = 진입 시점 정보(D0 종가·ADTV·D+1 시가·D+1 거래정지)로 갭·유동성·거래정지 필터를 적용한 건수. 수익·승률·초과수익은 계산하지 않았다."
+  }
+}
