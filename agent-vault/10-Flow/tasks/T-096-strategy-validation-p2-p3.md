@@ -173,6 +173,9 @@ demo_gate:
 
 ## QA
 
+- [00:48] **P3 1단계 QA 실행 검증(Haiku, 직접 실행 — 커밋 `1b07345`+`66778c7` 의 깨끗한 사본)**: 항목1 필수 파일 전부 존재·메인 `git status` 깨끗 pass · 항목2 §B 해시 `0626cbd2…`(문서 머리=registry docHash=oos 원장 머리, 파이썬 독립 계산)·H_r `543d1f4c…`(러너 출력=§B-11 마커 한 줄) pass · 항목3 건식 거부(DB 환경변수 없이) — `is` 사유 "G1 미기록" 하나·`is --as-of 2026-10-22` 는 as-of 불일치+G1 미기록·`oos` 는 G1 미기록+IS 리포트 없음(+아래 낮음 1건), `registry/g1-record.json` 은 저장소에 없음 pass · 항목4 profit-engine 시험 전체 **14 스위트 526 통과**·`tsc --noEmit` 오류 0 pass · 항목5 **counts 재현**(읽기 전용 SELECT) — 커밋된 리포트와 `result` 전체·`head.fingerprints`(엔진·registry·데이터 26,749행·유니버스 50) 동일 pass · 항목6 counts JSON 키 101종 전수 검사에서 수익·승률·초과수익 계열 키 0건 pass.
+- [00:48] QA 가 확인하지 못한 것: `--phase is`·`--phase oos` 의 DB 실행(금지). QA 이상 징후(낮음): `--phase oos` 거부 사유에 "--unlock-oos 가 §B sha256 과 다르다"가 인자를 주지 않아도 뜬다 — 차단은 맞고 메시지만 오해 소지(후속 정리, 러너 변경이라 G1 전에 하면 counts 재실행 필요하니 IS 결과 뒤로 미룸).
+
 ## 배포 기록
 
 ## Codex 검토
