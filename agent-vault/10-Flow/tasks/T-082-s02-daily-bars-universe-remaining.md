@@ -13,7 +13,7 @@ tags:
   - domain/strategy
 aliases:
   - S02 일봉 잔여
-waiting: [10-27(화) 05:35 이후 증분 확인 시점, KIS 읽기 권한(수동 호출), 후보군 원천 확인 결과 C02, 착수 승인]
+waiting: [KIS 읽기 승인 완료(사용자 10-26) — 10-27(화) 05:40 KST 이후 증분 수집 실행 대기, 후보군 원천 확인 결과 C02, 착수 승인(R02)]
 created: 2026-10-25
 updated: 2026-10-25
 ---
@@ -60,3 +60,7 @@ updated: 2026-10-25
 ## Reviewer
 
 ## QA
+
+## 진행 기록
+
+- **19:13 사용자 승인**: 사용자 발화 그대로 "T-082 일봉 증분 수집 승인"(10-26 저녁, Leader 가 요청한 "내일 10-27 05:35 이후 KIS 읽기 약 95호출" 승인). 계획: **10-27 05:40 KST 이후** T-070 라우트 `POST /api/cron/daily-bars`(오프아워, 크론 비밀은 헤더 파일로만)로 보유·최근 시그널 종목(`symbols` 생략 = 기본 대상)과 ETF 2종목(`AMS:SPY`·`069500`)을 증분 수집 — 종목당 1호출 예상(약 95호출, `maxCalls` ≤150) → 확인 항목: `modes:["incremental"]`·`calls` 종목당 1·`adjChange.mismatches=0`·`quality.storedGaps=0`·새 봉 `is_final`. 쓰기는 `daily_bars` 추가 전용(주문·시그널 없음). 사전 등록 분석(as-of 2026-10-23)에는 영향 없음.
