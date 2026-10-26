@@ -4,6 +4,7 @@ import './globals.css';
 import { BottomTabs } from '@/components/BottomTabs';
 import { ToastProvider } from '@/components/ui/Toast';
 import { AppUpdateBanner } from '@/components/app/AppUpdateBanner';
+import { AppLinkNavigator } from '@/components/app/AppLinkNavigator';
 
 export const metadata: Metadata = {
   title: '주식 자동매매',
@@ -28,6 +29,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             {children}
           </div>
           <BottomTabs />
+          {/* T-091 M2 App Link 수신 → WebView 이동. 그리는 것 없음, 앱에서만 구독(웹은 아무 일도 안 함). 레이아웃에 한 번만 둔다 */}
+          {/* {children} 뒤에 둔다 — 로그인 딥링크 구독(AppDeepLink)이 먼저여야 한다(Capacitor 는 붙잡아 둔 appUrlOpen 을 첫 구독자 하나에게만 준다) */}
+          <AppLinkNavigator />
         </ToastProvider>
       </body>
     </html>

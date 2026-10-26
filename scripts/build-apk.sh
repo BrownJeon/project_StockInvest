@@ -19,8 +19,9 @@
 # - 배포본은 release 만: `aapt2` 로 debuggable 이 없음을, `apksigner` 로 서명을 확인하고 **서명 인증서 SHA-256 이 기대 지문과
 #   다르면 실패**한다(키가 바뀐 APK 는 기존 설치본 위에 덮어써지지 않고, M2 App Links 지문과도 어긋난다).
 # - 권한은 INTERNET(+ androidx 가 스스로 선언하는 앱 전용 DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION)만 허용한다.
-# - 딥링크(intent-filter <data>)는 T-088 로그인 콜백 stockinvest://auth/callback **정확히 하나**만 허용한다(다른 스킴·호스트·경로·
-#   pathPrefix/pathPattern 이 생기면 실패 — M2 App Links 를 더할 때 이 검사도 함께 바꾼다).
+# - 딥링크(intent-filter <data>)는 **정확히 둘**만 허용한다(T-091 M2): T-088 로그인 콜백 stockinvest://auth/callback 1개 +
+#   https App Link 1개(호스트 = EXPECTED_SERVER_URL 의 호스트·경로 정확히 `/`·autoVerify=true). 그 밖의 스킴·호스트·경로·
+#   pathPrefix/pathPattern·포트·MIME 이 생기거나 autoVerify 위치가 다르면 실패한다.
 # - 작업 디렉터리 android/ 의 옛 빌드 산출물(app/build·build)은 저장소 쪽 네이티브 소스가 바뀌면 지우고 다시 빌드한다(T-088 ⑧ —
 #   리소스·Manifest 를 바꾼 뒤 옛 중간 산출물이 남아 빌드가 깨지던 문제). 판단은 소스 해시로 하고, 빌드가 성공했을 때만 해시를 기록한다.
 # - APK 안에 .env·키스토어·서명 설정·비밀 문자열이 없는지 검사한다.
@@ -234,20 +235,76 @@ UNEXPECTED_PERMS="$(grep -v -x -e 'android.permission.INTERNET' -e "${EXPECTED_A
 [ -z "$UNEXPECTED_PERMS" ] || fail "허용하지 않은 권한: $(tr '\n' ' ' <<<"$UNEXPECTED_PERMS")"
 grep -q -x 'android.permission.INTERNET' <<<"$PERMS" || fail "INTERNET 권한이 없다"
 
-# 딥링크(T-088): Manifest 의 <data> 속성은 stockinvest://auth/callback 하나뿐이어야 한다. 출력은 변수에서 sed 로 뽑는다(파이프 SIGPIPE 회피).
-#   aapt2 xmltree 형식: `A: http://schemas.android.com/apk/res/android:scheme(0x01010027)="stockinvest" (Raw: "stockinvest")`
-manifest_attr_values() {
-  sed -n "s/.*android:$1([^)]*)=\"\([^\"]*\)\".*/\1/p" <<<"$MANIFEST_TREE" | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//'
+# 딥링크(T-088 + T-091 M2): 빌드된 Manifest 의 <data> 는 정확히 둘 — 로그인 콜백(stockinvest://auth/callback, autoVerify 없음) 1개와
+# App Link(https://<서버 호스트>/ 경로 정확히 `/`, autoVerify=true) 1개. 각각 자기 intent-filter(VIEW 1개 + DEFAULT·BROWSABLE)에 <data> 하나씩.
+# aapt2 xmltree 의 들여쓰기로 요소 나무를 세워 intent-filter 단위로 본다(예전처럼 속성 값만 모으면 스킴·호스트·경로가 어느 필터 것인지 구별하지 못한다).
+#   형식: `E: data (line=88)` · `A: http://schemas.android.com/apk/res/android:scheme(0x01010027)="https" (Raw: "https")` · 불리언은 `=true`/`=(type 0x12)0xffffffff`
+# 판정은 종료 코드, 표준 출력은 로그용 한 줄. 이 node 본문(MANIFEST_CHECK 표식 사이)은 manifest-deeplink-t088.test.ts 가 그대로 떼어 변이 나무로 실행한다 —
+# 표식·인자 순서를 바꾸면 시험도 고친다.
+DL_SUMMARY="$(node - "$MANIFEST_TREE" "$EXPECTED_SERVER_URL" <<'MANIFEST_CHECK'
+const [tree, serverUrl] = process.argv.slice(2)
+const host = new URL(serverUrl).host
+const root = { name: '#root', attrs: {}, children: [], indent: -1, parent: null }
+let stack = [root]
+for (const line of tree.split('\n')) {
+  const e = /^(\s*)E: (\S+)/.exec(line)
+  const a = /^(\s*)A: (?:http:\/\/schemas\.android\.com\/apk\/res\/android:)?([A-Za-z_]+)(?:\(0x[0-9a-fA-F]+\))?=(.*)$/.exec(line)
+  if (e) {
+    const indent = e[1].length
+    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop()
+    const node = { name: e[2], attrs: {}, children: [], indent, parent: stack[stack.length - 1] }
+    node.parent.children.push(node)
+    stack.push(node)
+  } else if (a) {
+    const indent = a[1].length
+    while (stack.length > 1 && stack[stack.length - 1].indent >= indent) stack.pop()
+    const raw = a[3].trim()
+    const q = /^"([^"]*)"/.exec(raw)
+    const owner = stack[stack.length - 1]
+    if (Object.prototype.hasOwnProperty.call(owner.attrs, a[2])) owner.dup = true
+    owner.attrs[a[2]] = q ? q[1] : raw
+  }
 }
-DL_SCHEMES="$(manifest_attr_values scheme)"
-DL_HOSTS="$(manifest_attr_values host)"
-DL_PATHS="$(manifest_attr_values path)"
-[ "$DL_SCHEMES" = "stockinvest" ] || fail "딥링크 스킴이 기대와 다르다: '$DL_SCHEMES' (기대 'stockinvest' 하나 — T-088)"
-[ "$DL_HOSTS" = "auth" ] || fail "딥링크 호스트가 기대와 다르다: '$DL_HOSTS' (기대 'auth' 하나)"
-[ "$DL_PATHS" = "/callback" ] || fail "딥링크 경로가 기대와 다르다: '$DL_PATHS' (기대 '/callback' 하나)"
-for attr in pathPrefix pathPattern pathAdvancedPattern pathSuffix ssp sspPrefix sspPattern port mimeType autoVerify; do
-  [ -z "$(manifest_attr_values "$attr")" ] || fail "딥링크에 허용하지 않은 속성이 있다: android:$attr"
-done
+const all = []
+const walk = (n) => { all.push(n); n.children.forEach(walk) }
+walk(root)
+const bad = []
+const isTrue = (v) => v === 'true' || /^\(type 0x12\)0x0*[1-9a-fA-F]/.test(v || '')
+const datas = all.filter((n) => n.name === 'data')
+if (datas.length !== 2) bad.push(`<data> ${datas.length}개(기대 2)`)
+if (all.filter((n) => 'autoVerify' in n.attrs).length !== 1) bad.push('autoVerify 는 App Link intent-filter 에 정확히 한 번')
+const kinds = []
+for (const d of datas) {
+  const f = d.parent
+  if (!f || f.name !== 'intent-filter') { bad.push('<data> 가 intent-filter 밖에 있다'); continue }
+  if (!f.parent || f.parent.name !== 'activity') bad.push('딥링크 intent-filter 가 activity 밖에 있다')
+  const fd = f.children.filter((c) => c.name === 'data')
+  if (fd.length !== 1) bad.push(`intent-filter 하나에 <data> ${fd.length}개(기대 1)`)
+  const actions = f.children.filter((c) => c.name === 'action').map((c) => c.attrs.name)
+  const cats = f.children.filter((c) => c.name === 'category').map((c) => c.attrs.name).sort()
+  if (actions.join(',') !== 'android.intent.action.VIEW') bad.push(`딥링크 action 이 VIEW 하나가 아니다: ${actions.join(',')}`)
+  if (cats.join(',') !== 'android.intent.category.BROWSABLE,android.intent.category.DEFAULT') bad.push(`딥링크 category 가 DEFAULT·BROWSABLE 이 아니다: ${cats.join(',')}`)
+  if (d.dup) bad.push('<data> 에 같은 속성이 두 번 있다')
+  const keys = Object.keys(d.attrs).sort().join(',')
+  if (keys !== 'host,path,scheme') bad.push(`<data> 속성이 scheme·host·path 가 아니다: ${keys}`)
+  const { scheme, host: h, path } = d.attrs
+  const av = f.attrs.autoVerify
+  if (scheme === 'stockinvest' && h === 'auth' && path === '/callback') {
+    if (av !== undefined) bad.push('로그인 콜백(커스텀 스킴)에 autoVerify 가 있다')
+    kinds.push('login')
+  } else if (scheme === 'https' && h === host && path === '/') {
+    if (!isTrue(av)) bad.push('App Link 에 autoVerify=true 가 없다')
+    kinds.push('applink')
+  } else {
+    bad.push(`허용하지 않은 딥링크: ${scheme}://${h}${path}`)
+  }
+}
+if (kinds.filter((k) => k === 'login').length !== 1) bad.push('로그인 콜백 딥링크가 정확히 하나가 아니다')
+if (kinds.filter((k) => k === 'applink').length !== 1) bad.push('App Link 가 정확히 하나가 아니다')
+if (bad.length) { console.error('[build-apk] 딥링크 검사 실패: ' + bad.join(' / ')); process.exit(1) }
+console.log(`stockinvest://auth/callback + https://${host}/ (autoVerify) — 정확히 둘`)
+MANIFEST_CHECK
+)" || fail "딥링크(intent-filter <data>) 검사 실패 — 위 사유. 기대: 로그인 콜백 1 + https 루트 App Link 1 (T-088·T-091)"
 
 # 서명: apksigner 검증 + 인증서 지문이 기대값과 같아야 한다.
 set +e
@@ -314,7 +371,7 @@ log "sha256     : $APK_SHA"
 log "signer     : SHA-256 $CERT_SHA (기대 지문과 일치)"
 log "debuggable : no"
 log "secrets    : 없음(파일 이름·assets 목록·문자열 패턴·서명 비밀번호 검사 통과)"
-log "deeplink   : $DL_SCHEMES://$DL_HOSTS$DL_PATHS (정확히 하나)"
+log "deeplink   : $DL_SUMMARY"
 # 검사까지 통과한 빌드의 소스 해시만 기록한다(다음 빌드가 옛 산출물을 재사용해도 되는지 판단).
 echo "$SRC_HASH" > "$SRC_HASH_FILE"
 

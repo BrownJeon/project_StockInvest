@@ -24,7 +24,7 @@
 1. **[확실]** 범위가 "껍데기 앱"에서 "기능 4개짜리 프로젝트"로 커졌다. 한 번에 만들지 않고 **마일스톤 4개**(§0-1)로 나눈다. 각 마일스톤마다 APK 재빌드·`versionCode` 증가·사용자 재설치가 따른다.
 2. **[확실]** 안전 경로(`SAFETY_PATHS`, Reviewer 판정 필수)를 **건드린다.** M1 에서 `src/middleware.ts`(다운로드 경로 공개)와 `scripts/migrations/`(AppRelease 테이블), M2 에서 같은 `middleware.ts`(`assetlinks.json` 공개), M4 에서 `src/lib/signals/approval-notify.ts` 와 `src/lib/credentials.ts` 주변(승인 요청 푸시·FCM 비밀키). 앞선 "안전 경로 0건" 권고는 범위 확대로 무효가 됐다.
 3. **[확실]** 푸시(FCM)는 **데이터 외부 전송이 있는 외부 서비스 도입**이다. 워크스페이스 규칙상 `/신규도입` 검토와 사용자 결정을 거쳐야 하고, Firebase 프로젝트·서비스 계정 키는 **사용자만 만들 수 있다.**
-4. **[가능성 높음]** 텔레그램 링크로 앱 열기는 **안 될 수도 있다.** 텔레그램 인앱 브라우저가 Android App Links 를 가로챌 수 있다. 만들기 전에 실기기 시험(M2-0)으로 먼저 확인한다.
+4. **[가능성 높음]** 텔레그램 링크로 앱 열기는 **안 될 수도 있다.** 텔레그램 인앱 브라우저가 Android App Links 를 가로챌 수 있다. 만들기 전에 실기기 시험(M2-0)으로 먼저 확인한다(T-091 은 §7 M2 참고 — 시험 APK 로 대체).
 5. 루트 배치(결정)는 `tsconfig.json` 이 `**/*.ts` 를 포함해 `capacitor.config.ts` 가 웹 빌드·타입체크에 걸리는 문제를 만든다. 질문에서 이 영향을 밝혔고 사용자가 루트를 택했으므로 **완화책(§6)을 넣어 진행**한다.
 
 ### 0-1. 마일스톤
@@ -113,7 +113,7 @@
 
 | M | 추가 변경 | SAFETY |
 |---|---|---|
-| **M2** | `AndroidManifest` intent-filter(`autoVerify`, https, 퓨니코드 호스트), `/.well-known/assetlinks.json`(패키지명+서명 인증서 SHA-256 지문) 공개 서빙, 앱이 링크 URL 을 받아 WebView 를 해당 경로로 이동(`window.Capacitor.Plugins.App` 의 `appUrlOpen`) | `src/middleware.ts`(`PUBLIC_EXACT` 에 assetlinks 경로) ✅ — 또는 nginx 에서 정적 응답하면 미들웨어 불변(HOME-SERVER 영역, 판단 필요) |
+| **M2** | `AndroidManifest` intent-filter(`autoVerify`, https, 퓨니코드 호스트), `/.well-known/assetlinks.json`(패키지명+서명 인증서 SHA-256 지문) 공개 서빙, 앱이 링크 URL 을 받아 WebView 를 해당 경로로 이동(`window.Capacitor.Plugins.App` 의 `appUrlOpen`) | `src/middleware.ts`(`PUBLIC_EXACT` 에 assetlinks 경로) ✅ — T-091 에서 이 방식을 택했다(nginx 불변, §7 M2 "진행 상태·결정") |
 | **M3** | 앱 내장 Capacitor 플러그인(Kotlin/Java, `androidx.biometric` `BiometricPrompt`, 생체 실패 시 기기 PIN 허용 여부는 D-11), 잠금 시 WebView 를 네이티브로 가림, 설정 화면의 잠금 on/off·시간 항목 | 웹 설정 화면 변경은 SAFETY 아님 |
 | **M4** | `@capacitor/push-notifications`, `google-services.json`+Gradle 플러그인(`com.google.gms.google-services`), Android 13+ `POST_NOTIFICATIONS` 권한, 토큰 등록 API+**토큰 테이블(마이그레이션=사용자 승인)**, 서버 FCM 발송기(HTTP v1, 서비스 계정 키는 `.env`/`credentialRef` 방식), 알림 분배층에 `push` 채널 추가, `notify-channel` 설정 API·`NotifyChannelSection` 확장 | `signals/approval-notify.ts`(승인 요청을 푸시로도 보낼 때) ✅ · `src/lib/credentials.ts`(키 취급 시) ✅ · `notify/index.ts` 는 SAFETY 아님 |
 
@@ -141,7 +141,7 @@
 | D-13 | 다운로드 보호 수준 | ✅ Kaiwa 방식(사용자 "동일하게") | 공개 경로 `/app/download/`, **등록된 행의 파일 이름·sha256 과 일치하는 `.apk` 만** 스트리밍, 경로 이탈 차단, 요청 제한. APK 보관은 저장소 밖 `/home/brownjeon/apps/stockinvest/shared/app-releases/`(릴리스 prune 과 무관). APK 에 비밀이 없음을 빌드 때 검사 |
 | D-14 | FCM 도입 (M4) | ⏳ M4 전 | `/신규도입` 절차: 외부 서비스·데이터 외부 전송(기기 토큰+알림 본문)·신규 비밀키 → 시범 전 보안 검토·사용자 결정 |
 
-**네이티브에 기대는 화면·기능은 웹 배포 전에 앱 버전 게이트를 둔다(T-091, 2026-10-26).** 웹은 push 즉시 바뀌고 APK 는 사용자가 설치할 때 바뀐다 — T-088 때 웹이 먼저 나가 옛 앱 1.0.0 에도 Google 버튼이 보였지만 딥링크 수신 설정이 없어 무응답이었다. 필요 최소 build 는 `src/lib/app-release/feature-gate.ts` 의 `APP_FEATURE_MIN_BUILD` 한 곳에서 관리하고(첫 항목 `googleLogin: 2`), 화면은 `appMeetsFeature()` 로 판단한다 — 앱이 아니거나 build 를 못 읽으면 막지 않는다(업데이트 강제 없음), 판단은 화면 표시용이다(서버 권한 판단에 쓰지 않는다). 새 네이티브 의존 기능(M2 앱 링크 등)은 그 표에 한 줄을 더해 옛 앱에서는 그 기능 대신 업데이트 안내가 보이게 한다. **순서: APK 공개(`app_release` INSERT) → 그다음 `APP_FEATURE_MIN_BUILD` 값을 올리는 웹 배포.** 거꾸로 하면 안내 띠의 [업데이트]가 아직 옛 APK 를 내려주는 막다른 길이 생긴다(M2 가 `appLinks` 를 build 3 으로 올릴 때 바로 해당).
+**네이티브에 기대는 화면·기능은 웹 배포 전에 앱 버전 게이트를 둔다(T-091, 2026-10-26).** 웹은 push 즉시 바뀌고 APK 는 사용자가 설치할 때 바뀐다 — T-088 때 웹이 먼저 나가 옛 앱 1.0.0 에도 Google 버튼이 보였지만 딥링크 수신 설정이 없어 무응답이었다. 필요 최소 build 는 `src/lib/app-release/feature-gate.ts` 의 `APP_FEATURE_MIN_BUILD` 한 곳에서 관리하고(첫 항목 `googleLogin: 2`), 화면은 `appMeetsFeature()` 로 판단한다 — 앱이 아니거나 build 를 못 읽으면 막지 않는다(업데이트 강제 없음), 판단은 화면 표시용이다(서버 권한 판단에 쓰지 않는다). 네이티브 기능에 기대는 새 화면은 그 표에 한 줄을 더해 옛 앱에서는 그 기능 대신 업데이트 안내가 보이게 한다. **순서: APK 공개(`app_release` INSERT) → 그다음 `APP_FEATURE_MIN_BUILD` 값을 올리는 웹 배포.** 거꾸로 하면 안내 띠의 [업데이트]가 아직 옛 APK 를 내려주는 막다른 길이 생긴다(실행 순서는 [`deploy-order.md`](./deploy-order.md) 「앱(APK) 배포」 — 기능 코드 push 와 표 값 상향 push 를 나눈다). M2 App Link 는 표에 넣지 않았다(아래 §7 M2 "진행 상태·결정").
 
 ---
 
@@ -157,7 +157,7 @@
 | 세션 쿠키 | `onPause` flush 없으면 재실행마다 로그인 | 중 | `MainActivity` 에 포함, 실기기 확인 |
 | 폰 분실 | 세션 30일 보관 | 중 | `allowBackup=false`, 디버깅 끔, **M3 앱 잠금** |
 | 서명 키 | 분실=업데이트 불가, 유출=위조 | 중 | D-5, 백업·접근 권한 절차 |
-| 텔레그램 링크(M2) | 텔레그램 인앱 브라우저가 앱 링크를 가로챌 수 있음 **[추측]** | 중 | M2-0 시험 먼저. 불가 판정이면 M2 를 접고 보고(대안 없음 — 인라인 버튼은 https·tg 스킴만) |
+| 텔레그램 링크(M2) | 텔레그램 인앱 브라우저가 앱 링크를 가로챌 수 있음 **[추측]** | 중 | M2-0 시험 먼저(T-091 은 §7 M2 참고 — 시험 APK 로 대체). 불가 판정이면 M2 를 접고 보고(대안 없음 — 인라인 버튼은 https·tg 스킴만) |
 | 푸시(M4) | 기기 토큰·알림 본문이 Google FCM 으로 전송, 서비스 계정 키 신규 비밀, 토큰 테이블 마이그레이션, 알림 권한(Android 13+) | **높음** | D-14, `credentialRef`/`.env` 방식, 본문 최소화, 마이그레이션 승인, 토큰 만료·삭제 처리 |
 | 화면 | 연결 실패 화면·잠금 화면·설정 항목(잠금·푸시)·업데이트 띠 = 새 사용자 화면 | 중 | judge 가 데모 수준 판정 → 데모 승인 후 구현(데모 검토 게이트) |
 | 작업 트리 | 타 세션 미커밋 변경 다수 | 중 | 내 파일만 **명시 경로로 `git add`**, `git add -A` 금지 |
@@ -202,6 +202,16 @@
 | 2-1 | 서명 인증서 SHA-256 지문 확정(D-5), `assetlinks.json` 서빙(middleware 또는 nginx), Manifest `autoVerify` intent-filter(링크 경로 범위 최소화) | SAFETY(middleware 택 시) |
 | 2-2 | 앱이 링크 URL 을 받아 WebView 를 해당 경로로 이동 | 웹은 `window.Capacitor.Plugins.App` 만 사용 |
 | 2-3 | 순환·APK 재빌드(`versionCode`↑)·실기기 확인 | 주의: 검증된 App Links 는 크롬에서도 이 도메인 링크를 앱으로 연다 |
+
+**진행 상태·결정(T-091, 2026-10-26)** — 정본 task [[T-091-app-version-gate-and-m2]]. 구현·APK 시험 빌드 단계이고 **아직 배포·공개 전**이다(1.1.0 은 공개되지 않았다).
+- **2-0 은 따로 하지 않았다**: 지금 공개된 APK(1.0.0·1.0.1)에는 https 링크 수신 설정이 없어 시험 자체가 2-1 의 Manifest·`assetlinks.json` 이 든 APK 를 요구한다 — 사용자 승인(2026-10-26 "지금 정의되어있는 작업들 모두 진행")에 따라 시험 APK 1.1.0(versionCode 3)으로 바로 확인한다. 텔레그램 앱이 링크를 가로채는지는 여전히 실기기에서만 알 수 있다.
+- **범위 = 사이트 루트 한 경로**: Manifest intent-filter 하나(`autoVerify="true"`, `https`, 호스트 `stock.xn--lh0b87pnudm10a4vd.com`, `android:path="/"` 정확 일치). 그 밖의 https 링크(OAuth 콜백·APK 내려받기 등)는 지금처럼 브라우저가 연다. 텔레그램 버튼이 가리킬 곳은 루트 하나면 충분하다(승인 요청 화면 개별 경로가 필요해지면 범위를 다시 정한다).
+- **`app_public_url` 권고값 = `https://stock.xn--lh0b87pnudm10a4vd.com/`**(끝 슬래시·퓨니코드·소문자). `android:path="/"` 는 슬래시 없는 `https://호스트` 에는 맞지 않는다 — 안드로이드 `Uri.getPath()` 가 빈 문자열을 주고 `PatternMatcher` 는 리터럴을 그대로 비교한다(AOSP 소스 확인). 안드로이드의 호스트 비교는 대소문자를 구분하고 한글 도메인을 퓨니코드로 바꾸지 않는다(공식 `<data>` 문서). 이 값은 DB 설정이라 코드 배포와 별개로 Leader 가 넣는다(텔레그램 메시지 코드는 바꾸지 않았다 — `approval-message.ts` 는 값을 그대로 버튼 주소로 쓴다).
+- **`assetlinks.json` 서빙 = 정적 파일 + 미들웨어 정확 일치**: `public/.well-known/assetlinks.json`(패키지 이름 + 서명 인증서 SHA-256, 공개 정보 — 값은 `build-apk.sh` `EXPECTED_CERT_SHA256` 과 같고 시험 `appLink-t091.test.ts` 가 대조) · `src/middleware.ts` `PUBLIC_EXACT` 에 `/.well-known/assetlinks.json` 1줄(SAFETY — 그 외 `/.well-known/*`·하위 경로·대소문자 변형은 보호 유지, `middleware-public-paths.test.ts` ⑥·⑦). nginx 는 바꾸지 않는다. Next 15 는 `public/` 의 점 폴더도 서빙한다 — 정적 서빙의 `send` 는 마지막 경로 조각이 점으로 시작할 때만 숨기고(`assetlinks.json` 은 해당 없음) 공개 폴더 목록에 거름 조건이 없다(`node_modules/next` 15.5.27 소스 확인, 운영 응답 확인은 배포 후).
+- **앱 처리 = 로그인 딥링크와 분리**: `src/lib/native/appLink.ts`(`resolveAppLinkTarget`·`onAppLink`) + 레이아웃에 한 번 둔 `src/components/app/AppLinkNavigator.tsx`(그리는 것 없음). https·지금 문서와 같은 호스트·`sanitizeAppNextPath` 를 바뀌지 않고 통과하는 같은 출처 경로일 때만 `location.assign` 으로 이동하고, 이미 그 화면이거나 로그인·가입 흐름 화면이면 이동하지 않는다. 콜드 스타트 주소(`getLaunchUrl`)는 앱 프로세스당 한 번만 본다. 로그인 콜백(`stockinvest://auth/callback`)은 `onAuthDeepLink`(구독자 하나)가 그대로 맡고 이 모듈은 커스텀 스킴을 무시한다.
+- **`APP_FEATURE_MIN_BUILD` 에 `appLinks` 는 넣지 않는다** — 링크에 기대는 새 화면이 없다(옛 앱에서는 링크가 브라우저로 열릴 뿐).
+- **순서: 웹 배포(assetlinks 공개) → APK 공개.** 안드로이드는 설치 때 assetlinks 를 받아 검증하므로 거꾸로면 검증이 실패한다 — [`deploy-order.md`](./deploy-order.md) 「앱(APK) 배포」.
+- **알려진 영향**: 검증된 App Link 는 크롬 등에서도 루트 주소(`https://stock…com/`)를 앱으로 연다 — 루트 한 경로라 영향이 작다. `build-apk.sh` 의 Manifest 검사는 "딥링크 정확히 둘(로그인 콜백 + https 루트 `autoVerify`)"로 바뀌었다.
 
 ### M3 — 앱 잠금
 | # | 작업 | 비고 |
@@ -279,7 +289,7 @@
 - **[확실]** 서명 키 분실=업데이트 불가. 백업 폴더 `NFS/homes/brownjeon/backup/android-signing/` 는 있으나 StockInvest 전용 키 보관 절차는 새로 정해야 한다.
 - **[추측]** 텔레그램 인앱 브라우저가 App Links 를 가로채는지(M2) — 시험 전에는 알 수 없다.
 - **[추측]** FCM 도입이 `/신규도입` 에서 보류·조건부로 나올 수 있다 — M4 일정은 그 결과에 달렸다.
-- **미확인**: `release.sh` 가 저장소 파일을 릴리스에 싣는 방식과 `npm ci` 옵션, lightweight-charts 의 WebView 터치 동작, WebView 에서 Next 15 클라이언트 라우팅의 뒤로가기, `assetlinks.json` 을 Next `public/.well-known/` 으로 서빙할 때의 동작, 인터넷 노출된 공개 APK 경로에 nginx 요청 제한이 필요한지.
+- **미확인**: `release.sh` 가 저장소 파일을 릴리스에 싣는 방식과 `npm ci` 옵션, lightweight-charts 의 WebView 터치 동작, WebView 에서 Next 15 클라이언트 라우팅의 뒤로가기, `assetlinks.json` 을 Next `public/.well-known/` 으로 서빙할 때의 **운영 응답**(소스로는 서빙됨을 확인 — T-091, 운영 `curl` 은 배포 후), 인터넷 노출된 공개 APK 경로에 nginx 요청 제한이 필요한지.
 - **문서 불일치**: Kaiwa `deployer.md:118` 의 APK 산출물 경로는 낡았다. `app-conversion-guide.md §5` 는 TheKaiwa 를 "계획"으로 적었지만 이미 완료. StockInvest `CLAUDE.md` 는 Next 14 로 적었으나 실제 15.5.27.
 - **교훈(Kaiwa 이력)**: 처음 debug 빌드 배포 계획이 Codex 지적 후 release 빌드로 바뀜 · 키보드는 웹만으로 해결 안 되고 네이티브 인셋 보정 필요 · 딥링크는 가로채기 대비 필요 · nginx `alias` 는 403 이라 앱 라우트로 대체 · `--publish` 에서 `.env` 줄 끝 한글 주석이 경로에 섞임.
 

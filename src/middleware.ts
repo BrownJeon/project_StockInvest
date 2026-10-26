@@ -42,6 +42,12 @@ import { OAUTH_PUBLIC_PATHS } from '@/lib/auth/oauth/names';
  *   정확 일치 1개다(하위 경로·대소문자 변형은 보호 유지 — middleware-public-paths.test.ts). OAuth 프로바이더 목록에서 펼쳐지는
  *   `OAUTH_PUBLIC_PATHS`(names.ts) 에 넣지 않고 여기 문자열로 둔다: 그 목록은 프로바이더마다 경로를 만드는 규칙이고, 교환 경로는
  *   프로바이더와 무관한 한 줄이라 관문 파일에서 바로 보이는 쪽이 감사하기 쉽다.
+ *
+ * T-091 M2: 안드로이드 App Links 검증 파일이 추가됐다 — 안드로이드가 앱 **설치 때** 쿠키 없이 받아 가므로 공개여야 하고,
+ *   리다이렉트(로그인 화면 307)가 끼면 검증이 실패한다(공식 문서: 301/302 없이 https 로 접근 가능해야 함).
+ *   - `/.well-known/assetlinks.json` : `public/.well-known/assetlinks.json` 정적 파일(패키지 이름 + 서명 인증서 SHA-256, 공개 정보)
+ *   정확 일치 1개다 — `/.well-known/` 를 prefix 로 열지 않는다(다른 `.well-known` 경로·하위 경로·대소문자 변형은 보호 유지 —
+ *   middleware-public-paths.test.ts ⑥·⑦).
  */
 const PUBLIC_EXACT = new Set<string>([
   '/api/health',
@@ -58,6 +64,7 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/oauth-complete',
   '/api/auth/app-exchange', // T-088 — 정확 일치. POST 만 의미가 있고(GET 405) 실패는 전부 같은 400
   '/oauth/invite',
+  '/.well-known/assetlinks.json', // T-091 M2 — 정확 일치. App Links 검증 파일(정적, 공개 정보)
   '/favicon.ico',
   '/robots.txt',
   '/manifest.json',

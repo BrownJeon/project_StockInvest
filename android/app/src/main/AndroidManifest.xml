@@ -30,7 +30,7 @@
             windowSoftInputMode="adjustResize" — 입력창이 키보드에 가리지 않게. edge-to-edge(targetSdk 35) 아래에서는
             이것만으로 창이 줄지 않아 MainActivity.fitAboveKeyboard 가 함께 맡는다(app-conversion-guide §1-2).
 
-            intent-filter 는 LAUNCHER + T-088 로그인 딥링크 두 개다 — https App Links 는 M2 에서 추가한다.
+            intent-filter 는 LAUNCHER + T-088 로그인 딥링크 + T-091 M2 https App Link(사이트 루트 한 경로) 세 개다.
         -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation"
@@ -60,6 +60,27 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="stockinvest" android:host="auth" android:path="/callback" />
+            </intent-filter>
+
+            <!--
+                T-091 M2 App Link — 텔레그램 승인 요청의 "앱에서 자세히" 링크(system_config.app_public_url)가 브라우저 대신 이 앱을 연다.
+                범위는 **사이트 루트 `/` 한 경로뿐**이다(path 정확 일치 — pathPrefix·pathPattern 금지). 그 밖의 https 링크(OAuth 콜백·
+                APK 내려받기 등)는 지금처럼 브라우저가 처리한다. host 는 capacitor.config.ts server.url 의 호스트(퓨니코드·소문자 —
+                안드로이드의 호스트 비교는 대소문자를 구분한다)와 같아야 한다(manifest-deeplink-t088.test.ts 가 대조, build-apk.sh 가 빌드된
+                APK 에서 다시 확인).
+                ⚠ path="/" 는 `https://호스트/`(슬래시 있음)에만 맞는다 — 슬래시 없는 `https://호스트` 는 Uri.getPath() 가 "" 라 맞지 않는다
+                (AOSP IntentFilter.matchData → PatternMatcher 리터럴 비교). 그래서 app_public_url 은 끝에 `/` 를 붙인 퓨니코드 주소로 둔다.
+                autoVerify="true" — 설치 때 안드로이드가 https://<host>/.well-known/assetlinks.json(public/.well-known/, 미들웨어 공개
+                정확 일치 1개)을 받아 이 앱의 서명 인증서 지문과 대조한다. 그래서 **웹 배포(assetlinks 공개)가 APK 공개보다 먼저**다.
+                검증된 App Link 는 크롬에서도 루트 주소를 앱으로 연다(루트 한 경로라 영향이 작다). 받은 주소의 처리는 웹 쪽
+                src/lib/native/appLink.ts(같은 출처 경로만 이동 — 로그인 딥링크 처리와 분리).
+                이 intent-filter 추가는 네이티브 변경이다 → versionCode 3 / 1.1.0(android/app/build.gradle).
+            -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="stock.xn--lh0b87pnudm10a4vd.com" android:path="/" />
             </intent-filter>
 
         </activity>

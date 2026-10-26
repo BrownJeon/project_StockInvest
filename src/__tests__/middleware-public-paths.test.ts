@@ -202,3 +202,82 @@ describe('⑤ T-088 이웃 경로는 여전히 보호', () => {
     }
   });
 });
+
+/**
+ * T-091 M2 — 안드로이드 App Links 검증 파일 `/.well-known/assetlinks.json` 을 **정확 일치 1개**로 공개한다.
+ * 안드로이드는 설치 때 쿠키 없이 이 파일을 받아 가고 리다이렉트가 끼면 검증이 실패하므로 무인증 통과여야 한다.
+ * `/.well-known/` 를 prefix 로 열지 않는다 — 다른 `.well-known` 경로·하위 경로·대소문자·인코딩 변형은 아래 ⑦ 이 보호를 고정한다.
+ * (진짜 쿼리스트링 `?x=1` 은 pathname 을 바꾸지 않는다 — 같은 정적 파일이라 공개가 맞다. 경로 안에 인코딩된 `%3F` 는 다른 경로라 보호.)
+ */
+describe('⑥ T-091 /.well-known/assetlinks.json — 정확 일치만 무인증 통과', () => {
+  test.each(['GET', 'HEAD'])('%s /.well-known/assetlinks.json → public', async (m) => {
+    expect((await verdict('/.well-known/assetlinks.json', m)).v).toBe('public');
+  });
+
+  test('쿼리스트링은 pathname 을 바꾸지 않는다 — 같은 파일이라 공개', async () => {
+    const r = await verdict('/.well-known/assetlinks.json?x=1');
+    expect(r.pathname).toBe('/.well-known/assetlinks.json');
+    expect(r.v).toBe('public');
+  });
+
+  test('세션 서명 키가 없어도 공개(설치 때 검증은 서버 설정과 무관해야 한다)', async () => {
+    delete process.env.AUTH_SESSION_SECRET;
+    expect((await verdict('/.well-known/assetlinks.json')).v).toBe('public');
+  });
+
+  test('공개 파일이 실제로 public/.well-known/assetlinks.json 에 있다(경로 철자 드리프트 방지)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require('node:fs') as typeof import('node:fs');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require('node:path') as typeof import('node:path');
+    expect(fs.existsSync(path.join(__dirname, '..', '..', 'public', '.well-known', 'assetlinks.json'))).toBe(true);
+  });
+});
+
+describe('⑦ T-091 그 밖의 /.well-known/* 와 이웃 경로는 여전히 보호', () => {
+  test.each([
+    ['/.well-known/other.json', 'login'],
+    ['/.well-known/apple-app-site-association', 'login'],
+    ['/.well-known/security.txt', 'login'],
+    ['/.well-known/', 'login'],
+    ['/.well-known', 'login'],
+    ['/.well-known/assetlinks.json/', 'login'],
+    ['/.well-known/assetlinks.json/x', 'login'],
+    ['/.well-known/assetlinks.jsonx', 'login'],
+    ['/.well-known/assetlinks.json.bak', 'login'],
+    ['/.well-known/assetlinks', 'login'],
+    ['/.well-known/assetlink.json', 'login'],
+    ['/.WELL-KNOWN/assetlinks.json', 'login'],
+    ['/.well-known/AssetLinks.json', 'login'],
+    ['/.well-known/assetlinks.JSON', 'login'],
+    ['/x/.well-known/assetlinks.json', 'login'],
+    ['/.well-known/x/assetlinks.json', 'login'],
+    ['/assetlinks.json', 'login'],
+    ['/well-known/assetlinks.json', 'login'],
+    ['/.well_known/assetlinks.json', 'login'],
+    ['/api/.well-known/assetlinks.json', 'api401'],
+  ])('%s → %s', async (p, want) => {
+    expect((await verdict(p)).v).toBe(want);
+  });
+
+  test.each([
+    ['/.well-known/assetlinks.json/../../api/orders', '/api/orders'],
+    ['/.well-known/assetlinks.json/%2e%2e/%2e%2e/api/orders', '/api/orders'],
+    ['/.well-known/../api/settings/safety', '/api/settings/safety'],
+    ['/.well-known/assetlinks.json%3Fx', null],
+    ['/.well-known/assetlinks.json%23x', null],
+    ['/.well-known/assetlinks%2Ejson', null],
+    ['/.well-known%2Fassetlinks.json', null],
+    ['/.well-known/assetlinks.json;x', null],
+    ['/.well-known/assetlinks.json%00', null],
+    ['/.well-known/assetlinks.json%2f..%2f..%2fapi%2forders', null],
+  ])('변형 %s → 보호', async (p, normalized) => {
+    const r = await verdict(p);
+    if (normalized !== null) expect(r.pathname).toBe(normalized);
+    expect(r.v).not.toBe('public');
+  });
+
+  test('점 구간으로 assetlinks 를 감싸 보호 경로를 열 수 없다(POST)', async () => {
+    expect((await verdict('/.well-known/assetlinks.json/../../api/orders', 'POST')).v).toBe('api401');
+  });
+});

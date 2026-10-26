@@ -439,7 +439,20 @@ blue/green 으로 컷오버하면서 이 훅을 그대로 두면 **push 한 번�
 > 있거나 처음 공개할 때만 만든다. 구조·결정은 [`mobile-app-procedure.md`](./mobile-app-procedure.md), 실행 주체는 [`deployer.md`](../.claude/agents/deployer.md) `<apk_release>`.
 > 이 절의 승인 게이트(DDL·`--publish`·INSERT)는 **각각 사용자 명시 승인**이 필요하다 — QA PASS 나 웹 배포 승인으로 대신하지 않는다.
 
-**네이티브에 기대는 화면·기능은 웹 배포 전에 앱 버전 게이트를 둔다(T-091).** 웹은 즉시, APK 는 사용자 설치 때 바뀐다 — T-088 때 옛 앱 1.0.0 이 Google 버튼을 보았으나 딥링크 수신 설정이 없어 무응답이었다. 필요 최소 build 는 `APP_FEATURE_MIN_BUILD`(`src/lib/app-release/feature-gate.ts`) 한 곳에서 관리한다 — 새 네이티브 의존 기능의 웹 코드를 배포하기 전에 그 표에 한 줄(새 APK 의 versionCode)을 더했는지 확인한다. **순서: APK 공개(위 ③·④, `app_release` INSERT) → 그다음 표 값을 올리는 웹 배포.** 거꾸로 하면 안내 띠의 [업데이트]가 옛 APK(`latest.apk`)를 내려주는 막다른 길이 생긴다(M2 가 `appLinks` 를 build 3 으로 올릴 때 바로 해당).
+**네이티브에 기대는 화면·기능은 웹 배포 전에 앱 버전 게이트를 둔다(T-091).** 웹은 즉시, APK 는 사용자 설치 때 바뀐다 — T-088 때 옛 앱 1.0.0 이 Google 버튼을 보았으나 딥링크 수신 설정이 없어 무응답이었다. 필요 최소 build 는 `APP_FEATURE_MIN_BUILD`(`src/lib/app-release/feature-gate.ts`) 한 곳에서 관리한다 — 새 네이티브 의존 기능의 웹 코드를 배포하기 전에 그 표에 한 줄(새 APK 의 versionCode)을 더했는지 확인한다. **순서: APK 공개(위 ③·④, `app_release` INSERT) → 그다음 표 값을 올리는 웹 배포.** 거꾸로 하면 안내 띠의 [업데이트]가 옛 APK(`latest.apk`)를 내려주는 막다른 길이 생긴다. 아래 ③ 사전 확인("빌드할 트리가 배포한 커밋과 같은가")과 함께 지키려면 push 를 둘로 나눈다 — **① 기능 코드 배포(표 값은 그대로) → ② 그 커밋으로 APK 공개(③·④) → ③ 표 값만 올리는 두 번째 push**(T-091 Reviewer N2). M2 App Link 는 이 표에 넣지 않았다 — 링크에 기대는 새 화면이 없고(웹은 받은 주소로 이동만 한다), 옛 앱에서는 링크가 지금처럼 브라우저에서 열릴 뿐이라 막다른 길이 생기지 않는다.
+
+**App Links(M2, T-091) 순서: 웹 배포(`/.well-known/assetlinks.json` 공개) → 그다음 APK 공개(③·④).** 안드로이드는 앱을 **설치(덮어쓰기 포함)할 때** `https://<호스트>/.well-known/assetlinks.json` 을 받아 서명 인증서 지문과 대조한다 — 파일이 아직 없을 때 설치하면 검증이 실패해 링크가 브라우저로 열린다(Android 14 이하는 앱을 다시 설치·업데이트할 때만 재검증, Android 15 이상은 주기적 재검증이라 반영까지 며칠 걸릴 수 있다 — 공식 문서). 위 표 값 상향 순서(APK 먼저)와는 반대 방향이지만 서로 부딪히지 않는다: App Link 는 표 값을 올리지 않으므로 "웹(assetlinks) → APK" 한 방향만 지키면 된다. **웹 배포 전에 먼저: `public/.well-known/assetlinks.json` 이 커밋에 들어갔는지 확인한다** — 점 폴더의 새 파일은 `git add -A` 같은 일괄 stage 없이 경로를 명시해 커밋하는 이 저장소 관행에서 빠지기 쉽고, 빠지면 릴리스(`git archive`)에 실리지 않아 운영이 404 가 되며 안드로이드 검증이 조용히 실패한다. 커밋 뒤 `git ls-files public/.well-known`(한 줄이 나와야 한다)으로 확인(T-091 QA·Reviewer 지적). 웹 배포 뒤 APK 공개 전에 확인(무인증):
+
+```bash
+B=https://stock.xn--lh0b87pnudm10a4vd.com
+curl -sS -D /tmp/al.h -o /tmp/al.json "$B/.well-known/assetlinks.json"; head -1 /tmp/al.h; grep -i '^content-type\|^location' /tmp/al.h; cat /tmp/al.json
+#   기대: 200 (301/302/307 이면 실패 — 리다이렉트가 끼면 검증 실패) · content-type application/json · package_name com.miraclepenguin.stockinvest
+#         · sha256_cert_fingerprints = build-apk.sh EXPECTED_CERT_SHA256 (6F:A5:…:0F:08)
+for p in /.well-known/other.json /.well-known/assetlinks.json/x; do printf '%s ' "$p"; curl -s -o /dev/null -w '%{http_code}\n' "$B$p"; done
+#   기대: 307(로그인) — 200 이면 공개 범위가 넓어진 것(즉시 중단·보고)
+```
+
+텔레그램 "앱에서 자세히" 버튼 주소(`system_config.app_public_url`)는 **`https://stock.xn--lh0b87pnudm10a4vd.com/`** — 끝 슬래시를 붙인 퓨니코드·소문자로 둔다. Manifest 가 받는 범위가 경로 정확히 `/` 라서 슬래시 없는 `https://호스트` 는 안드로이드에서 경로가 빈 문자열로 읽혀 맞지 않고(AOSP `Uri.getPath()`·`PatternMatcher` 리터럴 비교), 한글 도메인·대문자 호스트도 안드로이드의 호스트 비교(대소문자 구분, 퓨니코드 변환 없음)에서 맞지 않는다 [가능성 높음 — 텔레그램 앱이 주소를 바꿔 넘기는지는 실기기 미확인].
 
 ### 순서 (첫 공개 기준 — 이후 공개는 ③부터)
 
@@ -471,6 +484,7 @@ curl -s --path-as-is -o /dev/null -w '%{http_code}\n' "$B/app/download/../api/or
 
 - 로그인한 화면에서 설정 › 앱 (안드로이드)에 새 버전·sha256 앞 8자가 보이는지(웹), 낮은 versionCode 앱에서 업데이트 띠가 뜨는지(실기기) 확인한다.
 - nginx(ModSecurity)를 거친 실서비스 다운로드는 T-084 감사에서 재현하지 못했다 — 첫 공개 때 위 `curl` 결과가 그 첫 확인이다.
+- (App Link, 1.1.0~) 설치한 폰에서 검증 결과 확인 — **사용자 몫**(USB 디버깅 연결 필요, AI 는 실행하지 않는다): `adb shell pm get-app-links com.miraclepenguin.stockinvest` → `stock.xn--lh0b87pnudm10a4vd.com: verified` 이어야 한다(`none` 은 아직 검증 중 — 몇 분 뒤 다시, 그 밖의 값·1024 이상 숫자는 검증 실패). `curl` 은 서버 파일만 보고 기기의 검증 결과는 보지 못한다.
 
 ⑥ 사용자 안내에 넣을 것: 받을 곳(휴대폰 Chrome → 설정 › 앱 (안드로이드) → [APK 내려받기], 앱 안이면 업데이트 띠 [받기]) · 버전·바뀐 점 · **재설치 필요 여부**(네이티브 변경이면 새 APK 를 설치해야 한다 — 같은 키로 서명돼 있어 덮어 설치되고 로그인은 남는다. "앱이 설치되지 않았습니다"가 나오면 삭제 후 재설치·재로그인) · Chrome 이 **"유해할 수 있는 파일입니다"** 라고 물으면 [다운로드](플레이스토어 밖 앱이라 매번 뜬다 — 이 확인에서 멈춘 듯 보일 수 있다, TheKaiwa 실측) · 처음 한 번 "출처를 알 수 없는 앱 설치" 허용.
 
@@ -482,6 +496,7 @@ curl -s --path-as-is -o /dev/null -w '%{http_code}\n' "$B/app/download/../api/or
 | 이미 설치된 앱 | 더 낮은 versionCode 는 덮어 설치되지 않는다 — 이전 소스를 **더 높은 versionCode** 로 다시 빌드해 공개하거나, 삭제 후 재설치 |
 | 웹 | 기존 절차(§6, `--rollback` 은 사용자 지시 시). 코드 롤백이면 `/app/download/` 공개도 함께 사라진다(정상). `app_release` 테이블은 되돌아가지 않지만 옛 코드는 읽지 않아 무해 |
 | 테이블 자체 | 앱 기능을 통째로 철회할 때만 `DROP TABLE IF EXISTS app_release;`(사용자 승인) |
+| App Link(M2, 1.1.0~) | **어느 방법도 즉시·완전하지 않다.** ① `assetlinks.json` 제거(웹 롤백 포함): Android 14 이하는 주기 재검증이 없어 이미 설치·검증된 기기를 풀지 못하고, Android 15 이상도 반영까지 최대 약 7일(공식 문서) ② APK 철회(`app_release` 행 삭제)는 이미 설치된 1.1.0 을 되돌리지 못한다(새로 받는 사람만 막는다) ③ 사용자 폰에서 바로 끄기: 안드로이드 설정 › 앱 › 주식캐기 › 기본값으로 열기 › "지원되는 링크 열기" 끄기(기기마다 메뉴 이름이 다르다 — 공식 문서는 이 화면을 "Open by default"·"Open supported links" 로 적는다) ④ 근본 해제: App Link 필터를 뺀 소스를 **더 높은 versionCode** 로 다시 빌드·공개하고 사용자가 설치 |
 
 ### 하지 말 것
 
@@ -491,6 +506,7 @@ curl -s --path-as-is -o /dev/null -w '%{http_code}\n' "$B/app/download/../api/or
 - ❌ 사용자 승인 없이 `--publish`, 사용자 승인 없이 `app_release` INSERT·DELETE·DDL
 - ❌ APK·키스토어를 저장소 안에 두거나 커밋
 - ❌ 실기기 확인 전에 "앱 배포 완료" 보고
+- ❌ App Link 가 든 APK(1.1.0~)를 `/.well-known/assetlinks.json` 웹 배포·공개 확인보다 먼저 공개(설치 때 검증이 실패한다, T-091)
 
 ---
 
