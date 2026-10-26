@@ -10,7 +10,8 @@
 
 | 영역 | 기술 |
 |------|------|
-| 프론트엔드·API | Next.js 14 (App Router) + TypeScript |
+| 프론트엔드·API | Next.js 15.5.27 (App Router) + React 18.3.1 + TypeScript (버전 정본은 `package.json`) |
+| 모바일 앱 | Capacitor 7 안드로이드 셸 "주식캐기" — 운영 웹을 띄우는 껍데기(아래 "모바일 앱(주식캐기)" 절) |
 | 데이터베이스 | MariaDB (NAS 호스팅, mysql2/promise) |
 | 증권사 | 한국투자증권 KIS OpenAPI — 국내(`kis-domestic`)·해외(`kis-overseas`), 진입점 `src/lib/exchanges/kis.ts` |
 | 지표 | 자체 구현 (순수 함수) — TA-Lib 값과 대조 |
@@ -39,6 +40,11 @@ StockInvest/
 │   │   └── safety/                # Kill Switch / 주문 한도 / DRY_RUN
 │   └── types/
 ├── public/
+│   └── app-shell/index.html       # 앱 연결 실패 화면(APK 안 독립 파일 — 바꾸면 네이티브 변경)
+├── android/                       # Capacitor 안드로이드 프로젝트(소스만 커밋 — APK·키스토어·빌드 산출물은 gitignore)
+├── capacitor.config.ts            # 앱 설정(appId·server.url) — tsconfig exclude, 바꾸면 네이티브 변경
+├── scripts/
+│   └── build-apk.sh               # APK 빌드·검사(우분투) / --publish 는 deployer 전용
 ├── .env.example
 ├── .gitignore
 ├── .claudignore
@@ -123,6 +129,28 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 - **차트 라이브러리**: lightweight-charts 표준
 - 상세 규칙은 [`.codex/agents/developer.toml`](./.codex/agents/developer.toml) "화면 디자인 워크플로우" 참조
 
+## 모바일 앱(주식캐기)
+
+안드로이드 앱 **"주식캐기"**(T-084 M1~)는 TheKaiwa 와 같은 **Capacitor 셸**이다 — 운영 웹을 WebView 로 띄우는 껍데기이고 화면·API·매매 로직은 서버에 그대로 있다.
+
+| 항목 | 값 |
+|---|---|
+| 앱 이름 / appId | 주식캐기 / `com.miraclepenguin.stockinvest` (첫 설치 뒤에는 바꿀 수 없다) |
+| 로드 주소 | `server.url` = `https://stock.xn--lh0b87pnudm10a4vd.com`(stock.미라클펭귄.com 의 퓨니코드), `androidScheme: 'https'`, `allowNavigation` 없음 — `capacitor.config.ts` |
+| 버전 | `android/app/build.gradle` 의 `stockVersionCode`·`stockVersionName` (서버 `app_release.version_code` 와 같은 정수, 줄어들면 안 된다) |
+| 서명 키 | 키스토어 `~/.android/stockinvest-release.keystore` · 서명 설정 `~/.android/stockinvest-signing.env`(권한 600, 저장소 밖) · 백업 `NFS/homes/brownjeon/backup/android-signing/stockinvest/`. **경로만 적는다 — 비밀번호·값은 어떤 문서·로그에도 적지 않는다.** 키를 잃으면 덮어쓰기 설치가 막히고, 새면 위조 업데이트가 가능하다 |
+| 서명 인증서 SHA-256(공개 정보) | `6F:A5:AD:6F:65:43:F2:2E:5F:42:21:AA:10:14:0E:77:A4:BD:41:78:05:04:A4:DE:10:49:45:50:61:51:0F:08` — `build-apk.sh` 가 이 값과 다르면 실패한다(M2 App Links 지문) |
+| 빌드 | `bash scripts/build-apk.sh` — 우분투, JDK 21, `ANDROID_HOME=~/.node-local/android-sdk`, 작업 디렉터리 `~/.node-local/stockinvest-apk`. 출력은 로그 파일로(파이프로 자르면 SIGPIPE) |
+| 공개 | `bash scripts/build-apk.sh --publish` — **deployer 전용·사용자 승인 후.** APK 를 `APP_RELEASE_DIR` 로 복사하고 `app_release` INSERT SQL 을 **출력만** 한다(실행하지 않는다). 같은 이름·다른 내용은 거부 |
+| `APP_RELEASE_DIR` | 기본 `/home/brownjeon/apps/stockinvest/shared/app-releases`(저장소 밖 — `build-apk.sh` 와 서버 `src/lib/app-release/paths.ts` 의 기본값이 같다) |
+| 다운로드·업데이트 | 공개 `/app/download/<파일>.apk`(등록된 sha256 과 일치하는 파일만) · `GET /api/app/version`(로그인 필요) · 테이블 `app_release`(`scripts/migrations/T-084-app-release.sql`, 앱은 읽기만) |
+
+- **웹 변경 = 웹 배포**(push=blue/green). **네이티브 변경** — `android/**`·`capacitor.config.ts`·`AndroidManifest.xml`·Gradle 설정·`@capacitor/*` 추가·버전 변경·`public/app-shell/index.html`(연결 실패 화면)·아이콘 리소스 — 은 웹 배포로 반영되지 않는다: **APK 재빌드 + `versionCode` 증가 + 사용자 재설치**.
+- 앱/웹 분기는 `window.Capacitor`(`src/lib/native/bridge.ts`)로 하는 **화면 표시 전용**이다. 웹 코드(`src/**`)는 `@capacitor/*` 를 import 하지 않는다.
+- **앱 로그인(T-088, 1.0.1~)**: Google(Chrome 창 + 딥링크 `stockinvest://auth/callback` + 60초 1회용 코드·PKCE → `POST /api/auth/app-exchange`)과 이메일. Google 은 WebView 안 로그인을 거부(`disallowed_useragent`)하므로 **앱 WebView 가 `/api/auth/google` 로 이동하는 코드를 만들지 않는다**. 1회용 코드는 테이블 `app_auth_code`(`scripts/migrations/T-088-app-auth-code.sql`)에 `sha256(code:challenge)` 로만 저장하고, 세션 발급은 기존 `signSession`·`setSessionCookie` 를 그대로 쓴다. 현재 공개 버전은 **1.0.1(versionCode 2)** — 정본 task `agent-vault/10-Flow/tasks/T-088-app-google-login.md`.
+- 세션을 발급하는 `src/app/api/auth/` 전체(`app-exchange/`·`[provider]/**`·`login`·`signup` 등)는 **T-090(2026-10-26)부터 커밋 훅 `SAFETY_PATHS` 가 감시한다** — Reviewer 판정 줄(`최종 판정: PASS (scope: src/app/api/auth/…)`) 없이는 커밋되지 않는다(아래 "커밋 안전장치" 절). 로그인 화면(`src/app/login/`)은 UI 라 감시 밖이다. **T-092(2026-10-26)부터** 인증 관문 주변의 구현·시험 파일도 감시한다 — 초대코드 대조 `src/lib/auth/signup-gate.ts`·가입 요청(IP 속도 제한 키·초대코드 조회) `signup-request.ts`·관리자 메일 수신자 고정 `src/lib/mail/send.ts`·웹 로그인 후 이동 경로 관문 `src/lib/safe-next-path.ts`(각 시험 포함)·비밀번호 변경 `src/app/api/profile/password/`·미들웨어 공개 경로 시험 `src/__tests__/middleware-public-paths.test.ts`.
+- 정본: [`docs/mobile-app-procedure.md`](docs/mobile-app-procedure.md)(구조·결정·마일스톤 M1~M4) · [`docs/deploy-order.md`](docs/deploy-order.md) 「앱(APK) 배포」 절 · [`docs/screens.md`](docs/screens.md) §5(앱 전용 화면) · 워크스페이스 [`../docs/app-conversion-guide.md`](../docs/app-conversion-guide.md)(공통 체크리스트·실기기 확인).
+
 ## 금기 사항
 
 - API 키·패스워드 하드코딩 금지 (`.env`만 사용)
@@ -131,6 +159,10 @@ Workspace의 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`이 활성화되어 있다.
 - 백테스트 미검증 전략의 실매매 운용 금지
 - **UI 데모(목업) 승인 없이 화면을 즉흥 구현 금지** — 데모는 designer 담당, 워크스페이스 [`docs/demo-review-gate.md`](../docs/demo-review-gate.md) 데모 검토 게이트(2026-09-28)
 - **Reviewer 독립감사 없이 안전 관련 코드를 커밋 금지** (아래 커밋 안전장치 참조)
+- **네이티브 변경**(`android/**`·`capacitor.config.ts`·`AndroidManifest.xml`·Gradle·`public/app-shell/index.html`)을 `versionCode` 증가와 사용자 고지 없이 배포 금지 — 웹 배포로는 반영되지 않고, 설치된 앱과 서버 기록이 어긋난다
+- **서명 키스토어·`stockinvest-signing.env`·APK 를 저장소에 커밋 금지, 디버그 키로 서명 금지** (`build-apk.sh` 가 디버그 키·다른 지문을 거부한다)
+- **앱 판별(`window.Capacitor`)을 서버 권한 판단에 사용 금지** — 누구나 흉내 낼 수 있다. 화면 표시에만 쓴다
+- **`/app/download/` 아래에 `[file]/route.ts` 외 라우트·페이지 추가 금지** — 미들웨어가 이 접두어를 무인증 공개하므로 추가한 것은 검토 없이 공개된다(가드 테스트 `src/__tests__/app-download-public-surface.test.ts` — catch-all 세그먼트·`next.config.js` 경로 변환도 막는다)
 
 ## 커밋 안전장치 — commit-msg git 훅 (T-025)
 
@@ -149,7 +181,7 @@ awk '/^SAFETY_PATHS=\(/,/^\)/' scripts/git-hooks/commit-msg   # 권위 있는 �
 경계 판단 두 가지만 여기 남긴다(반복해서 재논의되므로):
 
 - **포함**: `settings/blocked-symbols` — 화이트리스트 정책이 2026-04-25 폐기되어, `order-limits.ts`의 `checkSymbolBlacklist()`가 읽는 이 블랙리스트가 **현재 유일한 실효 심볼 안전장치**다. `auth/oauth/` — `OAUTH_PUBLIC_PATHS`가 `middleware.ts`의 무인증 통과 목록에 그대로 펼쳐지므로, 여기에 문자열 하나만 넣으면 미들웨어를 건드리지 않고 임의 API를 열 수 있다.
-- **제외**: `settings/watch-symbols`(그 값을 읽는 코드가 `src/`에 0건 — 실측), 로그인 시도제한 계열(`*-gate.ts`·`request-limits.ts` — 권한을 주고 뺏는 코드가 아니라 시도 속도만 늦춘다).
+- **제외**: `settings/watch-symbols`(그 값을 읽는 코드가 `src/`에 0건 — 실측), 시도 속도·본문 크기 제한 계열(`attempt-gate.ts`·`login-gate.ts`·`signup-request-gate.ts`·`request-limits.ts` — 권한을 주고 뺏는 코드가 아니라 시도 속도·요청 크기만 제한한다). **이름이 `*-gate.ts` 라고 제외하지 않는다** — `signup-gate.ts` 는 초대코드를 대조해 가입을 허용·거부하는 접근 통제라 포함한다(T-092 정정, 이전 문구는 `*-gate.ts` 전체를 제외하는 것처럼 읽혔다).
 - **테스트 파일은 제외하지 않는다.** 과도차단이라는 지적이 있었으나, 안전 경로의 테스트는 그 경로의 회귀망이고 "테스트 전부 통과"가 Reviewer·QA 판단 근거이므로 그 근거를 무검토로 바꿀 수 있게 두지 않는다(`test-git-hooks.sh`를 포함시킨 것과 같은 논리). 제외 규칙 자체가 우회 표면이 된다는 이유도 있다.
 
 **설치 (신규 clone·새 머신·새 워크트리마다 1회 필수)**:
@@ -222,6 +254,7 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
 - 배포는 **`origin` 의 ref 기준**이다 — push 되지 않은 커밋은 나가지 않는다.
 - `--with-migrate`(DB 마이그레이션)는 **사용자 승인 사항**이다. 개발과 운영이 같은 NAS MariaDB 를 보고, 롤백은 코드만 되돌린다.
 - 배포 실패로 수정했다면 곧바로 재배포하지 않고 **Reviewer 부터 전체 재순환**한다.
+- 앱(APK) 공개·`app_release` 기록은 웹 배포와 별개다 — [`docs/deploy-order.md`](docs/deploy-order.md) 「앱(APK) 배포」 절(사용자 승인 게이트).
 
 워크스페이스 공통: [배포 메커니즘](../docs/dev-deploy-workflow.md) · [연계 정책](../docs/deployer-integration-procedure.md) · [롤아웃 순서](../docs/deploy-rollout-order.md)
 

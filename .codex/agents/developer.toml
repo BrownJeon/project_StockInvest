@@ -81,7 +81,7 @@ QA(Fail) → Developer: 버그 리포트 수신 → 수정 → Reviewer 재인�
 
 | 영역 | 파일 | 비고 |
 |------|------|------|
-| 페이지 / API Route | `src/app/**` | Next.js 14 App Router |
+| 페이지 / API Route | `src/app/**` | Next.js 15 App Router |
 | 거래소 어댑터 | `src/lib/exchanges/*.ts` | 실매매 REST 클라이언트 |
 | 안전장치 | `src/lib/safety/*.ts` | 주문 송신 전 반드시 통과 |
 | DB 커넥션 | `src/lib/db.ts` | mysql2/promise Pool + Retry |
