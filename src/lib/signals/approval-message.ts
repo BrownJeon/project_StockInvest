@@ -88,6 +88,42 @@ export interface ApprovalRequestView {
    * 없으면 `amountKRW`.
    */
   signedAmountKRW?: number | null;
+  /**
+   * T-097 Q-E "수량" 줄 — 호출처(`approval-notify`)가 시그널의 `indicators.sizing` 과 환율로 미리 계산해 넘긴다.
+   * 없거나 값이 이상하면 줄을 적지 않는다(추측해서 적지 않는다). 버튼·서명과 무관하다.
+   */
+  quantityLine?: QuantityLineView | null;
+}
+
+/**
+ * "수량" 줄에 쓸 값 — 승인된 데모 `mockups/T-097-telegram-sizing-line-v1.html` 의 두 형식뿐이다.
+ *  - 해외: `수량   N주 × $정수  (≈ ₩원화)` — 단가는 실제 송신 단가와 같은 **정수 달러**(`overseasLimitUnitUsd`), 괄호는 수량 × 정수 달러 × 환율
+ *  - 국내: `수량   N주 × ₩단가  (= ₩금액)` — 단가는 실제 송신가와 같은 **호가단위 반올림** 값(어댑터 `roundToTick`), 금액은 그 단가 × 수량
+ * 이 모듈은 순수하므로 환율·정수 달러·호가단위 계산은 하지 않는다 — 호출처가 계산한 값을 그대로 적는다.
+ */
+export type QuantityLineView =
+  | { market: 'overseas'; quantity: number; unitUsd: number; approxKrw: number }
+  | { market: 'domestic'; quantity: number; unitKrw: number; totalKrw: number };
+
+const isPosFinite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
+
+/**
+ * "수량" 줄 한 줄. 값이 하나라도 이상하면 `null`(줄 없음) — 해외 단가가 정수 달러가 아니면(1달러 미만 등) 승인되지 않은 형식이라 적지 않는다.
+ * 숫자만 들어가지만 이 파일의 규칙대로 동적 값은 전부 `h()` 를 통과한다.
+ */
+export function renderQuantityLine(q: QuantityLineView | null | undefined): string | null {
+  if (q == null || typeof q !== 'object') return null;
+  if (!Number.isInteger(q.quantity) || q.quantity < 1) return null;
+  const qty = h(q.quantity.toLocaleString('ko-KR'));
+  if (q.market === 'overseas') {
+    if (!isPosFinite(q.unitUsd) || !Number.isInteger(q.unitUsd) || !isPosFinite(q.approxKrw)) return null;
+    return `수량   ${qty}주 × $${h(q.unitUsd.toLocaleString('ko-KR'))}  (≈ ${h(won(q.approxKrw))})`;
+  }
+  if (q.market === 'domestic') {
+    if (!isPosFinite(q.unitKrw) || !isPosFinite(q.totalKrw)) return null;
+    return `수량   ${qty}주 × ${h(won(q.unitKrw))}  (= ${h(won(q.totalKrw))})`;
+  }
+  return null;
 }
 
 export interface RenderedMessage { text: string; keyboard: InlineKeyboard }
@@ -104,6 +140,13 @@ export function renderApprovalRequest(v: ApprovalRequestView, key: Buffer): Rend
 
   const pct = v.totalAssetPct != null && Number.isFinite(v.totalAssetPct) ? ` (총자산의 ${v.totalAssetPct.toFixed(1)}%)` : '';
   lines.push(`금액   ${won(v.amountKRW)}${pct}`);
+
+  // T-097 Q-E — "금액" 줄 바로 아래. 매수이고, 진입 구간(감시 등록 — 주문 단가·수량이 구간 도달 때 다시 정해진다)이 아니고,
+  // 시장이 일치할 때만. 그 밖에는 줄 없음.
+  if (v.side === 'buy' && !v.zone && v.quantityLine && v.quantityLine.market === v.market) {
+    const q = renderQuantityLine(v.quantityLine);
+    if (q) lines.push(q);
+  }
 
   if (v.side === 'buy') {
     const parts: string[] = [];

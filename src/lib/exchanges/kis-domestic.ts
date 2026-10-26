@@ -283,7 +283,7 @@ function tickSize(price: number): number {
 }
 
 /** 지정가 주문 가격을 호가단위에 맞게 반올림 */
-function roundToTick(price: number): number {
+export function roundToTick(price: number): number {
   const tick = tickSize(price);
   return Math.round(price / tick) * tick;
 }

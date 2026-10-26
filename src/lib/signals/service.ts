@@ -703,6 +703,7 @@ export async function createSignal(
         side: input.side,
         amountKRW: input.amountKRW,
         price: input.price,
+        orderType: input.orderType,
         strategyId: input.strategyId ?? null,
         reasoning: input.reasoning,
         indicators: enrichedIndicators,

@@ -1,7 +1,7 @@
 ---
 task_id: T-097
 title: 주문 사이징 — "금액 먼저"에서 "주가(수량) 먼저, 결과 금액으로 처리"로 변경 (P4) — 설계 질문 확정 전 구현 금지
-status: doing
+status: done
 priority: medium
 project: StockInvest
 created: 2026-10-26
@@ -219,6 +219,12 @@ demo_gate:
 - [19:11] **최종 판정: FAIL (scope: src/lib/exchanges/kis-domestic.ts, src/lib/signals/approval-message.ts, src/lib/signals/approval-notify.ts, src/lib/signals/__tests__/t097-approval-qty-line.test.ts, src/lib/signals/__tests__/t097-domestic-tick-parity.test.ts)**
 - [21:41] Q-E 재확인(코드 재감사 없음 — 19:11 판정이 fail 이던 유일한 사유인 데모 게이트 기록이 채워진 뒤 확인만). ① 직접 실행한 `check.mjs check --task agent-vault/10-Flow/tasks/T-097-price-first-sizing.md` 결과 `DEMO_GATE_PASSED`(status approved·approved_version v1·demo `mockups/T-097-telegram-sizing-line-v1.html`·hash verified) [확실]. `evidence.jsonl` 마지막 T-097 줄은 kind approve·version 1·prompt_ts 21:38:17·session `b8b8f031`(이 세션)이고, `prompts.jsonl` 에 같은 시각(21:38:17)의 훅 기록이 있으며 그 프롬프트에 "텔레그램 수량 데모 승인"이 들어 있다 — 승인 줄이 훅이 남긴 사용자 발화에 묶여 있고 에이전트가 대신 쓴 흔적은 없다(같은 발화의 T-042 생략 waive 줄도 별도 존재, 이번 scope 와 무관). ② worktree `~/.node-local/stockinvest-qe-t097` 의 5개 파일 sha256 앞 12자가 19:11 에 기록한 값과 **전부 동일**: `kis-domestic.ts` `eba2778e093a`·`approval-message.ts` `331258cd4296`·`approval-notify.ts` `b6dafd7074dd`·`t097-approval-qty-line.test.ts` `366fcbd6288a`·`t097-domestic-tick-parity.test.ts` `d891a4cc23f8` [확실]. `git status` 도 수정 3(`kis-domestic.ts`·`approval-message.ts`·`approval-notify.ts`)·신규 2뿐이고 `git diff -- '*.test.ts'` 비어 있다(기존 시험 수정 0줄 유지). 따라서 19:11 의 확인 1~9 결론(코드 critical 0·high 0, 어댑터 diff `export` 한 단어, 목업 문자 단위 일치, 서명 입력 `amount_krw` 불변, 전체 jest 7,466 pass·tsc 0)이 그대로 유효하다. 사용자가 두 고지(해외 단가는 알림 시점 환율 기준 예상값·목업 안내 문구 오류)를 받은 뒤 승인했다는 것은 Leader 보고이며 나는 task `## Q-E 구현 결과와 Reviewer 판정 요약` 의 내용을 사실로 확인하지 않았다. 비차단 보강 3건(국내 버튼 서명 시험 A18·B19, `renderQuantityLine(null)` 가드 A19, 시험 머리말 "독립" 표현)은 Leader 결정대로 이번 커밋에서 제외하고 후속으로 남긴다 — 이 파일들이 바뀌면 재감사가 필요하다.
 - [21:41] **최종 판정: PASS (scope: src/lib/exchanges/kis-domestic.ts, src/lib/signals/approval-message.ts, src/lib/signals/approval-notify.ts, src/lib/signals/__tests__/t097-approval-qty-line.test.ts, src/lib/signals/__tests__/t097-domestic-tick-parity.test.ts)**
+- [21:57] Q-E 보완 재감사(Codex C2 중간 지적 — 시장가 매수에도 수량 줄이 나옴). 21:41 이후 바뀐 부분만 확인. **확인 1(해시·diff)** — sha256(앞 12자)이 요청 값과 전부 일치: `approval-notify.ts` `7cb21c3c9bb0`·`service.ts` `4d71e48fc247`·`t097-approval-qty-line.test.ts` `cb0233b1c559`·`t097-domestic-tick-parity.test.ts` `8b9c6a094490`·`t097-approval-notify-ordertype.test.ts` `82479ab5ff08`, 변경 없음 두 파일은 `approval-message.ts` `331258cd4296`·`kis-domestic.ts` `eba2778e093a`(21:41 감사본과 같다). `service.ts` 는 HEAD(내가 3라운드에 감사한 `16e856e1840f`) 대비 `git diff` 가 **정확히 한 줄**(`orderType: input.orderType,` 추가, +1/−0)이고 `sizing-snapshot.ts` `81214a2ee9ce` 도 그대로다. 커밋된 기존 `*.test.ts` 수정 0줄(`git diff -- '*.test.ts'` 비어 있음, 시험 3개는 전부 미커밋 신규) [확실]. `approval-notify.ts` 는 21:41 감사본 복사본과 `diff` 한 결과가 `orderType?` 타입 필드·`quantityLineNeedsFx` 가드(`a.orderType !== 'limit'` → false)·`buildQuantityLine` 가드(`args.orderType !== 'limit'` → null)·`notifyApprovalRequest` 의 `orderType: a.orderType` 전달과 주석뿐이다. 새 주석의 근거도 맞다: `kis-domestic.ts:334` `ORD_UNPR: req.type === 'market' ? '0' : String(roundToTick(price))`, `kis-overseas.ts:614-618` 시장가 매수 `usdPrice * 1.005`.
+- [21:57] **확인 2(호출부)** — src 전체 grep 으로 `notifyApprovalRequest` 호출부는 `service.ts:700` 하나뿐이고 거기서 `orderType: input.orderType` 를 넘긴다(다른 호출부가 `orderType` 없이 불러 줄이 조용히 사라지는 곳 없음) [확실]. `orderType` 미전달·시장가·대소문자 변형·null 은 줄을 뺀다 — 표시 전용 fail-closed 라는 의도와 일치하고 알림·버튼은 그대로 나간다. 대문자 `LIMIT` 등은 어차피 `sizeOrderQuantity` 가 지정가로 보지 않아(`=== 'limit'`) 기록 수량이 미확정이라 줄이 없는 것과도 모순이 없다.
+- [21:57] **확인 3(지정가 불변·시장가에서 전송/서명)** — 21:41 감사본 `approval-notify` 를 스크래치패드에 따로 두고 현재 판과 같은 입력·같은 의존성으로 대조: ① 지정가(`orderType:'limit'`) 랜덤 30,000건(국내·해외·매수·매도·진입 구간·sizing 변형·환율 null/throw·`<` `&` 포함 사유) — 알림 결과·제목·간단한 본문·**메시지 본문·키보드(버튼 서명 포함) 문자 단위 일치 불일치 0**, 환율 읽기 횟수도 같다 → 목업과 문자 단위로 일치하던 21:41 상태가 그대로다(`approval-message.ts` 해시 동일). ② 시장가·미전달·`'MARKET'`·`'Limit'`·빈 문자열·null 20,000건 — 21:41 판은 이 입력 전부(20,000건)에서 수량 줄을 냈고(= 이번 보완이 막는 대상), 현재 판은 알림이 `buttons` 형식으로 정상 전송, 본문은 21:41 판에서 **수량 줄만 빠진 것**, 키보드 동일, 환율을 읽지 않는다(불일치 0). ③ 시장가 매수의 버튼 서명 입력은 DB `amount_krw`(99,600) — 국내·해외 모두 `verifyCallbackData(…, 99_600)` true, 실현액으로는 false. 시장가에서 전송이 막히거나 서명이 달라지는 경로는 없다(가드는 `view.quantityLine` 만 건드린다) [확실].
+- [21:57] **확인 4(변이)** — 복사본에서 8종: Y01 `buildQuantityLine` limit 가드 삭제(7개 시험 실패)·Y02 `=== 'market'` 만 제외로 완화(4)·Y03 `quantityLineNeedsFx` 가드 삭제(2)·Y04 notify 가 `orderType` 미전달(6)·Y05 `service.ts` 한 줄 삭제(4)·Y06 대소문자 무시(1)·Y07 service 가 항상 `'limit'` 전달(2)·Y08 환율 가드 반전(5) — **전부 사망**, 핵심 5종의 사망 개수가 Developer 보고(7·4·2·6·4)와 일치한다. **확인 5(전체 시험)** — worktree 에서 직접 재실행: 285 suites pass·4 skipped, **7,481 tests pass**, `tsc --noEmit` 오류 0(보고와 일치).
+- [21:57] 새 발견(전부 낮음, 판정 영향 없음): (a) 후속 후보 — 시장가 시그널의 승인 본문 "승인하면  지정가 주문 (신호가 기준)"(`approval-message.ts` 정적 문구)은 시장가에서 사실과 다를 수 있다(국내는 `ORD_UNPR` 0 시장가, 해외는 +0.5% 가산 지정가). 기존 문구이고 이번 변경 대상이 아니므로 판정에 넣지 않고 후속으로만 적는다. (b) 이월 — 21:41 에 적은 비차단 보강 3건(국내 버튼 서명 시험·`renderQuantityLine(null)` 가드·시험 머리말 "독립" 표현)과 F-Q3 해외 환율 시점 차이는 그대로 후속이다(이번에 시험 파일이 바뀌었지만 이 공백은 여전하다). 확인하지 못한 것: 운영 DB·텔레그램 실발송, `next build`, 커밋 훅 동작, worktree 안 vault 사본의 `## Reviewer` 동기화(Leader 몫 — 훅은 그쪽 마지막 판정 줄을 읽는다).
+- [21:57] **최종 판정: PASS (scope: src/lib/exchanges/kis-domestic.ts, src/lib/signals/approval-message.ts, src/lib/signals/approval-notify.ts, src/lib/signals/service.ts, src/lib/signals/__tests__/t097-approval-qty-line.test.ts, src/lib/signals/__tests__/t097-domestic-tick-parity.test.ts, src/lib/signals/__tests__/t097-approval-notify-ordertype.test.ts)**
 
 ## QA
 
@@ -231,6 +237,10 @@ demo_gate:
 - [17:38] 항목6 요약 — 줄 수 `service.ts` 1,057(+86/−7)·`sizing-snapshot.ts` 177·골든 시험 442·기록 시험 147(합 1,823줄). 새 시험 42개(골든 35·기록 7) 전부 pass. 전체 시험 시간 jest 11.2~13.6초(12코어), tsc 5.8초. 집중 실행(safety·signals·entry-watcher·orders·post-market) 2,447 pass 중 실패 1건은 위 스모크 사본 오염(결함 아님)이었고 제거 후 전체 재실행에서 0 failed.
 - [17:38] 확인하지 못한 것: 운영 DB·KIS·서버·텔레그램 실발송(금지 범위), `indicators.sizing` INSERT 의 실제 MariaDB 왕복(일회용 MariaDB 시험은 4 suites skipped — 환경 의존), 옵션 ON 배선 후 실주문 경로(미구현), 메인 저장소의 실제 훅 설치 상태에서의 커밋(금지), 텔레그램 "N주 × 단가" 줄(데모 v1 승인 대기라 미구현). 결함 0건, critical 0.
 - [17:38] ✅ 검증 통과 (결함 0건)
+
+- [22:02] **Q-E QA 실행 검증(Haiku, 직접 실행)** — 일회용 사본(`t097qe-qa/`, 기준 `e2a7206` + 7파일) 결과: 항목1 `diff -rq` 차이가 정확히 7파일·sha256 앞12자 7개 일치 pass · 항목2 전체 jest 2회 모두 **285 suites pass(4 skipped), 7,481 tests pass**, `tsc --noEmit` 오류 0 pass · 항목3 훅 모의 커밋(일회용 저장소, 메인 훅 복사본 sha256 일치) 5시나리오 — 7파일+scope 7개 줄 통과(rc 0), service.ts 가 빠진 옛 판정만 있으면 scope 합집합 밖으로 차단(rc 1), 마지막 줄이 fail 이면 차단, task ID 없으면 차단, service.ts 만 다른 task ID 로 staged 이면 차단 pass · 항목4 합성 렌더 8/8 — 국내 지정가 호가 반올림 2종(199,940→199,900·200,240→200,000, `수량   3주 × ₩199,900  (= ₩599,700)`), 해외 지정가(환율 1,324 → `3주 × $12  (≈ ₩47,664)`), 환율 null·국내/해외 시장가·매도·orderType 미전달은 줄 없음, 같은 입력의 시장가와 지정가 본문 차이가 정확히 수량 줄 1줄, `<`·`&` 사유 이스케이프, 버튼 2개 동일 pass · 항목5 `service.ts` +1줄·기존 커밋된 시험 수정 0줄 pass.
+- [22:02] QA 가 확인하지 못한 것: `defaultDeps().fxRate` 의 실제 SQL(DB 없음 — 주입값으로 판정 로직만), 실제 텔레그램 발송, `createSignal` end-to-end(DB), 승인된 데모 문구와의 일치(독립 감사가 문자 단위 대조를 함). QA 가 일회용 저장소 준비 중 GateGuard 가 막은 명령 2건은 모두 일회용 사본 안의 명령이었고 우회 없이 새 사본으로 진행.
+- [22:02] Leader: Q-E 7파일을 worktree `stockinvest-qe-t097` 에서 메인 트리로 복사(sha256 앞12자 7개 일치 확인) 후 명시 경로 7개 + 이 task 문서만 커밋한다.
 
 ## 배포 기록
 
@@ -268,6 +278,19 @@ demo_gate:
 - **👉 사용자가 결정할 것**: **Q-E 텔레그램 "수량" 줄 데모 v1 승인**(승인 시 구현, "생략"이면 줄 없이 이 task 종료). 데모: `mockups/T-097-telegram-sizing-line-v1.html`
 - **남은 일**: ① Q-E 구현(승인 시 — `approval-message.ts`·`approval-notify.ts`·시험 갱신, 이스케이프, Reviewer→QA) ② **옵션 ON 배선은 별도 task**(필수 조건 5항은 위 "옵션(최소 1주) ON 배선 task 로 이월하는 필수 조건" 절) ③ 후속 후보: 매수 요청 수량 주문의 한도 기준 상향
 - **이슈·위험**: MU 같은 비싼 종목은 이 변경으로 풀리지 않는다(1회 한도 4% 가 막음 — 한도는 사용자가 설정에서 변경). 롤백: 커밋 `7ca2b62` revert(신규 파일 + `service.ts` 변경뿐, DB 정리 불필요)
+
+
+### [T-097 Q-E] 텔레그램 승인 요청에 "수량" 줄 추가
+
+- **상태**: ✅ 구현·검증 완료 · ⏸ 로컬 커밋(미 push·미배포) — 이 task 는 여기서 종료, 옵션 ON 배선은 별도 task
+- **무엇이 바뀌었나**: 시그널 승인 요청 텔레그램 메시지의 "금액" 줄 바로 아래에 `수량   N주 × 단가  (= 합계)` 한 줄이 생긴다. 지정가 매수에만 나온다. 국내 단가는 실제 주문이 쓰는 호가 단위 반올림값, 해외는 정수 달러 단가와 알림 시점 환율 기준 예상 원화(`≈`)다. 매도·시장가·환율을 모를 때·수량 0 이면 줄이 없다(표시 전용이라 줄이 빠져도 알림·버튼은 그대로 나간다). 주문 금액·수량 계산·버튼 서명 입력·한도는 바뀌지 않았다. 코드: `approval-notify.ts`(줄 값 계산)·`approval-message.ts`(렌더)·`service.ts`(호출부 한 줄)·`kis-domestic.ts`(호가 반올림 함수 `export` 한 단어)와 시험 3개.
+- **배포**: ⏸ 미배포 — 커밋은 이 task 를 닫는 커밋(해시는 `git log` 의 `feat(T-097): 텔레그램 승인 요청 수량 줄`)이고 로컬·미push 다. 다음 push 에 T-097 1단계(`7ca2b62`, 동작 불변)·T-095(`96fdf99`, 스크립트)·문서 커밋들과 함께 나간다. push=blue/green 배포라 장외 창(15:40~22:00 KST)에 하는 것이 원칙이다.
+- **AI 가 검증한 것**: 독립 감사 2회 pass(21:41, 보완분 21:57 — 지정가 메시지·버튼 서명 입력·금액 줄이 보완 전과 문자 단위 일치하는지 랜덤 30,000건 대조, 시장가·미전달 20,000건에서 전송·서명 불변) · Codex C2 1건(중간: 시장가 매수도 수량 줄이 나와 표시 단가가 실제 송신가와 어긋날 수 있음 → 채택, 시장가·미전달은 줄 생략으로 보완) · 변이 8종 전부 사망 · QA 직접 실행 pass(전체 jest 285 suites·7,481 통과·tsc 0, 훅 모의 커밋 5시나리오, 합성 렌더 8/8).
+  - 검증 못 한 것: 실제 텔레그램 발송 화면, 운영 DB 환율 행(`fx_rates`)으로 만든 줄, `createSignal` 전체 경로(DB).
+- **👉 사용자가 확인할 것**: push 후 **지정가 매수 승인 요청 메시지**가 처음 나올 때 "금액" 줄 아래 수량 줄이 데모와 같은 모양인지. 정상 기준: 국내 `수량 3주 × ₩199,900  (= ₩599,700)` 꼴, 해외 `수량 3주 × $12  (≈ ₩47,664)` 꼴. **언제부터 보이는지는 불확실하다** — 킬스위치 ON·전 전략 검증 전 상태라 신규 매수 시그널이 당분간 없을 수 있다 `[가능성 높음]`.
+- **👉 사용자가 결정할 것**: 없음(데모 v1 은 이미 승인). push 시점은 다른 로컬 커밋들과 함께 별도로 정한다.
+- **남은 일**: ① 옵션(최소 1주) ON 배선 — 별도 task, 필수 조건 5항은 위 1단계 요약에 있음 ② 비차단 후속 3건(국내 버튼 서명 시험 보강·`renderQuantityLine(null)` 가드·시험 머리말 표현) ③ 시장가 시그널의 승인 본문 "승인하면 지정가 주문 (신호가 기준)" 정적 문구가 시장가에서는 사실과 다를 수 있음(기존 문구, 이번 범위 밖 — 시장가 매수 시그널이 실제로 생기는지 먼저 확인)
+- **이슈·위험**: 해외 단가는 알림 시점 환율 기준 예상값이라 실제 주문 시점 환율과 다를 수 있다(사용자 고지·승인 완료). 롤백: 이 커밋 revert(표시 줄 한 개와 `export` 한 단어, DB 정리 불필요).
 
 
 ## 데모 검토 (demo gate)
