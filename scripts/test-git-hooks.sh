@@ -10,7 +10,7 @@
 #
 #   1) 로직 시나리오 단계 — GIT_INDEX_FILE 로 만든 **임시 index** 에만 가짜 blob 을 stage 하고 훅을
 #      직접 호출한다. 이 단계는 실제 index 를 건드리지 않는다. 다만
-#        · 판정 fixture(agent-vault/10-Flow/tasks/T-979~998-hooktest-*.md)를 **실제 작업 트리에** 잠시
+#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998-hooktest-*.md)를 **실제 작업 트리에** 잠시
 #          썼다가 EXIT trap 으로 지운다(kill -9 같은 강제 종료면 남을 수 있다). 실행 중 다른 세션이
 #          `git add -A` 하면 그 커밋에 섞일 수 있다.
 #        · 가짜 blob 은 .git/objects 에 dangling object 로 남는다(`git gc` 로 정리된다).
@@ -428,10 +428,13 @@ stage_and_run 1 "(z3) session-cookie·current-user·password·kis-verify → 차
   "src/lib/auth/password.ts" "src/lib/auth/kis-verify.ts"
 
 # (z4) 제외 판단 회귀 고정 — 시도제한(rate limit) 계열은 여전히 통과해야 한다
-stage_and_run 0 "(z4) attempt/login/signup gate·request-limits → 통과(의도적 제외)" \
+#   (T-092 갱신) 원래 묶음에 있던 src/lib/auth/signup-gate.ts 는 속도 제한이 아니라 초대코드 대조(접근 통제)라
+#   T-092 에서 목록에 들어갔다 → 이 시나리오에서 빼고, 실제 속도 제한인 signup-request-gate.ts 로 바꿨다.
+#   signup-gate.ts 가 이제 걸린다는 단언은 아래 '[T-092 …]' 절(t092-a*)에 있다.
+stage_and_run 0 "(z4) attempt/login/signup-request gate·request-limits → 통과(의도적 제외)" \
   "$(msg 'chore: 로그인 시도제한 임계값 조정')" \
   "src/lib/auth/attempt-gate.ts" "src/lib/auth/login-gate.ts" \
-  "src/lib/auth/signup-gate.ts" "src/lib/auth/request-limits.ts"
+  "src/lib/auth/signup-request-gate.ts" "src/lib/auth/request-limits.ts"
 
 # (z5) 테스트 파일 정책 — 제외하지 않기로 했으므로 안전경로의 테스트도 계속 차단된다
 stage_and_run 1 "(z5) [정책] 안전경로 테스트 파일도 계속 차단(제외 안 함)" \
@@ -845,11 +848,16 @@ stage_and_run 0 "(t090-n1) authx/·auth-foo/·foo/…/auth/·mockups/…/auth/ �
   "src/app/api/authx/route.ts" "src/app/api/auth-foo/route.ts" \
   "foo/src/app/api/auth/login/route.ts" "mockups/src/app/api/auth/route.ts"
 
-# 인증 계열이지만 이번 승인(T-090) 범위 밖인 경로 — T-090 이 auth/ 밖으로 넓어지지 않았음을 고정한다(과도차단 회귀 방지).
-# 별개 사용자 결정 대기 항목이라 "영구 제외"가 아니다: 나중에 사용자가 이 경로를 목록에 넣기로 하면 이 시나리오를 함께 고친다.
-stage_and_run 0 "(t090-x) 범위 밖: profile/password·middleware-public-paths 시험 → 통과" \
-  "$(msg 'chore: 비밀번호 변경·공개경로 시험 수정')" \
-  "src/app/api/profile/password/route.ts" "src/__tests__/middleware-public-paths.test.ts"
+# 인증 계열이지만 T-090 승인 범위 밖이던 경로. T-090 때는 "범위 밖이라 통과"를 고정했다(당시 별개 사용자 결정 대기).
+# (T-092 갱신) 사용자가 "인증 관련파일은 나누지 말고"로 두 경로를 목록에 넣기로 해 뜻이 뒤집혔다 — 시나리오를 지우지 않고
+# "이제 걸린다"로 바꾸고, 결정이 따로였던 두 경로를 둘로 나눴다(T-090 Reviewer 권장). 여전히 밖인 이웃은 x3 이 고정한다.
+stage_and_run 1 "(t090-x1) profile/password (T-092 에서 포함) → 이제 차단" \
+  "$(msg 'chore: 비밀번호 변경 수정')" "src/app/api/profile/password/route.ts"
+stage_and_run 1 "(t090-x2) middleware-public-paths 시험 (T-092 에서 포함) → 이제 차단" \
+  "$(msg 'test: 공개경로 시험 수정')" "src/__tests__/middleware-public-paths.test.ts"
+stage_and_run 0 "(t090-x3) profile/route.ts·profile/settings/ (여전히 미포함) → 통과" \
+  "$(msg 'chore: 프로필 조회·회원 설정 수정')" \
+  "src/app/api/profile/route.ts" "src/app/api/profile/settings/route.ts"
 
 echo ""
 echo "[T-090 — 실 커밋 E2E: 일회용 임시 저장소에서 git 이 새 훅을 실제로 호출하는가]"
@@ -936,6 +944,181 @@ e2e_commit "(t090-g4) 실 커밋: 로그인 화면·authx/ 이웃(task ID 없음
   'feat: 로그인 화면 문구'
 
 echo ""
+echo "[T-092 — 인증 관련 구현·시험 파일(6곳 + 시험 4) 추가]"
+
+# T-090 이 잠근 인증 입구 라우트가 기대는 불변식의 구현 쪽. 디렉토리 항목은 profile/password/ 하나뿐이고 나머지는 정확 일치다.
+# 항목마다 ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과(통과 문구까지 확인) ③이웃 경로만 검토한 판정 → 차단.
+# 각 시나리오는 새 경로 파일 **하나만** stage 한다 — 목록에서 그 항목 하나만 빠져도 그 항목의 ①·②·③ 이 실패한다.
+T092_ITEMS=(
+  "src/lib/auth/signup-gate.ts"                      # 초대코드 대조 = 접근 통제(속도 제한 아님)
+  "src/lib/auth/__tests__/signup-gate.test.ts"
+  "src/lib/auth/signup-request.ts"                   # 가입 요청 입력 검증·IP 키·초대코드 조회
+  "src/lib/auth/__tests__/signup-request.test.ts"
+  "src/lib/mail/send.ts"                             # 수신자 env 고정(초대코드는 관리자 주소로만)
+  "src/lib/mail/__tests__/send.test.ts"
+  "src/lib/safe-next-path.ts"                        # T-089 오픈 리다이렉트 단일 관문
+  "src/lib/__tests__/safe-next-path.test.ts"
+  "src/app/api/profile/password/route.ts"            # 비밀번호 변경(디렉토리 항목)
+  "src/__tests__/middleware-public-paths.test.ts"    # 미들웨어 공개/보호 판정 시험
+)
+
+cat > "agent-vault/10-Flow/tasks/T-978-hooktest-t092-scoped.md" <<'EOF'
+---
+task_id: T-978
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/signup-gate.ts, src/lib/auth/__tests__/signup-gate.test.ts, src/lib/auth/signup-request.ts, src/lib/auth/__tests__/signup-request.test.ts, src/lib/mail/send.ts, src/lib/mail/__tests__/send.test.ts, src/lib/safe-next-path.ts, src/lib/__tests__/safe-next-path.test.ts, src/app/api/profile/password/, src/__tests__/middleware-public-paths.test.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-978-hooktest-t092-scoped.md")
+
+# ③ 용 — 이름이 비슷한 '이웃' 경로만 검토한 판정. 어느 것도 새 10개 파일을 덮지 않아야 한다:
+#    속도 제한 gate·header-safe(같은 디렉토리의 다른 파일) · 슬래시 없는 `src/lib/mail`·`src/app/api/profile/password`
+#    (= 그 이름의 파일 하나만) · profile/kis/(형제 디렉토리) · 확장자·위치만 다른 파일 · middleware 자체 시험 아닌 다른 이름.
+cat > "agent-vault/10-Flow/tasks/T-977-hooktest-t092-nearmiss.md" <<'EOF'
+---
+task_id: T-977
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/signup-request-gate.ts, src/lib/auth/login-gate.ts, src/lib/mail/header-safe.ts, src/lib/mail, src/app/api/profile/password, src/app/api/profile/kis/, src/lib/safe-next-path.tsx, src/lib/auth/signup-gate.test.ts, src/lib/__tests__/safe-next-path.ts, src/__tests__/middleware.test.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-977-hooktest-t092-nearmiss.md")
+
+t092_i=0
+for t092_p in "${T092_ITEMS[@]}"; do
+  t092_i=$((t092_i + 1))
+  stage_and_run 1 "(t092-a${t092_i}.1) ${t092_p#src/} + 판정 미기록(T-993) → 차단" \
+    "$(msg 'fix(T-993): 인증 구현 수정')" "$t092_p"
+  stage_and_run_expect "$T075_OK" 0 "(t092-a${t092_i}.2) ${t092_p#src/} + T-978(scope 포함) → 통과" \
+    "$(msg 'fix(T-978): 인증 구현 수정')" "$t092_p"
+  stage_and_run 1 "(t092-a${t092_i}.3) ${t092_p#src/} + T-977(이웃 경로 scope) → 차단" \
+    "$(msg 'fix(T-977): 인증 구현 수정')" "$t092_p"
+done
+
+# task ID 없이 고친 경우 — 대표 2건(정확 일치 1·디렉토리 1)
+stage_and_run 1 "(t092-b1) signup-gate.ts + task ID 없음 → 차단" \
+  "$(msg 'fix: 초대코드 비교 수정')" "src/lib/auth/signup-gate.ts"
+stage_and_run 1 "(t092-b2) profile/password/route.ts + task ID 없음 → 차단" \
+  "$(msg 'fix: 비밀번호 변경 수정')" "src/app/api/profile/password/route.ts"
+
+# 디렉토리 항목 profile/password/ — 아직 없는 하위 파일(시험 등)도 걸린다. 차단 기대는 경로 하나씩.
+stage_and_run 1 "(t092-c1) profile/password/__tests__/route.test.ts (하위·신규) → 차단" \
+  "$(msg 'test: 비밀번호 변경 시험 추가')" "src/app/api/profile/password/__tests__/route.test.ts"
+stage_and_run_expect "$T075_OK" 0 "(t092-c2) 같은 하위 파일 + T-978(디렉토리 scope) → 통과" \
+  "$(msg 'test(T-978): 비밀번호 변경 시험 추가')" "src/app/api/profile/password/__tests__/route.test.ts"
+
+# 차용 방지 — T-090 의 auth/ 라우트 판정(T-980)으로 lib 구현을 통과시킬 수 없다(라우트를 검토했다고 구현을 검토한 게 아니다).
+stage_and_run 1 "(t092-v1) signup-gate.ts 를 T-980(auth/ 라우트 scope)로 통과 시도 → 차단" \
+  "$(msg 'fix(T-980): 가입 라우트 + 초대코드 비교')" \
+  "src/app/api/auth/signup/route.ts" "src/lib/auth/signup-gate.ts"
+
+# 이웃은 감사 대상이 아니다 — task ID 없이도 통과해야 한다. 통과 기대는 묶어도 약해지지 않는다(하나라도 잘못 매치되면 exit 1).
+# 줄마다 겨냥하는 변이: `\.ts$` 삭제(signup-request-gate.ts·signup-gate-foo.ts·signup-gate.ts.bak) · `.` 이스케이프 누락
+# (signup-gatexts) · `^` 삭제(앞에 디렉토리가 붙은 경로) · `-gate` 류 전체로 확대(login/attempt/signup-request gate).
+stage_and_run 0 "(t092-n1) 속도 제한 gate·signup-gate 이웃(-foo·.bak·xts·foo/…) → 통과" \
+  "$(msg 'chore: 이웃 파일 정리')" \
+  "src/lib/auth/login-gate.ts" "src/lib/auth/attempt-gate.ts" "src/lib/auth/signup-request-gate.ts" \
+  "src/lib/auth/request-limits.ts" "src/lib/auth/signup-gate-foo.ts" "src/lib/auth/signup-gate.ts.bak" \
+  "src/lib/auth/signup-gatexts" "foo/src/lib/auth/signup-gate.ts" "src/lib/auth/signup-request.tsx"
+# 겨냥 변이: `^src/lib/mail/` 디렉토리로 확대 · `send` 접두로 축약(sender.ts) · `$` 삭제(send.ts.bak) · 시험 위치 확대 · `^` 삭제(foo/…).
+stage_and_run 0 "(t092-n2) mail 이웃(header-safe·config·signup-request-mail·sender·send.ts.bak) → 통과" \
+  "$(msg 'chore: 이웃 파일 정리')" \
+  "src/lib/mail/header-safe.ts" "src/lib/mail/config.ts" "src/lib/mail/signup-request-mail.ts" \
+  "src/lib/mail/sender.ts" "src/lib/mail/send.ts.bak" "src/lib/mail/__tests__/header-safe.test.ts" \
+  "src/lib/mail/__tests__/send.test.ts.snap" "src/types/nodemailer.d.ts" "foo/src/lib/mail/send.ts"
+# 겨냥 변이: `\.ts$` 삭제(safe-next-path-x.ts·.tsx·-old.test.ts) · 디렉토리 위치 무시(auth/safe-next-path.ts) · `^` 삭제(mockups/…).
+stage_and_run 0 "(t092-n3) safe-next-path 이웃(-x·.tsx·auth/·-old 시험) → 통과" \
+  "$(msg 'chore: 이웃 파일 정리')" \
+  "src/lib/safe-next-path-x.ts" "src/lib/safe-next-path.tsx" "src/lib/auth/safe-next-path.ts" \
+  "src/lib/__tests__/safe-next-path-old.test.ts" "src/lib/__tests__/safe-next-path.test.tsx" \
+  "mockups/src/lib/safe-next-path.ts"
+# 겨냥 변이: 끝 `/` 삭제(password-reset/·passwordx.ts) · `^src/app/api/profile/` 로 확대(route.ts·settings/) · 화면 경로 · `^` 삭제(mockups/…).
+stage_and_run 0 "(t092-n4) profile 이웃(password-reset/·passwordx·route.ts·settings/)·화면 → 통과" \
+  "$(msg 'chore: 이웃 파일 정리')" \
+  "src/app/api/profile/password-reset/route.ts" "src/app/api/profile/passwordx.ts" \
+  "src/app/api/profile/route.ts" "src/app/api/profile/settings/route.ts" \
+  "src/app/profile/ProfilePage.tsx" "src/app/login/page.tsx" "mockups/src/app/api/profile/password/route.ts"
+# 겨냥 변이: 시험 항목의 `\.ts$` 삭제(.tsx·.bak) · `__tests__/` 전체로 확대(다른 시험들) · `^` 삭제(foo/…).
+stage_and_run 0 "(t092-n5) 시험 이웃(oauth-invite-gate·login-gate·app-download 시험 등) → 통과" \
+  "$(msg 'test: 이웃 시험 정리')" \
+  "src/lib/auth/__tests__/oauth-invite-gate.test.ts" "src/lib/auth/__tests__/login-gate.test.ts" \
+  "src/lib/auth/__tests__/request-limits.test.ts" "src/__tests__/app-download-public-surface.test.ts" \
+  "src/__tests__/middleware-public-paths.test.tsx" "src/lib/auth/__tests__/signup-gate.test.ts.bak" \
+  "foo/src/__tests__/middleware-public-paths.test.ts"
+
+# 혼합 커밋 — 판정 합집합(요구사항4). T-978(새 10개)·T-980(auth/)·T-995(src/lib/safety/) 가 각자 자기 몫만 덮는다.
+T092_MIX=( "README.md" "src/app/api/auth/signup/route.ts" "src/lib/auth/signup-gate.ts" "src/lib/mail/send.ts" )
+stage_and_run 1 "(t092-m1) [문서, auth 라우트, 새 구현×2] 판정 미기록(T-993) → 차단" \
+  "$(msg 'feat(T-993): 가입 경로 정리')" "${T092_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t092-m2) 같은 묶음 + T-978·T-980 합집합 → 통과" \
+  "$(msg 'feat(T-978,T-980): 가입 경로 정리')" "${T092_MIX[@]}"
+stage_and_run 1 "(t092-m3) 같은 묶음 + T-978 만 → auth 라우트가 범위 밖, 차단" \
+  "$(msg 'feat(T-978): 가입 경로 정리')" "${T092_MIX[@]}"
+stage_and_run 1 "(t092-m4) 같은 묶음 + T-980 만 → 새 구현이 범위 밖, 차단" \
+  "$(msg 'feat(T-980): 가입 경로 정리')" "${T092_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t092-m5) 새 10개 전부 + 문서, T-978 → 통과" \
+  "$(msg 'feat(T-978): 인증 구현 일괄')" "${T092_ITEMS[@]}" "docs/x.md"
+stage_and_run 1 "(t092-m6) 새 구현 + 기존 안전파일(safety/), T-978 만 → 차단" \
+  "$(msg 'fix(T-978): 인증 + 안전장치')" "src/lib/safe-next-path.ts" "$SAFETY_FILE"
+stage_and_run_expect "$T075_OK" 0 "(t092-m7) 같은 묶음 + T-978·T-995 합집합 → 통과" \
+  "$(msg 'fix(T-978,T-995): 인증 + 안전장치')" "src/lib/safe-next-path.ts" "$SAFETY_FILE"
+
+echo ""
+echo "[T-092 — 실 커밋 E2E: 일회용 임시 저장소에서 git 이 새 항목을 실제로 거르는가]"
+
+# 위 T-090 실 커밋 E2E 와 같은 일회용 저장소·shim(이 작업 트리의 훅)을 그대로 쓴다. 실제 저장소는 건드리지 않는다.
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-978-hooktest-t092-scoped.md" <<'EOF'
+---
+task_id: T-978
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/signup-gate.ts, src/lib/mail/send.ts, src/lib/safe-next-path.ts, src/app/api/profile/password/, src/__tests__/middleware-public-paths.test.ts)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-977-hooktest-t092-nearmiss.md" <<'EOF'
+---
+task_id: T-977
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/auth/login-gate.ts, src/lib/mail, src/app/api/profile/password)**
+EOF
+mkdir -p "$E2E_REPO/src/lib/auth" "$E2E_REPO/src/lib/mail" "$E2E_REPO/src/app/api/profile/password" \
+  "$E2E_REPO/src/__tests__" "$E2E_REPO/src/app/api/auth/signup"
+# (fixture 는 커밋하지 않는다 — 훅은 작업 트리의 task 파일을 읽는다. T-090 fixture 와 같다.)
+
+printf 'v1\n' > "$E2E_REPO/src/lib/auth/signup-gate.ts"
+e2e_git add src/lib/auth/signup-gate.ts
+e2e_commit "(t092-g1) 실 커밋: signup-gate.ts + task ID 없음 → 차단" block "커밋 차단" \
+  'fix: 초대코드 비교 수정'
+e2e_commit "(t092-g2) 실 커밋: 같은 변경 + T-977(이웃 경로 scope) → 차단" block "커밋 차단" \
+  'fix(T-977): 초대코드 비교 수정'
+e2e_commit "(t092-g3) 실 커밋: 같은 변경 + T-980(auth/ 라우트 scope) → 차단(차용 방지)" block "커밋 차단" \
+  'fix(T-980): 초대코드 비교 수정'
+e2e_commit "(t092-g4) 실 커밋: 같은 변경 + T-978(scope 포함) → 통과·HEAD 이동" commit "$T075_OK" \
+  'fix(T-978): 초대코드 비교 수정'
+
+printf 'v1\n' > "$E2E_REPO/src/app/api/profile/password/route.ts"
+printf 'v1\n' > "$E2E_REPO/src/__tests__/middleware-public-paths.test.ts"
+e2e_git add src/app/api/profile/password/route.ts src/__tests__/middleware-public-paths.test.ts
+e2e_commit "(t092-g5) 실 커밋: profile/password·미들웨어 시험 + task ID 없음 → 차단" block "커밋 차단" \
+  'chore: 비밀번호 변경·공개경로 시험'
+e2e_commit "(t092-g6) 실 커밋: 같은 변경 + T-978 → 통과·HEAD 이동" commit "$T075_OK" \
+  'chore(T-978): 비밀번호 변경·공개경로 시험'
+
+printf 'v1\n' > "$E2E_REPO/src/lib/mail/send.ts"
+printf 'v1\n' > "$E2E_REPO/src/app/api/auth/signup/route.ts"
+e2e_git add src/lib/mail/send.ts src/app/api/auth/signup/route.ts
+e2e_commit "(t092-g7) 실 커밋: [send.ts, auth 라우트] + T-978 만 → 차단" block "커밋 차단" \
+  'feat(T-978): 가입 메일 정리'
+e2e_commit "(t092-g8) 실 커밋: 같은 변경 + T-978·T-980 합집합 → 통과·HEAD 이동" commit "$T075_OK" \
+  'feat(T-978,T-980): 가입 메일 정리'
+
+printf 'x\n' > "$E2E_REPO/src/lib/auth/login-gate.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/auth/signup-request-gate.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/mail/header-safe.ts"
+e2e_git add src/lib/auth/login-gate.ts src/lib/auth/signup-request-gate.ts src/lib/mail/header-safe.ts
+e2e_commit "(t092-g9) 실 커밋: 속도 제한 gate·header-safe 이웃(task ID 없음) → 통과" commit "" \
+  'chore: 시도제한 임계값·헤더 정리'
+
+echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
 printf '결과: %d 통과 / %d 실패\n' "$PASS_N" "$FAIL_N"
 echo ""
@@ -1013,7 +1196,7 @@ if [ "$VERBOSE" -eq 1 ]; then
 fi
 
 echo ""
-echo "워킹트리 영향 확인 (T-981~998 테스트 fixture 가 남아 있지 않아야 함):"
+echo "워킹트리 영향 확인 (T-977~998 테스트 fixture 가 남아 있지 않아야 함):"
 git status --short | sed 's/^/  /'
 echo ""
 echo "✅ 전체 검증 통과."

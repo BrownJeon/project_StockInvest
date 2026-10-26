@@ -198,6 +198,11 @@ check_hook_sync || true
 #       튜닝으로 상대적으로 자주 바뀌는 파일이라 게이트에 넣으면 마찰 대비 안전 이득이 낮다.
 #       ⚠ 단, 소유자 비밀번호가 약해 브루트포스 방어가 **사실상 유일한 장벽**이 되는 상황이면
 #         이 판단은 뒤집혀야 한다. 그 경우 Leader 판단으로 재검토할 것.
+#     ⚠ T-092(2026-10-26) 정정 — 위 줄의 `signup-gate.ts`·`signup-request.ts` 는 시도 속도 제한 코드가 아니었다
+#       (이름이 `-gate` 로 끝난다고 같은 부류가 아니다). signup-gate.ts 는 초대코드를 대조해 가입을 허용·거부하는
+#       **접근 통제**이고, signup-request.ts 는 가입 요청 입력 검증·IP 키·초대코드 조회다. 둘은 T-092 에서 포함으로
+#       뒤집혔다(아래 'T-092 추가'). 지금도 제외인 것은 시도 속도 제한 `attempt-gate.ts`·`login-gate.ts`·
+#       `signup-request-gate.ts` 와 본문 크기 제한 `request-limits.ts` 뿐이다(test-git-hooks.sh 가 고정).
 #
 # 테스트 파일(`**/__tests__/`, `*.test.ts`) — 제외하지 **않는다**(REV-025 MEDIUM 검토 결과):
 #   과도차단이라는 지적은 타당하나, 제외하면 아래 새 구멍이 생겨 순이득이 음수라고 판단했다.
@@ -300,9 +305,69 @@ check_hook_sync || true
 #   넣지 않은 것:
 #     - src/__tests__/middleware-public-paths.test.ts   미들웨어 공개 경로 시험 — T-084 때부터 별개 사용자 결정 대기 중이라
 #                               이번 승인 범위 밖이다.
+#                               ⚠ T-092(2026-10-26)에서 포함됐다(아래 'T-092 추가').
 #     - src/app/api/profile/ (kis/ 외)·src/app/login/   비밀번호 변경 등 다른 인증 계열·로그인 화면 — 이번 승인 범위 밖.
 #                               화면(src/app/login/page.tsx)은 UI 라 훅 대상이 아니다.
+#                               ⚠ T-092 에서 profile/password/ 는 포함됐다. profile/route.ts·profile/settings/ 와
+#                               login/ 화면은 여전히 미포함이다.
 #   (경로 이름만 비슷한 src/app/api/authx/·src/app/api/auth-foo/ 는 접두 `auth/` 가 아니라 걸리지 않는다 — test-git-hooks.sh 가 고정.)
+#
+# T-092 추가 (2026-10-26, 사용자 결정 "인증 관련파일은 나누지 말고" — T-090 Reviewer 커버리지 관찰·최종 요약 결정 2 후속):
+#   T-090 은 인증 입구 *라우트*(src/app/api/auth/)를 잠갔지만, 그 라우트가 기대는 구현(signup-gate·signup-request·
+#   mail/send·safe-next-path)과 인증 관문 주변 경로(profile/password/·미들웨어 공개 경로 시험)는 훅 밖이었다.
+#   아래 6곳(+ signup-gate·signup-request·send·safe-next-path 의 시험 4개)을 한 번에 넣는다. 디렉토리 항목은
+#   `src/app/api/profile/password/` 하나뿐이고 나머지는 정확 일치(`^…\.ts$`)라
+#   이름이 비슷한 이웃 파일(예: login-gate.ts·signup-request-gate.ts·mail/header-safe.ts)은 새지 않는다.
+#   + src/lib/auth/signup-gate.ts       → 초대코드(`SIGNUP_INVITE_CODE`)를 상수시간 대조해 가입을 허용·거부하는
+#                               **접근 통제**다. 자체 머리 주석대로 인터넷에 열린 vhost 의 유일한 가입 제한이고,
+#                               signup 라우트(가입 즉시 세션 발급)와 OAuth 가입(oauth/complete-gate.ts)이 함께 쓴다.
+#                               이름이 `-gate` 로 끝나지만 속도 제한이 아니다 — 위 '라운드4 제외 판단'의 T-092 정정 참조.
+#   + src/lib/auth/signup-request.ts    → 가입 요청 입력 검증(parseSignupRequest)·속도 제한용 IP 키(clientIpKey —
+#                               x-real-ip → XFF **마지막** 항목, 첫 항목을 쓰면 헤더 위조로 제한이 무력해진다)·
+#                               초대코드 조회(currentInviteCode). 수신자 고정 불변식 자체는 이 파일이 아니라
+#                               mail/send.ts 가 지지만, 이 파일에도 지키는 것이 둘 있다:
+#                               ① clientIpKey 는 signup-request 라우트 외에 이미 감시 중인 app-exchange 라우트(앱 1회용
+#                               코드 → 세션 교환)의 속도 제한 키이고, app-release/handlers.ts(APK 다운로드)의 속도
+#                               제한 키이기도 하다 — XFF 첫 항목을 쓰는 식으로 약해지면 그 제한들이 함께 무력해진다.
+#                               ② currentInviteCode() 는 초대코드 문자열이 관리자 메일 본문으로 들어가는 유일한 읽기다.
+#   + src/lib/mail/send.ts              → `sendAdminMail(content)` 인자에 수신자 필드가 없고, 수신자를 config.ts 의
+#                               `getAdminNotifyEmail()` 로만 받아 `to:` 에 넣는다 = "초대코드는 관리자 주소로만 나간다"의
+#                               **구조적 보증**(자체 머리 주석). 이 파일이 지는 것은 그 시그니처와 `to:` 줄이다 —
+#                               인자에 `to` 하나만 추가돼도 보증이 사라진다. env(`ADMIN_NOTIFY_EMAIL`) 읽기와 주소 형식
+#                               검사(isSafeHeaderAddress)는 훅 밖 mail/config.ts 에 있다(아래 '넣지 않은 것' 후보).
+#                               T-090 이 잠근 signup-request 라우트 시험은 이 함수를 모킹하므로 보증 자체는 이 파일이 진다.
+#   + src/lib/safe-next-path.ts         → 로그인 후 이동 경로 검사(sanitizeInternalPath) — T-089 오픈 리다이렉트에서
+#                               **웹 `next`** 의 단일 관문. 서버(oauth/config.ts 의 sanitizeNextPath)와 로그인 화면이
+#                               공유한다. 앱 딥링크 경로는 별도 검사 sanitizeAppNextPath(oauth/app-flow.ts — 웹보다
+#                               엄격, 이 파일에 위임하지 않음, ^src/lib/auth/oauth/ 로 이미 감시 중)가 맡는다.
+#                               약화되면 웹에서 로그인을 마친 사용자를 외부 사이트로 보낼 수 있다(피싱 발판).
+#   + src/app/api/profile/password/     → 비밀번호 변경 라우트. 현재 비밀번호 재확인으로 "쿠키 탈취만으로 계정을
+#                               빼앗기지 않게" 하고, OAuth 전용 계정의 비밀번호 심기를 거부한다(자체 주석). 여기가
+#                               약화되면 세션 쿠키 하나로 비밀번호를 바꿔 계정을 영구 탈취한다 = 매매 전권.
+#                               2026-10-26 현재 그 아래는 route.ts 하나뿐이다. 신규 파일(시험 포함)이 새지 않게
+#                               디렉토리로 넣는다(auth/ 와 같은 이유). profile/kis/ 는 이미 별도 항목이다.
+#   + src/__tests__/middleware-public-paths.test.ts → 미들웨어(src/middleware.ts) 공개/보호 판정을 고정하는 시험
+#                               (T-084). middleware.ts 는 이미 감시 중인데 그 회귀망은 밖이었다 — "테스트 파일 —
+#                               제외하지 않는다" 원칙(위)과 같은 이유로 넣는다.
+#   + signup-gate·signup-request·send·safe-next-path 의 시험 4개(정확 일치): src/lib/auth/__tests__/signup-gate.test.ts·
+#                               signup-request.test.ts, src/lib/mail/__tests__/send.test.ts, src/lib/__tests__/safe-next-path.test.ts.
+#                               구현은 감시하면서 그 단언을 무검토로 지울 수 있으면 회귀망이 먼저 오염된다(T-042 와 같은 처리).
+#                               signup-request.test.ts 에는 제외 유지인 속도 제한 게이트 단언('게이트 정책'·'login-gate
+#                               오염 방지' describe)도 있어 그 회귀망 일부가 함께 감시 안으로 들어왔다 — 임계값 튜닝은
+#                               상수를 import 하는 구조라 이 시험 수정을 거의 부르지 않아 마찰은 작다.
+#   새로 걸리는 추적 파일(2026-10-26, `git ls-files` 전수에 옛·새 목록을 이 훅과 같은 방식으로 적용해 대조): 정확히
+#   10개 — 위 구현 4·시험 4·profile/password/route.ts·middleware-public-paths.test.ts. 옛 목록이 걸던 파일은 전부 그대로.
+#   넣지 않은 것 (6곳 밖 — 사용자 결정 범위를 넓히지 않았다. 애매한 이웃은 T-092 task 이력서에 '후보'로 적었다):
+#     - src/lib/mail/header-safe.ts·config.ts·signup-request-mail.ts(+ 시험)·src/types/nodemailer.d.ts
+#                               메일 헤더 인젝션 방지·수신자 env 읽기·본문 조립·cc/bcc 미선언 타입. send.ts 의 보증과
+#                               맞물려 있어 후보로만 남긴다.
+#     - src/lib/auth/__tests__/oauth-invite-gate.test.ts   이미 감시 중인 oauth/complete-gate.ts 의 시험인데 위치가
+#                               oauth/ 밖이다 — 후보.
+#     - src/lib/auth/{attempt,login,signup-request}-gate.ts·request-limits.ts   시도 속도·본문 크기 제한(제외 유지).
+#     - src/app/login/ 화면·profile/settings/   UI·아직 매매에 배선되지 않은 회원별 설정 저장(자체 주석 engineWired:false).
+#     - src/app/api/profile/route.ts   KIS 계좌번호를 decryptSecret(secret-box.ts, 감시 중)로 복호화해 마스킹만 내려주는
+#                               GET 이다(머리 주석 불변식: KIS App Key/Secret 은 어떤 경우에도 응답에 담지 않는다).
+#                               사용자 결정 범위(6곳) 밖이라 넣지 않았다 — 후보.
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
@@ -328,6 +393,16 @@ SAFETY_PATHS=(
   '^src/lib/auth/oauth/'
   '^src/middleware\.ts$'
   '^src/app/api/auth/'
+  '^src/lib/auth/signup-gate\.ts$'
+  '^src/lib/auth/__tests__/signup-gate\.test\.ts$'
+  '^src/lib/auth/signup-request\.ts$'
+  '^src/lib/auth/__tests__/signup-request\.test\.ts$'
+  '^src/lib/mail/send\.ts$'
+  '^src/lib/mail/__tests__/send\.test\.ts$'
+  '^src/lib/safe-next-path\.ts$'
+  '^src/lib/__tests__/safe-next-path\.test\.ts$'
+  '^src/app/api/profile/password/'
+  '^src/__tests__/middleware-public-paths\.test\.ts$'
   '^src/app/api/orders/'
   '^src/app/api/safety/'
   '^src/app/api/cron/'
