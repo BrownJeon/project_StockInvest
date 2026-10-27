@@ -71,15 +71,40 @@ export function isNativeApp(): boolean {
 }
 
 /**
+ * T-094 WP-3 — `App.getInfo()` 응답을 기다리는 최대 시간(ms). 넘으면 "버전 모름"(null)으로 끝낸다.
+ *
+ * 근거: `getInfo()` 는 네트워크 없이 기기 안 패키지 정보(PackageManager)만 읽는 네이티브 호출이라 정상이면 수 ms 안에 온다.
+ *   끝내 응답하지 않으면 지금까지는 버전 읽기가 영원히 "읽는 중"으로 남아 로그인 화면의 Google 자리·구분선이 비어 있었다
+ *   (`OAuthButtons` `googleLoginGate` 의 'reading'). 앱 시작 직후 브리지가 바쁜 순간까지 넉넉히 감싸면서도
+ *   사용자가 빈 자리를 오래 보지 않도록 3초로 둔다(정상 응답의 수백 배 여유).
+ * ⚠ 시간 초과 null 은 "앱 아님·플러그인 없음·형식 오류"와 같은 "모름"이다 — 호출부는 모르는 값으로는 막지 않는다(T-091 대안 B).
+ *   그래서 이 값을 너무 짧게 잡으면 느린 기기의 **옛 앱**이 게이트를 지나칠 수 있다(막지 않는 쪽으로 틀린다). 줄일 때는 그 점을 본다.
+ */
+export const APP_INFO_TIMEOUT_MS = 3_000;
+
+/** 시간 초과 표시(정상 응답 값 `null`·`undefined` 와 구분하려고 따로 둔다). */
+const APP_INFO_TIMED_OUT: unique symbol = Symbol('app-info-timed-out');
+
+/**
  * 설치된 앱 버전 — `{ version: versionName, build: versionCode(정수) }`. 앱이 아니거나 App 플러그인이 없거나 값 형식이 다르면 null.
+ * `App.getInfo()` 가 `APP_INFO_TIMEOUT_MS` 안에 응답하지 않아도 null(T-094 WP-3) — 그 뒤 늦게 온 응답은 쓰지 않는다(이미 null 을 돌려줬다).
+ * 타이머는 응답·거부·시간 초과 어느 쪽이든 끝나면 지운다. 앱이 아니거나 플러그인이 없으면 타이머를 만들지 않는다.
  * 업데이트 비교는 `build`(정수)로만 한다(`src/lib/app-release/version.ts`).
  */
 export async function getAppVersion(): Promise<{ version: string; build: number } | null> {
   if (!isNativeApp()) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const getInfo = getBridge()?.Plugins?.App?.getInfo;
     if (typeof getInfo !== 'function') return null;
-    const info = await getInfo();
+    // 호출을 먼저 한다 — 동기 예외면 타이머를 만들기 전에 catch 로 간다.
+    const pending = getInfo();
+    const timedOut = new Promise<typeof APP_INFO_TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => resolve(APP_INFO_TIMED_OUT), APP_INFO_TIMEOUT_MS);
+    });
+    // race 가 pending 에 거부 처리기를 붙이므로, 시간 초과 뒤 늦게 거부돼도 처리되지 않은 거부로 남지 않는다.
+    const info = await Promise.race([pending, timedOut]);
+    if (info === APP_INFO_TIMED_OUT) return null;
     const rawBuild = typeof info?.build === 'string' || typeof info?.build === 'number' ? String(info.build).trim() : '';
     const build = /^\d{1,10}$/.test(rawBuild) ? Number(rawBuild) : NaN;
     const version = typeof info?.version === 'string' && VERSION_NAME_RE.test(info.version) ? info.version : null;
@@ -87,6 +112,8 @@ export async function getAppVersion(): Promise<{ version: string; build: number 
     return { version, build };
   } catch {
     return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
