@@ -218,6 +218,8 @@ demo_gate:
 
 - 2026-10-27 16:24 push `cae9f80`(origin `92b86ac..cae9f80`, 29커밋: T-095·T-096 P3 1단계+G1 기록·T-098 훅 편입·문서) → 릴리스 `20261027-162455-cae9f80a` `RELEASE_RESULT ok`, migrated=false. 앱 런타임 동작 변경 없음(백테스트·registry 는 앱이 import 하지 않음, 전체 jest 287 스위트 7,600 통과·tsc 0 은 push 직전 같은 트리에서 확인). 배포 후: pm2 stockinvest·stockinvest-cron 각 1(cron 1행)·재시작 0, `/api/health` 200, 킬스위치 ON, 주문 id 3229 불변, system_config 87키 불변. T-097 코드 2커밋은 사용자 지시로 제외(로컬 main 에 남음 — T-097 문서 참조).
 
+- 2026-10-27 21:38 push `c9ab4ca..61b80c9` → 릴리스 `20261027-213849-61b80c96` ok(T-094 와 동승, 이 task 의 문서 기록 포함 — 이 task 의 코드 변경 없음).
+
 ## Codex 검토
 
 ### [2026-10-27 00:28] C2 review focus=none — done (지적 1건, 중간)
