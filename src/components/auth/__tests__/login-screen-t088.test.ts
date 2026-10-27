@@ -2,7 +2,7 @@
  * T-088 — 승인 데모 v2(mockups/T-088-app-login-v2.html) 기준 웹·앱 공용 로그인 화면.
  * ① 앱 상태 전이표(`appLoginReducer`, DOM·타이머 없이) · ② 상태별 마크업(`OAuthButtonsView`) · ③ 오류 상자(`OAuthErrorNote`) ·
  * ④ 딥링크 마무리(`AppDeepLink` 순수 도우미·덮개·배경 막기) · ⑤ 브리지 확장(`addBrowserFinishedListener`·`closeExternalBrowser`) ·
- * ⑥ 신호 모듈 · ⑦ 소스 가드(앱에서 WebView 안 이동 금지·next 검사 두 줄 불변·구독자 1개).
+ * ⑥ 신호 모듈 · ⑦ 소스 가드(앱에서 WebView 안 이동 금지·next 검사 두 줄은 T-089 수정형만(T-094 WP-1)·구독자 1개).
  * jest 는 node 환경이라 `window` 는 가짜를 꽂았다 뺀다(appLogin-t088.test.ts 와 같은 방식).
  */
 import * as fs from 'fs';
@@ -31,6 +31,7 @@ import {
 import { OAUTH_ERROR_TEXT, OAuthErrorNote, SIGNUP_REQUIRES_WEB_COPY, oauthErrorText } from '@/components/auth/OAuthErrorNote';
 import { APP_DEEP_LINK_COPY, AppDeepLink, AppLoginCover, finishDestination, loginErrorHref, lockBackground } from '@/components/auth/AppDeepLink';
 import { addBrowserFinishedListener, closeExternalBrowser } from '@/lib/native/bridge';
+import { sanitizeInternalPath } from '@/lib/safe-next-path';
 import { APP_LOGIN_TTL_MS } from '@/lib/native/appLogin';
 import { __resetAppLoginSignalForTest, notifyAppLoginLink, subscribeAppLoginLink } from '@/lib/native/appLoginSignal';
 
@@ -644,18 +645,50 @@ describe('⑦ 소스 가드', () => {
     expect(fs.existsSync(path.join(SRC, 'components/auth/AppLoginArea.tsx'))).toBe(false);
   });
 
-  test('로그인 페이지의 next 검사 두 줄은 이 task 가 바꾸지 않았다 — 원문이거나 별도 task(T-089)가 고친 형태(어느 쪽이 먼저 합쳐져도 통과)', () => {
+  // T-094 WP-1(2026-10-27): 원래 이 시험은 T-089 병합 순서와 무관하게 통과하도록 "T-089 이전 원문이거나 수정형"을 모두
+  // 허용했다(커밋 1b379ac) — 그래서 원문(`startsWith('/') && !startsWith('//')`)으로 되돌리는 회귀를 못 잡았다(T-093 한계).
+  // T-089 가 병합된 지금은 **수정형만** 허용한다. 주석에 남긴 글자로 통과하지 않게 주석을 벗긴 코드로 본다.
+  describe('로그인 후 이동 경로(next) 관문 — T-089 수정형만 허용(T-094 WP-1)', () => {
     const page = read('app/login/page.tsx');
-    // 이 task(T-088)는 이 두 줄을 건드리지 않는다. 별도 task T-089 가 같은 두 줄을 `sanitizeInternalPath` 로 고치므로 두 모양 중 하나여야 한다.
-    // 두 줄이 서로 다른 모양(한쪽만 고쳐짐)이거나 임의의 제3의 모양이면 실패한다.
-    const ORIGINAL_NEXT = "setNextPath(n && n.startsWith('/') && !n.startsWith('//') ? n : undefined);";
-    const ORIGINAL_DEST = "const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/';";
+    // 주석은 빼고 코드만 본다(블록 주석 · 줄 주석 · 줄 끝 주석) — 위 no-console 가드와 같은 식
+    const pageCode = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '');
+    const count = (s: string, needle: string) => s.split(needle).length - 1;
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const FIXED_NEXT = 'setNextPath(sanitizeInternalPath(n) ?? undefined);';
     const FIXED_DEST = "const dest = sanitizeInternalPath(next) ?? '/';";
-    const original = page.includes(ORIGINAL_NEXT) && page.includes(ORIGINAL_DEST);
-    const fixed = page.includes(FIXED_NEXT) && page.includes(FIXED_DEST);
-    expect(original || fixed).toBe(true);
-    expect(original && fixed).toBe(false);
+
+    test('두 줄 모두 수정형이 코드에 정확히 한 번씩 있다 — 원문 관문(startsWith 만 검사)으로 되돌리면 실패', () => {
+      expect(count(pageCode, FIXED_NEXT)).toBe(1);
+      expect(count(pageCode, FIXED_DEST)).toBe(1);
+      // 원문 관문의 조각(`startsWith('/')`·`startsWith('//')`)이 코드 어디에도 없다 — 수정형 옆에 원문 검사를 덧대는 변이도 잡는다
+      expect(pageCode).not.toMatch(/startsWith\(/);
+    });
+
+    test('관문 함수는 감시 중인 @/lib/safe-next-path 의 것 — 화면 안에서 같은 이름을 새로 정의하거나 다른 곳에서 가져오지 않는다', () => {
+      expect(count(pageCode, "import { sanitizeInternalPath } from '@/lib/safe-next-path';")).toBe(1);
+      expect(pageCode.match(/\bsanitizeInternalPath\b/g)).toHaveLength(3); // import 1 + 두 줄
+      expect(pageCode).not.toMatch(/(function|const|let|var)\s+sanitizeInternalPath\b/);
+    });
+
+    test('next 를 읽는 곳은 두 곳뿐이고 각각 바로 다음 문장에서 관문을 지난다 · 로그인 뒤 이동은 dest 로만 한다', () => {
+      expect(pageCode.match(/params\.get\('next'\)/g)).toHaveLength(2);
+      expect(pageCode).toMatch(new RegExp(`${esc("const n = params.get('next');")}\\s*${esc(FIXED_NEXT)}`));
+      expect(pageCode).toMatch(new RegExp(`${esc("const next = params.get('next');")}\\s*${esc(FIXED_DEST)}`));
+      // 이동은 관문을 지난 dest 한 곳 — next 원문으로 이동하는 경로가 새로 생기면 실패
+      expect(pageCode.match(/location\.(replace|assign)\(|location\.href\s*=/g)).toHaveLength(1);
+      expect(pageCode).toContain('window.location.replace(dest);');
+    });
+
+    test('화면이 쓰는 관문 함수가 T-089 의 우회 입력을 실제로 거부한다(감시 중인 관문이 약해져도 이 시험이 함께 실패)', () => {
+      // T-089 가 막으려던 것: URL 해석기가 지우는 탭·줄바꿈·CR 로 `//` 를 만드는 우회, 백슬래시, 프로토콜 상대·절대 주소, 제어문자·줄 구분 문자
+      const attacks = [
+        '//evil.com', '/\t/evil.com', '/\n/evil.com', '/\r/evil.com', '/\\evil.com', '/\\/evil.com', '/x\\y',
+        '/\u0000x', '/a\u001fb', '/a\u007fb', '/a\u2028b', '/a\u2029b', 'https://evil.com', 'evil.com', '', '/'.padEnd(2049, 'a'),
+      ];
+      for (const a of attacks) expect(`${JSON.stringify(a)} → ${sanitizeInternalPath(a)}`).toBe(`${JSON.stringify(a)} → null`);
+      // 정상 내부 경로는 손대지 않고 그대로(쿼리·해시·인코딩 보존)
+      for (const ok of ['/', '/orders', '/orders?tab=1#x', '/a%2Fb']) expect(sanitizeInternalPath(ok)).toBe(ok);
+    });
   });
 
   test('앱 판별은 마운트 뒤 effect 에서만 · 오류 상자 포커스는 앱에서만(웹은 이메일 칸 자동 포커스 그대로)', () => {
