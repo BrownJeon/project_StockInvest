@@ -1,7 +1,7 @@
 ---
 task_id: T-061
 title: ADP-006-C01 분석가 근거 규칙 이식 시범 — 노트 작성·감사 (단계 실행, 표본 외 6종목×3군)
-status: cancelled
+status: todo
 priority: medium
 roles_involved: [leader, analyst, qa]
 related_tasks: [T-057, T-059, T-056]
@@ -11,8 +11,8 @@ tags:
 aliases:
   - ADP-006-C01
 created: 2026-10-21
-updated: 2026-10-22
-waiting: []
+updated: 2026-10-27
+waiting: [AMD 이벤트 단계 착수 2026-10-30 (노트 3개, 11-03 발표 전), 사용자 중단 지시 없을 때]
 ---
 
 # T-061 — ADP-006-C01 시범 (분석가 근거 규칙 이식)
@@ -42,6 +42,7 @@ waiting: []
 
 - 기록 감사(서브에이전트 jsonl): 6건 모두 읽은 파일 2개(역할 파일·데이터 팩), 웹·Bash·`.env` 0, 위반 0.
 - 사전 테스트 노트(판정 제외): `trials/ADP-006-C01/notes/pretest-2026-10-21/`.
+- [2026-10-27 22:4x] **재개(취소 → todo)** — 사용자 지시 그대로: "그럼 보완된 종목분석 작업에 대해서 시스템에 적용할 수 있도록 꺼져있거나 중단된 것을 진행해서 보완된 버전으로 적용될 수 있도록 해줘". ADP-006 [D-06](../../../../adoption/ADP-006-anthropic-financial-services/20-결정.md) 로 hold → trial. D-04 B안 이어서 **다음 단계 = AMD 3노트(10-30~11-02 작성, 발표 11-03)**, 그 뒤 NVDA(11월 중순 공지 후)·MU·ORCL(12월 공지 후). AMD 단계 비용 고지 ≈ 57만 토큰 [추측]. 지금은 토큰을 쓰지 않았고(상태 기록만), 착수 문구 "StockInvest 작업 이어서 진행해줘" 또는 10-30 이후 Leader 가 시작. 판정 전 `analyst.md` 승격 없음(대조군 보존).
 
 ## QA
 
