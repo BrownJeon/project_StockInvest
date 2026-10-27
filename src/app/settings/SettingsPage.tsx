@@ -31,6 +31,8 @@ interface SafetyData {
   orderMaxPct: number; dailyOrderMaxPct: number;
   universeEnabled: boolean;
   analystEnabled: boolean;
+  /** T-101 — 해외 장마감 후 분석(system_config.post_market_overseas_enabled). 엔진과 같은 판정(키 없음 = false). */
+  postMarketOverseasEnabled: boolean;
   blockedSymbols: string[];
   blockedSymbolsOverseas: string[];
   volGuardEnabled: boolean;
@@ -133,6 +135,32 @@ function Toggle({ checked, onChange, danger }: { checked: boolean; onChange: (v:
         width: 20, height: 20, borderRadius: '50%', background: '#fff',
         transition: 'left .2s',
       }} />
+    </div>
+  );
+}
+
+/**
+ * T-101 — 안전장치 카드의 '해외 장마감 후 분석' 행. 모양은 같은 카드의 실거래·KILL_SWITCH·자동 청산 행과 같고,
+ * 저장도 그 행들처럼 토글 즉시(autoSave — 실패 시 서버 값으로 되돌림) 한다. 시험에서 행만 그려 볼 수 있게 export.
+ */
+export function PostMarketOverseasRow({ enabled, onToggle }: { enabled: boolean; onToggle: (v: boolean) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 14 }}>해외 장마감 후 분석 (미국 시나리오)</div>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+          {enabled
+            ? 'ON — 미국 정규장이 열린 날의 다음 날 아침 08:00(KST)에 미국 종목 시나리오 카드를 만듭니다(미국 휴장일 다음날은 건너뜀).'
+            : 'OFF — 켜면 미국 정규장이 열린 날의 다음 날 아침 08:00(KST)에 미국 종목 시나리오 카드를 만듭니다(미국 휴장일 다음날은 건너뜀).'}
+          {' '}주문은 하지 않으며 승인·킬스위치·검증 관문이 그대로 적용됩니다.
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: enabled ? 'var(--ok)' : 'var(--muted)' }}>
+          {enabled ? 'ON' : 'OFF'}
+        </span>
+        <Toggle checked={enabled} onChange={onToggle} />
+      </div>
     </div>
   );
 }
@@ -270,9 +298,13 @@ export function SettingsPage() {
     setSaveState('saving');
     setSaveError(null);
     try {
+      // T-101 — 해외 장마감 후 분석 스위치는 자기 토글(autoSave)로만 저장한다. 저장 바의 일괄 저장이 다른 필드를
+      // 저장하면서 이 키를 화면에 남은(오래됐을 수 있는) 값으로 덮어쓰지 않게 뺀다.
+      const { postMarketOverseasEnabled: _postMarketOverseasOwnToggle, ...safetyForBulkSave } = safety;
+      void _postMarketOverseasOwnToggle;
       const results = await Promise.all([
         patchSetting('/api/settings/safety', {
-          ...safety,
+          ...safetyForBulkSave,
           notifySignalAutoSubmit: notifySignal.autoSubmit,
           notifySignalPending:    notifySignal.pending,
           notifySignalEntry:      notifySignal.entry,
@@ -556,6 +588,16 @@ export function SettingsPage() {
             </div>
           )}
         </div>
+
+        {/* T-101 해외 장마감 후 분석 — 같은 카드의 토글들처럼 즉시 저장, 실패 시 서버 값으로 되돌림 */}
+        <PostMarketOverseasRow
+          enabled={safety?.postMarketOverseasEnabled ?? false}
+          onToggle={v => {
+            const prev = safety?.postMarketOverseasEnabled ?? false;
+            update({ postMarketOverseasEnabled: v });
+            autoSave({ postMarketOverseasEnabled: v }, { postMarketOverseasEnabled: prev }, '해외 장마감 후 분석');
+          }}
+        />
 
         {/* 1회 주문 최대 */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>

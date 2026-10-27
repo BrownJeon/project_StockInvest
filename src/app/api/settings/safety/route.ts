@@ -11,6 +11,14 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * T-101 — 해외 장마감 후 분석 스위치 키. 엔진 상수(`POST_MARKET_OVERSEAS_SWITCH_KEY`)와 같은 문자열을
+ * **리터럴로** 둔다 — 이 라우트(KILL_SWITCH·DRY_RUN 긴급 제어)가 엔진 모듈 트리(llm·rag·텔레그램·시그널)를
+ * 정적으로 끌어오지 않게 하려는 것. 두 값의 일치는 시험이 고정한다(PATCH 가 쓴 키 == 엔진 상수, 어긋나면 실패).
+ * export 하지 않는다 — App Router route 파일은 HTTP 메서드·라우트 설정 외의 export 를 빌드 타입 검사에서 거부한다.
+ */
+const POST_MARKET_OVERSEAS_KEY = 'post_market_overseas_enabled';
+
 async function getOverrides(): Promise<Record<string, unknown>> {
   try {
     const pool = getPool();
@@ -88,6 +96,23 @@ export async function GET() {
   const exitSwitch = await readExitEngineSwitch();
 
   /**
+   * T-101 — 해외 장마감 후 분석 스위치. **엔진(`runPostMarketOverseas`)이 부르는 판독기 그대로** 읽는다
+   * (키 없음·정확히 JSON `true` 외 값·읽기 오류 = 꺼짐). `getOverrides()` 를 거치지 않는 이유: 거기서
+   * 한 번 `JSON.parse` 한 값을 다시 판정하면 문자열 `"true"`(저장 값 `"\"true\""`)가 켜짐으로 읽혀
+   * 화면과 엔진이 갈라진다.
+   */
+  //   엔진 모듈은 **GET 안에서만 지연 import** 한다. import·판독이 어떤 이유로든 실패하면 꺼짐(false)으로
+  //   보여 주고 나머지 응답(긴급 제어 값)은 그대로 돌려준다 — 이 라우트의 성공을 엔진 모듈 로드에 묶지 않는다.
+  let postMarketOverseasEnabled = false;
+  try {
+    const engine = await import('@/lib/strategy/post-market-overseas');
+    postMarketOverseasEnabled = (await engine.readPostMarketOverseasSwitch()).enabled === true;
+  } catch (e) {
+    postMarketOverseasEnabled = false;
+    console.error(`[settings:safety] 해외 장마감 후 분석 스위치 판독 실패 — 꺼짐으로 표시: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  /**
    * T-017 — KIS 요청 유량. `getOverrides()` 의 LIKE 패턴(safety_%/strategy_%/…) 밖의 키라
    * 별도로 읽는다. **재배포 없이 조정**하기 위한 값이며 KIS 공표 한도가 아니다.
    */
@@ -120,6 +145,8 @@ export async function GET() {
       dailyOrderMaxPct,
       universeEnabled,
       analystEnabled,
+      /** T-101 — 해외 장마감 후 분석(미국 정규장이 열린 날의 다음 날 아침 08:00 KST 미국 시나리오) on/off. 엔진과 같은 판정. */
+      postMarketOverseasEnabled,
       blockedSymbols,
       blockedSymbolsOverseas,
       volGuardEnabled,
@@ -167,6 +194,8 @@ const ALLOWED_PATCH_KEYS: Record<string, string> = {
   dailyOrderMaxPct:        'safety_daily_order_max_pct',
   universeEnabled:         'strategy_universe_enabled',
   analystEnabled:          'strategy_analyst_enabled',
+  // T-101 — 해외 장마감 후 분석 스위치. 키는 엔진 상수와 같은 리터럴(위 POST_MARKET_OVERSEAS_KEY, 시험이 일치 고정).
+  postMarketOverseasEnabled: POST_MARKET_OVERSEAS_KEY,
   blockedSymbols:          'safety_blocked_symbols',
   blockedSymbolsOverseas:  'safety_blocked_symbols_overseas',
   volGuardEnabled:         'vol_guard_enabled',
@@ -217,7 +246,7 @@ const PATCH_ENUMS: Record<string, readonly string[]> = {
  * 들어가도 판독기(`exit-switch.ts`)가 안전하게 해석하긴 하지만, **자금 스위치의 저장 값이
  * 무엇인지 눈으로 확인 불가능해지는 상태를 애초에 만들지 않는다.**
  */
-const PATCH_STRICT_BOOLEANS = ['exitEngineEnabled'] as const;
+const PATCH_STRICT_BOOLEANS = ['exitEngineEnabled', 'postMarketOverseasEnabled'] as const;
 
 /**
  * 수치 도메인이 고정된 필드 — 저장 전 검증.
@@ -274,6 +303,14 @@ export async function PATCH(req: NextRequest) {
     console.warn(
       `[settings:safety] 자동 청산 엔진 ${on ? 'ON — 하드손절·EOD손절·트레일링·목표익절 자동 매도가 다시 활성화됨' : 'OFF — 자동 매도 주문 전면 중단'}`
       + ' (system_config.exit_engine_enabled)',
+    );
+  }
+
+  // T-101 — 해외 장마감 후 분석 스위치 변경도 서버 로그에 남긴다(주문은 하지 않음 — 시나리오 카드 생성 여부만).
+  if ('postMarketOverseasEnabled' in body) {
+    console.warn(
+      `[settings:safety] 해외 장마감 후 분석 ${body['postMarketOverseasEnabled'] === true ? 'ON — 미국 정규장이 열린 날의 다음 날 아침 08:00(KST) 미국 종목 시나리오 생성' : 'OFF — 미국 종목 시나리오 생성 중단'}`
+      + ` (system_config.${POST_MARKET_OVERSEAS_KEY})`,
     );
   }
 
