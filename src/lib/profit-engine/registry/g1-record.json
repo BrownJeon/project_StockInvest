@@ -1,0 +1,22 @@
+{
+  "schema": "t096-g1@1",
+  "status": "passed",
+  "approved_by": "user",
+  "approval_quote": "T-096 G1 승인",
+  "approved_at": "2026-10-27 16:09 KST (사용자 발화 직후 첫 도구 호출 16:09:40 기준 상한 — 정확한 발화 시각은 세션에 없음)",
+  "section_b_sha256": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+  "registry_numeric_sha256": "543d1f4cd4cd5e7140a1e208ea7851a0ecd284fcc6887a2428e686d8867391fc",
+  "market": "US",
+  "strategies": [
+    "rsi-oversold-daily",
+    "control-spike-contraction"
+  ],
+  "rule": "any_combo_meets_u5_after_filters",
+  "counts_report": "T-096-backtest-counts-US-20261027-r2.json",
+  "counts_report_sha256": "9a1a89c3e714346a8793138743dd3bd9fd3560b2832bdd0e72414f066f41e0a9",
+  "combosMeetingU5AfterFilters": {
+    "rsi-oversold-daily": 7,
+    "control-spike-contraction": 1
+  },
+  "engine_fingerprint": "engine-78a3ef6b29365b1d26d821169ac7109e7be5da05816f2ce26b1a2e7fcac59592"
+}
