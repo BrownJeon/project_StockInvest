@@ -1,5 +1,41 @@
 {
   "schema": "t096-is-ledger@1",
   "note": "추가 전용(append-only). IS 실행마다 한 줄(seq·시각·문서 해시·지문 4종·전략별 결과 해시). 줄 삭제·수정 금지 — 러너가 실행 전에 git HEAD 본과 접두 관계를 대조한다.",
-  "entries": []
+  "entries": [
+    {
+      "seq": 1,
+      "at": "2026-10-27 17:12 KST",
+      "market": "US",
+      "docHash": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+      "gitHead": "ae4ac85c087d09ee0e58cccf0c7e6a957756f551",
+      "fingerprints": {
+        "registryFull": "55a358ee377162da9ae4de9baaa9908e261bbdacd66b056882adf202519df070",
+        "registryNumeric": "543d1f4cd4cd5e7140a1e208ea7851a0ecd284fcc6887a2428e686d8867391fc",
+        "engine": "engine-78a3ef6b29365b1d26d821169ac7109e7be5da05816f2ce26b1a2e7fcac59592",
+        "data": {
+          "until": "2025-09-30",
+          "rows": 27141,
+          "sha256": "9e4c2460cdf5667ba3f9bbec5635cc1e9e621b4c9ddbf6e3605929f9fff6f245"
+        },
+        "universe": {
+          "n": 50,
+          "sha256": "c796de8cf06ea454d854ea89a19bdce4408c5b8805b5e24c4929bddda97ab854"
+        }
+      },
+      "reports": [
+        "agent-vault/10-Flow/reports/T-096-backtest-is-US-rsi-oversold-daily-20261027-1.json",
+        "agent-vault/10-Flow/reports/T-096-backtest-is-US-control-spike-contraction-20261027-1.json"
+      ],
+      "strategies": [
+        {
+          "id": "rsi-oversold-daily",
+          "resultSha256": "d69f263f4db6aae433bb2572fd02cf74f340b34f380d5fd052479862d5350ff1"
+        },
+        {
+          "id": "control-spike-contraction",
+          "resultSha256": "14c1a471ecd079b0edd3a06bf452aae96931f589a61940f4b91b268a7873e772"
+        }
+      ]
+    }
+  ]
 }

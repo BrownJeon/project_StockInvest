@@ -1,0 +1,265 @@
+{
+  "head": {
+    "task": "T-096",
+    "phase": "is",
+    "market": "US",
+    "generatedAt": "2026-10-27 17:12 KST",
+    "asOf": "2026-10-23",
+    "docPath": "docs/design/2026-10-26-strategy-validation-preregistration-v1.1.md",
+    "docVersion": "v1.1",
+    "sectionB": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+    "actualHash": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+    "hashOk": true,
+    "numericOk": true,
+    "numericReason": null,
+    "fingerprints": {
+      "registryFull": "55a358ee377162da9ae4de9baaa9908e261bbdacd66b056882adf202519df070",
+      "registryNumeric": "543d1f4cd4cd5e7140a1e208ea7851a0ecd284fcc6887a2428e686d8867391fc",
+      "engine": "engine-78a3ef6b29365b1d26d821169ac7109e7be5da05816f2ce26b1a2e7fcac59592",
+      "data": {
+        "until": "2025-09-30",
+        "rows": 27141,
+        "sha256": "9e4c2460cdf5667ba3f9bbec5635cc1e9e621b4c9ddbf6e3605929f9fff6f245"
+      },
+      "universe": {
+        "n": 50,
+        "sha256": "c796de8cf06ea454d854ea89a19bdce4408c5b8805b5e24c4929bddda97ab854"
+      }
+    },
+    "universeLimitation": "현재 시점 대형주 정적 목록(US SP500_TOP50+SMH 50종목, KR 최근 90일 시그널 43종목) — PIT 유니버스 아님(§B-0·§E-1)",
+    "pit": false,
+    "decisionDate": "2026-12-07",
+    "rsiOversoldV1DecisionDate": "min(S1 OOS report date, 2027-03-09)",
+    "judgeCurrency": "USD",
+    "interpretation": {
+      "version": "v1.1",
+      "symbolShareDenominator": "total_net",
+      "plateauMembershipRequiresSample": true,
+      "plateauMedianFallback": "nearest_l1",
+      "plateauRegimeTie": "off",
+      "plateauEvenMedian": "low",
+      "plateauTieOrder": [
+        "th",
+        "lo",
+        "L",
+        "k",
+        "r",
+        "b",
+        "stop",
+        "hold",
+        "regime"
+      ],
+      "g1Rule": "any_combo_meets_u5_after_filters",
+      "pendingUserConfirmation": []
+    },
+    "bootstrap": {
+      "iters": 2000,
+      "seed": 20261026,
+      "auxSeeds": [
+        1,
+        2
+      ],
+      "cluster": "week_monday_of_d0",
+      "prng": "mulberry32",
+      "interval": "percentile95"
+    },
+    "isLedgerSeq": 1,
+    "gitHead": "ae4ac85c087d09ee0e58cccf0c7e6a957756f551"
+  },
+  "result": {
+    "phase": "is",
+    "market": "US",
+    "window": {
+      "from": "2024-02-01",
+      "to": "2025-09-30",
+      "dataMin": "2023-03-28",
+      "dataMax": "2025-09-30",
+      "rows": 27141
+    },
+    "deltaAnnual": 0,
+    "strategies": [
+      {
+        "id": "control-spike-contraction",
+        "label": "S7",
+        "tier": "control",
+        "trials": 2,
+        "grid": [
+          {
+            "params": {
+              "hold": 5
+            },
+            "metrics": {
+              "n": 173,
+              "weeks": 62,
+              "symbols": 38,
+              "maxSymbolShare": 0.4186868441674911,
+              "maxSymbolShareAux": 0.19320451790995152,
+              "excessLo": -0.003033796352341608,
+              "excessHi": 0.01101050290553255,
+              "excessT": 1.1696606658581992,
+              "excessMean": 0.004125647926248029,
+              "excessLoAux": [
+                -0.002941015370339313,
+                -0.0023766247816184635
+              ],
+              "seedSensitive": false,
+              "netMean": 0.0035761482009129867,
+              "deltaTrade": 0,
+              "pf": 1.253966173993953,
+              "payoff": 1.2395527696951718,
+              "stressNetMean": 0.0027567840390632743,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.0019374198772135487
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 1.0016284613282702,
+              "sharpe": 0.6114674367769363,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.0938277342677689,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.03295725039814745
+            },
+            "counts": {
+              "candidates": 315,
+              "episodes": 183,
+              "taken": 173,
+              "stops": 24,
+              "gapSkip": 10,
+              "liquiditySkip": 0,
+              "unclosed": 0,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 183,
+              "filled": 171,
+              "fillRate": 0.9344262295081968
+            },
+            "portfolio": {
+              "entries": 163,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 10,
+                "liquidity": 0,
+                "gap": 10,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 132
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 0
+            },
+            "judge": {
+              "verdict": "EXPLORATORY",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "EXPLORATORY — tier control·시장 US 는 판정 대상이 아님(보고만)",
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10
+            },
+            "metrics": {
+              "n": 148,
+              "weeks": 59,
+              "symbols": 38,
+              "maxSymbolShare": 0.4446008072914594,
+              "maxSymbolShareAux": 0.27640307024096683,
+              "excessLo": -0.00402572708221876,
+              "excessHi": 0.01711341264528866,
+              "excessT": 1.2707293945630231,
+              "excessMean": 0.0066046274913006695,
+              "excessLoAux": [
+                -0.0033823078684986235,
+                -0.003980503579816045
+              ],
+              "seedSensitive": false,
+              "netMean": 0.010400802671917014,
+              "deltaTrade": 0,
+              "pf": 1.5350053584748016,
+              "payoff": 1.377568911451745,
+              "stressNetMean": 0.009525802671917008,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.008650802671917002
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.9845232158882203,
+              "sharpe": 0.9753911035626878,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.053717048853124914,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.07761215786224063
+            },
+            "counts": {
+              "candidates": 315,
+              "episodes": 158,
+              "taken": 148,
+              "stops": 37,
+              "gapSkip": 9,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 157,
+              "filled": 144,
+              "fillRate": 0.9171974522292994
+            },
+            "portfolio": {
+              "entries": 137,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 12,
+                "liquidity": 0,
+                "gap": 9,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 157
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 0
+            },
+            "judge": {
+              "verdict": "EXPLORATORY",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "EXPLORATORY — tier control·시장 US 는 판정 대상이 아님(보고만)",
+                "is.1-1 에피소드 148 < 150"
+              ]
+            },
+            "plateauRole": null
+          }
+        ],
+        "plateau": {
+          "perfOnly": [],
+          "members": [],
+          "edgeMembers": [],
+          "inP": [],
+          "plateau": [],
+          "chosen": null,
+          "reason": "empty_P"
+        }
+      }
+    ]
+  }
+}

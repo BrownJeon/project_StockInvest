@@ -1,0 +1,2161 @@
+{
+  "head": {
+    "task": "T-096",
+    "phase": "is",
+    "market": "US",
+    "generatedAt": "2026-10-27 17:12 KST",
+    "asOf": "2026-10-23",
+    "docPath": "docs/design/2026-10-26-strategy-validation-preregistration-v1.1.md",
+    "docVersion": "v1.1",
+    "sectionB": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+    "actualHash": "0626cbd22ab0269d16486e99807cae9f6f43e78f0253cc8f59cfb657997cbc15",
+    "hashOk": true,
+    "numericOk": true,
+    "numericReason": null,
+    "fingerprints": {
+      "registryFull": "55a358ee377162da9ae4de9baaa9908e261bbdacd66b056882adf202519df070",
+      "registryNumeric": "543d1f4cd4cd5e7140a1e208ea7851a0ecd284fcc6887a2428e686d8867391fc",
+      "engine": "engine-78a3ef6b29365b1d26d821169ac7109e7be5da05816f2ce26b1a2e7fcac59592",
+      "data": {
+        "until": "2025-09-30",
+        "rows": 27141,
+        "sha256": "9e4c2460cdf5667ba3f9bbec5635cc1e9e621b4c9ddbf6e3605929f9fff6f245"
+      },
+      "universe": {
+        "n": 50,
+        "sha256": "c796de8cf06ea454d854ea89a19bdce4408c5b8805b5e24c4929bddda97ab854"
+      }
+    },
+    "universeLimitation": "현재 시점 대형주 정적 목록(US SP500_TOP50+SMH 50종목, KR 최근 90일 시그널 43종목) — PIT 유니버스 아님(§B-0·§E-1)",
+    "pit": false,
+    "decisionDate": "2026-12-07",
+    "rsiOversoldV1DecisionDate": "min(S1 OOS report date, 2027-03-09)",
+    "judgeCurrency": "USD",
+    "interpretation": {
+      "version": "v1.1",
+      "symbolShareDenominator": "total_net",
+      "plateauMembershipRequiresSample": true,
+      "plateauMedianFallback": "nearest_l1",
+      "plateauRegimeTie": "off",
+      "plateauEvenMedian": "low",
+      "plateauTieOrder": [
+        "th",
+        "lo",
+        "L",
+        "k",
+        "r",
+        "b",
+        "stop",
+        "hold",
+        "regime"
+      ],
+      "g1Rule": "any_combo_meets_u5_after_filters",
+      "pendingUserConfirmation": []
+    },
+    "bootstrap": {
+      "iters": 2000,
+      "seed": 20261026,
+      "auxSeeds": [
+        1,
+        2
+      ],
+      "cluster": "week_monday_of_d0",
+      "prng": "mulberry32",
+      "interval": "percentile95"
+    },
+    "isLedgerSeq": 1,
+    "gitHead": "ae4ac85c087d09ee0e58cccf0c7e6a957756f551"
+  },
+  "result": {
+    "phase": "is",
+    "market": "US",
+    "window": {
+      "from": "2024-02-01",
+      "to": "2025-09-30",
+      "dataMin": "2023-03-28",
+      "dataMax": "2025-09-30",
+      "rows": 27141
+    },
+    "deltaAnnual": 0,
+    "strategies": [
+      {
+        "id": "rsi-oversold-daily",
+        "label": "S1",
+        "tier": "A",
+        "trials": 24,
+        "grid": [
+          {
+            "params": {
+              "hold": 5,
+              "regime": false,
+              "stop": 0.03,
+              "th": 30
+            },
+            "metrics": {
+              "n": 95,
+              "weeks": 47,
+              "symbols": 43,
+              "maxSymbolShare": 0.6323334151551645,
+              "maxSymbolShareAux": 0.2256804138760528,
+              "excessLo": -0.0070674883202081085,
+              "excessHi": 0.010331412430403171,
+              "excessT": 0.26478754922569286,
+              "excessMean": 0.0012072672004218579,
+              "excessLoAux": [
+                -0.007422471688325265,
+                -0.007382886773338274
+              ],
+              "seedSensitive": false,
+              "netMean": 0.0051583162532225085,
+              "deltaTrade": 0,
+              "pf": 1.3208889227084157,
+              "payoff": 1.5310303422302092,
+              "stressNetMean": 0.004239895200590944,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.0033214741479593484
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.454933046578353,
+              "sharpe": 0.7307304298083244,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.019239911644289346,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.030359360911275557
+            },
+            "counts": {
+              "candidates": 254,
+              "episodes": 126,
+              "taken": 95,
+              "stops": 32,
+              "gapSkip": 31,
+              "liquiditySkip": 0,
+              "unclosed": 0,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 126,
+              "filled": 111,
+              "fillRate": 0.8809523809523809
+            },
+            "portfolio": {
+              "entries": 94,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 13,
+                "liquidity": 0,
+                "gap": 19,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 128
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 0
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 95 < 150"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": false,
+              "stop": 0.03,
+              "th": 35
+            },
+            "metrics": {
+              "n": 233,
+              "weeks": 71,
+              "symbols": 47,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.11047424384371947,
+              "excessLo": -0.008055213758691665,
+              "excessHi": 0.0030320838263008082,
+              "excessT": -0.9577059589629209,
+              "excessMean": -0.0027341530115561393,
+              "excessLoAux": [
+                -0.007941262354624555,
+                -0.007913402462577794
+              ],
+              "seedSensitive": false,
+              "netMean": -0.0037481319136187068,
+              "deltaTrade": 0,
+              "pf": 0.7859234216545642,
+              "payoff": 1.0271474421624007,
+              "stressNetMean": -0.004674097578854778,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.00560006324409083
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 3.8747509695559956,
+              "sharpe": -0.5373963854636782,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.11896474322084023,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.04516003071467434
+            },
+            "counts": {
+              "candidates": 703,
+              "episodes": 281,
+              "taken": 233,
+              "stops": 82,
+              "gapSkip": 47,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 280,
+              "filled": 256,
+              "fillRate": 0.9142857142857143
+            },
+            "portfolio": {
+              "entries": 231,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 16,
+                "liquidity": 0,
+                "gap": 34,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 422
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 1
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": false,
+              "stop": 0.03,
+              "th": 38
+            },
+            "metrics": {
+              "n": 418,
+              "weeks": 82,
+              "symbols": 50,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.17352326933400858,
+              "excessLo": -0.005618804883361588,
+              "excessHi": 0.0037859147484021237,
+              "excessT": -0.4864112678846051,
+              "excessMean": -0.0011423643492085727,
+              "excessLoAux": [
+                -0.005423757593091098,
+                -0.005504842560129401
+              ],
+              "seedSensitive": false,
+              "netMean": -0.003365317971947452,
+              "deltaTrade": 0,
+              "pf": 0.8086228111648794,
+              "payoff": 1.0902779476380398,
+              "stressNetMean": -0.004298332326014445,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.005231346680081421
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": null,
+              "sharpe": -0.6395323359953908,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.18800088417236635,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.07710738734029365
+            },
+            "counts": {
+              "candidates": 1177,
+              "episodes": 467,
+              "taken": 418,
+              "stops": 153,
+              "gapSkip": 45,
+              "liquiditySkip": 0,
+              "unclosed": 4,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 463,
+              "filled": 424,
+              "fillRate": 0.9157667386609071
+            },
+            "portfolio": {
+              "entries": 381,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 53,
+                "liquidity": 0,
+                "gap": 33,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 710
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 4
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1",
+                "is.2-2 MDD > 0.12"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": false,
+              "stop": 0.05,
+              "th": 30
+            },
+            "metrics": {
+              "n": 95,
+              "weeks": 47,
+              "symbols": 43,
+              "maxSymbolShare": 0.6638509605070717,
+              "maxSymbolShareAux": 0.21416131472459193,
+              "excessLo": -0.00875724109242269,
+              "excessHi": 0.010741332587317416,
+              "excessT": 0.12945883712308523,
+              "excessMean": 0.000645237762436401,
+              "excessLoAux": [
+                -0.008767853958658959,
+                -0.009217612702455465
+              ],
+              "seedSensitive": false,
+              "netMean": 0.004596286815237052,
+              "deltaTrade": 0,
+              "pf": 1.2650421679983865,
+              "payoff": 1.2919579588068628,
+              "stressNetMean": 0.003751549973131805,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.002906813131026523
+                }
+              ],
+              "foldsPositive": 1,
+              "foldMaxProfitShare": 0.5320656160726749,
+              "sharpe": 0.6708298860647095,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.02358425787718144,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.03166426331479988
+            },
+            "counts": {
+              "candidates": 254,
+              "episodes": 126,
+              "taken": 95,
+              "stops": 18,
+              "gapSkip": 31,
+              "liquiditySkip": 0,
+              "unclosed": 0,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 126,
+              "filled": 111,
+              "fillRate": 0.8809523809523809
+            },
+            "portfolio": {
+              "entries": 93,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 14,
+                "liquidity": 0,
+                "gap": 19,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 128
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 0
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 95 < 150"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": false,
+              "stop": 0.05,
+              "th": 35
+            },
+            "metrics": {
+              "n": 233,
+              "weeks": 71,
+              "symbols": 47,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.10525078729907551,
+              "excessLo": -0.007805293199715272,
+              "excessHi": 0.0030638947177330854,
+              "excessT": -0.8998383534284935,
+              "excessMean": -0.0024827861555300726,
+              "excessLoAux": [
+                -0.0076382505430718315,
+                -0.007654959753352302
+              ],
+              "seedSensitive": false,
+              "netMean": -0.003496765057592638,
+              "deltaTrade": 0,
+              "pf": 0.8071961690931023,
+              "payoff": 0.8720601469666551,
+              "stressNetMean": -0.0043390397357042435,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.005181314413815838
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 2.374237001418515,
+              "sharpe": -0.3760101064248663,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.11408677687150053,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.036225432360185605
+            },
+            "counts": {
+              "candidates": 703,
+              "episodes": 281,
+              "taken": 233,
+              "stops": 43,
+              "gapSkip": 47,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 280,
+              "filled": 256,
+              "fillRate": 0.9142857142857143
+            },
+            "portfolio": {
+              "entries": 229,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 18,
+                "liquidity": 0,
+                "gap": 34,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 422
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 1
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": false,
+              "stop": 0.05,
+              "th": 38
+            },
+            "metrics": {
+              "n": 418,
+              "weeks": 82,
+              "symbols": 50,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.1280141511189818,
+              "excessLo": -0.004006222493802385,
+              "excessHi": 0.0035639599363215947,
+              "excessT": -0.16528146669799373,
+              "excessMean": -0.00030876327434070384,
+              "excessLoAux": [
+                -0.0037191254738904085,
+                -0.003932170189430096
+              ],
+              "seedSensitive": false,
+              "netMean": -0.0025317168970795715,
+              "deltaTrade": 0,
+              "pf": 0.8600469352784209,
+              "payoff": 0.9556077058649121,
+              "stressNetMean": -0.003373822160237479,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.004215927423395373
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 2.2211085208733508,
+              "sharpe": -0.3880833296923198,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.1861597577644293,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.056850058844470475
+            },
+            "counts": {
+              "candidates": 1177,
+              "episodes": 467,
+              "taken": 418,
+              "stops": 77,
+              "gapSkip": 45,
+              "liquiditySkip": 0,
+              "unclosed": 4,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 463,
+              "filled": 424,
+              "fillRate": 0.9157667386609071
+            },
+            "portfolio": {
+              "entries": 372,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 64,
+                "liquidity": 0,
+                "gap": 31,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 710
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 4
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1",
+                "is.2-2 MDD > 0.12"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": true,
+              "stop": 0.03,
+              "th": 30
+            },
+            "metrics": {
+              "n": 68,
+              "weeks": 40,
+              "symbols": 31,
+              "maxSymbolShare": 0.9394786291839138,
+              "maxSymbolShareAux": 0.31673232359522147,
+              "excessLo": -0.0051121506077625115,
+              "excessHi": 0.01663137721591516,
+              "excessT": 0.90484784560953,
+              "excessMean": 0.005144039545345015,
+              "excessLoAux": [
+                -0.005045423641507093,
+                -0.005260491717530371
+              ],
+              "seedSensitive": false,
+              "netMean": 0.0048504483512428614,
+              "deltaTrade": 0,
+              "pf": 1.2932468228829122,
+              "payoff": 1.6381126423183556,
+              "stressNetMean": 0.0039386836453605125,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.0030269189394781563
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.4873927953333643,
+              "sharpe": 0.6709817102692973,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.020005935019262157,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.018475757416109406
+            },
+            "counts": {
+              "candidates": 152,
+              "episodes": 73,
+              "taken": 68,
+              "stops": 22,
+              "gapSkip": 5,
+              "liquiditySkip": 0,
+              "unclosed": 0,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 73,
+              "filled": 64,
+              "fillRate": 0.8767123287671232
+            },
+            "portfolio": {
+              "entries": 68,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 0,
+                "liquidity": 0,
+                "gap": 5,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 79
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 0
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 68 < 150"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": true,
+              "stop": 0.03,
+              "th": 35
+            },
+            "metrics": {
+              "n": 177,
+              "weeks": 63,
+              "symbols": 44,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.1683848230143695,
+              "excessLo": -0.008692826932468981,
+              "excessHi": 0.0016933203169522174,
+              "excessT": -1.2576747594841746,
+              "excessMean": -0.0032686470092302606,
+              "excessLoAux": [
+                -0.008233561340998351,
+                -0.008218884288992851
+              ],
+              "seedSensitive": false,
+              "netMean": -0.005688162861806077,
+              "deltaTrade": 0,
+              "pf": 0.6614293804677619,
+              "payoff": 0.8995439574361562,
+              "stressNetMean": -0.0066020046697157,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.007515846477625305
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 17.452726604029746,
+              "sharpe": -1.298934573547025,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.10538030283039174,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.05409014481168983
+            },
+            "counts": {
+              "candidates": 451,
+              "episodes": 189,
+              "taken": 177,
+              "stops": 58,
+              "gapSkip": 11,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 188,
+              "filled": 174,
+              "fillRate": 0.925531914893617
+            },
+            "portfolio": {
+              "entries": 178,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 0,
+                "liquidity": 0,
+                "gap": 11,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 262
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 1
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": true,
+              "stop": 0.03,
+              "th": 38
+            },
+            "metrics": {
+              "n": 315,
+              "weeks": 72,
+              "symbols": 48,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.1561484389669495,
+              "excessLo": -0.0034654930550709106,
+              "excessHi": 0.0033346809344146824,
+              "excessT": -0.08829046827835009,
+              "excessMean": -0.00015296491183641327,
+              "excessLoAux": [
+                -0.0035246922262264268,
+                -0.003427488979321023
+              ],
+              "seedSensitive": false,
+              "netMean": -0.004068614302877947,
+              "deltaTrade": 0,
+              "pf": 0.752344771253244,
+              "payoff": 0.9902184856936079,
+              "stressNetMean": -0.004982106366370018,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.0058955984298620775
+                }
+              ],
+              "foldsPositive": 3,
+              "foldMaxProfitShare": 0.45928903506439317,
+              "sharpe": -0.9708681308508937,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.1325185865529531,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.056880927102584966
+            },
+            "counts": {
+              "candidates": 801,
+              "episodes": 336,
+              "taken": 315,
+              "stops": 103,
+              "gapSkip": 17,
+              "liquiditySkip": 0,
+              "unclosed": 4,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 332,
+              "filled": 303,
+              "fillRate": 0.9126506024096386
+            },
+            "portfolio": {
+              "entries": 299,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 20,
+                "liquidity": 0,
+                "gap": 17,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 465
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 4
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.2-1 샤프 < 1",
+                "is.2-2 MDD > 0.12"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": true,
+              "stop": 0.05,
+              "th": 30
+            },
+            "metrics": {
+              "n": 68,
+              "weeks": 40,
+              "symbols": 31,
+              "maxSymbolShare": 0.7571187896773633,
+              "maxSymbolShareAux": 0.29608529898388913,
+              "excessLo": -0.006008888465479918,
+              "excessHi": 0.018371152292497497,
+              "excessT": 0.9438930503689907,
+              "excessMean": 0.005923850248577237,
+              "excessLoAux": [
+                -0.005922700870196589,
+                -0.005987039310086617
+              ],
+              "seedSensitive": false,
+              "netMean": 0.005630259054475085,
+              "deltaTrade": 0,
+              "pf": 1.3435411364736571,
+              "payoff": 1.424967872017515,
+              "stressNetMean": 0.004799376701533917,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.003968494348592731
+                }
+              ],
+              "foldsPositive": 1,
+              "foldMaxProfitShare": 0.6484248602934229,
+              "sharpe": 0.7366132389305315,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.02136291640212822,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.021377234230760767
+            },
+            "counts": {
+              "candidates": 152,
+              "episodes": 73,
+              "taken": 68,
+              "stops": 11,
+              "gapSkip": 5,
+              "liquiditySkip": 0,
+              "unclosed": 0,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 73,
+              "filled": 64,
+              "fillRate": 0.8767123287671232
+            },
+            "portfolio": {
+              "entries": 68,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 0,
+                "liquidity": 0,
+                "gap": 5,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 79
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 0
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 68 < 150"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": true,
+              "stop": 0.05,
+              "th": 35
+            },
+            "metrics": {
+              "n": 177,
+              "weeks": 63,
+              "symbols": 44,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.15264826136781057,
+              "excessLo": -0.007946416507878598,
+              "excessHi": 0.0030590138860810516,
+              "excessT": -0.8491123476741302,
+              "excessMean": -0.002359958601476741,
+              "excessLoAux": [
+                -0.007606271991064619,
+                -0.007858941809951376
+              ],
+              "seedSensitive": false,
+              "netMean": -0.004779474454052553,
+              "deltaTrade": 0,
+              "pf": 0.7145166815018902,
+              "payoff": 0.7910720402342355,
+              "stressNetMean": -0.005608570499250308,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.006437666544448058
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.8277735590533912,
+              "sharpe": -0.9757746490167793,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.09982884239591686,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.04583326461787118
+            },
+            "counts": {
+              "candidates": 451,
+              "episodes": 189,
+              "taken": 177,
+              "stops": 28,
+              "gapSkip": 11,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 188,
+              "filled": 174,
+              "fillRate": 0.925531914893617
+            },
+            "portfolio": {
+              "entries": 178,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 0,
+                "liquidity": 0,
+                "gap": 11,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 262
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 1
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 5,
+              "regime": true,
+              "stop": 0.05,
+              "th": 38
+            },
+            "metrics": {
+              "n": 315,
+              "weeks": 72,
+              "symbols": 48,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.1456303996625782,
+              "excessLo": -0.0043869113632793435,
+              "excessHi": 0.0028240775471938245,
+              "excessT": -0.4587608981976096,
+              "excessMean": -0.0008065270233499668,
+              "excessLoAux": [
+                -0.004354824488606174,
+                -0.0041921730788062545
+              ],
+              "seedSensitive": false,
+              "netMean": -0.004722176414391496,
+              "deltaTrade": 0,
+              "pf": 0.7273233897578988,
+              "payoff": 0.8527239741989158,
+              "stressNetMean": -0.0055515414937565895,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.006380906573121647
+                }
+              ],
+              "foldsPositive": 3,
+              "foldMaxProfitShare": 0.4137270055697705,
+              "sharpe": -1.029000726311835,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.1470353823612114,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.06707552160006203
+            },
+            "counts": {
+              "candidates": 801,
+              "episodes": 336,
+              "taken": 315,
+              "stops": 50,
+              "gapSkip": 17,
+              "liquiditySkip": 0,
+              "unclosed": 4,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 332,
+              "filled": 303,
+              "fillRate": 0.9126506024096386
+            },
+            "portfolio": {
+              "entries": 296,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 23,
+                "liquidity": 0,
+                "gap": 17,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 465
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 4
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.2-1 샤프 < 1",
+                "is.2-2 MDD > 0.12"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": false,
+              "stop": 0.03,
+              "th": 30
+            },
+            "metrics": {
+              "n": 82,
+              "weeks": 42,
+              "symbols": 42,
+              "maxSymbolShare": 0.15993473105136372,
+              "maxSymbolShareAux": 0.10536423305981014,
+              "excessLo": -0.005776686165704264,
+              "excessHi": 0.018776371754599636,
+              "excessT": 0.9843713749837661,
+              "excessMean": 0.006019101759585348,
+              "excessLoAux": [
+                -0.005631233786633399,
+                -0.006025561440755785
+              ],
+              "seedSensitive": false,
+              "netMean": 0.018685460318964838,
+              "deltaTrade": 0,
+              "pf": 2.130158521895723,
+              "payoff": 1.7514636735587055,
+              "stressNetMean": 0.01774643592872092,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.016807411538477014
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.5229908741561353,
+              "sharpe": 1.6905853797850385,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.02485225136263038,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.0909560378534271
+            },
+            "counts": {
+              "candidates": 254,
+              "episodes": 110,
+              "taken": 82,
+              "stops": 31,
+              "gapSkip": 27,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 109,
+              "filled": 98,
+              "fillRate": 0.8990825688073395
+            },
+            "portfolio": {
+              "entries": 82,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 13,
+                "liquidity": 0,
+                "gap": 15,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 144
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 1
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 82 < 150"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": false,
+              "stop": 0.03,
+              "th": 35
+            },
+            "metrics": {
+              "n": 178,
+              "weeks": 63,
+              "symbols": 48,
+              "maxSymbolShare": 0.9429379503718192,
+              "maxSymbolShareAux": 0.17070271912008964,
+              "excessLo": -0.008317923090227167,
+              "excessHi": 0.006408120151916875,
+              "excessT": -0.28808764955562227,
+              "excessMean": -0.0011268498738346625,
+              "excessLoAux": [
+                -0.008608025466852607,
+                -0.008770184241157292
+              ],
+              "seedSensitive": false,
+              "netMean": 0.002098133227230204,
+              "deltaTrade": 0,
+              "pf": 1.0995280902887938,
+              "payoff": 1.618749688480724,
+              "stressNetMean": 0.0011037512047582976,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.00010936918228638212
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.5873371508202625,
+              "sharpe": 0.45699066512151815,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.06805529395831865,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.03126429701646294
+            },
+            "counts": {
+              "candidates": 703,
+              "episodes": 220,
+              "taken": 178,
+              "stops": 87,
+              "gapSkip": 37,
+              "liquiditySkip": 0,
+              "unclosed": 5,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 215,
+              "filled": 200,
+              "fillRate": 0.9302325581395349
+            },
+            "portfolio": {
+              "entries": 179,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 18,
+                "liquidity": 0,
+                "gap": 23,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 483
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 4
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.2-1 샤프 < 1"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": false,
+              "stop": 0.03,
+              "th": 38
+            },
+            "metrics": {
+              "n": 301,
+              "weeks": 78,
+              "symbols": 50,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.13711401470282505,
+              "excessLo": -0.008547391594780736,
+              "excessHi": 0.0025822515153945814,
+              "excessT": -0.9652480253807555,
+              "excessMean": -0.002789767600629388,
+              "excessLoAux": [
+                -0.008226962619168592,
+                -0.008552586838711407
+              ],
+              "seedSensitive": false,
+              "netMean": -0.00047847686875887666,
+              "deltaTrade": 0,
+              "pf": 0.9778826629988425,
+              "payoff": 1.604070684041961,
+              "stressNetMean": -0.0014743240448386126,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.0024701712209183506
+                }
+              ],
+              "foldsPositive": 1,
+              "foldMaxProfitShare": 1.9464005429971234,
+              "sharpe": -0.09881561333532117,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.13049617711144446,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.013272460226103955
+            },
+            "counts": {
+              "candidates": 1177,
+              "episodes": 344,
+              "taken": 301,
+              "stops": 148,
+              "gapSkip": 35,
+              "liquiditySkip": 0,
+              "unclosed": 8,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 336,
+              "filled": 311,
+              "fillRate": 0.9255952380952381
+            },
+            "portfolio": {
+              "entries": 273,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 47,
+                "liquidity": 0,
+                "gap": 24,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 833
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 7
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 양(+) 폴드 < 2",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1",
+                "is.2-2 MDD > 0.12"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": false,
+              "stop": 0.05,
+              "th": 30
+            },
+            "metrics": {
+              "n": 82,
+              "weeks": 42,
+              "symbols": 42,
+              "maxSymbolShare": 0.1836797623112195,
+              "maxSymbolShareAux": 0.1143807292597364,
+              "excessLo": -0.008965339236913538,
+              "excessHi": 0.017841220876557047,
+              "excessT": 0.6724474609193289,
+              "excessMean": 0.0045360663869588045,
+              "excessLoAux": [
+                -0.008354648175841759,
+                -0.009350824090511493
+              ],
+              "seedSensitive": false,
+              "netMean": 0.017202424946338297,
+              "deltaTrade": 0,
+              "pf": 1.8970665427427638,
+              "payoff": 1.2776162430716573,
+              "stressNetMean": 0.016312181043899254,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.01542193714146022
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.4992824978749644,
+              "sharpe": 1.4100026494605697,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.024037841463067155,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.08377839452124936
+            },
+            "counts": {
+              "candidates": 254,
+              "episodes": 110,
+              "taken": 82,
+              "stops": 23,
+              "gapSkip": 27,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 109,
+              "filled": 98,
+              "fillRate": 0.8990825688073395
+            },
+            "portfolio": {
+              "entries": 82,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 13,
+                "liquidity": 0,
+                "gap": 15,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 144
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 1
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 82 < 150"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": false,
+              "stop": 0.05,
+              "th": 35
+            },
+            "metrics": {
+              "n": 178,
+              "weeks": 63,
+              "symbols": 48,
+              "maxSymbolShare": 0.6994913515645914,
+              "maxSymbolShareAux": 0.1703731694863352,
+              "excessLo": -0.008843442289753596,
+              "excessHi": 0.0083923570983629,
+              "excessT": -0.08763154737101302,
+              "excessMean": -0.00039662869687353517,
+              "excessLoAux": [
+                -0.009216642247040555,
+                -0.009009845123818454
+              ],
+              "seedSensitive": false,
+              "netMean": 0.0028283544041913314,
+              "deltaTrade": 0,
+              "pf": 1.1195876235953293,
+              "payoff": 1.2528718644995351,
+              "stressNetMean": 0.0019154330558767316,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.0010025117075621172
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.6582765502051682,
+              "sharpe": 0.4565643231301719,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.08159382464394044,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.037163195184237274
+            },
+            "counts": {
+              "candidates": 703,
+              "episodes": 220,
+              "taken": 178,
+              "stops": 58,
+              "gapSkip": 37,
+              "liquiditySkip": 0,
+              "unclosed": 5,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 215,
+              "filled": 200,
+              "fillRate": 0.9302325581395349
+            },
+            "portfolio": {
+              "entries": 177,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 20,
+                "liquidity": 0,
+                "gap": 23,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 483
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 5
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": false,
+              "stop": 0.05,
+              "th": 38
+            },
+            "metrics": {
+              "n": 301,
+              "weeks": 78,
+              "symbols": 50,
+              "maxSymbolShare": 6.803839523790971,
+              "maxSymbolShareAux": 0.25507549678587205,
+              "excessLo": -0.007864532252048187,
+              "excessHi": 0.004046282178699663,
+              "excessT": -0.6333890500215633,
+              "excessMean": -0.001951052284384914,
+              "excessLoAux": [
+                -0.007979778971824976,
+                -0.008269080395026393
+              ],
+              "seedSensitive": false,
+              "netMean": 0.00036023844748560643,
+              "deltaTrade": 0,
+              "pf": 1.0148052332447817,
+              "payoff": 1.2478345831009907,
+              "stressNetMean": -0.0005508911206207104,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.0014620206887270301
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 1.0145244837514775,
+              "sharpe": 0.07539383472553747,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.12293718294439071,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.002229621310415819
+            },
+            "counts": {
+              "candidates": 1177,
+              "episodes": 344,
+              "taken": 301,
+              "stops": 97,
+              "gapSkip": 35,
+              "liquiditySkip": 0,
+              "unclosed": 8,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 336,
+              "filled": 311,
+              "fillRate": 0.9255952380952381
+            },
+            "portfolio": {
+              "entries": 260,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 60,
+                "liquidity": 0,
+                "gap": 24,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 833
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 7
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1",
+                "is.2-2 MDD > 0.12"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": true,
+              "stop": 0.03,
+              "th": 30
+            },
+            "metrics": {
+              "n": 58,
+              "weeks": 36,
+              "symbols": 31,
+              "maxSymbolShare": 0.3352028828617562,
+              "maxSymbolShareAux": 0.16820873477330114,
+              "excessLo": -0.009255778755483304,
+              "excessHi": 0.01957814685736055,
+              "excessT": 0.8028373730773822,
+              "excessMean": 0.005988967838319739,
+              "excessLoAux": [
+                -0.008990251467869855,
+                -0.008994085062012042
+              ],
+              "seedSensitive": false,
+              "netMean": 0.012764277257985323,
+              "deltaTrade": 0,
+              "pf": 1.7012370149470402,
+              "payoff": 1.70123701494704,
+              "stressNetMean": 0.011816001395916364,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.010867725533847385
+                }
+              ],
+              "foldsPositive": 1,
+              "foldMaxProfitShare": 1.0044354924196246,
+              "sharpe": 1.0326517961209032,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.02002324218889602,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.04042533904111423
+            },
+            "counts": {
+              "candidates": 152,
+              "episodes": 63,
+              "taken": 58,
+              "stops": 23,
+              "gapSkip": 4,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 62,
+              "filled": 55,
+              "fillRate": 0.8870967741935484
+            },
+            "portfolio": {
+              "entries": 59,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 0,
+                "liquidity": 0,
+                "gap": 4,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 89
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 1
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 58 < 150",
+                "is.1-1 주 36 < 40"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": true,
+              "stop": 0.03,
+              "th": 35
+            },
+            "metrics": {
+              "n": 138,
+              "weeks": 54,
+              "symbols": 44,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.19210911902592376,
+              "excessLo": -0.012389683439724571,
+              "excessHi": 0.0019687541882558576,
+              "excessT": -1.382023182059093,
+              "excessMean": -0.005106467591786037,
+              "excessLoAux": [
+                -0.012297519908918527,
+                -0.012651842744342662
+              ],
+              "seedSensitive": false,
+              "netMean": -0.004534741009188769,
+              "deltaTrade": 0,
+              "pf": 0.7888807293132026,
+              "payoff": 1.2651860753136266,
+              "stressNetMean": -0.005531117820782988,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.006527494632377197
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 1.993811043975051,
+              "sharpe": -0.6195082744954,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.09149376864280716,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.03190681139755147
+            },
+            "counts": {
+              "candidates": 451,
+              "episodes": 149,
+              "taken": 138,
+              "stops": 68,
+              "gapSkip": 6,
+              "liquiditySkip": 0,
+              "unclosed": 5,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 144,
+              "filled": 134,
+              "fillRate": 0.9305555555555556
+            },
+            "portfolio": {
+              "entries": 142,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 1,
+                "liquidity": 0,
+                "gap": 6,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 302
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 4
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 138 < 150"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": true,
+              "stop": 0.03,
+              "th": 38
+            },
+            "metrics": {
+              "n": 236,
+              "weeks": 66,
+              "symbols": 48,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.22881459476532356,
+              "excessLo": -0.011004812032963595,
+              "excessHi": 0.0008661256926721067,
+              "excessT": -1.7734150905974317,
+              "excessMean": -0.005226146872863913,
+              "excessLoAux": [
+                -0.010889636612149308,
+                -0.010855280201501413
+              ],
+              "seedSensitive": false,
+              "netMean": -0.005516838971507213,
+              "deltaTrade": 0,
+              "pf": 0.7429497471183615,
+              "payoff": 1.2958425821831887,
+              "stressNetMean": -0.006506245751168234,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.0074956525308292506
+                }
+              ],
+              "foldsPositive": 0,
+              "foldMaxProfitShare": 1.0522359758068955,
+              "sharpe": -0.9941711453456893,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.16110637306833508,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.06436794012601443
+            },
+            "counts": {
+              "candidates": 801,
+              "episodes": 255,
+              "taken": 236,
+              "stops": 113,
+              "gapSkip": 11,
+              "liquiditySkip": 0,
+              "unclosed": 8,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 247,
+              "filled": 229,
+              "fillRate": 0.9271255060728745
+            },
+            "portfolio": {
+              "entries": 221,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 23,
+                "liquidity": 0,
+                "gap": 11,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 546
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 7
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 양(+) 폴드 < 2",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1",
+                "is.2-2 MDD > 0.12"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": true,
+              "stop": 0.05,
+              "th": 30
+            },
+            "metrics": {
+              "n": 58,
+              "weeks": 36,
+              "symbols": 31,
+              "maxSymbolShare": 0.45890220456269576,
+              "maxSymbolShareAux": 0.2134706720328424,
+              "excessLo": -0.012165040142251251,
+              "excessHi": 0.02020350794317348,
+              "excessT": 0.6120931951262129,
+              "excessMean": 0.0051195869118786305,
+              "excessLoAux": [
+                -0.012271919054948793,
+                -0.012560379955746727
+              ],
+              "seedSensitive": false,
+              "netMean": 0.011894896331544213,
+              "deltaTrade": 0,
+              "pf": 1.576944713003252,
+              "payoff": 1.281267579315142,
+              "stressNetMean": 0.01100696529706146,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": 0.01011903426257869
+                }
+              ],
+              "foldsPositive": 1,
+              "foldMaxProfitShare": 0.9080876654104107,
+              "sharpe": 0.9008191195614182,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.02595793965206125,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": 0.03729406479206632
+            },
+            "counts": {
+              "candidates": 152,
+              "episodes": 63,
+              "taken": 58,
+              "stops": 16,
+              "gapSkip": 4,
+              "liquiditySkip": 0,
+              "unclosed": 1,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 62,
+              "filled": 55,
+              "fillRate": 0.8870967741935484
+            },
+            "portfolio": {
+              "entries": 59,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 0,
+                "liquidity": 0,
+                "gap": 4,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 89
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 1
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 58 < 150",
+                "is.1-1 주 36 < 40"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": true,
+              "stop": 0.05,
+              "th": 35
+            },
+            "metrics": {
+              "n": 138,
+              "weeks": 54,
+              "symbols": 44,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.15501143646875112,
+              "excessLo": -0.011604815820550524,
+              "excessHi": 0.005955595563272888,
+              "excessT": -0.6715824302327456,
+              "excessMean": -0.003071216436603722,
+              "excessLoAux": [
+                -0.01217608156670149,
+                -0.012235034915042275
+              ],
+              "seedSensitive": false,
+              "netMean": -0.0024994898540064616,
+              "deltaTrade": 0,
+              "pf": 0.8940732560610731,
+              "payoff": 1.0959607654942187,
+              "stressNetMean": -0.0034052869554557445,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.004311084056905027
+                }
+              ],
+              "foldsPositive": 2,
+              "foldMaxProfitShare": 0.771241325081401,
+              "sharpe": -0.22321355018382588,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.09491448293183227,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.015950140554666925
+            },
+            "counts": {
+              "candidates": 451,
+              "episodes": 149,
+              "taken": 138,
+              "stops": 43,
+              "gapSkip": 6,
+              "liquiditySkip": 0,
+              "unclosed": 5,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 144,
+              "filled": 134,
+              "fillRate": 0.9305555555555556
+            },
+            "portfolio": {
+              "entries": 141,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 2,
+                "liquidity": 0,
+                "gap": 6,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 302
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 5
+            },
+            "judge": {
+              "verdict": "INSUFFICIENT",
+              "shape": "INSUFFICIENT",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-1 에피소드 138 < 150"
+              ]
+            },
+            "plateauRole": null
+          },
+          {
+            "params": {
+              "hold": 10,
+              "regime": true,
+              "stop": 0.05,
+              "th": 38
+            },
+            "metrics": {
+              "n": 236,
+              "weeks": 66,
+              "symbols": 48,
+              "maxSymbolShare": null,
+              "maxSymbolShareAux": 0.29227606570350195,
+              "excessLo": -0.010940887210191059,
+              "excessHi": 0.0012851260076171273,
+              "excessT": -1.5776699182187064,
+              "excessMean": -0.004801153585800702,
+              "excessLoAux": [
+                -0.010753152584157913,
+                -0.011166781350762826
+              ],
+              "seedSensitive": false,
+              "netMean": -0.005091845684444001,
+              "deltaTrade": 0,
+              "pf": 0.7891075502604118,
+              "payoff": 1.0919973170270345,
+              "stressNetMean": -0.005990150769189769,
+              "stressReport": [
+                {
+                  "multiplier": 2,
+                  "netMean": -0.006888455853935523
+                }
+              ],
+              "foldsPositive": 3,
+              "foldMaxProfitShare": 0.6953588062550909,
+              "sharpe": -0.4970388322586545,
+              "benchSharpe": 1.2588212493548676,
+              "mdd": 0.15070187309696295,
+              "benchMdd": 0.18186810506626028,
+              "annualReturn": -0.04274716501957976
+            },
+            "counts": {
+              "candidates": 801,
+              "episodes": 255,
+              "taken": 236,
+              "stops": 70,
+              "gapSkip": 11,
+              "liquiditySkip": 0,
+              "unclosed": 8,
+              "corpSuspect": 0
+            },
+            "limitModel": {
+              "attempted": 247,
+              "filled": 229,
+              "fillRate": 0.9271255060728745
+            },
+            "portfolio": {
+              "entries": 213,
+              "skipped": {
+                "priceAboveSlot": 0,
+                "noSlot": 31,
+                "liquidity": 0,
+                "gap": 11,
+                "cash": 0,
+                "noForwardBars": 0,
+                "cooldown": 546
+              },
+              "priceAboveSlotRate": 0,
+              "openAtEnd": 7
+            },
+            "judge": {
+              "verdict": "UNTESTED_OOS",
+              "shape": "UNTESTED_OOS",
+              "isPassed": false,
+              "promotionBlocked": false,
+              "reasons": [
+                "is.1-2 단일 종목 비중 > 0.15",
+                "is.1-3 초과수익 구간 하한 ≤ 0",
+                "is.1-3 t < 2.5",
+                "is.1-4 순기대값−δ < 0.004",
+                "is.1-5 PF < 1.4",
+                "is.1-5 손익비 < 1.5",
+                "is.1-6 슬리피지 민감도 순기대값 < 0",
+                "is.1-7 한 폴드 이익 비중 > 0.6",
+                "is.2-1 샤프 < 1",
+                "is.2-2 MDD > 0.12"
+              ]
+            },
+            "plateauRole": null
+          }
+        ],
+        "plateau": {
+          "perfOnly": [],
+          "members": [],
+          "edgeMembers": [],
+          "inP": [],
+          "plateau": [],
+          "chosen": null,
+          "reason": "empty_P"
+        }
+      }
+    ]
+  }
+}
