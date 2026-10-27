@@ -212,6 +212,50 @@ describe('(R-1) 오래된 MAX 증분 — 예산이 작아도 영구 결측이 �
     expect(r.symbols![0].quality!.storedGaps).toBe(0);
   });
 
+  test('(T-099 F1) 여러 칸 + 첫 칸 겹침의 최신 저장 봉만 잠정값 → 재수집 없이 마지막 칸까지 이어 가고 adjChange 를 누적', async () => {
+    const db = new FakeBarsDb();
+    const m = fakeMarket({ 'NAS:MU': makeBars('2022-01-03', '2025-08-20') });
+    await runDailyBarsCollect(deps(db, m.fetchPage, { now: () => kst('2025-08-21 21:00') }), { symbols: ['NAS:MU'], years: 1 });
+    const latest = db.rows().find((x) => x.trade_date === '2025-08-20')!;
+    const finalClose = latest.close;
+    latest.close = Math.round((Number(finalClose) - 0.5) * 10000) / 10000;  // 첫 칸 겹침의 최신 저장 봉 = 잠정값
+    m.data.set('NAS:MU', US_DATA());
+    m.requests.length = 0;
+    const r = await runDailyBarsCollect(deps(db, m.fetchPage), { symbols: ['NAS:MU'], years: 1 });
+    expect(r.symbols![0]).toMatchObject({ modes: ['incremental'], status: 'done', calls: 4 });   // 재수집 없음, 칸 수만큼
+    expect(m.requests.map((q) => q.endDate)).toEqual(['2025-12-18', '2026-04-17', '2026-08-15', null]);
+    // 첫 칸 8개(그중 최신 1개 불일치) + 뒤 칸 겹침 26개(전부 일치) — 칸마다 누적
+    expect(r.symbols![0].adjChange).toEqual({ compared: 34, mismatches: 1, settling: 1 });
+    expect(db.rows().filter((x) => x.flags !== null)).toEqual([]);
+    expect(db.rows().find((x) => x.trade_date === '2025-08-20')!.close).toBe(finalClose);
+    expect(db.rows().slice(-1)[0].trade_date).toBe('2026-10-21');           // 마지막 칸까지 도달
+    expect(findGaps(db.rows().map((x) => ({ tradeDate: String(x.trade_date) })))).toEqual([]);
+  });
+
+  test('(T-099 F1) 첫 칸과 둘째 칸 모두 정착 중 불일치 → settling 이 칸마다 더해져 2(덮어쓰기 아님)', async () => {
+    const db = new FakeBarsDb();
+    const m = fakeMarket({ 'NAS:MU': makeBars('2022-01-03', '2025-08-20') });
+    await runDailyBarsCollect(deps(db, m.fetchPage, { now: () => kst('2025-08-21 21:00') }), { symbols: ['NAS:MU'], years: 1 });
+    db.rows().find((x) => x.trade_date === '2025-08-20')!.close = 50;      // 첫 칸: 저장 최신 봉 잠정(약 −50%, 20배 미만)
+    m.data.set('NAS:MU', US_DATA());
+    m.requests.length = 0;
+    // 첫 칸 응답의 가장 최신 봉(2025-12-18)만 잠정값으로 준다 → 둘째 칸이 그 봉을 확정값으로 다시 받아 불일치
+    const finalOf1218 = US_DATA().find((b) => b.tradeDate === '2025-12-18')!.close;
+    let call = 0;
+    const fetchPage: FetchDailyPage = async (req) => {
+      const page = await m.fetchPage(req);
+      call++;
+      if (call === 1) page.rows = page.rows.map((b) => (b.tradeDate === '2025-12-18' ? { ...b, close: b.close - 0.5 } : b));
+      return page;
+    };
+    const r = await runDailyBarsCollect(deps(db, fetchPage), { symbols: ['NAS:MU'], years: 1 });
+    expect(r.symbols![0]).toMatchObject({ modes: ['incremental'], status: 'done', calls: 4 });
+    expect(r.symbols![0].adjChange).toEqual({ compared: 34, mismatches: 2, settling: 2 });
+    expect(db.rows().filter((x) => x.flags !== null)).toEqual([]);
+    expect(db.rows().find((x) => x.trade_date === '2025-12-18')!.close).toBe(finalOf1218);
+    expect(db.rows().slice(-1)[0].trade_date).toBe('2026-10-21');
+  });
+
   test('(T-1) storedGaps 는 저장분의 9일 초과 빈틈 수를 센다', async () => {
     const db = new FakeBarsDb();
     const m = fakeMarket({ 'NAS:MU': US_DATA() });
@@ -443,6 +487,65 @@ describe('조정 기준 변경 감지 → 전체 재수집', () => {
     const r = await runDailyBarsCollect(deps(db, m.fetchPage), { symbols: ['NAS:MU'], years: 1 });
     expect(r.symbols![0].modes).toEqual(['refetch']);
     expect(new Set(db.rows().map((x) => x.adj_mode))).toEqual(new Set(['adjusted']));
+  });
+});
+
+describe('(T-099) 정착 중인 최신 봉 — 재수집하지 않고 겹침 재기록으로 덮는다', () => {
+  test('미국형: 저장 최신 봉(10-21)만 잠정값 → 증분 1호출로 끝, stale·재수집 없음, 최신 봉은 새 값으로 덮인다', async () => {
+    const db = new FakeBarsDb();
+    const m = fakeMarket({ 'NAS:MU': US_DATA() });
+    await runDailyBarsCollect(deps(db, m.fetchPage), { symbols: ['NAS:MU'], years: 1 });
+    const row = db.rows().find((x) => x.trade_date === '2026-10-21')!;
+    const finalClose = row.close;
+    row.close = 524.9988;                                                   // 마감 직후 저장한 잠정 종가(진단 MSFT 모양)
+    const before = closesOf(db.rows());
+    m.data.set('NAS:MU', makeBars('2022-01-03', '2026-10-23'));
+    m.requests.length = 0;
+    const r = await runDailyBarsCollect(deps(db, m.fetchPage, { now: () => NEXT }), { symbols: ['NAS:MU'], years: 1 });
+    expect(r.symbols![0]).toMatchObject({ modes: ['incremental'], status: 'done', calls: 1 });
+    expect(r.symbols![0].adjChange).toEqual({ compared: 8, mismatches: 1, settling: 1 });
+    expect(m.requests).toHaveLength(1);
+    expect(db.rows().filter((x) => x.flags !== null)).toEqual([]);           // adj_stale 표시 없음
+    expect(db.rows().find((x) => x.trade_date === '2026-10-21')!.close).toBe(finalClose);
+    expect(db.rows()).toHaveLength(302);
+    // 겹침 밖 과거 행은 손대지 않았다
+    for (const x of db.rows().filter((y) => String(y.trade_date) < '2026-10-12')) expect(x.close).toBe(before[String(x.trade_date)]);
+  });
+
+  test('국내형: 저장 최신 봉(10-22)만 213500 → 215500 식으로 다르면 증분 1호출, stale 없음, 덮어쓰기', async () => {
+    const data = makeBars('2023-01-02', '2026-10-22', 200000, 100);
+    const db = new FakeBarsDb();
+    await runDailyBarsCollect(deps(db, fakeMarket({ '005930': data }, { today: '2026-10-22' }).fetchPage, { now: () => kst('2026-10-22 16:00') }),
+      { symbols: ['005930'], years: 1 });
+    const row = db.rows('KR', '005930').find((x) => x.trade_date === '2026-10-22')!;
+    expect(row.is_final).toBe(1);
+    const finalClose = row.close;
+    row.close = Number(finalClose) - 2000;                                  // 잠정 종가(진단 005930 의 −0.9% 모양)
+    const m2 = fakeMarket({ '005930': makeBars('2023-01-02', '2026-10-23', 200000, 100) }, { today: '2026-10-23' });
+    const r = await runDailyBarsCollect(deps(db, m2.fetchPage, { now: () => kst('2026-10-23 16:00') }), { symbols: ['005930'], years: 1 });
+    expect(r.symbols![0]).toMatchObject({ modes: ['incremental'], status: 'done', calls: 1 });
+    expect(r.symbols![0].adjChange).toMatchObject({ mismatches: 1, settling: 1 });
+    expect(m2.requests).toHaveLength(1);
+    expect(db.rows().filter((x) => x.flags !== null)).toEqual([]);
+    expect(db.rows('KR', '005930').find((x) => x.trade_date === '2026-10-22')!.close).toBe(finalClose);
+    expect(db.rows('KR', '005930').slice(-1)[0]).toMatchObject({ trade_date: '2026-10-23', is_final: 1 });
+  });
+
+  test('최신 3개가 다르면(K 초과) 지금처럼 stale 표시 + 재수집', async () => {
+    const db = new FakeBarsDb();
+    const m = fakeMarket({ 'NAS:MU': US_DATA() });
+    await runDailyBarsCollect(deps(db, m.fetchPage), { symbols: ['NAS:MU'], years: 1 });
+    for (const d of ['2026-10-19', '2026-10-20', '2026-10-21']) {
+      const x = db.rows().find((y) => y.trade_date === d)!;
+      x.close = Math.round(Number(x.close) * 0.99 * 10000) / 10000;          // 1% 차이(단위 혼입 아님)
+    }
+    m.data.set('NAS:MU', makeBars('2022-01-03', '2026-10-23'));
+    const r = await runDailyBarsCollect(deps(db, m.fetchPage, { now: () => NEXT }), { symbols: ['NAS:MU'], years: 1 });
+    expect(r.symbols![0].modes).toEqual(['incremental', 'refetch']);
+    expect(r.symbols![0].adjChange).toEqual({ compared: 8, mismatches: 3, settling: 0 });
+    expect(r.symbols![0].calls).toBe(4);                                     // 증분 1 + 재수집 3(1년 ≈ 300행 / 100행)
+    expect(r.symbols![0].status).toBe('done');
+    expect(db.rows().filter((x) => x.flags !== null)).toEqual([]);           // 재수집이 끝까지 돌아 stale 이 풀렸다
   });
 });
 

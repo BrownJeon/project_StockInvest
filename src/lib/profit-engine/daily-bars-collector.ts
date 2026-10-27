@@ -8,6 +8,9 @@
  *  - 행 없음                          → 백필: 오늘부터 과거로 years 년
  *  - MAX(trade_date) < 최근 확정 평일, 또는 최신 행이 장중 값인데 그 날 확정 시각이 지남
  *                                     → 증분: MAX 에서 앞으로 120일 칸씩(저장분과 10일 겹침 — 늘 연속, 조정 기준 변경 감지)
+ *                                        (T-099) 겹침 불일치가 가장 최근 비교 봉 2개 안에만 있으면 '정착 중인 최신 봉'으로 보고
+ *                                        재수집하지 않는다 — 받은 페이지 재기록이 잠정값을 확정값으로 덮는다(daily-bars-quality.detectAdjustmentChange).
+ *                                        한계: 저장된 가장 최신 봉은 다음 증분 전까지 잠정일 수 있다(다음 날 증분이 고친다).
  *  - 'adj_stale' 행 있음               → 재수집: adj_stale 아닌 가장 이른 날의 전날부터 과거로(저장된 가장 이른 날·years 하한 중 이른 쪽까지)
  *  - MIN(trade_date) > years 하한+7일  → 백필 이어 가기: MIN 전날부터 과거로
  *  - 그 밖                            → 호출 0 (이미 최신·완료)
@@ -84,7 +87,8 @@ export interface SymbolReport {
   status: 'done' | 'partial' | 'failed' | 'skipped' | 'no_data';
   reasons: PaginateReason[];
   rowsPerCall: number[];
-  adjChange?: { compared: number; mismatches: number };
+  /** mismatches = 겹침 불일치 총수, settling = 그중 정착 중인 최신 봉으로 보고 재수집하지 않은 수(T-099) */
+  adjChange?: { compared: number; mismatches: number; settling: number };
   /** gaps = 이번에 받은 봉의 빈틈, storedGaps = 실행 뒤 저장분 전체의 9일 초과 빈틈(안전망 — 거래정지와 구별 안 함) */
   quality?: { corpActionSuspect: number; zeroVolume: number; duplicates: number; conflicts: number; orderViolations: number; dropped: number; gaps: number; storedGaps: number };
   error?: string;
@@ -332,6 +336,7 @@ async function collectSymbol(c: SymbolCtx): Promise<InternalReport> {
       let anchor = st.maxDate!;
       let compared = 0;
       let mismatches = 0;
+      let settling = 0;
       for (let step = 0; step < MAX_INCREMENTAL_STEPS; step++) {
         const stepEnd = addDays(anchor, INCREMENTAL_STEP_DAYS);
         const end = stepEnd < today ? stepEnd : null;           // null = 오늘 기준(마지막 칸)
@@ -347,7 +352,8 @@ async function collectSymbol(c: SymbolCtx): Promise<InternalReport> {
         const adj = detectAdjustmentChange(r.merge.bars, stored);
         compared += adj.compared;
         mismatches += adj.mismatches.length;
-        rep.adjChange = { compared, mismatches };
+        settling += adj.settling;
+        rep.adjChange = { compared, mismatches, settling };
         if (adj.unitMismatch) throw new CurrencyMismatchError(market, ['unit_mismatch']);
         if (adj.changed) {
           // 과거 전체가 낡았다 — 표시하고 이 페이지를 쓴 뒤 아래 재수집으로 넘어간다(남은 최신 구간은 다음 실행의 증분이 잇는다)
@@ -355,6 +361,7 @@ async function collectSymbol(c: SymbolCtx): Promise<InternalReport> {
           await write(r, false);
           break;
         }
+        // 불일치가 없거나 정착 중인 최신 봉뿐(adj.settling > 0)이면 stale 표시 없이 쓰기만 한다 — 겹침 재기록이 잠정값을 확정값으로 덮는다
         await write(r, false);
         if (end === null) break;
         anchor = end;
