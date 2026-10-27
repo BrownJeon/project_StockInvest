@@ -19,8 +19,14 @@ const REG_TEXT = fs.readFileSync(path.join(ROOT, core.PATHS.registry), 'utf8');
 const REG = JSON.parse(REG_TEXT);
 const DOC_PATH = REG.document.path;
 const DOC_TEXT = fs.readFileSync(path.join(ROOT, DOC_PATH), 'utf8');
-const LEDGER_TEXT = fs.readFileSync(path.join(ROOT, core.PATHS.ledger), 'utf8');
-const IS_LEDGER_TEXT = fs.readFileSync(path.join(ROOT, core.PATHS.isLedger), 'utf8');
+/**
+ * 합성 파일 묶음의 기준 원장. 저장소의 실제 원장은 IS·OOS 실행 기록이 추가 전용으로 쌓이는 파일이라(첫 IS 는 2026-10-27, seq 1) 시험이 그 내용에
+ * 기대면 기록이 생기는 순간 어긋난다. 그래서 스키마·설명은 실제 파일에서 읽되 항목은 비운 초기 상태를 기준으로 쓴다.
+ * 실제 파일이 비어 있을 때의 바이트와 같다(러너가 JSON.stringify(…, null, 2) + 개행으로 쓴다).
+ */
+const emptyLedgerText = (text: string): string => `${JSON.stringify({ ...JSON.parse(text), entries: [] }, null, 2)}\n`;
+const LEDGER_TEXT = emptyLedgerText(fs.readFileSync(path.join(ROOT, core.PATHS.ledger), 'utf8'));
+const IS_LEDGER_TEXT = emptyLedgerText(fs.readFileSync(path.join(ROOT, core.PATHS.isLedger), 'utf8'));
 /** 동결 문서(v1.1)의 §B 해시 = registry docHash. v1.1 문서는 §B-11 에 registry 수치 마커(H_r) 한 줄이 이미 있다. */
 const DOC_HASH = REG.document.section_b_sha256;
 const MARKER_RE = /^registry-numeric-sha256: [0-9a-f]{64}$/m;
