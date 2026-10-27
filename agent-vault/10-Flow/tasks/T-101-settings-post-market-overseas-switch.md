@@ -1,11 +1,11 @@
 ---
 task_id: T-101
 title: 설정 > 안전장치에 '해외 장마감 후 분석' 스위치(post_market_overseas_enabled) 추가 — 데모 없이 진행(사용자 생략)
-status: doing
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-27
-updated: 2026-10-27
+updated: 2026-10-28
 base_ref: 8f91ecb
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa, codex]
@@ -97,6 +97,11 @@ push=배포. 장외 창(15:40~22:00 KST)에만. 지금(10-27 23시대)은 미국
 
 ## 배포 기록
 
+- **2026-10-28 05:11 KST push `61b80c9..5ac9119`(7커밋, T-101 `2d4079a`·T-102 `227c5bf`와 문서 5개 동승) → 웹훅 blue/green → `RELEASE_RESULT ok`, 릴리스 `20261028-051140-5ac91195`, `migrated=false`(DB 변경 없음), 05:13 완료.**
+- 배포 창 근거: docs/deploy-order.md 허용 창 05:10~08:30(미국 정규장 05:00 마감 후·국내장 09:00 전). 사전 점검(05:10): 킬스위치 ON·`safety_dry_run=false`·최근 3시간 주문 0건·`orders` 최대 id 3229·`system_config` 87키·health 200(포트 3003)·pm2 두 프로세스 online 재시작 0. 사전 `git fetch` 로 다른 세션 커밋이 섞이지 않았음(7커밋 모두 이 세션 것)을 확인했고 다른 세션의 미추적 파일 2개는 올리지 않았다.
+- 배포 후 검증(05:13): pm2 `stockinvest`·`stockinvest-cron` 새 릴리스 경로 online·재시작 0 · health 200 · 킬스위치 ON·주문 최대 id 3229·최근 3시간 주문 0건·키 87개 그대로(`post_market_overseas_enabled` 키는 **여전히 없음 = 꺼짐**, Leader 가 쓰지 않음) · 새 번들 `.next/server/app/api/settings/safety/route.js`·`settings/page.js` 에 `postMarketOverseasEnabled` 포함.
+- 롤백: 코드 `git revert 2d4079a` 후 push(스위치 행만 사라지고 키는 그대로 꺼짐 유지). 스위치를 켠 뒤라면 DB 키를 지우거나 `false` 로 저장하면 같은 효과.
+
 ## Codex 검토
 
 ### [2026-10-28 00:1x] C2 review focus=none — done (지적 1건, 중간)
@@ -110,7 +115,16 @@ push=배포. 장외 창(15:40~22:00 KST)에만. 지금(10-27 23시대)은 미국
 
 ## 최종 요약
 
-(완료 시 Leader 가 작성)
+**[T-101] 설정 > 안전장치에 '해외 장마감 후 분석' 스위치 추가**
+
+- 상태: 완료·운영 반영(2026-10-28 05:13, 릴리스 `20261028-051140-5ac91195`).
+- 무엇이 바뀌었나: 설정 화면 '안전장치 (공통)' 카드의 '자동 청산 엔진' 아래·'1회 주문 최대' 위에 **해외 장마감 후 분석 ON/OFF 스위치**가 생겼다. 누르면 즉시 저장되고(실패하면 원래대로 되돌림) '변경 저장' 일괄 저장과는 별개다. 서버(`/api/settings/safety`)는 이 키를 참/거짓 값 하나로만 받고 그 외 값은 400 으로 거절한다.
+- 배포: 05:11 push·05:13 `ok`, DB 마이그레이션 없음. T-102 와 같은 배포에 실렸다.
+- AI 가 검증한 것: 타입 검사·전체 jest(296묶음 통과·실패 0)·`next build`·진짜 GET/PATCH 핸들러 시뮬레이션 27건·Chromium 360/412px 실렌더(가로 스크롤 없음)·Reviewer 독립 감사 PASS·Codex C2·QA PASS. 배포 후 번들에 새 코드 포함 확인.
+- AI 가 못 한 것: 로그인한 실제 앱·WebView·실기기, 실DB 에서 GET/PATCH 한 번 돌려 보기, 키보드·스크린리더 실측. **스위치는 사용자가 켜기 전까지 꺼져 있다 — AI 는 운영 DB 에 쓰지 않았다.**
+- 👉 사용자가 확인할 것: **설정 > 안전장치(공통)** 에 '해외 장마감 후 분석' 행이 보이는지(지금 OFF 여야 정상). 켜기로 결정하면 직접 켠다 — 켜면 **다음 영업일 08:00 KST**(미국 정규장이 열린 날의 다음 날 아침)부터 미국 종목 시나리오 카드가 만들어지고, 주문은 하지 않으며 승인·킬스위치·검증 관문이 그대로 적용된다. 켜기 전 필수 조건 3개(카드 금액 10만원에서 실효 종목 수 인지·보유/관심 종목 IR 확정일 입력·08:00 에 KIS 일봉 반영 확인)는 T-062 기록 참조.
+- 남은 일(후속 후보): PATCH 쓰기 루프 트랜잭션·감사 로그 커밋 후 기록(기존 구조, Codex 중간 지적) · 스위치 터치 영역 24px·`tabIndex`(designer) · `scenario-card-display.ts:296` 카드 안내 문구의 "매일 08:00" 과장 표현 · 판독 실패(read_error) 화면 경고.
+- 이슈·위험: 위 후속 후보 외 없음.
 
 ## 데모 검토 (demo gate)
 
