@@ -75,12 +75,21 @@ export interface Balance {
 }
 
 /**
- * 해외 USD 예수금 1회 관측값 (T-056). 출처는 CTRP6504R(해외 체결기준현재잔고) `output2` USD 행 `frcr_dncl_amt_2`.
+ * 해외 USD 예수금 1회 관측값 (T-056). 출처는 CTRP6504R(해외 체결기준현재잔고) `output2` USD 행 `frcr_dncl_amt_2`
+ * − `frcr_buy_mgn_amt`(T-102 — 미결제 매수 차감).
  */
 export interface UsdCashReading {
-  /** 외화예수금액(USD). 유한한 0 이상 값만 들어온다 — 판정 규칙을 통과하지 못한 응답은 아예 이 모양이 되지 않는다. */
+  /**
+   * USD **순예수금** = 외화예수금액 − 미결제 매수(매수증거금) (T-102). 유한한 0 이상 값만 들어온다 — 판정 규칙을 통과하지 못한
+   * 응답은 아예 이 모양이 되지 않는다. 방금 산(결제 전) 종목은 이미 보유 평가에 들어 있으므로 총예수금을 쓰면 이중 계상된다.
+   * 미결제 매수가 없으면 외화예수금액 그대로다(T-056 과 같은 값).
+   */
   usd: number;
   source: 'CTRP6504R';
+  /** (T-102, 미결제 매수가 있을 때만) 외화예수금액 전체(USD) = `usd + unsettledBuyUsd`(소수 6자리 반올림 오차 이내 — `usd` 는 이 값을 넘지 않는다). 기록·진단용 — 평가·한도에 쓰지 않는다. */
+  grossDepositUsd?: number;
+  /** (T-102, 미결제 매수가 있을 때만) 매수증거금 `frcr_buy_mgn_amt`(USD, 양수). 결제(T+1)되면 사라지고 `usd` 는 그대로 이어진다. */
+  unsettledBuyUsd?: number;
   /**
    * `output3.ustl_sll_amt_smtl`(미결제매도금액합계) 원값. **총액에 넣지 않는다** — 단계 4(첫 해외 매도 직후 관측)에서
    * 예수금이 체결기준인지 판별하는 자료로만 남긴다. 단위는 KIS 문서상 명시가 없고 output3 의 다른 원화 합계와 같은 형식이다.

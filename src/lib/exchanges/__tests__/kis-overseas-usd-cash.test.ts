@@ -332,9 +332,11 @@ describe('라운드 4 — 분기 1 환율은 양수여야 한다', () => {
     expect(parseUsdCashFromPresentBalance(fixture).usd).toBe(368.51);
   });
 
-  test('(e) 의도: 환율에 크기 하한은 두지 않는다 — 0.0001 처럼 아주 작은 양수라도 정합·합계가 맞으면 known (환율 타당성 범위 검사는 범위 밖)', () => {
+  // T-102 Codex C2 high 로 T-056 라운드 4 의 '범위 밖' 결정을 뒤집음 — 손상 응답에서 정합 검사 무력화 방지
+  // (원 단위 허용치를 달러로 바꾸면 1/환율 — 환율이 아주 작으면 ±1원 정합이 어떤 예수금이든 통과시킨다).
+  test('(e) 0.0001 처럼 아주 작은 양수 환율은 정합·합계가 맞아도 → 던진다 (타당 범위 밖)', () => {
     const evlu = String(368.51 * 0.0001);
-    expect(parseUsdCashFromPresentBalance(usdRow('368.510000', '0.0001', evlu, evlu)).usd).toBe(368.51);
+    expect(() => parseUsdCashFromPresentBalance(usdRow('368.510000', '0.0001', evlu, evlu))).toThrow(/타당 범위\(100~10000\) 밖/);
   });
 
   test('(f) 확인: 환율 양수일 때 평가 음수(−5원, 예수금 0)는 정합 불일치로 이미 던진다 — 별도 검사 없음', () => {

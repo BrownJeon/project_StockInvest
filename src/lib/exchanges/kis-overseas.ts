@@ -193,14 +193,41 @@ async function getDailyCandles(symbol: string, count: number): Promise<Candle[]>
 // `tot_dncl_amt`·`wdrw_psbl_tot_amt`)는 원화 예수금이 섞여 있어(실측: `tot_frcr_cblc_smtl` = USD 원화값 + KRW 예수금) 쓰면
 // KRW 행과 **이중 계상**된다. `output3` 은 아래 정합 검사에만 쓴다.
 //
-// ## 판정 규칙 (설계 Q9 + Leader 결정 — 비교는 모두 ±1원)
+// ## 판정 규칙 (설계 Q9 + Leader 결정 — 비교는 모두 ±1원, T-102 독립 검산만 ±2원)
 //
-//  1. `rt_cd='0'` + USD 행 정확히 1개 + `frcr_dncl_amt_2` 유한·≥0 + `frcr_evlu_amt2 ≈ frcr_dncl_amt_2 × frst_bltn_exrt`
-//     + `output3.frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2`                                  → **known = frcr_dncl_amt_2**
+//  1. `rt_cd='0'` + USD 행 정확히 1개 + `frcr_dncl_amt_2` 유한·≥0
+//     + 환율 `frst_bltn_exrt` 유한한 양수 **이고 타당 범위 100~10000 KRW/USD** (`USD_KRW_RATE_MIN/MAX`, T-102 Codex C2 high —
+//       원 단위 허용치는 달러로 1/환율이라 극단 환율에서 아래 정합이 무력화된다)
+//     + 매수증거금 margin = `frcr_buy_mgn_amt`(키 없음·공백 = 0, 비숫자·음수 → 던짐), 순예수금 net = min(round6(예수금 − margin), 예수금)
+//       (margin 0 이면 net = 예수금 그대로, net < 0 이면 던짐 — 자세한 근거는 아래 T-102 절)
+//     + 정합 검사 5종:
+//         ① 행        `frcr_evlu_amt2 ≈ net × 환율`
+//         ② 합계      `output3.frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2 + margin × 환율`
+//         ③ 교차      `output3.buy_mgn_amt ≈ margin × 환율` (margin 0 이면 값이 있을 때 ≈ 0, 비숫자는 던짐)
+//         ④ 체결분 대조(margin > 0 만) `output3.ustl_buy_amt_smtl ≈ output3.buy_mgn_amt`
+//         ⑤ 독립 검산(margin > 0 만)  `tot_asst_amt ≈ evlu_amt_smtl_amt + tot_dncl_amt + Σ frcr_evlu_amt2` (±2원)
+//     (margin 0 이면 ①② 는 T-056 원래 식 `evlu ≈ 예수금 × 환율`·`tota ≈ Σ evlu` 와 같다)
+//                                                                                          → **known = net** (margin 0 이면 frcr_dncl_amt_2)
 //  2. `rt_cd='0'` + USD 행 없음 + output3 존재 + `frcr_evlu_tota ≈ 0` + `tot_asst_amt − evlu_amt_smtl_amt − tot_dncl_amt ≈ 0`
 //     (+ 1번과 같은 `frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2` — 자기모순 응답 차단, 구현 시 추가)
 //                                                                                          → **known = 0** (KIS 가 0 통화를 생략해도 데드락 없음)
 //  3. 그 밖 전부(HTTP≠200, `rt_cd≠'0'`, output3 없음, 항등식 불일치, 비유한 값, USD 행 2개 이상)  → **던진다** (호출부는 unknown)
+//
+// ## T-102 — 미결제 매수(매수증거금)가 있을 때 (2026-10-27 실측 1건 + KIS 자체 총자산 항등식)
+//
+// 매수 체결 후 결제(T+1) 전에는 USD 행에 `frcr_buy_mgn_amt`(매수증거금, USD)가 생기고 관계가 바뀐다:
+//   - `frcr_evlu_amt2` = (예수금 − 매수증거금) × 환율   (출금가능 기준. 예전 가정은 예수금 × 환율)
+//   - `output3.frcr_evlu_tota` = 예수금 전체 × 환율     → `tota = Σ frcr_evlu_amt2 + 매수증거금 × 환율`
+//   - `output3.buy_mgn_amt` = 매수증거금 × 환율
+//   - `output3.tot_asst_amt = evlu_amt_smtl_amt + tot_dncl_amt + Σ frcr_evlu_amt2` — KIS 도 총자산에 순예수금을 쓴다
+// 그래서 1번 분기를 넓힌다: margin = `frcr_buy_mgn_amt`(키 없음·빈 값 = 0, 비숫자·음수·예수금 초과는 던진다), net = 예수금 − margin,
+//   행 `frcr_evlu_amt2 ≈ net × 환율` · 합계 `frcr_evlu_tota ≈ Σ frcr_evlu_amt2 + margin × 환율` (±1원, margin 0 이면 예전 식 그대로)
+//   · 교차 `output3.buy_mgn_amt ≈ margin × 환율` (±1원, margin 0 이면 값이 있을 때 ≈ 0)
+//   · 체결분 대조(margin > 0 일 때만) `output3.ustl_buy_amt_smtl ≈ output3.buy_mgn_amt` (±1원 — 미체결 주문 예약금이 섞인 증거금 차단)
+//   · 독립 검산(margin > 0 일 때만) `tot_asst_amt ≈ evlu_amt_smtl_amt + tot_dncl_amt + Σ frcr_evlu_amt2` (±2원 — 반올림된 세 항)
+//                                                                                          → **known = net**
+// 결제된 종목은 이미 보유(output1) 평가에 들어 있으므로 총예수금을 쓰면 이중 계상된다. 결제가 끝나면 margin 0 → net = 예수금이라
+// 값이 연속이다(결제 시점 총자산 튐 없음). 미결제 **매도**(`ustl_sll_amt_smtl`)는 여전히 기록만 하고 평가에 넣지 않는다(실측 없음).
 //
 // 🔴 **이 경로 어디에도 실패를 0 으로 바꾸는 지점이 없어야 한다.** 0 은 2번 분기(항등식이 0 을 확인)에서만 나온다.
 
@@ -228,15 +255,54 @@ function strictNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function within(a: number, b: number): boolean {
-  return Math.abs(a - b) <= USD_CASH_RECONCILE_TOLERANCE_KRW;
+/**
+ * (T-102) 미결제 매수 상태의 독립 검산 `tot_asst_amt ≈ evlu_amt_smtl_amt + tot_dncl_amt + Σ frcr_evlu_amt2` 허용치.
+ * 우변 세 항이 각각 원 단위로 반올림된 값이라 한 칸(1원)보다 하나 넓게 둔다(Leader 설계 T-102).
+ */
+export const USD_CASH_TOT_ASST_TOLERANCE_KRW = 2;
+
+/**
+ * (T-102 Codex C2 high) USD 행 환율(`frst_bltn_exrt`, KRW/USD) 타당 범위. 원 단위 허용치(±1·±2원)를 달러로 바꾸면 1/환율이라,
+ * 환율이 극단적으로 작으면 정합 검사가 사실상 무력화돼 손상 응답의 `usd` 가 과대 계상될 수 있다 → 범위 밖이면 던진다.
+ */
+export const USD_KRW_RATE_MIN = 100;
+export const USD_KRW_RATE_MAX = 10_000;
+
+function within(a: number, b: number, tol: number = USD_CASH_RECONCILE_TOLERANCE_KRW): boolean {
+  return Math.abs(a - b) <= tol;
+}
+
+/** USD 소수 6자리 반올림 — 예수금 − 증거금 의 부동소수 잡음(…0000001)을 지운다. */
+function round6(x: number): number {
+  return Math.round(x * 1e6) / 1e6;
+}
+
+/**
+ * (T-102) 생략 가능한 숫자 필드. 키가 없거나(null/undefined) 공백뿐인 문자열이면 0(과거 응답 모양 호환),
+ * 값이 있는데 숫자 형식이 아니면(비유한·'abc'·'1e3') null — 호출부가 던진다.
+ */
+function optionalNumOrZero(v: unknown): number | null {
+  if (v == null) return 0;
+  if (typeof v === 'string' && v.trim() === '') return 0;
+  return strictNum(v);
+}
+
+export interface ParsedUsdCash {
+  /** 순예수금(미결제 매수 차감) — `UsdCashReading.usd` */
+  usd: number;
+  ustlSllAmtSmtl: number;
+  /** 미결제 매수가 있을 때만: 총예수금(USD) */
+  grossDepositUsd?: number;
+  /** 미결제 매수가 있을 때만: 매수증거금(USD) */
+  unsettledBuyUsd?: number;
 }
 
 /**
  * CTRP6504R 응답 본문 → USD 예수금. **순수 함수**(fetch·db 없음) — 판정 규칙 전부가 여기 있다.
- * 규칙을 통과하지 못하면 `UsdCashUnavailableError` 를 던진다. 0 은 오직 2번 분기에서만 반환된다.
+ * 규칙을 통과하지 못하면 `UsdCashUnavailableError` 를 던진다. 0 은 2번 분기(항등식이 0 확인) 또는 1번 분기의
+ * 정합 검사를 모두 통과한 순예수금이 0 일 때만 반환된다.
  */
-export function parseUsdCashFromPresentBalance(data: unknown): { usd: number; ustlSllAmtSmtl: number } {
+export function parseUsdCashFromPresentBalance(data: unknown): ParsedUsdCash {
   const fail = (why: string): never => { throw new UsdCashUnavailableError(`CTRP6504R USD 예수금 판정 불가 — ${why}`); };
   if (!data || typeof data !== 'object') fail('응답 본문이 객체가 아님');
   const d = data as Record<string, unknown>;
@@ -268,36 +334,90 @@ export function parseUsdCashFromPresentBalance(data: unknown): { usd: number; us
   const usdRows = rows.filter(r => r && String(r.crcy_cd ?? '').trim().toUpperCase() === 'USD');
   if (usdRows.length > 1) fail(`output2 에 USD 행이 ${usdRows.length}개`);
 
-  // 두 분기 공통 항등식: output3.frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2 (실측으로 확인된 관계).
+  // 두 분기 공통 항등식: output3.frcr_evlu_tota ≈ Σ output2.frcr_evlu_amt2 (+ 분기 1 의 매수증거금 × 환율, T-102).
   // 분기 2 에도 적용한다 — USD 행은 없는데 다른 통화 행에 값이 있고 합계는 0 이라고 말하는 자기모순 응답을 0 으로 읽지 않게.
+  // (T-102) 매수증거금 항은 USD 행 환율을 확인한 뒤에야 계산할 수 있어 비교는 각 분기 안에서 한다 — 검사 집합은 같다.
   let sumEvlu = 0;
   for (const row of rows) {
     const v = strictNum(row?.frcr_evlu_amt2);
     if (v == null) fail(`output2 ${String(row?.crcy_cd)} 행의 frcr_evlu_amt2 가 숫자가 아님`);
     sumEvlu += v as number;
   }
-  if (!within(frcrEvluTota, sumEvlu)) {
-    fail(`output3.frcr_evlu_tota=${frcrEvluTota} ≠ Σ output2.frcr_evlu_amt2=${sumEvlu}`);
-  }
 
   if (usdRows.length === 1) {
-    // ── 분기 1: USD 행 있음 + 정합 ──
+    // ── 분기 1: USD 행 있음 + 정합 (T-102: 미결제 매수 = 매수증거금이 있으면 순예수금 기준) ──
     const r = usdRows[0];
-    const usd = strictNum(r.frcr_dncl_amt_2);
-    if (usd == null) fail(`frcr_dncl_amt_2 가 숫자가 아님 (${JSON.stringify(r.frcr_dncl_amt_2)})`);
-    if ((usd as number) < 0) fail(`frcr_dncl_amt_2 음수 (${usd})`);
+    const dncl = strictNum(r.frcr_dncl_amt_2);
+    if (dncl == null) fail(`frcr_dncl_amt_2 가 숫자가 아님 (${JSON.stringify(r.frcr_dncl_amt_2)})`);
+    if ((dncl as number) < 0) fail(`frcr_dncl_amt_2 음수 (${dncl})`);
     const rate = strictNum(r.frst_bltn_exrt);
     const evlu = strictNum(r.frcr_evlu_amt2);
     if (rate == null || evlu == null) fail('USD 행의 frst_bltn_exrt·frcr_evlu_amt2 가 숫자가 아님');
     // (Codex C2 high) 환율 0·음수면 `0 × usd = 0` 정합이 아무 예수금이나 통과시킨다 — 앱은 자체 환율로 환산하므로 총자산 과대 기록.
     if (!((rate as number) > 0)) fail(`USD 행 환율(frst_bltn_exrt)이 양수가 아님 (${rate})`);
-    if (!within(evlu as number, (usd as number) * (rate as number))) {
-      fail(`USD 행 정합 불일치: frcr_evlu_amt2=${evlu} ≠ ${usd}×${rate}`);
+    // (T-102 Codex C2 high) 아주 작은(또는 큰) 양수 환율도 원 단위 정합을 무력화한다 — 분기 1 공통(margin 0·>0).
+    if ((rate as number) < USD_KRW_RATE_MIN || (rate as number) > USD_KRW_RATE_MAX) {
+      fail(`USD 행 환율(frst_bltn_exrt)이 타당 범위(${USD_KRW_RATE_MIN}~${USD_KRW_RATE_MAX}) 밖 (${rate})`);
     }
-    return { usd: usd as number, ustlSllAmtSmtl };
+
+    // (T-102) 매수증거금(미결제 매수, USD). 키 없음·빈 값 = 0(과거 응답 호환), 비숫자·음수·예수금 초과는 던진다.
+    const margin = optionalNumOrZero(r.frcr_buy_mgn_amt);
+    if (margin == null) fail(`USD 행 frcr_buy_mgn_amt 가 숫자가 아님 (${JSON.stringify(r.frcr_buy_mgn_amt)})`);
+    if ((margin as number) < 0) fail(`USD 행 frcr_buy_mgn_amt 음수 (${margin})`);
+    const hasMargin = (margin as number) > 0;
+    // margin 0 이면 예수금 그대로(T-056 과 비트 단위로 같은 값), 있으면 순예수금.
+    // (Reviewer F1) 소수 7자리 이하 입력에서 round6 이 예수금 위로 올림하지 않게 `≤ 예수금` 으로 묶는다.
+    const net = hasMargin ? Math.min(round6((dncl as number) - (margin as number)), dncl as number) : (dncl as number);
+    // 순예수금 음수 = 증거금이 예수금보다 크다(통합증거금·신용 등 모르는 상태) — 0 으로 자르지 않고 던진다.
+    if (net < 0) fail(`USD 행 매수증거금 ${margin} > 예수금 ${dncl} (순예수금 음수 — 모르는 상태)`);
+    const marginKrw = (margin as number) * (rate as number);
+
+    // 행: frcr_evlu_amt2 ≈ 순예수금 × 환율 (margin 0 이면 예전 식 `예수금 × 환율` 과 같다)
+    if (!within(evlu as number, net * (rate as number))) {
+      fail(`USD 행 정합 불일치: frcr_evlu_amt2=${evlu} ≠ ${net}×${rate}`
+        + (hasMargin ? ` (순예수금 = 예수금 ${dncl} − 매수증거금 ${margin})` : ''));
+    }
+    // 합계: frcr_evlu_tota ≈ Σ frcr_evlu_amt2 + 매수증거금 × 환율 (margin 0 이면 예전 식과 같다)
+    if (!within(frcrEvluTota, sumEvlu + marginKrw)) {
+      fail(`output3.frcr_evlu_tota=${frcrEvluTota} ≠ Σ output2.frcr_evlu_amt2=${sumEvlu}`
+        + (hasMargin ? ` + 매수증거금×환율=${marginKrw}` : ''));
+    }
+    // 교차: output3.buy_mgn_amt ≈ 매수증거금 × 환율. margin > 0 이면 반드시 있어야 하고, 0 이면 (있을 때) ≈ 0.
+    if (hasMargin) {
+      const buyMgnKrw = strictNum(o3!.buy_mgn_amt);
+      if (buyMgnKrw == null) fail(`매수증거금이 있는데 output3.buy_mgn_amt 가 숫자가 아님 (${JSON.stringify(o3!.buy_mgn_amt)})`);
+      if (!within(buyMgnKrw as number, marginKrw)) {
+        fail(`output3.buy_mgn_amt=${buyMgnKrw} ≠ 매수증거금×환율=${marginKrw}`);
+      }
+      // (T-102 Leader 결정) 체결분 대조: 매수증거금이 **체결된 미결제 매수**만인지 확인한다. 미체결 주문 예약금이 섞이면
+      // `ustl_buy_amt_smtl`(미결제매수금액 — 체결분만)이 더 작아진다 → 순예수금이 보유에 없는 금액까지 빼게 되므로 던진다.
+      const ustlBuyKrw = strictNum(o3!.ustl_buy_amt_smtl);
+      if (ustlBuyKrw == null) {
+        fail(`매수증거금이 있는데 output3.ustl_buy_amt_smtl 가 숫자가 아님 (${JSON.stringify(o3!.ustl_buy_amt_smtl)})`);
+      }
+      if (!within(ustlBuyKrw as number, buyMgnKrw as number)) {
+        fail(`output3.ustl_buy_amt_smtl=${ustlBuyKrw} ≠ output3.buy_mgn_amt=${buyMgnKrw} (미체결 주문 예약금 등 체결분 외 증거금 — 모르는 상태)`);
+      }
+      // 독립 검산(새 경로라 더 엄격하게): KIS 자신의 총자산이 순예수금 기준인지
+      const assetRhs = o3n('evlu_amt_smtl_amt') + o3n('tot_dncl_amt') + sumEvlu;
+      const totAsst = o3n('tot_asst_amt');
+      if (!within(totAsst, assetRhs, USD_CASH_TOT_ASST_TOLERANCE_KRW)) {
+        fail(`미결제 매수 상태 독립 검산 불일치: tot_asst_amt=${totAsst} ≠ evlu_amt_smtl_amt + tot_dncl_amt + Σ frcr_evlu_amt2 = ${assetRhs}`);
+      }
+      return { usd: net, ustlSllAmtSmtl, grossDepositUsd: dncl as number, unsettledBuyUsd: margin as number };
+    }
+    const buyMgnKrw0 = optionalNumOrZero(o3!.buy_mgn_amt);
+    if (buyMgnKrw0 == null) fail(`output3.buy_mgn_amt 가 숫자가 아님 (${JSON.stringify(o3!.buy_mgn_amt)})`);
+    if (!within(buyMgnKrw0 as number, 0)) {
+      fail(`USD 행 매수증거금이 0 인데 output3.buy_mgn_amt=${buyMgnKrw0} ≠ 0 (다른 통화 증거금 등 모르는 상태)`);
+    }
+    return { usd: net, ustlSllAmtSmtl };
   }
 
   // ── 분기 2: USD 행 없음 — output3 항등식이 0 을 확인할 때만 known 0 ──
+  if (!within(frcrEvluTota, sumEvlu)) {
+    fail(`output3.frcr_evlu_tota=${frcrEvluTota} ≠ Σ output2.frcr_evlu_amt2=${sumEvlu}`);
+  }
   if (!within(frcrEvluTota, 0)) fail(`USD 행이 없는데 output3.frcr_evlu_tota=${frcrEvluTota} ≠ 0`);
   const residual = o3n('tot_asst_amt') - o3n('evlu_amt_smtl_amt') - o3n('tot_dncl_amt');
   if (!within(residual, 0)) fail(`USD 행이 없는데 tot_asst_amt − evlu_amt_smtl_amt − tot_dncl_amt = ${residual} ≠ 0`);
@@ -338,7 +458,13 @@ export async function getUsdCash(): Promise<UsdCashReading> {
     }
     const data: unknown = await res.json();
     const parsed = parseUsdCashFromPresentBalance(data);
-    return { usd: parsed.usd, source: 'CTRP6504R', ustlSllAmtSmtl: parsed.ustlSllAmtSmtl };
+    return {
+      usd: parsed.usd, source: 'CTRP6504R', ustlSllAmtSmtl: parsed.ustlSllAmtSmtl,
+      // (T-102) 미결제 매수가 있을 때만 붙는다 — 없으면 T-056 과 같은 모양.
+      ...(parsed.unsettledBuyUsd != null
+        ? { grossDepositUsd: parsed.grossDepositUsd, unsettledBuyUsd: parsed.unsettledBuyUsd }
+        : {}),
+    };
   }
 }
 
