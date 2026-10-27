@@ -10,7 +10,7 @@
 #
 #   1) 로직 시나리오 단계 — GIT_INDEX_FILE 로 만든 **임시 index** 에만 가짜 blob 을 stage 하고 훅을
 #      직접 호출한다. 이 단계는 실제 index 를 건드리지 않는다. 다만
-#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998·T-963~969-hooktest-*.md)를 **실제 작업 트리에** 잠시
+#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998·T-960~969-hooktest-*.md)를 **실제 작업 트리에** 잠시
 #          썼다가 EXIT trap 으로 지운다(kill -9 같은 강제 종료면 남을 수 있다). 실행 중 다른 세션이
 #          `git add -A` 하면 그 커밋에 섞일 수 있다.
 #        · 가짜 blob 은 .git/objects 에 dangling object 로 남는다(`git gc` 로 정리된다).
@@ -1023,10 +1023,13 @@ stage_and_run 0 "(t092-n1) 속도 제한 gate·signup-gate 이웃(-foo·.bak·xt
 # (T-093 갱신) 원래 묶음에 있던 src/lib/mail/config.ts 는 T-093 에서 목록에 들어갔다 → 이 통과 묶음에서 뺐다. 이 시나리오의
 #   겨냥 변이(`^src/lib/mail/` 확대 등)는 남은 header-safe·signup-request-mail 등이 그대로 잡는다. config.ts 가 이제 걸린다는
 #   단언은 아래 '[T-093 …]' 절(t093-a17.*)에 있다.
-stage_and_run 0 "(t092-n2) mail 이웃(header-safe·signup-request-mail·sender·send.ts.bak) → 통과" \
+# (T-094 갱신) 원래 묶음에 있던 src/lib/mail/header-safe.ts·__tests__/header-safe.test.ts 는 T-094 에서 목록에 들어갔다 → 이 통과
+#   묶음에서 뺐다. `^src/lib/mail/` 확대 변이는 남은 signup-request-mail·sender 가, 시험 위치 확대 변이는 send.test.ts.snap 이
+#   그대로 잡는다. 이제 걸린다는 단언은 아래 '[T-094 …]' 절(t094-a*)에 있다.
+stage_and_run 0 "(t092-n2) mail 이웃(signup-request-mail·sender·send.ts.bak) → 통과" \
   "$(msg 'chore: 이웃 파일 정리')" \
-  "src/lib/mail/header-safe.ts" "src/lib/mail/signup-request-mail.ts" \
-  "src/lib/mail/sender.ts" "src/lib/mail/send.ts.bak" "src/lib/mail/__tests__/header-safe.test.ts" \
+  "src/lib/mail/signup-request-mail.ts" \
+  "src/lib/mail/sender.ts" "src/lib/mail/send.ts.bak" \
   "src/lib/mail/__tests__/send.test.ts.snap" "src/types/nodemailer.d.ts" "foo/src/lib/mail/send.ts"
 # 겨냥 변이: `\.ts$` 삭제(safe-next-path-x.ts·.tsx·-old.test.ts) · 디렉토리 위치 무시(auth/safe-next-path.ts) · `^` 삭제(mockups/…).
 stage_and_run 0 "(t092-n3) safe-next-path 이웃(-x·.tsx·auth/·-old 시험) → 통과" \
@@ -1119,9 +1122,9 @@ e2e_commit "(t092-g8) 실 커밋: 같은 변경 + T-978·T-980 합집합 → 통
 
 printf 'x\n' > "$E2E_REPO/src/lib/auth/login-gate.ts"
 printf 'x\n' > "$E2E_REPO/src/lib/auth/signup-request-gate.ts"
-printf 'x\n' > "$E2E_REPO/src/lib/mail/header-safe.ts"
-e2e_git add src/lib/auth/login-gate.ts src/lib/auth/signup-request-gate.ts src/lib/mail/header-safe.ts
-e2e_commit "(t092-g9) 실 커밋: 속도 제한 gate·header-safe 이웃(task ID 없음) → 통과" commit "" \
+# (T-094 갱신) 원래 이 커밋에 있던 src/lib/mail/header-safe.ts 는 T-094 에서 목록에 들어갔다 → 뺐다(실 커밋 차단은 t094-g*).
+e2e_git add src/lib/auth/login-gate.ts src/lib/auth/signup-request-gate.ts
+e2e_commit "(t092-g9) 실 커밋: 속도 제한 gate 이웃(task ID 없음) → 통과" commit "" \
   'chore: 시도제한 임계값·헤더 정리'
 
 echo ""
@@ -1239,12 +1242,14 @@ stage_and_run 0 "(t093-n2) 로그인 화면 본체·화면 컴포넌트·형제 
   "src/components/auth/__tests__/app-version-gate-t091.test.ts" \
   "src/components/auth/__tests__/login-screen-t088.test.ts.bak" \
   "mockups/src/components/auth/__tests__/login-screen-t088.test.ts"
-# 겨냥 변이: `^src/lib/mail/` 로 넓히기(header-safe·signup-request-mail) · `$` 삭제(config.ts.bak) · `.` 이스케이프 누락
+# 겨냥 변이: `^src/lib/mail/` 로 넓히기(signup-request-mail) · `$` 삭제(config.ts.bak) · `.` 이스케이프 누락
 # (configxts) · 시험 위치로 넓히기(mail/__tests__/) · `^` 삭제(foo/…). nodemailer 타입 선언도 감시 밖(T-092 후보 보류).
-stage_and_run 0 "(t093-n3) mail 이웃(header-safe·signup-request-mail·config.tsx·.bak·시험) → 통과" \
+# (T-094 갱신) 원래 묶음에 있던 header-safe.ts·__tests__/header-safe.test.ts 는 T-094 에서 목록에 들어갔다 → 뺐다. 남은
+#   signup-request-mail·config.test.ts 가 위 겨냥 변이를 그대로 잡는다. 이제 걸린다는 단언은 '[T-094 …]' 절(t094-a*)에 있다.
+stage_and_run 0 "(t093-n3) mail 이웃(signup-request-mail·config.tsx·.bak·시험) → 통과" \
   "$(msg 'chore: 메일 이웃 정리')" \
-  "src/lib/mail/header-safe.ts" "src/lib/mail/signup-request-mail.ts" "src/lib/mail/config.tsx" \
-  "src/lib/mail/config.ts.bak" "src/lib/mail/configxts" "src/lib/mail/__tests__/header-safe.test.ts" \
+  "src/lib/mail/signup-request-mail.ts" "src/lib/mail/config.tsx" \
+  "src/lib/mail/config.ts.bak" "src/lib/mail/configxts" \
   "src/lib/mail/__tests__/config.test.ts" "src/types/nodemailer.d.ts" "foo/src/lib/mail/config.ts"
 
 # 혼합 커밋 — 판정 합집합(요구사항4). T-969(새 17개)·T-967(구현)·T-978(T-092 10개)이 각자 자기 몫만 덮는다.
@@ -1324,11 +1329,11 @@ e2e_commit "(t093-g7) 실 커밋: 같은 변경 + T-969 → 통과·HEAD 이동"
 printf 'x\n' > "$E2E_REPO/src/lib/auth/__tests__/login-gate.test.ts"
 printf 'x\n' > "$E2E_REPO/src/lib/auth/__tests__/request-limits.test.ts"
 printf 'x\n' > "$E2E_REPO/src/components/auth/__tests__/app-version-gate-t091.test.ts"
-printf 'y\n' > "$E2E_REPO/src/lib/mail/header-safe.ts"
 printf 'v3\n' > "$E2E_REPO/src/app/login/page.tsx"
+# (T-094 갱신) 원래 이 커밋에 있던 src/lib/mail/header-safe.ts 는 T-094 에서 목록에 들어갔다 → 뺐다(실 커밋 차단은 t094-g*).
 e2e_git add src/lib/auth/__tests__/login-gate.test.ts src/lib/auth/__tests__/request-limits.test.ts \
-  src/components/auth/__tests__/app-version-gate-t091.test.ts src/lib/mail/header-safe.ts src/app/login/page.tsx
-e2e_commit "(t093-g8) 실 커밋: 속도 제한 게이트 시험·형제 시험·header-safe·화면(task ID 없음) → 통과" commit "" \
+  src/components/auth/__tests__/app-version-gate-t091.test.ts src/app/login/page.tsx
+e2e_commit "(t093-g8) 실 커밋: 속도 제한 게이트 시험·형제 시험·화면(task ID 없음) → 통과" commit "" \
   'chore: 시도제한 시험·화면 정리'
 
 echo ""
@@ -1579,6 +1584,163 @@ e2e_git add scripts/profit-engine/postmortem-core.js src/lib/profit-engine/daily
   src/lib/profit-engine/registry-x/a.json agent-vault/10-Flow/reports/T-096-backtest-counts-US-20261026.md
 e2e_commit "(t098-g8) 실 커밋: 사후검증 본체·일봉 수집·registry-x/·리포트(task ID 없음) → 통과" commit "" \
   'chore: 사후검증·일봉·리포트 정리'
+
+echo ""
+echo "[T-094 — 메일 헤더·본문 안전화 header-safe.ts·그 시험(정확 일치 2줄) 추가]"
+
+# T-093 과 같은 방식. 항목마다 ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과(통과 문구까지 확인) ③이름이 비슷한 이웃만
+# 검토한 판정 → 차단 ④·⑤ 앞 라운드의 인접 판정(T-093 의 mail/config.ts·T-092 의 mail/send.ts 와 그 시험) 차용 → 차단.
+# 각 시나리오는 새 경로 파일 **하나만** stage 한다 — 목록에서 그 줄 하나만 빠져도 그 항목의 ①~⑤ 가 실패한다.
+T094_ITEMS=(
+  "src/lib/mail/header-safe.ts"                 # a1 sanitizeHeaderText·isSafeHeaderAddress·escapeHtml 정의
+  "src/lib/mail/__tests__/header-safe.test.ts"  # a2 그 시험
+)
+
+cat > "agent-vault/10-Flow/tasks/T-962-hooktest-t094-scoped.md" <<'EOF'
+---
+task_id: T-962
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/mail/header-safe.ts, src/lib/mail/__tests__/header-safe.test.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-962-hooktest-t094-scoped.md")
+
+# ③ 용 — 이름이 비슷한 '이웃'만 검토한 판정. 어느 것도 새 2개를 덮지 않아야 한다:
+#    슬래시 없는 `src/lib/mail`·`src/lib/mail/__tests__`(= 그 이름의 파일 하나만) · 확장자·위치만 다른 파일(.tsx·lib/ 바로 아래·
+#    시험 이름을 구현 위치에) · 같은 디렉토리의 형제(signup-request-mail·config·send 와 그 시험).
+cat > "agent-vault/10-Flow/tasks/T-961-hooktest-t094-nearmiss.md" <<'EOF'
+---
+task_id: T-961
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/mail, src/lib/mail/__tests__, src/lib/mail/header-safe.tsx, src/lib/header-safe.ts, src/lib/mail/header-safe.test.ts, src/lib/mail/__tests__/header-safe.test.tsx, src/lib/mail/signup-request-mail.ts, src/lib/mail/__tests__/signup-request-mail.test.ts, src/lib/mail/config.ts, src/lib/mail/send.ts, src/lib/mail/__tests__/send.test.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-961-hooktest-t094-nearmiss.md")
+
+# 구현만 검토한 판정 — header-safe.ts 는 덮지만 시험은 덮지 않는다(T-093 ④ 와 같은 처리: 구현을 봤다고 시험을 본 게 아니다).
+cat > "agent-vault/10-Flow/tasks/T-960-hooktest-t094-implonly.md" <<'EOF'
+---
+task_id: T-960
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/mail/header-safe.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-960-hooktest-t094-implonly.md")
+
+t094_i=0
+for t094_p in "${T094_ITEMS[@]}"; do
+  t094_i=$((t094_i + 1))
+  stage_and_run 1 "(t094-a${t094_i}.1) ${t094_p#src/lib/} + 판정 미기록(T-993) → 차단" \
+    "$(msg 'fix(T-993): 메일 헤더 정리')" "$t094_p"
+  stage_and_run_expect "$T075_OK" 0 "(t094-a${t094_i}.2) ${t094_p#src/lib/} + T-962(scope 포함) → 통과" \
+    "$(msg 'fix(T-962): 메일 헤더 정리')" "$t094_p"
+  stage_and_run 1 "(t094-a${t094_i}.3) ${t094_p#src/lib/} + T-961(이웃 경로 scope) → 차단" \
+    "$(msg 'fix(T-961): 메일 헤더 정리')" "$t094_p"
+  stage_and_run 1 "(t094-a${t094_i}.4) ${t094_p#src/lib/} + T-969(T-093 scope — config.ts 포함) → 차단" \
+    "$(msg 'fix(T-969): 메일 헤더 정리')" "$t094_p"
+  stage_and_run 1 "(t094-a${t094_i}.5) ${t094_p#src/lib/} + T-978(T-092 scope — send.ts·그 시험 포함) → 차단" \
+    "$(msg 'fix(T-978): 메일 헤더 정리')" "$t094_p"
+done
+
+# task ID 없이 고친 경우
+stage_and_run 1 "(t094-b1) mail/header-safe.ts + task ID 없음 → 차단" \
+  "$(msg 'fix: 헤더 정화 정리')" "src/lib/mail/header-safe.ts"
+stage_and_run 1 "(t094-b2) mail/__tests__/header-safe.test.ts + task ID 없음 → 차단" \
+  "$(msg 'test: 헤더 시험 정리')" "src/lib/mail/__tests__/header-safe.test.ts"
+
+# 구현만 검토한 판정 — 시험은 못 열고(차단), 구현은 연다(대조군).
+stage_and_run 1 "(t094-v1) header-safe.test.ts 를 T-960(구현만 scope)로 통과 시도 → 차단" \
+  "$(msg 'test(T-960): 헤더 시험 수정')" "src/lib/mail/__tests__/header-safe.test.ts"
+stage_and_run_expect "$T075_OK" 0 "(t094-v2) header-safe.ts + T-960(구현 scope 안) → 통과(대조군)" \
+  "$(msg 'fix(T-960): 헤더 정화 수정')" "src/lib/mail/header-safe.ts"
+stage_and_run 1 "(t094-v3) [header-safe.ts, 그 시험] T-960 만 → 시험이 범위 밖, 차단" \
+  "$(msg 'fix(T-960): 헤더 정화 + 시험')" "src/lib/mail/header-safe.ts" "src/lib/mail/__tests__/header-safe.test.ts"
+
+# 이웃은 감사 대상이 아니다 — task ID 없이도 통과해야 한다. 통과 기대는 묶어도 약해지지 않는다(하나라도 잘못 매치되면 exit 1).
+# 겨냥 변이: `^src/lib/mail/` 로 넓히기(signup-request-mail) · `^src/lib/mail/__tests__/` 로 넓히기(signup-request-mail 시험) ·
+# `$` 삭제(.bak·.tsx·-v2 접미) · `\.ts` 의 `.` 이스케이프 누락(header-safexts·header-safe.testxts) · `\.test` 의 이스케이프 누락
+# (header-safextest.ts) · 위치 무시(lib/ 바로 아래·시험 이름을 구현 위치에·구현 이름을 시험 위치에) · `^` 삭제(foo/·mockups/) ·
+# 대소문자(Header-safe.ts — 훅은 대소문자를 구분한다).
+stage_and_run 0 "(t094-n1) header-safe 이웃(.tsx·.bak·xts·위치·대소문자·형제 메일 파일) → 통과" \
+  "$(msg 'chore: 메일 이웃 정리')" \
+  "src/lib/mail/signup-request-mail.ts" "src/lib/mail/__tests__/signup-request-mail.test.ts" \
+  "src/lib/mail/header-safe.tsx" "src/lib/mail/header-safe.ts.bak" "src/lib/mail/header-safe-v2.ts" \
+  "src/lib/mail/header-safexts" "src/lib/mail/Header-safe.ts" "src/lib/header-safe.ts" \
+  "src/lib/mail/header-safe.test.ts" "src/lib/mail/__tests__/header-safe.ts" \
+  "src/lib/mail/__tests__/header-safe.test.tsx" "src/lib/mail/__tests__/header-safe.test.ts.bak" \
+  "src/lib/mail/__tests__/header-safextest.ts" "src/lib/mail/__tests__/header-safe.testxts" \
+  "foo/src/lib/mail/header-safe.ts" "mockups/src/lib/mail/__tests__/header-safe.test.ts" "src/types/nodemailer.d.ts"
+
+# 혼합 커밋 — 판정 합집합. T-962(새 2개)·T-978(T-092 의 send.ts)·T-969(T-093 의 config.ts)가 각자 자기 몫만 덮는다.
+T094_MIX=( "README.md" "src/lib/mail/header-safe.ts" "src/lib/mail/__tests__/header-safe.test.ts" "src/lib/mail/send.ts" "src/lib/mail/config.ts" )
+stage_and_run 1 "(t094-m1) [문서, header-safe·시험, send.ts, config.ts] 판정 미기록(T-993) → 차단" \
+  "$(msg 'fix(T-993): 메일 정리')" "${T094_MIX[@]}"
+stage_and_run 1 "(t094-m2) 같은 묶음 + T-962 만 → send.ts·config.ts 가 범위 밖, 차단" \
+  "$(msg 'fix(T-962): 메일 정리')" "${T094_MIX[@]}"
+stage_and_run 1 "(t094-m3) 같은 묶음 + T-978·T-969 만 → header-safe 2개가 범위 밖, 차단" \
+  "$(msg 'fix(T-978,T-969): 메일 정리')" "${T094_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t094-m4) 같은 묶음 + T-962·T-978·T-969 합집합 → 통과" \
+  "$(msg 'fix(T-962,T-978,T-969): 메일 정리')" "${T094_MIX[@]}"
+# 형제 signup-request-mail.ts 는 감시 밖이지만 같은 커밋의 header-safe.ts 때문에 걸린다.
+stage_and_run 1 "(t094-m5) [signup-request-mail.ts, header-safe.ts] task ID 없음 → header-safe 때문에 차단" \
+  "$(msg 'feat: 가입 요청 메일 정리')" "src/lib/mail/signup-request-mail.ts" "src/lib/mail/header-safe.ts"
+stage_and_run_expect "$T075_OK" 0 "(t094-m6) 같은 묶음 + T-962 → 통과(signup-request-mail 은 안전 경로 아님)" \
+  "$(msg 'feat(T-962): 가입 요청 메일 정리')" "src/lib/mail/signup-request-mail.ts" "src/lib/mail/header-safe.ts"
+
+echo ""
+echo "[T-094 — 실 커밋 E2E: 일회용 임시 저장소에서 git 이 새 항목을 실제로 거르는가]"
+
+# 위 T-090~T-098 실 커밋 E2E 와 같은 일회용 저장소·shim(이 작업 트리의 훅)을 그대로 쓴다. 실제 저장소는 건드리지 않는다.
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-962-hooktest-t094-scoped.md" <<'EOF'
+---
+task_id: T-962
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/mail/header-safe.ts, src/lib/mail/__tests__/header-safe.test.ts)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-961-hooktest-t094-nearmiss.md" <<'EOF'
+---
+task_id: T-961
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/mail, src/lib/mail/signup-request-mail.ts, src/lib/mail/header-safe.tsx, src/lib/mail/__tests__/send.test.ts)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-960-hooktest-t094-implonly.md" <<'EOF'
+---
+task_id: T-960
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/mail/header-safe.ts)**
+EOF
+mkdir -p "$E2E_REPO/src/lib/mail/__tests__"
+# (fixture 는 커밋하지 않는다 — 훅은 작업 트리의 task 파일을 읽는다. 앞 절 fixture 와 같다.)
+# T-969(T-093 scope — config.ts 포함) fixture 는 위 T-093 E2E 절이 이 저장소에 이미 써 두었다(차용 시험에 쓴다).
+
+printf 'v1\n' > "$E2E_REPO/src/lib/mail/header-safe.ts"
+e2e_git add src/lib/mail/header-safe.ts
+e2e_commit "(t094-g1) 실 커밋: header-safe.ts + task ID 없음 → 차단" block "커밋 차단" \
+  'fix: 헤더 정화 정리'
+e2e_commit "(t094-g2) 실 커밋: 같은 변경 + T-961(이웃 경로 scope) → 차단" block "커밋 차단" \
+  'fix(T-961): 헤더 정화 정리'
+e2e_commit "(t094-g3) 실 커밋: 같은 변경 + T-969(T-093 의 config.ts scope) → 차단(차용 방지)" block "커밋 차단" \
+  'fix(T-969): 헤더 정화 정리'
+e2e_commit "(t094-g4) 실 커밋: 같은 변경 + T-962(scope 포함) → 통과·HEAD 이동" commit "$T075_OK" \
+  'fix(T-962): 헤더 정화 정리'
+
+printf 'v2\n' > "$E2E_REPO/src/lib/mail/header-safe.ts"
+printf 'v1\n' > "$E2E_REPO/src/lib/mail/__tests__/header-safe.test.ts"
+e2e_git add src/lib/mail/header-safe.ts src/lib/mail/__tests__/header-safe.test.ts
+e2e_commit "(t094-g5) 실 커밋: [header-safe.ts, 그 시험] + T-960(구현만 검토) → 차단(시험이 범위 밖)" block "커밋 차단" \
+  'fix(T-960): 헤더 정화 + 시험'
+e2e_commit "(t094-g6) 실 커밋: 같은 변경 + T-962 → 통과·HEAD 이동" commit "$T075_OK" \
+  'fix(T-962): 헤더 정화 + 시험'
+
+printf 'x\n' > "$E2E_REPO/src/lib/mail/signup-request-mail.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/mail/__tests__/signup-request-mail.test.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/mail/header-safe.tsx"
+e2e_git add src/lib/mail/signup-request-mail.ts src/lib/mail/__tests__/signup-request-mail.test.ts src/lib/mail/header-safe.tsx
+e2e_commit "(t094-g7) 실 커밋: 형제 메일 파일·그 시험·header-safe.tsx 이웃(task ID 없음) → 통과" commit "" \
+  'chore: 메일 이웃 정리'
 
 echo ""
 echo "─────────────────────────────────────────────────────────────────────────"

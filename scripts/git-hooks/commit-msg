@@ -318,6 +318,7 @@ check_hook_sync || true
 #   아래 6곳(+ signup-gate·signup-request·send·safe-next-path 의 시험 4개)을 한 번에 넣는다. 디렉토리 항목은
 #   `src/app/api/profile/password/` 하나뿐이고 나머지는 정확 일치(`^…\.ts$`)라
 #   이름이 비슷한 이웃 파일(예: login-gate.ts·signup-request-gate.ts·mail/header-safe.ts)은 새지 않는다.
+#   ⚠ T-094(2026-10-27) — 이 중 mail/header-safe.ts 는 T-094 에서 자기 항목(정확 일치)으로 포함됐다(아래 'T-094 추가').
 #   + src/lib/auth/signup-gate.ts       → 초대코드(`SIGNUP_INVITE_CODE`)를 상수시간 대조해 가입을 허용·거부하는
 #                               **접근 통제**다. 자체 머리 주석대로 인터넷에 열린 vhost 의 유일한 가입 제한이고,
 #                               signup 라우트(가입 즉시 세션 발급)와 OAuth 가입(oauth/complete-gate.ts)이 함께 쓴다.
@@ -338,6 +339,7 @@ check_hook_sync || true
 #                               ⚠ T-093(2026-10-26) 정정 — mail/config.ts 는 T-093 에서 포함됐다(아래 'T-093 추가').
 #                               또 isSafeHeaderAddress 는 config.ts 가 *부르는* 함수이고 정의는 mail/header-safe.ts 에
 #                               있다(그 파일은 여전히 훅 밖 — 후보).
+#                               ⚠ T-094(2026-10-27) — header-safe.ts(+ 시험)는 T-094 에서 포함됐다(아래 'T-094 추가').
 #                               T-090 이 잠근 signup-request 라우트 시험은 이 함수를 모킹하므로 보증 자체는 이 파일이 진다.
 #   + src/lib/safe-next-path.ts         → 로그인 후 이동 경로 검사(sanitizeInternalPath) — T-089 오픈 리다이렉트에서
 #                               **웹 `next`** 의 단일 관문. 서버(oauth/config.ts 의 sanitizeNextPath)와 로그인 화면이
@@ -366,6 +368,8 @@ check_hook_sync || true
 #                               맞물려 있어 후보로만 남긴다.
 #                               ⚠ T-093(2026-10-26)에서 이 중 config.ts 만 포함됐다(아래 'T-093 추가'). header-safe.ts·
 #                               signup-request-mail.ts(+ 시험)·nodemailer.d.ts 는 여전히 미포함(사용자 권고 보류).
+#                               ⚠ T-094(2026-10-27)에서 header-safe.ts(+ 시험)도 포함됐다(아래 'T-094 추가').
+#                               signup-request-mail.ts(+ 시험)·nodemailer.d.ts 는 여전히 미포함.
 #     - src/lib/auth/__tests__/oauth-invite-gate.test.ts   이미 감시 중인 oauth/complete-gate.ts 의 시험인데 위치가
 #                               oauth/ 밖이다 — 후보.
 #                               ⚠ T-093(2026-10-26)에서 포함됐다(아래 'T-093 추가').
@@ -442,6 +446,10 @@ check_hook_sync || true
 #                               ⚠ next 두 줄 단언은 T-089 수정형(`sanitizeInternalPath(next) ?? '/'`)만 고정하지 **않는다** —
 #                               T-089 이전 원문(`startsWith('/') && !startsWith('//')`)이어도 두 줄이 같은 모양이면 통과한다
 #                               (원문·수정형 중 하나이고 섞이지 않았는지만 본다). 원문으로 되돌리는 회귀는 이 시험으로 안 잡힌다.
+#                               ⚠ T-094 WP-1(2026-10-27) 정정 — 이 한계는 T-094 WP-1 커밋으로 해소됐다: 이제 주석을 벗긴
+#                               코드에서 수정형 두 줄이 정확히 한 번씩·`startsWith(` 없음·관문 import 출처가 @/lib/safe-next-path·
+#                               이동은 dest 한 곳만을 단언하고, 화면이 쓰는 sanitizeInternalPath 에 T-089 우회 입력(탭·줄바꿈·
+#                               백슬래시·제어문자·U+2028/2029·프로토콜 상대·길이 초과)을 넣어 null 인지도 본다.
 #                               알려진 영향(과도 차단 후보): OAuthButtons 등 UI 를 고치며 이 시험의 문구·치수 단언을 함께
 #                               고치는 커밋도 이제 Reviewer 판정이 필요하다. 마찰이 반복되면 Leader 판단으로 재검토한다.
 #   + src/lib/mail/config.ts → 관리자 수신 주소 getAdminNotifyEmail() 의 유일한 출처. `ADMIN_NOTIFY_EMAIL` 만 읽고 SMTP_USER
@@ -463,6 +471,7 @@ check_hook_sync || true
 #                               제목의 CR/LF 등 제어문자를 지우는 sanitizeHeaderText(send.ts·signup-request-mail.ts 가 부름)와
 #                               env 수신·발신 주소 검사 isSafeHeaderAddress(config.ts 만 부름)·본문용 escapeHtml 의 정의다.
 #                               자체 머리 주석이 "헤더 인젝션은 곧 코드 유출"(초대코드)이라 적는다 — 요청 유래 제목 정화가 더 큰 몫이다.
+#                               ⚠ T-094(2026-10-27)에서 header-safe.ts(+ 시험)는 포함됐다(아래 'T-094 추가'). 나머지는 여전히 미포함.
 #
 # T-098 추가 (2026-10-26, 사용자 결정 "V4 사전 등록 코드를 커밋 훅 감시 대상에 넣어줘" — T-096 v1.1 패치 §B-0 V4 권고 승인):
 #   T-096 P3(전략 합격 판정용 일봉 백테스트)의 사전 등록 잠금 — 등록 수치·원장·해시/판정 코드·엔진·러너 — 은 훅 밖이라 독립 감사
@@ -514,6 +523,43 @@ check_hook_sync || true
 #    쓸 수 없으니 시험 파일은 하나씩 적는다.)
 #   이 편입이 막지 못하는 것: 미커밋 작업 트리에서의 러너 실행, `git commit --no-verify`, 훅 shim 비활성(설치 누락), 저장소 복사본에서의
 #   실행, 판정 작성자 미검증(self-attestation — 위 커밋 안전장치 일반 한계와 같다).
+#
+# T-094 추가 (2026-10-27, T-094 WP-2 — T-092·T-093 이 '다음 후보 1순위'로 남긴 것. 사용자 위임 "기존에 계획되어있던 작업 끝까지
+#   진행"에 따른 Leader 권고 = 결정, task 이력서 진행 기록 2026-10-27 20:2x):
+#   감시 중인 mail/send.ts(수신자 고정)·mail/config.ts(수신 주소 출처)가 부르는 헤더 안전화 함수의 **정의**가 훅 밖이었다.
+#   정확 일치 2줄을 넣는다(`^src/lib/mail/` 디렉토리 항목은 쓰지 않는다 — 아직 후보인 signup-request-mail.ts(+ 시험)까지 걸린다).
+#   (각 파일이 하는 일은 2026-10-27 base f7e4444 의 소스와 시험 단언을 읽어 적었다. 줄 번호는 그 base 기준이다.)
+#   + src/lib/mail/header-safe.ts → 메일 헤더·본문 안전화 함수 세 개의 정의(다른 코드를 import 하지 않는 순수 함수):
+#                               ① sanitizeHeaderText(raw, maxLen) — U+0000~U+001F(CR·LF·TAB·NUL 포함)·U+007F·U+2028/2029 를
+#                               **삭제**(치환 아님)하고 연속 공백을 접어 다듬은 뒤 maxLen 자로 자른다. 문자열이 아니면 빈 문자열.
+#                               부르는 곳(시험 제외): signup-request-mail.ts:61(요청자가 적은 이름 input.name → 메일 제목)·
+#                               send.ts:82(발송 직전 content.subject 를 한 번 더 — send.ts 자체 주석 "제목은 유일하게 요청자
+#                               입력(이름)이 닿는 헤더다"). ② isSafeHeaderAddress(raw) — 앞뒤 공백을 다듬은 뒤 길이 1~254,
+#                               U+0000~U+001F·U+007F·U+2028/2029·공백·`, ; < > " ' \ ( ) [ ]` 가 하나라도 있으면 false, 아니면 `x@y.z` 꼴만
+#                               true. 부르는 곳: config.ts:54(SMTP_USER — send.ts 의 from 주소)·config.ts:71(ADMIN_NOTIFY_EMAIL —
+#                               to 주소) 둘뿐 — 둘 다 env 값이라 요청이 닿지 않는다(env 오타·붙여넣기 사고 대비, 자체 주석 3번).
+#                               ③ escapeHtml(raw) — & < > " ' 를 엔티티로(& 먼저). 부르는 곳: signup-request-mail.ts 의 HTML
+#                               본문 5곳(96·105~108행: 초대코드·이름·이메일·하실 말씀·요청 시각).
+#                               자체 머리 주석(8~9행, 강조 표시 생략)이 "이 기능의 메일에는 초대코드가 들어 있으므로, 헤더
+#                               인젝션은 곧 코드 유출이다"라 적는다 — ①이 약해지면 요청자 이름으로 `\r\nBcc: …` 헤더를 만들 길이 열린다.
+#                               위험 크기: T-092 는 '중~약'(T-092 Reviewer 가 nodemailer 9.0.5 소스에서 일반 헤더의 CRLF 를
+#                               자체 치환함을 확인한 것을 반영), T-093 Reviewer 는 '중'으로 봤다 — nodemailer 가 2차 방어라는 뜻이고,
+#                               이 주석을 쓰며 nodemailer 소스는 다시 확인하지 않았다. ③이 약해지면 요청자가 관리자 메일함의
+#                               HTML 본문에 마크업을 넣을 수 있다.
+#   + src/lib/mail/__tests__/header-safe.test.ts → 위 세 함수의 회귀망(위 "테스트 파일 — 제외하지 않는다" 원칙):
+#                               ① CR·LF(묶음·단독)·NUL·U+0001·DEL·TAB·U+2028/2029 삭제(`홍길동\r\nBcc: …` → 줄 없이 한 덩어리)·
+#                               공백 접기·maxLen·문자열 아닌 값(toString 을 가진 객체 포함) → 빈 문자열·제어문자만 → 빈 문자열
+#                               ② 정상 주소 통과·CRLF/LF/NUL 섞인 주소 거부·쉼표·세미콜론(수신자 추가) 거부·꺾쇠·따옴표·괄호·
+#                               공백 거부·형식 아님·254자 초과 거부 ③ 메타문자 이스케이프·& 먼저·문자열 아닌 값 → 빈 문자열.
+#                               ⚠ 이 시험 파일은 67행에 리터럴 NUL 바이트가 있어 git 이 **바이너리**로 본다 — `git diff` 는
+#                               "Binary files differ" 만 보여 주므로 검토할 때는 `git diff --text` 로 본다.
+#   새로 걸리는 추적 파일(base f7e4444, `git ls-files` 전수에 옛·새 목록을 이 훅과 같은 방식으로 적용해 대조): 정확히 위 2개.
+#   옛 목록이 걸던 파일은 전부 그대로.
+#   넣지 않은 것:
+#     - src/lib/mail/signup-request-mail.ts(+ 시험)·src/types/nodemailer.d.ts·src/app/api/profile/route.ts   T-092·T-093 의
+#                               후보 보류분 그대로(이번 범위는 header-safe 2개). signup-request-mail.ts 가 ①·③ 을 부르지 않게
+#                               바뀌는 변경은 여전히 훅 밖이다 — 발송 직전 send.ts:82 의 제목 재정화(감시 중)가 남는 것은 ①(제목)뿐이다.
+#                               ③ escapeHtml 호출(signup-request-mail.ts:96,105~108)을 지우는 변경에는 감시 중인 보완책이 없다(T-094 Reviewer L1).
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
@@ -566,6 +612,8 @@ SAFETY_PATHS=(
   '^src/lib/auth/__tests__/oauth-web-regression-t088\.test\.ts$'
   '^src/components/auth/__tests__/login-screen-t088\.test\.ts$'
   '^src/lib/mail/config\.ts$'
+  '^src/lib/mail/header-safe\.ts$'
+  '^src/lib/mail/__tests__/header-safe\.test\.ts$'
   '^src/lib/profit-engine/registry/'
   '^src/lib/profit-engine/backtest/'
   '^scripts/profit-engine/backtest-runner\.mjs$'
