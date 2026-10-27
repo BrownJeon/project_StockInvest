@@ -302,8 +302,26 @@ describe('⑥ 화면 조립 소스 가드', () => {
     expect(page.match(/<AppUpdateRequiredBand/g)).toHaveLength(1);
   });
 
+  // T-094 WP-5(N1, T-091 Reviewer): effect·조립 줄을 `//`·`/* */` 로 주석 처리하거나(글자는 남김) 주석으로 남기고 상수로 바꾸는
+  // 우회(T-091 변이 N05·N06·N08)는 원문에 toContain 하면 통과해 버린다 — effect 관련 검사는 주석을 벗긴 code() 로 본다.
+  /** OAuthButtons 조립 본문(effect·조립 줄) 검사 — 어긋난 항목 이름 목록(빈 배열 = 통과). 실제 파일과 아래 주석 우회 변이에 같은 검사를 쓴다. */
+  const assemblyProblems = (src: string): string[] => {
+    const body = code(src.slice(src.indexOf('export function OAuthButtons('), src.indexOf('export const oauthStyles')));
+    const problems: string[] = [];
+    if (!body.includes('const app = useAppUpdateState();')) problems.push('useAppUpdateState');
+    if (!body.includes('const { slot, bandVersion } = deriveGoogleSlot({ providers, native, appLogin, app });')) problems.push('deriveGoogleSlot 줄');
+    // 이 effect 한 줄이 빠지거나 deps 에서 bandVersion 이 빠지면 옛 앱에 설명 없는 비활성 버튼만 남는다(Reviewer 변이 M07·M22)
+    if (!body.includes('useEffect(() => { onAppGate?.(bandVersion); }, [onAppGate, bandVersion]);')) problems.push('onAppGate effect');
+    if ((body.match(/onAppGate\?\.\(/g) ?? []).length !== 1) problems.push('onAppGate 호출 수');
+    if ((body.match(/deriveGoogleSlot\(/g) ?? []).length !== 1) problems.push('deriveGoogleSlot 호출 수');
+    if (!body.includes('useEffect(() => { appUpdateStore.detect(); }, []);')) problems.push('detect effect');
+    // 컴포넌트 안에서 게이트를 따로 조립하지 않는다(시험과 갈라지지 않게)
+    if (/googleLoginGate\(|gatedAppVersion\(/.test(body)) problems.push('컴포넌트 안 게이트 조립');
+    return problems;
+  };
+
   test('첫 포커스는 현행 유지(D2 — 이메일 칸, 앱의 oauth_error 만 예외)', () => {
-    expect(page).toContain("if (isNativeApp() && new URLSearchParams(window.location.search).get('oauth_error') !== null) return;\n    emailRef.current?.focus();\n  }, []);");
+    expect(code(page)).toContain("if (isNativeApp() && new URLSearchParams(window.location.search).get('oauth_error') !== null) return;\n    emailRef.current?.focus();\n  }, []);");
     expect(code(page)).not.toMatch(/appGateVersion[^\n]*focus|focus[^\n]*appGateVersion/);
   });
 
@@ -312,7 +330,7 @@ describe('⑥ 화면 조립 소스 가드', () => {
       const src = code(read(rel));
       expect(src).not.toMatch(/ensureLoaded|refresh\(|\/api\/app\/version|installResumeRefetch/);
     }
-    expect(buttons).toContain('useEffect(() => { appUpdateStore.detect(); }, []);');
+    expect(code(buttons)).toContain('useEffect(() => { appUpdateStore.detect(); }, []);');
   });
 
   test('OAuthButtons: 기존 그리기 조건 뒤에 "자리가 none 이면 그리지 않음"(버전 읽는 중 포함)', () => {
@@ -324,15 +342,28 @@ describe('⑥ 화면 조립 소스 가드', () => {
   });
 
   test('OAuthButtons 조립: 상태표 시험과 같은 deriveGoogleSlot 에 컴포넌트의 실제 값을 넘기고, 띠 버전을 effect 로 로그인 화면에 알린다', () => {
-    const body = buttons.slice(buttons.indexOf('export function OAuthButtons('), buttons.indexOf('export const oauthStyles'));
-    expect(body).toContain('const app = useAppUpdateState();');
-    expect(body).toContain('const { slot, bandVersion } = deriveGoogleSlot({ providers, native, appLogin, app });');
-    // 이 effect 한 줄이 빠지거나 deps 에서 bandVersion 이 빠지면 옛 앱에 설명 없는 비활성 버튼만 남는다(Reviewer 변이 M07·M22)
-    expect(body).toContain('useEffect(() => { onAppGate?.(bandVersion); }, [onAppGate, bandVersion]);');
-    expect(body.match(/onAppGate\?\.\(/g)).toHaveLength(1);
-    expect(body.match(/deriveGoogleSlot\(/g)).toHaveLength(1);
-    // 컴포넌트 안에서 게이트를 따로 조립하지 않는다(시험과 갈라지지 않게)
-    expect(body).not.toMatch(/googleLoginGate\(|gatedAppVersion\(/);
+    // 검사 항목은 위 assemblyProblems(주석을 벗긴 본문 기준) — 어긋나면 항목 이름이 실패 메시지에 나온다
+    expect(assemblyProblems(buttons)).toEqual([]);
+  });
+
+  test('T-094 N1: effect·조립 줄을 주석 처리해 글자만 남기는 우회 3종(T-091 변이 N05·N06·N08)과 detect effect 주석 처리를 잡는다', () => {
+    const EFFECT = 'useEffect(() => { onAppGate?.(bandVersion); }, [onAppGate, bandVersion]);';
+    const ASSEMBLE = 'const { slot, bandVersion } = deriveGoogleSlot({ providers, native, appLogin, app });';
+    const DETECT = 'useEffect(() => { appUpdateStore.detect(); }, []);';
+    const mutate = (from: string, to: string) => {
+      expect(buttons.split(from)).toHaveLength(2); // 원문에 정확히 한 번 — 변이가 실제로 적용됐는지
+      return buttons.replace(from, to);
+    };
+    const mutants: Record<string, string> = {
+      'N05 effect 줄 // 주석': mutate(EFFECT, `// ${EFFECT}`),
+      'N06 effect 줄 /* */ 주석': mutate(EFFECT, `/* ${EFFECT} */`),
+      'N08 조립 줄 주석 + 상수 대체': mutate(ASSEMBLE, `// ${ASSEMBLE}\n  const { slot, bandVersion } = { slot: 'google' as GoogleSlot, bandVersion: null as string | null };`),
+      'detect effect 줄 // 주석': mutate(DETECT, `// ${DETECT}`),
+    };
+    for (const [name, src] of Object.entries(mutants)) {
+      expect(src).toContain(name.startsWith('detect') ? DETECT : name.startsWith('N08') ? ASSEMBLE : EFFECT); // 글자는 남아 있다(옛 가드는 여기서 통과했다)
+      expect(`${name}: ${assemblyProblems(src).length > 0}`).toBe(`${name}: true`);
+    }
   });
 
   test('deriveGoogleSlot 조립 본문: 버전 읽기 완료 = detected && currentLoaded · build 모름은 null 그대로 · 띠는 visible 과 gate 로', () => {
