@@ -115,6 +115,30 @@ demo_gate:
 - 러너는 한 틱에 여러 잡을 순차로 부르고, 하트비트 감시(300초)가 있다. 러너 주석 계산상 한 틱의 무거운 잡 합계는 대략 **180초 안**이어야 한다 [러너 주석에서 도출 — 추측 포함]. 같은 시각에 무거운 잡을 몰아 넣으면 순찰이 러너를 재시작한다.
 - 잡 사이 순서 의존: 뉴스 → (edgar·research) → broker-fills(양보 규칙), 해외 뉴스 → 국내 뉴스(양보), 해외 분석은 뉴스·실적 일정(edgar)이 먼저 있어야 의미 있음, 국내 분석은 장 마감(15:30) 이후, 해외 분석은 미국 정규장 마감(서머 05:00 / 표준시 06:00 KST) 이후.
 
+### 잡 설명 (10-28 14:3x — 각 라우트 머리 주석·코드에서 확인, 확인 못 한 부분은 [추측] 표기)
+
+| 잡 | 하는 일 |
+|---|---|
+| entry-watcher | 승인된 시그널의 진입 구간(price_zone)에 현재가가 닿았는지 감시해 자동 주문(`submitOrder`) 실행. 국내 장중(09:00~15:30)에만 동작. 매수는 검증 상태 관문(D5)·가용 현금 점검 뒤 |
+| holding-checker | 보유 기간(holding_deadline)을 넘긴 포지션에 텔레그램 경고(알림만, 중복 방지로 기한 초기화) |
+| stop-alert | 보유 종목 현재가가 사용자 정책의 예상 손절가에 닿으면 텔레그램 알림. **알림만** — 주문·매도·시그널 없음. 열린 시장의 보유 종목만 시세 조회 |
+| strategy-eval | 등록된 전략 전체를 평가(`runAll`)해 시그널 생성 + 미체결 주문 상태 동기화(`syncPendingOrders`) |
+| signal-followup | 24시간 후 가격변화 라벨이 갱신된 시그널을 지식베이스(Qdrant)에 재인덱싱(실패는 로그만) |
+| signal-expiry | 유효기간(expires_at)이 지난 시그널의 상태를 `expired` 로 바꿈 |
+| portfolio-snapshot | 잔고·환율을 조회해 포트폴리오 스냅샷 저장 + 변동성 가드·낙폭 킬스위치 평가(저장 뒤에만 실행). 양시장 마감+최근 스냅샷이 있으면 KIS 호출 생략 |
+| trade-report | 매매 요약 리포트를 설정 채널(slack/telegram/both/none)로 전송. 실제 전송 간격은 라우트가 마지막 전송 시각으로 판단하는 것으로 보임 [추측 — 코드 일부만 확인] |
+| news-fetch (해외/국내) | M4 지식베이스에 RSS 뉴스 적재(해외 4피드·국내 연합뉴스) — 분석의 뉴스 검색 재료 |
+| edgar-sync | SEC EDGAR 읽기 전용 수집(공시·재무·실적 발표 일정). 해외 분석의 실적 일정 입력 |
+| research-cycle-overseas / -domestic | 리서치 추적 종목의 급등·급락 사이클 패턴 재계산(해외는 미국 마감 뒤, 국내는 Yahoo 일봉) |
+| kis-fundamentals-snapshot | KIS 해외 현재가상세 원값을 `us_fundamentals_snapshot` 에 저장(읽기 전용) |
+| post-market-analysis (해외/국내) | 장 마감 후 일봉+뉴스를 AI 로 분석해 다음 세션 시나리오 시그널(카드) 사전 등록. 해외는 스위치(`post_market_overseas_enabled`, 10-28 켬)·휴장표·환율·실적 일정 확인이 필요하고 실패 시 하루 최대 3회·10분 간격 재시도 |
+| sync-stock-meta | KIS KOSPI/KOSDAQ 마스터 파일로 종목 메타 테이블 전 종목 upsert |
+| rs-update (국내) | RS 등급(0~99 상대강도 백분위) 갱신 — 분석 > 리더보드 화면에서만 쓰임 |
+| broker-fills | 브로커 체결 원장 수집(KIS 읽기 전용 GET: 국내·해외 × 체결·기간손익·잔고), 알림 없음 |
+| export-llm-trainset | 학습 데이터셋 내보내기 bash 스크립트(라우트 아님) |
+
+러너에 호출이 없는 것: `daily-bars`(일봉 저장소 수집), `telegram-approval-selftest`, `rs-update?market=overseas`(라우트는 지원).
+
 ### C 설계 (구조로 막는 것)
 
 1. **저장**: `system_config.cron_schedule`(JSON) — 잡 id → `{enabled, daily:'HH:MM'}` 또는 `{enabled, everyMin:N}` + 그룹 스위치 2개. **키가 없거나 깨지면 지금의 하드코딩 값(기본 스케줄)** 으로 동작 → 배포만으로 달라지는 것 없음, 키 삭제 = 원복.
