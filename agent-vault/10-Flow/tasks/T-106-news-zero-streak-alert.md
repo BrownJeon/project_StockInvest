@@ -16,7 +16,7 @@ tags:
   - domain/observability
 aliases:
   - 뉴스0건감시
-waiting: [16:00 국내 분석 첫 관측, 10-29 06:00 수집 관측]
+waiting: [10-29 06:00 수집 관측, T-105 후보 E 사용자 결정]
 demo_gate:
   required: false
   level: "none"
@@ -93,6 +93,7 @@ demo_gate:
 - [10-28 12:0x] 접수·설계 확정. 다음: 격리 워크트리 → Developer(Opus).
 - [10-28 12:3x] Developer 2라운드(상한 4초·검색 오류 채널) 완료 → Reviewer 델타 재감사 **PASS**(중간 0·낮음 2). 낮음 2건 처리 결정(Leader): **D-1**(`.catch` 를 구분하는 시험이 없음 — 호출부 3곳이 try/catch 로 감싸 실제 영향 없음)과 **D-2**(`CAUSE_HINT.retrieval` 문장이 매듭 없이 끝남 — 시험이 문자열을 고정) 모두 **이번에는 반영하지 않는다**. 이유: 동작·안전 영향이 없고, 코드를 바꾸면 Reviewer 재확인 한 바퀴가 더 든다. 후속 후보로만 남긴다(T-104 크론 정리 때 손볼 수 있음). Reviewer 임시 시험 두 건은 스크래치패드 `t106-rev-mut2/keep/` 에 있다.
 - [10-28 12:3x] 메인 트리 ↔ 워크트리(`~/.node-local/stockinvest-t106`) 변경 9개 파일 sha256 일치 확인(Reviewer 도 재확인). 커밋은 명시한 경로만(남의 세션 미추적 파일 2개 제외).
+- [10-28 16:09] **16:00 국내 분석 첫 관측 — 감시 경로 정상.** DB `news_zero_streak:retrieval:domestic` = `{streak:1, lastDate:2026-10-28, lastCount:0, lastOkDate:null}`, `retrieval_error:domestic` = `{streak:0, lastCount:1}`(검색 오류 아님으로 판정), 로그 `[news-health] retrieval:domestic 0 관측 — 연속 1일(기준 3)`, 16시대 로그에 경고 줄 없음(기준 3 미만 — 오탐 없음). 다만 지시서가 기대한 `lastCount>0` 은 아니다 — 뉴스 0건의 실제 원인이 검색 유사도 임계(T-105 후보 E)로 확인돼, 감시가 의도대로 실제 0건을 잡은 것. 그대로 두면 10-30 16:00 에 연속 3일째 경고. `fetch` 채널 키는 아직 없음(10-29 06:00 수집 때 생성 예정).
 
 ## Developer
 
