@@ -16,7 +16,7 @@ tags:
   - domain/operations
 aliases:
   - 크론정리
-waiting: [사용자 범위 결정(아래 "결정 필요")]
+waiting: [사용자 착수 신호(범위 B 확정·설정 화면 데모 생략 여부)]
 demo_gate:
   required: false
   level: "none"
@@ -84,6 +84,72 @@ demo_gate:
 1. `post-market-*`(분석)를 "정보 수집" 그룹에 둘지 별도 "분석" 그룹으로 둘지 — 권고: 그룹 안에 두되 이름으로 구분(`수집`/`분석` 하위 표기).
 2. `rs-update` 해외 판이 예약돼 있지 않은 것은 의도인가(미국 RS 등급을 쓰는 곳이 있는가) — 이 task 에서 추가하지 않고 사용자 확인 후 별도 처리.
 3. 러너는 안전 영역(`^scripts/cron-runner\.sh$`·`^src/app/api/cron/` 가 훅 `SAFETY_PATHS`) — Reviewer 판정 줄 필수, Codex C2 필수(R2).
+
+## 작업 내역 (착수용 확정본 — 권고 B 기준, 10-28 14:10 사용자 요청 "T-104작업 진행할 수 있도록 작업내역 정리해서 알려줘")
+
+> 범위는 **B = 구조 정리 + 해외/국내 그룹 켜기·끄기 스위치**로 정리했다(권고안). 사용자가 "착수"를 말하면 이 내역대로 접수(Judge intake)부터 진행한다. 아래 "Leader 가 정한 점"은 사용자가 바꿀 수 있다.
+
+### 목표 상태 (사용자에게 보이는 변화)
+
+- 크론 잡이 **해외 수집 / 국내 수집 / 공통(매매 감시·원장·학습)** 세 구역으로 정리되고, 해외·국내 두 그룹은 각각 **ON/OFF 스위치**를 갖는다. 한 시장의 수집·분석만 멈추고 다른 시장은 그대로 돌 수 있다(예: 해외 수집이 고장 났을 때, 비용을 아끼고 싶을 때).
+- **스위치가 없는 상태(기본)는 지금과 똑같이 전부 켜져 있다.** 배포만으로 동작이 바뀌지 않는다.
+- 매매 감시 잡(entry-watcher·holding-checker·stop-alert·strategy-eval·signal-*·portfolio-snapshot·trade-report)과 broker-fills·export-llm-trainset 은 **그룹 스위치와 무관**하다(공통 구역).
+
+### 그룹 소속 (러너 실측 기준 확정안)
+
+| 그룹 | 잡(라우트) | 시각 |
+|---|---|---|
+| 해외 | news-fetch?market=overseas · edgar-sync · research-cycle-overseas · kis-fundamentals-snapshot · post-market-analysis?market=overseas | 06:00 · 07:00 · 07:00 · 08:00 · 08:00 |
+| 국내 | news-fetch?market=domestic · post-market-analysis?market=domestic · research-cycle-domestic · sync-stock-meta · rs-update?market=domestic | 06:00 · 16:00 · 16:00 · 17:00 · 17:30 |
+| 공통 | 위 목록에 없는 나머지 전부 + broker-fills(국내·해외 둘 다 읽음) | 변경 없음 |
+
+`daily-bars` 라우트는 러너가 부르지 않는다(별도 실행) — 이 task 범위 밖. `rs-update?market=overseas` 는 라우트가 지원하지만 러너에 예약이 없다 — 이 task 에서 추가하지 않는다(별도 결정).
+
+### Leader 가 정한 점 (바꾸려면 말씀)
+
+1. **스위치 위치**: 러너(bash)가 아니라 **각 `/api/cron/*` 라우트가 시작할 때 DB 를 읽어** 판단한다. 이유: 앱은 이미 DB 를 쓰고 설정 화면 토글(T-101 방식)과 연결되며, 러너가 DB 에 의존하게 되는 위험(러너 정지)을 피한다. 러너의 시각·순서·하트비트 예산은 불변.
+2. **키 이름**: `cron_group_overseas_enabled` · `cron_group_domestic_enabled` (`system_config`, JSON true/false).
+3. **판독 규칙(중요 — T-101 과 반대)**: 키 없음·읽기 오류·해석 불가 = **켜짐**(fail-open). 이 잡들은 읽기 전용 수집·분석이고 지금 이미 켜져 있으므로, 판독 실패가 수집을 멈추는 것이 더 나쁘다. **끄려면 명시적으로 `false`(또는 문자열 "false"·0)를 저장해야 한다.** 해외 post-market 은 기존 `post_market_overseas_enabled`(기본 꺼짐)와 **둘 다 켜져야** 실행(AND).
+4. **꺼진 그룹의 응답**: 인증(401)을 먼저 검사한 뒤 스위치를 읽고, 꺼져 있으면 `200 {ok:true, skipped:'group_disabled', group}` 과 로그 한 줄 `[cron-group] skipped group=… job=…` 로 끝낸다(외부 호출 0). 러너는 응답과 무관하게 그날 날짜 파일을 쓰므로(실측) **그날 다시 켜도 다음 날 정시부터** 돈다(급하면 수동 호출 안내를 문서에 둔다).
+5. **T-106 연동**: 꺼진 그룹의 날은 뉴스 건수를 **기록하지 않는다**(0건으로 세어 경고가 오발하지 않게). 시험으로 고정.
+6. **러너 변경은 주석·구역 표시만**: 호출 순서·시각·라벨(`news-fetch-overseas` 등, 시험 스크립트 3개와 순찰이 문자열로 보는 값)은 **바꾸지 않는다**. 처음 제안했던 `[ovs]`/`[dom]` 접두어와 블록 재배치는 07시 틱의 양보 규칙(broker-fills ← research/edgar)을 깨뜨릴 수 있어 하지 않는다.
+7. **설정 화면 토글(B2)**: 설정 > 안전장치(공통) 카드에 T-101 과 같은 컴포넌트로 **ON/OFF 한 줄씩 2개**("해외 수집·분석", "국내 수집·분석"). 설정 API(`/api/settings/safety`)의 허용 키에 두 키 추가. 화면 변경이므로 데모 게이트 대상이다 — 사용자가 T-101 처럼 **데모 생략**을 말해 주면 생략(`check.mjs waive`, 원문 기록), 아니면 delta 데모 1장. T-108(메뉴·홈 개편)이 설정 화면을 다시 만지므로 **T-104 를 먼저 끝내고 T-108 이 그 위에서 시작**한다.
+
+### 작업 패키지 (순서)
+
+| # | 작업 | 파일(예상) | 역할 |
+|---|---|---|---|
+| WP1 | 그룹 정의 상수 `CRON_GROUPS`(잡 ↔ 그룹 표) + 스위치 판독기 + 시험(키 없음·true·false·"false"·0·깨진 JSON·DB 오류) | 신규 `src/lib/cron/group-switch.ts` + 시험 | Developer |
+| WP2 | 라우트 게이트 10곳: news-fetch(시장별)·edgar-sync·research-cycle-overseas·research-cycle-domestic·kis-fundamentals-snapshot·post-market-analysis(시장별, 해외는 AND)·sync-stock-meta·rs-update(시장별). 각 라우트 시험: 꺼짐이면 외부 호출(KIS·SEC·M4·LLM) 0·인증 우선·켜짐이면 기존과 동일 | `src/app/api/cron/<8개>/route.ts` + `__tests__` | Developer |
+| WP3 | 러너 구역 주석 + 그룹 표 머리말(동작 불변). 러너 시험 3개 재실행, news-split 시험 기준선 재설정(후속 후보로 적어 둔 것 처리) | `scripts/cron-runner.sh`, `scripts/test-cron-runner-news-split.sh` | Developer |
+| WP4 | 정합 시험: `CRON_GROUPS` ↔ 라우트 게이트 호출 ↔ 러너 호출 경로가 일치(새 잡을 추가하고 그룹을 빼먹으면 시험이 깨짐) | 신규 시험 | Developer |
+| WP5 | 설정 API 허용 키 2개 + GET 응답 필드 + 설정 화면 토글 2줄 + 시험 | `src/app/api/settings/safety/route.ts`, `src/app/settings/SettingsPage.tsx` + 시험 | Developer(데모 처리 후) |
+| WP6 | 운영 문서: 켜고 끄는 방법(설정 화면·SQL), "그날 재개" 수동 호출, 그룹 표 | `docs/` 한 곳 + 이 task 최종 요약 | Leader |
+
+### 절차·게이트
+
+Judge intake(R2 예상: 크론 경로·무인 실행) → [WP5 만 데모 게이트: 생략 또는 delta] → Developer(격리 worktree, 로컬 디스크) → Reviewer(Sonnet, 2라운드 예상) → Judge C2 → **Codex(R2 필수)** → QA(Sonnet) → Leader 가 명시 경로 커밋(훅: `^src/app/api/cron/`·`^scripts/cron-runner\.sh$`·`settings/safety` 감시 → Reviewer 판정 줄의 scope 가 스테이징 파일을 모두 덮어야 함) → push(배포 창 05:10~08:30 · 15:40~22:20, 킬스위치 ON·최근 3시간 주문 0건 확인) → 관측(다음 06:00/07:00/08:00 해외 잡, 16:00/17:00 국내 잡이 정상 호출되는지 + 스위치를 한 번 껐다 켜 보는 스모크는 **사용자 승인 후**에만).
+
+훅 감시 확인(`scripts/git-hooks/commit-msg` 실측): `^src/app/api/cron/`·`^src/app/api/settings/safety/`·`^scripts/cron-runner\.sh$` 는 **이미 감시**, 새 판독기 `src/lib/cron/group-switch.ts` 는 **감시 밖**이다 — 무인 실행 잡의 켜짐/꺼짐을 정하는 코드라 `SAFETY_PATHS` 에 `^src/lib/cron/` 추가를 권고한다(훅 파일도 감시 대상이라 별도 Reviewer 판정 줄이 필요, 이 task 의 WP 로 포함).
+
+규모 [추측]: 변경 파일 약 25개(신규 3·수정 라우트 8·러너 1·설정 2·시험 약 11), T-106(Developer 2라운드·Reviewer 2라운드·Codex·QA)의 1.2~1.5배 토큰.
+
+### 위험과 대비
+
+| 위험 | 대비 |
+|---|---|
+| 게이트 버그로 **켜져야 할 잡이 멈춤**(조용한 수집 중단 — T-105 와 같은 유형) | fail-open 판독 + 시험 매트릭스 + 정합 시험 + 배포 후 첫 정시 호출 로그 확인. 꺼진 경우 로그 `[cron-group] skipped` 가 남아 원인 추적 가능 |
+| 꺼짐을 잊어 장기간 수집 정지 | 꺼진 그룹이 있으면 설정 화면 토글에 표시되고, 후속 후보로 "꺼진 지 N일" 알림(이 task 범위 밖) |
+| 같은 날 다시 켜도 다음 날부터 | 문서에 수동 호출 방법을 명시(WP6) |
+| T-106 오탐 | 꺼진 날 미기록 시험(요구 5) |
+| 설정 화면 충돌(T-108) | T-104 선행, T-108 은 그 뒤 |
+| 러너 하트비트 예산(300초) | 라우트당 DB 읽기 1회 추가(수 ms), 러너 시각·순서 불변 |
+
+### 사용자에게 받을 것 (착수 신호와 함께)
+
+1. 범위 **B 확정**(또는 A/C 로 변경).
+2. WP5 설정 화면 토글: **데모 생략** 여부(T-101 처럼 "데모 없이" 라고 해 주시면 생략 기록).
+3. `post-market` 분석을 그룹에 포함하는 위 안(권고)으로 괜찮은지 — 다르게 하려면 말씀.
 
 ## 선행·연관
 
