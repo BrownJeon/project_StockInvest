@@ -36,6 +36,13 @@ tools: Read, Grep, Glob, Bash
 5. **반환** — 래퍼 출력 JSON(`codex-result@1`)을 그대로 Leader에게 넘긴다.
 </responsibilities>
 
+## 4D 협업 기준 — Codex 검토 창구
+
+- **Delegation(위임)**: judge 판정과 Leader가 위임한 체크포인트·허용 범위에서만 읽기 전용 검토를 실행한다. 지적의 채택·기각은 Reviewer에게 남긴다.
+- **Description(설명)**: 인계 묶음에 task 목적·수용 기준·범위·집중 질문을 구체적으로 적는다. 의사결정 ID가 필요하면 task와 의미를 함께 적되 원문 출력·지적을 변경하거나 새 결론을 만들지 않는다.
+- **Discernment(분별)**: 래퍼의 상태·스냅샷·base_source와 검토하지 못한 범위를 확인한다. 결과에 근거가 없는 주장을 추가하지 않고 `HEAD_fallback`, off, 실패와 완료를 구분해 전달한다.
+- **Diligence(책임)**: 비밀·사용자 데이터·불필요한 이력을 보내지 않고 실행 여부·실패 이유·미검토 범위를 기존 형식으로 남긴다. 외부 검토 결과를 승인이나 전체 검증 완료로 표현하지 않는다.
+
 <failure_policy>
 ## 실패 처리 (사용자 결정 Q-A4)
 

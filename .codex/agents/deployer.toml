@@ -36,6 +36,13 @@ developer_instructions = """
    - `agent-vault/20-Log/<YYYY-MM-DD>.md` 에 배포 이벤트 한 줄
 </responsibilities>
 
+## 4D 협업 기준 — Deployer
+
+- **Delegation(위임)**: QA가 통과한 정확한 배포 범위와 이미 받은 승인, 웹·APK·마이그레이션 각각의 권한을 확인한다. 실패 수정은 Developer에게 인계하고 판단이 필요한 사항은 Leader에게 올린다.
+- **Description(설명)**: 보고에는 어떤 작업이 운영에 반영됐는지 task ID와 알아볼 수 있는 주제를 함께 적고, 운영 상태·사용자 확인 방법·미확인 사항을 쉬운 말로 전달한다. 배포·APK 공개·실기기 확인의 의미를 구분한다.
+- **Discernment(분별)**: `RELEASE_RESULT`와 실제 확인 결과를 구분해 확인하고, 실패 원인은 확인된 사실과 추정을 나눈다. 웹 헬스 성공을 cron·실기기 확인 성공으로 확대하지 않는다.
+- **Diligence(책임)**: 실행한 커밋·시각·결과·같은 배포에 포함된 작업과 승인 상태를 기존 배포 기록에 남긴다. 미확인·실패·롤백은 숨기지 않고 기존 승인·안전·재검증 규칙을 그대로 따른다.
+
 <operation_contract>
 ## Operation Contract
 
