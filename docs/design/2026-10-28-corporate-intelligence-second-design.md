@@ -634,6 +634,34 @@ CREATE TABLE ci_work_item (
 
 **순서에 미치는 영향**: 기준 판단 기록과 `job_run_log` 는 4주 관찰 시계가 이미 돌고 있어 이 설계의 단계 1 보다 **먼저 시작해야 할 수 있다**(U1·U2). 이 설계의 단계 1~2 는 그 기록이 있어도 없어도 독립 진행 가능하게 `ci_*` 를 자기완결로 둔다.
 
+### 9.5 J1 실행·상태 기록 모델 — `job_run_log` 확정안 (T-108 U7 요청, 제안)
+
+T-108 세션이 "J1 상태 모델만 먼저 확정해 달라"(U7)고 요청해 필드를 정한다. **구현은 사용자 지시 D-1 에 따라 통합 계획 뒤**이고, 여기서는 모델만 확정한다. 마지막 확인: 2026-10-28 18:2x.
+
+| 필드 | 타입 | 뜻 |
+|---|---|---|
+| `run_id` | BIGINT AUTO_INCREMENT PK | 실행 한 건 |
+| `job_id` | VARCHAR(64) | T-104 잡 정의의 id (예: `news-fetch-domestic-pm`) |
+| `run_kind` | VARCHAR(24) | `ingest` · `peek` · `drain` · `reconcile` · `analysis` · `other` |
+| `market` | ENUM('domestic','overseas','common') | 시장 |
+| `target` | VARCHAR(64) NULL | 원천(`rss`·`sec`·`kis` 또는 피드 호스트) |
+| `scheduled_slot_at` | DATETIME NULL | 예정 슬롯 시각(KST). 없으면 임의 실행 |
+| `started_at` / `ended_at` | DATETIME | 실제 시작·종료(KST) |
+| `status` | ENUM | `ok` · `partial` · `failed` · `skipped` · `missing` · `degraded` (인계서 §5 어휘) |
+| `http_code` | SMALLINT NULL | 러너가 본 응답 코드(`000` = 연결 끊김) |
+| `counts_json` | JSON NULL | `{fetched, new, processed, candidates}` — 있는 것만 |
+| `error_code` / `degraded_reason` | VARCHAR NULL | 짧은 분류어(예: `HTTP=000`, `news=0`) |
+| `session_date_kst` / `session_date_et` | DATE | 미국 잡은 ET 세션일 병기 |
+| `recorder` | ENUM('runner_hook','route') | 누가 썼나 |
+
+- **유일성**: `UNIQUE (job_id, scheduled_slot_at, recorder)` — 재시도·재기록이 한 줄을 갱신한다.
+- **`missing` 은 잡이 쓰지 않는다.** 예정 슬롯 + 유예 시간이 지났는데 기록이 없으면 **재대사 잡이 합성**한다(죽은 잡은 스스로 못 쓴다 — 10-26 `edgar-sync` 가 그 사례). `skipped`(휴장·스위치 꺼짐·그룹 꺼짐)와 구별된다.
+- **기록 지점**: 러너 `call()` 사후 후크 1곳 → 인증된 기록 라우트(다른 cron 라우트와 같은 비밀 검사)로 POST. 후크는 응답 본문 앞부분(상한 2KB)에서 건수를 뽑아 `counts_json` 에 싣는다. **기록 실패는 잡에 영향 0**(예외 삼킴, 실패 카운트만 로그).
+- **빈도 규칙(제안)**: 5분 이상 간격 잡은 실행마다 한 줄. **매분 잡**(`entry-watcher`·`holding-checker`·`stop-alert`)은 실행마다 쓰지 않는다 — 하루 4,000줄 이상이 되고 거래 감시 루프에 쓰기 부하를 얹는다. 시간당 1줄 롤업(`counts_json = {runs, failed, maxMs}`)과 **실패한 실행은 즉시 한 줄**로 한다.
+- **보관(제안)**: 90일 후 롤업만 남기고 삭제하는 정리는 별도 승인 사항(이 설계의 "삭제 없음" 원칙 유지).
+- **열린 질문**: 롤업 해상도·보관 기간은 T-108 가동률 지표 계약이 나올 때 확정.
+
+
 ---
 
 ## 10. 사용자 결정 요청 · 열린 질문
