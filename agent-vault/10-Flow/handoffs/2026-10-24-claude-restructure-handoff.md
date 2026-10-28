@@ -3,14 +3,16 @@ project: StockInvest
 task: T-078
 related_tasks: [T-064-profit-engine-design, T-077-portfolio-restructure-handoff]
 created: 2026-10-24
-updated: 2026-10-24
-status: ready-for-claude
+updated: 2026-10-28
+status: closed
 tags: [type/handoff, domain/restructure, domain/strategy]
 aliases:
   - Claude 개편 인수인계
 ---
 
 # Claude 인수인계 — StockInvest 개편 작업
+
+> **2026-10-28 종료:** 사용자가 통합 작업절차서로 작업을 완료했다고 알렸으며 이번 설계·인수인계 작업을 마무리했다. 아래 S00 시작 지시문은 당시 인계 이력이다. 새 지시 없이 처음부터 다시 실행하지 않는다. 이 종료 기록은 운영/전략 검증을 새로 통과시킨 판정이 아니며, 별도 후속 상태는 최신 ACTIVE·실행 원장·각 task의 증거를 따른다.
 
 ## 1. 이번에 받은 요청과 현재 완료 범위
 

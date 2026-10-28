@@ -4,6 +4,14 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-28 — [[T-078-integrated-execution-procedure]] 종료 정리**: 사용자가 통합 작업절차서로 작업 완료를 알림. 이번 인터뷰·설계·Claude 인수인계 종료, 기존 인수인계 closed. 사용자 완료 보고와 이번에 확인한 문서 범위를 구분했으며 실제 구현/운영 재검증이나 다른 task의 일괄 완료 처리는 하지 않음. 코드·설정·DB·주문·알림·커밋/push·배포 변경 없음.
+
+> **2026-10-28 16:53 — [[T-111-corporate-intelligence-first-design]] 기존 일일 수집 유지·기업정보 통합 1차 설계 완료**: 유지/변경/개선/영향, 비동기 증분·부분/정정·별도 Fast Watch·수익 검증, [[2026-10-28-corporate-intelligence-second-design-claude]] 인계와 첨부 원본 복사 작성. 사용자가 Claude에 직접 전달했다고 알림; 2차 설계 착수·완료는 미확인. 코드/DB/운영/배포 변경 없음.
+
+> **2026-10-28 15:44 — [[T-110-corporate-intelligence-review]] 기업정보 통합 수집계획 검토 완료**: 계획서 8단계 대비 기존 SEC·KIS·RSS 자산과 증거/기업식별/사건/시점 정합·Fast Watch 선결조건 보고. 구현·운영 변경 없음. **[[T-109-research-context-for-analysis]] 최근 3일 리서치 판단 참고** 별도 todo 접수(미구현·shadow 평가 후 검증). 기업정보 개선과 T-109 착수는 T-078 실행 원장과 조율.
+
+> **2026-10-28 13:28 — [[T-107-analysis-flow-visualization]] 분석 절차 소스 조사·도표 설명 완료**: 네 가지 분석 경로와 공통 검증·승인·주문 연결, 개선 후보 6개를 보고서·대화용 도표로 작성. 코드/운영/배포 변경 없음. 개선 구현은 후속 범위이며 T-068 재감사 제외.
+
 > **2026-10-28 11:50 — [[T-103-news-fetch-market-split]] 뉴스 수집 크론 국내·해외 분리 배포 완료**(11:21 push, 릴리스 `20261028-112124-414cc3b4` ok, 코드 `8b1e712`, Reviewer PASS·Codex 지적 0·QA PASS, 내일 06:13 실제 동작 검증 예약). **[[T-105-news-rag-zero-hits]] 분석에 뉴스 0건 문제 원인 확정(M4 읽기 전용 진단)** — 발행일 RFC 822 저장·해외 RSS 2025-01 정지·news.macro 시드뿐. 수정은 home-m4-api `task-007`(Developer 진행 중, M4 push 는 사용자 승인). ADP-006 C01 2단계는 [[T-061-adp006-c01-analyst-policy-trial]] 참조.
 
 > **2026-10-28 05:15 — [[T-101-settings-post-market-overseas-switch]] 설정 '해외 장마감 후 분석' 스위치·[[T-102-usd-cash-unsettled-buy]] 미결제 매수 시 USD 예수금 판정 수정 운영 반영**(push `61b80c9..5ac9119`, 릴리스 `20261028-051140-5ac91195` ok). 스위치 키는 꺼진 채(사용자가 켠다)·킬스위치 ON 유지·주문 id 3229. T-102 사용자 확인: 대시보드 총자산이 숫자로 돌아왔는지.
@@ -256,6 +264,8 @@ tags:
 - ~~**[High, 사용자 결정 필요] next@14.2.35에 잔존 CVE 21건**~~ → **2026-08-04 사용자 승인, [[T-005-next15-upgrade]]로 착수됨**
 
 ## Todo
+
+- **[T-109] 최신 3일 종목 리서치를 분석 참고로 연결** → [[T-109-research-context-for-analysis]] (사용자 요청 반영·미구현; 동일 종목/시장·데이터 기준일·shadow 비교·기존 검증 관문 유지).
 
 - ✅ **[T-094, 2026-10-26, R2] 앱·인증 후속 보강 묶음** → [[T-094-app-auth-followups]] — **2026-10-27 21:38 운영 반영**(릴리스 `20261027-213849-61b80c96` ok). WP-3 `getAppVersion` 3초 제한(웹 배포, `936ab6a`)·WP-1 login-screen 시험 조임(`def8db6`)·WP-2 header-safe 훅 감시(`9ef403d`)·WP-5 시험/문서(`6f31e68`) 완료, WP-4 보류(다음 APK 빌드 때). 한계: 3초 넘게 늦은 정상 응답은 버려짐(옛 앱 Google 버튼이 열릴 수 있으나 세션 미발급).
 - 🟡 **[T-080, 2026-10-25, R2] 킬스위치 24h 손실 판정의 USD 행 오집계 방지(S05 안전 경계)** → [[T-080-killswitch-usd-misread]] (**Phase 1 배포 완료 `20261025-140926-30ae50bd`** · Phase 2 = 평일 저녁 KIS 조회 1회 + 반대 방향 편향 A07 · 킬스위치는 ON 유지)

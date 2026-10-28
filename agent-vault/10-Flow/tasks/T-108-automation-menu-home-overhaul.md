@@ -9,7 +9,7 @@ updated: 2026-10-28
 base_ref: 93530f5
 risk_level: R2
 roles_involved: [leader, judge, analyst, designer, developer, reviewer, qa, codex, deployer]
-related_tasks: [T-095-postmortem-script-p1, T-096-strategy-validation-p2-p3, T-081-s01-ledger-cost-monthly-metric, T-100-holdings-loss-control, T-101-settings-post-market-overseas-switch, T-102-usd-cash-unsettled-buy, T-074-cash-ledger, T-107-analysis-flow-visualization]
+related_tasks: [T-095-postmortem-script-p1, T-096-strategy-validation-p2-p3, T-081-s01-ledger-cost-monthly-metric, T-100-holdings-loss-control, T-101-settings-post-market-overseas-switch, T-102-usd-cash-unsettled-buy, T-074-cash-ledger, T-107-analysis-flow-visualization, T-111-corporate-intelligence-first-design, T-114-corporate-intelligence-second-design]
 tags:
   - type/task
   - domain/ui
@@ -18,7 +18,7 @@ tags:
 aliases:
   - 메뉴홈개편
   - 거래비서개편
-waiting: [사용자: 착수 순서·데모 범위 확인, Analyst 지표 계약, Designer 데모]
+waiting: [수집 통합 2차 설계(T-114, T-111 후속) 완료 후 통합 계획 수립 — 사용자 지시 10-28 17:09, 사용자: 통합 계획 승인]
 demo_gate:
   required: true
   level: "delta"
@@ -93,6 +93,9 @@ demo_gate:
 ## 진행 기록
 
 - [10-28 13:5x] 접수. 인계서 대조(0단계) 완료. 사용자 착수 신호 대기.
+- [10-28 17:09] **사용자 결정 기록(발화 요지)**: ① 11-23 킬스위치 판단에 볼 증거 = 후보의 사후 성과 · 분석/데이터 정상 가동률 · 후보·제외 사유 추이(보유 위험·자금 정합은 선택 안 함) ② **기록 먼저 분리** — 새 기록 기반을 UI 개편보다 먼저(별도 task, DDL 은 그때 승인) ③ 홈 숫자 정의 불일치(승인 대기 집합 `/recommend` 와 통일, 깔때기 국내 고정 → 시장 토글)는 **개편에 포함**, 전후 비교를 데모에 ④ 비서 **대화 소유권 설계까지 포함**(별도 task, 비서 탭 노출은 소유권 적용 배포 이후) ⑤ **2차 설계(수집 통합, T-111) 후 두 작업을 통합해 함께 진행 — 그때까지 착수 보류** ⑥ 일봉 정기 수집은 수집 통합 세션이 맡음(이쪽 항목은 완료 처리, 보류 해제·KIS 호출 승인은 아님) ⑦ 읽기 전용 SELECT 는 두 세션 몫을 합쳐 1회 승인하는 방식(U6, 쿼리는 목록 제시 전 미실행).
+- [10-28 17:09] 공동 인계: [[2026-10-28-joint-collection-integration-and-menu-home-handoff]] (충돌 지점 J1~J9·소유권·기준선 변경 대장·조율 로그). 작업절차서 v2 원문은 로컬 계획 파일 `~/.claude/plans/agent-vault-10-flow-handoffs-2026-10-28-ticklish-scroll.md`(통합 계획의 입력, 승인 아님). 새 task 번호는 T-112 이상 — 생성 직전 `ls` 로 재확인.
+- [10-28 17:25] **세션 마무리(사용자 지시)**: 수집 통합 세션이 공동 인계서를 읽고 2차 설계를 시작해 T-114 로 문서 커밋(`30ffb90`·`5d4fdd1`). 합의: 공유 기록 테이블 `job_run_log`(최소 필드 + `run_kind`·`target`·`detail_json`), 판단 구분 필드명 `judgment_role ∈ {baseline, shadow}`, **T-112·T-113 은 비어 있음**(T-108 몫), 기준 판단(baseline) 기록은 T-112 범위 후보, U6 은 수집 통합 몫이 이미 실행돼 **T-108 몫 SELECT 만 남음(목록 미제시·미실행)**, 일봉 정기 수집(R13)은 수집 통합 세션 몫. **재개 조건**: T-114 2차 설계 완료 → 통합 계획 수립·사용자 승인 → T-112/T-113 접수(번호 `ls` 재확인) → 지표 계약·데모. 재개 시 공동 인계서 §11 의 수집 통합 `요청 → T-108 세션`(기록 명세와 설계서 §7 단계 3 필드 대조)에 `답 →` 로 응답한다.
 
 ## Analyst
 
