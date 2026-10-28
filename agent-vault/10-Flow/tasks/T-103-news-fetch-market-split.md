@@ -158,6 +158,7 @@ demo_gate:
 - 배포 직후 검증(직접 실행): pm2 `stockinvest`·`stockinvest-cron` 둘 다 online·재시작 0·`pm_cwd` 가 새 릴리스 / cron 프로세스 정확히 1행·실제 러너 프로세스 1개(새 릴리스 경로, `ps` 의 두 번째 줄은 점검 명령 자신) / 하트비트 71초 전(한도 300초) / `/api/health` 200 / 인증 없이 `POST /api/cron/news-fetch?market=bad` → **401**(인증이 시장 값 검사보다 먼저임을 운영에서 확인) / `[cron-runner] started` 가 11:21:53·11:21:56 두 줄(pm2 재등록 과정의 기동 흔적으로 보이며 실제 러너는 1개) / 기동 직전 첫 틱의 `HTTP=000`(strategy-eval 등)은 앱이 아직 뜨기 전의 일시 현상. 킬스위치 ON·주문 0 유지.
 - 못 한 것: **실제 06시 동작(해외 06:00 → 국내 다음 틱, 각 1회, 날짜 파일 2개)은 내일 아침에야 볼 수 있다** — 10-29 06:10 에 로그로 확인하도록 예약(아래 진행 기록). 운영 `?market=domestic|overseas` 호출 자체는 M4 에 쓰기를 하므로 하지 않았다.
 - 롤백: `git revert 8b1e712` 후 push. 라우트만 되돌리고 러너를 두는 부분 롤백은 피한다(새 러너가 옛 라우트를 부르면 두 호출이 각각 두 시장을 받아 M4 부하만 2배).
+- [2026-10-29 06:13] **첫 실제 06시 동작 검증(읽기 전용, 예약 점검)**: ① cron 로그 `06:00:31 news-fetch-overseas OK` → 같은 틱 `news-fetch-domestic yield_tick`(정확히 1줄) → `06:01:38 news-fetch-domestic OK` — 각 1회, 같은 틱에 두 호출 없음 ② 앱 로그 `overseas OK upserted=78 attempt=1 fresh=77` · `domestic OK upserted=100 attempt=1 fresh=100`(T-115 건수 100 이 국내에서 처음 실제로 100건) ③ 날짜파일 `news-fetch-overseas-last-date`·`news-fetch-domestic-last-date` = 2026-10-29, 옛 `news-fetch-last-date` = 2026-10-28 그대로 ④ `cron-watchdog` critical 없음(시작 줄만: 22:57 배포·04:44 재부팅) ⑤ M4 502 없음 → 시장별 critical 알림 문구는 이 날 검증할 기회가 없었다(실패일이 아님). 참고: 10-28 23:49~10-29 04:43 서버 정지는 이 06시 수집과 무관(04:43 재부팅 후 정상 기동). T-106 `news_zero_streak:fetch:*` 는 양 시장 streak 0.
 
 ## Codex 검토
 
