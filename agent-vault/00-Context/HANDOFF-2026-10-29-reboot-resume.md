@@ -27,7 +27,7 @@ aliases:
 
 | task | 상태 (05:1x) | 남은 순서 |
 |---|---|---|
-| **T-117** 일봉 정기 수집 크론(R13, 07:40~07:54) | Developer 완료(+H-1 수정: `src/lib/profit-engine/__tests__/isolation.test.ts` 긍정 단언 4개) · Reviewer 1차 FAIL(H-1) → 수정 → **재검증 PASS(05:17)** · **Judge C2 완료(`codex_required=true`)** · **남은 것: Codex(필수) → QA → 커밋 → push** · 변경 5개 파일(러너 sha256 `3e646908…fdd60`) | ① ✅ Reviewer PASS(05:17) ② ✅ judge C2(결과는 T-117 task 「판단 기록」에 옮겨 적음 — 다시 돌릴 필요 없음) ③ **Codex 필수(R2)**: `codex` 역할 문서(`.claude/agents/codex.md`)대로 인계 묶음을 만들어 `bash ~/NFS/homes/brownjeon/project/.claude/tools/codex-review/codex-review.sh run --task T-117 --checkpoint C2 --mode review --focus none --handoff <파일>` 를 worktree `~/.node-local/stockinvest-t117` 에서 실행(신규 미추적 파일이 스냅샷에 들어가는지 확인; `node_modules` 심볼릭 링크는 스냅샷 부산물이라 지적 시 Reviewer 가 기각 판단)  ④ QA(직렬: 새 러너 시험 81, news-split 119, news-peek 46, pmo-retry 76, stop-alert 22, 전체 jest, 훅 시험 410, tsc) ⑤ 메인 트리로 5개 파일 복사·sha256 대조·명시 경로만 `git add`·커밋 전 확인(`mode 120000`·`node_modules`·`hooktest`·`tsbuildinfo` 0건) ⑥ push 전 점검(킬스위치 ON·최근 3시간 주문 0건) ⑦ **push 창**: 05:10~06:50 은 **06:36 에 지났고(미배포 확정, T-117 `## 배포 기록` 참조)** **오늘 15:40~20:00**(첫 실행은 다음 날 07:40~07:54). **07:35~07:57 에 cron 재시작을 일으키는 배포는 피한다**(날짜파일이 호출 뒤에 기록돼 재시작 시 두 번 호출될 수 있음) |
+| **T-117** 일봉 정기 수집 크론(R13, 07:40~07:54) | Developer 완료(+H-1 수정: `src/lib/profit-engine/__tests__/isolation.test.ts` 긍정 단언 4개) · Reviewer 1차 FAIL(H-1) → 수정 → **재검증 PASS(05:17)** · **Judge C2 완료(`codex_required=true`)** · **Codex 완료(06:38, 지적 1건 → Reviewer 가 후속 L-5 로 강등, 06:45 PASS 유지)** · **QA 진행 중(06:5x 시작, 직렬 약 40분 — 진행은 task `## QA` 에 한 줄씩)** · 남은 것: QA 결과 → 커밋(5개 파일) → push(오늘 15:40~20:00) · 변경 5개 파일(러너 sha256 `3e646908…fdd60`) | ① ✅ Reviewer PASS(05:17) ② ✅ judge C2(결과는 T-117 task 「판단 기록」에 옮겨 적음 — 다시 돌릴 필요 없음) ③ **Codex 필수(R2)**: `codex` 역할 문서(`.claude/agents/codex.md`)대로 인계 묶음을 만들어 `bash ~/NFS/homes/brownjeon/project/.claude/tools/codex-review/codex-review.sh run --task T-117 --checkpoint C2 --mode review --focus none --handoff <파일>` 를 worktree `~/.node-local/stockinvest-t117` 에서 실행(신규 미추적 파일이 스냅샷에 들어가는지 확인; `node_modules` 심볼릭 링크는 스냅샷 부산물이라 지적 시 Reviewer 가 기각 판단)  ④ QA(직렬: 새 러너 시험 81, news-split 119, news-peek 46, pmo-retry 76, stop-alert 22, 전체 jest, 훅 시험 410, tsc) ⑤ 메인 트리로 5개 파일 복사·sha256 대조·명시 경로만 `git add`·커밋 전 확인(`mode 120000`·`node_modules`·`hooktest`·`tsbuildinfo` 0건) ⑥ push 전 점검(킬스위치 ON·최근 3시간 주문 0건) ⑦ **push 창**: 05:10~06:50 은 **06:36 에 지났고(미배포 확정, T-117 `## 배포 기록` 참조)** **오늘 15:40~20:00**(첫 실행은 다음 날 07:40~07:54). **07:35~07:57 에 cron 재시작을 일으키는 배포는 피한다**(날짜파일이 호출 뒤에 기록돼 재시작 시 두 번 호출될 수 있음) |
 | **T-118** 해외 peek 19슬롯+피드별 겹침 검사+peek 재시도 1회/20초 | Developer 구현 거의 완료(신규 `src/lib/corp-intel/feed-check.ts` 등), 시험 재실행 전 — Developer 재개용 인수인계는 task `## Developer` 절 | Developer 시험·변이(직렬) → Reviewer → T-119 와 합쳐 러너 시험 1회 → judge C2 → Codex 필수 → QA → push(묶음 2) |
 | **T-119** 보유 종목 개장 전 공시 확인(B) | Developer 구현 거의 완료(신규 `holdings-premarket` 라우트·모듈·러너 블록), 시험 재실행 전 | 동일. 스위치 `holdings_premarket_enabled`(키 없음=꺼짐)는 **배포·검증 뒤 Leader 가 켠다**(사용자 승인 Q2⑤). 첫 실행 ET 08:00(KST 21:00) |
 
@@ -54,6 +54,10 @@ aliases:
 ## 5. 서브에이전트 재개 방법
 
 서브에이전트는 재기동으로 사라지지만 대화 기록은 저장돼 있다 — `SendMessage` 의 `to` 에 agentId 를 넣어 재개할 수 있다(10-29 04:5x 에 이 방식으로 재개했다): T-117 Developer `ab17dcfef45e35721` · T-117 Reviewer `a61d93829f1d61f33` · T-118 Developer `ae600b9f3a6b56405` · T-119 Developer `a6981698a1234800f`. 재개 메시지에는 항상 현재 상태 재확인(git status·task 의 Developer/Reviewer 절)과 §0-4 부하 규칙을 넣는다. 재기동 전 시험 결과는 재실행 전까지 미검증으로 취급한다.
+
+## 5b. 06:5x 상태 갱신
+
+서버 재기동은 **아직 안 됐다**(06:43 가동 2시간, `/var/run/reboot-required` 는 05:05 생성 — 패키지 업데이트는 05:47 에 끝남, 사용자가 재기동하면 이 세션·에이전트는 끝나며 위 §2·§6 으로 이어 간다). 사용자 알림 없이 06:50 에 시험을 재개했다(업데이트 종료 확인 후, `flock` 직렬). T-117 QA·T-118 체인·T-119 시험이 같은 락을 공유하며 순서대로 돈다 — 각자 단계마다 task 에 한 줄씩 기록한다.
 
 ## 6. Developer 중간 보고 요약과 Leader 결정 (05:15)
 
