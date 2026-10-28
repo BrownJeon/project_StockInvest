@@ -131,6 +131,7 @@ waiting: []
 | 시각(KST) | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
 |---|---|---|---|---|---|
 | 2026-10-28 19:07 (webhook, Leader push `0825250..a16bc0c`) | `20261028-190713-a16bc0cb` | `a16bc0c` | T-115(코드: 국내 15:30 추가 수집·시장별 100건), T-104·T-105·T-106·T-108·T-112·T-114·T-116(문서 전용) | `RELEASE_RESULT status=ok`, `migrated=false`, `previous=20261028-132733-08252507` | Deployer 는 배포를 실행하지 않고 webhook 배포 로그 판정·재확인만 함(이중 배포 없음). health 200, pm2 `stockinvest`·`stockinvest-cron` 각 1개 online, restarts 0. 오늘 15:30 수집은 지나서 `news-fetch-domestic-pm skipped` 1줄(정상). 첫 실제 수집은 10-29 15:30 |
+- [2026-10-29 06:27] **첫 실제 06시 수집 검증(읽기 전용, 예약 점검)** — 정상. ① 앱 로그: 해외 06:00:24 start → 06:00:28 `OK upserted=78 attempt=1 fresh=77`(소요 약 4초, 이전 20 → 78) · 국내 06:01:31 start → 06:01:34 `OK upserted=100 attempt=1 fresh=100`(소요 약 3초, 이전 20 → **100**, 상한 도달) · 재시도·timeout·502 없음 ② M4 KB 새 메타: `news.kr_market` 최근 항목 20건 전부(ingested_at 06:01:31 KST) `source_url`·`guid`·`feed_host` 3/3, `news.us_market` 06:00 수집분 3/3 · **10-28 13:28 이전 수집분은 0/3**(task-009 18:46 배포 전 항목, 기대와 일치) ③ T-106: `news_zero_streak:fetch:domestic`(lastCount 100)·`fetch:overseas`(lastCount 77) 키 생성·streak 0, `news-health`/`alerted=` 경고 줄 없음. 부수 확인: T-116 ingest 캡처가 같은 수집에서 `ci_raw_item` 175행 신규(국내 100·해외 75, 중복 3), `ci_capture_status` 양쪽 ok. **확인하지 못한 것**: 오늘 15:30 국내 추가 수집(`news-fetch-domestic-pm`)의 첫 실제 실행(15:47 예약 점검)·16:00 분석에서 `news>0` 인지(16:12 예약 점검) — 분석 입력에 실제로 반영되는지는 그때 본다. 참고: 10-28 23:49~10-29 04:43 서버 정지는 이 06시 수집과 무관.
 
 ## 최종 요약
 
