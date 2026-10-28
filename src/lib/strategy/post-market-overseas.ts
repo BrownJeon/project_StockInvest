@@ -28,6 +28,7 @@ import type { Candle } from '@/lib/exchanges/types';
 import { runLlm } from '@/lib/llm/provider';
 import { retrieveRagContext } from '@/lib/rag/retrieval';
 import { formatRagSection } from '@/lib/rag/format';
+import { recordRetrievalNewsOutcome } from '@/lib/rag/news-health';
 import { gateSwitchValueEnabled, judgeFxRow } from '@/lib/signals/signal-cash-gate';
 import { loadUsTargetSymbols } from '@/lib/data/us-data-db';
 import { eodHighClose } from './rules/eod-high-close';
@@ -621,6 +622,8 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     let ragSection = '';
     try {
       const ragCtx = await retrieveRagContext(queryText, 'overseas', { lookbackDays: 3, topKNews: 5, topKSignals: 3 });
+      // T-106 뉴스 0건 연속 감시 — KB 오류가 없던 실행만 센다(errors.length === 0). 기록 실패는 분석에 영향 0.
+      try { await recordRetrievalNewsOutcome('overseas', ragCtx); } catch { /* recordRetrievalNewsOutcome 는 던지지 않는다 — 이중 안전 */ }
       if (ragCtx.totalChars > 0) ragSection = formatRagSection(ragCtx);
     } catch (e) {
       errors.push(`rag_fail:${errMsg(e)}`);

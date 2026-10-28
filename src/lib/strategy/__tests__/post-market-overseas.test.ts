@@ -14,6 +14,7 @@ import { isOverseasEnabled } from '@/lib/exchanges/market-flags';
 import { getUsdKrwRate } from '@/lib/exchanges/fx';
 import { runLlm } from '@/lib/llm/provider';
 import { retrieveRagContext } from '@/lib/rag/retrieval';
+import { recordRetrievalNewsOutcome } from '@/lib/rag/news-health';
 import { loadUsTargetSymbols, findMissingTables } from '@/lib/data/us-data-db';
 import { eodHighClose } from '../rules/eod-high-close';
 import { insideBar } from '../rules/inside-bar';
@@ -30,6 +31,8 @@ jest.mock('@/lib/exchanges/market-flags', () => ({ isOverseasEnabled: jest.fn() 
 jest.mock('@/lib/exchanges/fx', () => ({ getUsdKrwRate: jest.fn() }));
 jest.mock('@/lib/llm/provider', () => ({ runLlm: jest.fn() }));
 jest.mock('@/lib/rag/retrieval', () => ({ retrieveRagContext: jest.fn() }));
+// T-106 — 뉴스 0건 연속 감시 기록은 이 파일에서 목(호출 지점·인자·흐름 무영향만 본다; 세는 규칙은 rag/__tests__/news-health.test.ts).
+jest.mock('@/lib/rag/news-health', () => ({ recordRetrievalNewsOutcome: jest.fn(async () => null) }));
 jest.mock('@/lib/rag/format', () => ({ formatRagSection: jest.fn(() => '### 뉴스\n- WSJ 헤드라인') }));
 jest.mock('@/lib/data/us-data-db', () => ({ loadUsTargetSymbols: jest.fn(), findMissingTables: jest.fn() }));
 jest.mock('../rules/eod-high-close', () => ({ eodHighClose: jest.fn() }));
@@ -1072,5 +1075,37 @@ describe('🔴 T-072 G2 — 검증 관문(해외 트랜잭션): skipped 카드 +
 describe('formatKrwInt', () => {
   test.each([[36176, '36,176'], [999, '999'], [1000, '1,000'], [1234567, '1,234,567'], [36176.4, '36,176']])('%s → %s', (n, s) => {
     expect(formatKrwInt(n)).toBe(s);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('T-106 뉴스 0건 연속 감시 — 해외 검색 채널 호출 지점', () => {
+  const mHealth = recordRetrievalNewsOutcome as jest.Mock;
+
+  test('🔴 retrieveRagContext 직후 (\'overseas\', ragCtx) 로 기록 — LLM 전, 카드 생성 그대로', async () => {
+    arrange({ closes: { 'NAS:CMCSA': 27.4 }, decisions: [buy('NAS:CMCSA', 27.2, 27.6)] });
+    const ctx = { pastSignals: [], recentNews: [], macroContext: [], totalChars: 0, elapsedMs: 1, errors: [] };
+    mRag.mockResolvedValue(ctx);
+    const r = await runPostMarketOverseas();
+    expect(mHealth).toHaveBeenCalledTimes(1);
+    expect(mHealth).toHaveBeenCalledWith('overseas', ctx);
+    expect(mHealth.mock.invocationCallOrder[0]).toBeGreaterThan(mRag.mock.invocationCallOrder[0]);
+    expect(mHealth.mock.invocationCallOrder[0]).toBeLessThan(mLlm.mock.invocationCallOrder[0]);
+    expect(r).toMatchObject({ ok: true, status: 'ok', signalsCreated: 1, errors: [] });
+  });
+
+  test('🔴 기록이 던져도(이론상 없음) 분석은 그대로 — rag_fail 없음, 뉴스 절 유지', async () => {
+    arrange({ closes: { 'NAS:CMCSA': 27.4 }, decisions: [buy('NAS:CMCSA', 27.2, 27.6)] });
+    mHealth.mockRejectedValueOnce(new Error('db down'));
+    const r = await runPostMarketOverseas();
+    expect(r).toMatchObject({ ok: true, status: 'ok', signalsCreated: 1, errors: [] });
+    expect(String(mLlm.mock.calls[0][0])).toContain('WSJ');
+  });
+
+  test('RAG 가 던지면 기록하지 않는다', async () => {
+    arrange({ closes: { 'NAS:CMCSA': 27.4 }, decisions: [buy('NAS:CMCSA', 27.2, 27.6)] });
+    mRag.mockRejectedValue(new Error('m4 down'));
+    await runPostMarketOverseas();
+    expect(mHealth).not.toHaveBeenCalled();
   });
 });

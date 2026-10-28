@@ -37,11 +37,18 @@
  *    `news-fetch:<market>:failed` critical — 한 시장 전체 실패도 숨기지 않는다(T-036 교훈).
  *  - 허용 밖 값(빈 값·대소문자 다름 포함): 인증 통과 **후** `400 invalid_market`, M4 호출 0.
  *  - 인증이 항상 먼저, 토큰 누락 fail-safe(알림 1회 후 스킵)는 시장 지정 여부와 무관하게 그대로.
+ *
+ * ## 뉴스 0건 연속 감시 (T-106)
+ *
+ * 시장별 결과가 확정되고 기존 실패 알림을 보낸 뒤, `recordNewsOutcome({channel:'fetch'})` 로 그 시장의 건수를 기록한다
+ * (실패 소진 = 0, 성공 = M4 응답의 숫자 `fresh` 가 있으면 그것, 없으면 `upserted`). 같은 시장 연속 3일 0건이면
+ * `news-zero:fetch:<market>` warning. 기록 실패는 응답·재시도·기존 알림에 영향 0. 토큰 누락 스킵·400 은 기록하지 않는다.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { checkCronAuth } from '@/lib/cron-auth';
 import { trackCall } from '@/lib/api-usage';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
+import { recordNewsOutcome } from '@/lib/rag/news-health';
 
 export const dynamic = 'force-dynamic';
 
@@ -77,6 +84,40 @@ interface MarketResult {
   error?: string;
 }
 
+/**
+ * (T-106) 시장별 결과 + 응답에 싣지 않는 내부 값. `fresh` = M4 가 알려 준 "최근 3일 날짜를 가진 항목 수"
+ * (M4 task-008 이 추가 예정 — 숫자가 아니면 undefined). 응답 형식(`markets`)은 바꾸지 않는다.
+ */
+interface MarketOutcome {
+  result: MarketResult;
+  fresh?: number;
+}
+
+/** M4 응답의 선택 필드 `fresh` — 0 이상 유한한 숫자일 때만 인정. */
+function readFresh(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
+}
+
+/**
+ * (T-106) 뉴스 0건 연속 감시용 건수. 실패(재시도 소진) = 0, 성공 = `fresh` 가 있으면 그것, 없으면 `upserted`.
+ * (`upserted` 만 보면 낡은 기사 재저장도 20 으로 보인다 — T-105.)
+ */
+function newsHealthCount(o: MarketOutcome): number {
+  if (!o.result.ok) return 0;
+  return o.fresh ?? o.result.upserted;
+}
+
+/** (T-106) 감시 기록 — 실패해도 라우트 응답·재시도·기존 알림에 영향 0(recordNewsOutcome 자체도 던지지 않는다). */
+async function recordFetchHealth(outcomes: MarketOutcome[]): Promise<void> {
+  await Promise.all(outcomes.map(async (o) => {
+    try {
+      await recordNewsOutcome({ channel: 'fetch', market: o.result.market, count: newsHealthCount(o) });
+    } catch (e) {
+      console.warn(`[cron/news-fetch] ${o.result.market} 뉴스 0건 감시 기록 실패(무시): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }));
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -89,7 +130,7 @@ function resolveM4AdminToken(): string {
   return process.env.M4_ADMIN_TOKEN ?? process.env.ADMIN_TOKEN ?? '';
 }
 
-async function fetchNewsOnce(base: string, adminToken: string, market: Market): Promise<number> {
+async function fetchNewsOnce(base: string, adminToken: string, market: Market): Promise<{ upserted: number; fresh?: number }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -105,8 +146,8 @@ async function fetchNewsOnce(base: string, adminToken: string, market: Market): 
       const body = await res.text().catch(() => '');
       throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
     }
-    const data = (await res.json().catch(() => ({}))) as { upserted?: number };
-    return data.upserted ?? 0;
+    const data = (await res.json().catch(() => ({}))) as { upserted?: number; fresh?: unknown };
+    return { upserted: data.upserted ?? 0, fresh: readFresh(data.fresh) };
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
       throw new Error(`timeout after ${REQUEST_TIMEOUT_MS}ms`);
@@ -117,13 +158,13 @@ async function fetchNewsOnce(base: string, adminToken: string, market: Market): 
   }
 }
 
-async function fetchMarketWithRetry(base: string, adminToken: string, market: Market): Promise<MarketResult> {
+async function fetchMarketWithRetry(base: string, adminToken: string, market: Market): Promise<MarketOutcome> {
   let lastError = '';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const upserted = await fetchNewsOnce(base, adminToken, market);
-      console.log(`[cron/news-fetch] ${market} OK upserted=${upserted} attempt=${attempt}`);
-      return { market, ok: true, upserted, attempts: attempt };
+      const { upserted, fresh } = await fetchNewsOnce(base, adminToken, market);
+      console.log(`[cron/news-fetch] ${market} OK upserted=${upserted} attempt=${attempt}` + (fresh !== undefined ? ` fresh=${fresh}` : ''));
+      return { result: { market, ok: true, upserted, attempts: attempt }, fresh };
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
       console.error(`[cron/news-fetch] ${market} FAILED attempt=${attempt}/${MAX_ATTEMPTS} error=${lastError}`);
@@ -132,7 +173,7 @@ async function fetchMarketWithRetry(base: string, adminToken: string, market: Ma
       }
     }
   }
-  return { market, ok: false, upserted: 0, attempts: MAX_ATTEMPTS, error: lastError };
+  return { result: { market, ok: false, upserted: 0, attempts: MAX_ATTEMPTS, error: lastError } };
 }
 
 export async function POST(req: NextRequest) {
@@ -162,7 +203,8 @@ export async function POST(req: NextRequest) {
     }
 
     console.log(`[cron/news-fetch] start base=${base}` + (single ? ` market=${single}` : ''));
-    const results = await Promise.all(targets.map((market) => fetchMarketWithRetry(base, adminToken, market)));
+    const outcomes = await Promise.all(targets.map((market) => fetchMarketWithRetry(base, adminToken, market)));
+    const results = outcomes.map((o) => o.result);
     const failed = results.filter((r) => !r.ok);
 
     if (single && failed.length > 0) {
@@ -186,6 +228,9 @@ export async function POST(req: NextRequest) {
         `M4 뉴스 KB 갱신 실패 (${failed.length}/${MARKETS.length}개 시장, 시장별 최대 ${MAX_ATTEMPTS}회 시도 후)\n${summary}`,
       );
     }
+
+    // (T-106) 시장별 결과 확정·기존 알림 뒤 — 뉴스 0건 연속 감시. 응답·기존 알림 키·심각도는 그대로.
+    await recordFetchHealth(outcomes);
 
     const ok = failed.length === 0;
     console.log(`[cron/news-fetch] done ok=${ok}`, results);

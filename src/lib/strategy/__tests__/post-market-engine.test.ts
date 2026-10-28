@@ -14,6 +14,7 @@ import { getCandles } from '@/lib/exchanges/kis-domestic';
 import { getAlwaysIncludeSymbols, getUniverseSnapshot } from '../universe';
 import { runLlm } from '@/lib/llm/provider';
 import { retrieveRagContext } from '@/lib/rag/retrieval';
+import { recordRetrievalNewsOutcome } from '@/lib/rag/news-health';
 import { eodHighClose } from '../rules/eod-high-close';
 import { insideBar } from '../rules/inside-bar';
 import { oversoldBounceDaily } from '../rules/oversold-bounce-daily';
@@ -23,6 +24,8 @@ jest.mock('@/lib/exchanges/kis-domestic', () => ({ getCandles: jest.fn() }));
 jest.mock('../universe', () => ({ getAlwaysIncludeSymbols: jest.fn(), getUniverseSnapshot: jest.fn() }));
 jest.mock('@/lib/llm/provider', () => ({ runLlm: jest.fn() }));
 jest.mock('@/lib/rag/retrieval', () => ({ retrieveRagContext: jest.fn() }));
+// T-106 — 뉴스 0건 연속 감시 기록은 이 파일에서 목(호출 지점·인자·흐름 무영향만 본다; 세는 규칙은 rag/__tests__/news-health.test.ts).
+jest.mock('@/lib/rag/news-health', () => ({ recordRetrievalNewsOutcome: jest.fn(async () => null) }));
 jest.mock('@/lib/rag/format', () => ({ formatRagSection: jest.fn(() => '') }));
 jest.mock('../rules/eod-high-close', () => ({ eodHighClose: jest.fn() }));
 jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
@@ -534,5 +537,58 @@ describe('T-053 — 1주 가격이 카드 금액을 넘는 카드는 만들지 �
     const r = await runPostMarketAnalysis('domestic');
     expect(r).toMatchObject({ signalsCreated: 0, signalsSkipped: 2, duplicatesSkipped: 1, unaffordableSkipped: 1 });
     expect(query).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('T-106 뉴스 0건 연속 감시 — 국내 검색 채널 호출 지점', () => {
+  const mHealth = recordRetrievalNewsOutcome as jest.Mock;
+
+  test('🔴 retrieveRagContext 직후 (market, ragCtx) 로 기록 — 카드 생성 흐름 그대로', async () => {
+    setNow(FRI_1602);
+    arrangeFlow(['005380'], [{ affectedRows: 1 }]);
+    const ctx = { pastSignals: [], recentNews: [], macroContext: [], totalChars: 0, elapsedMs: 1, errors: [] };
+    mRag.mockResolvedValue(ctx);
+    const r = await runPostMarketAnalysis('domestic');
+    expect(mHealth).toHaveBeenCalledTimes(1);
+    expect(mHealth).toHaveBeenCalledWith('domestic', ctx);
+    expect(mHealth.mock.invocationCallOrder[0]).toBeGreaterThan(mRag.mock.invocationCallOrder[0]);
+    expect(mHealth.mock.invocationCallOrder[0]).toBeLessThan(mLlm.mock.invocationCallOrder[0]);
+    expect(r.signalsCreated).toBe(1);
+    expect(r.errors).toEqual([]);
+  });
+
+  test('🔴 기록이 던져도(이론상 없음) 분석은 그대로 — rag_fail 을 남기지 않고 LLM·INSERT 진행', async () => {
+    setNow(FRI_1602);
+    arrangeFlow(['005380'], [{ affectedRows: 1 }]);
+    mHealth.mockRejectedValueOnce(new Error('db down'));
+    const r = await runPostMarketAnalysis('domestic');
+    expect(r.signalsCreated).toBe(1);
+    expect(r.errors).toEqual([]);
+    expect(mLlm).toHaveBeenCalledTimes(1);
+  });
+
+  test('RAG 가 던지면 기록하지 않는다(조회 장애 — 기존 rag_fail 소관)', async () => {
+    setNow(FRI_1602);
+    arrangeFlow(['005380'], [{ affectedRows: 1 }]);
+    mRag.mockRejectedValue(new Error('m4 down'));
+    const r = await runPostMarketAnalysis('domestic');
+    expect(mHealth).not.toHaveBeenCalled();
+    expect(r.errors).toEqual(['rag_fail:m4 down']);
+  });
+
+  test('주말 스킵에서는 기록하지 않는다', async () => {
+    setNow(SAT_1602);
+    await runPostMarketAnalysis('domestic');
+    expect(mHealth).not.toHaveBeenCalled();
+  });
+
+  test('정적 — 장중 ai-filter-stage1 은 감시 기록을 부르지 않는다', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('node:fs') as typeof import('node:fs');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('node:path') as typeof import('node:path');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'ai-filter-stage1.ts'), 'utf8');
+    expect(src).not.toMatch(/news-health|recordNewsOutcome|recordRetrievalNewsOutcome/);
   });
 });

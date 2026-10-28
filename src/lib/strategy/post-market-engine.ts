@@ -17,6 +17,7 @@ import { getAlwaysIncludeSymbols, getUniverseSnapshot } from './universe';
 import { runLlm } from '@/lib/llm/provider';
 import { retrieveRagContext } from '@/lib/rag/retrieval';
 import { formatRagSection } from '@/lib/rag/format';
+import { recordRetrievalNewsOutcome } from '@/lib/rag/news-health';
 import { eodHighClose } from './rules/eod-high-close';
 import { insideBar } from './rules/inside-bar';
 import { oversoldBounceDaily } from './rules/oversold-bounce-daily';
@@ -528,6 +529,8 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
   let ragSection = '';
   try {
     const ragCtx = await retrieveRagContext(queryText, market, { lookbackDays: 3, topKNews: 5, topKSignals: 3 });
+    // T-106 뉴스 0건 연속 감시 — KB 오류가 없던 실행만 센다(errors.length === 0). 기록 실패는 분석에 영향 0.
+    try { await recordRetrievalNewsOutcome(market, ragCtx); } catch { /* recordRetrievalNewsOutcome 는 던지지 않는다 — 이중 안전 */ }
     if (ragCtx.totalChars > 0) ragSection = formatRagSection(ragCtx);
   } catch (e) {
     errors.push(`rag_fail:${e instanceof Error ? e.message : String(e)}`);

@@ -30,6 +30,11 @@ jest.mock('@/lib/notify/throttle', () => ({
   sendAlertThrottled: (...a: unknown[]) => alertMock(...a),
   resetAlertThrottle: () => {},
 }));
+// T-106 — 뉴스 0건 연속 감시 기록. 실제 모듈은 getPool()(실 DB·스키마 설정)을 부르므로 이 파일에서는 항상 목으로 막는다.
+const healthMock = jest.fn();
+jest.mock('@/lib/rag/news-health', () => ({
+  recordNewsOutcome: (...a: unknown[]) => healthMock(...a),
+}));
 
 const req = {} as NextRequest;
 
@@ -56,6 +61,8 @@ beforeEach(() => {
   jest.useFakeTimers();
   authMock.mockReset();
   alertMock.mockReset();
+  healthMock.mockReset();
+  healthMock.mockResolvedValue({ streak: 0, alerted: false });
   authMock.mockReturnValue(undefined);
   originalFetch = globalThis.fetch;
   originalAdminToken = process.env.M4_ADMIN_TOKEN;
@@ -515,5 +522,114 @@ describe('T-103 정적 — 호출 기록 지점 불변', () => {
   test("trackCall('m4', 'news.fetch' 호출 지점은 1곳 그대로", () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'route.ts'), 'utf8');
     expect(src.match(/trackCall\('m4', 'news\.fetch'/g)?.length).toBe(1);
+  });
+});
+
+describe('T-106 뉴스 0건 연속 감시 — 수집 채널 기록', () => {
+  const healthArgs = () =>
+    (healthMock.mock.calls.map((c) => c[0]) as { channel: string; market: string; count: number }[])
+      .sort((a, b) => a.market.localeCompare(b.market));
+
+  test('두 시장 성공·fresh 없음 → 시장별 upserted 를 fetch 채널로 기록, 응답 형식 불변(fresh 키 없음)', async () => {
+    const { fn } = countingFetch();
+    globalThis.fetch = fn;
+
+    const { res, body } = await runPost();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      markets: [
+        { market: 'domestic', ok: true, upserted: 4, attempts: 1 },
+        { market: 'overseas', ok: true, upserted: 6, attempts: 1 },
+      ],
+    });
+    expect(healthArgs()).toEqual([
+      { channel: 'fetch', market: 'domestic', count: 4 },
+      { channel: 'fetch', market: 'overseas', count: 6 },
+    ]);
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+
+  test('🔴 M4 응답에 숫자 fresh 가 있으면 upserted 대신 fresh 로 센다(낡은 기사 재저장 = upserted 20, fresh 0) — 응답에는 싣지 않는다', async () => {
+    globalThis.fetch = jest.fn().mockImplementation(async () => jsonResponse(200, { upserted: 20, fresh: 0 }));
+
+    const { body } = await runPost(reqWith('overseas'));
+
+    expect(body).toEqual({ ok: true, markets: [{ market: 'overseas', ok: true, upserted: 20, attempts: 1 }] });
+    expect(healthArgs()).toEqual([{ channel: 'fetch', market: 'overseas', count: 0 }]);
+  });
+
+  test('fresh 가 양수면 그 값으로 센다', async () => {
+    globalThis.fetch = jest.fn().mockImplementation(async () => jsonResponse(200, { upserted: 20, fresh: 7 }));
+    await runPost(reqWith('domestic'));
+    expect(healthArgs()).toEqual([{ channel: 'fetch', market: 'domestic', count: 7 }]);
+  });
+
+  test.each([
+    ['문자열', '5'],
+    ['음수', -1],
+    ['null', null],
+    ['객체', { n: 1 }],
+  ])('fresh 가 %s 이면 무시하고 upserted 로 센다', async (_n, fresh) => {
+    globalThis.fetch = jest.fn().mockImplementation(async () => jsonResponse(200, { upserted: 9, fresh }));
+    const { body } = await runPost(reqWith('domestic'));
+    expect(body.markets).toEqual([{ market: 'domestic', ok: true, upserted: 9, attempts: 1 }]);
+    expect(healthArgs()).toEqual([{ channel: 'fetch', market: 'domestic', count: 9 }]);
+  });
+
+  test('🔴 단일 시장 3회 소진 실패 → 0 으로 기록, 기존 알림 키·심각도 그대로', async () => {
+    const { fn } = countingFetch(() => 502);
+    globalThis.fetch = fn;
+
+    const { body } = await runPost(reqWith('overseas'));
+
+    expect(body.markets[0]).toMatchObject({ market: 'overseas', ok: false, upserted: 0, attempts: 3 });
+    expect(healthArgs()).toEqual([{ channel: 'fetch', market: 'overseas', count: 0 }]);
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    expect(alertMock.mock.calls[0][0]).toBe('news-fetch:overseas:failed');
+    expect(alertMock.mock.calls[0][1]).toBe('critical');
+  });
+
+  test('두 시장 부분 실패 → 실패 시장 0·성공 시장 upserted, 기존 partial_failed warning 그대로', async () => {
+    const { fn } = countingFetch((m) => (m === 'domestic' ? 500 : 200));
+    globalThis.fetch = fn;
+
+    const { body } = await runPost();
+
+    expect(body.ok).toBe(false);
+    expect(healthArgs()).toEqual([
+      { channel: 'fetch', market: 'domestic', count: 0 },
+      { channel: 'fetch', market: 'overseas', count: 6 },
+    ]);
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    expect(alertMock.mock.calls[0][0]).toBe('news-fetch:partial_failed');
+    expect(alertMock.mock.calls[0][1]).toBe('warning');
+  });
+
+  test('🔴 감시 기록이 던져도(이론상 없음) 응답·HTTP 상태·기존 알림은 그대로', async () => {
+    healthMock.mockRejectedValue(new Error('db down'));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { fn } = countingFetch();
+    globalThis.fetch = fn;
+
+    const { res, body } = await runPost(reqWith('domestic'));
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({ ok: true, markets: [{ market: 'domestic', ok: true, upserted: 4, attempts: 1 }] });
+    expect(alertMock).not.toHaveBeenCalled();
+    expect(healthMock).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  test('토큰 누락 스킵·잘못된 market 400·인증 실패에서는 기록하지 않는다', async () => {
+    globalThis.fetch = jest.fn();
+    delete process.env.M4_ADMIN_TOKEN;
+    await runPost(reqWith('domestic'));
+    process.env.M4_ADMIN_TOKEN = 'test-admin-token';
+    await runPost(reqWith('DOMESTIC'));
+    authMock.mockReturnValue(jsonResponse(401, { ok: false, error: 'unauthorized' }, false));
+    await runPost();
+    expect(healthMock).not.toHaveBeenCalled();
   });
 });
