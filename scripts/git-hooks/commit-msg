@@ -560,6 +560,22 @@ check_hook_sync || true
 #                               후보 보류분 그대로(이번 범위는 header-safe 2개). signup-request-mail.ts 가 ①·③ 을 부르지 않게
 #                               바뀌는 변경은 여전히 훅 밖이다 — 발송 직전 send.ts:82 의 제목 재정화(감시 중)가 남는 것은 ①(제목)뿐이다.
 #                               ③ escapeHtml 호출(signup-request-mail.ts:96,105~108)을 지우는 변경에는 감시 중인 보완책이 없다(T-094 Reviewer L1).
+#
+# T-116 추가 (2026-10-28, 2차 설계 D8 — 사용자 지시 "나머지는 권고안대로 진행해줘"로 권고 채택, task 이력서 T-116 「사용자 지시·승인」):
+#   + src/lib/corp-intel/ (디렉토리 — 하위 __tests__/ 포함) → 기업정보 통합 모듈. T-116 시점에는 뉴스 최초 관측 증거 캡처
+#                               (raw-capture.ts — 무인 실행 경로 /api/cron/news-fetch 가 부르고 운영 DB ci_raw_item·system_config 에
+#                               쓴다)·멱등 키(keys.ts)·캡처 상태(status.ts)와 그 경계 시험(__tests__/isolation.test.ts — corp-intel 이
+#                               주문·안전장치·시그널·전략·거래소·알림 모듈을 import 하지 않고, src 의 참조자가 news-fetch 라우트뿐임을 고정).
+#                               근거: ① 설계서(docs/design/2026-10-28-corporate-intelligence-second-design.md) §6.8 — 이 모듈은 단계 3 에서
+#                               판단 병행 비교·기준 판단 기록까지 커지며, 그때 경계(새 정보가 카드·주문을 건드리지 않음)를 지키는 것이
+#                               위 격리 시험이다. 격리 시험을 무검토로 느슨하게 바꿀 수 있으면 경계가 조용히 열린다(T-098 이
+#                               profit-engine 격리 시험을 넣은 것과 같은 이유). ② 첫 관측 시각(first_seen_at)을 덮어쓰지 않는 SQL·스위치
+#                               (키 없음 = 꺼짐) 판정이 여기 있다 — 바뀌면 되살릴 수 없는 증거가 덮어쓰이거나 승인 없이 쓰기가 켜진다.
+#                               ③ 지금 이미 감시 중인 라우트(src/app/api/cron/)가 부르는 구현이 훅 밖이면 라우트 감사가 무의미해진다.
+#   디렉토리 항목으로 넣는다(새 파일도 자동으로 걸린다 — 단계 2·3 의 사건·스냅샷 코드가 같은 폴더에 생긴다).
+#   새로 걸리는 추적 파일(base a16bc0c): 0개 — 이 폴더는 T-116 이 처음 만든다. 옛 목록이 걸던 파일은 전부 그대로.
+#   CLAUDE.md 의 대분류 설명은 바꾸지 않는다(목록 정본은 이 배열).
+#   넣지 않은 것: scripts/migrations/T-116-ci-raw-item.sql(이미 ^scripts/migrations/ 로 감시 중)·docs/design/(문서).
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
@@ -620,6 +636,7 @@ SAFETY_PATHS=(
   '^scripts/profit-engine/backtest-runner-core\.js$'
   '^src/lib/profit-engine/__tests__/backtest-'
   '^src/lib/profit-engine/__tests__/isolation\.test\.ts$'
+  '^src/lib/corp-intel/'
   '^src/app/api/orders/'
   '^src/app/api/safety/'
   '^src/app/api/cron/'

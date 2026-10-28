@@ -48,12 +48,32 @@
  * 시장별 결과가 확정되고 기존 실패 알림을 보낸 뒤, `recordNewsOutcome({channel:'fetch'})` 로 그 시장의 건수를 기록한다
  * (실패 소진 = 0, 성공 = M4 응답의 숫자 `fresh` 가 있으면 그것, 없으면 `upserted`). 같은 시장 연속 3일 0건이면
  * `news-zero:fetch:<market>` warning. 기록 실패는 응답·재시도·기존 알림에 영향 0. 토큰 누락 스킵·400 은 기록하지 않는다.
+ *
+ * ## 뉴스 최초 관측 캡처 (T-116) — `?mode=peek` 와 ingest 의 `items`
+ *
+ * M4(task-009)는 응답에 기사 메타 `items[]` 를 싣는다. 이것을 `src/lib/corp-intel/raw-capture.ts` 의 `captureFetchOutcome` 으로
+ * `ci_raw_item` 에 남긴다(스위치 `system_config.ci_capture_enabled`, 키 없음 = 꺼짐). 캡처는 **가산 전용**이다 — 캡처가 실패하거나
+ * 던져도 응답·HTTP 상태·재시도·알림은 그대로다(캡처 함수 자체도 던지지 않고, 스위치 읽기·저장·상태 기록이 **마감 하나를 공유해 합계 4초**
+ * 안에 돌아온다 — Leader 결정 Q8. peek 는 M4 호출 전 스위치 확인에 따로 최대 4초를 더 쓴다).
+ *  - `mode` 쿼리: 정확히 `peek` 이면 peek, 그 밖의 값·없음은 ingest(기존 동작). 인증 → `market` 검사(400) 뒤에 해석한다.
+ *  - **ingest**(06시·T-115 15:30): 동작·요청 본문(`{market, limit}`)·응답 형식·재시도·알림·T-106 기록 전부 그대로. 시장별 결과가
+ *    확정되고 기존 알림을 보낸 뒤 T-106 기록과 **병렬로** 캡처한다 — M4 가 성공했고 응답에 `items` 가 있을 때만 저장(+ 상태
+ *    `ci_capture_status:<market>`), 없거나(구 M4) 재시도 소진 실패면 캡처 모듈을 부르지 않는다(실패는 기존 알림이 알린다).
+ *  - **peek**(T-116 러너 블록 — 낮 시간 7회): 스위치가 꺼져 있으면 **M4 를 부르지 않고** `{ok:true, skipped:'capture_disabled'}`(200).
+ *    켜져 있으면 요청 본문에 `mode:'peek'` 를 실어(임베딩·upsert 없이 피드만 읽음) 재시도 규칙 그대로 부르고 `items` 를 캡처한다.
+ *    🔴 peek 결과는 `recordNewsOutcome({channel:'fetch'})` 에 **넘기지 않는다** — peek 응답은 항상 `upserted: 0` 이라 T-106 수집 0건
+ *    감시에 거짓 경고가 난다(M4 계약 §9.8 호출자 주의 ①). peek 실패는 `news-fetch:*` 알림을 내지 않고(06시 ingest 가 같은 장애를
+ *    알린다) 로그 + 캡처 상태의 `consecutiveFailures` 만 올린다. 토큰 누락도 peek 에서는 설정 알림 없이 로그만 남기고 끝낸다.
+ *    peek 응답 형식: `{ ok, mode:'peek', markets, capture:[{market, status, inserted, duplicates, rejected}] }`. capture.status 는
+ *    캡처 결과(ok·skipped_no_table·failed …)이고, 저장은 했지만 공유 마감 때문에 상태 기록을 건너뛰었으면 `partial` 이다
+ *    (저장을 건너뛰었으면 `failed`).
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { checkCronAuth } from '@/lib/cron-auth';
 import { trackCall } from '@/lib/api-usage';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { recordNewsOutcome } from '@/lib/rag/news-health';
+import { captureFetchOutcome, readCaptureSwitch, type CaptureFetchOutcomeResult } from '@/lib/corp-intel/raw-capture';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,6 +91,12 @@ function resolveTargetMarkets(req: NextRequest): readonly Market[] | null {
   if (raw === null) return MARKETS;
   const hit = MARKETS.find((m) => m === raw);
   return hit ? [hit] : null;
+}
+
+type FetchMode = 'ingest' | 'peek';
+/** (T-116) `?mode=` 해석 — 정확히 'peek' 만 peek, 그 밖(없음·빈 값·대소문자 다름 포함)은 ingest. nextUrl 없는 최소 요청도 ingest. */
+function resolveMode(req: NextRequest): FetchMode {
+  return req.nextUrl?.searchParams.get('mode') === 'peek' ? 'peek' : 'ingest';
 }
 
 /**
@@ -103,6 +129,8 @@ interface MarketResult {
 interface MarketOutcome {
   result: MarketResult;
   fresh?: number;
+  /** (T-116) M4 응답의 `items`(배열일 때만) — 캡처 전용, 응답에 싣지 않는다. */
+  items?: unknown[];
 }
 
 /** M4 응답의 선택 필드 `fresh` — 0 이상 유한한 숫자일 때만 인정. */
@@ -142,15 +170,21 @@ function resolveM4AdminToken(): string {
   return process.env.M4_ADMIN_TOKEN ?? process.env.ADMIN_TOKEN ?? '';
 }
 
-async function fetchNewsOnce(base: string, adminToken: string, market: Market): Promise<{ upserted: number; fresh?: number }> {
+async function fetchNewsOnce(
+  base: string, adminToken: string, market: Market, mode: FetchMode = 'ingest',
+): Promise<{ upserted: number; fresh?: number; items?: unknown[] }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  // (T-116) ingest 본문은 기존과 같은 {market, limit} — peek 만 mode 를 싣는다.
+  const reqBody = mode === 'peek'
+    ? { market, limit: NEWS_FETCH_LIMITS[market], mode: 'peek' }
+    : { market, limit: NEWS_FETCH_LIMITS[market] };
   try {
     // T-040 호출 기록 — 시도 1번 = 한 줄(재시도 루프 안쪽). 자체 타이머 abort 는 timeout.
     const res = await trackCall('m4', 'news.fetch', () => fetch(`${base}/v1/news/fetch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
-      body: JSON.stringify({ market, limit: NEWS_FETCH_LIMITS[market] }),
+      body: JSON.stringify(reqBody),
       signal: ctrl.signal,
       cache: 'no-store',
     }), { err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });
@@ -158,8 +192,12 @@ async function fetchNewsOnce(base: string, adminToken: string, market: Market): 
       const body = await res.text().catch(() => '');
       throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
     }
-    const data = (await res.json().catch(() => ({}))) as { upserted?: number; fresh?: unknown };
-    return { upserted: data.upserted ?? 0, fresh: readFresh(data.fresh) };
+    const data = (await res.json().catch(() => ({}))) as { upserted?: number; fresh?: unknown; items?: unknown };
+    return {
+      upserted: data.upserted ?? 0,
+      fresh: readFresh(data.fresh),
+      items: Array.isArray(data?.items) ? (data.items as unknown[]) : undefined,
+    };
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
       throw new Error(`timeout after ${REQUEST_TIMEOUT_MS}ms`);
@@ -170,22 +208,90 @@ async function fetchNewsOnce(base: string, adminToken: string, market: Market): 
   }
 }
 
-async function fetchMarketWithRetry(base: string, adminToken: string, market: Market): Promise<MarketOutcome> {
+async function fetchMarketWithRetry(base: string, adminToken: string, market: Market, mode: FetchMode = 'ingest'): Promise<MarketOutcome> {
   let lastError = '';
+  const tag = mode === 'peek' ? `${market} peek` : market;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const { upserted, fresh } = await fetchNewsOnce(base, adminToken, market);
-      console.log(`[cron/news-fetch] ${market} OK upserted=${upserted} attempt=${attempt}` + (fresh !== undefined ? ` fresh=${fresh}` : ''));
-      return { result: { market, ok: true, upserted, attempts: attempt }, fresh };
+      const { upserted, fresh, items } = await fetchNewsOnce(base, adminToken, market, mode);
+      console.log(`[cron/news-fetch] ${tag} OK upserted=${upserted} attempt=${attempt}` + (fresh !== undefined ? ` fresh=${fresh}` : '')
+        + (mode === 'peek' && items !== undefined ? ` items=${items.length}` : ''));   // ingest 로그 줄은 기존과 같다
+      return { result: { market, ok: true, upserted, attempts: attempt }, fresh, items };
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
-      console.error(`[cron/news-fetch] ${market} FAILED attempt=${attempt}/${MAX_ATTEMPTS} error=${lastError}`);
+      console.error(`[cron/news-fetch] ${tag} FAILED attempt=${attempt}/${MAX_ATTEMPTS} error=${lastError}`);
       if (attempt < MAX_ATTEMPTS) {
         await sleep(RETRY_BACKOFF_MS);
       }
     }
   }
   return { result: { market, ok: false, upserted: 0, attempts: MAX_ATTEMPTS, error: lastError } };
+}
+
+/** (T-116) 캡처 1건 — 캡처 함수는 원래 던지지 않지만, 던져도 여기서 흡수한다(응답·재시도·알림 영향 0). */
+async function safeCapture(market: Market, mode: FetchMode, o: MarketOutcome, assumeEnabled: boolean): Promise<CaptureFetchOutcomeResult> {
+  try {
+    return await captureFetchOutcome({ market, mode, ok: o.result.ok, items: o.items, assumeEnabled });
+  } catch (e) {
+    console.warn(`[cron/news-fetch] ${market} ${mode} 캡처 실패(무시): ${e instanceof Error ? e.message : String(e)}`);
+    return { capture: null, status: null, deadline: 'ok' };
+  }
+}
+
+/**
+ * (T-116) ingest 의 캡처 — **성공했고 `items` 배열이 있을 때만** 부른다. 구 M4(items 없음)·재시도 소진 실패는 캡처 모듈을 부르지 않는다
+ * (실패는 이미 news-fetch:* 알림이 알린다 — ingest 경로에 DB 접근을 하나도 늘리지 않는다). 스위치는 captureFetchOutcome 이 읽는다(꺼짐 = 무동작).
+ */
+async function captureIngest(outcomes: MarketOutcome[]): Promise<void> {
+  await Promise.all(outcomes.map((o) => {
+    if (!o.result.ok || o.items === undefined) return undefined;
+    return safeCapture(o.result.market, 'ingest', o, false);
+  }));
+}
+
+/**
+ * (T-116) peek — 스위치 확인(꺼짐 = M4 호출 0) → 시장별 M4 peek(재시도 규칙 그대로) → 캡처.
+ * 🔴 recordNewsOutcome 를 부르지 않고, news-fetch:* 알림을 내지 않는다(머리 주석).
+ */
+async function handlePeek(targets: readonly Market[], single: Market | null): Promise<NextResponse> {
+  let enabled = false;
+  let source = 'read_error';
+  try {
+    const sw = await readCaptureSwitch();
+    enabled = sw.enabled;
+    source = sw.source;
+  } catch { /* 꺼짐으로 본다 */ }
+  if (!enabled) {
+    console.log(`[cron/news-fetch] peek 건너뜀 — 캡처 스위치 꺼짐(ci_capture_enabled: ${source}), M4 호출 없음` + (single ? ` market=${single}` : ''));
+    return NextResponse.json({ ok: true, skipped: 'capture_disabled' });
+  }
+
+  const base = resolveM4Base();
+  const adminToken = resolveM4AdminToken();
+  if (!adminToken) {
+    const msg = 'M4_ADMIN_TOKEN(또는 ADMIN_TOKEN) 미설정 — news-fetch peek 스킵(알림은 06시 ingest 가 낸다)' + (single ? ` (market=${single})` : '');
+    console.error(`[cron/news-fetch] ${msg}`);
+    return NextResponse.json({ ok: false, mode: 'peek', error: msg, markets: [] });
+  }
+
+  console.log(`[cron/news-fetch] peek start base=${base}` + (single ? ` market=${single}` : ''));
+  const outcomes = await Promise.all(targets.map((market) => fetchMarketWithRetry(base, adminToken, market, 'peek')));
+  const results = outcomes.map((o) => o.result);
+  for (const r of results) {
+    if (!r.ok) console.error(`[cron/news-fetch] peek ${r.market} 실패(알림 없음 — 캡처 상태에 실패로 센다): ${r.error}`);
+  }
+  const caps = await Promise.all(outcomes.map((o) => safeCapture(o.result.market, 'peek', o, true)));
+  const capture = outcomes.map((o, i) => {
+    const c = caps[i].capture;
+    // 저장은 했는데(ok) 공유 마감 때문에 상태 기록만 건너뛰었으면 partial — 저장을 건너뛴 경우는 capture.status 가 이미 failed.
+    const status = c?.status === 'ok' && caps[i].deadline === 'status_skipped'
+      ? 'partial'
+      : c?.status ?? (!o.result.ok ? 'fetch_failed' : o.items === undefined ? 'no_items' : 'failed');
+    return { market: o.result.market, status, inserted: c?.inserted ?? 0, duplicates: c?.duplicates ?? 0, rejected: c?.rejected ?? 0 };
+  });
+  const ok = results.every((r) => r.ok);
+  console.log(`[cron/news-fetch] peek done ok=${ok}`, capture);
+  return NextResponse.json({ ok, mode: 'peek', markets: results, capture });
 }
 
 export async function POST(req: NextRequest) {
@@ -200,6 +306,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: 'invalid_market' }, { status: 400 });
     }
     const single: Market | null = targets.length === 1 ? targets[0] : null;
+
+    // (T-116) peek 은 별도 경로 — 스위치 꺼짐이면 M4 호출 0, T-106 기록·news-fetch:* 알림 없음.
+    if (resolveMode(req) === 'peek') return await handlePeek(targets, single);
 
     const base = resolveM4Base();
     const adminToken = resolveM4AdminToken();
@@ -242,7 +351,8 @@ export async function POST(req: NextRequest) {
     }
 
     // (T-106) 시장별 결과 확정·기존 알림 뒤 — 뉴스 0건 연속 감시. 응답·기존 알림 키·심각도는 그대로.
-    await recordFetchHealth(outcomes);
+    // (T-116) 같은 자리에서 캡처를 병렬로 — 감시 기록(4초 상한)과 캡처(공유 마감 4초)가 서로를 기다리지 않는다. 둘 다 던지지 않는다.
+    await Promise.all([recordFetchHealth(outcomes), captureIngest(outcomes)]);
 
     const ok = failed.length === 0;
     console.log(`[cron/news-fetch] done ok=${ok}`, results);

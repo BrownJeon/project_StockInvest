@@ -27,6 +27,10 @@
 #  - stop-alert        : 1분 — 손절가 도달 텔레그램 알림 (T-068, 알림만, curl 상한 STOP_ALERT_CURL_MAX_TIME)
 #  - broker-fills      : 매일 07:20 KST 이후 첫 틱 — 브로커 체결 원장 "앞으로 수집" (T-087, KIS 읽기 전용 GET·주문 없음, 스위치 기본 꺼짐,
 #                        curl 상한 BROKER_FILLS_CURL_MAX_TIME, research-cycle-overseas·edgar-sync 가 같은 틱에 돌면 다음 틱으로 미룸)
+#  - news-peek-<시장>-<HH>: 뉴스 최초 관측 캡처용 peek (T-116, ?market=…&mode=peek — M4 는 피드만 읽고 임베딩·적재 안 함). 국내 10·13시,
+#                        해외 02·10·14·18·22시 KST 각 시각의 첫 틱에 하루 1회(슬롯마다 날짜파일, 성공·실패 무관 기록). 스위치
+#                        ci_capture_enabled 가 꺼져 있으면 라우트가 M4 를 부르지 않고 바로 끝난다. 같은 틱에 두 슬롯이 겹치면(10시)
+#                        뒤 슬롯은 다음 틱으로 미룬다. 새 잡은 T-104 가 나중에 잡 정의로 흡수한다(J8).
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -369,6 +373,45 @@ while true; do
       fi ;;
   esac
   # <<< news-fetch-domestic-pm
+  # >>> news-fetch-peek (T-116) — scripts/test-cron-runner-news-peek.sh 가 러너 전체를 가짜 시각으로 돌려 시험한다
+  # 뉴스 최초 관측 증거 캡처용 peek. M4 KB 는 같은 기사를 다시 적재하면 시각을 덮어쓰므로 "우리가 처음 본 시각"은 앱의 ci_raw_item 에만
+  #   남는다(src/lib/corp-intel/raw-capture.ts). 06시·15:30 ingest 만으로는 피드 창보다 간격이 길어 그 사이 기사를 놓친다 → 낮 시간에
+  #   피드만 읽는 peek 를 더 부른다(M4 mode:'peek' — 임베딩·upsert 없음, 응답의 items 만 캡처).
+  # 시각표(KST, 서머타임과 무관하게 고정 — 간격 규칙만 지키면 된다): 캡처 간격 < 가장 짧은 피드 창(해외 MarketWatch 약 5.6시간, 국내 평일
+  #   낮 약 6.6시간)이어야 항목을 놓치지 않는다.
+  #     국내 10·13시 (+ 기존 ingest 06시·15:30) → 낮 최대 간격 06→10 = 4시간. 15:30→다음 날 06시(14.5시간) 밤 공백은 task T-116 설계 4 의
+  #       시각표 그대로다 — 밤 기사량이 적어 피드 창이 길어진다는 가정이며 실측하지 않았다(캡처 상태로 나중에 확인할 거리)
+  #     해외 02·10·14·18·22시 (+ 기존 ingest 06시) → 4시간 간격 고정(02→06→10→14→18→22→02)
+  #   하루 호출: 국내 2 · 해외 5. 스위치(ci_capture_enabled)가 꺼져 있으면 라우트가 M4 를 부르지 않고 바로 200 으로 끝난다(DB 1회).
+  # 슬롯마다 독립된 하루 1회 잡이다 — 날짜파일 news-peek-<시장>-<HH>-last-date(시장·시각마다 따로), 호출했으면 성공·실패 무관 기록(T-036).
+  #   그 시각(HH)의 첫 틱에 돈다 — 그 시간 내내 러너가 꺼져 있었으면 그 슬롯은 건너뛴다(로그 없음, 다음 슬롯이 4시간 안에 온다).
+  # 🔴 같은 틱에 peek 를 두 번 부르지 않는다: 10시는 해외·국내 두 슬롯이 겹친다 → 목록 앞쪽(해외)이 돌면 뒤(국내)는 다음 틱으로 미룬다
+  #   (yield_tick, 날짜파일 안 씀 — 06시 블록과 같은 방식). 10:59 에 처음 돌면 국내 10시 슬롯은 그날 건너뛴다(다음 국내 슬롯 13시).
+  # 다른 무거운 블록과 같은 틱이 되지 않는 시각만 골랐다: 하루 1회 블록은 03·06·07·08·15(30분~)·16·17시뿐이다(02·10·13·14·18·22시 없음).
+  # 하트비트 최악(peek 틱): 라우트 = M4 호출 전 스위치 읽기 4초 + M4 최악 186초(3회×60 + 대기 2×3) + 캡처 4초(스위치·저장·상태 기록이
+  #   마감 하나를 공유 — Leader 결정 Q8) = 194초, + 매 분 잡 약 30초 + sleep 60 = 약 284초 < 300초(순찰 재시작 기준).
+  #   라우트 쪽 상한 근거는 route.ts·raw-capture.ts 주석.
+  #   (참고: 06시·15:30 ingest 틱은 캡처 4초가 T-106 기록 4초와 병렬이라 라우트에 최대 4초가 더해진다 — 186 + 4 + 30 + 60 = 약 280초.)
+  # 실패 알림: peek 실패는 news-fetch:* 알림을 내지 않는다(같은 장애는 06시 ingest 가 알린다) — 라우트가 캡처 상태
+  #   system_config.ci_capture_status:<시장> 의 consecutiveFailures 만 올린다. T-106 뉴스 0건 감시에는 peek 를 넘기지 않는다.
+  # 이 블록은 호출 줄·조건을 새로 더하기만 한다 — 다른 잡의 호출·시각·순서는 그대로다. 새 잡은 T-104 가 잡 정의로 흡수한다(J8).
+  PEEK_RAN_LABEL=""
+  for PEEK_SLOT in overseas:02 overseas:10 domestic:10 domestic:13 overseas:14 overseas:18 overseas:22; do
+    PEEK_MKT="${PEEK_SLOT%%:*}"
+    PEEK_HH="${PEEK_SLOT##*:}"
+    [ "$HH" = "$PEEK_HH" ] || continue
+    PEEK_LABEL="news-peek-${PEEK_MKT}-${PEEK_HH}"
+    PEEK_FILE="${HOME}/.node-local/stockinvest/${PEEK_LABEL}-last-date"
+    [ "$(cat "$PEEK_FILE" 2>/dev/null || echo "")" != "$TODAY" ] || continue
+    if [ -n "$PEEK_RAN_LABEL" ]; then
+      echo "[$(date '+%F %T')] $PEEK_LABEL yield_tick — $PEEK_RAN_LABEL 가 이 틱에 돌아 다음 틱으로 미룸"
+      continue
+    fi
+    call "/api/cron/news-fetch?market=${PEEK_MKT}&mode=peek" "$PEEK_LABEL"
+    echo "$TODAY" > "$PEEK_FILE"   # 성공·실패 무관 기록
+    PEEK_RAN_LABEL="$PEEK_LABEL"
+  done
+  # <<< news-fetch-peek
   # 매일 03:00 KST: LoRA 학습 데이터셋 export (하루 1회만)
   LAST_TRAINSET=$(cat "$TRAINSET_LAST_RUN_FILE" 2>/dev/null || echo "")
   if [ "$HH" = "03" ] && [ "$LAST_TRAINSET" != "$TODAY" ]; then

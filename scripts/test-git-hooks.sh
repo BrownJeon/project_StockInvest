@@ -10,7 +10,7 @@
 #
 #   1) 로직 시나리오 단계 — GIT_INDEX_FILE 로 만든 **임시 index** 에만 가짜 blob 을 stage 하고 훅을
 #      직접 호출한다. 이 단계는 실제 index 를 건드리지 않는다. 다만
-#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998·T-960~969-hooktest-*.md)를 **실제 작업 트리에** 잠시
+#        · 판정 fixture(agent-vault/10-Flow/tasks/T-977~998·T-956~969-hooktest-*.md)를 **실제 작업 트리에** 잠시
 #          썼다가 EXIT trap 으로 지운다(kill -9 같은 강제 종료면 남을 수 있다). 실행 중 다른 세션이
 #          `git add -A` 하면 그 커밋에 섞일 수 있다.
 #        · 가짜 blob 은 .git/objects 에 dangling object 로 남는다(`git gc` 로 정리된다).
@@ -1743,6 +1743,144 @@ e2e_commit "(t094-g7) 실 커밋: 형제 메일 파일·그 시험·header-safe.
   'chore: 메일 이웃 정리'
 
 echo ""
+echo "[T-116 — 기업정보 통합 모듈 src/lib/corp-intel/ (디렉토리 항목) 추가]"
+
+# 2차 설계 D8. 디렉토리 항목 1줄(`^src/lib/corp-intel/`) — 구현·시험·하위 폴더·아직 없는 새 파일이 전부 걸려야 한다.
+# 항목마다 ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과(통과 문구까지 확인) ③이름이 비슷한 이웃만 검토한 판정 → 차단
+# ④다른 안전 경로(이 모듈을 부르는 news-fetch 라우트의 src/app/api/cron/ 등)만 검토한 판정 차용 → 차단.
+# 각 시나리오는 경로 **하나만** stage 한다 — 목록에서 그 줄이 빠지면 ①·④ 가 실패한다.
+T116_ITEMS=(
+  "src/lib/corp-intel/raw-capture.ts"                 # a1 캡처(스위치·first_seen_at 보존 SQL)
+  "src/lib/corp-intel/keys.ts"                        # a2 멱등 키
+  "src/lib/corp-intel/status.ts"                      # a3 캡처 상태 기록
+  "src/lib/corp-intel/__tests__/isolation.test.ts"    # a4 경계 시험(격리 방어선)
+  "src/lib/corp-intel/__tests__/raw-capture.test.ts"  # a5 캡처 시험
+  "src/lib/corp-intel/events/builder.ts"              # a6 아직 없는 하위 폴더의 새 파일(단계 2 자리)
+)
+
+cat > "agent-vault/10-Flow/tasks/T-958-hooktest-t116-scoped.md" <<'EOF'
+---
+task_id: T-958
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/corp-intel/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-958-hooktest-t116-scoped.md")
+
+# ③ 용 — 이웃만 검토한 판정. 슬래시 없는 `src/lib/corp-intel`(= 그 이름의 파일 하나만) · 가짜 접두 디렉토리(corp-intelx/·corp-intel-old/) ·
+#    같은 이름의 파일(corp-intel.ts) · 위치만 다른 경로(foo/…) · 부르는 쪽 라우트 폴더.
+cat > "agent-vault/10-Flow/tasks/T-957-hooktest-t116-nearmiss.md" <<'EOF'
+---
+task_id: T-957
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/corp-intel, src/lib/corp-intelx/, src/lib/corp-intel-old/, src/lib/corp-intel.ts, foo/src/lib/corp-intel/, src/app/api/cron/news-fetch/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-957-hooktest-t116-nearmiss.md")
+
+# ④ 용 — 차용 방지: 이 모듈과 함께 바뀌는 다른 안전 경로(cron 라우트·DDL·러너·훅)와 이웃 모듈(rag/·profit-engine/)만 검토한 판정.
+cat > "agent-vault/10-Flow/tasks/T-956-hooktest-t116-borrowed.md" <<'EOF'
+---
+task_id: T-956
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/app/api/cron/, scripts/migrations/, scripts/cron-runner.sh, scripts/git-hooks/, src/lib/rag/, src/lib/profit-engine/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-956-hooktest-t116-borrowed.md")
+
+t116_i=0
+for t116_p in "${T116_ITEMS[@]}"; do
+  t116_i=$((t116_i + 1))
+  stage_and_run 1 "(t116-a${t116_i}.1) ${t116_p#src/lib/} + 판정 미기록(T-993) → 차단" \
+    "$(msg 'feat(T-993): 기업정보 캡처')" "$t116_p"
+  stage_and_run_expect "$T075_OK" 0 "(t116-a${t116_i}.2) ${t116_p#src/lib/} + T-958(scope 포함) → 통과" \
+    "$(msg 'feat(T-958): 기업정보 캡처')" "$t116_p"
+  stage_and_run 1 "(t116-a${t116_i}.3) ${t116_p#src/lib/} + T-957(이웃 경로 scope) → 차단" \
+    "$(msg 'feat(T-957): 기업정보 캡처')" "$t116_p"
+  stage_and_run 1 "(t116-a${t116_i}.4) ${t116_p#src/lib/} + T-956(다른 안전 경로 scope) → 차단(차용 방지)" \
+    "$(msg 'feat(T-956): 기업정보 캡처')" "$t116_p"
+done
+
+stage_and_run 1 "(t116-b1) corp-intel/raw-capture.ts + task ID 없음 → 차단" \
+  "$(msg 'fix: 캡처 정리')" "src/lib/corp-intel/raw-capture.ts"
+stage_and_run 1 "(t116-b2) corp-intel/__tests__/isolation.test.ts + task ID 없음 → 차단" \
+  "$(msg 'test: 경계 시험 정리')" "src/lib/corp-intel/__tests__/isolation.test.ts"
+
+# 이웃은 감사 대상이 아니다 — task ID 없이도 통과해야 한다(하나라도 잘못 매치되면 exit 1).
+# 겨냥 변이: 끝 `/` 삭제(corp-intel.ts·corp-intelx/·corp-intel-old/) · `^` 삭제(foo/·mockups/) · 위치 무시(src/corp-intel/·lib/corp-intel/) ·
+# 대소문자(Corp-intel — 훅은 대소문자를 구분한다) · 설계 문서·DDL 이 아닌 문서.
+stage_and_run 0 "(t116-n1) corp-intel 이웃(.ts·intelx/·-old/·foo/·mockups/·위치·대소문자·문서) → 통과" \
+  "$(msg 'chore: 이웃 정리')" \
+  "src/lib/corp-intel.ts" "src/lib/corp-intelx/raw-capture.ts" "src/lib/corp-intel-old/keys.ts" \
+  "foo/src/lib/corp-intel/raw-capture.ts" "mockups/src/lib/corp-intel/raw-capture.ts" \
+  "src/corp-intel/raw-capture.ts" "lib/corp-intel/raw-capture.ts" "src/lib/Corp-intel/raw-capture.ts" \
+  "docs/design/2026-10-28-corporate-intelligence-second-design.md" "src/lib/intel/raw-capture.ts"
+
+# 혼합 커밋 — 판정 합집합. T-958(corp-intel/)·T-956(cron 라우트·DDL·러너)이 각자 자기 몫만 덮는다.
+T116_MIX=( "README.md" "src/lib/corp-intel/raw-capture.ts" "src/app/api/cron/news-fetch/route.ts" \
+  "scripts/migrations/T-116-ci-raw-item.sql" "scripts/cron-runner.sh" )
+stage_and_run 1 "(t116-m1) [문서, 캡처, 라우트, DDL, 러너] 판정 미기록(T-993) → 차단" \
+  "$(msg 'feat(T-993): 뉴스 최초 관측 캡처')" "${T116_MIX[@]}"
+stage_and_run 1 "(t116-m2) 같은 묶음 + T-958 만 → 라우트·DDL·러너가 범위 밖, 차단" \
+  "$(msg 'feat(T-958): 뉴스 최초 관측 캡처')" "${T116_MIX[@]}"
+stage_and_run 1 "(t116-m3) 같은 묶음 + T-956 만 → corp-intel 이 범위 밖, 차단" \
+  "$(msg 'feat(T-956): 뉴스 최초 관측 캡처')" "${T116_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t116-m4) 같은 묶음 + T-958·T-956 합집합 → 통과" \
+  "$(msg 'feat(T-958,T-956): 뉴스 최초 관측 캡처')" "${T116_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t116-m5) 항목 6개 전부 + 문서, T-958 → 통과" \
+  "$(msg 'feat(T-958): corp-intel 일괄')" "${T116_ITEMS[@]}" "docs/x.md"
+
+echo ""
+echo "[T-116 — 실 커밋 E2E: 일회용 임시 저장소에서 git 이 corp-intel/ 을 실제로 거르는가]"
+
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-958-hooktest-t116-scoped.md" <<'EOF'
+---
+task_id: T-958
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/corp-intel/)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-957-hooktest-t116-nearmiss.md" <<'EOF'
+---
+task_id: T-957
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/corp-intel, src/lib/corp-intelx/, src/app/api/cron/news-fetch/)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-956-hooktest-t116-borrowed.md" <<'EOF'
+---
+task_id: T-956
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/app/api/cron/, scripts/migrations/, scripts/git-hooks/)**
+EOF
+mkdir -p "$E2E_REPO/src/lib/corp-intel/__tests__" "$E2E_REPO/src/lib/corp-intelx"
+
+printf 'v1\n' > "$E2E_REPO/src/lib/corp-intel/raw-capture.ts"
+e2e_git add src/lib/corp-intel/raw-capture.ts
+e2e_commit "(t116-g1) 실 커밋: corp-intel/raw-capture.ts(신규) + task ID 없음 → 차단" block "커밋 차단" \
+  'feat: 뉴스 캡처'
+e2e_commit "(t116-g2) 실 커밋: 같은 변경 + T-957(이웃 경로 scope) → 차단" block "커밋 차단" \
+  'feat(T-957): 뉴스 캡처'
+e2e_commit "(t116-g3) 실 커밋: 같은 변경 + T-956(다른 안전 경로 scope) → 차단(차용 방지)" block "커밋 차단" \
+  'feat(T-956): 뉴스 캡처'
+e2e_commit "(t116-g4) 실 커밋: 같은 변경 + T-958(scope 포함) → 통과·HEAD 이동" commit "$T075_OK" \
+  'feat(T-958): 뉴스 캡처'
+
+printf 'v1\n' > "$E2E_REPO/src/lib/corp-intel/__tests__/isolation.test.ts"
+e2e_git add src/lib/corp-intel/__tests__/isolation.test.ts
+e2e_commit "(t116-g5) 실 커밋: corp-intel/__tests__/isolation.test.ts + task ID 없음 → 차단" block "커밋 차단" \
+  'test: 경계 시험'
+e2e_commit "(t116-g6) 실 커밋: 같은 변경 + T-958 → 통과·HEAD 이동" commit "$T075_OK" \
+  'test(T-958): 경계 시험'
+
+printf 'x\n' > "$E2E_REPO/src/lib/corp-intelx/a.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/corp-intel.ts"
+e2e_git add src/lib/corp-intelx/a.ts src/lib/corp-intel.ts
+e2e_commit "(t116-g7) 실 커밋: corp-intelx/·corp-intel.ts 이웃(task ID 없음) → 통과" commit "" \
+  'chore: 이웃 정리'
+
+echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
 printf '결과: %d 통과 / %d 실패\n' "$PASS_N" "$FAIL_N"
 echo ""
@@ -1820,7 +1958,7 @@ if [ "$VERBOSE" -eq 1 ]; then
 fi
 
 echo ""
-echo "워킹트리 영향 확인 (T-977~998·T-963~969 테스트 fixture 가 남아 있지 않아야 함):"
+echo "워킹트리 영향 확인 (T-977~998·T-956~969 테스트 fixture 가 남아 있지 않아야 함):"
 git status --short | sed 's/^/  /'
 echo ""
 echo "✅ 전체 검증 통과."

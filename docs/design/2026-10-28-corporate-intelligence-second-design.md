@@ -280,6 +280,8 @@ BMO 는 접수가 미국 개장(22:30 KST, 서머타임) **이전**인데 우리
 
 ## 5. 스키마 초안 (적용 아님)
 
+> **정정 기록(2026-10-28 T-116)**: `ci_raw_item` 초안에 `guid` 열이 빠져 있었다(키 해시에만 들어가 원문이 남지 않음). 구현 단계에서 발견해 `guid VARCHAR(300) NULL` 을 추가했다 — 적용 전에 바로잡아 ALTER 가 필요 없다.
+>
 > 모든 DDL 은 **가산 전용**이며 `scripts/migrations/` 에 별도 task 로 만들고 사용자 승인 뒤 사람이 적용한다(T-059 방식). 아래는 키·제약의 합의용 초안이다. DB 는 MariaDB 10.11.11 [확실] — `SELECT … FOR UPDATE SKIP LOCKED` 사용 가능.
 
 ```sql
@@ -295,6 +297,7 @@ CREATE TABLE ci_raw_item (
   first_seen_at  DATETIME NOT NULL,
   last_seen_at   DATETIME NOT NULL,
   url            VARCHAR(512) NULL,
+  guid           VARCHAR(300) NULL,           -- 정정(10-28 T-116 Developer 지적): 초안에는 없었다. 링크가 없거나 버려진 항목의 GUID 원문이 영구히 사라지지 않게
   feed_host      VARCHAR(120) NULL,
   publisher      VARCHAR(80)  NULL,
   title          VARCHAR(400) NULL,

@@ -224,8 +224,10 @@ pmo_mt() { grep -v '^/api/cron/stop-alert ' "$1/maxtime" | grep -v '^/api/cron/b
 eq "🔴 --max-time 은 (stop-alert 외) 해외 post-market 호출에만(200 시나리오)" "$(pmo_mt "$RS" | cut -d' ' -f1 | sort -u)" "/api/cron/post-market-analysis?market=overseas"
 eq "--max-time 값 120" "$(pmo_mt "$RS" | cut -d' ' -f2 | sort -u)" "max-time=120"
 eq "--max-time 이 붙은 호출 수 = 해외 호출 수(502 시나리오 3)" "$(pmo_mt "$RF" | wc -l)" "3"
+# (T-116) 이 시나리오는 상한(120초)×3 만큼 시계가 밀려 10시에 닿는다 — 10:00 의 T-116 해외 peek(news-fetch?market=overseas&mode=peek)가
+#   'market=overseas' 에 함께 걸리므로 해외 post-market 경로로 좁혀 센다(post-market 동작 기대값은 그대로).
 eq "🔴 curl 상한 초과(000) → 해외 3회 08:00·08:12·08:24(간격은 종료 시각부터)" \
-   "$(grep 'market=overseas' "$RT/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:12 08:24 "
+   "$(grep 'post-market-analysis?market=overseas' "$RT/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:12 08:24 "
 eq "🔴 curl 상한 초과 → 날짜파일 없음" \
    "$(cat "$RT/home/.node-local/stockinvest/post-market-overseas-last-date" 2>/dev/null || echo none)" "none"
 eq "curl 상한 초과 → 시도 기록 3" "$(cut -d' ' -f2 "$RT/home/.node-local/stockinvest/post-market-overseas-attempts")" "3"
