@@ -143,7 +143,8 @@ describe('정상 응답', () => {
       const headers = init.headers as Record<string, string>;
       expect(headers['X-Admin-Token']).toBe('test-admin-token');
       const parsedBody = JSON.parse(init.body as string);
-      expect(parsedBody.limit).toBe(20);
+      // (T-115) 두 시장 공통 20 → 시장별 100(국내 100·해외 100). 시장별 값은 아래 'T-115 시장별 limit' 묶음이 따로 본다.
+      expect(parsedBody.limit).toBe(100);
       expect(['domestic', 'overseas']).toContain(parsedBody.market);
     }
   });
@@ -332,7 +333,8 @@ describe('T-103 시장 지정 — 정상', () => {
     expect(alertMock).not.toHaveBeenCalled();
   });
 
-  test('market=overseas — 해외만 1회 호출(국내 0), 요청 형식(URL·헤더·limit 20)은 기존과 같다', async () => {
+  // (T-115) limit 기대값 20 → 100(시장별 상수). URL·헤더·본문 키 구성은 그대로.
+  test('market=overseas — 해외만 1회 호출(국내 0), 요청 형식(URL·헤더)은 기존과 같고 limit 은 해외 값 100', async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     globalThis.fetch = jest.fn().mockImplementation(async (url: string, init: RequestInit) => {
       calls.push({ url, init });
@@ -344,7 +346,7 @@ describe('T-103 시장 지정 — 정상', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe('http://m4.local:8000/v1/news/fetch');
     expect((calls[0].init.headers as Record<string, string>)['X-Admin-Token']).toBe('test-admin-token');
-    expect(JSON.parse(calls[0].init.body as string)).toEqual({ market: 'overseas', limit: 20 });
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ market: 'overseas', limit: 100 });
     expect(body).toEqual({ ok: true, markets: [{ market: 'overseas', ok: true, upserted: 6, attempts: 1 }] });
     expect(alertMock).not.toHaveBeenCalled();
   });
@@ -631,5 +633,71 @@ describe('T-106 뉴스 0건 연속 감시 — 수집 채널 기록', () => {
     authMock.mockReturnValue(jsonResponse(401, { ok: false, error: 'unauthorized' }, false));
     await runPost();
     expect(healthMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('T-115 시장별 limit', () => {
+  /** 시장 → 요청 본문 목록(재시도 포함 모든 시도). */
+  function bodyRecorder(status: (market: string) => number = () => 200) {
+    const bodies: { market: string; limit: unknown }[] = [];
+    const fn = jest.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+      const b = JSON.parse(init.body as string) as { market: string; limit: unknown };
+      bodies.push(b);
+      const s = status(b.market);
+      return s === 200 ? jsonResponse(200, { upserted: 1 }) : jsonResponse(s, {}, false);
+    });
+    return { fn, bodies };
+  }
+
+  test.each([
+    ['domestic', 100],
+    ['overseas', 100],
+  ])('🔴 market=%s → 요청 본문 limit = %i (본문 키는 market·limit 둘뿐)', async (market, limit) => {
+    const { fn, bodies } = bodyRecorder();
+    globalThis.fetch = fn;
+
+    await runPost(reqWith(market));
+
+    expect(bodies).toEqual([{ market, limit }]);
+  });
+
+  test('🔴 시장 미지정(두 시장) — 시장마다 자기 limit(국내 100·해외 100)', async () => {
+    const { fn, bodies } = bodyRecorder();
+    globalThis.fetch = fn;
+
+    await runPost();
+
+    expect([...bodies].sort((a, b) => a.market.localeCompare(b.market))).toEqual([
+      { market: 'domestic', limit: 100 },
+      { market: 'overseas', limit: 100 },
+    ]);
+  });
+
+  test('재시도마다 같은 limit — 3회 소진 시 세 본문 모두 100, 시도 상한·알림은 그대로', async () => {
+    const { fn, bodies } = bodyRecorder(() => 502);
+    globalThis.fetch = fn;
+
+    const { body } = await runPost(reqWith('domestic'));
+
+    expect(bodies).toEqual([
+      { market: 'domestic', limit: 100 },
+      { market: 'domestic', limit: 100 },
+      { market: 'domestic', limit: 100 },
+    ]);
+    expect(body.markets[0]).toMatchObject({ market: 'domestic', ok: false, attempts: 3 });
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    expect(alertMock.mock.calls[0].slice(0, 2)).toEqual(['news-fetch:domestic:failed', 'critical']);
+  });
+
+  test('정적 — 옛 공통 상수 NEWS_FETCH_LIMIT 없음 · 시장별 상수 값 · 재시도 3·시도당 60초·대기 3초 불변 · 라우트 외 export 없음', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'route.ts'), 'utf8');
+    expect(src).not.toMatch(/\bNEWS_FETCH_LIMIT\b/);
+    expect(src).toMatch(/^const NEWS_FETCH_LIMITS: Readonly<Record<Market, number>> = \{ domestic: 100, overseas: 100 \};$/m);
+    expect(src).toMatch(/^const MAX_ATTEMPTS = 3;$/m);
+    expect(src).toMatch(/^const REQUEST_TIMEOUT_MS = 60_000;$/m);
+    expect(src).toMatch(/^const RETRY_BACKOFF_MS = 3_000;$/m);
+    // Next App Router 는 route.ts 의 HTTP 메서드·설정 외 export 를 빌드에서 거부한다 — 상수를 export 하지 않는다.
+    const exported = [...src.matchAll(/^export\s+(?:async\s+)?(?:const|function|let)\s+(\w+)/gm)].map((m) => m[1]).sort();
+    expect(exported).toEqual(['POST', 'dynamic']);
   });
 });

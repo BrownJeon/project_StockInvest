@@ -38,6 +38,11 @@
  *  - 허용 밖 값(빈 값·대소문자 다름 포함): 인증 통과 **후** `400 invalid_market`, M4 호출 0.
  *  - 인증이 항상 먼저, 토큰 누락 fail-safe(알림 1회 후 스킵)는 시장 지정 여부와 무관하게 그대로.
  *
+ * ## 건수·국내 두 번째 수집 (T-115)
+ *
+ * M4 요청 `limit` 은 시장별 상수 `NEWS_FETCH_LIMITS`(국내 100·해외 100). cron-runner 는 국내를 06시에 더해 **15:30~15:59 에
+ * 한 번 더**(`news-fetch-domestic-pm`) 부른다 — 장중 기사가 16:00 국내 분석 전에 KB 에 들어가게. 라우트 동작은 호출 시각과 무관하다.
+ *
  * ## 뉴스 0건 연속 감시 (T-106)
  *
  * 시장별 결과가 확정되고 기존 실패 알림을 보낸 뒤, `recordNewsOutcome({channel:'fetch'})` 로 그 시장의 건수를 기록한다
@@ -68,7 +73,14 @@ function resolveTargetMarkets(req: NextRequest): readonly Market[] | null {
   return hit ? [hit] : null;
 }
 
-const NEWS_FETCH_LIMIT = 20;
+/**
+ * 시장별 M4 요청 건수(`limit`) — T-115 에서 두 시장 공통 20 → 시장별 100(M4 요청 상한 100).
+ * 근거(T-115): 연합뉴스 경제 피드는 약 120건·약 6.6시간 창이라 20건이면 최근 약 50분뿐이고, 해외 4개 피드(합계 약 80건)는
+ * 20 이면 피드당 5건뿐이었다. M4 임베딩 평균 0.07초 × 100 ≈ 7초라 시도당 상한(60초) 안이다. 재시도·상한·대기는 그대로.
+ * export 하지 않는다 — Next App Router 는 route.ts 의 HTTP 메서드·설정 외 export 를 빌드 타입 검사에서 거부한다.
+ * 시험은 요청 본문의 `limit` 으로 값을 확인한다.
+ */
+const NEWS_FETCH_LIMITS: Readonly<Record<Market, number>> = { domestic: 100, overseas: 100 };
 /** 시장별 최대 2회 재시도 = 최초 시도 포함 총 3회. */
 const MAX_ATTEMPTS = 3;
 /** bash 원본의 `--max-time 60` 과 동일 — 시도당 상한. */
@@ -138,7 +150,7 @@ async function fetchNewsOnce(base: string, adminToken: string, market: Market): 
     const res = await trackCall('m4', 'news.fetch', () => fetch(`${base}/v1/news/fetch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
-      body: JSON.stringify({ market, limit: NEWS_FETCH_LIMIT }),
+      body: JSON.stringify({ market, limit: NEWS_FETCH_LIMITS[market] }),
       signal: ctrl.signal,
       cache: 'no-store',
     }), { err: () => (ctrl.signal.aborted ? 'timeout' : undefined) });

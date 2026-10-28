@@ -14,6 +14,9 @@
 #                        (T-036에서 bash 직접 curl → /api/cron/news-fetch 라우트로 이관.
 #                         재시도·타임아웃·실패 알림은 전부 라우트 안에 있다. T-103에서 시장별 독립 잡으로 분리 —
 #                         날짜파일·실패 알림 키가 시장마다 따로다. 해외가 06:5x 에 처음 돌면 국내는 그날 건너뛴다(06시 블록 주석))
+#  - news-fetch-domestic-pm: 매일 15:30~15:59 KST 첫 틱 — 국내 뉴스 **두 번째** 수집 (?market=domestic, T-115). 장중 기사를 16:00 국내
+#                        post-market 전에 KB 에 넣는다. 06시 국내와 독립된 하루 1회 잡(날짜파일 news-fetch-domestic-pm-last-date,
+#                        성공·실패 무관 기록). 16:00 이후에는 부르지 않는다(15:30~15:59 내내 러너가 꺼져 있었으면 그날은 건너뛰고 로그 한 줄)
 #  - post-market-domestic: 매일 16:00 KST — 국내장 마감 후 익일 시나리오 분석
 #  - post-market-overseas: 매일 08:00 KST — 해외장 마감 후 다음 미국장 시나리오 분석 (T-062: 200 이 아니면 08시 안에서 최대 3회)
 #  - research-cycle-domestic: 매일 16:00 KST — 국내 리서치 추적 종목 사이클 패턴 재계산 (T-032, 주문 없음)
@@ -151,6 +154,7 @@ META_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/sync-stock-meta-last-date"
 TRAINSET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/export-llm-trainset-last-date"
 NEWS_FETCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-overseas-last-date"   # (T-103) 옛 news-fetch-last-date 는 읽지 않는다
 NEWS_FETCH_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-domestic-last-date"   # (T-103)
+NEWS_FETCH_DOMESTIC_PM_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-domestic-pm-last-date"   # (T-115) 06시 국내 날짜파일과 별개
 POST_MARKET_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-domestic-last-date"
 POST_MARKET_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-last-date"
 POST_MARKET_OVERSEAS_ATTEMPT_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-attempts"   # (T-062 S-2b) 그날 시도 횟수
@@ -309,6 +313,7 @@ while true; do
   # >>> news-fetch-split (T-103) — scripts/test-cron-runner-news-split.sh 가 러너 전체를 가짜 시각으로 돌려 시험한다
   # 매일 06시 KST: M4 KB 뉴스 fetch — 시장별 **독립된 두 잡**(각자 하루 1회). 해외(news.us_market, 08:00 해외 post-market 이 소비) 먼저,
   # 국내(news.kr_market, 16:00 국내 post-market 이 소비) 다음. 실행 시각(06시)·건수(20)·재시도(3회)·60초 상한은 분리 전과 같다.
+  #   (T-115) 건수는 그 뒤 시장별 100 으로 바뀌었다(route.ts NEWS_FETCH_LIMITS). 이 블록의 호출·시각·순서는 그대로다.
   # (T-036) bash 직접 curl → 라우트 호출로 이관. 재시도·타임아웃·실패 알림은 라우트 안에 있다. 날짜파일은 시장마다 따로,
   #   호출했으면 성공·실패 무관 기록(날짜파일 선언부 주석 참고) — 하루 1회.
   # 🔴 같은 틱에 두 시장을 이어 부르지 않는다: 라우트는 시장당 최악 약 186초(3회×60초 + 대기 2×3초)라 순차 두 번이면 약 372초로
@@ -335,6 +340,35 @@ while true; do
     fi
   fi
   # <<< news-fetch-split
+  # >>> news-fetch-domestic-pm (T-115) — scripts/test-cron-runner-news-split.sh 가 러너 전체를 가짜 시각으로 돌려 시험한다(시나리오 F)
+  # 매일 15:30~15:59 KST 첫 틱: 국내 뉴스(news.kr_market) **두 번째** 수집. 06시 국내 수집은 장중 기사를 원천적으로 못 담아(연합 경제
+  #   피드는 약 120건·약 6.6시간 창) 16:00 국내 post-market 분석의 KB 에 그날 장중 기사가 없었다 → 장 마감(15:30) 직후 한 번 더 받는다.
+  # 06시 블록(news-fetch-split)과 **독립된 잡**이다 — 날짜파일이 따로라 서로의 실행 여부에 영향을 주지 않는다. 라우트·실패 알림 키
+  #   (news-fetch:domestic:failed)·재시도(3회)·시도당 60초는 06시 국내와 같다.
+  # 날짜파일은 호출했으면 성공·실패 무관 기록(T-036) — 하루 1회. `HH_MM="15:30"` 정확 일치는 틱이 분을 건너뛰면 그날을 놓쳐 쓰지 않는다
+  #   (분 ≥ 30, broker-fills 와 같은 방식).
+  # 🔴 16:00 이후에는 부르지 않는다 — 16:00 틱의 post-market-domestic·research-cycle-domestic 과 같은 틱에 겹치지 않게. 러너가 15:30~15:59
+  #   내내 꺼져 있었으면 그날은 건너뛰고(국내 뉴스는 06시 것만) 16~23시 첫 틱에 로그 한 줄만 남긴다 — 호출하지 않았으므로 날짜파일은 쓰지
+  #   않는다. 로그 중복은 러너 프로세스 안의 변수(NFP_SKIP_LOGGED)로 막는다(러너가 재기동되면 그날 한 줄 더 남을 수 있다 — 로그일 뿐).
+  # 하트비트: 이 틱 최악 = 라우트 약 186초(3회×60 + 대기 2×3) + 매 분 잡 약 30초 + sleep 60 = 약 276초 < 300초(순찰 재시작 기준).
+  #   15시대에는 다른 하루 1회 블록이 없다(03·06·07·08·16·17시뿐).
+  # T-106 뉴스 0건 감시(라우트가 기록): 같은 KST 날짜의 두 번째 국내 수집은 하루로 센다(news-health.ts — streak 를 늘리지 않고, 06시가 0 이고
+  #   지금 > 0 이면 초기화). 코드 변경 없음.
+  NFP_MM=$(date '+%M')
+  case "$NFP_MM" in [0-5][0-9]) ;; *) NFP_MM=00 ;; esac   # 읽을 수 없으면 이 틱은 돌지 않는다
+  LAST_NEWS_DOM_PM=$(cat "$NEWS_FETCH_DOMESTIC_PM_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "15" ] && [ "$NFP_MM" -ge 30 ] && [ "$LAST_NEWS_DOM_PM" != "$TODAY" ]; then
+    call "/api/cron/news-fetch?market=domestic" "news-fetch-domestic-pm"
+    echo "$TODAY" > "$NEWS_FETCH_DOMESTIC_PM_LAST_RUN_FILE"   # 성공·실패 무관 기록
+  fi
+  case "$HH" in
+    16|17|18|19|20|21|22|23)
+      if [ "$LAST_NEWS_DOM_PM" != "$TODAY" ] && [ "${NFP_SKIP_LOGGED:-}" != "$TODAY" ]; then
+        echo "[$(date '+%F %T')] news-fetch-domestic-pm skipped — 15:30~15:59 에 러너가 돌지 않아 오늘 국내 두 번째 수집은 건너뜀(16:00 이후 호출 안 함)"
+        NFP_SKIP_LOGGED="$TODAY"
+      fi ;;
+  esac
+  # <<< news-fetch-domestic-pm
   # 매일 03:00 KST: LoRA 학습 데이터셋 export (하루 1회만)
   LAST_TRAINSET=$(cat "$TRAINSET_LAST_RUN_FILE" 2>/dev/null || echo "")
   if [ "$HH" = "03" ] && [ "$LAST_TRAINSET" != "$TODAY" ]; then

@@ -12,11 +12,18 @@
 #  C. 느린 M4(시장당 186초 = 3회×60 + 2×3): 해외 06:00 → 국내 06:04, 하트비트 간격 < 300초 · 06:57 시작이면 국내는 그날 건너뜀
 #  D. 하루 전체(1440틱): 뉴스 외 호출 목록이 변경 전 러너와 완전히 같다(03·07·08·16·17시 잡 포함)
 #  E. 정적: 뉴스 블록·선언·주석을 뺀 나머지 실행 줄이 변경 전과 한 글자도 같다
+# T-115 — 국내 뉴스 두 번째 수집(news-fetch-domestic-pm, 15:30~15:59 하루 1회)을 더했다. A~E 는 "뉴스 외 호출 = 변경 전(bf8450d)"을
+#   그대로 증명한다(새 잡도 경로가 /api/cron/news-fetch 라 뉴스로 분류돼 비교에서 빠진다). 새 잡 때문에 기대값이 달라진 곳(D 하루 뉴스 목록,
+#   E 의 블록 제거·호출 줄 개수)은 그 자리에 이유를 적었다. 새 시나리오 F 는 T-103 러너(git show $T115_BASE_REF:scripts/cron-runner.sh,
+#   기본 5d4fdd1 = T-115 착수 기준)와 비교해 **새 잡을 뺀 모든 호출(06시 뉴스 포함)이 T-103 과 완전히 같음**을 증명한다.
+#  F. 15:29 에는 안 돎 · 15:30 에 하루 1회 · 502 여도 하루 1회 · 다음 날 다시 1회 · 16:00 이후 늦게 시작하면 안 돎(건너뜀 로그 하루 1줄) ·
+#     15:59 시작이면 15:59 1회 · 이미 돈 날 재기동이면 안 돎(로그 없음) · 느린 M4 하트비트 < 300초 · 하루 전체 = T-103 + 15:30 1건 · 정적
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNNER="${T103_RUNNER:-$HERE/cron-runner.sh}"   # 변이 시험용 덮어쓰기(기본 = 이 저장소의 러너)
 BASE_REF="${T103_BASE_REF:-bf8450d}"
+T115_REF="${T115_BASE_REF:-5d4fdd1}"   # (T-115) T-103 러너 = 이번 변경 직전
 REAL_DATE="$(command -v date)"
 PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
@@ -32,15 +39,26 @@ if ! git -C "$HERE/.." show "$BASE_REF:scripts/cron-runner.sh" > "$BEFORE" 2>/de
   exit 1
 fi
 
+BEFORE115="$W/runner-t103.sh"
+if ! git -C "$HERE/.." show "$T115_REF:scripts/cron-runner.sh" > "$BEFORE115" 2>/dev/null || [ ! -s "$BEFORE115" ]; then
+  echo "T-103 러너($T115_REF:scripts/cron-runner.sh)를 읽지 못함 — 시나리오 F 비교를 할 수 없다(T115_BASE_REF 로 지정 가능)"
+  exit 1
+fi
+
 ep() { TZ=Asia/Seoul "$REAL_DATE" -d "$1" +%s; }
 
-# run_loop NAME RUNNER START TICKS NEWS_MODE [JUMP_AT JUMP_TO]
+# run_loop NAME RUNNER START TICKS NEWS_MODE [JUMP_AT JUMP_TO [SEED]]
 #  NEWS_MODE: ok(200) | fail(502) | slow(시장당 186초 흐른 뒤 200)
 #  JUMP_AT/JUMP_TO: sleep 이 시계를 JUMP_AT 이상으로 밀면 한 번 JUMP_TO 로 옮긴다(다음 날로 건너뛰기)
+#  SEED(T-115): "날짜파일이름=내용" — 러너 시작 전에 ~/.node-local/stockinvest/ 에 미리 써 둔다(재기동 흉내). 비우면 없음.
 # 호출 기록 한 줄: "MM-DD HH:MM 틱번호 경로"
 run_loop() {
-  local name="$1" runner="$2" start="$3" ticks="$4" mode="$5" jat="${6:-0}" jto="${7:-0}" R="$W/$1"
+  local name="$1" runner="$2" start="$3" ticks="$4" mode="$5" jat="${6:-0}" jto="${7:-0}" seed="${8:-}" R="$W/$1"
   mkdir -p "$R/bin" "$R/home" "$R/proj"
+  if [ -n "$seed" ]; then
+    mkdir -p "$R/home/.node-local/stockinvest"
+    printf '%s\n' "${seed#*=}" > "$R/home/.node-local/stockinvest/${seed%%=*}"
+  fi
   printf 'CRON_SECRET=test-secret\n' > "$R/proj/.env"
   ep "$start" > "$R/clock"
   cat > "$R/bin/date" <<EOF
@@ -160,8 +178,9 @@ BA="$(run_loop old-day "$BEFORE" "2026-10-28 00:00:00" 1440 ok)"
 eq "D: 새 러너 1440틱 완주" "$(cat "$NA/ticks")" "1440"
 eq "D: 변경 전 러너 1440틱 완주" "$(cat "$BA/ticks")" "1440"
 if diff <(others "$NA") <(others "$BA") > /dev/null; then ok "🔴 D: 뉴스 외 호출 목록(시각·틱·경로) = 변경 전 러너 ($(others "$NA" | wc -l | tr -d ' ')건)"; else bad "D: 뉴스 외 호출 목록이 변경 전과 다르다"; diff <(others "$NA") <(others "$BA") | head -10; fi
-eq "D: 하루 뉴스 = 해외 06:00 · 국내 06:01" "$(news "$NA" | awk '{print $2, $4}' | tr '\n' ' ')" \
-   "06:00 /api/cron/news-fetch?market=overseas 06:01 /api/cron/news-fetch?market=domestic "
+# (T-115) 새 잡 news-fetch-domestic-pm 이 15:30 에 국내를 한 번 더 부른다 — 기대값에 "15:30 국내" 1건이 늘었다(06시 두 건은 그대로).
+eq "D: 하루 뉴스 = 해외 06:00 · 국내 06:01 · (T-115) 국내 15:30" "$(news "$NA" | awk '{print $2, $4}' | tr '\n' ' ')" \
+   "06:00 /api/cron/news-fetch?market=overseas 06:01 /api/cron/news-fetch?market=domestic 15:30 /api/cron/news-fetch?market=domestic "
 eq "D: 변경 전 하루 뉴스 = 06:00 1회" "$(news "$BA" | awk '{print $2, $4}' | tr '\n' ' ')" "06:00 /api/cron/news-fetch "
 if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime") <(grep -v '^/api/cron/news-fetch' "$BA/maxtime") > /dev/null; then ok "D: --max-time 붙는 호출 목록 = 변경 전"; else bad "D: --max-time 목록이 다르다"; fi
 
@@ -169,13 +188,18 @@ if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime") <(grep -v '^/api/cron/n
 echo "E. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 # 뉴스 블록(새: >>> news-fetch-split ~ <<<, 옛: '# 매일 06:00 KST: M4 KB 뉴스 fetch' ~ 다음 '  fi')·NEWS_FETCH_* 선언·주석·빈 줄을 뺀 나머지
-strip_new() { awk '/^  # >>> news-fetch-split/{s=1} s{ if (/^  # <<< news-fetch-split/) s=0; next } {print}' "$1" \
+# (T-115) 새 뉴스 블록 news-fetch-domestic-pm 도 뉴스 블록이라 같이 뺀다(선언 NEWS_FETCH_DOMESTIC_PM_* 는 아래 '^NEWS_FETCH_' 가 뺀다).
+#   그 블록이 바꾼 것이 없는지는 F 의 정적 비교(T-103 러너 대비)가 따로 본다.
+strip_new() { awk '/^  # >>> news-fetch-(split|domestic-pm)/{s=1} s{ if (/^  # <<< news-fetch-(split|domestic-pm)/) s=0; next } {print}' "$1" \
   | grep -v '^NEWS_FETCH_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 strip_old() { awk '/^  # 매일 06:00 KST: M4 KB 뉴스 fetch/{s=1} s{ if (/^  fi$/) s=0; next } {print}' "$1" \
   | grep -v '^NEWS_FETCH_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 if diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") > /dev/null; then ok "🔴 뉴스 블록·선언·주석 밖 실행 줄 = 변경 전과 동일 ($(strip_new "$RUNNER" | wc -l | tr -d ' ')줄)"; else bad "뉴스 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") | head -10; fi
 eq "call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
-eq "뉴스 호출 줄 = 시장별 2개" "$(grep -c 'call "/api/cron/news-fetch?market=' "$RUNNER")" "2"
+# (T-115) 파일 전체로 세면 새 잡의 국내 호출 줄 1개가 더해져 3 이 된다 — 06시 블록(news-fetch-split) 안으로 범위를 좁혀 2 를 본다.
+eq "06시 블록의 뉴스 호출 줄 = 시장별 2개" \
+   "$(awk '/^  # >>> news-fetch-split/,/^  # <<< news-fetch-split/' "$RUNNER" | grep -c 'call "/api/cron/news-fetch?market=')" "2"
+eq "(T-115) 파일 전체 뉴스 호출 줄 = 3(06시 2 + 15:30 국내 1)" "$(grep -c 'call "/api/cron/news-fetch?market=' "$RUNNER")" "3"
 eq "시장 미지정 뉴스 호출 줄 없음" "$(grep -cE 'call "?/api/cron/news-fetch"? ' "$RUNNER")" "0"
 eq "옛 날짜파일 이름을 실행 줄에서 참조하지 않음(주석 제외)" "$(grep -v '^[[:space:]]*#' "$RUNNER" | sed 's/[[:space:]]#.*$//' | grep -c 'news-fetch-last-date')" "0"
 eq "해외 블록이 국내 블록보다 앞" "$([ "$(grep -n 'market=overseas" "news-fetch-overseas"' "$RUNNER" | cut -d: -f1)" -lt "$(grep -n 'market=domestic" "news-fetch-domestic"' "$RUNNER" | cut -d: -f1)" ] && echo yes || echo no)" "yes"
@@ -186,6 +210,107 @@ else
   bad "yield 판단이 LAST_NEWS_OVS 변수가 아니다"
 fi
 eq "해외 날짜파일 읽기는 블록 안 1곳(틱 시작)" "$(printf '%s\n' "$b" | grep -c 'cat "\$NEWS_FETCH_OVERSEAS_LAST_RUN_FILE"')" "1"
+
+# ── F. (T-115) 국내 두 번째 수집 news-fetch-domestic-pm ─────────────────────────────
+echo "F. (T-115) 15:30~15:59 국내 두 번째 수집 — T-103 러너($T115_REF)와 비교"
+PMRE='^[0-9-]+ 15:[0-9][0-9] [0-9]+ /api/cron/news-fetch\?market=domestic$'
+pm()      { grep -E "$PMRE" "$1/calls"; }                                # 새 잡 호출(15시대 국내 뉴스)
+nopm()    { grep -vE "$PMRE" "$1/calls" | awk '{print $1, $2, $4}'; }   # 새 잡을 뺀 모든 호출(뉴스 포함)
+allc()    { awk '{print $1, $2, $4}' "$1/calls"; }
+pmat()    { pm "$1" | awk '{print $1, $2}' | tr '\n' ' '; }
+skiplog() { grep -c 'news-fetch-domestic-pm skipped' "$1/stdout"; }
+same115() {   # same115 라벨 새러너결과 옛러너결과 — 새 잡을 뺀 호출 목록이 T-103 러너와 완전히 같은가
+  if diff <(nopm "$2") <(allc "$3") > /dev/null; then ok "🔴 $1: 새 잡을 뺀 모든 호출(뉴스 포함) = T-103 러너 ($(nopm "$2" | wc -l | tr -d ' ')건)"
+  else bad "$1: 새 잡을 뺀 호출 목록이 T-103 러너와 다르다"; diff <(nopm "$2") <(allc "$3") | head -10; fi
+}
+
+# F1. 15:28~15:35 × 이틀(각 8틱, 15:36 에 다음 날 15:28 로 건너뜀) — 200 과 502
+FJA=$(ep "2026-10-28 15:36:00"); FJT=$(ep "2026-10-29 15:28:00")
+FO="$(run_loop f-new-ok   "$RUNNER"    "2026-10-28 15:28:00" 16 ok   "$FJA" "$FJT")"
+FF="$(run_loop f-new-fail "$RUNNER"    "2026-10-28 15:28:00" 16 fail "$FJA" "$FJT")"
+GO="$(run_loop f-old-ok   "$BEFORE115" "2026-10-28 15:28:00" 16 ok   "$FJA" "$FJT")"
+GF="$(run_loop f-old-fail "$BEFORE115" "2026-10-28 15:28:00" 16 fail "$FJA" "$FJT")"
+for R in "$FO" "$FF" "$GO" "$GF"; do eq "$(basename "$R"): 16틱 완주" "$(cat "$R/ticks")" "16"; done
+eq "(하네스 확인) T-103 러너: 15시대 뉴스 호출 없음" "$(news "$GO" | wc -l | tr -d ' ')" "0"
+for R in "$FO" "$FF"; do
+  n="$(basename "$R")"
+  eq "🔴 $n: 국내 두 번째 수집 = 날마다 15:30 정확히 1회(15:29 에는 안 돎)" "$(pmat "$R")" "10-28 15:30 10-29 15:30 "
+  eq "🔴 $n: 뉴스 호출은 새 잡뿐(해외·06시 국내 없음)" "$(news "$R" | wc -l | tr -d ' ')" "2"
+  eq "$n: 한 틱에 뉴스 호출은 최대 1회" "$(maxper "$R")" "1"
+  eq "$n: 새 날짜파일 = 둘째 날" "$(df "$R" news-fetch-domestic-pm-last-date)" "2026-10-29"
+  eq "🔴 $n: 06시 국내 날짜파일은 건드리지 않음" "$(df "$R" news-fetch-domestic-last-date)" "none"
+  eq "$n: 해외 날짜파일도 건드리지 않음" "$(df "$R" news-fetch-overseas-last-date)" "none"
+  eq "$n: 새 잡 호출에는 --max-time 없음" "$(grep -c '^/api/cron/news-fetch' "$R/maxtime")" "0"
+  eq "$n: 건너뜀 로그 없음(15시대에 돌았음)" "$(skiplog "$R")" "0"
+done
+eq "ok: 새 잡 OK 로그 2줄(라벨 news-fetch-domestic-pm)" "$(grep -c 'news-fetch-domestic-pm OK' "$FO/stdout")" "2"
+eq "🔴 fail(502): 새 잡 실패 로그 2줄(같은 날 재호출 없음)" "$(grep -c 'news-fetch-domestic-pm HTTP=502' "$FF/stdout")" "2"
+same115 "F1 ok" "$FO" "$GO"
+same115 "F1 fail" "$FF" "$GF"
+
+# F2. 16:00 이후 늦게 시작(첫날 16:00~16:03, 다음 날 16:30~16:33 — 분 ≥ 30 이어도 16시면 안 돎) — 호출 없음, 건너뜀 로그 하루 1줄
+FL="$(run_loop f-new-late "$RUNNER"    "2026-10-28 16:00:00" 8 ok "$(ep '2026-10-28 16:04:00')" "$(ep '2026-10-29 16:30:00')")"
+GL="$(run_loop f-old-late "$BEFORE115" "2026-10-28 16:00:00" 8 ok "$(ep '2026-10-28 16:04:00')" "$(ep '2026-10-29 16:30:00')")"
+eq "F2: 8틱 완주" "$(cat "$FL/ticks")" "8"
+eq "🔴 F2: 16:00 이후 시작이면 새 잡 호출 없음" "$(pm "$FL" | wc -l | tr -d ' ')" "0"
+eq "F2: 뉴스 호출 없음" "$(news "$FL" | wc -l | tr -d ' ')" "0"
+eq "🔴 F2: 건너뜀 로그 = 날마다 1줄(4틱씩 돌아도)" "$(skiplog "$FL")" "2"
+grep -q '2026-10-28 16:00:00\] news-fetch-domestic-pm skipped' "$FL/stdout" && ok "F2: 첫날 건너뜀 로그 시각 16:00" || bad "F2: 첫날 16:00 건너뜀 로그 없음"
+eq "F2: 건너뛴 날은 날짜파일을 쓰지 않음" "$(df "$FL" news-fetch-domestic-pm-last-date)" "none"
+grep -q '2026-10-29 16:30:00\] news-fetch-domestic-pm skipped' "$FL/stdout" && ok "F2: 다음 날 건너뜀 로그 시각 16:30" || bad "F2: 다음 날 16:30 건너뜀 로그 없음"
+eq "(하네스 확인) F2: post-market-domestic 은 그대로 돈다(16:00 · 16:30 첫 틱)" "$(grep -cE ' 16:(00|30) [0-9]+ /api/cron/post-market-analysis\?market=domestic$' "$FL/calls")" "2"
+same115 "F2" "$FL" "$GL"
+
+# F3. 15:59 시작 — 창의 마지막 분이라 1회
+FE="$(run_loop f-new-1559 "$RUNNER" "2026-10-28 15:59:00" 3 ok)"
+eq "🔴 F3: 15:59 시작 → 15:59 1회, 16시 틱에는 안 돎" "$(pmat "$FE")" "10-28 15:59 "
+eq "F3: 건너뜀 로그 없음" "$(skiplog "$FE")" "0"
+
+# F4. 재기동 — 오늘 이미 돈 날(날짜파일 = 오늘) 15:45 에 다시 시작해 16:04 까지
+FR="$(run_loop f-new-restart "$RUNNER" "2026-10-28 15:45:00" 20 ok 0 0 "news-fetch-domestic-pm-last-date=2026-10-28")"
+eq "F4: 20틱 완주" "$(cat "$FR/ticks")" "20"
+eq "🔴 F4: 오늘 이미 돈 날 재기동 → 새 잡 호출 없음" "$(pm "$FR" | wc -l | tr -d ' ')" "0"
+eq "F4: 건너뜀 로그 없음(이미 돌았음)" "$(skiplog "$FR")" "0"
+FY="$(run_loop f-new-restart-y "$RUNNER" "2026-10-28 15:45:00" 3 ok 0 0 "news-fetch-domestic-pm-last-date=2026-10-27")"
+eq "F4: 날짜파일이 어제면 15:45 첫 틱에 1회" "$(pmat "$FY")" "10-28 15:45 "
+
+# F5. 느린 M4(뉴스 호출마다 186초) — 15:29 시작
+FS="$(run_loop f-new-slow "$RUNNER" "2026-10-28 15:29:00" 6 slow)"
+eq "F5: 6틱 완주" "$(cat "$FS/ticks")" "6"
+eq "F5: 느려도 15:30 1회" "$(pmat "$FS")" "10-28 15:30 "
+g="$(gap "$FS")"
+if [ "$g" -lt 300 ]; then ok "🔴 F5: 하트비트 간격 최대 ${g}초 < 300초(워치독 한도)"; else bad "F5: 하트비트 간격 ${g}초 ≥ 300"; fi
+eq "F5: 최대 간격 = 186 + 60" "$g" "246"
+# 15:59 시작 + 느린 M4 — 호출이 16:02 에 끝나 다음 틱이 16:03 이라 16시 잡이 16:03 에 돈다(알려진 가장자리, Developer 기록 참고)
+FS2="$(run_loop f-new-slow-1559 "$RUNNER" "2026-10-28 15:59:00" 3 slow)"
+eq "F5: 15:59 시작 + 느린 M4 → 새 잡 15:59 · post-market-domestic 은 다음 틱 16:03(같은 틱에 겹치지 않음)" \
+   "$(grep -E 'news-fetch\?market=domestic$|post-market-analysis\?market=domestic$' "$FS2/calls" | awk '{print $2, $4}' | tr '\n' ' ')" \
+   "15:59 /api/cron/news-fetch?market=domestic 16:03 /api/cron/post-market-analysis?market=domestic "
+
+# F6. 하루 전체 1440틱 — T-103 러너 대비 차이는 15:30 국내 1건뿐
+GA="$(run_loop f-old-day "$BEFORE115" "2026-10-28 00:00:00" 1440 ok)"
+eq "F6: T-103 러너 1440틱 완주" "$(cat "$GA/ticks")" "1440"
+eq "🔴 F6: 새 잡 = 하루 15:30 1회" "$(pmat "$NA")" "10-28 15:30 "
+same115 "F6 하루 전체" "$NA" "$GA"
+eq "F6: 하루 전체에서 건너뜀 로그 없음" "$(skiplog "$NA")" "0"
+eq "F6: 날짜파일 — 06시 국내·15시 국내 모두 오늘" "$(df "$NA" news-fetch-domestic-last-date) $(df "$NA" news-fetch-domestic-pm-last-date)" "2026-10-28 2026-10-28"
+if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime") <(grep -v '^/api/cron/news-fetch' "$GA/maxtime") > /dev/null && \
+   [ "$(grep -c '^/api/cron/news-fetch' "$NA/maxtime")" = "0" ]; then ok "F6: --max-time 목록 = T-103 러너(뉴스에는 없음)"; else bad "F6: --max-time 목록이 다르다"; fi
+
+# F7. 정적 — 새 블록·선언·주석을 빼면 T-103 러너와 실행 줄이 한 글자도 같다
+strip115() { awk '/^  # >>> news-fetch-domestic-pm/{s=1} s{ if (/^  # <<< news-fetch-domestic-pm/) s=0; next } {print}' "$1" \
+  | grep -v '^NEWS_FETCH_DOMESTIC_PM_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
+strip103() { grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$'; }
+if diff <(strip115 "$RUNNER") <(strip103 "$BEFORE115") > /dev/null; then ok "🔴 F7: 새 블록·선언·주석 밖 실행 줄 = T-103 러너 ($(strip115 "$RUNNER" | wc -l | tr -d ' ')줄)"; else bad "F7: 새 블록 밖 실행 줄이 T-103 과 다르다"; diff <(strip115 "$RUNNER") <(strip103 "$BEFORE115") | head -10; fi
+nb="$(awk '/^  # >>> news-fetch-domestic-pm/,/^  # <<< news-fetch-domestic-pm/' "$RUNNER")"
+eq "F7: 새 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> news-fetch-domestic-pm' "$RUNNER") $(grep -c '^  # <<< news-fetch-domestic-pm' "$RUNNER")" "1 1"
+eq "F7: 새 블록 호출 줄 = 국내 1개(라벨 news-fetch-domestic-pm)" "$(printf '%s\n' "$nb" | grep -c '^    call "/api/cron/news-fetch?market=domestic" "news-fetch-domestic-pm"$')" "1"
+eq "F7: 새 블록 안 호출 줄 총 1개" "$(printf '%s\n' "$nb" | grep -c 'call ')" "1"
+if printf '%s\n' "$nb" | grep -q '^  if \[ "\$HH" = "15" \] && \[ "\$NFP_MM" -ge 30 \] && \[ "\$LAST_NEWS_DOM_PM" != "\$TODAY" \]; then$'; then
+  ok "F7: 조건 = HH 15 · 분 ≥ 30 · 오늘 아직 안 돎"; else bad "F7: 호출 조건 줄이 사양과 다르다"; fi
+eq "F7: 새 블록은 06시 블록 뒤" "$([ "$(grep -n '^  # >>> news-fetch-domestic-pm' "$RUNNER" | cut -d: -f1)" -gt "$(grep -n '^  # <<< news-fetch-split' "$RUNNER" | cut -d: -f1)" ] && echo yes || echo no)" "yes"
+eq "F7: 날짜파일 선언 1개(news-fetch-domestic-pm-last-date)" "$(grep -c '^NEWS_FETCH_DOMESTIC_PM_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-domestic-pm-last-date"' "$RUNNER")" "1"
+eq "F7: 상단 잡 목록 주석에 새 잡" "$(sed -n '1,40p' "$RUNNER" | grep -c '^#  - news-fetch-domestic-pm:')" "1"
 
 echo
 echo "결과: PASS=$PASS FAIL=$FAIL"
