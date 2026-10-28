@@ -9,9 +9,11 @@
 #  - portfolio-snapshot: 60분 — 포트폴리오 스냅샷 + 변동폭 가드
 #  - trade-report      : 5분 — 거래 리포트 anchor·interval 검증 후 Slack/Telegram 발송 (라우트 내부 자체 판단)
 #  - sync-stock-meta   : 매일 17:00 KST — KIS KOSPI/KOSDAQ 마스터 → stock_meta 현행화
-#  - news-fetch        : 매일 06:00 KST — M4 KB news.kr_market + news.us_market RSS 갱신
+#  - news-fetch-overseas: 매일 06시 첫 틱 — M4 KB news.us_market RSS 갱신 (/api/cron/news-fetch?market=overseas, T-103)
+#  - news-fetch-domestic: 매일 06시, 해외가 돈 **다음 틱** — M4 KB news.kr_market RSS 갱신 (?market=domestic, T-103)
 #                        (T-036에서 bash 직접 curl → /api/cron/news-fetch 라우트로 이관.
-#                         재시도·타임아웃·실패 알림은 전부 라우트 안에 있다)
+#                         재시도·타임아웃·실패 알림은 전부 라우트 안에 있다. T-103에서 시장별 독립 잡으로 분리 —
+#                         날짜파일·실패 알림 키가 시장마다 따로다. 해외가 06:5x 에 처음 돌면 국내는 그날 건너뛴다(06시 블록 주석))
 #  - post-market-domestic: 매일 16:00 KST — 국내장 마감 후 익일 시나리오 분석
 #  - post-market-overseas: 매일 08:00 KST — 해외장 마감 후 다음 미국장 시나리오 분석 (T-062: 200 이 아니면 08시 안에서 최대 3회)
 #  - research-cycle-domestic: 매일 16:00 KST — 국내 리서치 추적 종목 사이클 패턴 재계산 (T-032, 주문 없음)
@@ -147,7 +149,8 @@ echo "[cron-runner] started, base=$BASE_URL"
 #    알림의 역할이다.
 META_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/sync-stock-meta-last-date"
 TRAINSET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/export-llm-trainset-last-date"
-NEWS_FETCH_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-last-date"
+NEWS_FETCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-overseas-last-date"   # (T-103) 옛 news-fetch-last-date 는 읽지 않는다
+NEWS_FETCH_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch-domestic-last-date"   # (T-103)
 POST_MARKET_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-domestic-last-date"
 POST_MARKET_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-last-date"
 POST_MARKET_OVERSEAS_ATTEMPT_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-attempts"   # (T-062 S-2b) 그날 시도 횟수
@@ -303,13 +306,35 @@ while true; do
     call "/api/cron/research-cycle-domestic" "research-cycle-domestic"
     echo "$TODAY" > "$RESEARCH_DOMESTIC_LAST_RUN_FILE"
   fi
-  # 매일 06:00 KST: M4 KB 뉴스 fetch (하루 1회만) — news.kr_market + news.us_market 갱신.
-  # (T-036) bash 직접 curl → 라우트 호출로 이관. 재시도·타임아웃·실패 알림은 라우트 안에 있다.
-  LAST_NEWS=$(cat "$NEWS_FETCH_LAST_RUN_FILE" 2>/dev/null || echo "")
-  if [ "$HH" = "06" ] && [ "$LAST_NEWS" != "$TODAY" ]; then
-    call /api/cron/news-fetch "news-fetch"
-    echo "$TODAY" > "$NEWS_FETCH_LAST_RUN_FILE"   # 성공·실패 무관 기록 (날짜파일 선언부 주석 참고)
+  # >>> news-fetch-split (T-103) — scripts/test-cron-runner-news-split.sh 가 러너 전체를 가짜 시각으로 돌려 시험한다
+  # 매일 06시 KST: M4 KB 뉴스 fetch — 시장별 **독립된 두 잡**(각자 하루 1회). 해외(news.us_market, 08:00 해외 post-market 이 소비) 먼저,
+  # 국내(news.kr_market, 16:00 국내 post-market 이 소비) 다음. 실행 시각(06시)·건수(20)·재시도(3회)·60초 상한은 분리 전과 같다.
+  # (T-036) bash 직접 curl → 라우트 호출로 이관. 재시도·타임아웃·실패 알림은 라우트 안에 있다. 날짜파일은 시장마다 따로,
+  #   호출했으면 성공·실패 무관 기록(날짜파일 선언부 주석 참고) — 하루 1회.
+  # 🔴 같은 틱에 두 시장을 이어 부르지 않는다: 라우트는 시장당 최악 약 186초(3회×60초 + 대기 2×3초)라 순차 두 번이면 약 372초로
+  #   하트비트 워치독 한도(300초)를 넘는다(분리 전에는 한 호출 안 병렬이라 약 186초). 그래서 해외가 **이 틱에** 돌았으면 국내는
+  #   다음 틱으로 미룬다(yield_tick, 날짜파일 안 씀). 판단은 틱 시작에 읽어 둔 LAST_NEWS_OVS(호출 **전** 값)로 한다 — 날짜파일을 다시
+  #   읽으면 해외 블록이 이미 오늘로 써 두어 미루기가 발동하지 않는다(broker-fills yield_tick 과 같은 이유). call() 병렬화는 하지 않는다
+  #   (임시 파일명 $$ 충돌).
+  # ⚠ 알려진 가장자리(허용): 해외가 06시 끝자락(06:59 틱, 또는 M4 가 느려 해외 호출이 07시를 넘겨 끝나는 06:5x 틱)에 처음 돌면
+  #   다음 틱이 07시라 국내는 **그날 건너뛴다**(로그: news-fetch-domestic yield_tick 뒤 호출 없음). 러너가 06시 거의 내내 꺼져 있던 날에만
+  #   생기며, 국내 뉴스는 16:00 에 소비되고 다음 날 06시에 정상 복구된다. 07시 틱(research·edgar·broker-fills)에는 합류시키지 않는다
+  #   (그 틱의 동기 대기 시간 악화).
+  LAST_NEWS_OVS=$(cat "$NEWS_FETCH_OVERSEAS_LAST_RUN_FILE" 2>/dev/null || echo "")
+  LAST_NEWS_DOM=$(cat "$NEWS_FETCH_DOMESTIC_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "06" ] && [ "$LAST_NEWS_OVS" != "$TODAY" ]; then
+    call "/api/cron/news-fetch?market=overseas" "news-fetch-overseas"
+    echo "$TODAY" > "$NEWS_FETCH_OVERSEAS_LAST_RUN_FILE"   # 성공·실패 무관 기록
   fi
+  if [ "$HH" = "06" ] && [ "$LAST_NEWS_DOM" != "$TODAY" ]; then
+    if [ "$LAST_NEWS_OVS" != "$TODAY" ]; then
+      echo "[$(date '+%F %T')] news-fetch-domestic yield_tick — news-fetch-overseas 가 이 틱에 돌아 다음 틱으로 미룸"
+    else
+      call "/api/cron/news-fetch?market=domestic" "news-fetch-domestic"
+      echo "$TODAY" > "$NEWS_FETCH_DOMESTIC_LAST_RUN_FILE"   # 성공·실패 무관 기록
+    fi
+  fi
+  # <<< news-fetch-split
   # 매일 03:00 KST: LoRA 학습 데이터셋 export (하루 1회만)
   LAST_TRAINSET=$(cat "$TRAINSET_LAST_RUN_FILE" 2>/dev/null || echo "")
   if [ "$HH" = "03" ] && [ "$LAST_TRAINSET" != "$TODAY" ]; then

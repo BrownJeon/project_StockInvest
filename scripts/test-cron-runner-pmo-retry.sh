@@ -235,8 +235,10 @@ eq "entry-watcher 는 매 틱(120회)" "$(grep -c '/api/cron/entry-watcher' "$RF
 grep -q 'post-market-overseas 오늘 3회 모두 실패' "$RF/stdout" && ok "3회 실패 로그 한 줄" || bad "3회 실패 로그 없음"
 
 # 다른 하루 1회 잡은 T-036 규칙(성공·실패 무관 날짜파일 기록) 그대로인지 — 구조 확인
+# (T-103) 뉴스 수집은 시장별 두 잡으로 나뉘어 날짜파일 변수도 둘이다(NEWS_FETCH_LAST_RUN_FILE → OVERSEAS·DOMESTIC).
 for v in META_LAST_RUN_FILE RS_UPDATE_LAST_RUN_FILE KIS_FUNDAMENTALS_LAST_RUN_FILE POST_MARKET_DOMESTIC_LAST_RUN_FILE \
-         RESEARCH_OVERSEAS_LAST_RUN_FILE EDGAR_SYNC_LAST_RUN_FILE RESEARCH_DOMESTIC_LAST_RUN_FILE NEWS_FETCH_LAST_RUN_FILE TRAINSET_LAST_RUN_FILE; do
+         RESEARCH_OVERSEAS_LAST_RUN_FILE EDGAR_SYNC_LAST_RUN_FILE RESEARCH_DOMESTIC_LAST_RUN_FILE \
+         NEWS_FETCH_OVERSEAS_LAST_RUN_FILE NEWS_FETCH_DOMESTIC_LAST_RUN_FILE TRAINSET_LAST_RUN_FILE; do
   grep -q "echo \"\$TODAY\" > \"\$$v\"" "$RUNNER" && ok "$v 무조건 기록 유지" || bad "$v 기록 줄이 바뀌었다"
 done
 grep -q 'echo "$TODAY" > "$POST_MARKET_OVERSEAS_LAST_RUN_FILE"' "$RUNNER" && bad "해외 post-market 이 아직 무조건 기록한다" || ok "해외 post-market 무조건 기록 제거"

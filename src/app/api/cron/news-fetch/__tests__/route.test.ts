@@ -11,10 +11,15 @@
  *  4. 부분 실패 — 한 시장만 전량 재시도 소진 시 warning 알림, 성공한 시장은 정상 반영
  *  5. 전체 실패 — 두 시장 다 소진 시 critical 알림, 응답 ok=false (그러나 HTTP 200)
  *  6. M4_ADMIN_TOKEN(및 ADMIN_TOKEN) 미설정 — 호출 없이 즉시 critical 알림 후 스킵 (fail-safe)
+ *  7. (T-103) `?market=domestic|overseas` — 그 시장만 호출(응답 배열 길이 1), 미지정은 두 시장(기존 알림 키 불변),
+ *     허용 밖 값은 인증 통과 후 400 invalid_market·M4 호출 0(인증이 먼저), 단일 시장 전량 실패는
+ *     `news-fetch:<market>:failed` critical(본문에 시장명), 토큰 누락 fail-safe 는 단일 시장에서도 그대로.
  *
  * 실제 M4 서버 호출 안 함 — global.fetch mock으로 격리. 재시도 백오프(3s)는 fake timers로
  * 실제 대기 없이 진행시킨다.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import type { NextRequest } from 'next/server';
 
 const authMock = jest.fn();
@@ -71,9 +76,9 @@ afterEach(() => {
 });
 
 /** POST 실행 후 재시도 백오프(fake timer)를 전부 흘려보내고 응답을 반환한다. */
-async function runPost(): Promise<{ res: Response; body: Body }> {
+async function runPost(r: NextRequest = req): Promise<{ res: Response; body: Body }> {
   const { POST } = await import('../route');
-  const resPromise = POST(req);
+  const resPromise = POST(r);
   await jest.runAllTimersAsync();
   const res = await resPromise;
   const body = (await res.json()) as Body;
@@ -284,5 +289,231 @@ describe('예외 흡수', () => {
     const { res, body } = await runPost();
     expect(res.status).toBe(200);
     expect(body.ok).toBe(false);
+  });
+});
+
+// ── T-103 시장 지정(?market=) ─────────────────────────────────────────────────────
+/** 운영 Next 요청처럼 nextUrl 을 가진 최소 요청. market 이 undefined 면 쿼리 없음. */
+function reqWith(market?: string): NextRequest {
+  const url = new URL('http://localhost:3003/api/cron/news-fetch');
+  if (market !== undefined) url.searchParams.set('market', market);
+  return { nextUrl: url } as unknown as NextRequest;
+}
+
+/** 시장별 호출 횟수를 세는 fetch mock. status(market) 로 응답 코드를 정한다. */
+function countingFetch(status: (market: string) => number = () => 200) {
+  const counts: Record<string, number> = {};
+  const fn = jest.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+    const { market } = JSON.parse(init.body as string) as { market: string };
+    counts[market] = (counts[market] ?? 0) + 1;
+    const s = status(market);
+    return s === 200 ? jsonResponse(200, { upserted: market === 'domestic' ? 4 : 6 }) : jsonResponse(s, { error: 'boom' }, false);
+  });
+  return { fn, counts };
+}
+
+describe('T-103 시장 지정 — 정상', () => {
+  test('market=domestic — 국내만 1회 호출(해외 0), 응답 markets 길이 1, 알림 없음', async () => {
+    const { fn, counts } = countingFetch();
+    globalThis.fetch = fn;
+
+    const { res, body } = await runPost(reqWith('domestic'));
+
+    expect(res.status).toBe(200);
+    expect(counts).toEqual({ domestic: 1 });
+    expect(body).toEqual({ ok: true, markets: [{ market: 'domestic', ok: true, upserted: 4, attempts: 1 }] });
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+
+  test('market=overseas — 해외만 1회 호출(국내 0), 요청 형식(URL·헤더·limit 20)은 기존과 같다', async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    globalThis.fetch = jest.fn().mockImplementation(async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse(200, { upserted: 6 });
+    });
+
+    const { body } = await runPost(reqWith('overseas'));
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('http://m4.local:8000/v1/news/fetch');
+    expect((calls[0].init.headers as Record<string, string>)['X-Admin-Token']).toBe('test-admin-token');
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ market: 'overseas', limit: 20 });
+    expect(body).toEqual({ ok: true, markets: [{ market: 'overseas', ok: true, upserted: 6, attempts: 1 }] });
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+
+  test('단일 시장도 재시도 3회 상한 그대로 — 2번째에 성공하면 attempts 2, 알림 없음', async () => {
+    let n = 0;
+    globalThis.fetch = jest.fn().mockImplementation(async () => (++n < 2 ? jsonResponse(503, {}, false) : jsonResponse(200, { upserted: 2 })));
+
+    const { body } = await runPost(reqWith('overseas'));
+
+    expect(n).toBe(2);
+    expect(body.markets).toEqual([{ market: 'overseas', ok: true, upserted: 2, attempts: 2 }]);
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('T-103 시장 미지정 — 하위 호환(두 시장)', () => {
+  test('nextUrl 이 있어도 market 이 없으면 두 시장 각 1회', async () => {
+    const { fn, counts } = countingFetch();
+    globalThis.fetch = fn;
+
+    const { body } = await runPost(reqWith());
+
+    expect(counts).toEqual({ domestic: 1, overseas: 1 });
+    expect(body.ok).toBe(true);
+    expect(body.markets.map((m) => m.market).sort()).toEqual(['domestic', 'overseas']);
+  });
+
+  test('미지정 경로 부분 실패 — 기존 키 news-fetch:partial_failed · warning 불변(시장별 키 안 씀)', async () => {
+    const { fn } = countingFetch((m) => (m === 'domestic' ? 500 : 200));
+    globalThis.fetch = fn;
+
+    await runPost(reqWith());
+
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    expect(alertMock.mock.calls[0].slice(0, 2)).toEqual(['news-fetch:partial_failed', 'warning']);
+  });
+
+  test('미지정 경로 전체 실패 — 기존 키 news-fetch:all_failed · critical 불변', async () => {
+    const { fn, counts } = countingFetch(() => 500);
+    globalThis.fetch = fn;
+
+    await runPost(reqWith());
+
+    expect(counts).toEqual({ domestic: 3, overseas: 3 });
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    expect(alertMock.mock.calls[0].slice(0, 2)).toEqual(['news-fetch:all_failed', 'critical']);
+  });
+});
+
+describe('T-103 잘못된 시장 값', () => {
+  test.each(['', 'Domestic', 'OVERSEAS', 'all', 'kr', 'domestic,overseas', ' overseas'])(
+    '🔴 market=%p → 400 invalid_market, M4 호출 0, 알림 0',
+    async (bad) => {
+      const fetchMock = jest.fn();
+      globalThis.fetch = fetchMock;
+
+      const { res, body } = await runPost(reqWith(bad));
+
+      expect(res.status).toBe(400);
+      expect(body).toEqual({ ok: false, error: 'invalid_market' });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(alertMock).not.toHaveBeenCalled();
+    },
+  );
+
+  test('🔴 인증이 먼저 — 인증 실패면 잘못된 시장 값이어도 401(400 아님), M4 호출 0', async () => {
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+    authMock.mockReturnValue(jsonResponse(401, { ok: false, error: 'unauthorized' }, false));
+
+    const { POST } = await import('../route');
+    const res = await POST(reqWith('nope'));
+
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+
+  test('🔴 인증 실패면 정상 시장 값이어도 401, M4 호출 0', async () => {
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+    authMock.mockReturnValue(jsonResponse(401, { ok: false, error: 'unauthorized' }, false));
+
+    const { POST } = await import('../route');
+    const res = await POST(reqWith('overseas'));
+
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('잘못된 값 + 토큰 누락 — 400 이 먼저(설정 알림 안 보냄)', async () => {
+    delete process.env.M4_ADMIN_TOKEN;
+    delete process.env.ADMIN_TOKEN;
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+
+    const { res } = await runPost(reqWith('xx'));
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('T-103 단일 시장 전량 실패 알림', () => {
+  test.each([
+    ['domestic', '국내'],
+    ['overseas', '해외'],
+  ])('🔴 market=%s(%s) 3회 소진 → news-fetch:<market>:failed · critical, 본문에 시장명, HTTP 200·ok=false',async (market, label) => {
+    const { fn, counts } = countingFetch(() => 502);
+    globalThis.fetch = fn;
+
+    const { res, body } = await runPost(reqWith(market));
+
+    expect(res.status).toBe(200);
+    expect(counts).toEqual({ [market]: 3 });
+    expect(body.ok).toBe(false);
+    expect(body.markets).toHaveLength(1);
+    expect(body.markets[0]).toMatchObject({ market, ok: false, upserted: 0, attempts: 3 });
+    expect(body.markets[0].error).toContain('502');
+
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    const [key, level, title, text] = alertMock.mock.calls[0] as [string, string, string, string];
+    expect(key).toBe(`news-fetch:${market}:failed`);
+    expect(level).toBe('critical');
+    expect(title).toContain(market);
+    expect(title).toContain(label);
+    expect(text).toContain(market);
+    expect(text).toContain(label);
+    expect(text).toContain('502');
+    // 두 시장 경로 키를 쓰지 않는다
+    expect(alertMock.mock.calls.flat()).not.toContain('news-fetch:all_failed');
+    expect(alertMock.mock.calls.flat()).not.toContain('news-fetch:partial_failed');
+  });
+
+  test('단일 시장 타임아웃 소진도 같은 시장별 키(critical)', async () => {
+    globalThis.fetch = jest.fn().mockImplementation((_url: string, init: RequestInit) => new Promise((_, reject) => {
+      (init.signal as AbortSignal).addEventListener('abort', () => {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        reject(err);
+      });
+    }));
+
+    const { body } = await runPost(reqWith('domestic'));
+
+    expect(body.markets[0].error).toMatch(/timeout after/);
+    expect(alertMock).toHaveBeenCalledWith('news-fetch:domestic:failed', 'critical', expect.any(String), expect.any(String));
+  });
+});
+
+describe('T-103 토큰 누락 — 단일 시장', () => {
+  test.each(['domestic', 'overseas'])('market=%s 에서도 호출 없이 news-fetch:config critical 1회 후 스킵(200, markets [])', async (market) => {
+    delete process.env.M4_ADMIN_TOKEN;
+    delete process.env.ADMIN_TOKEN;
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock;
+
+    const { res, body } = await runPost(reqWith(market));
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(false);
+    expect(body.markets).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(alertMock).toHaveBeenCalledTimes(1);
+    const [key, level, , text] = alertMock.mock.calls[0] as [string, string, string, string];
+    expect(key).toBe('news-fetch:config');
+    expect(level).toBe('critical');
+    expect(text).toContain(market);
+  });
+});
+
+describe('T-103 정적 — 호출 기록 지점 불변', () => {
+  test("trackCall('m4', 'news.fetch' 호출 지점은 1곳 그대로", () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'route.ts'), 'utf8');
+    expect(src.match(/trackCall\('m4', 'news\.fetch'/g)?.length).toBe(1);
   });
 });

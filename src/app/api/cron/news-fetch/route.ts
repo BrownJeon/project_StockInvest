@@ -25,6 +25,18 @@
  * 재시도 폭주로 이어지지 않는다. 다른 cron 라우트(post-market-analysis, research-cycle-*)의
  * 관례를 그대로 따라 — 예상된 부분/전체 실패는 본문에서 흡수해 200으로 응답하고(호출자가
  * 결과를 파싱해 판단), 프로그램 오류 등 진짜 예외만 500으로 흡수한다.
+ *
+ * ## 시장 지정 — `?market=domestic|overseas` (T-103)
+ *
+ * cron-runner 는 06시에 두 시장을 **서로 다른 틱의 독립 잡**으로 부른다(news-fetch-overseas →
+ * news-fetch-domestic, 날짜파일·알림 키도 따로). 같은 틱에 두 번 순차 호출하면 최악 약 372초로
+ * 하트비트 워치독 한도(300초)를 넘기 때문이다(cron-runner.sh 06시 블록 주석 참고).
+ *  - `market` 미지정: **기존과 동일하게 두 시장 모두** 병렬 처리(하위 호환 — 수동 호출·배포 중 옛 러너·롤백).
+ *    알림 키·심각도도 그대로(`news-fetch:partial_failed` warning / `news-fetch:all_failed` critical).
+ *  - `market` 지정: 그 시장 하나만. 응답 형식은 같다(`markets` 배열 길이 1). 전량 실패 시
+ *    `news-fetch:<market>:failed` critical — 한 시장 전체 실패도 숨기지 않는다(T-036 교훈).
+ *  - 허용 밖 값(빈 값·대소문자 다름 포함): 인증 통과 **후** `400 invalid_market`, M4 호출 0.
+ *  - 인증이 항상 먼저, 토큰 누락 fail-safe(알림 1회 후 스킵)는 시장 지정 여부와 무관하게 그대로.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { checkCronAuth } from '@/lib/cron-auth';
@@ -35,6 +47,19 @@ export const dynamic = 'force-dynamic';
 
 const MARKETS = ['domestic', 'overseas'] as const;
 type Market = (typeof MARKETS)[number];
+/** 알림 본문용 시장 이름. */
+const MARKET_LABEL: Record<Market, string> = { domestic: '국내', overseas: '해외' };
+
+/**
+ * `?market=` 해석 (T-103). 없으면 두 시장(하위 호환), 허용 값이면 그 시장 하나, 그 밖이면 null(→ 400).
+ * `nextUrl` 이 없는 최소 요청 객체(기존 시험의 `{}`)는 미지정과 같게 본다 — 운영 Next 요청에는 항상 있다.
+ */
+function resolveTargetMarkets(req: NextRequest): readonly Market[] | null {
+  const raw = req.nextUrl?.searchParams.get('market') ?? null;
+  if (raw === null) return MARKETS;
+  const hit = MARKETS.find((m) => m === raw);
+  return hit ? [hit] : null;
+}
 
 const NEWS_FETCH_LIMIT = 20;
 /** 시장별 최대 2회 재시도 = 최초 시도 포함 총 3회. */
@@ -115,24 +140,43 @@ export async function POST(req: NextRequest) {
   if (authErr) return authErr;
 
   try {
+    // (T-103) 시장 지정 해석 — 인증 뒤, 설정 확인·M4 호출 전. 허용 밖 값은 아무것도 하지 않고 400.
+    const targets = resolveTargetMarkets(req);
+    if (targets === null) {
+      console.error('[cron/news-fetch] invalid market param — 400, M4 호출 없음');
+      return NextResponse.json({ ok: false, error: 'invalid_market' }, { status: 400 });
+    }
+    const single: Market | null = targets.length === 1 ? targets[0] : null;
+
     const base = resolveM4Base();
     const adminToken = resolveM4AdminToken();
 
     // Fail-safe: 설정 누락은 무한 재시도·크래시가 아니라 알림 1회 후 조용히 종료한다.
     // (M4_ADMIN_TOKEN 이 비어 있으면 매 attempt 가 어차피 401로 실패할 뿐이라, 3회 재시도 ×
-    //  2개 시장을 낭비할 이유가 없다.)
+    //  2개 시장을 낭비할 이유가 없다.) 시장 지정 호출도 같은 키·심각도 — 메시지에 시장만 덧붙인다.
     if (!adminToken) {
-      const msg = 'M4_ADMIN_TOKEN(또는 ADMIN_TOKEN) 미설정 — news-fetch 스킵';
+      const msg = 'M4_ADMIN_TOKEN(또는 ADMIN_TOKEN) 미설정 — news-fetch 스킵' + (single ? ` (market=${single})` : '');
       console.error(`[cron/news-fetch] ${msg}`);
       sendAlertThrottled('news-fetch:config', 'critical', 'news-fetch 설정 오류', msg);
       return NextResponse.json({ ok: false, error: msg, markets: [] });
     }
 
-    console.log(`[cron/news-fetch] start base=${base}`);
-    const results = await Promise.all(MARKETS.map((market) => fetchMarketWithRetry(base, adminToken, market)));
+    console.log(`[cron/news-fetch] start base=${base}` + (single ? ` market=${single}` : ''));
+    const results = await Promise.all(targets.map((market) => fetchMarketWithRetry(base, adminToken, market)));
     const failed = results.filter((r) => !r.ok);
 
-    if (failed.length > 0) {
+    if (single && failed.length > 0) {
+      // (T-103) 시장 지정 호출의 전량 소진 실패 — 부분 실패가 있을 수 없으므로 critical 한 종류.
+      const r = failed[0];
+      const name = `${MARKET_LABEL[r.market]}(${r.market})`;
+      sendAlertThrottled(
+        `news-fetch:${r.market}:failed`,
+        'critical',
+        `news-fetch ${name} 실패`,
+        `M4 뉴스 KB 갱신 실패 — ${name} 시장, 최대 ${MAX_ATTEMPTS}회 시도 후\n${r.market}: ${r.error}`,
+      );
+    } else if (failed.length > 0) {
+      // 두 시장(미지정) 경로 — 기존 키·심각도·문구 그대로.
       const allFailed = failed.length === MARKETS.length;
       const summary = failed.map((r) => `${r.market}: ${r.error}`).join('; ');
       sendAlertThrottled(
