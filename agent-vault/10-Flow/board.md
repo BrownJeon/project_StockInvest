@@ -4,6 +4,8 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-28 11:50 — [[T-103-news-fetch-market-split]] 뉴스 수집 크론 국내·해외 분리 배포 완료**(11:21 push, 릴리스 `20261028-112124-414cc3b4` ok, 코드 `8b1e712`, Reviewer PASS·Codex 지적 0·QA PASS, 내일 06:13 실제 동작 검증 예약). **[[T-105-news-rag-zero-hits]] 분석에 뉴스 0건 문제 원인 확정(M4 읽기 전용 진단)** — 발행일 RFC 822 저장·해외 RSS 2025-01 정지·news.macro 시드뿐. 수정은 home-m4-api `task-007`(Developer 진행 중, M4 push 는 사용자 승인). ADP-006 C01 2단계는 [[T-061-adp006-c01-analyst-policy-trial]] 참조.
+
 > **2026-10-28 05:15 — [[T-101-settings-post-market-overseas-switch]] 설정 '해외 장마감 후 분석' 스위치·[[T-102-usd-cash-unsettled-buy]] 미결제 매수 시 USD 예수금 판정 수정 운영 반영**(push `61b80c9..5ac9119`, 릴리스 `20261028-051140-5ac91195` ok). 스위치 키는 꺼진 채(사용자가 켠다)·킬스위치 ON 유지·주문 id 3229. T-102 사용자 확인: 대시보드 총자산이 숫자로 돌아왔는지.
 
 > **2026-10-25 23:30 — T-081 WP-D D1a 브로커 체결 원장 "앞으로 수집" 가동**: [[T-085-safety-paths-broker-ledger]](훅 감시 경로 추가, `21f84c3`)·[[T-086-d0-unmatched-sell-cost-basis]](거래 리포트 원가 미상 분리, `7f7b038`) 21:06 배포 ok(릴리스 `20261025-210643-7f7b0384`) → [[T-087-wpd-d1a-broker-fills-collect]] DDL(새 테이블 5개) 23:19 적용·코드 `1b6fc08` 23:21 배포 ok(릴리스 `20261025-232107-1b6fc082`)·첫 manual 7 run 전부 complete·수집 스위치 ON(23:24). 첫 자동 실행은 10-26 07:20 이후. 사용자 결정 대기: D1b 백필 승인·수집 실패 알림 여부. 킬스위치는 ON 유지. 후속 A13~A17은 실행 원장 §5.1.
