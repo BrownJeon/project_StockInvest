@@ -1,7 +1,7 @@
 ---
 task_id: T-106
 title: 뉴스가 연속 3회 0건이면 알림 — 수집 단계·분석 검색 단계 감시 (T-105 재발 방지)
-status: in-progress
+status: deployed
 priority: high
 project: StockInvest
 created: 2026-10-28
@@ -16,7 +16,7 @@ tags:
   - domain/observability
 aliases:
   - 뉴스0건감시
-waiting: [Developer 구현, Reviewer·Codex·QA, 장외 배포]
+waiting: [16:00 국내 분석 첫 관측, 10-29 06:00 수집 관측]
 demo_gate:
   required: false
   level: "none"
@@ -146,6 +146,10 @@ demo_gate:
 
 ## 배포 기록
 
+- [10-28 13:27] 푸시 `414cc3b..0825250`(커밋 `dfc8831` 문서 + `0825250` T-106). **사용자 지시**(원문): "커밋 및 푸시해서 배포작업 진행해줘". 예약했던 15:43 푸시를 사용자 지시로 앞당겼다(장중 푸시 — T-103 과 같은 방식). 푸시 직전 확인: 킬스위치 `true`(ON), 최근 3시간 `orders` 0건, 푸시 대상 커밋 2개 모두 이번 세션 작성분. 예약 작업(15:43)은 취소.
+- [10-28 13:29] 웹훅 blue/green 배포 완료 — `RELEASE_RESULT ok`, 릴리스 `20261028-132733-08252507`, 이전 `20261028-112124-414cc3b4`, `migrated=false`(DB 변경 없음). pm2 `stockinvest`·`stockinvest-cron` online(재시작 0), `/api/health` ok(`killSwitch:true`, safetyStatus green).
+- 롤백: `git revert 0825250` 후 푸시(코드만 되돌림, 상태 키 `news_zero_streak:*` 는 남아도 무해).
+
 ## Codex 검토
 
 ### [2026-10-28 12:3x] C2 review focus=none — done
@@ -156,6 +160,16 @@ demo_gate:
 - 원본: `.claude/state/codex-review/runs/20261028T032722Z-T-106-C2/raw.txt`
 
 ## 최종 요약
+
+**[T-106] 뉴스가 3일 연속 0건이면 텔레그램 알림 — 운영 반영 완료, 첫 관측 대기**
+
+- 상태: 배포됨(13:29 KST, 릴리스 `20261028-132733-08252507`). 관측 전.
+- 무엇이 바뀌었나: 뉴스 수집(06:00)과 국내·해외 장마감 후 분석(국내 16:00, 해외는 스위치 켠 뒤)이 뉴스 건수를 일 단위로 기록하고, 같은 채널이 연속 3일 0건이면 텔레그램 경고를 보낸다(20시간 스로틀 — 해결될 때까지 하루 1회 반복, 의도된 설계). 수집은 정상인데 검색에서 0건인 경우와 검색 자체가 실패한 경우도 따로 센다. 기록·알림은 4초 상한이라 수집·분석을 막지 않는다. 주문·시그널·안전장치 경로 변경 없음.
+- 배포: 위 배포 기록 참조(사용자 지시로 앞당긴 장중 푸시, 킬스위치 ON·최근 3시간 주문 0건 확인 후).
+- AI 가 검증한 것: Reviewer 2라운드 PASS(중간 2건 반영), Codex C2 코드 지적 0건, QA PASS(jest 59 suites·1260 tests, 서버 시간대 2종, 변이 12종 모두 검출, DB 멈춤 4초 폴백·같은 날 중복 미증가·3일째에만 알림 임시 시험). 못 한 것: 운영 DB·텔레그램 실제 연동(제약상 미실행) — 아래 관측으로 확인.
+- 👉 사용자가 확인할 것(AI 가 먼저 확인하고 결과를 보고한다): 오늘 16:00 국내 분석 직후 DB `system_config` 에 `news_zero_streak:retrieval:domestic`·`news_zero_streak:retrieval_error:domestic` 키가 생기고 `lastCount` 가 0 이 아닌지(M4 수정 task-007 로 뉴스가 검색되기 시작했으므로 정상 기준은 5 이하의 양수), 내일 06:00 수집 뒤 `news_zero_streak:fetch:domestic`·`:overseas` 키 생성. 정상 기준: 텔레그램 경고가 오지 않는다.
+- 남은 일: 위 관측 기록, T-105 종료 조건(분석 로그 `[rag-retrieval] news>0`) 확인, 낮음 2건(D-1 `.catch` 구분 시험 추가·D-2 경고 문구 매듭) 후속 후보.
+- 이슈·위험: 해외 장마감 후 분석은 스위치가 꺼져 있어 해외 검색 감시는 스위치를 켠 뒤부터 시작된다. 연휴·휴장일에는 건수가 0 이어도 경고가 날 수 있다(3일 연속 기준).
 
 ## 데모 검토 (demo gate)
 
