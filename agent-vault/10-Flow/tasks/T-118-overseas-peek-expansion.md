@@ -1,7 +1,7 @@
 ---
 task_id: T-118
 title: 해외 peek 슬롯 확대 + 피드별 겹침 검사 + peek 재시도 단축 (T-116 후속, T-114 독립 검토 HIGH H1 대응)
-status: deployed
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-28
@@ -136,10 +136,11 @@ waiting: []
 ## 배포 기록
 
 - [2026-10-29 13:51] **배포 완료** — push 2026-10-29 13:49:04 KST(`0761fec..5ca7817`, 세 코드 커밋 `159c4a7`·`f91cd94`·`3568ebc` + 문서 커밋 12개 한 번에) → webhook blue/green **릴리스 `20261029-134931-5ca78174` 13:51 `RELEASE_RESULT ok`**(migrated=false, 헬스체크 정상, 이전 릴리스 `20261028-225643-0761feca`). push 전 점검: 킬스위치 ON·최근 3시간 주문 0건·자동 청산 스위치 OFF·원격 main fast-forward. 배포는 국내 장중이었다(사용자 지시로 15:42 창 대기 없이 진행 — 킬스위치 ON·청산 OFF 라 매매 영향 없음). 독립 확인(Leader): pm2 `stockinvest`(**Node 24.22.2**, 첫 Node 24 기동)·`stockinvest-cron` 각 1개·restarts 0·`/api/health` 200·cron-runner 프로세스 1개(구 러너 잔존 없음)·cron 로그 오류 0. 재기동 직후 `strategy-eval` 첫 호출이 약 3~5분 걸렸으나(10-26 의 장중 재기동 3건도 1~3분, 종목당 KIS 분봉→일봉 대체 순회) 정상 완료돼 13:55 부터 매분 틱 재개·하트비트 정상. 이 task 몫: 해외 정시 슬롯은 배포 직후 해당 시각 첫 틱부터 새 규칙(매시, 06·07·08·15·16시 제외)으로 돈다.
+- [2026-10-29 14:09] **운영 관측(첫 새 슬롯)**: 배포 직후 새 규칙의 슬롯이 실제로 돌았다 — `news-peek-overseas-13` **13:53:10 OK**(T-116 에는 없던 슬롯, 날짜파일이 없어 배포 직후 첫 틱에 실행), `news-peek-overseas-14` **14:00:11 OK**, 국내 `news-peek-domestic-13` 13:00:15 OK. DB `ci_capture_status:overseas`(14:00:10): status ok·fetched 79·inserted 1·duplicates 78·consecutiveFailures 0, **`feeds` 4개 기록**(dowjones·yahoo·bloomberg·cnbc) 모두 `gap:false`·`consecutiveGaps:0` — 직전 캡처와 겹쳐 이어짐. 하트비트·매분 틱 정상. 사용자 지시로 이 시점에 완료 처리. (Yahoo 의 09·17시 gap 표시는 사양 결과로 오경보 아님 — 관측 때 구분할 것.)
 
 ## 최종 요약
 
-- **상태**: 배포 완료, 운영 관측 대기.
+- **상태**: **완료** — 배포 후 첫 운영 관측 정상(아래 「운영 관측」). 사용자 지시(10-29 14:1x)로 `done` 처리.
 - **무엇이 바뀌었나**: 뉴스 기사 **최초 관측 시각**을 더 촘촘히 남긴다 — 해외 peek 가 하루 7회에서 **매시(06·07·08·15·16시 제외, 하루 19회)** 로, 국내는 10·13시. 매 캡처마다 피드별로 직전 관측과 **겹치는지(gap/bootstrap/skipped)** 를 상태 `ci_capture_status:<시장>.feeds` 에 기록한다. 주문·시그널·알림·분석 판단은 불변(관측 전용).
 - **배포**: 2026-10-29 13:51, 릴리스 `20261029-134931-5ca78174`(ok).
 - **AI 가 검증한 것**: Reviewer PASS(병합본 기준, M-1 조건 해소)·Judge C2·Codex(medium 1건 기각 — 날짜파일 호출 뒤 기록은 러너 전체 의도·peek 는 멱등, low 3건 후속)·QA PASS(직접 실행), 러너 시험 81·119·76·22·81 전부 통과, 변이 18건 잡힘, 병합 후 broker-fills "추가만" 시험 통과. **못 한 것**: 운영 M4 실호출·실제 DB 실행계획.

@@ -165,3 +165,6 @@ aliases:
 - **정리 대기**: 임시 worktree 5개 `~/.node-local/stockinvest-{t117,t118,t119,m118,m119}`(`git worktree remove`; 미커밋 내용은 이미 main 에 커밋됨)·시험 로그 디렉터리 `~/.node-local/{t118-work,m118-work,m119-work,t119-scratch,t119-scratch,m119-scratch,m119-qa,...}`·dangling 임시 커밋(`e565c07b…`, gc 가 정리).
 - **후속 task**: T-120(예약: T-105 후보 E), T-121(골든 시험), T-122(feeds), T-123(hp 조용히 건너뜀 등 — 켠 첫 주 상태 확인 후), 그 밖 T-104 흡수 단계·T-108 화면 개편(데모 승인 필요)은 통합 계획 `docs/design/2026-10-28-collection-menu-integrated-plan.md` §5.
 - **보안 위생 후보(사용자 확인 후 `/이슈기록`)**: 운영 러너의 `curl` 인자에 `x-cron-secret` 값이 있어 `ps` 출력에 보인다(같은 서버 사용자에게만; 이번 변경이 만든 것 아님, QA·내 점검 중 `ps` 출력에 두 번 노출됨 — 로그·문서에는 적지 않았다). 인자 대신 환경변수/헤더 파일로 넘기는 개선 후보. 값은 어디에도 기록하지 말 것.
+
+### 7-11. 갱신 (14:15) — 완료 처리 지시 (사용자)
+- **T-118 은 `status: done` 으로 변경했다**(첫 운영 관측 정상: 13:53 `news-peek-overseas-13`·14:00 `news-peek-overseas-14` OK, `feeds` 4개 gap 없음). **T-117·T-119 는 첫 관측 후 이상 없으면 `done` 으로 변경**하라는 사용자 지시 — 새 세션 할 일: ① T-119: 오늘 21:01 첫 실행 관측(§7-10 ③) 정상이면 `T-119-holdings-premarket-check.md` frontmatter `status: done` + 최종 요약 「상태」 줄에 완료 시각 ② T-117: 내일 10-30 07:55 이후 첫 실행 관측(§7-10 ⑤) 정상이면 `T-117-daily-bars-cron-registration.md` 를 `done`. 이상이 보이면 `done` 으로 올리지 말고 원인 조사 task 를 열어 사용자에게 보고(롤백 필요 시 `git revert` 후 push). 두 task 문서 「최종 요약」 상태 줄에 이 조건을 적어 두었다.
