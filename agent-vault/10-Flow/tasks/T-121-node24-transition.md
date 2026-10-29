@@ -1,7 +1,7 @@
 ---
 task_id: T-121
 title: 시스템 Node 20→24 전환 영향 정리 — 골든 시험 1건 실패 + 다음 배포부터 StockInvest 가 Node 24 로 기동
-status: in-progress
+status: qa-passed
 priority: medium
 project: StockInvest
 created: 2026-10-29
@@ -17,6 +17,23 @@ tags:
 aliases:
   - Node24전환
 waiting: []
+demo_gate:
+  required: false
+  level: "none"
+  status: "not_required"
+  version: 0
+  repo_path: ""
+  artifact_url: ""
+  content_sha256: ""
+  decided_by: "judge"
+  rule_id: ""
+  approved_by: ""
+  approved_at: ""
+  approval_quote: ""
+  waived_by: ""
+  waived_at: ""
+  waiver_quote: ""
+  active: false
 ---
 
 # T-121 시스템 Node 20→24 전환 영향 정리
@@ -67,5 +84,62 @@ waiting: []
 - [2026-10-29 13:55] **사용자 확인**: Node 20→24 업그레이드는 사용자가 오전에 **다른 세션에서 의도해 진행한 정상 작업**이며 그 세션에서 검증도 끝났다("버전 업그레이드는 내가 오전에 다른 세션에서 진행했으며 정상적인 작업"). 위 「목표·배경」의 "원인 불명/주체 미확인" 표현은 이로써 해소 — 의도된 변경이다.
 - [2026-10-29 13:51~13:58] **첫 Node 24 배포 결과(T-117·T-118·T-119 한 번에)**: 릴리스 `20261029-134931-5ca78174` build·헬스체크 ok(`next build` 가 Node 24 에서 성공), `stockinvest`(Next 15.5.27) **Node 24.22.2 로 정상 기동·restarts 0**, `/api/health` 200, `stockinvest-cron`(bash 러너, pm2 node_version 표시는 데몬 값 20.20.2 — 러너는 Node 를 쓰지 않음) 매분 틱 정상. 위 「확인 못 한 것」 3번(`next build`·운영 런타임 Node 24 동작)은 **해소**. 남은 것: 골든 시험 1건(`scenario-card-domestic-golden`, `AM 12:00`↔`오전 12:00`) 정리 — 배포와 무관한 시험 정리라 우선순위 낮음, judge 접수 후 Developer→Reviewer→QA.
 
+- [2026-10-29 14:12~14:45] **착수·구현·검증 완료(Leader)**: 사용자 지시("T-118·T-119 작업은 완료했으니 T-121 부터 이어서")로 착수. 착수 조건 3개 확인(T-118 done·T-119 deployed+최종 요약, 두 커밋이 `origin/main` 에 있음, 락 대기열 비어 있음 — 13:49 배포로 T-117 도 함께 나갔다). judge intake(규칙 엔진 fallback: Jev 예산 창 만료) → Developer(픽스처 Node 24 재생성) → Reviewer PASS → QA 통과 → 로컬 커밋 `c872f6f`(미배포). 결정 기본값 (a) 로 진행: 운영 소스 불변, 시험 픽스처 1개만 변경. 자세한 내용은 아래 각 절·최종 요약.
+
+## 판단 기록 (judge)
+
+- [2026-10-29 14:16] intake engine=rules → task_type=null · risk=R1 · developer_model=opus · next=demo_first · demo=delta/designer(DM-kw-delta) · actions=prepare_demo,request_demo_approval,assign_developer | overrides=MD-judge-failed-opus,DM-kw-delta | fallback=budget_window_closed | tokens=0
+- [2026-10-29 14:18] intake [재실행] engine=rules → task_type=null · risk=R1 · developer_model=opus · next=assign · demo=none/- · actions=assign_developer | overrides=MD-judge-failed-opus | fallback=budget_window_closed | tokens=0 | 재실행 사유: 첫 판정의 demo delta(DM-kw-delta)가 요약 속 부정문 '화면 구조 변경 없음'의 문자열에 걸린 오탐이라는 Leader 판단. 요약 문구만 Leader 지정으로 교체, changed_paths·사실관계는 동일
+
+## Developer
+- [14:19] 착수: 서버 `node -v`=v24.22.2·ICU 78.3 확인. 작업 폴더 `~/.node-local/stockinvest-t121`(origin/main `5ca7817` detached), 시험 락 대기 0. 데모 게이트 `check.mjs check` 첫 두 줄 `DEMO_GATE_BLOCKED` / `task: T-121`(frontmatter 에 demo_gate 없음) — 단 변경 파일은 `projects.mjs isUiPath()`=false(`**/__tests__/**` 제외 규칙)라 화면 파일이 아니다. 운영 소스·주문 경로 변경 없음 → 안전장치 self-check 해당 없음.
+- [14:20] 기준선(Node 24, flock 1파일): 6/7 — 실패 1건 "국내 3장(이미 평가등급순 입력) → 정렬 라벨 바 + 진입줄 style 외 동일", 기대 `진입 가능: 10. 21. AM 12:00 KST` 2곳 대 실제 `오전 12:00 KST`. 배정 설명과 같음. 로그 `~/.node-local/t121/baseline-golden.log`.
+- [14:22] 재생성(픽스처 머리말 절차 재현, 손으로 고치지 않음): `git archive 7cd47e7 src jest.config.js package.json tsconfig.json` → 스크래치 `~/.node-local/t121-golden/head`, `Dashboard.tsx` 1024행 `function TomorrowScenarioTab(` 앞에 `export` 한 단어만(원본과 diff 1줄 확인). 입력·`host-sim.ts` 는 현 worktree 사본(0e9991c 이후 변경 없음), mock 6개·`useForeignHost()`·`globalThis.React` 는 골든 시험 파일과 같게 둔 생성 시험으로 `renderToStaticMarkup`(7cd47e7 자체 jest 설정). React·react-dom 18.3.1(7cd47e7 lock 과 같음), @swc/jest 0.2.37. 로그 `~/.node-local/t121/regen-golden.log`, 생성·비교·조립 스크립트 `~/.node-local/t121/gen-scripts/`.
+- [14:22] 바이트 비교(문자 단위, `~/.node-local/t121/compare.log`): `HEAD_CARDS[0..4]`·`HEAD_TOMORROW_EMPTY` 바이트 동일. `HEAD_TOMORROW` 만 차이 2곳(UTF-16 위치 1064·1960, 둘 다 `진입 가능: 10. 21. ` 바로 뒤) `AM`→`오전`, 그 밖 차이 0(UTF-8 2733→2741바이트). 기존 리터럴 7개는 모두 `JSON.stringify(값)` 과 파일 안에서 정확히 1회 일치 → 리터럴 교체는 재생성 값의 `JSON.stringify` 로 1곳만.
+- [14:23] 변경 파일 1개 `src/components/__tests__/fixtures/t062-domestic-golden-head.ts`(+7 −2): ① 머리말 7행 `AM 12:00`→`오전 12:00` ② 8행 뒤 재생성 설명 5줄(2026-10-29·Node 24.22.2/ICU 78.3·차이 2곳·나머지 바이트 동일·Node 20 에서는 `AM 12:00` 으로 그려져 1건 실패) ③ `HEAD_TOMORROW` 리터럴. 시험 파일·입력 파일·`Dashboard.tsx` 변경 없음.
+- [14:23] 검증: 골든 시험 7/7 통과(Node 24, flock, `~/.node-local/t121/after-golden.log`). eslint 는 프로젝트에 설정 파일이 없어 실행 불가(`eslint` exit 2 "couldn't find a configuration file", `~/.node-local/t121/eslint.log`) — 린트는 못 했다. 대신 TypeScript 5.5.3 `transpileModule` 구문 진단 0(`~/.node-local/t121/syntax-check.log`). `git status`: 변경은 픽스처 1개 + untracked `node_modules` 링크, 스테이징 0. 커밋·push·stash 안 함. 전체 jest·tsc 는 실행 안 함(QA 몫).
+- [14:24] 정리: 스크래치 `~/.node-local/t121-golden/` 삭제(안의 `node_modules` 링크를 먼저 unlink, NFS `node_modules` 무사 확인). 로그·스크립트는 `~/.node-local/t121/` 에 남김.
+- [14:25] 남은 위험: (1) 이 골든은 이제 Node 24 ICU 기준 — Node 20 환경에서 돌리면 같은 1건이 반대로 실패한다. (2) 시험이 고정하는 `오전 12:00` 은 host-sim(UTC·ko-KR) 아래 시험용 표기라 사용자 브라우저 화면의 표기를 보증하지 않는다(그 줄이 UTC 벽시계에 KST 를 붙이는 기존 표시 문제는 범위 밖, 그대로). (3) 생성 시험은 골든 시험 파일의 mock·흉내 구성을 옮긴 것이라, 2026-10-21 원 생성 때 쓴 하네스와 완전히 같은지는 기록이 없어 확인 못 했다 — 다만 결과가 6개 리터럴 바이트 동일·차이 2곳 예상대로라 동등하다고 본다.
+
+## Reviewer
+- [14:35] 범위·방법: 서버 worktree `~/.node-local/stockinvest-t121`(HEAD `5ca7817`)의 working-tree `git diff` 와 연관 파일을 독립 검토했다. 읽기 + 격리 스크래치 재현(`~/.node-local/t121-review/`, 끝나서 삭제)만 했고 코드·시험·픽스처 수정 0, commit·push·stash 0, pm2 명령·DB·다른 worktree 접근 0. 증거 요약 `~/.node-local/t121/review-evidence.log`, 골든 실행 로그 `~/.node-local/t121/review-golden-node24.log`. (공개: Node 20.20.2 재현용으로, 08:35 apt 업그레이드 때 파일은 지워졌지만 기존 프로세스가 쥐고 있는 바이너리 이미지를 `/proc/<pid>/exe` 에서 스크래치로 복사해 실행했다 — 읽기 전용 복사이며 해당 프로세스에는 영향이 없다.)
+- [14:35] [확실] 항목1 diff 범위: 변경 파일은 `src/components/__tests__/fixtures/t062-domestic-golden-head.ts` 1개(+7 −2)뿐이고 스테이징 0. 리터럴 바이트 비교(HEAD blob 대 working tree): `HEAD_CARDS[0..4]`·`HEAD_TOMORROW_EMPTY` 는 바이트 동일, `HEAD_TOMORROW` 는 UTF-16 위치 1064·1960 두 곳의 `AM`→`오전` 뿐이며 `old.replaceAll('AM 12:00','오전 12:00') === new` 가 참(UTF-8 2733→2741바이트). 리터럴 밖 변경은 머리말 주석뿐(7행 `AM`→`오전` 1줄 교체 + 설명 5줄 추가).
+- [14:35] [확실] 머리말 서술 대조: 날짜(2026-10-29)·Node 24.22.2/ICU 78.3(`process.versions.icu` 실측)·"2곳"·"나머지 리터럴 바이트 동일"·"Node 20(20.20.2)에서 `AM 12:00` 으로 그려져 '내일' 탭 시험 1건 실패" 모두 실측과 일치한다. Node 20.20.2 이미지(ICU 78.2/CLDR 48.0)로 골든 시험을 돌리면 6/7 이고 실패는 그 1건뿐이다. 정밀도 지적 1건은 아래 L-1.
+- [14:35] [확실] 항목2 재생성 충실도(독립 재현): `git archive 7cd47e7`(src·jest.config.js·package.json·tsconfig.json) → `Dashboard.tsx:1024` 선언 줄에 `export` 한 단어만 추가(순정본 대비 diff 정확히 1줄) → 골든 시험 파일의 mock 6개·`useForeignHost()`·`globalThis.React` 를 그대로 옮긴, 내가 새로 쓴 렌더 시험(Developer 의 `regen.test.ts` 미사용)을 7cd47e7 자체 jest 설정으로 실행. 결과 — Node 24.22.2: 7개 리터럴 전부 새 픽스처와 일치(기존 픽스처와는 `HEAD_TOMORROW` 만 불일치). Node 20.20.2: 7개 리터럴 전부 기존(HEAD) 픽스처와 일치(새 픽스처와는 `HEAD_TOMORROW` 만 불일치). 즉 10-21 원 골든이 Node 20.20.2 산출물이었다는 점과 이번 재생성 하네스가 원 생성 하네스와 출력 동등하다는 점이 둘 다 확인돼, Developer 가 남긴 "원 하네스와 같은지 확인 못 함" 위험 (3)은 해소된다. 입력·`host-sim.ts` 는 커밋 `0e9991c` 본과 바이트 동일(`cmp`), react·react-dom 18.3.1·jest 29.7.0·@swc/jest 0.2.37 은 7cd47e7 과 현재가 같다(7cd47e7 이후 `jest.config.js` 에 `setupFilesAfterEnv` 가 추가됐으나 7cd47e7 자체 설정을 써서 무관).
+- [14:35] [확실] 시험 의도 보존(골든은 HEAD 출력이지 현재 코드 출력이 아님): 재생성은 7cd47e7 의 `Dashboard.tsx`·`ScenarioCard.tsx` 로 했다. "진입 가능" 서식 코드 `new Date(sig.valid_from).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })` 는 `7cd47e7:Dashboard.tsx:1121` 과 현재 `Dashboard.tsx:1164` 가 글자 그대로 같다 — 따라서 `AM`→`오전` 은 코드 회귀가 아니라 순수 런타임(ICU) 차이다.
+- [14:35] [확실] 항목3 파급: 픽스처를 import 하는 곳은 `scenario-card-domestic-golden.test.ts` 1곳(grep, node_modules·.git·.next 제외; 나머지는 주석·vault 문서)이다. 골든 시험 파일·`t062-domestic-golden-inputs.ts`·`host-sim.ts`·`Dashboard.tsx`·`ScenarioCard.tsx` 는 HEAD 와 diff 없음. 운영 소스 변경 0, 픽스처는 `__tests__/` 아래라 `tsconfig.json` exclude 대상이고, 이 저장소의 `scripts/*.sh`·`scripts/git-hooks`·`.github` 에는 jest 를 배포·커밋 게이트로 호출하는 곳이 없다(워크스페이스 공용 deploy.sh·release.sh 는 저장소 밖이라 미확인). untracked 는 `node_modules` 심볼릭 링크(→ NFS 절대경로) 하나뿐이고 스테이징된 것은 없다. 내 실행 뒤에도 `git status` 는 같고(수정 1 + untracked 1) 픽스처 sha256 은 불변이다.
+- [14:35] [확실] SAFETY_PATHS 해당 여부: `awk '/^SAFETY_PATHS=\(/,/^\)/' scripts/git-hooks/commit-msg` 에서 76개 패턴을 추출해 대조했다(양성 대조 `src/lib/safety/dry-run.ts` 는 매치 확인). 이 픽스처 경로는 매치 0 이라 커밋 훅의 Reviewer 판정 요구 대상은 아니다(이 기록은 task 규약상 수행).
+- [14:35] [확실] 항목5 실행: 지정 명령대로 골든 시험 1파일을 서버 Node 24.22.2 에서 실행 — 7/7 통과, exit 0, 0.16초(`~/.node-local/t121/review-golden-node24.log`). 전체 jest·tsc 는 실행하지 않았다(QA 몫).
+- [14:35] 항목4 시험 의도 의견(채택은 Leader 판단): [가능성 높음] 이번 선택(골든을 Node 24/ICU 78.3 출력에 고정)은 허용 가능하다. 근거 ① 이 토큰은 코드가 아니라 로케일 데이터가 정하고, 이 줄의 서식 코드는 HEAD 와 같아 정규화해도 잃는 회귀 감지력이 사실상 없다 — 반대로 고정하면 바이트 엄격성이 유지된다. ② 새 값 `오전` 이 장기적으로 더 안정적인 쪽일 가능성이 높다 — 서버에 남은 ICU 70.1·72.1·73.1·73.2·75.1(Node 16·18·20.15.1)과 78.3 은 모두 `오전` 이고 `AM` 은 ICU 78.2(Node 20.20.2, Mac 의 Node 22.22.0)에서만 관측했다(ICU 76·77 은 미관측). ③ 변경이 픽스처 1개·시험 로직 0 이라 되돌리기 쉽다. 한계: (a) 같은 CLDR 48.0 인데 ICU 패치(78.2→78.3)로 출력이 바뀌었으므로 골든은 ICU 패치 단위로 다시 깨질 수 있다 — Mac 에서 jest 를 로컬로 돌린다면(Node 22.22.0/ICU 78.2) 새 골든이 반대로 실패할 가능성이 높다(실행은 안 해 봄). (b) 재생성마다 같은 수작업 절차가 든다. 대안 비교: 시험이 `(AM|PM|오전|오후)` 를 정규화해 비교하거나 같은 `Intl` 호출로 기대 토큰을 계산하면 ICU 에 무관해지지만, 시험 파일 수정이 필요하고 "골든은 HEAD 렌더 바이트" 원칙을 그 토큰 한정으로 느슨하게 만든다. 이번 변경을 막을 사유는 아니며, 같은 ICU 흔들림이 재발하면 정규화로 전환하길 권한다(그때는 시험 파일 수정이라 Reviewer 재감사 대상).
+- [14:35] 발견 사항(심각도 순, critical 0 · high 0 · medium 0 · low 3). L-1 [LOW·문서] 머리말은 원인을 "Node 24 ICU" 대 "Node 20" 으로 서술하지만 실제 변수는 ICU 패치 78.2(`AM`) 대 78.3(`오전`)이다. "Node 20 에서는 … 실패" 는 20.20.2 한정으로만 참이고 Node 20.15.1(ICU 75.1)은 `오전` 을 낸다. 권고(선택): "ICU 78.2(Node 20.20.2)는 `AM`, ICU 78.3(Node 24.22.2)은 `오전`" 으로 한 줄 보정. L-2 [LOW·설계] 골든이 ICU 패치에 민감함(위 한계 a). L-3 [LOW·절차] `.gitignore` 가 `node_modules/`(끝 슬래시)라 심볼릭 링크 `node_modules` 는 무시되지 않고 `?? node_modules` 로 보인다 — `git add -A`·`git add .` 를 쓰면 NFS 절대경로 링크가 스테이징된다. 계획대로 파일 경로를 명시해 add 하고 커밋 직전 `git diff --cached --name-only` 가 픽스처 1줄인지 확인할 것.
+- [14:35] Developer 보고와의 차이: 없음(주장한 사실 전부 재현). 다만 "Node 20 에서는 실패" 의 근거가 QA A/B 기록뿐이었는데 Node 20.20.2 이미지로 직접 재현해 독립 보강됐다. eslint 미실행(설정 파일 부재)은 Developer 가 공개한 대로이며, 골든 시험 실행이 이 파일을 swc 로 변환해 통과했으므로 구문 문제는 없다.
+- [14:35] 확인하지 못한 것: ① ICU 76·77 에서의 출력, ICU 78.2→78.3 이 출력을 바꾼 원인(CLDR 데이터인지 ICU 코드인지 [추측]) ② 실제 사용자 브라우저(Chrome, 갤럭시 S25+)의 "진입 가능" 표기와 이 탭이 서버 선렌더(SSR)를 타는지 ③ 전체 jest·tsc(QA 몫) ④ 원격 최신 여부(worktree 의 로컬 `origin/main` 참조는 `5ca7817` 로 HEAD 와 같으나 fetch 하지 않았다) ⑤ 다른 앱의 Node 24 영향(범위 밖).
+- [14:36] **최종 판정: PASS (scope: src/components/__tests__/fixtures/t062-domestic-golden-head.ts)**
+
+## QA
+
+- [14:36~14:39] QA(Leader 직접 실행, T-117 QA 와 같은 방식 — 서버 `~/.node-local/t121/qa-run.sh`, flock 직렬, 읽기 전용): worktree `~/.node-local/stockinvest-t121`(base `5ca7817` = T-117·T-118·T-119 포함 `origin/main`), Node 24.22.2·ICU 78.3. 변경 파일은 `src/components/__tests__/fixtures/t062-domestic-golden-head.ts` 1개(sha256 앞 16자 `b7ec7c810ede3fd2`, 실행 전후 동일), 스테이징 0 → 실행 후에도 0.
+- [14:39] **전체 jest(Node 24, `--maxWorkers=3`)**: Test Suites 306 passed·4 skipped(310) / Tests 8532 passed·149 skipped(8681) / **실패 0**, 161초. `scenario-card-domestic-golden.test.ts` PASS. 비교: T-117 QA 때 Node 20 전체는 302 suites·8429 passed·4 skipped·149 skipped — 늘어난 4 suites·103 tests 는 그사이 병합된 T-118·T-119 시험이고 skip 수(4·149)는 같다. Node 24 에서 이 task 착수 전 실패하던 1건은 사라졌다.
+- [14:39] **tsc `--noEmit`(Node 24)**: exit 0, 출력 0줄. 단 이 변경 파일은 `tsconfig.json` 의 `exclude`(`**/__tests__/**/*`) 대상이라 tsc 가 보지 않는다 — 이 변경에 대한 검증력은 없고, 운영 소스가 base 와 동일하다는 보조 확인이다(`--listFilesOnly` 로 `src/` 510개 포함·픽스처 0개 확인). 실행이 5초로 짧은 것은 증분(`incremental: true`) 설정 때문일 수 있다 [추측].
+- [확인] Reviewer PASS(scope 픽스처 1개, 독립 재현으로 Node 24 출력 = 새 픽스처·Node 20.20.2 출력 = 기존 픽스처 확인)를 QA 가 전제로 삼았다. 이후 코드 변경 없음 → Reviewer 재순환 불필요.
+- [QA 판정] **통과**. 운영 영향 없음(시험 파일만 변경, 운영 소스·DB·cron·pm2 호출 0). 못 한 것: Mac 등 다른 ICU 환경의 jest 실행, 실제 Chrome 의 "진입 가능" 표기 확인(서버 선렌더 여부 포함).
+
 ## 최종 요약
-(미작성)
+
+- **상태**: 구현·검증 완료, 로컬 커밋 `c872f6f`(워크트리 원본 `0d9fb7b`) — **미배포**. push 시점은 사용자 결정 대기.
+- **무엇이 바뀌었나**: 서버 Node 가 24 로 바뀐 뒤 실패하던 시험 1건(`scenario-card-domestic-golden`)을 고쳤다. 원인은 시험 환경의 12시간제 표기가 `AM 12:00` 에서 `오전 12:00` 으로 바뀐 것뿐이었고, 시험 기대값 파일 1개(`src/components/__tests__/fixtures/t062-domestic-golden-head.ts`)를 머리말의 생성 절차대로 Node 24 에서 다시 만들어 해당 2곳만 바꿨다. **운영 소스·화면·동작 변화 없음.**
+- **배포**: 하지 않았다. 시험 파일만 바뀌어 운영에 반영될 내용이 없고, push 하면 blue/green 재배포(앱·크론 재기동)만 일어난다. **같은 배포에 실린 다른 작업**: 해당 없음(미배포) — push 하면 로컬에만 있는 문서 커밋 2개(`ac4fd25`·`5da008a`)가 함께 나간다.
+- **AI 가 검증한 것**: ① Developer — 재생성 값과 기존 값을 바이트 비교해 차이가 `AM`→`오전` 2곳뿐임을 확인. ② Reviewer PASS — 별도 렌더 시험으로 독립 재현(Node 24 출력 = 새 픽스처, Node 20.20.2 출력 = 기존 픽스처). ③ QA — Node 24 전체 jest 306 suites·8532 통과·**실패 0**(착수 전 실패 1건 해소), 골든 7/7. tsc 는 exit 0 이지만 이 변경 파일이 tsconfig 제외 대상이라 검증력은 없음.
+- **AI 가 못 한 것**: eslint(프로젝트에 설정 파일 없음)·Mac 등 다른 ICU 환경의 jest·실제 Chrome 화면의 "진입 가능" 표기 확인. judge 는 Jev 를 쓰지 못하고 규칙 엔진으로만 판정했다.
+- 👉 **확인할 것**: 없음 — 운영 영향이 없다. (참고) 다음 배포 뒤 서버에서 전체 jest 를 돌리면 이 건이 0 실패인지 이미 확인됨.
+- 👉 **결정할 것**: ① **push 시점** — 권고: 이 커밋만으로 단독 배포하지 않고 **다음 기능 배포(T-122·T-123 등)에 묶어** 올린다(이번엔 재기동 이득이 없음. 단독 push 가 필요하면 15:40~20:00 창, 사용자 확인 후). ② **Jev 예산 창 갱신 여부** — `.claude/tools/jev-judge/config.json` 의 창이 2026-09-27 부터 28일이라 10-25 에 끝나 judge 가 규칙 엔진 fallback 으로만 동작한다(사용 $0.016/상한 $5). 판정 실패 시 developer 는 Opus 로 간다. 갱신은 사용자 결정이라 손대지 않았다.
+- **남은 일**: push(위 ①). 후속 task T-122(feeds 정확도)·T-123(조용히 건너뜀 알림 등)은 별개. 워크트리 `~/.node-local/stockinvest-t121` 은 push 확인 뒤 정리.
+- **이슈·위험**: ⓐ 이 골든은 이제 **ICU 78.3(Node 24.22.2) 표기**가 기준이다 — ICU 78.2(Node 20.20.2)나 Mac 로컬 Node 22 에서 jest 를 돌리면 같은 1건이 반대로 실패할 수 있고, ICU 패치만 바뀌어도 다시 깨질 수 있다. 재발하면 시험에서 `AM/PM/오전/오후` 를 정규화하는 방식으로 바꾸길 권한다(Reviewer 의견, 시험 파일 수정 필요). ⓑ 절차 순서 1건: demo_gate 기록(`init`)을 Developer 시작 뒤에 했다(결과 `not_required`, 영향 없음). judge 첫 판정은 요약문의 부정문 "화면 구조 변경 없음" 에 키워드 규칙이 걸려 `delta` 였고, 사실 그대로 쓴 요약으로 재실행해 `none` 을 얻었다(두 기록 모두 `## 판단 기록 (judge)` 에 남김). ⓒ Reviewer low 3건 중 머리말 서술 보정(원인이 "Node 24 대 20" 이 아니라 ICU 78.2 대 78.3)은 선택 사항으로 두었다.
+
+## 데모 검토 (demo gate)
+
+> 실행 판정 정본은 frontmatter `demo_gate` 이다. 이 표는 check.mjs 가 함께 기록하는 사람용 이력이다(docs/demo-review-gate.md).
+
+| 버전 | 상태 | 저장소 파일 | Artifact | 사용자 결정 | 일시 |
+|---|---|---|---|---|---|
+| - | 해당없음 | - | - | judge: none | 10-29 14:26 |
