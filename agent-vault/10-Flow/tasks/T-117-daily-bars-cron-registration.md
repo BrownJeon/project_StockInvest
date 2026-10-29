@@ -1,11 +1,11 @@
 ---
 task_id: T-117
 title: 일봉 정기 증분 수집 크론 등록(R13) — 수동 호출만 하던 daily-bars 를 러너에 하루 1회 등록
-status: doing
+status: deployed
 priority: high
 project: StockInvest
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-10-29
 base_ref: faf8bc3
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa, codex, deployer]
@@ -131,5 +131,15 @@ waiting: []
 
 ## 배포 기록
 - [2026-10-29 06:36] **05:10~06:50 배포 창 마감 점검(예약 메모)** — 아직 나갈 수 없다: Reviewer PASS(05:17)·Judge C2(`codex_required=true`)까지만 끝났고 **Codex(R2 필수)와 QA 는 미실행·커밋 전**이다. 사유: ① 04:5x 세션 중단(10-28 23:49 서버 정지→04:43 재부팅)으로 파이프라인이 늦어졌고 ② 사용자 PC 업데이트·서버 재기동 예정으로 05:1x 에 무거운 작업을 멈췄다(재기동은 06:36 현재 아직 안 됨, 서버 가동 1시간 53분). Codex+QA(직렬 시험 약 40분) 후 06:50 이내 push 는 불가능하다. **push 하지 않았고, 배포를 오늘 15:40~20:00 창으로 미룬다**(킬스위치 ON·최근 3시간 주문 0건 확인 후). 일봉 첫 실행은 **10-30 07:40~07:54**(07:35~07:57 cron 재시작 배포는 피할 것 — Reviewer L-2).
+- [2026-10-29 13:51] **배포 완료** — push 2026-10-29 13:49:04 KST(`0761fec..5ca7817`, 세 코드 커밋 `159c4a7`·`f91cd94`·`3568ebc` + 문서 커밋 12개 한 번에) → webhook blue/green **릴리스 `20261029-134931-5ca78174` 13:51 `RELEASE_RESULT ok`**(migrated=false, 헬스체크 정상, 이전 릴리스 `20261028-225643-0761feca`). push 전 점검: 킬스위치 ON·최근 3시간 주문 0건·자동 청산 스위치 OFF·원격 main fast-forward. 배포는 국내 장중이었다(사용자 지시로 15:42 창 대기 없이 진행 — 킬스위치 ON·청산 OFF 라 매매 영향 없음). 독립 확인(Leader): pm2 `stockinvest`(**Node 24.22.2**, 첫 Node 24 기동)·`stockinvest-cron` 각 1개·restarts 0·`/api/health` 200·cron-runner 프로세스 1개(구 러너 잔존 없음)·cron 로그 오류 0. 재기동 직후 `strategy-eval` 첫 호출이 약 3~5분 걸렸으나(10-26 의 장중 재기동 3건도 1~3분, 종목당 KIS 분봉→일봉 대체 순회) 정상 완료돼 13:55 부터 매분 틱 재개·하트비트 정상. 이 task 몫 첫 실행은 내일 10-30 07:40~07:54(관측 항목 아래 최종 요약 참조).
 
 ## 최종 요약
+
+- **상태**: 배포 완료, 첫 자동 실행 관측 대기.
+- **무엇이 바뀌었나**: 일봉(`daily_bars`) 정기 증분 수집이 **매일 07:40~07:54 KST 에 자동으로 한 번** 돈다(그동안은 사람이 curl 로만 불렀다). 증권사 읽기 조회만 하며 주문·시그널·알림은 없다.
+- **배포**: 2026-10-29 13:51, 릴리스 `20261029-134931-5ca78174`(T-118·T-119 와 한 번에, ok). 위 「배포 기록」 참조.
+- **AI 가 검증한 것**: Reviewer 2회 PASS·Judge C2·Codex(지적 1건은 후속 L-5)·QA PASS, 새 러너 시험 81/0, 변이 10건 잡힘, 병합 후에도 T-118·T-119 와 합친 트리에서 81/0. **못 한 것**: 실제 크론 시계에서의 첫 실행(내일).
+- 👉 **확인할 것** (내일 10-30 07:55 이후): cron 로그 `~/apps/stockinvest/shared/logs/cron-out.log` 에 `daily-bars OK` **정확히 1줄**, 날짜파일 `~/.node-local/stockinvest/daily-bars-last-date`=2026-10-30, 앱 로그 `[daily-bars] done ok= … aborted=`(aborted 가 있으면 실패 신호), `daily_bars` 최신 거래일이 미국 10-29·국내 10-30 인지. 정상 기준: 위 3개가 맞고 `entry-watcher` 가 07:4x 에도 매분 정상.
+- 👉 **결정할 것**: 없음.
+- **남은 일**: L-5(날짜파일 쓰기 실패 무시 — 하루 1회 잡 공통 처리)는 T-104 가 잡 정의로 흡수할 때 함께. Reviewer L-1(주석 드리프트 2곳) 후속.
+- **이슈·위험**: 없음(첫 Node 24 기동은 T-121 참조, 배포 직후 정상).

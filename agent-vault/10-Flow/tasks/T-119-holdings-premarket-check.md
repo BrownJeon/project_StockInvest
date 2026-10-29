@@ -1,11 +1,11 @@
 ---
 task_id: T-119
 title: 보유 종목 개장 전 공시 체크포인트(설계서 단계 4 대체안 "B") — 보유 미국 종목 한정, ET 08:00 하루 1회, 알림만
-status: doing
+status: deployed
 priority: high
 project: StockInvest
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-10-29
 base_ref: 0761fec
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa, codex, deployer]
@@ -207,4 +207,16 @@ waiting: []
 
 ## 배포 기록
 
+- [2026-10-29 13:51] **배포 완료** — push 2026-10-29 13:49:04 KST(`0761fec..5ca7817`, 세 코드 커밋 `159c4a7`·`f91cd94`·`3568ebc` + 문서 커밋 12개 한 번에) → webhook blue/green **릴리스 `20261029-134931-5ca78174` 13:51 `RELEASE_RESULT ok`**(migrated=false, 헬스체크 정상, 이전 릴리스 `20261028-225643-0761feca`). push 전 점검: 킬스위치 ON·최근 3시간 주문 0건·자동 청산 스위치 OFF·원격 main fast-forward. 배포는 국내 장중이었다(사용자 지시로 15:42 창 대기 없이 진행 — 킬스위치 ON·청산 OFF 라 매매 영향 없음). 독립 확인(Leader): pm2 `stockinvest`(**Node 24.22.2**, 첫 Node 24 기동)·`stockinvest-cron` 각 1개·restarts 0·`/api/health` 200·cron-runner 프로세스 1개(구 러너 잔존 없음)·cron 로그 오류 0. 재기동 직후 `strategy-eval` 첫 호출이 약 3~5분 걸렸으나(10-26 의 장중 재기동 3건도 1~3분, 종목당 KIS 분봉→일봉 대체 순회) 정상 완료돼 13:55 부터 매분 틱 재개·하트비트 정상.
+- [2026-10-29 13:58:22] **스위치 `holdings_premarket_enabled`=true 켬**(사용자 사전 승인 Q2⑤, 배포 확인 뒤, DB `system_config` INSERT·읽기 확인; `ci_capture_enabled`=true 유지, 킬스위치 ON·`exit_engine_enabled`=false 유지). 첫 호출은 오늘 KST 21:01(EDT, 21:00 은 해외 21시 peek 에 양보); 11-01 DST 종료 뒤 11-02(월)부터 22:01.
+
 ## 최종 요약
+
+- **상태**: 배포 완료 + 스위치 켬, 첫 자동 실행 관측 대기(오늘 21:01).
+- **무엇이 바뀌었나**: 미국 정규장 개장 전(ET 08시, 평일 하루 1회) **내가 보유한 미국 종목**의 새 SEC 공시(8-K·10-Q·10-K·20-F·40-F·6-K)를 확인해, 아직 분석에 반영되지 않은 새 공시가 있을 때만 텔레그램으로 알린다(`보유 종목 개장 전 공시`, "알림만, 주문 없음"). 지금 보유 4종목 중 AAPL·MU·ORCL 3개를 확인하고 SMH 는 ETF 라 SEC 회사 공시 대상이 아니다. 주문·분석·증권사 호출은 없다.
+- **배포·스위치**: 2026-10-29 13:51 릴리스 `20261029-134931-5ca78174`(ok), **13:58:22 스위치 `holdings_premarket_enabled`=true**(사전 승인).
+- **AI 가 검증한 것**: Reviewer PASS(1차 + 병합본 2·3차)·Judge C2·Codex(low 1건 후속)·QA PASS(직접 실행, 시각 의존 시험 결함 2건 수정 후 재확인: KST 13~14시 구간 포함 5개 시계에서 23/23), hp 러너 시험 53/0, jest 변이 10건·러너 변이 7건 잡힘. 실제 DB 읽기 전용 조회로 보유·CIK 매핑 확인. **못 한 것**: 실제 SEC 호출·텔레그램 발송(첫 실행 때 확인).
+- 👉 **확인할 것**: **오늘 21:01 KST 직후** — cron 로그에 21:00 `holdings-premarket yield_tick` 1줄(해외 21시 peek 에 양보) → 21:01 `holdings-premarket OK`, DB `holdings_premarket_status` 가 status ok·holdings 4·checked 3·detail `unmapped=NAS:SMH`(SMH 는 매일 찍혀도 정상). `stale_holdings`·`checked=0`·`failed` 는 이상 신호. 새 공시가 있을 때만 텔레그램 알림이 오고 `ci_raw_item` 에 `sec_filing` 행이 생긴다(없으면 0행이 정상). 11-01(일) 서머타임 종료 뒤 11-02(월) 22:01 호출·토·일 무호출도 확인.
+- 👉 **결정할 것**: 없음(켠 첫 주 매일 상태를 본 뒤 T-123 착수 여부).
+- **남은 일**: T-123(스냅샷이 3시간 넘게 낡거나 보유 전부 미매핑일 때 알림 없이 건너뜀 → 실패로 세기, 오류 메시지 100자 노출 정리, 동시 실행 중복 알림).
+- **이슈·위험**: 알림 발송이 실패하면 같은 공시를 다시 알리지 않는다(알려진 한계, 다음 날 07:00 수집으로 분석엔 반영).

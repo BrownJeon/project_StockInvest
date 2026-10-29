@@ -1,7 +1,7 @@
 ---
 task_id: T-121
 title: 시스템 Node 20→24 전환 영향 정리 — 골든 시험 1건 실패 + 다음 배포부터 StockInvest 가 Node 24 로 기동
-status: planned
+status: in-progress
 priority: medium
 project: StockInvest
 created: 2026-10-29
@@ -64,6 +64,8 @@ waiting: []
 - 이 task 범위 밖: `thecareer`·`themeal`·`voicevault`·`thekaiwa`·`thethinker`·`odinue` 등 다른 앱의 다음 배포는 각각 첫 Node 24 빌드가 된다(HOME-SERVER 소관, 알림만).
 
 **자동 점검**: 이 세션에 예약이 하나 있다(매일 08:23~20:23 사이 3시간마다 :23, 세션 전용·7일 후 만료). 조건이 거짓이면 한 줄만 남기고, 참이면 위 절차 1 부터 시작한다. 세션이 끝나 예약이 사라지면 새 세션이 위 착수 조건을 직접 확인하고 시작한다.
+- [2026-10-29 13:55] **사용자 확인**: Node 20→24 업그레이드는 사용자가 오전에 **다른 세션에서 의도해 진행한 정상 작업**이며 그 세션에서 검증도 끝났다("버전 업그레이드는 내가 오전에 다른 세션에서 진행했으며 정상적인 작업"). 위 「목표·배경」의 "원인 불명/주체 미확인" 표현은 이로써 해소 — 의도된 변경이다.
+- [2026-10-29 13:51~13:58] **첫 Node 24 배포 결과(T-117·T-118·T-119 한 번에)**: 릴리스 `20261029-134931-5ca78174` build·헬스체크 ok(`next build` 가 Node 24 에서 성공), `stockinvest`(Next 15.5.27) **Node 24.22.2 로 정상 기동·restarts 0**, `/api/health` 200, `stockinvest-cron`(bash 러너, pm2 node_version 표시는 데몬 값 20.20.2 — 러너는 Node 를 쓰지 않음) 매분 틱 정상. 위 「확인 못 한 것」 3번(`next build`·운영 런타임 Node 24 동작)은 **해소**. 남은 것: 골든 시험 1건(`scenario-card-domestic-golden`, `AM 12:00`↔`오전 12:00`) 정리 — 배포와 무관한 시험 정리라 우선순위 낮음, judge 접수 후 Developer→Reviewer→QA.
 
 ## 최종 요약
 (미작성)
