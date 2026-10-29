@@ -20,6 +20,9 @@
 # T-117 — 일봉 정기 증분 수집 블록(daily-bars-daily, 07:40~07:54 하루 1회)이 main 에 먼저 들어갔다. P1·P2 의 기준 러너는 이 러너의
 #   peek 블록만 바꾼 것이라 daily-bars 호출은 양쪽에 똑같이 들어가 비교에 영향이 없다. P7 정적 비교만 daily-bars 블록·DAILY_BARS_*
 #   선언을 양쪽에서 뺀다(범위 정교화 — peek 기대값은 그대로). daily-bars 자체의 시험은 scripts/test-cron-runner-daily-bars.sh 가 한다.
+# T-119 — 보유 종목 개장 전 공시 블록(holdings-premarket, ET 08시 평일 — KST 21시 EDT / 22시 EST)이 main 에 합쳐졌다. P1·P2 의 기준 러너는 이
+#   러너의 peek 블록만 바꾼 것이라 그 호출은 양쪽에 똑같이 들어가 비교에 영향이 없다. P7 정적 비교만 그 블록·선언(HOLDINGS_PREMARKET_*)도
+#   양쪽에서 뺀다(범위 정교화 — peek 기대값은 그대로). holdings-premarket 자체의 시험은 scripts/test-cron-runner-holdings-premarket.sh.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -119,7 +122,7 @@ EOF
 }
 
 peek()   { grep -E ' /api/cron/news-fetch\?market=(domestic|overseas)&mode=peek$' "$1/calls"; }
-nopeek() { grep -vE 'mode=peek' "$1/calls" | awk '{print $1, $2, $4}'; }
+nopeek() { grep -vE 'mode=peek' "$1/calls" | grep -v ' /api/cron/holdings-premarket$' | awk '{print $1, $2, $4}'; }   # (T-119) holdings-premarket 제외 — 기준 러너에는 21·22시 peek 슬롯이 없어 이 호출이 정시에 돌고, 합친 러너는 peek 에 양보해 :01 에 돈다(시각은 hp 시험 H1·H1b 가 단언)
 plist()  { peek "$1" | awk '{ sub(/.*market=/, "", $4); sub(/&mode=peek/, "", $4); print $1, $2, $4 }' | tr '\n' ' '; }
 maxper() { peek "$1" | awk '{print $1, $3}' | sort | uniq -c | awk '{ if ($1 > m) m = $1 } END { print m + 0 }'; }
 df()     { cat "$1/home/.node-local/stockinvest/$2" 2>/dev/null || echo none; }
@@ -169,7 +172,7 @@ eq "P1: 국내 10·13시 yield 로그 각 1줄(해외 다음 틱으로 미룸)" 
    "$(grep -c 'news-peek-domestic-10 yield_tick — news-peek-overseas-10' "$NA/stdout") $(grep -c 'news-peek-domestic-13 yield_tick — news-peek-overseas-13' "$NA/stdout")" "1 1"
 eq "🔴 P1: peek 호출마다 --max-time 40(21줄)" "$(grep -cE 'mode=peek max-time=40$' "$NA/maxtime")" "21"
 eq "🔴 P1: peek 아닌 뉴스(ingest) 호출에는 --max-time 없음" "$(grep '^/api/cron/news-fetch' "$NA/maxtime" | grep -vc 'mode=peek')" "0"
-if diff <(grep -v 'mode=peek' "$NA/maxtime") <(grep -v 'mode=peek' "$BA/maxtime") > /dev/null; then ok "🔴 P1: peek 외 --max-time 목록 = 기준 러너"; else bad "P1: peek 외 --max-time 목록이 다르다"; fi
+if diff <(grep -v 'mode=peek' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ') <(grep -v 'mode=peek' "$BA/maxtime" | grep -v '^/api/cron/holdings-premarket ') > /dev/null; then ok "🔴 P1: peek 외 --max-time 목록 = 기준 러너(T-119 holdings-premarket 제외 — 21·22시 peek 양보로 호출 순서가 :01 로 밀림, 그 --max-time 은 hp 시험 H1 이 단언)"; else bad "P1: peek 외 --max-time 목록이 다르다"; fi
 eq "P1: peek OK 로그 21줄(라벨 news-peek-…)" "$(grep -cE 'news-peek-(domestic|overseas)-[0-9]{2} OK' "$NA/stdout")" "21"
 
 # ── P2. 이틀 · 502 ────────────────────────────────────────────────────────────────
@@ -239,8 +242,8 @@ eq "P6: 국내 10시 날짜파일 없음(호출 안 했으므로)" "$(df "$NE" n
 # ── P7. 정적 ──────────────────────────────────────────────────────────────────────
 echo "P7. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
-strip_blk() { awk '/^  # >>> (news-fetch-peek|daily-bars-daily)/{s=1} s{ if (/^  # <<< (news-fetch-peek|daily-bars-daily)/) s=0; next } {print}' "$1" \
-  | grep -v '^DAILY_BARS_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117) daily-bars 블록·선언도 제외
+strip_blk() { awk '/^  # >>> (news-fetch-peek|daily-bars-daily|holdings-premarket)/{s=1} s{ if (/^  # <<< (news-fetch-peek|daily-bars-daily|holdings-premarket)/) s=0; next } {print}' "$1" \
+  | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket) 블록·선언도 제외
 if diff <(strip_blk "$RUNNER") <(strip_blk "$BASEFILE") > /dev/null; then ok "🔴 P7: peek 블록·주석 밖 실행 줄 = 기준 ref $BASE_REF ($(strip_blk "$RUNNER" | wc -l | tr -d ' ')줄)"
 else bad "P7: peek 블록 밖 실행 줄이 기준 ref $BASE_REF 와 다르다(다른 블록 변경과 합쳤으면 T118_BASE_REF 지정)"; diff <(strip_blk "$RUNNER") <(strip_blk "$BASEFILE") | head -10; fi
 eq "P7: call() 함수 본문 = 기준 ref" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASEFILE" | sha256sum)"

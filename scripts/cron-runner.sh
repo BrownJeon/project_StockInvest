@@ -35,6 +35,7 @@
 #                        KIS 읽기 전용 GET → daily_bars upsert 뿐·주문·시그널·알림 없음). 하루 1회(성공·실패 무관 날짜파일), 재시도 없음,
 #                        curl 상한 DAILY_BARS_CURL_MAX_TIME. research-cycle-overseas·edgar-sync·broker-fills 가 같은 틱에 돌면 다음 틱으로
 #                        미루고, 07:55 이후에는 부르지 않는다(그날 건너뜀 — 로그 한 줄). 새 잡은 T-104 가 나중에 잡 정의로 흡수한다(J8).
+#  - holdings-premarket: 미국 동부(ET) 08시 평일 첫 틱 하루 1회 — 보유 미국 종목 SEC 새 공시 확인, 새 공시가 있을 때만 알림 (T-119, 주문·분석 무관)
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -179,6 +180,7 @@ EDGAR_SYNC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/edgar-sync-last-date"
 KIS_FUNDAMENTALS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/kis-fundamentals-snapshot-last-date"
 BROKER_FILLS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/broker-fills-last-date"   # (T-087 D1a)
 DAILY_BARS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/daily-bars-last-date"   # (T-117)
+HOLDINGS_PREMARKET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/holdings-premarket-last-date"   # (T-119) KST 가 아니라 ET 날짜를 쓴다
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
 # (T-036) M4 뉴스 fetch용 AI_API_BASE/M4_ADMIN_TOKEN 플럼빙은 여기서 제거했다 —
@@ -486,6 +488,34 @@ while true; do
     PEEK_RAN_LABEL="$PEEK_LABEL"
   done
   # <<< news-fetch-peek
+  # >>> holdings-premarket (T-119) — scripts/test-cron-runner-holdings-premarket.sh 가 러너 전체를 가짜 시각으로 돌려 시험한다
+  # 보유 미국 종목 개장 전 공시 확인 — 새 공시가 있을 때만 텔레그램 정보 알림(주문·시그널·분석 입력 없음, us_filings 안 씀).
+  # T-104 단계 1 에서 잡 정의로 흡수, ET 기준 시각(America/New_York 08:00) 표현이 필요 — 이 잡만 KST 고정 시각이 아니다.
+  # 시각: 미국 동부 08시(ET)의 첫 틱, 월~금. 서머타임(EDT) 중 KST 21시 / 표준시(EST) 중 KST 22시 — 러너가 `TZ=America/New_York date`
+  #   로 시·요일·날짜를 읽으므로 전환일(11월 첫 일요일·3월 둘째 일요일)은 tzdata 가 처리한다. %Z 가 EDT/EST 가 아니면(tzdata 없음 → glibc 가
+  #   조용히 UTC 로 계산) 부르지 않는다. 미국 휴장 평일에도 부른다(공시는 휴장일에도 접수된다 — 라우트 SEC 요청 하루 약 3~5건).
+  # 날짜파일은 ET 날짜(YYYY-MM-DD)를 쓴다, 호출했으면 성공·실패 무관 기록(T-036) — 하루 1회. 08시(ET) 내내 러너가 꺼져 있었으면 그날은 건너뛴다.
+  # 🔴 같은 틱에 peek 가 돌았으면(PEEK_RAN_LABEL — 해외 21시(EDT)·22시(EST) peek 슬롯이 이 시각과 겹친다) 다음 틱으로 미룬다(yield_tick, 날짜파일 안 씀).
+  # 하트비트 최악: 이 호출 curl 상한 HP_CURL_MAX_TIME 90초(라우트 자체 예산 약 60초) + 매 분 잡 약 30초 + sleep 60 = 약 180초 < 300초.
+  #   21·22시(KST)에는 다른 하루 1회 블록이 없다(peek 는 위 규칙으로 다른 틱).
+  # 스위치 holdings_premarket_enabled 가 없거나 true 가 아니면 라우트가 SEC 를 부르지 않고 바로 끝난다.
+  HP_CURL_MAX_TIME=90
+  HP_ET=$(TZ=America/New_York date '+%F %H %u %Z')
+  read -r HP_ET_DATE HP_ET_HH HP_ET_DOW HP_ET_ZONE <<< "$HP_ET"
+  LAST_HP=$(cat "$HOLDINGS_PREMARKET_LAST_RUN_FILE" 2>/dev/null || echo "")
+  case "${HP_ET_ZONE:-}" in EDT|EST) HP_TZ_OK=1 ;; *) HP_TZ_OK=0 ;; esac
+  case "${HP_ET_DOW:-}" in [1-5]) HP_WEEKDAY=1 ;; *) HP_WEEKDAY=0 ;; esac
+  if [ "$HP_TZ_OK" = "1" ] && [ "$HP_WEEKDAY" = "1" ] && [ "${HP_ET_HH:-}" = "08" ] && [ "$LAST_HP" != "$HP_ET_DATE" ]; then
+    if [ -n "$PEEK_RAN_LABEL" ]; then
+      echo "[$(date '+%F %T')] holdings-premarket yield_tick — $PEEK_RAN_LABEL 가 이 틱에 돌아 다음 틱으로 미룸"
+    else
+      CALL_MAX_TIME="$HP_CURL_MAX_TIME"   # 이 호출에만 시간 상한
+      call "/api/cron/holdings-premarket" "holdings-premarket"
+      CALL_MAX_TIME=""
+      echo "$HP_ET_DATE" > "$HOLDINGS_PREMARKET_LAST_RUN_FILE"   # 성공·실패 무관 기록(ET 날짜)
+    fi
+  fi
+  # <<< holdings-premarket
   # 매일 03:00 KST: LoRA 학습 데이터셋 export (하루 1회만)
   LAST_TRAINSET=$(cat "$TRAINSET_LAST_RUN_FILE" 2>/dev/null || echo "")
   if [ "$HH" = "03" ] && [ "$LAST_TRAINSET" != "$TODAY" ]; then

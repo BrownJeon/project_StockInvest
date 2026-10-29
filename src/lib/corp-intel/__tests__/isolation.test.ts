@@ -9,6 +9,13 @@
  *  4. 라우트가 corp-intel 에서 가져오는 이름은 둘(captureFetchOutcome·readCaptureSwitch)과 타입 하나뿐.
  *  5. (T-118) 읽기 SQL 대상도 `system_config`·`ci_raw_item` 뿐 — 피드별 겹침 검사(feed-check.ts)는 `ci_raw_item` 읽기 1문장만 더하고 쓰기는
  *     더하지 않는다. 동작 시험에서 실제로 나간 읽기 문장·대상도 모은다.
+ * T-119 — 보유 종목 개장 전 공시(`holdings-premarket.ts`)가 더해졌다. 허용 목록을 그만큼만 넓힌다:
+ *  - 참조자: `app/api/cron/holdings-premarket/route.ts` 와 그 시험 폴더(2.)
+ *  - system_config 쓰기 키: `holdings_premarket_status` 하나 더(3.) — 스위치 `holdings_premarket_enabled` 는 읽기만
+ *  - 그 라우트의 import 는 허용 목록뿐 — 거래소(KIS)·안전장치·시그널·전략·주문·LLM·RAG 없음, 직접 fetch 없음, us_filings 쓰기 없음(6.)
+ *  - 읽기 SQL(5.): `us_filings` 읽기는 holdings-premarket.ts 의 존재 확인 1문장·그 파일 하나뿐, `ci_raw_item` 읽기 파일은 feed-check.ts·
+ *    holdings-premarket.ts 둘뿐이고 각 1문장(sec_filing 사전 SELECT). us_filings 쓰기 금지는 3.·6. 이 그대로 본다.
+ *  6. (T-119) holdings-premarket 라우트의 import·직접 fetch·쓰기 금지 — 'holdings-premarket 라우트 import = 허용 목록뿐' 시험.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -28,6 +35,8 @@ const isTest = (r: string) => /(^|\/)__tests__\//.test(r) || /\.test\.tsx?$/.tes
 const OWN = /^lib\/corp-intel\//;
 const ROUTE = 'app/api/cron/news-fetch/route.ts';
 const ROUTE_TESTS = /^app\/api\/cron\/news-fetch\/__tests__\//;
+const HP_ROUTE = 'app/api/cron/holdings-premarket/route.ts';   // (T-119)
+const HP_ROUTE_TESTS = /^app\/api\/cron\/holdings-premarket\/__tests__\//;
 const read = (f: string) => fs.readFileSync(f, 'utf8');
 const importsOf = (src: string) => [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
 
@@ -35,7 +44,10 @@ const ownFiles = ALL.filter((f) => OWN.test(rel(f)) && !isTest(rel(f)));
 
 describe('corp-intel → 거래·안전장치 경로를 쓰지 않는다', () => {
   test('검사 대상 존재', () => {
-    expect(ownFiles.map(rel).sort()).toEqual(['lib/corp-intel/feed-check.ts', 'lib/corp-intel/keys.ts', 'lib/corp-intel/raw-capture.ts', 'lib/corp-intel/status.ts']);
+    expect(ownFiles.map(rel).sort()).toEqual([
+      'lib/corp-intel/feed-check.ts', 'lib/corp-intel/holdings-premarket.ts', 'lib/corp-intel/keys.ts',
+      'lib/corp-intel/raw-capture.ts', 'lib/corp-intel/status.ts',
+    ]);
   });
 
   test('import 는 허용 목록뿐(DB·시간·mysql2 타입·node:crypto·같은 폴더)', () => {
@@ -81,13 +93,18 @@ describe('corp-intel → 거래·안전장치 경로를 쓰지 않는다', () =>
     expect(sql).not.toMatch(new RegExp(`\\b(${ddl})\\s+(TABLE|DATABASE|INDEX)\\b`, 'i'));
   });
 
-  test('🔴 (T-118) 읽기 SQL 대상은 system_config·ci_raw_item 뿐 — ci_raw_item 읽기는 feed-check.ts 의 겹침 검사 1문장뿐', () => {
+  test('🔴 (T-118) 읽기 SQL 대상은 system_config·ci_raw_item 뿐 — ci_raw_item 읽기는 feed-check.ts 의 겹침 검사 1문장뿐 · (T-119) + holdings-premarket.ts 의 us_filings·ci_raw_item 각 1문장', () => {
     const sql = ownFiles.map(read).join('\n');
     const froms = [...sql.matchAll(/\bFROM\s+`?(\w+)/g)].map((m) => m[1]);
-    expect(new Set(froms)).toEqual(new Set(['system_config', 'ci_raw_item']));
+    expect(new Set(froms)).toEqual(new Set(['system_config', 'ci_raw_item', 'us_filings']));   // (T-119) us_filings 읽기 추가 — 아래에서 파일·문장 수를 고정
     const rawReads = ownFiles.filter((f) => /\bFROM\s+ci_raw_item\b/.test(read(f))).map(rel);
-    expect(rawReads).toEqual(['lib/corp-intel/feed-check.ts']);
+    expect(rawReads).toEqual(['lib/corp-intel/feed-check.ts', 'lib/corp-intel/holdings-premarket.ts']);   // (T-119) holdings-premarket.ts 추가
     expect((read(path.join(SRC, 'lib/corp-intel/feed-check.ts')).match(/\bFROM\s+ci_raw_item\b/g) ?? []).length).toBe(1);
+    // (T-119) holdings-premarket.ts: ci_raw_item 읽기는 sec_filing 사전 SELECT 1문장, us_filings 읽기는 존재 확인 1문장뿐 — us_filings 를 읽는 corp-intel 파일은 이것 하나
+    const hpSrc = read(path.join(SRC, 'lib/corp-intel/holdings-premarket.ts'));
+    expect((hpSrc.match(/\bFROM\s+ci_raw_item\b/g) ?? []).length).toBe(1);
+    expect((hpSrc.match(/\bFROM\s+us_filings\b/g) ?? []).length).toBe(1);
+    expect(ownFiles.filter((f) => /\bFROM\s+us_filings\b/.test(read(f))).map(rel)).toEqual(['lib/corp-intel/holdings-premarket.ts']);
     // feed-check.ts 는 쓰기 문장을 하나도 갖지 않는다(주석을 뺀 코드 기준 — 주석은 저장(INSERT)을 설명한다)
     const code = read(path.join(SRC, 'lib/corp-intel/feed-check.ts')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     expect(code).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|TRUNCATE)\b/);
@@ -99,10 +116,26 @@ describe('corp-intel → 거래·안전장치 경로를 쓰지 않는다', () =>
     const keyLits = [...all.matchAll(/['"`](ci_[a-z_]+:?)/g)].map((m) => m[1]);
     expect(new Set(keyLits)).toEqual(new Set(['ci_capture_enabled', 'ci_capture_status:', 'ci_raw_item']));
     const status = read(path.join(SRC, 'lib/corp-intel/status.ts'));
-    // system_config INSERT 는 status.ts 한 곳, 그 매개변수 첫 값은 captureStatusKey() 결과(key 변수)
-    expect((all.match(/INSERT INTO system_config/g) ?? []).length).toBe(1);
+    // system_config INSERT 는 status.ts 한 곳 + (T-119) holdings-premarket.ts 한 곳. status.ts 의 매개변수 첫 값은 captureStatusKey() 결과(key 변수)
+    expect((all.match(/INSERT INTO system_config/g) ?? []).length).toBe(2);
+    expect((status.match(/INSERT INTO system_config/g) ?? []).length).toBe(1);
     expect(status).toMatch(/const key = captureStatusKey\(market\);/);
     expect(status).toMatch(/'INSERT INTO system_config \(`key`, value\) VALUES \(\?, \?\) ON DUPLICATE KEY UPDATE value = VALUES\(value\)',\s*\[key, JSON\.stringify\(next\)\],/);
+  });
+
+  test('🔴 (T-119) holdings-premarket.ts — system_config 키 리터럴은 스위치·상태 둘뿐, INSERT 는 상태 키 상수 하나로만', () => {
+    const hp = read(path.join(SRC, 'lib/corp-intel/holdings-premarket.ts'));
+    const keyLits = [...hp.matchAll(/['"`](holdings_premarket_[a-z_]+)/g)].map((m) => m[1]);
+    expect(new Set(keyLits)).toEqual(new Set(['holdings_premarket_enabled', 'holdings_premarket_status']));
+    expect(hp).toMatch(/export const HP_SWITCH_KEY = 'holdings_premarket_enabled';/);
+    expect(hp).toMatch(/export const HP_STATUS_KEY = 'holdings_premarket_status';/);
+    expect((hp.match(/INSERT INTO system_config/g) ?? []).length).toBe(1);
+    expect(hp).toMatch(/'INSERT INTO system_config \(`key`, value\) VALUES \(\?, \?\) ON DUPLICATE KEY UPDATE value = VALUES\(value\)',\s*\[HP_STATUS_KEY, JSON\.stringify\(value\)\],/);
+    // ci_raw_item 쓰기는 T-116 의 UPSERT 상수를 그대로 쓴다(first_seen_at 덮어쓰기 없음) — 자체 INSERT 문장 없음
+    expect(hp).not.toMatch(/INSERT (IGNORE )?INTO ci_raw_item/);
+    expect(hp).toMatch(/query<ResultSetHeader>\(CI_RAW_ITEM_UPSERT_SQL,/);
+    // 🔴 us_filings 는 SELECT 만
+    expect(hp).not.toMatch(/(INSERT|UPDATE|DELETE|REPLACE)[^'"`]*us_filings/i);
   });
 });
 
@@ -157,6 +190,38 @@ describe('🔴 동작으로 확인 — 모든 분기에서 나간 쓰기 문장�
     ]));
     jest.restoreAllMocks();
   });
+
+  test('🔴 (T-119) holdings-premarket — 스위치·기록(us_filings 있음/없음·ci 있음/없음·테이블 없음·오류)·상태 쓰기 전 분기에서 쓰기는 ci_raw_item 과 holdings_premarket_status 뿐', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const hp = require('../holdings-premarket') as typeof import('../holdings-premarket');
+    const now = new Date('2026-10-28T12:00:00Z');
+    const cands = hp.selectPremarketCandidates([1, 2].map((i) => ({
+      symbols: ['NAS:AAPL'], cik: 320193, accession: `0000320193-26-00000${i}`, form: '8-K', items: '2.02', filed: '2026-10-28',
+      acceptedAtUtc: '2026-10-28T11:00:00Z', primaryDocUrl: null,
+    })), now).candidates;
+    const writes: string[] = [];
+    for (const mode of ['ok', 'in_us', 'in_ci', 'no_table', 'error'] as const) {
+      mockQuery.mockReset();
+      mockQuery.mockImplementation(async (sql: string, params: unknown[]) => {
+        if (/^\s*SELECT\b/i.test(sql)) {
+          if (mode === 'no_table' && /ci_raw_item/.test(sql)) throw Object.assign(new Error('x'), { code: 'ER_NO_SUCH_TABLE' });
+          if (/us_filings/.test(sql)) return [mode === 'in_us' ? [{ accession: cands[0].accession }] : []];
+          if (/FROM ci_raw_item/.test(sql)) return [mode === 'in_ci' ? [{ source_key: cands[1].accession }] : []];
+          return [[{ value: 'true' }]];
+        }
+        writes.push(`${sql.split(' (')[0]} ${sql.includes('system_config') ? String(params[0]) : ''}`.trim());
+        if (mode === 'error') throw new Error('deadlock');
+        return [{ affectedRows: 1 }];
+      });
+      await hp.readPremarketSwitch();
+      await hp.recordPremarketFilings(cands, now);
+      await hp.readHpStatus();
+      await hp.writeHpStatus(hp.nextHpStatus(null, { status: 'ok', holdings: 1, checked: 1, newFilings: 0, alerted: 0 }, now));
+    }
+    expect(new Set(writes)).toEqual(new Set(['INSERT INTO ci_raw_item', 'INSERT INTO system_config holdings_premarket_status']));
+    jest.restoreAllMocks();
+  });
 });
 
 describe('src → corp-intel 참조는 허용 목록뿐', () => {
@@ -171,10 +236,33 @@ describe('src → corp-intel 참조는 허용 목록뿐', () => {
     }
   });
 
-  test('🔴 corp-intel·ci_raw_item·ci_capture_ 를 언급하는 src 파일 = 라우트와 그 시험뿐', () => {
+  test('🔴 corp-intel·ci_raw_item·ci_capture_ 를 언급하는 src 파일 = 라우트 둘(news-fetch·holdings-premarket)과 그 시험뿐', () => {
     const hits = others.filter((f) => /corp-intel|\bci_raw_item\b|\bci_capture_/.test(read(f))).map(rel);
-    expect(hits.filter((r) => !(r === ROUTE || ROUTE_TESTS.test(r)))).toEqual([]);
+    expect(hits.filter((r) => !(r === ROUTE || ROUTE_TESTS.test(r) || r === HP_ROUTE || HP_ROUTE_TESTS.test(r)))).toEqual([]);
     expect(hits).toContain(ROUTE);
+    expect(hits).toContain(HP_ROUTE);
+  });
+
+  test('🔴 (T-119) holdings-premarket 상수·키를 쓰는 src 파일 = corp-intel 과 그 라우트·시험뿐', () => {
+    const hits = others.filter((f) => /holdings_premarket_|holdings-premarket/.test(read(f))).map(rel);
+    expect(hits.filter((r) => !(r === HP_ROUTE || HP_ROUTE_TESTS.test(r)))).toEqual([]);
+  });
+
+  test('🔴 (T-119) holdings-premarket 라우트 import = 허용 목록뿐 — KIS·안전장치·시그널·전략·주문·LLM·RAG 없음, 직접 fetch·us_filings 쓰기 없음', () => {
+    const src = read(path.join(SRC, HP_ROUTE));
+    expect(importsOf(src).sort()).toEqual([
+      '@/lib/corp-intel/holdings-premarket', '@/lib/cron-auth', '@/lib/data/us-edgar/parse', '@/lib/data/us-edgar/sec-client', '@/lib/db',
+      '@/lib/notify', 'mysql2', 'next/server',
+    ]);
+    for (const m of ['exchanges', 'safety', 'signals', 'strategy', 'orders', 'llm', 'analyst', 'rag', 'profit-engine', 'broker-ledger', 'ledger', 'risk']) {
+      expect(importsOf(src).filter((x) => x.startsWith('@/lib/' + m))).toEqual([]);
+    }
+    expect(src).not.toMatch(/import\(|require\(/);
+    expect(src).not.toMatch(/\bfetch\(/);                                   // SEC 는 SecClient 로만
+    expect(src).not.toMatch(/\b(submitOrder|createOrder|cancelOrder|getBalances|getTicker)\b/);
+    expect(src).not.toMatch(/(INSERT|UPDATE|DELETE|REPLACE)[^'"`]*\b(us_filings|portfolio_snapshots|symbol_cik_map|signals|orders|position_state)\b/i);
+    // corp-intel 에서 가져오는 것은 holdings-premarket 하나(raw-capture·status 직접 사용 없음)
+    expect(importsOf(src).filter((x) => x.startsWith('@/lib/corp-intel'))).toEqual(['@/lib/corp-intel/holdings-premarket']);
   });
 
   test('라우트가 가져오는 이름 — captureFetchOutcome·readCaptureSwitch·타입 CaptureFetchOutcomeResult 뿐, 동적 import 없음', () => {

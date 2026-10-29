@@ -21,6 +21,9 @@
 # (T-118 병합) 변경 전 러너 = faf8bc3 러너에서 **peek 블록(news-fetch-peek)과 상단 peek 잡 주석만 현재 러너의 것으로 바꿔 끼운 것**.
 #   T-118 이 peek 슬롯·상한을 바꿔도 이 시험의 비교(D1 호출·상한 목록, D6 정적·추가만)는 daily-bars 변경만 보게 된다 — D6 정적 비교는
 #   peek 블록을 양쪽에서 똑같이 한 번 더 뺀다. daily-bars 기대값은 그대로다.
+# (T-119 병합) holdings-premarket(ET 08시 평일 — KST 21·22시)은 현재 러너에만 있는 무관한 잡이라, 그 호출은 D1 등 호출 비교(nodb)와
+#   --max-time 목록 비교에서 빼고, D6 정적 비교는 그 블록(>>> ~ <<< holdings-premarket)·HOLDINGS_PREMARKET_* 선언을 양쪽에서 똑같이 뺀다
+#   (블록 안 HP_* 변수는 블록과 함께 빠진다). 범위 정교화일 뿐 daily-bars 기대값·단언 개수는 그대로다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -130,7 +133,7 @@ EOF
 DBRE=' /api/cron/daily-bars$'
 dbc()    { grep -E "$DBRE" "$1/calls"; }
 dbat()   { dbc "$1" | awk '{print $1, $2}' | tr '\n' ' '; }
-nodb()   { grep -vE "$DBRE" "$1/calls" | awk '{print $1, $2, $4}'; }
+nodb()   { grep -vE "$DBRE" "$1/calls" | grep -v ' /api/cron/holdings-premarket$' | awk '{print $1, $2, $4}'; }   # (T-119 병합) holdings-premarket 제외
 allc()   { awk '{print $1, $2, $4}' "$1/calls"; }
 df()     { cat "$1/home/.node-local/stockinvest/$2" 2>/dev/null || echo none; }
 gap()    { awk 'NR>1 { g = $1 - p; if (g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }
@@ -157,8 +160,8 @@ eq "🔴 D1: daily-bars = 07:40 하루 1회" "$(dbat "$NA")" "10-28 07:40 "
 eq "🔴 D1: 07:40~07:54 밖의 daily-bars 호출 0" "$(dbc "$NA" | awk '{print $2}' | grep -cvE '^07:(4[0-9]|5[0-4])$')" "0"
 eq "D1: 본문 = '{}'(본문 없음 → 라우트 기본 대상)" "$(sort -u "$NA/dbody" | tr '\n' ' ')" "{} "
 eq "🔴 D1: daily-bars 호출에 --max-time 120" "$(grep '^/api/cron/daily-bars ' "$NA/maxtime" | tr '\n' ' ')" "/api/cron/daily-bars max-time=120 "
-if diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime") "$BA/maxtime" > /dev/null; then ok "🔴 D1: daily-bars 를 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
-else bad "D1: --max-time 목록이 다르다"; diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime") "$BA/maxtime" | head -5; fi
+if diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ') "$BA/maxtime" > /dev/null; then ok "🔴 D1: daily-bars 를 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
+else bad "D1: --max-time 목록이 다르다"; diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ') "$BA/maxtime" | head -5; fi
 eq "D1: 날짜파일 = 오늘" "$(df "$NA" daily-bars-last-date)" "$TD"
 eq "D1: OK 로그 1줄" "$(grep -c '\] daily-bars OK$' "$NA/stdout")" "1"
 eq "D1: yield 로그 없음(07:00·07:20 틱과 다른 틱)" "$(ylog "$NA")" "0"
@@ -248,7 +251,8 @@ eq "D5: 같은 조건 변경 전 러너 최대 간격도 260초(daily-bars 가 �
 # ── D6. 정적 ──────────────────────────────────────────────────────────────────────
 echo "D6. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
-no_peek()   { awk '/^  # >>> news-fetch-peek/{s=1} s{ if (/^  # <<< news-fetch-peek/) s=0; next } {print}' "$1"; }   # (T-118 병합) 양쪽에서 똑같이
+no_peek()   { awk '/^  # >>> news-fetch-peek/{s=1} s{ if (/^  # <<< news-fetch-peek/) s=0; next } {print}' "$1" \
+  | awk '/^  # >>> holdings-premarket/{s=1} s{ if (/^  # <<< holdings-premarket/) s=0; next } {print}' | grep -v '^HOLDINGS_PREMARKET_'; }   # (T-118 병합) peek · (T-119 병합) holdings-premarket 블록·선언 — 양쪽에서 똑같이
 strip_new() { no_peek "$1" | awk '/^  # >>> daily-bars-daily/{s=1} s{ if (/^  # <<< daily-bars-daily/) s=0; next } {print}' \
   | grep -v '^DAILY_BARS_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 strip_old() { no_peek "$1" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
