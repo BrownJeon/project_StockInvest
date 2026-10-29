@@ -4,7 +4,9 @@
  *     (주문 진입점 `kis`·`kis-overseas`·`kis-domestic`·`order-quantity`·`fx` 없음, 토큰 재발급 `invalidateKisToken` 없음).
  *  2. 매매 경로(=src 전체에서 허용 목록 밖)는 profit-engine 을 참조하지 않는다. 예외는 수동 수집 라우트 `app/api/cron/daily-bars/route.ts` 하나.
  *  3. profit-engine 의 쓰기 SQL 은 daily_bars 뿐, DDL 없음. 라우트는 SQL 을 직접 쓰지 않는다.
- *  4. 라우트는 cron-runner 에 등록하지 않는다(정기 증분은 Phase 1).
+ *  4. (T-117) 라우트는 2026-10-28 사용자 승인(R13)으로 cron-runner 에 하루 1회 등록됐다 — 아래 단언이 등록 방식을 고정한다
+ *     (`# >>> daily-bars-daily` 블록 밖 실행 참조는 선언 2줄뿐, 호출 줄 1개·본문 인자 없음, 시간 상한은 그 호출 앞뒤에서만).
+ *     T-070 때의 원래 규칙은 "등록하지 않는다(정기 증분은 Phase 1)"였다.
  *  5. 사후검증 스크립트(scripts/profit-engine/)는 읽기 전용 — 쓰기·DDL SQL 없음, READ ONLY 세션, KIS·주문 호출 없음.
  *  6. (T-096) 백테스트 엔진(backtest/·registry/)은 순수 계산 — 거래소·자격증명·DB·mysql2 도 쓰지 않는다. `@/lib/strategy` 금지는 그대로이고,
  *     **예외는 지표 5개 모듈(`@/lib/strategy/indicators/(rsi|sma|ema|bollinger|atr)`)의 정확한 경로 import 하나뿐**(사용자 승인 허용 목록).
@@ -224,9 +226,50 @@ describe('수동 수집 라우트 — 범위 고정', () => {
     expect(body.indexOf('checkCronAuth(req)')).toBeLessThan(body.indexOf('getPool()'));
   });
 
-  test('cron-runner 에 등록하지 않는다', () => {
+  // (T-117) 2026-10-28 사용자 승인(R13)으로 cron-runner 에 하루 1회 등록됐다. 예전의 "등록하지 않는다" 단언을 지우지 않고
+  //   **등록 방식을 고정하는 단언**으로 바꿨다 — 블록 밖으로 새거나, 호출이 늘거나, 본문(대상·기간·호출 수)을 붙이거나,
+  //   시간 상한이 다른 잡에 새면 실패한다. 동작 시험은 scripts/test-cron-runner-daily-bars.sh.
+  describe('(T-117) cron-runner 등록 방식 고정', () => {
     const runner = read(path.join(ROOT, 'scripts/cron-runner.sh'));
-    expect(runner).not.toMatch(/daily-bars|daily_bars/);
+    const lines = runner.split('\n');
+    const start = lines.findIndex((l) => l.startsWith('  # >>> daily-bars-daily'));
+    const end = lines.findIndex((l) => l === '  # <<< daily-bars-daily');
+    /** 주석 줄·빈 줄을 버리고 줄 끝 주석을 떼어 낸 실행 줄 */
+    const exec = (ls: string[]) => ls
+      .filter((l) => !/^\s*(#|$)/.test(l))
+      .map((l) => l.replace(/\s+#.*$/, ''));
+    const block = exec(lines.slice(start + 1, end));
+    const outside = exec([...lines.slice(0, Math.max(start, 0)), ...lines.slice(end + 1)]);
+
+    test('블록 표지 >>>/<<< 가 각 1개이고 순서가 맞다', () => {
+      expect(lines.filter((l) => l.startsWith('  # >>> daily-bars-daily')).length).toBe(1);
+      expect(lines.filter((l) => l === '  # <<< daily-bars-daily').length).toBe(1);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+    });
+
+    test('블록 밖 실행 줄의 daily-bars 참조는 선언 2줄(상한 120·날짜파일)뿐이다', () => {
+      expect(outside.filter((l) => /daily[-_]bars/i.test(l))).toEqual([
+        'DAILY_BARS_CURL_MAX_TIME=120',
+        'DAILY_BARS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/daily-bars-last-date"',
+      ]);
+    });
+
+    test('실행 호출 줄은 파일 전체에서 정확히 1개, 본문·symbols·years·maxCalls 인자 없음', () => {
+      const calls = exec(lines).filter((l) => /\bcall\b/.test(l) && /daily[-_]bars/i.test(l));
+      expect(calls.map((l) => l.trim())).toEqual(['call "/api/cron/daily-bars" "daily-bars"']);
+      expect(block.filter((l) => /^\s*call\s/.test(l)).map((l) => l.trim())).toEqual(['call "/api/cron/daily-bars" "daily-bars"']);
+      // 본문(세 번째 인자)은 위 정확 일치가 막는다. 블록 어디에도 대상·기간·호출 수 지정이 없다.
+      expect(block.join('\n')).not.toMatch(/symbols|years|maxCalls/);
+    });
+
+    test('CALL_MAX_TIME 은 그 호출 바로 앞에서 켜고 바로 뒤에서 끈다(블록 안 다른 설정 없음)', () => {
+      const i = block.findIndex((l) => /^\s*call\s/.test(l));
+      expect(block[i - 1].trim()).toBe('CALL_MAX_TIME="$DAILY_BARS_CURL_MAX_TIME"');
+      expect(block[i + 1].trim()).toBe('CALL_MAX_TIME=""');
+      expect(block.filter((l) => /CALL_MAX_TIME/.test(l)).length).toBe(2);
+      expect(outside.filter((l) => /DAILY_BARS_CURL_MAX_TIME/.test(l))).toEqual(['DAILY_BARS_CURL_MAX_TIME=120']);
+    });
   });
 });
 

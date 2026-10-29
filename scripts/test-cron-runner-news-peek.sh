@@ -13,6 +13,9 @@
 #  P4. 재기동: 슬롯이 이미 돈 날(날짜파일=오늘) 10:30 시작 → peek 없음 / 날짜파일 없으면 10:30 해외·10:31 국내
 #  P5. 10:59 시작: 해외 10:59, 국내 10시 슬롯은 그날 건너뜀(11시 틱에 안 부름) · yield 로그 1줄 · 국내 13시는 정상
 #  P6. 정적: peek 블록·주석을 빼면 실행 줄이 변경 전과 한 글자도 같다 · call() 불변 · 블록 안 호출 줄 1개 · --max-time 없음
+# T-117 — 일봉 정기 증분 수집 블록(daily-bars-daily, 07:40~07:54 하루 1회)이 생겼다. P1·P2 의 "peek 를 뺀 호출 = 변경 전(a16bc0c)" 비교와
+#   P6 정적 비교에서 daily-bars 호출·블록·DAILY_BARS_* 선언도 뺀다(범위 정교화 — peek 기대값은 그대로). daily-bars 자체의 시험과
+#   "daily-bars 를 뺀 모든 호출 = T-116 러너" 증명은 scripts/test-cron-runner-daily-bars.sh 가 한다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,7 +98,7 @@ EOF
 }
 
 peek()   { grep -E ' /api/cron/news-fetch\?market=(domestic|overseas)&mode=peek$' "$1/calls"; }
-nopeek() { grep -vE 'mode=peek' "$1/calls" | awk '{print $1, $2, $4}'; }
+nopeek() { grep -vE 'mode=peek' "$1/calls" | grep -v ' /api/cron/daily-bars$' | awk '{print $1, $2, $4}'; }   # (T-117) daily-bars 제외
 allc()   { awk '{print $1, $2, $4}' "$1/calls"; }
 plist()  { peek "$1" | awk '{ sub(/.*market=/, "", $4); sub(/&mode=peek/, "", $4); print $1, $2, $4 }' | tr '\n' ' '; }
 maxper() { peek "$1" | awk '{print $1, $3}' | sort | uniq -c | awk '{ if ($1 > m) m = $1 } END { print m + 0 }'; }
@@ -170,8 +173,8 @@ eq "P5: 국내 10시 날짜파일 없음(호출 안 했으므로)" "$(df "$NE" n
 # ── P6. 정적 ──────────────────────────────────────────────────────────────────────
 echo "P6. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
-strip_new() { awk '/^  # >>> news-fetch-peek/{s=1} s{ if (/^  # <<< news-fetch-peek/) s=0; next } {print}' "$1" \
-  | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
+strip_new() { awk '/^  # >>> (news-fetch-peek|daily-bars-daily)/{s=1} s{ if (/^  # <<< (news-fetch-peek|daily-bars-daily)/) s=0; next } {print}' "$1" \
+  | grep -v '^DAILY_BARS_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117) daily-bars 블록·선언 제외
 strip_old() { grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$'; }
 if diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") > /dev/null; then ok "🔴 P6: peek 블록·주석 밖 실행 줄 = 변경 전과 동일 ($(strip_new "$RUNNER" | wc -l | tr -d ' ')줄)"
 else bad "P6: peek 블록 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") | head -10; fi

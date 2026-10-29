@@ -31,6 +31,10 @@
 #                        해외 02·10·14·18·22시 KST 각 시각의 첫 틱에 하루 1회(슬롯마다 날짜파일, 성공·실패 무관 기록). 스위치
 #                        ci_capture_enabled 가 꺼져 있으면 라우트가 M4 를 부르지 않고 바로 끝난다. 같은 틱에 두 슬롯이 겹치면(10시)
 #                        뒤 슬롯은 다음 틱으로 미룬다. 새 잡은 T-104 가 나중에 잡 정의로 흡수한다(J8).
+#  - daily-bars        : 매일 07:40~07:54 KST 첫 틱 — 일봉 정기 증분 수집 (T-117, POST /api/cron/daily-bars 본문 없음 = 라우트 기본 대상,
+#                        KIS 읽기 전용 GET → daily_bars upsert 뿐·주문·시그널·알림 없음). 하루 1회(성공·실패 무관 날짜파일), 재시도 없음,
+#                        curl 상한 DAILY_BARS_CURL_MAX_TIME. research-cycle-overseas·edgar-sync·broker-fills 가 같은 틱에 돌면 다음 틱으로
+#                        미루고, 07:55 이후에는 부르지 않는다(그날 건너뜀 — 로그 한 줄). 새 잡은 T-104 가 나중에 잡 정의로 흡수한다(J8).
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -88,6 +92,12 @@ STOP_ALERT_CURL_MAX_TIME=20
 # (T-087 D1a) 브로커 체결 원장 수집(broker-fills) 호출 한 번의 curl 전체 시간 상한(초). 라우트 자체 예산 75초보다 길고, 하트비트 최악은
 # 90 + 매 분 잡 약 30 + sleep 60 = 180초 < 300초(순찰 재시작 기준). 07시 틱(research·edgar)과는 아래 yield 규칙으로 같은 틱에 겹치지 않는다.
 BROKER_FILLS_CURL_MAX_TIME=90
+# (T-117) 일봉 정기 증분 수집(daily-bars) 호출 한 번의 curl 전체 시간 상한(초). 라우트 예산은 KIS 호출 시작 기준 100초(DEFAULT_MAX_MS)이고
+# 그 앞(테이블·대상 조회)과 마지막 호출(줄 서기·통신 10초)·upsert 가 더 걸릴 수 있어 여유를 둔 값이다. 하트비트 최악(07:40 틱):
+# 120 + stop-alert 20 + 매 분 잡 약 30 + sleep 60 = 약 230초 < 300초(순찰 재시작 기준). 07시 무거운 틱(research·edgar·broker-fills)과는
+# 아래 daily-bars 블록의 yield 규칙으로 같은 틱에 겹치지 않는다. 상한에 걸리면 curl 이 000 으로 끝나고(그날 날짜파일은 기록 — 재시도 없음)
+# 서버 쪽 실행은 끝까지 갈 수 있다(라우트 single-flight 가 겹침을 막고, 저장은 가산 upsert 라 다음 날 증분이 이어받는다).
+DAILY_BARS_CURL_MAX_TIME=120
 CALL_MAX_TIME=""
 # 시도 기록 파일 한 줄: "<YYYY-MM-DD> <그날 시도 횟수> <마지막 시도 시각 epoch 초(시작에 기록, 끝나면 종료 시각으로 갱신)>"
 # pmo_due TODAY NOW DONE_FILE ATTEMPT_FILE → 0(지금 부를 차례) / 1(부르지 않음)
@@ -168,6 +178,7 @@ RESEARCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-
 EDGAR_SYNC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/edgar-sync-last-date"
 KIS_FUNDAMENTALS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/kis-fundamentals-snapshot-last-date"
 BROKER_FILLS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/broker-fills-last-date"   # (T-087 D1a)
+DAILY_BARS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/daily-bars-last-date"   # (T-117)
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
 # (T-036) M4 뉴스 fetch용 AI_API_BASE/M4_ADMIN_TOKEN 플럼빙은 여기서 제거했다 —
@@ -307,6 +318,51 @@ while true; do
     fi
   fi
   # <<< broker-fills-daily
+  # >>> daily-bars-daily (T-117) — scripts/test-cron-runner-daily-bars.sh 가 러너 전체를 가짜 시각·가짜 curl 로 돌려 시험한다
+  # 매일 07:40~07:54 KST 첫 틱: 일봉 정기 증분 수집. POST /api/cron/daily-bars 를 **본문 없이**(call() 기본 '{}') 부른다 = 라우트 기본 대상
+  #   (보유 → 최근 90일 시그널 종목 ≤300, years 3, maxCalls 150). KIS 읽기 GET → daily_bars upsert 뿐 — 주문·시그널·알림 없음.
+  #   증분 판정·up_to_date 건너뛰기·single-flight·예산(호출 150·100초)·오프아워 판정(KST 05:10~08:30, 매시 분 3~55 밖, 07:55~08:10 거부)은
+  #   라우트가 한다(src/app/api/cron/daily-bars/route.ts, src/lib/profit-engine/daily-bars-time.ts).
+  # 왜 07:40~07:54: ① 미국 일봉 확정(ET 16:30) = KST 05:30(서머타임) / 06:30(2026-11-01 서머타임 종료 후) 보다 늦다 ② 라우트 오프아워 창 안이고
+  #   정각 앞뒤·07:55~08:10 을 피한다 ③ 07:00 틱(research-cycle-overseas·edgar-sync)·07:20 이후 첫 틱(broker-fills) 뒤다 ④ 08:00 해외 분석
+  #   (post-market-overseas, 실패 시 08:10·08:20)·kis-fundamentals-snapshot 과 겹치지 않는다. 국내 봉은 전날 15:40 확정분을 같은 호출이 받는다.
+  # 한 번만 부른다(재시도 없음). 날짜파일은 호출했으면 성공·실패 무관 기록(T-036) — 하루 1회. 409(오프아워 밖·이미 실행 중)·503(유량·인증 중단)·
+  #   000(curl 상한) 도 따로 처리하지 않고 call() 의 로그 한 줄로 끝난다. 못 한 날은 다음 날 증분이 이어받는다(daily_bars 는 가산 upsert,
+  #   증분은 저장된 마지막 일자부터).
+  # 🔴 같은 틱에 무거운 잡이 돌았으면 미룬다(yield_tick, 날짜파일 안 씀): research-cycle-overseas·edgar-sync·broker-fills 블록이 호출 **전**에
+  #   읽어 둔 LAST_RESEARCH_OVS·LAST_EDGAR·LAST_BROKER_FILLS 중 하나라도 오늘이 아니면 그 잡이 이 틱에 돌았다(또는 broker-fills 가 미뤘다 —
+  #   그때는 research·edgar 가 이 틱에 돌았다)는 뜻이다. 07시 40분 이후에는 세 블록 모두 "오늘이 아니면 이 틱에 반드시 돈다(또는 미룬다)"라
+  #   변수만으로 정확하다. 날짜파일을 다시 읽으면 세 블록이 이미 오늘로 써 두어 미루기가 발동하지 않는다(broker-fills yield_tick 과 같은 이유).
+  # 하트비트: 이 틱 최악 = curl 상한 DAILY_BARS_CURL_MAX_TIME 120 + stop-alert 20 + 매 분 잡 약 30 + sleep 60 = 약 230초 < 300초(순찰 재시작 기준).
+  # ⚠ 러너 가장자리(허용): 07:40~07:54 에 러너가 꺼져 있었거나, 재기동 직후 미루기(research·edgar → broker-fills → daily-bars, 틱 3개)가
+  #   07:55 를 넘기면 그날은 건너뛴다 — 08:10 이후로 미루지 않는다(08시 해외 분석 재시도와 겹치고 라우트가 08:10~08:27 만 허용한다).
+  #   호출하지 않았으므로 날짜파일은 쓰지 않고, 07:55~23:59 의 첫 틱에 로그 한 줄만 남긴다(러너 프로세스 변수 DBARS_SKIP_LOGGED 로 중복 방지 —
+  #   러너가 재기동되면 그날 한 줄 더 남을 수 있다. 로그일 뿐). 다음 날 증분이 이어받는다.
+  # 이 블록은 호출 줄·조건을 새로 더하기만 한다 — 다른 잡의 호출·시각·순서는 그대로다. T-104 단계 1(잡 정의·스케줄 DB 화)이 시작되면
+  #   이 하드코딩 블록을 잡 정의로 흡수한다(공동 인계서 J8).
+  DBARS_MM=$(date '+%M')
+  case "$DBARS_MM" in [0-5][0-9]) ;; *) DBARS_MM=00 ;; esac   # 읽을 수 없으면 이 틱은 돌지 않는다
+  LAST_DAILY_BARS=$(cat "$DAILY_BARS_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "07" ] && [ "$DBARS_MM" -ge 40 ] && [ "$DBARS_MM" -le 54 ] && [ "$LAST_DAILY_BARS" != "$TODAY" ]; then
+    if [ "$LAST_RESEARCH_OVS" != "$TODAY" ] || [ "$LAST_EDGAR" != "$TODAY" ] || [ "$LAST_BROKER_FILLS" != "$TODAY" ]; then
+      echo "[$(date '+%F %T')] daily-bars yield_tick — research-cycle-overseas/edgar-sync/broker-fills 가 이 틱에 돌아 다음 틱으로 미룸"
+    else
+      CALL_MAX_TIME="$DAILY_BARS_CURL_MAX_TIME"   # 이 호출에만 시간 상한
+      call "/api/cron/daily-bars" "daily-bars"
+      CALL_MAX_TIME=""
+      echo "$TODAY" > "$DAILY_BARS_LAST_RUN_FILE"   # 성공·실패 무관 기록
+    fi
+  fi
+  DBARS_LATE=no
+  case "$HH" in
+    07) [ "$DBARS_MM" -ge 55 ] && DBARS_LATE=yes ;;
+    08|09|1[0-9]|2[0-3]) DBARS_LATE=yes ;;
+  esac
+  if [ "$DBARS_LATE" = "yes" ] && [ "$LAST_DAILY_BARS" != "$TODAY" ] && [ "${DBARS_SKIP_LOGGED:-}" != "$TODAY" ]; then
+    echo "[$(date '+%F %T')] daily-bars skipped — 07:40~07:54 에 부르지 못해 오늘 일봉 증분은 건너뜀(07:55 이후 호출 안 함, 다음 날 증분이 이어받음)"
+    DBARS_SKIP_LOGGED="$TODAY"
+  fi
+  # <<< daily-bars-daily
   # 매일 16:00 KST: 국내 리서치 사이클 재계산 (T-032) — 15:30 마감 후 30분 데이터 반영 대기.
   # post-market-domestic(16:00)과 **독립된 블록**이다 — 같은 시각이지만 합치지 않는다.
   LAST_RESEARCH_DOM=$(cat "$RESEARCH_DOMESTIC_LAST_RUN_FILE" 2>/dev/null || echo "")
