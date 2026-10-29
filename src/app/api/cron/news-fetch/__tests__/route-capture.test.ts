@@ -9,7 +9,10 @@
  *  4. ingest + items → 캡처 호출(mode ingest) · 응답·HTTP·재시도·알림·T-106 기록은 캡처가 던져도 같다
  *  5. 구 M4(items 없음) → ingest 는 캡처 미호출, peek 은 no_items 로 응답
  *  6. mode 해석 — 정확히 'peek' 만 peek(대소문자·공백·빈 값은 ingest, 본문에 mode 없음), 400·401 이 먼저
+ *  7. (T-118) peek 의 M4 호출은 1회·20초(재시도 없음) — ingest 의 3회×60초(+대기 3초×2 = 최악 186초)는 그대로
  */
+import * as fs from 'fs';
+import * as path from 'path';
 import type { NextRequest } from 'next/server';
 
 const authMock = jest.fn();
@@ -149,13 +152,14 @@ describe('peek — 스위치 켜짐', () => {
     expect((body.markets as unknown[]).length).toBe(2);
   });
 
-  test('🔴 peek 3회 소진 실패 → news-fetch:* 알림 없음, T-106 기록 없음, 캡처는 ok:false 로(상태에 실패), HTTP 200·ok false', async () => {
+  test('🔴 (T-118) peek 실패 → M4 1회만(재시도 없음), news-fetch:* 알림 없음, T-106 기록 없음, 캡처는 ok:false 로(상태에 실패), HTTP 200·ok false', async () => {
     const { fn, bodies } = m4({ status: () => 502 });
     globalThis.fetch = fn;
     captureMock.mockResolvedValue({ capture: null, status: null });
     const { res, body } = await runPost(reqWith({ market: 'overseas', mode: 'peek' }));
     expect(res.status).toBe(200);
-    expect(bodies).toHaveLength(3);                           // 재시도 규칙 그대로
+    expect(bodies).toHaveLength(1);                           // (T-118) peek 는 재시도하지 않는다
+    expect(body).toMatchObject({ markets: [{ market: 'overseas', ok: false, upserted: 0, attempts: 1 }] });
     expect(alertMock).not.toHaveBeenCalled();
     expect(healthMock).not.toHaveBeenCalled();
     expect(captureMock.mock.calls[0][0]).toMatchObject({ market: 'overseas', mode: 'peek', ok: false });
@@ -282,6 +286,90 @@ describe('ingest — items 캡처(동작·응답·재시도·알림 불변)', ()
     globalThis.fetch = jest.fn().mockImplementation(async () => jsonResponse(200, { upserted: 1, items: { a: 1 } }));
     await runPost(reqWith({ market: 'domestic' }));
     expect(captureMock).not.toHaveBeenCalled();
+  });
+});
+
+/** AbortSignal 을 지키는 멈춘 M4 — abort 되면 AbortError 로 끝난다. 호출마다 시작 시각(가짜 시계)을 남긴다. */
+function hangingM4() {
+  const starts: number[] = [];
+  const bodies: Record<string, unknown>[] = [];
+  const fn = jest.fn().mockImplementation((_u: string, init: RequestInit) => {
+    starts.push(Date.now());
+    bodies.push(JSON.parse(init.body as string) as Record<string, unknown>);
+    return new Promise((_res, rej) => {
+      init.signal?.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; rej(e); });
+    });
+  });
+  return { fn, starts, bodies };
+}
+
+describe('(T-118) M4 호출 규칙 — peek 1회·20초, ingest 3회×60초 그대로', () => {
+  async function timedPost(q: Record<string, string>) {
+    const { POST } = await import('../route');
+    const t0 = Date.now();
+    let doneAt = -1;
+    const p = POST(reqWith(q)).then((r) => { doneAt = Date.now() - t0; return r; });
+    await jest.runAllTimersAsync();
+    const res = await p;
+    return { res, body: (await res.json()) as { markets: { market: string; ok: boolean; attempts: number; error?: string }[] }, ms: doneAt, t0 };
+  }
+
+  test('🔴 peek + M4 멈춤 → 1회만 부르고 20초에 끊고 끝(라우트 약 20초), 알림·T-106 없음', async () => {
+    const h = hangingM4();
+    globalThis.fetch = h.fn;
+    captureMock.mockResolvedValue({ capture: null, status: null, deadline: 'ok' });
+    const { res, body, ms } = await timedPost({ market: 'overseas', mode: 'peek' });
+    expect(res.status).toBe(200);
+    expect(h.fn).toHaveBeenCalledTimes(1);
+    expect(ms).toBe(20_000);
+    expect(body.markets).toEqual([{ market: 'overseas', ok: false, upserted: 0, attempts: 1, error: 'timeout after 20000ms' }]);
+    expect(alertMock).not.toHaveBeenCalled();
+    expect(healthMock).not.toHaveBeenCalled();
+  });
+
+  test('peek 시장 미지정 + M4 멈춤 → 시장별 1회(병렬), 라우트 약 20초', async () => {
+    const h = hangingM4();
+    globalThis.fetch = h.fn;
+    captureMock.mockResolvedValue({ capture: null, status: null, deadline: 'ok' });
+    const { ms } = await timedPost({ mode: 'peek' });
+    expect(h.fn).toHaveBeenCalledTimes(2);
+    expect(ms).toBe(20_000);
+  });
+
+  test('🔴 ingest + M4 멈춤 → 그대로 3회 × 60초 + 대기 3초 × 2 = 186초, 알림 그대로, 시도 시작 0·63·126초', async () => {
+    const h = hangingM4();
+    globalThis.fetch = h.fn;
+    const { body, ms, t0 } = await timedPost({ market: 'domestic' });
+    expect(h.fn).toHaveBeenCalledTimes(3);
+    expect(h.bodies).toEqual([{ market: 'domestic', limit: 100 }, { market: 'domestic', limit: 100 }, { market: 'domestic', limit: 100 }]);
+    expect(h.starts.map((t) => t - t0)).toEqual([0, 63_000, 126_000]);
+    expect(ms).toBe(186_000);
+    expect(body.markets).toEqual([{ market: 'domestic', ok: false, upserted: 0, attempts: 3, error: 'timeout after 60000ms' }]);
+    expect(alertMock.mock.calls.map((c) => c.slice(0, 2))).toEqual([['news-fetch:domestic:failed', 'critical']]);
+    expect(healthMock).toHaveBeenCalledWith({ channel: 'fetch', market: 'domestic', count: 0 });
+  });
+
+  test('🔴 ingest 502 → 그대로 3회(재시도 규칙 불변), peek 502 → 1회', async () => {
+    const a = m4({ status: () => 502 });
+    globalThis.fetch = a.fn;
+    await runPost(reqWith({ market: 'overseas' }));
+    expect(a.bodies).toHaveLength(3);
+    jest.resetModules();
+    const b = m4({ status: () => 502 });
+    globalThis.fetch = b.fn;
+    captureMock.mockResolvedValue({ capture: null, status: null });
+    await runPost(reqWith({ market: 'overseas', mode: 'peek' }));
+    expect(b.bodies).toHaveLength(1);
+  });
+
+  test('정적 — peek 상수 1회·20초, ingest 상수 3회·60초·3초 불변, 모드별 규칙 함수가 peek 에만 peek 상수를 준다', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'route.ts'), 'utf8');
+    expect(src).toMatch(/^const PEEK_MAX_ATTEMPTS = 1;$/m);
+    expect(src).toMatch(/^const PEEK_REQUEST_TIMEOUT_MS = 20_000;$/m);
+    expect(src).toMatch(/^const MAX_ATTEMPTS = 3;$/m);
+    expect(src).toMatch(/^const REQUEST_TIMEOUT_MS = 60_000;$/m);
+    expect(src).toMatch(/^const RETRY_BACKOFF_MS = 3_000;$/m);
+    expect(src).toMatch(/return mode === 'peek'\s*\? \{ maxAttempts: PEEK_MAX_ATTEMPTS, timeoutMs: PEEK_REQUEST_TIMEOUT_MS \}\s*: \{ maxAttempts: MAX_ATTEMPTS, timeoutMs: REQUEST_TIMEOUT_MS \};/);
   });
 });
 

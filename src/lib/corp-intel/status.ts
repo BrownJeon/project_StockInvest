@@ -2,11 +2,16 @@
  * 마지막 캡처 상태 기록 (T-116) — `system_config` 키 `ci_capture_status:<market>` 에 JSON 한 개.
  *
  * T-106 `news_zero_streak:*` 와 같은 방식의 **관찰용** 값이다(캡처 공백 감시의 재료 — 알림은 이 task 범위 밖).
- * 값: `{ lastAt, mode, status, fetched, inserted, duplicates, rejected, consecutiveFailures }`
+ * 값: `{ lastAt, mode, status, fetched, inserted, duplicates, rejected, consecutiveFailures, feeds }`
  *  - lastAt: KST 벽시계 `YYYY-MM-DD HH:mm:ss`
  *  - mode: 'peek' | 'ingest'
  *  - status: 이번 시도의 결과(`CaptureStatusKind`) — 사양 필드 목록에 더한 것(무엇 때문에 실패로 셌는지 보이게)
  *  - consecutiveFailures: 실패로 세는 결과(`isFailureStatus`)가 연속된 횟수. 정상(ok)이면 0 으로 초기화.
+ *  - feeds (T-118 추가 — 앞 필드는 그대로라 하위 호환): `{ "<feed_host>": { oldestPub, newestPub, items, gap, consecutiveGaps } }`.
+ *    이번 응답을 받아 겹침 검사(feed-check.ts)를 한 시도면 그 결과(연속 gap 수는 직전 상태의 같은 피드 값에서 이어 센다), 응답을 못 받은
+ *    시도(fetch_failed·no_items)·검사를 하지 않은 호출이면 **직전 상태의 feeds 를 그대로 옮긴다**(연속 gap 수를 잃지 않게 — 그 값이
+ *    이번 시도의 것이 아니라는 것은 status 로 안다). 직전 값이 없거나 손상이면 `{}`. 검사를 한 시도에서 이번 응답에 없는 피드는
+ *    빠진다(그 피드의 연속 gap 수는 다음에 다시 보이면 0 에서 센다). 알림은 만들지 않는다.
  *
  * **절대 던지지 않는다.** 읽기·쓰기 오류는 경고 후 무시한다. 대기는 **마감(deadline, epoch ms)** 까지 — 호출자(raw-capture 의
  * captureFetchOutcome)가 스위치 읽기·INSERT 와 **같은 마감 하나를 공유**시킨다(캡처 전체 4초, Leader 결정 Q8). 마감을 주지 않으면
@@ -17,6 +22,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { toKstDatetime } from '@/lib/time';
+import { CI_FEED_MAX, nextConsecutiveGaps, type FeedObservation, type FeedStatus } from './feed-check';
 
 export type CaptureMarket = 'domestic' | 'overseas';
 export type CaptureMode = 'peek' | 'ingest';
@@ -49,6 +55,8 @@ export interface CaptureStatusValue {
   duplicates: number;
   rejected: number;
   consecutiveFailures: number;
+  /** (T-118) 피드별 겹침 검사 — 머리 주석 */
+  feeds: Record<string, FeedStatus>;
 }
 
 export interface RecordCaptureStatusInput {
@@ -59,6 +67,8 @@ export interface RecordCaptureStatusInput {
   duplicates: number;
   rejected: number;
   now?: Date;
+  /** (T-118) 이번 시도의 피드별 겹침 검사 결과. 없으면(검사하지 않은 시도) 직전 상태의 feeds 를 옮긴다. */
+  feeds?: Record<string, FeedObservation>;
 }
 
 export function isCaptureMarket(m: unknown): m is CaptureMarket {
@@ -88,8 +98,54 @@ export function readPrevFailures(raw: unknown): number {
   return nonNegInt(n) ? n : 0;
 }
 
-/** 순수 계산 — 다음 상태 값. */
-export function nextCaptureStatus(prevFailures: number, input: RecordCaptureStatusInput, now: Date): CaptureStatusValue {
+const FEED_HOST_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/;
+const KST_DT_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const isGap = (g: unknown): g is FeedStatus['gap'] => g === true || g === false || g === 'bootstrap' || g === 'skipped';
+const pubOrNull = (v: unknown): string | null => (typeof v === 'string' && KST_DT_RE.test(v) ? v : null);
+
+/**
+ * (T-118) 이전 값에서 feeds 만 읽는다 — 형태가 맞는 칸만(호스트 이름 꼴·필드 타입), 최대 `CI_FEED_MAX` 개. 손상·없음이면 `{}`.
+ * mysql2 JSON 컬럼은 객체, 문자열 저장분은 문자열로 온다.
+ */
+export function readPrevFeeds(raw: unknown): Record<string, FeedStatus> {
+  let v: unknown = raw;
+  if (typeof v === 'string') {
+    try { v = JSON.parse(v); } catch { return {}; }
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const f = (v as Record<string, unknown>).feeds;
+  if (!f || typeof f !== 'object' || Array.isArray(f)) return {};
+  const out: Record<string, FeedStatus> = {};
+  for (const host of Object.keys(f).filter((h) => h.length <= 120 && FEED_HOST_RE.test(h)).sort().slice(0, CI_FEED_MAX)) {
+    const e = (f as Record<string, unknown>)[host];
+    if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
+    const o = e as Record<string, unknown>;
+    out[host] = {
+      oldestPub: pubOrNull(o.oldestPub),
+      newestPub: pubOrNull(o.newestPub),
+      items: nonNegInt(o.items) ? o.items : 0,
+      gap: isGap(o.gap) ? o.gap : 'skipped',
+      consecutiveGaps: nonNegInt(o.consecutiveGaps) ? o.consecutiveGaps : 0,
+    };
+  }
+  return out;
+}
+
+/** (T-118) 순수 계산 — 다음 feeds. 이번 검사 결과가 없으면 직전 feeds 그대로, 있으면 피드마다 연속 gap 수를 직전 값에서 이어 센다. */
+export function nextFeeds(prevFeeds: Record<string, FeedStatus>, obs: Record<string, FeedObservation> | undefined): Record<string, FeedStatus> {
+  if (obs === undefined) return prevFeeds;
+  const out: Record<string, FeedStatus> = {};
+  for (const [host, o] of Object.entries(obs)) {
+    const prev = Object.prototype.hasOwnProperty.call(prevFeeds, host) ? prevFeeds[host].consecutiveGaps : 0;
+    out[host] = { oldestPub: o.oldestPub, newestPub: o.newestPub, items: o.items, gap: o.gap, consecutiveGaps: nextConsecutiveGaps(prev, o.gap) };
+  }
+  return out;
+}
+
+/** 순수 계산 — 다음 상태 값. prevFeeds(T-118)를 주지 않으면 직전 feeds 없음(`{}`)으로 본다. */
+export function nextCaptureStatus(
+  prevFailures: number, input: RecordCaptureStatusInput, now: Date, prevFeeds: Record<string, FeedStatus> = {},
+): CaptureStatusValue {
   const fail = isFailureStatus(input.status);
   const cnt = (n: unknown) => (nonNegInt(n) ? n : 0);
   return {
@@ -101,6 +157,7 @@ export function nextCaptureStatus(prevFailures: number, input: RecordCaptureStat
     duplicates: cnt(input.duplicates),
     rejected: cnt(input.rejected),
     consecutiveFailures: fail ? prevFailures + 1 : 0,
+    feeds: nextFeeds(prevFeeds, input.feeds),
   };
 }
 
@@ -144,17 +201,21 @@ async function recordCaptureStatusBody(market: CaptureMarket, input: RecordCaptu
     if (!input || input.status === 'skipped_disabled') return null;
     const now = input.now ?? new Date();
     let prev = 0;
+    let prevFeeds: Record<string, FeedStatus> = {};
     try {
       const [rows] = await getPool().query<(RowDataPacket & { value: unknown })[]>(
         'SELECT value FROM system_config WHERE `key` = ? LIMIT 1',
         [key],
       );
-      if (Array.isArray(rows) && rows.length > 0) prev = readPrevFailures(rows[0].value);
+      if (Array.isArray(rows) && rows.length > 0) {
+        prev = readPrevFailures(rows[0].value);
+        prevFeeds = readPrevFeeds(rows[0].value);   // (T-118) 같은 읽기 1회에서 — 쿼리를 늘리지 않는다
+      }
     } catch (e) {
       // 읽기 실패 — 연속 횟수는 모르지만 이번 결과는 남긴다(0 에서 다시 센다).
       console.warn(`${LOG} ${key} 읽기 실패 — 연속 실패 횟수를 0 에서 다시 센다: ${e instanceof Error ? e.message : String(e)}`);
     }
-    const next = nextCaptureStatus(prev, input, now);
+    const next = nextCaptureStatus(prev, input, now, prevFeeds);
     // 읽기가 마감을 넘겨 끝났으면(호출자는 이미 null 로 돌아갔다) 쓰기 단계를 보내지 않는다 — 마감 뒤 늦은 쓰기 0.
     if (remainingMs(deadline) <= 0) {
       console.warn(`${LOG} ${key} 마감이 지나 상태 쓰기를 건너뜀`);

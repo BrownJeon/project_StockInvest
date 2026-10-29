@@ -59,8 +59,11 @@
  *  - **ingest**(06시·T-115 15:30): 동작·요청 본문(`{market, limit}`)·응답 형식·재시도·알림·T-106 기록 전부 그대로. 시장별 결과가
  *    확정되고 기존 알림을 보낸 뒤 T-106 기록과 **병렬로** 캡처한다 — M4 가 성공했고 응답에 `items` 가 있을 때만 저장(+ 상태
  *    `ci_capture_status:<market>`), 없거나(구 M4) 재시도 소진 실패면 캡처 모듈을 부르지 않는다(실패는 기존 알림이 알린다).
- *  - **peek**(T-116 러너 블록 — 낮 시간 7회): 스위치가 꺼져 있으면 **M4 를 부르지 않고** `{ok:true, skipped:'capture_disabled'}`(200).
- *    켜져 있으면 요청 본문에 `mode:'peek'` 를 실어(임베딩·upsert 없이 피드만 읽음) 재시도 규칙 그대로 부르고 `items` 를 캡처한다.
+ *  - **peek**(T-116 러너 블록 — T-118 부터 해외 하루 19회·국내 2회): 스위치가 꺼져 있으면 **M4 를 부르지 않고** `{ok:true, skipped:'capture_disabled'}`(200).
+ *    켜져 있으면 요청 본문에 `mode:'peek'` 를 실어(임베딩·upsert 없이 피드만 읽음) 부르고 `items` 를 캡처한다.
+ *    (T-118) peek 의 M4 호출은 **1회·20초**(`PEEK_MAX_ATTEMPTS`·`PEEK_REQUEST_TIMEOUT_MS`) — 재시도하지 않는다(실패하면 캡처 상태에
+ *    fetch_failed 로 남기고 끝, 다음 슬롯이 1시간 뒤다). peek 라우트 최악 = 스위치 4초 + M4 20초 + 캡처 4초 = 28초 — 러너의 peek curl 상한
+ *    (40초) 안이다. ingest 의 3회×60초 재시도는 그대로다.
  *    🔴 peek 결과는 `recordNewsOutcome({channel:'fetch'})` 에 **넘기지 않는다** — peek 응답은 항상 `upserted: 0` 이라 T-106 수집 0건
  *    감시에 거짓 경고가 난다(M4 계약 §9.8 호출자 주의 ①). peek 실패는 `news-fetch:*` 알림을 내지 않고(06시 ingest 가 같은 장애를
  *    알린다) 로그 + 캡처 상태의 `consecutiveFailures` 만 올린다. 토큰 누락도 peek 에서는 설정 알림 없이 로그만 남기고 끝낸다.
@@ -113,6 +116,19 @@ const MAX_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 60_000;
 /** 재시도 사이 고정 대기. 하루 1회 잡이라 지수 백오프까지는 불필요. */
 const RETRY_BACKOFF_MS = 3_000;
+/**
+ * (T-118) peek 의 M4 호출 — 1회·20초. 슬롯이 하루 21회(매시)라 실패해도 1시간 뒤 다음 슬롯이 오고, ingest 와 같은 3회×60초(최악 약 186초)를
+ * 쓰면 M4 장애 때 러너 틱이 그만큼 길어진다(하트비트 300초). 위 세 상수(ingest)는 바꾸지 않는다.
+ */
+const PEEK_MAX_ATTEMPTS = 1;
+const PEEK_REQUEST_TIMEOUT_MS = 20_000;
+
+/** 모드별 M4 호출 규칙 — ingest 는 기존 상수 그대로, peek 은 1회·20초. */
+function fetchPolicy(mode: FetchMode): { maxAttempts: number; timeoutMs: number } {
+  return mode === 'peek'
+    ? { maxAttempts: PEEK_MAX_ATTEMPTS, timeoutMs: PEEK_REQUEST_TIMEOUT_MS }
+    : { maxAttempts: MAX_ATTEMPTS, timeoutMs: REQUEST_TIMEOUT_MS };
+}
 
 interface MarketResult {
   market: Market;
@@ -173,8 +189,9 @@ function resolveM4AdminToken(): string {
 async function fetchNewsOnce(
   base: string, adminToken: string, market: Market, mode: FetchMode = 'ingest',
 ): Promise<{ upserted: number; fresh?: number; items?: unknown[] }> {
+  const { timeoutMs } = fetchPolicy(mode);
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   // (T-116) ingest 본문은 기존과 같은 {market, limit} — peek 만 mode 를 싣는다.
   const reqBody = mode === 'peek'
     ? { market, limit: NEWS_FETCH_LIMITS[market], mode: 'peek' }
@@ -200,7 +217,7 @@ async function fetchNewsOnce(
     };
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') {
-      throw new Error(`timeout after ${REQUEST_TIMEOUT_MS}ms`);
+      throw new Error(`timeout after ${timeoutMs}ms`);
     }
     throw e;
   } finally {
@@ -211,7 +228,8 @@ async function fetchNewsOnce(
 async function fetchMarketWithRetry(base: string, adminToken: string, market: Market, mode: FetchMode = 'ingest'): Promise<MarketOutcome> {
   let lastError = '';
   const tag = mode === 'peek' ? `${market} peek` : market;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  const { maxAttempts } = fetchPolicy(mode);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const { upserted, fresh, items } = await fetchNewsOnce(base, adminToken, market, mode);
       console.log(`[cron/news-fetch] ${tag} OK upserted=${upserted} attempt=${attempt}` + (fresh !== undefined ? ` fresh=${fresh}` : '')
@@ -219,13 +237,13 @@ async function fetchMarketWithRetry(base: string, adminToken: string, market: Ma
       return { result: { market, ok: true, upserted, attempts: attempt }, fresh, items };
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
-      console.error(`[cron/news-fetch] ${tag} FAILED attempt=${attempt}/${MAX_ATTEMPTS} error=${lastError}`);
-      if (attempt < MAX_ATTEMPTS) {
+      console.error(`[cron/news-fetch] ${tag} FAILED attempt=${attempt}/${maxAttempts} error=${lastError}`);
+      if (attempt < maxAttempts) {
         await sleep(RETRY_BACKOFF_MS);
       }
     }
   }
-  return { result: { market, ok: false, upserted: 0, attempts: MAX_ATTEMPTS, error: lastError } };
+  return { result: { market, ok: false, upserted: 0, attempts: maxAttempts, error: lastError } };
 }
 
 /** (T-116) 캡처 1건 — 캡처 함수는 원래 던지지 않지만, 던져도 여기서 흡수한다(응답·재시도·알림 영향 0). */
@@ -250,7 +268,7 @@ async function captureIngest(outcomes: MarketOutcome[]): Promise<void> {
 }
 
 /**
- * (T-116) peek — 스위치 확인(꺼짐 = M4 호출 0) → 시장별 M4 peek(재시도 규칙 그대로) → 캡처.
+ * (T-116) peek — 스위치 확인(꺼짐 = M4 호출 0) → 시장별 M4 peek(T-118: 1회·20초, 재시도 없음) → 캡처.
  * 🔴 recordNewsOutcome 를 부르지 않고, news-fetch:* 알림을 내지 않는다(머리 주석).
  */
 async function handlePeek(targets: readonly Market[], single: Market | null): Promise<NextResponse> {

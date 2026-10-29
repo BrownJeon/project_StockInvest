@@ -7,6 +7,8 @@
  *     `system_config` 쓰기는 `ci_capture_status:<market>` 키뿐 — 정적(키 함수·리터럴)과 동작(가짜 풀로 모든 분기를 돌려 실제로
  *     나간 쓰기 문장·키를 모은다) 두 방향으로 확인한다.
  *  4. 라우트가 corp-intel 에서 가져오는 이름은 둘(captureFetchOutcome·readCaptureSwitch)과 타입 하나뿐.
+ *  5. (T-118) 읽기 SQL 대상도 `system_config`·`ci_raw_item` 뿐 — 피드별 겹침 검사(feed-check.ts)는 `ci_raw_item` 읽기 1문장만 더하고 쓰기는
+ *     더하지 않는다. 동작 시험에서 실제로 나간 읽기 문장·대상도 모은다.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -33,7 +35,7 @@ const ownFiles = ALL.filter((f) => OWN.test(rel(f)) && !isTest(rel(f)));
 
 describe('corp-intel → 거래·안전장치 경로를 쓰지 않는다', () => {
   test('검사 대상 존재', () => {
-    expect(ownFiles.map(rel).sort()).toEqual(['lib/corp-intel/keys.ts', 'lib/corp-intel/raw-capture.ts', 'lib/corp-intel/status.ts']);
+    expect(ownFiles.map(rel).sort()).toEqual(['lib/corp-intel/feed-check.ts', 'lib/corp-intel/keys.ts', 'lib/corp-intel/raw-capture.ts', 'lib/corp-intel/status.ts']);
   });
 
   test('import 는 허용 목록뿐(DB·시간·mysql2 타입·node:crypto·같은 폴더)', () => {
@@ -79,6 +81,19 @@ describe('corp-intel → 거래·안전장치 경로를 쓰지 않는다', () =>
     expect(sql).not.toMatch(new RegExp(`\\b(${ddl})\\s+(TABLE|DATABASE|INDEX)\\b`, 'i'));
   });
 
+  test('🔴 (T-118) 읽기 SQL 대상은 system_config·ci_raw_item 뿐 — ci_raw_item 읽기는 feed-check.ts 의 겹침 검사 1문장뿐', () => {
+    const sql = ownFiles.map(read).join('\n');
+    const froms = [...sql.matchAll(/\bFROM\s+`?(\w+)/g)].map((m) => m[1]);
+    expect(new Set(froms)).toEqual(new Set(['system_config', 'ci_raw_item']));
+    const rawReads = ownFiles.filter((f) => /\bFROM\s+ci_raw_item\b/.test(read(f))).map(rel);
+    expect(rawReads).toEqual(['lib/corp-intel/feed-check.ts']);
+    expect((read(path.join(SRC, 'lib/corp-intel/feed-check.ts')).match(/\bFROM\s+ci_raw_item\b/g) ?? []).length).toBe(1);
+    // feed-check.ts 는 쓰기 문장을 하나도 갖지 않는다(주석을 뺀 코드 기준 — 주석은 저장(INSERT)을 설명한다)
+    const code = read(path.join(SRC, 'lib/corp-intel/feed-check.ts')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|TRUNCATE)\b/);
+    expect(code).toMatch(/SELECT feed_host/);
+  });
+
   test('🔴 system_config 키 리터럴은 ci_capture_enabled(읽기)·ci_capture_status:(쓰기 접두)뿐 — 쓰기 키는 captureStatusKey 하나로만 만든다', () => {
     const all = ownFiles.map(read).join('\n');
     const keyLits = [...all.matchAll(/['"`](ci_[a-z_]+:?)/g)].map((m) => m[1]);
@@ -102,11 +117,15 @@ describe('🔴 동작으로 확인 — 모든 분기에서 나간 쓰기 문장�
     const mod = require('../raw-capture') as typeof import('../raw-capture');
     const item = { guid: 'g', link: 'https://a.example.com/x', title: 't', published_at: '2026-10-28T00:00:00Z', feed_host: 'a.example.com' };
     const writes: string[] = [];
+    const reads: string[] = [];
     for (const sw of [true, 'false', null]) {
       for (const insert of ['ok', 'no_table', 'error'] as const) {
         mockQuery.mockReset();
         mockQuery.mockImplementation(async (sql: string, params: unknown[]) => {
           if (/^\s*SELECT\b/i.test(sql)) {
+            // (T-118) 실제로 나간 읽기 — 대상 테이블 + system_config 면 키
+            const from = /\bFROM\s+(\w+)/.exec(sql)?.[1] ?? '?';
+            reads.push(from === 'system_config' ? `${from} ${String(params[0])}` : from);
             if (params[0] === 'ci_capture_enabled') return [sw === null ? [] : [{ value: sw }]];
             return [[]];
           }
@@ -131,6 +150,10 @@ describe('🔴 동작으로 확인 — 모든 분기에서 나간 쓰기 문장�
     expect(writes.length).toBeGreaterThan(0);
     expect(new Set(writes)).toEqual(new Set([
       'INSERT INTO ci_raw_item', 'INSERT INTO system_config ci_capture_status:domestic', 'INSERT INTO system_config ci_capture_status:overseas',
+    ]));
+    // (T-118) 읽기도 허용 목록 안 — 스위치·상태 키(system_config)와 겹침 검사(ci_raw_item)
+    expect(new Set(reads)).toEqual(new Set([
+      'system_config ci_capture_enabled', 'system_config ci_capture_status:domestic', 'system_config ci_capture_status:overseas', 'ci_raw_item',
     ]));
     jest.restoreAllMocks();
   });

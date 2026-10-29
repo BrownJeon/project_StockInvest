@@ -188,12 +188,14 @@ eq "120틱 완주(실패 시나리오)" "$(cat "$RF/ticks")" "120"
 eq "120틱 완주(성공 시나리오)" "$(cat "$RS/ticks")" "120"
 
 ovs() { grep -c 'post-market-analysis?market=overseas' "$1/calls"; }
+# (T-118) 해외 peek 가 09시에도 돈다(news-fetch?market=overseas&mode=peek) — 'market=overseas' 로 거르면 함께 걸리므로 시도 시각 단언은
+#   해외 post-market 경로로 좁힌다(T-116 이 RT 시나리오에 한 것과 같은 방식, post-market 기대값은 그대로).
 eq "🔴 해외 post-market 502 → 2시간 동안 정확히 3회" "$(ovs "$RF")" "3"
 eq "🔴 시도 시각 = 08:00 · 08:10 · 08:20 (10분 간격, 08시 안)" \
-   "$(grep 'market=overseas' "$RF/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:10 08:20 "
+   "$(grep 'post-market-analysis?market=overseas' "$RF/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:10 08:20 "
 eq "해외 post-market 200 → 1회" "$(ovs "$RS")" "1"
 eq "🔴 해외 post-market 503(데이터 일시 모름) → 3회 08:00·08:10·08:20" \
-   "$(grep 'market=overseas' "$RU/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:10 08:20 "
+   "$(grep 'post-market-analysis?market=overseas' "$RU/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:10 08:20 "
 eq "503 시나리오: 날짜파일 없음" \
    "$(cat "$RU/home/.node-local/stockinvest/post-market-overseas-last-date" 2>/dev/null || echo none)" "none"
 if diff <(grep -v 'market=overseas' "$RU/calls") <(grep -v 'market=overseas' "$RS/calls") > /dev/null; then ok "503 시나리오도 다른 잡 호출 목록 동일"; else bad "503 시나리오 다른 잡 호출 목록이 다르다"; fi
@@ -213,14 +215,15 @@ eq "🔴 다른 잡 호출 목록 = HEAD 고정 목록(502 시나리오, sha256)
 RR="$(run_loop 502 restart)"
 eq "🔴 M-1 재시작: 첫 해외 호출 도중 러너 강제 종료됨" "$([ -e "$RR/killed" ] && echo yes || echo no)" "yes"
 eq "🔴 M-1 재시작: 새 러너는 곧바로 다시 부르지 않고 08:00(중단)·08:10·08:20 — 하루 3회 절대 상한" \
-   "$(grep 'market=overseas' "$RR/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:10 08:20 "
+   "$(grep 'post-market-analysis?market=overseas' "$RR/calls" | cut -d' ' -f1 | tr '\n' ' ')" "08:00 08:10 08:20 "
 eq "M-1 재시작: 시도 기록 3회" "$(cut -d' ' -f2 "$RR/home/.node-local/stockinvest/post-market-overseas-attempts")" "3"
 eq "M-1 재시작: 날짜파일 없음" \
    "$(cat "$RR/home/.node-local/stockinvest/post-market-overseas-last-date" 2>/dev/null || echo none)" "none"
 # 🔴 Codex C2 ② — --max-time 은 해외 post-market 호출에만, 값 120
 # (T-068) stop-alert 의 --max-time(20)은 test-cron-runner-stop-alert.sh 가 따로 본다 — 여기서는 그 줄을 빼고 해외 post-market 만 본다.
 # (T-087) broker-fills 의 --max-time(90)도 그 블록 시험이 따로 본다 — 여기서는 뺀다.
-pmo_mt() { grep -v '^/api/cron/stop-alert ' "$1/maxtime" | grep -v '^/api/cron/broker-fills '; }
+# (T-118) 09시 해외 peek(news-fetch?…&mode=peek)의 --max-time(40)은 scripts/test-cron-runner-news-peek.sh 가 따로 본다 — 같은 방식으로 뺀다.
+pmo_mt() { grep -v '^/api/cron/stop-alert ' "$1/maxtime" | grep -v '^/api/cron/broker-fills ' | grep -v 'mode=peek max-time='; }
 eq "🔴 --max-time 은 (stop-alert 외) 해외 post-market 호출에만(200 시나리오)" "$(pmo_mt "$RS" | cut -d' ' -f1 | sort -u)" "/api/cron/post-market-analysis?market=overseas"
 eq "--max-time 값 120" "$(pmo_mt "$RS" | cut -d' ' -f2 | sort -u)" "max-time=120"
 eq "--max-time 이 붙은 호출 수 = 해외 호출 수(502 시나리오 3)" "$(pmo_mt "$RF" | wc -l)" "3"

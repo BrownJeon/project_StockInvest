@@ -25,6 +25,10 @@
 #   --max-time 목록, E·F7 정적)는 변경 전 러너(bf8450d·5d4fdd1)와 대조하므로 daily-bars 호출·블록·DAILY_BARS_* 선언을 peek 처럼 뺀다
 #   (범위 정교화 — 뉴스 쪽 기대값은 그대로). daily-bars 자체의 시험과 "daily-bars 를 뺀 모든 호출 = T-116 러너" 증명은
 #   scripts/test-cron-runner-daily-bars.sh 가 한다.
+# T-118 — peek 가 해외 매시(06·07·08·15·16시 제외)로 늘고 peek 호출에만 curl --max-time 40 이 붙었다. 이 파일의 시나리오 A·C 는 05:58 에
+#   시작해 05시 해외 peek 가 끼므로 ① curl 스텁이 --max-time 을 지킨다(응답이 상한보다 늦으면 상한만큼만 흐르고 000 — 실제 curl 과 같다.
+#   ingest 호출에는 상한이 없어 그 동작은 전과 같다) ② "뉴스 호출에 --max-time 없음" 단언은 ingest 호출(경로에 mode=peek 없음)로 좁힌다.
+#   peek 의 상한·시각은 scripts/test-cron-runner-news-peek.sh 가 본다. ingest 기대값은 하나도 바꾸지 않았다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -102,7 +106,9 @@ case "\$path" in
   /api/cron/news-fetch*)
     case "$mode" in
       fail) code=502 ;;
-      slow) c=\$(cat "$R/clock"); echo \$((c + 186)) > "$R/clock" ;;
+      slow) took=186
+            if [ -n "\$mt" ] && [ "\$took" -gt "\$mt" ]; then took=\$mt; code=000; fi   # (T-118) curl 상한을 지킨다(peek 만 상한이 있다)
+            c=\$(cat "$R/clock"); echo \$((c + took)) > "$R/clock" ;;
     esac ;;
 esac
 [ -n "\$out" ] && echo '{}' > "\$out"
@@ -143,7 +149,7 @@ for R in "$NO" "$NF"; do
   eq "$n: 국내 날짜파일 = 둘째 날" "$(df "$R" news-fetch-domestic-last-date)" "2026-10-29"
   eq "$n: 옛 날짜파일 news-fetch-last-date 를 만들지 않음" "$(df "$R" news-fetch-last-date)" "none"
   eq "$n: 국내 yield 로그 = 날마다 1번" "$(grep -c 'news-fetch-domestic yield_tick' "$R/stdout")" "2"
-  eq "$n: 뉴스 호출에는 --max-time 없음" "$(grep -c '^/api/cron/news-fetch' "$R/maxtime")" "0"
+  eq "$n: 뉴스(ingest) 호출에는 --max-time 없음" "$(grep '^/api/cron/news-fetch' "$R/maxtime" | grep -vc 'mode=peek')" "0"   # (T-118) peek 상한은 peek 시험이 본다
 done
 eq "ok: 해외 OK 로그 2줄" "$(grep -c 'news-fetch-overseas OK' "$NO/stdout")" "2"
 eq "ok: 국내 OK 로그 2줄" "$(grep -c 'news-fetch-domestic OK' "$NO/stdout")" "2"
@@ -303,7 +309,7 @@ same115 "F6 하루 전체" "$NA" "$GA"
 eq "F6: 하루 전체에서 건너뜀 로그 없음" "$(skiplog "$NA")" "0"
 eq "F6: 날짜파일 — 06시 국내·15시 국내 모두 오늘" "$(df "$NA" news-fetch-domestic-last-date) $(df "$NA" news-fetch-domestic-pm-last-date)" "2026-10-28 2026-10-28"
 if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime" | grep -v '^/api/cron/daily-bars ') <(grep -v '^/api/cron/news-fetch' "$GA/maxtime") > /dev/null && \
-   [ "$(grep -c '^/api/cron/news-fetch' "$NA/maxtime")" = "0" ]; then ok "F6: --max-time 목록 = T-103 러너(뉴스에는 없음)"; else bad "F6: --max-time 목록이 다르다"; fi
+   [ "$(grep '^/api/cron/news-fetch' "$NA/maxtime" | grep -vc 'mode=peek')" = "0" ]; then ok "F6: --max-time 목록 = T-103 러너(뉴스 ingest 에는 없음 — T-118 peek 상한은 peek 시험)"; else bad "F6: --max-time 목록이 다르다"; fi
 
 # F7. 정적 — 새 블록·선언·주석을 빼면 T-103 러너와 실행 줄이 한 글자도 같다
 strip115() { awk '/^  # >>> (news-fetch-(domestic-pm|peek)|daily-bars-daily)/{s=1} s{ if (/^  # <<< (news-fetch-(domestic-pm|peek)|daily-bars-daily)/) s=0; next } {print}' "$1" \

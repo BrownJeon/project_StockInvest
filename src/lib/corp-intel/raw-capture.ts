@@ -42,6 +42,7 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { toKstDatetime } from '@/lib/time';
+import { checkFeedOverlap, type FeedObservation } from './feed-check';
 import { RSS_KEY_SCHEME, parseIsoUtcStrict, rssSourceKey, sha256Hex } from './keys';
 import {
   isCaptureMarket,
@@ -357,7 +358,8 @@ export async function captureNewsItems(market: CaptureMarket, items: unknown, op
   });
 }
 
-async function captureBody(market: CaptureMarket, items: unknown, opts: CaptureOptions): Promise<CaptureResult> {
+/** 항목 목록 → 저장할 행(키 중복 제거)·거부 수·묶음 안 중복 수. 순수 함수 — 저장(captureBody)과 겹침 검사(T-118)가 같은 행을 본다. */
+export function prepareCaptureRows(items: unknown): { rows: CiRawRssRow[]; rejected: number; inBatchDup: number } {
   const list: unknown[] = Array.isArray(items) ? items : [];
   let rejected = Math.max(0, list.length - CI_CAPTURE_MAX_ITEMS);
   const byKey = new Map<string, CiRawRssRow>();
@@ -369,7 +371,11 @@ async function captureBody(market: CaptureMarket, items: unknown, opts: CaptureO
     if (byKey.has(row.sourceKey)) { inBatchDup++; continue; }
     byKey.set(row.sourceKey, row);
   }
-  const rows = [...byKey.values()];
+  return { rows: [...byKey.values()], rejected, inBatchDup };
+}
+
+async function captureBody(market: CaptureMarket, items: unknown, opts: CaptureOptions): Promise<CaptureResult> {
+  const { rows, rejected, inBatchDup } = prepareCaptureRows(items);
   if (rows.length === 0) return { status: 'ok', inserted: 0, duplicates: inBatchDup, rejected };
 
   const seen = toKstDatetime(opts.now ?? new Date());
@@ -417,9 +423,11 @@ export interface CaptureFetchOutcomeResult {
 }
 
 /**
- * news-fetch 라우트가 시장별로 부른다. 스위치(꺼짐 = 아무것도 안 함) → 실패·항목 없음이면 상태만 → 저장 → 상태 기록.
- * **절대 던지지 않고, 시작할 때 정한 마감 하나(지금 + `CI_CAPTURE_TIMEOUT_MS` = 4초) 안에 돌아온다** — 세 단계가 그 마감을 나눠 쓰고,
- * 남은 시간이 0 이면 다음 단계를 건너뛴다(결과 `deadline`).
+ * news-fetch 라우트가 시장별로 부른다. 스위치(꺼짐 = 아무것도 안 함) → 실패·항목 없음이면 상태만 → (T-118) 피드별 겹침 검사(읽기 1회,
+ * 최대 `CI_FEED_CHECK_TIMEOUT_MS`)와 저장을 나란히 → 상태 기록(`feeds` 포함).
+ * **절대 던지지 않고, 시작할 때 정한 마감 하나(지금 + `CI_CAPTURE_TIMEOUT_MS` = 4초) 안에 돌아온다** — 네 단계가 그 마감을 나눠 쓰고,
+ * 남은 시간이 0 이면 다음 단계를 건너뛴다(결과 `deadline`). 겹침 검사를 건너뛰는 것은 `deadline` 에 나타나지 않는다(그 피드의 gap 이
+ * 'skipped' 로 상태에 남는다).
  */
 export async function captureFetchOutcome(input: CaptureFetchOutcomeInput): Promise<CaptureFetchOutcomeResult> {
   const deadline = Date.now() + CI_CAPTURE_TIMEOUT_MS;
@@ -459,10 +467,17 @@ async function captureFetchOutcomeBody(input: CaptureFetchOutcomeInput, deadline
     const r = await record({ ...base, status: 'no_items', fetched: 0 });
     return { capture: null, status: r.status, deadline: r.skipped ? 'status_skipped' : 'ok' };
   }
-  const capture = await captureNewsItems(market, input.items, { now: input.now, assumeEnabled: true, deadline });
+  // (T-118) 피드별 겹침 검사 — 저장과 **나란히**, 같은 마감 안에서 최대 CI_FEED_CHECK_TIMEOUT_MS. 조회가 `first_seen_at < now` 로 이번 캡처의
+  //   새 행을 빼므로 순서와 무관하게 "이 캡처 전" 값이다 — 그래서 저장이 조회를 기다리지 않는다(저장 시간 영향 0). 같은 now 를 둘에 준다.
+  //   조회가 넘기거나 실패하면 그 피드는 gap 'skipped' — 저장·상태 기록은 그대로 간다(feed-check.ts 머리 주석).
+  const now = input.now ?? new Date();
+  const [feeds, capture] = await Promise.all([
+    checkFeedOverlap(prepareCaptureRows(input.items).rows, deadline, now).catch((): Record<string, FeedObservation> => ({})),
+    captureNewsItems(market, input.items, { now, assumeEnabled: true, deadline }),
+  ]);
   const r = await record({
     mode, status: capture.status, fetched: input.items.length,
-    inserted: capture.inserted, duplicates: capture.duplicates, rejected: capture.rejected, now: input.now,
+    inserted: capture.inserted, duplicates: capture.duplicates, rejected: capture.rejected, now: input.now, feeds,
   });
   const dl: CaptureDeadlineState = capture.reason === 'deadline' ? 'insert_skipped' : r.skipped ? 'status_skipped' : 'ok';
   console.log(`${LOG} ${market} ${mode} ${capture.status} fetched=${input.items.length} inserted=${capture.inserted} duplicates=${capture.duplicates} rejected=${capture.rejected}`

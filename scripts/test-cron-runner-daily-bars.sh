@@ -18,6 +18,9 @@
 #      daily-bars 120) 전 구간 간격 < 300초이며 daily-bars 는 무거운 잡과 다른 틱
 #  D6. 정적: 블록·DAILY_BARS_* 선언·주석을 빼면 실행 줄이 변경 전과 한 글자도 같다 · call() 불변 · 호출 줄 1개 · 상한은 그 호출에만 ·
 #      yield 판단은 LAST_* 변수 · 블록 위치 · 비밀 헤더를 블록에서 다루지 않음 · 변경 전 줄이 전부 그대로(추가만)
+# (T-118 병합) 변경 전 러너 = faf8bc3 러너에서 **peek 블록(news-fetch-peek)과 상단 peek 잡 주석만 현재 러너의 것으로 바꿔 끼운 것**.
+#   T-118 이 peek 슬롯·상한을 바꿔도 이 시험의 비교(D1 호출·상한 목록, D6 정적·추가만)는 daily-bars 변경만 보게 된다 — D6 정적 비교는
+#   peek 블록을 양쪽에서 똑같이 한 번 더 뺀다. daily-bars 기대값은 그대로다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,9 +36,25 @@ W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
 BEFORE="$W/runner-before.sh"
-if ! git -C "$HERE/.." show "$BASE_REF:scripts/cron-runner.sh" > "$BEFORE" 2>/dev/null || [ ! -s "$BEFORE" ]; then
+BASEFILE="$W/runner-base.sh"
+if ! git -C "$HERE/.." show "$BASE_REF:scripts/cron-runner.sh" > "$BASEFILE" 2>/dev/null || [ ! -s "$BASEFILE" ]; then
   echo "변경 전 러너($BASE_REF:scripts/cron-runner.sh)를 읽지 못함 — 비교 시험을 할 수 없다(T117_BASE_REF 로 지정 가능)"
   exit 1
+fi
+# (T-118 병합) 기준 러너의 peek 블록(>>> ~ <<< news-fetch-peek)과 상단 peek 잡 주석(`#  - news-peek-` 줄 + 이어지는 들여쓴 주석 줄)을
+#   현재 러너($RUNNER)의 것으로 바꿔 끼운다 — 나머지 줄은 기준 ref 그대로.
+awk -v cf="$RUNNER" '
+  BEGIN { while ((getline l < cf) > 0) {
+            if (l ~ /^  # >>> news-fetch-peek/) s = 1; if (s) blk = blk l "\n"; if (l ~ /^  # <<< news-fetch-peek/) s = 0
+            if (l ~ /^#  - news-peek-/) h = 1; else if (h && l !~ /^#                        /) h = 0; if (h) hdr = hdr l "\n" } }
+  /^#  - news-peek-/ { printf "%s", hdr; hs = 1; next }
+  hs { if ($0 ~ /^#                        /) next; hs = 0 }
+  /^  # >>> news-fetch-peek/ { printf "%s", blk; skip = 1; next }
+  skip { if (/^  # <<< news-fetch-peek/) skip = 0; next }
+  { print }' "$BASEFILE" > "$BEFORE"
+if [ "$(awk '/^  # >>> news-fetch-peek/,/^  # <<< news-fetch-peek/' "$BEFORE" | sha256sum)" != "$(awk '/^  # >>> news-fetch-peek/,/^  # <<< news-fetch-peek/' "$RUNNER" | sha256sum)" ] \
+   || [ "$(grep -c '^  # >>> news-fetch-peek' "$BEFORE")" != "1" ]; then
+  echo "기준 러너 조립 실패 — peek 블록을 바꿔 끼우지 못함"; exit 1
 fi
 
 ep() { TZ=Asia/Seoul "$REAL_DATE" -d "$1" +%s; }
@@ -229,9 +248,10 @@ eq "D5: 같은 조건 변경 전 러너 최대 간격도 260초(daily-bars 가 �
 # ── D6. 정적 ──────────────────────────────────────────────────────────────────────
 echo "D6. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
-strip_new() { awk '/^  # >>> daily-bars-daily/{s=1} s{ if (/^  # <<< daily-bars-daily/) s=0; next } {print}' "$1" \
+no_peek()   { awk '/^  # >>> news-fetch-peek/{s=1} s{ if (/^  # <<< news-fetch-peek/) s=0; next } {print}' "$1"; }   # (T-118 병합) 양쪽에서 똑같이
+strip_new() { no_peek "$1" | awk '/^  # >>> daily-bars-daily/{s=1} s{ if (/^  # <<< daily-bars-daily/) s=0; next } {print}' \
   | grep -v '^DAILY_BARS_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
-strip_old() { grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$'; }
+strip_old() { no_peek "$1" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 if diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") > /dev/null; then ok "🔴 D6: daily-bars 블록·DAILY_BARS_* 선언·주석 밖 실행 줄 = 변경 전과 동일 ($(strip_new "$RUNNER" | wc -l | tr -d ' ')줄)"
 else bad "D6: 블록 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") | head -10; fi
 # 변경 전 러너의 모든 줄(주석 포함)이 순서대로 새 러너에 있다 = 삭제·수정 0, 추가만

@@ -25,6 +25,7 @@ import {
   validateNewsItem,
 } from '../raw-capture';
 import { CI_STATUS_TIMEOUT_MS, recordCaptureStatus } from '../status';
+import { CI_FEED_PREV_NEWEST_SQL } from '../feed-check';
 import * as fs from 'fs';
 import * as path from 'path';
 import { rssSourceKey } from '../keys';
@@ -47,6 +48,9 @@ interface DbOpts {
   insertResult?: { affectedRows?: number; info?: string };
   insertError?: unknown;
   statusWriteError?: Error;
+  /** (T-118) 겹침 검사 조회 결과 행(기본 없음 = bootstrap) */
+  feedRows?: { feed_host: string; newest: unknown }[];
+  feedError?: Error;
 }
 /** SQL 로 갈라 응답하는 가짜 풀. 호출 기록은 mockQuery.mock.calls. */
 function db(o: DbOpts = {}) {
@@ -63,6 +67,10 @@ function db(o: DbOpts = {}) {
         return [o.statusValue === undefined ? [] : [{ value: o.statusValue }]];
       }
       throw new Error(`unexpected key ${key}`);
+    }
+    if (sql === CI_FEED_PREV_NEWEST_SQL) {
+      if (o.feedError) throw o.feedError;
+      return [o.feedRows ?? []];
     }
     if (sql === CI_RAW_ITEM_UPSERT_SQL) {
       if (o.insertError) throw o.insertError;
@@ -511,6 +519,8 @@ describe('captureFetchOutcome + 상태 기록(ci_capture_status:<market>)', () =
     expect(statusWrites()[0][1][0]).toBe('ci_capture_status:overseas');
     expect(statusOf()).toEqual({
       lastAt: KST_NOW, mode: 'peek', status: 'ok', fetched: 2, inserted: 2, duplicates: 0, rejected: 0, consecutiveFailures: 0,
+      // (T-118) 피드별 겹침 검사 — 직전 행 없음(첫 캡처) = bootstrap
+      feeds: { 'www.yna.co.kr': { oldestPub: '2026-10-28 10:02:03', newestPub: '2026-10-28 10:02:03', items: 2, gap: 'bootstrap', consecutiveGaps: 0 } },
     });
     expect(r.status).toEqual(statusOf());
   });
@@ -621,12 +631,13 @@ describe('(Leader 결정 Q1) guid 열 — DDL·INSERT 일치, 저장 규칙', ()
 
 describe('(Leader 결정 Q8) 캡처 전체 4초 — 스위치·INSERT·상태 기록이 마감 하나를 공유', () => {
   /** SQL 별 지연(ms)을 주는 가짜 풀 — 가짜 타이머로 흘린다. */
-  function slowDb(delay: { switch?: number; insert?: number; statusRead?: number; statusWrite?: number }) {
+  function slowDb(delay: { switch?: number; insert?: number; statusRead?: number; statusWrite?: number; feedCheck?: number }) {
     const later = <T>(ms: number | undefined, v: T) => (ms ? new Promise<T>((res) => setTimeout(() => res(v), ms)) : Promise.resolve(v));
     mockQuery.mockImplementation((sql: string, params: unknown[]) => {
       if (sql.startsWith('SELECT value FROM system_config')) {
         return params[0] === 'ci_capture_enabled' ? later(delay.switch, [[{ value: true }]]) : later(delay.statusRead, [[]]);
       }
+      if (sql === CI_FEED_PREV_NEWEST_SQL) return later(delay.feedCheck, [[]]);   // (T-118) 겹침 검사 조회
       if (sql === CI_RAW_ITEM_UPSERT_SQL) return later(delay.insert, [{ affectedRows: 1, info: '' }]);
       return later(delay.statusWrite, [{ affectedRows: 1 }]);
     });
