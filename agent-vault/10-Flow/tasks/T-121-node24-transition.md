@@ -1,7 +1,7 @@
 ---
 task_id: T-121
 title: 시스템 Node 20→24 전환 영향 정리 — 골든 시험 1건 실패 + 다음 배포부터 StockInvest 가 Node 24 로 기동
-status: qa-passed
+status: deployed
 priority: medium
 project: StockInvest
 created: 2026-10-29
@@ -124,17 +124,26 @@ demo_gate:
 - [확인] Reviewer PASS(scope 픽스처 1개, 독립 재현으로 Node 24 출력 = 새 픽스처·Node 20.20.2 출력 = 기존 픽스처 확인)를 QA 가 전제로 삼았다. 이후 코드 변경 없음 → Reviewer 재순환 불필요.
 - [QA 판정] **통과**. 운영 영향 없음(시험 파일만 변경, 운영 소스·DB·cron·pm2 호출 0). 못 한 것: Mac 등 다른 ICU 환경의 jest 실행, 실제 Chrome 의 "진입 가능" 표기 확인(서버 선렌더 여부 포함).
 
+## 배포 기록
+
+- [15:42] 사용자 지시("오늘 단독 push")로 push. 사전 점검(15:41) — `origin/main` `5ca7817` 불변·ahead 4(코드 변경은 시험 픽스처 1개, 나머지 `agent-vault` 문서)·미커밋 0, `safety_kill_switch`=true, 최근 3시간 주문 0건·최대 order id 3229, `/api/health` 200, pm2 두 앱 online·`stockinvest-cron` 1행, 배포 진행 프로세스 없음, 시각이 15:40~20:00 창 안(07:35~07:57 수집 구간 아님). 명령: `git push origin 99104fb:main` (정확한 SHA) → `5ca7817..99104fb`. `deploy.sh --yes` 는 따로 돌리지 않았다(webhook 이 release.sh 로 배포 — 이중 배포 방지).
+- [15:42~15:44] 웹훅 배포(서버 로그 UTC 06:42:34~06:44:03 = KST 15:42:34~15:44:03, 약 1분 30초). `RELEASE_RESULT {"status":"ok","release":"20261029-154239-99104fbe","sha":"99104fbe3b5a3879ed5e6c2e04fdc41e36d29429","previous":"/home/brownjeon/apps/stockinvest/releases/20261029-134931-5ca78174","migrated":false}` — 헬스체크 정상, 오래된 릴리스 `20261028-190713-a16bc0cb` 삭제.
+- [15:44] `scripts/deploy.sh StockInvest --status`: current `20261029-154239-99104fbe`, releases 5개, pm2 `stockinvest`·`stockinvest-cron` online(cwd 새 릴리스), health ✅ 200.
+- [15:44~15:46] **배포 후 확인(실측)**: ① `stockinvest-cron` **정확히 1행** ② 재시작 횟수 두 앱 모두 0(배포 전 0 → 후 0), `stockinvest` pm2 `node_version` **24.22.2**(Deployer 조건 (f): 13:49 첫 Node 24 기동에 이어 두 번째 기동·build 성공; `stockinvest-cron` 의 20.20.2 표시는 pm2 데몬 값이고 러너는 bash 라 Node 를 쓰지 않는다) ③ `/api/health` 본문 `ok:true db:true schemaFatal:false safetyStatus:green`, `killSwitch:true`, `dryRun:false`, 한도 설정 true — 배포 전과 동일(`system_config.safety_kill_switch`=true 불변, 최대 order id 3229 불변 → 신규 주문 0) ④ 운영 도메인 307(로그인 리다이렉트, 정상) ⑤ 크론 틱 15:43·15:44·15:45 `strategy-eval`·`signal-followup`·`signal-expiry`·`portfolio-snapshot`·`trade-report`·`entry-watcher`·`holding-checker`·`stop-alert` 전부 OK ⑥ `pm2-out.log` ERROR 0건. 참고(이상 아님): `daily-bars skipped — 07:40~07:54 에 부르지 못해…` 는 T-117 설계대로 창 밖 첫 틱의 건너뛰기 로그이고 첫 실제 실행은 내일 07:40~07:54 다. `pm2-err.log` 의 "자동 청산 엔진 OFF" 안내는 기존 설정(`exit_engine_enabled`=false, 2026-10-18 이후 불변)이 기동 때마다 찍는 문구다.
+- **미확인**: 로그인 후 메인 화면 렌더링(비로그인 307 까지만), KIS OpenAPI 개별 연동 호출(health·안전장치 green 으로만 확인), 앱(APK) — 해당 없음.
+- [15:46] 내가 만든 worktree `~/.node-local/stockinvest-t121` 정리(심볼릭 링크만 지움 — NFS `node_modules` 무사, 변경은 `c872f6f` 로 main 에 있음). 증거 로그는 서버 `~/.node-local/t121/` 에 보존.
+
 ## 최종 요약
 
-- **상태**: 구현·검증 완료, 로컬 커밋 `c872f6f`(워크트리 원본 `0d9fb7b`) — **미배포**. push 시점은 사용자 결정 대기.
+- **상태**: **배포 완료** — 2026-10-29 15:44 KST, 릴리스 `20261029-154239-99104fbe`(status ok). 운영 이상 징후 없음.
 - **무엇이 바뀌었나**: 서버 Node 가 24 로 바뀐 뒤 실패하던 시험 1건(`scenario-card-domestic-golden`)을 고쳤다. 원인은 시험 환경의 12시간제 표기가 `AM 12:00` 에서 `오전 12:00` 으로 바뀐 것뿐이었고, 시험 기대값 파일 1개(`src/components/__tests__/fixtures/t062-domestic-golden-head.ts`)를 머리말의 생성 절차대로 Node 24 에서 다시 만들어 해당 2곳만 바꿨다. **운영 소스·화면·동작 변화 없음.**
-- **배포**: 하지 않았다. 시험 파일만 바뀌어 운영에 반영될 내용이 없고, push 하면 blue/green 재배포(앱·크론 재기동)만 일어난다. **같은 배포에 실린 다른 작업**: 해당 없음(미배포) — push 하면 로컬에만 있는 문서 커밋 2개(`ac4fd25`·`5da008a`)가 함께 나간다.
-- **AI 가 검증한 것**: ① Developer — 재생성 값과 기존 값을 바이트 비교해 차이가 `AM`→`오전` 2곳뿐임을 확인. ② Reviewer PASS — 별도 렌더 시험으로 독립 재현(Node 24 출력 = 새 픽스처, Node 20.20.2 출력 = 기존 픽스처). ③ QA — Node 24 전체 jest 306 suites·8532 통과·**실패 0**(착수 전 실패 1건 해소), 골든 7/7. tsc 는 exit 0 이지만 이 변경 파일이 tsconfig 제외 대상이라 검증력은 없음.
-- **AI 가 못 한 것**: eslint(프로젝트에 설정 파일 없음)·Mac 등 다른 ICU 환경의 jest·실제 Chrome 화면의 "진입 가능" 표기 확인. judge 는 Jev 를 쓰지 못하고 규칙 엔진으로만 판정했다.
-- 👉 **확인할 것**: 없음 — 운영 영향이 없다. (참고) 다음 배포 뒤 서버에서 전체 jest 를 돌리면 이 건이 0 실패인지 이미 확인됨.
-- 👉 **결정할 것**: ① **push 시점** — 권고: 이 커밋만으로 단독 배포하지 않고 **다음 기능 배포(T-122·T-123 등)에 묶어** 올린다(이번엔 재기동 이득이 없음. 단독 push 가 필요하면 15:40~20:00 창, 사용자 확인 후). ② **Jev 예산 창 갱신 여부** — `.claude/tools/jev-judge/config.json` 의 창이 2026-09-27 부터 28일이라 10-25 에 끝나 judge 가 규칙 엔진 fallback 으로만 동작한다(사용 $0.016/상한 $5). 판정 실패 시 developer 는 Opus 로 간다. 갱신은 사용자 결정이라 손대지 않았다.
-- **남은 일**: push(위 ①). 후속 task T-122(feeds 정확도)·T-123(조용히 건너뜀 알림 등)은 별개. 워크트리 `~/.node-local/stockinvest-t121` 은 push 확인 뒤 정리.
-- **이슈·위험**: ⓐ 이 골든은 이제 **ICU 78.3(Node 24.22.2) 표기**가 기준이다 — ICU 78.2(Node 20.20.2)나 Mac 로컬 Node 22 에서 jest 를 돌리면 같은 1건이 반대로 실패할 수 있고, ICU 패치만 바뀌어도 다시 깨질 수 있다. 재발하면 시험에서 `AM/PM/오전/오후` 를 정규화하는 방식으로 바꾸길 권한다(Reviewer 의견, 시험 파일 수정 필요). ⓑ 절차 순서 1건: demo_gate 기록(`init`)을 Developer 시작 뒤에 했다(결과 `not_required`, 영향 없음). judge 첫 판정은 요약문의 부정문 "화면 구조 변경 없음" 에 키워드 규칙이 걸려 `delta` 였고, 사실 그대로 쓴 요약으로 재실행해 `none` 을 얻었다(두 기록 모두 `## 판단 기록 (judge)` 에 남김). ⓒ Reviewer low 3건 중 머리말 서술 보정(원인이 "Node 24 대 20" 이 아니라 ICU 78.2 대 78.3)은 선택 사항으로 두었다.
+- **배포**: push 15:42:22(`5ca7817..99104fb`) → 웹훅 blue/green 15:42:34~15:44:03, `RELEASE_RESULT` ok, migrated false. **같은 배포에 실린 다른 작업**: 코드는 없고, 로컬에만 있던 문서 커밋 3개(`ac4fd25`·`5da008a`·`99104fb`)가 함께 나갔다. 이 최종 요약을 담은 문서 커밋은 push 하지 않았다(문서만 push 해도 재배포가 일어나므로 다음 배포에 묶는다).
+- **AI 가 검증한 것**: ① Developer — 재생성 값과 기존 값을 바이트 비교해 차이가 `AM`→`오전` 2곳뿐. ② Reviewer PASS — 별도 렌더 시험으로 독립 재현(Node 24 출력 = 새 픽스처, Node 20.20.2 출력 = 기존 픽스처). ③ QA — Node 24 전체 jest 306 suites·8532 통과·실패 0. ④ 배포 후 — cron 1행, 재시작 0, health green·킬스위치 true 불변, 주문 0건 증가, 크론 틱 정상, `stockinvest` Node 24.22.2 두 번째 정상 기동.
+- **AI 가 못 한 것**: 로그인 후 메인 화면 렌더링·KIS 개별 연동 호출 확인, eslint(프로젝트에 설정 없음), 다른 ICU 환경의 jest, 실제 Chrome 의 "진입 가능" 표기. judge 는 Jev 없이 규칙 엔진으로만 판정했다.
+- 👉 **확인할 것**: 없음 — 운영 영향이 없다.
+- 👉 **결정할 것**: **Jev 예산 창 갱신 여부** — `.claude/tools/jev-judge/config.json` 의 창이 2026-09-27 부터 28일이라 10-25 에 끝나 judge 가 규칙 엔진 fallback 으로만 동작한다(사용 $0.016/상한 $5). 판정 실패 시 developer 는 Opus 로 간다. 갱신은 사용자 결정이라 손대지 않았다.
+- **남은 일**: 없음(이 task 는 닫을 수 있다 — 사용자 확인 전이라 status 는 `deployed`). 후속 T-122·T-123 은 별개.
+- **이슈·위험**: ⓐ 이 골든은 이제 **ICU 78.3(Node 24.22.2) 표기**가 기준이다 — ICU 78.2(Node 20.20.2)나 Mac 로컬 Node 22 에서 jest 를 돌리면 같은 1건이 반대로 실패할 수 있고, ICU 패치만 바뀌어도 다시 깨질 수 있다. 재발하면 시험에서 `AM/PM/오전/오후` 를 정규화하는 방식으로 바꾸길 권한다(Reviewer 의견). ⓑ 절차 순서 1건: demo_gate 기록(`init`)을 Developer 시작 뒤에 했다(결과 `not_required`, 영향 없음). judge 첫 판정은 요약문의 부정문 "화면 구조 변경 없음" 에 키워드 규칙이 걸려 `delta` 였고, 사실 그대로 쓴 요약으로 재실행해 `none` 을 얻었다(두 기록 모두 `## 판단 기록 (judge)` 에 남김). ⓒ Reviewer low 3건 중 머리말 서술 보정(원인이 "Node 24 대 20" 이 아니라 ICU 78.2 대 78.3)은 선택 사항으로 두었다.
 
 ## 데모 검토 (demo gate)
 
