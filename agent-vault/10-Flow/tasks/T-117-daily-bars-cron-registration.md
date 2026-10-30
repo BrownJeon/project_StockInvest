@@ -1,11 +1,11 @@
 ---
 task_id: T-117
 title: 일봉 정기 증분 수집 크론 등록(R13) — 수동 호출만 하던 daily-bars 를 러너에 하루 1회 등록
-status: deployed
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-28
-updated: 2026-10-29
+updated: 2026-10-30
 base_ref: faf8bc3
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa, codex, deployer]
@@ -135,7 +135,8 @@ waiting: []
 
 ## 최종 요약
 
-- **상태**: 배포 완료, 첫 자동 실행 관측 대기. **완료 처리 조건(사용자 지시 2026-10-29)**: 내일 10-30 07:55 이후 첫 자동 실행 관측(cron 로그 `daily-bars OK` 1줄·날짜파일·앱 로그 `aborted` 없음·`daily_bars` 최신일)에서 이상 없으면 이 task 의 `status` 를 `deployed` → `done` 으로 변경하고 이 줄에 완료 시각을 남긴다(이어받는 세션이 처리).
+- **상태**: **완료(2026-10-30 09:3x)** — 배포 완료, 첫 자동 실행 관측 정상(2026-10-30 07:41:56). 아래 사용자 사전 지시에 따라 `deployed` → `done`. 관측 근거는 바로 아래 「첫 실행 관측」 줄. (이전 상태 문구: 첫 자동 실행 관측 대기.) **완료 처리 조건(사용자 지시 2026-10-29)**: 내일 10-30 07:55 이후 첫 자동 실행 관측(cron 로그 `daily-bars OK` 1줄·날짜파일·앱 로그 `aborted` 없음·`daily_bars` 최신일)에서 이상 없으면 이 task 의 `status` 를 `deployed` → `done` 으로 변경하고 이 줄에 완료 시각을 남긴다(이어받는 세션이 처리).
+- **첫 실행 관측 (2026-10-30 09:2x, 읽기 전용)**: ① cron-out `daily-bars OK` **정확히 1줄**(07:41:56) ② 날짜파일 `~/.node-local/stockinvest/daily-bars-last-date` = 2026-10-30 ③ 앱 로그 `[daily-bars] done ok=true targets=93 processed=93 calls=94/150 written=5430 remaining=0 failed=-`(07:41:56, `aborted` 없음) ④ `daily_bars` 최신: 미국 2026-10-29(확정 `is_final=1`) · 국내 2026-10-29 확정 + **2026-10-30 은 개장 전 자리표시 봉**(43종목 전부 `volume=0`·`is_final=0`·`flags=zero_volume`, 시가=고가=저가=종가=전일 종가) — 소비 쪽은 `is_final=1` 만 써야 한다 ⑤ 07시대 틱: entry-watcher 가 07:40:29 다음 **07:42:56** 에 돌았다(07:41 한 틱 건너뜀, 간격 147초) — 설계의 하트비트 근거(07:40 틱 최악 간격 200초, 워치독 300초)에 들어가는 예상된 간격이고 그 외 분은 매분 OK·실패 줄 0. 소비 쪽 확인(소스 grep, 09:4x): `daily_bars` 를 읽는 SQL 은 `scripts/profit-engine/backtest-runner-core.js:56`·`postmortem-core.js:1452·1466` 이고 셋 다 `is_final = 1` 로 거른다(`holdings-report.mjs`·`backtest/pipeline.ts` 는 문구·주석 언급뿐 읽지 않음). AI 가 못 본 것: 이 grep 은 코드 정독이 아니라 문자열 검색이고, 앱 화면·분석 경로가 `daily_bars` 를 읽는지는 `src/` 안에서 위 파일들 밖에 찾지 못했다.
 - **무엇이 바뀌었나**: 일봉(`daily_bars`) 정기 증분 수집이 **매일 07:40~07:54 KST 에 자동으로 한 번** 돈다(그동안은 사람이 curl 로만 불렀다). 증권사 읽기 조회만 하며 주문·시그널·알림은 없다.
 - **배포**: 2026-10-29 13:51, 릴리스 `20261029-134931-5ca78174`(T-118·T-119 와 한 번에, ok). 위 「배포 기록」 참조.
 - **AI 가 검증한 것**: Reviewer 2회 PASS·Judge C2·Codex(지적 1건은 후속 L-5)·QA PASS, 새 러너 시험 81/0, 변이 10건 잡힘, 병합 후에도 T-118·T-119 와 합친 트리에서 81/0. **못 한 것**: 실제 크론 시계에서의 첫 실행(내일).

@@ -10,7 +10,7 @@ tags:
 
 > **2026-10-29 15:44 — [[T-121-node24-transition]] Node 20→24 전환 영향 정리 배포 완료**: 시스템 Node 가 24 로 바뀌며 골든 시험 1건(ko-KR 12시간 표기 `AM`→`오전`, ICU 78.2→78.3)이 실패 → 시험 픽스처 1개만 재생성(`c872f6f`), 릴리스 `20261029-154239-99104fbe` ok, Node 24.22.2 기동 정상. 골든이 ICU 패치 버전에 민감하다는 위험은 task 에 기록.
 
-> **2026-10-29 13:51 — [[T-117-daily-bars-cron-registration]]·[[T-118-overseas-peek-expansion]]·[[T-119-holdings-premarket-check]] 한 번에 배포**(릴리스 `20261029-134931-5ca78174` ok). T-117 일봉 정기 증분 수집 크론(매일 07:40~07:54 KST) — **첫 자동 실행 관측은 10-30 07:55 이후**, 정상이면 `deployed`→`done`. T-118 해외 peek 하루 19회·피드별 겹침 검사 — `done`. T-119 보유 미국 종목 개장 전 공시 알림(스위치 `holdings_premarket_enabled` 13:58 켬) — **10-29 21:01 첫 자동 실행 정상**(status ok·holdings 4·checked 3·newFilings 0·alerted 0·`unmapped=NAS:SMH`)이라 `done` 처리.
+> **2026-10-29 13:51 — [[T-117-daily-bars-cron-registration]]·[[T-118-overseas-peek-expansion]]·[[T-119-holdings-premarket-check]] 한 번에 배포**(릴리스 `20261029-134931-5ca78174` ok). T-117 일봉 정기 증분 수집 크론(매일 07:40~07:54 KST) — **10-30 07:41 첫 자동 실행 정상 확인**(`daily-bars OK` 1줄·`targets=93 processed=93 written=5430 remaining=0`, 날짜파일 2026-10-30)이라 `done` 처리. T-118 해외 peek 하루 19회·피드별 겹침 검사 — `done`. T-119 보유 미국 종목 개장 전 공시 알림(스위치 `holdings_premarket_enabled` 13:58 켬) — **10-29 21:01 첫 자동 실행 정상**(status ok·holdings 4·checked 3·newFilings 0·alerted 0·`unmapped=NAS:SMH`)이라 `done` 처리.
 
 > **2026-10-28 21:13 — [[T-116-news-first-seen-capture]] 뉴스 최초 관측 증거 캡처 배포**(릴리스 `20261028-211308-faf8bc36` ok). task 파일은 2026-10-30 에 `done`·최종 요약 작성으로 정리(운영 실측 1,109행 정상; 같은 URL 이 제목·발행시각 변경으로 2행 이상인 100그룹은 설계상 결과 — 단계 2 에서 url/guid 로 묶어야 함). 19:07 [[T-115-news-fetch-coverage-fix]] 국내 뉴스 15:30 추가 수집·건수 20→100 배포(릴리스 `20261028-190713-a16bc0cb` ok), 첫 실제 동작 10-29 06:00·15:30 정상 확인.
 
