@@ -35,7 +35,7 @@ demo_gate:
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
-  active: false
+  active: true
 ---
 
 # T-108 자동매매 중심 메뉴·홈·분석·비서 개편
@@ -89,6 +89,8 @@ demo_gate:
 ## 판단 기록 (judge)
 
 - [10-28 13:5x] intake — 위 "Judge 접수" 참조.
+- [2026-10-30 21:47] intake(구현 단계) engine=rules → task_type=null · risk=R2 · developer_model=opus · next=demo_first · demo=delta/designer | overrides=R2-kw-payment,MD-judge-failed-opus,DM-kw-risky-cta | fallback=budget_window_closed | tokens=0
+- [21:50] Leader: ① 이 접수는 **구현 단계 재접수**다. `demo.required=true`·`next=demo_first`·`blocking_gate=demo` 는 judge 입력에 데모 승인 상태 필드가 없어 승인 완료를 반영하지 못한 값이다 — 실제 상태는 `check.mjs check` = approved(v3, hash verified, 21:05). ② 세 덮어쓰기는 요약의 「주문」「스위치(→위치)」 글자에 걸린 키워드 규칙이며 「쓰기 없음」 같은 부정 문맥을 가리지 못한다 — risk R2 는 **유지**(자금 화면이고 승인 시트·설정 표시가 포함되므로 낮추지 않는다). ③ developer_model=opus(Jev 층 미실행, `MD-judge-failed-opus`). ④ Codex C2 는 R2 라 필수(규칙 `CX-r2-post-review`), C1 은 가이드 완료 후 판정.
 
 ## 진행 기록
 
@@ -133,6 +135,12 @@ demo_gate:
   | ⑦ | 장중 룰 평가 깔때기 국내/해외 토글 | 거래 › 운영 기록 영역 머리의 국내/해외 세그먼트(기본 = 마지막 세션이 더 최근인 시장, 글자에 세션일·이상 건수 표기). 홈 「오늘의 분석」 표는 토글 없이 두 열 |
 
   - 이 확정으로 **데모 v3 의 승인 범위와 구현 결정이 모두 닫혔다.** 남은 일: Designer 구현 가이드(승인 버전 v3 명시, `screens.md` 반영 범위 포함) → Judge(접수·risk) → `activate` → Developer → Reviewer → QA → Deployer. 착수 순서는 DP1(~11-05) 에서 T-104·T-126 과 함께 정하고, 사용자가 지금 시작을 원하면 앞당긴다. **구현 순서상 걸리는 것**: 홈 지표 일부(가동률·분석 판단 이력)는 `job_run_log`(관찰 중)·`judgment_record_enabled`(꺼짐)가 쌓여야 채워진다 — 데모의 「첫 배포」 상태가 그 공백을 이미 다룬다.
+
+- [21:45] **사용자 지시(원문 "구현가이드 작성하고 구현까지 바로 작업 진행해줘"; 질문: Designer 구현 가이드를 지금 쓸까요, DP1(11-05경)까지 기다릴까요)** → DP1 를 기다리지 않고 지금 착수. 범위 해석: 가이드 → 구현 → 검증(Reviewer·Judge C2·Codex·QA)까지, **push·배포는 이 지시에 포함하지 않는다**(QA 통과 뒤 사용자 승인 요청). 구현 환경: 서버 격리 worktree `~/.node-local/stockinvest-t108`(기준 `a39612a`, node_modules 심볼릭 링크). `check.mjs activate` 는 Developer 착수 직전에 한다. Designer 가이드 입력·소유: 쓰기 허용 `docs/design/2026-10-30-t108-implementation-guide.md`·`docs/screens.md` 두 파일.
+
+- [22:10] **Designer 구현 가이드 완료**(24분) → [docs/design/2026-10-30-t108-implementation-guide.md](../../../docs/design/2026-10-30-t108-implementation-guide.md)(823줄) + `docs/screens.md` 갱신. 불편한 사실 3: ① 데모의 「승인 시트」는 현재 코드에 없는 화면(웹 승인은 `/recommend/[id]` 상세에서 회차·수량 편집 후 `POST /api/signals/custom/confirm`) — 시트를 새로 만들지 않고 결과 상태 6종만 기존 상세 화면에 옮김, 승인 API·요청 본문 불변 ② **배포 직후 홈 관찰 지표의 절반쯤은 `◌ 미수집`/`준비 중`**(`job_run_log` 는 10-30 21:05 부터, 분석 첫 행 해외 10-31 08:00·국내 11-02 16:00, 판단 기록 꺼짐) — 빈 칸을 0 으로 채우면 결함 ③ 분석 8탭 중 5개(포트폴리오·포지션 추적·투자일지·놓친 기회·신호 진단)는 데모에 입구가 없어 가이드 §1.2 에 입구 5개를 정함, `/markets` 입구는 L-1. 확인 못 한 것(Designer): 매도(청산 익절) 승인 경로·`isDryRun`/`isKillSwitchActive` 의 DB 오류 때 반환값·`/api/cash-ledger` 조회 중 쓰기 여부·스냅샷 현금·현재가 행 모양·`job_run_log` 개발 서버 행 구분 열 없음·앱 WebView 띠 겹침.
+- [22:12] **Leader 결정 — 가이드 열린 질문 L-1~L-7 전부 권고안대로**(사용자에게 되묻지 않음: 가이드가 사용자 질문 0건으로 분류, 화면 문구·구조는 승인 v3 범위): L-1 `/markets` 입구 = 분석 › 데이터 상태 행 1줄 · **L-2 WP-D(텔레그램·경보 서버 문구 7파일, SAFETY_PATHS)는 오늘 범위 밖 — 별도 커밋·별도 Reviewer 로 내일 이후**(그 사이 화면 「모든거래차단」 / 텔레그램 「킬스위치」 표기가 혼재 — 사용자에게 알린다) · **L-3 사후 성과 「초과수익 중앙값」은 `준비 중`(건수만)** · L-4 설정 화면 문구만(T-104 선행 합의 유지) · **L-5 계좌 전체 손익(B5)은 숫자 대신 자산 기록 링크**(데모와 다른 점 — 사용자에게 알린다) · L-6 `Dashboard.tsx` 유지·후속 정리 · L-7 설정 머리 미니 띠 생략. Judge C1: 규칙 엔진 대체 모드에서 `design_uncertainty` 가 없으면 false 라 **생략**, 설계 위험은 C2 Codex(R2 필수)로 본다(T-112 와 같은 판단).
+- [22:15] **구현 착수**: `check.mjs activate` 기록(demo_gate 상태 approved 유지). 서버 격리 worktree `~/.node-local/stockinvest-t108`(기준 `a39612a`) 에서 Developer 3명 병렬(Opus) — WP-A `t108-dev-a`(지표 읽기 계층·읽기 전용 GET 5개·`live-trading.ts`) · WP-B `t108-dev-b`(하단 탭 4칸·공용 UI·홈) · WP-C `t108-dev-c`(거래 3칸·분석 3분류·설정 문구·용어 전수). 단일 소유: `BottomTabs`·`ops.module.css`·`page.tsx`=WP-B, `types.ts`·`live-trading.ts`=WP-A, `layout`·`globals.css`·`middleware`·`db.ts`=아무도 안 바꿈. 커밋·push 는 Leader 만, 운영 DB 데이터 조회 금지(스키마 확인만), 무거운 명령은 `flock` 직렬. 다음: 세 보고 → 통합(tsc·jest·build) → Reviewer(scope: `src/lib/safety/live-trading.ts`+시험 필수, `src/app/api/ops/**`·`src/lib/ops/**` 는 읽기 전용 경계 검토) → Judge C2·Codex → QA → 사용자에게 배포 승인 요청.
 
 ## Developer
 
