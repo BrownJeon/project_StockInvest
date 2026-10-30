@@ -1,7 +1,7 @@
 ---
 task_id: T-112
-title: 실행·판단 기록 기반 — `job_run_log`(실행·상태 기록)와 기준 판단(baseline) 기록 — 문서 단계: DDL 초안·J1 호환 확인
-status: in-progress
+title: 실행·판단 기록 기반 — `job_run_log`(실행·상태 기록)와 기준 판단(baseline) 기록 — 구현·배포 완료(기록 스위치 꺼짐)
+status: deployed
 priority: high
 project: StockInvest
 created: 2026-10-30
@@ -193,6 +193,19 @@ DDL 일회용 MariaDB 10.11 시험은 **90/90 통과**(두 sql_mode)이고 DDL �
 
 ## 배포 기록
 
+| 항목 | 값 |
+|---|---|
+| DDL 적용 | 2026-10-30 20:17 KST, 사용자 승인 원문 "결정사항에서 DDL 적용 승인하며 푸시시점은 바로 진행해줘". `scripts/migrations/T-112-run-judgment-record.sql`(커밋본 sha256 `1b317282273f916c…`, 비주석 파괴적 문장 0)을 `DBQ_ALLOW_WRITE=1` 로 1회 적용. 사전 확인(F8): 대상 테이블 3개 없음 · `@@GLOBAL.sql_mode`=`STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`(`NO_BACKSLASH_ESCAPES` 없음) · MariaDB 10.11.11 |
+| DDL 결과 | `job_run_log`·`judgment_run`·`judgment_candidate` 생성(InnoDB, utf8mb4_general_ci), 행 0·0·0, CHECK 13(`chk_*` 이름 붙은 10 + JSON 유효성 3), 기록 스위치 키 2개 없음(=꺼짐). SHOW CREATE TABLE 전문: 서버 `~/.node-local/t112-logs/ddl/show-create-*.txt` (설계 §2.1·§3.2 DDL 과 열·키·CHECK 일치) |
+| push | 2026-10-30 20:17 KST `git push origin main` (`9d087a4..df4b4a2`, 22 커밋 — 코드 변경은 `df4b4a2` 하나, 나머지 21 은 문서·vault·데모) |
+| 배포 | webhook → release.sh blue/green, 20:17:45~20:18:57 KST, `RELEASE_RESULT {"status":"ok","release":"20261030-201752-df4b4a2d","sha":"df4b4a2d…","migrated":false}`(DDL 은 배포와 별개로 위에서 적용). 이전 릴리스 `20261030-051343-9d087a4d` |
+| 같은 배포에 실린 다른 작업 | 문서·데모뿐 — T-108(데모 v1~v3·지표 계약), T-112 설계 문서, T-117·T-120·T-124·T-125·T-126·T-127 기록, vault 갱신. 런타임 코드 영향 없음 |
+| 사후 확인(AI, 읽기 전용) | pm2 `stockinvest` 1개·`stockinvest-cron` **정확히 1개**, 둘 다 새 릴리스 경로·online·restarts 0 / `/api/health` ok·db true·safetyStatus green·`dryRun` true·`killSwitch` false / 안전 설정 4개 불변(`safety_dry_run`=true 09:08:14·`safety_kill_switch`=false 09:08:18·`exit_engine_enabled`=true 09:08:29·`exit_hard_stop_enabled`=false 07-02) · 기록 스위치 키 없음 / 크론 틱 매분 정상(entry-watcher·holding-checker·stop-alert OK, strategy-eval·trade-report OK 20:23), 하트비트 갱신, `job-run-log 전송 실패` 로그 0 / 20:23:20 스풀 `.sending` 파일이 생겼다가 비워짐(후크 활성·전송 200 응답 확인 — 앱이 스위치 꺼짐으로 `skipped_disabled` 응답) / `job_run_log`·`judgment_run` 행 0 |
+| 못 한 확인 | 스위치 ON 상태의 실제 기록(아직 꺼짐), 오늘 밤 21:00 holdings-premarket·22:30 미국장 틱과 내일 08:00 해외 분석에서 후크·판단 기록 코드가 본 기능에 영향을 주지 않는지(지켜볼 항목), 운영 라우트 직접 curl(비밀 헤더 필요 — 하지 않음) |
+| 롤백 | 1순위 기록 스위치를 끄는 것(키 없음=꺼짐, 지금 상태). 러너 후크까지 끄려면 `JRL_SPOOL_FILE=` 로 러너 재시작 또는 `git revert df4b4a2` 후 push. DDL 은 되돌아가지 않는다(빈 테이블 3개 — 삭제는 `DROP TABLE` 줄 주석, 쌓인 기록과 함께 삭제되므로 사용자 승인 사항) |
+
+> 알림: 러너 후크는 앱 스위치와 무관하게 활성이다 — 배포 순간부터 서버 로컬 스풀(`~/.node-local/stockinvest/job-run-spool`, 644, 상위 디렉터리 750)에 호출 한 줄(응답 앞 2KB base64)이 쌓였다가 틱 끝(경과 150초 미만)에 전송·비워진다. `portfolio-snapshot`(매시)·`trade-report` 응답은 금액 본문을 싣는다 — Reviewer·Codex 판정 Low, 후속 [[T-127-job-run-spool-hardening]].
+
 ## 진행 기록
 - [2026-10-30 11:45] 접수(Leader). 번호 T-112 는 `ls` 로 비어 있음을 재확인했고 공동 인계서 §11 에 선점 줄을 남겼다. 문서 단계만 — DDL 초안(Developer)·T-108 지표 계약 초안(Analyst) 병렬 시작.
 - [12:07] 문서 단계 산출물 2종 도착(DDL 초안·지표 계약 초안) → Leader G-J1 대조 완료(위 「호환 확인 기록」). 사용자 결정 U1~U5 대기. U6 읽기 전용 SELECT 승인 대기(T-108 몫, 미실행).
@@ -219,7 +232,19 @@ DDL 일회용 MariaDB 10.11 시험은 **90/90 통과**(두 sql_mode)이고 DDL �
 - 원본: /home/brownjeon/NFS/homes/brownjeon/project/.claude/state/codex-review/runs/20261030T105053Z-T-112-C2/raw.txt
 
 ## 최종 요약
-(미작성)
+
+### [T-112] 실행·판단 기록 기반 — 크론 잡 실행과 장마감 분석 판단을 DB 에 남기는 기반 (기록 스위치는 꺼짐)
+
+- **상태**: ⏳ 사용자 결정 대기(기록 스위치 켜기)
+- **무엇이 바뀌었나**: 화면·매매 동작은 달라지지 않았다. DB 에 빈 테이블 3개(`job_run_log`·`judgment_run`·`judgment_candidate`)가 생겼고, 크론 러너가 호출 기록을 서버 로컬 스풀에 쌓았다가 틱 끝에 앱으로 보내며(앱은 스위치가 꺼져 있어 받고 건너뜀), 장마감 분석 엔진에 판단 기록 코드가 들어갔다(스위치가 꺼져 있어 쓰지 않음). T-108 홈·분석 지표(가동률·분석 판단 이력)가 이 테이블을 읽는다.
+- **배포**: ✅ 운영 반영 — 커밋 `df4b4a2` · 2026-10-30 20:17 KST · push(webhook, blue/green) · 결과 ok · 릴리스 `20261030-201752-df4b4a2d`. DDL 은 사용자 승인("결정사항에서 DDL 적용 승인하며 푸시시점은 바로 진행해줘") 후 20:17 KST 에 별도 적용.
+  - 같은 배포에 함께 실린 작업: 문서·데모뿐(T-108 데모 v1~v3·지표 계약, T-117·T-120·T-124·T-125·T-126·T-127 기록) — 런타임 영향 없음
+- **AI 가 검증한 것**: Reviewer PASS(Critical 0·Major 0·Minor 3) · Judge C2 `codex_required=true` → Codex 1차 지적 1건(medium) → Reviewer 부분 채택·Low·배포 비차단 → T-127 · QA PASS(러너 시험 80/80, records jest 487, strict 일회용 MariaDB 10.11.19 33/33, 마이그레이션 2회 적용, 라우트 curl 401·200 skipped·200 ok·413) · 전체 jest 315 스위트·tsc 오류 0 · 배포 후 pm2·health·안전 설정 불변·스풀 전송·행 0 확인
+  - 검증 못 한 것: 스위치 ON 상태의 실제 기록 · 오늘 밤 21:00·22:30 틱과 내일 08:00 해외 분석에서의 영향(지켜볼 것) · QA 가 기존 러너 시험 5종은 재실행 없이 Reviewer 로그를 인용했고 news-peek 은 QA 실행 중 시간 때문에 중단(Reviewer·Developer 실행분 인용) · 운영 라우트 직접 curl
+- **👉 사용자가 확인할 것**: 없음 — 화면·알림 변화가 없다. (이상 징후는 AI 가 크론 로그·하트비트·`job_run_log` 행으로 확인한다.)
+- **👉 사용자가 결정할 것**: Q1 기록 스위치를 켤지 — AI 권고: `job_run_log_enabled`(크론 실행 기록)만 먼저 켜고 하루 쌓이는 것을 관찰한 뒤 `judgment_record_enabled`(분석 판단 기록)를 그다음 단계로(Reviewer 권장 순서). 둘 다 켜는 것도 가능하나 문제 시 원인 분리가 어렵다. 켜기는 `system_config` 키 쓰기이며 사용자 승인 후에만 한다.
+- **남은 일**: 스위치 켜기·하루 관찰 · [[T-127-job-run-spool-hardening]](금액 본문 마스킹·스풀 0600·롤업 시험 한 케이스 — 착수 결정 대기) · T-108 구현이 이 테이블의 `engine_release IS NOT NULL` 행만 집계하도록 계약 반영 · 롤업 `runs` 근사값 명시
+- **이슈·위험**: 러너 후크는 스위치와 무관하게 이미 활성(스풀에 매시 총자산·현금 본문이 짧게 남음 — 644, 상위 디렉터리 750, 정상 시 약 60초, Low) / 롤백: 스위치 끄기(현재 상태) → 필요 시 `git revert df4b4a2` 후 push, DDL 은 되돌아가지 않음(빈 테이블)
 
 ## 데모 검토 (demo gate)
 

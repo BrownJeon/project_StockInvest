@@ -4,6 +4,8 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-30 20:18 — [[T-112-run-judgment-record-foundation]] 운영 반영(커밋 `df4b4a2`, 릴리스 `20261030-201752-df4b4a2d` ok) + DDL 적용(테이블 3개·행 0)**: 사용자 "결정사항에서 DDL 적용 승인하며 푸시시점은 바로 진행해줘". Reviewer PASS·Judge C2 → Codex 1차 지적 1건(러너 스풀에 금액 본문, Low·비차단 → 후보 [[T-127-job-run-spool-hardening]])·QA PASS. 기록 스위치 2개는 키 없음=꺼짐 — **켜기는 사용자 결정 대기**(권고: `job_run_log_enabled` 먼저). 안전 설정 4개 불변 확인(DRY_RUN true·kill false·청산 엔진 ON·하드손절 OFF).
+
 > **2026-10-30 18:20 — T-108 데모 v3 사용자 검토 요청(demo_gate = review_requested; v2 는 수정요청)**: 사용자 "용어를 좀 수정해야할 것같아. 변경하는 용어는 모든 화면에서 동일하게 변경해줘"(7항목) → `mockups/T-108-menu-home-v3.html`(카드→시그널·DRY_RUN→실거래여부(방향 반대)·킬스위치→모든거래차단·EOD→장마감 전 손절·표본 부족→건수 적음, 용어 설명표 F 절 추가). 사용자가 뜻만 물은 「AI BUY」·「하드손절」은 Leader 권고로 「AI 매수 판단」·「손실한도 손절」로 같이 바꿨고 되돌릴 수 있다. Artifact(비공개) https://claude.ai/artifact/SiyXU1cB6nD2JZhnHnfDNq. 승인 전 화면 코드 없음.
 
 > **2026-10-30 17:36 — T-108 데모 v2 사용자 검토 요청(demo_gate = review_requested)**: 사용자 "메뉴 아이콘에 대해서 지난번에 함께 정한게 있잖아. 그걸로 해줘" → v1 아이콘이 정해 둔 Lucide(stone·handshake·scan-search·brain·settings)와 모양이 달랐던 것을 원본 경로로 교체한 `mockups/T-108-menu-home-v2.html`(그 밖은 v1 과 동일). Artifact(비공개) https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr. 승인 전 화면 코드 없음.
@@ -303,12 +305,13 @@ tags:
 
 - ✅ **[T-120] 뉴스 점수 임계·질의 보정(T-105 후보 E)** → [[T-120-news-score-threshold-query]] (done 2026-10-30 — (가) 유지, 변경 없음).
 
-- **[T-112] 실행·판단 기록 기반(job_run_log·기준 판단 기록)** → [[T-112-run-judgment-record-foundation]] (planned·문서 단계 완료 — 사용자 결정 U1~U5·DDL 일회용 시험·건별 적용 승인 대기; 11-23 증거용이라 시작이 늦을수록 관측 기간이 줄어듦).
+- **[T-112] 실행·판단 기록 기반(job_run_log·기준 판단 기록)** → [[T-112-run-judgment-record-foundation]] (deployed — 10-30 20:18 운영 반영·DDL 적용 완료, 기록 스위치 꺼짐; 스위치 켜기 사용자 결정 대기).
 
 - **[T-124] 뉴스 입력 오독·본문 절단 위험 보완(후보)** → [[T-124-news-input-misread-truncation]] (proposed·착수 전; 먼저 읽기 전용으로 오독 빈도 점검, 구현은 11-23 이후 권고).
 
 - **[T-125] 뉴스 0건 경고 정리(후보)** → [[T-125-news-zero-alert-cleanup]] (proposed·착수 전; 먼저 3~5 분석일 관찰, 안 B = 점수 컷 0건과 진짜 검색 0건 구분).
 
+- **[T-127] 러너 스풀 후속 보강(후보)** → [[T-127-job-run-spool-hardening]] (proposed·착수 전; 금액 본문 마스킹·스풀 0600·롤업 시험 — T-112 Codex·Reviewer 후속).
 - **[T-126] 청산 판단 영구 보존 기록(후보)** → [[T-126-exit-judgment-persistence]] (proposed·착수 전; `exit_judgment` 가칭, 마스터 OFF 기간 발화 조건 기록이 30일 뒤 소멸, T-112 와 같은 승인 묶음 여부는 DP1).
 
 - **[후보] 종목별 뉴스·공시 원천** — 2차 설계서 단계 2·3·5(해외는 일정 문제, 국내는 새 원천 선정·약관) · 별도 task 미생성.
