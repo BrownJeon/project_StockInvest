@@ -31,6 +31,9 @@ jest.mock('../rules/eod-high-close', () => ({ eodHighClose: jest.fn() }));
 jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
 jest.mock('../rules/oversold-bounce-daily', () => ({ oversoldBounceDaily: jest.fn() }));
 jest.mock('../style', () => ({ getStyleConfig: jest.fn() }));
+// T-112 — 기준 판단 기록기는 이 파일에서 목이다(기록 I/O 가 풀 목·로그·호출 수를 건드리지 않게). 추적 표시(judgment-trace)는 실물이다.
+//   기록 on/off·실패·지연이 분석 결과를 바꾸지 않는다는 증명과 거르기 지점별 기록은 records/__tests__/judgment-engine-wiring.test.ts 가 본다.
+jest.mock('../records/judgment-recorder', () => ({ recordJudgmentDetached: jest.fn() }));
 // T-072 G2 — 골든은 "검증된 전략이면 국내 경로가 HEAD 7cd47e7 과 바이트 동일"을 고정한다(아래 GOLDEN 리터럴은 그대로).
 //   관문 판정만 '검증됨'으로 고정한다 — 판정 조회가 같은 목 풀을 지나 골든의 poolCalls·inserts 를 바꾸지 않게.
 //   막히는 경우(미검증·미등록 → skipped + 가상 체결)는 post-market-validation-gate.test.ts 가 실제 관문으로 본다.

@@ -39,6 +39,9 @@ jest.mock('../rules/eod-high-close', () => ({ eodHighClose: jest.fn() }));
 jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
 jest.mock('../rules/oversold-bounce-daily', () => ({ oversoldBounceDaily: jest.fn() }));
 jest.mock('../style', () => ({ getStyleConfig: jest.fn() }));
+// T-112 — 기준 판단 기록기는 이 파일에서 목이다(기록 I/O 가 풀 목·로그·호출 수를 건드리지 않게). 추적 표시(judgment-trace)는 실물이다.
+//   기록 on/off·실패·지연이 분석 결과를 바꾸지 않는다는 증명과 거르기 지점별 기록은 records/__tests__/judgment-engine-wiring.test.ts 가 본다.
+jest.mock('../records/judgment-recorder', () => ({ recordJudgmentDetached: jest.fn() }));
 jest.mock('../universe', () => ({ getAlwaysIncludeSymbols: jest.fn(), getUniverseSnapshot: jest.fn() }));
 // T-072 G2 — 이 파일은 해외 카드 생성 기계(스위치·휴장·환율·트랜잭션·필터)를 본다. 관문 판정은 '검증됨'으로 고정해 카드가 기존처럼
 //   `pending` 으로 들어가는 경로를 그대로 시험한다(아래 풀 목은 예상 밖 SQL 을 던진다 — 판정 조회가 그 목을 지나지 않게).

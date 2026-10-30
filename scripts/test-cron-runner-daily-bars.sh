@@ -102,6 +102,9 @@ while [ \$# -gt 0 ]; do
   esac
 done
 path="\${url#http://stub}"
+# (T-112) 실행·상태 기록 전송(POST /api/cron/job-run-log — 러너 틱 끝, call() 밖)은 이 시험의 대상이 아니다: 호출·--max-time 목록과 시계에
+#   넣지 않고 200 으로 답한다(받은 줄은 버림). 전송·후크 자체와 "후크가 켜져도 다른 호출 = 기준 러너"는 scripts/test-cron-runner-job-run-log.sh 가 본다.
+[ "\$path" = "/api/cron/job-run-log" ] && { printf '200'; exit 0; }
 echo "\$("$REAL_DATE" -d "@\$(cat "$R/clock")" '+%m-%d %H:%M') \$(cat "$R/ticks" 2>/dev/null || echo 0) \$path" >> "$R/calls"
 [ -n "\$mt" ] && echo "\$path max-time=\$mt" >> "$R/maxtime"
 adv() { c=\$(cat "$R/clock"); echo \$((c + \$1)) > "$R/clock"; }
@@ -256,12 +259,16 @@ no_peek()   { awk '/^  # >>> news-fetch-peek/{s=1} s{ if (/^  # <<< news-fetch-p
 strip_new() { no_peek "$1" | awk '/^  # >>> daily-bars-daily/{s=1} s{ if (/^  # <<< daily-bars-daily/) s=0; next } {print}' \
   | grep -v '^DAILY_BARS_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 strip_old() { no_peek "$1" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
-if diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") > /dev/null; then ok "🔴 D6: daily-bars 블록·DAILY_BARS_* 선언·주석 밖 실행 줄 = 변경 전과 동일 ($(strip_new "$RUNNER" | wc -l | tr -d ' ')줄)"
-else bad "D6: 블록 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") | head -10; fi
+# (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
+#   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
+no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$'; }
+RUNNER_NOJRL="$W/runner-nojrl.sh"; no_jrl "$RUNNER" > "$RUNNER_NOJRL"
+if diff <(strip_new "$RUNNER_NOJRL") <(strip_old "$BEFORE") > /dev/null; then ok "🔴 D6: daily-bars 블록·DAILY_BARS_* 선언·주석 밖 실행 줄 = 변경 전과 동일 ($(strip_new "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"
+else bad "D6: 블록 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER_NOJRL") <(strip_old "$BEFORE") | head -10; fi
 # 변경 전 러너의 모든 줄(주석 포함)이 순서대로 새 러너에 있다 = 삭제·수정 0, 추가만
 missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' "$RUNNER" "$BEFORE")"
 eq "🔴 D6: 변경 전 러너의 모든 줄이 순서대로 남아 있다(추가만)" "${missing:-none}" "none"
-eq "D6: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+eq "D6: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
 nb="$(awk '/^  # >>> daily-bars-daily/,/^  # <<< daily-bars-daily/' "$RUNNER")"
 eq "D6: 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> daily-bars-daily' "$RUNNER") $(grep -c '^  # <<< daily-bars-daily' "$RUNNER")" "1 1"
 eq "D6: 파일 전체 daily-bars 호출 줄 1개(블록 안)" "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -c 'call "/api/cron/daily-bars"') $(printf '%s\n' "$nb" | grep -c '^      call "/api/cron/daily-bars" "daily-bars"$')" "1 1"

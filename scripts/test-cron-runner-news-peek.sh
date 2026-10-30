@@ -96,6 +96,9 @@ while [ \$# -gt 0 ]; do
   esac
 done
 path="\${url#http://stub}"
+# (T-112) 실행·상태 기록 전송(POST /api/cron/job-run-log — 러너 틱 끝, call() 밖)은 이 시험의 대상이 아니다: 호출·--max-time 목록과 시계에
+#   넣지 않고 200 으로 답한다(받은 줄은 버림). 전송·후크 자체와 "후크가 켜져도 다른 호출 = 기준 러너"는 scripts/test-cron-runner-job-run-log.sh 가 본다.
+[ "\$path" = "/api/cron/job-run-log" ] && { printf '200'; exit 0; }
 echo "\$("$REAL_DATE" -d "@\$(cat "$R/clock")" '+%m-%d %H:%M') \$(cat "$R/ticks" 2>/dev/null || echo 0) \$path" >> "$R/calls"
 [ -n "\$mt" ] && echo "\$path max-time=\$mt" >> "$R/maxtime"
 code=200; took=0
@@ -244,9 +247,13 @@ echo "P7. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 strip_blk() { awk '/^  # >>> (news-fetch-peek|daily-bars-daily|holdings-premarket)/{s=1} s{ if (/^  # <<< (news-fetch-peek|daily-bars-daily|holdings-premarket)/) s=0; next } {print}' "$1" \
   | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket) 블록·선언도 제외
-if diff <(strip_blk "$RUNNER") <(strip_blk "$BASEFILE") > /dev/null; then ok "🔴 P7: peek 블록·주석 밖 실행 줄 = 기준 ref $BASE_REF ($(strip_blk "$RUNNER" | wc -l | tr -d ' ')줄)"
-else bad "P7: peek 블록 밖 실행 줄이 기준 ref $BASE_REF 와 다르다(다른 블록 변경과 합쳤으면 T118_BASE_REF 지정)"; diff <(strip_blk "$RUNNER") <(strip_blk "$BASEFILE") | head -10; fi
-eq "P7: call() 함수 본문 = 기준 ref" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASEFILE" | sha256sum)"
+# (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
+#   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
+no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$'; }
+RUNNER_NOJRL="$W/runner-nojrl.sh"; no_jrl "$RUNNER" > "$RUNNER_NOJRL"
+if diff <(strip_blk "$RUNNER_NOJRL") <(strip_blk "$BASEFILE") > /dev/null; then ok "🔴 P7: peek 블록·주석 밖 실행 줄 = 기준 ref $BASE_REF ($(strip_blk "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"
+else bad "P7: peek 블록 밖 실행 줄이 기준 ref $BASE_REF 와 다르다(다른 블록 변경과 합쳤으면 T118_BASE_REF 지정)"; diff <(strip_blk "$RUNNER_NOJRL") <(strip_blk "$BASEFILE") | head -10; fi
+eq "P7: call() 함수 본문 = 기준 ref" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASEFILE" | sha256sum)"
 nb="$(awk '/^  # >>> news-fetch-peek/,/^  # <<< news-fetch-peek/' "$RUNNER")"
 nbx="$(printf '%s\n' "$nb" | grep -v '^[[:space:]]*#' | LC_ALL=C sed 's/[[:space:]][[:space:]]*#.*$//')"   # 주석 뺀 실행 줄(LC_ALL=C — ko_KR.UTF-8 의 GNU sed 는 '—' 가 든 줄에서 '.*$' 가 맞지 않았다)
 eq "P7: 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> news-fetch-peek' "$RUNNER") $(grep -c '^  # <<< news-fetch-peek' "$RUNNER")" "1 1"

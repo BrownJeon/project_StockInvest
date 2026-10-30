@@ -31,6 +31,8 @@ import {
   withValidationGateIndicators,
   type PaperFillInput,
 } from '@/lib/signals/paper-fill';
+import { JudgmentTrace } from './records/judgment-trace';
+import { recordJudgmentDetached } from './records/judgment-recorder';
 
 export type PostMarketMarket = 'domestic' | 'overseas';
 
@@ -456,6 +458,17 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     const { runPostMarketOverseas } = await import('./post-market-overseas');
     return runPostMarketOverseas();
   }
+  // T-112 — 기준 판단(baseline) 기록. 판단 흐름은 아래 runPostMarketDomestic 그대로이고(추적 표시는 메모리 전용·예외 삼킴),
+  // 결과가 정해진 **뒤** 기다리지 않고 기록한다(구현 규칙 R2 — 기록 실패·지연·예외는 반환값·카드·LLM 결과에 영향 0).
+  const trace = new JudgmentTrace('domestic');
+  try {
+    return await runPostMarketDomestic(market, trace);
+  } finally {
+    try { recordJudgmentDetached(trace); } catch { /* recordJudgmentDetached 는 던지지 않는다 — 이중 안전 */ }
+  }
+}
+
+async function runPostMarketDomestic(market: PostMarketMarket, trace: JudgmentTrace): Promise<PostMarketResult> {
   const errors: string[] = [];
   const validFromDate = nextTradingDayOpen();
   const expiresAtDate = nextTradingDayClose();
@@ -477,6 +490,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
       errors, validFrom, skipped: 'weekend',
     };
   }
+  trace.session(validFrom);   // T-112 — 여기부터 분석 실행(주말 건너뜀은 헤더를 남기지 않는다)
 
   // 1. 심볼 로드
   const symbols = await loadSymbols(market);
@@ -488,6 +502,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
   const candidateResults = await Promise.allSettled(
     symbols.map(async (symbol) => {
       const candles = await getCandles(symbol, '1d', 60);
+      trace.observeLastBar(candles);   // T-112 — 국내 D0 = 조회한 일봉의 마지막 봉 날짜 중 가장 늦은 날
       const results: DailyCandidate[] = [];
       const eod = eodHighClose(symbol, candles);
       const ib  = insideBar(symbol, candles);
@@ -506,8 +521,10 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
       candidates.push(...r.value);
     } else {
       errors.push(`candle_fail:${symbols[i]}:${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+      trace.symbolExcluded(symbols[i], 'candle_fail');
     }
   }
+  trace.candlesFetched(symbols.length);
 
   if (candidates.length === 0) {
     return { market, symbolsEvaluated: symbols.length, candidatesFound: 0, signalsCreated: 0, signalsSkipped: 0, errors, validFrom };
@@ -523,27 +540,34 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     }
   }
   const uniqueCandidates = [...deduped.values()];
+  trace.candidates(uniqueCandidates);
 
   // 3. RAG 검색
   const queryText = uniqueCandidates.map(c => `${c.symbol} ${c.pattern} ${c.reasoning}`).join(' | ');
   let ragSection = '';
+  trace.markAsOf();
   try {
     const ragCtx = await retrieveRagContext(queryText, market, { lookbackDays: 3, topKNews: 5, topKSignals: 3 });
+    trace.rag(ragCtx);
     // T-106 뉴스 0건 연속 감시 — KB 오류가 없던 실행만 센다(errors.length === 0). 기록 실패는 분석에 영향 0.
     try { await recordRetrievalNewsOutcome(market, ragCtx); } catch { /* recordRetrievalNewsOutcome 는 던지지 않는다 — 이중 안전 */ }
     if (ragCtx.totalChars > 0) ragSection = formatRagSection(ragCtx);
   } catch (e) {
     errors.push(`rag_fail:${e instanceof Error ? e.message : String(e)}`);
+    trace.ragFailed();
   }
 
   // 4. AI 배치 분석
   const prompt = buildPrompt(uniqueCandidates, ragSection, nextDay);
   let decisions: AiDecision[] = [];
+  trace.sentToLlm(uniqueCandidates, prompt);
   try {
     const raw = await runLlm(prompt, { timeoutMs: 90000, responseFormat: 'json' });
     decisions = await parseAiResponse(raw);
+    trace.domesticLlmParsed(raw);   // 해석 실패(엔진은 빈 목록으로 삼킨다)면 후보가 llm_error, 아니면 결정 없는 후보가 NONE
   } catch (e) {
     errors.push(`ai_fail:${e instanceof Error ? e.message : String(e)}`);
+    trace.llmFailed();
     return { market, symbolsEvaluated: symbols.length, candidatesFound: uniqueCandidates.length, signalsCreated: 0, signalsSkipped: uniqueCandidates.length, errors, validFrom };
   }
 
@@ -573,12 +597,13 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
     if (!candidate) { signalsSkipped++; continue; }
 
     if (d.action !== 'BUY' || !d.entry_zone || !d.target_pct || !d.stop_pct) {
+      trace.decide(candidate.symbol, d, d.action === 'SKIP' ? null : 'schema_invalid');
       signalsSkipped++;
       continue;
     }
 
     const confidence = d.confidence ?? 0;
-    if (confidence < 60) { signalsSkipped++; continue; }
+    if (confidence < 60) { trace.decide(candidate.symbol, d, 'low_confidence'); signalsSkipped++; continue; }
 
     const entryMid = (d.entry_zone.lo + d.entry_zone.hi) / 2;
 
@@ -590,6 +615,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
       const { zero, chasedPrice } = cardBuysZeroShares(entryMid, chasePct);
       chasedPriceKrw = chasedPrice;   // T-072 — 막힌 카드의 가상 체결 사이징(실행 경로와 같은 값)
       if (zero) {
+        trace.decide(candidate.symbol, d, 'unaffordable');
         unaffordableSkipped++;
         signalsSkipped++;
         console.log(
@@ -647,6 +673,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
         zoneHi: d.entry_zone.hi,
         chasedPriceKrw,
       });
+      trace.decide(candidate.symbol, d, null, outcome);
       if (outcome === 'duplicate') {
         duplicatesSkipped++;
         signalsSkipped++;
@@ -662,6 +689,7 @@ export async function runPostMarketAnalysis(market: PostMarketMarket): Promise<P
       }
     } catch (e) {
       errors.push(`insert_fail:${candidate.symbol}:${e instanceof Error ? e.message : String(e)}`);
+      trace.decide(candidate.symbol, d, 'insert_fail');
       signalsSkipped++;
     }
   }

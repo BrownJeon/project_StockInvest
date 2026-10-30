@@ -37,6 +37,9 @@ jest.mock('../rules/eod-high-close', () => ({ eodHighClose: jest.fn() }));
 jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
 jest.mock('../rules/oversold-bounce-daily', () => ({ oversoldBounceDaily: jest.fn() }));
 jest.mock('../style', () => ({ getStyleConfig: jest.fn() }));
+// T-112 — 기준 판단 기록기는 이 파일에서 목이다(기록 I/O 가 풀 목·로그·호출 수를 건드리지 않게). 추적 표시(judgment-trace)는 실물이다.
+//   기록 on/off·실패·지연이 분석 결과를 바꾸지 않는다는 증명과 거르기 지점별 기록은 records/__tests__/judgment-engine-wiring.test.ts 가 본다.
+jest.mock('../records/judgment-recorder', () => ({ recordJudgmentDetached: jest.fn() }));
 
 const mGetPool = getPool as jest.Mock;
 const LEDGER = /\b(orders|executions|position_state|portfolio_snapshots|holdings)\b/i;

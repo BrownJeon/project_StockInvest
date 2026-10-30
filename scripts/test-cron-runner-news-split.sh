@@ -103,6 +103,9 @@ while [ \$# -gt 0 ]; do
   esac
 done
 path="\${url#http://stub}"
+# (T-112) 실행·상태 기록 전송(POST /api/cron/job-run-log — 러너 틱 끝, call() 밖)은 이 시험의 대상이 아니다: 호출·--max-time 목록과 시계에
+#   넣지 않고 200 으로 답한다(받은 줄은 버림). 전송·후크 자체와 "후크가 켜져도 다른 호출 = 기준 러너"는 scripts/test-cron-runner-job-run-log.sh 가 본다.
+[ "\$path" = "/api/cron/job-run-log" ] && { printf '200'; exit 0; }
 echo "\$("$REAL_DATE" -d "@\$(cat "$R/clock")" '+%m-%d %H:%M') \$(cat "$R/ticks" 2>/dev/null || echo 0) \$path" >> "$R/calls"
 [ -n "\$mt" ] && echo "\$path max-time=\$mt" >> "$R/maxtime"
 code=200
@@ -212,8 +215,12 @@ strip_new() { awk '/^  # >>> (news-fetch-(split|domestic-pm|peek)|daily-bars-dai
   | grep -v '^NEWS_FETCH_' | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 strip_old() { awk '/^  # 매일 06:00 KST: M4 KB 뉴스 fetch/{s=1} s{ if (/^  fi$/) s=0; next } {print}' "$1" \
   | grep -v '^NEWS_FETCH_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
-if diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") > /dev/null; then ok "🔴 뉴스 블록·선언·주석 밖 실행 줄 = 변경 전과 동일 ($(strip_new "$RUNNER" | wc -l | tr -d ' ')줄)"; else bad "뉴스 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER") <(strip_old "$BEFORE") | head -10; fi
-eq "call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+# (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
+#   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
+no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$'; }
+RUNNER_NOJRL="$W/runner-nojrl.sh"; no_jrl "$RUNNER" > "$RUNNER_NOJRL"
+if diff <(strip_new "$RUNNER_NOJRL") <(strip_old "$BEFORE") > /dev/null; then ok "🔴 뉴스 블록·선언·주석 밖 실행 줄 = 변경 전과 동일 ($(strip_new "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"; else bad "뉴스 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER_NOJRL") <(strip_old "$BEFORE") | head -10; fi
+eq "call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
 # (T-115) 파일 전체로 세면 새 잡의 국내 호출 줄 1개가 더해져 3 이 된다 — 06시 블록(news-fetch-split) 안으로 범위를 좁혀 2 를 본다.
 eq "06시 블록의 뉴스 호출 줄 = 시장별 2개" \
    "$(awk '/^  # >>> news-fetch-split/,/^  # <<< news-fetch-split/' "$RUNNER" | grep -c 'call "/api/cron/news-fetch?market=')" "2"
@@ -319,7 +326,7 @@ if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime" | grep -v '^/api/cron/da
 strip115() { awk '/^  # >>> (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket)/{s=1} s{ if (/^  # <<< (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket)/) s=0; next } {print}' "$1" \
   | grep -v '^NEWS_FETCH_DOMESTIC_PM_' | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket) 블록·선언 제외
 strip103() { grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$'; }
-if diff <(strip115 "$RUNNER") <(strip103 "$BEFORE115") > /dev/null; then ok "🔴 F7: 새 블록·선언·주석 밖 실행 줄 = T-103 러너 ($(strip115 "$RUNNER" | wc -l | tr -d ' ')줄)"; else bad "F7: 새 블록 밖 실행 줄이 T-103 과 다르다"; diff <(strip115 "$RUNNER") <(strip103 "$BEFORE115") | head -10; fi
+if diff <(strip115 "$RUNNER_NOJRL") <(strip103 "$BEFORE115") > /dev/null; then ok "🔴 F7: 새 블록·선언·주석 밖 실행 줄 = T-103 러너 ($(strip115 "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"; else bad "F7: 새 블록 밖 실행 줄이 T-103 과 다르다"; diff <(strip115 "$RUNNER_NOJRL") <(strip103 "$BEFORE115") | head -10; fi
 nb="$(awk '/^  # >>> news-fetch-domestic-pm/,/^  # <<< news-fetch-domestic-pm/' "$RUNNER")"
 eq "F7: 새 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> news-fetch-domestic-pm' "$RUNNER") $(grep -c '^  # <<< news-fetch-domestic-pm' "$RUNNER")" "1 1"
 eq "F7: 새 블록 호출 줄 = 국내 1개(라벨 news-fetch-domestic-pm)" "$(printf '%s\n' "$nb" | grep -c '^    call "/api/cron/news-fetch?market=domestic" "news-fetch-domestic-pm"$')" "1"

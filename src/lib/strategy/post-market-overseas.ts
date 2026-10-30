@@ -59,6 +59,8 @@ import {
   yearsNeededFor,
 } from './us-session';
 import { EARNINGS_BLACKOUT_DAYS, judgeBlackout, loadEarningsEvents, type EarningsSummary } from './earnings-blackout';
+import { JudgmentTrace } from './records/judgment-trace';
+import { recordJudgmentDetached } from './records/judgment-recorder';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 상수 — 임계값과 근거 (S-1, D-4, D-5)
@@ -440,7 +442,21 @@ async function insertCardsInTransaction(
  */
 const overseasInFlight = new Set<string>();
 
+/**
+ * T-112 — 기준 판단(baseline) 기록. 판단 흐름은 아래 runPostMarketOverseasTraced 그대로이고(추적 표시는 메모리 전용·예외 삼킴),
+ * 결과가 정해진 **뒤**(카드 트랜잭션 커밋·가상 체결 기록 뒤) 기다리지 않고 기록한다 — 기록기는 트랜잭션 연결이 아니라 `getPool()` 을
+ * 쓴다. 기록 실패·지연·예외는 반환값·카드·LLM 결과·러너 curl 상한(120초) 안의 응답 시각에 영향 0(구현 규칙 R2).
+ */
 export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult> {
+  const trace = new JudgmentTrace('overseas');
+  try {
+    return await runPostMarketOverseasTraced(trace);
+  } finally {
+    try { recordJudgmentDetached(trace); } catch { /* recordJudgmentDetached 는 던지지 않는다 — 이중 안전 */ }
+  }
+}
+
+async function runPostMarketOverseasTraced(trace: JudgmentTrace): Promise<PostMarketOverseasResult> {
   const errors: string[] = [];
   const base = (over: Partial<PostMarketOverseasResult> = {}): PostMarketOverseasResult => ({
     market: 'overseas', ok: true, status: 'ok',
@@ -494,13 +510,16 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     const validFrom = toKstDatetime(new Date(openUtc));
     const expiresAt = toKstDatetime(new Date(closeUtc));
     const sessionEt = { d0, s1 };
+    trace.session(validFrom, d0);   // T-112 — 여기부터 분석 실행(앞의 건너뜀·진행 중·휴장 표 모름은 헤더를 남기지 않는다)
 
     // 5. 환율 R
     const fx = await readCardFx();
     if (fx.kind !== 'known') {
       errors.push(`fx_unknown:${fx.reason}`);
+      trace.status('fx', fx.reason === 'fx_stale' ? 'stale' : 'error');
       return base({ ...unknownDay, skipped: 'fx_unknown', switchSource: sw.source, validFrom, sessionEt });
     }
+    trace.status('fx', 'available');
     const R = fx.rate;
 
     // 6. 대상 종목
@@ -516,8 +535,10 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     const earnings = await loadEarningsEvents(getPool(), symbols, d0);
     if (earnings.kind !== 'ok') {
       errors.push(`earnings_unknown:${earnings.reason}`);
+      trace.status('earnings', 'error');
       return base({ ...unknownDay, skipped: 'earnings_unknown', switchSource: sw.source, validFrom, sessionEt, symbolsEvaluated: symbols.length });
     }
+    trace.status('earnings', 'available');
 
     // 8. 일봉 — 해외 어댑터가 KRW 로 환산한다. 환산에 쓴 환율이 R 과 같았는지 전후로 확인한다(폴백 1·1380 오염 방지).
     const fxBefore = await getUsdKrwRate().catch(() => Number.NaN);
@@ -529,10 +550,12 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
       const first = candleResults[0] as PromiseRejectedResult;
       errors.push(`candles_unavailable:${symbols.length}/${symbols.length}:${errMsg(first.reason)}`);
       console.error(`[post-market] market=overseas 일봉 ${symbols.length}종목 조회가 전부 실패 — 이번 실행은 카드를 만들지 않음(재시도 가능)`);
+      trace.status('candles', 'error');
       return base({ ...unknownDay, skipped: 'candles_unavailable', switchSource: sw.source, validFrom, sessionEt, symbolsEvaluated: symbols.length });
     }
     if (!fxMatches(fxBefore, R) || !fxMatches(fxAfter, R)) {
       errors.push(`fx_inconsistent:R=${R},before=${fxBefore},after=${fxAfter}`);
+      trace.status('fx', 'error');
       return base({ ...unknownDay, skipped: 'fx_inconsistent', switchSource: sw.source, validFrom, sessionEt, symbolsEvaluated: symbols.length });
     }
 
@@ -546,6 +569,7 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     if (scaleSuspects.length > 0) {
       errors.push(`candle_scale_suspect:${scaleSuspects.join(',')}`);
       console.error(`[post-market] market=overseas 일봉 KRW 종가가 R×$${MIN_CLOSE_USD_FOR_SCALE} 미만 — 환산 실패 의심, 이번 실행은 카드를 만들지 않음: ${scaleSuspects.join(', ')}`);
+      trace.status('candles', 'error');
       return base({ ...unknownDay, skipped: 'candle_scale_suspect', switchSource: sw.source, validFrom, sessionEt, symbolsEvaluated: symbols.length });
     }
 
@@ -555,12 +579,14 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
       const symbol = symbols[i];
       if (r.status === 'rejected') {
         errors.push(`candle_fail:${symbol}:${errMsg(r.reason)}`);
+        trace.symbolExcluded(symbol, 'candle_fail');
         return;
       }
       const candles: Candle[] = r.value ?? [];
       const last = candles[candles.length - 1];
       const lastDate = last ? candleSessionDate(last.ts) : null;
       if (lastDate !== d0) {   // 🔴 S-4 — UTC 날짜 그대로 비교(시간대 변환 없음)
+        trace.symbolExcluded(symbol, 'stale_candle');
         staleCandleSkipped++;
         return;
       }
@@ -571,7 +597,9 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
       if (ib)  candidates.push(ib);
       if (osb) candidates.push(osb);
     });
+    trace.candlesFetched(symbols.length);
     const unique = dedupeCandidates(candidates);
+    trace.candidates(unique);
 
     // 9~10. 블랙아웃
     let blackoutSkipped = 0;
@@ -579,6 +607,7 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     const afterBlackout = unique.filter((c) => {
       const v = judgeBlackout(earnings.bySymbol.get(c.symbol) ?? [], d0, sessions, observedAt);
       if (v.blocked) {
+        trace.candidateExcluded(c.symbol, 'blackout');
         blackoutSkipped++;
         console.log(`[post-market] 📅 ${c.symbol} 확정 실적 일정이 다음 ${EARNINGS_BLACKOUT_DAYS}거래일 안 — BUY 카드를 만들지 않음`);
         return false;
@@ -599,6 +628,7 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     let prefilterUnaffordable = 0;
     const llmCandidates = afterBlackout.filter((c) => {
       if (c.close * (1 + chase) > amountKrw * PREFILTER_AMOUNT_SLACK) {
+        trace.candidateExcluded(c.symbol, 'prefilter_unaffordable');
         prefilterUnaffordable++;
         return false;
       }
@@ -620,30 +650,37 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
     // 12. RAG
     const queryText = llmCandidates.map(c => `${c.symbol} ${c.pattern} ${c.reasoning}`).join(' | ');
     let ragSection = '';
+    trace.markAsOf();
     try {
       const ragCtx = await retrieveRagContext(queryText, 'overseas', { lookbackDays: 3, topKNews: 5, topKSignals: 3 });
+      trace.rag(ragCtx);
       // T-106 뉴스 0건 연속 감시 — KB 오류가 없던 실행만 센다(errors.length === 0). 기록 실패는 분석에 영향 0.
       try { await recordRetrievalNewsOutcome('overseas', ragCtx); } catch { /* recordRetrievalNewsOutcome 는 던지지 않는다 — 이중 안전 */ }
       if (ragCtx.totalChars > 0) ragSection = formatRagSection(ragCtx);
     } catch (e) {
       errors.push(`rag_fail:${errMsg(e)}`);
+      trace.ragFailed();
     }
 
     // 13. LLM 1회 — 실패는 "0건"이 아니라 구조화된 실패(S-2)
     const prompt = buildOverseasPrompt(llmCandidates, ragSection, { d0, s1, rate: R, fxAsOf: fx.asOf });
+    trace.sentToLlm(llmCandidates, prompt);
     let raw: unknown;
     try {
       raw = await runLlm(prompt, { timeoutMs: LLM_TIMEOUT_MS, responseFormat: 'json' });
     } catch (e) {
       errors.push(`ai_fail:${errMsg(e)}`);
+      trace.llmFailed();
       return base({ ...common, ok: false, status: 'ai_fail', signalsSkipped: llmCandidates.length });
     }
     const parsed = parseOverseasAiResponse(raw);
     if (!parsed.ok) {
       errors.push(`ai_parse_fail:${parsed.reason}`);
+      trace.llmFailed();
       console.error(`[post-market] market=overseas AI 응답 해석 실패(${parsed.reason}) — 카드를 만들지 않음`);
       return base({ ...common, ok: false, status: 'ai_parse_fail', signalsSkipped: llmCandidates.length });
     }
+    trace.llmOk();
 
     // 14. 결정 검증 → 카드 행(아직 저장하지 않음)
     let signalsSkipped = 0;
@@ -663,13 +700,18 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
 
       const closeUsd = candidate.close / R;
       const chk = checkOverseasDecision(d, closeUsd);
-      if (chk.kind === 'skip' || chk.kind === 'low_confidence') { signalsSkipped++; continue; }
+      if (chk.kind === 'skip' || chk.kind === 'low_confidence') {
+        trace.decide(candidate.symbol, d, chk.kind === 'low_confidence' ? 'low_confidence' : null);
+        signalsSkipped++; continue;
+      }
       if (chk.kind === 'schema') {
+        trace.decide(candidate.symbol, d, 'schema_invalid');
         schemaRejected++; signalsSkipped++;
         console.log(`[post-market] ⚠ ${candidate.symbol} AI 결정 형식·범위 위반(${chk.why}) — 만들지 않음`);
         continue;
       }
       if (chk.kind === 'zone') {
+        trace.decide(candidate.symbol, d, 'zone_out_of_range');
         zoneRejected++; signalsSkipped++;
         console.log(`[post-market] ⚠ ${candidate.symbol} 진입 구간이 종가 $${closeUsd.toFixed(2)} 대비 허용 범위 밖(${chk.why}) — 단위 착오 의심, 만들지 않음`);
         continue;
@@ -680,6 +722,7 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
       const priceKrw = (loKrw + hiKrw) / 2;
       const { zero, chasedPrice } = cardBuysZeroShares(priceKrw, chasePct, amountKrw, 'overseas');
       if (zero) {
+        trace.decide(candidate.symbol, d, 'unaffordable');
         unaffordableSkipped++; signalsSkipped++;
         console.log(
           `[post-market] 💸 ${candidate.symbol} 금액 초과 — 1주 지정가 ${Math.round(chasedPrice)}원 > 카드 금액 ${amountKrw}원 ` +
@@ -743,6 +786,7 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
         chasedPriceKrw: chasedPrice,
       });
       rowMeta.push({ symbol: candidate.symbol, pattern: candidate.pattern, confidence: chk.confidence });
+      trace.decide(candidate.symbol, d, null);   // 카드 결과는 커밋 뒤 cardResult/insertFailed 로 닫는다
     }
 
     // 15. 저장(트랜잭션 하나)
@@ -754,6 +798,7 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
       const ins = await insertCardsAtomically(rows);
       if (!ins.ok) {
         errors.push(`insert_fail:${ins.error}`);
+        for (const m of rowMeta) trace.insertFailed(m.symbol);
         console.error(`[post-market] market=overseas 카드 저장 실패 — 이 실행의 카드 ${rows.length}장 전부 되돌림: ${ins.error}`);
         return base({
           ...counts, ok: false, status: 'insert_fail',
@@ -762,6 +807,7 @@ export async function runPostMarketOverseas(): Promise<PostMarketOverseasResult>
       }
       ins.outcomes.forEach((o, i) => {
         const m = rowMeta[i];
+        trace.cardResult(m.symbol, o);
         if (o === 'duplicate') {
           duplicatesSkipped++;
           signalsSkipped++;

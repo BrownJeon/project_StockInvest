@@ -137,6 +137,9 @@ while [ \$# -gt 0 ]; do
   esac
 done
 path="\${url#http://stub}"
+# (T-112) 실행·상태 기록 전송(POST /api/cron/job-run-log — 러너 틱 끝, call() 밖)은 이 시험의 대상이 아니다: 호출·--max-time 목록과 시계에
+#   넣지 않고 200 으로 답한다(받은 줄은 버림). 전송·후크 자체와 "후크가 켜져도 다른 호출 = 기준 러너"는 scripts/test-cron-runner-job-run-log.sh 가 본다.
+[ "\$path" = "/api/cron/job-run-log" ] && { printf '200'; exit 0; }
 echo "\$("$REAL_DATE" -d "@\$(cat "$R/clock")" '+%H:%M') \$path" >> "$R/calls"
 [ -n "\$mt" ] && echo "\$path max-time=\$mt" >> "$R/maxtime"
 case "\$path" in

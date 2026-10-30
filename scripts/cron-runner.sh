@@ -36,6 +36,8 @@
 #                        curl 상한 DAILY_BARS_CURL_MAX_TIME. research-cycle-overseas·edgar-sync·broker-fills 가 같은 틱에 돌면 다음 틱으로
 #                        미루고, 07:55 이후에는 부르지 않는다(그날 건너뜀 — 로그 한 줄). 새 잡은 T-104 가 나중에 잡 정의로 흡수한다(J8).
 #  - holdings-premarket: 미국 동부(ET) 08시 평일 첫 틱 하루 1회 — 보유 미국 종목 SEC 새 공시 확인, 새 공시가 있을 때만 알림 (T-119, 주문·분석 무관)
+#  - (T-112) 실행·상태 기록 후크: call() 이 끝날 때마다 로컬 스풀에 한 줄, 틱 경과 150초 미만인 틱 끝에서 POST /api/cron/job-run-log 로 일괄 전송
+#                        (기록 전용 — 잡 호출·시각·날짜파일·하트비트 불변, 아래 job-run-log-spool 블록)
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -47,11 +49,14 @@ if [ -z "$CRON_SECRET" ]; then
   exit 1
 fi
 
+# (T-112) 아래 `# T-112 jrl` 표지 두 줄은 실행·상태 기록 후크다(job-run-log-spool 블록). 시작 시각을 재고, 로그 줄을 쓴 뒤·임시 본문 파일을 지우기
+#   전에 스풀에 한 줄을 남긴다. code·CALL_LAST_CODE·본문 파일·반환값(마지막 rm)은 바꾸지 않는다. 후크 함수가 없어도(블록만 잘라 시험) 무해하다.
 call() {
   local path="$1"
   local label="$2"
   local body="${3:-{}}"
   local code
+  local jrl_t0; jrl_t0=$(jrl_now_ms 2>/dev/null)   # T-112 jrl
   # (T-062 Codex C2 ②) CALL_MAX_TIME 이 비어 있지 않을 때만 --max-time 을 붙인다 — 지금은 해외 post-market 호출만 쓴다.
   # 비어 있으면 아래 curl 명령은 예전과 같다(다른 모든 잡 불변).
   code=$(curl -s ${CALL_MAX_TIME:+--max-time "$CALL_MAX_TIME"} -o /tmp/cron-runner-$$.out -w "%{http_code}" -X POST \
@@ -64,6 +69,7 @@ call() {
   else
     echo "[$ts] $label HTTP=$code body=$(head -c 200 /tmp/cron-runner-$$.out 2>/dev/null)"
   fi
+  jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" 2>/dev/null || true   # T-112 jrl
   rm -f /tmp/cron-runner-$$.out
 }
 
@@ -89,6 +95,8 @@ PMO_CURL_MAX_TIME=120
 # (KIS 0), 열렸을 때도 시세 10초·발송 15초 예산 안에서 스스로 멈춘다 — 이 상한은 그 예산이 깨져도 tick 이 막히지 않게 하는 마지막
 # 방어선이다. 하트비트 최악(위 PMO 계산에 더함): 120 + 60 + 30 + 20 + 60(sleep) = 290초 < 300초(순찰 재시작 기준).
 # 상한에 걸리면 curl 이 000 으로 끝나고 다음 분에 다시 부른다(서버 쪽 실행은 single-flight 라 겹치지 않는다).
+# (T-112) 기록 후크(call() 마다 로컬 스풀 한 줄, 약 5~15ms)를 더해도 이 틱 최악 ≈ 290.2초 < 300초 — 스풀 일괄 전송은 틱 경과 150초 미만인
+#   틱에서만이라 이 틱에서는 돌지 않는다(job-run-log-spool 블록 주석의 계산).
 STOP_ALERT_CURL_MAX_TIME=20
 # (T-087 D1a) 브로커 체결 원장 수집(broker-fills) 호출 한 번의 curl 전체 시간 상한(초). 라우트 자체 예산 75초보다 길고, 하트비트 최악은
 # 90 + 매 분 잡 약 30 + sleep 60 = 180초 < 300초(순찰 재시작 기준). 07시 틱(research·edgar)과는 아래 yield 규칙으로 같은 틱에 겹치지 않는다.
@@ -152,6 +160,106 @@ pmo_finish() {
 }
 # <<< post-market-overseas-retry
 
+# >>> job-run-log-spool (T-112) — 크론 잡 실행·상태 기록(job_run_log). scripts/test-cron-runner-job-run-log.sh 가 러너 전체를 가짜 시각·가짜 curl 로 돌려 시험한다
+# 무엇: call() 이 끝날 때마다(jrl_hook) 서버 로컬 스풀 파일에 한 줄을 덧붙이고, 틱 끝(jrl_flush — sleep 60 앞)에서 **틱 경과가 150초 미만일 때만**
+#   최대 200줄을 묶어 POST /api/cron/job-run-log 로 보낸다(DDL 초안 §5.1 방식 B · T-112 구현 규칙 R1). 판정(ok·failed·skipped …)·예정 슬롯·시간 롤업은
+#   앱(src/lib/strategy/records/job-run-log.ts·job-slots.ts)이 한다 — 러너는 라벨·경로·HTTP 코드·시각·본문 앞 2KB 만 적는다.
+# 🔴 관찰 전용 — 기록이 실패하거나 느려도 잡 호출·순서·시각·날짜파일·CALL_LAST_CODE(해외 분석 재시도)·로그 줄·하트비트가 바뀌지 않는다:
+#   - 후크는 로컬 파일 덧붙이기뿐(네트워크 없음). 명령은 전부 2>/dev/null, 부르는 자리는 `|| true`. set -u 라 인자·변수는 ${VAR:-} 로 읽는다.
+#   - 후크는 code·CALL_LAST_CODE·임시 본문 파일을 바꾸지 않는다(본문은 읽기만 — 지우는 것은 call() 의 원래 rm 줄).
+#   - 전송 curl 은 call() 을 거치지 않는다(재귀 기록 없음 — 이 전송 자체는 기록되지 않는다).
+# 스풀: ${HOME}/.node-local/stockinvest/job-run-spool (로컬 디스크 — NFS 아님, 하트비트와 같은 디렉터리). JRL_SPOOL_FILE="" 로 띄우면 후크·전송이 모두 꺼진다.
+#   줄 형식 v1(탭 구분 7칸): v1 · 라벨 · 경로 · HTTP 코드(000 = 연결 끊김·curl 상한) · 시작 epoch ms · 종료 epoch ms · 본문 앞 2KB 의 base64(한 줄 —
+#   따옴표·줄바꿈·탭이 줄을 깨지 않는다). 매 분 잡 3개(entry-watcher·holding-checker·stop-alert)는 200 이면 본문을 싣지 않는다(앱의 표와 같아야
+#   한다 — job-slots.test.ts 가 아래 case 줄을 읽어 대조). curl 종료코드는 call() 의 기존 줄을 바꾸지 않고는 얻을 수 없어 싣지 않는다(삭제 줄 0 원칙).
+# 전송: 응답이 200 이면 보낸 줄을 지운다(기록 스위치 job_run_log_enabled 가 꺼졌거나 테이블이 없어도 앱이 200 skipped 로 답한다 → 비운다).
+#   그 밖(앱 다운 000·503·401)이면 남겨 다음 가벼운 틱에 다시 보낸다 — 앱은 같은 줄을 멱등으로 받는다(시간 롤업 runs 만 드물게 과대 집계, 초안 §5.2).
+#   실패가 시작될 때 로그 한 줄, 회복될 때 한 줄(매 분 반복하지 않는다).
+# 상한: 보낼 파일이 2MiB 를 넘으면 오래된 줄부터 버려 1MiB 로 줄이고 로그 한 줄 — 앱이 오래 죽어 있어도 디스크가 차지 않는다.
+# 하트비트 최악(T-037 워치독·HOME-SERVER 순찰 300초 — 하트비트는 틱 시작에만 쓰므로 최악 = 틱 길이 + sleep 60):
+#   - 전송하는 틱: 틱 경과 < 150초 + 전송 curl 상한 3초 + 로컬 처리(수 ms) + sleep 60 ≈ 213초 < 300초.
+#   - 전송하지 않는 틱(경과 ≥ 150초 — 08시·06시 ingest·07:40 daily-bars 같은 무거운 틱): 기존 최악 290초(08시: 해외 분석 120 + KIS 스냅샷 60 +
+#     매 분 잡 30 + stop-alert 20 + sleep 60) + 후크(call() 마다 date 2번·head·base64·printf — 약 5~15ms × 그 틱의 call() 약 10번 ≈ 0.1~0.2초)
+#     + 스풀 접기·상한 검사(수 ms) ≈ 290.2초 < 300초. 후크는 남은 10초 여유를 넘기지 않는다.
+#   - export-llm-trainset(03시)은 call() 을 거치지 않아 기록되지 않는다(bash 스크립트를 직접 돌린다 — 초안 §0-6).
+# 겹침: 배포 때 러너 두 개가 1~3초 겹칠 수 있다(설계서 §11 LOW). 한 줄(< 4KB) 덧붙이기는 섞이지 않고, 그 몇 초 동안 접기·전송이 겹치면 줄이 한 번 더
+#   가거나(멱등) 드물게 한 줄 빠질 수 있다 — 기록 전용이라 허용.
+JRL_SPOOL_FILE="${JRL_SPOOL_FILE-${HOME}/.node-local/stockinvest/job-run-spool}"
+JRL_SPOOL_MAX_BYTES=2097152
+JRL_SPOOL_KEEP_BYTES=1048576
+JRL_FLUSH_MAX_ELAPSED_SEC=150
+JRL_FLUSH_CURL_MAX_TIME=3
+JRL_FLUSH_MAX_LINES=200
+JRL_BODY_MAX_BYTES=2048
+JRL_FAILING=""
+jrl_now_ms() {
+  local s; s=$(date +%s%3N 2>/dev/null)
+  case "$s" in ''|*[!0-9]*) s="$(date +%s 2>/dev/null)000" ;; esac
+  printf '%s' "$s"
+}
+# jrl_hook LABEL PATH CODE T0_MS — call() 끝(임시 본문 파일을 지우기 전)에서 스풀에 한 줄. 실패는 전부 삼킨다. 반환은 항상 0.
+jrl_hook() {
+  local label="${1:-}" path="${2:-}" hc="${3:-}" t0="${4:-}" t1="" b64="" b64_skip=0 f="${JRL_SPOOL_FILE:-}"
+  [ -n "$f" ] || return 0
+  t1=$(jrl_now_ms)
+  case "$hc" in [0-9][0-9][0-9]) ;; *) hc=000 ;; esac
+  case "$t0" in ''|*[!0-9]*) t0="$t1" ;; esac
+  case "$label" in
+    entry-watcher|holding-checker|stop-alert) [ "$hc" = "200" ] && b64_skip=1 ;;
+  esac
+  if [ "$b64_skip" = "0" ]; then
+    b64=$(head -c "$JRL_BODY_MAX_BYTES" "/tmp/cron-runner-$$.out" 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
+  fi
+  { printf 'v1\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$path" "$hc" "$t0" "$t1" "$b64" >> "$f"; } 2>/dev/null || true
+  return 0
+}
+# jrl_flush TICK_T0 — 틱 끝(sleep 60 앞). ① 새 줄을 보낼 파일(.sending)로 접는다 ② 크기 상한 ③ 틱 경과 < 150초면 최대 200줄 전송. 반환은 항상 0.
+jrl_flush() {
+  local f="${JRL_SPOOL_FILE:-}" t0="${1:-}" s="" now="" el=0 sz=0 n=0 before=0 after=0 code=""
+  [ -n "$f" ] || return 0
+  s="$f.sending"
+  # ① 접기 — 후크와 같은 프로세스라 서로 겹치지 않는다. 앞 틱에서 접다 멈춘 .fold 가 있으면 그것부터(덮어쓰지 않는다).
+  if [ ! -f "$f.fold" ] && [ -s "$f" ]; then mv -f "$f" "$f.fold" 2>/dev/null || true; fi
+  if [ -f "$f.fold" ]; then { cat "$f.fold" >> "$s"; } 2>/dev/null && rm -f "$f.fold" 2>/dev/null; fi
+  [ -s "$s" ] || { rm -f "$s" 2>/dev/null; return 0; }
+  # ② 크기 상한 — 로컬 처리라 틱 경과와 무관하게 매 틱 본다
+  sz=$(wc -c < "$s" 2>/dev/null); case "$sz" in ''|*[!0-9]*) sz=0 ;; esac
+  if [ "$sz" -gt "$JRL_SPOOL_MAX_BYTES" ]; then
+    before=$(wc -l < "$s" 2>/dev/null); case "$before" in ''|*[!0-9]*) before=0 ;; esac
+    if { tail -c "$JRL_SPOOL_KEEP_BYTES" "$s" | tail -n +2 > "$s.cap"; } 2>/dev/null && mv -f "$s.cap" "$s" 2>/dev/null; then
+      after=$(wc -l < "$s" 2>/dev/null); case "$after" in ''|*[!0-9]*) after=0 ;; esac
+      echo "[$(date '+%F %T')] job-run-log 스풀 상한(${JRL_SPOOL_MAX_BYTES}B) 초과 — 오래된 $((before - after))줄 버림(기록 전용, 잡 동작 무관)"
+    else
+      rm -f "$s.cap" 2>/dev/null
+    fi
+  fi
+  # ③ 전송 — 틱 경과 150초 미만일 때만(위 하트비트 계산). 시각을 읽을 수 없으면 보내지 않는다.
+  case "$t0" in ''|*[!0-9]*) return 0 ;; esac
+  now=$(date +%s 2>/dev/null); case "$now" in ''|*[!0-9]*) return 0 ;; esac
+  el=$((now - t0))
+  [ "$el" -lt "$JRL_FLUSH_MAX_ELAPSED_SEC" ] || return 0
+  { head -n "$JRL_FLUSH_MAX_LINES" "$s" > "$s.batch"; } 2>/dev/null || { rm -f "$s.batch" 2>/dev/null; return 0; }
+  n=$(wc -l < "$s.batch" 2>/dev/null); case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  [ "$n" -gt 0 ] || { rm -f "$s.batch" 2>/dev/null; return 0; }
+  code=$(curl -s --max-time "$JRL_FLUSH_CURL_MAX_TIME" -o /dev/null -w "%{http_code}" -X POST \
+    -H "x-cron-secret: ${CRON_SECRET:-}" -H 'Content-Type: text/plain' \
+    --data-binary @"$s.batch" "${BASE_URL:-}/api/cron/job-run-log" 2>/dev/null) || code="000"
+  if [ "$code" = "200" ]; then
+    if { tail -n +$((n + 1)) "$s" > "$s.rest"; } 2>/dev/null && mv -f "$s.rest" "$s" 2>/dev/null; then
+      [ -s "$s" ] || rm -f "$s" 2>/dev/null
+    else
+      rm -f "$s.rest" 2>/dev/null
+    fi
+    if [ -n "$JRL_FAILING" ]; then echo "[$(date '+%F %T')] job-run-log 전송 회복"; JRL_FAILING=""; fi
+  elif [ -z "$JRL_FAILING" ]; then
+    JRL_FAILING="$code"
+    echo "[$(date '+%F %T')] job-run-log 전송 실패 HTTP=$code — 스풀에 남겨 다음 가벼운 틱에 다시 보냄(기록 전용, 잡 동작 무관)"
+  fi
+  rm -f "$s.batch" 2>/dev/null
+  return 0
+}
+# <<< job-run-log-spool
+
 # 시작 시 한 번 실행 (선택)
 echo "[cron-runner] started, base=$BASE_URL"
 
@@ -211,6 +319,7 @@ while true; do
   : "${CRON_HEARTBEAT_FILE:=${HOME}/.node-local/stockinvest/cron-heartbeat}"
   { printf '%s\n' "$(date +%s)" > "${CRON_HEARTBEAT_FILE}.tmp" \
       && mv -f "${CRON_HEARTBEAT_FILE}.tmp" "${CRON_HEARTBEAT_FILE}"; } 2>/dev/null || true
+  JRL_TICK_T0=$(date +%s 2>/dev/null)   # T-112 jrl
 
   # 매 1분: entry-watcher — 진입 구간 도달 시 자동 주문 실행
   call /api/cron/entry-watcher "entry-watcher"
@@ -536,6 +645,7 @@ while true; do
     # 성공·실패 무관하게 기록 (날짜파일 선언부 주석 참고) — 실패해도 하루 1회로 끝낸다.
     echo "$TODAY" > "$TRAINSET_LAST_RUN_FILE"
   fi
+  jrl_flush "${JRL_TICK_T0:-}" 2>/dev/null || true   # T-112 jrl
   i=$(( (i + 1) % 1440 ))   # 24h 사이클
   sleep 60
 done

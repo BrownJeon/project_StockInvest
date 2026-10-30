@@ -32,6 +32,9 @@ jest.mock('../rules/inside-bar', () => ({ insideBar: jest.fn() }));
 jest.mock('../rules/oversold-bounce-daily', () => ({ oversoldBounceDaily: jest.fn() }));
 // T-053 — 엔진이 지정가 추격률(limitChasePct)을 읽는다. DB 목(query)의 INSERT 응답 순서를 건드리지 않도록 따로 목한다.
 jest.mock('../style', () => ({ getStyleConfig: jest.fn() }));
+// T-112 — 기준 판단 기록기는 이 파일에서 목이다(기록 I/O 가 풀 목·로그·호출 수를 건드리지 않게). 추적 표시(judgment-trace)는 실물이다.
+//   기록 on/off·실패·지연이 분석 결과를 바꾸지 않는다는 증명과 거르기 지점별 기록은 records/__tests__/judgment-engine-wiring.test.ts 가 본다.
+jest.mock('../records/judgment-recorder', () => ({ recordJudgmentDetached: jest.fn() }));
 // T-072 G2 — 이 파일은 카드 INSERT 기계(중복·시각·금액 필터·SQL 모양)를 본다. 관문 판정은 '검증됨'으로 고정해 카드가 기존처럼
 //   `pending` 으로 들어가는 경로를 그대로 시험한다(판정 조회가 같은 목 풀의 mockResolvedValueOnce 를 먹지 않게).
 //   막히는 경우는 post-market-validation-gate.test.ts 가 실제 관문으로 본다.

@@ -37,6 +37,8 @@ const ROUTE = 'app/api/cron/news-fetch/route.ts';
 const ROUTE_TESTS = /^app\/api\/cron\/news-fetch\/__tests__\//;
 const HP_ROUTE = 'app/api/cron/holdings-premarket/route.ts';   // (T-119)
 const HP_ROUTE_TESTS = /^app\/api\/cron\/holdings-premarket\/__tests__\//;
+// (T-112) 잡 이름표 — 크론 러너가 부르는 이름 "holdings-premarket" 을 문자열로 적은 파일 3개(슬롯 표 1·그 시험 2). corp-intel 상수·키·모듈이 아니다.
+const HP_LABEL_FILES = /^lib\/strategy\/records\/(job-slots\.ts|__tests__\/(job-slots|job-run-log-disposable-mariadb)\.test\.ts)$/;
 const read = (f: string) => fs.readFileSync(f, 'utf8');
 const importsOf = (src: string) => [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
 
@@ -243,9 +245,11 @@ describe('src → corp-intel 참조는 허용 목록뿐', () => {
     expect(hits).toContain(HP_ROUTE);
   });
 
-  test('🔴 (T-119) holdings-premarket 상수·키를 쓰는 src 파일 = corp-intel 과 그 라우트·시험뿐', () => {
+  test('🔴 (T-119) holdings-premarket 상수·키를 쓰는 src 파일 = corp-intel 과 그 라우트·시험뿐 (+ T-112 잡 이름표 3파일, 이름표 파일은 상수·키 0)', () => {
     const hits = others.filter((f) => /holdings_premarket_|holdings-premarket/.test(read(f))).map(rel);
-    expect(hits.filter((r) => !(r === HP_ROUTE || HP_ROUTE_TESTS.test(r)))).toEqual([]);
+    expect(hits.filter((r) => !(r === HP_ROUTE || HP_ROUTE_TESTS.test(r) || HP_LABEL_FILES.test(r)))).toEqual([]);
+    // 이름표 파일은 이름 문자열만 쓴다 — 설정 키(holdings_premarket_*)·corp-intel 참조가 들어오면 허용을 철회한다
+    expect(hits.filter((r) => HP_LABEL_FILES.test(r)).filter((r) => /holdings_premarket_|corp-intel/.test(read(path.join(SRC, r))))).toEqual([]);
   });
 
   test('🔴 (T-119) holdings-premarket 라우트 import = 허용 목록뿐 — KIS·안전장치·시그널·전략·주문·LLM·RAG 없음, 직접 fetch·us_filings 쓰기 없음', () => {

@@ -99,6 +99,9 @@ while [ \$# -gt 0 ]; do
   esac
 done
 path="\${url#http://stub}"
+# (T-112) 실행·상태 기록 전송(POST /api/cron/job-run-log — 러너 틱 끝, call() 밖)은 이 시험의 대상이 아니다: 호출·--max-time 목록과 시계에
+#   넣지 않고 200 으로 답한다(받은 줄은 버림). 전송·후크 자체와 "후크가 켜져도 다른 호출 = 기준 러너"는 scripts/test-cron-runner-job-run-log.sh 가 본다.
+[ "\$path" = "/api/cron/job-run-log" ] && { printf '200'; exit 0; }
 echo "\$("$REAL_DATE" -d "@\$(cat "$R/clock")" '+%m-%d %H:%M') \$(cat "$R/ticks" 2>/dev/null || echo 0) \$path" >> "$R/calls"
 [ -n "\$mt" ] && echo "\$path max-time=\$mt" >> "$R/maxtime"
 code=200
@@ -240,10 +243,14 @@ eq "H9: 블록은 news-fetch-peek 블록 뒤(PEEK_RAN_LABEL 를 읽는다)" \
    "$([ "$(grep -n '^  # >>> holdings-premarket' "$RUNNER" | cut -d: -f1)" -gt "$(grep -n '^  # <<< news-fetch-peek' "$RUNNER" | cut -d: -f1)" ] && echo yes || echo no)" "yes"
 eq "H9: 날짜파일 선언 1개" "$(grep -c '^HOLDINGS_PREMARKET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/holdings-premarket-last-date"' "$RUNNER")" "1"
 eq "H9: 상단 잡 목록 주석에 새 잡" "$(sed -n '1,45p' "$RUNNER" | grep -c '^#  - holdings-premarket:')" "1"
-eq "H9: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+eq "H9: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
 noc() { grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$'; }
-if diff <(noc "$STRIPPED") <(noc "$BEFORE") > /dev/null; then ok "🔴 H9: 블록·선언·머리 주석 밖 실행 줄 = 변경 전($BASE_REF)과 동일 ($(noc "$STRIPPED" | wc -l | tr -d ' ')줄)"
-else bad "H9: 블록 밖 실행 줄이 변경 전($BASE_REF)과 다르다 — 다른 task 와 합친 뒤라면 T119_BASE_REF 를 지정"; diff <(noc "$STRIPPED") <(noc "$BEFORE") | head -10; fi
+# (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
+#   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
+no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$'; }
+STRIPPED_NOJRL="$W/runner-stripped-nojrl.sh"; no_jrl "$STRIPPED" > "$STRIPPED_NOJRL"
+if diff <(noc "$STRIPPED_NOJRL") <(noc "$BEFORE") > /dev/null; then ok "🔴 H9: 블록·선언·머리 주석 밖 실행 줄 = 변경 전($BASE_REF)과 동일 ($(noc "$STRIPPED_NOJRL" | wc -l | tr -d ' ')줄)"
+else bad "H9: 블록 밖 실행 줄이 변경 전($BASE_REF)과 다르다 — 다른 task 와 합친 뒤라면 T119_BASE_REF 를 지정"; diff <(noc "$STRIPPED_NOJRL") <(noc "$BEFORE") | head -10; fi
 eq "H9: 지운 줄 = 블록 + 선언 1 + 머리 주석 1" "$(( $(wc -l < "$RUNNER") - $(wc -l < "$STRIPPED") ))" "$(( $(printf '%s\n' "$nb" | wc -l) + 2 ))"
 
 echo
