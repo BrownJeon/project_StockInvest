@@ -1,7 +1,7 @@
 ---
 task_id: T-112
 title: 실행·판단 기록 기반 — `job_run_log`(실행·상태 기록)와 기준 판단(baseline) 기록 — 문서 단계: DDL 초안·J1 호환 확인
-status: planned
+status: in-progress
 priority: high
 project: StockInvest
 created: 2026-10-30
@@ -75,6 +75,27 @@ demo_gate:
 
 **Leader 결론**: 두 문서는 큰 충돌이 없다. 미해결로 남는 것은 ① 국내 D0 정의(Analyst 질문 ⑤) ② 위 7번 `engine_release` 1열 가산 ③ 사용자 결정 U1~U5 뿐이다. 구현은 Judge 접수(R2, Codex 필수) → 일회용 DB 시험 → Developer → Reviewer → QA → **DDL 적용 사용자 승인** 순서이며 이 단계에서는 시작하지 않는다.
 
+## 구현 규칙 (Leader 채택 17:00 — DDL 시험 결과 §10.6 F1~F10 + Reviewer 질문 R1~R4)
+DDL 일회용 MariaDB 10.11 시험은 **90/90 통과**(두 sql_mode)이고 DDL 블록은 고칠 곳이 없었다. 아래는 구현이 지킬 규칙이다.
+| # | 결정 |
+|---|---|
+| F1 | ODKU 식은 **b′**: 비교에 `IFNULL(ended_at,'1000-01-01 00:00:00')`, `ended_at` 대입은 **맨 마지막**. `chk_jrl_ended` CHECK(대안 a)는 넣지 않는다 |
+| F2 | 무변화 재전송은 `insertId=0`·`affectedRows=1` — `affectedRows` 로 새 행을 판정하지 않는다. `run_id` 가 필요하면 첫 대입을 `run_id = LAST_INSERT_ID(run_id)` 로 |
+| F3 | 문자열은 **코드포인트 단위**로 자른다(`Array.from(s).slice(0,N).join('')`). 근거 500자, `symbol` 32·`pattern` 32·`exclusion_code` 40·`llm_provider` 24·`llm_model` 64·`engine_release` 48·`error_code` 64·`degraded_reason` 128 등 **모든 열**을 넣기 전에 길이 검사·자르기 |
+| F4 | 인덱스 열 순서 **바꾸지 않는다**(1년 뒤 느려지면 가산 ALTER) |
+| F5 | 한 실행 안 같은 종목 대소문자·공백 변형은 **넣기 전 정규화·중복 제거** |
+| F6 | CHECK 위반 판별은 `errno === 4025` (mysql2 `code` 문자열 아님) |
+| F7 | DDL 그대로. JSON 크기 상한 표기는 "2048자·4096자·1024자"(글자 수)로 읽는다 |
+| F8 | DDL 적용 직전 확인에 `SELECT @@GLOBAL.sql_mode` 1회 추가 — **운영 조회라 사용자 승인 게이트에 포함** |
+| F9 | 정식 마이그레이션 첫 줄에 `SET SESSION lock_wait_timeout = 5` 를 둔다(T-088 선례) |
+| F10 | 앱 풀은 `dateStrings` 를 쓰지 않아 해당 없음 — 문자열로 읽게 되면 `DATE_FORMAT` |
+| R1 | **스풀 방식 B + 틱 경과 150초 미만일 때만 일괄 전송** 채택(구현 후 Reviewer 가 시간 여유 재확인) |
+| R2 | 분석 쪽 기록은 **결과를 정한 뒤 기다리지 않는 기록**(자체 시간 상한·예외 삼킴). 분석·카드·LLM 결과는 기록 때문에 바뀌지 않는다 |
+| R3 | 기록기 위치 = **`src/lib/strategy/records/`** (훅 `^src/lib/strategy/` 접두어가 자동으로 덮는다 — `SAFETY_PATHS` 수정 없음) |
+| R4 | `missing` 행 합성 잡은 **v1 에 넣지 않는다**(새 잡 → 하트비트 부담). 상태 어휘·`reconciler` 값은 DDL 에 남기되 쓰지 않고, 슬롯 누락 판정은 T-104 단계 1 에서 |
+| 스위치 | `job_run_log_enabled`·`judgment_record_enabled` — **키 없음 = 꺼짐**(fail-closed). 테이블 없음(ER_NO_SUCH_TABLE)도 조용히 건너뜀. 배포 시점에는 둘 다 꺼짐, 켜기는 DDL 적용 사용자 승인 뒤 Leader |
+| 범위 밖 | 청산 판단 기록(T-126), `missing` 합성(T-104), 홈 가동률 계산(T-108), 새 잡 추가 |
+
 ## 보호할 것
 - 코드·DDL 적용·운영 DB·알림·배포 변경 없음. `src/app/api/cron/**`·`scripts/cron-runner.sh`·`src/lib/strategy/post-market-*` 는 훅 `SAFETY_PATHS` — 구현 단계에서 Reviewer 판정 줄 필수.
 - 기록 실패가 수집·분석·주문을 막지 않는다(T-106 `news-health.ts` 의 "절대 던지지 않는다" 원칙과 같다).
@@ -84,6 +105,7 @@ demo_gate:
 - [2026-10-30 11:48] intake engine=rules → task_type=null · risk=R2 · developer_model=opus · next=demo_first · demo=delta/designer(DM-kw-risky-cta) · actions=prepare_demo,request_demo_approval,assign_developer | overrides=R2-kw-payment,MD-judge-failed-opus,DM-kw-risky-cta | fallback=budget_window_closed | tokens=0
 - [2026-10-30 11:50] [재실행 — Leader 요청, 입력 요약 정정] intake engine=rules → task_type=null · risk=R1 · developer_model=opus · next=assign · demo=none/- · actions=assign_developer | overrides=MD-judge-failed-opus | fallback=budget_window_closed | tokens=0
 - [11:50] Leader: 첫 intake 의 demo=delta/R2 는 입력 요약 속 "주문"·"추가"(비-UI 문맥)에 걸린 키워드 오탐이다 — 이 task 는 사용자 화면을 만들지 않는다. 입력 요약을 사실 그대로 다시 써 재실행(Leader 요청, 두 줄 모두 보존; `waive` 아님) → demo=none·risk=R1·next=assign. `check.mjs init` 으로 `demo_gate` = not_required 기록. **risk 는 R2 로 유지**(재실행 입력에서 빠진 "DDL 적용은 사용자 건별 승인"·크론 러너/장마감 분석 모듈 수정이 구현 단계에 있고, `src/app/api/cron/**`·`scripts/cron-runner.sh`·`src/lib/strategy/post-market-*` 는 훅 SAFETY_PATHS). developer_model opus 는 복잡도 판정이 아니라 예산 구간 만료 대체 규칙(`MD-judge-failed-opus`).
+- [2026-10-30 16:36] codex_gate/C1 engine=rules → codex_required=false · wanted_before_budget=false · mode=- · focus=- · budget_rule=CX-limit-unknown-r2 · codex_calls_used=0 · codex_switch=on · input_risk=R2(Leader 지정) · remaining_limit_pct=null(stale) | overrides=- | fallback=budget_window_closed | tokens=0
 
 ## Developer
 - [12:07] **문서 단계 완료(Developer, 읽기 전용)** → [docs/design/2026-10-30-t112-record-ddl-draft.md](../../../docs/design/2026-10-30-t112-record-ddl-draft.md) (566줄). 제안 테이블 3개 `job_run_log`(§9.5 확정안 + 변경 4건 D-a~D-d)·`judgment_run`·`judgment_candidate`(모두 `CREATE TABLE IF NOT EXISTS`·외래키 없음·부팅 DDL 미포함). 기준 판단 기록을 2테이블로 나눈 이유: 1개면 후보 0건 실행이 안 남는다. 기존 `eval_funnel` 은 30일 삭제·판단 필드 없음으로 재사용 안 함.
@@ -103,6 +125,8 @@ demo_gate:
 - [13:44] 열린 범위 질문(Leader): 감사 기간 증거에 **청산 엔진 판단**이 들어가는데(사용자 설명 10-30) 현재 기록은 `eval_funnel` stage 21~29(30일 롤링)와 pm2 로그뿐이다. 이 task 의 기록 대상(`job_run_log`·장마감 분석 판단)에는 포함돼 있지 않다 — 영구 보존이 필요한지, 필요하면 이 task 범위로 넣을지 별도 task 로 둘지는 지표 계약 D1 재확인과 함께 사용자 결정(DDL 초안 v1.1 은 바꾸지 않음).
 - [14:45] 청산 판단 영구 보존(지표 계약 D11): Analyst 권고 **(c) 별도 task** — T-112 는 Judge 접수(R2) 전이라 범위 확장이 일정을 밀고 청산 기록은 쓰기 지점·주기가 다르다. 사용자 확정 대기. T-112 DDL v1.1 은 바꾸지 않음.
 - [16:16] D11 확정: 청산 판단 영구 보존은 T-112 범위에 넣지 않고 [[T-126-exit-judgment-persistence]](후보)로 분리(사용자 "권고안 확정"). T-112 DDL v1.1 변경 없음.
+- [16:37] **구현 단계 착수**(사용자 "다음 작업 진행해줘" — 10-28 결정 ② "기록 먼저"에 따라 다음 작업을 T-112 구현으로 해석). Judge C1 → `codex_required=false`(규칙 엔진 대체 모드에서 C1 은 Jev 의 `design_uncertainty` 답이 있어야 true 이고 R2 강제는 C2 에만 있다 — 판정자 지적). **Leader 결정: C1 Codex 생략**, 설계 위험은 C2 Codex(R2 필수)와 Reviewer 질문 R1~R4 로 받는다. 진행: ① DDL v1.1 일회용 MariaDB 문법·제약 시험(Developer, 컨테이너 `t112-mariadb` 127.0.0.1:33112, 운영 DB 접근 0) ② 구현 분할안(시험 결과 확정 뒤): **A** = 마이그레이션 SQL·기록 라우트·러너 후크/스풀·시험 / **B** = 장마감 분석 2모듈 기록 호출·시험. 기록기 코드는 `src/lib/strategy/records/` 아래에 둔다 — 훅 `SAFETY_PATHS` 의 `^src/lib/strategy/` 접두어가 자동으로 덮어 Reviewer R3(기록기 위치) 가 해결된다. DDL 적용·push·스위치 ON 은 사용자 승인 게이트.
+- [17:00] **DDL 일회용 시험 완료**(Developer; 90/90, 두 sql_mode, 컨테이너 제거 확인, 운영 접근 0) → DDL 초안 §10. DDL 블록 수정 없음, 구현 규칙 F1~F10·R1~R4 를 위 「구현 규칙」으로 채택. 다음: 격리 worktree `~/.node-local/stockinvest-t112` 에서 Developer 2명 병렬 구현(파일 소유 분리) → Reviewer → Judge C2/Codex → QA.
 
 ## 최종 요약
 (미작성)

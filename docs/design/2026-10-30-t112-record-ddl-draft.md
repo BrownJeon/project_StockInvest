@@ -13,7 +13,8 @@
 - 사용자 답(원문): **"권고안 일괄 확정"** — 질문은 "위 결정을 권고안으로 일괄 확정하고 U6 SELECT 18건도 지금 실행해도 될까요?".
 - **U1~U5 확정(권고안)**: U1 §9.5 대비 변경 4건(D-a~D-d) 수용 · U2 60분 미만 주기 잡은 **시간 롤업**(실패는 즉시 1줄) · U3 **DDL 파일 1개(3테이블, 승인 1회)** · U4 AI 판단 근거 **500자 저장** · U5 90일 뒤 정리는 **그때 다시 묻기**(삭제는 건별 승인).
 - **G-J1 Leader 제안 채택**(T-112 「호환 확인 기록」): 해외 503 `data_unknown` = `failed`+`error_code` · 재시도 성공은 최종 `ok`(횟수는 `attempt`) · `rule_hits`·판단 기록 `run_id`·기준가/환율 열은 v1 미포함 · `judgment_run.engine_release` 1열 가산(아래 DDL 에 반영) · T-104 실행 판정은 이 테이블을 읽지 않음(E8).
-- 이 v1.1 은 **문서 결정**이다. DDL 문법은 여전히 미검증·미적용이고, 적용은 일회용 DB 시험 뒤 사용자 건별 승인이다. 본문 §4.3·§8 의 질문 표는 위 확정으로 닫혔으나 이력 보존을 위해 지우지 않았다.
+- 이 v1.1 은 **문서 결정**이다. DDL 문법은 여전히 미검증·미적용이고, 적용은 일회용 DB 시험 뒤 사용자 건별 승인이다.
+- **17:00 갱신**: 일회용 MariaDB 시험이 끝나 **문법은 검증됐다(90/90, §10)**. 미적용은 그대로. 발견 사항 F1~F10 의 채택 여부는 T-112 task 「구현 규칙」에 있다(DDL 블록 본문은 바꾸지 않았다). 본문 §4.3·§8 의 질문 표는 위 확정으로 닫혔으나 이력 보존을 위해 지우지 않았다.
 
 ## 0. 먼저 읽는 요약
 
@@ -571,3 +572,225 @@ judgment_candidate   후보 + 종목 단계 제외                 ≈ 10~60 행
 - **하지 않은 것**: DDL 실행(일회용 포함 — **문법 미검증**), 운영 DB 조회, 코드 변경, 라우트 응답 실측, 지연 실측.
 - **확신이 낮은 곳**: 틱·POST·줄 쓰기 시간(전부 [추측]), 하루 행 수(틱 수 근사), 행 크기, ODKU 대입 순서 동작(일회용 DB 에서 확인할 것), 상주 프로세스에서 기다리지 않는 Promise 의 완료(가능성 높음), 다른 라우트 본문 모양(미확인), T-108 계약과의 실제 일치(미작성).
 - **다음**: Leader 가 T-108 지표 계약 초안과 §4 를 대조(G-J1) → 사용자 결정 U1~U5 → (승인 시) 구현 task: Judge 접수(R2, Codex 필수) → 일회용 DB 시험 → Developer → Reviewer → QA → DDL 적용 승인 → 배포 → 스위치 ON.
+
+---
+
+## 10. DDL 문법·제약 시험 결과 (일회용 MariaDB 10.11, 2026-10-30)
+
+작성: 2026-10-30 16:5x KST · T-112 Developer. **본문 DDL 블록(§2.1·§3.2)은 고치지 않았다.** 위 절들의 [추측]·「문법 미검증」 표시도 그대로 두었다(갱신은 Leader). 아래 수정안은 반영 여부를 Leader 가 정한다. 이 절에는 `sql` 언어 표시 코드블록을 두지 않았다 — DDL 추출 명령이 본문 블록만 잡게 하려는 것이다.
+
+### 10.1 먼저 읽는 요약
+
+1. **[확실] DDL 3개는 문법 오류 없이 적용되고 제약도 모두 의도대로 동작했다.** 두 sql_mode(서버 기본 / 세션에 `NO_BACKSLASH_ESCAPES` 추가)에서 결과가 같았고, mariadb CLI(주석 포함 원문 파일)와 mysql2 두 경로의 `SHOW CREATE TABLE` 도 같았다. **DDL 블록을 꼭 고쳐야 할 결함은 찾지 못했다.**
+2. **[확실] §2.2 의 ODKU 대입 순서 [가능성 높음] → 확인됐다.** MariaDB 는 ODKU 대입을 왼쪽부터 적용한다. `ended_at` 을 먼저 두는 변이를 넣으면 재시도 횟수·상태 갱신이 전부 사라진다.
+3. **[확실] 그러나 문서의 ODKU 식에는 구멍이 하나 있다(F1).** 기존 행의 `ended_at` 이 NULL 이면 `VALUES(ended_at) > NULL` 이 NULL 이고 `GREATEST(NULL, x)` 도 NULL 이라, 뒤에 성공한 재시도가 와도 그 행은 **영원히 `failed`·`attempt=1` 로 남는다.** 초안 DDL 은 `missing` 이 아닌 행의 `ended_at` NULL 을 막지 않는다. 수정안 2가지를 시험했다(10.6).
+4. 구현 규칙으로 지켜야 할 것 3건(F2 `insertId`, F3 500자 자르기·길이 검사, F5 종목 대소문자 중복) — DDL 은 바뀌지 않는다.
+5. 시험 중 실패: 1차 실행 C7 2건은 **시험 설계 결함**(1행짜리 합성 표에서 EXPLAIN 이 PRIMARY 대신 전체 읽기를 골랐다)이어서 단언을 측정 DB 로 옮긴 뒤 2차에서 통과했다. 수정안 시험 V5 2건은 단언 문자열 형식이 틀린 것이고, 확인하려던 결함은 재현됐다(10.3).
+
+### 10.2 환경·실행
+
+| 항목 | 값 |
+|---|---|
+| 서버 | `home_ubuntu`, 이미 있던 이미지 `mariadb:10.11`(`--pull=never`, 다운로드 없음) → `10.11.19-MariaDB-ubu2204` |
+| 컨테이너 | `t112-mariadb`, `-p 127.0.0.1:33112:3306` 만, `--rm`. 서버 옵션은 T-088 선례와 같다: `--sql-mode=IGNORE_SPACE,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION --character-set-server=utf8mb3 --collation-server=utf8mb3_general_ci` (`innodb_autoinc_lock_mode=1`, `innodb_default_row_format=dynamic`) |
+| 비밀번호 | 기동 때 임의 생성 → 컨테이너 환경변수로만(시험 스크립트에는 `docker exec … printenv` 로 넘김). 작업 디렉터리 파일 중 비밀번호를 담은 파일 0개 확인 |
+| 작업 디렉터리 | 저장소 밖 `~/.node-local/t112-ddl/`: `T-112-draft.sql`·`cli-apply.sh`·`t112-test.js`·`t112-sup.js`·`t112-variants.js`·`results.json`·`run1.log`·`run2.log`·`sup2.log`·`variants.log` |
+| 클라이언트 | mysql2 3.11.3(서버의 `~/.node-local/stockinvest/node_modules` 를 읽기만), 값은 `execute`(준비문)로 바인딩. 측정 적재만 `query` 일괄 INSERT |
+| 조인 상대 | `ci_raw_item` = 저장소 `scripts/migrations/T-116-ci-raw-item.sql` 원본(읽기만)을 일회용 DB 에 적용 · `signals` = `id BIGINT AUTO_INCREMENT`(`src/lib/db.ts` 782행과 같은 타입)·`symbol` 만 있는 합성 표 |
+| 운영 접근 | 0 — 운영 NAS MariaDB·`.env`·`@/lib/db` 풀을 쓰지 않았다. 접속 대상은 `127.0.0.1:33112` 하나 |
+| 정리 | `docker rm -f t112-mariadb` → 컨테이너 0·포트 33112 리슨 0. 남은 익명 볼륨 1개는 내용(`t112*` DB 디렉터리)을 확인한 뒤 삭제. 수정안 시험용 2차 기동은 `docker rm -fv` 로 제거(볼륨 잔여 0) |
+
+**DDL 추출 — 시험에 쓴 SQL 과 문서 블록의 차이: 없음.** 문서의 `sql` 코드블록 2개(65~108행·197~251행, CREATE 3개)를 그대로 잘라 붙였다(블록마다 출처 주석 1줄만 덧붙임). 그 두 구간과 `diff` 0, 파일 sha256 `b3eb31eb76ce48a59edc2b686180125a6331ffb2407fd17f2c6e4da41c0cf9c3`. 수정안(10.6)은 이 파일을 메모리에서 바꾼 변형으로만 시험했고 파일로 남기지 않았다. `scripts/migrations/` 에는 아무것도 만들지 않았다.
+
+```bash
+# 기동(비밀번호는 환경변수로만)
+MARIADB_ROOT_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -dc A-Za-z0-9 | head -c 24)" \
+  docker run -d --rm --pull=never --name t112-mariadb -p 127.0.0.1:33112:3306 \
+  -e MARIADB_ROOT_PASSWORD -e MARIADB_DATABASE=t112 mariadb:10.11 \
+  --sql-mode=IGNORE_SPACE,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION \
+  --character-set-server=utf8mb3 --collation-server=utf8mb3_general_ci
+# 추출: 문서의 sql 블록 2개 → ~/.node-local/t112-ddl/T-112-draft.sql (awk, 블록 머리에 출처 주석 1줄)
+# CLI 적용(주석 포함 원문, 서버 기본 / NBE 세션 각 2회) + SHOW CREATE 저장
+bash ~/.node-local/t112-ddl/cli-apply.sh
+# 제약 시험 90건 + 30일 측정 / 보조 측정(90일·대안 인덱스) / 수정안 변형
+T112_DB_PW="$(docker exec t112-mariadb printenv MARIADB_ROOT_PASSWORD)" node ~/.node-local/t112-ddl/t112-test.js
+T112_DB_PW="$(docker exec t112-mariadb printenv MARIADB_ROOT_PASSWORD)" node ~/.node-local/t112-ddl/t112-sup.js
+T112_DB_PW="$(docker exec t112-mariadb printenv MARIADB_ROOT_PASSWORD)" node ~/.node-local/t112-ddl/t112-variants.js
+docker rm -fv t112-mariadb
+```
+
+### 10.3 통과/실패 집계
+
+| 묶음 | 건수 | 통과 | 실패 | 비고 |
+|---|---|---|---|---|
+| mariadb CLI 원문 적용(서버 기본·NBE × 1차·2차) | 4 | 4 | 0 | 1차 경고 0 · 2차 `Note 1050` ×3 · 두 모드 `SHOW CREATE` 3개 동일 |
+| mysql2 시험 1차 실행 | 90 | 88 | 2 | C7(두 모드) — 시험 설계 결함, 아래 |
+| mysql2 시험 2차 실행(시험 코드만 수정, DDL 동일) | 90 | **90** | 0 | 서버 기본 42 · NBE 42 · 비strict 보조 5 · 측정 1 |
+| 수정안 변형(서버 기본·NBE) | 20 | 18 | 2 | V5(두 모드) — 단언 형식 오류, 결함 재현은 성공 |
+
+- **C7(1차)**: 합성 `signals` 가 1행이라 옵티마이저가 `PRIMARY` 대신 전체 읽기(ALL)를 골랐다. 이 단언이 앞에서 멈춰 뒤의 검사(2^63−1 허용·2^63 거부)도 1차에서는 돌지 않았다. 2차에서 EXPLAIN 확인을 측정 DB(signals 228행·후보 1,800행)로 옮겼고, 거기서 `c:ref/uq_run_symbol → s:eq_ref/PRIMARY` 를 확인했다. 나머지 검사도 2차에서 통과했다.
+- **V5**: "GREATEST+IFNULL 수정안은 NULL 위에 NULL 이 오면 가짜 시각을 쓴다"를 확인하는 시험이다. 저장값은 `1000-01-01 00:00:00` 이었는데 단언이 `'1000-01-01 00:00:00'` 문자열을 기다렸다. mysql2 준비문 결과는 시각이 0 인 DATETIME 을 날짜만(`1000-01-01`)으로 돌려준다 [확실: mysql2 `packet.js` `readDateTimeString` — 길이 4 이면 날짜만]. **결함은 재현됐다** — 그래서 그 수정안은 버리고 b′ 를 권고한다(10.6).
+
+### 10.4 항목별 결과 (두 sql_mode 동일 — 다른 곳만 따로 적음)
+
+**공통·적용**
+
+| 확인 | 결과 |
+|---|---|
+| 문장 | 3개 모두 `CREATE TABLE IF NOT EXISTS`. ALTER·DROP·INSERT 등 없음 |
+| 멱등 | 2차 적용 `Note 1050` ×3, `SHOW CREATE` 바뀌지 않음 |
+| 문자셋 | 서버 기본이 utf8mb3 인데도 3테이블 모두 `DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`, utf8mb3 열 0. JSON 열은 `longtext … utf8mb4_bin` + 자동 `json_valid` CHECK, `prompt_sha256` 은 `ascii_bin` |
+| CHECK 저장형 | 이름 붙은 10개(`chk_jrl_*` 4 · `chk_jr_*` 3 · `chk_jc_*` 3) + JSON 열 `json_valid` 3개. 저장된 CHECK 에 백슬래시 0개(두 모드), `chk_jr_prompt` 는 `'^[0-9a-f]{64}$'` 그대로. `chk_jrl_missing` 의 괄호는 저장할 때 빠지지만 AND 가 먼저 묶여 뜻은 같다(아래 거부 시험으로 확인) |
+| 타입 | `run_id`·`judgment_run_id`(두 표)·`candidate_id` = `bigint(20) unsigned`, `signal_id` = `bigint(20)`(부호 있음) |
+| UNIQUE 길이 | 오류 없이 생성(§2.2 의 약 264바이트 계산과 맞음) |
+
+**`job_run_log`**
+
+| 시험 | 결과 |
+|---|---|
+| 정상 행 | 저장·읽기 OK, `attempt` 기본 1, KST 문자열 왕복 |
+| UNIQUE `(job_id, scheduled_slot_at, recorder)` | 같은 키 → 1062. `recorder` 만 다르면(`runner_hook`·`runner_rollup`·`route`) 3행 공존(D-a). 슬롯 NULL 2행 허용(§7.1-6) |
+| 어휘 | `status` `'yield'`·`''` → 1265, NULL → 1048 · `recorder` `'cron'`·`market` `'us'` → 1265 |
+| `chk_jrl_started` | `ok` + `started_at` NULL → 4025 |
+| `chk_jrl_missing` | 정상형(슬롯 있음·`started_at` NULL·`reconciler`·`attempt` 0) 허용. `started_at` 있음 / `recorder=runner_hook` / 슬롯 NULL → 각각 4025. `reconciler` 가 `skipped` 행을 쓰는 것은 막지 않음 |
+| `counts_json` | 2048자 허용 · 2049자 → 4025(`chk_jrl_counts`) · JSON 아님 → 4025(`json_valid`) · **한글 2048자(6,128바이트) 허용 → 상한은 바이트가 아니라 글자 수**(F7) |
+| `http_code` | 0·999 허용 · 1000 → 4025 · −1·65536 → 1264 |
+| `attempt` | 255 허용 · 256·−1 → 1264. `ok` 행의 `attempt=0` 은 막지 않음(정보) |
+| 길이 | `job_id` 65·`run_kind` 25·`error_code` 65·`degraded_reason` 129 → 1406 · `session_date_kst` NULL → 1048 |
+| `detail` 크기 | 초안에 `detail` 열은 없다(E4 이후 `counts_json` 하나). 크기 상한은 위 `counts_json` CHECK 와 `error_code`·`degraded_reason` 길이로 시험했다 |
+| **ODKU 문서 순서** | 1차(503) → 같은 줄 재전송 → 2차(ok) → 재전송 → 늦게 온 1차 줄 → 3차: `attempt` 1,1,2,2,2,3 · `status` failed→ok(늦은 줄 무시) · `started_at` 08:00:05 유지 · `ended_at` 최대값 · 2차에서 `error_code` NULL·200 · `run_id` 불변 |
+| **ODKU 변이(`ended_at` 먼저)** | `attempt` 1,1,1,1,1,1 · `status` 계속 failed → **변이가 잡힌다 = 왼쪽부터 대입** |
+| [보조] `SIMULTANEOUS_ASSIGNMENT` | 세션에 켜면 변이도 1,1,2,2,2,3 이 된다 — MariaDB 는 이 모드를 ODKU 에도 적용한다. 문서 순서는 두 경우 모두 맞다. 변이 시험은 운영과 같은 모드(이 모드 없음 — T-088 기록값)에서만 의미가 있다 |
+| ODKU + `ended_at` NULL 행 | 문서 식: 뒤에 ok 재시도가 와도 `attempt=1`·`failed`·`ended_at` NULL 그대로(F1) |
+| `insertId`·`affectedRows` | 새 행 = `run_id`(aff 1) · 실제 갱신 = `run_id`(aff 2) · **바뀐 것 없는 재전송 = 0**(aff 1). ODKU 첫 대입에 `run_id = LAST_INSERT_ID(run_id)` 를 두면 바뀐 것 없는 재전송도 `run_id`. mysql2 기본 플래그(FOUND_ROWS) 때문에 새 행과 무변화 재전송이 둘 다 aff 1 이다(F2) |
+| AUTO_INCREMENT | 중복 경로도 번호를 쓴다(5문장 → +5). `run_id` 에 빈 번호가 생긴다 — 무해 |
+| `run_id` ↔ `ci_raw_item.run_id` | 두 열 모두 `bigint(20) unsigned`. 2^63 값으로 조인 1행, EXPLAIN `j:eq_ref/PRIMARY` |
+
+**`judgment_run`·`judgment_candidate`**
+
+| 시험 | 결과 |
+|---|---|
+| 정상 행 | 헤더 1행(실제 형식 sha256·`engine_release` 24자) + 후보 3행 multi-row INSERT(BUY+카드 / SKIP / 종목 단계 제외) |
+| `chk_jr_prompt` | 대문자 64자·63자·`g` 포함 → 4025(`ascii_bin` 이라 대소문자를 가린다) · 65자 → 1406 · 한글 → 1366 · 64자 + 끝 개행 → 개행이 잘린 채 저장(CHAR 끝 공백류, T-088 관찰과 같음 — 저장값은 정상형) |
+| JSON 상한 | `rag_context_ids` 4096 허용·4097 → 4025 · `data_status` 1024 허용·1025 → 4025 · JSON 아님 → 4025 |
+| `engine_release` | 48자 허용 · 49자 → 1406 |
+| ENUM | `judgment_role` `'live'` → 1265 · `market` `'common'` → 1265 · `'BASELINE'` 은 `'baseline'` 으로, `ai_decision` `'buy'` 는 `'BUY'` 로 저장된다(ENUM 은 대소문자를 가리지 않음 — F5) · `'HOLD'` → 1265 · `NONE`·`INVALID` 허용 |
+| NULL·범위 | `valid_from`·`started_at`·`judgment_run_id` NULL → 1048 · `candidate_count` 65535 허용, 65536·−1 → 1264 · `llm_provider` 25자·`llm_model` 65자 → 1406 |
+| UNIQUE `(judgment_run_id, symbol)` | 중복 → 1062 · 다른 실행의 같은 종목 허용 · **`'nas:mu'`·`'NAS:MU '`(끝 공백)도 `'NAS:MU'` 와 같은 키**(general_ci·PAD SPACE — F5) |
+| `sent_to_llm`·`ai_decision` | sent 0 + SKIP/BUY → 4025(`chk_jc_decision`) · sent 1 + NULL 허용(`llm_error`) · sent 2·−1 → 4025(`chk_jc_sent`) |
+| `confidence` | 0·100·99.99 허용 · 100.01·−0.01 → 4025 · 1000 → 1264 · 55.555 → 55.56(Note 1265, 거부 아님) |
+| `ai_reasoning` | 한글 500자(1,500바이트)·이모지 500자(2,000바이트) 허용 · 501자 → 1406(strict) · **JS `s.slice(0, 500)` 로 자르면 끝의 서로게이트 반쪽이 U+FFFD(`EFBFBD`)로 바뀌어 오류 없이 저장된다** · `Array.from(s).slice(0, 500).join('')` 은 정상 · 따옴표·백슬래시·탭·줄바꿈·`--` 원문 보존(두 모드) — F3 |
+| `signal_id` ↔ `signals.id` | 둘 다 `bigint(20)`. 조인 1행 · 2^63−1 허용 · 2^63 → 1264 · 측정 DB EXPLAIN `c:ref/uq_run_symbol → s:eq_ref/PRIMARY` |
+
+**[보조] 비strict 세션(`sql_mode='NO_ENGINE_SUBSTITUTION'`)** — §7.1-3 요구분
+
+- 이름 붙은 CHECK 6종(`ok`+started NULL · `missing`+started · counts 2049 · prompt 대문자·63자 · sent 0+SKIP)은 비strict 에서도 4025 로 거부된다.
+- 대신 **ENUM 위반 `'yield'` 는 빈 문자열로 저장**(경고 1265만) · `ai_reasoning` 501자는 500자로 잘려 저장 · `prompt_sha256` 65자는 64자로 잘린 뒤 CHECK 를 통과해 저장된다.
+- 앱 풀(`src/lib/db.ts` 33~48행)은 `sql_mode` 를 지정하지 않아 서버 전역값을 따른다 [확실: 소스]. 운영 전역값은 이번에 조회하지 않았다 — T-088 기록값(strict) 기준 [미확인] (F8).
+
+### 10.5 측정 (일회용 DB 에서만, 합성 30일 적재)
+
+적재 규칙은 §2.4·§6 그대로다: 매 분 잡 롤업 72 + (A) 주기 잡 실행마다 744 또는 (B) U2 확정안(60분 미만 주기 잡을 시간 롤업, `portfolio-snapshot` 만 실행마다) + 하루 1회 14(holdings 는 평일만) + peek 21 + 실패 즉시 줄·`missing` 약간. 판단 기록은 상한 가정으로 하루 실행 4회(국내 1·해외 3) × 후보 15 = 60행/일, 근거는 한글 100~500자(평균 293자 = 848바이트). `ANALYZE TABLE` 뒤 `information_schema.TABLES` 값이다.
+
+| 표 | 행 | 데이터 + 인덱스 | 행당(인덱스 포함) | 1년 환산 [추측: 선형] |
+|---|---|---|---|---|
+| `job_run_log` (A) §9.5 규칙 30일 | 25,641 (≈855/일) | 2,576KB + 4,656KB | 289B | ≈ 90MB |
+| 같은 (A) 를 90일로 복제 | 76,923 | 7,696KB + 10,800KB | 246B | ≈ 77MB |
+| `job_run_log` (B) U2 확정 30일 | 6,912 (≈230/일) | 1,552KB + 1,040KB | 384B* | ≈ 21~32MB |
+| `judgment_run` 30일 | 120 | 96KB + 32KB | ≈1.1KB* | ≈ 1.6MB |
+| `judgment_candidate` 30일 | 1,800 | 1,552KB + 240KB | 1,019B | ≈ 22MB |
+
+\* 작은 표는 InnoDB 가 1MB 단위로 공간을 잡아 행당 값이 부풀려진다. (B) 의 연간 값은 (A) 90일의 246B/행으로 잡은 하한과 384B/행 상한을 같이 적었다.
+
+→ §6 의 추정(행당 400~450바이트, 연 140MB/40MB)보다 `job_run_log` 는 작다. `judgment_candidate` 는 "연 수 MB"보다 크다(하루 60행·근거 약 300자 상한 가정이면 연 약 20MB, 하루 10행이면 약 4MB). 셋 다 설계서 §8.4 의 "월 100MB 이하" 안이다.
+
+**EXPLAIN** ((A) 30일 표, 별도 표시는 90일 표)
+
+| 조회 | 계획 | 판정 |
+|---|---|---|
+| 가동률 하루·시장 | `ref idx_session_market` (≈25행) | 인덱스 ✓ |
+| 가동률 7일·시장 | 30일 표: **ALL**(7일이 표의 약 23%라 옵티마이저가 전체 읽기 선택) → 90일 표: `range idx_session_market`(추정 10,356행), 실측 0.8ms | 데이터가 쌓이면 인덱스 ✓. 다만 앞 열이 날짜라 `market` 은 범위 키가 아니라 거르기 조건으로만 쓰인다(F4) |
+| 가동률 30일 전체 | ALL | 전부 읽는 조회라 의도대로 |
+| 보존 정리(날짜만, 90일 표) | `range idx_session_market` [Using index] | ✓ |
+| 잡별 최근 상태(`ORDER BY started_at DESC LIMIT 1`) | `ref idx_job_started`, filesort 없음 | ✓ |
+| 전 잡 마지막 시작(`GROUP BY job_id`) | `range idx_job_started` [Using index for group-by] | ✓ |
+| 전 잡 마지막 행(파생 표 조인) | 파생 표 83행 → `ref idx_job_started` | ✓ |
+| 오늘 잡별 마지막 | `ref idx_session_market` + 임시표 정렬(≈858행) | ✓(작음) |
+| 슬롯 존재(재대사) | `ref uq_job_slot_recorder` [Using index] | ✓ |
+| 슬롯 범위(하루·잡 4개) | `range uq_job_slot_recorder` [Using index] | ✓ |
+| 후보·제외 추이 | `r: range idx_market_session` [Using index] → `c: ref uq_run_symbol` | ✓ |
+| 후보 0건 실행 포함(LEFT JOIN) | `r: range idx_market_session` → `c: ref uq_run_symbol` | ✓ |
+| 종목별 판단 이력 | `ref idx_symbol` | ✓ |
+| 카드 → 판단 | `ref idx_signal` [Using index] | ✓ |
+| 후보 → 카드(실행 1개) | `c: ref uq_run_symbol` → `s: eq_ref PRIMARY` | ✓ |
+| 수집 원문 → 실행 | `j: eq_ref PRIMARY` | ✓. 반대 방향("실행 → 원문")은 `ci_raw_item.run_id` 에 인덱스가 없어 전체 읽기 — T-116 표의 일이라 이 DDL 범위 밖 |
+
+### 10.6 발견한 수정 필요 사항 (반영 여부는 Leader)
+
+| # | 확신 | 내용 | DDL 영향 | 제안 |
+|---|---|---|---|---|
+| F1 | [확실] | ODKU 식이 기존 행의 `ended_at` NULL 에서 고착(10.4). 초안은 `missing` 이 아닌 행의 `ended_at` NULL 을 막지 않는다. §5.1 의 "시작 표시 줄 → `runner_killed`" 를 쓰면 이런 행이 생길 수 있다 [가능성 높음] | 선택 | **권고 b′(구현 규칙, DDL 그대로)** — 아래 diff. 서버 기본·NBE 에서 6단계 1,1,2,2,2,3 · 변이 검출 · NULL 행 회복 · NULL 위 NULL 재전송 시 `ended_at` NULL 유지(가짜 시각 없음)를 확인. 대안 a(DDL CHECK 추가)도 두 모드에서 시험해 통과했지만, `runner_killed` 줄에 종료 시각을 지어 넣게 만들어 §4.2 "시각을 지어내지 않는다"와 부딪힌다. 시험 중 먼저 떠올린 "GREATEST+IFNULL" 안은 NULL 위에 NULL 이 오면 `1000-01-01 00:00:00` 을 저장해서 버렸다(V5) |
+| F2 | [확실] | 바뀐 것 없는 재전송은 `insertId=0` 이다. 새 행과 무변화 재전송은 둘 다 `affectedRows=1` 이다 | 없음 | 기록 라우트가 `run_id` 를 돌려받아야 하면 ODKU 첫 대입을 `run_id = LAST_INSERT_ID(run_id)` 로 두거나 UNIQUE 키로 다시 SELECT 한다. `affectedRows` 로 "새 행"을 판정하지 않는다. (2^63 넘는 `insertId` 를 mysql2 가 음수로 보여 주는 것도 봤지만 실제로는 닿지 않는 범위다) |
+| F3 | [확실] | 501자 이상 근거는 strict 에서 1406 → **multi-row INSERT 한 문장 전체가 실패**해 그 실행의 후보 기록이 통째로 빠진다(기록 실패는 삼키므로 조용히). JS `slice` 는 서로게이트를 쪼갠다 | 없음 | 기록기는 코드포인트 단위(`Array.from(s).slice(0, 500).join('')`)로 자른다. `symbol`(32)·`pattern`(32)·`exclusion_code`(40)·`llm_provider`(24)·`llm_model`(64)·`engine_release`(48)·`error_code`(64)·`degraded_reason`(128)도 넣기 전에 길이를 검사한다 — 한 값만 넘어도 그 문장 전체가 거부된다 |
+| F4 | [가능성 높음] | `idx_session_market (session_date_kst, market)` 은 "시장 + 기간" 조회에서 `market` 을 범위 키로 못 쓴다. 90일 표에 `(market, session_date_kst)` 를 더하면 7일 조회 추정 행 10,356 → 173, 실측 0.8 → 0.5ms | 선택 | **바꾸지 않는 것을 권고** — 이 규모에서는 체감 차이가 없고, 보존 정리(날짜만)는 지금 인덱스를 그대로 쓴다. 1년치가 쌓인 뒤 느려지면 가산 ALTER 로 충분하다 |
+| F5 | [확실] | ENUM 은 대소문자를 가리지 않고 정규형으로 저장한다. `uq_run_symbol` 은 대소문자·끝 공백만 다른 종목을 같은 키로 본다 | 없음 | 엔진 심볼은 이미 정규형이라 지금은 문제가 없다. 다만 한 실행 안에 같은 종목이 형태만 달리 두 번 오면 multi-row INSERT 전체가 1062 로 실패하므로, 기록기가 넣기 전에 정규화·중복 제거를 한다. 앱 쪽 어휘 검사를 DB ENUM 에 맡기지 않는다 |
+| F6 | [확실] | mysql2 3.11.3 은 MariaDB errno 4025(CHECK 위반)를 `code: 'ER_INNODB_AUTOEXTEND_SIZE_OUT_OF_RANGE'` 로 표시한다(MySQL 번호표를 쓰기 때문) | 없음 | CHECK 위반 판별은 `errno === 4025` 로 한다(T-088 시험과 같음). `code` 문자열로 하지 않는다 |
+| F7 | [확실] | JSON 크기 CHECK 는 글자 수(`CHAR_LENGTH`) 기준이라 문서의 "2KB·4KB·1KB" 와 다르다(한글 2048자 = 6,128바이트도 통과) | 선택 | 내용이 ASCII 위주라 실무 차이는 작다 [가능성 높음] → **DDL 은 그대로 두고 문서 표기를 "2048자·4096자·1024자"로 읽는 것을 권고.** 바이트 상한이 의도라면 아래 diff(`OCTET_LENGTH`) — `counts_json` 변형만 두 모드에서 시험해 통과, 나머지 두 열은 같은 꼴이지만 시험하지 않았다 |
+| F8 | [가능성 높음] | 비strict 세션이면 ENUM 위반·길이 초과가 경고만 내고 잘려 저장된다. 앱 풀은 `sql_mode` 를 지정하지 않는다 | 없음 | §7.2 적용 직전 확인에 `SELECT @@GLOBAL.sql_mode` 1회를 더하기를 제안한다(운영 조회라 사용자 승인 사항) |
+| F9 | [확실] | T-088 마이그레이션은 첫 문장이 `SET SESSION lock_wait_timeout = 5` 다. 이 초안과 T-116 에는 없다 | 선택 | 새 테이블 CREATE 3개라 잠금 대기 위험은 낮다 [가능성 높음]. 정식 파일로 옮길 때 같은 첫 줄을 넣을지 Leader 가 정한다 |
+| F10 | [확실] | mysql2 준비문 + `dateStrings` 는 시각이 0 인 DATETIME(예: 롤업 슬롯 `00:00:00`)을 날짜만(`YYYY-MM-DD`)으로 돌려준다 | 없음 | 앱 풀은 `dateStrings` 를 쓰지 않아 지금은 해당 없다. 기록 라우트·재대사가 문자열로 읽게 되면 `DATE_FORMAT` 이나 Date 변환으로 읽는다 |
+
+#### 10.6.1 수정안 b′ — ODKU 식 (구현 규칙, §2.2 문단 대체 후보 · DDL 변경 없음)
+
+```diff
+ INSERT INTO job_run_log (…) VALUES (…)
+ ON DUPLICATE KEY UPDATE
++  run_id      = LAST_INSERT_ID(run_id),                                   -- F2: 무변화 재전송에도 run_id 를 돌려받을 때만
+-  attempt     = IF(VALUES(ended_at) > ended_at, attempt + 1, attempt),
+-  status      = IF(VALUES(ended_at) > ended_at, VALUES(status), status),
+-  http_code   = IF(VALUES(ended_at) > ended_at, VALUES(http_code), http_code),
+-  error_code  = IF(VALUES(ended_at) > ended_at, VALUES(error_code), error_code),
+-  counts_json = IF(VALUES(ended_at) > ended_at, VALUES(counts_json), counts_json),
+-  ended_at    = GREATEST(ended_at, VALUES(ended_at))
++  attempt     = IF(VALUES(ended_at) > IFNULL(ended_at, '1000-01-01 00:00:00'), attempt + 1, attempt),
++  status      = IF(VALUES(ended_at) > IFNULL(ended_at, '1000-01-01 00:00:00'), VALUES(status), status),
++  http_code   = IF(VALUES(ended_at) > IFNULL(ended_at, '1000-01-01 00:00:00'), VALUES(http_code), http_code),
++  error_code  = IF(VALUES(ended_at) > IFNULL(ended_at, '1000-01-01 00:00:00'), VALUES(error_code), error_code),
++  counts_json = IF(VALUES(ended_at) > IFNULL(ended_at, '1000-01-01 00:00:00'), VALUES(counts_json), counts_json),
++  ended_at    = IF(VALUES(ended_at) > IFNULL(ended_at, '1000-01-01 00:00:00'), VALUES(ended_at), ended_at)   -- 맨 마지막 유지
+```
+
+새 값이 NULL 이면 비교가 NULL(거짓)이라 기존 값을 그대로 둔다. `'1000-01-01 00:00:00'` 은 비교에만 쓰이고 저장되지 않는다(V3 확인). `run_id = LAST_INSERT_ID(run_id)` 줄은 J20·보조 시험으로 따로 확인했고, b′ 변형 시험(V1~V4)에는 넣지 않았다.
+
+#### 10.6.2 수정안 a — `missing` 이 아닌 행의 `ended_at` 필수 (DDL, 대안 — 권고하지 않음)
+
+```diff
+   CONSTRAINT chk_jrl_counts  CHECK (counts_json IS NULL OR CHAR_LENGTH(counts_json) <= 2048),
+-  CONSTRAINT chk_jrl_http    CHECK (http_code IS NULL OR http_code <= 999)
++  CONSTRAINT chk_jrl_http    CHECK (http_code IS NULL OR http_code <= 999),
++  CONSTRAINT chk_jrl_ended   CHECK (status = 'missing' OR ended_at IS NOT NULL)
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+시험(두 모드): 적용·저장형 백슬래시 없음 · `ok` + `ended_at` NULL → 4025(`chk_jrl_ended`) · `missing`(ended NULL)과 `ok`(ended 있음) 허용.
+
+#### 10.6.3 수정안 F7 — 크기 상한을 바이트로 (DDL, 선택 — 권고하지 않음)
+
+```diff
+-  CONSTRAINT chk_jrl_counts  CHECK (counts_json IS NULL OR CHAR_LENGTH(counts_json) <= 2048),
++  CONSTRAINT chk_jrl_counts  CHECK (counts_json IS NULL OR OCTET_LENGTH(counts_json) <= 2048),
+   …
+-  CONSTRAINT chk_jr_rag    CHECK (rag_context_ids IS NULL OR CHAR_LENGTH(rag_context_ids) <= 4096),
+-  CONSTRAINT chk_jr_status CHECK (data_status IS NULL OR CHAR_LENGTH(data_status) <= 1024)
++  CONSTRAINT chk_jr_rag    CHECK (rag_context_ids IS NULL OR OCTET_LENGTH(rag_context_ids) <= 4096),
++  CONSTRAINT chk_jr_status CHECK (data_status IS NULL OR OCTET_LENGTH(data_status) <= 1024)
+```
+
+시험은 `chk_jrl_counts` 변형만 했다(두 모드): ASCII 2048바이트 허용 · 한글 681자 포함 2,051바이트 → 4025. `chk_jr_rag`·`chk_jr_status` 변형은 시험하지 않았다.
+
+#### 10.6.4 §7.3 구현 단계 시험 목록에 더할 후보 (이번 결과에서 나온 것)
+
+- #11(재전송 멱등)에 더하기: 기존 행 `ended_at` NULL → 재시도 ok 회복, NULL 위 NULL 재전송에 가짜 시각 없음, 무변화 재전송의 `run_id` 회수(F1·F2).
+- #11 의 변이 시험은 운영과 같은 `sql_mode` 에서 돌린다 — 세션에 `SIMULTANEOUS_ASSIGNMENT` 가 있으면 변이가 잡히지 않는다(10.4).
+- #13·#14(엔진 기록)에 더하기: 근거 501자·이모지 경계 자르기, 열 길이 초과 값 1개가 섞인 실행, 대소문자만 다른 같은 종목 2개 → 다른 후보 기록이 살아남는지(F3·F5).
+- 일회용 DB 시험의 CHECK 판별은 `errno === 4025` 로(F6).
