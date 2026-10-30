@@ -32,6 +32,8 @@ waiting: [T-112 배포 완료, 사용자 착수 결정]
 3. **롤업 `failed` 전이 시험 한 케이스**(Reviewer Minor-1, `job-run-log.ts:522` 의 `>=`→`>` 변이가 안 잡힘): "failed 2건 → failed 배치 1건 더 → status failed" 약 5줄.
 4. **문서**(Reviewer Minor-2): 롤업 `runs` 는 근사값 — 서버 처리 상한 2.5초를 넘기면 503 으로 답하지만 `work()` 가 계속 돌아 커밋되고 러너가 같은 줄을 다시 보내 두 배가 될 수 있다. T-108 지표 계약에 "롤업 `runs` 는 근사값" 명시.
 
+5. **503 사유 로그**(T-112 관찰 21:30 — 전송 실패 HTTP=503 1건, 1분 뒤 회복, 사유 미상): 라우트의 스위치 읽기·처리 2.5초 상한 초과 경로는 로그를 남기지 않고 러너는 응답 본문을 버린다 → 상한 초과·스위치 읽기 실패 때 `console.warn` 한 줄(원인 분류어만, 본문·금액 없음)과, 러너가 503 일 때 응답 본문 앞 80자(`reason`)를 실패 로그 한 줄에 함께 적는 안. 러너 수정이므로 1·2 와 같은 재시험·Reviewer 재순환에 묶는다.
+
 ## 재시험 범위(Reviewer 추정)
 새 러너 시험 `scripts/test-cron-runner-job-run-log.sh` 약 11분(마스킹·"umask 022 에서 600" 케이스 추가), `job-slots.test` 수 초, 기존 러너 시험 6종 약 40분, Reviewer 재순환·QA 포함 1시간 반 이상. 러너(`scripts/cron-runner.sh`)는 훅 감시 경로라 Reviewer `최종 판정` 필요.
 
