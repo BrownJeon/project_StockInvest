@@ -18,7 +18,7 @@ tags:
 aliases:
   - 기록기반
   - job_run_log
-waiting: [사용자 결정 U1~U5, G-J1 Leader 제안 확인, 국내 D0 정의(Analyst), 일회용 MariaDB DDL 시험, DDL 적용 사용자 승인(건별), T-104 1단계 순서(DP1 ~11-05)]
+waiting: [구현 단계 착수 지시(DP1 ~11-05 순서 결정), 일회용 MariaDB DDL 시험, DDL 적용 사용자 승인(건별), 국내 D0 정의(Analyst), T-104 1단계 순서]
 demo_gate:
   required: false
   level: "none"
@@ -99,6 +99,7 @@ demo_gate:
 ## 진행 기록
 - [2026-10-30 11:45] 접수(Leader). 번호 T-112 는 `ls` 로 비어 있음을 재확인했고 공동 인계서 §11 에 선점 줄을 남겼다. 문서 단계만 — DDL 초안(Developer)·T-108 지표 계약 초안(Analyst) 병렬 시작.
 - [12:07] 문서 단계 산출물 2종 도착(DDL 초안·지표 계약 초안) → Leader G-J1 대조 완료(위 「호환 확인 기록」). 사용자 결정 U1~U5 대기. U6 읽기 전용 SELECT 승인 대기(T-108 몫, 미실행).
+- [12:22] **사용자 확정**(원문 "권고안 일괄 확정", 질문: 권고안 일괄 확정 + U6 18건 실행): U1~U5 권고안, G-J1 Leader 제안 채택(`engine_release` 1열 가산 포함). DDL 초안을 v1.1 로 갱신했고 계약 §10 에 U6 결과를 붙였다. 문서 결정만 — DDL 문법 미검증·미적용, 구현 단계(Judge C1 → 일회용 DB 시험 → Developer → Reviewer → QA → DDL 적용 승인)는 시작하지 않음.
 
 ## 최종 요약
 (미작성)

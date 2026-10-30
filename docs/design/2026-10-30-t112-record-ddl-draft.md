@@ -9,6 +9,12 @@
 
 ---
 
+## v1.1 (2026-10-30 12:22) — 사용자 확정 반영
+- 사용자 답(원문): **"권고안 일괄 확정"** — 질문은 "위 결정을 권고안으로 일괄 확정하고 U6 SELECT 18건도 지금 실행해도 될까요?".
+- **U1~U5 확정(권고안)**: U1 §9.5 대비 변경 4건(D-a~D-d) 수용 · U2 60분 미만 주기 잡은 **시간 롤업**(실패는 즉시 1줄) · U3 **DDL 파일 1개(3테이블, 승인 1회)** · U4 AI 판단 근거 **500자 저장** · U5 90일 뒤 정리는 **그때 다시 묻기**(삭제는 건별 승인).
+- **G-J1 Leader 제안 채택**(T-112 「호환 확인 기록」): 해외 503 `data_unknown` = `failed`+`error_code` · 재시도 성공은 최종 `ok`(횟수는 `attempt`) · `rule_hits`·판단 기록 `run_id`·기준가/환율 열은 v1 미포함 · `judgment_run.engine_release` 1열 가산(아래 DDL 에 반영) · T-104 실행 판정은 이 테이블을 읽지 않음(E8).
+- 이 v1.1 은 **문서 결정**이다. DDL 문법은 여전히 미검증·미적용이고, 적용은 일회용 DB 시험 뒤 사용자 건별 승인이다. 본문 §4.3·§8 의 질문 표는 위 확정으로 닫혔으나 이력 보존을 위해 지우지 않았다.
+
 ## 0. 먼저 읽는 요약
 
 **불편한 사실 (먼저)**
@@ -212,6 +218,7 @@ CREATE TABLE IF NOT EXISTS judgment_run (
   prompt_sha256    CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,   -- runLlm 에 넘긴 프롬프트 문자열 그대로의 sha256 16진
   rag_context_ids  JSON NULL,                    -- {"news":[KbHit.id…],"signals":[…],"macro":[…]} — 4KB 이하
   data_status      JSON NULL,                    -- {"candles":"available|partial|…","news":…,"earnings":…,"fx":…,"llm":…} — J5 어휘, 1KB 이하
+  engine_release   VARCHAR(48) NULL,             -- v1.1 추가(G-J1 #7): 릴리스 디렉터리 이름(process.cwd() 의 마지막 경로, 예 20261030-051343-9d087a4d). 기준선 변경 대장(공동 인계서 §10) 대조용
   KEY idx_market_session (market, session_d0, judgment_role),
   KEY idx_started (started_at),
   CONSTRAINT chk_jr_prompt CHECK (prompt_sha256 IS NULL OR prompt_sha256 REGEXP '^[0-9a-f]{64}$'),

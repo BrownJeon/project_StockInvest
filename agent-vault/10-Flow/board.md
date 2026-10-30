@@ -4,6 +4,8 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-30 12:22 — 사용자 "권고안 일괄 확정" 반영 + U6 SELECT 18건 실행(읽기 전용)**: T-108 지표 계약 D1~D9·T-112 DDL U1~U5·G-J1 제안 확정(문서 결정만; DDL v1.1 에 `engine_release` 1열 가산). **U6 실행 중 발견: `safety_kill_switch=false`·`safety_dry_run=true`·`exit_engine_enabled=true` 가 10-30 09:08 에 변경되어 있음(변경 주체 미확인, 제가 바꾼 것 아님; health `dryRun true · killSwitch false · green`, 최근 72시간 주문 0).** 11-23 증거 풀은 얇다(장마감 카드 55장·관찰 이후 8장·executions 0). T-108 화면·데모·구현 미시작, T-112 구현·DDL 적용 미시작.
+
 > **2026-10-30 12:07 — T-108 문서 단계 결과: [[T-112-run-judgment-record-foundation]] DDL 초안 + T-108 지표 계약 초안 도착, G-J1 Leader 대조 완료(문서 전용)**: ① 지표 계약(182줄): 11-23 증거 3종 중 2종은 BUY 통과 카드 외 소급 불가·가동률은 소급 불가, 홈 승인 대기와 /recommend 숫자 불일치(`pending` 누락), 환율 폴백 무표시 ② DDL 초안(566줄): 테이블 3개(`job_run_log`·`judgment_run`·`judgment_candidate`), §9.5 대비 변경 4건, 기록 POST 는 스풀+일괄 전송 권고(08시 틱 290초/한도 300초), 기준 판단 기록은 훅 감시 경로 수정 다수 ③ **DDL 문법 미검증·미적용**, 운영 DB 조회 0. 사용자 대기: U6 SELECT 18건 승인 · 계약 결정 D1~D9 · DDL 결정 U1~U5. T-108 화면·데모·구현은 시작하지 않음.
 
 > **2026-10-30 11:07 — [[T-125-news-zero-alert-cleanup]] 뉴스 0건 경고 정리 후보 등록(proposed, 착수 전)**: 사용자 "알림 정리 후보 등록". T-120 (가) 유지로 국내 `news=0`(점수 컷)이 수용되어도 T-106 경고는 `streak ≥ 3` 동안 분석일마다 반복되도록 설계돼 있다(`news-health.ts` 주석 "고쳐질 때까지 하루 1회"). 후보 안: 점수 컷 0건과 진짜 검색 0건 구분 등. 먼저 3~5 분석일 관찰 후 착수 결정. T-105 는 열어 둠. 코드·설정·운영 변경 없음.

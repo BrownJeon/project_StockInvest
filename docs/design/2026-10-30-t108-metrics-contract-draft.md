@@ -180,3 +180,42 @@ tags: [type/design, domain/analytics, domain/ui]
 | Q18 | 리서치 통계 최신일(A4 대리·분석 메뉴 입력) | `SELECT market, MAX(run_date) AS last_run, COUNT(DISTINCT symbol) AS symbols FROM research_rally_results GROUP BY market` | research_rally_results | 시장별 2값 |
 
 총 18건(Q10·Q17 은 각 2문장). 전부 집계·존재 확인이며 종목명·수량·금액·비밀 키는 출력하지 않는다.
+
+---
+
+## 10. 사용자 확정 기록과 U6 실행 결과 (2026-10-30 12:22 추가 — Leader)
+
+### 10.1 사용자 확정
+- 질문: "위 결정을 권고안으로 일괄 확정하고 U6 SELECT 18건도 지금 실행해도 될까요?" → 사용자 답(원문): **"권고안 일괄 확정"**.
+- 확정 범위: ① **U6 읽기 전용 SELECT 18건 실행**(이 문서 §9 목록 그대로, 실행 결과는 아래) ② 이 문서 §7 **D1~D9 를 권고안으로 확정**(D1 장마감 AI 분석만 · D2 시장별 세션일 · D3 계좌 전체로만 표시 · D4 설정에서 배정액 입력 · D5 실거래 전환일 첫 스냅샷 · D6 `ok` 만 · D7 `d1open` · D8 `detected` 분리 · D9 환율 시각+stale/fallback 표지) ③ T-112 DDL 결정 U1~U5 권고안 ④ T-112 G-J1 Leader 제안 채택(해외 503 `failed`+`error_code` · 재시도 성공은 최종 `ok` · `rule_hits`·`run_id`·기준가/환율 열 v1 미포함 · `engine_release` 1열 가산).
+- **확정은 문서 결정이다.** 화면 코드·DDL 적용·운영 변경·데모는 시작하지 않았다.
+
+### 10.2 U6 실행 결과 (읽기 전용 SELECT 18건 · 건 수만, 비밀·금액·종목명 출력 없음 · 실행 2026-10-30 12:2x)
+| 쿼리 | 결과 요약 |
+|---|---|
+| Q1 스위치 | `safety_kill_switch=false`(**10-30 09:08:18 변경**) · `safety_dry_run=true`(09:08:14) · `exit_engine_enabled=true`(09:08:29) · `exit_hard_stop_enabled=false` · `autopilot_mode="assist"` · `engine_enabled`·`hybrid_mode_enabled`·`strategy_analyst_enabled`·`vol_guard_enabled`·`post_market_overseas_enabled`(10-28 13:33)·`broker_fills_cron_enabled`·`ci_capture_enabled`·`holdings_premarket_enabled` = true · `rag_enabled="true"`(문자열). `signal_cash_gate_domestic/overseas_enabled` 는 **행 없음**(기본값 의존) |
+| Q2 뉴스 감시 | 국내 `retrieval` streak 2(lastDate 10-29), 해외 `retrieval` streak 0(10-30 `lastCount 1`), 수집·검색 오류 채널 streak 0 |
+| Q3 손익 기준 | `cash_ledger_baseline` version 2 · baselineAt 10-25 08:19:43 · snapshotId 5462 |
+| Q4 전략 검증 | **16개 전부 `unvalidated`**(enabled 8 · disabled 8) → D5 관문이 신규 매수를 막는다 |
+| Q5 | users 1 · chat_threads 13(활성 13) · chat_messages 32 — "계정 1명 전제"가 현재 사실 |
+| Q6 테이블 | `job_run_log` **없음**(기대대로). 행 수(추정치): signals 18,023 · eval_funnel 260,043 · daily_bars 75,256 · portfolio_snapshots 4,365 · orders 3,028 · paper_fills 295 · ci_raw_item 1,139 · market_holidays 164 · research_rally_results 190 · broker_fill_runs 37 · broker_position_snapshots 36 · position_state 5 · cash_flow_ledger 2 · broker_fills 2 · broker_realized_pnl 1 · **executions 0** · fx_rates "0"(추정치 — Q17 에는 1행 있음) |
+| Q7 장마감 카드 | domestic: approved 2(8월) · rejected 2(10-21~22) · expired 43(05-27~10-19) · skipped 6(10-26~29) / overseas: skipped 2(10-29·10-30). **총 55장**, 관찰 시작(10-26) 이후는 skipped 8장 |
+| Q8 승인 대기 | **0건**(해당 상태 행 없음) — 홈과 /recommend 의 정의 불일치(§0-2)는 지금은 숫자로 보이지 않는다 |
+| Q9 paper_fills | domestic engine `unvalidated` 210(수량>0 94, 10-23~) · domestic post_market `unregistered` 6 · overseas engine `unvalidated` 77(수량>0 56) · overseas post_market `unregistered` 2 |
+| Q10 주문·체결 | orders 마지막: 국내 2026-08-12, 해외 2026-05-29. 최근 72시간 주문 0. **executions 0행** → B3·B4 표본 0 확정 |
+| Q11 브로커 원장 | fills·realized_pnl·position_snapshot × 국내/해외 전부 `complete`, 마지막 실행 10-30 07:20 → 수집 가동 중 |
+| Q12 입출금 | withdrawal KRW 1 · USD 1, 둘 다 `matched` |
+| Q13 일봉 | KR 44종목 마지막 10-30(미확정 43) · US 51종목 마지막 10-29(미확정 1) |
+| Q14 스냅샷 | 최근 14일 하루 7~18건 전부 `hourly` — **24건 미만인 날이 모두**(가동 공백의 대리 신호이지 원인은 미확인) |
+| Q15 깔때기 | eval_funnel 국내 1,311 run · 해외 1,383 run, **첫 행이 정확히 30일 전(09-30)** → 30일 롤링 삭제 확인, 11-23 에는 10-24 이전 행이 없다 |
+| Q16 포지션 | position_state 국내 1 · 해외 4 |
+| Q17 휴장·환율 | market_holidays 2025~2030 전 연도 존재(국내 연 15 · 해외 연 11~13) → **엄격 로더가 던질 연도 공백 우려 해소**. fx_rates USD_KRW 최신 12:20 · plausible |
+| Q18 리서치 | 국내 마지막 10-29(2종목) · 해외 10-30(3종목) |
+
+### 10.3 이 결과가 바꾸는 것 (Leader 판단)
+1. **[확실] 전제가 바뀌었다 — 킬스위치 `false` · DRY_RUN `true` · 청산 엔진 `true`(10-30 09:08).** 이 문서 §2 "관찰 기간 = 킬스위치 ON·D5 차단"은 더 이상 사실이 아니다. 현재 유효 상태는 health 로도 확인했다(`dryRun true · killSwitch false · safetyStatus green`). **홈의 단계(관찰/실거래)는 수동 플래그가 아니라 `safety_kill_switch`·`safety_dry_run`·검증 관문(Q4)의 조합으로 파생**해야 한다 — 1.1 "검증 차단" 상태 어휘와 §2 제목·본문의 "킬스위치 ON" 서술은 구현 전에 이 파생 규칙으로 다시 쓴다. 신규 매수는 여전히 D5 관문(전략 16개 `unvalidated`)과 DRY_RUN 이 막는다.
+2. **[확실] 11-23 증거 풀이 얇다.** 장마감 카드는 총 55장이고 관찰 시작 이후는 skipped 8장뿐이다(Q7). `executions` 0·최근 72시간 주문 0(Q10) — §5 의 "BUY 통과 카드 한정 소급"이 실제로는 매우 작은 표본이다. 가동률(E2)은 `job_run_log` 가 없어 여전히 소급 불가.
+3. **[확실] 스냅샷이 매일 24건 미만이다(Q14).** E2 의 대리 지표로 쓰려면 "정상 건수"의 기준 자체를 먼저 정해야 한다(하루 몇 건이 정상인지는 이 계약에서 미정 — 가동 스케줄 표 확인 필요).
+4. **[확실] `signal_cash_gate_*` 키가 없다(Q1).** B7 의 "신규 매수 가능 금액" 차단 판정은 코드 기본값에 의존한다 — 구현 때 기본값을 코드에서 읽어 화면 문구에 반영한다.
+5. 분류 변경 없음: B3·B4 "표본 0"과 A1·B4 "새 연결 필요"는 그대로 확정, B2 는 `position_state`(국내 1·해외 4)가 KIS 잔고 복제라는 점이 그대로. 휴장표 연도 공백 우려(§8)는 해소.
+
