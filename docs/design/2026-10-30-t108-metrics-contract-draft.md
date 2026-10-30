@@ -135,7 +135,7 @@ tags: [type/design, domain/analytics, domain/ui]
 
 | # | 결정 | 선택지 | 권고 |
 |---|---|---|---|
-| D1 | 홈 「분석」의 범위 | (a) 장마감 AI 분석만 (b) 장중 룰 엔진 포함 | **(a)** — 11-23 증거 대상·사용자 발화 "종목분석"과 일치. 룰 엔진은 거래>신호 진단 |
+| D1 | 홈 「분석」의 범위 | (a) 장마감 AI 분석만 (b) 장중 룰 엔진 포함 | **(a)** — 11-23 증거 대상·사용자 발화 "종목분석"과 일치. 룰 엔진은 거래>신호 진단 | **→ 14:45 사용자 결정(원문 "(c) 청산 로직 지표 신설"): (a) 유지 + 「청산 로직」 관찰 지표 신설 — §11. 이 행의 권고 (a) 근거 중 "룰 엔진은 진단"은 킬스위치 해제 전 전제였다.**
 | D2 | 「오늘」 경계 | (a) KST 달력일 (b) 시장별 세션일(해외 ET) | **(b)** — 11-01 DST 종료 뒤 KST 자정이 미국장 중간을 가름 |
 | D3 | 앱 밖 취득 보유 3종목의 홈 귀속 | (a) 계좌 전체로만 (b) 자동 관리 편입 | **(a)** — 편입은 T-100 Q1~Q8 과 함께. 홈은 "자동 운용 0 / 계좌 보유 N" 두 줄 |
 | D4 | 운용액 정의 | (a) 설정에서 사용자가 배정액 입력 (b) 일일 한도 기준 파생 (c) 숨김 | **(a)**, 입력 전 "미설정" |
@@ -226,4 +226,118 @@ tags: [type/design, domain/analytics, domain/ui]
    - 현재(10-30 12시대) 값은 관찰(DRY_RUN) 단계다(Q1·Q4).
 7. **[확실 — 10-30 13:44 읽기 전용 관측] 감사 기간 증거에는 장중 룰 엔진 시그널과 청산 엔진 판단이 들어간다.** 09:08 이후: ① 장중 룰 엔진 buy 시그널 22건 생성, **전부 `skipped`**(D5 관문, 마지막 13:32) ② 청산 엔진은 `eval_funnel` stage 25 `exit_hard_stop_disabled` 40건뿐(09:14~13:39) — pm2 로그 `[exit-engine] 005930 hard_stop 스킵 (exit_hard_stop_enabled=false)`: 삼성전자(005930)가 하드스톱 조건에 걸리는데 `exit_hard_stop_enabled=false` 라 매 평가 주기(약 6~7분)마다 스킵된다. 다른 청산 종류(`eod_loss_cut`·`trailing_stop`·`target_profit`)의 기록은 없다(발화하지 않았거나 발화 시에만 기록되는지는 미확인). 주문은 0이다.
 8. **D1 재확인 필요**: D1 은 "홈 분석 범위 = 장마감 AI 분석만"으로 확정됐지만, 그 근거가 "킬스위치 ON·룰 엔진은 진단"이었다. 사용자의 감사 목적(시그널 생성 + 청산 로직 관찰)은 **장중 룰 엔진 시그널과 청산 엔진 판단을 증거에 포함**시킨다. 선택지: (a) 유지(장마감 AI 만 — 시그널·청산 관찰은 분석 메뉴 상세에서) · (b) 홈 분석에 장중 룰 엔진 시그널 포함 · (c) (a) 유지 + **「청산 로직」 관찰 지표 신설**(평가 건수·스킵 사유·가상 청산 제안; 원천은 `eval_funnel` stage 21~29 이며 **30일 롤링 삭제**라 11-23 까지는 남지만 영구 증거는 아니다). 권고: **(c)** [추측 — 사용자 확인 필요].
+
+---
+
+## 11. 청산 로직 관찰 지표 (2026-10-30 14:4x 추가 — Analyst, 사용자 결정 「(c) 청산 로직 지표 신설」)
+
+**범위**: D1(홈 분석 = 장마감 AI 분석만)은 그대로 두고, DRY_RUN 으로 켜 둔 **청산 엔진의 판단**을 관찰하는 지표를 새로 정의한다. 코드·DB·운영 설정은 바꾸지 않는다. 근거는 저장소 소스(`exit-engine.ts`·`exit-switch.ts`·`engine.ts` `runExitEngine`·`eval-funnel*.ts`·`position-state.ts`·`signals/router.ts`·`signals/service.ts`·`safety/dry-run.ts`·`db.ts` DDL)와 서버 pm2 **로그 파일 grep(건수만, 종목·금액 마스킹)**이다. 운영 DB 조회 0건 — 운영 수치는 §10 의 U6 결과와 Leader 관측(§10.3-7)만 인용한다.
+
+### 11.0 먼저 — 불편한 사실
+
+1. **[가능성 높음] 오늘(10-30) 15:20~15:29 KST 에 국내 보유 1종목(§10.3-7)의 `eod_loss_cut` 이 발화해 DRY_RUN 매도 주문 1건이 기록될 것이다.** `exit_hard_stop_enabled=false` 는 **`hard_stop` 한 종류만** 끊고(`engine.ts:911`), `eod_loss_cut` 은 평가 우선순위 1번(`exit-engine.ts:92`)이며 모드 무관 **강제 자동 제출**(`router.ts:253`)이다. 그 종목은 하드손절 구간(손실 ≥ 1.5% 기본값)에 있으므로 EOD 임계(기본 1.5%)도 넘는다. 경로: `signals`(`auto_submitted`) → `submitOrder` → 킬스위치 false → 블랙리스트 → (매도는 1회·일일 한도·변동폭 가드 **제외**, `dry-run.ts:195~222`) → DRY_RUN → `orders.status='dry_run'`·`trade_logs.event='dry_run'`·텔레그램 「✅ 자동 제출」(기본 on). 실 송신은 없다. pm2-err 로그에 마스터 OFF 기간의 `eod_loss_cut 발화 조건 충족` 줄이 62건 있다 — 조건은 반복 성립해 왔다. 운영 임계 override(`style_default_*`)는 미조회(U7-7).
+2. **[확실] 하드손절 OFF 상태에서는 그 종목의 다른 청산 종류도 평가되지 않는다.** `evaluateExit` 는 첫 매칭만 반환하므로 하드손절 구간 종목은 `hard_stop` 에서 끝나고(`exit_hard_stop_disabled` skip → `continue`), 익절·트레일링은 도달 불가다. 즉 지금 관찰 가능한 판정은 「하드손절 비활성 N틱」의 반복뿐이고, 이 skip 행에는 **손익률이 기록되지 않는다**(`engine.ts:913` detail 은 `exitKind` 만). 임계 대비 거리는 다른 원천(X5)으로 봐야 한다.
+3. **[확실] 영구 증거가 없다.** 청산 판단은 `eval_funnel`(30일 롤링, §0-6)과 pm2 로그 파일(`/home/brownjeon/apps/stockinvest/shared/logs/pm2-out.log`·`pm2-err.log`, 2026-09-19 22:47 컷오버부터 **회전 설정 없음** — `~/.pm2/module_conf.json` 은 `{}`, `/etc/logrotate.d` 에 항목 없음)에만 남는다. 엔진이 웹 프로세스 안에서 돌아 `cron-out.log` 에는 0건이고, `console.log`(hard_stop 스킵 48건, 09:12~14:33) 는 out, `console.warn`(마스터 OFF 차단·단위 불일치) 은 err 로 갈라져 있다. T-112 기록 대상에도 없다(T-112 task 13:44 기록).
+4. **[확실] 해외 청산 평가는 미국 정규장에만 돈다**(`runMarket` 의 `isOverseasOpen` 가드 — 09:30~16:00 ET = 22:30~05:00 KST, 11-01 DST 종료 뒤 23:30~06:00). 09:08~13:39 관측에 해외 행이 0건인 것은 「이상 없음」이 아니라 **「미평가」**다. 해외 `position_state` 4행(Q16)과 T-100 의 보유 3종목 수가 다른 이유는 미확인.
+
+### 11.1 청산 엔진이 실제로 하는 일 (코드 근거)
+
+- **실행**: `cron-runner.sh` 가 5분마다 `POST /api/cron/strategy-eval` → `runAll` → 시장별 `runMarket` → 장 열림 확인 뒤 **어떤 엔진 스위치보다 앞에서** `runExitEngine`(`engine.ts:1201~1214`). 실측 간격 6~7분(§10.3-7)은 러너 루프 지연으로 보인다 [추측]. `ENGINE_ENABLED=false` 여도 청산 트랙은 돈다(`engine.ts:1192~1196`).
+- **두 스위치의 의미 차이** [확실]:
+
+| 키 | 끊는 것 | 끊지 않는 것 | 기본 방향 |
+|---|---|---|---|
+| `exit_engine_enabled`(마스터, `exit-switch.ts`) | 4종 청산 시그널 **생성** 전부(→ 주문도 없음). 차단 시 `exit_engine_disabled` skip 행 + `exitKind·pnlPct·wouldHaveFired` 기록 + 12h 스로틀 경보 | `position_state` 진입가·고점 갱신, reconcile, 룰 전략의 일반 매도 시그널 | 정확히 `true` 만 ON(fail-closed) |
+| `exit_hard_stop_enabled`(하위, `engine.ts:911`) | `hard_stop` 시그널 생성만. 차단 시 `exit_hard_stop_disabled` skip 행(손익률 없음) | `eod_loss_cut`·`target_profit`·`trailing_stop`, 고점 갱신 | 명시적 `false` 만 OFF(DB 오류 시 ON). 설정 API PATCH 대상 아님(읽기 표기만, `safety/route.ts:190`) |
+
+- **트리거 4종** [확실] — `price`·`entry`(KIS 잔고 avgPrice)·`peak`(`position_state`), `pnl = (price−entry)/entry×100`, 임계는 `style`(코드 기본값, 운영값은 `system_config.style_default_*` override — 미조회):
+
+| 우선순위 | exit_kind | 조건 | 시장 | 라우팅(`routeSignal`) | DRY_RUN 에서 끝나는 자리 |
+|---|---|---|---|---|---|
+| 1 | `eod_loss_cut` | KST 15:20~15:29 평일 ∧ pnl ≤ −eodLossCutPct(1.5) | 국내만 | **강제 `auto_submit`** → `auto_submitted` | `orders.status='dry_run'`(`source='auto'`) |
+| 2·3 | `hard_stop` | pnl ≤ −hardStopPct(1.5) / 시나리오 `stopHi`·`stopLo` | 둘 다 | **강제 `auto_submit`** | 지금은 하위 스위치가 생성 전에 차단 |
+| 4·5 | `target_profit` | pnl ≥ targetProfitPct(2.5) / 시나리오 `targetHi`·`targetLo` | 둘 다 | `autopilot_mode='assist'` → **`awaiting_approval`** + 텔레그램 승인 요청 | 승인하면 `submitOrder` → `dry_run`; 미승인은 TTL 뒤 `expired` |
+| 6 | `trailing_stop` | (peak−entry)/entry ≥ trailingActivatePct(2.5) ∧ (peak−price)/peak ≥ trailingDrawdownPct(1.5) | 둘 다 | 같음(`awaiting_approval`) | 같음 |
+
+- **생성 전 공통 관문**(종목당 매 틱, `engine.ts:818~931`): avgPrice 결손 → `exit_avg_price_missing`(error) / 시세 실패·0 → `exit_ticker_error`·`exit_price_invalid`(error) / `upsertPositionState` 실패 → `exit_state_upsert_failed`(error) / 행 없음 → `exit_state_missing`(error) / price/entry 비율 ∉ [0.3, 3.0] → `exit_unit_mismatch`(error, 시그널 거부 — 2026-05-13 USD/KRW 오발화 재발 방지) / 조건 미충족 → **`exit_no_fire`(pass, detail.pnlPct)** / 같은 (종목, 종류) 15분 쿨다운 → `cooldown_exit`(skip, 생성 **성공** 시에만 설정) / `createSignal` 정책 스킵은 stage 11 게이트(`quantity_below_min`·`duplicate_active_signal`…)로 1회만, 진짜 실패는 `exit_create_failed`(error, stage 29). 성공은 `signal_created`(strategy_id `exit-engine-v1`). 잔고 조회 실패 틱은 `balances_unknown`(error) 하나로 끝나고 reconcile 도 건너뛴다(고점 보호).
+- **`position_state`**: 매 틱 `entry_price=KIS avgPrice`, `peak_price=GREATEST(이전, 현재가)`, `qty` upsert; 미보유 행은 시장 단위 reconcile 삭제. **스위치 상태와 무관**하게 갱신된다(§11.1 표). `run` 행 detail 에 `exitSignalsCreated·exitEngineEnabled·exitBlockedByDisable·exitSwitchSource` 가 매 틱 들어간다(`engine.ts:1217~1222`, 4개 종료 경로 모두) — 단 `exitBlockedByDisable` 는 **마스터 OFF 차단만** 세고 하위 스위치 스킵은 세지 않는다.
+- **지금 닫힌 것**: T-055 매도 제안 미리보기(`sell_proposal_preview`)는 마스터 OFF 일 때만 열린다(`engine.ts:809`) → 10-30 09:08 이후 기록되지 않는다.
+- **미확인**: 해외 청산 시그널의 `price`·`amount_krw` 통화 단위(§1.3 규약 적용 여부), `createSignalGuarded` 가 stage 11 행에 `strategy_id` 를 채우는지, `stop-alert`(T-068, 알림 전용) 손절선과 이 엔진 임계의 관계, 운영 `style_default_*` 값, 해외 4행 중 보유 3종목 외 1행의 정체.
+
+### 11.2 「청산 로직」 관찰 지표 — 8항목 계약과 분류
+
+| # | 지표 | 대상 집합 | 기간/세션 | 집계 단위 | 데이터 출처 | 통화 | 비용 | 기준 시각 | 완전성·상태 | 분류 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| X1 | 청산 엔진 가동 | 시장별 마지막 `run` 행 + 스위치 2개 | 시장 세션(국내 KST·해외 ET, D2) | 시장 2줄: ON/OFF(마스터·하드손절)·마지막 평가 시각·세션 내 run 수 | `GET /api/settings/safety`(`exitEngineEnabled`·`exitHardStopEnabled`·`exitSwitchSource`) + `eval_funnel gate='run'` detail(`exitEngineEnabled`) | — | — | `run.ts`(KST) | 장중인데 마지막 run > 15분 → `stale`; 장외는 「휴장/장외」(0 아님); `balances_unknown` run → `error` | **기존 가능** |
+| X2 | 평가 대상 포지션 | `position_state` 행 중 그 틱에 평가된 종목(= 종목 단위 exit 행이 있는 심볼) | 세션일 | 시장별 종목 수: 평가됨 / 데이터 이상(stage 21~24 error) / 미평가(행만 있음) | `position_state` ∩ `eval_funnel` stage 21~29 `COUNT(DISTINCT symbol)` | — | — | `position_state.updated_at` 최대 | 해외 장외 = 「미평가」; `qty IS NULL` 행 별표 | **기존 가능** |
+| X3 | 트리거별 판정 현황 | 종목 단위 exit 행(`exit_no_fire`·`exit_hard_stop_disabled`·`cooldown_exit`·`signal_created`·error 게이트) | 세션일 · 최근 30일 추이 | **종목 수**(틱 수 병기) × {정상 0, 정책 스킵, 데이터 이상, 발화}, `detail.exitKind` 별 | `eval_funnel` stage 21~29 (+ stage 11 `strategy_id='exit-engine-v1'`) | — | — | 행 `ts` | 11.3 규칙으로 분류; 30일 이전은 `unknown` | **기존 가능(30일 한정)** |
+| X4 | 가상 청산 제안 | `signals.strategy_id='exit-engine-v1'` 와 `consumed_order_id` 로 이어진 `orders` | 세션일 · 10-30 09:08 이후 누적 | 건수 × exit_kind × `signals.status`(`auto_submitted`/`awaiting_approval`/`expired`/`rejected`/`skipped`) × `orders.status`(`dry_run`/`blocked`+`blocked_by`) | `signals`·`orders`·`trade_logs(event in dry_run,blocked)` | 원통화 + KRW 환산은 **상세만**(§1.3 표기 규칙) | 없음(가상) | `signals.created_at`·`orders.created_at` | `dry_run` 은 「가상 체결」이 아니라 **차단 기록**(§1.4) — 홈 「오늘 체결」(§0-5)에서 분리(D13) | **기존 가능** |
+| X5 | 임계 대비 현재 상태 | 보유 포지션 전체(계좌 전체, D3) | 최신 스냅샷 시각 | **홈: 종목 수**만 — {하드손절 구간, EOD 구간(국내), 익절 구간, 트레일링 활성, 중립}; **상세: 종목별 pnl·임계까지 거리** | `position_state(entry_price·peak_price)` + 현재가(`portfolio_snapshots.positions` 최신 또는 `exit_no_fire.detail.pnlPct`) + 임계(`style` 기본값 ⊕ `style_default_*`) | 원통화(비율이라 환율 무관) | — | 스냅샷 `ts`(>3h `stale`, §1.1) | 하드손절 스킵 종목은 깔때기에 pnl 이 없어 스냅샷 필수; 스냅샷 공백(Q14)이면 `stale` | **기존 가능(스냅샷 신선도 종속)** · 임계 운영값은 **U7-7 뒤 확정** |
+| X6 | 청산 기록 공백 | 장중 세션의 5분 슬롯 | 세션일 | 슬롯 수: 기대 − `run` 행 수; `balances_unknown` 틱 수 | `eval_funnel gate='run'` + 세션 길이(§1.2) | — | — | — | 해외 11-01 DST 뒤 슬롯 수 변경; 러너 지연으로 기대치는 근사 | **부분 가능** → 완전판은 T-112 `job_run_log`(`strategy-eval` 잡) |
+
+**홈에 종목 수만 두는 근거**: ① 보유는 자동 귀속이 아니라 계좌 전체다(D3 — 홈은 「자동 운용 0 / 계좌 보유 N」 두 줄) ② T-100 보고서가 종목·수량·평단 때문에 커밋에서 제외된 것과 같은 민감도이고 홈은 412px 앱 WebView 첫 화면이다 ③ 임계까지 거리는 종목별로만 뜻이 있어 상세(분석>보유)에 둔다.
+
+### 11.3 상태 어휘와 「실패 vs 0 vs 스킵」 (§1.1 과 같은 어휘)
+
+| 깔때기 게이트 (verdict) | 분류 | 홈 표시 | 0 으로 쓰는가 |
+|---|---|---|---|
+| `exit_no_fire` (pass) | **정상 0** — 평가했고 조건 미충족 | 「청산 조건 해당 없음 N종목」 | 예 — 유일하게 0 인 상태 |
+| `exit_hard_stop_disabled` (skip) | **정책 스킵** — 조건 충족, 하위 스위치로 생성 안 함 | 「하드손절 OFF — 조건 충족 N종목」(틱 수 아님, D12) | 아니오 |
+| `exit_engine_disabled` (skip) | **정책 스킵(상위)** — 09-30~10-30 09:08 소급 이력(pnlPct 있음) | 「자동 청산 OFF 기간 조건 충족 N종목·N틱」 | 아니오 |
+| `cooldown_exit` (skip) | **정책 스킵** — 직전 생성 뒤 15분 | 발화 건수에 합산하지 않음(중복 억제) | 아니오 |
+| `quantity_below_min`·`duplicate_active_signal`·`symbol_blacklisted` (skip, stage 11) | **정책 스킵** — 생성 단계 | 「생성 보류 N건(사유)」 | 아니오 |
+| `exit_avg_price_missing`·`exit_ticker_error`·`exit_price_invalid`·`exit_state_*`·`exit_unit_mismatch` (error) | **데이터 이상** | 「데이터 이상 N종목」+ 사유 코드 | 아니오 — `error` |
+| `exit_create_failed`·`signal_create_failed` (error) | **실패** | 「생성 실패 N건」 경보 | 아니오 |
+| `balances_unknown` (error, run) | **미수집/실패** — 그 틱 평가 자체 없음 | 「잔고 미확인 N틱」 | 아니오 — `error` |
+| 장외·휴장(run 행 없음) | **해당 없음** | 「장외」(해외는 ET 세션 기준) | 아니오 — `unknown` 과도 구분 |
+| `signal_created` (pass) + `orders.dry_run` | **발화(가상)** | 「DRY_RUN 청산 N건」 — 「체결」 어휘 금지 | — |
+
+### 11.4 기록 공백·소급 범위와 T-112 확장 **후보**(제안 — DDL v1.1 은 바꾸지 않는다)
+
+| 사실 | 남는 곳 | 11-23 시점 |
+|---|---|---|
+| 틱별 판정(게이트·exitKind·pnlPct(no_fire·engine_disabled 만)) | `eval_funnel`(30일) | 10-24 이전 소실. 09-30~10-30 09:08 의 `exit_engine_disabled` 이력도 11-23 에는 대부분 사라짐 |
+| 하드손절 스킵 종목의 손익률 | **없음**(skip 행에 pnl 없음, out 로그에도 없음) | 복원 불가 — 스냅샷으로 근사만 |
+| 마스터 OFF 기간 조건 충족(09-19~10-30) | `pm2-err.log` — `hard_stop` 7,284 · `target_profit` 670 · `eod_loss_cut` 62 줄, 배너 국내 1,337·해외 1,837 | 회전 없음이라 남지만 파일 1개·stderr·종목이 평문 — 증거로 쓰려면 별도 보존 결정 필요 |
+| 가상 청산 제안·DRY_RUN 주문 | `signals`·`orders`·`trade_logs`(영구) | 남음 — 단 「발화 안 한 틱」은 여기 없음 |
+| 스위치 변경 이력 | `system_config.updated_at`(마지막 값만) | 09:08 변경 외 이전 이력 없음 |
+
+**확장 후보 — `exit_judgment`(가칭, 가산 전용·외래키 없음·실패 시 영향 0, T-112 와 같은 원칙)**: 1행 = (틱 run_id, 시장, 종목) — `evaluated_at`(KST)·`market`·`symbol`·`position_qty`·`entry_price`·`peak_price`·`price`·`currency`·`pnl_pct`·`trigger_kind`(eod_loss_cut/hard_stop/target_profit/trailing_stop/none)·`threshold_pct`(적용 임계)·`decision`(fired/skip_policy/skip_cooldown/error/no_fire)·`decision_code`(게이트 ID 그대로)·`exit_engine_enabled`·`exit_hard_stop_enabled`·`dry_run`·`signal_id`·`order_id`·`engine_release`(T-112 와 같은 정의). 하루 상한 ≈ 보유 5종목 × 2시장 × 80틱 ≈ 수백 행. 쓰기 지점은 `runExitEngine` 루프 끝(`rec.*` 호출 자리) 1곳. **이것은 제안이다** — T-112 범위에 넣을지, 별도 task 로 할지, 안 할지는 D10.
+
+### 11.5 사용자에게 물을 결정 (D10~D14)
+
+| # | 결정 | 선택지 | 권고 |
+|---|---|---|---|
+| D10 | **오늘 15:20 `eod_loss_cut` DRY_RUN 발화 예상**(11.0-1) — 의도한 관찰인가 | (a) 그대로 두고 DRY_RUN 기록을 관찰 증거로 쓴다 (b) `exit_engine_enabled=false` 로 되돌린다(하위 스위치처럼 EOD 만 끄는 키는 **없다**) | **(a)** — 실 송신 0 이고 가상 청산 1건이 X4 의 첫 표본이 된다. 단 승인 요청이 아니라 「자동 제출」 알림이 온다는 점을 미리 알 것 |
+| D11 | 청산 판단 영구 보존 | (a) `eval_funnel` 30일 그대로 (b) T-112 범위에 `exit_judgment` 추가 (c) 별도 task 로 11.4 후보안 | **(c)** — T-112 는 이미 Judge 접수 대기라 범위 확장이 일정을 밀고, 청산 기록은 쓰기 지점·주기가 다르다. 11-23 까지 쌓이는 양을 생각하면 빨라야 한다 |
+| D12 | 하드손절 비활성 기간의 표현 | (a) 스킵 틱 수 (b) 「하드손절 OFF — 조건 충족 N종목」+ 지속 일수 (c) 숨김 | **(b)** — 틱 수는 5분마다 부풀고, 종목 수가 위험의 크기다 |
+| D13 | DRY_RUN 청산 주문의 홈 표기 | (a) 현행 「오늘 체결」에 포함(`EXECUTED_STATUSES` 에 `dry_run`) (b) 「DRY_RUN 청산 N건」으로 분리 | **(b)** — §1.4 「`dry_run` 은 체결이 아니다」와 §0-5 정정 |
+| D14 | 홈 표기 수준 | (a) X1+X3 요약+X4 건수(3줄) (b) 트리거별 상세까지 (c) 설정 화면만 | **(a)** — 상세는 분석>보유 |
+
+### 11.6 U7 읽기 전용 SELECT 후보 (실행하지 않았다 — 사용자 승인 뒤 Leader 실행)
+
+규칙은 §9 와 같다(SELECT 만·집계 위주·종목명·수량·금액·비밀 출력 없음). 컬럼명은 `db.ts` DDL 에서 확인했다. JSON 접근은 `JSON_VALUE`(MariaDB 10.2.3+) — 버전이 낮으면 `JSON_UNQUOTE(JSON_EXTRACT(...))` 로 바꾼다.
+
+| # | 목적 | SQL | 읽는 테이블 | 출력 |
+|---|---|---|---|---|
+| U7-1 | 09:08 이후 exit 트랙 게이트 분포(X3) | `SELECT market, gate, verdict, COUNT(*) AS n, COUNT(DISTINCT symbol) AS symbols, COUNT(DISTINCT run_id) AS runs, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM eval_funnel WHERE stage BETWEEN 21 AND 29 AND ts >= '2026-10-30 09:08:00' GROUP BY market, gate, verdict` | eval_funnel | 게이트별 건수·종목 수 |
+| U7-2 | 30일 스킵·차단 행의 exit_kind 분포(소급 이력) | `SELECT market, gate, JSON_VALUE(detail,'$.exitKind') AS exit_kind, COUNT(*) AS n, COUNT(DISTINCT symbol) AS symbols, MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM eval_funnel WHERE gate IN ('exit_hard_stop_disabled','exit_engine_disabled','cooldown_exit','exit_create_failed') GROUP BY market, gate, exit_kind` | eval_funnel | 종류별 건수 |
+| U7-3 | run 행의 청산 트랙 요약(X1·X6) | `SELECT market, DATE(ts) AS d, COUNT(*) AS runs, SUM(JSON_VALUE(detail,'$.exitEngineEnabled') = 'true') AS runs_exit_on, SUM(CAST(JSON_VALUE(detail,'$.exitSignalsCreated') AS UNSIGNED)) AS created, SUM(CAST(JSON_VALUE(detail,'$.exitBlockedByDisable') AS UNSIGNED)) AS blocked_master_off, SUM(reason = 'balances_unknown') AS balances_unknown, MAX(ts) AS last_run FROM eval_funnel WHERE gate = 'run' AND ts >= NOW() - INTERVAL 14 DAY GROUP BY market, DATE(ts) ORDER BY market, d` | eval_funnel | 일별 run 수·생성·차단 |
+| U7-4 | `exit_no_fire` 손익 구간 분포(X5 근사, 종목명 없음) | `SELECT market, COUNT(DISTINCT symbol) AS symbols, SUM(CAST(JSON_VALUE(detail,'$.pnlPct') AS DECIMAL(10,2)) <= -1.5) AS ticks_below_hs, SUM(CAST(JSON_VALUE(detail,'$.pnlPct') AS DECIMAL(10,2)) >= 2.5) AS ticks_above_tp, COUNT(*) AS ticks FROM eval_funnel WHERE gate = 'exit_no_fire' AND ts >= '2026-10-30 09:08:00' GROUP BY market` | eval_funnel | 구간별 틱 수(임계는 코드 기본값 — U7-7 뒤 재계산) |
+| U7-5 | 가상 청산 제안 현황(X4) | `SELECT market, status, JSON_VALUE(indicators,'$.exit_kind') AS exit_kind, COUNT(*) AS n, SUM(consumed_order_id IS NOT NULL) AS with_order, MIN(created_at) AS first_at, MAX(created_at) AS last_at FROM signals WHERE strategy_id = 'exit-engine-v1' GROUP BY market, status, exit_kind` | signals | 상태·종류별 건수(전 기간) |
+| U7-6 | 청산 시그널이 만든 주문의 상태(X4) | `SELECT o.market, o.status, o.blocked_by, COUNT(*) AS n, MIN(o.created_at) AS first_at, MAX(o.created_at) AS last_at FROM orders o JOIN signals s ON s.consumed_order_id = o.id WHERE s.strategy_id = 'exit-engine-v1' AND o.side = 'sell' GROUP BY o.market, o.status, o.blocked_by` | orders·signals | `dry_run`/`blocked` 건수 |
+| U7-7 | 운영 임계 override·관련 키(X5 임계 확정) | ``SELECT `key`, value, updated_at FROM system_config WHERE (`key` LIKE 'style_%' AND (`key` LIKE '%hardStop%' OR `key` LIKE '%eodLossCut%' OR `key` LIKE '%targetProfit%' OR `key` LIKE '%trailing%')) OR `key` IN ('sell_proposal_preview_enabled','notify_signal_auto_submit','notify_signal_pending') ORDER BY `key` `` | system_config | 키·값(비율·불리언) |
+| U7-8 | `position_state` 신선도·구조(X2, 가격 없음) | `SELECT market, COUNT(*) AS n, MIN(updated_at) AS oldest_update, MAX(updated_at) AS last_update, SUM(scenario_exit IS NOT NULL) AS with_scenario, SUM(qty IS NULL) AS qty_null, MIN(first_seen_at) AS first_seen FROM position_state GROUP BY market` | position_state | 시장별 6값 |
+| U7-9 | 오늘 이후 DRY_RUN·차단 감사 이벤트(매도만, X4 교차 확인) | `SELECT t.event, DATE(t.occurred_at) AS d, COUNT(*) AS n FROM trade_logs t JOIN orders o ON o.id = t.order_id WHERE t.event IN ('dry_run','blocked') AND o.side = 'sell' AND t.occurred_at >= '2026-10-30' GROUP BY t.event, DATE(t.occurred_at)` | trade_logs·orders | 이벤트별 건수 |
+
+총 9건. U7-4 의 손익 구간은 비율이고 종목이 1개인 시장에서는 그 종목의 구간이 드러난다 — 출력을 문서에 옮길 때는 구간 수만 적는다.
+
+### 11.7 열린 질문·미확인
+
+- 11.0-1 의 15:20 발화는 임계 운영값(U7-7)·그 시각의 손익률에 달려 있다 — **예측이고 관측이 아니다.** 15:30 뒤 U7-5·U7-6·U7-9 로 확인한다.
+- 해외 보유의 하드손절 구간 여부(T-100 10-27 기준 3종목 전부)는 10-30 밤 22:30 KST 첫 해외 틱 뒤에야 `exit_hard_stop_disabled` 행으로 드러난다. 해외는 EOD 손절이 코드상 없다(`exit-engine.ts:15`) — 해외 X3 에서 `eod_loss_cut` 은 「해당 없음」.
+- pm2 로그 회전이 없어 `pm2-out.log` 8.2MB·`pm2-err.log` 3.7MB 가 계속 자란다 — 보존 결정(D11)과 별개로 운영 위험이며 이 문서 범위 밖(Leader 에 전달).
+- `exit_engine_disabled` 행의 `reason` 은 스위치 판독 출처(`config/absent/…`)다 — 「차단 사유」로 읽으면 틀린다.
+- 룰 전략의 일반 매도 시그널(`ma-cross` 데드크로스 등, 승인 경로)은 이 절의 대상이 아니다 — 홈에 섞이면 X4 가 부푼다. `strategy_id='exit-engine-v1'` 필터가 경계다.
+- 확인하지 않은 것: `createSignalGuarded` 의 stage 11 기록 필드, 해외 시그널 통화 단위, `stop-alert` 임계와의 관계, 해외 `position_state` 4행의 정체, 운영 `style_default_*`, `sell_proposal_preview_enabled` 과거 값.
 
