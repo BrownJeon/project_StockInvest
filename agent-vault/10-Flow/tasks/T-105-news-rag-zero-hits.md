@@ -89,5 +89,6 @@ waiting: [user_decision]
 - [2026-10-29 15:48] **T-115 국내 15:30 추가 수집 첫 실행 정상 — 16:00 분석 판정은 아직(16:05 이후 재확인 필요).** 15:30:48 `domestic OK upserted=100 attempt=1 fresh=100`(상세는 T-115 배포 기록). 이 100건이 16:00 분석에서 `news>0` 으로 이어지는지가 사전 결정 Q6 의 판정 기준이다 — `[rag-retrieval] (domestic) … news=…`(0 이면 `droppedByScore` 값만 기록) 과 `[cron/post-market-analysis] done`·errors 는 16:00 이후 값이라 15:48 점검에서는 읽지 못했다. 수정·재배포 없음.
 - [2026-10-29 16:12] **국내 16:00 분석 판정(Q6) — `news=0`, T-120 접수.** `2026-10-29 16:00:16 [rag-retrieval] (domestic) past=3 news=0 macro=0 chars=829 elapsed=1091ms droppedByScore=5(<0.5)`. T-115 의 15:30 추가 수집(신규 51건)이 정상이었는데도 같은 결과라 원인은 수집이 아니라 점수 임계·질의 불일치(후보 E)로 굳어졌다. T-106 `retrieval:domestic` streak=2(10-29), 10-30 16:00 에 3일째 경고 가능(오탐 아님). 후속은 [[T-120-news-score-threshold-query]] — 임계 변경 전 Analyst 점검 필수. 코드·DB 변경 없음.
 - [2026-10-30 10:52] **후보 E 결정 — T-120 에서 (가) 유지**(사용자 2026-10-30 "(가) 유지로 정리"). 해외는 10-30 08:01 에 뉴스 1건이 통과(`news=1`)했으나 국내는 `news=0` 지속 → 이 task 의 완료 조건(국내 `news>0`)은 충족되지 않았다. 종료 여부는 사용자 결정 대기(T-120 최종 요약). 후속 후보 [[T-124-news-input-misread-truncation]].
+- [2026-10-30 11:07] T-106 국내 경고 반복은 후보 [[T-125-news-zero-alert-cleanup]] 로 등록. 이 task 는 열어 둔다(국내 `news>0` 완료 조건 미충족).
 
 ## 최종 요약
