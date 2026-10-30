@@ -22,16 +22,16 @@ waiting: [수집 통합 2차 설계(T-114, T-111 후속) 완료 후 통합 계�
 demo_gate:
   required: true
   level: "delta"
-  status: "review_requested"
+  status: "approved"
   version: 3
   repo_path: "mockups/T-108-menu-home-v3.html"
   artifact_url: "https://claude.ai/artifact/SiyXU1cB6nD2JZhnHnfDNq"
   content_sha256: "f3230e69cd05df1c7c7fdcfab74aad20a048a33dc5f740d63a6775f144d8a0a5"
   decided_by: "judge"
   rule_id: "DM-kw-risky-cta"
-  approved_by: ""
-  approved_at: ""
-  approval_quote: ""
+  approved_by: "user"
+  approved_at: "2026-10-30T21:05:11+09:00"
+  approval_quote: "T-108 데모 v3 승인하며 job_run_log_enabled를 켜고 관찰하는 작업도 진행해줘"
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
@@ -119,6 +119,7 @@ demo_gate:
 - [18:20] **Leader 판단 2건 — 사용자가 「바꿔 달라」가 아니라 「뜻이 뭐냐」고 물은 항목을 v3 에서 같이 바꿨다**: 「AI BUY」→「AI 매수 판단」, 「하드손절」→「손실한도 손절」. 의미를 묻는 말은 이름이 어렵다는 신호로 읽어 권고안으로 적용했고, 되돌릴 수 있다(v3 배너·용어 설명표에 명시). 사용자 확정 대기.
 - [18:20] **불편한 사실(구현 때 사고 위험)**: 「실거래여부」는 내부 값 `safety_dry_run` 과 **방향이 반대**다(ON = 실거래 가능 ⇔ `safety_dry_run=false`). 화면에서 토글·값을 뒤집어 읽어 오는 코드를 안 쓰면 실거래가 켜진 줄 알고 꺼 둔 상태(또는 그 반대)가 된다 → 구현 시 변환 한 곳에 모으고 Reviewer·QA 가 양방향 검사(ON/OFF × 값). 이 이름 변경은 현재 설정 화면·알림 문구·로그에도 남은 「DRY_RUN」·「킬스위치」 표기와 함께 별도 작업 범위(데모 승인 뒤 구현 가이드에 포함).
 - [18:20] **v3 검토 요청**: Artifact(비공개) https://claude.ai/artifact/SiyXU1cB6nD2JZhnHnfDNq (sha256 `f3230e69cd05…`), `check.mjs status --to review_requested --version 3`. `check` = BLOCK(승인 전) 정상. 승인 시 사용자 원문 그대로 `check.mjs approve --version 3 --quote`. 이전 링크(v2) https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr 는 이력용.
+- [21:05] **사용자 승인(원문 "T-108 데모 v3 승인하며 job_run_log_enabled를 켜고 관찰하는 작업도 진행해줘")** → `check.mjs approve --version 3` 기록, `check` = approved(hash verified, sha256 `f3230e69cd05…`). v3 의 용어 정정 7항목 전부(「AI 매수 판단」「손실한도 손절」 두 이름 포함 — 사용자가 이름까지 되돌리지 않았으므로 유지)가 승인 범위. **「결정 필요」 A/B 7건은 이 승인에서 별도로 답받지 않았다** — 구현 가이드·착수 전에 권고(전부 A)로 갈지 한 번 확인한다. 화면 구현은 아직 시작하지 않았다(`activate` 안 함): 다음은 Designer 구현 가이드(승인 버전 v3 명시) → Judge → Developer → Reviewer → QA, 착수 순서는 DP1(~11-05) 에서 T-104·T-126 과 함께 정한다.
 
 ## Developer
 
@@ -144,3 +145,4 @@ demo_gate:
 | v2 | 검토요청 | mockups/T-108-menu-home-v2.html | https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr | 사용자 검토 요청 | 10-30 17:36 |
 | v2 | 수정요청 | mockups/T-108-menu-home-v2.html | https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr | "용어를 좀 수정해야할 것같아. 변경하는 용어는 모든 화면에서 동일하게 변경해줘" | 10-30 18:19 |
 | v3 | 검토요청 | mockups/T-108-menu-home-v3.html | https://claude.ai/artifact/SiyXU1cB6nD2JZhnHnfDNq | 사용자 검토 요청 | 10-30 18:20 |
+| v3 | 승인 | mockups/T-108-menu-home-v3.html | https://claude.ai/artifact/SiyXU1cB6nD2JZhnHnfDNq | "T-108 데모 v3 승인하며 job_run_log_enabled를 켜고 관찰하는 작업도 진행해줘" | 10-30 21:05 |

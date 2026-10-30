@@ -4,6 +4,8 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-30 21:05 — T-108 데모 v3 사용자 승인(demo_gate = approved) + `job_run_log_enabled` 켬(관찰 시작)**: 사용자 "T-108 데모 v3 승인하며 job_run_log_enabled를 켜고 관찰하는 작업도 진행해줘". v3 승인(용어 정정 7항목 유지). 「결정 필요」 A/B 7건은 별도 답 없음 — 구현 전 권고(A) 확인 필요, 화면 구현 미시작. 스위치 켠 8분: `job_run_log` 롤업 5행 ok·실패 0·전송 실패 로그 0. 관찰 예약 4회(10-30 22:12·23:42, 10-31 08:13, 11-02 16:13). 다음 단계: `judgment_record_enabled` 는 11-02 점검 뒤 사용자 승인으로.
+
 > **2026-10-30 20:18 — [[T-112-run-judgment-record-foundation]] 운영 반영(커밋 `df4b4a2`, 릴리스 `20261030-201752-df4b4a2d` ok) + DDL 적용(테이블 3개·행 0)**: 사용자 "결정사항에서 DDL 적용 승인하며 푸시시점은 바로 진행해줘". Reviewer PASS·Judge C2 → Codex 1차 지적 1건(러너 스풀에 금액 본문, Low·비차단 → 후보 [[T-127-job-run-spool-hardening]])·QA PASS. 기록 스위치 2개는 키 없음=꺼짐 — **켜기는 사용자 결정 대기**(권고: `job_run_log_enabled` 먼저). 안전 설정 4개 불변 확인(DRY_RUN true·kill false·청산 엔진 ON·하드손절 OFF).
 
 > **2026-10-30 18:20 — T-108 데모 v3 사용자 검토 요청(demo_gate = review_requested; v2 는 수정요청)**: 사용자 "용어를 좀 수정해야할 것같아. 변경하는 용어는 모든 화면에서 동일하게 변경해줘"(7항목) → `mockups/T-108-menu-home-v3.html`(카드→시그널·DRY_RUN→실거래여부(방향 반대)·킬스위치→모든거래차단·EOD→장마감 전 손절·표본 부족→건수 적음, 용어 설명표 F 절 추가). 사용자가 뜻만 물은 「AI BUY」·「하드손절」은 Leader 권고로 「AI 매수 판단」·「손실한도 손절」로 같이 바꿨고 되돌릴 수 있다. Artifact(비공개) https://claude.ai/artifact/SiyXU1cB6nD2JZhnHnfDNq. 승인 전 화면 코드 없음.
@@ -305,7 +307,7 @@ tags:
 
 - ✅ **[T-120] 뉴스 점수 임계·질의 보정(T-105 후보 E)** → [[T-120-news-score-threshold-query]] (done 2026-10-30 — (가) 유지, 변경 없음).
 
-- **[T-112] 실행·판단 기록 기반(job_run_log·기준 판단 기록)** → [[T-112-run-judgment-record-foundation]] (deployed — 10-30 20:18 운영 반영·DDL 적용 완료, 기록 스위치 꺼짐; 스위치 켜기 사용자 결정 대기).
+- **[T-112] 실행·판단 기록 기반(job_run_log·기준 판단 기록)** → [[T-112-run-judgment-record-foundation]] (deployed — 10-30 20:18 운영 반영·DDL 적용 완료; `job_run_log_enabled` 10-30 21:05 켬·관찰 중, `judgment_record_enabled` 꺼짐).
 
 - **[T-124] 뉴스 입력 오독·본문 절단 위험 보완(후보)** → [[T-124-news-input-misread-truncation]] (proposed·착수 전; 먼저 읽기 전용으로 오독 빈도 점검, 구현은 11-23 이후 권고).
 

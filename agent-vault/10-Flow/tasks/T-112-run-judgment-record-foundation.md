@@ -222,6 +222,9 @@ DDL 일회용 MariaDB 10.11 시험은 **90/90 통과**(두 sql_mode)이고 DDL �
 - [20:16] **운영 sql_mode 확인(Leader, 19:13 읽기 전용 조회)**: `STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION` — `NO_BACKSLASH_ESCAPES` 없음(Reviewer Minor-3 조건 미해당). MariaDB 10.11.11, 새 테이블 3개·스위치 키 2개 모두 아직 없음. 
 - [20:17] **사용자 승인(원문 "결정사항에서 DDL 적용 승인하며 푸시시점은 바로 진행해줘")**: DDL 적용 승인 + push 는 검증 순환(Reviewer→Judge C2→Codex→QA) 통과 즉시. **스위치 켜기는 이 승인 범위 밖**(키 없음=꺼짐 유지, 별도 승인).
 
+- [21:05] **스위치 켬 + 관찰 시작**(사용자 승인 원문 "T-108 데모 v3 승인하며 job_run_log_enabled를 켜고 관찰하는 작업도 진행해줘"): `system_config.job_run_log_enabled`=`true`(21:05:27, 다른 안전 설정 4개 시각까지 불변, `judgment_record_enabled` 키 없음 유지). 서버 스위치 읽기 캐시 30초 — 첫 행은 21:05:30. **8분 관찰(21:08)**: `job_run_log` 5개 롤업 행(entry-watcher·holding-checker·stop-alert runs 4, strategy-eval·trade-report runs 1 — 틱 수와 일치) 모두 `ok`·failed 0·`maxMs` 12~15ms, 비정상(status≠ok·error_code·degraded_reason) 0행, `job-run-log 전송 실패` 로그 0, 스풀 비어 있음, pm2-err 에 기록 관련 오류 0. 21:00 holdings-premarket 틱은 켜기 전이라 기록 없음(정상).
+- [21:08] **관찰 예약(AI, 세션 한정 크론 4회, 각 1회성)**: 10-30 22:12(시간 잡·news-peek·portfolio-snapshot 슬롯) · 23:42(미국장 개장 후 롤업 runs·청산 틱) · 10-31 08:13(08:00 해외 분석 최악 틱의 하트비트 간격·post-market-overseas 행) · 11-02 16:13(국내 첫 평일 전체 사이클, `judgment_record_enabled` 켜도 되는지 AI 의견). 각 점검은 읽기 전용, 이상 없으면 이 절에 한 줄 추가, 본 기능 영향이 확실할 때만 `job_run_log_enabled`=false(설계된 1순위 롤백)로 되돌리고 보고. 세션이 끝나면 예약도 사라진다(사용자에게 알림).
+
 ## Codex 검토
 ### [2026-10-30 19:50] C2 review focus=none — done
 - judge 판정: 판단 기록 2026-10-30 19:47 줄 / 호출 차수: 1/4
@@ -235,14 +238,14 @@ DDL 일회용 MariaDB 10.11 시험은 **90/90 통과**(두 sql_mode)이고 DDL �
 
 ### [T-112] 실행·판단 기록 기반 — 크론 잡 실행과 장마감 분석 판단을 DB 에 남기는 기반 (기록 스위치는 꺼짐)
 
-- **상태**: ⏳ 사용자 결정 대기(기록 스위치 켜기)
+- **상태**: 🔁 관찰 중 — `job_run_log_enabled` 켬(2026-10-30 21:05:27), `judgment_record_enabled` 는 꺼짐
 - **무엇이 바뀌었나**: 화면·매매 동작은 달라지지 않았다. DB 에 빈 테이블 3개(`job_run_log`·`judgment_run`·`judgment_candidate`)가 생겼고, 크론 러너가 호출 기록을 서버 로컬 스풀에 쌓았다가 틱 끝에 앱으로 보내며(앱은 스위치가 꺼져 있어 받고 건너뜀), 장마감 분석 엔진에 판단 기록 코드가 들어갔다(스위치가 꺼져 있어 쓰지 않음). T-108 홈·분석 지표(가동률·분석 판단 이력)가 이 테이블을 읽는다.
 - **배포**: ✅ 운영 반영 — 커밋 `df4b4a2` · 2026-10-30 20:17 KST · push(webhook, blue/green) · 결과 ok · 릴리스 `20261030-201752-df4b4a2d`. DDL 은 사용자 승인("결정사항에서 DDL 적용 승인하며 푸시시점은 바로 진행해줘") 후 20:17 KST 에 별도 적용.
   - 같은 배포에 함께 실린 작업: 문서·데모뿐(T-108 데모 v1~v3·지표 계약, T-117·T-120·T-124·T-125·T-126·T-127 기록) — 런타임 영향 없음
 - **AI 가 검증한 것**: Reviewer PASS(Critical 0·Major 0·Minor 3) · Judge C2 `codex_required=true` → Codex 1차 지적 1건(medium) → Reviewer 부분 채택·Low·배포 비차단 → T-127 · QA PASS(러너 시험 80/80, records jest 487, strict 일회용 MariaDB 10.11.19 33/33, 마이그레이션 2회 적용, 라우트 curl 401·200 skipped·200 ok·413) · 전체 jest 315 스위트·tsc 오류 0 · 배포 후 pm2·health·안전 설정 불변·스풀 전송·행 0 확인
   - 검증 못 한 것: 스위치 ON 상태의 실제 기록 · 오늘 밤 21:00·22:30 틱과 내일 08:00 해외 분석에서의 영향(지켜볼 것) · QA 가 기존 러너 시험 5종은 재실행 없이 Reviewer 로그를 인용했고 news-peek 은 QA 실행 중 시간 때문에 중단(Reviewer·Developer 실행분 인용) · 운영 라우트 직접 curl
 - **👉 사용자가 확인할 것**: 없음 — 화면·알림 변화가 없다. (이상 징후는 AI 가 크론 로그·하트비트·`job_run_log` 행으로 확인한다.)
-- **👉 사용자가 결정할 것**: Q1 기록 스위치를 켤지 — AI 권고: `job_run_log_enabled`(크론 실행 기록)만 먼저 켜고 하루 쌓이는 것을 관찰한 뒤 `judgment_record_enabled`(분석 판단 기록)를 그다음 단계로(Reviewer 권장 순서). 둘 다 켜는 것도 가능하나 문제 시 원인 분리가 어렵다. 켜기는 `system_config` 키 쓰기이며 사용자 승인 후에만 한다.
+- **👉 사용자가 결정할 것**: Q1(해결됨) `job_run_log_enabled` 켜기 — 사용자 승인(원문 "T-108 데모 v3 승인하며 job_run_log_enabled를 켜고 관찰하는 작업도 진행해줘")으로 21:05:27 에 켰다. 남은 Q2 `judgment_record_enabled`(분석 판단 기록) — 11-02(월) 16:13 점검에서 AI 의견을 내고 사용자 승인 뒤 켠다(기록 모듈이 국내·해외 분석 엔진 안에서 도는 것이라 job_run_log 보다 한 단계 위험).
 - **남은 일**: 스위치 켜기·하루 관찰 · [[T-127-job-run-spool-hardening]](금액 본문 마스킹·스풀 0600·롤업 시험 한 케이스 — 착수 결정 대기) · T-108 구현이 이 테이블의 `engine_release IS NOT NULL` 행만 집계하도록 계약 반영 · 롤업 `runs` 근사값 명시
 - **이슈·위험**: 러너 후크는 스위치와 무관하게 이미 활성(스풀에 매시 총자산·현금 본문이 짧게 남음 — 644, 상위 디렉터리 750, 정상 시 약 60초, Low) / 롤백: 스위치 끄기(현재 상태) → 필요 시 `git revert df4b4a2` 후 push, DDL 은 되돌아가지 않음(빈 테이블)
 
