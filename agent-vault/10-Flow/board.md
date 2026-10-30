@@ -12,7 +12,7 @@ tags:
 
 > **2026-10-29 13:51 — [[T-117-daily-bars-cron-registration]]·[[T-118-overseas-peek-expansion]]·[[T-119-holdings-premarket-check]] 한 번에 배포**(릴리스 `20261029-134931-5ca78174` ok). T-117 일봉 정기 증분 수집 크론(매일 07:40~07:54 KST) — **첫 자동 실행 관측은 10-30 07:55 이후**, 정상이면 `deployed`→`done`. T-118 해외 peek 하루 19회·피드별 겹침 검사 — `done`. T-119 보유 미국 종목 개장 전 공시 알림(스위치 `holdings_premarket_enabled` 13:58 켬) — **10-29 21:01 첫 자동 실행 정상**(status ok·holdings 4·checked 3·newFilings 0·alerted 0·`unmapped=NAS:SMH`)이라 `done` 처리.
 
-> **2026-10-28 21:13 — [[T-116-news-first-seen-capture]] 뉴스 최초 관측 증거 캡처 배포**(릴리스 `20261028-211308-faf8bc36` ok). ⚠ task 파일 `status` 는 아직 `doing`, `## 최종 요약` 미작성 — 정리 필요. 19:07 [[T-115-news-fetch-coverage-fix]] 국내 뉴스 15:30 추가 수집·건수 20→100 배포(릴리스 `20261028-190713-a16bc0cb` ok), 첫 실제 동작 10-29 06:00·15:30 정상 확인.
+> **2026-10-28 21:13 — [[T-116-news-first-seen-capture]] 뉴스 최초 관측 증거 캡처 배포**(릴리스 `20261028-211308-faf8bc36` ok). task 파일은 2026-10-30 에 `done`·최종 요약 작성으로 정리(운영 실측 1,109행 정상; 같은 URL 이 제목·발행시각 변경으로 2행 이상인 100그룹은 설계상 결과 — 단계 2 에서 url/guid 로 묶어야 함). 19:07 [[T-115-news-fetch-coverage-fix]] 국내 뉴스 15:30 추가 수집·건수 20→100 배포(릴리스 `20261028-190713-a16bc0cb` ok), 첫 실제 동작 10-29 06:00·15:30 정상 확인.
 
 > **2026-10-28 — [[T-078-integrated-execution-procedure]] 종료 정리**: 사용자가 통합 작업절차서로 작업 완료를 알림. 이번 인터뷰·설계·Claude 인수인계 종료, 기존 인수인계 closed. 사용자 완료 보고와 이번에 확인한 문서 범위를 구분했으며 실제 구현/운영 재검증이나 다른 task의 일괄 완료 처리는 하지 않음. 코드·설정·DB·주문·알림·커밋/push·배포 변경 없음.
 

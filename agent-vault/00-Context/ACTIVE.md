@@ -9,7 +9,7 @@ tags:
 ## 2026-10-30 05:2x — 10-28 밤~10-30 새벽 진행 정리 (운영 상태 스냅샷은 05:15 실측, 낡을 수 있음)
 
 - **운영**: 릴리스 `20261030-051343-9d087a4d`(Node 24.22.2) · `stockinvest`·`stockinvest-cron` online·재시작 0·cron 정확히 1행 · health green · 킬스위치 `true`(10-23 22:42 자동 발동, **해제는 사용자 전용**) · 최근 24h 주문 0.
-- **끝난 것**: T-115 국내 15:30 추가 수집(10-29 첫 실동작 정상) · T-116 최초 관측 캡처(배포 완료, task 파일 `status`/최종 요약 정리 필요) · T-118 해외 peek 19슬롯 `done` · T-119 보유 종목 개장 전 공시 `done`(10-29 21:01 첫 실행 정상) · T-121 Node 24 골든 시험 정리(배포) · 문서 전용 push(10-30 05:13).
+- **끝난 것**: T-115 국내 15:30 추가 수집(10-29 첫 실동작 정상) · T-116 최초 관측 캡처(`done`, 10-30 정리 — `ci_raw_item` 1,109행 정상) · T-118 해외 peek 19슬롯 `done` · T-119 보유 종목 개장 전 공시 `done`(10-29 21:01 첫 실행 정상) · T-121 Node 24 골든 시험 정리(배포) · 문서 전용 push(10-30 05:13).
 - **오늘 10-30 관측·예정**: ① 07:40~07:54 T-117 일봉 첫 자동 실행 → **07:55 이후** `daily-bars OK` 1줄·날짜파일 `daily-bars-last-date`=2026-10-30·앱 로그 `aborted` 없음·`daily_bars` 최신일 확인, 정상이면 [[T-117-daily-bars-cron-registration]] `deployed`→`done`(이어받는 세션이 처리 — 사용자 사전 지시 10-29). ② 16:00 국내 분석 뒤 T-106 `뉴스 0건` 경고(국내 3일째)가 울릴 수 있다 — 맞는 경고. ③ 10-31 08:00 해외 3일째.
 - **사용자 결정 대기**: [[T-120-news-score-threshold-query]] — Analyst 점검(현재 말뭉치로 임계 0.35~0.50 재채점) 착수 여부, (가)(나)(다) 선택, priority(뉴스는 후보 선정이 아니라 AI 판단 입력에만 쓰여 수익 경로 밖 [가능성 높음]) · Jev 판정 예산 구간 갱신(10-25 만료로 judge 가 규칙 엔진 대체 모드) · home-m4-api 커밋 M4 push 승인 · 킬스위치 해제 판단(10-26 RESUME 기준 2026-11-23경 — 재확인 필요).
 - **대기 중 task**: [[T-104-cron-jobs-market-grouping]](planned) · [[T-108-automation-menu-home-overhaul]](proposed) · [[T-109-research-context-for-analysis]](todo) · [[T-122-t118-followup-feed-check]]·[[T-123-t119-followup-silent-skip]](planned 후속) · [[T-105-news-rag-zero-hits]](in-progress — T-120 이 후보 E 를 이어받음).
