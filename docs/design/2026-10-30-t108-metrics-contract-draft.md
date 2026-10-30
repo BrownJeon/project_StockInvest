@@ -341,3 +341,28 @@ tags: [type/design, domain/analytics, domain/ui]
 - 룰 전략의 일반 매도 시그널(`ma-cross` 데드크로스 등, 승인 경로)은 이 절의 대상이 아니다 — 홈에 섞이면 X4 가 부푼다. `strategy_id='exit-engine-v1'` 필터가 경계다.
 - 확인하지 않은 것: `createSignalGuarded` 의 stage 11 기록 필드, 해외 시그널 통화 단위, `stop-alert` 임계와의 관계, 해외 `position_state` 4행의 정체, 운영 `style_default_*`, `sell_proposal_preview_enabled` 과거 값.
 
+### 11.8 사용자 확정(D11~D14)과 U7 실행 결과 (2026-10-30 16:16 추가 — Leader)
+
+**사용자 확정**: 질문 "D11~D14 를 권고안으로 확정하고 U7 읽기 전용 SELECT 9건을 실행해도 될까요?" → 답(원문) **"권고안 확정"**. D10 은 답을 받기 전에 15:26 에 발생했다(§11.0-1 관측 주석). 확정: **D11 (c)** 청산 판단 영구 보존은 별도 task([[T-126-exit-judgment-persistence]], 후보) · **D12 (b)** 하드손절 비활성 표현 = 「하드손절 OFF — 조건 충족 N종목」+ 지속 일수 · **D13 (b)** DRY_RUN 청산을 「오늘 체결」에서 분리(「DRY_RUN 청산 N건」) · **D14 (a)** 홈 표기 = X1 + X3 요약 + X4 건수의 3줄(상세는 분석>보유). 문서 결정만 — 화면·데모·DDL·코드 변경은 시작하지 않았다.
+
+**U7 실행 결과**(읽기 전용 SELECT 9건, 종목명·금액·비밀 출력 없음, 실행 16:16):
+| 쿼리 | 결과 요약 |
+|---|---|
+| U7-1 오늘 exit 트랙 | domestic `exit_hard_stop_disabled`/skip **55행**(종목 1·run 55, 09:14:44~15:21:46). 해외 0행(미평가) |
+| U7-2 30일 스킵·차단(소급) | **마스터 OFF 기간 "발화했을 조건"**: domestic `exit_engine_disabled` — hard_stop 1,845행(종목 2, 09-30~10-30 09:07)·eod_loss_cut 50행(종목 2, 09-30~10-29) / overseas — hard_stop 3,432행(종목 5, 09-30~10-30 04:56)·target_profit 219행(종목 2, 09-30~10-12) |
+| U7-3 run 요약 | domestic 하루 약 57~63 run(10-30: 57, 청산 시그널 생성 1·마스터 차단 1[09:07 이전]) · overseas 하루 15~67 run · `balances_unknown` 은 10-28 국내 1회뿐 · `runs_exit_on` 전부 0(run 행의 `exitEngineEnabled` 필드는 값이 비어 이 집계로는 마스터 ON 구분 불가 — 미해결) |
+| U7-4 `exit_no_fire` | **0행** — 오늘 국내 유일 보유가 하드손절 구간이라 평가가 `hard_stop` 에서 끝난다 [가능성 높음]. 해외는 오늘 밤 첫 틱 뒤 확인 |
+| U7-5 청산 시그널(`exit-engine-v1`) | domestic: `auto_submitted` eod_loss_cut **5건**(주문 5, 08-06~**10-30 15:26:49**)·hard_stop 1건(05-12) · `expired` 33건 · `rejected`/`approved` 3건(07-02) / overseas: **`auto_submitted` 2,680건**(hard_stop 1,065·target_profit 1,494·trailing_stop 121, **05-11~05-22**) · `expired` 69 · `superseded` 10 |
+| U7-6 청산 주문 상태 | domestic: `dry_run` **1건**(10-30 15:26:51)·`blocked`/`kill_switch` 4건(08-06~08-07)·`filled` 1건(05-12) / overseas: `rejected`/`kis_rejected` **1,360**·`rejected`/`kis_5xx` 39·`blocked`/`kill_switch` 790·`dry_run` 485·`filled` 14 |
+| U7-7 임계·알림 키 | override 는 **`style_default_trailingActivatePct`=3.5 · `style_default_trailingDrawdownPct`=1.2** 둘뿐(05-11). 하드손절·EOD 손절·익절 override 키 **없음 → 코드 기본값 적용**. **`notify_signal_auto_submit`=false**(05-11) · `notify_signal_pending`=true · `sell_proposal_preview_enabled`=true(10-20) |
+| U7-8 포지션 | domestic 1행(`updated_at` 10-29 10:11) · overseas 4행(마지막 갱신 10-30 00:09) · 시나리오 연결 0 · `qty` 결손 0 |
+| U7-9 감사 이벤트 | 오늘 매도 `dry_run` 이벤트 1건 — U7-6 과 일치 |
+
+**이 결과가 바꾸는 것**
+1. **[확실] 15:26 DRY_RUN 청산 건의 텔레그램 "자동 제출" 알림은 꺼져 있다** — `notify_signal_auto_submit=false`. 앞서 "알림이 올 수 있다"고 한 안내(§11.5 D10 행 포함)는 **정정**: 알림은 오지 않았을 가능성이 높다 [가능성 높음 — 다른 알림 경로 미확인]. 확인은 DB(`orders`·`signals`)로만 가능하다.
+2. **[확실] X5 임계**: 하드손절·EOD 손절·익절은 코드 기본값(§11.1 표), 트레일링만 활성 3.5% · 되돌림 1.2% 로 override 되어 있다 — 지표 정의에 쓸 때 코드 기본값과 override 를 구분해 표기한다.
+3. **[확실] 소멸 전 보존**: U7-2 의 "마스터 OFF 기간 발화했을 조건" 행은 30일 롤링으로 가장 오래된 것(09-30)부터 지워진다. 위 합계를 이 절에 옮겨 두었다. 원천 행은 T-126 이 없으면 사라진다.
+4. **[확실] 과거 이력 — 5월 해외 청산 폭주**: 05-11~05-22 해외 청산 시그널이 자동 제출 2,680건이었고 주문은 거부 1,399건(`kis_rejected` 1,360·`kis_5xx` 39)·체결 14건·DRY_RUN 485건·킬스위치 차단 790건이었다. 원인은 이번에 조사하지 않았다(15분 쿨다운 `cooldown_exit` 이 이후 도입됐는지는 미확인). **DRY_RUN 을 `false` 로 바꾸기 전 감사 항목 후보**다 [추측: 같은 조건 반복 제출].
+5. **[가능성 높음] 오늘 밤 해외 첫 틱(22:30 KST)**: 해외 보유 4행 중 하드손절 구간이 아닌 종목에서 `target_profit`·`trailing_stop` 이 발화하면 `awaiting_approval` + 텔레그램 승인 요청(`notify_signal_pending=true`)이 올 수 있다 — 승인해도 DRY_RUN 이라 주문은 `dry_run` 으로 끝난다. 해외는 EOD 손절이 없다.
+6. U7-3 의 `runs_exit_on` 이 전부 0 인 것은 값 자체가 아니라 필드 비어 있음 가능성이 크다(미해결) — 구현 때 코드로 확인.
+
