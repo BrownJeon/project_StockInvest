@@ -4,6 +4,8 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-30 18:20 — T-108 데모 v3 사용자 검토 요청(demo_gate = review_requested; v2 는 수정요청)**: 사용자 "용어를 좀 수정해야할 것같아. 변경하는 용어는 모든 화면에서 동일하게 변경해줘"(7항목) → `mockups/T-108-menu-home-v3.html`(카드→시그널·DRY_RUN→실거래여부(방향 반대)·킬스위치→모든거래차단·EOD→장마감 전 손절·표본 부족→건수 적음, 용어 설명표 F 절 추가). 사용자가 뜻만 물은 「AI BUY」·「하드손절」은 Leader 권고로 「AI 매수 판단」·「손실한도 손절」로 같이 바꿨고 되돌릴 수 있다. Artifact(비공개) https://claude.ai/artifact/SiyXU1cB6nD2JZhnHnfDNq. 승인 전 화면 코드 없음.
+
 > **2026-10-30 17:36 — T-108 데모 v2 사용자 검토 요청(demo_gate = review_requested)**: 사용자 "메뉴 아이콘에 대해서 지난번에 함께 정한게 있잖아. 그걸로 해줘" → v1 아이콘이 정해 둔 Lucide(stone·handshake·scan-search·brain·settings)와 모양이 달랐던 것을 원본 경로로 교체한 `mockups/T-108-menu-home-v2.html`(그 밖은 v1 과 동일). Artifact(비공개) https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr. 승인 전 화면 코드 없음.
 
 > **2026-10-30 17:25 — T-108 데모 v1 사용자 검토 요청(demo_gate = review_requested)**: `mockups/T-108-menu-home-v1.html`(full 수준, 합성 데이터, 홈 단계 4종 × 데이터 상태 6종 × 5탭 + 승인 흐름, 결정 필요 A/B 7건·권고 전부 A). Artifact(비공개) https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW. 승인 전 화면 코드 없음, 구현은 승인 뒤 Designer 가이드 → Judge C1 → Developer …
