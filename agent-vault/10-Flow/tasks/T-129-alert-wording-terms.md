@@ -1,7 +1,7 @@
 ---
 task_id: T-129
 title: 용어 정정 서버 쪽 마무리(T-108 WP-D) — 텔레그램·경보·리포트·설정 요약 문구의 옛 용어를 승인된 용어로
-status: in-progress
+status: deployed
 priority: medium
 project: StockInvest
 created: 2026-10-31
@@ -10,6 +10,7 @@ base_ref: origin/main 9d087a4
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa, codex]
 related_tasks: [T-108-automation-menu-home-overhaul]
+waiting: [사용자: 다음 텔레그램 알림(승인 요청·경보·리포트)에서 새 문구 확인]
 tags:
   - type/task
   - domain/notify
@@ -92,6 +93,9 @@ aliases:
 - [01:14] **QA 생략(Leader 판단)**: 문자열 리터럴 한정 변경이라 별도 QA 에이전트(일회용 환경·브라우저)는 두지 않고 Reviewer(AST 비교·console 바이트 동일·변이 21개 중 20개 검출)·Codex(데이터 무결성)와 자동 시험으로 대체. 서버 `flock` 직렬 실행(Leader): 전체 tsc 0(`TSC_EXIT=0`) · 전체 jest 340 스위트 9,567 통과·실패 0(`JEST_EXIT=0`, 건너뜀 6 스위트 184건 = 일회용 DB 시험) — T-108 구현(커밋 52442c5)이 이미 포함된 기준. 마지막으로 추가된 울타리 시험 1건은 Developer 가 해당 파일만 실행(4건 통과·변이 on/off 잡힘). **실제 텔레그램 발송·화면 렌더는 미확인**(배포 후 다음 알림에서 확인).
 
 ## 배포 기록
+- [2026-10-31 05:20] **T-108 과 같은 배포로 나감** — 커밋 `4c6f595`, 릴리스 `20261031-052042-4c6f5950`, `RELEASE_RESULT status ok`·`migrated:false`(상세·배포 전후 확인 항목은 [[T-108-automation-menu-home-overhaul]] `## 배포 기록`). 스위치·DB 변경 없음.
+- 확인된 것: 부팅 로그에 새 용어 「자동 청산 엔진 ON — 손실한도 손절(개별 OFF)·장마감 전 손절·트레일링·익절 동작 중」 출력(`describeExitEngineSwitch`, Codex low 수용분 — console 문구도 같이 바뀜) · 배포 후 앱 오류 로그 새 줄 0건.
+- **확인하지 못한 것**: 실제 텔레그램 발송(승인 요청·경보·거래 리포트·설정 요약)의 새 문구 — 아직 해당 알림이 나가지 않았다. 다음 알림이 올 때 사용자 확인 필요(아래 최종 보고 참조). 알려진 한계: 텔레그램 청산 승인 메시지는 제목은 새 이름(「손실한도 손절」)인데 DB 에 저장된 사유 앞머리 `[하드 손절]`/`[EOD 손절]` 이 같이 보인다 → [[T-128-t108-followups]] 9번.
 
 ## Codex 검토
 

@@ -1,10 +1,18 @@
 ---
 project: StockInvest
-updated: 2026-10-30
+updated: 2026-10-31
 tags:
   - type/context
 ---
 # 현재 상태
+
+## 2026-10-31 05:22 — T-108·T-129 운영 배포 완료
+
+- **05:20 배포**: push `df4b4a2..4c6f595`(코드 커밋 `52442c5` T-108 + `4c6f595` T-129, 나머지 문서), 릴리스 `20261031-052042-4c6f5950` `RELEASE_RESULT ok`·`migrated:false`. 스위치·DB 변경 없음. 안전 설정 4개(`safety_dry_run=true`·`safety_kill_switch=false`·`exit_engine_enabled=true`·`exit_hard_stop_enabled=false`)와 `job_run_log_enabled=true` 불변, `judgment_record_enabled` 키 없음(꺼짐) 불변. 상세 [[T-108-automation-menu-home-overhaul]] `## 배포 기록`.
+- **배포 순간 일회성**: 새 크론 러너 첫 틱 05:21:10 에 `signal-expiry`·`portfolio-snapshot`·`trade-report` 가 `HTTP=000`(웹 앱이 포트 열기 전) → 1초 뒤 OK. `job_run_log` 에 `failed` 2행·롤업 `partial` 1행이 남음(집계 해석 때 제외). `job-run-log` 전송 05:22:15 회복, 스풀 비어 있음.
+- **사용자 확인 대기**: ① 운영 홈 화면(하단 탭 4칸·섹션 순서·값 표시) ② 다음 텔레그램 알림에서 새 문구 ③ `/api/ops/home` 응답 시간은 홈을 연 뒤 앱 로그로 확인(목표 4초, 최악 추정 8.8초).
+- **알려진 한계(T-128 9번)**: 텔레그램 청산 승인 메시지는 제목이 새 이름(「손실한도 손절」)인데 DB 저장 사유 앞머리 `[하드 손절]`/`[EOD 손절]` 이 같이 보임.
+- **다음 점검**: 08:13 T-112 `job_run_log` 관찰 3회차(08:00 해외 분석 뒤) · 11-02 16:13 4회차(+ `judgment_record_enabled` 켜기 의견, 사용자 승인 필요).
 
 ## 2026-10-30 05:2x — 10-28 밤~10-30 새벽 진행 정리 (운영 상태 스냅샷은 05:15 실측, 낡을 수 있음)
 
@@ -23,7 +31,7 @@ tags:
 - **끝난 것**: T-115 국내 15:30 추가 수집(10-29 첫 실동작 정상) · T-116 최초 관측 캡처(`done`, 10-30 정리 — `ci_raw_item` 1,109행 정상) · T-117 일봉 정기 수집 `done`(10-30 07:41 첫 실행 정상) · T-118 해외 peek 19슬롯 `done` · T-119 보유 종목 개장 전 공시 `done`(10-29 21:01 첫 실행 정상) · T-121 Node 24 골든 시험 정리(배포) · 문서 전용 push(10-30 05:13).
 - **오늘 10-30 관측·예정**: ① ✅ T-117 일봉 첫 자동 실행 07:41:56 정상(`daily-bars OK` 1줄·날짜파일 2026-10-30·`targets=93 processed=93 written=5430`·`aborted` 없음) → [[T-117-daily-bars-cron-registration]] `done`(09:3x). 국내 10-30 봉은 개장 전 자리표시(`is_final=0`)이니 소비 쪽은 `is_final=1` 만 쓴다. ② 16:00 국내 분석 뒤 T-106 `뉴스 0건` 경고(국내 3일째)가 울릴 수 있다 — 맞는 경고. ③ 해외는 정정: 10-30 08:01 해외 검색에서 뉴스 1건이 통과(`news=1`)해 카운터가 0 으로 리셋 — 앞서 적은 "10-31 08:00 해외 3일째" 예측은 틀렸고, 해외 경고는 빨라도 11-02 이후다.
 - **사용자 결정 대기**: [[T-120-news-score-threshold-query]] **(가) 유지로 종료**(10-30, 변경 없음) → T-106 국내 경고 반복(`streak ≥ 3`·재발송 20시간 — 뉴스 0건인 동안 분석일마다)은 후보 [[T-125-news-zero-alert-cleanup]] 로 등록(10-30, 착수 전; 먼저 3~5 분석일 관찰) · [[T-105-news-rag-zero-hits]] 는 열어 둠(국내 `news>0` 는 10-30 16:03 에 1회 관측 — 종료 여부 사용자 결정) · Jev 판정 예산 구간 갱신(10-25 만료로 judge 가 규칙 엔진 대체 모드) · home-m4-api 커밋 M4 push 승인 · 11-23 = 남은 감사(관찰) 기간 종료 시점(킬스위치는 10-30 09:08 에 이미 해제 — 문서의 "11-23 킬스위치 해제 판단"은 "11-23 감사 기간 종료 판단"으로 읽는다; 그날의 결정 내용은 사용자가 정함).
-- **대기 중 task**: [[T-104-cron-jobs-market-grouping]](planned) · [[T-108-automation-menu-home-overhaul]](proposed — 데모 v3 승인 10-30 21:05·A/B 7건 확정 21:15, 구현 가이드·착수 순서 사용자 결정 대기) · [[T-112-run-judgment-record-foundation]](deployed — job_run_log 관찰 중, judgment_record 꺼짐) · [[T-127-job-run-spool-hardening]](proposed 후보) · [[T-109-research-context-for-analysis]](todo) · [[T-122-t118-followup-feed-check]]·[[T-123-t119-followup-silent-skip]](planned 후속) · [[T-105-news-rag-zero-hits]](in-progress — 후보 E 는 T-120 에서 (가) 유지로 결정) · [[T-124-news-input-misread-truncation]](proposed 후보) · [[T-125-news-zero-alert-cleanup]](proposed 후보) · [[T-126-exit-judgment-persistence]](proposed 후보).
+- **대기 중 task**: [[T-104-cron-jobs-market-grouping]](planned) · [[T-108-automation-menu-home-overhaul]](deployed 10-31 05:21 — 운영 홈 화면 사용자 확인 대기, 후속 [[T-128-t108-followups]]) · [[T-129-alert-wording-terms]](deployed 10-31 05:21 — 다음 텔레그램 알림에서 새 문구 확인 대기) · [[T-112-run-judgment-record-foundation]](deployed — job_run_log 관찰 중, judgment_record 꺼짐) · [[T-127-job-run-spool-hardening]](proposed 후보) · [[T-109-research-context-for-analysis]](todo) · [[T-122-t118-followup-feed-check]]·[[T-123-t119-followup-silent-skip]](planned 후속) · [[T-105-news-rag-zero-hits]](in-progress — 후보 E 는 T-120 에서 (가) 유지로 결정) · [[T-124-news-input-misread-truncation]](proposed 후보) · [[T-125-news-zero-alert-cleanup]](proposed 후보) · [[T-126-exit-judgment-persistence]](proposed 후보).
 - **로컬에만 있는 커밋(push 안 함)**: 이 갱신·배포 기록(`1d2dc07` 등). 문서만 push 해도 blue/green 배포가 돌므로 다음 기능 배포에 동승한다. push 는 배포 창(05:10~06:50 또는 15:40~20:00, 07:35~07:57 피함; 미국 정규장은 지금 22:30~05:00 KST 지만 서머타임이 끝나는 11-01 이후 23:30~06:00 으로 바뀌어 05:10 창이 장중과 겹칠 수 있다 [가능성 높음 — 11-02 전에 재확인])에서만.
 - **주의**: 골든 시험 `t062-domestic-golden-head.ts` 는 ICU 78.3(Node 24.22.2) 기준이라 Node 20.20.2 에서는 실패한다(ICU 패치 민감). 무거운 명령(`jest`·`tsc`·`test-*.sh`)은 `flock /tmp/stockinvest-heavy-tests.lock nice -n 10` 으로 한 번에 하나만(10-28 23:49 서버 정지 사고).
 

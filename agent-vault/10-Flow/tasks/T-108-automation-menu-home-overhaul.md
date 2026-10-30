@@ -1,11 +1,11 @@
 ---
 task_id: T-108
 title: 자동매매 중심 메뉴·홈·분석·비서 개편 — 접수·지표 계약·데모 준비 (구현은 데모 승인 뒤)
-status: proposed
+status: deployed
 priority: high
 project: StockInvest
 created: 2026-10-28
-updated: 2026-10-30
+updated: 2026-10-31
 base_ref: 93530f5
 risk_level: R2
 roles_involved: [leader, judge, analyst, designer, developer, reviewer, qa, codex, deployer]
@@ -18,7 +18,7 @@ tags:
 aliases:
   - 메뉴홈개편
   - 거래비서개편
-waiting: [수집 통합 2차 설계(T-114, T-111 후속) 완료 후 통합 계획 수립 — 사용자 지시 10-28 17:09, 사용자: 통합 계획 승인]
+waiting: [사용자: 운영 홈 화면 확인(10-31 배포분) · 후속 Minor T-128 착수 결정 · 비서 탭은 T-113 배포 뒤]
 demo_gate:
   required: true
   level: "delta"
@@ -259,6 +259,13 @@ demo_gate:
 - [00:41] **QA 판정: PASS** (면제 1건: 설정 화면 44px 미만 컨트롤 10개 — 기존 UI·L-4 범위 밖·T-128 이관, Leader 결정 · 미확인: 실기기·운영 DB 질의 성능·운영 계정 SET STATEMENT 권한·승인/거절/감시 취소 실제 클릭·클라이언트 리다이렉트 notes/trailing/zzz · 후속 Minor 5건은 T-128 이관 · 배포 후 관찰 4건은 위 bullet · 이전 FAIL 판정은 이 면제로 대체)
 
 ## 배포 기록
+- [2026-10-31 05:20] **배포 완료.** 사용자 지시 「판정이 패스가 되면 푸시 및 배포 진행해주고 다음 작업 이어서 진행해줘」(Reviewer 데이터 PASS·화면 pass·QA PASS 뒤)에 따라 서버 체크아웃에서 `git push origin main`(`df4b4a2..4c6f595`, 커밋 10개). 코드가 든 커밋은 T-108 `52442c5`(134파일)와 [[T-129-alert-wording-terms]] `4c6f595`(15파일) 둘이고 나머지 8개는 문서다(금지 영역 android·capacitor·app-shell·db.ts·migrations·middleware·globals.css·layout.tsx·package 파일은 diff 0, `jest.config.js` 만 T-108 의도분). webhook blue/green 05:20:14 시작 → 05:21:48 완료(`exit=0`).
+- 결과: `RELEASE_RESULT {"status":"ok","release":"20261031-052042-4c6f5950","sha":"4c6f5950733b…","previous":"…/releases/20261030-201752-df4b4a2d","migrated":false}`. 마이그레이션·DDL·스위치 변경 없음. 롤백 필요 없음(필요하면 이전 릴리스 `20261030-201752-df4b4a2d`).
+- 배포 전 확인(05:19): 시각 05:10~07:30 창 안 · origin 이 로컬보다 앞서지 않음 · 진행 중 배포 없음(마지막 배포 10-30 20:18 종료) · pm2 `stockinvest-cron` 1행 · health green · 안전 설정 4개(`safety_dry_run=true`·`safety_kill_switch=false`·`exit_engine_enabled=true`·`exit_hard_stop_enabled=false`)와 `job_run_log_enabled=true` 확인(`judgment_record_enabled` 키는 없음 = 꺼짐, 건드리지 않음).
+- 배포 후 확인(05:22, 읽기 전용): ① pm2 `stockinvest`·`stockinvest-cron` 모두 새 릴리스 경로 · online · restarts 0 · cron 프로세스 1개 ② `/api/health` green · `dryRun true` · `killSwitch false` ③ 안전 설정 4개 값·`updated_at` 불변 · `job_run_log_enabled` true 불변 ④ 새 빌드에 `/api/ops/{safety-state,home,trade,funnel,analysis}` 5개 존재, 로그인 없이 호출하면 5개 모두 401(인증 관문 동작) · `/login` 200 ⑤ 앱 로그(`pm2-out.log` 전체)에 `[ops/metrics]`·`SET STATEMENT`·`Too many connections` 0건, `pm2-err.log` 배포 후 새 줄 0건, `cron-err.log` 새 줄 없음 ⑥ DB `Threads_connected` 29(배포 전 28)·`Max_used_connections` 48(불변) ⑦ 부팅 로그에 「자동 청산 엔진 ON — 손실한도 손절(개별 OFF)·장마감 전 손절·트레일링·익절 동작 중」(T-129 새 용어 확인).
+- 관찰(이상 아님, 기록용): ① 새 크론 러너 첫 틱(05:21:10)에서 `signal-expiry`·`portfolio-snapshot`·`trade-report` 가 `HTTP=000`(웹 앱이 포트를 열기 전) → 1초 뒤(05:21:11) 같은 잡 OK. `job_run_log` 에 이 순간의 `failed` 2행(signal-expiry·trade-report, http 0)과 롤업 `partial` 1행이 남았다 — 배포 순간의 일회성이라 집계 해석에서 제외한다. ② `job-run-log` 전송이 05:21:10 `HTTP=000`·05:21:14 `HTTP=503`(웹 앱 시동 중) 두 번 실패했다가 05:22:15 「전송 회복」, 스풀 디렉터리는 비었다(유실 없음). ③ `[cron-runner] started` 줄이 두 번 찍히는 것은 10-28 재기동들에도 있던 패턴이다(프로세스는 1개).
+- **확인하지 못한 것(NOT_VERIFIED)**: 운영 로그인 화면(홈·거래·분석·설정) 실제 렌더 · `/api/ops/home` 응답 시간(목표 4초, 로그인 필요라 직접 호출 못 함 — 배포 직후 앱 로그에 `/api/ops/*` 호출이 아직 0건이라 **오류가 없는 것이 아니라 아직 호출이 없는 것**) · 운영 계정 `SET STATEMENT max_statement_time` 허용 여부 · 장애 구간 풀 대기열 · 실기기 앱. 사용자 로그인 화면 확인 요청은 최종 보고에 있음.
+- 이월(T-108 QA 가 「배포 직후 스모크」로 넘긴 4건): `Threads_connected`(위 ⑥ 기록) · 풀 대기열 · `/api/ops/home` 응답 시간 · `SET STATEMENT` 허용 — 뒤 둘은 사용자가 홈을 열어 본 뒤 앱 로그(`[ops/metrics]` 오류 유무)와 `job_run_log`/로그 응답 시간으로 확인한다. 후속 Minor 는 [[T-128-t108-followups]].
 
 ## Codex 검토
 
