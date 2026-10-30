@@ -5,7 +5,7 @@ status: proposed
 priority: high
 project: StockInvest
 created: 2026-10-28
-updated: 2026-10-28
+updated: 2026-10-30
 base_ref: 93530f5
 risk_level: R2
 roles_involved: [leader, judge, analyst, designer, developer, reviewer, qa, codex, deployer]
@@ -22,11 +22,11 @@ waiting: [수집 통합 2차 설계(T-114, T-111 후속) 완료 후 통합 계�
 demo_gate:
   required: true
   level: "delta"
-  status: "drafting"
-  version: 0
-  repo_path: ""
-  artifact_url: ""
-  content_sha256: ""
+  status: "review_requested"
+  version: 1
+  repo_path: "mockups/T-108-menu-home-v1.html"
+  artifact_url: "https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW"
+  content_sha256: "ead8ce0e64f1c1c71d3f050902361489fead3cbae073c59a2e1e6df967539c9e"
   decided_by: "judge"
   rule_id: "DM-kw-risky-cta"
   approved_by: ""
@@ -108,6 +108,9 @@ demo_gate:
 - [16:43] **사용자 결정(원문 "지금 시작"; 질문: Designer 데모 v1 을 권고 범위로 지금 시작할까요, 아니면 DP1(~11-05)까지 기다릴까요)**: 2단계 Designer 데모 v1 착수 — 범위 = 관찰 기간 홈 + 실거래 홈(+혼합) + 5탭 이동(인계서 권고), 수준 full. 산출물 `mockups/T-108-menu-home-v1.html`(Designer, 합성 데이터·토큰 스냅샷·외부 URL 없음, `check.mjs lint` 통과 필요). **Leader 후속**: lint 통과 확인 → Artifact 게시 → `check.mjs status --to review_requested --version 1 --repo-path mockups/T-108-menu-home-v1.html` → 사용자 검토·승인(승인 전 화면 코드 없음). T-112 구현과 병행(파일 겹침 없음).
 
 ## Designer
+- [17:25] **데모 v1 작성 완료(Designer)** → `mockups/T-108-menu-home-v1.html`(111,102 bytes, sha256 `ead8ce0e64f1…`, lint `DEMO_LINT_PASSED`·경고 0). 홈 단계 4종(관찰/중지/혼합/실거래) × 데이터 상태 6종(정상·첫 배포·빈·로딩·조회 실패·오래됨) × 5탭 + 승인 시트(처리 중·성공·실패·네트워크 오류·차단·거절)·감시 취소 확인 대화상자, 현재 vs 제안 비교(D8 숫자표 포함), 상태 어휘 카탈로그, 「결정 필요」 A/B 7건(권고 전부 A). 자체 점검 P0 0·P1 0·P2 3, a11y Critical 0·Major 0·Minor 3. 360·412·1280px 자동 순회(가로 넘침 0, 터치 44px 미만 0, 11px 미만 글자 0, 명암비 4.5:1 미만 0), 실기기 미확인. **Leader 전체 읽기 후 게시**(외부 URL·네트워크 호출 0, 인라인 스크립트만).
+- [17:25] **검토 요청**: Artifact(비공개) https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW → `check.mjs status --to review_requested --version 1` 기록(frontmatter·이력 표 갱신). 현재 `check` = BLOCK(사용자 승인 없음) — 정상. 승인 전 화면 코드 없음. 사용자 승인 원문은 그대로 `check.mjs approve --quote` 에 기록한다.
+- [17:25] Designer 가 정한 8곳(계약이 말하지 않았거나 다르게 해석)은 데모 E 절에 있다 — 청산 상세 위치(X1·X3·X4·X6 분석 > 검증·성과, X2·X5 거래 > 보유·주문) · 장중 깔때기 홈 제외 · 「중지」 띠 라벨 · 혼합 단계 손익 기준 미설정 · 하드손절 조건 충족 「확인 필요」 중복 · 최근 활동 원천 · 하단 라벨 11px · 비서 5칸 보류 표시. Designer 불편한 사실: ① 현재 홈에 DRY_RUN·킬스위치 표시 0(`SafetyBar` 미사용) ② 「오늘 체결」이 DRY_RUN 을 체결로 셈 ③ 「분석 완료 종목」은 T-112 전엔 채울 수 없음(첫 배포 상태 별도 표시).
 
 ## Developer
 
@@ -128,3 +131,4 @@ demo_gate:
 | 버전 | 상태 | 저장소 파일 | Artifact | 사용자 결정 | 일시 |
 |---|---|---|---|---|---|
 | - | 작성중 | - | - | judge: delta (DM-kw-risky-cta) | 10-28 13:40 |
+| v1 | 검토요청 | mockups/T-108-menu-home-v1.html | https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW | 사용자 검토 요청 | 10-30 17:24 |
