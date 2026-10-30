@@ -4,6 +4,8 @@ tags:
 ---
 # 칸반 보드
 
+> **2026-10-30 17:36 — T-108 데모 v2 사용자 검토 요청(demo_gate = review_requested)**: 사용자 "메뉴 아이콘에 대해서 지난번에 함께 정한게 있잖아. 그걸로 해줘" → v1 아이콘이 정해 둔 Lucide(stone·handshake·scan-search·brain·settings)와 모양이 달랐던 것을 원본 경로로 교체한 `mockups/T-108-menu-home-v2.html`(그 밖은 v1 과 동일). Artifact(비공개) https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr. 승인 전 화면 코드 없음.
+
 > **2026-10-30 17:25 — T-108 데모 v1 사용자 검토 요청(demo_gate = review_requested)**: `mockups/T-108-menu-home-v1.html`(full 수준, 합성 데이터, 홈 단계 4종 × 데이터 상태 6종 × 5탭 + 승인 흐름, 결정 필요 A/B 7건·권고 전부 A). Artifact(비공개) https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW. 승인 전 화면 코드 없음, 구현은 승인 뒤 Designer 가이드 → Judge C1 → Developer …
 
 > **2026-10-30 16:16 — 사용자 "권고안 확정": T-108 청산 지표 D11~D14 확정 + U7 SELECT 9건 실행**: 후보 등록 [[T-126-exit-judgment-persistence]](청산 판단 영구 보존). 발견: ① 텔레그램 "자동 제출" 알림 꺼짐(`notify_signal_auto_submit=false`) — 15:26 DRY_RUN 청산 알림은 오지 않았을 가능성이 높음(정정) ② 마스터 OFF 기간 "발화했을 조건" 기록은 30일 뒤 소멸(합계 보존) ③ 05-11~22 해외 청산 자동 제출 2,680건·주문 거부 1,399건 이력 ④ 트레일링만 임계 override(3.5/1.2). 문서 전용·스위치 변경 없음.

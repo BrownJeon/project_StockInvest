@@ -23,10 +23,10 @@ demo_gate:
   required: true
   level: "delta"
   status: "review_requested"
-  version: 1
-  repo_path: "mockups/T-108-menu-home-v1.html"
-  artifact_url: "https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW"
-  content_sha256: "ead8ce0e64f1c1c71d3f050902361489fead3cbae073c59a2e1e6df967539c9e"
+  version: 2
+  repo_path: "mockups/T-108-menu-home-v2.html"
+  artifact_url: "https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr"
+  content_sha256: "6fabba424ad86c1021b3ace973d425431d58d37bf70359a18e5c80cd8a3ed497"
   decided_by: "judge"
   rule_id: "DM-kw-risky-cta"
   approved_by: ""
@@ -111,6 +111,9 @@ demo_gate:
 - [17:25] **데모 v1 작성 완료(Designer)** → `mockups/T-108-menu-home-v1.html`(111,102 bytes, sha256 `ead8ce0e64f1…`, lint `DEMO_LINT_PASSED`·경고 0). 홈 단계 4종(관찰/중지/혼합/실거래) × 데이터 상태 6종(정상·첫 배포·빈·로딩·조회 실패·오래됨) × 5탭 + 승인 시트(처리 중·성공·실패·네트워크 오류·차단·거절)·감시 취소 확인 대화상자, 현재 vs 제안 비교(D8 숫자표 포함), 상태 어휘 카탈로그, 「결정 필요」 A/B 7건(권고 전부 A). 자체 점검 P0 0·P1 0·P2 3, a11y Critical 0·Major 0·Minor 3. 360·412·1280px 자동 순회(가로 넘침 0, 터치 44px 미만 0, 11px 미만 글자 0, 명암비 4.5:1 미만 0), 실기기 미확인. **Leader 전체 읽기 후 게시**(외부 URL·네트워크 호출 0, 인라인 스크립트만).
 - [17:25] **검토 요청**: Artifact(비공개) https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW → `check.mjs status --to review_requested --version 1` 기록(frontmatter·이력 표 갱신). 현재 `check` = BLOCK(사용자 승인 없음) — 정상. 승인 전 화면 코드 없음. 사용자 승인 원문은 그대로 `check.mjs approve --quote` 에 기록한다.
 - [17:25] Designer 가 정한 8곳(계약이 말하지 않았거나 다르게 해석)은 데모 E 절에 있다 — 청산 상세 위치(X1·X3·X4·X6 분석 > 검증·성과, X2·X5 거래 > 보유·주문) · 장중 깔때기 홈 제외 · 「중지」 띠 라벨 · 혼합 단계 손익 기준 미설정 · 하드손절 조건 충족 「확인 필요」 중복 · 최근 활동 원천 · 하단 라벨 11px · 비서 5칸 보류 표시. Designer 불편한 사실: ① 현재 홈에 DRY_RUN·킬스위치 표시 0(`SafetyBar` 미사용) ② 「오늘 체결」이 DRY_RUN 을 체결로 셈 ③ 「분석 완료 종목」은 T-112 전엔 채울 수 없음(첫 배포 상태 별도 표시).
+- [17:36] **사용자 변경 요청(원문 "메뉴 아이콘에 대해서 지난번에 함께 정한게 있잖아. 그걸로 해줘")** → v1 `changes_requested` 기록. 원인: v1 하단 아이콘이 지난번에 정한 Lucide(`docs/design/2026-10-27-navigation-icon-decisions.md`: 홈 `stone`·거래 `handshake`·분석 `scan-search`·비서 `brain`·설정 `settings`)와 달랐다 — 홈은 Designer 가 손으로 그린 근사 도형, 비서(brain)·설정(settings)은 구버전 도형(거래·분석만 일치). 이름은 같았지만 모양이 원본이 아니었다 [확실: v1 경로와 lucide-react 1.24.0 원본 대조].
+- [17:36] **v2 작성**(Leader, 기계적 교체): `mockups/T-108-menu-home-v2.html` = v1 에서 ① 아이콘 5개를 워크스페이스 `lucide-react` 1.24.0(ISC)의 원본 SVG 경로 그대로 교체(stone 3·handshake 5·scan-search 6·brain 8·settings 2 도형) ② 메타·제목·머리말 v1→v2 + 「v2 변경점」 배너 ③ E 절 아이콘 메모 갱신. **diff 로 그 밖의 줄이 같음을 확인**(변경 줄: 메타·제목·h1·배너·E 메모·home/ai/set 아이콘 3줄), lint `DEMO_LINT_PASSED`, 브라우저로 5탭 아이콘 렌더 확인(도형 수 3·5·6·8·2, 22px). Designer 재호출 없이 Leader 가 했다 — 화면·상태·결정 필요 7건은 v1 과 동일. 새 파일이라 v1 은 수정하지 않음.
+- [17:36] **v2 검토 요청**: Artifact(비공개) https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr (sha256 `6fabba424ad8…`), `check.mjs status --to review_requested --version 2`. `check` = BLOCK(승인 전) 정상. 승인 시 사용자 원문 그대로 `check.mjs approve --version 2 --quote`. 이전 링크(v1) https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW 는 이력용.
 
 ## Developer
 
@@ -132,3 +135,5 @@ demo_gate:
 |---|---|---|---|---|---|
 | - | 작성중 | - | - | judge: delta (DM-kw-risky-cta) | 10-28 13:40 |
 | v1 | 검토요청 | mockups/T-108-menu-home-v1.html | https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW | 사용자 검토 요청 | 10-30 17:24 |
+| v1 | 수정요청 | mockups/T-108-menu-home-v1.html | https://claude.ai/artifact/D7XK8XAEFPrqzkqGABmCNW | "메뉴 아이콘에 대해서 지난번에 함께 정한게 있잖아. 그걸로 해줘" | 10-30 17:35 |
+| v2 | 검토요청 | mockups/T-108-menu-home-v2.html | https://claude.ai/artifact/6ev1RzsZivkd8nHbJvEUjr | 사용자 검토 요청 | 10-30 17:36 |
