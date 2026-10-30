@@ -194,6 +194,12 @@ bash scripts/test-git-hooks.sh      # 전 시나리오 + 실 커밋 E2E 검증
 
 > ⚠ **noexec 마운트 주의**: 이 저장소의 주 편집 경로(`/home/.../NFS/...`)는 NFS `noexec`라 `chmod +x`가 무효다. git은 **실행 불가한 훅을 경고 한 줄만 남기고 조용히 무시한 채 커밋을 진행**하므로, 단순히 `core.hooksPath=scripts/git-hooks`만 설정하면 안전장치가 통째로 fail-open 된다. `install-git-hooks.sh`가 이를 자동 감지해 로컬 디스크(`~/.local/share/stockinvest-git-hooks/`)에 실행 가능한 shim을 만들고 그쪽을 가리키며, 설치 끝에 실행 가능 여부를 검증해 실패 시 비정상 종료한다.
 
+> 🔴 **Mac 세션에서는 이 훅이 돌지 않는다 (2026-10-30 실측)**: `core.hooksPath` 는 `.git/config` 한 벌에 들어 있고 그 값(`/home/brownjeon/.local/share/stockinvest-git-hooks/<id>`)은 **우분투에만 존재하는 경로**다. 저장소가 NFS/SMB 로 공유되므로 같은 설정이 **서버에서는 유효하고 Mac(`/Volumes/homes/...`)에서는 없는 경로를 가리킨다**. git 은 없는 hooksPath 를 **경고 한 줄 없이 건너뛴다**(실행 불가 훅은 경고라도 남긴다). 즉 Mac 에서 커밋하면 `commit-msg` 안전장치가 **통째로 무검사**다.
+>
+> - **규칙: `SAFETY_PATHS` 에 걸리는 파일의 커밋은 서버에서 한다** (`ssh home_ubuntu`, 또는 서버 worktree `~/.node-local/stockinvest-*`). Mac 세션은 문서·`agent-vault/` 커밋만 한다.
+> - Mac 에서 `install-git-hooks.sh` 를 돌리는 것은 **해결이 아니다** — 공유된 `core.hooksPath` 를 Mac 로컬 경로로 덮어써서 이번에는 **서버 쪽 훅이 죽는다**. `core.hooksPath` 는 조건부가 안 되고, 저장소 안 경로(`scripts/git-hooks`)는 서버 NFS `noexec` 때문에 무효다. 설정 한 벌로 두 머신을 동시에 덮는 방법은 현재 없다.
+> - 지금 이 머신에서 유효한지 확인: `ls "$(git config --get core.hooksPath)/commit-msg"` — 안 보이면 그 머신의 커밋은 무검사다.
+
 **Reviewer 기록 작성 규칙** (훅이 판정을 인식하려면 필수):
 
 Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 남긴다. 마크다운 장식·타임스탬프 접두는 허용된다.
