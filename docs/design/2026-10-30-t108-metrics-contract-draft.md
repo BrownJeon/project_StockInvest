@@ -213,9 +213,14 @@ tags: [type/design, domain/analytics, domain/ui]
 | Q18 리서치 | 국내 마지막 10-29(2종목) · 해외 10-30(3종목) |
 
 ### 10.3 이 결과가 바꾸는 것 (Leader 판단)
-1. **[확실] 전제가 바뀌었다 — 킬스위치 `false` · DRY_RUN `true` · 청산 엔진 `true`(10-30 09:08).** 이 문서 §2 "관찰 기간 = 킬스위치 ON·D5 차단"은 더 이상 사실이 아니다. 현재 유효 상태는 health 로도 확인했다(`dryRun true · killSwitch false · safetyStatus green`). **홈의 단계(관찰/실거래)는 수동 플래그가 아니라 `safety_kill_switch`·`safety_dry_run`·검증 관문(Q4)의 조합으로 파생**해야 한다 — 1.1 "검증 차단" 상태 어휘와 §2 제목·본문의 "킬스위치 ON" 서술은 구현 전에 이 파생 규칙으로 다시 쓴다. 신규 매수는 여전히 D5 관문(전략 16개 `unvalidated`)과 DRY_RUN 이 막는다.
+1. **[확실] 전제가 바뀌었다 — 킬스위치 `false` · DRY_RUN `true` · 청산 엔진 `true`(10-30 09:08, 사용자 의도 변경 — 답 "의도한 변경").** 이 문서 §2 "관찰 기간 = 킬스위치 ON·D5 차단"은 더 이상 사실이 아니다. 현재 유효 상태는 health 로도 확인했다(`dryRun true · killSwitch false · safetyStatus green`). **홈의 단계(관찰/실거래)는 수동 플래그가 아니라 `safety_kill_switch`·`safety_dry_run`·검증 관문(Q4)의 조합으로 파생**해야 한다 — 1.1 "검증 차단" 상태 어휘와 §2 제목·본문의 "킬스위치 ON" 서술은 구현 전에 이 파생 규칙으로 다시 쓴다. 신규 매수는 여전히 D5 관문(전략 16개 `unvalidated`)과 DRY_RUN 이 막는다.
 2. **[확실] 11-23 증거 풀이 얇다.** 장마감 카드는 총 55장이고 관찰 시작 이후는 skipped 8장뿐이다(Q7). `executions` 0·최근 72시간 주문 0(Q10) — §5 의 "BUY 통과 카드 한정 소급"이 실제로는 매우 작은 표본이다. 가동률(E2)은 `job_run_log` 가 없어 여전히 소급 불가.
 3. **[확실] 스냅샷이 매일 24건 미만이다(Q14).** E2 의 대리 지표로 쓰려면 "정상 건수"의 기준 자체를 먼저 정해야 한다(하루 몇 건이 정상인지는 이 계약에서 미정 — 가동 스케줄 표 확인 필요).
 4. **[확실] `signal_cash_gate_*` 키가 없다(Q1).** B7 의 "신규 매수 가능 금액" 차단 판정은 코드 기본값에 의존한다 — 구현 때 기본값을 코드에서 읽어 화면 문구에 반영한다.
 5. 분류 변경 없음: B3·B4 "표본 0"과 A1·B4 "새 연결 필요"는 그대로 확정, B2 는 `position_state`(국내 1·해외 4)가 KIS 잔고 복제라는 점이 그대로. 휴장표 연도 공백 우려(§8)는 해소.
-
+6. **[Leader 제안 — Analyst·사용자 확인 필요] 홈 단계 파생 규칙** (12:47): 단계는 수동 플래그가 아니라 아래 조합에서 계산한다.
+   - **관찰(DRY_RUN) 단계**: `safety_dry_run=true` **또는** `safety_kill_switch=true` **또는** 검증 통과 전략(`backtested`·`paper_validated`) 0개. 지표 A 4종을 쓰고 가상 체결(`paper_fills`)은 별도 라벨, 손익은 표시하지 않는다(D5).
+   - **실거래 단계**: `safety_dry_run=false` **그리고** `safety_kill_switch=false` **그리고** enabled 전략 중 검증 통과 ≥ 1. 지표 B 를 쓴다.
+   - **혼합(예: DRY_RUN `false` 인데 전략이 전부 `unvalidated`)**: "실거래 준비 — 매수 차단"으로 표시한다(0 으로 쓰지 않는다).
+   - **청산 엔진은 단계와 별개 항목**(`exit_engine_enabled`·`exit_hard_stop_enabled`)으로 표시한다 — DRY_RUN 이 `false` 가 되면 검증 관문과 무관하게 실주문을 낼 수 있기 때문이다.
+   - 현재(10-30 12시대) 값은 관찰(DRY_RUN) 단계다(Q1·Q4).
