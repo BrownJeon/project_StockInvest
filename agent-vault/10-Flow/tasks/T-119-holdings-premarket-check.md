@@ -1,11 +1,11 @@
 ---
 task_id: T-119
 title: 보유 종목 개장 전 공시 체크포인트(설계서 단계 4 대체안 "B") — 보유 미국 종목 한정, ET 08:00 하루 1회, 알림만
-status: deployed
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-28
-updated: 2026-10-29
+updated: 2026-10-30
 base_ref: 0761fec
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa, codex, deployer]
@@ -212,7 +212,7 @@ waiting: []
 
 ## 최종 요약
 
-- **상태**: 배포 완료 + 스위치 켬, 첫 자동 실행 관측 대기(오늘 21:01). **완료 처리 조건(사용자 지시 2026-10-29)**: 오늘 21:01 KST 첫 자동 실행 관측(`holdings-premarket OK`·상태 ok·holdings 4·checked 3·`unmapped=NAS:SMH`·오류 없음)에서 이상 없으면 이 task 의 `status` 를 `deployed` → `done` 으로 변경하고 이 줄에 완료 시각을 남긴다(이어받는 세션이 처리).
+- **상태**: **완료(2026-10-30 05:2x)** — 배포 완료 + 스위치 켬, 첫 자동 실행 관측 정상. 2026-10-29 21:00:10 `yield_tick`(해외 21시 peek 에 양보) → 21:01:17 cron `holdings-premarket OK`, 10-30 05:2x 읽기 전용 확인: `holdings_premarket_status` status ok·holdings 4·checked 3·newFilings 0·alerted 0·consecutiveFailures 0·detail `unmapped=NAS:SMH`, cron-err 에 해당 오류 줄 없음. 아래 사용자 사전 지시에 따라 `deployed` → `done`. (이전 상태 문구: 첫 자동 실행 관측 대기(오늘 21:01).) **완료 처리 조건(사용자 지시 2026-10-29)**: 오늘 21:01 KST 첫 자동 실행 관측(`holdings-premarket OK`·상태 ok·holdings 4·checked 3·`unmapped=NAS:SMH`·오류 없음)에서 이상 없으면 이 task 의 `status` 를 `deployed` → `done` 으로 변경하고 이 줄에 완료 시각을 남긴다(이어받는 세션이 처리).
 - **무엇이 바뀌었나**: 미국 정규장 개장 전(ET 08시, 평일 하루 1회) **내가 보유한 미국 종목**의 새 SEC 공시(8-K·10-Q·10-K·20-F·40-F·6-K)를 확인해, 아직 분석에 반영되지 않은 새 공시가 있을 때만 텔레그램으로 알린다(`보유 종목 개장 전 공시`, "알림만, 주문 없음"). 지금 보유 4종목 중 AAPL·MU·ORCL 3개를 확인하고 SMH 는 ETF 라 SEC 회사 공시 대상이 아니다. 주문·분석·증권사 호출은 없다.
 - **배포·스위치**: 2026-10-29 13:51 릴리스 `20261029-134931-5ca78174`(ok), **13:58:22 스위치 `holdings_premarket_enabled`=true**(사전 승인).
 - **AI 가 검증한 것**: Reviewer PASS(1차 + 병합본 2·3차)·Judge C2·Codex(low 1건 후속)·QA PASS(직접 실행, 시각 의존 시험 결함 2건 수정 후 재확인: KST 13~14시 구간 포함 5개 시계에서 23/23), hp 러너 시험 53/0, jest 변이 10건·러너 변이 7건 잡힘. 실제 DB 읽기 전용 조회로 보유·CIK 매핑 확인. **못 한 것**: 실제 SEC 호출·텔레그램 발송(첫 실행 때 확인).
