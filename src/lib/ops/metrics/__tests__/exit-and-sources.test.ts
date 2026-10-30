@@ -3,13 +3,13 @@
  */
 jest.mock('@/lib/db', () => ({ getPool: jest.fn() }));
 
-import { ageRow, barsRow, buildAnomalies, expectedBarDate, newsRows } from '../anomalies';
+import { ageRow, barsRow, BROKER_LAST_SQL, buildAnomalies, expectedBarDate, newsRows, readDataSources, SNAPSHOT_MAX_SQL } from '../anomalies';
 import {
   consecutiveSessionDays, gapMetric, groupExitGates, lastEvalMetric, noRunMetric, summarizeProposals,
 } from '../exit-lines';
 import { homePostmortem, verifyPostmortemRows, type MarketSample } from '../postmortem-sample';
 import { buyableMetric, readOrderMaxPct } from '../live-set';
-import { fakeReader, kst } from './fake-reader';
+import { dbError, fakeReader, kst } from './fake-reader';
 
 const NONE = new Set<string>();
 
@@ -145,6 +145,20 @@ describe('원천 신선도', () => {
     expect(rows.overseas.state).toBe('stale');
     expect(newsRows([], now).domestic.state).toBe('unknown');
   });
+  // T-128 A3(a) — 가이드 §4.0 「테이블 없음(1146): prep + reason not_migrated」. 이번 범위는 브로커 원장 원천만(다른 원천은 그대로 — 아래 셋째 단언).
+  it('브로커 원장 표 없음(1146) → prep:not_migrated (조회 실패 아님) · 그 밖 실패는 error 그대로', async () => {
+    const now = kst('2026-10-31 10:00');
+    const closed = { domestic: new Set<string>(), overseas: new Set<string>() };
+    const broker = async (reply: Error) => (await readDataSources(fakeReader(now, [[BROKER_LAST_SQL, reply]]), closed)).find((r) => r.id === 'broker_ledger');
+    expect(await broker(dbError(1146))).toMatchObject({ id: 'broker_ledger', state: 'prep', reason: 'not_migrated', lastOkAt: null });
+    expect(await broker(dbError(1064))).toMatchObject({ id: 'broker_ledger', state: 'error', reason: 'db_error' });
+    const snap = (await readDataSources(fakeReader(now, [[SNAPSHOT_MAX_SQL, dbError(1146)]]), closed)).find((r) => r.id === 'portfolio_snapshot');
+    expect(snap).toMatchObject({ state: 'error', reason: 'not_migrated' });
+  });
+  it('브로커 원장 준비 중은 데이터 이상(A4) 항목이 아니다 — 조회 실패였을 때만 이상으로 셌다', () => {
+    const rows = [{ id: 'broker_ledger' as const, lastOkAt: null, state: 'prep' as const, dateRef: null, streak: null, reason: 'not_migrated' }];
+    expect(buildAnomalies(rows, [], true, 'x')).toMatchObject({ state: 'zero', value: { total: 0 } });
+  });
 });
 
 describe('A4 데이터 이상', () => {
@@ -259,10 +273,12 @@ describe('주문 문제 SQL', () => {
 describe('최근 활동 — 건너뜀·실패 사유는 코드로(「휴장」 단정 금지)', () => {
   const { analysisItem } = jest.requireActual('../activity') as typeof import('../activity');
   const row = (status: string, degraded: string | null) => ({ market: 'overseas', status, started_at: new Date(kst('2026-10-31 08:00')), counts_json: null, degraded_reason: degraded });
-  it('skip:<코드> → 사유 말 + params.skipReason, 모르는 코드는 그대로, 사유 없음은 그렇게', () => {
-    expect(analysisItem(row('skipped', 'skip:overseas_disabled'))).toMatchObject({ sub: '건너뜀 · 해외 분석 꺼짐', params: { skipReason: 'overseas_disabled' } });
-    expect(analysisItem(row('skipped', 'skip:brand_new_code'))?.sub).toBe('건너뜀 · 사유 brand_new_code');
-    expect(analysisItem(row('skipped', 'skip'))?.sub).toBe('건너뜀 · 사유 기록 없음');
+  // T-128 A2 — 서버 부제도 화면과 같은 사전(reason-dictionary)·같은 글자. 예전 서버 전용 문구(「해외 분석 꺼짐」·「사유 x」·
+  // 「사유 기록 없음」)는 화면이 덮어써 보인 적이 없다(home-render-t108 activitySub 시험) — 서버·화면 일치는 reason-dictionary-keys 시험이 본다.
+  it('skip:<코드> → 사유 말 + params.skipReason, 모르는 코드는 「사유 코드 x」, 사유 없음은 「사유 모름」', () => {
+    expect(analysisItem(row('skipped', 'skip:overseas_disabled'))).toMatchObject({ sub: '건너뜀 · 해외 장마감 후 분석 꺼짐', params: { skipReason: 'overseas_disabled' } });
+    expect(analysisItem(row('skipped', 'skip:brand_new_code'))?.sub).toBe('건너뜀 · 사유 코드 brand_new_code');
+    expect(analysisItem(row('skipped', 'skip'))?.sub).toBe('건너뜀 · 사유 모름');
     expect(analysisItem(row('failed', 'fx_unknown'))).toMatchObject({ sub: '실행 실패 · 환율 모름', params: { failReason: 'fx_unknown' } });
     for (const r of [row('skipped', 'skip:weekend'), row('skipped', 'skip:no_new_session')]) expect(analysisItem(r)?.sub).not.toContain('휴장');
   });

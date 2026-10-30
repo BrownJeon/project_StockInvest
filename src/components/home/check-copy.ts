@@ -119,7 +119,8 @@ export function checkLine(item: CheckItem, nowMs: number): CheckLine | null {
       const sideText = side === 'buy' ? '매수' : side === 'sell' ? '매도' : null;
       return { key: 'rejected', severity: 'e', glyph: '!',
         title: `주문 거부${n != null ? ` ${n}건` : ''}${sym ? ` — ${formatSymbolShort(sym)}${sideText ? ` ${sideText}` : ''}` : ''}`,
-        sub: join(orderReasonText(reason), '재시도하지 않음'), href: item.href };
+        // T-128 A3 — 사유가 비어 있으면(blocked_by IS NULL) 「재시도하지 않음」 만 남기지 않는다 — 아래 order_blocked 와 같은 처리
+        sub: join(orderReasonText(reason) ?? '사유 기록 없음', '재시도하지 않음'), href: item.href };
     }
     case 'order_blocked': {
       // 오늘 안전장치(한도·검증 관문 등 — 모든거래차단 제외)에 막혀 송신되지 않은 주문 (가이드 표에 없던 줄 — WP-A 추가, 문구는 Leader·designer 확인 대상)

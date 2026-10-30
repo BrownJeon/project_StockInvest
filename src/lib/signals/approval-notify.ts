@@ -29,6 +29,7 @@ import { extractEntryZone } from './approval-transitions';
 import { judgeFxRow, overseasLimitUnitUsd } from './signal-cash-gate';
 import { computeRealizedKrw, readSizingSnapshot } from './sizing-snapshot';
 import { deriveApprovalKey } from './telegram-callback-data';
+import { displayExitReason } from './exit-reason-display';
 
 const h = (v: unknown): string => escapeAlertText(typeof v === 'string' ? v : v == null ? '' : String(v));
 
@@ -151,13 +152,17 @@ function readExitKind(indicators: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined;
 }
 
-/** 사유 핵심 한 줄 (기존 규칙 그대로): exit 는 첫 줄, AI 선택은 `[AI N%]` 줄 우선, 그 외 첫 비어있지 않은 줄 — 100자 */
+/**
+ * 사유 핵심 한 줄 (기존 규칙 그대로): exit 는 첫 줄, AI 선택은 `[AI N%]` 줄 우선, 그 외 첫 비어있지 않은 줄 — 100자.
+ * T-128 A4 — 고른 줄의 청산 앞머리(`[하드 손절]`·`[EOD 손절]`)는 표시 용어로 바꾼 뒤 자른다(`displayExitReason` — 저장 텍스트는 그대로).
+ * 간단 본문 「사유:」 와 버튼 본문(`approval-message.ts` reasonLine)이 모두 이 함수를 거친다.
+ */
 export function pickReasonLine(reasoning: string | undefined, exitKind: string | undefined): string | undefined {
   if (!reasoning) return undefined;
   const lines = reasoning.split('\n').map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return undefined;
-  if (exitKind) return lines[0].slice(0, 100);
-  return (lines.find((l) => l.startsWith('[AI ')) ?? lines[0]).slice(0, 100);
+  if (exitKind) return displayExitReason(lines[0]).slice(0, 100);
+  return displayExitReason(lines.find((l) => l.startsWith('[AI ')) ?? lines[0]).slice(0, 100);
 }
 
 /** `label` 은 `getSymbolLabel` 의 반환값 — **이미 이스케이프돼 있다.** 다시 이스케이프하면 `&amp;amp;` 가 된다(2라운드 감사 R2-1). */

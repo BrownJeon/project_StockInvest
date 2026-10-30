@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
+import { displayExitReason } from '@/lib/signals/exit-reason-display';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,7 +65,8 @@ export async function GET(req: NextRequest) {
       symbol: r.symbol,
       side: r.side,
       strategyId: r.strategy_id,
-      reasoning: r.reasoning ?? '',
+      // T-128 A4 — 청산 앞머리만 표시 용어로(거절된 청산 시그널도 이 목록에 온다 — DB 값은 불변)
+      reasoning: displayExitReason(r.reasoning ?? ''),
       confidence: extractConfidence(r.indicators),
       priceAtSkip: r.price_at_skip != null ? Number(r.price_at_skip) : null,
       price1hAfter: r.price_1h_after != null ? Number(r.price_1h_after) : null,

@@ -680,7 +680,9 @@ describe('수정 6 — 분류코드를 영문 그대로 보이지 않는다 (R-U
     checkLines([{ kind, severity: kind === 'order_rejected' ? 'e' : 'w', count: 1, params: { symbol: 'NAS:AAPL', side: 'sell', reason, market: 'overseas' }, href: '/recommend?tab=log' }], NOW)[0];
   test.each([
     ['insufficient_balance', '주문 가능 금액 부족 · 재시도하지 않음'], ['kis_5xx', '증권사 서버 오류 — 결과 확인 필요 · 재시도하지 않음'],
-    ['market_closed', '장 마감·시간 외 · 재시도하지 않음'], ['totally_new', '사유 코드 totally_new · 재시도하지 않음'], [null, '재시도하지 않음'],
+    ['market_closed', '장 마감·시간 외 · 재시도하지 않음'], ['totally_new', '사유 코드 totally_new · 재시도하지 않음'],
+    // T-128 A3(c) — 사유가 비면(blocked_by IS NULL) 주문 차단 줄과 같이 「사유 기록 없음」 을 붙인다(예전 「재시도하지 않음」 만)
+    [null, '사유 기록 없음 · 재시도하지 않음'], ['', '사유 기록 없음 · 재시도하지 않음'],
   ] as const)('주문 거부 %s → %s', (code, want) => {
     const l = line('order_rejected', code);
     expect(l.title).toBe('주문 거부 1건 — AAPL 매도');

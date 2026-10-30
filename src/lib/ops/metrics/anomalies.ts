@@ -10,7 +10,7 @@
  *  | 브로커 원장 | `broker_fill_runs` 완료(`complete`) 실행 `MAX(started_at)` | 26시간 |
  * 원천마다 따로 읽고, 한 원천의 실패는 그 행만 error 다(0·정상으로 위장하지 않는다).
  */
-import { num, parseJsonObject, type OpsReader } from './read-only';
+import { num, OpsQueryError, parseJsonObject, type OpsReader } from './read-only';
 import { readLastBarDates } from './daily-bars-read';
 import { addDaysYmd } from '@/lib/strategy/us-session';
 import { isTradingDay, kstDateOf, kstIso, kstWallToMs, localDateOf, toMs, type ClosedDays } from './sessions';
@@ -50,6 +50,19 @@ function row(id: DataSourceId, state: MetricState, lastOkAt: string | null, extr
 function errRow(id: DataSourceId, e: unknown): DataSourceRow {
   const code = (e as { code?: unknown } | null)?.code;
   return row(id, 'error', null, { reason: typeof code === 'string' ? code : 'db_error' });
+}
+
+/**
+ * 브로커 원장 원천의 조회 실패 — **표 없음(1146 → `not_migrated`)은 준비 중**(`prep:not_migrated`, 가이드 §4.0 「테이블 없음: 그 섹션 prep」).
+ * 그 밖의 실패는 다른 원천과 같은 error. (T-128 A3 — 예전에는 표 없음도 `error:not_migrated` 로 「조회 실패」가 됐다. 운영에는 표가 있어 무해.)
+ * 이번 범위는 브로커 원장 원천 하나다(`broker_fill_runs` — 별도 마이그레이션 `T-081-wpd-broker-fills.sql` 로 생기는 표라 그 DDL 전
+ * 환경이 있을 수 있다). 다른 원천은 `errRow` 그대로: 스냅샷·환율·system_config 표는 부팅 스키마(`db.ts`)가 만들어 없을 수 없고,
+ * 같은 처지(마이그레이션 표)인 일봉 표(T-070 마이그레이션)는 A4 「데이터 이상」 건수 의미가 바뀌는 일이라 T-128 Leader 보고로 넘겼다
+ * (일봉 표 이름은 `daily-bars-read.ts` 에만 쓴다 — ops-read-only-fence 시험).
+ */
+export function brokerErrRow(e: unknown): DataSourceRow {
+  if (e instanceof OpsQueryError && e.code === 'not_migrated') return row('broker_ledger', 'prep', null, { reason: 'not_migrated' });
+  return errRow('broker_ledger', e);
 }
 
 /** 나이 기준 원천 — 순수. */
@@ -138,7 +151,7 @@ export async function readDataSources(r: OpsReader, closed: ClosedDays): Promise
     out.push(errRow('news_domestic', news.reason));
     out.push(errRow('news_overseas', news.reason));
   }
-  out.push(broker.status === 'fulfilled' ? ageRow('broker_ledger', toMs(broker.value[0]?.t), now, BROKER_LIMIT_MS) : errRow('broker_ledger', broker.reason));
+  out.push(broker.status === 'fulfilled' ? ageRow('broker_ledger', toMs(broker.value[0]?.t), now, BROKER_LIMIT_MS) : brokerErrRow(broker.reason));
   return out;
 }
 

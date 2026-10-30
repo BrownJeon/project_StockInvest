@@ -120,10 +120,21 @@ describe('2. 🔴 간단한 본문 — 기존 형식 그대로 + 이스케이프
     expect(unsafe(sent.plain[0].title)).toBe(0);
   });
 
-  test('청산 유형이 있으면 유형 줄을, 사유는 첫 줄을 쓴다', async () => {
+  // T-128 A4 — 저장된 앞머리 `[하드 손절]` 은 표시 때 승인 용어 `[손실한도 손절]` 로(유형 줄과 같은 말). T-129 때는 옛 앞머리를 그대로 단언했다.
+  test('청산 유형이 있으면 유형 줄을, 사유는 첫 줄을 쓴다 — 청산 앞머리는 표시 용어로', async () => {
     const { d, sent } = deps();
     await notifyApprovalRequest(args({ side: 'sell', indicators: { exit_kind: 'hard_stop' }, reasoning: '[하드 손절] 손실 -9.00% < -8%\n상세 설명' }), d);
-    expect(sent.plain[0].body).toBe('매도 ₩1,121,925 · TTL 28분\n유형: 🔴 손실한도 손절 (자금보호)\n사유: [하드 손절] 손실 -9.00% &lt; -8%');
+    expect(sent.plain[0].body).toBe('매도 ₩1,121,925 · TTL 28분\n유형: 🔴 손실한도 손절 (자금보호)\n사유: [손실한도 손절] 손실 -9.00% &lt; -8%');
+  });
+
+  test('T-128 A4 — 버튼 형식에서도 같은 사유 줄(장마감 전 손절 앞머리), 간단 본문과 같은 함수를 거친다', async () => {
+    const on = { key: KEY as Buffer | null, enabled: true, appUrl: null as string | null };
+    const { d, sent } = deps({}, OK, on);
+    await notifyApprovalRequest(args({ side: 'sell', indicators: { exit_kind: 'eod_loss_cut' }, reasoning: '[EOD 손절] KST 15:20~15:29 동시호가, 손실 -2.00% ≤ -1.5% → 시장가 청산' }), d);
+    expect(sent.rich).toHaveLength(1);
+    expect(sent.rich[0].text).toContain('[장마감 전 손절] KST 15:20~15:29 동시호가');
+    expect(sent.rich[0].plainBody).toContain('사유: [장마감 전 손절] KST 15:20~15:29 동시호가');
+    expect(`${sent.rich[0].text}\n${sent.rich[0].plainBody}`).not.toMatch(/EOD 손절|하드 손절/);
   });
 
   test('사유가 없으면 사유 줄이 없다', async () => {
@@ -142,6 +153,11 @@ describe('2. 🔴 간단한 본문 — 기존 형식 그대로 + 이스케이프
     expect(pickReasonLine('x'.repeat(300), undefined)).toHaveLength(100);
     expect(pickReasonLine('', undefined)).toBeUndefined();
     expect(pickReasonLine('\n  \n', undefined)).toBeUndefined();
+    // T-128 A4 — 고른 줄의 청산 앞머리만 표시 용어로(그 밖은 그대로), 바꾼 뒤 100자로 자른다
+    expect(pickReasonLine('[하드 손절] a\nb', 'hard_stop')).toBe('[손실한도 손절] a');
+    expect(pickReasonLine('  [EOD 손절] a', 'eod_loss_cut')).toBe('[장마감 전 손절] a');   // 줄 앞 공백은 줄 다듬기에서 먼저 빠진다
+    expect(pickReasonLine('[목표 익절] a', 'target_profit')).toBe('[목표 익절] a');
+    expect(pickReasonLine(`[하드 손절] ${'x'.repeat(300)}`, 'hard_stop')).toHaveLength(100);
   });
 });
 

@@ -24,7 +24,7 @@ function notifyBalancesIncomplete(detail: string): void {
     'snapshot:balances_incomplete',
     'warning',
     '포트폴리오 스냅샷 건너뜀 — 잔고 부분 실패',
-    `${detail}\n낮은 총액을 기록하면 킬스위치 24h 기준선이 오염되므로 이번 회차는 기록하지 않았습니다. `
+    `${detail}\n낮은 총액을 기록하면 모든거래차단 24h 기준선이 오염되므로 이번 회차는 기록하지 않았습니다. `
     + '다음 주기에 자동 복구되며, 반복되면 KIS 레이트리밋(EGW00201) 상태를 확인하세요.',
   );
 }
@@ -47,7 +47,7 @@ function notifyCashUnavailable(reason: CashHoldReason, detail: string): void {
     usd ? '🚨 포트폴리오 스냅샷 보류 — 해외 USD 예수금 확인 불가'
         : '🚨 포트폴리오 스냅샷 보류 — 국내 KRW 예수금 확인 불가',
     `${detail}\n`
-    + '예수금을 모르는 채 총액을 기록하면(행 생략 = 0원) 킬스위치 24h 기준선이 오염되어 거짓 발동하거나 실제 손실을 놓칩니다. '
+    + '예수금을 모르는 채 총액을 기록하면(행 생략 = 0원) 모든거래차단 24h 기준선이 오염되어 거짓 발동하거나 실제 손실을 놓칩니다. '
     + '이번 회차는 기록하지 않았습니다.\n'
     + '**보류가 이어지는 동안 24h drawdown 자동 발동은 동작하지 않습니다.**\n'
     + (usd
@@ -215,7 +215,7 @@ export async function POST(req: NextRequest) {
       if (volCheck.level === 'panic') {
         action = 'panic_alert';
         console.error(`[cron/portfolio-snapshot] PANIC ${volCheck.changePct?.toFixed(2)}% — 패닉 청산 필요`);
-        sendAlert('critical', '🚨 변동폭 패닉 경고', `포트폴리오 변동: ${volCheck.changePct?.toFixed(1)}% — Kill Switch 발동 권고`);
+        sendAlert('critical', '🚨 변동폭 패닉 경고', `포트폴리오 변동: ${volCheck.changePct?.toFixed(1)}% — 모든거래차단 발동 권고`);
       } else if (volCheck.level === 'block') {
         action = 'block_alert';
         console.error(`[cron/portfolio-snapshot] BLOCK ${volCheck.changePct?.toFixed(2)}% — KILL_SWITCH 권고`);

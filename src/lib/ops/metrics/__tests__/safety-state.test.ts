@@ -6,7 +6,7 @@ jest.mock('@/lib/db', () => ({ getPool: jest.fn(), ping: jest.fn(async () => tru
 
 import { getPool } from '@/lib/db';
 import { createReader } from '../read-only';
-import { createSafetyReader, crossCheck, readSafetyState, SAFETY_CFG_SQL, STRATEGIES_SQL, type SafetyStateDeps } from '../safety-state';
+import { createSafetyReader, crossCheck, readSafetyState, SAFETY_CFG_SQL, SAFETY_LANE_ALLOWED_SQL, STRATEGIES_SQL, type SafetyStateDeps } from '../safety-state';
 import { fakeReader, kst, type Route } from './fake-reader';
 
 const NOW = kst('2026-10-30 22:00');
@@ -128,5 +128,24 @@ describe('🔴 안전 판독 예약 레인 — 홈 질의가 전역 관문을 �
     await expect(r.rows(STRATEGIES_SQL)).resolves.toEqual([]);
     await expect(r.rows(SAFETY_CFG_SQL)).resolves.toEqual([]);
     await expect(r.rows('SELECT COUNT(*) AS n FROM signals')).rejects.toMatchObject({ code: 'not_select' });
+  });
+
+  // T-128 A3(b) — 예약 레인 허용 문장 목록을 원문 그대로 고정한다(문장을 더하거나 바꾸면 여기서 깨진다).
+  it('안전 레인 허용 SQL = 두 문장 원문 그대로(정확 일치), 바꿀 수 없다', () => {
+    expect(SAFETY_LANE_ALLOWED_SQL).toEqual([
+      'SELECT validation_status, enabled, COUNT(*) AS n FROM strategies GROUP BY validation_status, enabled',
+      "SELECT `key`, value, updated_at FROM system_config WHERE `key` IN ('notify_signal_auto_submit', 'safety_kill_switch', 'safety_dry_run')",
+    ]);
+    expect(Object.isFrozen(SAFETY_LANE_ALLOWED_SQL)).toBe(true);
+  });
+
+  it('안전 레인 reader 는 허용 목록의 문장만 보낸다 — 목록의 각 문장은 통과, 한 글자 다른 문장은 보내기 전에 거부', async () => {
+    const query = jest.fn(async () => [[], []]);
+    (getPool as jest.Mock).mockReturnValue({ query });
+    const r = createSafetyReader();
+    for (const sql of SAFETY_LANE_ALLOWED_SQL) await expect(r.rows(sql)).resolves.toEqual([]);
+    expect(query).toHaveBeenCalledTimes(SAFETY_LANE_ALLOWED_SQL.length);
+    await expect(r.rows(`${STRATEGIES_SQL} `)).rejects.toMatchObject({ code: 'not_select' });
+    expect(query).toHaveBeenCalledTimes(SAFETY_LANE_ALLOWED_SQL.length);
   });
 });

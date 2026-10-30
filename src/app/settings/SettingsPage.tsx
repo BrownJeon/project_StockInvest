@@ -231,7 +231,9 @@ export function SettingsPage() {
     Promise.all([
       // T-108 — 안전 조회 실패(네트워크·JSON 아님)는 null 로 — safety 가 비어 있는 채로 남고 안전 토글은 잠긴다(아래 [다시 읽기])
       fetch('/api/settings/safety').then(r => r.json()).catch(() => null),
-      fetch('/api/settings/strategies').then(r => r.json()),
+      // T-128 A1 — 전략 조회 실패도 null 로. 예전에는 이 요청 하나가 실패하면 Promise.all 전체가 거부돼 안전 값까지 상태에
+      // 못 들어가고(토글 잠김) unhandled rejection 이 났다. 이제 전략 목록만 비고 나머지 조회 결과는 그대로 쓴다.
+      fetch('/api/settings/strategies').then(r => r.json()).catch(() => null),
       fetch('/api/settings/hybrid').then(r => r.json()).catch(() => null),
     ]).then(([safetyData, stratData, hybridData]) => {
       if (safetyData?.ok) {
@@ -240,7 +242,7 @@ export function SettingsPage() {
         if (safetyData.notifySignal) setNotifySignal(safetyData.notifySignal as NotifySignalData);
         if (safetyData.report) setReport(safetyData.report as ReportData);
       }
-      if (stratData.ok) {
+      if (stratData?.ok) {
         setStrategies(stratData.strategies);
       }
       if (hybridData?.ok) {

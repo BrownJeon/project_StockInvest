@@ -292,3 +292,31 @@ test('1차 조회 예외 → 기존과 같은 500 {ok:false,error}', async () =>
   expect(body).toEqual({ ok: false, error: 'db down' });
   spy.mockRestore();
 });
+
+// ── 5. T-128 A4 — 응답 reasoning 의 청산 앞머리만 표시 용어로(SQL·바인딩·다른 키·다른 행 불변) ──────────────
+describe('T-128 A4 — 청산 앞머리 표시 별칭', () => {
+  test('옛 앞머리 행만 reasoning 이 바뀌고, 그 밖의 행·키·SQL 은 그대로 (withOrder 없음·있음 모두)', async () => {
+    const rows = [
+      sig(1, 10, { side: 'sell', reasoning: '[하드 손절] 손실 -9.00% ≤ -8% → 자금 보호 청산' }),
+      sig(2, null, { side: 'sell', reasoning: '[EOD 손절] KST 15:20~15:29 동시호가' }),
+      sig(3, null, { reasoning: '[목표 익절] +5%' }),
+      sig(4, null, { reasoning: 'RSI14=30 < 38' }),
+      sig(5, null),
+    ];
+    const expected = JSON.parse(JSON.stringify(rows));
+    expected[0].reasoning = '[손실한도 손절] 손실 -9.00% ≤ -8% → 자금 보호 청산';
+    expected[1].reasoning = '[장마감 전 손절] KST 15:20~15:29 동시호가';
+
+    setup(rows);
+    const plain = await call('?status=executing');
+    expect(query.mock.calls[0][0]).toBe(baseSql(`WHERE status = ? AND ${EXPIRES}`));
+    expect(plain.body.data).toEqual(expected);
+    for (const r of plain.body.data) expect(Object.keys(r).sort()).toEqual(Object.keys(rows[0]).sort());
+    expect(rows[0].reasoning).toBe('[하드 손절] 손실 -9.00% ≤ -8% → 자금 보호 청산');   // DB 행 객체는 건드리지 않는다
+
+    setup(rows, [{ id: 10, status: 'dry_run', blocked_by: 'dry_run' }]);
+    const joined = await call('?withOrder=1');
+    expect(joined.body.data[0]).toMatchObject({ reasoning: '[손실한도 손절] 손실 -9.00% ≤ -8% → 자금 보호 청산', order_status: 'dry_run' });
+    expect(joined.body.data[3].reasoning).toBe('RSI14=30 < 38');
+  });
+});

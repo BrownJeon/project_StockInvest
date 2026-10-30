@@ -48,6 +48,7 @@ import {
   attachSizingSnapshot,
   computeSizingSnapshot,
 } from './sizing-snapshot';
+import { displayExitReason } from './exit-reason-display';
 
 /** safety_limit_chase_disabled = true 면 chasePct 0 강제 (즉시 무력화 스위치). */
 async function getEffectiveChasePct(stylePct: number): Promise<number> {
@@ -752,8 +753,9 @@ export async function createSignal(
   }
   const flags2 = await getSignalNotifyFlags();
   if (flags2.autoSubmit) {
+    // T-128 A4 — 청산 앞머리(`[하드 손절]`·`[EOD 손절]`)는 표시 용어로 바꾼 뒤 자른다(표시 전용 — 위에서 저장한 reasoning 은 그대로).
     const reasonLine2 = input.reasoning
-      ? input.reasoning.split('\n').find(l => l.trim().length > 0)?.trim().slice(0, 100)
+      ? displayExitReason(input.reasoning.split('\n').find(l => l.trim().length > 0)?.trim())?.slice(0, 100)
       : undefined;
     const bodyLines2 = [
       `${input.side === 'buy' ? '매수' : '매도'} ₩${fmtNum(input.amountKRW)} · 주문 #${orderResult.orderId ?? '-'}`,

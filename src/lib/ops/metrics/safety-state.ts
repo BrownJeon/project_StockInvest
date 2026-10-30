@@ -48,11 +48,17 @@ export const SAFETY_CFG_SQL =
   "SELECT `key`, value, updated_at FROM system_config WHERE `key` IN ('notify_signal_auto_submit', 'safety_kill_switch', 'safety_dry_run')";
 
 /**
+ * 안전 판독 예약 레인이 보낼 수 있는 SQL 문장 전부(정확 일치) — T-128 A3: 상수로 내보내 시험이 `toEqual` 로 문장 원문까지 고정한다
+ * (여기에 문장을 더하거나 바꾸면 그 시험이 깨진다 — 홈 질의가 예약 레인으로 새어 들어오지 않게).
+ */
+export const SAFETY_LANE_ALLOWED_SQL: readonly string[] = Object.freeze([STRATEGIES_SQL, SAFETY_CFG_SQL]);
+
+/**
  * 안전 판독 전용 reader — **예약 레인**(OPS_SAFETY_GATE, 전역 관문과 별개)을 쓰고 위 두 문장만 보낼 수 있다.
  * 홈 질의가 전역 관문을 채우고 있어도 안전 띠(30초 재조회)가 그 뒤에 줄 서지 않는다(Reviewer R-DATA — 새 관문 Major).
  */
 export function createSafetyReader(nowMs?: number): OpsReader {
-  return createReader({ nowMs, gate: OPS_SAFETY_GATE, allowedSql: [STRATEGIES_SQL, SAFETY_CFG_SQL] });
+  return createReader({ nowMs, gate: OPS_SAFETY_GATE, allowedSql: SAFETY_LANE_ALLOWED_SQL });
 }
 
 const DEFAULT_DEPS: SafetyStateDeps = {

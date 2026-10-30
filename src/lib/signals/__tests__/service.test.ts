@@ -549,6 +549,25 @@ describe('signals/service', () => {
     expect(String(call![2]).replace(/&(?:amp|lt|gt);/g, '')).not.toMatch(/[<&>]/);
   });
 
+  // T-128 A4 — 자동 제출 알림의 청산 앞머리는 표시 용어로, DB 에 넣는 reasoning 은 엔진 원문 그대로.
+  test('자동 제출 알림: 청산 사유 앞머리 [하드 손절] → [손실한도 손절] 로 보이고, signals INSERT 값은 원문 그대로', async () => {
+    process.env.ANALYST_ENABLED = 'false';   // assist — hard_stop 청산은 모드와 무관하게 자동 제출(위 T-003 §4-1 시험과 같은 입력)
+    (sendAlert as jest.Mock).mockClear();
+    const cap = setupMockDB();
+    const raw = '[하드 손절] 손실 -9.00% ≤ -8% → 자금 보호 청산\n상세 줄';
+    const r = await createSignal({
+      symbol: 'KRW-BTC', side: 'sell', orderType: 'market', amountKRW: 3_000,
+      indicators: { exit_kind: 'hard_stop' }, reasoning: raw,
+    });
+    expect(r.autoSubmitted).toBe(true);
+    const call = (sendAlert as jest.Mock).mock.calls.find((c) => String(c[1]).includes('자동 제출'));
+    expect(call).toBeDefined();
+    expect(call![2]).toContain('사유: [손실한도 손절] 손실 -9.00% ≤ -8% → 자금 보호 청산');
+    expect(call![2]).not.toContain('하드 손절');
+    const insert = cap.queries.find((q) => /INSERT INTO signals/i.test(q.sql));
+    expect(insert?.params).toContain(raw);   // 저장 텍스트 불변
+  });
+
   test('approveSignalHybrid 정상 → approved_pending_entry 로 원자적 전이', async () => {
     const cap = setupMockDB({ signalRow: PENDING_ROW });
     const r = await approveSignalHybrid(5150);

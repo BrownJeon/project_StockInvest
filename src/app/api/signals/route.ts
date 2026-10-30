@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { isEngineEnabled } from '@/lib/signals/router';
 import { createSignal } from '@/lib/signals/service';
+import { withDisplayReasoning } from '@/lib/signals/exit-reason-display';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import {
   invalidNumericField,
@@ -146,7 +147,7 @@ export async function GET(req: Request) {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const pool = getPool();
-    const [rows] = await pool.query<RowDataPacket[]>(
+    const [dbRows] = await pool.query<RowDataPacket[]>(
       `SELECT id, strategy_id, symbol, side, order_type, price, quantity, amount_krw,
               reasoning, indicators, status, expires_at, valid_from, market, scenario_source,
               consumed_order_id, created_at, updated_at
@@ -156,6 +157,9 @@ export async function GET(req: Request) {
        LIMIT ?`,
       [...params, limit],
     );
+    // T-128 A4 — 응답 `reasoning` 의 청산 앞머리만 표시 용어로(`withDisplayReasoning` — 바뀔 것이 없는 행은 같은 객체 그대로,
+    // DB 값·SQL·바인딩·다른 키는 불변). 이 목록을 그리는 화면들이 같은 말을 보게 응답 변환부에서 한 번만 바꾼다.
+    const rows = dbRows.map(withDisplayReasoning);
     if (!withOrder) return Response.json({ ok: true, data: rows });
 
     // 2차 조회 — 번호가 있는 행만, 중복 제거. 실패하면 바깥 catch 로 500:

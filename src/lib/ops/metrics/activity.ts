@@ -10,6 +10,7 @@
  */
 import { VALIDATION_GATE_INDICATOR } from '@/lib/signals/paper-fill';
 import { EXIT_STRATEGY_ID } from '@/lib/strategy/exit-engine';
+import { analysisReasonText, skipText } from '@/lib/ops/reason-dictionary';
 import { POST_MARKET_JOB, skipReasonOf } from './analysis-runs';
 import { count, num, OpsQueryError, parseJsonObject, type OpsReader } from './read-only';
 import { currentSessionDay, kstIso, kstSql, toMs } from './sessions';
@@ -39,16 +40,9 @@ export const EXIT_KIND_LABEL: Readonly<Record<string, string>> = {
   eod_loss_cut: '장마감 전 손절', hard_stop: '손실한도 손절', target_profit: '익절', trailing_stop: '트레일링',
 };
 const SIDE_KO: Record<string, string> = { buy: '매수', sell: '매도' };
-/**
- * 장마감 분석 건너뜀·실패 사유 코드 → 짧은 말(엔진 소스에서 확인한 코드만: post-market-engine.ts weekend,
- * post-market-overseas.ts 475~573). 문구는 designer 확인 대상 — 화면은 params.skipReason·failReason 으로 자기 사전을 쓸 수 있다.
- */
-export const REASON_KO: Readonly<Record<string, string>> = {
-  weekend: '주말', overseas_disabled: '해외 분석 꺼짐', overseas_market_disabled: '해외 시장 꺼짐', us_session_open: '미국 장중',
-  no_new_session: '새 세션 없음', holidays_unknown: '휴장표 모름', fx_unknown: '환율 모름', earnings_unknown: '실적 일정 모름',
-  candles_unavailable: '일봉 없음', fx_inconsistent: '환율 불일치', candle_scale_suspect: '일봉 단위 의심', rag_fail: '참고 자료 조회 실패',
-  no_symbols: '대상 종목 없음',
-};
+// 장마감 분석 건너뜀·실패 사유 코드 → 말: 화면과 같은 사전 하나(`@/lib/ops/reason-dictionary` — T-128 A2).
+// 예전 이 파일의 서버 전용 사전 `REASON_KO` 는 화면 사전과 문구가 달랐고, 화면(ActivitySection.activitySub)이 그 부제를 덮어써
+// 사용자에게 보인 적이 없다 — 그래서 서버 부제도 화면이 그리는 글자와 같게 맞췄다(보이는 글자 불변).
 
 export function analysisItem(row: Record<string, unknown>): ActivityItem | null {
   const at = toMs(row.started_at);
@@ -68,9 +62,10 @@ export function analysisItem(row: Record<string, unknown>): ActivityItem | null 
   const skipReason = status === 'skipped' ? skipReasonOf(degraded) : null;
   const failReason = status === 'failed' || status === 'degraded' || status === 'partial' ? degraded : null;
   let sub: string;
-  // 건너뜀·실패 사유는 코드로 말한다 — 「휴장」으로 단정하지 않는다(R-UI M2). 모르는 코드는 그대로 보인다(화면이 params 로 다시 쓸 수 있다).
-  if (status === 'failed') sub = failReason ? `실행 실패 · ${REASON_KO[failReason] ?? `사유 ${failReason}`}` : '실행 실패 — 데이터 상태에서 확인';
-  else if (status === 'skipped') sub = skipReason ? `건너뜀 · ${REASON_KO[skipReason] ?? `사유 ${skipReason}`}` : '건너뜀 · 사유 기록 없음';
+  // 건너뜀·실패 사유는 코드로 말한다 — 「휴장」으로 단정하지 않는다(R-UI M2). 모르는 코드는 「사유 코드 {code}」(화면 사전 규칙).
+  const failWhy = status === 'failed' ? analysisReasonText(failReason) : null;
+  if (status === 'failed') sub = failWhy ? `실행 실패 · ${failWhy}` : '실행 실패 — 데이터 상태에서 확인';
+  else if (status === 'skipped') sub = skipText(skipReason);
   else if (evaluated == null) sub = '건수 기록 없음';
   else if (signals != null && signals > 0 && blocked != null && blocked >= signals) sub = `${evaluated}종목 · 시그널 ${signals}건 → 검증 관문 차단`;
   else sub = `${evaluated}종목 · 시그널 ${signals ?? 0}건`;

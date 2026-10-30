@@ -12,8 +12,10 @@
  *  - `console.*(…)` 호출 안의 리터럴은 운영 로그라 뺀다(pm2 로그 grep·운영 점검 문구가 그 글자를 기대한다 — 가이드 §3.3 제외 목록).
  *  - 그 밖에 남는 옛 용어는 아래 ALLOWED 에 **파일 + 리터럴 원문 정확 일치 + 사유**로만 허용한다. 새로 생기면 시험이 깨진다.
  *
- * 이 울타리가 보지 않는 것(가이드 §3.3 「제외」): `exit-engine.ts` 의 `reasonHead`(DB `signals.reason` 저장 텍스트),
- * 장마감 후 분석 엔진·판단 기록기·`volatility-guard`·`portfolio-snapshot/route.ts` 의 내부 경보(v1 제외).
+ * 이 울타리가 보지 않는 것(가이드 §3.3 「제외」): `exit-engine.ts` 의 `reasonHead`(DB `signals.reason` 저장 텍스트 — 표시 때만
+ * `lib/signals/exit-reason-display.ts` 가 승인 용어로 바꾼다. 그 별칭 표의 옛 앞머리는 입력 키라 이 울타리 대상이 아니다),
+ * 장마감 후 분석 엔진·판단 기록기의 내부 경보(v1 제외).
+ * T-128 A5 — `volatility-guard.ts`·`portfolio-snapshot/route.ts` 경보 6건을 「모든거래차단」으로 정정하고 제외에서 빼 울타리에 넣었다.
  * (판단 기록 모듈 파일 이름을 여기 그대로 적지 않는다 — strategy/records 의 경계 시험이 src 전체에서 그 이름을 센다)
  */
 import { readFileSync } from 'node:fs';
@@ -30,9 +32,12 @@ const TARGETS = [
   'lib/strategy/exit-switch.ts',
   'lib/reports/trade-report.ts',
   'lib/safety/kill-switch.ts',
+  // T-128 A5 — 스냅샷 실명·저장 거부·회복·잔고 부분 실패·예수금 확인 불가·변동폭 패닉 경보(발송 조건·임계·스로틀은 그대로)
+  'lib/safety/volatility-guard.ts',
+  'app/api/cron/portfolio-snapshot/route.ts',
 ] as const;
 
-/** 옛 용어 — 「DRY_RUN —」만이 아니라 DRY_RUN 전체를 막는다(이 7파일의 비로그 리터럴에 env 이름 DRY_RUN 이 들어갈 자리가 없다). */
+/** 옛 용어 — 「DRY_RUN —」만이 아니라 DRY_RUN 전체를 막는다(이 9파일의 비로그 리터럴에 env 이름 DRY_RUN 이 들어갈 자리가 없다). */
 const OLD_TERMS = /DRY_RUN|DRY RUN|킬스위치|KILL_SWITCH|[Kk]ill [Ss]witch|하드 ?손절|EOD ?손절|표본 ?부족/g;
 
 interface Hit { file: string; literal: string; terms: string[] }
@@ -88,8 +93,8 @@ const ALLOWED: Array<Hit & { reason: string }> = [
 const FILES = TARGETS.map((rel) => ({ rel, text: readFileSync(join(SRC, rel), 'utf8') }));
 
 describe('T-129 서버 사용자 문구 — 옛 용어 울타리', () => {
-  test('대상 7파일을 실제로 읽었고, 바뀐 용어가 들어 있다 (경로 오류로 빈 검사가 통과하지 않게)', () => {
-    expect(FILES).toHaveLength(7);
+  test('대상 9파일을 실제로 읽었고, 바뀐 용어가 들어 있다 (경로 오류로 빈 검사가 통과하지 않게)', () => {
+    expect(FILES).toHaveLength(9);
     for (const f of FILES) expect(literals(f.rel, f.text).length).toBeGreaterThan(5);
     const all = (rel: string) => literals(rel, FILES.find(f => f.rel === rel)!.text).map(l => l.text).join('\n');
     expect(all('lib/signals/approval-message.ts')).toContain('손실한도 손절');
@@ -99,6 +104,9 @@ describe('T-129 서버 사용자 문구 — 옛 용어 울타리', () => {
     expect(all('lib/strategy/exit-switch.ts')).toContain('손실한도 손절·장마감 전 손절·트레일링·익절');
     expect(all('lib/reports/trade-report.ts')).toContain('건수 적음');
     expect(all('lib/safety/kill-switch.ts')).toContain('모든거래차단 자동 발동');
+    expect(all('lib/safety/volatility-guard.ts')).toContain('모든거래차단 24h drawdown 기준선');
+    expect(all('lib/safety/volatility-guard.ts')).toContain('모든거래차단 기준선이 다시 갱신됩니다');
+    expect(all('app/api/cron/portfolio-snapshot/route.ts')).toContain('모든거래차단 발동 권고');
   });
 
   test('울타리 자체 점검 — 로그·주석·정규식·식별자는 빼고, 그 밖의 문자열·템플릿 조각은 한글 그대로 잡는다', () => {

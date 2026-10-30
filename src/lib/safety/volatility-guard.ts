@@ -627,7 +627,7 @@ export async function reportSnapshotBlindness(blocking: string, source: string):
         `마지막 정상 스냅샷: ${f.latestTs?.toISOString() ?? '없음'}\n`
         + `시장 상태: ${f.session === 'closed' ? '전 시장 폐장 중' : f.session === 'open' ? '장중' : '개장 여부 판정 실패'}\n`
         + `현재 저장을 막는 사유: ${blocking} (source=${source})\n\n`
-        + '이 값은 킬스위치 24h drawdown 기준선입니다. 관측이 멈춘 동안에는 실제 급락을 '
+        + '이 값은 모든거래차단 24h drawdown 기준선입니다. 관측이 멈춘 동안에는 실제 급락을 '
         + '감지하지 못할 수 있습니다.\n'
         + '· 시세·잔고 조회 실패라면 KIS 레이트리밋(EGW00201)·토큰 상태를 확인하세요.\n'
         + '· 특정 종목이 거래정지·상장폐지로 **정말 0원**이라면 '
@@ -655,7 +655,7 @@ function reportSnapshotRecovered(): void {
   sendAlert(
     'info',
     '✅ 포트폴리오 스냅샷 정상화',
-    `관측이 재개됐습니다 (critical 경보 이후 ${blindMins}분). 킬스위치 기준선이 다시 갱신됩니다.`,
+    `관측이 재개됐습니다 (critical 경보 이후 ${blindMins}분). 모든거래차단 기준선이 다시 갱신됩니다.`,
   );
 }
 
@@ -669,7 +669,7 @@ function rejectSnapshot(r: SnapshotReject, source: string): void {
     '포트폴리오 스냅샷 저장 거부',
     `사유(${r.code}): ${r.detail}\n`
     + `source=${source}\n`
-    + '스냅샷은 킬스위치 24h 기준선·변동성 가드·주문한도의 입력값이라, 오염된 값을 넣는 대신 '
+    + '스냅샷은 모든거래차단 24h 기준선·변동성 가드·주문한도의 입력값이라, 오염된 값을 넣는 대신 '
     + '이번 tick 을 건너뜁니다. 반복되면 KIS 시세·잔고 조회 상태를 확인하세요.',
   );
   // 거부가 길어지면 그 자체가 위험이다 — 실명 시간을 따로 재서 승격 경보한다.

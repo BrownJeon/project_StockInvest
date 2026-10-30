@@ -1,5 +1,6 @@
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { getPool } from '@/lib/db';
+import { withDisplayReasoning } from '@/lib/signals/exit-reason-display';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,8 @@ export async function GET(
       return Response.json({ ok: false, error: 'not found' }, { status: 404 });
     }
 
-    const row = rows[0];
+    // T-128 A4 — 응답 `reasoning` 의 청산 앞머리만 표시 용어로(시나리오 상세 화면이 그대로 그린다 — DB 값은 불변)
+    const row = withDisplayReasoning(rows[0]);
     // indicators는 JSON 문자열로 저장돼 있을 수 있음
     if (typeof row['indicators'] === 'string') {
       try { row['indicators'] = JSON.parse(row['indicators']); } catch { /* keep as string */ }
