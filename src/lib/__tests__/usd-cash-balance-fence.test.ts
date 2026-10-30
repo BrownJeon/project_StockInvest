@@ -79,6 +79,20 @@ const ALLOWED: Record<string, number> = {
   'lib/ledger/snapshots.ts': 1,
 };
 
+/** `.get('USD')`·`.has('USD')`·`new Set([... 'USD' ...])` — Map·Set 조회로 USD 행을 고르는 모양(따옴표 종류 무관). */
+const USD_LOOKUP = /\.(?:get|has)\(\s*['"`]USD['"`]\s*\)|new Set\(\s*\[[^\]]*['"`]USD['"`][^\]]*\]\s*\)/g;
+
+/**
+ * 허용 목록 — Map·Set 조회. 항목마다 그것이 `kis.getBalances()` 의 잔고 배열이 아니라 **크론이 기록한 스냅샷 positions** 를 읽는 이유.
+ */
+const ALLOWED_LOOKUP: Record<string, number> = {
+  // T-041 스냅샷 positions 의 현금 행(KRW·USD) 판별 집합 `CASH_CURRENCIES` — 구성 비교·가려진 USD 이월·T-108 보유 목록이 같이 쓴다.
+  'lib/safety/snapshot-composition.ts': 1,
+  // T-108 B7 신규 매수 가능 — 최신 스냅샷 positions 의 USD 현금 행(T-056 이 기록)을 `cash.get('USD')` 로 읽는다(평가액 합산 1·예수금 1).
+  //   행이 없으면 unknown(usd_cash_unknown) 이고 0 으로 바꾸지 않는다. 잔고 배열을 읽지 않는다(KIS 호출 0).
+  'lib/ops/metrics/live-set.ts': 2,
+};
+
 describe('🔴 USD 예수금 경계 — 잔고 배열에서 USD 를 골라 읽는 새 지점이 생기면 실패한다', () => {
   test('같음 비교 위치·개수가 허용 목록과 정확히 같다', () => {
     expect(usdEqualityCounts()).toEqual(ALLOWED);
@@ -93,6 +107,31 @@ describe('🔴 USD 예수금 경계 — 잔고 배열에서 USD 를 골라 읽�
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * (T-108 Reviewer R-DATA Minor-a) 같음 비교 말고 **Map·Set 조회**로 USD 행을 고르는 지점도 파일·개수로 고정한다 —
+   * `.get('USD')`·`.has('USD')`, `'USD'` 를 담은 `new Set([...])`(현금 행 판별 집합). 새 지점이 생기면 실패한다.
+   */
+  test('Map·Set 로 USD 행을 고르는 위치·개수가 허용 목록과 정확히 같다', () => {
+    const counts: Record<string, number> = {};
+    for (const f of FILES) {
+      for (const line of f.text.split('\n')) {
+        const code = line.replace(/^\s*(\*|\/\*|\/\/).*$/, '').replace(/\/\/.*$/, '');
+        const n = (code.match(USD_LOOKUP) ?? []).length;
+        if (n > 0) counts[f.path] = (counts[f.path] ?? 0) + n;
+      }
+    }
+    expect(counts).toEqual(ALLOWED_LOOKUP);
+  });
+
+  test('Map·Set 패턴 자기 점검', () => {
+    const hit = (s: string) => (s.match(USD_LOOKUP) ?? []).length;
+    expect(hit("snap.cash.get('USD')")).toBe(1);
+    expect(hit('byCur.has("USD")')).toBe(1);
+    expect(hit("new Set(['KRW', 'USD'])")).toBe(1);
+    expect(hit("cash.get('KRW')")).toBe(0);
+    expect(hit("m.get('USD_KRW')")).toBe(0);
   });
 
   test('패턴 자기 점검 — 잡아야 할 모양은 잡고, 제외 비교는 세지 않는다', () => {

@@ -11,6 +11,17 @@ import { RiskPolicySummaryRow } from './RiskPolicySummaryRow';
 import { CashLedgerSummaryRow } from './CashLedgerSummaryRow';
 import { AppSection } from './AppSection';
 import { EnforcedStrip } from '@/components/risk/EnforcedStrip';
+import { liveTradingFromDryRun, dryRunFromLiveTrading, LIVE_TRADING_LABEL } from '@/lib/safety/live-trading';
+
+/**
+ * T-108 — 손실한도 손절 기본 임계(%) 안내 문구용. `@/lib/risk/defaults` 의 `EXIT_ENGINE_DEFAULT_HARD_STOP_PCT`·
+ * `@/lib/strategy/style.ts` 의 `DEFAULT_STYLE_CONFIG.hardStopPct` 와 같은 값이다. 이 화면은 risk 모듈을 import 할 수 없고
+ * (`risk/__tests__/isolation.test.ts` 가 import 2줄을 고정), style.ts 는 DB 모듈을 끌고 와 클라이언트에서 쓸 수 없어 여기 둔다.
+ * 세 값이 어긋나면 `settings-live-trading-t108.test.ts` 가 실패한다. 실제 적용값은 운영 설정이 바꿀 수 있어 「기본」이라고 쓴다.
+ */
+export const HARD_STOP_DEFAULT_PCT = 1.5;
+/** 안전 값을 못 읽었을 때(safety 없음) — OFF·ON 어느 쪽도 단정하지 않는다(R-UI ①) */
+const SAFETY_UNREAD = '값을 읽지 못했습니다 — 지금 상태를 알 수 없습니다';
 
 interface StrategyItem {
   id: string;
@@ -115,19 +126,25 @@ export async function patchSetting(url: string, body: unknown): Promise<SaveFail
   return r.ok ? null : r.failure;
 }
 
-function Toggle({ checked, onChange, danger }: { checked: boolean; onChange: (v: boolean) => void; danger?: boolean }) {
+/**
+ * `disabled`(T-108 Codex C2 high — Leader 승인): 안전 값을 못 읽은 동안 안전 토글을 잠근다. 잠긴 토글은 눌러도
+ * onChange 를 부르지 않는다. disabled 가 없으면(정상 상태) 마크업·동작은 이전과 같다.
+ */
+function Toggle({ checked, onChange, danger, disabled }: { checked: boolean; onChange: (v: boolean) => void; danger?: boolean; disabled?: boolean }) {
   return (
     <div
       role="switch"
       aria-checked={checked}
-      onClick={() => onChange(!checked)}
+      aria-disabled={disabled ? true : undefined}
+      onClick={() => { if (!disabled) onChange(!checked); }}
       style={{
         position: 'relative', width: 44, height: 24, borderRadius: 12,
-        cursor: 'pointer', flexShrink: 0,
+        cursor: disabled ? 'not-allowed' : 'pointer', flexShrink: 0,
         background: checked
           ? (danger ? 'var(--down)' : 'var(--ok)')
           : 'var(--bg3)',
         transition: 'background .2s',
+        ...(disabled ? { opacity: 0.45 } : {}),
       }}
     >
       <div style={{
@@ -150,9 +167,9 @@ export function PostMarketOverseasRow({ enabled, onToggle }: { enabled: boolean;
         <div style={{ fontSize: 14 }}>해외 장마감 후 분석 (미국 시나리오)</div>
         <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
           {enabled
-            ? 'ON — 미국 정규장이 열린 날의 다음 날 아침 08:00(KST)에 미국 종목 시나리오 카드를 만듭니다(미국 휴장일 다음날은 건너뜀).'
-            : 'OFF — 켜면 미국 정규장이 열린 날의 다음 날 아침 08:00(KST)에 미국 종목 시나리오 카드를 만듭니다(미국 휴장일 다음날은 건너뜀).'}
-          {' '}주문은 하지 않으며 승인·킬스위치·검증 관문이 그대로 적용됩니다.
+            ? 'ON — 미국 정규장이 열린 날의 다음 날 아침 08:00(KST)에 미국 종목 매수 시그널을 만듭니다(미국 휴장일 다음날은 건너뜀).'
+            : 'OFF — 켜면 미국 정규장이 열린 날의 다음 날 아침 08:00(KST)에 미국 종목 매수 시그널을 만듭니다(미국 휴장일 다음날은 건너뜀).'}
+          {' '}주문은 하지 않으며 승인·모든거래차단·검증 관문이 그대로 적용됩니다.
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
@@ -212,11 +229,12 @@ export function SettingsPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/settings/safety').then(r => r.json()),
+      // T-108 — 안전 조회 실패(네트워크·JSON 아님)는 null 로 — safety 가 비어 있는 채로 남고 안전 토글은 잠긴다(아래 [다시 읽기])
+      fetch('/api/settings/safety').then(r => r.json()).catch(() => null),
       fetch('/api/settings/strategies').then(r => r.json()),
       fetch('/api/settings/hybrid').then(r => r.json()).catch(() => null),
     ]).then(([safetyData, stratData, hybridData]) => {
-      if (safetyData.ok) {
+      if (safetyData?.ok) {
         setSafety(safetyData.safety);
         setExchanges(safetyData.exchanges);
         if (safetyData.notifySignal) setNotifySignal(safetyData.notifySignal as NotifySignalData);
@@ -229,6 +247,22 @@ export function SettingsPage() {
         setHybridMode(hybridData.enabled ?? false);
       }
     }).finally(() => setLoading(false));
+  }, []);
+
+  /**
+   * T-108 [다시 읽기] — 안전 값을 못 읽었을 때 안전 조회(`/api/settings/safety` GET 1회)만 다시 한다.
+   * 성공하면 처음 불러올 때와 같은 칸(safety·exchanges·알림·리포트)을 채운다 — 알림·리포트를 기본값으로 둔 채
+   * 저장 바가 서버 값을 기본값으로 덮어쓰지 않게. 실패하면 아무것도 바꾸지 않는다(토글은 잠긴 채).
+   */
+  const reloadSafety = useCallback(async () => {
+    const r = await requestJson<{ safety?: SafetyData; exchanges?: ExchangeData; notifySignal?: NotifySignalData; report?: ReportData }>(
+      '/api/settings/safety', { cache: 'no-store' },
+    );
+    if (!r.ok || !r.data?.safety) return;
+    setSafety(r.data.safety);
+    if (r.data.exchanges) setExchanges(r.data.exchanges);
+    if (r.data.notifySignal) setNotifySignal(r.data.notifySignal);
+    if (r.data.report) setReport(r.data.report);
   }, []);
 
   const toggleHybridMode = useCallback(async (enabled: boolean) => {
@@ -282,8 +316,8 @@ export function SettingsPage() {
     setSaveError(
       `${label} 전환이 저장되지 않았습니다 — ${failure.message} ` +
       (fromServer
-        ? `${label} 은 서버의 실제 상태로 되돌렸습니다 (다른 미저장 편집은 그대로 둡니다).`
-        : `${label} 을 직전 값으로 되돌렸습니다 — 서버 상태를 확인하지 못했으니 새로고침으로 확인하세요.`),
+        ? `${label} 값은 서버의 실제 상태로 되돌렸습니다 (다른 미저장 편집은 그대로 둡니다).`
+        : `${label} 값을 직전 값으로 되돌렸습니다 — 서버 상태를 확인하지 못했으니 새로고침으로 확인하세요.`),
     );
     setSaveState('error');
   }, []);
@@ -346,6 +380,10 @@ export function SettingsPage() {
   }, [safety, notifySignal, report, strategies]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted)' }}>불러오는 중…</div>;
+
+  // T-108 §3.5 — 화면 「실거래여부」(ON = 실거래 가능)는 내부 dryRun 과 방향이 반대다. 뒤집기는 live-trading.ts 한 곳에서만.
+  // 값을 못 읽었으면(safety 없음) dryRun=true 로 보고 실거래 아님(OFF)으로 그린다 — 토글·경고 상자가 같은 값을 쓴다.
+  const liveTrading = liveTradingFromDryRun(safety?.dryRun ?? true);
 
   return (
     <div style={{ overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -426,7 +464,7 @@ export function SettingsPage() {
                 : 'OFF — 승인하면 즉시 주문'}
             </div>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              ON 시 추천(💡) 탭에서 진입가·수량을 편집한 뒤 감시를 시작할 수 있습니다.
+              ON 시 거래 › 운용 현황에서 진입가·수량을 편집한 뒤 감시를 시작할 수 있습니다.
             </div>
             {/*
               이 스위치가 자동매매 스위치로 오인되면 안 된다.
@@ -452,7 +490,7 @@ export function SettingsPage() {
                 borderRadius: 8, padding: '8px 10px',
               }}>
                 🔕 <b>현재 자동 청산 엔진이 꺼져 있습니다 — 손절도 자동으로 나가지 않습니다.</b><br />
-                하드 손절·장마감 손실 차단·트레일링 스탑·목표 익절 <b>네 가지 모두</b> 주문이
+                손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 <b>네 가지 모두</b> 주문이
                 만들어지지 않습니다. 아래 <b>안전장치 (공통) &gt; 자동 청산 엔진</b>에서 다시 켤 수 있습니다.
               </div>
             ) : (
@@ -462,7 +500,7 @@ export function SettingsPage() {
                 borderRadius: 8, padding: '8px 10px',
               }}>
                 ⚠️ <b>예외 — 보유 종목 보호 청산은 승인 없이 즉시 주문됩니다.</b><br />
-                하드 손절과 장마감 손실 차단 매도는 <b>이 설정·자동조종 모드와 무관하게</b> 자동
+                손실한도 손절과 장마감 전 손절 매도는 <b>이 설정·자동조종 모드와 무관하게</b> 자동
                 제출됩니다. 손실이 커지는 것을 막는 기능이라 사람의 응답을 기다리지 않습니다.
                 (목표 익절·트레일링 스탑 매도는 일반 승인 경로를 따릅니다.)
               </div>
@@ -488,24 +526,47 @@ export function SettingsPage() {
         {/* T-066 — 이 카드는 실제 주문에 적용된다(집행 중). 아래 '리스크 정책' 행은 표시·위험 계산·알림(주문·매도 없음)이라 구분한다. */}
         <EnforcedStrip />
 
+        {/* T-108 — 안전 값을 못 읽은 동안: 세 안전 토글(실거래여부·모든거래차단·자동 청산 엔진)을 잠그고 다시 읽기를 둔다 */}
+        {!safety && (
+          <div role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 16px', borderBottom: '1px solid var(--border)', background: 'rgba(245,158,11,.08)' }}>
+            <span style={{ fontSize: 12, color: '#f59e0b', lineHeight: 1.5, minWidth: 0 }}>
+              안전 값을 읽지 못해 세 안전 토글(실거래여부·모든거래차단·자동 청산 엔진)을 잠갔습니다 — 다시 읽은 뒤에 바꿀 수 있습니다
+            </span>
+            <button
+              type="button"
+              onClick={() => { void reloadSafety(); }}
+              style={{ flexShrink: 0, minHeight: 44, padding: '0 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text)' }}
+            >
+              다시 읽기
+            </button>
+          </div>
+        )}
+
         {/* 실거래 여부 toggle (내부 dryRun 의미를 반전해 노출) */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
-            <div style={{ fontSize: 14 }}>실거래 여부</div>
+            <div style={{ fontSize: 14 }}>{LIVE_TRADING_LABEL}</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-              {safety?.dryRun ? 'OFF — 실제 거래소 API 차단 (안전, DRY_RUN)' : 'ON — 실제 주문 전송 중'}
+              {!safety ? SAFETY_UNREAD : liveTrading ? 'ON — 실거래 가능(실제 주문)' : 'OFF — 실거래 차단(기록만)'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+              ON 이면 주문이 거래소로 나가고, OFF 이면 기록만 남깁니다
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: safety?.dryRun ? 'var(--ok)' : 'var(--down)' }}>
-              {safety?.dryRun ? 'OFF' : 'ON'}
+            <span style={{ fontSize: 12, fontWeight: 600, color: !safety ? 'var(--muted)' : liveTrading ? 'var(--down)' : 'var(--ok)' }}>
+              {!safety ? '—' : liveTrading ? 'ON' : 'OFF'}
             </span>
             <Toggle
-              checked={!(safety?.dryRun ?? true)}
+              checked={liveTrading}
+              disabled={!safety}
               onChange={v => {
+                if (!safety) return;   // 값을 못 읽은 동안은 저장하지 않는다(잠금 이중 확인)
+                // 저장 본문 키·값은 이전과 같다(ON → dryRun:false, OFF → dryRun:true) — 변환만 live-trading.ts 경유.
                 const prev = safety?.dryRun ?? true;
-                update({ dryRun: !v });
-                autoSave({ dryRun: !v }, { dryRun: prev }, 'DRY_RUN');
+                const nextDryRun = dryRunFromLiveTrading(v);
+                update({ dryRun: nextDryRun });
+                autoSave({ dryRun: nextDryRun }, { dryRun: prev }, LIVE_TRADING_LABEL);
               }}
             />
           </div>
@@ -514,21 +575,26 @@ export function SettingsPage() {
         {/* KILL_SWITCH toggle */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
-            <div style={{ fontSize: 14 }}>KILL_SWITCH</div>
+            <div style={{ fontSize: 14 }}>모든거래차단</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-              {safety?.killSwitch ? '모든 주문 즉시 차단 중' : 'OFF — 주문 정상 처리'}
+              {!safety ? SAFETY_UNREAD : safety.killSwitch ? 'ON — 모든 주문 차단' : 'OFF — 차단 안 함'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+              ON 이면 매수·매도·청산 모두 송신하지 않습니다
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: safety?.killSwitch ? 'var(--down)' : 'var(--ok)' }}>
-              {safety?.killSwitch ? 'ON' : 'OFF'}
+            <span style={{ fontSize: 12, fontWeight: 600, color: !safety ? 'var(--muted)' : safety.killSwitch ? 'var(--down)' : 'var(--ok)' }}>
+              {!safety ? '—' : safety.killSwitch ? 'ON' : 'OFF'}
             </span>
             <Toggle
               checked={safety?.killSwitch ?? false}
+              disabled={!safety}
               onChange={v => {
+                if (!safety) return;   // 값을 못 읽은 동안은 저장하지 않는다(잠금 이중 확인)
                 const prev = safety?.killSwitch ?? false;
                 update({ killSwitch: v });
-                autoSave({ killSwitch: v }, { killSwitch: prev }, 'KILL_SWITCH');
+                autoSave({ killSwitch: v }, { killSwitch: prev }, '모든거래차단');
               }}
               danger
             />
@@ -542,18 +608,22 @@ export function SettingsPage() {
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 14 }}>자동 청산 엔진</div>
               <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-                {safety?.exitEngineEnabled
-                  ? `ON — 하드손절·EOD손절·트레일링스탑·목표익절 자동 매도 동작 중${safety?.exitHardStopEnabled === false ? ' (하드손절만 개별 OFF)' : ''}`
+                {!safety
+                  ? SAFETY_UNREAD
+                  : safety.exitEngineEnabled
+                  ? `ON — 손실한도 손절·장마감 전 손절·트레일링·익절 자동 매도 동작 중${safety?.exitHardStopEnabled === false ? ' (손실한도 손절만 개별 OFF)' : ''}`
                   : 'OFF — 자동 손절·익절 매도 주문을 내지 않습니다'}
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: safety?.exitEngineEnabled ? 'var(--ok)' : '#ef4444' }}>
-                {safety?.exitEngineEnabled ? 'ON' : 'OFF'}
+              <span style={{ fontSize: 12, fontWeight: 600, color: !safety ? 'var(--muted)' : safety.exitEngineEnabled ? 'var(--ok)' : '#ef4444' }}>
+                {!safety ? '—' : safety.exitEngineEnabled ? 'ON' : 'OFF'}
               </span>
               <Toggle
                 checked={safety?.exitEngineEnabled ?? false}
+                disabled={!safety}
                 onChange={v => {
+                  if (!safety) return;   // 값을 못 읽은 동안은 저장하지 않는다(잠금 이중 확인)
                   const prev = safety?.exitEngineEnabled ?? false;
                   update({ exitEngineEnabled: v });
                   autoSave({ exitEngineEnabled: v }, { exitEngineEnabled: prev }, '자동 청산 엔진');
@@ -570,8 +640,8 @@ export function SettingsPage() {
               fontSize: 12, color: '#fca5a5', lineHeight: 1.7,
             }}>
               🔕 <b>손절이 자동으로 걸리지 않습니다.</b><br />
-              보유 종목이 얼마나 떨어져도 시스템은 <b>스스로 팔지 않습니다.</b> 하드 손절,
-              장마감 손실 차단, 트레일링 스탑, 목표 익절 <b>네 가지 모두</b> 시그널조차 만들지
+              보유 종목이 얼마나 떨어져도 시스템은 <b>스스로 팔지 않습니다.</b> 손실한도 손절,
+              장마감 전 손절, 트레일링 스탑, 목표 익절 <b>네 가지 모두</b> 시그널조차 만들지
               않습니다. 청산이 필요하면 <b>직접 주문</b>하세요.<br />
               <span style={{ color: 'var(--muted)' }}>
                 진입가·고점(peak) 추적은 계속되므로 다시 켜면 올바른 트레일링 기준으로 재개됩니다.
@@ -587,6 +657,20 @@ export function SettingsPage() {
               )}
             </div>
           )}
+        </div>
+
+        {/* T-108 §2.6 — 손실한도 손절(hard_stop 하위 스위치) 읽기 전용 줄. 값은 GET 응답 exitHardStopEnabled 그대로이고,
+            설정 API(PATCH) 대상이 아니다 — 토글을 두지 않는다. */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14 }}>손실한도 손절</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+              손실이 한도(기본 −{HARD_STOP_DEFAULT_PCT}%)에 닿으면 바로 매도 · 읽기 전용 표시 — 설정 API 대상 아님
+            </div>
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 600, flexShrink: 0, color: safety?.exitHardStopEnabled === true ? 'var(--ok)' : '#f59e0b' }}>
+            {safety?.exitHardStopEnabled === true ? 'ON' : safety?.exitHardStopEnabled === false ? 'OFF' : '—'}
+          </span>
         </div>
 
         {/* T-101 해외 장마감 후 분석 — 같은 카드의 토글들처럼 즉시 저장, 실패 시 서버 값으로 되돌림 */}
@@ -631,6 +715,36 @@ export function SettingsPage() {
 
       {/* T-066 리스크 정책 요약 — 값 변경은 /settings/risk-policy 에서만 (자체 조회·자체 저장, 이 페이지 저장 바와 무관) */}
       <RiskPolicySummaryRow />
+
+      {/* T-108 §2.6 자동매매 자금 — 두 행 모두 이동 전용(데이터 조회·저장 없음). 운용액 입력 화면은 이번 범위 밖이라
+          첫 행은 누를 곳이 없는 비활성 행, 둘째 행은 기존 자산 기록 화면으로 이동한다. */}
+      <SectionHeader title="자동매매 자금" />
+      <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 56, padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <span aria-hidden style={{ width: 22, textAlign: 'center', color: 'var(--muted)', flexShrink: 0 }}>◌</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14 }}>운용액 배정 — 미설정</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+              자동매매에 쓸 금액을 직접 정합니다(D4). 입력 화면은 다음 범위
+            </div>
+          </div>
+        </div>
+        <Link
+          href="/settings/cash-ledger"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minHeight: 56, padding: '12px 16px' }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <span aria-hidden style={{ width: 22, textAlign: 'center', color: 'var(--muted)', flexShrink: 0 }}>◷</span>
+            <span style={{ minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 14 }}>손익 기준 — 실거래 전환일 첫 스냅샷</span>
+              <span style={{ display: 'block', fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                자산 기록의 「기준 정하기」를 재사용(D5) · 관찰 기간엔 홈 손익 미표시
+              </span>
+            </span>
+          </span>
+          <span style={{ fontSize: 18, color: 'var(--muted)' }} aria-hidden>›</span>
+        </Link>
+      </div>
 
       {/* 거래 보호 — 종목별 거래 차단 */}
       <SectionHeader title="거래 보호" />
@@ -787,9 +901,9 @@ export function SettingsPage() {
       </div>
 
       {/* Warning when 실거래 여부 = ON (DRY_RUN OFF) */}
-      {!safety?.dryRun && (
+      {liveTrading && (
         <div style={{ background: 'rgba(239,68,68,.1)', borderRadius: 12, padding: '12px 16px', border: '1px solid rgba(239,68,68,.3)', fontSize: 13, color: 'var(--down)', lineHeight: 1.7 }}>
-          ⚠ 실거래 모드가 ON입니다. 전략 실행 시 실제 KIS API로 주문이 전송됩니다.
+          ⚠ 실거래여부가 ON 입니다. 전략 실행 시 실제 KIS API로 주문이 전송됩니다.
         </div>
       )}
 
@@ -932,7 +1046,7 @@ export function SettingsPage() {
       <AppSection />
 
       <div style={{ background: 'var(--bg2)', borderRadius: 12, padding: 14, border: '1px solid var(--border)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.7 }}>
-        실거래 여부 / KILL_SWITCH / 주문 한도는 DB에 저장되어 서버 재시작 없이 즉시 반영됩니다.
+        실거래여부 / 모든거래차단 / 주문 한도는 DB에 저장되어 서버 재시작 없이 즉시 반영됩니다.
         거래소 API 키·알람 자격은 위 카드에서 등록·수정 시 평문으로 DB에 저장되며 즉시 반영됩니다.
       </div>
 

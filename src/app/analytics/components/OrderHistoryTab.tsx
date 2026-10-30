@@ -28,7 +28,7 @@ type FilterKey = 'all' | 'filled' | 'dryrun' | 'blocked' | 'failed';
 const FILTERS: { id: FilterKey; label: string }[] = [
   { id: 'all',     label: '전체'     },
   { id: 'filled',  label: '체결'     },
-  { id: 'dryrun',  label: 'DRY_RUN'  },
+  { id: 'dryrun',  label: '가상'     },
   { id: 'blocked', label: '차단'     },
   { id: 'failed',  label: '실패/거부' },
 ];
@@ -39,7 +39,7 @@ const STATUS_META: Record<OrderStatus, { text: string; color: string }> = {
   cancelled:        { text: '취소됨',   color: 'var(--muted)' },
   rejected:         { text: '거부됨',   color: '#ef4444'      },
   failed:           { text: '실패',     color: '#ef4444'      },
-  dry_run:          { text: 'DRY RUN',  color: '#555'         },
+  dry_run:          { text: '가상',     color: '#555'         },
   blocked:          { text: '차단됨',   color: '#555'         },
   pending:          { text: '대기',     color: 'var(--accent)'},
   accepted:         { text: '접수됨',   color: 'var(--accent)'},
@@ -153,7 +153,7 @@ export function OrderHistoryTab() {
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--accent)' }}>{todayDryRun}</div>
-          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>DRY_RUN</div>
+          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>가상 주문</div>
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--up)' }}>{todayBlocked}</div>

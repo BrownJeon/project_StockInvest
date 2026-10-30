@@ -177,7 +177,7 @@ export function RiskBody(p: BodyProps) {
         <div className="infobox" role="note">
           <span className="ic" aria-hidden="true">ⓘ</span>
           <div>
-            예상 손절가는 <b>표시·위험 계산·알림용</b>입니다. 자동 청산 엔진(지금 {data.exitEngine.enabled ? 'ON' : 'OFF'}, 기본 하드 손절 {EXIT_ENGINE_DEFAULT_HARD_STOP_PCT}%)의 값과 별개이며,
+            예상 손절가는 <b>표시·위험 계산·알림용</b>입니다. 자동 청산 엔진(지금 {data.exitEngine.enabled ? 'ON' : 'OFF'}, 기본 손실한도 손절 {EXIT_ENGINE_DEFAULT_HARD_STOP_PCT}%)의 값과 별개이며,
             {data.exitEngine.enabled ? ' 엔진이 이 손절가보다 먼저 팔 수 있습니다.' : ' 엔진을 켜면 이 손절가보다 먼저 팔릴 수 있습니다.'} 이 화면은 주문을 만들지 않습니다.
             <br /><b>손절가 도달 알림은 엔진과 별개라, 엔진이 꺼져 있어도 옵니다.</b>
           </div>

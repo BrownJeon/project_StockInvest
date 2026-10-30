@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { formatRelativeTime } from '@/lib/time';
+import { liveTradingFromDryRun } from '@/lib/safety/live-trading';
 
 interface Safety {
   analystEnabled: boolean;
@@ -57,7 +58,7 @@ export function AnalystStatusBanner(_props: Props = {}) {
    * 서버 판독 결과를 그대로 보여주는 단일 진실이고, 이 배너는 그 요약이다.
    */
   const isExitOff = safety.exitEngineEnabled === false;
-  const isLive   = !safety.dryRun;   // 실거래 ON 여부 (DRY_RUN의 반전)
+  const isLive   = liveTradingFromDryRun(safety.dryRun);   // 실거래여부 ON — 방향 변환은 live-trading.ts 한 곳(T-108 §3.5)
   const relTime  = lastRunAt ? formatRelativeTime(lastRunAt) : null;
 
   // 메인 라벨 + 아이콘
@@ -130,8 +131,8 @@ export function AnalystStatusBanner(_props: Props = {}) {
           background: 'rgba(239,68,68,.12)', border: '1px solid rgba(239,68,68,.45)',
           fontSize: 11, color: '#fca5a5', lineHeight: 1.6,
         }}>
-          🔕 <b>자동 청산 엔진 OFF — 손절이 자동으로 걸리지 않습니다.</b> 하드 손절·장마감 손실
-          차단·트레일링 스탑·목표 익절 모두 주문을 내지 않습니다. 청산은 직접 주문하세요.{' '}
+          🔕 <b>자동 청산 엔진 OFF — 손절이 자동으로 걸리지 않습니다.</b> 손실한도 손절·장마감 전
+          손절·트레일링 스탑·목표 익절 모두 주문을 내지 않습니다. 청산은 직접 주문하세요.{' '}
           <Link href="/settings" style={{ color: '#fca5a5', textDecoration: 'underline' }}>설정에서 켜기 →</Link>
         </div>
       )}
@@ -163,8 +164,8 @@ export function AnalystStatusBanner(_props: Props = {}) {
         }}>
           <span style={{ fontSize: 11, color: isLive ? 'var(--ok)' : '#ef4444', fontWeight: isLive ? 400 : 600 }}>
             {isLive
-              ? '🟢 실거래 모드 — KIS API에 실제 주문이 송신됩니다'
-              : '⚠️ 모의 주문 모드 — 실제 주문이 전송되지 않습니다'}
+              ? '🟢 실거래여부 ON — KIS API에 실제 주문이 송신됩니다'
+              : '⚠️ 실거래여부 OFF(가상 주문) — 실제 주문이 전송되지 않습니다'}
           </span>
           <Link href="/settings" style={{ fontSize: 11, color: 'var(--muted)', textDecoration: 'none' }}>
             설정에서 변경 →

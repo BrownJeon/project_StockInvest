@@ -40,8 +40,8 @@ export const STATUS_META: Record<SignalStatus, { text: string; color: string; bg
   rejected:               { text: '거부됨',    color: 'var(--muted)',   bg: 'var(--bg3)'           },
   expired:                { text: '만료됨',    color: '#555',           bg: 'var(--bg)'            },
   superseded:             { text: '대체됨',    color: '#555',           bg: 'var(--bg)'            },
-  skipped:                { text: '스킵됨',    color: '#555',           bg: 'var(--bg)'            },
-  ai_skipped:             { text: '스킵됨',    color: '#555',           bg: 'var(--bg)'            },
+  skipped:                { text: '건너뜀',    color: '#555',           bg: 'var(--bg)'            },
+  ai_skipped:             { text: 'AI 매매 안 함', color: '#555',        bg: 'var(--bg)'            },
 };
 
 import { formatTimeKST } from '@/lib/time';

@@ -154,7 +154,7 @@ export default function SignupPage() {
           "계좌 종류"와 "모의 매매"가 서로 다른 스위치라는 설명은 실제로 계좌 종류를 고르는
           프로필의 KIS 연결 화면에서 다시 한 번, 더 자세히 나온다. */}
       <div style={authStyles.note}>
-        가입하면 <b style={{ color: 'var(--text)' }}>모의 매매가 켜진 상태</b>로 시작합니다 — 주문이 실제로 나가지 않습니다.<br />
+        가입하면 <b style={{ color: 'var(--text)' }}>실거래여부가 OFF(실거래 차단)인 상태</b>로 시작합니다 — 주문이 실제로 나가지 않습니다.<br />
         증권계좌(한국투자증권 API) 연결은 가입한 뒤 <b style={{ color: 'var(--text)' }}>프로필 → 계좌 연결</b>에서 진행합니다.
       </div>
 

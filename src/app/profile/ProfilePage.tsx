@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { requestJson } from '@/lib/http';
+import { liveTradingFromDryRun, dryRunFromLiveTrading, LIVE_TRADING_LABEL } from '@/lib/safety/live-trading';
 
 interface ProfileSettings {
   dryRun: boolean;
@@ -154,12 +155,15 @@ function SettingsSection({ settings, onSaved }: { settings: ProfileSettings; onS
     <section>
       <SectionHeader title="내 매매 설정" />
       <div style={S.card}>
+        {/* T-108 R-UI — 「모의 매매」(ON=주문 안 보냄)가 설정의 「실거래여부」(ON=실거래)와 부호가 반대로 함께 있어 혼동 위험.
+            같은 값(회원별 dryRun)을 「실거래여부」 이름·방향으로 보인다. 저장되는 값(form.dryRun)의 뜻은 그대로 —
+            방향 변환은 live-trading.ts 두 함수로만. */}
         <ToggleRow
-          label="모의 매매"
-          desc="켜져 있으면 주문을 실제로 보내지 않습니다"
-          checked={form.dryRun}
-          onChange={(v) => setForm({ ...form, dryRun: v })}
-          warning="⚠️ 지금은 이 스위치가 주문 송신을 막지 못합니다. 실제 주문 여부는 서버 공용 DRY_RUN 값이 결정합니다 (4단계에서 연결)."
+          label={`${LIVE_TRADING_LABEL} (내 계정)`}
+          desc="켜져 있으면 주문을 실제로 보냅니다 · 꺼져 있으면 기록만 남깁니다"
+          checked={liveTradingFromDryRun(form.dryRun)}
+          onChange={(v) => setForm({ ...form, dryRun: dryRunFromLiveTrading(v) })}
+          warning="⚠️ 지금은 이 스위치가 주문 송신을 막지 못합니다. 실제 주문 여부는 서버 공용 실거래여부 값이 결정합니다 (4단계에서 연결)."
         />
         <ToggleRow
           label="긴급 정지"
@@ -342,13 +346,13 @@ function KisConnectForm({
 
       {/* 사용자 결정 Q2 — 실전투자를 골랐다고 해서 실매매가 시작되는 것이 아님을 명확히 한다. */}
       <div style={{ ...S.note, borderLeftColor: 'var(--warn)' }}>
-        <b style={S.strong}>계좌 종류와 모의 매매는 서로 다른 스위치입니다.</b><br />
+        <b style={S.strong}>계좌 종류와 실거래여부(내 계정)는 서로 다른 스위치입니다.</b><br />
         · <b style={S.strong}>계좌 종류</b>(실전/모의) — 어느 KIS 서버에 접속할지 고르는 값입니다.
         실전투자를 선택해도 그것만으로 주문이 나가지는 않습니다.<br />
-        · <b style={S.strong}>모의 매매</b>(위 &lsquo;내 매매 설정&rsquo;) — 주문을 실제로 보낼지 결정하는 값입니다.
-        가입 시 <b style={S.strong}>켜짐</b>으로 시작합니다.<br />
-        → 실제로 돈이 움직이려면 <b style={S.strong}>실전투자 계좌 + 모의 매매 꺼짐</b>이 동시에 필요하고,
-        모의 매매 해제는 4단계에서 엔진에 연결된 뒤에야 효력이 생깁니다.
+        · <b style={S.strong}>실거래여부 (내 계정)</b>(위 &lsquo;내 매매 설정&rsquo;) — 주문을 실제로 보낼지 결정하는 값입니다(ON = 실제 주문).
+        가입 시 <b style={S.strong}>꺼짐(OFF)</b>으로 시작합니다.<br />
+        → 실제로 돈이 움직이려면 <b style={S.strong}>실전투자 계좌 + 실거래여부 켜짐</b>이 동시에 필요하고,
+        실거래여부 켜기는 4단계에서 엔진에 연결된 뒤에야 효력이 생깁니다.
       </div>
 
       <div style={{ ...S.note, borderLeftColor: 'var(--muted)' }}>

@@ -157,7 +157,7 @@ export default function OAuthInvitePage() {
         다음부터는 소셜 버튼만 누르면 바로 들어옵니다.
       </div>
       <div style={authStyles.note}>
-        가입하면 <b style={{ color: 'var(--text)' }}>모의 매매가 켜진 상태</b>로 시작합니다 — 주문이 실제로 나가지 않습니다.
+        가입하면 <b style={{ color: 'var(--text)' }}>실거래여부가 OFF(실거래 차단)인 상태</b>로 시작합니다 — 주문이 실제로 나가지 않습니다.
       </div>
     </AuthShell>
   );

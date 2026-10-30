@@ -25,6 +25,8 @@ jest.mock('@/lib/db', () => ({ getPool: jest.fn(() => { throw new Error('추적 
 jest.mock('@/lib/llm/provider', () => ({ getProviderConfig: jest.fn() }));
 
 const ROOT = join(__dirname, '..', '..', '..', '..', '..');
+/** (T-108) 판단 기록 표 이름을 쓸 수 있는 기록 모듈 밖 ops 읽기 파일 — 정확 일치 1개. */
+const OPS_JUDGMENT_READER = 'src/lib/ops/metrics/judgment-read.ts';
 const read = (p: string) => readFileSync(join(ROOT, p), 'utf8');
 
 const withRows = (t: JudgmentTrace) => t.snapshot().candidates;
@@ -322,6 +324,7 @@ describe('🔴 경계 — judgment_* 는 기록 모듈만 쓴다(시그널·주�
     const allowed = new Set([
       'src/lib/strategy/post-market-engine.ts',
       'src/lib/strategy/post-market-overseas.ts',
+      OPS_JUDGMENT_READER,   // (T-108) ops 지표의 판단 기록 reader 1개 — 정확 일치(아래 시험이 읽기 전용임을 확인)
     ]);
     const offenders: string[] = [];
     for (const f of walk(join(ROOT, 'src'))) {
@@ -332,5 +335,11 @@ describe('🔴 경계 — judgment_* 는 기록 모듈만 쓴다(시그널·주�
       if (/judgment_run|judgment_candidate|judgment-recorder|judgment-trace/.test(s) && !allowed.has(rel)) offenders.push(rel);
     }
     expect(offenders).toEqual([]);
+  });
+  // (T-108, Leader 결정 2026-10-30) 판단 기록 표의 설계된 소비자(홈·분석 지표, baseline 만)는 ops 읽기 파일 1개로만 둔다.
+  test('(T-108) 허용된 ops 판단 기록 reader — 파일이 있고, 쓰기·DDL 키워드 0, 기록 모듈(기록기·추적기) import 0', () => {
+    const s = readFileSync(join(ROOT, OPS_JUDGMENT_READER), 'utf8');
+    expect(s).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|TRUNCATE|CREATE|ALTER|DROP)\b/i);
+    expect([...s.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]).filter((m) => /judgment-(recorder|trace)/.test(m))).toEqual([]);
   });
 });

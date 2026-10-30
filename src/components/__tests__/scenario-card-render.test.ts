@@ -131,9 +131,9 @@ describe('장면 2 — "내일" 탭 TomorrowScenarioTab', () => {
   });
   test('해외 카드가 없으면 하단 고정 문구 없음, 있으면(장면 4) 있음', () => {
     const domesticOnly = T062_TOMORROW.filter(r => r.market === 'domestic');
-    expect(text(tab(domesticOnly))).not.toContain('미국 카드는');
+    expect(text(tab(domesticOnly))).not.toContain('미국 시그널은') // T-108 §3.2 용어 정정(카드 → 시그널) — 기대 문구만 갱신;
     const t4 = text(tab(T062_SCENE4));
-    expect(t4.endsWith('미국 카드는 매일 08:00 분석 · 1주 가격이 100,000원 이하인 종목만 만들어집니다(보유·관심 종목 중 비싼 종목은 나오지 않음).')).toBe(true);
+    expect(t4.endsWith('미국 시그널은 매일 08:00 분석 · 1주 가격이 100,000원 이하인 종목만 만들어집니다(보유·관심 종목 중 비싼 종목은 나오지 않음).')).toBe(true);
   });
   test('Q-g 폴백: price_zone_usd 없는 CMCSA → "진입 36,176 ~ 36,708원"', () => {
     const t = text(tab([cmcsaWithoutUsd()]));
@@ -158,7 +158,7 @@ describe('장면 3 — 승인 화면 조각 (ScenarioDetail)', () => {
   });
   test('해외 CMCSA: AI 권장 진입 구간 달러 + 원화 보조 줄', () => {
     const t = text(renderToStaticMarkup(h(AiEntryZoneBox, { overseas: true, indicators: cmcsa.indicators, domesticZone: '36176~36708' })));
-    expect(t).toBe('AI 권장 진입 구간: $27.20 ~ $27.60≈ 36,176 ~ 36,708원 · 카드 환율 1,330 (10-21 08:00) · 자동 진입은 이 원화 구간으로 판단');
+    expect(t).toBe('AI 권장 진입 구간: $27.20 ~ $27.60≈ 36,176 ~ 36,708원 · 시그널 환율 1,330 (10-21 08:00) · 자동 진입은 이 원화 구간으로 판단');
   });
   test('G11-② 해외 전략 시그널(price_zone_usd 없음) → 원화 단위 표기 폴백', () => {
     const t = text(renderToStaticMarkup(h(AiEntryZoneBox, { overseas: true, indicators: cmcsaWithoutUsd().indicators, domesticZone: '36176~36708' })));

@@ -25,7 +25,7 @@ const STATUS_LABEL: Record<string, { text: string; color: string }> = {
   executed:       { text: '체결',     color: 'var(--up)' },
   accepted:       { text: '승인됨',   color: 'var(--up)' },
   approved:       { text: '승인',     color: '#60a5fa' },
-  ai_skipped:     { text: 'AI 스킵', color: 'var(--muted)' },
+  ai_skipped:     { text: 'AI 매매 안 함', color: 'var(--muted)' },
   pending:        { text: '대기중',   color: '#fbbf24' },
   rejected:       { text: '거부됨',   color: 'var(--down)' },
   expired:        { text: '만료',     color: 'var(--muted)' },
@@ -231,7 +231,7 @@ export function StrategyHistoryTab() {
           {[
             { label: '전체 시그널', value: counts.total, color: 'var(--text)' },
             { label: '실행됨',     value: counts.executed, color: 'var(--up)' },
-            { label: 'AI 스킵',    value: counts.skipped,  color: 'var(--muted)' },
+            { label: 'AI 매매 안 함', value: counts.skipped,  color: 'var(--muted)' },
             { label: '매수',       value: counts.buy,       color: 'var(--up)' },
             { label: '매도',       value: counts.sell,      color: 'var(--down)' },
           ].map((item, i) => (

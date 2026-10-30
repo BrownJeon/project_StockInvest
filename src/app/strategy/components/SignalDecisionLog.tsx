@@ -117,7 +117,7 @@ export function SignalDecisionLog() {
                     background: isSkip ? 'var(--bg3)' : 'rgba(34,197,94,.15)',
                     color:      isSkip ? 'var(--muted)' : 'var(--ok)',
                   }}>
-                    {isSkip ? '⏭ SKIP' : '✅ EXEC'}{confidence != null ? ` ${confidence}%` : ''}
+                    {isSkip ? `⏭ AI ${sig.side === 'buy' ? '매수' : '매도'} 안 함` : `✅ AI ${sig.side === 'buy' ? '매수' : '매도'} 판단`}{confidence != null ? ` ${confidence}%` : ''}
                   </span>
                 </div>
 

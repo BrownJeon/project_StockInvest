@@ -69,7 +69,7 @@ export function MissedOpportunityTab() {
       <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <Chip label="전체" value={summary.total} />
         <Chip label="놓친 기회 (+3%↑)" value={summary.missedBuy} color="var(--up)" />
-        <Chip label="올바른 스킵 (-3%↓)" value={summary.correctSkip} color="var(--down)" />
+        <Chip label="매수 안 함이 맞음 (-3%↓)" value={summary.correctSkip} color="var(--down)" />
         <Chip label="내 거절 기회" value={summary.userRejectedMissed} color="var(--up)" />
         {/* 기간 필터 */}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
@@ -99,7 +99,7 @@ export function MissedOpportunityTab() {
             color: sourceFilter === f ? '#000' : 'var(--muted)',
             border: 'none', cursor: 'pointer',
           }}>
-            {f === 'all' ? '전체' : f === 'ai_skipped' ? 'AI 스킵' : '내 거절'}
+            {f === 'all' ? '전체' : f === 'ai_skipped' ? 'AI 매매 안 함' : '내 거절'}
           </button>
         ))}
       </div>
@@ -144,7 +144,7 @@ export function MissedOpportunityTab() {
           {/* 가격 정보 */}
           {sig.priceAtSkip != null && (
             <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
-              <span>스킵 시 ₩{sig.priceAtSkip.toLocaleString('ko-KR')}</span>
+              <span>판단 시 ₩{sig.priceAtSkip.toLocaleString('ko-KR')}</span>
               {sig.price1hAfter != null && (
                 <span>1h 후 ₩{sig.price1hAfter.toLocaleString('ko-KR')}</span>
               )}

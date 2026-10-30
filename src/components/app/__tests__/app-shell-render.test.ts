@@ -242,7 +242,9 @@ describe('배치 — 띠는 레이아웃 흐름 안 맨 위, 앱 섹션은 설�
     const at = src.indexOf('<AppSection />');
     expect(src.match(/<AppSection \/>/g)).toHaveLength(1);
     expect(at).toBeGreaterThan(src.indexOf('<SectionHeader title="정기 거래 리포트" />'));
-    expect(at).toBeLessThan(src.indexOf('실거래 여부 / KILL_SWITCH / 주문 한도는 DB에 저장되어'));
+    // T-108 §2.6 용어 정정(실거래 여부 → 실거래여부, KILL_SWITCH → 모든거래차단) — 안내 상자 기준 문구만 갱신
+    expect(src.indexOf('실거래여부 / 모든거래차단 / 주문 한도는 DB에 저장되어')).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(src.indexOf('실거래여부 / 모든거래차단 / 주문 한도는 DB에 저장되어'));
     const effect = src.slice(src.indexOf('Promise.all(['), src.indexOf(']).then(([safetyData'));
     expect(effect).not.toMatch(/app\/version|AppSection/);
     const save = src.slice(src.indexOf('const handleSave'), src.indexOf('if (loading) return'));

@@ -8,7 +8,7 @@
  * 두 화면은 데이터를 `useEffect` 안의 fetch 로 채우므로 `react-dom/server` 정적 렌더에서는 "불러오는 중" 만 보인다.
  * 그래서 `react` 의 `useState` 만 감싸, 대상 컴포넌트가 **맨 앞에서 부르는 useState 몇 개**의 초기값을
  * fetch 가 끝난 뒤의 값으로 바꿔 준다(그 밖의 useState 는 실제 구현 그대로). 의존하는 소스 사실:
- *  - page.tsx: useState 순서 = signals → pendingEntry → loading → blockBanner (그 앞에 다른 useState 없음 —
+ *  - TradeNowPanel.tsx(옛 page.tsx 본문, T-108): useState 순서 = signals → pendingEntry → loading → blockBanner (그 앞에 다른 useState 없음 —
  *    useSymbolMeta·useFxRate 는 목으로 대체)
  *  - ScenarioDetail.tsx: useState 순서 = signal → loading → (나머지는 실제 초기값)
  * 이 순서가 바뀌면 이 시험이 "불러오는 중"·잘못된 화면으로 실패한다(조용히 통과하지 않는다 — 각 시험이 화면 문구를 확인).
@@ -39,7 +39,8 @@ jest.mock('@/lib/hooks/useSymbolMeta', () => ({
 
 (globalThis as unknown as { React: typeof ReactNS }).React = ReactNS;
 
-import RecommendPage from '@/app/recommend/page';
+// T-108 §2.4.1 — 옛 `/recommend` 본문은 `TradeNowPanel`(거래 › 운용 현황)로 옮겼다(useState 순서 그대로). page.tsx 는 틀(TradePage)만 그린다.
+import { TradeNowPanel as RecommendPage } from '@/app/recommend/TradeNowPanel';
 import { ScenarioDetail } from '@/components/ScenarioDetail';
 import { useForeignHost } from './fixtures/host-sim';
 import { T062_FIXTURE, CMCSA_INDICATORS, cmcsaWithoutUsd } from './fixtures/t062-signals-fixture';
@@ -95,7 +96,9 @@ describe('R-1 추천 탭 page.tsx 배선', () => {
     expect(t.indexOf('정렬: 평가등급순')).toBeLessThan(t.indexOf('BAC'));
     const empty = text(renderRecommend([], []));
     expect(empty).not.toContain('정렬:');
-    expect(empty).toContain('현재 추천 종목이 없습니다');
+    // T-108 §2.4.1 빈 상태 문구 정정(데모 v3 approvalCards): 「현재 추천 종목이 없습니다」 → 「승인 대기 없음 ✓ 확인된 0」
+    expect(empty).toContain('승인 대기 없음');
+    expect(empty).not.toContain('현재 추천 종목이 없습니다');
   });
   test('추천 카드: 문자열 indicators 를 풀어 등급·신뢰도·금액 서식이 보인다', () => {
     const t = text(renderRecommend(T062_FIXTURE));
@@ -157,7 +160,7 @@ describe('R-2 승인 화면 ScenarioDetail 배선', () => {
   });
   test('해외 CMCSA: AI 권장 진입 구간 달러 주표기 + 원화 보조 줄', () => {
     const t = text(renderDetail(CMCSA_DETAIL));
-    expect(t).toContain('AI 권장 진입 구간: $27.20 ~ $27.60≈ 36,176 ~ 36,708원 · 카드 환율 1,330 (10-21 08:00) · 자동 진입은 이 원화 구간으로 판단');
+    expect(t).toContain('AI 권장 진입 구간: $27.20 ~ $27.60≈ 36,176 ~ 36,708원 · 시그널 환율 1,330 (10-21 08:00) · 자동 진입은 이 원화 구간으로 판단'); // T-108 §3.2 용어 정정(카드 → 시그널)
     expect(t).not.toContain('AI 권장 진입 구간: 36176~36708');
   });
   test('indicators 가 문자열로 와도(상세 API 파싱 실패 경로) 같은 화면', () => {

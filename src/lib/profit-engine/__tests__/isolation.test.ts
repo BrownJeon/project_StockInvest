@@ -33,6 +33,8 @@ const isTest = (r: string) => /(^|\/)__tests__\//.test(r) || /\.test\.tsx?$/.tes
 const OWN = /^lib\/profit-engine\//;
 const ROUTE = 'app/api/cron/daily-bars/route.ts';
 const ROUTE_TESTS = /^app\/api\/cron\/daily-bars\/__tests__\//;
+/** (T-108, Leader 결정 2026-10-30) 일봉 테이블 이름을 쓸 수 있는 매매 경로 밖 ops 읽기 파일 — 정확 일치 1개(아래 시험이 읽기 전용·profit-engine import 0 을 확인). */
+const OPS_BARS_READER = 'lib/ops/metrics/daily-bars-read.ts';
 
 const engineFiles = ALL.filter((f) => OWN.test(rel(f)) && !isTest(rel(f)));
 const read = (f: string) => fs.readFileSync(f, 'utf8');
@@ -195,13 +197,20 @@ describe('매매 경로 → profit-engine 을 참조하지 않는다', () => {
   });
 
   test.each([
-    ['@/lib/profit-engine', /@\/lib\/profit-engine\b/],
-    ['상대경로 profit-engine', /(from\s+|import\(\s*|require\(\s*)['"](\.{1,2}\/)+([^'"]*\/)?profit-engine(\/[^'"]*)?['"]/],
-    ['daily-bars 모듈명', /daily-bars-(collector|kis|paginate|quality|store|time|request)\b/],
-    ['daily_bars 테이블', /\bdaily_bars\b/],
-  ])('%s 참조 0건', (_n, re) => {
-    const hits = guarded.filter((f) => re.test(read(f))).map(rel);
+    ['@/lib/profit-engine', /@\/lib\/profit-engine\b/, []],
+    ['상대경로 profit-engine', /(from\s+|import\(\s*|require\(\s*)['"](\.{1,2}\/)+([^'"]*\/)?profit-engine(\/[^'"]*)?['"]/, []],
+    ['daily-bars 모듈명', /daily-bars-(collector|kis|paginate|quality|store|time|request)\b/, []],
+    ['daily_bars 테이블', /\bdaily_bars\b/, [OPS_BARS_READER]],
+  ] as [string, RegExp, string[]][])('%s 참조 0건', (_n, re, allowed) => {
+    const hits = guarded.filter((f) => re.test(read(f))).map(rel).filter((r) => !allowed.includes(r));
     expect(hits).toEqual([]);
+  });
+
+  test('(T-108) 허용된 ops 일봉 reader — 파일이 있고, 쓰기·DDL 키워드 0, profit-engine 참조 0, profit-engine 이 그 파일을 참조하지 않음', () => {
+    const src = read(path.join(SRC, OPS_BARS_READER));
+    expect(src).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|TRUNCATE|CREATE|ALTER|DROP)\b/i);
+    expect(src).not.toMatch(/profit-engine/);
+    expect(engineFiles.filter((f) => /ops\/metrics/.test(read(f))).map(rel)).toEqual([]);
   });
 });
 

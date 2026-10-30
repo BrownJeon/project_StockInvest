@@ -1,6 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { FunnelDTO, Market } from '@/lib/ops/metrics/types';
+import { StatusChip } from '@/components/ops/ui';
+import { CHIP } from '@/components/ops/format';
 
 interface FunnelStepCount {
   key: string;
@@ -36,30 +39,100 @@ interface EvalFunnelSummary {
   neutralPct: number | null;
 }
 
+/** T-108 — 세션 모드에서 부모(거래 › 운영 기록)에 넘기는 머리 정보(기본 시장·시장별 세션일·이상 수). */
+export type FunnelMeta = Pick<FunnelDTO, 'defaultMarket' | 'sessions' | 'market' | 'generatedAt'>;
+
+/**
+ * 세션 모드 응답 1회 해석(순수). 기준 세션 조회가 실패하면(`basis.state='error'`) 응답의 시장·세션일은 **추정값**이라
+ * 부모에 머리 정보로 넘기지 않고 실패로 알린다 — 추정 세션일로 「오늘 주문」을 거르거나 날짜·「이상 n」을 정상값처럼 그리지 않게.
+ */
+export function readFunnelResponse(status: number, j: unknown): {
+  meta: FunnelMeta | null; metaError: string | null; data: EvalFunnelSummary | null; error: string | null;
+} {
+  if (status === 401) return { meta: null, metaError: 'unauthorized', data: null, error: 'unauthorized' };
+  const b = j as { ok?: unknown; data?: unknown } | null;
+  if (!b || b.ok !== true || !b.data) { const code = b ? 'api_error' : 'bad_json'; return { meta: null, metaError: code, data: null, error: code }; }
+  const dto = b.data as FunnelDTO;
+  const summary = dto.summary?.state === 'ok'
+    ? { data: dto.summary.data as unknown as EvalFunnelSummary, error: null }
+    : { data: null, error: dto.summary?.state === 'error' ? dto.summary.error : 'api_error' };
+  if (dto.basis && dto.basis.state === 'error') return { meta: null, metaError: dto.basis.error, ...summary };
+  return { meta: { defaultMarket: dto.defaultMarket, sessions: dto.sessions, market: dto.market, generatedAt: dto.generatedAt }, metaError: null, ...summary };
+}
+
+/** 세션 모드 조회 주소 — market 이 없으면 서버가 defaultMarket(마지막 세션이 더 최근인 시장)으로 채운다. */
+export function sessionFunnelUrl(market?: Market): string {
+  return market ? `/api/ops/funnel?market=${market}` : '/api/ops/funnel';
+}
+
 /**
  * 오늘의 평가 깔때기 카드 (T-002 §4) — 국내장 기준.
  * "시그널이 왜 안 나오는가"를 3초 안에 읽게: 헤더 → 이상 배너 → 병목 1줄 → 6단계 바 → 최다 차단 top3.
+ *
+ * T-108 §2.4.5 — `source: 'session'` 이면 새 읽기 라우트 `/api/ops/funnel`(시장별 **세션일** 범위 — 해외는 ET 날짜)을 읽는다.
+ * 기존 사용처(legacy, 기본값)는 그대로 `/api/dashboard/eval-funnel?market=domestic`(KST 자정 기준)이고 동작이 같다.
+ * 세션 모드는 거래 › 운영 기록의 본문이라 조회 실패를 숨기지 않고 「! 조회 실패 · {code}」로 보인다.
  */
-export function EvalFunnelCard({ reloadKey }: { reloadKey: number }) {
+export function EvalFunnelCard({ reloadKey, market, source = 'legacy', onMeta, onMetaError }: {
+  reloadKey: number;
+  /** session 모드에서만 — 없으면 서버 기본 시장 */
+  market?: Market;
+  source?: 'legacy' | 'session';
+  onMeta?: (meta: FunnelMeta) => void;
+  /** session 모드 — 응답 자체를 못 받았을 때(세션일을 모름) 실패 코드. 부모가 세션일에 기대는 목록을 「실패」로 바꾼다 */
+  onMetaError?: (code: string) => void;
+}) {
   const [data, setData] = useState<EvalFunnelSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const session = source === 'session';
+  const onMetaRef = useRef(onMeta);
+  onMetaRef.current = onMeta;
+  const onMetaErrorRef = useRef(onMetaError);
+  onMetaErrorRef.current = onMetaError;
+  const lastMarket = useRef<string | undefined>(market);
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/dashboard/eval-funnel?market=domestic')
-      .then(r => r.json())
-      .then(j => {
+    if (!session) {
+      fetch('/api/dashboard/eval-funnel?market=domestic')
+        .then(r => r.json())
+        .then(j => {
+          if (!alive) return;
+          if (j.ok) { setData(j.data); setError(null); }
+          else setError(j.error ?? 'unknown');
+        })
+        .catch(e => { if (alive) setError(String(e)); });
+      return () => { alive = false; };
+    }
+    // 시장을 바꾸면 이전 시장 숫자를 남기지 않는다(같은 시장 재조회는 값을 유지해 깜빡이지 않게)
+    if (lastMarket.current !== market) { setData(null); setError(null); lastMarket.current = market; }
+    fetch(sessionFunnelUrl(market), { cache: 'no-store' })
+      .then(async r => ({ status: r.status, j: await r.json().catch(() => null) }))
+      .then(({ status, j }) => {
         if (!alive) return;
-        if (j.ok) { setData(j.data); setError(null); }
-        else setError(j.error ?? 'unknown');
+        const out = readFunnelResponse(status, j);
+        if (out.meta) onMetaRef.current?.(out.meta);
+        else if (out.metaError) onMetaErrorRef.current?.(out.metaError);
+        setData(out.data);
+        setError(out.error);
       })
-      .catch(e => { if (alive) setError(String(e)); });
+      .catch(() => { if (alive) { setError('network'); onMetaErrorRef.current?.('network'); } });
     return () => { alive = false; };
-  }, [reloadKey]);
+  }, [reloadKey, session, market]);
 
-  if (error) return null; // 관측 실패는 조용히 숨김 — 매매 화면을 가릴 이유 없음
-  if (!data) return null;
+  if (error) {
+    if (!session) return null; // 관측 실패는 조용히 숨김 — 매매 화면을 가릴 이유 없음
+    return (
+      <div style={{ padding: '8px 16px 12px' }}>
+        <StatusChip kind="error">{CHIP.error(error)}</StatusChip>
+      </div>
+    );
+  }
+  if (!data) {
+    if (!session) return null;
+    return <div style={{ padding: '8px 16px 12px', fontSize: 12, color: 'var(--muted)' }} aria-busy="true">불러오는 중…</div>;
+  }
 
   const strategySignals = data.buySignals + data.sellSignals;
   const signalsCreated = strategySignals + data.exitSignals;
@@ -73,7 +146,7 @@ export function EvalFunnelCard({ reloadKey }: { reloadKey: number }) {
         style={{ ...sx.cardHeader, cursor: 'pointer', userSelect: 'none' as const }}
       >
         <span style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '.6px', textTransform: 'uppercase' }}>
-          오늘의 평가 깔때기
+          {session ? '평가 깔때기' : '오늘의 평가 깔때기'}
         </span>
         <span style={{
           fontSize: 14, color: 'var(--muted)', transition: 'transform .15s',
@@ -84,7 +157,7 @@ export function EvalFunnelCard({ reloadKey }: { reloadKey: number }) {
       {/* 헤더(결론) */}
       <div style={{ padding: '2px 14px 10px' }}>
         <div style={{ fontSize: 13 }}>
-          오늘 시그널{' '}
+          {session ? '시그널' : '오늘 시그널'}{' '}
           <strong style={{ color: signalsCreated > 0 ? 'var(--ok)' : 'var(--text)' }}>{signalsCreated}건</strong>
           {signalsCreated > 0 && (
             <span style={{ color: 'var(--muted)' }}> (전략 {strategySignals} · 청산 {data.exitSignals})</span>

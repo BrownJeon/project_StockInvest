@@ -109,7 +109,7 @@ export function MarketsPage() {
       />
 
       <div style={sx.foot}>
-        <Link href="/" style={{ fontSize: 12, color: 'var(--muted)' }}>← 대시보드</Link>
+        <Link href="/" style={{ fontSize: 12, color: 'var(--muted)' }}>← 홈</Link>
         <span style={{ fontSize: 11, color: 'var(--muted)' }}>
           {new Date(status.now).toLocaleString('ko-KR')}
         </span>

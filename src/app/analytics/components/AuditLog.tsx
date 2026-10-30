@@ -30,7 +30,7 @@ const FILTER_LABELS: Record<FilterKey, string> = {
 const EVENT_META: Record<string, { icon: string; label: string; color: string }> = {
   submit_attempt:  { icon: '📤', label: '주문 시도',   color: 'var(--muted)' },
   accepted:        { icon: '✅', label: '주문 접수',   color: 'var(--ok)' },
-  dry_run:         { icon: '🔵', label: '모의 주문',   color: 'var(--accent)' },
+  dry_run:         { icon: '🔵', label: '가상 주문',   color: 'var(--accent)' },
   blocked:         { icon: '🚫', label: '주문 차단',   color: 'var(--down)' },
   rejected:        { icon: '❌', label: '주문 거부',   color: 'var(--down)' },
   error:           { icon: '⚠️', label: '주문 오류',   color: 'var(--down)' },
@@ -38,7 +38,7 @@ const EVENT_META: Record<string, { icon: string; label: string; color: string }>
 };
 
 const BLOCK_REASON: Record<string, string> = {
-  kill_switch:        'Kill Switch 발동',
+  kill_switch:        '모든거래차단 발동',
   symbol_not_allowed: '허용되지 않은 심볼',
   order_limit:        '주문 한도 초과',
   daily_limit:        '일일 한도 초과',

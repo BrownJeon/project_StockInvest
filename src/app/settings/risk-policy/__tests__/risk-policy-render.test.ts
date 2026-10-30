@@ -140,7 +140,7 @@ describe('리스크 정책 화면 — 상태별', () => {
     expect(t).toContain('미국 → 국내');
     expect(t).toContain('미국 70% · 국내 30%');
     expect(t).toContain('위 정책 값은 읽기 전용입니다. 변경은 사용자 승인 후 반영됩니다.');
-    expect(t).toContain('자동 청산 엔진(지금 OFF, 기본 하드 손절 1.5%)');
+    expect(t).toContain('자동 청산 엔진(지금 OFF, 기본 손실한도 손절 1.5%)'); // T-108 §3.2 용어 정정(하드 손절 → 손실한도 손절)
     expect(t).not.toContain('변경 1건');
     expect(html).not.toContain('class="savebar');
     expect(html).not.toContain('최대 2회');

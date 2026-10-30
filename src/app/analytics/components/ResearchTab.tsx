@@ -123,7 +123,7 @@ interface TrackedItem {
 }
 
 const WARNING_KO: Record<string, string> = {
-  short_history: '상장 이력이 짧아 표본이 부족합니다 — "패턴 없음"이 아니라 "아직 판단 불가"입니다.',
+  short_history: '상장 이력이 짧아 건수가 적습니다 — "패턴 없음"이 아니라 "아직 판단 불가"입니다.',
   no_events: '설정한 기준(저점 대비 급등)에 해당하는 구간이 관측되지 않았습니다.',
   insufficient_for_precursors: '이벤트가 없어 선행지표 분석을 수행하지 않았습니다.',
   pending_recent_trough: '최근 저점은 관측 기간이 남아 있어 판단을 보류했습니다.',
@@ -342,7 +342,7 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
       ? { icon: '🟢', text: '매수 고려', color: '#ef4444' }
       : buy.action === 'hold'
         ? { icon: '⚪', text: '관망', color: 'var(--muted)' }
-        : { icon: '⚪', text: '판단 보류(표본부족)', color: 'var(--muted)' };
+        : { icon: '⚪', text: '판단 보류(건수 적음)', color: 'var(--muted)' };
 
   const sellBadge = !sell
     ? null
@@ -358,7 +358,7 @@ function RecommendationBlock({ rec }: { rec: Recommendation }) {
           ? DOWNGRADE_KO[buy.downgradeReason]
           : '오늘 종가 기준 충족한 선행지표 조건이 없습니다.')
       : buy.action === 'insufficient_data'
-        ? `판단에 쓸 과거 표본이 부족합니다${buy.triggerCount > 0 ? `(트리거 ${buy.triggerCount}건)` : ''}.`
+        ? `판단에 쓸 과거 건수가 적습니다${buy.triggerCount > 0 ? `(트리거 ${buy.triggerCount}건)` : ''}.`
         : null;
 
   const buyZone = displayableBuyZone(targets);

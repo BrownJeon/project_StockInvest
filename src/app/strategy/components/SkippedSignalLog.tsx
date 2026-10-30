@@ -54,7 +54,7 @@ export function SkippedSignalLog() {
     <div style={{ borderTop: '1px solid var(--border)', marginTop: 4 }}>
       <div style={{ padding: '14px 16px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' as const, letterSpacing: '.5px' }}>
-          ⏭ AI 스킵 이력
+          ⏭ AI 매매 안 함 이력
         </span>
         {signals.length > 0 && (
           <span style={{
@@ -73,7 +73,7 @@ export function SkippedSignalLog() {
           </div>
         ) : signals.length === 0 ? (
           <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
-            오늘 스킵된 시그널 없음
+            오늘 AI 가 매매하지 않기로 판단한 시그널 없음
           </div>
         ) : (
           <>
@@ -106,7 +106,7 @@ export function SkippedSignalLog() {
                         fontSize: 11, padding: '1px 6px', borderRadius: 7, fontWeight: 600,
                         background: 'var(--bg3)', color: 'var(--muted)', marginLeft: 'auto',
                       }}>
-                        SKIP {confidence}%
+                        {sig.side === 'buy' ? '매수' : '매도'} 안 함 {confidence}%
                       </span>
                     )}
                   </div>

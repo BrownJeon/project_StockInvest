@@ -1,8 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, useCallback } from 'react';
-import { useToast } from '@/components/ui/Toast';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { UsMarketBadge, type SignalWithScenario } from './ScenarioCard';
 import {
   parseIndicators, scenarioOf, isOverseasSignal, overseasZoneView, detailZoneAux, sessionLine, earningsLine,
@@ -13,6 +12,7 @@ import {
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
 import { useFxRate } from '@/lib/hooks/useFxRate';
 import { fmtMarketPrice } from '@/lib/format';
+import { cx, ops } from '@/components/ops/ui';
 
 interface Props {
   signalId: number;
@@ -120,6 +120,51 @@ export function AiEntryZoneBox({ overseas, indicators, domesticZone }: {
   );
 }
 
+// ─── T-108 §2.4.3 승인·거절 결과 표시 (데모 v3 시트 결과 상태) ─────────────────────
+// API·요청 본문·편집 폼·확인 단계는 그대로다. 바뀌는 것은 응답을 **읽어 나눠 보이는 것**뿐(이전: 토스트 1줄, 거절은 결과를 보지 않음).
+// 매수·매도 모두 `custom/confirm` 은 진입 감시(approved_pending_entry)를 만든다 — 바로 주문을 내지 않는다 [확인: confirm route 반환값].
+
+export type DetailResultKind = 'ok' | 'fail' | 'blocked' | 'unknown' | 'rejected' | 'reject_fail' | 'reject_unknown';
+export interface DetailResult { kind: DetailResultKind; text: string }
+
+export const APPROVE_UNKNOWN_TEXT = '! 오류: 연결이 끊겼습니다 — 승인됐는지 알 수 없습니다. 목록을 새로 고쳐 상태를 확인한 뒤 다시 시도하세요.';
+export const REJECT_UNKNOWN_TEXT = '! 오류: 연결이 끊겼습니다 — 거절됐는지 알 수 없습니다. 목록을 새로 고쳐 상태를 확인하세요.';
+const BLOCK_CODES = new Set(['validation_gate', 'validation_lookup_error']);
+
+/** 승인 응답(HTTP 상태 + 본문) → 결과. 본문을 못 읽었거나(undefined) 5xx 면 「알 수 없음」 — 서버가 일부를 처리했을 수 있다. */
+export function approveResultOf(status: number, data: unknown): DetailResult {
+  const d = (data && typeof data === 'object' ? data : null) as { ok?: unknown; status?: unknown; error?: unknown; errorCode?: unknown; blockedBy?: unknown } | null;
+  if (!d) return { kind: 'unknown', text: APPROVE_UNKNOWN_TEXT };
+  if (d.ok === true) {
+    return { kind: 'ok', text: d.status === 'approved_pending_entry' ? '✓ 진입 감시가 시작됐습니다' : '✓ 승인했습니다' };
+  }
+  const err = typeof d.error === 'string' && d.error ? d.error : '알 수 없는 오류';
+  if ((typeof d.errorCode === 'string' && BLOCK_CODES.has(d.errorCode)) || d.blockedBy != null) {
+    return { kind: 'blocked', text: `⊘ 차단: ${err} — 승인되지 않았습니다.` };
+  }
+  if (status >= 500) {
+    return { kind: 'unknown', text: `! 오류: ${err} — 승인됐는지 알 수 없습니다. 목록을 새로 고쳐 상태를 확인한 뒤 다시 시도하세요.` };
+  }
+  return { kind: 'fail', text: `! 오류: ${err} — 승인되지 않았습니다. 목록으로 돌아가 다시 확인하세요.` };
+}
+
+/** 거절 응답 → 결과. 거절 성공은 놓친 기회(사후 추적)에 남는다. */
+export function rejectResultOf(status: number, data: unknown): DetailResult {
+  const d = (data && typeof data === 'object' ? data : null) as { ok?: unknown } | null;
+  if (d && d.ok === true) return { kind: 'rejected', text: '거절했습니다 — 놓친 기회(사후 추적)에 기록됩니다' };
+  if (!d || status >= 500) return { kind: 'reject_unknown', text: REJECT_UNKNOWN_TEXT };
+  return { kind: 'reject_fail', text: '! 거절하지 못했습니다 — 시그널은 그대로입니다' };
+}
+
+/** 승인 버튼 위 안내(데모 `.gate`). 실거래여부 값은 `/api/ops/safety-state` 의 liveTrading(서버가 live-trading.ts 로 변환한 값). */
+/** 「등록하면 **진입 감시가 시작**」 뒤에 붙는 문장(버튼 「✅ 등록」과 어휘를 맞춤 — R-UI ⑦). 매도도 같은 진입 감시 경로다 — 다만 주문 한도·검증 관문은 매도에 적용되지 않는다(dry-run.ts·validation-gate). */
+export function approveGateText(side: 'buy' | 'sell', liveTrading: boolean | null): { body: string; live: boolean } {
+  const live = liveTrading === true;
+  return side === 'sell'
+    ? { body: '됩니다 — 이 단계에서는 주문이 나가지 않습니다. 매도 주문은 지정한 구간에 닿을 때 안전장치(모든거래차단·실거래여부)를 거쳐 나갑니다(매도는 주문 한도·검증 관문을 거치지 않음)', live }
+    : { body: '됩니다 — 이 단계에서는 주문이 나가지 않습니다. 주문은 진입 구간에 닿을 때 안전장치(모든거래차단·한도·실거래여부)를 거쳐 나갑니다', live };
+}
+
 const GRADE_STYLE: Record<string, { color: string; bg: string; border: string }> = {
   'A':  { color: '#22c55e', bg: 'rgba(34,197,94,.15)',   border: 'rgba(34,197,94,.4)'  },
   'B+': { color: '#818cf8', bg: 'rgba(99,102,241,.18)',  border: 'rgba(99,102,241,.4)' },
@@ -129,7 +174,6 @@ const GRADE_STYLE: Record<string, { color: string; bg: string; border: string }>
 
 export function ScenarioDetail({ signalId }: Props) {
   const router = useRouter();
-  const toast = useToast();
   const { displaySymbol, marketFlag } = useSymbolMeta();
   const fxRate = useFxRate();
   // 로드된 signal의 market 기준으로 가격 포맷 — signal이 없으면 domestic 기본
@@ -148,6 +192,23 @@ export function ScenarioDetail({ signalId }: Props) {
   const [priceLoading, setPriceLoading] = useState(false);
   const [holdingQty, setHoldingQty] = useState<number>(0);
   const [formError, setFormError] = useState<string | null>(null);
+  // T-108 §2.4.3 — 결과 표시·실거래여부 안내 (위 useState 뒤에만 추가: 시험이 앞 2개 순서에 기댄다)
+  const [result, setResult] = useState<DetailResult | null>(null);
+  const [liveTrading, setLiveTrading] = useState<boolean | null>(null);
+  const resultRef = useRef<HTMLDivElement | null>(null);
+
+  // 결과가 바뀌면 결과 상자로 포커스(role=status 없이 tabIndex=-1 — 두 번 읽힘 방지, 가이드 §8.2)
+  useEffect(() => { if (result) resultRef.current?.focus(); }, [result]);
+
+  // 실거래여부(안내 문구용) — 읽기 전용 라우트. 실패하면 null(빨간 「실제 주문」 꼬리를 붙이지 않는다)
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/ops/safety-state', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (alive && j?.ok && j.data) setLiveTrading(typeof j.data.liveTrading === 'boolean' ? j.data.liveTrading : null); })
+      .catch(() => { /* 안내 꼬리만 빠진다 */ });
+    return () => { alive = false; };
+  }, []);
 
   // 시그널 로드
   useEffect(() => {
@@ -352,15 +413,12 @@ export function ScenarioDetail({ signalId }: Props) {
           sourceSignalId: signal.id,
         }),
       });
-      const data = await res.json();
-      if (data.ok) {
-        toast.show('진입 감시가 시작됐습니다', 'success');
-        setTimeout(() => router.push('/recommend'), 1800);
-      } else {
-        toast.show(`오류: ${data.error ?? '알 수 없는 오류'}`, 'error');
-      }
-    } catch (e) {
-      toast.show(`오류: ${String(e)}`, 'error');
+      const data = await res.json().catch(() => undefined);
+      const outcome = approveResultOf(res.status, data);
+      setResult(outcome);
+      if (outcome.kind === 'ok') setTimeout(() => router.push('/recommend'), 1800);
+    } catch {
+      setResult({ kind: 'unknown', text: APPROVE_UNKNOWN_TEXT });
     } finally {
       setSubmitting(false);
     }
@@ -370,8 +428,14 @@ export function ScenarioDetail({ signalId }: Props) {
     if (!signal) return;
     setRejecting(true);
     try {
-      await fetch(`/api/signals/${signal.id}/reject`, { method: 'POST' });
-      router.push('/recommend');
+      const res = await fetch(`/api/signals/${signal.id}/reject`, { method: 'POST' });
+      const data = await res.json().catch(() => undefined);
+      const outcome = rejectResultOf(res.status, data);
+      setResult(outcome);
+      // 이동 목적지는 이전과 같다(/recommend). 결과 문구를 읽을 수 있게 승인 성공과 같은 1.8초 뒤에 이동한다.
+      if (outcome.kind === 'rejected') setTimeout(() => router.push('/recommend'), 1800);
+    } catch {
+      setResult({ kind: 'reject_unknown', text: REJECT_UNKNOWN_TEXT });
     } finally {
       setRejecting(false);
     }
@@ -403,7 +467,8 @@ export function ScenarioDetail({ signalId }: Props) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: 100 }}>
+    // 하단 고정 바(버튼 52 + 여백)가 결과 상자만큼 커지면 본문 끝이 가려진다 — 그만큼 아래 여백을 늘린다(R-UI ⑦)
+    <div style={{ display: 'flex', flexDirection: 'column', paddingBottom: (submitting || rejecting || result) ? 160 : 100 }}>
       {/* 헤더 */}
       <div style={{
         padding: '12px 16px 10px', position: 'sticky', top: 0,
@@ -694,6 +759,17 @@ export function ScenarioDetail({ signalId }: Props) {
           )}
         </section>
 
+        {/* T-108 §2.4.3 — 승인 버튼 위 안내(데모 .gate). 실거래여부 ON 이면 빨간 상자 + 「실제 주문」 */}
+        {(() => {
+          const g = approveGateText(signal.side === 'sell' ? 'sell' : 'buy', liveTrading);
+          return (
+            <div className={cx(ops.gate, g.live && ops.bad)} style={{ margin: 0, fontSize: 12, lineHeight: 1.55 }}>
+              등록하면 <b>진입 감시가 시작</b>{g.body}
+              {g.live ? <> — 지금 실거래여부 ON = <b>실제 주문</b>.</> : '.'}
+            </div>
+          );
+        })()}
+
       </div>
 
       {/* 하단 고정 버튼 */}
@@ -704,9 +780,22 @@ export function ScenarioDetail({ signalId }: Props) {
         display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10,
         zIndex: 20,
       }}>
+        {/* T-108 §2.4.3 결과 — 처리 중·성공·실패·차단·알 수 없음·거절 (버튼 위, 포커스 이동) */}
+        {(submitting || rejecting || result) && (
+          <div
+            ref={resultRef}
+            tabIndex={-1}
+            className={cx(ops.res, !(submitting || rejecting) && result && (result.kind === 'ok' ? ops.ok : result.kind === 'rejected' ? null : ops.e))}
+            style={{ gridColumn: '1 / -1', margin: 0 }}
+          >
+            {submitting || rejecting
+              ? <><span className={ops.spin} aria-hidden="true" /> 처리 중… (다시 누를 수 없음)</>
+              : result?.text}
+          </div>
+        )}
         <button
           onClick={handleApprove}
-          disabled={submitting}
+          disabled={submitting || rejecting || result?.kind === 'ok' || result?.kind === 'rejected'}
           style={{
             height: 52, borderRadius: 10, fontSize: 16, fontWeight: 700,
             background: submitting ? 'var(--bg3)' : 'var(--up)',
@@ -718,7 +807,7 @@ export function ScenarioDetail({ signalId }: Props) {
         </button>
         <button
           onClick={handleReject}
-          disabled={rejecting || submitting}
+          disabled={rejecting || submitting || result?.kind === 'ok' || result?.kind === 'rejected'}
           style={{
             height: 52, borderRadius: 10, fontSize: 16, fontWeight: 700,
             background: 'var(--bg3)', color: 'var(--muted)',

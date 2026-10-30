@@ -24,7 +24,7 @@ describe('R-5 호스트 흉내가 실제로 켜져 있다 (전제 확인)', () =
   test('그래도 금액·환율·구간 서식은 쉼표(ko-KR)', () => {
     expect(fmtApproxKrw('100000.00')).toBe('약 100,000원');
     expect(krwZoneText(CMCSA_INDICATORS)).toBe('36,176 ~ 36,708원');
-    expect(fxView(CMCSA_INDICATORS)).toBe('카드 환율 1,330 (10-21 08:00)');
+    expect(fxView(CMCSA_INDICATORS)).toBe('시그널 환율 1,330 (10-21 08:00)');
   });
 });
 
@@ -162,7 +162,7 @@ describe('G4 fmtApproxKrw — "약 100,000원"', () => {
 describe('G6 overseasZoneView · usdZoneText · krwZoneText · detailZoneAux', () => {
   test('정상: 달러 주표기 + 원화(쉼표·원)', () => {
     expect(overseasZoneView(JSON.stringify(CMCSA_INDICATORS))).toEqual({ usd: '$27.20 ~ $27.60', krw: '36,176 ~ 36,708원' });
-    expect(detailZoneAux(CMCSA_INDICATORS)).toBe('≈ 36,176 ~ 36,708원 · 카드 환율 1,330 (10-21 08:00) · 자동 진입은 이 원화 구간으로 판단');
+    expect(detailZoneAux(CMCSA_INDICATORS)).toBe('≈ 36,176 ~ 36,708원 · 시그널 환율 1,330 (10-21 08:00) · 자동 진입은 이 원화 구간으로 판단');
   });
   test('price_zone_usd 없음(Q-g) → 원화 폴백, 보조 줄 없음', () => {
     const ind = cmcsaWithoutUsd().indicators;
@@ -176,7 +176,7 @@ describe('G6 overseasZoneView · usdZoneText · krwZoneText · detailZoneAux', (
   test('달러만 있고 원화 구간 없음 → 보조 줄은 환율 문구만', () => {
     const ind = { price_zone_usd: { lo: 1, hi: 2 }, fx: { rate: 1330 } };
     expect(overseasZoneView(ind)).toEqual({ usd: '$1.00 ~ $2.00', krw: null });
-    expect(detailZoneAux(ind)).toBe('카드 환율 1,330');
+    expect(detailZoneAux(ind)).toBe('시그널 환율 1,330');
     expect(detailZoneAux({ price_zone_usd: { lo: 1, hi: 2 } })).toBeNull();
   });
   test.each<[unknown]>([
@@ -204,16 +204,17 @@ describe('G6 overseasZoneView · usdZoneText · krwZoneText · detailZoneAux', (
   });
 });
 
+// T-108 §3.2 — 시그널 뜻의 「카드」를 「시그널」로 정정(카드 환율·카드 금액·미국 카드는 → 시그널 …). 이 파일은 기대 문구만 갱신, 시험 논리 불변.
 describe('G6 fxView', () => {
-  test('rate + asOf → "카드 환율 1,330 (10-21 08:00)"', () => {
-    expect(fxView(CMCSA_INDICATORS)).toBe('카드 환율 1,330 (10-21 08:00)');
+  test('rate + asOf → "시그널 환율 1,330 (10-21 08:00)"', () => {
+    expect(fxView(CMCSA_INDICATORS)).toBe('시그널 환율 1,330 (10-21 08:00)');
   });
   test('asOf UTC 표기도 KST 로', () => {
-    expect(fxView({ fx: { rate: 1330.456, asOf: '2026-10-20T23:00:00Z' } })).toBe('카드 환율 1,330.46 (10-21 08:00)');
+    expect(fxView({ fx: { rate: 1330.456, asOf: '2026-10-20T23:00:00Z' } })).toBe('시그널 환율 1,330.46 (10-21 08:00)');
   });
   test('asOf 없음·Invalid → 괄호 생략, rate 없음·0·문자열 → null', () => {
-    expect(fxView({ fx: { rate: 1330 } })).toBe('카드 환율 1,330');
-    expect(fxView({ fx: { rate: 1330, asOf: 'nope' } })).toBe('카드 환율 1,330');
+    expect(fxView({ fx: { rate: 1330 } })).toBe('시그널 환율 1,330');
+    expect(fxView({ fx: { rate: 1330, asOf: 'nope' } })).toBe('시그널 환율 1,330');
     expect(fxView({ fx: { asOf: '2026-10-21T08:00:00+09:00' } })).toBeNull();
     expect(fxView({ fx: { rate: 0 } })).toBeNull();
     expect(fxView({ fx: { rate: '1330' } })).toBeNull();
@@ -266,15 +267,15 @@ describe('G6 earningsLine', () => {
 
 describe('G7 overseasFootnote — "내일" 탭 하단 고정 문구', () => {
   test('해외 카드 1장 이상(장면 4) → 문구, 금액은 카드 amount_krw', () => {
-    expect(overseasFootnote(T062_SCENE4)).toBe('미국 카드는 매일 08:00 분석 · 1주 가격이 100,000원 이하인 종목만 만들어집니다(보유·관심 종목 중 비싼 종목은 나오지 않음).');
+    expect(overseasFootnote(T062_SCENE4)).toBe('미국 시그널은 매일 08:00 분석 · 1주 가격이 100,000원 이하인 종목만 만들어집니다(보유·관심 종목 중 비싼 종목은 나오지 않음).');
   });
   test('해외 0장 → null (스위치 꺼짐 상태와 같은 화면)', () => {
     expect(overseasFootnote(T062_FIXTURE.filter(r => r.market === 'domestic'))).toBeNull();
     expect(overseasFootnote([])).toBeNull();
   });
-  test('해외 카드 금액 없음 → "카드 금액"', () => {
+  test('해외 카드 금액 없음 → "시그널 금액"', () => {
     expect(overseasFootnote([{ market: 'overseas', symbol: 'NAS:CMCSA', amount_krw: null }]))
-      .toContain('1주 가격이 카드 금액 이하인 종목만');
+      .toContain('1주 가격이 시그널 금액 이하인 종목만');
   });
   test('국내 카드 금액은 쓰지 않는다', () => {
     expect(overseasFootnote([

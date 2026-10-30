@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { fmtNum } from '@/lib/format';
 import { requestJson } from '@/lib/http';
+import { liveTradingFromDryRun } from '@/lib/safety/live-trading';
 
 interface HealthResponse {
   ok: boolean;
@@ -67,10 +68,12 @@ export function SafetyBar() {
     return () => { alive = false; };
   }, []);
 
+  // T-108 §3.1·§3.5 — 화면 이름은 실거래여부(ON = 실거래 가능)·모든거래차단. 방향 변환은 live-trading.ts 한 곳에서만.
+  const liveTrading = health ? liveTradingFromDryRun(health.safety.dryRun) : false;
   const warnings: string[] = [];
   if (health) {
-    if (!health.safety.dryRun) warnings.push('DRY_RUN OFF');
-    if (health.safety.killSwitch) warnings.push('KILL ON');
+    if (liveTrading) warnings.push('실거래여부 ON');
+    if (health.safety.killSwitch) warnings.push('모든거래차단 ON');
   }
   const dotBg     = warnings.length === 0 ? 'var(--ok)' : warnings.length >= 2 ? 'var(--danger)' : 'var(--warn)';
   const dotShadow = warnings.length === 0 ? 'rgba(34,197,94,.15)' : warnings.length >= 2 ? 'rgba(239,68,68,.15)' : 'rgba(245,158,11,.15)';
@@ -79,7 +82,7 @@ export function SafetyBar() {
   if (error) summary = `health error: ${error}`;
   else if (health) {
     summary = warnings.length === 0
-      ? `정상 · DRY_RUN ${health.safety.dryRun ? 'ON' : 'OFF'} · KILL ${health.safety.killSwitch ? 'ON' : 'OFF'} · BL ${health.safety.blockedSymbols.length}`
+      ? `정상 · 실거래여부 ${liveTrading ? 'ON' : 'OFF'} · 모든거래차단 ${health.safety.killSwitch ? 'ON' : 'OFF'} · BL ${health.safety.blockedSymbols.length}`
       : warnings.join(' · ');
   }
 
@@ -154,8 +157,8 @@ export function SafetyBar() {
         <div style={{ display: 'flex', gap: 6, padding: '10px 12px 6px', overflowX: 'auto' }}>
           {health ? (
             <>
-              <SafetyChip label="DRY_RUN" value={health.safety.dryRun ? 'ON' : 'OFF'} ok={health.safety.dryRun} />
-              <SafetyChip label="KILL" value={health.safety.killSwitch ? 'ON' : 'OFF'} ok={!health.safety.killSwitch} />
+              <SafetyChip label="실거래여부" value={liveTrading ? 'ON' : 'OFF'} ok={!liveTrading} />
+              <SafetyChip label="모든거래차단" value={health.safety.killSwitch ? 'ON' : 'OFF'} ok={!health.safety.killSwitch} />
               <SafetyChip label="ORDER_MAX" value={fmtNum(health.safety.orderMaxKRW)} />
               <SafetyChip label="DAILY_MAX" value={fmtNum(health.safety.dailyOrderMaxKRW)} />
               <SafetyChip label="BL" value={health.safety.blockedSymbols.length === 0 ? '없음' : health.safety.blockedSymbols.map((s) => s.replace('KRW-', '')).join(', ')} />
@@ -170,8 +173,8 @@ export function SafetyBar() {
         <div style={{ padding: '8px 12px 14px', borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>
             비상 청산 — 진행 중인 주문 전체 취소
-            {health?.safety.dryRun && (
-              <span style={{ marginLeft: 6, color: '#555' }}>(DRY_RUN: 실거래소 미호출)</span>
+            {health && !liveTrading && (
+              <span style={{ marginLeft: 6, color: '#555' }}>(실거래여부 OFF: 실거래소 미호출)</span>
             )}
           </div>
 

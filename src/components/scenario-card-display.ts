@@ -223,7 +223,7 @@ export function fxView(ind: unknown): string | null {
   const fx = objAt(parseIndicators(ind), 'fx');
   const rate = fx?.rate;
   if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) return null;
-  const head = `카드 환율 ${rate.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}`;
+  const head = `시그널 환율 ${rate.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}`;
   const at = toValidDate(fx?.asOf);
   if (!at) return head;
   const p = kstParts(at);
@@ -292,6 +292,6 @@ export function overseasFootnote(
 ): string | null {
   const overseas = items.filter(isOverseasSignal);
   if (overseas.length === 0) return null;
-  const amount = overseas.map(s => fmtKrw(s.amount_krw)).find((x): x is string => x !== null) ?? '카드 금액';
-  return `미국 카드는 매일 08:00 분석 · 1주 가격이 ${amount} 이하인 종목만 만들어집니다(보유·관심 종목 중 비싼 종목은 나오지 않음).`;
+  const amount = overseas.map(s => fmtKrw(s.amount_krw)).find((x): x is string => x !== null) ?? '시그널 금액';
+  return `미국 시그널은 매일 08:00 분석 · 1주 가격이 ${amount} 이하인 종목만 만들어집니다(보유·관심 종목 중 비싼 종목은 나오지 않음).`;
 }

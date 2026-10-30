@@ -146,7 +146,7 @@ export function TopSymbolsSection() {
                     )}
                   </div>
                   <div style={{ fontSize: 10, color: 'var(--muted)' }}>
-                    실행 {sym.execCount}  ·  스킵 {sym.skipCount}
+                    실행 {sym.execCount}  ·  안 함 {sym.skipCount}
                   </div>
                 </div>
               </div>
