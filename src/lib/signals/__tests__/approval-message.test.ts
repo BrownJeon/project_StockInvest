@@ -165,7 +165,7 @@ describe('승인 요청 본문 (목업 1·4)', () => {
   });
 
   test('청산 시그널은 exit 유형 이름으로 보인다', () => {
-    expect(renderApprovalRequest(base({ side: 'sell', exitKind: 'hard_stop' }), KEY).text).toContain('하드 손절');
+    expect(renderApprovalRequest(base({ side: 'sell', exitKind: 'hard_stop' }), KEY).text).toContain('손실한도 손절');
   });
 });
 
@@ -253,7 +253,7 @@ describe('결과 문구 (목업 2·3)', () => {
   });
 
   test('DRY_RUN 주문은 실제 주문이 아니라고 명시', () => {
-    expect(renderDecision({ kind: 'order_placed', orderId: 1, dryRun: true }, ctx).text).toContain('DRY_RUN');
+    expect(renderDecision({ kind: 'order_placed', orderId: 1, dryRun: true }, ctx).text).toContain('가상 주문');
   });
 
   test('이미 처리된 시그널은 상태를 한국어로 알린다', () => {
@@ -262,7 +262,7 @@ describe('결과 문구 (목업 2·3)', () => {
   });
 
   test('describeOrderFailure — 알려진 코드는 풀어 쓰고, 모르는 코드는 숨기지 않는다', () => {
-    expect(describeOrderFailure('order_not_accepted: kill_switch')).toBe('킬스위치가 켜져 있음');
+    expect(describeOrderFailure('order_not_accepted: kill_switch')).toBe('모든거래차단이 켜져 있음');
     expect(describeOrderFailure('order_not_accepted: daily_limit')).toBe('일 한도 초과');
     expect(describeOrderFailure('order_not_accepted: order_limit')).toContain('한도');
     expect(describeOrderFailure('insufficient_balance')).toContain('현금 부족');

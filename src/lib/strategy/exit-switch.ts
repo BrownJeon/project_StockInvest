@@ -139,8 +139,8 @@ export function describeExitEngineSwitch(s: ExitEngineSwitch): string {
     : s.source === 'unparsable' ? `system_config.${EXIT_ENGINE_ENABLED_KEY} 해석 불가(${JSON.stringify(s.raw)}) → 비활성`
     :                             `system_config 조회 실패(${s.error ?? 'unknown'}) → 비활성`;
   if (!s.enabled) {
-    return '자동 청산 엔진 OFF — 하드손절·EOD손절·트레일링스탑·목표익절이 '
+    return '자동 청산 엔진 OFF — 손실한도 손절·장마감 전 손절·트레일링·익절이 '
       + `자동 매도 주문을 내지 않습니다 (${reason})`;
   }
-  return `자동 청산 엔진 ON — 하드손절${s.hardStopEnabled ? '' : '(개별 OFF)'}·EOD손절·트레일링스탑·목표익절 동작 중 (${reason})`;
+  return `자동 청산 엔진 ON — 손실한도 손절${s.hardStopEnabled ? '' : '(개별 OFF)'}·장마감 전 손절·트레일링·익절 동작 중 (${reason})`;
 }

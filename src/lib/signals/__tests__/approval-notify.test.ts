@@ -123,7 +123,7 @@ describe('2. 🔴 간단한 본문 — 기존 형식 그대로 + 이스케이프
   test('청산 유형이 있으면 유형 줄을, 사유는 첫 줄을 쓴다', async () => {
     const { d, sent } = deps();
     await notifyApprovalRequest(args({ side: 'sell', indicators: { exit_kind: 'hard_stop' }, reasoning: '[하드 손절] 손실 -9.00% < -8%\n상세 설명' }), d);
-    expect(sent.plain[0].body).toBe('매도 ₩1,121,925 · TTL 28분\n유형: 🔴 하드 손절 (자금보호)\n사유: [하드 손절] 손실 -9.00% &lt; -8%');
+    expect(sent.plain[0].body).toBe('매도 ₩1,121,925 · TTL 28분\n유형: 🔴 손실한도 손절 (자금보호)\n사유: [하드 손절] 손실 -9.00% &lt; -8%');
   });
 
   test('사유가 없으면 사유 줄이 없다', async () => {

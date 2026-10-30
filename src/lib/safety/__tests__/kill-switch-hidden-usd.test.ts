@@ -139,7 +139,7 @@ describe('수용 기준 1 — 10-23 사건 합성 재현', () => {
     expect(String(body)).toContain('보정 손실률 -2.8%');
     expect(String(body)).toContain('기준선(마지막으로 보인 시각');
     expect(String(body)).toContain('현재(마지막으로 보인 시각');
-    expect(String(body)).toContain('실제 손실이라면 설정 > 안전장치에서 킬스위치를 수동으로 켜세요.');
+    expect(String(body)).toContain('실제 손실이라면 설정 > 안전장치에서 모든거래차단을 수동으로 켜세요.');
     expect(ttl).toBe(12 * HOUR);
     expect(String((r as { detail?: string }).detail)).toContain('-2.8%');
   });

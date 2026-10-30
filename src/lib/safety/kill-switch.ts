@@ -116,9 +116,11 @@ export function applyUsdSymmetricRemoval(
  */
 function reportUnparsableKillSwitch(source: string, raw: string): void {
   if (!shouldReportUnparsable(source, raw)) return;
-  const msg = `${source} 값을 해석할 수 없음(${JSON.stringify(raw)}) — 안전을 위해 KILL_SWITCH 활성으로 처리합니다. 값을 true/false 로 바로잡으면 즉시 해제됩니다.`;
-  console.error(`[safety] ${msg}`);
-  sendAlert('critical', 'KILL_SWITCH 값 해석 불가 — 활성 처리', msg);
+  // T-129: console 문구는 운영 로그 grep 이 기대하므로 이전과 같은 글자 그대로, 경보 본문만 화면 용어(모든거래차단).
+  // 로그 문장은 console 호출 안에 둔다 — 용어 울타리(t129-alert-terms-fence)가 로그로 인식하는 기준이다.
+  const head = `${source} 값을 해석할 수 없음(${JSON.stringify(raw)}) — 안전을 위해`;
+  console.error(`[safety] ${head} KILL_SWITCH 활성으로 처리합니다. 값을 true/false 로 바로잡으면 즉시 해제됩니다.`);
+  sendAlert('critical', '모든거래차단 값 해석 불가 — 활성 처리', `${head} 모든거래차단 활성으로 처리합니다. 값을 true/false 로 바로잡으면 즉시 해제됩니다.`);
 }
 
 export async function isKillSwitchActive(): Promise<boolean> {
@@ -249,7 +251,7 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
       sendAlertThrottled(
         'kill-switch:stale-current',
         fresh.session === 'closed' ? 'warning' : 'critical',
-        '⚠️ Kill Switch 24h drawdown 검사 생략 — 현재 자본을 믿을 수 없음',
+        '⚠️ 모든거래차단 24h drawdown 검사 생략 — 현재 자본을 믿을 수 없음',
         `${detail}\n`
         + '낡은 값으로 손실률을 계산하면 실제 폭락이 0% 로 보일 수 있어 계산 자체를 건너뜁니다.\n'
         + '**이 시간 동안 24h drawdown 자동 발동은 동작하지 않습니다.**\n'
@@ -274,9 +276,9 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
       sendAlertThrottled(
         'kill-switch:no-baseline',
         'warning',
-        'Kill Switch 24h drawdown 검사 생략 — 기준선 없음',
+        '모든거래차단 24h drawdown 검사 생략 — 기준선 없음',
         `${detail}.\n`
-        + '최근 스냅샷을 "24시간 전"으로 대신 쓰면 손실률이 ~0% 로 계산돼 킬스위치가 조용히 '
+        + '최근 스냅샷을 "24시간 전"으로 대신 쓰면 손실률이 ~0% 로 계산돼 모든거래차단이 조용히 '
         + '무력화되므로 대체하지 않습니다.\n'
         + '**이 회차의 24h drawdown 자동 발동은 동작하지 않습니다.**\n'
         + '반복되면 hourly 스냅샷 cron 이 정상 동작하는지 확인하세요.',
@@ -380,12 +382,12 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
                 // 사건(가려진 쪽 + 마지막으로 보인 시각)마다 키를 달리한다
                 `kill-switch:hidden-usd-carry:${carry.hiddenSides.map(n => `${n}=${(n === 'baseline' ? carry.baseline : carry.current).lastSeenMs ?? 'na'}`).join(',')}`,
                 'critical',
-                '⚠️ Kill Switch 자동 발동 보류 — USD 예수금 가려짐 의심',
+                '⚠️ 모든거래차단 자동 발동 보류 — USD 예수금 가려짐 의심',
                 `원시 24h 손실률 ${drawdownPct.toFixed(1)}% · 보정 손실률 ${carry.adjustedDrawdownPct.toFixed(1)}%\n`
                 + `가려진 쪽: ${sidesText}\n`
                 + 'USD 예수금 행이 수량 0 으로 기록돼(평일 야간 가려짐 의심) 손실이 부풀었을 수 있어 자동 발동을 보류했습니다.\n'
                 + '단, 가려진 동안 USD 를 원화로 환전·출금했다면 보정값이 낡았을 수 있습니다(주식 매수 정황이 보이면 이미 보정하지 않습니다).\n'
-                + '**실제 손실이라면 설정 > 안전장치에서 킬스위치를 수동으로 켜세요.**',
+                + '**실제 손실이라면 설정 > 안전장치에서 모든거래차단을 수동으로 켜세요.**',
                 12 * 60 * 60 * 1000,
               );
             } catch (alertErr) {
@@ -452,11 +454,11 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
               // 사건(소실 종목 조합)마다 키를 달리해 다른 사건의 알림이 스로틀에 먹히지 않게 한다
               `kill-switch:composition-suspected:${[...a.vanished].sort().join(',')}`,
               'critical',
-              '⚠️ Kill Switch 자동 발동 보류 — 보유 종목 소실 의심',
+              '⚠️ 모든거래차단 자동 발동 보류 — 보유 종목 소실 의심',
               `${rawNote}${detail}.\n`
               + '매도 대금 정산 대기·잔고 조회 누락 등 **관측 불능일 수 있어** 자동 발동을 보류했습니다 (시장 손실이면 종목은 남고 단가만 내립니다).\n'
               + '단, 상장폐지·정리매매로 종목이 계좌에서 제거된 **실손실**도 이렇게 보일 수 있습니다.\n'
-              + '**실제 손실이라면 설정 > 안전장치에서 킬스위치를 수동으로 켜세요.**\n'
+              + '**실제 손실이라면 설정 > 안전장치에서 모든거래차단을 수동으로 켜세요.**\n'
               + '스냅샷 저장 가드의 `holding_vanished` 경보가 함께 왔는지, KIS 체결내역에 매도가 있는지 확인하세요.',
               6 * 60 * 60 * 1000,
             );
@@ -488,7 +490,7 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     const lostKRW = current - baseline;
     const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과${compositionNote}${carryNote}${usdNote}`;
     console.error(`[kill-switch:drawdown] 자동 발동: ${msg}`);
-    sendAlert('critical', 'Kill Switch 자동 발동', msg);
+    sendAlert('critical', '모든거래차단 자동 발동', msg);
     return { status: 'evaluated', drawdownPct, triggered: true, ...usdFlag };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);

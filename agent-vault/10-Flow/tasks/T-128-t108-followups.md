@@ -33,6 +33,9 @@ T-108 의 Reviewer 2명·Codex·QA 가 배포를 막지 않는 항목으로 분�
 7. **읽기 계층**: `rejectedToday` 가 거절 시그널이 아니라 주문의 거절 행을 센다(명세 의도 확인), `broker_ledger` 표 없음(1146)을 §4.0 은 `prep` 으로 정하는데 구현은 `error(not_migrated)` — 운영에는 표가 있어 무해, 정리. 안전 읽기 레인 허용 SQL 목록을 시험이 고정하도록(상수 export + `toEqual`). `order_rejected` 줄 사유가 비면 「사유 기록 없음」.
 8. **배포 후 관찰 항목**(구현이 아닌 확인): `/api/ops/home` 응답 시간(쿼리 약 45개, 최악 약 8.8초 vs 목표 4초 — 운영 NAS 실측 필요)·`Threads_connected`·풀 대기열(풀 `queueLimit: 0`)·`order_blocked` 줄이 매일 뜨는지·운영 계정의 `SET STATEMENT max_statement_time` 허용.
 
+9. **저장된 청산 사유 앞머리 표시 변환**(T-129 Reviewer 4(a)): DB `signals.reason` 앞머리 `[하드 손절]`·`[EOD 손절]`(exit-engine `reasonHead`)이 텔레그램·화면에 그대로 나와 새 이름과 한 메시지에 섞인다. **표시 시점 별칭 맵**(옛·새 앞머리를 같은 새 용어로 변환, 신호 생성 경로·DB 텍스트는 불변) — 코드 변경이라 Reviewer 판정 필요.
+10. **T-129 Reviewer 경미**: 「트레일링」「익절」과 「트레일링 스탑」「목표 익절」 표기가 화면에서 혼재(용어표 §12 에 없음 — 정하기) · `kill-switch.test.ts` 에 console 문구 불변 단언 1줄 · `volatility-guard.ts`·`portfolio-snapshot/route.ts` 경보 6건의 「킬스위치」 정정(SAFETY_PATHS, 별도 판정).
+
 ## 착수 조건
 사용자 착수 결정. T-104(크론 정리 + 설정 화면 WP5)와 묶는 것이 효율적(1번·2번이 같은 파일).
 

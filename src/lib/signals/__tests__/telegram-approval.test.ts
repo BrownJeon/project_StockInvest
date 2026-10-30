@@ -263,7 +263,7 @@ describe('5. 상태 재확인 — 오래된 메시지의 버튼도 안전', () =
     expect(h.edits).toEqual([]);
     expect(h.clears).toEqual([]);
     expect(h.answers[0]).toMatchObject({ alert: true });
-    expect(h.answers[0].text).toContain('킬스위치');
+    expect(h.answers[0].text).toContain('모든거래차단');
   });
 
   test('킬스위치가 켜져 있어도 거절은 할 수 있다 (거절은 거래가 아니다)', async () => {
@@ -394,7 +394,7 @@ describe('6. 승인 — 기존 승인 함수만 부르고, 경로는 구간 유�
     const h = harness();
     h.approve.mockResolvedValueOnce({ ok: true, orderId: 9, dryRun: true });
     await handleCallbackQuery(press('a', RULE_SIGNAL), h.deps);
-    expect(h.edits[0].text).toContain('DRY_RUN');
+    expect(h.edits[0].text).toContain('가상 주문');
   });
 });
 

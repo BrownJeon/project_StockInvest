@@ -139,10 +139,10 @@ export function buildQuantityLine(args: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const EXIT_LABEL: Record<string, string> = {
-  hard_stop: '🔴 하드 손절 (자금보호)',
+  hard_stop: '🔴 손실한도 손절 (자금보호)',
   target_profit: '🟢 목표 익절',
   trailing_stop: '🟡 트레일링 스탑',
-  eod_loss_cut: '🔴 EOD 손절',
+  eod_loss_cut: '🔴 장마감 전 손절',
 };
 
 function readExitKind(indicators: unknown): string | undefined {

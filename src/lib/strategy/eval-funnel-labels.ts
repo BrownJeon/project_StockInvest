@@ -315,7 +315,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   exit_state_missing: '청산: 포지션 없음',
   exit_unit_mismatch: '청산: 단위 불일치',
   exit_no_fire: '청산 조건 미충족',
-  exit_hard_stop_disabled: '청산: 하드손절 비활성',
+  exit_hard_stop_disabled: '청산: 손실한도 손절 꺼짐',
   exit_engine_disabled: '🔕 자동 청산 엔진 OFF — 발화 조건 충족했으나 주문 안 함',
   exit_cooldown_5m: '청산 쿨다운',
   exit_create_failed: '청산 시그널 생성 실패',

@@ -39,10 +39,10 @@ const STRATEGY_TITLES: Readonly<Record<string, string>> = {
   'inside-bar-v1': '인사이드 바',
 };
 const EXIT_LABELS: Readonly<Record<string, string>> = {
-  hard_stop: '하드 손절',
+  hard_stop: '손실한도 손절',
   target_profit: '목표 익절',
   trailing_stop: '트레일링 스탑',
-  eod_loss_cut: 'EOD 손절',
+  eod_loss_cut: '장마감 전 손절',
 };
 export function strategyTitle(strategyId: string | null | undefined, exitKind?: string | null): string {
   if (exitKind && EXIT_LABELS[exitKind]) return EXIT_LABELS[exitKind];
@@ -217,7 +217,7 @@ const STATUS_KO: Readonly<Record<string, string>> = {
 /** 사람이 읽는 차단 사유. 모르는 코드는 그대로(이스케이프해서) 보인다 — 숨기지 않는다. */
 export function describeOrderFailure(raw: string): string {
   const s = raw.replace(/^order_not_accepted:\s*/, '');
-  if (/kill_switch|KILL_SWITCH/i.test(s)) return '킬스위치가 켜져 있음';
+  if (/kill_switch|KILL_SWITCH/i.test(s)) return '모든거래차단이 켜져 있음';
   if (/insufficient/i.test(s)) return '현금 부족 (insufficient_balance)';
   if (/daily_limit/i.test(s)) return '일 한도 초과';
   if (/order_limit/i.test(s)) return '1회 한도 초과 또는 미설정';
@@ -233,7 +233,7 @@ export function renderDecision(d: DecisionView, c: DecisionContext): { text: str
     case 'order_placed':
       return {
         keepButtons: false,
-        text: `✅ <b>승인됨</b>  ${h(at)}\n${head}\n주문 접수${d.orderId != null ? ` #${h(d.orderId)}` : ''} · 지정가${d.dryRun ? ' (DRY_RUN — 실제 주문 아님)' : ''}`,
+        text: `✅ <b>승인됨</b>  ${h(at)}\n${head}\n주문 접수${d.orderId != null ? ` #${h(d.orderId)}` : ''} · 지정가${d.dryRun ? ' (가상 주문 — 실제 주문 아님)' : ''}`,
       };
     case 'entry_watch':
       return { keepButtons: false, text: `✅ <b>승인됨</b>  ${h(at)}\n${head}\n진입 감시 등록 — 구간 도달 시 자동 주문` };
@@ -255,7 +255,7 @@ export function renderDecision(d: DecisionView, c: DecisionContext): { text: str
     case 'already_handled':
       return { keepButtons: false, text: `ℹ️ <b>이미 처리된 시그널입니다</b> — ${h(STATUS_KO[d.status] ?? d.status)}\n${head}` };
     case 'kill_switch':
-      return { keepButtons: true, text: `⛔ <b>킬스위치가 켜져 있어 승인하지 않았습니다</b>  ${h(at)}\n${head}\n해제한 뒤 다시 누르거나 거절하세요.` };
+      return { keepButtons: true, text: `⛔ <b>모든거래차단이 켜져 있어 승인하지 않았습니다</b>  ${h(at)}\n${head}\n해제한 뒤 다시 누르거나 거절하세요.` };
     case 'changed':
       return { keepButtons: false, text: `⚠️ <b>시그널이 바뀌어 이 버튼은 더 이상 유효하지 않습니다</b>\n${head}\n앱에서 확인하세요.` };
     case 'failed':

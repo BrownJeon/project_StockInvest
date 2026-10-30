@@ -610,7 +610,7 @@ function formatResearchSection(research: ResearchDigest, nameOf: (s: string) => 
       // T-034 — "얼마에" 를 차트 지지선으로 제시한다. 도달 근거가 없으면 숫자 대신 그 사실을 쓴다.
       lines.push(`   가격: ${formatTargetFragment(item.targets, 'buy', item.targets?.horizonDays ?? null)}`);
     } else {
-      const trig = item.buy.triggerCount > 0 ? `표본부족, 트리거 ${item.buy.triggerCount}건` : '표본부족';
+      const trig = item.buy.triggerCount > 0 ? `건수 적음, 트리거 ${item.buy.triggerCount}건` : '건수 적음';
       lines.push(`⚪ ${nameOf(item.symbol)} — 판단 보류 (${trig}) (${asOf})`);
     }
   }

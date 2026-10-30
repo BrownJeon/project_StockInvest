@@ -552,7 +552,7 @@ describe('formatReportMessage — 리서치분석 요약 (T-033)', () => {
         targets: chartTargets(),
       }],
     }));
-    expect(msg).toMatch(/⚪ 005930 — 판단 보류 \(표본부족, 트리거 4건\)/);
+    expect(msg).toMatch(/⚪ 005930 — 판단 보류 \(건수 적음, 트리거 4건\)/);
     expect(msg).not.toMatch(/매수 고려 \(/);
   });
 

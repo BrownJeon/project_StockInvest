@@ -60,7 +60,7 @@ describe('(a) 정상 입력 — 문구 요소', () => {
     expect(b.startsWith('기록상(USD 포함) 24h -16.8% (-3,514,108원) — 전환 24h 한정 비교')).toBe(true);
     expect(b).toContain('같은 조건 비교는 0.0%');                     // USD 를 뺀 비교 수치도 남는다(두 변화율)
     expect(b).toContain('전환 규칙 E');
-    expect(b).toContain('**실제 손실이라면 설정 > 안전장치에서 킬스위치를 수동으로 켜세요.**');
+    expect(b).toContain('**실제 손실이라면 설정 > 안전장치에서 모든거래차단을 수동으로 켜세요.**');
     expect(b).not.toMatch(/NaN|Infinity/);
   });
 

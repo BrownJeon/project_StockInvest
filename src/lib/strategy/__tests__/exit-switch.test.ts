@@ -122,10 +122,10 @@ describe('사람이 읽는 요약 — 오해할 여지를 남기지 않는다', 
     query.mockResolvedValue(rows({ [EXIT_ENGINE_ENABLED_KEY]: 'false' }));
     const text = describeExitEngineSwitch(await readExitEngineSwitch());
     expect(text).toContain('OFF');
-    expect(text).toContain('하드손절');
-    expect(text).toContain('EOD손절');
-    expect(text).toContain('트레일링스탑');
-    expect(text).toContain('목표익절');
+    expect(text).toContain('손실한도 손절');
+    expect(text).toContain('장마감 전 손절');
+    expect(text).toContain('트레일링');
+    expect(text).toContain('익절');
   });
 
   test('키 부재 시 "기본값" 이라는 사실을 밝힌다', async () => {

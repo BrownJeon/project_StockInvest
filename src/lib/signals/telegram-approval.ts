@@ -220,7 +220,7 @@ export async function handleCallbackQuery(cq: TelegramCallbackQuery, deps: Appro
   }
   if (action === 'approve' && (await deps.isKillSwitchActive())) {
     // 메시지는 그대로 두고(버튼 유지 — 해제 후 다시 누를 수 있게) 토스트로만 알린다
-    await safe(deps.telegram.answer(cq.id, '⛔ 킬스위치가 켜져 있어 승인할 수 없습니다. 해제 후 다시 누르거나 거절하세요', true));
+    await safe(deps.telegram.answer(cq.id, '⛔ 모든거래차단이 켜져 있어 승인할 수 없습니다. 해제 후 다시 누르거나 거절하세요', true));
     await audit('kill_switch');
     return { kind: 'decision', action, view: { kind: 'kill_switch' } };
   }
