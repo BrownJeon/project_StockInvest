@@ -224,6 +224,7 @@ waiting: [11-02(월) 09:22 국내 첫 틱·11-03(화) 07:20 해외 첫 틱의 ex
 - **정정(점검 오류 기록)**: 예약 프롬프트에 적은 로그 파일명(`~/.pm2/logs/stockinvest-error.log`·`stockinvest-out.log`)은 서버에 존재하지 않아 첫 ④ 점검이 헛돌았다(grep 0건은 파일이 없어서였다). `pm2 describe` 로 실제 경로가 `/home/brownjeon/apps/stockinvest/shared/logs/` 임을 확인해 ④ 를 다시 했고 위 결과는 그 재점검 값이다. 이후 예약 점검(11-02·11-03)도 이 경로로 읽는다.
 - **롤백**: 스위치를 `false` 로(`UPDATE system_config SET value='false' WHERE key='exit_judgment_record_enabled'`, 즉시·데이터 보존, 서버 캐시 30초). 표 삭제(`DROP TABLE exit_judgment`)는 쌓인 기록이 사라지므로 사용자 승인 사항.
 - **다음(예약, 세션 한정)**: 11-02(월) 09:22 국내 첫 틱 행 검증 · 11-03(화) 07:20 해외 첫 틱 행 검증 — 행 수 = 보유 종목 수, 종목당 1행, `decision_code` = 같은 틱 eval_funnel 마지막 게이트, `signal_id` ↔ `signals` 조인, `currency`·`threshold_pct` 부호, `engine_release` = 현재 릴리스. 예약은 이 세션이 끝나면 사라지므로 그 경우 사람이 같은 쿼리를 읽는다.
+- [2026-10-31 21:10] **사람용 수동 점검 런북 작성**: 예약 점검(11-02 09:22 국내 · 11-03 07:20 해외)이 세션 종료로 사라져도 같은 검증을 할 수 있도록 복붙 쿼리·기대값·정상 패턴(금요일 실측)·롤백을 [[T-126-exit-judgment-first-tick-check]] 에 정리했다. 쿼리 14개는 운영 DB 에서 **구문만** 검증했다(표가 비어 있어 결과 행은 못 봄); 검증 중 `eval_funnel` 의 `side='sell'` 에는 청산 엔진 밖 경로의 게이트(`sell_not_held` 등)도 섞여 있음을 발견해 「청산 트랙 단계 21~29(미리보기 `sell_proposal_preview` 제외) + 발화 `signal_created`(`strategy_id='exit-engine-v1'`, 단계 99)」로 걸러내도록 쿼리를 고쳤다.
 
 ## 진행 기록
 - [2026-10-30 16:16] 후보 등록(Leader). 사용자 "권고안 확정" — D11 (c).

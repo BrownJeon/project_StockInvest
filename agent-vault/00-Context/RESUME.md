@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-10-28
+updated: 2026-10-31
 tags:
   - type/context
 aliases:
@@ -9,6 +9,58 @@ aliases:
 ---
 
 # ▶ 이어서 작업 — 재개 진입점
+
+> **🟢 아래 「최신 — 2026-10-31」 절이 정본이다.** 그 아래 10-30 이전 절들은 **이력**이며 현재 사실과 다른 곳이 있다(특히 킬스위치·청산 엔진·"다음 task 번호"). 세부 경과는 [[ACTIVE]] 맨 위.
+
+## ▶ 최신 — 2026-10-31 21:0x (이 절의 값은 20:52 에 읽어 확인한 것)
+
+### 1. 지금 운영 상태
+- **릴리스** `20261031-192807-8ed1ba7b` (= `origin/main` `8ed1ba7`). 오늘 배포 4회, 전부 `RELEASE_RESULT ok`·`migrated:false`: 05:20(T-108·T-129) · 14:01(T-132 + T-126·T-127·T-128·T-130 코드) · 19:00(T-133 `getTicker` HTTP200 재시도) · 19:27(T-134·T-135). pm2 `stockinvest`·`stockinvest-cron` online·restarts 0, health green.
+- **안전 상태는 사용자 의도다**(10-30 12:47 「의도한 변경」 확인, [[ACTIVE]] 10-30 항목): `safety_dry_run=true` · `safety_kill_switch=false` · `exit_engine_enabled=true` · `exit_hard_stop_enabled=false`. 뜻: **실주문은 DRY_RUN 으로 막고, 킬스위치는 풀어 시그널 생성·청산 평가는 가동한 채 감사 기간을 지켜본다.** ⚠ `DRY_RUN` 이 false 가 되면 청산 엔진이 실주문을 낼 수 있다(검증 관문은 매수만 막는다). 10-30 15:26 국내 `eod_loss_cut` 발화는 `dry_run` 주문으로만 기록됐다.
+  - **낡은 문구 주의**: 이 문서 아래 절과 [[ACTIVE]] 일부, T-080 의 「킬스위치 ON 유지·11-23 경 해제 판단」은 10-30 변경 이전 계획이다. 현재 값은 위와 같다.
+- **기록 스위치·표**: `job_run_log_enabled=true`(10-30 21:05) · `exit_judgment_record_enabled=true`(표 `exit_judgment` 10-31 15:41:30 생성, 스위치 15:41:54, **행 0 — 첫 행은 11-02 장중**) · `judgment_record_enabled` 키 없음(꺼짐).
+- **로컬 `main` 은 `origin/main` 보다 문서 커밋이 앞서 있다**(push 안 함). **push 는 곧 배포**라 문서만 올려도 blue/green 재배포가 일어나고, 같은 브랜치를 쓰는 다른 세션이 push 하면 함께 나간다.
+
+### 2. 시간이 정해진 일
+| 때 | 일 | 방법 |
+|---|---|---|
+| 11-02(월) 09:22 · 11-03(화) 07:20 | `exit_judgment` 첫 틱 행 검증(국내·해외) | Claude 예약은 **세션 한정** — 사라졌으면 [[T-126-exit-judgment-first-tick-check]] 런북(복붙 쿼리·기대값·롤백) |
+| 11-02(월) 16:13 | T-112 `job_run_log` 4회차 점검 + `judgment_record_enabled` 켤지 의견 | 쿼리는 [[ACTIVE]] 10-30 21:05 항목. **켜기는 사용자 승인** |
+| 11-02(월) 장중 | 사용자: 홈 「데이터 이상」 건수 확인(T-134 새 게이트 「청산: 포지션 조회 실패」) | 0 이 아니면 그 게이트를 눌러 본다 |
+| 11-02 이후 | 원장 D1b 백필·수집 실패 알림 결정 | 사용자 결정 |
+| 약 11-05 | [[T-104-cron-jobs-market-grouping]] 착수 가능(T-117~T-119 배포 10-29 + 1주 관측) | 범위 C 설계 확정부터 |
+| 12-07 | `rsi-oversold-v1` `enabled=0` 판단 | 사용자 결정 |
+
+### 3. 사용자 결정·행동 대기 (AI 가 임의로 못 한다)
+- 새 문구 「청산: 포지션 조회 실패」([[T-134-exit-engine-state-load-isolation]], 디자이너 미검토) · 비정상 응답 로그 마스킹 범위([[T-135-recorder-pool-hold-and-runner-tmp]] 최종 요약).
+- [[T-131-t126-t130-followup-candidates]] **2순위 묶음**(안전 스위치 저장 직렬화 + 위험 방향 확인 시트 = 1·2번, 화면 변경 → 디자이너 데모 승인 먼저): **실거래 단계 1 진입 일정이 정해지면 그 1~2주 전에** 시작. 그 밖 후보는 보류 권고.
+- `proposed`: [[T-124-news-input-misread-truncation]] · [[T-125-news-zero-alert-cleanup]](관찰 3~5 분석일) · 사용자 결정 대기: T-100 보유 손실 통제 초안([[ACTIVE]] 10-27 항목).
+- 서버 정리 승인(worktree `stockinvest-t134`·`t135`·`integ2`·이전 task 것들, 브랜치 `wip/T-134-…`·`wip/T-135-…`, QA 일회용 DB 컨테이너, `~/.node-local/t1*` 로그 폴더). pm2 로그 회전 설치(외부 모듈이라 승인).
+- **사용자 파일**: `~/.codex/config.toml` 의 `model = "gpt-6.1-sol"` 이 ChatGPT 계정에서 미지원이라 Codex 검토가 매번 7분 뒤 실패한다 — 고치면 T-126~T-128 소급 검토 가능.
+
+### 4. 이어서 한다면 (권고 순서)
+1. 읽기 확인: health · 현재 릴리스 · 위 안전 키 6개(런북 1절 표) · `git log origin/main..main`(문서 커밋만 앞서 있는지).
+2. 11-02 장중 첫 틱 검증(예약 또는 런북) → 결과를 [[T-126-exit-judgment-persistence]] `## 배포 기록` 에.
+3. 사용자 결정(위 3절)을 받아 착수. **새 task 번호는 T-137 이상**(T-136 `token-retry-single-source` 은 다른 세션 작업으로 보임 — 번호는 `ls agent-vault/10-Flow/tasks` 로 확인).
+4. 칸반의 오래된 `in-progress`·`todo`(T-046~T-055 등)는 상태 표기가 낡아 실제 진행 여부를 확인하지 않았다 — 정리하려면 하나씩 확인한다.
+
+### 5. 환경·작업 규칙 (이번에 확인된 것)
+- **Mac 에서 서버 작업은 `ssh -o BatchMode=yes -o ConnectTimeout=20 home_ubuntu`**(pm2·DB·시험·worktree). 접속은 한 번만 열고 안에서 모두 실행 — 에이전트가 연결을 많이 열어 접속 제한이 걸린 적이 있다(10-31 19:09, 1분 내 복구). DB 는 `python3 -I ~/.node-local/tools/dbq.py -e "SELECT …"`(쓰기는 `DBQ_ALLOW_WRITE=1`+사용자 승인).
+- **안전 경로(`SAFETY_PATHS`) 코드는 서버 worktree 에서 커밋**한다(`commit-msg` 훅은 Mac 에서 돌지 않는다). Reviewer 판정 줄 형식은 프로젝트 `CLAUDE.md`. 훅이 worktree 최상위에서 task 이력서를 읽으므로 이력서를 복사해 넣었다가 커밋 후 지운다.
+- **승인 전 코드는 `main` 에 올리지 않는다** — worktree 별도 브랜치(`wip/T-NNN-…`)에 커밋해 두고, QA 통과 + 사용자 승인 + **합친 상태 검증**(`main` 위에 cherry-pick 한 별도 worktree 에서 `tsc`·jest·`next build`) 뒤에 `main` 으로 cherry-pick(트리 해시가 검증한 트리와 같은지 확인)해 push. 이유: 10-31 14:01 에 다른 세션 push 가 DDL·승인 전 코드를 실어 보냈다.
+- **배포** = push → webhook blue/green(웹+크론 재기동 약 1.5~2.5분). 창은 05:10~06:50 · 15:40~20:00 KST(07:35~07:57 피함). 완료 판정은 웹훅 로그(UTC)에서 **push 한 sha 의 `START` 이후 `END`** 만 인정 — 로그 끝에는 이전 배포의 `RELEASE_RESULT` 가 남아 있다.
+- 무거운 시험(`jest`·`tsc`·`next build`·`test-*.sh`)은 `flock /tmp/stockinvest-heavy-tests.lock nice -n 10 …` 직렬(10-28 서버 정지 사고), Node 24.22.2(`~/.node-local/v24.22.2/bin`).
+- **Mac 에서 쓴 파일을 서버에서 곧바로 `git add` 하면 옛 내용이 스테이징될 수 있다** — `git show :경로 | cmp - 경로` 로 대조하는 재시도 루프(8초 간격, 최대 4회)로 전부 일치할 때만 커밋. 문서 커밋은 파일을 명시해 `git add`.
+- 앱 로그: `/home/brownjeon/apps/stockinvest/shared/logs/{pm2-err,pm2-out,cron-err,cron-out}.log`(`~/.pm2/logs` 아님, `cron-out.log` 는 `grep -a`). grep 0건은 파일 존재·최근 수정 시각과 함께 봐야 의미가 있다.
+- 사용자 보고는 `docs/user-report-format.md` 양식, 확신 태그(`[확실]`/`[가능성 높음]`/`[추측]`). Codex 는 모델 설정 장애로 호출하지 않는다(호출해도 즉시 실패, 이력서에 사유를 남긴다).
+
+### 6. 하지 말 것
+- 승인 없이: `DRY_RUN`·킬스위치·청산 스위치 변경, 기록 스위치 켜기, DDL(`--with-migrate` 포함), 운영 DB 쓰기, push·배포, `git commit --no-verify`.
+- 다른 세션의 파일(`src/lib/exchanges/*` 등 T-133·T-136 작업)을 건드리지 않는다. 커밋은 항상 명시 경로로.
+- 개발 환경에서 `/api/cron/*` 를 호출하지 않는다(운영과 같은 DB).
+
+---
+**⬇ 아래는 이력이다 (현재 사실과 다를 수 있음).**
 
 > **🔄 2026-10-30 05:2x — 아래 10-29 HANDOFF 는 05:1x(재기동 직전) 기준이라 낡았다.** T-117·T-118·T-119 는 10-29 13:51 배포, T-121 은 15:44 배포, T-119 는 10-29 21:01 첫 실행 정상으로 `done`. **최신 상태·오늘 할 일은 [[ACTIVE]] 맨 위 2026-10-30 항목**을 먼저 읽는다.
 
