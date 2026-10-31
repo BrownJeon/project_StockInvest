@@ -6,6 +6,16 @@ tags:
 ---
 # 현재 상태
 
+## 2026-10-31 11:00 — T-126·T-127·T-128·T-130 구현·감사·QA 완료, 배포 승인 대기 (로컬 main `967d77e`, push 안 함)
+
+- **사용자 지시**: 10-31 06:50 "T-126 승인하니 DDL작업 진행해줘. 이후에 T-127,T-128도 이어서 진행해줘", 07:50 T-130 데모 v1 "전부 권고대로"(demo_gate=approved). DDL 승인 범위 해석(Leader): 가산 전용 새 표 1개 `CREATE TABLE IF NOT EXISTS`, 웹 배포보다 먼저·장외 창, **기록 스위치 켜기는 별도 승인**.
+- **로컬 main**: `ec6723c`(문서) ← `fe6f095` T-128 ← `c9fc415` T-127 ← `dd30ef8` T-130 ← `0116228` T-126 ← `967d77e`(T-130 후속: T-119 격리 시험 허용 목록 2파일). origin/main=`4c6f595`. 최종 통합 검증(tsc·전체 jest·build)은 서버 `/tmp/final-integ/status.txt` 에서 진행.
+- **T-126** exit_judgment: DDL 파일 sha256 `dfa0967c…e5fe1`, 운영에 표 없음(읽기 확인), sql_mode STRICT_TRANS_TABLES·MariaDB 10.11.11. Reviewer PASS(R1 풀 연결 점유 수정 후)·QA PASS. 적용 절차 = DDL(`DBQ_ALLOW_WRITE=1 dbq.py`) → push → 스위치는 별도 승인.
+- **T-127** 러너: 마스킹(금액 키 5개+detail)·스풀 0600·503 사유(`reason=`)·롤업 failed 전이 시험. Reviewer PASS·QA PASS. 배포 뒤 운영 스풀 권한·실패 줄 확인 필요(미검증).
+- **T-128** WP-A 5건·**T-130** 화면 후속: Reviewer PASS·QA PASS. T-130 QA 결함 N1(검증 관문 차단 집계가 gate 없는 skipped 포함, 표시 정확성)은 후속 [[T-131-t126-t130-followup-candidates]] 6번.
+- **Codex 연계 장애**: `~/.codex/config.toml` 의 `model = "gpt-6.1-sol"` 이 ChatGPT 계정에서 미지원(HTTP 400 `model_not_found`) — C1 2건 실패, C2 는 호출 생략(override 기록). 사용자가 모델을 고치면 소급 실행 가능.
+- **다음**: 사용자 배포 승인 → 15:40 창에 사전 점검 → DDL 적용 → push → `RELEASE_RESULT` 확인 → 읽기 전용 확인 → 스위치 켜기 승인 요청. 후속 후보 19건은 T-131.
+
 ## 2026-10-31 05:22 — T-108·T-129 운영 배포 완료
 
 - **05:20 배포**: push `df4b4a2..4c6f595`(코드 커밋 `52442c5` T-108 + `4c6f595` T-129, 나머지 문서), 릴리스 `20261031-052042-4c6f5950` `RELEASE_RESULT ok`·`migrated:false`. 스위치·DB 변경 없음. 안전 설정 4개(`safety_dry_run=true`·`safety_kill_switch=false`·`exit_engine_enabled=true`·`exit_hard_stop_enabled=false`)와 `job_run_log_enabled=true` 불변, `judgment_record_enabled` 키 없음(꺼짐) 불변. 상세 [[T-108-automation-menu-home-overhaul]] `## 배포 기록`.

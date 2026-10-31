@@ -1,0 +1,60 @@
+---
+task_id: T-131
+title: T-126·T-127·T-128·T-130 후속 후보 모음 — 감사·QA 에서 나온 범위 밖 발견 (착수 전, 우선순위·승인은 사용자)
+status: proposed
+priority: medium
+project: StockInvest
+created: 2026-10-31
+updated: 2026-10-31
+base_ref: ec6723c17e510aeb4baa8cbd3174c1183d1805d6
+risk_level: R2
+roles_involved: [leader, judge, developer, reviewer, qa]
+related_tasks: [T-126-exit-judgment-persistence, T-127-job-run-spool-hardening, T-128-t108-followups, T-130-t108-visual-followups, T-104-cron-jobs-market-grouping]
+tags:
+  - type/task
+  - domain/safety
+  - domain/ui
+aliases:
+  - 후속후보모음
+waiting: [사용자 착수 결정 — 항목별 우선순위]
+---
+
+# T-131 후속 후보 모음 (착수 전)
+
+10-31 T-126·T-127·T-128·T-130 작업에서 Reviewer·QA 가 낸 **범위 밖 발견**을 한곳에 모았다. 이 파일을 만든 것으로는 코드·DB·스위치를 바꾸지 않는다. 각 항목은 근거 위치(path:line)를 task 이력서 원문에서 가져왔다.
+
+## A. 실거래 직전에 처리를 권하는 것 (안전·자금)
+1. **안전 스위치 저장 직렬화 + 위험 방향 확인 시트(D9-B)** — `SettingsPage.tsx` `autoSave` 에 진행 중 요청 가드가 없다(연타 시 탭마다 PATCH, 서버가 순서를 뒤바꿔 적용하면 화면과 서버가 어긋나 「모든거래차단이 켜진 줄 알았는데 꺼져 있음」 가능). 실거래여부 ON·모든거래차단 OFF 전환에 확인 단계 없음. UI 파일이지만 저장 의미가 바뀌어 Reviewer·QA, 서버 `api/settings/safety` 를 건드리면 SAFETY_PATHS 판정 필요. 출처: T-130 Reviewer 재감사·WP1 개발자. **실거래여부를 실제로 만지기 전에 처리 권고.**
+2. **`toggleHybridMode` 가 저장 실패를 삼킨다** — 승인 후 진입 감시(하이브리드) 스위치 저장이 실패해도 화면은 새 값을 유지. API 가 커밋 훅 감시 목록. 출처: T-130 WP1.
+3. **`loadPositionState` 에 try/catch 없음** — `engine.ts:888`(T-126 기준 줄). `position_state` 조회 한 번 실패하면 그 시장 틱이 통째로 끝나 남은 종목의 손절·익절 평가가 멈춘다(변경 전 트리에서도 재현, Reviewer 확인). 출처: T-126 Reviewer·Developer. 청산 엔진 수정이라 R2·Reviewer·QA·Codex(가능하면).
+4. **매달린 INSERT 의 풀 연결 점유 — T-112 `job_run_log`/`judgment_*` 기록기에도 같은 성질** — T-126 은 `getConnection()` + 마감 시 `destroy()` 로 고쳤지만 T-112 기록기(`judgment-recorder.ts`·`job-run-log.ts`)는 그대로. 풀 10개를 주문 경로와 공유. 출처: T-126 Reviewer R1.
+5. **entry-watcher 「진입 실행」 알림의 사유 줄에 옛 청산 앞머리 노출 가능** — `POST /api/signals/[id]/approve` 에 `editedScenario` 본문 + 하이브리드 모드일 때만 도달(UI 로는 도달 안 함). `approval-transitions.ts:80`, `entry-watcher/route.ts:531-538`. 이 경로가 열리면 청산 신호가 매도 주문까지 가는지는 미확인. 출처: T-128 QA 8번.
+
+## B. 표시·문구 정리 (화면 — 데모 게이트 대상)
+6. **「검증 관문 차단」 집계가 gate 없는 skipped 를 포함 (T-130 QA N1, Medium)** — `analysis-runs.ts` `RUN_SIGNALS_SQL`(46행)·`readRunSignals`(125~134행)가 `skipped` 전체를 blocked 로 세서 홈 칩 「시그널 2건 모두 검증 관문 차단」과 후보 줄 「건너뜀 · 사유 기록 없음」이 어긋남. 관찰 단계(검증 통과 전략 0/16)에서는 gate 없는 skipped 가 드물 것으로 추정(운영 데이터 미확인). 집계를 gate 조건으로 좁히는 SQL 변경 — 숫자 의미가 바뀌므로 Designer 확인.
+7. 설정 화면의 남은 44px 미만 컨트롤: 정기 거래 리포트 **고정 발송 시각 입력칸 160×30**, 검색 드롭다운 항목 292×37, 별도 컴포넌트 5개(AI 제공자 [저장] 31px·거래소 [등록] 31px·프로젝트 태그 입력 29px/[저장] 28px·알림 채널 [등록] 31px). 출처: T-130 QA.
+8. 영문 코드/옛 용어가 남은 곳: `src/lib/strategy/exit-switch.ts`(「트레일링·익절」, 감시 경로), `ScenarioAnalysis.tsx:208`, `OrderHistoryTab.tsx:319`(`blocked_by` 영문 그대로), 거래 리포트의 「손절」·「마감손절」, 정적 문구의 `paper_fills`·`eval_funnel`(홈 운용현황 하단·거래 › 운영 기록 하단·분석 › 검증·성과 청산 로직 foot — T-130 QA 는 예외로 둠), 청산 이름 `EXIT_KIND_LABEL[x] ?? x`.
+9. 주문 사유 사전이 화면에 한 벌 더 있다(`TradeLogPanel.BLOCKED_BY_TEXT`·`ORDER_REASON_KO` — 값 일치만 시험으로 고정, 한 출처화 안 함). `blocked_by` 없는 차단 주문은 운영 기록 목록에 「차단」만 보임. `run_failed`·`order_max_unset` 한국어 문구 없음. 출처: T-130 WP2.
+10. 값 행에서 Enter 를 길게 누르면 편집 칸이 열고 닫히며 깜박일 수 있음(Reviewer 추정, 미재현) — 입력칸 Enter 처리기를 `if (!e.repeat) close(...)` 로. 값 행 스크린리더가 둘째 줄(「0 = 무제한」)을 읽지 못함(Designer 판단). `.st` 줄바꿈 CSS 를 고정하는 시험 없음(F3).
+11. 잡 이름 4개 [추측](`holdings-premarket`·`holding-checker` 등) — Designer 가 다듬을지 판단. T-104 WP5 가 새 스위치에 `label` prop 을 넘겨야 tsc 가 통과함.
+
+## C. 읽기 계층·시험 (낮음)
+12. T-128 Reviewer Low: 키 일치 시험의 `KNOWN_UNMAPPED` 설명 정정(`rag_fail`·`no_symbols` 는 화면에 보일 수 있음), `createSafetyReader` 가 상수 밖 SQL 을 거부하는 단언 1줄(변이 M09 생존), `approval-notify.ts:165` `[AI ` 줄 변환 시험 없음(M22 생존).
+13. 일봉(`daily_bars`) 표 없음(1146)을 브로커 원장과 같은 규칙(`prep`)으로 — 홈 「데이터 이상」 건수 의미가 바뀌므로 `sourcesChecked` 의미와 함께 한 번에 정할 것(출처: T-128 Reviewer Low-4).
+14. T-126 `exit_judgment` "영향 0" 배선 시험은 변경 후 엔진끼리 비교한다(Reviewer 의 변경 전 트리 대조 329건으로 보강) — 이후 `engine.ts` 편집에 대한 자동 보증은 아님. 시세·평단이 둘 다 1 이면 `currency='KRW'` 만 틀리게 남는 알려진 한계.
+
+## D. 러너·운영
+15. **`call()` 의 `/tmp/cron-runner-$$.out`(644)에 마스킹 전 원문이 호출 동안 남음** + 응답이 200 이 아니면 러너 로그에 본문 앞 200자 — T-127 Reviewer L-1. `mktemp` + 호출 안 `umask 077` + 로그 `body=` 마스킹. `call()` 은 모든 잡의 경로라 러너 시험 7종(약 40분) 재실행 필요. 출처: T-127.
+16. 마스킹 라벨이 두 개로 고정 — 금액을 싣는 새 `call` 라벨이 생기면 자동 마스킹 안 됨(I-3). 숫자 문자열(`"KRW":"123"`)·키/값 줄바꿈 미마스킹(L-2, 현재 라우트는 발생 조건 없음).
+17. 롤업 `runs` 중복 가산(재전송 중복 억제 설계) — 스풀 줄 멱등 키 등. 스풀 줄 형식·서버 롤업 가산 규칙 변경이 필요해 별도 설계(T-127 에서 제외). 관찰 22:13 의 71 대 68(+3).
+18. pm2 로그 회전 설정 없음(`pm2-out.log`·`pm2-err.log`), 16:00 국내 분석 소요 시간 이상(3분 36초)은 기존 후보 그대로.
+19. **Codex 연계**: 사용자 전역 `~/.codex/config.toml` 의 `model = "gpt-6.1-sol"` 이 ChatGPT 계정에서 지원되지 않아 C1·C2 가 즉시 실패(10-31 07:07~). 사용자가 모델을 고치면 T-126·T-127·T-128 의 Codex 검토를 소급 실행할 수 있다.
+
+## 하지 않는 것
+이 파일 작성으로는 코드·DB·스위치를 바꾸지 않는다. 착수는 사용자 결정(항목 번호로 지시).
+
+## 진행 기록
+- [2026-10-31 11:00] 등록(Leader). T-126·T-127·T-128·T-130 의 Reviewer·QA·Developer 범위 밖 발견을 모음.
+
+## 최종 요약
+(미작성)
