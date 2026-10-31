@@ -6,6 +6,14 @@ tags:
 ---
 # 현재 상태
 
+## 2026-10-31 19:30 — T-134·T-135 운영 배포 완료 (릴리스 `20261031-192807-8ed1ba7b`)
+
+- **사용자 승인**: 「오늘 검증 통과 시」(배포 시점 질문의 답). 합친 상태 검증(`tsc` 0 · jest 149 스위트 4442 통과 · `next build` 통과) 통과 후 19:27:34 push `90f858f..8ed1ba7`, webhook 19:27:54~19:30:17 `exit=0`, `RELEASE_RESULT ok`, `migrated:false`. 이전 릴리스 `20261031-185943-90f858f5`.
+- **내용**: [[T-134-exit-engine-state-load-isolation]](청산 평가 중 한 종목의 상태 조회 실패가 남은 종목 평가를 멈추지 않음) · [[T-135-recorder-pool-hold-and-runner-tmp]](기록기 풀 연결 점유 상한 + 러너 응답 임시 파일 0600 전용 디렉터리). 코드는 `main` 이 아니라 별도 브랜치에서 QA 까지 마친 뒤 사용자 승인 후에 cherry-pick 해 push 했다(14:01 에 다른 세션 push 에 실려 나간 사고의 재발 방지).
+- **배포 후 읽기 확인**: pm2 둘 다 online·restarts 0 · 러너 단일 프로세스·새 릴리스 · `call-tmp` 0700·잔존 0 · `/tmp/cron-runner-*` 0 · 스풀 비움 · `job_run_log` 계속 증가 · PROCESSLIST 비어 있음 · 안전 키 불변 · health green. 컷오버 때 `job-run-log 전송 실패 HTTP=000/503 reason=timeout` 가 났지만 스풀로 재전송돼 비워졌다(기저선과 같은 종류, T-127 의 `reason=` 형식을 운영에서 처음 관찰).
+- **다음**: 20:07 배포 후 40분 점검(예약) · 11-02(월) 09:22 국내·11-03(화) 07:20 해외 `exit_judgment` 첫 틱 검증(예약, 세션 한정) · 11-02 장중 홈 「데이터 이상」 확인. 후속 후보는 [[T-131-t126-t130-followup-candidates]](남은 1·2번 = 2순위, 실거래 단계 진입 전).
+- **정리 대기(사용자 확인 후)**: 서버 worktree `stockinvest-t134`·`t135`·`integ2`·이전 task worktree들, 브랜치 `wip/T-134-state-load-isolation`·`wip/T-135-recorder-pool-runner-tmp`(내용은 `main` 에 cherry-pick 되어 있음), QA 일회용 DB 컨테이너·`~/.node-local/t1*` 로그 폴더.
+
 ## 2026-10-31 19:01 — T-133(시세 HTTP200 업무실패 재시도) 운영 배포 완료 (릴리스 `20261031-185943-90f858f5`)
 
 - **사용자 지시**: 「네, 고쳐주세요」(T-132 보고의 결정 ①) → 「지금 배포」.

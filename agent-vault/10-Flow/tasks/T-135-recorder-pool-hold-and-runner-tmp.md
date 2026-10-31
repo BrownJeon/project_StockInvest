@@ -1,7 +1,7 @@
 ---
 task_id: T-135
 title: T-112 기록기(judgment-recorder·job-run-log)의 매달린 INSERT 풀 연결 점유 상한 + 크론 러너 call() 의 /tmp 본문 파일(644) 보호
-status: ready-to-deploy
+status: deployed
 priority: medium
 project: StockInvest
 created: 2026-10-31
@@ -16,7 +16,7 @@ tags:
   - domain/records
 aliases:
   - 기록기풀점유러너tmp
-waiting: [사용자: 배포 승인 — T-134 와 함께 한 번에(코드는 서버 worktree 별도 브랜치 wip/T-135-recorder-pool-runner-tmp 커밋 0957125, main 에는 아직 없음)]
+waiting: [배포 후 관찰: 다음 전송 실패 때 스풀 파일 0600 확인 · 운영에서 상한 타임아웃이 실제로 났을 때 PROCESSLIST 로 서버 쪽 정리 확인 · 20:07 후속 점검(예약)]
 demo_gate:
   required: false
   level: "none"
@@ -89,6 +89,15 @@ demo_gate:
 ## 판단 기록 (judge)
 
 - [2026-10-31 15:19] intake engine=jev → task_type=local_fix · risk=R2 · developer_model=opus · next=assign · demo=none/- · actions=assign_developer | overrides=- | fallback=- | tokens=1422
+
+## 배포 기록
+
+- [2026-10-31 19:27] **배포 완료.** 사용자 승인: 배포 시점 질문(「T-134·T-135 배포 시점을 정해 주세요」)에 대한 답 **「오늘 검증 통과 시」** — 합친 상태 검증이 통과하면 20:00 창 안에서 배포. 사전 검증(19:11~19:12, 별도 worktree `stockinvest-integ2` = 당시 `main` d454414 위에 두 커밋을 얹음): `tsc` 오류 0 · jest 149 스위트 4442 통과·실패 0(제 시험 + T-133 시세 시험 + 격리 시험 포함) · `next build` 컴파일·타입 검사 통과(`.next` 323MB). 배포 직전 가드 7개 통과(시각 19:27 · `origin/main`=`90f858f` · push 가 실을 코드는 이 두 건뿐 · 메인 체크아웃 작업 트리 깨끗 · **`main` 트리 해시 = 검증한 트리 해시 `dd1cb3bd…`** · 안전 키 불변 · health green).
+- push `90f858f..8ed1ba7`(19:27:34): 코드 커밋 `c1e8aea`(T-134)·`8ed1ba7`(T-135) — 별도 브랜치의 `bf9980a`·`0957125` 를 cherry-pick 한 것 — 과 문서 커밋 2개. webhook blue/green 19:27:54 시작 → 19:30:17 종료 `exit=0`, `RELEASE_RESULT {"status":"ok","release":"20261031-192807-8ed1ba7b",…,"migrated":false}`. 이전 릴리스 `20261031-185943-90f858f5`(롤백 대상). 마이그레이션·DDL·스위치 변경 없음. **같은 배포에 실린 다른 작업**: T-134 ↔ T-135 서로, 문서 커밋(T-133 배포 기록 `8f2d71a`·이 task 들의 마감 `d454414`).
+- 배포 후 읽기 확인(19:30~19:32): `current` → 새 릴리스 · 새 릴리스에 `bounded-conn.ts` 존재, `engine.ts` 의 `exit_state_load_failed` 2곳, `cron-runner.sh` 의 `call-tmp` 2곳 · pm2 `stockinvest`·`stockinvest-cron` 둘 다 online·restarts 0·exec cwd 새 릴리스 · 러너 프로세스 1개(pid 1720751, 19:28:37 시작, cwd 새 릴리스) · `call-tmp` 디렉터리 `drwx------`(0700)·잔존 파일 0 · `/tmp/cron-runner-*` 잔존 0 · 스풀 파일 없음(재전송 완료) · `job_run_log` 222행·마지막 기록 19:31:45 로 틱마다 증가 · 배포 후 non-ok 1건(`portfolio-snapshot` skipped `markets_closed` — 토요일 휴장) · `SHOW PROCESSLIST` 에 기록 표 INSERT 체류 없음 · 안전 키 5개 값·시각 불변, `exit_judgment_record_enabled` true 유지, `exit_judgment` 행 0(토요일) · health green(`safety.dryRun true`·`killSwitch false`).
+- 컷오버 순간 관찰(이상 아님): 19:28:37 `job-run-log 전송 실패 HTTP=000`(웹 재기동 중 연결 거부), 19:28:42 `HTTP=503 reason=timeout`(웹 프로세스 콜드 스타트) — 스풀에 남겨 다음 틱에 재전송돼 비워졌다. **`reason=` 형식을 운영에서 처음 관찰**([[T-127-job-run-spool-hardening]] 의 「운영 미관찰」 항목 중 하나 해소). 오늘 같은 `503 reason=timeout (deadline=2500ms)` 서버 로그는 15:44:48·19:08:27·19:27:41(배포 시작 직전, 옛 코드)에도 있었고 이전 관찰의 기저선(하루 약 16건)과 같아 **이번 변경 때문이라는 증거는 없다** [가능성 높음].
+- **운영에서 못 본 것**: ① 호출 중 응답 임시 파일의 실제 모드(0600) — 파일이 호출 동안(수 ms~수 초)만 존재해 점검 시 디렉터리가 비어 있었다(QA 가 임시 HOME 에서 실제 curl 로 확인) ② 시작 시 죽은 러너 파일 정리 — 새 디렉터리가 비어 있었으므로 정리할 대상이 없었다 ③ 상한이 실제로 나서 폐기된 연결의 **서버 쪽 대기 문장이 운영 MariaDB 에서 거둬지는지**(일회용 10.11 에서만 확인) — 평시 PROCESSLIST 는 비어 있었고 폐기 경로가 실제로 돈 증거는 아직 없다 ④ 스풀 파일 0600 — 스풀이 5초 안에 비워져 파일을 못 봤다. 20:07 후속 점검(예약, 세션 한정)과 다음 전송 실패 때 읽는다.
+- **롤백**: 이전 릴리스 `20261031-185943-90f858f5` 로(코드만, DDL·데이터 변경 없음). 사용자 승인 사항.
 
 ## 진행 기록
 

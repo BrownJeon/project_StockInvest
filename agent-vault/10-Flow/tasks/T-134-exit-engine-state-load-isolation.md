@@ -1,7 +1,7 @@
 ---
 task_id: T-134
 title: 청산 엔진 — 보유 종목 상태 조회(loadPositionState) 실패 한 번이 그 시장 틱의 남은 종목 손절·익절 평가를 통째로 멈추는 문제 (종목 단위 격리)
-status: ready-to-deploy
+status: deployed
 priority: high
 project: StockInvest
 created: 2026-10-31
@@ -16,7 +16,7 @@ tags:
   - domain/strategy
 aliases:
   - 청산상태조회격리
-waiting: [사용자: 배포 승인 — T-135 와 함께 한 번에(코드는 서버 worktree 별도 브랜치 wip/T-134-state-load-isolation 커밋 bf9980a, main 에는 아직 없음)]
+waiting: [배포 후 관찰: 홈 「데이터 이상」 이 0 이 아닐 때 새 게이트 「청산: 포지션 조회 실패」 확인 — 실패가 실제로 나야 운영에서 볼 수 있다]
 demo_gate:
   required: false
   level: "none"
@@ -82,6 +82,14 @@ demo_gate:
 - [2026-10-31 15:19] intake engine=jev → task_type=local_fix · risk=R2 · developer_model=opus · next=demo_first · demo=delta/designer · actions=prepare_demo,request_demo_approval,assign_developer | overrides=MD-r2-opus,DM-kw-risky-cta | fallback=- | tokens=1341
 - [2026-10-31 15:23] intake engine=jev → task_type=local_fix · risk=R1 · developer_model=sonnet · next=assign · demo=none/- · actions=assign_developer | overrides=- | fallback=- | tokens=1342
 - [2026-10-31 15:30] **Leader 채택·override 기록.** ① 재접수 이유: 첫 요약의 부정문(「화면 없음」·「주문 로직 변경 없음」)이 `rules.mjs` 의 `DM-kw-risky-cta`(`UI_CONTEXT` 91행 + `RISKY_OBJECT` 96행 + `RISKY_CHANGE` 97행, 119행)에 걸린 오탐 — 규칙은 부정 표현을 구분하지 않는다 [확실: 정규식 직접 확인, `ui_change`=none 0.94]. 같은 사실을 부정문 없이 쓴 요약으로 재실행했다. ② **데모: none 채택**(`check.mjs init` → `not_required`) — 이 task 의 사용자 가시 변화는 사유 사전 한국어 문구 한 줄뿐이고 레이아웃·흐름 변경 없음. ③ **`override: risk R2 · developer opus 유지`** — 재접수의 R1/sonnet 은 요약 표현이 바뀌어 `MD-r2-opus` 가 빠진 결과이고(judge 보고: 판정이 입력 표현에 따라 달라짐), 이 task 는 청산 평가 루프(손절·익절, 자금 직결, 커밋 훅 `SAFETY_PATHS` 의 `src/lib/strategy/`)를 고친다. 리더 규칙 「R2 보강」에 따라 judge 결과와 무관하게 R2. 이 task 의 Developer 는 Opus 다.
+
+## 배포 기록
+
+- [2026-10-31 19:27] **배포 완료.** 사용자 승인: 배포 시점 질문(「T-134·T-135 배포 시점을 정해 주세요」)에 대한 답 **「오늘 검증 통과 시」** — 합친 상태 검증이 통과하면 20:00 창 안에서 배포. 사전 검증(19:11~19:12, 별도 worktree `stockinvest-integ2` = 당시 `main` d454414 위에 두 커밋을 얹음): `tsc` 오류 0 · jest 149 스위트 4442 통과·실패 0(제 시험 + T-133 시세 시험 + 격리 시험 포함) · `next build` 컴파일·타입 검사 통과(`.next` 323MB). 배포 직전 가드 7개 통과(시각 19:27 · `origin/main`=`90f858f` · push 가 실을 코드는 이 두 건뿐 · 메인 체크아웃 작업 트리 깨끗 · **`main` 트리 해시 = 검증한 트리 해시 `dd1cb3bd…`** · 안전 키 불변 · health green).
+- push `90f858f..8ed1ba7`(19:27:34): 코드 커밋 `c1e8aea`(T-134)·`8ed1ba7`(T-135) — 별도 브랜치의 `bf9980a`·`0957125` 를 cherry-pick 한 것 — 과 문서 커밋 2개. webhook blue/green 19:27:54 시작 → 19:30:17 종료 `exit=0`, `RELEASE_RESULT {"status":"ok","release":"20261031-192807-8ed1ba7b",…,"migrated":false}`. 이전 릴리스 `20261031-185943-90f858f5`(롤백 대상). 마이그레이션·DDL·스위치 변경 없음. **같은 배포에 실린 다른 작업**: T-134 ↔ T-135 서로, 문서 커밋(T-133 배포 기록 `8f2d71a`·이 task 들의 마감 `d454414`).
+- 배포 후 읽기 확인(19:30~19:32): `current` → 새 릴리스 · 새 릴리스에 `bounded-conn.ts` 존재, `engine.ts` 의 `exit_state_load_failed` 2곳, `cron-runner.sh` 의 `call-tmp` 2곳 · pm2 `stockinvest`·`stockinvest-cron` 둘 다 online·restarts 0·exec cwd 새 릴리스 · 러너 프로세스 1개(pid 1720751, 19:28:37 시작, cwd 새 릴리스) · `call-tmp` 디렉터리 `drwx------`(0700)·잔존 파일 0 · `/tmp/cron-runner-*` 잔존 0 · 스풀 파일 없음(재전송 완료) · `job_run_log` 222행·마지막 기록 19:31:45 로 틱마다 증가 · 배포 후 non-ok 1건(`portfolio-snapshot` skipped `markets_closed` — 토요일 휴장) · `SHOW PROCESSLIST` 에 기록 표 INSERT 체류 없음 · 안전 키 5개 값·시각 불변, `exit_judgment_record_enabled` true 유지, `exit_judgment` 행 0(토요일) · health green(`safety.dryRun true`·`killSwitch false`).
+- 컷오버 순간 관찰(이상 아님): 19:28:37 `job-run-log 전송 실패 HTTP=000`(웹 재기동 중 연결 거부), 19:28:42 `HTTP=503 reason=timeout`(웹 프로세스 콜드 스타트) — 스풀에 남겨 다음 틱에 재전송돼 비워졌다. **`reason=` 형식을 운영에서 처음 관찰**([[T-127-job-run-spool-hardening]] 의 「운영 미관찰」 항목 중 하나 해소). 오늘 같은 `503 reason=timeout (deadline=2500ms)` 서버 로그는 15:44:48·19:08:27·19:27:41(배포 시작 직전, 옛 코드)에도 있었고 이전 관찰의 기저선(하루 약 16건)과 같아 **이번 변경 때문이라는 증거는 없다** [가능성 높음].
+- **운영에서 못 본 것**: `exit_state_load_failed` 가 실제로 발생하는 경우(조회 실패가 나야 한다 — 시험으로만 확인) · 홈 「데이터 이상」 건수·분석 퍼널의 새 문구 렌더. 다음 개장(11-02 월) 장중에 홈에서 「데이터 이상」 이 0 이 아니면 그 게이트를 눌러 본다.
 
 ## 진행 기록
 
