@@ -228,7 +228,9 @@ export async function getBalances(): Promise<Balance[]> {
       + `?CANO=${cano}&ACNT_PRDT_CD=${acntPrdt}`
       + `&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=02&UNPR_DVSN=01&FUND_STTL_ICLD_YN=N`
       + `&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=`;
-    res = await kisFetch(url, { headers }, { label: 'domestic getBalances' });
+    // (T-132) 게이트웨이 일시 오류(EGW00300·SESSION FULL)로 **한 틱이 통째로 버려지는 것**을 막는다.
+    // 잔고 조회는 멱등한 읽기이므로 재시도가 안전하다. 레이트리밋은 kisFetch 가 따로 처리한다.
+    res = await kisFetch(url, { headers }, { label: 'domestic getBalances', transientRetries: 2 });
     if (res.ok) break;
     body = await res.text().catch(() => '');
     if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
@@ -240,6 +242,20 @@ export async function getBalances(): Promise<Balance[]> {
     throw new Error(`KIS getBalances: ${res.status} body=${body.slice(0, 300)}`);
   }
   const data = await res.json();
+  /**
+   * (T-132) HTTP 200 인데 업무 실패(`rt_cd≠'0'`) — **성공으로 통과시키지 않는다.**
+   *
+   * 예전에는 그대로 내려가 `output2`(예수금)·`output1`(보유) 가 없는 응답이 "예수금 행 없는 정상
+   * 잔고" 로 반환됐다. 그 잔고로 총액을 내면 조용히 축소된 값이 킬스위치 기준선이 된다 — T-012 가
+   * 막으려던 계열이다. 2026-10-31 KIS 장애에서 실제로 나온 모양: `rt_cd:"9" OPSQ1002 SESSION FULL`.
+   * 평시 이 경로의 업무 실패는 0건이다(실측 — 42건/일은 전부 market-cap-ranking).
+   */
+  if (data?.rt_cd != null && data.rt_cd !== '0') {
+    throw new Error(
+      `KIS getBalances: 200 업무실패 rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+      + `msg=${String(data.msg1 ?? '').trim().slice(0, 120)}`,
+    );
+  }
   if (process.env.KIS_OVERSEAS_DEBUG === '1') {
     console.log('[kis-domestic getBalances raw] rt_cd=', data.rt_cd, 'msg=', data.msg1);
     (data.output1 ?? []).forEach((item: Record<string, string>, idx: number) => {

@@ -7,6 +7,9 @@
  *
  * 방어는 두 겹이다. 이 파일은 그 두 겹을 각각 고정한다.
  *  1. `submitOrder` 가 **주문 준비 전 구간**(한도 산정용 잔고 조회 포함)을 `critical` 로 실행
+ *  (T-132) 주문·취소는 `transientRetries` 를 **켜지 않는다** — 재시도의 전제는 멱등성이고 주문은 멱등하지
+ *  않다. 줄 스캔이 아니라 실제 호출 옵션으로 못 박는다(`kisFetch` 안에 GET 전용 런타임 가드도 있다).
+ *
  *  2. `createOrder`/`cancelOrder` 가 호출 지점에서 `priority:'critical'` 을 **명시** —
  *     주변 컨텍스트가 `bulk` 여도(strategy-eval 틱 안의 청산 주문) 강등되지 않는다
  */
@@ -63,11 +66,13 @@ describe('주문 송신·취소는 항상 critical lane 을 명시한다', () =>
     });
     expect(r.ok).toBe(true);
     expect(optsOf(0).priority).toBe('critical');
+    expect(optsOf(0).transientRetries ?? 0).toBe(0);
   });
 
   it('국내 주문 취소', async () => {
     await dom.cancelOrder({ symbol: '005930', exchangeOrderId: '0000123' });
     expect(optsOf(0).priority).toBe('critical');
+    expect(optsOf(0).transientRetries ?? 0).toBe(0);
   });
 
   it('해외 매도 주문', async () => {
@@ -77,11 +82,13 @@ describe('주문 송신·취소는 항상 critical lane 을 명시한다', () =>
     });
     expect(r.ok).toBe(true);
     expect(optsOf(0).priority).toBe('critical');
+    expect(optsOf(0).transientRetries ?? 0).toBe(0);
   });
 
   it('해외 주문 취소', async () => {
     await ovs.cancelOrder({ symbol: 'NAS:AAPL', exchangeOrderId: '0000123' });
     expect(optsOf(0).priority).toBe('critical');
+    expect(optsOf(0).transientRetries ?? 0).toBe(0);
   });
 
   it('🔑 bulk 컨텍스트(strategy-eval 틱) 안에서도 강등되지 않는다', async () => {

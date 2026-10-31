@@ -443,7 +443,9 @@ export async function getUsdCash(): Promise<UsdCashReading> {
   for (;;) {
     const headers = await kisHeaders(trId);
     const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-present-balance?${params}`;
-    const res = await kisFetch(url, { headers }, { label: 'overseas usdCash' });
+    // (T-132) 게이트웨이 일시 오류 재시도. `rt_cd≠'0'` 는 파서가 이미 거부하므로(아래
+    // parseUsdCashFromPresentBalance) 여기서는 재시도만 더한다.
+    const res = await kisFetch(url, { headers }, { label: 'overseas usdCash', transientRetries: 2 });
     if (!res.ok) {
       const body = kisBodyText(res) ?? await res.text().catch(() => '');
       if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
@@ -625,7 +627,8 @@ async function fetchBalancesForExchange(
       console.log(`[kis-overseas getBalances(${excd})] attempt=${attempt} token_prefix=${String(headers.Authorization ?? '').slice(7, 19)}`);
     }
     const url = `${BASE()}/uapi/overseas-stock/v1/trading/inquire-balance?${params}`;
-    res = await kisFetch(url, { headers }, { label: 'overseas getBalances' });
+    // (T-132) 게이트웨이 일시 오류 재시도 — 멱등한 읽기 전용 조회에만 켠다.
+    res = await kisFetch(url, { headers }, { label: 'overseas getBalances', transientRetries: 2 });
     if (res.ok) break;
     body = await res.text().catch(() => '');
     if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
@@ -636,6 +639,20 @@ async function fetchBalancesForExchange(
     throw new Error(`KIS overseas getBalances(${excd}): ${res.status} body=${body.slice(0, 200)}`);
   }
   const data = await res.json();
+  /**
+   * (T-132) HTTP 200 + `rt_cd≠'0'` 를 성공으로 보지 않는다.
+   *
+   * 여기서는 국내보다 위험하다 — 아래 `return { items: data.output1 ?? [] }` 는 업무 실패 응답을
+   * **"보유 종목 없음"** 으로 바꿔 놓고, 빈 보유는 정상 상태와 구분되지 않는다. 그 총액은 해외 보유가
+   * 통째로 빠진 값이 되고(T-012 유형 B), 지금은 sanity guard 4단(`checkHoldingVanished`)이 마지막에
+   * 막아 주지만 그 결과는 "거부 = 실명" 이다. 원천에서 실패로 만드는 것이 맞다.
+   */
+  if (data?.rt_cd != null && data.rt_cd !== '0') {
+    throw new Error(
+      `KIS overseas getBalances(${excd}): 200 업무실패 rt_cd=${data.rt_cd} `
+      + `msg_cd=${data.msg_cd ?? '-'} msg=${String(data.msg1 ?? '').trim().slice(0, 120)}`,
+    );
+  }
   if (process.env.KIS_OVERSEAS_DEBUG === '1') {
     const allItems: Record<string, string>[] = data.output1 ?? [];
     console.log(`[kis-overseas getBalances(${excd}) raw] rt_cd=`, data.rt_cd, 'msg=', data.msg1, 'total_items=', allItems.length);

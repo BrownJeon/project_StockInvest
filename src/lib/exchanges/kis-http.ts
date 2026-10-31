@@ -24,6 +24,27 @@
  *    (이미 여기서 물러섰다 — 위에서 또 때리면 증폭이 부활한다).
  *  - **진짜 5xx** → 이 모듈은 재시도하지 않는다. 기존 호출부 재시도 로직이 그대로 동작한다.
  *
+ * ## §일시 실패 재시도 (T-132, 옵트인)
+ *
+ * 위 doctrine 은 "진짜 5xx 는 호출부가 판단한다"였다. 그런데 **판단하지 않는 호출부**가 있었다 —
+ * `getBalances`·`getUsdCash` 는 한 번 실패하면 그대로 던져, KIS 게이트웨이가 한 번 깜박일 때마다
+ * 포트폴리오 스냅샷이 건너뛰어졌다. 예수금 쪽(`getUsdCash`·국내 KRW 요약)이 실패한 틱에서는 주문
+ * 한도가 **0** 이 되기도 했다(= 신규 매수 차단). 보유 조회만 실패한 틱의 한도는 0 이 아니라
+ * `portfolio-total.ts` 의 직전 정상값으로 계산된다 — **직전 틱이 `unknown` 판정으로 그 값을 지우지
+ * 않았다면**(`portfolio-total.ts` 의 `lastOk` 삭제). 둘을 섞어 적지 않는다(T-132 Reviewer M-2·I-3).
+ *
+ * 2026-10-31 실측(KIS 측 장애, 09:23~): `EGW00300 Gateway 라우팅 오류`(HTTP 500)와
+ * `OPSQ1002 SESSION FULL`(HTTP **200** + `rt_cd:"9"`)이 산발 발생해 KIS 실패율이 0.8% → 12.5%.
+ * 같은 URL·TR 이 **1초 뒤에는 성공**했고(10:30:08 실패 / 10:30:09 성공), 실패는 동시호출이 적을 때
+ * 일어났다(±1초 2~3건, 성공은 7~9건) — 유량 문제가 아니라 상대 쪽 일시 거절이다.
+ *
+ * 그래서 {@link KisFetchOptions.transientRetries} 로 **호출부가 명시로 켤 때만** 레이트리밋이
+ * 아닌 실패를 백오프 후 재시도한다. 기본값 0 이라 기존 호출부 동작은 그대로다. 레이트리밋 예산과
+ * 별도 카운터를 쓰므로 한쪽이 다른 쪽 재시도 횟수를 잡아먹지 않는다.
+ *
+ * 🔴 **읽기 전용 조회에만 켠다.** 주문 송신(`createOrder`·`cancelOrder`)에 켜면 KIS 가 이미 접수한
+ * 주문을 우리가 실패로 보고 다시 보내 **중복 주문**이 될 수 있다. 재시도의 전제는 멱등성이다.
+ *
  * ## §타임아웃 — 대기 시간이 타임아웃을 잡아먹지 않게
  *
  * 타이머를 요청 **직전**(토큰 획득 후)에 걸어야 한다. 대기열에 서기 전에 걸면 "5초 타임아웃"이
@@ -77,6 +98,13 @@ export interface KisFetchOptions {
    * 끄려면(0) 반드시 그 이유가 있어야 한다.
    */
   maxWaitMs?: number;
+  /**
+   * 레이트리밋이 **아닌** 일시 실패(게이트웨이 5xx·업무 실패)를 몇 번 재시도할지. 기본 0 =
+   * 기존 동작(호출부가 판단). 상세는 위 §일시 실패 재시도.
+   *
+   * 🔴 **멱등한 읽기 전용 조회에만 쓴다** — 주문 송신에 켜면 중복 주문이 될 수 있다.
+   */
+  transientRetries?: number;
   /** 로그 식별용 라벨 (예: `getTicker`). */
   label?: string;
 }
@@ -127,6 +155,11 @@ export function kisBodyText(res: Response): string | null {
 }
 
 const DEFAULT_RATE_LIMIT_RETRIES = 2;
+/**
+ * `transientRetries` 상한. 호출부는 전부 2 지만, 누가 큰 값을 넘겨 KIS 장애 중에 한 호출이 수십 번
+ * 재시도하는 일을 구조적으로 막는다. 상한을 넘기면 조용히 깎인다. (T-132 Reviewer I-2)
+ */
+const MAX_TRANSIENT_RETRIES = 5;
 /** 백오프 — 인덱스가 재시도 회차. 지터를 더해 여러 호출이 같은 순간에 몰리지 않게 한다. */
 const BACKOFF_MS = [400, 1200];
 const JITTER_MS  = 200;
@@ -150,6 +183,34 @@ function rtCdOf(body: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 토큰 계열 오류. HTTP 500 으로 오지만 재시도가 아니라 **재발급**이 답이고, 그것은 호출부가 한다
+ * (`body.includes('EGW00123')` → `invalidateKisToken()` → 1회 재시도). 여기서 먼저 재시도하면
+ * 죽은 토큰으로 두 번 더 때린 뒤에야 재발급에 닿는다. (T-132 Reviewer L-3)
+ */
+const TOKEN_ERROR_PATTERN = /EGW00121|EGW00123|만료된 token/;
+
+/**
+ * 레이트리밋이 아닌 **일시 실패**인가. `transientRetries` 를 켠 호출부에만 적용된다.
+ *
+ * 두 모양을 함께 본다 — 2026-10-31 KIS 장애에서 같은 창에 둘 다 나왔다(T-132):
+ *  - HTTP 5xx (`EGW00300 Gateway 라우팅 오류`)
+ *  - HTTP 2xx + `rt_cd` 가 `'0'` 이 아님 (`OPSQ1002 SESSION FULL` — rt_cd `"9"`)
+ *
+ * 업무 실패를 일시로 보는 것이 넓어 보이지만, 이 판정은 **옵트인한 호출부**(잔고·예수금 조회)에만
+ * 쓰이고 그 경로의 업무 실패는 평시 0건이다(10-27·29 42건/일, 10-30 40건이 전부
+ * `domestic.market-cap-ranking` — 실측). 영구 실패여도 비용은 짧은 재시도 두 번뿐이다.
+ *
+ * 레이트리밋은 여기서 보지 않는다 — 호출부가 그걸 켜도 레이트리밋은 위 §재시도 증폭 경로가
+ * 이미 백오프를 소진했으므로 **두 번 물러서지 않는다.**
+ */
+export function isTransientKisFailure(status: number, body: string): boolean {
+  if (TOKEN_ERROR_PATTERN.test(body)) return false;
+  if (status >= 500) return true;
+  const rtCd = rtCdOf(body);
+  return rtCd !== null && rtCd !== '0';
 }
 
 /** 시도 1번의 기록. 던지지 않는다. op 는 코드 상수 label 에서만 만든다. */
@@ -229,9 +290,28 @@ export async function kisFetch(
 ): Promise<Response> {
   const priority = opts.priority ?? currentKisPriority();
   const retries  = opts.rateLimitRetries ?? DEFAULT_RATE_LIMIT_RETRIES;
+  const transientRetries = Math.min(Math.max(0, opts.transientRetries ?? 0), MAX_TRANSIENT_RETRIES);
   const label    = opts.label ?? '';
 
-  let attempt = 0;
+  /**
+   * 🔴 멱등성 울타리 (T-132 Reviewer M-1). `transientRetries` 는 **GET 조회에만** 허용한다.
+   *
+   * 주문 송신(POST)에 켜지면 KIS 가 이미 접수한 주문을 우리가 실패로 보고 다시 보내 **중복 주문**이
+   * 된다. 호출 지점을 세는 정적 시험은 옵션 객체를 변수·스프레드로 넘기면 통과하므로, 여기서 한 번 더
+   * 막는다. 요청을 **보내기 전에** 던지므로 실패 방향이 안전하다(주문이 나가지 않는다).
+   */
+  if (transientRetries > 0) {
+    const method = (init.method ?? 'GET').toUpperCase();
+    if (method !== 'GET') {
+      throw new Error(
+        `[kis-http] transientRetries 는 GET 조회에만 허용된다 — method=${method} label=${label || '-'}`,
+      );
+    }
+  }
+
+  let attempt = 0;            // 레이트리밋 재시도 회차
+  let transientAttempt = 0;   // 일시 실패 재시도 회차 — 레이트리밋 예산과 따로 센다
+  let tries   = 0;            // 실제 HTTP 시도 횟수(진단용)
   for (;;) {
     // ① 유량 토큰. 두 가지로 실패할 수 있고 **둘 다 던진다**(빈 결과로 퇴화하지 않는다):
     //    - 대기열이 가득 참        → KisThrottleQueueFullError (즉시)
@@ -262,19 +342,47 @@ export async function kisFetch(
     const rateLimited = isKisRateLimitBody(body);
     logKisAttempt(label, t0, res, body, rateLimited);
     const replay = replayResponse(res, body);
-    META.set(replay, { rateLimited, attempts: attempt + 1, priority, body });
+    tries += 1;
+    META.set(replay, { rateLimited, attempts: tries, priority, body });
 
-    if (!rateLimited) return replay;
-
-    // ③ 레이트리밋 — 즉시 재시도하지 않는다. 물러섰다가 **토큰을 새로 받아** 다시 줄을 선다.
-    if (attempt >= retries) {
-      console.warn(
-        `[kis-http] 레이트리밋 재시도 소진${label ? ` (${label})` : ''} — `
-        + `${attempt + 1}회 시도 후 포기. lane=${priority}`,
-      );
-      return replay;
+    if (rateLimited) {
+      // ③ 레이트리밋 — 즉시 재시도하지 않는다. 물러섰다가 **토큰을 새로 받아** 다시 줄을 선다.
+      if (attempt >= retries) {
+        console.warn(
+          `[kis-http] 레이트리밋 재시도 소진${label ? ` (${label})` : ''} — `
+          + `${attempt + 1}회 시도 후 포기. lane=${priority}`,
+        );
+        return replay;
+      }
+      await sleep(backoffFor(attempt));
+      attempt += 1;
+      continue;
     }
-    await sleep(backoffFor(attempt));
-    attempt += 1;
+
+    // ④ 일시 실패(§일시 실패 재시도) — 켜 둔 호출부만. 소진하면 마지막 응답을 그대로 돌려주므로
+    //    호출부의 기존 실패 처리(던지기·경보)는 변하지 않는다.
+    if (transientAttempt < transientRetries && isTransientKisFailure(res.status, body)) {
+      console.warn(
+        `[kis-http] 일시 실패 재시도${label ? ` (${label})` : ''} — `
+        + `status=${res.status} ${transientAttempt + 1}/${transientRetries}회차. lane=${priority}`,
+      );
+      await sleep(backoffFor(transientAttempt));
+      transientAttempt += 1;
+      continue;
+    }
+
+    if (transientAttempt > 0) {
+      // (Reviewer L-6) 재시도가 **구해 준** 호출을 사후에 셀 수 있게 한 줄 남긴다. `api-usage` 는
+      // 시도마다 한 줄이라 "재시도 덕에 복구된 호출 수"가 어디에도 집계되지 않는다.
+      //
+      // 성공 판정에 HTTP 상태만 쓰면 안 된다 — 이 장애의 두 번째 모양(`SESSION FULL`)은 **HTTP 200**
+      // 이라, 재시도를 다 쓰고 실패한 호출이 "성공" 으로 집계된다(Reviewer N-1).
+      const recovered = res.ok && !isTransientKisFailure(res.status, body);
+      console.warn(
+        `[kis-http] 일시 실패 재시도 ${recovered ? '성공' : '소진'}${label ? ` (${label})` : ''} — `
+        + `${tries}회 시도, status=${res.status}. lane=${priority}`,
+      );
+    }
+    return replay;
   }
 }
