@@ -51,6 +51,13 @@ import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { EvalFunnelRecorder } from './eval-funnel';
 import type { FunnelGate, FunnelVerdict } from './eval-funnel-labels';
 import { openSellProposalPreview, type SellProposalPreviewRun } from './sell-proposal-preview';
+import {
+  openExitJudgmentCollector,
+  type ExitDecision,
+  type ExitJudgmentCollector,
+  type ExitJudgmentContext,
+  type ExitJudgmentInput,
+} from './records/exit-judgment';
 
 interface StrategyRow extends RowDataPacket {
   id: string;
@@ -721,6 +728,32 @@ async function insertSkipAuditPool(
   );
 }
 
+// ─── T-126 — 청산 판단 영구 기록(`exit_judgment`) 호출 격리 ─────────────────────
+//
+// 기록기(`records/exit-judgment.ts`)는 메서드 전부가 스스로 예외를 삼키고, 결론마다 메모리에 한 줄 push 만 하며, 틱 끝에 분리 실행으로
+// 한 번 쓴다(기다리지 않음). 그래도 이 파일은 주문으로 이어지는 안전 경로라 **호출부에서 한 번 더** 막는다 — 기록기가 나중에 바뀌어
+// 던지게 되더라도 청산 평가·시그널·주문·쿨다운·position_state·경보로 새지 않는다(기록은 관찰 전용, 영향 0).
+// 세 함수 모두 평가에 쓰이는 값을 돌려주지 않는다(수집기 핸들만 — 아래 루프는 그것을 기록 호출에만 넘긴다).
+function openExitJudgment(
+  market: Market,
+  rec: EvalFunnelRecorder,
+  exitSwitch: ExitJudgmentContext['exitSwitch'],
+  style: StyleConfig,
+): ExitJudgmentCollector | null {
+  try { return openExitJudgmentCollector(market, rec, exitSwitch, style); } catch { return null; }
+}
+function noteExitJudgment(
+  c: ExitJudgmentCollector | null,
+  decision: ExitDecision,
+  code: string | undefined,
+  input: ExitJudgmentInput,
+): void {
+  try { c?.add(decision, code, input); } catch { /* 관찰 전용 — 평가 영향 0 */ }
+}
+function flushExitJudgment(c: ExitJudgmentCollector | null): void {
+  try { c?.flushDetached(); } catch { /* 관찰 전용 — 평가 영향 0 */ }
+}
+
 /**
  * 보유 포지션 통합 청산 — exit-engine으로 hard_stop / target_profit / trailing_stop / eod_loss_cut 발화.
  * AI 필터 우회 (긴급도 + 룰 명확성). 발화 시 createSignal → submitOrder 정상 경로.
@@ -815,12 +848,15 @@ async function runExitEngine(
     }
   }
 
+  // T-126 — 이 틱의 종목별 결론을 모은다(아래 결론 지점마다 한 줄 push, 루프 뒤 분리 실행으로 한 번 기록). 평가는 이 값을 읽지 않는다.
+  const exitJudg = openExitJudgment(market, rec, exitSwitch, style);
   for (const symbol of heldSymbols) {
     const entry = heldAmounts.get(symbol);
     if (!entry || entry.qty <= 0) continue;
     if (!entry.avgPrice || entry.avgPrice <= 0) {
       // avgPrice 없으면 trailing 계산 불가 → skip (KIS 잔고 응답 결손)
       rec.error('exit_avg_price_missing', { symbol, side: 'sell', detail: { qty: entry.qty } });
+      noteExitJudgment(exitJudg, 'error', 'exit_avg_price_missing', { symbol, entry });
       continue;
     }
 
@@ -830,10 +866,12 @@ async function runExitEngine(
     } catch (e) {
       console.warn(`[exit-engine] ticker 조회 실패 ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
       rec.error('exit_ticker_error', { symbol, side: 'sell', detail: { error: String(e).slice(0, 300) } });
+      noteExitJudgment(exitJudg, 'error', 'exit_ticker_error', { symbol, entry });
       continue;
     }
     if (!ticker.price || ticker.price <= 0) {
       rec.error('exit_price_invalid', { symbol, side: 'sell', detail: { price: ticker.price ?? null } });
+      noteExitJudgment(exitJudg, 'error', 'exit_price_invalid', { symbol, entry, ticker });
       continue;
     }
 
@@ -843,12 +881,14 @@ async function runExitEngine(
     } catch (e) {
       console.warn(`[exit-engine] state upsert 실패 ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
       rec.error('exit_state_upsert_failed', { symbol, side: 'sell', detail: { error: String(e).slice(0, 300) } });
+      noteExitJudgment(exitJudg, 'error', 'exit_state_upsert_failed', { symbol, entry, ticker });
       continue;
     }
 
     const state = await loadPositionState(symbol, market);
     if (!state) {
       rec.error('exit_state_missing', { symbol, side: 'sell' });
+      noteExitJudgment(exitJudg, 'error', 'exit_state_missing', { symbol, entry, ticker });
       continue;
     }
 
@@ -859,6 +899,7 @@ async function runExitEngine(
         symbol, side: 'sell',
         detail: { ratio: Number(unitRatio.toFixed(4)), price: ticker.price, entry: state.entryPrice },
       });
+      noteExitJudgment(exitJudg, 'error', 'exit_unit_mismatch', { symbol, entry, ticker, state });
       // evaluateExit 이 동일 조건으로 null 을 반환하므로 아래에서 자연히 exit_no_fire 없이 종료
     }
 
@@ -880,6 +921,7 @@ async function runExitEngine(
           symbol, side: 'sell',
           detail: { pnlPct: Number((((ticker.price - state.entryPrice) / state.entryPrice) * 100).toFixed(2)) },
         });
+        noteExitJudgment(exitJudg, 'no_fire', 'exit_no_fire', { symbol, entry, ticker, state });
       }
       continue;
     }
@@ -904,6 +946,7 @@ async function runExitEngine(
         reason: exitSwitch.source,
         detail: { exitKind: exitSig.exitKind, pnlPct, wouldHaveFired: true },
       });
+      noteExitJudgment(exitJudg, 'skip_policy', 'exit_engine_disabled', { symbol, entry, ticker, state, exitSig });
       continue;
     }
 
@@ -911,6 +954,7 @@ async function runExitEngine(
     if (exitSig.exitKind === 'hard_stop' && !hardStopEnabled) {
       console.log(`[exit-engine] ${symbol} hard_stop 스킵 (exit_hard_stop_enabled=false)`);
       rec.skip('exit_hard_stop_disabled', { symbol, side: 'sell', detail: { exitKind: exitSig.exitKind } });
+      noteExitJudgment(exitJudg, 'skip_policy', 'exit_hard_stop_disabled', { symbol, entry, ticker, state, exitSig });
       continue;
     }
 
@@ -927,6 +971,7 @@ async function runExitEngine(
         symbol, side: 'sell',
         detail: { exitKind: exitSig.exitKind, until: cooldowns.until(exitKey), ttlMin: COOLDOWN_TTL_MIN.exit },
       });
+      noteExitJudgment(exitJudg, 'skip_cooldown', 'cooldown_exit', { symbol, entry, ticker, state, exitSig });
       continue; // 쿨다운 중
     }
 
@@ -934,6 +979,7 @@ async function runExitEngine(
     const res = await createSignalGuarded(exitSig, rec);
     if (res.ok) {
       created++;
+      noteExitJudgment(exitJudg, 'fired', 'signal_created', { symbol, entry, ticker, state, exitSig, signalId: res.signalId });
       // 쿨다운은 **생성 성공 시에만** 건다 — 실패한 시도로 다음 tick 의 재시도를 막으면
       // 손절이 통째로 유실된다.
       await setCooldown(exitKey, COOLDOWN_TTL_MIN.exit, `exit:${exitSig.exitKind}`);
@@ -956,6 +1002,7 @@ async function runExitEngine(
       console.log(
         `[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 스킵(${res.recordedGate}): ${res.error}`,
       );
+      noteExitJudgment(exitJudg, 'skip_policy', res.recordedGate, { symbol, entry, ticker, state, exitSig });
     } else {
       // 진짜 실패·예외 — exit 트랙(stage 29) 게이트로 한 번 더 남긴다.
       // `createSignalGuarded` 의 기록은 stage 11(진입 축)이라, 이걸 없애면 청산 실패가
@@ -964,9 +1011,13 @@ async function runExitEngine(
         symbol, side: 'sell',
         detail: { exitKind: exitSig.exitKind, error: res.error },
       });
+      noteExitJudgment(exitJudg, 'error', 'exit_create_failed', { symbol, entry, ticker, state, exitSig });
       console.warn(`[exit-engine] ${symbol} ${exitSig.exitKind} 시그널 실패: ${res.error}`);
     }
   }
+
+  // T-126 — 모은 청산 판단 기록을 분리 실행으로 시작만 한다(기다리지 않음·반환값 없음·절대 던지지 않음). 스위치 읽기도 그 안에서만.
+  flushExitJudgment(exitJudg);
 
   // T-055 미리보기 요약 — 하루 1회(시장 거래일, DB 표식). **기다리지 않는다**: 선점 쿼리·전송이
   // 느리거나 실패해도 이 틱의 나머지(경보·진입 평가·eval_funnel flush)는 그대로 진행된다.

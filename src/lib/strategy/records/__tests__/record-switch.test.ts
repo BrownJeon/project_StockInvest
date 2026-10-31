@@ -12,6 +12,7 @@ jest.mock('@/lib/db', () => ({ getPool: () => getPoolMock() }));
 
 import {
   RECORD_SWITCH_CACHE_MS,
+  RECORD_SWITCH_KEYS,
   RECORD_SWITCH_TIMEOUT_MS,
   readRecordSwitch,
   readRecordSwitchState,
@@ -130,5 +131,34 @@ describe('readRecordSwitchState — 꺼짐과 읽지 못함을 가른다', () =>
     jest.advanceTimersByTime(RECORD_SWITCH_TIMEOUT_MS);
     await expect(p).resolves.toEqual({ enabled: false, source: 'timeout' });
     await expect(readRecordSwitchState('x' as unknown as RecordSwitchKey)).resolves.toEqual({ enabled: false, source: 'unknown_key' });
+  });
+});
+
+// T-126 — 청산 판단 기록 스위치 키 추가. 같은 판정(정확히 JSON true 만)·같은 30초 캐시(키별)를 쓰고, 기존 두 키의 동작은 바뀌지 않는다.
+describe('T-126 exit_judgment_record_enabled', () => {
+  it('허용 목록 = 기존 두 키 + 새 키(순서 유지)', () => {
+    expect(RECORD_SWITCH_KEYS).toEqual(['job_run_log_enabled', 'judgment_record_enabled', 'exit_judgment_record_enabled']);
+  });
+  it('🔴 키 없음 = 꺼짐, 정확히 true 만 켜짐, 같은 SQL·인자', async () => {
+    queryMock.mockReturnValueOnce(rows());
+    await expect(readRecordSwitchState('exit_judgment_record_enabled')).resolves.toEqual({ enabled: false, source: 'missing' });
+    expect(queryMock.mock.calls[0]).toEqual(['SELECT value FROM system_config WHERE `key` = ? LIMIT 1', ['exit_judgment_record_enabled']]);
+    for (const [v, on] of [['true', true], [true, true], ['false', false], ['1', false], [1, false], ['"true"', false]] as const) {
+      resetRecordSwitchCacheForTest();
+      queryMock.mockReturnValueOnce(rows(v));
+      await expect(readRecordSwitch('exit_judgment_record_enabled')).resolves.toBe(on);
+    }
+  });
+  it('DB 오류 = 꺼짐(read_error), 캐시는 키별 — 새 키를 읽어도 기존 키 캐시가 바뀌지 않는다', async () => {
+    queryMock.mockReturnValueOnce(Promise.reject(Object.assign(new Error('no table'), { errno: 1146 })));
+    await expect(readRecordSwitchState('exit_judgment_record_enabled')).resolves.toEqual({ enabled: false, source: 'read_error' });
+    const t0 = 1_800_000_000_000;
+    jest.spyOn(Date, 'now').mockReturnValue(t0);
+    resetRecordSwitchCacheForTest();
+    queryMock.mockReturnValueOnce(rows('true')).mockReturnValueOnce(rows('false'));
+    await expect(readRecordSwitch('judgment_record_enabled')).resolves.toBe(true);
+    await expect(readRecordSwitch('exit_judgment_record_enabled')).resolves.toBe(false);
+    await expect(readRecordSwitch('judgment_record_enabled')).resolves.toBe(true);   // 캐시(DB 2회뿐)
+    expect(queryMock).toHaveBeenCalledTimes(3);
   });
 });

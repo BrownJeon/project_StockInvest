@@ -254,3 +254,21 @@ pending → accepted → partially_filled → filled   (해외 market 도 지정
 |------|------|------|
 | `cash_ledger_baseline` | 손익 기준: `version`·`updatedAt`·`baselineAt`(기준 스냅샷 ts)·`snapshotId`·`snapshot{totalKrw,krwCash,usdCash,fx}`(동결)·`confirmed{krwCash,usdCash,at,note}`(사용자 확인 현금, 없으면 null)·`baselineTotalKrw`·`history[]`(최근 20) | `PUT /api/cash-ledger/baseline` — `version` 낙관적 잠금(불일치 409 `version`). 손상되면 조회가 500 + 복구 안내("키를 삭제한 뒤 기준을 다시 정하세요") |
 | `cash_ledger_candidate_marks` | '입출금 아님' 표시: `version`·`marks{"<스냅샷 id>-<통화>": {state,reason,at,byUserId}}`(최대 1,000)·`log[]`(최대 200) | `POST /api/cash-ledger/candidates/:key/{dismiss,reopen}` — 낙관적 잠금 + 재시도 3회 |
+
+---
+
+## 청산 판단 영구 기록 — `exit_judgment` (T-126, 2026-10-31)
+
+> **부팅 DDL 이 아니다.** 정본 DDL 은 [`scripts/migrations/T-126-exit-judgment.sql`](../scripts/migrations/T-126-exit-judgment.sql)(새 테이블 1개, 가산 전용·외래키 없음)이고
+> `setupDB()` 에 넣지 않았다 — QA PASS 뒤 웹 배포보다 먼저 장외 창에서 사람이 직접 적용한다(적용 전후 확인 쿼리는 파일 머리 주석). 1행 = 청산 평가 틱(`run_id` — `eval_funnel.run_id`
+> 와 같은 분 단위 값이라 **UNIQUE 없음**) × 보유 종목의 결론 하나: `decision`(fired·skip_policy·skip_cooldown·error·no_fire) + `decision_code`(eval_funnel 게이트 ID 그대로) +
+> 엔진이 그 지점까지 가진 값(수량·진입가·고점·현재가·`pnl_pct`·`trigger_kind`·적용 임계 `threshold_pct`·스위치 상태·`signal_id`·`engine_release`). 가격은 국내·해외 모두
+> **원화**다 — 해외도 어댑터(`kis-overseas` getTicker·getBalances)가 시세·평단을 원화로 환산해 주므로 `currency='KRW'`. 국내는 항상 'KRW', 해외는 price/entry_price 비율이
+> 엔진 단위 검사 범위 [0.3, 3.0] 밖이거나 시세가 없으면 `currency`·`pnl_pct` NULL. 환율 함수(`fetchUsdKrwRate`)는 던지지 않고 환율을 못 얻으면 1 을 돌려주는데(드묾 —
+> 외부 → DB 캐시 → 상수 폴백), 그때 값은 달러 원값이다: 한쪽만 1 이면 범위 밖이라 NULL, 시세·평단이 둘 다 1 이면 단위 검사를 통과해 `'KRW'` 로 잘못 남는다(알려진 한계).
+> 기록 INSERT 는 풀에서 받은 연결로 보내고 4초 상한을 넘기면 그 연결을 버린다(`destroy` — 표가 잠겨도 풀이 바닥나지 않게, T-126 R1). `threshold_pct` 는 `pnl_pct` 와 같은 부호
+> (손절 음수·익절 양수, 트레일링·시나리오 포지션 NULL). 가상 주문(DRY_RUN) 열은 없다 — `signal_id → signals.consumed_order_id → orders.status` 로 본다.
+> 쓰는 곳은 `src/lib/strategy/records/exit-judgment.ts` 하나(틱 끝 분리 실행 multi-row INSERT, 4초 상한, 실패는 경고 1줄 — 청산 평가에 영향 없음).
+> 기록 스위치 `system_config.exit_judgment_record_enabled` 는 **키 없음 = 꺼짐**(정확히 JSON `true` 만 켜짐, 30초 캐시) — 켜기는 DDL·배포 뒤 별도 승인이고, 끄는 것이 곧 롤백이다.
+> 남지 않는 것: 잔고 미확인 틱·보유 0종목 틱·매수 판단·틱 도중 예외로 끝나지 않은 틱. 보존 기간 삭제는 아직 없다(별도 승인 사안). 마이그레이션을 바꾸면 일회용 DB 시험
+> (`T126_DB_PORT` 를 준 `src/lib/strategy/records/__tests__/exit-judgment-disposable-mariadb.test.ts`)을 반드시 돌린다 — 기본 `npm test` 에서는 정적 검사만 돈다.

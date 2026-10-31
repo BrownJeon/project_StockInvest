@@ -16,8 +16,9 @@ import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { withDeadline } from './safe-text';
 
-export type RecordSwitchKey = 'job_run_log_enabled' | 'judgment_record_enabled';
-export const RECORD_SWITCH_KEYS: readonly RecordSwitchKey[] = ['job_run_log_enabled', 'judgment_record_enabled'];
+/** T-126 — `exit_judgment_record_enabled`(청산 판단 기록, `exit-judgment.ts`)도 같은 판정·같은 30초 캐시를 쓴다. 기존 두 키의 동작은 그대로다. */
+export type RecordSwitchKey = 'job_run_log_enabled' | 'judgment_record_enabled' | 'exit_judgment_record_enabled';
+export const RECORD_SWITCH_KEYS: readonly RecordSwitchKey[] = ['job_run_log_enabled', 'judgment_record_enabled', 'exit_judgment_record_enabled'];
 export const RECORD_SWITCH_TIMEOUT_MS = 2000;
 export const RECORD_SWITCH_CACHE_MS = 30_000;
 
