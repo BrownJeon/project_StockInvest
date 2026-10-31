@@ -34,6 +34,8 @@ export const STREAK_WINDOW_DAYS = 30;
 
 const DATA_ERROR_GATES = new Set([
   'exit_avg_price_missing', 'exit_ticker_error', 'exit_price_invalid', 'exit_state_upsert_failed', 'exit_state_missing', 'exit_unit_mismatch',
+  // T-134 — stage 23 error(position_state 조회 실패로 그 종목 평가를 건너뜀). 계약 §11.3 「stage 21~24 의 error = 데이터 이상」 그대로.
+  'exit_state_load_failed',
 ]);
 
 export const RUN_SUMMARY_SQL =

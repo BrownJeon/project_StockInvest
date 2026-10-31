@@ -4,7 +4,7 @@
  *  ① 결론 지점 1:1
  *     - 정적: 엔진 소스의 루프 안 청산 트랙 `rec.*` 호출(게이트 ID) 하나마다 **바로 뒤에** 기록 호출이 정확히 하나, 결론(decision)은 설계 D1 표,
  *       시그널 생성 성공·정책 스킵(`res.recordedGate`) 지점에 하나씩 — 누락·중복이 생기면 이 시험이 먼저 깨진다.
- *     - 동적: 경로마다(19장면) 보유 종목당 행이 정확히 1개, 그 코드 = 그 틱에 eval_funnel 에 남은 그 종목의 게이트, 장면 합집합 = 정적 목록.
+ *     - 동적: 경로마다(19장면 + T-134 상태 조회 실패 2장면) 보유 종목당 행이 정확히 1개, 그 코드 = 그 틱에 eval_funnel 에 남은 그 종목의 게이트, 장면 합집합 = 정적 목록.
  *  ② 🔴 영향 0 — 기록 상태 11가지(기록기 없음·스위치 키 없음·false·읽기 오류·읽기 무한 대기·켜짐·테이블 없음·CHECK 위반·INSERT 무한 대기·
  *     수집기 메서드가 매번 던짐·수집기 열기가 던짐)에서 runAll 결과·eval_funnel 기록(순서·내용)·시그널 생성 인자·쿨다운·position_state 쓰기·
  *     시세 조회·경보·로그(기록 모듈 경고 제외)·엔진 자신의 DB 문장(순서·인자)이 **기록기 없는 실행과 같다.** 엔진은 기록을 기다리지 않는다
@@ -188,6 +188,8 @@ const SCENES: Scene[] = [
   { name: 'price_invalid', market: 'domestic', symbols: [DOM], arrange: () => price(0), expect: { [DOM]: ['error', 'exit_price_invalid'] } },
   { name: 'upsert_failed', market: 'domestic', symbols: [DOM], arrange: () => upsertPositionState.mockRejectedValue(new Error('lock wait')), expect: { [DOM]: ['error', 'exit_state_upsert_failed'] } },
   { name: 'state_missing', market: 'domestic', symbols: [DOM], arrange: () => loadPositionState.mockResolvedValue(null), expect: { [DOM]: ['error', 'exit_state_missing'] } },
+  // T-134 — 조회가 던지면 그 종목만 건너뛰고 기록(행이 없는 exit_state_missing 과 다른 코드)
+  { name: 'state_load_failed', market: 'domestic', symbols: [DOM], arrange: () => loadPositionState.mockRejectedValue(new Error('pool timeout')), expect: { [DOM]: ['error', 'exit_state_load_failed'] } },
   { name: 'unit_mismatch', market: 'overseas', symbols: [OVS], arrange: () => { price(98_000); loadPositionState.mockImplementation(async (s: string, m: Market) => positionState(s, m, { entryPrice: 71.2, peakPrice: 71.2 })); }, expect: { [OVS]: ['error', 'exit_unit_mismatch'] } },
   { name: 'no_fire', market: 'domestic', symbols: [DOM], arrange: () => price(ENTRY), expect: { [DOM]: ['no_fire', 'exit_no_fire'] } },
   { name: 'engine_disabled', market: 'domestic', symbols: [DOM], arrange: () => { db.exitEngineEnabled = 'false'; price(60_000); }, expect: { [DOM]: ['skip_policy', 'exit_engine_disabled'] } },
@@ -212,6 +214,18 @@ const SCENES: Scene[] = [
     },
     expect: { '005930': ['no_fire', 'exit_no_fire'], '000660': ['error', 'exit_ticker_error'], '035720': ['fired', 'signal_created'] },
   },
+  {
+    // T-134 — 가운데 종목의 상태 조회가 던져도 세 번째 종목이 평가·발화된다(예전에는 여기서 틱이 끊겨 flush 도 없었다)
+    name: 'multi_state_load', market: 'domestic', symbols: ['005930', '000660', '035720'],
+    arrange: () => {
+      price(60_000);
+      loadPositionState.mockImplementation(async (s: string, m: Market) => {
+        if (s === '000660') throw new Error('conn lost');
+        return positionState(s, m);
+      });
+    },
+    expect: { '005930': ['fired', 'signal_created'], '000660': ['error', 'exit_state_load_failed'], '035720': ['fired', 'signal_created'] },
+  },
 ];
 
 /** 설계 D1 표 — 결론 코드 → decision */
@@ -224,6 +238,7 @@ const D1: Record<string, ExitDecision> = {
   signal_created: 'fired',
   exit_avg_price_missing: 'error', exit_ticker_error: 'error', exit_price_invalid: 'error', exit_state_upsert_failed: 'error',
   exit_state_missing: 'error', exit_unit_mismatch: 'error', exit_create_failed: 'error',
+  exit_state_load_failed: 'error',   // T-134
 };
 
 // ─── 기록 모드 ───────────────────────────────────────────────────────────────
@@ -377,8 +392,8 @@ describe('① 정적 — 엔진 소스의 결론 지점 ↔ 기록 호출 1:1 (�
       + '  // T-126 — 모은 청산 판단 기록을 분리 실행으로 시작만 한다(기다리지 않음·반환값 없음·절대 던지지 않음). 스위치 읽기도 그 안에서만.\n'
       + '  flushExitJudgment(exitJudg);\n');
     expect(body).not.toMatch(/await\s+(noteExitJudgment|flushExitJudgment|openExitJudgment)/);
-    // exitJudg 는 기록 호출에만 쓰인다(열기 1 + 기록 13 + flush 1) — 평가 조건·반환값에 섞이지 않는다
-    expect(src.match(/\bexitJudg\b/g)).toHaveLength(15);
+    // exitJudg 는 기록 호출에만 쓰인다(열기 1 + 기록 14 + flush 1 — T-134 가 상태 조회 실패 기록 1을 더했다) — 평가 조건·반환값에 섞이지 않는다
+    expect(src.match(/\bexitJudg\b/g)).toHaveLength(16);
   });
 
   test('세 격리 래퍼 — 본문 전체가 try/catch, 평가에 쓰는 값을 돌려주지 않는다', () => {
@@ -388,10 +403,10 @@ describe('① 정적 — 엔진 소스의 결론 지점 ↔ 기록 호출 1:1 (�
     expect(src.match(/openExitJudgmentCollector\(/g)).toHaveLength(1);
   });
 
-  test('🔴 루프 안 청산 트랙 rec 게이트 = 11개, 게이트마다 바로 뒤 기록 호출 정확히 1개(사이에 continue·await·다른 rec 호출 없음)', () => {
+  test('🔴 루프 안 청산 트랙 rec 게이트 = 12개(T-134 exit_state_load_failed 포함), 게이트마다 바로 뒤 기록 호출 정확히 1개(사이에 continue·await·다른 rec 호출 없음)', () => {
     expect(recCalls.map((r) => r.gate).sort()).toEqual([
       'cooldown_exit', 'exit_avg_price_missing', 'exit_create_failed', 'exit_engine_disabled', 'exit_hard_stop_disabled', 'exit_no_fire',
-      'exit_price_invalid', 'exit_state_missing', 'exit_state_upsert_failed', 'exit_ticker_error', 'exit_unit_mismatch',
+      'exit_price_invalid', 'exit_state_load_failed', 'exit_state_missing', 'exit_state_upsert_failed', 'exit_ticker_error', 'exit_unit_mismatch',
     ]);
     for (const r of recCalls) {
       const mine = notes.filter((n) => n.code === r.gate);
@@ -452,7 +467,7 @@ describe('① 동적 — 경로마다 보유 종목당 1행, 코드 = 그 종목
   test('장면 합집합 = 정적 결론 코드 전부(정책 스킵 3종 포함)', () => {
     expect([...seenCodes].sort()).toEqual([
       'cooldown_exit', 'duplicate_active_signal', 'exit_avg_price_missing', 'exit_create_failed', 'exit_engine_disabled', 'exit_hard_stop_disabled',
-      'exit_no_fire', 'exit_price_invalid', 'exit_state_missing', 'exit_state_upsert_failed', 'exit_ticker_error', 'exit_unit_mismatch',
+      'exit_no_fire', 'exit_price_invalid', 'exit_state_load_failed', 'exit_state_missing', 'exit_state_upsert_failed', 'exit_ticker_error', 'exit_unit_mismatch',
       'quantity_below_min', 'signal_created', 'symbol_blacklisted',
     ]);
   });

@@ -31,7 +31,7 @@ import {
   EXIT_UNIT_RATIO_MIN,
   EXIT_UNIT_RATIO_MAX,
 } from '@/lib/strategy/exit-engine';
-import { upsertPositionState, reconcilePositionState, loadPositionState } from '@/lib/strategy/position-state';
+import { upsertPositionState, reconcilePositionState, loadPositionState, type PositionState } from '@/lib/strategy/position-state';
 import {
   readExitEngineSwitch,
   describeExitEngineSwitch,
@@ -885,7 +885,19 @@ async function runExitEngine(
       continue;
     }
 
-    const state = await loadPositionState(symbol, market);
+    // T-134 — 상태 조회도 이웃(시세·state upsert)과 같은 형태로 **종목 단위 격리**한다. 예전에는 여기만 무방비라 조회 한 번
+    // 실패(풀 대기 초과·연결 끊김·DB 일시 정지)가 for 를 끊고 runAll 밖으로 나가, 그 틱의 남은 보유 종목 손절·익절 평가와
+    // 틱 끝 기록(eval_funnel·exit_judgment)·신규 진입 평가가 통째로 사라지고 크론은 500 으로 끝났다.
+    // 실패 종목은 **평가하지 않는다** — 진입가를 KIS 평단으로 대체하는 등의 새 청산 경로를 만들지 않고 기록만 남긴다(다음 틱에 다시 읽는다).
+    let state: PositionState | null;
+    try {
+      state = await loadPositionState(symbol, market);
+    } catch (e) {
+      console.warn(`[exit-engine] state 조회 실패 ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
+      rec.error('exit_state_load_failed', { symbol, side: 'sell', detail: { error: String(e).slice(0, 300) } });
+      noteExitJudgment(exitJudg, 'error', 'exit_state_load_failed', { symbol, entry, ticker });
+      continue;
+    }
     if (!state) {
       rec.error('exit_state_missing', { symbol, side: 'sell' });
       noteExitJudgment(exitJudg, 'error', 'exit_state_missing', { symbol, entry, ticker });

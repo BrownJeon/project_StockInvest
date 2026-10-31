@@ -148,6 +148,11 @@ export const FUNNEL_GATES = [
   'validation_gate',
   /** T-072 — 검증 상태 **조회 실패**(마이그레이션 전 컬럼 없음·DB 장애)로 매수를 막았다. 막는 것은 같지만 인프라 이상이라 verdict error. */
   'validation_lookup_error',
+  /**
+   * T-134 — exit 트랙 stage 23(`exit_state_upsert_failed`·`exit_state_missing` 과 같은 단계). 보유 종목의 position_state **조회가 던져**
+   * 그 종목을 평가하지 않고 건너뛰었다(시그널·쿨다운·추가 쓰기 없음, 같은 틱의 다른 종목은 계속 평가). 행이 **없는** 것(`exit_state_missing`)과 다르다.
+   */
+  'exit_state_load_failed',
 ] as const;
 
 export type FunnelGate = (typeof FUNNEL_GATES)[number];
@@ -238,6 +243,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   insufficient_cash: 11,
   validation_gate: 11,
   validation_lookup_error: 11,
+  exit_state_load_failed: 23,
 };
 
 /** 사용자 화면·리포트용 한글 라벨 (T-002 §4 "한글 라벨 매핑") */
@@ -323,6 +329,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   insufficient_cash: '실시간 현금 부족 (매수 시그널 미생성)',
   validation_gate: '검증 전 전략 — 신규 매수 차단 (가상 체결만 기록)',
   validation_lookup_error: '전략 검증 상태 조회 실패 — 신규 매수 차단',
+  exit_state_load_failed: '청산: 포지션 조회 실패',
 };
 
 /**

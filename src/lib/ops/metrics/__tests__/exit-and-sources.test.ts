@@ -51,6 +51,16 @@ describe('X3 판정 — 종목 수·연속 일수', () => {
     expect([...g.createFailed]).toEqual(['D']);
     expect(g.judged.has('E')).toBe(false);
   });
+  it('T-134 — 상태 조회 실패(stage 23 error)는 데이터 이상으로 센다(판정만 하고 아무 묶음에도 안 들어가는 종목이 생기지 않게)', () => {
+    const g = groupExitGates([
+      { gate: 'exit_state_load_failed', verdict: 'error', symbol: 'F', n: 1 },
+      { gate: 'exit_state_missing', verdict: 'error', symbol: 'G', n: 1 },
+      { gate: 'exit_no_fire', verdict: 'pass', symbol: 'H', n: 3 },
+    ]);
+    expect([...g.dataErrors]).toEqual(['F', 'G']);
+    expect([...g.judged]).toEqual(['F', 'G', 'H']);
+    expect([...g.createFailed, ...g.noFire]).toEqual(['H']);
+  });
   it('연속 세션일 — run 없는 날(주말)은 건너뛰고, 끊기면 멈춘다', () => {
     const sessions = new Set(['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30']);
     const hits = new Set(['2026-10-28', '2026-10-29', '2026-10-30']);
