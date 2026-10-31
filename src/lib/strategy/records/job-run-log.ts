@@ -20,7 +20,9 @@
  * - 롤업 행(U2): (job_id, KST 정시, recorder='runner_rollup') 한 줄에 `{runs, failed, maxMs}` 를 **더해 간다**(배치가 여러 번 와도). 상태 =
  *   failed 0 → ok, failed = runs → failed, 그 밖 → partial. 실패한 실행은 따로 `runner_hook` 1줄(의사 슬롯)을 즉시 남긴다.
  *   알려진 한계(초안 §5.2): 라우트가 커밋한 뒤 응답이 러너 curl 상한(3초) 안에 못 가면 러너가 같은 줄을 다시 보내 롤업 runs 가 과대 집계될
- *   수 있다(실행 행은 ODKU 로 무해).
+ *   수 있다(실행 행은 ODKU 로 무해). (T-127, Reviewer Minor-2) 더 흔한 경로: 처리 상한 {@link JRL_DEADLINE_MS} 를 넘기면 503(timeout)으로
+ *   답하지만 `work()` 는 계속 돌아 나중에 커밋된다 → 러너가 같은 줄을 다시 보내 runs·failed 가 두 배가 될 수 있다(T-112 관찰 22:13 — 71 대 68).
+ *   롤업 runs 는 근사값이다(T-108 지표 계약 §6). 재전송 중복 억제는 T-127 범위 밖(후속 후보).
  * - 스위치 `job_run_log_enabled` 키 없음 = 꺼짐 → 아무것도 쓰지 않고 `skipped_disabled`(러너는 스풀을 비운다). 스위치를 **읽지 못하면**
  *   (DB 오류·시간 초과) 꺼짐으로 보되 `failed` 로 답해 러너가 스풀을 남기게 한다(DB 가 잠깐 아플 때 기록이 사라지지 않게).
  * - 테이블 없음(1146, DDL 적용 전) → `skipped_no_table`(프로세스당 경고 1회, 러너는 스풀을 비운다).
@@ -556,6 +558,16 @@ let noTableWarned = false;
 /** 시험 전용. */
 export function resetJobRunLogWarningsForTest(): void { noTableWarned = false; }
 
+/**
+ * (T-127 ⑤) 503 사유 한 줄 — 스위치를 읽지 못함·처리 상한 초과. 관찰(T-112 10-30 21:30·21:55 …)에서 503 의 원인이 어디에도 남지 않았다
+ * (러너는 응답 본문을 버렸고, 상한 초과 경로는 로그가 없었다). **원인 분류어와 상수만** 적는다 — 요청 본문(스풀 줄)·라벨·금액·종목은 넣지 않는다.
+ * db_error 는 아래 catch 가 이미 errno 와 함께 한 줄 남기므로 여기서 다시 적지 않는다. timeout 은 work() 가 계속 돌아 늦게 커밋될 수 있다 —
+ * 그러면 러너가 같은 줄을 다시 보내 롤업 runs 가 과대 집계된다(T-112 관찰 22:13, +3). 러너는 틱마다 최대 1번 보내므로 반복 억제는 두지 않는다.
+ */
+function warn503(reason: 'switch_unreadable' | 'timeout', detail: string): void {
+  try { console.warn(`${LOG} 503 reason=${reason} (${detail}) — 러너가 스풀을 남겨 다음 가벼운 틱에 다시 보낸다`); } catch { /* 흡수 */ }
+}
+
 interface Queryable { query: (sql: string, params?: unknown[]) => Promise<unknown> }
 
 class NoTable extends Error {}
@@ -598,9 +610,9 @@ export async function recordSpoolBatch(text: string, deadlineMs: number = JRL_DE
   const work = async (): Promise<RecordBatchResult> => {
     const sw = await readRecordSwitchState('job_run_log_enabled');
     if (!sw.enabled) {
-      return sw.source === 'missing' || sw.source === 'value'
-        ? { ...base, status: 'skipped_disabled' }
-        : { ...base, status: 'failed', reason: 'switch_unreadable' };
+      if (sw.source === 'missing' || sw.source === 'value') return { ...base, status: 'skipped_disabled' };
+      warn503('switch_unreadable', `source=${sw.source}`);
+      return { ...base, status: 'failed', reason: 'switch_unreadable' };
     }
     const built = buildRows(lines);
     const db = getPool() as unknown as Queryable;
@@ -625,7 +637,9 @@ export async function recordSpoolBatch(text: string, deadlineMs: number = JRL_DE
   };
   try {
     const r = await withDeadline(work(), deadlineMs);
-    return r ?? { ...base, status: 'failed', reason: 'timeout' };
+    if (r) return r;
+    warn503('timeout', `deadline=${deadlineMs}ms`);
+    return { ...base, status: 'failed', reason: 'timeout' };
   } catch (e) {
     try { console.warn(`${LOG} 예외 흡수: ${e instanceof Error ? e.message : String(e)}`); } catch { /* 흡수 */ }
     return { ...base, status: 'failed', reason: 'db_error' };

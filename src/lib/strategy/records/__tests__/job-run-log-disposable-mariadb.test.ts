@@ -7,7 +7,7 @@
  *     · ended_at NULL 행 회복(성공 재시도가 덮는다) · NULL 위 NULL 재전송은 가짜 시각을 쓰지 않는다
  *     · 변이 2종(IFNULL 제거 · ended_at 대입을 맨 앞으로)이 이 판정에 **잡힌다**(시험 감도 확인)
  *  C. 롤업(U2): 배치가 여러 번 와도 runs·failed 가산 · maxMs 최대 · 상태 ok/partial/failed · 같은 정시 슬롯의 실패 행(runner_hook)과
- *     롤업 행(runner_rollup)이 UNIQUE 충돌 없이 공존
+ *     롤업 행(runner_rollup)이 UNIQUE 충돌 없이 공존 · (T-127) C3 이미 있는 행에 failed 배치를 더해 failed 가 되는 ODKU 경로(`>=` 변이 감도 포함)
  *  D. 🔴 F3 클램프: 앱이 자른 값(이모지 128 코드포인트)은 strict 에서 저장 · 자르지 않은 129자는 1406 으로 거부(클램프가 필요한 이유)
  *  E. 🔴 F6 errno: CHECK 위반 = 4025(mysql2 code 는 엉뚱한 문자열) · 테이블 없음 = 1146
  *  F. recordSpoolBatch 끝에서 끝: 스위치 켜짐 → 저장 · 재전송 → 실행 행 불변(롤업 runs 는 두 배 — 알려진 한계, 초안 §5.2) · 스위치 키 없음 → 0행 ·
@@ -235,6 +235,20 @@ for (const [modeName, nbe] of MODES) {
       await upsert(b3.rollupRows, ROLLUP_ODKU);
       const [r11] = await rowsOf(c, "job_id = 'stop-alert' AND recorder = 'runner_rollup' AND scheduled_slot_at = '2026-10-30 11:00:00'");
       expect([r11.status, JSON.parse(String(r11.counts))]).toEqual(['partial', { runs: 3, failed: 2, maxMs: 20_000 }]);
+    });
+    // (T-127, T-112 Reviewer Minor-1) 이미 있는 롤업 행에 failed 배치를 더해 failed 가 되는 **ODKU 경로**. C2 의 "모두 실패 → failed" 는 첫 INSERT
+    //   (JS rollupRow 계산)에서 나와 ROLLUP_ODKU 의 `>=` 를 밟지 않는다 — `>` 로 바꾼 변이가 73건 시험을 모두 통과했다.
+    async function failedOnFailed(odku: string) {
+      await exec("DELETE FROM job_run_log WHERE job_id = 'holding-checker'", []);
+      await upsert(buildRows([line('holding-checker', 0, '2026-10-30 13:00:00', 100), line('holding-checker', 500, '2026-10-30 13:01:00', 70, { ok: false })]).rollupRows, odku);
+      await upsert(buildRows([line('holding-checker', 0, '2026-10-30 13:02:00', 90)]).rollupRows, odku);
+      const [r] = await rowsOf(c, "job_id = 'holding-checker' AND recorder = 'runner_rollup'");
+      return [r.status, JSON.parse(String(r.counts))];
+    }
+    test('🔴 C3. 롤업 ODKU failed 전이 — failed 2건 행 + failed 배치 1건 → failed(runs 3·failed 3) · `>=`→`>` 변이는 partial 로 잡힌다', async () => {
+      expect(await failedOnFailed(ROLLUP_ODKU)).toEqual(['failed', { runs: 3, failed: 3, maxMs: 100 }]);
+      expect(ROLLUP_ODKU.split(' >= ')).toHaveLength(2);
+      expect((await failedOnFailed(ROLLUP_ODKU.replace(' >= ', ' > ')))[0]).toBe('partial');
     });
   });
 }

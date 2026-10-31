@@ -21,6 +21,14 @@
 #  J7. 해외 분석 502 재시도(CALL_LAST_CODE): 08:00·08:10·08:20 = 기준 러너 · 날짜파일·시도 기록 같음
 #  J8. 정적: bash -n · 기준 러너의 모든 줄이 순서대로 남음(추가만) · call() 에서 `# T-112 jrl` 2줄을 빼면 기준과 같음 · 표지 줄 4개 위치 ·
 #      상수(150·3·200·2MiB) · 전송 curl 은 call() 을 거치지 않고 --max-time 이 있음 · 하트비트 계산 주석(290.2·213)
+#      · (T-127) umask 077 은 블록 안 두 곳(jrl_hook·jrl_flush)뿐·서브셸 없음 · 마스킹 라벨은 portfolio-snapshot·trade-report 둘뿐 · 금액 키 5개
+#  J9. (T-127 ①) 금액 값 마스킹 — 러너를 그대로 돌려 받은 줄을 푼다: 두 라벨만 금액 키 0·detail "" · 나머지 키·값·구조·skipped 신호 그대로(파이썬으로
+#      원문에 같은 치환을 한 것과 JSON 동일) · 다른 라벨(strategy-eval)은 같은 키가 있어도 그대로 · 2KB 에서 숫자·detail 이 잘려도 원래 숫자·글자가
+#      남지 않음 · 문자열 안의 키 글자는 그대로 · sed 가 실패하면 본문 칸이 빈다(원문이 새지 않음) + 마스킹 함수 단독 표 시험(소수·음수·지수·공백·중첩)
+#  J10. (T-127 ②) umask 022 에서 스풀·.batch·.sending·.resp 는 600 · 잡 호출(curl)은 매번 러너 원래 umask(0022)를 본다 = 후크·전송이 모든 경로
+#      (정상·앱 다운·스풀 못 씀·무거운 틱 150초 규칙)에서 umask 를 되돌린다 · 하트비트·날짜파일 권한 = 기준 러너(644)
+#  J11. (T-127 ⑤) 전송 실패 줄의 사유: 라우트 503 본문(사유가 100자 뒤) → `HTTP=503 reason=timeout` · 401 → `error=unauthorized` ·
+#      개행·ESC·대문자·긴 낱말·HTML 은 덧붙이지 않음(줄 1개, 주입 없음) · 000 은 예전 줄 그대로 · 응답 파일이 남지 않음
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 # T112_ONLY="J3 J8" 처럼 주면 그 묶음만 돈다(변이 시험을 빨리 돌리려는 것 — 평소에는 비워 전부 돈다).
 set -u
@@ -50,6 +58,9 @@ want() { [ -z "${T112_ONLY:-}" ] || case " $T112_ONLY " in *" $1 "*) return 0 ;;
 # run_loop NAME RUNNER START TICKS MODE JMODE [SEEDS] [ENV...]
 #  MODE(잡 응답): ok | worst08(해외 분석·stop-alert = curl 상한까지 늘어짐, KIS 60, 매 분 잡 10, 5분 잡 5) | pmo502 | bodies
 #  JMODE(기록 라우트): ok(200) | down(즉시 000) | slow(curl 상한만큼 흐르고 000) | down70(70틱까지 down, 그 뒤 ok)
+#    | resp(T-127 — 코드 STUB_JCODE, 응답 본문 STUB_JRESP_FILE 을 -o 파일에 씀)
+#  MODE money(T-127): portfolio-snapshot·trade-report·strategy-eval 은 $W/body-ps·body-tr·body-se 본문(있을 때)
+#  ENV STUB_PERMS=1(T-127): 호출마다 umask·스풀 권한, 전송마다 .batch·.resp 권한, 틱 끝마다 상태 디렉터리 권한을 기록(다른 시험의 시간을 늘리지 않게 켤 때만)
 #  SEEDS: "이름=내용 ..." — ~/.node-local/stockinvest/ 에 미리 쓴다. ENV: 러너 환경 덧붙임(예 JRL_SPOOL_FILE=).
 # 기록 — calls: "MM-DD HH:MM:SS 틱 경로" · maxtime · posts: "틱 줄수" · received(200 으로 받은 줄) · heartbeats · spoolsize(틱 끝 .sending 크기)
 run_loop() {
@@ -75,6 +86,7 @@ n=$(( $(cat "$R/ticks" 2>/dev/null || echo 0) + 1 )); echo $n > "$R/ticks"
 if [ -f "$R/jswitch" ]; then read -r at m < "$R/jswitch"; [ "$n" -ge "$at" ] && echo "$m" > "$R/jmode"; fi
 s="$R/home/.node-local/stockinvest/job-run-spool.sending"
 if [ -f "$s" ]; then wc -c < "$s" >> "$R/spoolsize"; else echo 0 >> "$R/spoolsize"; fi
+if [ -n "${STUB_PERMS:-}" ]; then ( cd "$R/home/.node-local/stockinvest" && for p in * .[!.]*; do [ -f "$p" ] && echo "$n $(stat -c %a "$p") $p"; done ) >> "$R/perms" 2>/dev/null; fi
 if [ $n -ge $(cat "$R/maxticks") ]; then kill -TERM $PPID; fi
 exit 0
 EOF
@@ -97,12 +109,21 @@ adv() { echo $(( $(cat "$R/clock") + $1 )) > "$R/clock"; }
 tk=$(cat "$R/ticks" 2>/dev/null || echo 0)
 echo "$("$STUB_REAL_DATE" -d "@$(cat "$R/clock")" '+%m-%d %H:%M:%S') $tk $path" >> "$R/calls"
 [ -n "$mt" ] && echo "$path max-time=$mt" >> "$R/maxtime"
+if [ -n "${STUB_PERMS:-}" ]; then
+  echo "$path $(umask)" >> "$R/umasks"
+  sp="$R/home/.node-local/stockinvest/job-run-spool"
+  [ "$path" != "/api/cron/job-run-log" ] && [ -f "$sp" ] && stat -c %a "$sp" >> "$R/spoolperm"
+fi
 if [ "$path" = "/api/cron/job-run-log" ]; then
   f="${data#@}"; n=$(wc -l < "$f" 2>/dev/null || echo 0)
   echo "$tk $n" >> "$R/posts"
+  [ -n "${STUB_PERMS:-}" ] && stat -c %a "$f" >> "$R/batchperm"
   case "$(cat "$R/jmode")" in
     down) printf '000'; exit 7 ;;
     slow) if [ -n "$mt" ]; then adv "$mt"; else adv 30; fi; printf '000'; exit 28 ;;
+    resp)
+      if [ -n "$out" ]; then cat "$STUB_JRESP_FILE" > "$out"; [ -n "${STUB_PERMS:-}" ] && stat -c %a "$out" >> "$R/respperm"; fi
+      printf '%s' "$STUB_JCODE"; exit 0 ;;
   esac
   cat "$f" >> "$R/received"
   printf '200'; exit 0
@@ -122,6 +143,12 @@ case "$(cat "$R/mode")" in
       /api/cron/edgar-sync) body="$(cat "$R/body-edgar")" ;;
       /api/cron/entry-watcher) code=500; body='{"ok":false,"error":"x"}' ;;
     esac ;;
+  money)
+    case "$path" in
+      /api/cron/portfolio-snapshot) [ -f "$R/body-ps" ] && body="$(cat "$R/body-ps")"; [ -f "$R/code-ps" ] && code="$(cat "$R/code-ps")" ;;
+      /api/cron/trade-report) [ -f "$R/body-tr" ] && body="$(cat "$R/body-tr")" ;;
+      /api/cron/strategy-eval) [ -f "$R/body-se" ] && body="$(cat "$R/body-se")" ;;
+    esac ;;
 esac
 if [ -n "$mt" ] && [ "$took" -gt "$mt" ]; then took=$mt; code=000; fi
 [ "$took" -gt 0 ] && adv "$took"
@@ -131,8 +158,10 @@ printf '%s' "$code"
 exit 0
 EOF
   chmod +x "$R/bin/date" "$R/bin/sleep" "$R/bin/curl"
+  if [ -d "$W/xbin-$name" ]; then cp "$W/xbin-$name"/* "$R/bin/" && chmod +x "$R/bin"/*; fi   # (T-127) 시나리오 전용 스텁(예: 실패하는 sed)
   : > "$R/calls"; : > "$R/maxtime"; : > "$R/posts"; : > "$R/received"; : > "$R/heartbeats"; : > "$R/spoolsize"
   [ -f "$W/body-edgar" ] && cp "$W/body-edgar" "$R/body-edgar"
+  for sd in body-ps body-tr body-se code-ps; do [ -f "$W/$sd" ] && cp "$W/$sd" "$R/$sd"; done   # (T-127) money 모드
   env PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul \
     STUB_R="$R" STUB_REAL_DATE="$REAL_DATE" "$@" timeout 900 bash "$runner" > "$R/stdout" 2>&1
   echo "$R"
@@ -312,6 +341,171 @@ eq "J8: 하트비트 최악 계산 주석(전송 틱 213초 · 무거운 틱 290
    "$(printf '%s\n' "$blk" | grep -c '≈ 213초 < 300초') $(printf '%s\n' "$blk" | grep -c '≈ 290.2초 < 300초') $(grep -c '^# (T-112) 기록 후크(call() 마다 로컬 스풀 한 줄' "$RUNNER")" "1 1 1"
 eq "J8: export-llm-trainset 는 여전히 call() 밖" "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -c 'call [^ ]* "export-llm-trainset"')" "0"
 eq "J8: 상단 잡 목록 주석에 기록 후크" "$(sed -n '1,45p' "$RUNNER" | grep -c '^#  - (T-112) 실행·상태 기록 후크')" "1"
+# (T-127) umask·마스킹 범위 고정
+BS="$(grep -n '^# >>> job-run-log-spool' "$RUNNER" | cut -d: -f1)"; BE="$(grep -n '^# <<< job-run-log-spool' "$RUNNER" | cut -d: -f1)"
+eq "🔴 J8(T-127): 블록 밖 실행 줄에 umask 없음 · 블록 안 umask 077 두 줄(jrl_hook·jrl_flush) · 서브셸 umask 없음" \
+   "$(grep -n 'umask' "$RUNNER" | grep -v '^[0-9]*:[[:space:]]*#' | awk -F: -v s="$BS" -v e="$BE" '$1 + 0 < s + 0 || $1 + 0 > e + 0' | wc -l | tr -d ' ') $(printf '%s\n' "$bx" | grep -c 'umask 077') $(grep -v '^[[:space:]]*#' "$RUNNER" | grep -cE '(^|[^$])\([[:space:]]*umask')" "0 2 0"
+eq "🔴 J8(T-127): 마스킹은 portfolio-snapshot·trade-report case 한 줄에서만 · 마스킹 함수 호출 1곳" \
+   "$(printf '%s\n' "$bx" | grep -cE '^[[:space:]]+portfolio-snapshot\|trade-report\)') $(printf '%s\n' "$bx" | grep -c '| jrl_mask_money ')" "1 1"
+eq "🔴 J8(T-127): 금액 키 5개 정확히" "$(printf '%s\n' "$bx" | grep -c '"(totalKRW|KRW|USD|headerPnlKRW|lifoPnlKRW)"')" "1"
+eq "J8(T-127): 매 분 잡 본문 생략 case 줄 불변(job-slots.test 가 읽는 줄)" "$(printf '%s\n' "$bx" | grep -c '^    entry-watcher|holding-checker|stop-alert) \[ "\$hc" = "200" \] && b64_skip=1 ;;$')" "1"
+
+fi
+# ── J9. (T-127 ①) 금액 값 마스킹 ──────────────────────────────────────────────────
+if want J9; then
+echo "J9. (T-127 ①) 금액 값 마스킹 — portfolio-snapshot·trade-report 만"
+MF="$W/mask-fn.sh"; awk '/^jrl_mask_money\(\) \{/,/^\}/' "$RUNNER" > "$MF"
+mk() { bash -c '. "$1"; jrl_mask_money' _ "$MF"; }
+mt() { eq "J9 표: $1" "$(printf '%s' "$2" | mk)" "$3"; }   # mt 이름 입력 기대
+eq "(하네스 확인) J9: 러너에서 마스킹 함수를 잘라 냈다" "$(grep -c '^jrl_mask_money() {' "$MF")" "1"
+mt "정수·중첩 cash{KRW,USD}" '{"totalKRW":987654321,"positions":4,"cash":{"KRW":12345678,"USD":4321.75}}' '{"totalKRW":0,"positions":4,"cash":{"KRW":0,"USD":0}}'
+mt "음수·지수·소수" '{"headerPnlKRW":-3333333,"lifoPnlKRW":2.5e+6,"USD":-0.75E-2}' '{"headerPnlKRW":0,"lifoPnlKRW":0,"USD":0}'
+mt "공백" '{ "KRW" :  77 , "USD" :88}' '{ "KRW" :  0 , "USD" :0}'
+mt "null 은 그대로" '{"USD":null,"KRW":1}' '{"USD":null,"KRW":0}'
+mt "이름이 비슷한 다른 키는 그대로" '{"totalKRWx":5,"xKRW":6,"KRWs":7,"usd":8}' '{"totalKRWx":5,"xKRW":6,"KRWs":7,"usd":8}'
+mt "문자열 값 안의 키 글자·값 KRW 는 그대로" '{"note":"\"totalKRW\":99","skipped":"KRW","currency":"USD"}' '{"note":"\"totalKRW\":99","skipped":"KRW","currency":"USD"}'
+mt "detail 닫힌 문자열 → \"\"(이스케이프 따옴표·역슬래시 포함, 중첩 두 곳)" \
+   '{"skipped":"usd_cash_unavailable","detail":"예수금(7777.25 USD) \"q\" \\ end","drawdown":{"reason":"baseline_invalid","detail":"기준 자본 1234원"}}' \
+   '{"skipped":"usd_cash_unavailable","detail":"","drawdown":{"reason":"baseline_invalid","detail":""}}'
+mt "detail 이 null 이면 그대로" '{"detail":null,"KRW":1}' '{"detail":null,"KRW":0}'
+mt "2KB 절단 — 숫자 중간" '{"ok":true,"totalKRW":12345' '{"ok":true,"totalKRW":0'
+mt "2KB 절단 — 콜론까지" '{"ok":true,"totalKRW":' '{"ok":true,"totalKRW":'
+mt "2KB 절단 — 음수 부호만" '{"KRW":-' '{"KRW":-'
+mt "2KB 절단 — detail 안" '{"skipped":"usd_cash_unavailable","detail":"USD 예수금(98765' '{"skipped":"usd_cash_unavailable","detail":"'
+mt "2KB 절단 — detail 안 역슬래시로 끝남" '{"detail":"abc 5\' '{"detail":"'
+mt "분류 신호(ok·partial·reason·status·error·skipped·배열) 보존" \
+   '{"ok":false,"partial":true,"status":"x","reason":"y","error":"boom 123","skipped":"balances_incomplete","failedMarkets":["overseas"]}' \
+   '{"ok":false,"partial":true,"status":"x","reason":"y","error":"boom 123","skipped":"balances_incomplete","failedMarkets":["overseas"]}'
+cat > "$W/maskcmp.py" <<'PYEOF'
+import json, sys
+KEYS = {"totalKRW", "KRW", "USD", "headerPnlKRW", "lifoPnlKRW"}
+def mask(v):
+    if isinstance(v, dict):
+        out = {}
+        for k, x in v.items():
+            if k in KEYS and isinstance(x, (int, float)) and not isinstance(x, bool):
+                out[k] = 0
+            elif k == "detail" and isinstance(x, str):
+                out[k] = ""
+            else:
+                out[k] = mask(x)
+        return out
+    if isinstance(v, list):
+        return [mask(x) for x in v]
+    return v
+orig = json.load(open(sys.argv[1], encoding="utf-8"))
+got = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+print("same" if json.dumps(mask(orig), ensure_ascii=False) == json.dumps(got, ensure_ascii=False) else "diff")
+PYEOF
+dec() { awk -F'\t' -v l="$2" '$2 == l {print $7}' "$1/received" | head -1 | base64 -d; }
+alldec() { awk -F'\t' '{print $7}' "$1/received" | while read -r b; do printf '%s' "$b" | base64 -d; echo; done; }
+MONEY_RE='987654321|12345678|4321\.75|7777\.25|3333333|2222222|55,555,555|66,666,666|98765|005930|AAPL|yyyy'
+# ① 정상(총액·현금·drawdown 종목 소실 detail) + trade-report 발송 + strategy-eval(같은 키가 있어도 마스킹 대상 아님)
+PS_OK='{"ok":true,"totalKRW":987654321,"positions":4,"cash":{"KRW":12345678,"USD":4321.75},"volGuard":{"level":"ok","changePct":-1.25},"killSwitch":false,"drawdown":{"status":"skipped","reason":"composition_change_suspected","detail":"24h -12.3% (-55,555,555원) 이지만 기준선에 있던 [005930, NAS:AAPL] 66,666,666원이 사라졌다"},"action":null}'
+TR_OK='{"ok":true,"sent":true,"channel":"telegram","partial":false,"delivered":["telegram"],"failed":[],"unconfigured":[],"noTargetChannel":false,"lastSentAtAdvanced":true,"rangeStart":"2026-10-28T00:00:00.000Z","rangeEnd":"2026-10-28T01:00:00.000Z","rangeCapped":false,"buys":2,"sells":1,"headerPnlKRW":-3333333,"lifoPnlKRW":2222222,"unmatchedSellCount":0,"matchedSellCount":1}'
+SE='{"ok":true,"totalKRW":1111111,"cash":{"KRW":5},"detail":"keep 9999"}'
+printf '%s' "$PS_OK" > "$W/body-ps"; printf '%s' "$TR_OK" > "$W/body-tr"; printf '%s' "$SE" > "$W/body-se"
+M1="$(run_loop mask-ok "$RUNNER" "2026-10-28 10:00:00" 1 money ok "")"
+eq "(하네스 확인) J9: 세 라벨이 이 틱에 기록됨" "$(awk -F'\t' '$2 == "portfolio-snapshot" || $2 == "trade-report" || $2 == "strategy-eval"' "$M1/received" | wc -l | tr -d ' ')" "3"
+eq "🔴 J9: portfolio-snapshot = 원문에 같은 치환(금액 키 0·detail \"\")을 한 JSON(키 순서·다른 값 그대로)" "$(dec "$M1" portfolio-snapshot | python3 -I "$W/maskcmp.py" "$W/body-ps")" "same"
+eq "🔴 J9: trade-report = 같은 치환" "$(dec "$M1" trade-report | python3 -I "$W/maskcmp.py" "$W/body-tr")" "same"
+eq "🔴 J9: 받은 줄 어디에도 금액·종목 원문 글자 없음" "$(alldec "$M1" | grep -cE "$MONEY_RE")" "0"
+eq "J9: (하네스 확인) 원문에는 그 글자가 있었다" "$(cat "$W/body-ps" "$W/body-tr" | grep -cE "$MONEY_RE")" "1"
+eq "🔴 J9: 다른 라벨(strategy-eval)은 같은 키·detail 이 있어도 원문 그대로" "$(dec "$M1" strategy-eval)" "$SE"
+same_calls "J9" "$M1" "$(run_loop mask-ok-base "$BASE" "2026-10-28 10:00:00" 1 money ok "")"
+# ② 보류(skipped:usd_cash_unavailable — detail 에 USD 금액) + trade-report 건너뜀
+PS_HOLD='{"ok":true,"skipped":"usd_cash_unavailable","detail":"USD/KRW 환율 조회 실패 — USD 예수금(7777.25 USD)을 환산할 수 없음: timeout","snapshotAgeMin":75,"blindness":"warning"}'
+TR_SKIP='{"ok":true,"skipped":"anchor_not_due"}'
+printf '%s' "$PS_HOLD" > "$W/body-ps"; printf '%s' "$TR_SKIP" > "$W/body-tr"
+M2="$(run_loop mask-hold "$RUNNER" "2026-10-28 10:00:00" 1 money ok "")"
+eq "🔴 J9: 보류 본문 = 같은 치환 · skipped 신호 그대로" "$(dec "$M2" portfolio-snapshot | python3 -I "$W/maskcmp.py" "$W/body-ps") $(dec "$M2" portfolio-snapshot | grep -c '"skipped":"usd_cash_unavailable"')" "same 1"
+eq "J9: 금액 키 없는 trade-report 건너뜀 본문은 바이트 그대로" "$(dec "$M2" trade-report)" "$TR_SKIP"
+eq "🔴 J9: USD 금액 원문 없음" "$(alldec "$M2" | grep -cE "$MONEY_RE")" "0"
+# ③ 2KB 절단 — portfolio-snapshot 은 2048바이트째가 totalKRW 숫자 한가운데, trade-report 는 detail 문자열 한가운데
+{ printf '{"ok":true,"pad":"'; head -c 2012 /dev/zero | tr '\0' 'x'; printf '","totalKRW":123456789012,"cash":{"KRW":5}}'; } > "$W/body-ps"
+{ printf '{"ok":true,"skipped":"x","detail":"USD 예수금(98765 USD) '; head -c 3000 /dev/zero | tr '\0' 'y'; printf '"}'; } > "$W/body-tr"
+eq "(하네스 확인) J9: 원문 앞 2048바이트가 숫자 중간에서 끝난다" "$(head -c 2048 "$W/body-ps" | tail -c 16)" '"totalKRW":12345'
+M3="$(run_loop mask-cut "$RUNNER" "2026-10-28 10:00:00" 1 money ok "")"
+eq "🔴 J9: 숫자 중간 절단 → 끝이 \"totalKRW\":0 · 잘린 숫자 글자 없음" "$(dec "$M3" portfolio-snapshot | tail -c 12) $(dec "$M3" portfolio-snapshot | grep -c 12345)" '"totalKRW":0 0'
+eq "J9: 절단 본문의 나머지 앞부분은 그대로" "$(dec "$M3" portfolio-snapshot | head -c 2030 | md5sum)" "$(head -c 2030 "$W/body-ps" | md5sum)"
+eq "🔴 J9: detail 문자열 중간 절단 → detail 값이 통째로 비고 끝난다" "$(dec "$M3" trade-report)" '{"ok":true,"skipped":"x","detail":"'
+# ④ 마스킹 실패(sed 가 출력 없이 실패) → 두 라벨은 본문 칸이 비고(원문이 새지 않음) 다른 라벨은 그대로
+printf '%s' "$PS_OK" > "$W/body-ps"; printf '%s' "$TR_OK" > "$W/body-tr"
+mkdir -p "$W/xbin-mask-sedfail"; printf '#!/usr/bin/env bash\nexit 1\n' > "$W/xbin-mask-sedfail/sed"
+M4="$(run_loop mask-sedfail "$RUNNER" "2026-10-28 10:00:00" 1 money ok "")"
+eq "🔴 J9: sed 실패 → portfolio-snapshot·trade-report 본문 칸 빈 값(7칸 유지)" \
+   "$(awk -F'\t' '($2 == "portfolio-snapshot" || $2 == "trade-report") && NF == 7 && $7 == ""' "$M4/received" | wc -l | tr -d ' ')" "2"
+eq "J9: sed 실패여도 다른 라벨 본문은 그대로" "$(dec "$M4" strategy-eval)" "$SE"
+eq "🔴 J9: sed 실패 때도 금액 원문 없음" "$(alldec "$M4" | grep -cE "$MONEY_RE")" "0"
+rm -rf "$W/xbin-mask-sedfail" "$W/body-ps" "$W/body-tr" "$W/body-se"
+
+fi
+# ── J10. (T-127 ②) 스풀 0600 · umask 복원 ──────────────────────────────────────────
+if want J10; then
+echo "J10. (T-127 ②) umask 022 — 스풀 파일 600, 러너의 나머지 파일·잡 호출 umask 는 그대로"
+printf '%s' '{"ok":false,"received":3,"status":"failed","reason":"timeout"}' > "$W/jresp-um"
+U_BASE="$(umask 022; run_loop um-base "$BASE" "2026-10-28 06:59:00" 3 ok ok "" STUB_PERMS=1)"
+U_OK="$(umask 022; run_loop um-ok "$RUNNER" "2026-10-28 06:59:00" 3 ok ok "" STUB_PERMS=1)"
+U_DOWN="$(umask 022; run_loop um-down "$RUNNER" "2026-10-28 06:59:00" 3 ok down "" STUB_PERMS=1)"
+U_UNW="$(umask 022; run_loop um-unw "$RUNNER" "2026-10-28 06:59:00" 3 ok ok "" STUB_PERMS=1 "JRL_SPOOL_FILE=$W/no-such-dir/x/spool")"
+U_HVY="$(umask 022; run_loop um-hvy "$RUNNER" "2026-10-28 08:00:00" 2 worst08 slow "" STUB_PERMS=1)"
+U_RSP="$(umask 022; run_loop um-rsp "$RUNNER" "2026-10-28 06:59:00" 3 ok resp "" STUB_PERMS=1 STUB_JCODE=503 "STUB_JRESP_FILE=$W/jresp-um")"
+eq "(하네스 확인) J10: 기준 러너의 잡 호출은 모두 umask 0022" "$(awk '$2 != "0022"' "$U_BASE/umasks" | wc -l | tr -d ' ') $([ "$(wc -l < "$U_BASE/umasks")" -gt 10 ] && echo many)" "0 many"
+eq "(하네스 확인) J10: 무거운 틱 시나리오 — 첫 틱은 전송 없음, 다음 틱은 전송" "$(awk '{print $1}' "$U_HVY/posts" | tr '\n' ' ')" "1 "
+for S in "$U_OK" "$U_DOWN" "$U_UNW" "$U_HVY" "$U_RSP"; do
+  sn="${S##*/}"
+  eq "🔴 J10 $sn: 잡 호출은 매번 러너 원래 umask 0022(후크·전송이 되돌림)" \
+     "$(awk '$1 != "/api/cron/job-run-log" && $2 != "0022"' "$S/umasks" | wc -l | tr -d ' ') $([ "$(awk '$1 != "/api/cron/job-run-log"' "$S/umasks" | wc -l)" -gt 5 ] && echo many)" "0 many"
+  eq "J10 $sn: 하트비트·날짜파일 권한 = 644" "$(grep -v ' job-run-spool' "$S/perms" | awk '$2 != "644"' | wc -l | tr -d ' ')" "0"
+  eq "🔴 J10 $sn: 상태 디렉터리의 스풀 파일은 모두 600 · 응답 파일(.resp) 잔존 없음" \
+     "$(grep ' job-run-spool' "$S/perms" | awk '$2 != "600"' | wc -l | tr -d ' ') $(grep -c '\.resp$' "$S/perms")" "0 0"
+done
+eq "🔴 J10: 하트비트·날짜파일 목록·권한 = 기준 러너(정상)" "$(grep -v ' job-run-spool' "$U_OK/perms" | md5sum)" "$(md5sum < "$U_BASE/perms")"
+eq "J10: (하네스 확인) 날짜파일이 생겼다(news-fetch-overseas·research·edgar)" "$(awk '$1 == 3' "$U_OK/perms" | grep -c 'last-date$')" "3"
+for S in "$U_OK" "$U_DOWN" "$U_HVY" "$U_RSP"; do
+  sn="${S##*/}"
+  eq "🔴 J10 $sn: 호출 사이 스풀 파일 600(관측 > 0)" "$(awk '$1 != "600"' "$S/spoolperm" | wc -l | tr -d ' ') $([ -s "$S/spoolperm" ] && echo seen)" "0 seen"
+  eq "🔴 J10 $sn: 전송 묶음(.batch) 600 · 전송 curl 은 umask 0077 아래" \
+     "$(awk '$1 != "600"' "$S/batchperm" | wc -l | tr -d ' ') $(awk '$1 == "/api/cron/job-run-log" && $2 != "0077"' "$S/umasks" | wc -l | tr -d ' ') $([ -s "$S/batchperm" ] && echo seen)" "0 0 seen"
+done
+eq "🔴 J10: 앱 다운 — 틱 끝에 남은 .sending 600" "$(grep -c ' 600 job-run-spool.sending$' "$U_DOWN/perms")" "3"
+eq "🔴 J10: 503 응답 파일(.resp)도 600 으로 생김" "$(awk '$1 != "600"' "$U_RSP/respperm" | wc -l | tr -d ' ') $(wc -l < "$U_RSP/respperm" | tr -d ' ')" "0 3"
+eq "J10: 스풀을 못 쓰는 러너도 3틱 완주·전송 0" "$(cat "$U_UNW/ticks") $(wc -l < "$U_UNW/posts" | tr -d ' ')" "3 0"
+
+fi
+# ── J11. (T-127 ⑤) 전송 실패 줄의 사유 ─────────────────────────────────────────────
+if want J11; then
+echo "J11. (T-127 ⑤) 전송 실패 줄의 사유 분류어 — 허용 문자만, 주입 없음"
+j11() {   # j11 이름 HTTP코드 응답본문 → 결과 디렉터리 (2틱, 두 틱 모두 실패 → 실패 줄은 1개여야 한다)
+  printf '%s' "$3" > "$W/jresp-$1"
+  run_loop "j11-$1" "$RUNNER" "2026-10-28 10:00:00" 2 ok resp "" STUB_JCODE="$2" "STUB_JRESP_FILE=$W/jresp-$1"
+}
+fl() { grep 'job-run-log 전송' "$1/stdout" | sed 's/^\[[^]]*\] //'; }
+TL=' — 스풀에 남겨 다음 가벼운 틱에 다시 보냄(기록 전용, 잡 동작 무관)'
+K="$(j11 timeout 503 '{"ok":false,"received":200,"rejected":0,"runRows":0,"rollupRows":0,"rowErrors":0,"status":"failed","reason":"timeout"}')"
+eq "🔴 J11: 라우트 503(사유가 100자 뒤) → reason=timeout, 실패 줄 1개" "$(fl "$K")" "job-run-log 전송 실패 HTTP=503 reason=timeout$TL"
+K="$(j11 sw 503 '{"ok":false,"received":5,"rejected":0,"runRows":0,"rollupRows":0,"rowErrors":0,"status":"failed","reason":"switch_unreadable"}')"
+eq "J11: reason=switch_unreadable" "$(fl "$K")" "job-run-log 전송 실패 HTTP=503 reason=switch_unreadable$TL"
+K="$(j11 auth 401 '{"ok":false,"error":"unauthorized","detail":"x-cron-secret required"}')"
+eq "J11: 401(미들웨어) → error=unauthorized" "$(fl "$K")" "job-run-log 전송 실패 HTTP=401 error=unauthorized$TL"
+K="$(j11 big 413 '{"ok":false,"error":"payload_too_large"}')"
+eq "J11: 413 → error=payload_too_large" "$(fl "$K")" "job-run-log 전송 실패 HTTP=413 error=payload_too_large$TL"
+K="$(j11 inj 503 $'{"ok":false,"reason":"timeout\n[2026-10-28 10:00:00] job-run-log 전송 회복\e[31m"}')"
+eq "🔴 J11: 개행·ESC 를 실은 사유 → 덧붙이지 않음 · 가짜 '회복' 줄 없음 · ESC 바이트 없음" \
+   "$(fl "$K") | $(grep -c '전송 회복' "$K/stdout") $(grep -c $'\e' "$K/stdout")" "job-run-log 전송 실패 HTTP=503$TL | 0 0"
+K="$(j11 cr 503 $'{"reason":"time\rout"}')"
+eq "🔴 J11: CR 을 실은 사유 → 덧붙이지 않음" "$(fl "$K") $(grep -c $'\r' "$K/stdout")" "job-run-log 전송 실패 HTTP=503$TL 0"
+K="$(j11 upper 503 '{"reason":"TIMEOUT"}')"
+eq "J11: 대문자 사유 → 덧붙이지 않음" "$(fl "$K")" "job-run-log 전송 실패 HTTP=503$TL"
+K="$(j11 long 503 "{\"reason\":\"a$(head -c 48 /dev/zero | tr '\0' 'b')\"}")"
+eq "J11: 49자 사유 → 덧붙이지 않음" "$(fl "$K")" "job-run-log 전송 실패 HTTP=503$TL"
+K="$(j11 html 500 '<html><body>Internal Server Error 123456</body></html>')"
+eq "J11: HTML 본문 → 덧붙이지 않음(본문 원문을 적지 않는다)" "$(fl "$K")" "job-run-log 전송 실패 HTTP=500$TL"
+K="$(j11 quote 503 '{"reason":"timeout\" x","error":"db_error"}')"
+eq "J11: 이스케이프 따옴표로 끝나는 사유는 건너뛰고 다음 허용 필드(error)" "$(fl "$K")" "job-run-log 전송 실패 HTTP=503 error=db_error$TL"
+K="$(run_loop j11-down "$RUNNER" "2026-10-28 10:00:00" 2 ok down "")"
+eq "🔴 J11: HTTP=000 → 예전 줄 그대로" "$(fl "$K")" "job-run-log 전송 실패 HTTP=000$TL"
+eq "J11: 응답 파일(.resp)이 남지 않는다" "$(ls -a "$K/home/.node-local/stockinvest/" "$W"/j11-*/home/.node-local/stockinvest/ 2>/dev/null | grep -c '\.resp$')" "0"
 
 fi
 echo

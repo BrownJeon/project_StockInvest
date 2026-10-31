@@ -116,6 +116,7 @@ tags: [type/design, domain/analytics, domain/ui]
 - `counts_json` 키 고정: 분석 run `{evaluated, candidates, llm_input, created, blocked, duplicate, skipped}`, 수집 run `{fetched, new, processed}`. 홈 A1·A2·E2 가 읽는다.
 - `degraded_reason` 에 해외 `PostMarketOverseasSkip` 사유(`holidays_unknown`·`fx_unknown`·`candles_unavailable`…)를 그대로 적고, 그 경우 status 는 `failed` 가 아니라 `skipped`(정상 판정 건너뜀: `overseas_disabled`·`no_new_session`·`us_session_open`) 또는 `degraded`(데이터 일시 모름 503) 로 구분.
 - `session_date_et` 는 해외 run 필수(홈·E2 의 세션일 집계 키). 매분 잡 롤업은 홈 지표 대상이 아니다(E2 분모에서 제외).
+- (T-127 추가, 2026-10-31) **롤업 행(`recorder='runner_rollup'`)의 `counts_json.runs`·`failed` 는 근사값이다** — 정확한 실행 횟수로 쓰지 않는다. 기록 라우트는 처리 상한 2.5초를 넘기면 503 으로 답하지만 그 뒤에도 작업이 계속 돌아 커밋될 수 있고, 러너는 503 을 실패로 보고 같은 줄을 다음 틱에 다시 보내 그 시간의 `runs` 가 더해진다(실행 행 `runner_hook` 은 ODKU 로 무해). 실측: T-112 관찰 10-30 22:13 — 매 분 잡 `runs` 합 71 대 실제 틱 68(+3). 반대로 러너 재시작·DB 장애 구간에는 모자랄 수 있다(같은 관찰 23:45). 재전송 중복 억제는 후속 후보([[T-127-job-run-spool-hardening]]).
 
 **기준 판단(baseline) 기록** — 2차 설계서 §7 단계 3 필수 필드(후보 전체·BUY/SKIP·신뢰도·프롬프트 해시·RAG 문맥 ID·자료 상태·`as_of`·`judgment_role`)에 이 계약이 더하는 것:
 

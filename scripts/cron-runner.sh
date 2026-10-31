@@ -175,6 +175,19 @@ pmo_finish() {
 # 전송: 응답이 200 이면 보낸 줄을 지운다(기록 스위치 job_run_log_enabled 가 꺼졌거나 테이블이 없어도 앱이 200 skipped 로 답한다 → 비운다).
 #   그 밖(앱 다운 000·503·401)이면 남겨 다음 가벼운 틱에 다시 보낸다 — 앱은 같은 줄을 멱등으로 받는다(시간 롤업 runs 만 드물게 과대 집계, 초안 §5.2).
 #   실패가 시작될 때 로그 한 줄, 회복될 때 한 줄(매 분 반복하지 않는다).
+#   (T-127 ⑤) 실패 줄에는 응답의 사유 분류어를 `reason=<낱말>` 로 덧붙인다 — 응답 본문에서 "reason"(없으면 "error") 값만, 영소문자·숫자·밑줄
+#   48자 이하일 때만 뽑는다(허용 문자만 남으니 개행·제어문자·ANSI 로 로그 줄을 꾸밀 수 없다). 본문 원문은 적지 않는다 — 라우트 503 본문은
+#   키 순서상 reason 이 약 100자 뒤에 있어 "앞 N자"로는 사유가 안 보인다. HTTP=000(응답 없음)이면 예전 줄 그대로.
+# (T-127 ①) 금액 값 마스킹: 금액·잔액·손익을 싣는 라벨 두 개(portfolio-snapshot — totalKRW·cash.KRW·cash.USD, 보류 사유 detail 에 USD 예수금,
+#   drawdown.detail 에 원화 금액·소실 종목 코드 / trade-report — headerPnlKRW·lifoPnlKRW)는 base64 전에 jrl_mask_money 로 금액 키 값을 0, detail 문자열을
+#   "" 로 바꾼다. ok·skipped·partial·reason·status·error 같은 분류 신호와 JSON 구조는 그대로라 앱의 분류(classifyRun)·슬롯 표는 바뀌지 않는다
+#   (본문을 통째로 빼면 portfolio-snapshot 의 skipped 신호가 사라져 상태가 전부 ok 가 된다 — 그래서 생략이 아니라 마스킹). 마스킹이 실패하면
+#   본문 칸을 비운다(원문을 싣지 않는다). 같은 원문은 call() 의 임시 본문 파일에 잠깐 있다(그 파일은 이 블록 밖 — 바꾸지 않는다).
+# (T-127 ②) 스풀 파일 0600: jrl_hook·jrl_flush 안에서만 umask 를 077 로 두고 끝에서 원래 값으로 되돌린다 — 스풀·.fold·.sending·.cap·.batch·.rest·.resp
+#   가 600 으로 생긴다. 러너 전체 umask·디렉터리 권한은 바꾸지 않는다(하트비트·날짜파일은 예전 권한 그대로 — T-037 워치독·순찰이 읽는다).
+#   서브셸로 감싸지 않는다(JRL_FAILING 상태가 서브셸에서 사라져 실패 로그가 매 분 찍힌다). 현재 umask 를 읽지 못하면 바꾸지 않는다(되돌릴 값이
+#   없으면 077 이 러너 전체로 새므로). 배포 전에 이미 있던 644 파일은 다음 접기·전송 성공 때 새 파일로 바뀌며 600 이 된다.
+#   추가 비용: 후크·전송마다 umask 읽기(서브셸 1개), 두 라벨만 sed 1번 — 수 ms 라 아래 하트비트 계산의 후크 몫(call() 당 5~15ms) 안이다.
 # 상한: 보낼 파일이 2MiB 를 넘으면 오래된 줄부터 버려 1MiB 로 줄이고 로그 한 줄 — 앱이 오래 죽어 있어도 디스크가 차지 않는다.
 # 하트비트 최악(T-037 워치독·HOME-SERVER 순찰 300초 — 하트비트는 틱 시작에만 쓰므로 최악 = 틱 길이 + sleep 60):
 #   - 전송하는 틱: 틱 경과 < 150초 + 전송 curl 상한 3초 + 로컬 처리(수 ms) + sleep 60 ≈ 213초 < 300초.
@@ -197,25 +210,58 @@ jrl_now_ms() {
   case "$s" in ''|*[!0-9]*) s="$(date +%s 2>/dev/null)000" ;; esac
   printf '%s' "$s"
 }
+# (T-127 ①) 표준입력(응답 본문 앞 2KB) → 금액 키 값 0 · detail 문자열 "" (표준출력). 바이트 단위(LC_ALL=C — 2KB 에서 잘린 UTF-8 반쪽도 그대로 통과).
+#   1식: "totalKRW|KRW|USD|headerPnlKRW|lifoPnlKRW" 키 뒤의 숫자(음수·소수·지수, 2KB 에서 잘린 숫자 포함)를 0 으로(`\10` = 1번 묶음 + 글자 0).
+#   2식: "detail" 키의 닫힌 문자열 값을 "" 로(이스케이프된 \" 는 문자열 안으로 본다). 3식: 2KB 에서 잘려 닫히지 않은 detail 문자열을 끝까지 지운다.
+#   키 이름은 따옴표째 맞춰 찾는다 — 문자열 값 안의 같은 글자(\"KRW\" 처럼 이스케이프된 것)는 건드리지 않는다. 다른 키·값·순서·공백은 그대로다.
+jrl_mask_money() {
+  LC_ALL=C sed -E \
+    -e 's/("(totalKRW|KRW|USD|headerPnlKRW|lifoPnlKRW)"[[:space:]]*:[[:space:]]*)-?[0-9][0-9.eE+-]*/\10/g' \
+    -e 's/("detail"[[:space:]]*:[[:space:]]*")([^"\\]|\\.)*"/\1"/g' \
+    -e 's/("detail"[[:space:]]*:[[:space:]]*")([^"\\]|\\.)*\\?$/\1/'
+}
 # jrl_hook LABEL PATH CODE T0_MS — call() 끝(임시 본문 파일을 지우기 전)에서 스풀에 한 줄. 실패는 전부 삼킨다. 반환은 항상 0.
+#   (T-127 ②) 스풀 0600 — 함수 안에서만 umask 077, 반환(맨 끝 하나)직전에 되돌린다. 앞의 이른 return 은 umask 를 바꾸기 전이다.
 jrl_hook() {
   local label="${1:-}" path="${2:-}" hc="${3:-}" t0="${4:-}" t1="" b64="" b64_skip=0 f="${JRL_SPOOL_FILE:-}"
+  local um=""
   [ -n "$f" ] || return 0
+  um=$(umask 2>/dev/null)
+  case "$um" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) umask 077 2>/dev/null || um="" ;; *) um="" ;; esac
   t1=$(jrl_now_ms)
   case "$hc" in [0-9][0-9][0-9]) ;; *) hc=000 ;; esac
   case "$t0" in ''|*[!0-9]*) t0="$t1" ;; esac
   case "$label" in
     entry-watcher|holding-checker|stop-alert) [ "$hc" = "200" ] && b64_skip=1 ;;
   esac
+  # (T-127 ①) 금액을 싣는 두 라벨은 여기서 마스킹한 본문을 싣고, 아래 일반 경로(원문 base64)는 건너뛴다(b64_skip=1 = "아래 줄을 돌리지 않음").
+  #   마스킹이 실패하면 원문이 아니라 빈 본문이 된다(파이프의 마지막 base64 가 빈 입력을 받는다).
+  case "$label" in
+    portfolio-snapshot|trade-report)
+      b64=$(head -c "$JRL_BODY_MAX_BYTES" "/tmp/cron-runner-$$.out" 2>/dev/null | jrl_mask_money 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
+      b64_skip=1 ;;
+  esac
   if [ "$b64_skip" = "0" ]; then
     b64=$(head -c "$JRL_BODY_MAX_BYTES" "/tmp/cron-runner-$$.out" 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
   fi
   { printf 'v1\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$path" "$hc" "$t0" "$t1" "$b64" >> "$f"; } 2>/dev/null || true
+  [ -z "$um" ] || umask "$um" 2>/dev/null || true
   return 0
 }
 # jrl_flush TICK_T0 — 틱 끝(sleep 60 앞). ① 새 줄을 보낼 파일(.sending)로 접는다 ② 크기 상한 ③ 틱 경과 < 150초면 최대 200줄 전송. 반환은 항상 0.
+#   (T-127 ②) 본문(_jrl_flush_body)은 return 이 여러 곳이라 이 얇은 겉함수가 umask 를 077 로 두고, 본문이 어디서 끝나든 한 곳에서 되돌린다.
+#   같은 셸에서 부르므로 본문이 바꾼 JRL_FAILING 은 그대로 남는다.
 jrl_flush() {
+  local um=""
+  um=$(umask 2>/dev/null)
+  case "$um" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) umask 077 2>/dev/null || um="" ;; *) um="" ;; esac
+  _jrl_flush_body "$@"
+  [ -z "$um" ] || umask "$um" 2>/dev/null || true
+  return 0
+}
+_jrl_flush_body() {
   local f="${JRL_SPOOL_FILE:-}" t0="${1:-}" s="" now="" el=0 sz=0 n=0 before=0 after=0 code=""
+  local resp="" re='"(reason|error)":"([a-z][a-z0-9_]{0,47})"'
   [ -n "$f" ] || return 0
   s="$f.sending"
   # ① 접기 — 후크와 같은 프로세스라 서로 겹치지 않는다. 앞 틱에서 접다 멈춘 .fold 가 있으면 그것부터(덮어쓰지 않는다).
@@ -241,9 +287,15 @@ jrl_flush() {
   { head -n "$JRL_FLUSH_MAX_LINES" "$s" > "$s.batch"; } 2>/dev/null || { rm -f "$s.batch" 2>/dev/null; return 0; }
   n=$(wc -l < "$s.batch" 2>/dev/null); case "$n" in ''|*[!0-9]*) n=0 ;; esac
   [ "$n" -gt 0 ] || { rm -f "$s.batch" 2>/dev/null; return 0; }
-  code=$(curl -s --max-time "$JRL_FLUSH_CURL_MAX_TIME" -o /dev/null -w "%{http_code}" -X POST \
+  code=$(curl -s --max-time "$JRL_FLUSH_CURL_MAX_TIME" -o "$s.resp" -w "%{http_code}" -X POST \
     -H "x-cron-secret: ${CRON_SECRET:-}" -H 'Content-Type: text/plain' \
     --data-binary @"$s.batch" "${BASE_URL:-}/api/cron/job-run-log" 2>/dev/null) || code="000"
+  # (T-127 ⑤) 200·000 이 아니면 응답에서 사유 분류어 하나만 뽑는다(허용 문자만 — 위 블록 머리 주석). 응답 파일은 바로 지운다.
+  if [ "$code" != "200" ] && [ "$code" != "000" ]; then
+    resp=$(head -c 512 "$s.resp" 2>/dev/null) || resp=""
+    if [[ "$resp" =~ $re ]]; then resp="${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"; else resp=""; fi
+  fi
+  rm -f "$s.resp" 2>/dev/null
   if [ "$code" = "200" ]; then
     if { tail -n +$((n + 1)) "$s" > "$s.rest"; } 2>/dev/null && mv -f "$s.rest" "$s" 2>/dev/null; then
       [ -s "$s" ] || rm -f "$s" 2>/dev/null
@@ -253,7 +305,7 @@ jrl_flush() {
     if [ -n "$JRL_FAILING" ]; then echo "[$(date '+%F %T')] job-run-log 전송 회복"; JRL_FAILING=""; fi
   elif [ -z "$JRL_FAILING" ]; then
     JRL_FAILING="$code"
-    echo "[$(date '+%F %T')] job-run-log 전송 실패 HTTP=$code — 스풀에 남겨 다음 가벼운 틱에 다시 보냄(기록 전용, 잡 동작 무관)"
+    echo "[$(date '+%F %T')] job-run-log 전송 실패 HTTP=$code${resp:+ $resp} — 스풀에 남겨 다음 가벼운 틱에 다시 보냄(기록 전용, 잡 동작 무관)"
   fi
   rm -f "$s.batch" 2>/dev/null
   return 0

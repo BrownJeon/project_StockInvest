@@ -7,6 +7,9 @@ const switchMock = jest.fn();
 jest.mock('@/lib/db', () => ({ getPool: () => ({ query: queryMock }) }));
 jest.mock('../record-switch', () => ({ readRecordSwitchState: (...a: unknown[]) => switchMock(...a) }));
 
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   JRL_COLUMNS,
   JRL_LEN,
@@ -328,6 +331,41 @@ describe('recordSpoolBatch — 스위치·테이블 없음·값 오류·시간 �
     switchMock.mockRejectedValue(new Error('x'));
     await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'failed' });
   });
+  it('🔴 (T-127 ⑤) 503 사유 한 줄 — 스위치를 읽지 못함: 분류어·출처만, 스풀 줄 내용(라벨·본문) 없음', async () => {
+    switchMock.mockResolvedValue({ enabled: false, source: 'timeout' });
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'failed', reason: 'switch_unreadable' });
+    const msgs = (console.warn as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(msgs.filter((m) => m.includes('503 reason=switch_unreadable (source=timeout)'))).toHaveLength(1);
+    for (const m of msgs) expect(m).not.toMatch(/edgar-sync|entry-watcher|eyJ|\/api\/cron/);
+  });
+  it('🔴 (T-127 ⑤) 503 사유 한 줄 — 처리 상한 초과(timeout): 분류어·상수만', async () => {
+    jest.useFakeTimers();
+    queryMock.mockReturnValue(new Promise(() => {}));
+    const p = recordSpoolBatch(L, 2500);
+    await Promise.resolve(); await Promise.resolve();
+    jest.advanceTimersByTime(2500);
+    await expect(p).resolves.toMatchObject({ status: 'failed', reason: 'timeout' });
+    const msgs = (console.warn as jest.Mock).mock.calls.map((c) => String(c[0]));
+    expect(msgs.filter((m) => m.includes('503 reason=timeout (deadline=2500ms)'))).toHaveLength(1);
+    for (const m of msgs) expect(m).not.toMatch(/edgar-sync|entry-watcher|eyJ|\/api\/cron/);
+  });
+  it('(T-127 ⑤) 503 이 아닌 결과(꺼짐·정상·테이블 없음)와 db_error(이미 errno 줄이 있음)에는 503 사유 줄을 더하지 않는다', async () => {
+    const n503 = () => (console.warn as jest.Mock).mock.calls.filter((c) => String(c[0]).includes('503 reason=')).length;
+    switchMock.mockResolvedValue({ enabled: false, source: 'missing' });
+    await recordSpoolBatch(L);
+    switchMock.mockResolvedValue({ enabled: false, source: 'value' });
+    await recordSpoolBatch(L);
+    switchMock.mockResolvedValue({ enabled: true, source: 'value' });
+    queryMock.mockResolvedValue([{}, undefined]);
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'ok' });
+    queryMock.mockRejectedValue(Object.assign(new Error('x'), { errno: 1146 }));
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'skipped_no_table' });
+    expect(n503()).toBe(0);
+    queryMock.mockRejectedValue(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET', errno: -104 }));
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'failed', reason: 'db_error' });
+    expect(n503()).toBe(0);
+    expect((console.warn as jest.Mock).mock.calls.filter((c) => String(c[0]).includes('기록 실패 errno=-104'))).toHaveLength(1);
+  });
   it('형식 오류 줄만 있으면 쓰지 않고 ok(rejected 수), 100행 넘으면 문장을 나눈다', async () => {
     queryMock.mockResolvedValue([{}, undefined]);
     await expect(recordSpoolBatch('garbage\nv1\tx')).resolves.toMatchObject({ status: 'ok', rejected: 2, runRows: 0 });
@@ -336,5 +374,109 @@ describe('recordSpoolBatch — 스위치·테이블 없음·값 오류·시간 �
     queryMock.mockClear();
     await expect(recordSpoolBatch(many)).resolves.toMatchObject({ status: 'ok', runRows: 150 });
     expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * T-127 ① — 러너 jrl_mask_money(scripts/cron-runner.sh 에서 그대로 잘라 bash 로 돌린다)가 금액을 지워도 **분류 결과가 같다**.
+ * 경로를 그대로 흉내 낸다: 러너 `head -c 2048 → (마스킹) → base64` → 앱 `parseSpoolLine` 의 디코드(앞 4096바이트 → UTF-8, 빈 값은 null).
+ * 응답 모양은 라우트 코드 그대로(portfolio-snapshot route.ts 의 성공·holdForCash·balances_incomplete·markets_closed·500, drawdown 결과
+ * kill-switch.ts 의 DrawdownCheckResult / trade-report route.ts 의 발송·건너뜀·channel_invalid·500). 금액·종목 값은 합성값이다.
+ */
+describe('🔴 T-127 ① 금액 값 마스킹 — 마스킹 전후 classifyRun 불변(러너 함수 그대로)', () => {
+  const RUNNER = path.resolve(__dirname, '..', '..', '..', '..', '..', 'scripts', 'cron-runner.sh');
+  const fnSrc = (() => {
+    const m = /^jrl_mask_money\(\) \{\n[\s\S]*?\n\}\n/m.exec(fs.readFileSync(RUNNER, 'utf8'));
+    if (!m) throw new Error('러너에 jrl_mask_money 가 없다');
+    return m[0];
+  })();
+  const mask = (buf: Buffer): Buffer =>
+    execFileSync('bash', ['-c', `${fnSrc}\njrl_mask_money`], { input: buf, env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } });
+  const viaRunner = (body: string, masked: boolean): string | null => {
+    const head = Buffer.from(body, 'utf8').subarray(0, 2048);
+    const s = (masked ? mask(head) : head).subarray(0, 4096).toString('utf8');
+    return s === '' ? null : s;
+  };
+  const KEYS = new Set(['totalKRW', 'KRW', 'USD', 'headerPnlKRW', 'lifoPnlKRW']);
+  const expectMasked = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(expectMasked);
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k,
+        KEYS.has(k) && typeof x === 'number' ? 0 : k === 'detail' && typeof x === 'string' ? '' : expectMasked(x)]));
+    }
+    return v;
+  };
+  const MONEY = /987654321|12345678|4321\.75|7777\.25|55,555,555|66,666,666|3333333|2222222|98765|005930|AAPL/;
+  const psOk = (drawdown: unknown) => ({
+    ok: true, totalKRW: 987654321, positions: 4, cash: { KRW: 12345678, USD: 4321.75 },
+    volGuard: { level: 'ok', changePct: -1.25 }, killSwitch: false, drawdown, action: null,
+  });
+  const PAD = 'x'.repeat(2012);
+  const CASES: Array<[string, string, number, unknown, { status: string; errorCode?: string | null; degradedReason?: string | null }]> = [
+    ['정상(drawdown evaluated)', 'portfolio-snapshot', 200, psOk({ status: 'evaluated', drawdownPct: -2.5, triggered: false }), { status: 'ok' }],
+    ['보류 usd_cash_unavailable(detail 에 USD 금액)', 'portfolio-snapshot', 200,
+      { ok: true, skipped: 'usd_cash_unavailable', detail: 'USD/KRW 환율 조회 실패 — USD 예수금(7777.25 USD)을 환산할 수 없음: timeout', snapshotAgeMin: 75, blindness: 'warning' },
+      { status: 'skipped', degradedReason: 'skip:usd_cash_unavailable' }],
+    ['보류 krw_cash_unavailable', 'portfolio-snapshot', 200,
+      { ok: true, skipped: 'krw_cash_unavailable', detail: '국내 잔고 응답에 예수금 요약(output2)이 없거나 값이 숫자가 아닙니다', snapshotAgeMin: null, blindness: 'unknown' },
+      { status: 'skipped', degradedReason: 'skip:krw_cash_unavailable' }],
+    ['balances_incomplete', 'portfolio-snapshot', 200,
+      { ok: true, skipped: 'balances_incomplete', failedMarkets: ['overseas'], snapshotAgeMin: 61, blindness: 'ok' },
+      { status: 'skipped', degradedReason: 'skip:balances_incomplete' }],
+    ['markets_closed', 'portfolio-snapshot', 200, { ok: true, skipped: 'markets_closed', lastSnapshotAt: '2026-10-30T01:00:00.000Z' },
+      { status: 'skipped', degradedReason: 'skip:markets_closed' }],
+    ['drawdown baseline_invalid(detail 에 원화 금액)', 'portfolio-snapshot', 200,
+      psOk({ status: 'skipped', reason: 'baseline_invalid', detail: 'USD 제외 후 기준 자본 98765원 · 양쪽에서 USD(기준 55,555,555원·현재 66,666,666원)를 빼고 비교' }),
+      { status: 'ok' }],
+    ['drawdown composition_change_suspected(detail 에 금액·종목 코드)', 'portfolio-snapshot', 200,
+      psOk({ status: 'skipped', reason: 'composition_change_suspected', detail: '24h -12.3% (-55,555,555원) 이지만 기준선에 있던 [005930, NAS:AAPL] 66,666,666원이 사라졌고' }),
+      { status: 'ok' }],
+    ['500 error 문장(숫자 포함)', 'portfolio-snapshot', 500, { ok: false, error: 'KIS 잔고 조회 실패 EGW00201 (500)' }, { status: 'failed', errorCode: 'HTTP=500' }],
+    ['500 error 분류어', 'portfolio-snapshot', 500, { ok: false, error: 'db_timeout' }, { status: 'failed', errorCode: 'HTTP=500:db_timeout' }],
+    ['2KB 절단 — totalKRW 숫자 한가운데', 'portfolio-snapshot', 200, `{"ok":true,"pad":"${PAD}","totalKRW":123456789012,"skipped":"never_read"}`, { status: 'ok' }],
+    ['2KB 절단 — 보류 detail 한가운데', 'portfolio-snapshot', 200,
+      `{"ok":true,"skipped":"usd_cash_unavailable","detail":"USD 예수금(98765 USD) ${'예'.repeat(900)}"}`, { status: 'skipped', degradedReason: 'skip:usd_cash_unavailable' }],
+    ['trade-report 발송', 'trade-report', 200, {
+      ok: true, sent: true, channel: 'telegram', partial: false, delivered: ['telegram'], failed: [], unconfigured: [], noTargetChannel: false,
+      lastSentAtAdvanced: true, rangeStart: '2026-10-30T00:00:00.000Z', rangeEnd: '2026-10-30T01:00:00.000Z', rangeCapped: false,
+      buys: 2, sells: 1, headerPnlKRW: -3333333, lifoPnlKRW: 2222222, unmatchedSellCount: 0, matchedSellCount: 1,
+    }, { status: 'ok' }],
+    ['trade-report 일부 채널 실패(partial)', 'trade-report', 200, {
+      ok: true, sent: true, channel: 'both', partial: true, delivered: ['telegram'], failed: [{ channel: 'slack', error: 'HTTP 500' }], unconfigured: [],
+      buys: 1, sells: 1, headerPnlKRW: 2222222, lifoPnlKRW: -3333333, unmatchedSellCount: 1, matchedSellCount: 0,
+    }, { status: 'partial', degradedReason: 'partial' }],
+    ['trade-report 건너뜀(too_early)', 'trade-report', 200, { ok: true, skipped: 'too_early', lastSentAt: '2026-10-30T00:00:00.000Z' }, { status: 'skipped', degradedReason: 'skip:too_early' }],
+    ['trade-report channel_invalid(200 ok:false)', 'trade-report', 200, { ok: false, skipped: 'channel_invalid', channel: 'x' }, { status: 'failed', errorCode: 'channel_invalid' }],
+    ['trade-report 500 error 문장', 'trade-report', 500, { ok: false, error: 'Lock wait timeout exceeded; try restarting transaction' }, { status: 'failed', errorCode: 'HTTP=500' }],
+    ['trade-report 500 error 분류어', 'trade-report', 500, { ok: false, error: 'ER_LOCK_WAIT_TIMEOUT' }, { status: 'failed', errorCode: 'HTTP=500:er_lock_wait_timeout' }],
+  ];
+
+  it('(하네스 확인) 러너에서 마스킹 함수를 잘라 냈고, 실제로 값을 바꾼다', () => {
+    expect(fnSrc).toContain('sed -E');
+    expect(mask(Buffer.from('{"KRW":12}')).toString()).toBe('{"KRW":0}');
+  });
+  it.each(CASES)('%s — 분류 결과 같음 · 기대 분류 · 금액/종목 원문 없음', (_n, label, http, body, want) => {
+    const raw = typeof body === 'string' ? body : JSON.stringify(body);
+    const before = viaRunner(raw, false);
+    const after = viaRunner(raw, true);
+    expect(classifyRun(label, http, after)).toEqual(classifyRun(label, http, before));
+    expect(classifyRun(label, http, after)).toMatchObject(want);
+    expect(after ?? '').not.toMatch(MONEY);
+    if (typeof body !== 'string') {
+      // 완전한 JSON(2KB 안) — 금액 키 0·detail "" 외에는 키 순서까지 그대로
+      expect(Buffer.byteLength(raw, 'utf8')).toBeLessThan(2048);
+      expect(after).toBe(JSON.stringify(expectMasked(body)));
+    }
+  });
+  it('🔴 마스킹이 실제로 무언가를 바꾼 경우가 대부분이다(공허한 통과 방지)', () => {
+    const changed = CASES.filter(([, , , body]) => {
+      const raw = typeof body === 'string' ? body : JSON.stringify(body);
+      return viaRunner(raw, true) !== viaRunner(raw, false);
+    }).length;
+    expect(changed).toBeGreaterThanOrEqual(9);
+  });
+  it('절단 경우: 숫자 중간 → "totalKRW":0 으로 끝남 · detail 중간 → detail 값이 비고 끝남', () => {
+    expect(viaRunner(CASES[9][3] as string, true)!.endsWith('"totalKRW":0')).toBe(true);
+    expect(viaRunner(CASES[10][3] as string, true)).toBe('{"ok":true,"skipped":"usd_cash_unavailable","detail":"');
   });
 });
