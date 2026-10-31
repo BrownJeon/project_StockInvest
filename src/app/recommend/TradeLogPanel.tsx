@@ -16,6 +16,7 @@ import type { OrderStatus } from '@/types/order';
 import { EvalFunnelCard, type FunnelMeta } from '@/components/dashboard/EvalFunnelCard';
 import { MyDecisionSection } from '@/components/dashboard/MyDecisionSection';
 import { CHIP, fmtEtSession, fmtKstTime, fmtSessionDate } from '@/components/ops/format';
+import { UNKNOWN_REASON } from '@/components/ops/reason-copy';
 import { ActivityList, CheckRow, EmptyNote, Rows, RetryButton, Section, SectionBody, SegmentControl, StatusChip, ops } from '@/components/ops/ui';
 import { InPageLink, InPageRow } from './InPageRow';
 
@@ -45,9 +46,10 @@ export const ORDER_STATUS_TEXT: Record<OrderStatus, string> = {
   cancelled: '취소',
 };
 
+// T-130 4-6: 값만 사전(`ORDER_REASON_KO`)의 승인 문구와 같게 맞췄다. 이 표를 사전 한 출처로 합치는 일은 T-130 후속(이번엔 글자만).
 const BLOCKED_BY_TEXT: Record<string, string> = {
-  kill_switch: '모든거래차단', validation_gate: '검증 관문', order_limit: '주문 한도 초과', daily_limit: '일일 한도 초과',
-  symbol_not_allowed: '허용되지 않은 종목', invalid_side: '주문 방향 오류', vol_block: '변동폭 차단', vol_panic: '변동폭 패닉',
+  kill_switch: '모든거래차단 ON', validation_gate: '검증 관문', order_limit: '1회 주문 한도 초과', daily_limit: '일일 누적 한도 초과',
+  symbol_not_allowed: '거래 차단 종목', invalid_side: '주문 방향 오류', vol_block: '변동폭 가드 · 차단 임계', vol_panic: '변동폭 가드 · 패닉 임계',
 };
 
 export function orderMatches(f: OrderFilter, s: OrderStatus): boolean {
@@ -61,7 +63,7 @@ export function orderMatches(f: OrderFilter, s: OrderStatus): boolean {
 export function orderStatusLine(o: Pick<LogOrder, 'status' | 'blocked_by'>): string {
   const base = ORDER_STATUS_TEXT[o.status] ?? o.status;
   if (o.status === 'dry_run') return `${base} · 송신 없음`;
-  if (o.status === 'blocked' && o.blocked_by) return `${base} · ${BLOCKED_BY_TEXT[o.blocked_by] ?? '안전장치'}`;
+  if (o.status === 'blocked' && o.blocked_by) return `${base} · ${BLOCKED_BY_TEXT[o.blocked_by] ?? UNKNOWN_REASON}`;
   if (o.status === 'partially_filled') return `${base} · 부분 체결`;
   return base;
 }
@@ -157,7 +159,7 @@ export function TradeLogPanel(p: {
           <SegmentControl label="주문 상태 필터" items={ORDER_FILTERS} value={filter} onChange={setFilter} />
         </SectionBody>
         {preBlocked > 0 && (filter === 'all' || filter === 'blk') ? (
-          <Rows><CheckRow severity="w" glyph="⊘" title={`주문 전 단계에서 차단된 매수 시그널 ${preBlocked}건 — 주문 기록 없음`} /></Rows>
+          <Rows><CheckRow severity="w" glyph="⊘" title={`검증 관문에서 차단된 매수 시그널 ${preBlocked}건 — 주문 기록 없음`} /></Rows>
         ) : null}
         {shown.length === 0 ? (
           <EmptyNote>오늘 이 상태의 주문 없음 <StatusChip kind="zero">{CHIP.zero}</StatusChip></EmptyNote>

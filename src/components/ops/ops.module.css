@@ -64,7 +64,9 @@ a.stage, button.stage { min-height: 44px; flex: none; }
 .tile .mk i { font-style: normal; color: var(--muted); display: inline-block; min-width: 28px; }
 .tile .meta { font-size: 11px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; word-break: keep-all; }
 .tile.dim .v, .tile.dim .mk { color: var(--muted); }
-.st { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border2); color: var(--text); background: var(--bg); line-height: 1.4; white-space: nowrap; }
+.st { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border2); color: var(--text); background: var(--bg); line-height: 1.4; white-space: normal; overflow-wrap: anywhere; word-break: keep-all; }
+/* T-130 D4-A — 분석 › 데이터 상태에서만 한국어 칩 뒤에 붙는 영문 원인 코드 */
+.stCode { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 600; margin-left: 4px; }
 .st.zero { border-color: rgba(34,197,94,.5); color: #86efac; }
 .st.unknown { border-style: dashed; color: var(--muted); }
 .st.error { border-color: var(--danger); color: #fca5a5; }

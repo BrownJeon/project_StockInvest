@@ -61,7 +61,7 @@ function run(m: Market, mode: Mode, live: boolean): AnalysisRunRow {
     session, runStartedAt, runStatus: 'ok', skipReason: null, failReason: null,
     evaluated: av(dom ? 44 : 51), ruleCandidates: av(dom ? 5 : 3), aiBuy: av(1), signalsCreated: av(1),
     signalsBlocked: live ? z() : av(1), signalsPending: live ? (dom ? av(1) : z()) : z(),
-    topExclusion: av(dom ? { code: 'low_conf', label: '신뢰도 60 미만', count: 3 } : { code: 'no_zone', label: '진입 구간 없음', count: 2 }),
+    topExclusion: av(dom ? { code: 'low_confidence', label: 'low_confidence', count: 3 } : { code: 'zone_out_of_range', label: 'zone_out_of_range', count: 2 }),
     nextRunAt,
   };
 }

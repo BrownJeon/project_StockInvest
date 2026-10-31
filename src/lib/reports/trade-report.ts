@@ -662,8 +662,8 @@ export function formatReportMessage(
     const totalPnl = sellPnlList.reduce((s, p) => s + p.pnlKRW, 0);
     const exitLabel: Record<string, string> = {
       hard_stop:     '손절',
-      trailing_stop: '트레일',
-      target_profit: '익절',
+      trailing_stop: '트레일링 스탑',
+      target_profit: '목표 익절',
       eod_loss_cut:  '마감손절',
       ai_sell:       'AI매도',
     };

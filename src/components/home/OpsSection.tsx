@@ -100,14 +100,15 @@ function a2Tile(analysis: ByMarket<AnalysisRunRow>): TileProps {
     else if (hasValue(rc) && hasValue(sc)) node = `후보 ${rc.value} → 시그널 ${sc.value}`;
     else if (hasValue(sc)) {
       partialMode = true;
-      node = `시그널 ${sc.value} · 차단 ${hasValue(sb) ? sb.value : DASH}`;
+      node = `시그널 ${sc.value} · 검증 관문 차단 ${hasValue(sb) ? sb.value : DASH}`;
     } else node = <MetricReason m={sc.state === 'unknown' || sc.state === 'prep' ? sc : rc} />;
     return <MarketLine key={m} m={MK[m]}>{node}</MarketLine>;
   });
   const base = { label: '분석 후보 종목', lines, dim: MARKETS.some((m) => analysis[m].ruleCandidates.state === 'stale' || analysis[m].signalsCreated.state === 'stale') };
   if (partialMode) return { ...base, chip: <StatusChip kind="partial">부분 — 시그널만</StatusChip>, meta: '규칙 후보 수는 T-112 기록 뒤' };
   if (zeroBoth) return { ...base, chip: <StatusChip kind="zero">{CHIP.zero}</StatusChip>, meta: '분석이 정상 완료된 날에만 0' };
-  if (created > 0 && blocked === created) return { ...base, chip: <StatusChip kind="blocked">⊘ 시그널 {created}건 모두 차단</StatusChip>, meta: '차단 = 검증 관문(전략 미검증)' };
+  // T-130 5번: 시그널의 차단은 막은 관문과 함께 말한다(「검증 관문 차단」) — 관문이 무엇인지도 한 줄로 풀어 준다
+  if (created > 0 && blocked === created) return { ...base, chip: <StatusChip kind="blocked">⊘ 시그널 {created}건 모두 검증 관문 차단</StatusChip>, meta: '검증 관문 = 검증 통과 전 전략의 신규 매수를 막는 장치' };
   if (pending > 0) return { ...base, chip: <StatusChip kind="partial">승인 가능 {pending}</StatusChip> };
   return base;
 }
@@ -138,12 +139,16 @@ function a4Tile(an: ObserveSet['anomalies']): TileProps {
       : { label, value: <ValueUnit n={0} unit="건" />, chip: <StatusChip kind="partial">부분 — 원천 {k}개만 확인</StatusChip>, meta: '분석 실패는 실행 기록 뒤' };
   }
   const first = v.items[0];
-  // 대표 상태 = 첫 이상의 상태 말(데모 「원천 6개 중 1 · degraded」)
-  const word = first ? (first.state === 'partial' ? 'degraded' : ANOMALY_STATE_WORD[first.state]) : undefined;
+  // 이상 항목의 출처를 가른다 — 원천(신선도) 이상 vs 실행 기록 잡(source='job_run') 실패. 합이 위 숫자(v.total)와 같다(D3-B: 6건이 어디서 왔는지)
+  const srcN = v.items.filter((i) => i.source !== 'job_run').length;
+  const jobN = v.items.length - srcN;
+  // 대표 상태 = 첫 이상의 상태 말(원천일 때만 — 잡 실패는 위 「실행 실패」가 말한다). 일부 저하는 「입력 품질 저하」(영문 degraded 를 쓰지 않는다)
+  const word = first && first.source !== 'job_run' ? (first.state === 'partial' ? '입력 품질 저하' : ANOMALY_STATE_WORD[first.state]) : undefined;
+  const meta = [srcN > 0 ? `원천 ${k}개 중 이상 ${srcN}` : `원천 ${k}개 정상`, jobN > 0 ? `실행 실패 ${jobN}` : null, word ?? null].filter(Boolean).join(' · ');
   return {
     label, value: <ValueUnit n={v.total} unit="건" />, lines: first ? [anomalyText(first).title] : undefined,
     chip: v.analysisFailureKnown ? undefined : <StatusChip kind="partial">부분 — 원천 {k}개만 확인</StatusChip>,
-    meta: v.analysisFailureKnown ? `원천 ${k}개 중 ${v.total}${word ? ` · ${word}` : ''}` : '분석 실패는 실행 기록 뒤',
+    meta: v.analysisFailureKnown ? meta : '분석 실패는 실행 기록 뒤',
     dim: an.state === 'stale',
   };
 }
@@ -180,7 +185,7 @@ const bothZero = <T,>(by: ByMarket<Metric<T>>) => by.domestic.state === 'zero' &
 
 function b1Tile(watch: LiveSet['watch'], mixed: boolean): TileProps {
   const label = '진입 감시';
-  if (mixed) return { label, value: DASH, chip: <StatusChip kind="blocked">⊘ 매수 차단</StatusChip>, meta: '검증 통과 전략 0' };
+  if (mixed) return { label, value: DASH, chip: <StatusChip kind="blocked">⊘ 매수 차단 · 검증 관문</StatusChip>, meta: '검증 통과 전략 0' };
   if (bothZero(watch)) return { label, value: '0', chip: <StatusChip kind="zero">{CHIP.zero}</StatusChip> };
   const next = MARKETS.reduce((s, m) => s + (hasValue(watch[m]) ? watch[m].value!.nextSession : 0), 0);
   return {
@@ -243,7 +248,7 @@ function b4Tile(pnl: LiveSet['autoPnl'], mixed: boolean): TileProps {
 
 function b7Tile(buy: LiveSet['buyable'], mixed: boolean, ctx: HomeCtx): TileProps {
   const label = '신규 매수 가능';
-  if (mixed) return { label, value: DASH, chip: <StatusChip kind="blocked">⊘ 차단 — 검증 통과 0</StatusChip>, meta: '금액 대신 사유를 표시' };
+  if (mixed) return { label, value: DASH, chip: <StatusChip kind="blocked">⊘ 차단 · 검증 관문(통과 0)</StatusChip>, meta: '금액 대신 사유를 표시' };
   // 해외 줄의 환율 표시(환산 여부·사유)를 meta 에 쓴다 — 콜백 안에서 채우므로 객체로 들고 다닌다
   const fx: { meta: string | null; converted: boolean } = { meta: null, converted: true };
   const lines = marketLines(buy, (v) => {

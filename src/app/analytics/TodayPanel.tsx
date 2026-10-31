@@ -9,14 +9,17 @@ import type { AnalysisCandidate, AnalysisTodayDTO, OpsStage } from '@/lib/ops/me
 import { useOpsPoll } from '@/components/ops/useOpsPoll';
 import { AnalysisStageTable } from '@/components/home/AnalysisSection';
 import { CHIP, fmtEtSession, fmtKstTime } from '@/components/ops/format';
+import { exclusionText, signalFate } from '@/components/ops/reason-copy';
 import { CheckRow, EmptyNote, Rows, Section, StatusChip, ops } from '@/components/ops/ui';
 import { InPageRow } from '@/app/recommend/InPageRow';
 import type { AnalyticsDetail } from './route-resolve';
 import { ANALYSIS_POLL_MS, FailBody, LoadingBody, analysisUrl, hasValue } from './panel-parts';
 
-/** 시그널 상태 → 후보 줄 부제(시그널로 이어진 종목). */
+/**
+ * 시그널 상태 → 후보 줄 부제(시그널로 이어진 종목).
+ * `skipped` 는 여기 없다 — 검증 관문에 막힌 것과 그 밖(수량 1주 미만 등)이 다르게 불려야 해서 `signalFate(status, gate)`(사전)가 맡는다(T-130 D7-A).
+ */
 const SIGNAL_FATE: Record<string, string> = {
-  skipped: '검증 관문 차단',
   awaiting_approval: '승인 대기', pending: '승인 대기', pending_approval: '승인 대기',
   approved_pending_entry: '진입 감시', executing: '주문 처리 중',
   expired: '만료', rejected: '거절', approved: '승인', auto_submitted: '자동 제출',
@@ -25,11 +28,13 @@ const SIGNAL_FATE: Record<string, string> = {
 export function candidateRow(c: AnalysisCandidate, displaySymbol: (s: string) => string): { severity: 'w' | 'n'; glyph: string; title: string; sub: string } {
   const mk = c.market === 'overseas' ? '해외' : '국내';
   if (c.origin === 'judgment_skip') {
-    return { severity: 'n', glyph: '·', title: `${displaySymbol(c.symbol)} ${mk} · AI 매수 안 함`, sub: c.exclusionCode ? `제외 사유 ${c.exclusionCode}` : '제외 사유 기록 없음' };
+    return { severity: 'n', glyph: '·', title: `${displaySymbol(c.symbol)} ${mk} · AI 매수 안 함`, sub: c.exclusionCode ? `제외 사유 ${exclusionText(c.exclusionCode)}` : '제외 사유 기록 없음' };
   }
   const conf = c.confidence != null ? ` · 신뢰도 ${Math.round(c.confidence)}` : '';
-  const fate = SIGNAL_FATE[c.signalStatus ?? ''] ?? '처리됨';
-  const blocked = c.signalStatus === 'skipped';
+  // `skipped` 는 gate 로 갈린다: 검증 관문 → 「⊘ 차단 · 검증 관문」(경고 줄), gate 없음 → 「건너뜀 · 사유 기록 없음」(보통 줄)
+  const sf = signalFate(c.signalStatus, c.signalGate);
+  const fate = sf ? sf.chip : (SIGNAL_FATE[c.signalStatus ?? ''] ?? '처리됨');
+  const blocked = sf?.blocked === true;
   const session = c.market === 'overseas' ? `${fmtEtSession(c.session.sessionDate)} 세션 · ` : '';
   return {
     severity: blocked ? 'w' : 'n',

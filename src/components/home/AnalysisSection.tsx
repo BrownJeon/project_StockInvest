@@ -8,7 +8,7 @@ import { Section, SectionBody } from '@/components/ops/ui/Section';
 import { SectionLink } from '@/components/ops/ui/SectionLink';
 import { StageTable, type StageHead } from '@/components/ops/ui/StageTable';
 import { StatusChip } from '@/components/ops/ui/StatusChip';
-import { skipReasonCode, skipText } from '@/components/ops/reason-copy';
+import { exclusionText, skipReasonCode, skipText } from '@/components/ops/reason-copy';
 import { ErrorChip, MetricReason, baseTime, hasValue, isStale, sectionData, sectionErrorCode, type HomeCtx } from './home-ctx';
 
 /**
@@ -43,7 +43,8 @@ function cell(m: Metric<number>, skipped: boolean): ReactNode {
 
 function exclusionCell(m: AnalysisRunRow['topExclusion'], skipped: boolean): ReactNode {
   if (m.state === 'zero') return DASH;
-  if (hasValue(m)) return `${m.value.label} ${m.value.count}`;
+  // T-130 4-7: 서버 label 대신 사전의 말(코드→문구 표 한 벌 — 홈·분석 오늘 분석이 같은 말을 쓴다). 모르는 코드는 「알 수 없는 사유」
+  if (hasValue(m)) return `${exclusionText(m.value.code)} ${m.value.count}`;
   if (skipped || m.state === 'off_hours') return <StatusChip kind="off">건너뜀</StatusChip>;
   return <MetricReason m={m} short />;
 }
@@ -59,7 +60,7 @@ function headOf(r: AnalysisRunRow, market: '국내' | '해외'): StageHead {
 
 /**
  * 「오늘의 분석·판단」 표(섹션 틀 없음) — 홈·분석 › 오늘 분석 공용.
- * stage 가 mixed·live 면 5번째 행이 「승인 대기」(signalsPending), 그 밖은 「검증 차단」(signalsBlocked).
+ * stage 가 mixed·live 면 5번째 행이 「승인 대기」(signalsPending), 그 밖은 「검증 관문 차단」(signalsBlocked).
  * staleBase 가 있으면(재조회 실패로 마지막 값) 값 회색 + caption 끝 「오래됨: 기준 {시각}」.
  */
 export function AnalysisStageTable({ runs, stage, staleBase }: { runs: ByMarket<AnalysisRunRow>; stage: OpsStage; staleBase?: string | null }) {
@@ -74,7 +75,7 @@ export function AnalysisStageTable({ runs, stage, staleBase }: { runs: ByMarket<
     { label: '시그널 생성', cells: [cell(d.signalsCreated, ds), cell(o.signalsCreated, os)] },
     live
       ? { label: '승인 대기', cells: [cell(d.signalsPending, ds), cell(o.signalsPending, os)] }
-      : { label: '검증 차단', cells: [cell(d.signalsBlocked, ds), cell(o.signalsBlocked, os)] },
+      : { label: '검증 관문 차단', cells: [cell(d.signalsBlocked, ds), cell(o.signalsBlocked, os)] },
     { label: anyExclusion ? '제외 사유 1위' : '제외 사유', cells: [exclusionCell(d.topExclusion, ds), exclusionCell(o.topExclusion, os)] },
   ];
   const dim = !!staleBase || [d, o].some((r) => r.evaluated.state === 'stale' || r.signalsCreated.state === 'stale');

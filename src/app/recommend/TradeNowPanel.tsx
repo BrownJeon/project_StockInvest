@@ -25,6 +25,7 @@ import {
 import type { OpsStage, SafetyStateDTO, TradeDTO } from '@/lib/ops/metrics/types';
 import type { PollStatus } from '@/components/ops/useOpsPoll';
 import { CHIP, fmtEtSession, fmtKstDateTime, fmtKstHm, fmtSessionDate } from '@/components/ops/format';
+import { skippedFate } from '@/components/ops/reason-copy';
 import { CheckRow, EmptyNote, Rows, RetryButton, Section, SectionBody, SectionLink, StatusChip, cx, ops } from '@/components/ops/ui';
 import { WatchCancelSheet, type WatchCancelTarget } from './WatchCancelSheet';
 
@@ -235,24 +236,28 @@ export function TradeNowPanel(props: TradeNowProps = {}) {
     approvalBody = (
       <>
         <EmptyNote>
-          <b>승인 대기 없음</b> — 검증 통과 전략이 없어 새 매수 시그널은 차단 기록으로 남습니다(승인 버튼 없음).
+          <b>승인 대기 없음</b> — 검증 통과 전략이 없어 새 매수 시그널은 검증 관문 차단 기록으로 남습니다(승인 버튼 없음).
         </EmptyNote>
-        {blockedCards.map(c => (
-          <div key={c.id} className={ops.card}>
-            <div className={ops.h}>
-              {displaySymbol(c.symbol)} <span className={ops.pill}>{marketText(c.market)}</span>
-              <span className={cx(ops.pill, ops.buy)}>매수 시그널</span>
-              <StatusChip kind="blocked">⊘ 차단</StatusChip>
+        {blockedCards.map(c => {
+          // T-130 D7-A: 이 카드의 시그널은 skipped — 검증 관문에 막힌 것(gate)이면 「차단」, 그 밖이면 「건너뜀」(둘을 같은 말로 부르지 않는다)
+          const fate = skippedFate(c.gate);
+          return (
+            <div key={c.id} className={ops.card}>
+              <div className={ops.h}>
+                {displaySymbol(c.symbol)} <span className={ops.pill}>{marketText(c.market)}</span>
+                <span className={cx(ops.pill, ops.buy)}>매수 시그널</span>
+                <StatusChip kind={fate.blocked ? 'blocked' : 'off'}>{fate.chip}</StatusChip>
+              </div>
+              <div className={ops.s}>
+                {c.market === 'overseas'
+                  ? `${fmtEtSession(c.session.sessionDate)} 세션 · ${fmtKstHm(c.createdAt)} 장마감 분석`
+                  : `${fmtSessionDate(c.session.sessionDate)} ${fmtKstHm(c.createdAt)} 장마감 분석`}
+                {c.confidence != null ? ` · AI 신뢰도 ${Math.round(c.confidence)}` : ''}
+                {fate.blocked ? ' · 전략 미검증 — 사후 결과 추적 대상으로만 씁니다' : ''}
+              </div>
             </div>
-            <div className={ops.s}>
-              {c.market === 'overseas'
-                ? `${fmtEtSession(c.session.sessionDate)} 세션 · ${fmtKstHm(c.createdAt)} 장마감 분석`
-                : `${fmtSessionDate(c.session.sessionDate)} ${fmtKstHm(c.createdAt)} 장마감 분석`}
-              {c.confidence != null ? ` · AI 신뢰도 ${Math.round(c.confidence)}` : ''}
-              {' · 검증 관문(전략 미검증) — 사후 결과 추적 대상으로만 씁니다'}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </>
     );
   } else if (enriched.length === 0) {

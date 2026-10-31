@@ -94,7 +94,7 @@ export function exitRows(x: ExitDetail, nowMs: number): XRow[] {
       if ((v.engineOffHit ?? 0) > 0) parts.push(`엔진 꺼진 동안 조건 충족 ${v.engineOffHit}종목`);
       if ((v.cooldown ?? 0) > 0) parts.push(`쿨다운 ${v.cooldown}종목`);
       parts.push(`해당 없음 ${v.noFire}`);
-      if (v.trailingActive > 0) parts.push(`트레일링 활성 ${v.trailingActive}`);
+      if (v.trailingActive > 0) parts.push(`트레일링 스탑 활성 ${v.trailingActive}`);
       parts.push(`데이터 이상 ${v.dataErrors}`);
       return `${MK[mk]} ${parts.join(' · ')}`;
     }),
@@ -113,7 +113,7 @@ export function exitRows(x: ExitDetail, nowMs: number): XRow[] {
           ...((pr.value.rejected ?? 0) > 0 ? [`거절 ${pr.value.rejected}`] : []),
           ...((pr.value.other ?? 0) > 0 ? [`그 밖 ${pr.value.other}`] : []),
           ...(pr.value.submittedLive > 0 ? [`실 송신 ${pr.value.submittedLive} → 체결 ${pr.value.filled}`] : []),
-          ...(pr.value.blockedByKill > 0 ? [`모든거래차단으로 차단 ${pr.value.blockedByKill}`] : []),
+          ...(pr.value.blockedByKill > 0 ? [`주문 차단 ${pr.value.blockedByKill} · 모든거래차단 ON`] : []),
         ].join(' · ')
       : ENGINE_OFF(pr) ? '— (엔진 꺼짐)' : '—',
     chip: ENGINE_OFF(pr) ? null : hasValue(pr) ? (pr.state === 'available' || pr.state === 'zero' ? null : stateChip(pr, { nowMs, partial: partialText(pr.reason) })) : stateChip(pr, { nowMs }),
@@ -123,7 +123,7 @@ export function exitRows(x: ExitDetail, nowMs: number): XRow[] {
   rows.push({
     k: 'X5 임계 대비 현재',
     d: hasValue(z)
-      ? `손실한도 ${z.value.hardStop} · 장마감 전 손절 ${z.value.eodCut} · 익절 ${z.value.takeProfit} · 트레일링 ${z.value.trailingActive} · 중립 ${z.value.neutral} · 미평가 ${z.value.notEvaluated} → 거래 › 보유·주문 (종목별 손익률·임계 거리)`
+      ? `손실한도 ${z.value.hardStop} · 장마감 전 손절 ${z.value.eodCut} · 목표 익절 ${z.value.takeProfit} · 트레일링 스탑 ${z.value.trailingActive} · 중립 ${z.value.neutral} · 미평가 ${z.value.notEvaluated} → 거래 › 보유·주문 (종목별 손익률·임계 거리)`
       : '→ 거래 › 보유·주문 (종목별 손익률·임계 거리)',
     chip: z.state === 'available' || z.state === 'zero' ? null : stateChip(z, { nowMs }),
   });

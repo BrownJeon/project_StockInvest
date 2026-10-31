@@ -6,6 +6,7 @@
  * - 음수 부호는 U+2212(−). 손익은 부호 + 색 클래스 + 글자 `(이익)`/`(손실)` — 색만으로 구분하지 않는다.
  * - 상태 칩 문구(데모 C 절)도 여기 한 곳에 둔다(CHIP).
  */
+import { errorChipText } from '@/lib/ops/reason-dictionary';
 
 export const DASH = '—';
 export const MINUS = '−';
@@ -141,7 +142,9 @@ export const CHIP = {
   zero: '✓ 확인된 0',
   noIssue: '✓ 이상 없음',
   unknown: '◌ 미수집',
-  error: (code: string) => `! 조회 실패 · ${code}`,
+  // T-130: 코드 원문(`! 조회 실패 · balances_unknown`)을 보이지 않는다 — 사전 `errorChipText`(4-1·4-2)가 한국어 칩을 만든다.
+  // 코드 병기는 분석 › 데이터 상태(panel-parts `showCode`)에서만.
+  error: (code: string) => errorChipText(code).text,
   stale: (at: string) => `오래됨 · 기준 ${at}`,
   fewer: (n: number) => `건수 적음 · ${n}건 (30건 미만)`,
   blocked: (why: string) => `⊘ 차단 · ${why}`,

@@ -3,7 +3,7 @@
  *
  * 데이터 상태 6종(가이드 §2.3.1)은 섹션·지표마다 따로 생긴다:
  *   정상(available) · 첫 배포(unknown/prep) · 빈(zero) · 로딩(첫 응답 전) · 조회 실패(HTTP·섹션 error·네트워크) · 오래됨(stale)
- * - 조회 전체가 실패(첫 응답부터) → 섹션마다 「! 조회 실패 · {code}」 + [다시 시도].
+ * - 조회 전체가 실패(첫 응답부터) → 섹션마다 「! 조회 실패 · {원인 말}」 + [다시 시도] (코드 원문은 보이지 않는다 — T-130 4-1)
  * - 재조회 실패(성공한 적 있음) → 마지막 값을 회색으로 + 「오래됨 · 기준 {시각}」.
  * - 「0」은 지표 state='zero'(조회 성공 + 0)일 때만 — 나머지는 `—` + 사유 칩.
  */
@@ -11,6 +11,7 @@ import { Fragment, type ReactNode } from 'react';
 import type { Metric, OpsStage, Section as Sec } from '@/lib/ops/metrics/types';
 import { CHIP, fmtKstTime } from '@/components/ops/format';
 import { StatusChip } from '@/components/ops/ui/StatusChip';
+import { blockedChipText, errorChipText } from '@/components/ops/reason-copy';
 
 export interface HomeCtx {
   /** 홈 조회 상태 */
@@ -50,10 +51,16 @@ export function hasValue<T>(m: Metric<T> | null | undefined): m is Metric<T> & {
 export function MetricReason({ m, short }: { m: Metric<unknown> | null | undefined; short?: boolean }): JSX.Element {
   const st = m?.state ?? 'unknown';
   switch (st) {
-    case 'error': return <StatusChip kind="error">{short ? '!' : `! 조회 실패${m?.reason ? ` · ${m.reason}` : ''}`}</StatusChip>;
+    // T-130 4-1·4-2: 영문 코드를 그대로 보이지 않는다 — 사전이 한국어 칩 전체를 만든다(`! 잔고를 읽지 못함` 등)
+    case 'error': return <StatusChip kind="error">{short ? '!' : errorChipText(m?.reason).text}</StatusChip>;
     case 'prep': return <StatusChip kind="prep">준비 중</StatusChip>;
     case 'off_hours': return <StatusChip kind="off">장외</StatusChip>;
-    case 'blocked': return <StatusChip kind="blocked">{short ? '⊘' : '⊘ 차단'}</StatusChip>;
+    case 'blocked': {
+      // T-130 5번: 차단은 막은 장치와 함께(`⊘ 차단 · 검증 관문`), 엔진 꺼짐은 차단이 아니라 꺼짐(off 칩)
+      if (short) return <StatusChip kind="blocked">⊘</StatusChip>;
+      const b = blockedChipText(m?.reason);
+      return <StatusChip kind={b.kind}>{b.text}</StatusChip>;
+    }
     case 'zero': return <StatusChip kind="zero">{CHIP.zero}</StatusChip>;
     case 'stale': return <StatusChip kind="stale">오래됨</StatusChip>;
     default: return <StatusChip kind="unknown">{short ? '◌' : CHIP.unknown}</StatusChip>;
@@ -65,7 +72,7 @@ export function StaleChip({ ctx, at }: { ctx: HomeCtx; at?: string | null }): JS
   return <StatusChip kind="stale">{CHIP.stale(fmtKstTime(at ?? ctx.generatedAt, ctx.nowMs))}</StatusChip>;
 }
 
-/** 조회 실패 칩 — 「! 조회 실패 · {code}」. */
+/** 조회 실패 칩 — 「! 조회 실패 · {원인 말}」(코드 원문 아님 — format.ts CHIP.error → 사전 errorChipText). */
 export function ErrorChip({ code }: { code: string }): JSX.Element {
   return <StatusChip kind="error">{CHIP.error(code)}</StatusChip>;
 }

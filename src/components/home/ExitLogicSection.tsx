@@ -5,6 +5,7 @@ import { LineList, LineSub, SkelBar } from '@/components/ops/ui/LineList';
 import { Section } from '@/components/ops/ui/Section';
 import { SectionLink } from '@/components/ops/ui/SectionLink';
 import { StatusChip } from '@/components/ops/ui/StatusChip';
+import { errorChipText } from '@/components/ops/reason-copy';
 import { exitKindLabel } from './check-copy';
 import { MetricReason, baseTime, hasValue, isStale, joinDot, sectionData, sectionErrorCode, type HomeCtx } from './home-ctx';
 
@@ -63,6 +64,11 @@ function evalSub(data: ExitLines, ctx: HomeCtx): ReactNode {
     }
     if (le.state === 'stale' && le.value?.at) return <>{MK[m]} 마지막 평가 <StatusChip kind="stale">{CHIP.stale(fmtKstTime(le.value.at, ctx.nowMs))}</StatusChip></>;
     if (hasValue(le) && le.value.at) return `${MK[m]} 마지막 평가 ${fmtKstTime(le.value.at, ctx.nowMs)}${le.value.sessionOpen === false ? '(장 마감)' : ''}`;
+    // T-130 4-2: 마지막 평가가 잔고 조회 실패로 끝났다 — 영문 코드(balances_unknown) 대신 한국어 칩 + 풀어쓴 설명. 칩 안은 한 글자열(텍스트 조각 분리 방지)
+    if (le.state === 'error' && le.reason === 'balances_unknown') {
+      const at = le.value?.at;
+      return <>{MK[m]} <StatusChip kind="error">{`${errorChipText(le.reason).text}${at ? ` · ${fmtKstTime(at, ctx.nowMs)}` : ''}`}</StatusChip> 보유 종목을 몰라 이번 평가를 못 했습니다</>;
+    }
     return <>{MK[m]} <MetricReason m={le} /></>;
   };
   return joinDot([part('domestic'), part('overseas')]);
@@ -152,7 +158,7 @@ function exitLines(data: ExitLines, ctx: HomeCtx): { k: string; d: ReactNode }[]
         </>
       );
     } else if (z.fired > 0 || (stage === 'live' && z.trailingActive > 0) || z.dataErrors > 0 || z.createFailed > 0 || z.engineOffHit > 0 || z.cooldown > 0) {
-      const main = joinDot([z.fired > 0 && `청산 시그널 생성 ${z.fired}종목`, `해당 없음 ${z.noFire}종목`, stage === 'live' && z.trailingActive > 0 && `트레일링 활성 ${z.trailingActive}`]);
+      const main = joinDot([z.fired > 0 && `청산 시그널 생성 ${z.fired}종목`, `해당 없음 ${z.noFire}종목`, stage === 'live' && z.trailingActive > 0 && `트레일링 스탑 활성 ${z.trailingActive}`]);
       judge = <>{failChip}{main}<LineSub>{joinDot([`데이터 이상 ${z.dataErrors}`, ...policyNote, ...otherNotes, retention])}</LineSub></>;
     } else {
       const sub = joinDot([...otherNotes, retention]);
@@ -180,13 +186,13 @@ function exitLines(data: ExitLines, ctx: HomeCtx): { k: string; d: ReactNode }[]
     } else if (stage === 'mixed') {
       close = <>청산 주문 {v.submittedLive}건 송신 → 체결 {v.filled}<LineSub>{joinDot([`승인 대기 청산 ${v.awaitingApproval}`, ...rest])}</LineSub></>;
     } else if (stage === 'live') {
-      const sub = joinDot([v.awaitingApproval > 0 && '익절 조건 — 거래 › 운용 현황에서 승인', ...rest]);
+      const sub = joinDot([v.awaitingApproval > 0 && '목표 익절 조건 — 거래 › 운용 현황에서 승인', ...rest]);
       close = <>청산 주문 {v.submittedLive} · 승인 대기 청산 {v.awaitingApproval}{sub ? <LineSub>{sub}</LineSub> : null}</>;
     } else {
       // 관찰·중지: 모든거래차단으로 막힌 주문이 실제로 있을 때만(blocked_by=kill_switch) 「주문 차단」 이라고 말한다
       const when = v.firstAt ? ` — ${exitKindLabel(v.firstKind)} ${fmtKstTime(v.firstAt, ctx.nowMs)}` : '';
       const head = v.blockedByKill > 0
-        ? <>청산 시그널 {v.blockedByKill}건 — <b>주문 차단</b>(모든거래차단)</>
+        ? <>청산 시그널 {v.blockedByKill}건 — <b>주문 차단</b> · 모든거래차단 ON</>
         : v.virtual > 0
           ? <><b>가상 청산 {v.virtual}건</b>{when}</>
           : <>청산 제안 {v.total}건</>;

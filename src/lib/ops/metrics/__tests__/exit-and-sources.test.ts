@@ -275,11 +275,38 @@ describe('최근 활동 — 건너뜀·실패 사유는 코드로(「휴장」 �
   const row = (status: string, degraded: string | null) => ({ market: 'overseas', status, started_at: new Date(kst('2026-10-31 08:00')), counts_json: null, degraded_reason: degraded });
   // T-128 A2 — 서버 부제도 화면과 같은 사전(reason-dictionary)·같은 글자. 예전 서버 전용 문구(「해외 분석 꺼짐」·「사유 x」·
   // 「사유 기록 없음」)는 화면이 덮어써 보인 적이 없다(home-render-t108 activitySub 시험) — 서버·화면 일치는 reason-dictionary-keys 시험이 본다.
-  it('skip:<코드> → 사유 말 + params.skipReason, 모르는 코드는 「사유 코드 x」, 사유 없음은 「사유 모름」', () => {
+  it('skip:<코드> → 사유 말 + params.skipReason, 모르는 코드는 「알 수 없는 사유」, 사유 없음은 「사유 기록 없음」 (T-130 4-3·D4-A)', () => {
     expect(analysisItem(row('skipped', 'skip:overseas_disabled'))).toMatchObject({ sub: '건너뜀 · 해외 장마감 후 분석 꺼짐', params: { skipReason: 'overseas_disabled' } });
-    expect(analysisItem(row('skipped', 'skip:brand_new_code'))?.sub).toBe('건너뜀 · 사유 코드 brand_new_code');
-    expect(analysisItem(row('skipped', 'skip'))?.sub).toBe('건너뜀 · 사유 모름');
+    expect(analysisItem(row('skipped', 'skip:brand_new_code'))?.sub).toBe('건너뜀 · 알 수 없는 사유');
+    expect(analysisItem(row('skipped', 'skip'))?.sub).toBe('건너뜀 · 사유 기록 없음');
+    expect(analysisItem(row('skipped', 'skipped'))?.sub).toBe('건너뜀 · 사유 기록 없음');
     expect(analysisItem(row('failed', 'fx_unknown'))).toMatchObject({ sub: '실행 실패 · 환율 모름', params: { failReason: 'fx_unknown' } });
     for (const r of [row('skipped', 'skip:weekend'), row('skipped', 'skip:no_new_session')]) expect(analysisItem(r)?.sub).not.toContain('휴장');
+  });
+});
+
+// ── T-130 WP2 — 최근 활동 주문 줄(서버 문구 = `/api/ops/home` 응답 글자): 차단 사유는 사전의 말, 청산 이름은 승인된 이름 ──
+describe('최근 활동 — 주문 줄 문구 (T-130 5번·D8-A)', () => {
+  const { orderItem } = jest.requireActual('../activity') as typeof import('../activity');
+  const { EXIT_STRATEGY_ID } = jest.requireActual('@/lib/strategy/exit-engine') as typeof import('@/lib/strategy/exit-engine');
+  const o = (over: Record<string, unknown>) => ({ symbol: '005930', side: 'sell', status: 'dry_run', blocked_by: null, created_at: new Date(kst('2026-10-30 15:26')), strategy_id: null, exit_kind: null, ...over });
+
+  it('차단 주문 부제 = 「{사전의 사유} · 송신 안 됨」 — 예전 「안전장치 차단」으로 뭉뚱그리지 않는다, 사유가 비면 「사유 기록 없음」', () => {
+    for (const [code, want] of [
+      ['kill_switch', '모든거래차단 ON'], ['validation_gate', '검증 관문'], ['order_limit', '1회 주문 한도 초과'], ['daily_limit', '일일 누적 한도 초과'],
+      ['symbol_not_allowed', '거래 차단 종목'], ['vol_block', '변동폭 가드 · 차단 임계'], ['vol_panic', '변동폭 가드 · 패닉 임계'],
+      ['brand_new', '알 수 없는 사유'], [null, '사유 기록 없음'], ['', '사유 기록 없음'],
+    ] as const) {
+      expect(orderItem(o({ status: 'blocked', blocked_by: code }), 'domestic')).toMatchObject({ title: '주문 차단 — 005930 매도', sub: `${want} · 송신 안 됨` });
+    }
+  });
+  it('청산 주문의 청산 이름: 목표 익절·트레일링 스탑(예전 「익절」「트레일링」) — 사전 한 벌', () => {
+    const exit = (kind: string, status = 'dry_run', blocked_by: string | null = null) => orderItem(o({ strategy_id: EXIT_STRATEGY_ID, exit_kind: kind, status, blocked_by }), 'domestic')!.sub;
+    expect(exit('target_profit')).toBe('목표 익절 · 주문 송신 없음');
+    expect(exit('trailing_stop')).toBe('트레일링 스탑 · 주문 송신 없음');
+    expect(exit('hard_stop')).toBe('손실한도 손절 · 주문 송신 없음');
+    expect(exit('eod_loss_cut')).toBe('장마감 전 손절 · 주문 송신 없음');
+    expect(exit('trailing_stop', 'blocked', 'kill_switch')).toBe('트레일링 스탑 · 모든거래차단 ON · 송신 안 됨');
+    expect(exit('target_profit', 'filled')).toBe('목표 익절 · 체결 완료');
   });
 });

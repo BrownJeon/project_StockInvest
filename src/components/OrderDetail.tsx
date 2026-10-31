@@ -5,6 +5,7 @@ import { fmtNum } from '@/lib/format';
 import { formatDateTimeSecondsKST as fmtTime } from '@/lib/time';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
 import type { Execution, Order, SignalInfo, TradeLog } from '@/types/order';
+import { orderReasonText } from '@/lib/ops/reason-dictionary';
 
 interface DetailData {
   order: Order;
@@ -153,7 +154,7 @@ export function OrderDetail({ orderId, onClose, onCancelDone }: Props) {
                   </div>
                   {order.blocked_by && (
                     <div style={{ marginTop: 10, fontSize: 12, color: '#555', padding: '6px 10px', background: 'var(--bg2)', borderRadius: 6 }}>
-                      차단 사유: {order.blocked_by}
+                      차단 사유: {orderReasonText(order.blocked_by)}
                     </div>
                   )}
                 </div>

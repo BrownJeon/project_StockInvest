@@ -231,7 +231,7 @@ maybe('T-108 ops 지표 — 일회용 MariaDB 10.11', () => {
     if (h.activity.state !== 'ok') throw new Error();
     // 최신순 4건: 해외 거부 21:30 · 국내 분석 16:00 · 가상 청산 15:26 · 차단 주문 10:31 (10:05 장중 차단 요약은 잘림)
     expect(h.activity.data.map((x) => x.kind)).toEqual(['order', 'analysis', 'order', 'order']);
-    expect(h.activity.data[3]).toMatchObject({ title: '주문 차단 — 000006 매수', sub: '모든거래차단 · 송신 안 됨' });
+    expect(h.activity.data[3]).toMatchObject({ title: '주문 차단 — 000006 매수', sub: '모든거래차단 ON · 송신 안 됨' });   // T-130 5번 — 사전의 말(예전 「모든거래차단」)
     expect(h.activity.data[2]).toMatchObject({ title: '가상 청산 기록 — 000001 매도', sub: '장마감 전 손절 · 주문 송신 없음' });
   });
 
@@ -244,7 +244,8 @@ maybe('T-108 ops 지표 — 일회용 MariaDB 10.11', () => {
     const byS = Object.fromEntries(t.holdings.data.rows.map((r) => [r.symbol, r]));
     expect(byS['000001']).toMatchObject({ zone: 'hard_stop', pnlPct: -2, detail: { thresholdPct: -1.5 } });
     expect(byS['NAS:AAPL'].zone).toBe('not_evaluated');   // 22:00 KST = 미국 장 전
-    expect(t.blockedPostMarket.data).toEqual([expect.objectContaining({ symbol: '000002', confidence: 72, session: { market: 'domestic', sessionDate: '2026-10-30', tz: 'KST' } })]);
+    // T-130 D7-A: gate(indicators.gate)를 읽기 계층이 함께 준다 — 화면이 「차단」/「건너뜀」을 가른다
+    expect(t.blockedPostMarket.data).toEqual([expect.objectContaining({ symbol: '000002', confidence: 72, gate: 'validation_gate', session: { market: 'domestic', sessionDate: '2026-10-30', tz: 'KST' } })]);
   });
 
   it('깔때기 — 기본 시장·세션일·요약', async () => {
@@ -264,7 +265,7 @@ maybe('T-108 ops 지표 — 일회용 MariaDB 10.11', () => {
     const data = await buildAnalysis('data', NOW);
     if (today.part !== 'today' || verify.part !== 'verify' || data.part !== 'data') throw new Error();
     expect(today.runs.state).toBe('ok');
-    expect(today.candidates).toMatchObject({ state: 'ok', data: { rows: [expect.objectContaining({ symbol: '000002', origin: 'signal', confidence: 72, signalStatus: 'skipped' })], skipRows: { state: 'prep' } } });
+    expect(today.candidates).toMatchObject({ state: 'ok', data: { rows: [expect.objectContaining({ symbol: '000002', origin: 'signal', confidence: 72, signalStatus: 'skipped', signalGate: 'validation_gate' })], skipRows: { state: 'prep' } } });
     expect(today.researchCount).toMatchObject({ state: 'available', value: 2 });
     expect(verify.postmortem.state).toBe('ok');
     expect(verify.exit.state).toBe('ok');

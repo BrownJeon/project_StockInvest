@@ -24,6 +24,7 @@ import {
   ORDER_STATUS_TEXT, orderMatches, orderSessionDate, ordersInSessions, orderStatusLine, type LogOrder,
 } from '@/app/recommend/TradeLogPanel';
 import { TradePage } from '@/app/recommend/TradePage';
+import { ORDER_REASON_KO } from '@/lib/ops/reason-dictionary';
 import { EvalFunnelCard, sessionFunnelUrl, readFunnelResponse } from '@/components/dashboard/EvalFunnelCard';
 import { TradeLogPanel } from '@/app/recommend/TradeLogPanel';
 
@@ -42,9 +43,9 @@ function trade(over: Partial<TradeDTO> = {}): TradeDTO {
     counts: { state: 'ok', data: { approval: { domestic: 0, overseas: 0 }, detected: 3, watching: { domestic: 0, overseas: 0 }, executing: 0, nextSession: 0, preOrderBlockedToday: 22 } },
     executing: { state: 'ok', data: [] },
     blockedPostMarket: { state: 'ok', data: [
-      { id: 1, symbol: '005930', market: 'domestic', confidence: 72, createdAt: '2026-10-30T16:00:00+09:00', session: { market: 'domestic', sessionDate: '2026-10-30', tz: 'KST' } },
-      { id: 2, symbol: 'NAS:MU', market: 'overseas', confidence: 68, createdAt: '2026-10-30T08:00:00+09:00', session: { market: 'overseas', sessionDate: '2026-10-29', tz: 'ET' } },
-      { id: 3, symbol: 'NAS:X', market: 'overseas', confidence: 50, createdAt: '2026-10-30T08:00:00+09:00', session: { market: 'overseas', sessionDate: '2026-10-29', tz: 'ET' } },
+      { id: 1, symbol: '005930', market: 'domestic', confidence: 72, createdAt: '2026-10-30T16:00:00+09:00', session: { market: 'domestic', sessionDate: '2026-10-30', tz: 'KST' }, gate: 'validation_gate' },
+      { id: 2, symbol: 'NAS:MU', market: 'overseas', confidence: 68, createdAt: '2026-10-30T08:00:00+09:00', session: { market: 'overseas', sessionDate: '2026-10-29', tz: 'ET' }, gate: 'validation_gate' },
+      { id: 3, symbol: 'NAS:X', market: 'overseas', confidence: 50, createdAt: '2026-10-30T08:00:00+09:00', session: { market: 'overseas', sessionDate: '2026-10-29', tz: 'ET' }, gate: 'validation_gate' },
     ] },
     holdings: { state: 'ok', data: {
       snapshotAt: '2026-10-30T15:00:00+09:00', stale: false,
@@ -78,17 +79,31 @@ describe('운용 현황 (§2.4.1)', () => {
   test('관찰 · 검증 통과 0 · 0건 → 「승인 대기 없음 — 검증 통과 전략이 없어…」 + 차단 카드 최대 2', () => {
     const t = text(renderNow({ stage: 'observe', safety: safety(), trade: trade(), tradeStatus: 'ok' }));
     expect(t).toContain('승인 대기 0건 · 홈과 같은 집합');
-    expect(t).toContain('승인 대기 없음 — 검증 통과 전략이 없어 새 매수 시그널은 차단 기록으로 남습니다(승인 버튼 없음).');
-    expect(t).toContain('종목005930 국내 매수 시그널 ⊘ 차단 10-30 16:00 장마감 분석 · AI 신뢰도 72 · 검증 관문(전략 미검증) — 사후 결과 추적 대상으로만 씁니다');
-    expect(t).toContain('종목NAS:MU 해외 매수 시그널 ⊘ 차단 ET 10-29 세션 · 08:00 장마감 분석 · AI 신뢰도 68');
+    expect(t).toContain('승인 대기 없음 — 검증 통과 전략이 없어 새 매수 시그널은 검증 관문 차단 기록으로 남습니다(승인 버튼 없음).');
+    expect(t).toContain('종목005930 국내 매수 시그널 ⊘ 차단 · 검증 관문 10-30 16:00 장마감 분석 · AI 신뢰도 72 · 전략 미검증 — 사후 결과 추적 대상으로만 씁니다');
+    expect(t).toContain('종목NAS:MU 해외 매수 시그널 ⊘ 차단 · 검증 관문 ET 10-29 세션 · 08:00 장마감 분석 · AI 신뢰도 68');
     expect(t).not.toContain('종목NAS:X');                     // 최대 2
     expect(t).not.toContain('✓ 확인된 0 — 매수 차단');
+  });
+  // T-130 D7-A — 이 카드의 시그널은 skipped. 검증 관문에 막힌 것(gate)이면 「차단」, gate 없음(수량 1주 미만 등)이면 「건너뜀」 — 같은 말로 부르지 않는다
+  test('차단 카드 — gate 없음 → 「건너뜀 · 사유 기록 없음」(차단 칩 아님) · 「전략 미검증」 꼬리 없음 / gate=validation_gate → 「⊘ 차단 · 검증 관문」', () => {
+    const tr = trade();
+    if (tr.blockedPostMarket.state !== 'ok') throw new Error('fixture');
+    tr.blockedPostMarket.data = [{ ...tr.blockedPostMarket.data[0], gate: null }, { ...tr.blockedPostMarket.data[1], gate: 'validation_gate' }];
+    const html = renderNow({ stage: 'observe', safety: safety(), trade: tr, tradeStatus: 'ok' });
+    const t = text(html);
+    expect(t).toContain('종목005930 국내 매수 시그널 건너뜀 · 사유 기록 없음 10-30 16:00 장마감 분석 · AI 신뢰도 72');
+    expect(t).not.toContain('종목005930 국내 매수 시그널 ⊘ 차단');
+    expect(t).not.toContain('AI 신뢰도 72 · 전략 미검증');
+    expect(html).toContain('<span class="st off">건너뜀 · 사유 기록 없음</span>');
+    expect(t).toContain('종목NAS:MU 해외 매수 시그널 ⊘ 차단 · 검증 관문 ET 10-29 세션 · 08:00 장마감 분석 · AI 신뢰도 68 · 전략 미검증 — 사후 결과 추적 대상으로만 씁니다');
+    expect(html).toContain('<span class="st blocked">⊘ 차단 · 검증 관문</span>');
   });
   test('관찰이어도 검증 통과 전략이 있으면 「검증 통과 전략이 없어」라고 말하지 않는다', () => {
     const t = text(renderNow({ stage: 'observe', safety: safety({ strategies: { total: 16, enabled: 8, validated: 1, validatedEnabled: 1 } }), trade: trade(), tradeStatus: 'ok' }));
     expect(t).toContain('승인 대기 없음 ✓ 확인된 0');
     expect(t).not.toContain('검증 통과 전략이 없어');
-    expect(t).not.toContain('⊘ 차단 10-30');
+    expect(t).not.toContain('⊘ 차단 · 검증 관문 10-30');
   });
   test('관측 기록 = detected COUNT, 승인 버튼 없음', () => {
     const t = text(renderNow({ stage: 'observe', safety: safety(), trade: trade(), tradeStatus: 'ok' }));
@@ -110,7 +125,8 @@ describe('운용 현황 (§2.4.1)', () => {
   });
   test('지표 조회 실패 — 관측 기록은 0 이 아니라 「! 조회 실패」', () => {
     const t = text(renderNow({ stage: 'observe', safety: safety(), trade: null, tradeStatus: 'error', tradeError: 'http_503' }));
-    expect(t).toContain('! 조회 실패 · http_503');
+    expect(t).toContain('! 조회 실패 · 서버 오류 503');
+    expect(t).not.toContain('http_503');
     expect(t).not.toMatch(/\b0건 — 수동 관측용/);
     expect(t).toContain('승인 대기 홈과 같은 집합');       // 숫자 없이
   });
@@ -118,7 +134,7 @@ describe('운용 현황 (§2.4.1)', () => {
     mockStateQueue.length = 0;
     mockStateQueue.push([], [], false, null, 'network');   // signals · pending · loading · banner · listError
     const t = text(renderToStaticMarkup(h(TradeNowPanel, { stage: 'observe', safety: safety(), trade: trade(), tradeStatus: 'ok' })));
-    expect(t).toContain('! 조회 실패 · network 비어 있는 것이 아닙니다');
+    expect(t).toContain('! 조회 실패 · 연결 끊김 비어 있는 것이 아닙니다');
     expect(t).not.toContain('승인 대기 없음');
   });
   test('진입 감시 없음 ✓ 확인된 0 · 감시 중/선점 숫자는 서버 COUNT', () => {
@@ -131,7 +147,7 @@ describe('운용 현황 (§2.4.1)', () => {
     mockStateQueue.length = 0;
     mockStateQueue.push([], [], false, null, null, null, 'network');   // … listError · cancelTarget · pendingError
     const w = watchPart(renderToStaticMarkup(h(TradeNowPanel, { stage: 'observe', safety: safety(), trade: trade(), tradeStatus: 'ok' })));
-    expect(w).toContain('! 조회 실패 · network 비어 있는 것이 아닙니다');
+    expect(w).toContain('! 조회 실패 · 연결 끊김 비어 있는 것이 아닙니다');
     expect(w).not.toContain('✓ 확인된 0');
   });
   test('거래 지표(/api/ops/trade) 아직 못 읽음 → 「확인 중…」', () => {
@@ -141,10 +157,10 @@ describe('운용 현황 (§2.4.1)', () => {
   });
   test('거래 지표 조회 실패 → 선점 여부 「! 조회 실패」(✓ 아님)', () => {
     const w = watchPart(renderNow({ stage: 'observe', safety: safety(), trade: null, tradeStatus: 'error', tradeError: 'http_503' }));
-    expect(w).toContain('주문 선점 여부 ! 조회 실패 · http_503 비어 있는 것이 아닙니다');
+    expect(w).toContain('주문 선점 여부 ! 조회 실패 · 서버 오류 503 비어 있는 것이 아닙니다');
     expect(w).not.toContain('✓ 확인된 0');
     const sec = trade({ executing: { state: 'error', error: 'timeout' } });
-    expect(watchPart(renderNow({ stage: 'observe', safety: safety(), trade: sec, tradeStatus: 'ok' }))).toContain('! 조회 실패 · timeout');
+    expect(watchPart(renderNow({ stage: 'observe', safety: safety(), trade: sec, tradeStatus: 'ok' }))).toContain('! 조회 실패 · 응답 시간 초과');
   });
   test('목록 0 인데 서버 COUNT 는 감시 중 2 → 0 이라고 말하지 않는다', () => {
     const tr = trade();
@@ -163,8 +179,8 @@ describe('보유·주문 (§2.4.4)', () => {
     expect(zoneText({ zone: 'hard_stop', detail: {} }, { ...ctx, hardStopEnabled: true })).toBe('손실한도 구간 (임계 −1.5%)');
     // 스위치 값을 모르면(null) 「OFF」라고 지어내지 않는다
     expect(zoneText({ zone: 'hard_stop', detail: {} }, { ...ctx, hardStopEnabled: null })).toBe('손실한도 구간 (임계 −1.5%)');
-    expect(zoneText({ zone: 'take_profit', detail: { thresholdPct: 2.5 } }, ctx)).toBe('익절 조건 충족 (임계 +2.5%)');
-    expect(zoneText({ zone: 'trailing_active', detail: { thresholdPct: -1.2, fromPeakPct: -0.6 } }, ctx)).toBe('트레일링 활성 · 고점 대비 −0.6% (되돌림 1.2%)');
+    expect(zoneText({ zone: 'take_profit', detail: { thresholdPct: 2.5 } }, ctx)).toBe('목표 익절 조건 충족 (임계 +2.5%)');
+    expect(zoneText({ zone: 'trailing_active', detail: { thresholdPct: -1.2, fromPeakPct: -0.6 } }, ctx)).toBe('트레일링 스탑 활성 · 고점 대비 −0.6% (되돌림 1.2%)');
     expect(zoneText({ zone: 'eod_cut', detail: {} }, ctx)).toBe('장마감 전 손절 구간');
     expect(zoneText({ zone: 'neutral', detail: {} }, ctx)).toBe('중립');
     expect(zoneText({ zone: 'not_evaluated', detail: {} }, ctx)).toBe('미평가 — 장외');
@@ -177,10 +193,10 @@ describe('보유·주문 (§2.4.4)', () => {
     const t = text(html);
     expect(t).toContain('보유 계좌 6 · 자동 운용 0 (D3)');
     expect(t).toContain('종목000660 국내 수동 보유 손실한도 구간 (임계 −1.5%) — 손실한도 손절 OFF −2.1%');
-    expect(t).toContain('종목NAS:C 해외 수동 보유 익절 조건 충족 (임계 +2.5%) +2.7%');
+    expect(t).toContain('종목NAS:C 해외 수동 보유 목표 익절 조건 충족 (임계 +2.5%) +2.7%');
     expect(html).toContain('class="num down">−2.1%');
     expect(html).toContain('class="num up">+2.7%');
-    expect(t).toContain('기준 15:00 스냅샷 · 청산 임계: 손실한도 손절·장마감 전 손절·익절 = 코드 기본값, 트레일링 = 운영 설정(활성 3.5% · 되돌림 1.2%). 손익률이라 환율 무관');
+    expect(t).toContain('기준 15:00 스냅샷 · 청산 임계: 손실한도 손절·장마감 전 손절·목표 익절 = 코드 기본값, 트레일링 스탑 = 운영 설정(활성 3.5% · 되돌림 1.2%). 손익률이라 환율 무관');
     expect(html).toContain('href="?tab=hold&amp;detail=trailing"');
     expect(t).toContain('포지션 추적 (청산 기준·고점)');
     expect(t).toContain('미체결 없음 ✓ 확인된 0');
@@ -202,7 +218,7 @@ describe('보유·주문 (§2.4.4)', () => {
   });
   test('조회 실패 — 0 이 아니라 「! 조회 실패」', () => {
     const t = text(renderToStaticMarkup(h(TradeHoldPanel, { trade: null, tradeStatus: 'error', tradeError: 'network', safety: null, displaySymbol: (s: string) => s, onGoTrailing: () => {} })));
-    expect(t).toContain('! 조회 실패 · network');
+    expect(t).toContain('! 조회 실패 · 연결 끊김');
     expect(t).not.toContain('미체결 없음');
   });
 });
@@ -212,8 +228,20 @@ describe('운영 기록 (§2.4.5) — 주문 상태·세션일', () => {
     expect(Object.keys(ORDER_STATUS_TEXT).sort()).toEqual(['accepted', 'blocked', 'cancelled', 'dry_run', 'failed', 'filled', 'partially_filled', 'pending', 'rejected']);
     expect(Object.values(ORDER_STATUS_TEXT).join()).not.toMatch(/DRY/);
     expect(orderStatusLine({ status: 'dry_run', blocked_by: null })).toBe('가상 · 송신 없음');
-    expect(orderStatusLine({ status: 'blocked', blocked_by: 'kill_switch' })).toBe('차단 · 모든거래차단');
+    expect(orderStatusLine({ status: 'blocked', blocked_by: 'kill_switch' })).toBe('차단 · 모든거래차단 ON');
     expect(orderStatusLine({ status: 'rejected', blocked_by: null })).toBe('거부');
+  });
+  test('주문 줄 차단 사유 — 사전 문구와 같은 8개(T-130 4-6) · 모르는 코드는 「알 수 없는 사유」(예전 「안전장치」 아님)', () => {
+    for (const [code, want] of [
+      ['kill_switch', '모든거래차단 ON'], ['validation_gate', '검증 관문'], ['order_limit', '1회 주문 한도 초과'], ['daily_limit', '일일 누적 한도 초과'],
+      ['symbol_not_allowed', '거래 차단 종목'], ['invalid_side', '주문 방향 오류'], ['vol_block', '변동폭 가드 · 차단 임계'], ['vol_panic', '변동폭 가드 · 패닉 임계'],
+    ] as const) expect(orderStatusLine({ status: 'blocked', blocked_by: code })).toBe(`차단 · ${want}`);
+    expect(orderStatusLine({ status: 'blocked', blocked_by: 'brand_new' })).toBe('차단 · 알 수 없는 사유');
+    expect(orderStatusLine({ status: 'blocked', blocked_by: null })).toBe('차단');                // 사유가 없으면 상태만(지금과 같음)
+    // 화면 사전(TradeLogPanel 의 표)과 공유 사전(ORDER_REASON_KO)이 같은 글자 — 사전 출처 한 벌로 합치기 전까지 어긋나지 않게 고정
+    for (const code of ['kill_switch', 'validation_gate', 'order_limit', 'daily_limit', 'symbol_not_allowed', 'invalid_side', 'vol_block', 'vol_panic']) {
+      expect(orderStatusLine({ status: 'blocked', blocked_by: code })).toBe(`차단 · ${ORDER_REASON_KO[code]}`);
+    }
   });
   test('필터 「체결」은 filled·partially_filled 만 — 가상·차단·거부는 체결 아님', () => {
     expect(orderMatches('fill', 'filled')).toBe(true);
@@ -239,6 +267,31 @@ describe('운영 기록 (§2.4.5) — 주문 상태·세션일', () => {
   });
 });
 
+describe('운영 기록 — 검증 관문 차단 머리 줄 (T-130 5번)', () => {
+  test('주문 전 단계에서 막힌 시그널 머리 줄 = 「검증 관문에서 차단된 매수 시그널 n건 — 주문 기록 없음」 (전체·차단 필터에서만)', () => {
+    const meta = {
+      market: 'domestic', defaultMarket: 'domestic', generatedAt: '2026-10-30T16:20:00+09:00',
+      sessions: {
+        domestic: { session: { market: 'domestic', sessionDate: '2026-10-30', tz: 'KST' }, anomalies: 0, lastRunAt: null },
+        overseas: { session: { market: 'overseas', sessionDate: '2026-10-29', tz: 'ET' }, anomalies: 0, lastRunAt: null },
+      },
+    };
+    const orders: LogOrder[] = [{ id: 9, symbol: '005930', side: 'buy', quantity: '1', status: 'blocked', blocked_by: 'order_limit', market: 'domestic', created_at: '2026-10-30T06:26:00.000Z' }];
+    const renderLog = (filter: string) => {
+      mockStateQueue.length = 0;
+      // TradeLogPanel useState 순서: market · meta · metaError · retry · orders · ordersError · ordersAt · filter
+      mockStateQueue.push(undefined, meta, null, 0, orders, null, null, filter);
+      return text(renderToStaticMarkup(h(TradeLogPanel, { trade: trade(), displaySymbol: (s: string) => `종목${s}`, reloadKey: 0, onGoOrders: () => {}, onGoNotes: () => {}, nowMs: Date.parse('2026-10-30T16:20:00+09:00') })));
+    };
+    const all = renderLog('all');
+    expect(all).toContain('검증 관문에서 차단된 매수 시그널 22건 — 주문 기록 없음');
+    expect(all).not.toContain('주문 전 단계에서 차단된');
+    expect(all).toContain('매수 종목005930 1주 차단 · 1회 주문 한도 초과');
+    expect(renderLog('blk')).toContain('검증 관문에서 차단된 매수 시그널 22건 — 주문 기록 없음');
+    expect(renderLog('fill')).not.toContain('검증 관문에서 차단된');
+  });
+});
+
 describe('운영 기록 — 깔때기 조회 실패 (R-UI ④)', () => {
   test('세션일을 못 읽으면 주문 기록이 「불러오는 중」에 멈추지 않고 「! 조회 실패」 + 다시 시도', () => {
     mockStateQueue.length = 0;
@@ -246,7 +299,7 @@ describe('운영 기록 — 깔때기 조회 실패 (R-UI ④)', () => {
     mockStateQueue.push(undefined, null, 'network', 0, [], null, null, 'all');
     const t = text(renderToStaticMarkup(h(TradeLogPanel, { trade: trade(), displaySymbol: (s: string) => s, reloadKey: 0, onGoOrders: () => {}, onGoNotes: () => {} })));
     const part = t.slice(t.indexOf('주문 기록'));
-    expect(part).toContain('! 조회 실패 · network 세션일을 읽지 못해 오늘 주문을 거를 수 없습니다 — 비어 있는 것이 아닙니다');
+    expect(part).toContain('! 조회 실패 · 연결 끊김 세션일을 읽지 못해 오늘 주문을 거를 수 없습니다 — 비어 있는 것이 아닙니다');
     expect(part).toContain('다시 시도');
     expect(part.split('내 결정')[0]).not.toContain('불러오는 중');
   });
@@ -309,7 +362,7 @@ describe('깔때기 기준 세션 조회 실패(basis.state=error) — 추정 �
     mockStateQueue.push(undefined, null, 'db_error', 0, [], null, null, 'all');
     const html = renderToStaticMarkup(h(TradeLogPanel, { trade: trade(), displaySymbol: (s: string) => s, reloadKey: 0, onGoOrders: () => {}, onGoNotes: () => {} }));
     const t = text(html);
-    expect(t).toContain('! 조회 실패 · db_error 세션일을 읽지 못해 오늘 주문을 거를 수 없습니다 — 비어 있는 것이 아닙니다');
+    expect(t).toContain('! 조회 실패 · DB 오류 세션일을 읽지 못해 오늘 주문을 거를 수 없습니다 — 비어 있는 것이 아닙니다');
     expect(t).not.toContain('오늘 이 상태의 주문 없음');
     expect(html).toMatch(/aria-label="깔때기 시장"><button type="button" aria-pressed="true">국내<\/button><button type="button" aria-pressed="false">해외<\/button>/);
   });

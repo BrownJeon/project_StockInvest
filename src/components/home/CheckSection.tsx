@@ -4,6 +4,7 @@ import { metricSetFor } from '@/lib/ops/metrics/stage';
 import { CheckRow, SkeletonRows } from '@/components/ops/ui/CheckRow';
 import { EmptyNote, Rows, Section, SectionBody } from '@/components/ops/ui/Section';
 import { RetryButton } from '@/components/ops/ui/RetryButton';
+import { errorChipText } from '@/components/ops/reason-copy';
 import { SAFETY_UNKNOWN_TITLE, checkLines } from './check-copy';
 import { baseTime, isStale, sectionData, sectionErrorCode, type HomeCtx } from './home-ctx';
 
@@ -12,7 +13,8 @@ type Counts = { approval: ByMarket<number>; earliestExpiry: { symbol: string; at
 /**
  * 홈 ② 확인 필요 — 데모 `checkSec()` · 가이드 §2.3.2.
  * 조치가 필요한 것만, 줄마다 이동할 곳. 0 건이면 빈 상태 한 줄(small 에 「0건」 을 쓰지 않는다 — §8.2 Minor).
- * 조회 실패는 「비어 있는 것이 아닙니다」 를 꼭 붙인다(빈 목록과 구별).
+ * 조회 실패는 「비어 있는 것이 아닙니다」 를 꼭 붙인다(빈 목록과 구별) — 원인은 한국어 말로(`서버 오류 503 · 비어 있는 것이 아닙니다`, T-130 4-1).
+ * 머리 숫자(small)는 **봐야 할 가짓수** — 줄 수다(`N가지`). 데이터 이상은 여러 건이어도 한 줄(T-130 D3-B)이라 한 가지로 센다.
  *
  * 빈 상태 문장은 **실제로 평가한 항목만 0 으로 말한다**(서버 `checkCoverage` — Reviewer R-DATA Major-2·R-UI M3):
  *  - 평가하지 못한 항목은 「{항목} 확인하지 못함」, 그때 머리말은 「지금 확인할 것 없음」 대신 「확인한 범위에서는 없음」.
@@ -34,7 +36,7 @@ export function CheckSection({ ctx, checks, counts, coverage }: {
     return (
       <Section id="h-check" title="확인 필요" foot={ctx.code === 'unauthorized' ? <Link href="/login">다시 로그인해 주세요</Link> : undefined}>
         <Rows>
-          <CheckRow severity="e" glyph="!" title="확인 필요 목록을 불러오지 못했습니다" sub={`${err} · 비어 있는 것이 아닙니다`} />
+          <CheckRow severity="e" glyph="!" title="확인 필요 목록을 불러오지 못했습니다" sub={`${errorChipText(err).word} · 비어 있는 것이 아닙니다`} />
         </Rows>
         <SectionBody><RetryButton onClick={ctx.onRetry} /></SectionBody>
       </Section>
@@ -59,7 +61,7 @@ export function CheckSection({ ctx, checks, counts, coverage }: {
       : <>승인 대기 {approvals ?? '—'} · 주문 오류 {rejected ?? '—'} · 기준 {base}{login}</>;
 
   return (
-    <Section id="h-check" title="확인 필요" small={lines.length ? `${lines.length}건` : undefined} foot={foot}>
+    <Section id="h-check" title="확인 필요" small={lines.length ? `${lines.length}가지` : undefined} foot={foot}>
       {lines.length === 0 ? (
         <EmptyNote>{emptySentence(coverage!)}</EmptyNote>
       ) : (

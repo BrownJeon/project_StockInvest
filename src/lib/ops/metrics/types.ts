@@ -218,7 +218,9 @@ export interface TradeDTO {
   /** 진입 감시 목록의 「주문 선점 중」 줄 — signals.status='executing' (취소 불가, 버튼 없음) */
   executing: Section<{ id: number; symbol: string; market: Market; side: 'buy' | 'sell'; since: string | null }[]>;
   /** 관찰 단계 0건일 때 보이는 「오늘 차단된 장마감 시그널」(최대 2) — signals.status='skipped' ∧ scenario_source='post-market' */
-  blockedPostMarket: Section<{ id: number; symbol: string; market: Market; confidence: number | null; createdAt: string; session: SessionRef }[]>;
+  blockedPostMarket: Section<{ id: number; symbol: string; market: Market; confidence: number | null; createdAt: string; session: SessionRef;
+    /** `signals.indicators.gate` — `validation_gate` 면 검증 관문 차단, 그 밖·없음이면 단순 건너뜀(T-130 D7-A) */
+    gate: string | null }[]>;
   holdings: Section<{ snapshotAt: string | null; stale: boolean; trailing: { activatePct: number; drawdownPct: number; source: 'override' | 'default' };
     /** 손실한도 손절·장마감 전 손절·익절 임계(코드 기본값 ⊕ override) — foot 문구용 */
     thresholds: { hardStopPct: number; eodLossCutPct: number; targetProfitPct: number; source: 'override' | 'default' };
@@ -254,6 +256,11 @@ export interface AnalysisCandidate {
   confidence: number | null;
   /** origin=signal: signals.status (skipped=검증 관문 차단 등) */
   signalStatus: string | null;
+  /**
+   * origin=signal: `signals.indicators.gate`(예 `validation_gate`) — `skipped` 가 검증 관문에 막힌 것인지 그 밖(수량 1주 미만 등)인지 가른다(T-130 D7-A).
+   * origin=judgment_skip 이거나 값이 없으면 null.
+   */
+  signalGate: string | null;
   /** origin=judgment_skip: 판단 기록 후보 행의 제외 코드(exclusion_code) */
   exclusionCode: string | null;
   createdAt: string | null;

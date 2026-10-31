@@ -47,6 +47,12 @@ export function confidenceFromIndicators(raw: unknown): number | null {
   return typeof c === 'number' && Number.isFinite(c) && c >= 0 && c <= 100 ? c : null;
 }
 
+/** `indicators.gate` — 검증 관문 감사 행이면 `validation_gate`. 문자열이 아니면 null (T-130 D7-A: `skipped` 의 두 경우를 가른다). */
+export function gateFromIndicators(raw: unknown): string | null {
+  const g = parseJsonObject(raw)?.gate;
+  return typeof g === 'string' && g ? g : null;
+}
+
 async function readCounts(r: OpsReader): Promise<Extract<TradeDTO['counts'], { state: 'ok' }>['data']> {
   const blocked = async (m: Market) => {
     const day = currentSessionDay(m, r.nowMs);
@@ -82,6 +88,7 @@ async function readBlockedPostMarket(r: OpsReader): Promise<Extract<TradeDTO['bl
       const ms = toMs(x.created_at);
       return ms == null ? null : {
         id: Number(x.id), symbol: String(x.symbol), market: m, confidence: confidenceFromIndicators(x.indicators),
+        gate: gateFromIndicators(x.indicators),
         createdAt: kstIso(ms), session: sessionRef(m, m === 'domestic' ? kstDateOf(ms) : localDateOf('overseas', ms)),
       };
     }).filter((v): v is NonNullable<typeof v> => v != null);

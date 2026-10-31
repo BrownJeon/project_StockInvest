@@ -17,7 +17,7 @@ import { counted, metric } from './metric';
 import { readPostmortemSample, SMALL_SAMPLE_N, verifyPostmortemRows } from './postmortem-sample';
 import { count, createReader, OpsQueryError, section, type OpsReader } from './read-only';
 import { readSafetyState } from './safety-state';
-import { confidenceFromIndicators } from './trade';
+import { confidenceFromIndicators, gateFromIndicators } from './trade';
 import { isTradingDay, isoOrNull, kstDateOf, kstIso, kstSql, loadClosedDays, toMs, type ClosedDays } from './sessions';
 import type {
   AnalysisCandidate, AnalysisDataDTO, AnalysisTodayDTO, AnalysisVerifyDTO, Market, Metric, SafetyStateDTO, UptimeRow,
@@ -61,7 +61,7 @@ export async function buildAnalysisToday(r: OpsReader, closed: ClosedDays): Prom
         for (const s of sig) {
           rows.push({
             symbol: String(s.symbol), market: m, session, origin: 'signal', aiDecision: 'BUY',
-            confidence: confidenceFromIndicators(s.indicators), signalStatus: String(s.status), exclusionCode: null, createdAt: isoOrNull(s.created_at),
+            confidence: confidenceFromIndicators(s.indicators), signalStatus: String(s.status), signalGate: gateFromIndicators(s.indicators), exclusionCode: null, createdAt: isoOrNull(s.created_at),
           });
         }
         if (w.judgment.kind === 'found' && w.judgment.id != null) {
@@ -71,7 +71,7 @@ export async function buildAnalysisToday(r: OpsReader, closed: ClosedDays): Prom
           for (const k of skips) {
             rows.push({
               symbol: k.symbol, market: m, session, origin: 'judgment_skip', aiDecision: k.aiDecision,
-              confidence: k.confidence, signalStatus: null, exclusionCode: k.exclusionCode, createdAt: null,
+              confidence: k.confidence, signalStatus: null, signalGate: null, exclusionCode: k.exclusionCode, createdAt: null,
             });
           }
         } else if (!whyNone) {

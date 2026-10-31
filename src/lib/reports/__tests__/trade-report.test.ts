@@ -181,11 +181,30 @@ describe('formatReportMessage', () => {
       ],
     });
     expect(msg).toMatch(/📉 매도 손익 \(총 \+₩5\)/);   // 10 + (-5)
-    expect(msg).toMatch(/🔴 BCH \+₩10 \(\+10\.00%\) \[익절\]/);
+    // T-130 D8-A: 청산 이름은 목표 익절·트레일링 스탑(텔레그램 승인 메시지·저장된 사유 앞머리와 같은 이름). hard_stop·eod_loss_cut 의 짧은 이름은 이번 범위 밖(후속)
+    expect(msg).toMatch(/🔴 BCH \+₩10 \(\+10\.00%\) \[목표 익절\]/);
     // fmtKRW 는 음수에 U+2212 MINUS SIGN(−)을 쓴다 (ASCII 하이픈 아님)
     expect(msg).toMatch(/🔵 XRP −₩5 \(-5\.00%\) \[손절\]/);
     // 상세 섹션이 나오면 축약 줄은 나오지 않는다
     expect(msg).not.toMatch(/• 실현 손익:/);
+  });
+
+  test('T-130 D8-A — 매도 손익 상세의 청산 이름: 트레일링 스탑·목표 익절(이전 「트레일」「익절」)', async () => {
+    const rangeStart = new Date(T0);
+    const rangeEnd = new Date(T0 + 3*HOUR);
+    const rows: OrderRow[] = [
+      row('BCH', 'buy',  100, 1, T0+1*HOUR),
+      row('BCH', 'sell', 110, 1, T0+2*HOUR),
+    ];
+    const rep = await buildTradeReport({ rangeStart, rangeEnd, totalKRW: 1100, baselineKRW: 1000, rows });
+    const msg = formatReportMessage(rep, 1100, 1000, {
+      buyWatchlist: [],
+      holdings: [],
+      sellPnl: [{ symbol: 'BCH', exitKind: 'trailing_stop', pnlPct: 10, pnlKRW: 10, sellAmountKRW: 110 }],
+    });
+    expect(msg).toMatch(/🔴 BCH \+₩10 \(\+10\.00%\) \[트레일링 스탑\]/);
+    expect(msg).not.toMatch(/\[트레일\]/);
+    expect(msg).not.toMatch(/\[익절\]/);
   });
 
   test('baseline 없을 때 — 스냅샷 없음 표시', async () => {

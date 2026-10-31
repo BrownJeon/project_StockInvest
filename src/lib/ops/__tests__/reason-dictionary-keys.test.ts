@@ -3,8 +3,9 @@
  *
  * 규칙: 서버 소스가 내는 사유 코드마다 ① 사전에 한국어 말이 있거나 ② 아래 `KNOWN_UNMAPPED` 에 **이유와 함께** 있어야 한다.
  * 비교는 정확 일치(`toEqual`)라 양쪽을 다 막는다 — 사전에도 허용 목록에도 없는 새 코드가 생기면 실패하고, 허용 목록에 남은 코드가
- * 더는 나오지 않거나 사전에 말이 생기면 그 줄을 지우라고 실패한다. 허용 목록 = 지금 화면에 영문 코드(또는 「사유 코드 x」)로 보이는
- * 목록이기도 하다 — 한국어 문구는 T-130(데모 승인)이 정한다. 이 시험은 새 문구를 만들지 않는다.
+ * 더는 나오지 않거나 사전에 말이 생기면 그 줄을 지우라고 실패한다. 허용 목록 = 사전에 말이 없는 코드 — 화면에는 한국어 대체어(「알 수 없는 사유」 등)로 보인다.
+ * T-130(데모 v1 승인)이 분석 2·주문 2·지표 10 코드에 문구를 넣어 그 줄들을 지웠다. 남은 것: 안전 2(`dry_run_mismatch`·`kill_switch_mismatch` — 후속)·
+ * 지표 1(`run_failed` — 후속). 이 시험은 새 문구를 만들지 않는다.
  *
  * 「서버가 내는 코드」는 소스를 TypeScript AST 로 읽어 모은다(코드가 생기는 자리 — 아래 각 수집기 주석). 정규식 한 줄로 긁지 않는 이유:
  * 삼항(`a ? 'vol_panic' : 'vol_block'`)·`??` 기본값·변수 경유가 섞여 있다. 변수로만 오는 동적 코드는 그 출처 타입(OpsErrorCode)만 따라간다.
@@ -129,47 +130,38 @@ function metricErrorCodes(): string[] {
 }
 
 /**
- * 허용 목록 — 사전에 말이 없는 채로 서버가 내는 코드. **지금 화면에는 영문 코드(또는 「사유 코드 x」)로 보인다.**
- * 한국어 문구는 T-130(데모 승인)이 정한다 — 그때 사전에 넣고 이 줄을 지운다(지우지 않으면 이 시험이 실패한다).
+ * 허용 목록 — 사전에 말이 없는 채로 서버가 내는 코드(T-130 뒤). 사전에 말이 생기면 그 줄을 지운다(지우지 않으면 이 시험이 실패한다).
+ *  - analysis·order: 0 — T-130 이 `rag_fail`·`no_symbols`(분석)와 `vol_block`·`vol_panic`(주문)에 문구를 넣었다.
+ *  - safetyError: 안전 상태 판독기↔DB 불일치 2개 — 문구가 데모에 없다(T-130 후속). 화면은 D4-A 예외로 「사유 코드 …」 를 유지한다.
+ *  - metricError: `run_failed` 1개 — 문구가 데모에 없다(T-130 후속). 화면은 「! 조회 실패 · 알 수 없는 사유」(데이터 상태에서만 코드 병기).
  */
 const KNOWN_UNMAPPED: Record<'analysis' | 'order' | 'safetyError' | 'metricError', Record<string, string>> = {
-  analysis: {
-    // 국내 장마감 분석이 degraded 로 끝날 때의 사유 — 지금 화면은 degraded 실행의 사유를 표시하지 않는다(A1 은 값, 최근 활동은 건수 부제).
-    // 옛 서버 전용 사전에 「참고 자료 조회 실패」·「대상 종목 없음」이 있었으나 화면에 보인 적이 없다 — T-130 후보 문구.
-    rag_fail: 'degraded 사유 — 화면 미표시(T-130 문구 후보 「참고 자료 조회 실패」)',
-    no_symbols: 'degraded 사유 — 화면 미표시(T-130 문구 후보 「대상 종목 없음」)',
-  },
-  order: {
-    // 변동성 가드가 주문을 막을 때 orders.blocked_by 에 남는 값(dry-run.ts markBlocked) — 확인 필요 「주문 차단」 부제에 「사유 코드 vol_*」 로 보인다.
-    vol_panic: '변동성 가드 패닉 차단 — 지금 「사유 코드 vol_panic」 표시(T-130)',
-    vol_block: '변동성 가드 차단 — 지금 「사유 코드 vol_block」 표시(T-130)',
-  },
+  analysis: {},
+  order: {},
   safetyError: {
-    // 판독기 값과 같은 요청의 DB 행이 다를 때(safety-state.ts crossCheck) — 확인 필요 「안전 상태」 부제에 「사유 코드 …」 로 보인다.
-    dry_run_mismatch: '실거래여부 판독기↔DB 불일치 — 지금 「사유 코드 dry_run_mismatch」 표시(T-130)',
-    kill_switch_mismatch: '모든거래차단 판독기↔DB 불일치 — 지금 「사유 코드 kill_switch_mismatch」 표시(T-130)',
+    // 판독기 값과 같은 요청의 DB 행이 다를 때(safety-state.ts crossCheck) — 확인 필요 「안전 상태」 부제에 「사유 코드 …」 로 보인다(D4-A 예외 유지).
+    dry_run_mismatch: '실거래여부 판독기↔DB 불일치 — 문구 없음(T-130 후속), 화면은 「사유 코드 dry_run_mismatch」 유지',
+    kill_switch_mismatch: '모든거래차단 판독기↔DB 불일치 — 문구 없음(T-130 후속), 화면은 「사유 코드 kill_switch_mismatch」 유지',
   },
-  // 지표 조회 실패 사유는 사전 자체가 없다 — 화면 `! 조회 실패 · {code}`(홈 MetricReason·분석 stateChip)에 영문 코드 그대로. 전부 T-130.
   metricError: {
-    all_sources_failed: '데이터 원천 7개를 하나도 읽지 못함(홈 A4)',
-    exit_switch_db_error: '청산 엔진 스위치 읽기 실패(홈 청산 줄 — 안전 상태 오류 사전의 같은 코드와 별개 자리)',
-    balances_unknown: '청산 엔진 마지막 평가가 잔고 조회 실패(홈 청산 가동 줄 「! 조회 실패 · balances_unknown」)',
-    db_error: 'DB 조회 실패 분류 코드(읽기 래퍼·원천 행)',
-    evaluated_zero: '장마감 분석 평가 종목 0 — 오류로 표시(A1)',
-    holdings_error: '보유 조회 실패(청산 구역)',
-    internal_error: '분류하지 못한 서버 예외(errorCodeOf)',
-    not_migrated: '표 없음(1146) 이 error 로 오는 자리(섹션 예외·연구 수 등 — prep 으로 바꾼 곳은 해당 없음)',
-    not_select: '읽기 전용 래퍼가 막은 문장(코드 결함 신호)',
-    run_failed: '실행 기록 status=failed(A1)',
-    timeout: '쿼리 상한·요청 예산 초과',
+    run_failed: '실행 기록 status=failed(A1) — 문구 없음(T-130 후속), 화면은 「! 조회 실패 · 알 수 없는 사유」(데이터 상태에서만 코드 병기)',
   },
 };
 
-const DICTS = { analysis: dict.ANALYSIS_REASON_KO, order: dict.ORDER_REASON_KO, safetyError: dict.SAFETY_ERROR_KO, metricError: {} as Readonly<Record<string, string>> };
+// 지표 조회 실패 사유의 사전 = 요청·섹션 조회 실패(4-1) ∪ 지표 자체 실패 칩(4-2)
+const DICTS = {
+  analysis: dict.ANALYSIS_REASON_KO, order: dict.ORDER_REASON_KO, safetyError: dict.SAFETY_ERROR_KO,
+  metricError: { ...dict.FETCH_ERROR_KO, ...dict.METRIC_ERROR_CHIP_KO } as Readonly<Record<string, string>>,
+};
 
 describe('단일 출처 — 화면 경로는 다시 내보내기만', () => {
   test('`@/components/ops/reason-copy` 의 내보내기 = 사전 모듈의 같은 객체(두 벌이 아니다)', () => {
-    for (const k of ['ORDER_REASON_KO', 'orderReasonText', 'ANALYSIS_REASON_KO', 'analysisReasonText', 'skipReasonCode', 'skipText', 'SAFETY_ERROR_KO', 'safetyErrorsText'] as const) {
+    // T-130: 새로 생긴 이름도 같은 이름으로 다시 내보낸다(사전 본문을 화면 쪽에 두지 않는다)
+    for (const k of [
+      'UNKNOWN_REASON', 'UNKNOWN_JOB', 'ORDER_REASON_KO', 'orderReasonText', 'ANALYSIS_REASON_KO', 'analysisReasonText', 'skipReasonCode', 'skipText',
+      'SAFETY_ERROR_KO', 'safetyErrorsText', 'FETCH_ERROR_KO', 'METRIC_ERROR_CHIP_KO', 'LOGIN_REQUIRED_CHIP', 'errorChipText', 'JOB_NAME_KO', 'jobNameText',
+      'EXCLUSION_KO', 'exclusionText', 'EXIT_KIND_LABEL', 'exitKindLabel', 'signalFate', 'skippedFate', 'blockedChipText',
+    ] as const) {
       expect(reasonCopy[k]).toBe(dict[k]);
     }
     expect(Object.keys(reasonCopy).sort()).toEqual(Object.keys(dict).sort());
@@ -178,6 +170,9 @@ describe('단일 출처 — 화면 경로는 다시 내보내기만', () => {
     const src = readFileSync(join(SRC, 'lib/ops/metrics/activity.ts'), 'utf8');
     expect(src).not.toMatch(/\bconst\s+REASON_KO\b/);   // 주석의 옛 이름 언급은 허용 — 사전 선언이 없어야 한다
     expect(src).toMatch(/from '@\/lib\/ops\/reason-dictionary'/);
+    // T-130 D8-A: 청산 이름표도 한 벌 — 서버 활동 모듈과 홈 확인 필요 모듈이 각자 갖지 않는다
+    expect(src).not.toMatch(/\bconst\s+EXIT_KIND_LABEL\b/);
+    expect(readFileSync(join(SRC, 'components/home/check-copy.ts'), 'utf8')).not.toMatch(/\bconst\s+EXIT_KIND_LABEL\b/);
   });
 });
 
@@ -200,9 +195,12 @@ describe('서버가 내는 사유 코드 ↔ 사전 키 (허용 목록 정확 �
     for (const c of Object.keys(KNOWN_UNMAPPED[d])) expect(c in DICTS[d]).toBe(false);   // 사전에 생기면 허용 목록에서 지운다
   });
 
-  test('metricError — 사전이 없으니 허용 목록 = 서버가 내는 코드 전부(새 코드가 생기면 위 시험이 알린다)', () => {
-    expect(Object.keys(DICTS.metricError)).toEqual([]);
-    expect(Object.keys(KNOWN_UNMAPPED.metricError).sort()).toEqual(EMITTED.metricError);
+  test('metricError — 서버가 내는 지표 코드 전부가 사전(4-1 ∪ 4-2)에 있다. 남은 것은 run_failed 하나', () => {
+    expect(EMITTED.metricError.filter((c) => !(c in DICTS.metricError))).toEqual(['run_failed']);
+    // T-130 이 문구를 넣은 코드가 실제로 사전에 있다(허용 목록에서 지운 것 + 사전에 들어간 것이 한 번 더 일치)
+    for (const c of ['balances_unknown', 'exit_switch_db_error', 'holdings_error', 'all_sources_failed', 'evaluated_zero', 'db_error', 'internal_error', 'not_migrated', 'not_select', 'timeout']) {
+      expect(DICTS.metricError[c]).toBeTruthy();
+    }
   });
 });
 
@@ -221,7 +219,12 @@ describe('서버 최근 활동 부제 = 화면이 그리는 글자 (사전 하�
   test('보이는 글자는 예전 화면과 같다(사전 문구 불변의 표본)', () => {
     expect(analysisItem(row('skipped', 'skip:overseas_disabled'))!.sub).toBe('건너뜀 · 해외 장마감 후 분석 꺼짐');
     expect(analysisItem(row('skipped', 'skip:us_session_open'))!.sub).toBe('건너뜀 · 미국 장 진행 중');
-    expect(analysisItem(row('failed', 'rag_fail'))!.sub).toBe('실행 실패 · 사유 코드 rag_fail');
-    expect(analysisItem(row('skipped', null))!.sub).toBe('건너뜀 · 사유 모름');
+    // T-130 4-3: 사유 없는 건너뜀 「사유 모름」 → 「사유 기록 없음」 · 모르는 코드 「사유 코드 x」 → 「알 수 없는 사유」 · rag_fail 에 문구
+    expect(analysisItem(row('failed', 'rag_fail'))!.sub).toBe('실행 실패 · 뉴스 참고 자료 조회 실패');
+    expect(analysisItem(row('failed', 'brand_new_code'))!.sub).toBe('실행 실패 · 알 수 없는 사유');
+    expect(analysisItem(row('skipped', null))!.sub).toBe('건너뜀 · 사유 기록 없음');
+    expect(analysisItem(row('skipped', 'skip'))!.sub).toBe('건너뜀 · 사유 기록 없음');
+    expect(analysisItem(row('skipped', 'skipped'))!.sub).toBe('건너뜀 · 사유 기록 없음');   // 사유 없는 건너뜀의 기본값 — 「사유 코드 skipped」 로 보이지 않는다
+    expect(analysisItem(row('skipped', 'skip:overseas_market_disabled'))!.sub).toBe('건너뜀 · 해외 시장 꺼짐(서버 설정)');
   });
 });

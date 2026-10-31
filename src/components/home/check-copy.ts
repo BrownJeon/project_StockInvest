@@ -3,16 +3,20 @@
  *
  * - 순서는 표 순서 고정(`CHECK_ORDER`) — 서버가 보낸 순서와 무관하게 다시 정렬한다.
  * - params 키는 `src/lib/ops/metrics/types.ts` `CheckItem` 주석(WP-A)과 같다. 값이 null 이면 그 빈칸이 든 구절을 뺀다(0 으로 채우지 않음).
- * - 데이터 이상(data_anomaly)은 최대 3줄 — 서버가 잘라 보낸 마지막 줄의 `more` 가 있으면 그 줄을 「외 {n}건」 으로 그린다.
+ * - 데이터 이상(data_anomaly)은 **한 줄로 묶는다**(T-130 D3-B) — 「데이터 이상·분석 실패 {n}건」 + 부제에 앞 2개 이름과 「외 {n-2}건」.
+ *   n = 서버가 보낸 항목 수(최대 3) + 마지막 항목 `params.more`(서버가 잘라낸 수). 운용현황 「데이터 이상·분석 실패」 칸 숫자와 같은 수다.
  * - 분석 결과 모름(analysis_unknown)은 시장별로 와도 한 줄로 합친다(데모 문구가 시장을 말하지 않음).
  * - 종목은 코드 표시(`formatSymbolShort` — 홈은 종목 이름 조회 `/api/ticker/*` 를 부르지 않는다, 가이드 §2.3).
- * - 청산 종류는 내부 이름 → 표시 이름(용어 정정표 §3.1): eod_loss_cut → 장마감 전 손절 등.
+ * - 청산 종류는 내부 이름 → 표시 이름(용어 정정표 §3.1·§12): eod_loss_cut → 장마감 전 손절 등. 이름표는 사전 한 벌(`reason-dictionary` EXIT_KIND_LABEL).
  */
 import type { CheckItem, CheckKind } from '@/lib/ops/metrics/types';
 import { formatSymbolShort } from '@/lib/symbols';
 import { fmtKstDateTime, fmtKstTime, kstDateKey, kstParts } from '@/components/ops/format';
 import type { CheckSeverity } from '@/components/ops/ui/CheckRow';
-import { orderReasonText, safetyErrorsText } from '@/components/ops/reason-copy';
+import { EXIT_KIND_LABEL, exitKindLabel, jobNameText, orderReasonText, safetyErrorsText } from '@/components/ops/reason-copy';
+
+// 청산 이름표는 사전(`reason-dictionary`)이 한 벌로 갖는다 — 기존 import 경로(ExitLogicSection·VerifyPanel)를 지키려고 여기서 다시 내보낸다.
+export { EXIT_KIND_LABEL, exitKindLabel };
 
 export const CHECK_ORDER: readonly CheckKind[] = [
   'safety_unknown', 'kill_switch_on', 'exit_live_orders', 'buy_blocked', 'awaiting_approval', 'order_rejected', 'order_blocked',
@@ -21,18 +25,6 @@ export const CHECK_ORDER: readonly CheckKind[] = [
 
 /** 안전 상태를 못 읽었을 때 확인 필요 첫 줄·빈 상태 대신 쓰는 문구(「지금 확인할 것 없음」 을 쓰지 않는다). */
 export const SAFETY_UNKNOWN_TITLE = '안전 상태를 불러오지 못해 확인할 수 없습니다';
-
-/** 청산 종류 표시 이름(용어 정정표 — 「EOD 손절」「하드손절」을 화면에 쓰지 않는다). */
-export const EXIT_KIND_LABEL: Readonly<Record<string, string>> = {
-  hard_stop: '손실한도 손절',
-  eod_loss_cut: '장마감 전 손절',
-  trailing_stop: '트레일링',
-  target_profit: '익절',
-};
-export function exitKindLabel(code: string | null | undefined): string {
-  if (!code) return '청산';
-  return EXIT_KIND_LABEL[code] ?? '청산';
-}
 
 export interface CheckLine { key: string; severity: CheckSeverity; glyph: string; title: string; sub: string | null; href: string }
 
@@ -51,34 +43,36 @@ function whenText(iso: string | null, nowMs: number): string | null {
 
 /**
  * 데이터 이상 1건(원천 신선도 · 실행 기록 잡) → 제목·부제. 홈 「확인 필요」 줄과 A4 칸 첫 줄이 같이 쓴다.
- * - 뉴스 0건 연속: 「국내 뉴스 0건 2일 연속」 / 「장마감 분석 입력 품질 저하(degraded)」 (데모 문구)
- * - 실행 기록 잡(source='job_run', label=job_id 원문): 장마감 분석 잡은 표시 이름으로, 그 밖은 job_id 그대로 + 상태 말
+ * - 뉴스 0건 연속: 「국내 뉴스 0건 2일 연속」 / 「장마감 분석 입력 품질 저하」 (데모 문구 — 영문 괄호 없음, T-130 4-4)
+ * - 실행 기록 잡(source='job_run', label=job_id 원문): 사전의 잡 이름(`jobNameText`, 모르는 잡은 「알 수 없는 작업」) + 상태 말
  * - 그 밖 원천: 서버 표시 이름(예: 「환율 USD/KRW」) + 상태 말(오래됨 · 조회 실패 · 기록 없음)
  */
-const JOB_NAME: Readonly<Record<string, string>> = {
-  'post-market-domestic': '국내 장마감 분석',
-  'post-market-overseas': '해외 장마감 분석',
-};
 const JOB_STATUS_WORD: Readonly<Record<string, string>> = {
-  failed: '실패', missing: '실행 기록 없음', degraded: '입력 품질 저하(degraded)', partial: '일부만 완료',
+  failed: '실패', missing: '실행 기록 없음', degraded: '입력 품질 저하', partial: '일부만 완료',
 };
 export const ANOMALY_STATE_WORD: Readonly<Record<string, string>> = {
-  stale: '오래됨', error: '조회 실패', unknown: '기록 없음', partial: '저하(degraded)', blocked: '차단', off_hours: '장외',
+  stale: '오래됨', error: '조회 실패', unknown: '기록 없음', partial: '일부 저하', blocked: '차단', off_hours: '장외',
 };
 export function anomalyText(a: {
   source?: string | null; label?: string | null; state?: string | null; streak?: number | null; jobId?: string | null; jobStatus?: string | null;
 }): { title: string; sub: string | null } {
   const label = a.label || '데이터 이상';
   if ((a.source === 'news_domestic' || a.source === 'news_overseas') && a.streak != null && a.streak >= 1) {
-    return { title: `${a.source === 'news_domestic' ? '국내' : '해외'} 뉴스 0건 ${a.streak}일 연속`, sub: '장마감 분석 입력 품질 저하(degraded)' };
+    return { title: `${a.source === 'news_domestic' ? '국내' : '해외'} 뉴스 0건 ${a.streak}일 연속`, sub: '장마감 분석 입력 품질 저하' };
   }
   if (a.source === 'job_run') {
     const id = a.jobId || label;
     const word = (a.jobStatus && JOB_STATUS_WORD[a.jobStatus]) || (a.state && ANOMALY_STATE_WORD[a.state]) || null;
-    return { title: [JOB_NAME[id] ?? id, word].filter(Boolean).join(' '), sub: null };
+    return { title: [jobNameText(id), word].filter(Boolean).join(' '), sub: null };
   }
   const word = a.state ? ANOMALY_STATE_WORD[a.state] : undefined;
   return { title: word ? `${label} ${word}` : label, sub: null };
+}
+
+/** 데이터 이상 항목 1건 → 제목·부제 (params 키는 `CheckItem` 주석 data_anomaly). */
+function anomalyOf(item: CheckItem): { title: string; sub: string | null } {
+  const p = item.params ?? {};
+  return anomalyText({ source: str(p.source), label: str(p.label), state: str(p.state), streak: num(p.streak), jobId: str(p.jobId), jobStatus: str(p.jobStatus) });
 }
 
 /** 한 항목 → 한 줄. 알 수 없는 kind 는 null(그리지 않음). */
@@ -104,7 +98,7 @@ export function checkLine(item: CheckItem, nowMs: number): CheckLine | null {
       const v = num(p.validatedEnabled), t = num(p.total);
       return { key: 'buy-blocked', severity: 'w', glyph: '⊘',
         title: v != null && t != null ? `신규 매수 차단 — 검증 통과 전략 ${v}/${t}` : '신규 매수 차단',
-        sub: '매수 시그널은 차단 기록으로만 남습니다', href: item.href };
+        sub: '매수 시그널은 검증 관문 차단 기록으로만 남습니다', href: item.href };
     }
     case 'awaiting_approval': {
       const d = num(p.domestic), o = num(p.overseas);
@@ -147,7 +141,7 @@ export function checkLine(item: CheckItem, nowMs: number): CheckLine | null {
         sub: join('주문은 기록만, 송신 없음', notifyText), href: item.href };
     }
     case 'data_anomaly': {
-      const t = anomalyText({ source: str(p.source), label: str(p.label), state: str(p.state), streak: num(p.streak), jobId: str(p.jobId), jobStatus: str(p.jobStatus) });
+      const t = anomalyOf(item);
       return { key: `anomaly-${str(p.source) ?? ''}-${str(p.jobId) ?? str(p.label) ?? ''}`, severity: 'w', glyph: '!', title: t.title, sub: t.sub, href: item.href };
     }
     case 'analysis_unknown':
@@ -158,7 +152,7 @@ export function checkLine(item: CheckItem, nowMs: number): CheckLine | null {
   }
 }
 
-/** 서버 목록 → 화면 줄(순서 고정 · 데이터 이상 최대 3줄 · 분석 모름 한 줄). */
+/** 서버 목록 → 화면 줄(순서 고정 · 데이터 이상은 묶음 한 줄 · 분석 모름 한 줄). */
 export function checkLines(items: readonly CheckItem[], nowMs: number): CheckLine[] {
   const rank = (k: CheckKind) => { const i = CHECK_ORDER.indexOf(k); return i < 0 ? CHECK_ORDER.length : i; };
   const sorted = items.map((it, i) => ({ it, i })).sort((a, b) => rank(a.it.kind) - rank(b.it.kind) || a.i - b.i).map((x) => x.it);
@@ -167,7 +161,7 @@ export function checkLines(items: readonly CheckItem[], nowMs: number): CheckLin
   let analysisUnknownDone = false;
   for (const it of sorted) {
     if (it.kind === 'data_anomaly') {
-      if (!anomaliesDone) out.push(...anomalyLines(sorted.filter((x) => x.kind === 'data_anomaly'), nowMs));
+      if (!anomaliesDone) out.push(...anomalyLines(sorted.filter((x) => x.kind === 'data_anomaly')));
       anomaliesDone = true;
       continue;
     }
@@ -181,15 +175,17 @@ export function checkLines(items: readonly CheckItem[], nowMs: number): CheckLin
   return out;
 }
 
-function anomalyLines(items: readonly CheckItem[], nowMs: number): CheckLine[] {
+/**
+ * 데이터 이상 → **묶음 한 줄**(T-130 D3-B). 머리 숫자 「N가지」 는 봐야 할 가짓수라 이상 여러 건을 한 가지로 센다 —
+ * 줄 제목의 건수는 운용현황 「데이터 이상·분석 실패」 칸의 숫자와 같다(서버가 항목을 최대 3개로 자르고 마지막 항목 `more` 에 잘린 수를 준다).
+ * 부제 = 앞 2개 이름 + 넘치면 「외 n건」. 건수가 늘어도 줄은 하나다(「외 n건」 단독 줄은 없다).
+ */
+function anomalyLines(items: readonly CheckItem[]): CheckLine[] {
   if (items.length === 0) return [];
-  const shown = items.slice(0, 3);
-  const extra = Math.max(0, items.length - 3) + (num(shown[shown.length - 1].params?.more) ?? 0);
-  const lines = shown.map((it) => checkLine(it, nowMs)).filter((x): x is CheckLine => x !== null);
-  if (extra > 0 && lines.length > 0) {
-    // 마지막 줄을 「외 {n}건」 으로 — 그 줄 자신 + 잘린 수
-    const last = lines[lines.length - 1];
-    lines[lines.length - 1] = { ...last, key: 'anomaly-more', title: `외 ${extra + 1}건`, sub: null };
-  }
-  return lines;
+  const total = items.length + (num(items[items.length - 1].params?.more) ?? 0);
+  const names = items.slice(0, 2).map((it) => anomalyOf(it).title).join(' · ');
+  return [{
+    key: 'anomaly-group', severity: 'w', glyph: '!', title: `데이터 이상·분석 실패 ${total}건`,
+    sub: total > 2 ? `${names} 외 ${total - 2}건` : names, href: items[0].href,
+  }];
 }

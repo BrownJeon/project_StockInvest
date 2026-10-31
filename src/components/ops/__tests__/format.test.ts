@@ -101,7 +101,12 @@ describe('B-3 상태 칩 문구(데모 C 절)', () => {
     expect(CHIP.zero).toBe('✓ 확인된 0');
     expect(CHIP.noIssue).toBe('✓ 이상 없음');
     expect(CHIP.unknown).toBe('◌ 미수집');
-    expect(CHIP.error('db_error')).toBe('! 조회 실패 · db_error');
+    // T-130 4-1·4-2: 코드 원문이 아니라 한국어 말(사전 errorChipText). 표 전체는 reason-dictionary-t130.test.ts
+    expect(CHIP.error('db_error')).toBe('! 조회 실패 · DB 오류');
+    expect(CHIP.error('http_503')).toBe('! 조회 실패 · 서버 오류 503');
+    expect(CHIP.error('balances_unknown')).toBe('! 잔고를 읽지 못함');
+    expect(CHIP.error('unauthorized')).toBe('! 로그인 필요');
+    expect(CHIP.error('totally_new')).toBe('! 조회 실패 · 알 수 없는 사유');
     expect(CHIP.stale('10-29 16:05')).toBe('오래됨 · 기준 10-29 16:05');
     expect(CHIP.fewer(8)).toBe('건수 적음 · 8건 (30건 미만)');
     expect(CHIP.blocked('검증 통과 전략 0')).toBe('⊘ 차단 · 검증 통과 전략 0');
@@ -174,20 +179,21 @@ describe('요청 시간 상한 (R-UI Minor ⑤ — 멈춘 요청이면 [다시 �
 });
 
 describe('사유 코드 → 말 (영문 분류코드·「휴장」 단정 금지)', () => {
-  test('주문 사유: 알려진 코드는 한글, 모르는 코드는 「사유 코드 x」, 없음은 null', () => {
-    expect(orderReasonText('kill_switch')).toBe('모든거래차단');
-    expect(orderReasonText('order_limit')).toBe('1회 주문 한도');
+  // T-130(4-6·D4-A): 문구는 승인된 데모 표, 모르는 코드는 영문 대신 「알 수 없는 사유」 (표 전체는 reason-dictionary-t130.test.ts)
+  test('주문 사유: 알려진 코드는 한글, 모르는 코드는 「알 수 없는 사유」, 없음은 null', () => {
+    expect(orderReasonText('kill_switch')).toBe('모든거래차단 ON');
+    expect(orderReasonText('order_limit')).toBe('1회 주문 한도 초과');
     expect(orderReasonText('validation_gate')).toBe('검증 관문');
     expect(orderReasonText('kis_rejected')).toBe('증권사 거부');
-    expect(orderReasonText('x_y')).toBe('사유 코드 x_y');
+    expect(orderReasonText('x_y')).toBe('알 수 없는 사유');
     expect(orderReasonText(null)).toBeNull();
     expect(orderReasonText('  ')).toBeNull();
   });
   test('건너뜀: 「휴장」 은 엔진이 휴장이라고 한 코드일 때만 · 모르는 코드 · 코드 없음', () => {
     expect(skipText('weekend')).toBe('건너뜀 · 주말');
     expect(skipText('no_new_session')).toBe('건너뜀 · 새 세션 없음');
-    expect(skipText('mystery')).toBe('건너뜀 · 사유 코드 mystery');
-    expect(skipText(null)).toBe('건너뜀 · 사유 모름');
+    expect(skipText('mystery')).toBe('건너뜀 · 알 수 없는 사유');
+    expect(skipText(null)).toBe('건너뜀 · 사유 기록 없음');
     for (const c of ['weekend', 'overseas_disabled', 'overseas_market_disabled', 'us_session_open', 'no_new_session', 'holidays_unknown', 'mystery', null]) {
       expect(skipText(c)).not.toContain('휴장 ·');
       expect(skipText(c)).not.toMatch(/· 휴장$/);
@@ -199,11 +205,12 @@ describe('사유 코드 → 말 (영문 분류코드·「휴장」 단정 금지
     expect(skipReasonCode({ skipReason: null, evaluated: { reason: 'skip:no_new_session' } })).toBe('no_new_session');
     expect(skipReasonCode({ skipReason: null, evaluated: { reason: 'us_session_open' } })).toBe('us_session_open');
     expect(skipReasonCode({ skipReason: null, evaluated: { reason: 'skip' } })).toBeNull();
+    expect(skipReasonCode({ skipReason: null, evaluated: { reason: 'skipped' } })).toBeNull();   // T-130 4-3: 사유 없는 건너뜀의 기본값은 코드가 아니다
     expect(skipReasonCode({ skipReason: null, evaluated: null })).toBeNull();
   });
   test('안전 상태 읽기 오류 코드', () => {
     expect(safetyErrorsText('db_unreachable, strategies_error')).toBe('DB 연결 실패 · 전략 목록 읽기 실패');
-    expect(safetyErrorsText('zzz')).toBe('사유 코드 zzz');
+    expect(safetyErrorsText('zzz')).toBe('사유 코드 zzz');   // D4-A 예외 — 안전 상태를 못 읽은 이유는 모르는 코드여도 숨기지 않는다
     expect(safetyErrorsText('')).toBeNull();
   });
 });

@@ -128,31 +128,53 @@ export async function patchSetting(url: string, body: unknown): Promise<SaveFail
 
 /**
  * `disabled`(T-108 Codex C2 high — Leader 승인): 안전 값을 못 읽은 동안 안전 토글을 잠근다. 잠긴 토글은 눌러도
- * onChange 를 부르지 않는다. disabled 가 없으면(정상 상태) 마크업·동작은 이전과 같다.
+ * onChange 를 부르지 않는다. disabled 가 없으면(정상 상태) 동작은 이전과 같다.
+ *
+ * T-130 WP1(D2-A, 데모 v1 승인) — 겉을 `div` 에서 **`<button type="button" role="switch">`** 로 바꿨다. 예전 div 는 tabIndex 가 없어
+ * 실거래여부·모든거래차단이 키보드로 닿지 않았다. 이제 Tab 으로 포커스되고 Space·Enter 는 버튼 기본 동작(click)으로 같은 onClick 을 탄다
+ * — 전환을 키 처리기에서 따로 하지 않는다(두 경로가 갈라지지 않게). 누르는 영역은 44×44, 그림(44×24·손잡이 20×20·색)은 안쪽 span 으로 그대로다.
+ * `margin: -10px 0` 으로 행 높이는 예전과 같다.
+ *  - **Enter 길게 누름(auto-repeat)만 막는다**(T-130 Reviewer F2): 네이티브 button 은 Enter 의 keypress 마다 click 이고 keypress 는 반복마다 나가므로,
+ *    포커스된 안전 스위치에서 Enter 를 누르고 있으면 전환·저장 요청(autoSave)이 반복된다(예전 div 는 키보드로 닿지 않아 없던 노출).
+ *    반복 keydown 만 기본 동작을 취소해 keypress→click 을 없앤다. 첫 Enter·Space 는 건드리지 않는다. Space 반복은 막지 않는다 — Space 는 keyup 에서
+ *    한 번만 click 이라(누르고 있어도 1회) 반복 전환이 생기지 않고, 반복 keydown 을 취소하면 엔진에 따라 누름 상태 추적에 끼어들 수 있어 얻는 것 없이 위험만 는다.
+ *  - 잠김은 예전처럼 `aria-disabled` + onClick 무시다. **`disabled` 속성은 쓰지 않는다** — 쓰면 포커스·읽기에서 빠져 잠긴 이유를 못 듣는다.
+ *    안전 스위치 3개의 onChange 안 `if (!safety) return` 이중 확인은 호출부에 그대로 있다.
+ *  - 행 전체를 누르게 하지 않는다(스크롤 중 실거래여부·모든거래차단 오조작 방지 — 데모 D2-A). 이 버튼 안에 다른 버튼·입력칸을 넣지 않는다.
+ *  - `label` = 행 제목 그대로(스크린리더가 「실거래여부, 스위치, 꺼짐」처럼 읽는다). 포커스 링은 브라우저 기본 `:focus-visible` 을 지우지 않는다.
  */
-function Toggle({ checked, onChange, danger, disabled }: { checked: boolean; onChange: (v: boolean) => void; danger?: boolean; disabled?: boolean }) {
+function Toggle({ checked, onChange, danger, disabled, label }: { checked: boolean; onChange: (v: boolean) => void; danger?: boolean; disabled?: boolean; label: string }) {
   return (
-    <div
+    <button
+      type="button"
       role="switch"
       aria-checked={checked}
       aria-disabled={disabled ? true : undefined}
+      aria-label={label}
       onClick={() => { if (!disabled) onChange(!checked); }}
+      onKeyDown={e => { if (e.key === 'Enter' && e.repeat) e.preventDefault(); }}
       style={{
-        position: 'relative', width: 44, height: 24, borderRadius: 12,
-        cursor: disabled ? 'not-allowed' : 'pointer', flexShrink: 0,
+        width: 44, height: 44, margin: '-10px 0', padding: 0,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: 'none', border: 0, borderRadius: 8, flexShrink: 0,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}
+    >
+      <span style={{
+        position: 'relative', display: 'block', width: 44, height: 24, borderRadius: 12,
         background: checked
           ? (danger ? 'var(--down)' : 'var(--ok)')
           : 'var(--bg3)',
         transition: 'background .2s',
         ...(disabled ? { opacity: 0.45 } : {}),
-      }}
-    >
-      <div style={{
-        position: 'absolute', top: 2, left: checked ? 22 : 2,
-        width: 20, height: 20, borderRadius: '50%', background: '#fff',
-        transition: 'left .2s',
-      }} />
-    </div>
+      }}>
+        <span style={{
+          position: 'absolute', top: 2, left: checked ? 22 : 2,
+          width: 20, height: 20, borderRadius: '50%', background: '#fff',
+          transition: 'left .2s',
+        }} />
+      </span>
+    </button>
   );
 }
 
@@ -176,7 +198,7 @@ export function PostMarketOverseasRow({ enabled, onToggle }: { enabled: boolean;
         <span style={{ fontSize: 12, fontWeight: 600, color: enabled ? 'var(--ok)' : 'var(--muted)' }}>
           {enabled ? 'ON' : 'OFF'}
         </span>
-        <Toggle checked={enabled} onChange={onToggle} />
+        <Toggle checked={enabled} onChange={onToggle} label="해외 장마감 후 분석 (미국 시나리오)" />
       </div>
     </div>
   );
@@ -418,7 +440,7 @@ export function SettingsPage() {
               onClick={handleSave}
               disabled={saveState === 'saving'}
               style={{
-                flexShrink: 0,
+                flexShrink: 0, minHeight: 44,
                 padding: '6px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700,
                 background: 'var(--accent)', color: '#000', border: 'none', cursor: 'pointer',
                 opacity: saveState === 'saving' ? 0.6 : 1,
@@ -516,6 +538,7 @@ export function SettingsPage() {
             <Toggle
               checked={hybridMode}
               onChange={toggleHybridMode}
+              label="승인 후 진입 감시 (하이브리드)"
             />
           </div>
         </div>
@@ -561,6 +584,7 @@ export function SettingsPage() {
             </span>
             <Toggle
               checked={liveTrading}
+              label={LIVE_TRADING_LABEL}
               disabled={!safety}
               onChange={v => {
                 if (!safety) return;   // 값을 못 읽은 동안은 저장하지 않는다(잠금 이중 확인)
@@ -579,7 +603,7 @@ export function SettingsPage() {
           <div>
             <div style={{ fontSize: 14 }}>모든거래차단</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-              {!safety ? SAFETY_UNREAD : safety.killSwitch ? 'ON — 모든 주문 차단' : 'OFF — 차단 안 함'}
+              {!safety ? SAFETY_UNREAD : safety.killSwitch ? 'ON — 모든 주문 차단' : 'OFF — 이 스위치로는 막지 않음'}
             </div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
               ON 이면 매수·매도·청산 모두 송신하지 않습니다
@@ -591,6 +615,7 @@ export function SettingsPage() {
             </span>
             <Toggle
               checked={safety?.killSwitch ?? false}
+              label="모든거래차단"
               disabled={!safety}
               onChange={v => {
                 if (!safety) return;   // 값을 못 읽은 동안은 저장하지 않는다(잠금 이중 확인)
@@ -613,7 +638,7 @@ export function SettingsPage() {
                 {!safety
                   ? SAFETY_UNREAD
                   : safety.exitEngineEnabled
-                  ? `ON — 손실한도 손절·장마감 전 손절·트레일링·익절 자동 매도 동작 중${safety?.exitHardStopEnabled === false ? ' (손실한도 손절만 개별 OFF)' : ''}`
+                  ? `ON — 손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 자동 매도 동작 중${safety?.exitHardStopEnabled === false ? ' (손실한도 손절만 개별 OFF)' : ''}`
                   : 'OFF — 자동 손절·익절 매도 주문을 내지 않습니다'}
               </div>
             </div>
@@ -623,6 +648,7 @@ export function SettingsPage() {
               </span>
               <Toggle
                 checked={safety?.exitEngineEnabled ?? false}
+                label="자동 청산 엔진"
                 disabled={!safety}
                 onChange={v => {
                   if (!safety) return;   // 값을 못 읽은 동안은 저장하지 않는다(잠금 이중 확인)
@@ -685,33 +711,25 @@ export function SettingsPage() {
           }}
         />
 
-        {/* 1회 주문 최대 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div>
-            <div style={{ fontSize: 14 }}>1회 주문 최대 (%)</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>포트폴리오 평가총액 × pct%. 0 = 무제한</div>
-          </div>
-          <LimitInput
-            value={safety?.orderMaxPct ?? 0}
-            onChange={v => update({ orderMaxPct: v })}
-            allowZero
-            suffix="%"
-          />
-        </div>
+        {/* 1회 주문 최대 — T-130 D1-A: 행 전체가 버튼(값 컴포넌트가 행을 함께 그린다), 저장은 예전처럼 저장 바 [저장] */}
+        <LimitInput
+          title="1회 주문 최대 (%)"
+          sub="포트폴리오 평가총액 × pct%. 0 = 무제한"
+          value={safety?.orderMaxPct ?? 0}
+          onChange={v => update({ orderMaxPct: v })}
+          allowZero
+          suffix="%"
+        />
 
         {/* 일일 누적 최대 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div>
-            <div style={{ fontSize: 14 }}>일일 누적 최대 (%)</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>포트폴리오 평가총액 × pct%. 오늘 0시~자정 누적 상한. 0 = 무제한</div>
-          </div>
-          <LimitInput
-            value={safety?.dailyOrderMaxPct ?? 0}
-            onChange={v => update({ dailyOrderMaxPct: v })}
-            allowZero
-            suffix="%"
-          />
-        </div>
+        <LimitInput
+          title="일일 누적 최대 (%)"
+          sub="포트폴리오 평가총액 × pct%. 오늘 0시~자정 누적 상한. 0 = 무제한"
+          value={safety?.dailyOrderMaxPct ?? 0}
+          onChange={v => update({ dailyOrderMaxPct: v })}
+          allowZero
+          suffix="%"
+        />
 
       </div>
 
@@ -795,48 +813,47 @@ export function SettingsPage() {
             <Toggle
               checked={safety?.volGuardEnabled ?? false}
               onChange={v => update({ volGuardEnabled: v })}
+              label="변동폭 가드 활성화"
             />
           </div>
         </div>
 
-        {/* Window */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)', opacity: safety?.volGuardEnabled ? 1 : 0.4 }}>
-          <div>
-            <div style={{ fontSize: 14 }}>비교 윈도우</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>이 시간 내 변동률 기준 (분)</div>
-          </div>
-          <MinutesInput
-            value={safety?.volGuardWindowMin ?? 60}
-            onChange={v => update({ volGuardWindowMin: v })}
-          />
-        </div>
+        {/* Window — 가드 OFF 면 흐리게(예전처럼 흐려도 편집은 된다) */}
+        <MinutesInput
+          title="비교 윈도우"
+          sub="이 시간 내 변동률 기준 (분)"
+          dim={!safety?.volGuardEnabled}
+          value={safety?.volGuardWindowMin ?? 60}
+          onChange={v => update({ volGuardWindowMin: v })}
+        />
 
         {/* Warn */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)', opacity: safety?.volGuardEnabled ? 1 : 0.4 }}>
-          <div>
-            <div style={{ fontSize: 14 }}>경고 임계치</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>로그만 기록 (주문 차단 없음)</div>
-          </div>
-          <PctInput value={safety?.volGuardWarnPct ?? -2} onChange={v => update({ volGuardWarnPct: v })} />
-        </div>
+        <PctInput
+          title="경고 임계치"
+          sub="로그만 기록 (주문 차단 없음)"
+          dim={!safety?.volGuardEnabled}
+          value={safety?.volGuardWarnPct ?? -2}
+          onChange={v => update({ volGuardWarnPct: v })}
+        />
 
         {/* Block */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)', opacity: safety?.volGuardEnabled ? 1 : 0.4 }}>
-          <div>
-            <div style={{ fontSize: 14 }}>차단 임계치</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>신규 주문 차단 + Slack 경고</div>
-          </div>
-          <PctInput value={safety?.volGuardBlockPct ?? -4} onChange={v => update({ volGuardBlockPct: v })} />
-        </div>
+        <PctInput
+          title="차단 임계치"
+          sub="신규 주문 차단 + Slack 경고"
+          dim={!safety?.volGuardEnabled}
+          value={safety?.volGuardBlockPct ?? -4}
+          onChange={v => update({ volGuardBlockPct: v })}
+        />
 
-        {/* Panic */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', opacity: safety?.volGuardEnabled ? 1 : 0.4 }}>
-          <div>
-            <div style={{ fontSize: 14 }}>패닉 임계치</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>패닉 청산 권고 + Slack 긴급 알림</div>
-          </div>
-          <PctInput value={safety?.volGuardPanicPct ?? -7} onChange={v => update({ volGuardPanicPct: v })} />
-        </div>
+        {/* Panic — 카드 마지막 행(아래 줄 없음, 예전 그대로) */}
+        <PctInput
+          title="패닉 임계치"
+          sub="패닉 청산 권고 + Slack 긴급 알림"
+          dim={!safety?.volGuardEnabled}
+          last
+          value={safety?.volGuardPanicPct ?? -7}
+          onChange={v => update({ volGuardPanicPct: v })}
+        />
       </div>
 
       {/* Strategy settings */}
@@ -860,6 +877,7 @@ export function SettingsPage() {
             <Toggle
               checked={safety?.universeEnabled ?? false}
               onChange={v => update({ universeEnabled: v })}
+              label="동적 종목 선별 (Universe)"
             />
           </div>
         </div>
@@ -879,25 +897,23 @@ export function SettingsPage() {
             <Toggle
               checked={safety?.analystEnabled ?? false}
               onChange={v => update({ analystEnabled: v })}
+              label="분석가 (Analyst)"
             />
           </div>
         </div>
 
-        {/* Global interval — applies to all strategies */}
+        {/* Global interval — applies to all strategies (행 여백 12px 16px — 예전 그대로) */}
         {strategies.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-            <div>
-              <div style={{ fontSize: 14 }}>평가 주기</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>모든 전략에 동일 적용</div>
-            </div>
-            <MinutesInput
-              value={strategies[0].backtestIntervalM}
-              onChange={v => {
-                setStrategies(prev => prev.map(s => ({ ...s, backtestIntervalM: v })));
-                setIsDirty(true);
-              }}
-            />
-          </div>
+          <MinutesInput
+            title="평가 주기"
+            sub="모든 전략에 동일 적용"
+            padding="12px 16px"
+            value={strategies[0].backtestIntervalM}
+            onChange={v => {
+              setStrategies(prev => prev.map(s => ({ ...s, backtestIntervalM: v })));
+              setIsDirty(true);
+            }}
+          />
         )}
 
       </div>
@@ -928,28 +944,28 @@ export function SettingsPage() {
             <div style={{ fontSize: 14 }}>자동 제출 알람</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>전략 엔진이 시그널을 자동 주문 체결 시 발송</div>
           </div>
-          <Toggle checked={notifySignal.autoSubmit} onChange={v => { setNotifySignal(s => ({ ...s, autoSubmit: v })); setIsDirty(true); }} />
+          <Toggle checked={notifySignal.autoSubmit} label="자동 제출 알람" onChange={v => { setNotifySignal(s => ({ ...s, autoSubmit: v })); setIsDirty(true); }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
             <div style={{ fontSize: 14 }}>승인 요청 알람</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>수동 승인 대기 시그널 생성 시 발송</div>
           </div>
-          <Toggle checked={notifySignal.pending} onChange={v => { setNotifySignal(s => ({ ...s, pending: v })); setIsDirty(true); }} />
+          <Toggle checked={notifySignal.pending} label="승인 요청 알람" onChange={v => { setNotifySignal(s => ({ ...s, pending: v })); setIsDirty(true); }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
             <div style={{ fontSize: 14 }}>진입 감시 발동 알람</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>진입 구간 도달 → 자동 주문 실행 시 발송</div>
           </div>
-          <Toggle checked={notifySignal.entry} onChange={v => { setNotifySignal(s => ({ ...s, entry: v })); setIsDirty(true); }} />
+          <Toggle checked={notifySignal.entry} label="진입 감시 발동 알람" onChange={v => { setNotifySignal(s => ({ ...s, entry: v })); setIsDirty(true); }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
           <div>
             <div style={{ fontSize: 14 }}>수동 시나리오 등록 알람</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>내 시나리오 만들기 등록 완료 시 발송</div>
           </div>
-          <Toggle checked={notifySignal.manual} onChange={v => { setNotifySignal(s => ({ ...s, manual: v })); setIsDirty(true); }} />
+          <Toggle checked={notifySignal.manual} label="수동 시나리오 등록 알람" onChange={v => { setNotifySignal(s => ({ ...s, manual: v })); setIsDirty(true); }} />
         </div>
       </div>
 
@@ -963,14 +979,16 @@ export function SettingsPage() {
                 <div style={{ fontSize: 14 }}>리포트 수신 활성화</div>
                 <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>분석 기간 거래·잔액 변동 자동 발송</div>
               </div>
-              <Toggle checked={report.enabled} onChange={v => updateReport({ enabled: v })} />
+              <Toggle checked={report.enabled} label="리포트 수신 활성화" onChange={v => updateReport({ enabled: v })} />
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+            {/* T-130 WP1 — 선택칸·발송 방식 버튼 높이 44px. 행 여백을 6px 16px 로 줄여 행 높이(약 56px)는 그대로 둔다 */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ fontSize: 14 }}>수신 채널</div>
               <select
+                aria-label="수신 채널"
                 value={report.channel}
                 onChange={e => updateReport({ channel: e.target.value as ReportData['channel'] })}
-                style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 14 }}
+                style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, minHeight: 44, padding: '0 10px', color: 'var(--text)', fontSize: 14 }}
               >
                 <option value="slack">Slack</option>
                 <option value="telegram">Telegram</option>
@@ -978,19 +996,22 @@ export function SettingsPage() {
                 <option value="none">없음</option>
               </select>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px', borderBottom: '1px solid var(--border)' }}>
               <div style={{ fontSize: 14 }}>발송 방식</div>
-              <div style={{ display: 'flex', gap: 4, background: 'var(--bg3)', borderRadius: 8, padding: 2 }}>
+              <div role="group" aria-label="발송 방식" style={{ display: 'flex', gap: 4, background: 'var(--bg3)', borderRadius: 8, padding: 2 }}>
                 {(['rolling', 'fixed'] as const).map(m => {
                   const active = report.mode === m;
                   return (
                     <button
                       key={m}
+                      aria-pressed={active}
                       onClick={() => updateReport({ mode: m })}
                       style={{
                         fontSize: 13, padding: '4px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                        minHeight: 44, minWidth: 52,
                         background: active ? 'var(--accent)' : 'transparent',
-                        color: active ? '#fff' : 'var(--text)',
+                        // T-130 — 주황 바탕 위 흰 글자 대비 약 2.1:1 → 검정 약 10:1 (데모 v1 제안 칸과 같음)
+                        color: active ? '#000' : 'var(--text)',
                         fontWeight: active ? 700 : 400,
                       }}
                     >
@@ -1002,12 +1023,13 @@ export function SettingsPage() {
             </div>
 
             {report.mode === 'rolling' ? (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px' }}>
                 <div style={{ fontSize: 14 }}>발송 간격</div>
                 <select
+                  aria-label="발송 간격"
                   value={report.intervalMin}
                   onChange={e => updateReport({ intervalMin: Number(e.target.value) })}
-                  style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 14 }}
+                  style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, minHeight: 44, padding: '0 10px', color: 'var(--text)', fontSize: 14 }}
                 >
                   <option value={60}>1시간</option>
                   <option value={180}>3시간</option>
@@ -1057,46 +1079,146 @@ export function SettingsPage() {
   );
 }
 
-function MinutesInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+/**
+ * T-130 WP1(D1-A, 데모 v1 승인) — 값 행 7개(1회 주문 최대·일일 누적 최대·비교 윈도우·경고/차단/패닉 임계치·평가 주기)의 행 모양.
+ * 예전에는 오른쪽 값 글자(「미적용 ›」「60분 ›」 등, 높이 약 18px)만 누를 수 있었다. 이제 값 컴포넌트가 **행 전체를 함께 그리고**
+ * 편집 전 행 전체가 버튼(높이 56px 이상)이다. 보이는 글자·색·「›」·여백·아래 줄·흐림은 예전 행 그대로.
+ */
+interface ValueRowLayout {
+  title: string;
+  sub: string;
+  /** 행 여백 — 기본 '14px 16px'(평가 주기만 '12px 16px', 예전 행 그대로) */
+  padding?: string;
+  /** 카드 마지막 행이면 아래 줄을 긋지 않는다(예전 패닉 임계치 행 그대로) */
+  last?: boolean;
+  /** 변동폭 가드 OFF 때 흐리게(opacity .4) — 예전처럼 흐려도 편집은 된다 */
+  dim?: boolean;
+}
+
+function valueRowBox({ padding = '14px 16px', last, dim }: Pick<ValueRowLayout, 'padding' | 'last' | 'dim'>): React.CSSProperties {
+  return {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+    width: '100%', minHeight: 56, padding,
+    ...(last ? {} : { borderBottom: '1px solid var(--border)' }),
+    ...(dim ? { opacity: 0.4 } : {}),
+  };
+}
+
+/**
+ * 값 행 하나 — 편집 상태(editing·draft)는 행마다 자기 것을 가진다(예전 값 컴포넌트와 같다).
+ *  - 편집 전: 행 전체 `<button type="button">`. 이름 = 「{제목}, 현재 {값}, 바꾸기」(값 글자는 이름에 들어 있어 aria-hidden).
+ *  - 편집 중: 같은 자리를 **div 행**으로 바꾸고 오른쪽 값 자리에 입력칸(높이 44px)을 연다 — 버튼 안에 입력칸을 넣지 않는다.
+ *  - 확정 = Enter·바깥 누르기(blur), 취소 = Esc — 예전과 같다. 확정 값은 `parse` 가 받아들일 때만 onChange(상태에만 반영, 저장은 저장 바 [저장]).
+ *  - 닫은 뒤 포커스를 그 행 버튼으로 돌린다(키보드 사용자가 제자리에서 이어 가게). 단 바깥 누르기로 포커스가 **다른 컨트롤로 이미 옮겨 갔으면**
+ *    (blur 의 relatedTarget 있음) 돌리지 않는다 — 사용자가 누른 검색칸·다른 행을 빼앗지 않는다. 돌릴 때 `preventScroll` — 편집 중 스크롤했다면
+ *    화면을 그 행으로 되감지 않는다.
+ *  - `open` 은 한 번 닫힌 편집에 뒤늦게 오는 blur(입력칸이 빠질 때 브라우저가 보내는 경우)가 다시 확정하지 않게 막는다 — Esc 로 취소한 값이
+ *    blur 로 저장되거나, Enter 확정이 두 번 불리는 일이 없다.
+ */
+function ValueEditor({ title, sub, padding, last, dim, value, display, color, inputMode, parse, onChange }: ValueRowLayout & {
+  value: number;
+  /** 행에 보이는 값 글자(예 「미적용」「60분」「-2%」) */
+  display: string;
+  color: string;
+  /** PctInput 은 지정하지 않는다 — 안드로이드 숫자 자판에 `-` 가 없어 음수를 못 넣을 수 있다 */
+  inputMode?: 'decimal';
+  /** 입력 글자 → 받아들일 값, 범위 밖·숫자 아님이면 null (값 컴포넌트마다 예전 검증 그대로) */
+  parse: (draft: string) => number | null;
+  onChange: (v: number) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft]     = useState('');
+  const rowRef  = useRef<HTMLButtonElement>(null);
+  const open    = useRef(false);
+  const refocus = useRef(false);
 
-  const start = () => { setDraft(String(value)); setEditing(true); };
-  const commit = () => {
-    const n = Number(draft);
-    if (!isNaN(n) && n >= 1 && n <= 10080) onChange(n);
+  useEffect(() => {
+    if (!editing && refocus.current) {
+      refocus.current = false;
+      rowRef.current?.focus({ preventScroll: true });
+    }
+  }, [editing]);
+
+  const start = () => { open.current = true; setDraft(String(value)); setEditing(true); };
+  const close = (save: boolean, backToRow: boolean) => {
+    if (!open.current) return;
+    open.current = false;
+    if (save) {
+      const n = parse(draft);
+      if (n !== null) onChange(n);
+    }
+    refocus.current = backToRow;
     setEditing(false);
   };
 
+  const box = valueRowBox({ padding, last, dim });
+  const titleBlock = (
+    <span style={{ minWidth: 0, flex: 1 }}>
+      <span style={{ display: 'block', fontSize: 14 }}>{title}</span>
+      <span style={{ display: 'block', fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{sub}</span>
+    </span>
+  );
+
   if (editing) {
     return (
-      <input
-        autoFocus
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-        style={{
-          width: 72, textAlign: 'right', fontSize: 14, fontWeight: 600,
-          background: 'var(--bg3)', border: '1px solid var(--accent)',
-          borderRadius: 8, padding: '4px 8px', color: 'var(--text)',
-          outline: 'none',
-        }}
-      />
+      <div style={box}>
+        {titleBlock}
+        <input
+          autoFocus
+          aria-label={title}
+          inputMode={inputMode}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={e => close(true, e.relatedTarget === null)}
+          onKeyDown={e => {
+            // T-130 Reviewer F1 — Enter keydown 의 기본 동작을 **먼저** 취소한다. 안 그러면 close 가 렌더·effect 로 포커스를 행 버튼에
+            // 옮긴 뒤 아직 안 나간 keypress(Enter)가 그 버튼으로 가서 click → 편집 칸이 곧바로 다시 열린다(Chromium 실재현).
+            // 다른 키(숫자·`-`·Backspace·Tab)는 취소하지 않는다 — 입력과 Tab 이동은 그대로.
+            if (e.key === 'Enter') { e.preventDefault(); close(true, true); }
+            if (e.key === 'Escape') close(false, true);
+          }}
+          style={{
+            width: 96, minHeight: 44, flexShrink: 0, textAlign: 'right', fontSize: 14, fontWeight: 600,
+            background: 'var(--bg3)', border: '1px solid var(--accent)',
+            borderRadius: 8, padding: '4px 8px', color: 'var(--text)',
+            outline: 'none',
+          }}
+        />
+      </div>
     );
   }
 
   return (
     <button
+      type="button"
+      ref={rowRef}
       onClick={start}
-      style={{
-        fontSize: 14, fontWeight: 600, color: 'var(--accent)',
-        background: 'none', border: 'none', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', gap: 4,
-      }}
+      aria-label={`${title}, 현재 ${display}, 바꾸기`}
+      style={{ ...box, textAlign: 'left', cursor: 'pointer' }}
     >
-      {value}분 <span style={{ color: 'var(--muted)', fontSize: 12 }}>›</span>
+      {titleBlock}
+      <span aria-hidden style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: 14, fontWeight: 600, color }}>
+        {display} <span style={{ color: 'var(--muted)', fontSize: 12 }}>›</span>
+      </span>
     </button>
+  );
+}
+
+/** 분 값 행(비교 윈도우·평가 주기) — 보이는 값 `{n}분`(강조색), 받아들이는 값 1~10080(예전 그대로). */
+function MinutesInput({ value, onChange, ...row }: ValueRowLayout & { value: number; onChange: (v: number) => void }) {
+  return (
+    <ValueEditor
+      {...row}
+      value={value}
+      display={`${value}분`}
+      color="var(--accent)"
+      inputMode="decimal"
+      parse={draft => {
+        const n = Number(draft);
+        return !isNaN(n) && n >= 1 && n <= 10080 ? n : null;
+      }}
+      onChange={onChange}
+    />
   );
 }
 
@@ -1169,21 +1291,25 @@ function SymbolEditor({ symbols, onChange, label = '차단 심볼', chipColor = 
     <div style={{ padding: '12px 16px' }}>
       <div style={{ fontSize: 14, marginBottom: 8 }}>{label}</div>
 
-      {/* Selected chips */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+      {/* Selected chips — T-130 WP1: 칩 높이 36px, × 누르는 영역 44×44(margin -4px 로 칩 높이 안에 맞춤) */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
         {symbols.length === 0 && (
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>등록된 차단 심볼 없음</span>
         )}
         {symbols.map(s => (
           <span key={s} style={{
             display: 'flex', alignItems: 'center', gap: 4,
-            fontSize: 12, padding: '3px 10px', borderRadius: 10,
+            fontSize: 12, minHeight: 36, padding: '0 0 0 10px', borderRadius: 10,
             background: chipColor, border: `1px solid ${chipBorder}`, color: 'var(--text)',
           }}>
             {display(s)}
             <button
               onClick={() => toggle(s)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, lineHeight: 1, padding: 0 }}
+              aria-label={`${display(s)} 빼기`}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, lineHeight: 1, padding: 0,
+                width: 44, height: 44, margin: '-4px 0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 10,
+              }}
             >×</button>
           </span>
         ))}
@@ -1192,13 +1318,14 @@ function SymbolEditor({ symbols, onChange, label = '차단 심볼', chipColor = 
       {/* Search input */}
       <input
         ref={inputRef}
+        aria-label={`${label} 검색`}
         value={query}
         onChange={e => setQuery(e.target.value)}
         onFocus={() => { positionDropdown(); setFocused(true); }}
         onBlur={() => setTimeout(() => setFocused(false), 150)}
         placeholder={loadingList ? '종목 목록 불러오는 중…' : '종목명 또는 코드로 검색'}
         style={{
-          width: '100%', fontSize: 13, padding: '7px 12px',
+          width: '100%', minHeight: 44, fontSize: 14, padding: '7px 12px',
           background: 'var(--bg3)', border: '1px solid var(--border2)',
           borderRadius: 8, color: 'var(--text)', outline: 'none',
         }}
@@ -1236,92 +1363,46 @@ function SymbolEditor({ symbols, onChange, label = '차단 심볼', chipColor = 
   );
 }
 
-function LimitInput({ value, onChange, allowZero, suffix }: { value: number; onChange: (v: number) => void; allowZero?: boolean; suffix?: string }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft]     = useState('');
-
-  const start = () => { setDraft(String(value)); setEditing(true); };
-  const commit = () => {
-    const n = Number(draft.replace(/,/g, ''));
-    if (!isNaN(n) && (allowZero ? n >= 0 : n > 0)) onChange(n);
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-        style={{
-          width: 100, textAlign: 'right', fontSize: 14, fontWeight: 600,
-          background: 'var(--bg3)', border: '1px solid var(--accent)',
-          borderRadius: 8, padding: '4px 8px', color: 'var(--text)',
-          outline: 'none',
-        }}
-      />
-    );
-  }
-
+/**
+ * 한도 값 행(1회 주문 최대·일일 누적 최대) — 보이는 값: 0 이고 allowZero 면 `미적용`(%)·`무제한`, 아니면 `{n}{suffix}`·`₩{n}`(강조색).
+ * 받아들이는 값: 쉼표를 지운 숫자, allowZero 면 0 이상·아니면 0 초과(예전 그대로).
+ */
+function LimitInput({ value, onChange, allowZero, suffix, ...row }: ValueRowLayout & { value: number; onChange: (v: number) => void; allowZero?: boolean; suffix?: string }) {
   return (
-    <button
-      onClick={start}
-      style={{
-        fontSize: 14, fontWeight: 600, color: 'var(--accent)',
-        background: 'none', border: 'none', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', gap: 4,
-      }}
-    >
-      {allowZero && value === 0
+    <ValueEditor
+      {...row}
+      value={value}
+      display={allowZero && value === 0
         ? (suffix === '%' ? '미적용' : '무제한')
         : suffix ? `${value}${suffix}` : `₩${fmtNum(value)}`}
-      <span style={{ color: 'var(--muted)', fontSize: 12 }}>›</span>
-    </button>
+      color="var(--accent)"
+      inputMode="decimal"
+      parse={draft => {
+        const n = Number(draft.replace(/,/g, ''));
+        return !isNaN(n) && (allowZero ? n >= 0 : n > 0) ? n : null;
+      }}
+      onChange={onChange}
+    />
   );
 }
 
-function PctInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft]     = useState('');
-
-  const start = () => { setDraft(String(value)); setEditing(true); };
-  const commit = () => {
-    const n = Number(draft);
-    if (!isNaN(n) && n <= 0 && n >= -100) onChange(n);
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-        style={{
-          width: 72, textAlign: 'right', fontSize: 14, fontWeight: 600,
-          background: 'var(--bg3)', border: '1px solid var(--accent)',
-          borderRadius: 8, padding: '4px 8px', color: 'var(--text)',
-          outline: 'none',
-        }}
-      />
-    );
-  }
-
+/**
+ * 변동폭 임계치 행(경고·차단·패닉) — 보이는 값 `{n}%`(하락색), 받아들이는 값 −100~0(예전 그대로).
+ * `inputMode` 를 지정하지 않는다 — 음수 `-` 입력을 막지 않게(가이드 T-130 §3(b)).
+ */
+function PctInput({ value, onChange, ...row }: ValueRowLayout & { value: number; onChange: (v: number) => void }) {
   return (
-    <button
-      onClick={start}
-      style={{
-        fontSize: 14, fontWeight: 600, color: 'var(--down)',
-        background: 'none', border: 'none', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', gap: 4,
+    <ValueEditor
+      {...row}
+      value={value}
+      display={`${value}%`}
+      color="var(--down)"
+      parse={draft => {
+        const n = Number(draft);
+        return !isNaN(n) && n <= 0 && n >= -100 ? n : null;
       }}
-    >
-      {value}% <span style={{ color: 'var(--muted)', fontSize: 12 }}>›</span>
-    </button>
+      onChange={onChange}
+    />
   );
 }
 

@@ -10,7 +10,7 @@
  */
 import { VALIDATION_GATE_INDICATOR } from '@/lib/signals/paper-fill';
 import { EXIT_STRATEGY_ID } from '@/lib/strategy/exit-engine';
-import { analysisReasonText, skipText } from '@/lib/ops/reason-dictionary';
+import { analysisReasonText, EXIT_KIND_LABEL, orderReasonText, skipText } from '@/lib/ops/reason-dictionary';
 import { POST_MARKET_JOB, skipReasonOf } from './analysis-runs';
 import { count, num, OpsQueryError, parseJsonObject, type OpsReader } from './read-only';
 import { currentSessionDay, kstIso, kstSql, toMs } from './sessions';
@@ -35,14 +35,12 @@ export const ACTIVITY_BLOCKS_SQL =
       AND (strategy_id IS NULL OR strategy_id <> ?)`;
 
 const MARKET_KO: Record<Market, string> = { domestic: '국내', overseas: '해외' };
-/** 청산 종류 표시 이름(용어 정정표 — 계약 §12). */
-export const EXIT_KIND_LABEL: Readonly<Record<string, string>> = {
-  eod_loss_cut: '장마감 전 손절', hard_stop: '손실한도 손절', target_profit: '익절', trailing_stop: '트레일링',
-};
+// 청산 종류 표시 이름(용어 정정표 — 계약 §12)은 사전 한 벌(`EXIT_KIND_LABEL`, T-130 D8-A) — 홈 확인 필요 `check-copy.ts` 와 같은 이름표를 쓴다.
 const SIDE_KO: Record<string, string> = { buy: '매수', sell: '매도' };
 // 장마감 분석 건너뜀·실패 사유 코드 → 말: 화면과 같은 사전 하나(`@/lib/ops/reason-dictionary` — T-128 A2).
 // 예전 이 파일의 서버 전용 사전 `REASON_KO` 는 화면 사전과 문구가 달랐고, 화면(ActivitySection.activitySub)이 그 부제를 덮어써
 // 사용자에게 보인 적이 없다 — 그래서 서버 부제도 화면이 그리는 글자와 같게 맞췄다(보이는 글자 불변).
+// (T-130: 이 서버 문구는 `/api/ops/home` 응답 글자라 사전 문구가 바뀌면 응답 글자도 바뀐다 — 보이는 글자 = 화면.)
 
 export function analysisItem(row: Record<string, unknown>): ActivityItem | null {
   const at = toMs(row.started_at);
@@ -62,7 +60,7 @@ export function analysisItem(row: Record<string, unknown>): ActivityItem | null 
   const skipReason = status === 'skipped' ? skipReasonOf(degraded) : null;
   const failReason = status === 'failed' || status === 'degraded' || status === 'partial' ? degraded : null;
   let sub: string;
-  // 건너뜀·실패 사유는 코드로 말한다 — 「휴장」으로 단정하지 않는다(R-UI M2). 모르는 코드는 「사유 코드 {code}」(화면 사전 규칙).
+  // 건너뜀·실패 사유는 코드로 말한다 — 「휴장」으로 단정하지 않는다(R-UI M2). 모르는 코드는 「알 수 없는 사유」(화면 사전 규칙, T-130 D4-A).
   const failWhy = status === 'failed' ? analysisReasonText(failReason) : null;
   if (status === 'failed') sub = failWhy ? `실행 실패 · ${failWhy}` : '실행 실패 — 데이터 상태에서 확인';
   else if (status === 'skipped') sub = skipText(skipReason);
@@ -90,7 +88,8 @@ export function orderItem(row: Record<string, unknown>, market: Market): Activit
     sub = `${kindKo ? `${kindKo} · ` : ''}${st === 'partially_filled' ? '부분 체결' : '체결 완료'}`;
   } else if (st === 'blocked') {
     title = `주문 차단 — ${symbol} ${side}`;
-    sub = `${kindKo ? `${kindKo} · ` : ''}${String(row.blocked_by) === 'kill_switch' ? '모든거래차단' : '안전장치 차단'} · 송신 안 됨`;
+    // T-130 5번: 막은 장치를 사전의 말로(`모든거래차단 ON`·`1회 주문 한도 초과` …) — 예전엔 모든거래차단이 아니면 뭉뚱그려 「안전장치 차단」. 사유가 비면 모른다고 말한다.
+    sub = `${kindKo ? `${kindKo} · ` : ''}${orderReasonText(row.blocked_by == null ? null : String(row.blocked_by)) ?? '사유 기록 없음'} · 송신 안 됨`;
   } else if (st === 'rejected' || st === 'failed') {
     title = `주문 거부 — ${symbol} ${side}`;
     sub = `${kindKo ? `${kindKo} · ` : ''}재시도하지 않음`;

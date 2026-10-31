@@ -123,7 +123,8 @@ describe('문구 — 이름과 방향 표시', () => {
   test('관찰(dryRun=true·kill=false): 실거래여부 OFF · 모든거래차단 OFF · 둘째 줄 설명', () => {
     const t = text(renderPage(baseSafety()));
     expect(t).toContain('실거래여부 OFF — 실거래 차단(기록만) ON 이면 주문이 거래소로 나가고, OFF 이면 기록만 남깁니다 OFF');
-    expect(t).toContain('모든거래차단 OFF — 차단 안 함 ON 이면 매수·매도·청산 모두 송신하지 않습니다 OFF');
+    // T-130 5번 「차단」 규칙(데모 v1 승인) — 스위치 OFF 부제 「차단 안 함」 → 「이 스위치로는 막지 않음」
+    expect(t).toContain('모든거래차단 OFF — 이 스위치로는 막지 않음 ON 이면 매수·매도·청산 모두 송신하지 않습니다 OFF');
     expect(t).not.toContain('실거래여부가 ON 입니다');
     expect(t).not.toMatch(/DRY_RUN|KILL_SWITCH|실거래 여부|하드 ?손절|EOD ?손절|장마감 손실 차단/);
   });
@@ -145,7 +146,7 @@ describe('문구 — 이름과 방향 표시', () => {
     expect(t).toContain('실거래여부 값을 읽지 못했습니다 — 지금 상태를 알 수 없습니다 ON 이면 주문이 거래소로 나가고, OFF 이면 기록만 남깁니다 —');
     expect(t).toContain('모든거래차단 값을 읽지 못했습니다 — 지금 상태를 알 수 없습니다 ON 이면 매수·매도·청산 모두 송신하지 않습니다 —');
     expect(t).toContain('자동 청산 엔진 값을 읽지 못했습니다 — 지금 상태를 알 수 없습니다 —');
-    expect(t).not.toMatch(/OFF — 실거래 차단|OFF — 차단 안 함|OFF — 자동 손절/);
+    expect(t).not.toMatch(/OFF — 실거래 차단|OFF — 이 스위치로는 막지 않음|OFF — 차단 안 함|OFF — 자동 손절/);
     expect(t).not.toContain('실거래여부가 ON 입니다');
   });
   test('손실한도 손절 기본 임계 상수 = risk/defaults = style.ts 기본값 (드리프트 방지)', () => {
@@ -154,7 +155,8 @@ describe('문구 — 이름과 방향 표시', () => {
   });
   test('자동 청산 엔진 설명 + 손실한도 손절 읽기 전용 줄(엔진 아래·해외 장마감 후 분석 앞)', () => {
     const t = text(renderPage(baseSafety()));
-    expect(t).toContain('ON — 손실한도 손절·장마감 전 손절·트레일링·익절 자동 매도 동작 중 (손실한도 손절만 개별 OFF)');
+    // T-130 10a(D8-A) — 청산 이름 「트레일링 스탑」·「목표 익절」
+    expect(t).toContain('ON — 손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 자동 매도 동작 중 (손실한도 손절만 개별 OFF)');
     const exit = t.indexOf('자동 청산 엔진');
     const hard = t.indexOf('손실한도 손절 손실이 한도(기본 −1.5%)에 닿으면 바로 매도 · 읽기 전용 표시 — 설정 API 대상 아님 OFF');
     const pmo = t.indexOf('해외 장마감 후 분석 (미국 시나리오)');
@@ -274,7 +276,8 @@ describe('안전 값을 못 읽은 동안 — 안전 토글 3개 잠금 · [다�
   test('safety=null 렌더 — 세 스위치 aria-disabled, 잠금 안내 + 「다시 읽기」 버튼(44px)', () => {
     const html = renderPage(null);
     expect(html.match(/role="switch" aria-checked="(true|false)" aria-disabled="true"/g)).toHaveLength(3);
-    expect(html.match(/aria-disabled="true" style="[^"]*cursor:not-allowed[^"]*opacity:0.45/g)).toHaveLength(3);
+    // T-130 D2-A — 스위치 겉은 button(누르는 영역 44×44, 잠기면 not-allowed), 흐림(.45)은 안쪽 그림 span 에
+    expect(html.match(/aria-disabled="true" aria-label="[^"]+" style="[^"]*cursor:not-allowed[^"]*"><span style="[^"]*opacity:0.45/g)).toHaveLength(3);
     // R-UI-N4 — 실제로 잠그는 3개를 이름으로(해외 장마감 후 분석 토글은 잠그지 않는다)
     expect(text(html)).toContain('안전 값을 읽지 못해 세 안전 토글(실거래여부·모든거래차단·자동 청산 엔진)을 잠갔습니다 — 다시 읽은 뒤에 바꿀 수 있습니다 다시 읽기');
     expect(html).toMatch(/<button type="button" style="[^"]*min-height:44px[^"]*">다시 읽기<\/button>/);

@@ -30,12 +30,12 @@ export function zoneText(
   if (z === 'eod_cut') return '장마감 전 손절 구간';
   if (z === 'take_profit') {
     const th = row.detail.thresholdPct ?? ctx.targetProfitPct;
-    return `익절 조건 충족${th != null ? ` (임계 +${pctAbs(th)})` : ''}`;
+    return `목표 익절 조건 충족${th != null ? ` (임계 +${pctAbs(th)})` : ''}`;
   }
   if (z === 'trailing_active') {
     const peak = row.detail.fromPeakPct;
     const dd = ctx.drawdownPct;
-    return `트레일링 활성${peak != null ? ` · 고점 대비 ${MINUS}${pctAbs(peak)}` : ''}${dd != null ? ` (되돌림 ${pctAbs(dd)})` : ''}`;
+    return `트레일링 스탑 활성${peak != null ? ` · 고점 대비 ${MINUS}${pctAbs(peak)}` : ''}${dd != null ? ` (되돌림 ${pctAbs(dd)})` : ''}`;
   }
   if (z === 'not_evaluated') return '미평가 — 장외';
   return '중립';
@@ -110,7 +110,7 @@ export function TradeHoldPanel(p: TradeHoldProps) {
       <>
         {stale ? `${CHIP.stale(fmtKstTime(p.trade?.generatedAt ?? null, nowMs))} — 새로 고치지 못했습니다 · ` : ''}
         {h.snapshotAt ? staleNote : ''}
-        청산 임계: 손실한도 손절·장마감 전 손절·익절 = {sourceText(h.thresholds.source)}, 트레일링 = {sourceText(h.trailing.source)}(활성 {pctAbs(h.trailing.activatePct)} · 되돌림 {pctAbs(h.trailing.drawdownPct)}). 손익률이라 환율 무관
+        청산 임계: 손실한도 손절·장마감 전 손절·목표 익절 = {sourceText(h.thresholds.source)}, 트레일링 스탑 = {sourceText(h.trailing.source)}(활성 {pctAbs(h.trailing.activatePct)} · 되돌림 {pctAbs(h.trailing.drawdownPct)}). 손익률이라 환율 무관
       </>
     );
   }

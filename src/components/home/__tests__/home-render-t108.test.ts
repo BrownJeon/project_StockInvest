@@ -15,9 +15,11 @@ jest.mock('next/navigation', () => ({ usePathname: () => '/', useRouter: () => (
 
 import { HomeView, type HomePoll } from '@/components/home/HomeScreen';
 import { AnalysisStageTable } from '@/components/home/AnalysisSection';
-import { checkLines, CHECK_ORDER } from '@/components/home/check-copy';
+import { anomalyText, checkLines, CHECK_ORDER } from '@/components/home/check-copy';
 import { buildStripModel, safetyViewFromPoll, type SafetyStateView } from '@/components/ops/safety-view';
-import type { AnalysisRunRow, CheckItem, HomeDTO, OpsStage } from '@/lib/ops/metrics/types';
+import type { AnalysisRunRow, AnomalyItem, CheckItem, HomeDTO, Metric, OpsStage } from '@/lib/ops/metrics/types';
+import { MetricReason } from '@/components/home/home-ctx';
+import * as dict from '@/lib/ops/reason-dictionary';
 import { emptySentence } from '@/components/home/CheckSection';
 import { activitySub } from '@/components/home/ActivitySection';
 import { NOW, analysis, homeDTO, safety, type Mode, type Stage4 } from './home-fixtures';
@@ -147,9 +149,11 @@ describe('B-2 확인 필요 (§2.3.2)', () => {
     expect(a).toBeGreaterThan(-1); expect(b).toBeGreaterThan(a); expect(c).toBeGreaterThan(b);
     expect(t).toContain('손실 한도에 닿았지만 스위치가 꺼져 손절 시그널을 만들지 않습니다');
     expect(t).toContain('주문은 기록만, 송신 없음 · 텔레그램 자동 제출 알림은 꺼져 있음');
-    expect(t).toContain('장마감 분석 입력 품질 저하(degraded)');
+    // T-130 D3-B: 데이터 이상은 한 줄 묶음(건수 = 운용현황 「데이터 이상·분석 실패」 칸 숫자), 머리 숫자는 가짓수 「N가지」
+    expect(t).toContain('데이터 이상·분석 실패 1건');
+    expect(t).not.toMatch(/degraded/);
     expect(t).toContain('승인 대기 0 · 주문 오류 0 · 기준 16:20');
-    expect(s).toContain('<h2 id="h-check">확인 필요<small>3건</small></h2>');
+    expect(s).toContain('<h2 id="h-check">확인 필요<small>3가지</small></h2>');
     // 줄은 링크(56px 행) — 이동만
     expect(s).toContain('<a class="rowl" href="/analytics?tab=verify">');
     expect(s).toContain('<a class="rowl" href="/recommend?tab=log">');
@@ -165,7 +169,7 @@ describe('B-2 확인 필요 (§2.3.2)', () => {
     const t = textOf(section(render('mixed', 'ok'), 'h-check'));
     expect(t.indexOf('청산 주문이 실제로 송신됩니다')).toBeLessThan(t.indexOf('신규 매수 차단 — 검증 통과 전략 0/16'));
     expect(t).toContain('실거래여부 ON · 오늘 청산 체결 1건');
-    expect(t).toContain('매수 시그널은 차단 기록으로만 남습니다');
+    expect(t).toContain('매수 시그널은 검증 관문 차단 기록으로만 남습니다');
     expect(t).toMatch(/기준 16:20$/);
   });
   test('실거래: 승인 대기 3건 — 국내 1 · 해외 2 / 가장 빨리 만료 · 주문 거부 1건 — 000660 매수 / 증권사 거부 · 재시도하지 않음(분류코드 영문 노출 없음)', () => {
@@ -188,35 +192,51 @@ describe('B-2 확인 필요 (§2.3.2)', () => {
     expect(textOf(s)).toContain('지금 확인할 것 없음 — 승인 대기 0 · 주문 오류 0 · 데이터 이상 0 · 청산 조건 해당 없음');
     expect(s).toContain('<h2 id="h-check">확인 필요</h2>');
   });
-  test('조회 실패: 「확인 필요 목록을 불러오지 못했습니다 / http_503 · 비어 있는 것이 아닙니다」 + [다시 시도]', () => {
+  test('조회 실패: 「확인 필요 목록을 불러오지 못했습니다 / 서버 오류 503 · 비어 있는 것이 아닙니다」 + [다시 시도] (T-130 4-1: 한국어 원인 말, 영문 코드 없음)', () => {
     const s = section(render('observe', 'error'), 'h-check');
-    expect(textOf(s)).toContain('확인 필요 목록을 불러오지 못했습니다http_503 · 비어 있는 것이 아닙니다');
+    expect(textOf(s)).toContain('확인 필요 목록을 불러오지 못했습니다서버 오류 503 · 비어 있는 것이 아닙니다');
+    expect(textOf(s)).not.toContain('http_503');
     expect(s).toContain('<button type="button" class="retry">다시 시도</button>');
     expect(textOf(s)).not.toContain('지금 확인할 것 없음');
   });
   test('오래됨: foot 「기준 10-29 16:05 · 오래됨 — 새로 고치지 못했습니다」', () => {
     expect(textOf(section(render('observe', 'stale'), 'h-check'))).toContain('기준 10-29 16:05 · 오래됨 — 새로 고치지 못했습니다');
   });
-  test('401 → 「! 조회 실패 · unauthorized」 + 「다시 로그인해 주세요」(/login)', () => {
+  test('401 → 「! 로그인 필요」 + 「다시 로그인해 주세요」(/login)', () => {
     const html = renderToStaticMarkup(h(HomeView, { safety: ok('observe'), home: { status: 'error', data: null, lastOkAt: null, error: 'unauthorized' }, nowMs: NOW }));
-    expect(textOf(section(html, 'h-check'))).toContain('unauthorized · 비어 있는 것이 아닙니다');
+    expect(textOf(section(html, 'h-check'))).toContain('로그인 필요 · 비어 있는 것이 아닙니다');
     expect(section(html, 'h-check')).toContain('<a href="/login">다시 로그인해 주세요</a>');
-    expect(textOf(section(html, 'h-ops'))).toContain('! 조회 실패 · unauthorized');
+    expect(textOf(section(html, 'h-ops'))).toContain('! 로그인 필요');
+    expect(textOf(html)).not.toContain('unauthorized');
   });
-  test('문구 함수: 표 순서(가이드 9종 + WP-A 추가 safety_unknown 맨 앞 · order_blocked 거부 뒤) · 데이터 이상 최대 3줄(넘치면 마지막 줄 「외 n건」) · null 빈칸은 구절째 뺀다', () => {
+  test('문구 함수: 표 순서(가이드 9종 + WP-A 추가 safety_unknown 맨 앞 · order_blocked 거부 뒤) · 데이터 이상은 묶음 한 줄(부제에 앞 2개 + 「외 n건」) · null 빈칸은 구절째 뺀다', () => {
     expect(CHECK_ORDER).toEqual(['safety_unknown', 'kill_switch_on', 'exit_live_orders', 'buy_blocked', 'awaiting_approval', 'order_rejected', 'order_blocked', 'hard_stop_off_hit', 'virtual_exit', 'data_anomaly', 'analysis_unknown']);
     const an = (i: number, more: number | null = null): CheckItem => ({ kind: 'data_anomaly', severity: 'w', params: { source: 'fx_usdkrw', label: `이상 ${i}`, state: 'stale', streak: null, more }, href: '/analytics?tab=data' });
+    // 데이터 이상 여러 건 → 한 줄(D3-B). 건수 = 서버가 보낸 항목 수 + 마지막 항목 more(잘린 수)
     const four = checkLines([an(1), an(2), an(3), an(4)], NOW);
-    expect(four.map((l) => l.title)).toEqual(['이상 1 오래됨', '이상 2 오래됨', '외 2건']);
+    expect(four.map((l) => [l.key, l.title, l.sub, l.severity, l.glyph])).toEqual([
+      ['anomaly-group', '데이터 이상·분석 실패 4건', '이상 1 오래됨 · 이상 2 오래됨 외 2건', 'w', '!'],
+    ]);
     const cut = checkLines([an(1), an(2), an(3, 4)], NOW);
-    expect(cut.map((l) => l.title)).toEqual(['이상 1 오래됨', '이상 2 오래됨', '외 5건']);
-    // 실행 기록 잡(source=job_run, label=job_id 원문) → 표시 이름 + 상태 말 · 뉴스 0건 연속 → 데모 문구
-    const job = checkLines([{ kind: 'data_anomaly', severity: 'w', params: { source: 'job_run', label: 'post-market-domestic', state: 'error', streak: null, jobId: 'post-market-domestic', jobStatus: 'failed', more: null }, href: '/analytics?tab=data' }], NOW)[0];
-    expect([job.title, job.sub]).toEqual(['국내 장마감 분석 실패', null]);
-    const other = checkLines([{ kind: 'data_anomaly', severity: 'w', params: { source: 'job_run', label: 'news-collect', state: 'partial', streak: null, jobId: 'news-collect', jobStatus: 'degraded', more: null }, href: '/analytics?tab=data' }], NOW)[0];
-    expect(other.title).toBe('news-collect 입력 품질 저하(degraded)');
-    const news = checkLines([{ kind: 'data_anomaly', severity: 'w', params: { source: 'news_overseas', label: '뉴스 해외', state: 'partial', streak: 3, more: null }, href: '/analytics?tab=data' }], NOW)[0];
-    expect([news.title, news.sub]).toEqual(['해외 뉴스 0건 3일 연속', '장마감 분석 입력 품질 저하(degraded)']);
+    expect(cut.map((l) => [l.title, l.sub])).toEqual([['데이터 이상·분석 실패 7건', '이상 1 오래됨 · 이상 2 오래됨 외 5건']]);
+    const two = checkLines([an(1), an(2)], NOW);
+    expect(two.map((l) => [l.title, l.sub, l.href])).toEqual([['데이터 이상·분석 실패 2건', '이상 1 오래됨 · 이상 2 오래됨', '/analytics?tab=data']]);   // 2건 이하는 「외」 없음
+    const one = checkLines([an(1)], NOW);
+    expect(one.map((l) => [l.title, l.sub])).toEqual([['데이터 이상·분석 실패 1건', '이상 1 오래됨']]);
+    // 「외 n건」 단독 줄은 없다 — 데이터 이상 줄은 항상 하나
+    expect(checkLines([an(1), an(2), an(3, 9)], NOW).filter((l) => l.key.startsWith('anomaly'))).toHaveLength(1);
+    // 실행 기록 잡(source=job_run, label=job_id 원문) → 사전의 잡 이름 + 상태 말 · 뉴스 0건 연속 → 데모 문구 (항목 한 건의 글자는 anomalyText)
+    const jobItem = { source: 'job_run', label: 'post-market-domestic', state: 'error', streak: null, jobId: 'post-market-domestic', jobStatus: 'failed' } as const;
+    expect(anomalyText(jobItem)).toEqual({ title: '국내 장마감 분석 실패', sub: null });
+    expect(anomalyText({ ...jobItem, jobId: 'strategy-eval', label: 'strategy-eval' }).title).toBe('장중 전략 평가 실패');
+    expect(anomalyText({ ...jobItem, jobId: 'news-peek-domestic-10', label: 'news-peek-domestic-10', jobStatus: 'missing' }).title).toBe('국내 뉴스 확인 10시 실행 기록 없음');
+    // 모르는 잡은 영문 id 를 그대로 보이지 않는다
+    expect(anomalyText({ ...jobItem, jobId: 'news-collect', label: 'news-collect', state: 'partial', jobStatus: 'degraded' }).title).toBe('알 수 없는 작업 입력 품질 저하');
+    expect(anomalyText({ source: 'news_overseas', label: '뉴스 해외', state: 'partial', streak: 3 })).toEqual({ title: '해외 뉴스 0건 3일 연속', sub: '장마감 분석 입력 품질 저하' });
+    expect(anomalyText({ source: 'fx_usdkrw', label: '환율 USD/KRW', state: 'partial', streak: null }).title).toBe('환율 USD/KRW 일부 저하');
+    expect(anomalyText({ ...jobItem, jobId: 'strategy-eval', jobStatus: 'partial', state: 'partial' }).title).toBe('장중 전략 평가 일부만 완료');
+    const group = checkLines([{ kind: 'data_anomaly', severity: 'w', params: { ...jobItem, more: null }, href: '/analytics?tab=data' }], NOW)[0];
+    expect([group.title, group.sub]).toEqual(['데이터 이상·분석 실패 1건', '국내 장마감 분석 실패']);
     const kill = checkLines([{ kind: 'kill_switch_on', severity: 'e', params: { since: null, exitSignalsBlocked: null }, href: '/settings' }], NOW)[0];
     expect(kill.sub).toBeNull();
     const capped = checkLines([{ kind: 'hard_stop_off_hit', severity: 'w', count: 2, params: { symbols: 2, days: 30, daysCapped: 1 }, href: '/analytics?tab=verify' }], NOW)[0];
@@ -233,17 +253,20 @@ describe('B-2 운용현황 — 관찰 세트 A (§2.3.3)', () => {
     expect(s).toContain('<h2 id="h-ops">운용현황<small>관찰 기간</small></h2><a class="lnk" aria-label="분석 탭 오늘 분석 보기" href="/analytics?tab=today">분석 ›</a>');
     expect(s).toContain('<span class="mk"><i>국내</i>44종목 · 10-30 16:00</span><span class="mk"><i>해외</i>51종목 · ET 10-29 · 08:00</span>');
     expect(s).toContain('<span class="meta">장마감 AI 분석 · D0 확정봉 기준</span>');
-    expect(s).toContain('<span class="mk"><i>국내</i>후보 5 → 시그널 1</span><span class="mk"><i>해외</i>후보 3 → 시그널 1</span><span class="st blocked">⊘ 시그널 2건 모두 차단</span>');
-    expect(s).toContain('차단 = 검증 관문(전략 미검증)');
+    expect(s).toContain('<span class="mk"><i>국내</i>후보 5 → 시그널 1</span><span class="mk"><i>해외</i>후보 3 → 시그널 1</span><span class="st blocked">⊘ 시그널 2건 모두 검증 관문 차단</span>');
+    expect(s).toContain('검증 관문 = 검증 통과 전 전략의 신규 매수를 막는 장치');
+    expect(s).not.toContain('차단 = 검증 관문(전략 미검증)');
     const t = textOf(s);
     expect(t).toContain('사후 결과 추적8건추적 완료 2 · 추적 중 6건수 적음 (30건 미만)30건 이상 쌓여야 성과를 판단할 수 있어 지금은 참고용 · 진입 d1open · D+1·3·5·10');
-    expect(t).toContain('데이터 이상·분석 실패1건국내 뉴스 0건 2일 연속원천 6개 중 1 · degraded');
+    // T-130 4-4: 영문 degraded 를 쓰지 않는다 · 보조 줄이 이상의 출처를 나눠 말한다(원천 이상 · 실행 실패 · 대표 상태)
+    expect(t).toContain('데이터 이상·분석 실패1건국내 뉴스 0건 2일 연속원천 6개 중 이상 1 · 입력 품질 저하');
+    expect(t).not.toMatch(/degraded/);
     expect(textOf(s)).toContain('손익은 표시하지 않습니다 — 실거래 전환일 첫 스냅샷에서 기준을 잡습니다(D5). 가상 진입(paper_fills)은 분석 › 검증·성과에 따로.');
   });
   test('첫 배포: A1 —/◌ 미수집 — 실행 기록 전 · A2 부분 — 시그널만 · A3 AI 매수 판단 시그널 한정 · A4 부분 — 원천 4개만 확인', () => {
     const s = section(render('observe', 'first'), 'h-ops');
     expect(s).toContain('<span class="lb">분석 완료 종목</span><span class="v">—</span><span class="st unknown">◌ 미수집 — 실행 기록 전</span><span class="meta">지금은 응답·로그에만 남아 셀 수 없음(T-112)</span>');
-    expect(s).toContain('<span class="mk"><i>국내</i>시그널 1 · 차단 1</span>');
+    expect(s).toContain('<span class="mk"><i>국내</i>시그널 1 · 검증 관문 차단 1</span>');
     expect(s).toContain('<span class="st partial">부분 — 시그널만</span><span class="meta">규칙 후보 수는 T-112 기록 뒤</span>');
     expect(textOf(s)).toContain('D+1·3·5·10 · AI 매수 판단 시그널 한정');
     expect(s).toContain('<span class="st partial">부분 — 원천 4개만 확인</span><span class="meta">분석 실패는 실행 기록 뒤</span>');
@@ -259,9 +282,10 @@ describe('B-2 운용현황 — 관찰 세트 A (§2.3.3)', () => {
     expect(s).toContain('aria-busy="true"');
     expect(s.match(/<div class="tile" aria-hidden="true">/g)).toHaveLength(4);
   });
-  test('조회 실패: 칸마다 — + ! 조회 실패 · http_503 · foot [다시 시도]', () => {
+  test('조회 실패: 칸마다 — + ! 조회 실패 · 서버 오류 503 · foot [다시 시도]', () => {
     const s = section(render('observe', 'error'), 'h-ops');
-    expect(s.match(/<span class="v">—<\/span><span class="st error">! 조회 실패 · http_503<\/span>/g)).toHaveLength(4);
+    expect(s.match(/<span class="v">—<\/span><span class="st error">! 조회 실패 · 서버 오류 503<\/span>/g)).toHaveLength(4);
+    expect(s).not.toContain('http_503');
     expect(s).toContain('<div class="sec-foot"><button type="button" class="retry">다시 시도</button></div>');
   });
   test('오래됨: 칸 회색(tile dim) + 「오래됨 · 기준 10-29 16:05」', () => {
@@ -301,11 +325,11 @@ describe('B-2 운용현황 — 실거래 세트 B (§2.3.4)', () => {
   test('혼합: B1 ⊘ 매수 차단 · B2 ✓ 자동 운용 0 · B3 청산 매도 · B4 혼합 문구 · B7 ⊘ 차단 · foot 기준 미설정', () => {
     const s = section(render('mixed', 'ok'), 'h-ops');
     expect(s).toContain('<small>실거래 준비</small>');
-    expect(s).toContain('<span class="lb">진입 감시</span><span class="v">—</span><span class="st blocked">⊘ 매수 차단</span><span class="meta">검증 통과 전략 0</span>');
+    expect(s).toContain('<span class="lb">진입 감시</span><span class="v">—</span><span class="st blocked">⊘ 매수 차단 · 검증 관문</span><span class="meta">검증 통과 전략 0</span>');
     expect(s).toContain('<span class="mk"><i>자동</i>운용 0</span><span class="mk"><i>계좌</i>보유 6종목</span><span class="st zero">✓ 자동 운용 0</span>');
     expect(s).toContain('<span class="mk"><i>국내</i>1건 · 청산 매도</span>');
     expect(textOf(s)).toContain('혼합 단계는 전환으로 볼지 결정 전');
-    expect(s).toContain('<span class="st blocked">⊘ 차단 — 검증 통과 0</span><span class="meta">금액 대신 사유를 표시</span>');
+    expect(s).toContain('<span class="st blocked">⊘ 차단 · 검증 관문(통과 0)</span><span class="meta">금액 대신 사유를 표시</span>');
     expect(textOf(s)).toContain('계좌 전체 손익(보조): 기준 미설정');
   });
   test('빈: 진입 감시 0 ✓ · 오늘 실체결 0건·0건 ✓', () => {
@@ -343,9 +367,9 @@ describe('B-2 청산 로직 3줄 (§2.3.5) — 0 이어도 항상', () => {
   test('첫 배포(30일 한정 partial) → 「30일 보존(영구 기록은 T-126)」', () => {
     expect(textOf(section(render('observe', 'first'), 'h-exit'))).toContain('30일 보존(영구 기록은 T-126)');
   });
-  test('중지: 청산 시그널 1건 — 주문 차단(모든거래차단)', () => {
+  test('중지: 청산 시그널 1건 — 주문 차단 · 모든거래차단 ON', () => {
     const s = section(render('halt', 'ok'), 'h-exit');
-    expect(textOf(s)).toContain('청산 시그널 1건 — 주문 차단(모든거래차단)');
+    expect(textOf(s)).toContain('청산 시그널 1건 — 주문 차단 · 모든거래차단 ON');
     expect(s).toContain('<b>주문 차단</b>');
   });
   test('혼합: 실주문 칩 · 청산 시그널 생성 1종목 · 청산 주문 1건 송신 → 체결 1', () => {
@@ -355,10 +379,10 @@ describe('B-2 청산 로직 3줄 (§2.3.5) — 0 이어도 항상', () => {
     expect(textOf(s)).not.toContain('발동');
     expect(textOf(s)).toContain('청산 주문 1건 송신 → 체결 1');
   });
-  test('실거래: 해당 없음 4종목 · 트레일링 활성 1 · 청산 주문 0 · 승인 대기 청산 1 / 익절 조건', () => {
+  test('실거래: 해당 없음 4종목 · 트레일링 스탑 활성 1 · 청산 주문 0 · 승인 대기 청산 1 / 목표 익절 조건 (T-130 D8-A)', () => {
     const t = textOf(section(render('live', 'ok'), 'h-exit'));
-    expect(t).toContain('해당 없음 4종목 · 트레일링 활성 1');
-    expect(t).toContain('청산 주문 0 · 승인 대기 청산 1익절 조건 — 거래 › 운용 현황에서 승인');
+    expect(t).toContain('해당 없음 4종목 · 트레일링 스탑 활성 1');
+    expect(t).toContain('청산 주문 0 · 승인 대기 청산 1목표 익절 조건 — 거래 › 운용 현황에서 승인');
   });
   test('빈: 「청산 조건 해당 없음 2종목 ✓ 확인된 0」 · 「청산 제안 0 ✓ 확인된 0」', () => {
     const t = textOf(section(render('observe', 'empty'), 'h-exit'));
@@ -414,8 +438,8 @@ describe('B-2 오늘의 분석·판단 (§2.3.6)', () => {
     expect(s).toContain('<th scope="col">국내<small>10-30 · 16:00 실행</small></th><th scope="col">해외<small>ET 10-29 · 08:00 실행</small></th>');
     const rows = [...s.matchAll(/<tr><th scope="row">([^<]*)<\/th><td>([^<]*)<\/td><td>([^<]*)<\/td><\/tr>/g)].map((m) => [m[1], m[2], m[3]]);
     expect(rows).toEqual([
-      ['평가 종목', '44', '51'], ['규칙 후보', '5', '3'], ['AI 매수 판단', '1', '1'], ['시그널 생성', '1', '1'], ['검증 차단', '1', '1'],
-      ['제외 사유 1위', '신뢰도 60 미만 3', '진입 구간 없음 2'],
+      ['평가 종목', '44', '51'], ['규칙 후보', '5', '3'], ['AI 매수 판단', '1', '1'], ['시그널 생성', '1', '1'], ['검증 관문 차단', '1', '1'],
+      ['제외 사유 1위', 'AI 신뢰도 60 미만 3', '진입 구간이 범위 밖 2'],
     ]);
     expect(textOf(s)).toContain('AI 매수 판단 = AI 가 「지금 살 만하다」고 본 종목 수(그 외는 「매수 안 함」) · 장마감 AI 분석만(D1) · 국내 = KST 세션일, 해외 = ET 세션일 ·');
     expect(textOf(s)).toContain('다음 분석 국내 10-31 16:00 · 해외 10-31 08:00 KST(스케줄 표에서 읽음)');
@@ -431,6 +455,7 @@ describe('B-2 오늘의 분석·판단 (§2.3.6)', () => {
     const s = section(render('live', 'ok'), 'h-ana');
     expect(s).toMatch(/<th scope="row">승인 대기<\/th><td>1<\/td><td>0<\/td>/);
     expect(s).not.toContain('검증 차단');
+    expect(s).not.toContain('검증 관문 차단');
   });
   test('AnalysisStageTable(분석 › 오늘 분석 공용) — 섹션 틀 없이 표만 · 오래됨 caption', () => {
     const html = renderToStaticMarkup(h(AnalysisStageTable, { runs: analysis('ok'), stage: 'observe', staleBase: '10-29 16:05' }));
@@ -439,9 +464,9 @@ describe('B-2 오늘의 분석·판단 (§2.3.6)', () => {
     expect(textOf(html)).toContain(' · 오래됨: 기준 10-29 16:05');
     expect(html).toContain('<td class="dim">44</td>');
   });
-  test('조회 실패: ! 조회 실패 · http_503 + [다시 시도]', () => {
+  test('조회 실패: ! 조회 실패 · 서버 오류 503 + [다시 시도]', () => {
     const s = section(render('observe', 'error'), 'h-ana');
-    expect(s).toContain('<span class="st error">! 조회 실패 · http_503</span>');
+    expect(s).toContain('<span class="st error">! 조회 실패 · 서버 오류 503</span>');
     expect(s).toContain('class="retry"');
   });
 });
@@ -553,8 +578,8 @@ describe('수정 4 — 중지 단계 「주문 차단」 은 blocked_by=kill_swi
     expect(t).toContain('가상 청산 1건 — 장마감 전 손절 15:26');
     expect(t).not.toContain('주문 차단');
   });
-  test('중지 + 모든거래차단 차단 1 → 「청산 시그널 1건 — 주문 차단(모든거래차단)」', () => {
-    expect(textOf(section(render('halt', 'ok'), 'h-exit'))).toContain('청산 시그널 1건 — 주문 차단(모든거래차단)');
+  test('중지 + 모든거래차단 차단 1 → 「청산 시그널 1건 — 주문 차단 · 모든거래차단 ON」', () => {
+    expect(textOf(section(render('halt', 'ok'), 'h-exit'))).toContain('청산 시그널 1건 — 주문 차단 · 모든거래차단 ON');
   });
 });
 
@@ -652,8 +677,8 @@ describe('수정 3 — 건너뜀 사유를 「휴장」 으로 단정하지 않�
   };
   const skipped = (skipReason: string | null): Partial<AnalysisRunRow> => ({ runStatus: 'skipped', skipReason, evaluated: { state: 'off_hours', value: null, asOf: null, ...(skipReason ? { reason: skipReason } : {}) } });
   test.each([
-    ['weekend', '건너뜀 · 주말'], ['overseas_disabled', '건너뜀 · 해외 장마감 후 분석 꺼짐'], ['overseas_market_disabled', '건너뜀 · 해외 시장 꺼짐(서버 환경 설정)'],
-    ['us_session_open', '건너뜀 · 미국 장 진행 중'], ['no_new_session', '건너뜀 · 새 세션 없음'], ['brand_new_code', '건너뜀 · 사유 코드 brand_new_code'], [null, '건너뜀 · 사유 모름'],
+    ['weekend', '건너뜀 · 주말'], ['overseas_disabled', '건너뜀 · 해외 장마감 후 분석 꺼짐'], ['overseas_market_disabled', '건너뜀 · 해외 시장 꺼짐(서버 설정)'],
+    ['us_session_open', '건너뜀 · 미국 장 진행 중'], ['no_new_session', '건너뜀 · 새 세션 없음'], ['brand_new_code', '건너뜀 · 알 수 없는 사유'], [null, '건너뜀 · 사유 기록 없음'],
   ] as const)('%s → 「%s」 (A1 줄 · 표 머리), 「휴장」 없음', (code, want) => {
     const html = renderDTO(withRuns(skipped(code), {}));
     const ops = section(html, 'h-ops');
@@ -667,11 +692,14 @@ describe('수정 3 — 건너뜀 사유를 「휴장」 으로 단정하지 않�
     const html = renderDTO(withRuns({ runStatus: 'skipped', skipReason: null, evaluated: { state: 'off_hours', value: null, asOf: null, reason: 'skip:weekend' } }, {}));
     expect(section(html, 'h-ops')).toContain('<i>국내</i>건너뜀 · 주말');
   });
-  test('실패 사유(failReason) — 데이터 모름 503 은 실패로: 「! 분석 실패 · 환율 모름」 · 모르는 코드는 사유 코드', () => {
+  test('실패 사유(failReason) — 데이터 모름 503 은 실패로: 「! 분석 실패 · 환율 모름」 · rag_fail 은 문구 · 모르는 코드는 「알 수 없는 사유」', () => {
     const html = renderDTO(withRuns({}, { runStatus: 'failed', failReason: 'fx_unknown', evaluated: { state: 'error', value: null, asOf: null } }));
     expect(section(html, 'h-ops')).toContain('<span class="mk"><i>해외</i><span class="st error">! 분석 실패 · 환율 모름</span></span>');
     const html2 = renderDTO(withRuns({}, { runStatus: 'failed', failReason: 'rag_fail', evaluated: { state: 'error', value: null, asOf: null } }));
-    expect(textOf(section(html2, 'h-ops'))).toContain('! 분석 실패 · 사유 코드 rag_fail');
+    expect(textOf(section(html2, 'h-ops'))).toContain('! 분석 실패 · 뉴스 참고 자료 조회 실패');
+    const html3 = renderDTO(withRuns({}, { runStatus: 'failed', failReason: 'brand_new_code', evaluated: { state: 'error', value: null, asOf: null } }));
+    expect(textOf(section(html3, 'h-ops'))).toContain('! 분석 실패 · 알 수 없는 사유');
+    expect(textOf(section(html3, 'h-ops'))).not.toContain('brand_new_code');
   });
 });
 
@@ -680,7 +708,7 @@ describe('수정 6 — 분류코드를 영문 그대로 보이지 않는다 (R-U
     checkLines([{ kind, severity: kind === 'order_rejected' ? 'e' : 'w', count: 1, params: { symbol: 'NAS:AAPL', side: 'sell', reason, market: 'overseas' }, href: '/recommend?tab=log' }], NOW)[0];
   test.each([
     ['insufficient_balance', '주문 가능 금액 부족 · 재시도하지 않음'], ['kis_5xx', '증권사 서버 오류 — 결과 확인 필요 · 재시도하지 않음'],
-    ['market_closed', '장 마감·시간 외 · 재시도하지 않음'], ['totally_new', '사유 코드 totally_new · 재시도하지 않음'],
+    ['market_closed', '장 마감·시간 외 · 재시도하지 않음'], ['totally_new', '알 수 없는 사유 · 재시도하지 않음'],
     // T-128 A3(c) — 사유가 비면(blocked_by IS NULL) 주문 차단 줄과 같이 「사유 기록 없음」 을 붙인다(예전 「재시도하지 않음」 만)
     [null, '사유 기록 없음 · 재시도하지 않음'], ['', '사유 기록 없음 · 재시도하지 않음'],
   ] as const)('주문 거부 %s → %s', (code, want) => {
@@ -694,7 +722,7 @@ describe('수정 6 — 분류코드를 영문 그대로 보이지 않는다 (R-U
   });
   test('주문 차단(안전장치 — 모든거래차단 제외): 「주문 차단 1건 — AAPL 매도」 / 「1일 주문 한도 · 송신 안 됨」 · 순서는 주문 거부 바로 뒤', () => {
     const l = line('order_blocked', 'daily_limit');
-    expect([l.title, l.sub, l.severity, l.glyph]).toEqual(['주문 차단 1건 — AAPL 매도', '1일 주문 한도 · 송신 안 됨', 'w', '⊘']);
+    expect([l.title, l.sub, l.severity, l.glyph]).toEqual(['주문 차단 1건 — AAPL 매도', '일일 누적 한도 초과 · 송신 안 됨', 'w', '⊘']);
     const order = checkLines([
       { kind: 'order_blocked', severity: 'w', count: 1, params: { symbol: '005930', side: 'buy', reason: 'validation_gate', market: 'domestic' }, href: '/recommend?tab=log' },
       { kind: 'order_rejected', severity: 'e', count: 1, params: { symbol: '005930', side: 'buy', reason: 'kis_rejected', market: 'domestic' }, href: '/recommend?tab=log' },
@@ -707,15 +735,144 @@ describe('수정 6 — 분류코드를 영문 그대로 보이지 않는다 (R-U
 
 describe('수정 3 — 최근 활동의 분석 건너뜀·실패 부제도 화면 사전과 같은 말', () => {
   const item = (params: Record<string, string | number | null>, sub: string) => ({ at: '2026-10-31T08:00:00+09:00', kind: 'analysis' as const, title: '해외 장마감 분석 건너뜀', sub, params });
-  test('건너뜀 → 「건너뜀 · {사유}」(서버 사전 표기가 달라도 화면 사전으로) · 코드 없음 → 사유 모름', () => {
+  test('건너뜀 → 「건너뜀 · {사유}」(서버 사전 표기가 달라도 화면 사전으로) · 코드 없음 → 사유 기록 없음 · 모르는 코드 → 알 수 없는 사유', () => {
     expect(activitySub(item({ status: 'skipped', skipReason: 'overseas_disabled', failReason: null }, '건너뜀 · 해외 분석 꺼짐'))).toBe('건너뜀 · 해외 장마감 후 분석 꺼짐');
-    expect(activitySub(item({ status: 'skipped', skipReason: null, failReason: null }, '건너뜀 · 사유 기록 없음'))).toBe('건너뜀 · 사유 모름');
-    expect(activitySub(item({ status: 'skipped', skipReason: 'zz', failReason: null }, '건너뜀 · 사유 zz'))).toBe('건너뜀 · 사유 코드 zz');
+    expect(activitySub(item({ status: 'skipped', skipReason: null, failReason: null }, '건너뜀 · 사유 기록 없음'))).toBe('건너뜀 · 사유 기록 없음');
+    expect(activitySub(item({ status: 'skipped', skipReason: 'zz', failReason: null }, '건너뜀 · 사유 zz'))).toBe('건너뜀 · 알 수 없는 사유');
   });
   test('실패 → 「실행 실패 · {사유}」 · 사유 없으면 서버 문구 · 그 밖 상태·종류는 서버 문구 그대로', () => {
     expect(activitySub(item({ status: 'failed', skipReason: null, failReason: 'holidays_unknown' }, 'x'))).toBe('실행 실패 · 휴장표 모름');
     expect(activitySub(item({ status: 'failed', skipReason: null, failReason: null }, '실행 실패 — 데이터 상태에서 확인'))).toBe('실행 실패 — 데이터 상태에서 확인');
     expect(activitySub(item({ status: 'ok', skipReason: null, failReason: null }, '44종목 · 시그널 1건'))).toBe('44종목 · 시그널 1건');
     expect(activitySub({ at: 'x', kind: 'order', title: 't', sub: '장마감 전 손절 · 주문 송신 없음', params: { status: 'skipped' } })).toBe('장마감 전 손절 · 주문 송신 없음');
+  });
+});
+
+
+// ── T-130 WP2 (데모 v1 승인 — 사용자 「전부 권고대로」) ───────────────────────────────────────────────────────
+// 용어·사유 문구 정정 + 확인 필요 머리 숫자(D3-B) + 영문 코드 노출 제거(D4-A). 사전 표 자체는 reason-dictionary-t130.test.ts 가 고정한다.
+
+describe('T-130 확인 필요 머리 숫자 = 봐야 할 가짓수 (D3-B)', () => {
+  test.each(STAGES)('%s × 정상: 머리 「3가지」 — 줄 수이고 데이터 이상은 여러 건이어도 한 줄', (stage) => {
+    const s = section(render(stage, 'ok'), 'h-check');
+    expect(s).toContain('<small>3가지</small>');
+    expect(s).not.toMatch(/<small>\d+건<\/small>/);
+    expect(s.match(/class="rowl"/g)).toHaveLength(3);
+  });
+  test.each(STAGES)('%s × 빈·로딩·조회 실패: 머리 숫자 없음', (stage) => {
+    for (const d of ['empty', 'loading', 'error'] as const) {
+      const s = section(render(stage, d), 'h-check');
+      expect(s).not.toMatch(/<small>/);
+    }
+  });
+  const anomalyChecks = (more: number | null): CheckItem[] => [
+    { kind: 'data_anomaly', severity: 'w', params: { source: 'news_domestic', label: '뉴스 국내', state: 'partial', streak: 2, jobId: null, jobStatus: null, more: null }, href: '/analytics?tab=data' },
+    { kind: 'data_anomaly', severity: 'w', params: { source: 'fx_usdkrw', label: '환율 USD/KRW', state: 'stale', streak: null, jobId: null, jobStatus: null, more: null }, href: '/analytics?tab=data' },
+    { kind: 'data_anomaly', severity: 'w', params: { source: 'job_run', label: 'strategy-eval', state: 'error', streak: null, jobId: 'strategy-eval', jobStatus: 'failed', more }, href: '/analytics?tab=data' },
+  ];
+  test('데이터 이상 건수: 확인 필요 묶음 줄(서버 항목 + 잘린 수) = 운용현황 「데이터 이상·분석 실패」 칸 숫자, 보조 줄이 출처를 나눈다', () => {
+    const dto = homeDTO('observe', 'ok');
+    if (dto.checks.state !== 'ok' || !dto.observe || dto.observe.state !== 'ok') throw new Error('fixture');
+    dto.checks.data = anomalyChecks(1);                          // 3줄 + 잘린 1 = 4건
+    const items: AnomalyItem[] = [
+      { source: 'news_domestic', state: 'partial', label: '뉴스 국내', streak: 2 },
+      { source: 'fx_usdkrw', state: 'stale', label: '환율 USD/KRW' },
+      { source: 'job_run', state: 'error', label: 'strategy-eval', jobId: 'strategy-eval', market: 'common', jobStatus: 'failed' },
+      { source: 'job_run', state: 'error', label: 'entry-watcher', jobId: 'entry-watcher', market: 'common', jobStatus: 'missing' },
+    ];
+    dto.observe.data.anomalies = { state: 'available', value: { total: 4, sourcesChecked: 7, items, analysisFailureKnown: true }, asOf: dto.generatedAt };
+    const html = renderDTO(dto);
+    const check = textOf(section(html, 'h-check'));
+    expect(check).toContain('데이터 이상·분석 실패 4건');
+    expect(check).toContain('국내 뉴스 0건 2일 연속 · 환율 USD/KRW 오래됨 외 2건');
+    expect(section(html, 'h-check')).toContain('<small>1가지</small>');
+    expect(section(html, 'h-check')).toContain('<a class="rowl" href="/analytics?tab=data">');
+    // 운용현황 A4 칸: 같은 숫자 4건 + 원천 2 · 실행 실패 2 · 대표 상태(첫 이상 = 일부 저하 → 입력 품질 저하)
+    const ops = textOf(section(html, 'h-ops'));
+    expect(ops).toContain('데이터 이상·분석 실패4건');
+    expect(ops).toContain('원천 7개 중 이상 2 · 실행 실패 2 · 입력 품질 저하');
+    expect(`${check}${ops}`).not.toContain('외 1건');         // 「외 n건」 단독 줄 없음
+  });
+  test('A4 보조 줄 — 잡 실패만 있으면 「원천 7개 정상 · 실행 실패 1」(대표 상태 말 없음)', () => {
+    const dto = homeDTO('observe', 'ok');
+    if (!dto.observe || dto.observe.state !== 'ok') throw new Error('fixture');
+    const items: AnomalyItem[] = [{ source: 'job_run', state: 'error', label: 'strategy-eval', jobId: 'strategy-eval', market: 'common', jobStatus: 'failed' }];
+    dto.observe.data.anomalies = { state: 'available', value: { total: 1, sourcesChecked: 7, items, analysisFailureKnown: true }, asOf: dto.generatedAt };
+    const ops = textOf(section(renderDTO(dto), 'h-ops'));
+    expect(ops).toContain('데이터 이상·분석 실패1건장중 전략 평가 실패원천 7개 정상 · 실행 실패 1');
+  });
+  test('A4 보조 줄 — 분석 실패를 아직 모르면(analysisFailureKnown=false) 지금처럼 「분석 실패는 실행 기록 뒤」', () => {
+    const t = textOf(section(render('observe', 'first'), 'h-ops'));
+    expect(t).toContain('분석 실패는 실행 기록 뒤');
+  });
+});
+
+describe('T-130 한국어 사유 칩 — 홈에 영문 코드가 보이지 않는다 (D4-A)', () => {
+  const chip = (m: Parameters<typeof MetricReason>[0]['m'], short?: boolean) => renderToStaticMarkup(h(MetricReason, { m, short }));
+  const mm = (state: Metric<number>['state'], reason?: string): Metric<number> => ({ state, value: null, asOf: null, ...(reason ? { reason } : {}) });
+  test('error — 지표 자체 실패는 칩 전체 문구, 요청 실패는 「! 조회 실패 · {말}」, 모르는 코드는 「알 수 없는 사유」, short 는 「!」', () => {
+    expect(chip(mm('error', 'balances_unknown'))).toBe('<span class="st error">! 잔고를 읽지 못함</span>');
+    expect(chip(mm('error', 'exit_switch_db_error'))).toBe('<span class="st error">! 청산 스위치 읽기 실패</span>');
+    expect(chip(mm('error', 'all_sources_failed'))).toBe('<span class="st error">! 데이터 원천을 하나도 읽지 못함</span>');
+    expect(chip(mm('error', 'http_503'))).toBe('<span class="st error">! 조회 실패 · 서버 오류 503</span>');
+    expect(chip(mm('error', 'unauthorized'))).toBe('<span class="st error">! 로그인 필요</span>');
+    expect(chip(mm('error', 'totally_new'))).toBe('<span class="st error">! 조회 실패 · 알 수 없는 사유</span>');
+    expect(chip(mm('error'))).toBe('<span class="st error">! 조회 실패 · 원인 모름</span>');
+    expect(chip(mm('error', 'balances_unknown'), true)).toBe('<span class="st error">!</span>');
+  });
+  test('blocked — 막은 장치와 함께, 엔진 꺼짐은 차단이 아니라 꺼짐(off 칩), short 는 「⊘」', () => {
+    expect(chip(mm('blocked', 'validation_gate'))).toBe('<span class="st blocked">⊘ 차단 · 검증 관문</span>');
+    expect(chip(mm('blocked', 'engine_off'))).toBe('<span class="st off">엔진 꺼짐</span>');
+    expect(chip(mm('blocked', 'order_max_unset'))).toBe('<span class="st blocked">⊘ 차단</span>');
+    expect(chip(mm('blocked'))).toBe('<span class="st blocked">⊘ 차단</span>');
+    expect(chip(mm('blocked', 'validation_gate'), true)).toBe('<span class="st blocked">⊘</span>');
+  });
+  test.each(STAGES.flatMap((s) => DATA.map((d) => [s, d] as const)))('%s × %s: 사전이 다루는 사유 코드·요청 오류 코드가 글자로 새지 않는다', (s, d) => {
+    const t = textOf(render(s, d));
+    const codes = [
+      ...Object.keys(dict.ORDER_REASON_KO), ...Object.keys(dict.ANALYSIS_REASON_KO), ...Object.keys(dict.FETCH_ERROR_KO), ...Object.keys(dict.METRIC_ERROR_CHIP_KO),
+      ...Object.keys(dict.EXCLUSION_KO), ...Object.keys(dict.JOB_NAME_KO), 'unauthorized', 'http_503', 'degraded',
+    ].filter((c) => /_|-/.test(c) || ['unauthorized', 'degraded', 'timeout', 'network', 'missing', 'weekend', 'holiday'].includes(c));
+    for (const c of codes) expect([c, t.includes(c)]).toEqual([c, false]);
+  });
+});
+
+describe('T-130 청산 로직 — 잔고 조회 실패와 이름 통일', () => {
+  test('마지막 평가가 balances_unknown → 「국내 ! 잔고를 읽지 못함 · 15:21 보유 종목을 몰라 이번 평가를 못 했습니다 · 해외 장외 …」 (영문 코드 없음)', () => {
+    const dto = homeDTO('observe', 'ok');
+    exitOf(dto).lastEval.domestic = { state: 'error', value: { at: '2026-10-30T15:21:00+09:00', runsToday: 57, sessionOpen: false }, asOf: '2026-10-30T15:21:00+09:00', reason: 'balances_unknown' };
+    const html = section(renderDTO(dto), 'h-exit');
+    const t = textOf(html);
+    expect(html).toContain('국내 <span class="st error">! 잔고를 읽지 못함 · 15:21</span> 보유 종목을 몰라 이번 평가를 못 했습니다');
+    expect(t).toContain('국내 ! 잔고를 읽지 못함 · 15:21 보유 종목을 몰라 이번 평가를 못 했습니다 · 해외 장외 개장 22:30 KST');
+    expect(t).not.toContain('balances_unknown');
+    expect(t).not.toContain('조회 실패');
+  });
+  test('마지막 평가 시각이 없으면 칩에 시각을 붙이지 않는다', () => {
+    const dto = homeDTO('observe', 'ok');
+    exitOf(dto).lastEval.domestic = { state: 'error', value: { at: null, runsToday: 1, sessionOpen: true }, asOf: null, reason: 'balances_unknown' };
+    expect(section(renderDTO(dto), 'h-exit')).toContain('국내 <span class="st error">! 잔고를 읽지 못함</span> 보유 종목을 몰라 이번 평가를 못 했습니다');
+  });
+  test('청산 스위치 읽기 실패(exit_switch_db_error) → 가동 줄 「— ! 청산 스위치 읽기 실패」 + 「청산 엔진이 꺼진 것이 아닙니다」', () => {
+    const dto = homeDTO('observe', 'ok');
+    exitOf(dto).engine = { state: 'error', value: null, asOf: null, reason: 'exit_switch_db_error' };
+    const t = textOf(section(renderDTO(dto), 'h-exit'));
+    expect(t).toContain('가동— ! 청산 스위치 읽기 실패청산 엔진이 꺼진 것이 아닙니다 — 상태를 모릅니다');
+    expect(t).not.toContain('exit_switch_db_error');
+  });
+  test('실거래 단계 가상 청산 이름 — 확인 필요 줄에 「트레일링 스탑」「목표 익절」(D8-A)', () => {
+    const line = (kind: string) => checkLines([{ kind: 'virtual_exit', severity: 'i', count: 1, params: { at: '2026-10-30T15:26:00+09:00', exitKind: kind, notifyAutoSubmit: null }, href: '/recommend?tab=log' }], NOW)[0].title;
+    expect(line('trailing_stop')).toBe('가상 청산 1건 — 오늘 15:26 트레일링 스탑');
+    expect(line('target_profit')).toBe('가상 청산 1건 — 오늘 15:26 목표 익절');
+    expect(line('hard_stop')).toBe('가상 청산 1건 — 오늘 15:26 손실한도 손절');
+    expect(line('eod_loss_cut')).toBe('가상 청산 1건 — 오늘 15:26 장마감 전 손절');
+    expect(line('weird')).toBe('가상 청산 1건 — 오늘 15:26 청산');
+  });
+  test('홈 화면 글자에 옛 청산 이름이 없다: 「익절」「트레일링」 단독 표기 0 (일반어 「손절·익절」 제외)', () => {
+    for (const s of STAGES) for (const d of DATA) {
+      const t = textOf(render(s, d)).replace(/자동 손절·익절 없음/g, '');
+      expect([s, d, /(^|[^목표 ])익절/.test(t)]).toEqual([s, d, false]);
+      expect([s, d, /트레일링(?! 스탑)/.test(t)]).toEqual([s, d, false]);
+    }
   });
 });

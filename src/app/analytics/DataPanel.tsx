@@ -34,12 +34,13 @@ export function sourceWhen(r: DataSourceRow, nowMs: number): string {
 
 function sourceChip(r: DataSourceRow, nowMs: number): ReactNode {
   if (r.state === 'available' || r.state === 'zero') return <StatusChip kind="zero">정상</StatusChip>;
-  if (r.state === 'partial') return <StatusChip kind="partial">degraded</StatusChip>;
-  return stateChip({ state: r.state, asOf: r.lastOkAt, reason: r.reason }, { nowMs });
+  if (r.state === 'partial') return <StatusChip kind="partial">일부 저하</StatusChip>;
+  // showCode: 이 패널만 한국어 칩 뒤에 원인 코드 원문을 작게 붙인다(T-130 D4-A) — 홈·거래·분석(오늘·검증)은 한국어만
+  return stateChip({ state: r.state, asOf: r.lastOkAt, reason: r.reason }, { nowMs, showCode: true });
 }
 
 const UPTIME_LABEL: Record<UptimeRow['group'], { k: string; s: string }> = {
-  analysis: { k: '장마감 분석 (국내·해외)', s: '예정 회차 대비 정상(ok) 회차 — 분자는 ok 만(D6), partial·degraded 는 별도 선' },
+  analysis: { k: '장마감 분석 (국내·해외)', s: '예정 회차 대비 정상 회차 — 분자는 ok 만(D6), 일부 완료·입력 저하는 별도 선' },
   collection: { k: '데이터 수집 (뉴스·일봉·스냅샷·공시)', s: '실행 기록(job_run_log, T-112) 이 쌓인 날부터 — 지난 기록은 소급 불가' },
 };
 
@@ -64,18 +65,18 @@ export function uptimeValue(u: UptimeRow, nowMs: number): ReactNode {
     if (day != null && day < 7) return <StatusChip kind="prep">기록 {day}일째 — 주 단위 비율은 7일 뒤</StatusChip>;
     return <span className="num" style={{ fontWeight: 700 }}>{u.ok}/{u.expected} ({Math.round((u.ok / u.expected) * 100)}%)</span>;
   }
-  return stateChip({ state: u.state, asOf: null, reason: u.reason }, { nowMs }) ?? '—';
+  return stateChip({ state: u.state, asOf: null, reason: u.reason }, { nowMs, showCode: true }) ?? '—';
 }
 
 export function DataPanel(p: { nowMs?: number }) {
   const nowMs = p.nowMs ?? Date.now();
   const poll = useOpsPoll<AnalysisDataDTO>(analysisUrl('data'), { intervalMs: ANALYSIS_POLL_MS });
   const d = poll.data;
-  const fail = !d && poll.status === 'error' ? <FailBody code={poll.error ?? 'api_error'} onRetry={poll.refresh} /> : null;
+  const fail = !d && poll.status === 'error' ? <FailBody code={poll.error ?? 'api_error'} onRetry={poll.refresh} showCode /> : null;
 
   let uptime: ReactNode;
   if (!d) uptime = fail ?? <LoadingBody />;
-  else if (d.uptime.state === 'error') uptime = <FailBody code={d.uptime.error} onRetry={poll.refresh} />;
+  else if (d.uptime.state === 'error') uptime = <FailBody code={d.uptime.error} onRetry={poll.refresh} showCode />;
   else {
     const byGroup = new Map(d.uptime.data.map(u => [u.group, u]));
     uptime = (
@@ -96,7 +97,7 @@ export function DataPanel(p: { nowMs?: number }) {
 
   let sources: ReactNode;
   if (!d) sources = fail ?? <LoadingBody />;
-  else if (d.sources.state === 'error') sources = <FailBody code={d.sources.error} onRetry={poll.refresh} />;
+  else if (d.sources.state === 'error') sources = <FailBody code={d.sources.error} onRetry={poll.refresh} showCode />;
   else {
     sources = (
       <Rows>
