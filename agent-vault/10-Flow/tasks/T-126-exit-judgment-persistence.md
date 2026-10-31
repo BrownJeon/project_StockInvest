@@ -1,7 +1,7 @@
 ---
 task_id: T-126
 title: 청산 판단 영구 보존 기록 후보 — `exit_judgment`(가칭): 청산 엔진 평가·스킵·발화를 감사 기간 이후에도 남기는 기록
-status: ready-to-deploy
+status: deployed
 priority: medium
 project: StockInvest
 created: 2026-10-30
@@ -16,7 +16,7 @@ tags:
   - domain/exit
 aliases:
   - 청산판단기록
-waiting: [사용자: 배포 승인(15:40 창 — DDL 적용 → push) · 기록 스위치(exit_judgment_record_enabled) 켜기는 배포 뒤 별도 승인]
+waiting: [11-02(월) 09:22 국내 첫 틱·11-03(화) 07:20 해외 첫 틱의 exit_judgment 행 검증(예약, 세션 한정) · 이상이면 스위치 false]
 ---
 
 # T-126 청산 판단 영구 보존 기록 (후보 — 착수 전)
@@ -210,6 +210,20 @@ waiting: [사용자: 배포 승인(15:40 창 — DDL 적용 → push) · 기록 
 
 ## 폐기된 판정 이력 (superseded)
 - [09:25] (폐기) 1차 감사의 판정은 조건부 통과(conditional pass, 검토 범위 = 위 판정과 같은 8개 파일)였고 조건은 "R1 을 스위치 켜기 승인 전에 해소(코드 수정 시 재검증), 커밋은 서버에서" 였다. R1 이 09:38 에 수정되어 10:10 재검증에서 해소가 확인되었으므로 이 판정은 위 새 판정으로 대체되었다(참고용으로만 남긴다).
+
+## 배포 기록
+
+- [2026-10-31 14:01] **코드 운영 반영(다른 세션의 push 에 실림).** T-132 세션이 서버 체크아웃에서 `git push origin main`(`4c6f595..ad45efc`, 커밋 9개·94파일)을 해서 webhook blue/green 이 13:59:37~14:01:03 에 끝났다. 릴리스 `20261031-135945-ad45efc2`, `RELEASE_RESULT ok`, `migrated:false`(DDL 없음). 계획이던 「15:40 창 — DDL 적용 → push」가 아니라 **이 세션의 사용자 승인(15:40 창)보다 먼저, 다른 세션 지시(사용자 「지금 배포」)로 나갔다.** 상세: [[T-132-kis-gateway-transient-retry]] 「배포 기록」·`ACTIVE.md` 2026-10-31 14:01 절.
+- [15:08] **현재 상태(읽기 전용 확인).** `exit_judgment` 표 없음(`information_schema` 0건) · `system_config.exit_judgment_record_enabled` 키 없음(= 꺼짐) · DDL 파일 sha256 `dfa0967c3877a20347d07835a2e3fd31ae09e8842fbcb84adf6708773d9e5fe1` 일치 · `@@GLOBAL.sql_mode` = `STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`(`NO_BACKSLASH_ESCAPES` 없음)·MariaDB 10.11.11 · 안전 키 5개(`safety_dry_run`·`safety_kill_switch`·`exit_engine_enabled`·`exit_hard_stop_enabled`·`job_run_log_enabled`) 값·`updated_at` 불변 · `/api/health` 200. **코드가 DDL 보다 먼저 나갔지만 스위치가 꺼져 있고 표가 없어도 기록 코드는 아무것도 쓰지 않는다**(표 없음 = errno 1146 조용히 건너뜀) — 청산 평가·시그널·주문 동작 변화 없음 [확실 — 설계·시험·Reviewer 재현은 위 `## Reviewer`·`## QA` 절].
+- [10-31, 15:05 이전] **사용자 승인(원문): 「1. 기록 스위치 켜기 승인」.** 순서는 DDL → 스위치로 유지한다(스위치를 켠 채 표가 없으면 기록이 조용히 건너뛰어져 첫 틱 기록을 놓친다). DDL 은 06:50 의 승인(「T-126 승인하니 DDL작업 진행해줘」)과 15:40 창 승인(「배포 승인하니 이어서 작업 진행해줘」)에 따라 **15:40 이후**에 적용한다.
+- [15:12] **예약(이 세션, 세션 한정)**: `6a20663b` 10-31 15:41 DDL 적용 → `SHOW CREATE TABLE` 대조 → 스위치 켜기 → 켠 뒤 점검 6개 → 이 절에 결과 추가 · `c4a43f30` 11-02(월) 09:22 국내 첫 틱 행 검증 · `60bb8ee9` 11-03(화) 07:20 해외 첫 틱 행 검증(미국 서머타임 11-01 종료로 정규장 23:30~06:00 KST). 이 세션이 끝나면 예약이 사라지므로 그 경우 아래 절차를 사람이 실행한다.
+- 절차(수동 대체용): `cd <서버 체크아웃>` → `DBQ_ALLOW_WRITE=1 python3 -I ~/.node-local/tools/dbq.py -e "$(cat scripts/migrations/T-126-exit-judgment.sql)"` → `SHOW CREATE TABLE exit_judgment` 대조 → `INSERT INTO system_config (`key`,`value`) VALUES ('exit_judgment_record_enabled','true') ON DUPLICATE KEY UPDATE `value`=VALUES(`value`)`. 롤백: 스위치를 `false` 로(즉시·데이터 보존, 서버 캐시 30초). `DROP TABLE` 은 쌓인 기록이 사라지므로 사용자 승인 사항.
+- [2026-10-31 15:41] **DDL 적용** — 사용자 승인(원문: 「T-126 승인하니 DDL작업 진행해줘」·「배포 승인하니 이어서 작업 진행해줘」=15:40 장외 창). 15:41:30 `DBQ_ALLOW_WRITE=1 dbq.py` 1회, exit 0, 문장은 `SET SESSION lock_wait_timeout=5` 와 `CREATE TABLE IF NOT EXISTS exit_judgment` 둘뿐. **사전 가드 7개 전부 통과**: 15:41 KST(창 15:40~19:30) · origin/main=`ad45efc2…`·`0116228` 조상 확인·운영 릴리스에 `exit-judgment.ts` 존재 · 표 없음(0) · sha256 `dfa0967c3877a20347d07835a2e3fd31ae09e8842fbcb84adf6708773d9e5fe1` 일치 · health 200 green(`safety.dryRun true`·`killSwitch false`) · sql_mode `STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION`(`NO_BACKSLASH_ESCAPES` 없음) · 안전 키 5개 기대값 일치.
+- [2026-10-31 15:41] **`SHOW CREATE TABLE` 대조 통과** — Reviewer 의 기대 정의(스크래치패드 `rev-t126/expected-create.txt`)와 공백·`\n` 이스케이프·`AUTO_INCREMENT` 줄을 정규화해 대조 → 길이 1212 = 1212, **문자열 완전 일치**(21열, 인덱스 `idx_evaluated_market`·`idx_symbol_evaluated`, CHECK `chk_xj_code`·`chk_xj_pnl`, InnoDB, utf8mb4). 행 0.
+- [2026-10-31 15:41] **기록 스위치 켬** — 사용자 승인 원문 「1. 기록 스위치 켜기 승인」. `system_config.exit_judgment_record_enabled`=`true`, `updated_at` 15:41:54(서버 캐시 30초). 켠 뒤 점검(15:42): ① 값 true ② 안전 키 5개 값·`updated_at` 불변(`safety_dry_run` true 10-30 09:08:14 · `safety_kill_switch` false 09:08:18 · `exit_engine_enabled` true 09:08:29 · `exit_hard_stop_enabled` false 07-02 16:39:53 · `job_run_log_enabled` true 10-30 21:05:27) ③ `INSERT INTO exit_judgment` 장기 체류 0(processlist) ④ 실제 앱 로그(`shared/logs/pm2-err.log`·`pm2-out.log`·`cron-err.log`·`cron-out.log`)에 `청산 판단 기록` 경고 0건·`exit_judgment` 언급 0건 ⑤ health 200 green ⑥ `exit_judgment` 행 0 — 토요일 휴장이라 청산 틱이 보유 종목 행을 만들지 않으므로 정상.
+- **정정(점검 오류 기록)**: 예약 프롬프트에 적은 로그 파일명(`~/.pm2/logs/stockinvest-error.log`·`stockinvest-out.log`)은 서버에 존재하지 않아 첫 ④ 점검이 헛돌았다(grep 0건은 파일이 없어서였다). `pm2 describe` 로 실제 경로가 `/home/brownjeon/apps/stockinvest/shared/logs/` 임을 확인해 ④ 를 다시 했고 위 결과는 그 재점검 값이다. 이후 예약 점검(11-02·11-03)도 이 경로로 읽는다.
+- **롤백**: 스위치를 `false` 로(`UPDATE system_config SET value='false' WHERE key='exit_judgment_record_enabled'`, 즉시·데이터 보존, 서버 캐시 30초). 표 삭제(`DROP TABLE exit_judgment`)는 쌓인 기록이 사라지므로 사용자 승인 사항.
+- **다음(예약, 세션 한정)**: 11-02(월) 09:22 국내 첫 틱 행 검증 · 11-03(화) 07:20 해외 첫 틱 행 검증 — 행 수 = 보유 종목 수, 종목당 1행, `decision_code` = 같은 틱 eval_funnel 마지막 게이트, `signal_id` ↔ `signals` 조인, `currency`·`threshold_pct` 부호, `engine_release` = 현재 릴리스. 예약은 이 세션이 끝나면 사라지므로 그 경우 사람이 같은 쿼리를 읽는다.
 
 ## 진행 기록
 - [2026-10-30 16:16] 후보 등록(Leader). 사용자 "권고안 확정" — D11 (c).

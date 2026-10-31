@@ -6,6 +6,14 @@ tags:
 ---
 # 현재 상태
 
+## 2026-10-31 15:42 — T-126 DDL 적용 + 기록 스위치 켬 (`exit_judgment`)
+
+- **사용자 승인**: 「T-126 승인하니 DDL작업 진행해줘」(06:50)·「배포 승인하니 이어서 작업 진행해줘」(15:40 창)·「1. 기록 스위치 켜기 승인」.
+- **결과**: 15:41:30 DDL 1회 exit 0(`CREATE TABLE IF NOT EXISTS exit_judgment`), 가드 7개 통과, `SHOW CREATE TABLE` 이 Reviewer 기대 정의와 **완전 일치**(21열·인덱스 2·CHECK 2). 15:41:54 `exit_judgment_record_enabled=true`. 켠 뒤 안전 키 5개 값·시각 불변, 멈춘 INSERT 0, 앱 로그 경고 0, health green, 행 0(토요일 휴장 — 정상).
+- **정정**: 예약 프롬프트의 로그 파일명이 틀려(`~/.pm2/logs/stockinvest-*.log` 없음) 첫 로그 점검이 헛돌았다 — 실제 경로 `shared/logs/pm2-err.log` 등으로 재점검, 결과 동일. 상세: [[T-126-exit-judgment-persistence]] 「배포 기록」.
+- **다음**: 11-02(월) 09:22 국내 첫 틱 행 검증 · 11-03(화) 07:20 해외 첫 틱 행 검증(예약은 세션 한정). 이상이면 스위치를 false 로(롤백).
+- **병행 착수(사용자 「권고대로 착수」)**: [[T-134-exit-engine-state-load-isolation]](청산 엔진 상태 조회 실패 종목 단위 격리) · [[T-135-recorder-pool-hold-and-runner-tmp]](T-112 기록기 풀 점유 상한 + 러너 임시 파일 0600) — Developer 구현 중, 코드 변경은 서버 worktree(`stockinvest-t134`·`t135`)에만 있고 미커밋. `getTicker` HTTP200 은 다른 세션의 [[T-133-ticker-business-failure-retry]] 가 맡는다(이 두 task 는 `src/lib/exchanges/*` 를 건드리지 않는다).
+
 ## 2026-10-31 14:01 — T-132 + 대기였던 T-126·T-127·T-128·T-130 운영 배포 완료 (릴리스 `20261031-135945-ad45efc2`)
 
 - **사용자 지시**: 10-31 「지금 배포」(T-132 보고에서 "push 하면 8커밋이 함께 배포된다"를 명시한 뒤 받은 승인).

@@ -1,7 +1,7 @@
 ---
 task_id: T-127
 title: 러너 스풀 후속 보강 후보 — 금액 본문 마스킹·스풀 파일 0600·롤업 failed 전이 시험 (T-112 Codex·Reviewer 후속)
-status: ready-to-deploy
+status: deployed
 priority: low
 project: StockInvest
 created: 2026-10-30
@@ -16,7 +16,7 @@ tags:
   - domain/ops
 aliases:
   - 러너스풀보강
-waiting: [사용자: 배포 승인(15:40 창, 웹+크론 재기동) · 배포 뒤 운영 스풀 600·실패 줄 reason= 읽기 확인(미검증)]
+waiting: [운영 스풀 0600·실패 줄 `reason=` 확인은 전송 실패/스풀 발생이 있어야 가능 — 지금까지 발생 0건이라 관찰 대기]
 ---
 
 # T-127 러너 스풀 후속 보강 (후보 — 착수 전)
@@ -54,6 +54,12 @@ waiting: [사용자: 배포 승인(15:40 창, 웹+크론 재기동) · 배포 �
 - [2026-10-31 06:50] intake engine=jev → task_type=null / risk=R2 / developer_model=opus / next=ask_user / demo=none/- | overrides=MD-judge-failed-opus | fallback=- | tokens=1338
 - [2026-10-31 06:53] intake engine=jev → task_type=null / risk=R2 / developer_model=opus / next=assign / demo=none/- | overrides=MD-judge-failed-opus | fallback=- | tokens=1351 | 범위 확정 재접수
 - [2026-10-31 06:56] codex_gate/C1 engine=jev → codex_required=true · mode=adversarial-review · focus=security · budget_rule=CX-limit-unknown-r2 · codex_switch=on | overrides=- | fallback=- | tokens=809
+
+## 배포 기록
+
+- [2026-10-31 14:01] **코드 운영 반영(다른 세션의 push 에 실림).** T-132 세션이 서버 체크아웃에서 `git push origin main`(`4c6f595..ad45efc`, 커밋 9개·94파일)을 해서 webhook blue/green 이 13:59:37~14:01:03 에 끝났다. 릴리스 `20261031-135945-ad45efc2`, `RELEASE_RESULT ok`, `migrated:false`(DDL 없음). 계획이던 「15:40 창 — DDL 적용 → push」가 아니라 **이 세션의 사용자 승인(15:40 창)보다 먼저, 다른 세션 지시(사용자 「지금 배포」)로 나갔다.** 상세: [[T-132-kis-gateway-transient-retry]] 「배포 기록」·`ACTIVE.md` 2026-10-31 14:01 절.
+- [15:06] **배포 후 읽기 확인.** 크론 러너 프로세스 `bash …/releases/20261031-135945-ad45efc2/scripts/cron-runner.sh`(pid 3345996, 시작 14:00:15, `/proc/<pid>/cwd` = 새 릴리스) · 새 릴리스 `scripts/cron-runner.sh` 에 `_jrl_flush_body`·`jrl_mask_money` 6곳 존재 · 스풀 파일(`~/.node-local/stockinvest/job-run-spool`) **없음**(전송 대기분 0) · `job_run_log` 181행·마지막 기록 15:06:57 · 배포 후 non-ok 3행은 설명됨(14:00:15 `news-peek-overseas-14` `HTTP=000` = 컷오버 순간·05:21 배포에도 같은 패턴 / `portfolio-snapshot` skipped `markets_closed` 2건 = 토요일 휴장). `job-run-log 전송 실패` 로그 0건.
+- **운영에서 확인하지 못한 것**: 스풀 파일 권한 0600 과 전송 실패 줄의 `reason=` 형식 — 둘 다 스풀이 생기거나 전송이 실패해야 나타나는데 배포 후 그런 일이 없었다(시험·변이 시험으로는 확인됨 — 위 `## QA`). 금액 값 마스킹도 운영에서는 해당 본문이 오가는 상황 전엔 눈으로 못 본다. 다음 전송 실패 때 파일 권한과 실패 줄을 읽기로 확인한다.
 
 ## 진행 기록
 - [2026-10-30 20:00] 후보 등록(Leader). T-112 Codex C2 지적 1건 + Reviewer Minor-1·2 를 모아 둠.

@@ -1,7 +1,7 @@
 ---
 task_id: T-130
 title: T-108 화면 후속 — 설정 화면 터치 영역 44px·확인 필요 머리 숫자 의미·영문 사유 코드 문구·「차단」 표기 규칙·분석 skipped 표기·용어 혼재 (데모 검토 게이트 대상)
-status: ready-to-deploy
+status: deployed
 priority: low
 project: StockInvest
 created: 2026-10-31
@@ -15,7 +15,7 @@ tags:
   - domain/ui
 aliases:
   - T108화면후속
-waiting: [사용자: 배포 승인 · 배포 뒤 갤럭시 실기기에서 설정 화면 터치·키보드·홈 표기 확인]
+waiting: [후속 후보는 T-131 — 사용자 우선순위 결정]
 demo_gate:
   required: true
   level: "full"
@@ -312,6 +312,12 @@ demo_gate:
 - [10:06] **정리 [확실]**: 일회용 앱 서버(127.0.0.1:3998)·SSH 터널·`~/.node-local/t130-qa/`(앱 복사본·빌드·환경 파일·시험 계정 파일)·내가 만든 DB `t130qa` 와 계정 `t130qa@%`·`/tmp/t130qa-*` 삭제. 컨테이너 `t108-qa-db` 와 T-108 의 `t108qa` DB 는 그대로(정리는 Leader 가 사용자 확인 후). 임시 컨테이너 `t130-ops-a` 제거 확인. 브라우저는 viewport·색 체계 에뮬레이션을 풀고 내가 연 탭을 닫음. 산출물 정리: 스크린샷 16개 삭제(프로젝트 폴더에는 만들지 않음 — 응답 폴더의 파일만), 근거는 위 측정값·문구를 글로 남겼다.
 - [10:06] **QA 판정: PASS** — 체크리스트 6개 영역 PASS, Critical·High 결함 0, **Medium 1건(N1, 표시 정확성·안전 무관 — Leader 가 이번 배포 전 수정 vs 후속 등록을 정한다)**, 후속 기록 6건, NOT_VERIFIED 8건(실기기 소프트 키보드·Enter 길게 누름·보유/라이브 상태 문구 등). 설정 화면 터치 영역 44px 수용 기준은 T-130 목록 기준으로 충족(목록 밖 컨트롤은 후속). 이 PASS 는 운영 확인·실매매 승인이 아니다.
 - [10:32][qa] 🔴 통합 회귀(T-126 QA 가 4커밋 합본 `0116228` 으로 수행)에서 **전체 jest 1건 실패 — 결함 #1(High·릴리스 차단, 런타임 영향 0)**: `src/lib/corp-intel/__tests__/isolation.test.ts`(T-119 울타리, `holdings-premarket` 를 쓰는 src 파일 허용 목록)가 T-130 의 `src/lib/ops/reason-dictionary.ts`(226행 잡 라벨)·`src/lib/ops/__tests__/reason-dictionary-t130.test.ts`(142행)를 허용 목록 밖으로 잡는다. `ec6723c` 37/37, `0116228` 36/37. 상세·재현·처리 방향은 [[T-126-exit-judgment-persistence]] `## QA` 결함 #1 참고. 수정 → Reviewer 부터 재순환 필요(수정 파일이 `SAFETY_PATHS` 의 `src/lib/corp-intel/` 이면 Reviewer 판정 줄 필요).
+
+## 배포 기록
+
+- [2026-10-31 14:01] **코드 운영 반영(다른 세션의 push 에 실림).** T-132 세션이 서버 체크아웃에서 `git push origin main`(`4c6f595..ad45efc`, 커밋 9개·94파일)을 해서 webhook blue/green 이 13:59:37~14:01:03 에 끝났다. 릴리스 `20261031-135945-ad45efc2`, `RELEASE_RESULT ok`, `migrated:false`(DDL 없음). 계획이던 「15:40 창 — DDL 적용 → push」가 아니라 **이 세션의 사용자 승인(15:40 창)보다 먼저, 다른 세션 지시(사용자 「지금 배포」)로 나갔다.** 상세: [[T-132-kis-gateway-transient-retry]] 「배포 기록」·`ACTIVE.md` 2026-10-31 14:01 절.
+- [15:05 이전] **사용자 확인(원문): 「2. 설정확인 완료」** — 운영 설정 화면을 확인했다는 사용자 보고다. 항목별 범위(갤럭시 소프트 키보드에서 값 행 Enter 확정·스위치 키보드 조작·터치 영역)는 세부 기재가 없어 어디까지 봤는지는 모른다. 갤럭시 소프트 키보드 Enter 는 AI 가 확인할 수 없는 항목이라 사용자 보고를 그대로 따른다.
+- 남은 것: 홈 칩 「시그널 N건 모두 검증 관문 차단」과 후보 줄 「건너뜀 · 사유 기록 없음」이 어긋날 수 있는 N1(gate 없는 skipped 집계), 44px 미만 컨트롤 잔여, 영문 코드 잔여 — 모두 [[T-131-t126-t130-followup-candidates]] 에 모았다.
 
 ## 진행 기록
 - [2026-10-31 07:00] 등록(Leader). T-128 의 화면 변경 항목을 분리. 사용자 착수 원문: "T-126 승인하니 DDL작업 진행해줘. 이후에 T-127,T-128도 이어서 진행해줘" — T-128 의 일부이므로 같은 지시로 착수한다.

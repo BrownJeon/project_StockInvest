@@ -1,7 +1,7 @@
 ---
 task_id: T-128
 title: T-108 후속 정리 후보 — 설정 화면 기존 컨트롤 터치 영역·초기 조회 실패 처리·문구 정리·배포 후 관찰 항목
-status: ready-to-deploy
+status: deployed
 priority: low
 project: StockInvest
 created: 2026-10-31
@@ -15,7 +15,7 @@ tags:
   - domain/ui
 aliases:
   - T108후속
-waiting: [사용자: 배포 승인 · 8번(배포 후 관찰)은 사용자 로그인 호출 뒤 확인 · 화면 항목은 T-130, 나머지 후보는 T-131]
+waiting: [8번(배포 후 관찰)은 사용자 로그인 호출 뒤 확인 · 나머지 후보는 T-131]
 demo_gate:
   required: false
   level: "none"
@@ -81,6 +81,11 @@ judge 첫 접수(전체 묶음)는 `demo=full`·`ask_user` 였다. 화면 레이
 - [2026-10-31 06:58] codex_gate/C1 engine=jev → codex_required=false / mode=- / focus=- / budget_rule=CX-limit-unknown-r2 / codex_switch=on | overrides=- | fallback=- | tokens=833
 - [2026-10-31 08:45] codex_gate/C2 engine=jev → codex_required=true / mode=adversarial-review / focus=error_handling / budget_rule=CX-limit-unknown-r2 / codex_switch=on | overrides=- | fallback=- | tokens=935
 - [2026-10-31 09:05] **override(Leader)**: C2 `codex_required=true` 이지만 Codex 를 호출하지 않는다 — 사유: C1(T-126·T-127) 호출 2건이 모두 `model_not_found`(사용자 전역 설정 `~/.codex/config.toml` 의 `model = "gpt-6.1-sol"` 이 ChatGPT 계정에서 지원되지 않음)로 즉시 실패했고 설정이 그대로다(09:0x 재확인). 호출해도 같은 오류가 나며 스냅샷 체크아웃에만 약 7분이 든다. 기록상 `Codex 검토 실패(미실행)` 으로 둔다("검토 완료" 아님). 대신 Reviewer 단독 감사 + QA 가 이 task 의 독립 검증이다. 사용자가 설정을 고치면 재실행 가능.
+
+## 배포 기록
+
+- [2026-10-31 14:01] **코드 운영 반영(다른 세션의 push 에 실림).** T-132 세션이 서버 체크아웃에서 `git push origin main`(`4c6f595..ad45efc`, 커밋 9개·94파일)을 해서 webhook blue/green 이 13:59:37~14:01:03 에 끝났다. 릴리스 `20261031-135945-ad45efc2`, `RELEASE_RESULT ok`, `migrated:false`(DDL 없음). 계획이던 「15:40 창 — DDL 적용 → push」가 아니라 **이 세션의 사용자 승인(15:40 창)보다 먼저, 다른 세션 지시(사용자 「지금 배포」)로 나갔다.** 상세: [[T-132-kis-gateway-transient-retry]] 「배포 기록」·`ACTIVE.md` 2026-10-31 14:01 절.
+- [15:06] 배포 후 읽기 확인: `/api/health` 200 · 안전 키 불변 · pm2 `stockinvest`·`stockinvest-cron` online. 화면에 드러나는 부분(설정 초기 조회 실패 격리·사유 사전 한 출처·청산 사유 앞머리 표시 변환)은 T-130 화면 확인과 함께 사용자가 본다. 서버·읽기 계층 변경이라 운영에서 직접 눈으로 못 본 항목(경보 용어 정정이 실제 텔레그램에 나가는 것)은 **다음 텔레그램 경보에서** 확인한다.
 
 ## 진행 기록
 - [2026-10-31 00:42] 후보 등록(Leader). T-108 QA 의 44px 면제와 Reviewer·Codex·QA 의 Minor 를 모음.
