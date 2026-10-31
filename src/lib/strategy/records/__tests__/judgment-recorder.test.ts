@@ -35,11 +35,40 @@ const mProvider = getProviderConfig as jest.Mock;
 type Handler = (sql: string, params: unknown[]) => unknown;
 let query: jest.Mock;
 let handlers: { switch: Handler; lookup: Handler; run: Handler; cand: Handler };
-/** (T-135) 풀 연결 — INSERT 는 이 연결로 간다. 문장은 같은 `query` 목에 남기고(기존 단언 그대로), 어느 창구로 왔는지만 따로 센다. */
+/** (T-135) 풀 연결 — INSERT 는 이 연결로 간다. 문장은 같은 `query` 목에 남기고(기존 단언 그대로), 어느 창구로 왔는지만 따로 센다.
+ *  (T-139) 기록 스위치 읽기(`record-switch.ts`)도 풀에서 **자기** 연결을 받는다. 받을 때마다 새 연결을 주고 처음 보낸 문장으로 갈라 —
+ *  스위치 SELECT 로 시작한 연결의 문장·끝은 swConnQuery·swRelease·swDestroy 로, 나머지(INSERT 연결·문장 없이 끝난 늦은 연결)는 예전처럼
+ *  connQuery·connRelease·connDestroy 로 센다. `ends()` 의 받은 수도 INSERT 쪽 연결만이다(스위치 연결이 섞이면 T-135 단언이 흐려진다). */
+interface FakeConn { query: (sql: string, params?: unknown[]) => unknown; release: () => void; destroy: () => void; isSwitch: () => boolean }
 let connQuery: jest.Mock;
 let connRelease: jest.Mock;
 let connDestroy: jest.Mock;
+let swConnQuery: jest.Mock;
+let swRelease: jest.Mock;
+let swDestroy: jest.Mock;
+let conns: FakeConn[];
 let getConnection: jest.Mock;
+
+function makeConn(): FakeConn {
+  let kind: 'switch' | 'other' | null = null;
+  const kindOf = (sql: string) => (kind ??= sql.includes('FROM system_config') ? 'switch' : 'other');
+  const c: FakeConn = {
+    query: (sql, params) => (kindOf(sql) === 'switch' ? swConnQuery(sql, params) : connQuery(sql, params)),
+    release: () => { if (kind === 'switch') swRelease(); else connRelease(); },
+    destroy: () => { if (kind === 'switch') swDestroy(); else connDestroy(); },
+    isSwitch: () => kind === 'switch',
+  };
+  conns.push(c);
+  return c;
+}
+/** (T-139) 기록 1회는 스위치 읽기(캐시 비움) → INSERT 순서다 — 첫 연결 받기(스위치)는 정상으로 두고 그 뒤(INSERT)만 impl 로 바꾼다.
+ *  첫 연결이 정말 스위치 SELECT 에 쓰였는지는 각 시험이 swEnds() 로 확인한다. */
+function insertConnWith(impl: () => Promise<unknown>): void {
+  getConnection.mockImplementation(impl);
+  getConnection.mockImplementationOnce(async () => makeConn());
+}
+/** (T-139) 스위치 연결의 [받은 수, release, destroy]. */
+const swEnds = () => [conns.filter((c) => c.isSwitch()).length, swRelease.mock.calls.length, swDestroy.mock.calls.length];
 
 function wire() {
   handlers = {
@@ -58,7 +87,11 @@ function wire() {
   connQuery = jest.fn((sql: string, params?: unknown[]) => query(sql, params));
   connRelease = jest.fn();
   connDestroy = jest.fn();
-  getConnection = jest.fn(async () => ({ query: connQuery, release: connRelease, destroy: connDestroy }));
+  swConnQuery = jest.fn((sql: string, params?: unknown[]) => query(sql, params));
+  swRelease = jest.fn();
+  swDestroy = jest.fn();
+  conns = [];
+  getConnection = jest.fn(async () => makeConn());
   mGetPool.mockReturnValue({ query, getConnection });
 }
 const callsOf = (needle: string) => query.mock.calls.filter((c) => String(c[0]).includes(needle));
@@ -309,7 +342,8 @@ describe('🔴 실패 삼킴 — 던지지 않는다', () => {
 
   test('getPool() 이 스위치 뒤에 던져도 결과는 error(거부·예외 없음)', async () => {
     let n = 0;
-    mGetPool.mockImplementation(() => { if (n++ === 0) return { query }; throw new Error('pool closed'); });
+    // (T-139) 첫 getPool 은 스위치 읽기 — 스위치는 풀에서 연결을 받으므로 첫 풀도 getConnection 을 준다(그 뒤의 getPool 만 던진다)
+    mGetPool.mockImplementation(() => { if (n++ === 0) return { query, getConnection }; throw new Error('pool closed'); });
     await expect(recordJudgment(snapOf({ candidates: [cand({ symbol: 'A' })] }))).resolves.toMatchObject({ status: 'error' });
   });
 
@@ -340,6 +374,10 @@ describe('🔴 진입점 recordJudgmentDetached — 기다리지 않고 던지�
     handlers.switch = () => new Promise((r) => { release = r; });
     const t = traceRecordable();
     expect(recordJudgmentDetached(t)).toBeUndefined();
+    expect(callsOf('judgment_run')).toHaveLength(0);
+    // (T-139) 스위치 SELECT 는 풀에서 연결을 받은 뒤(마이크로태스크 몇 개 뒤) 나간다 — 나가서 매달린 것을 확인한 뒤 푼다
+    for (let i = 0; i < 50 && callsOf('FROM system_config').length === 0; i++) await Promise.resolve();
+    expect(callsOf('FROM system_config')).toHaveLength(1);
     expect(callsOf('judgment_run')).toHaveLength(0);
     release([[{ value: 'true' }], undefined]);
     await expect(waitForJudgmentRecordsForTest()).resolves.toEqual([expect.objectContaining({ status: 'written' })]);
@@ -372,32 +410,44 @@ describe('🔴 진입점 recordJudgmentDetached — 기다리지 않고 던지�
 // ─────────────────────────────────────────────────────────────────────────────
 describe('🔴 (T-135) INSERT 는 연결 하나로 — 상한이면 그 연결을 풀에서 뺀다', () => {
   const ownWarns = () => (console.warn as jest.Mock).mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith('[strategy/records/judgment]'));
-  const ends = () => [getConnection.mock.calls.length, connRelease.mock.calls.length, connDestroy.mock.calls.length];
+  /** INSERT 쪽 연결의 [받은 수, release, destroy] — (T-139) 스위치 SELECT 연결은 빼고 센다(swEnds). */
+  const ends = () => [conns.filter((c) => !c.isSwitch()).length, connRelease.mock.calls.length, connDestroy.mock.calls.length];
   const flush = async () => { for (let i = 0; i < 50; i++) await Promise.resolve(); };
 
-  test('정상 — 연결 1개로 INSERT 2문장(헤더·후보), 스위치 읽기·카드 id 조회는 풀 query, 끝나면 release 1', async () => {
+  test('정상 — 연결 1개로 INSERT 2문장(헤더·후보), 카드 id 조회는 풀 query, 끝나면 release 1 · (T-139) 스위치 읽기는 자기 연결 1개(release 1)', async () => {
     handlers.lookup = () => [[{ id: 601, symbol: 'NAS:AAA' }], undefined];
     await expect(recordJudgment(snapOf())).resolves.toEqual({ status: 'written', judgmentRunId: 77, candidates: 2, dropped: 0 });
     expect(ends()).toEqual([1, 1, 0]);
     expect(connQuery.mock.calls.map((c) => String(c[0]).trim().split('\n')[0])).toEqual(['INSERT INTO judgment_run', 'INSERT INTO judgment_candidate']);
-    // 연결로 간 문장 = 전체 문장 중 INSERT 전부(스위치·조회는 연결로 가지 않는다)
+    // INSERT 연결로 간 문장 = 전체 문장 중 INSERT 전부(스위치·조회는 INSERT 연결로 가지 않는다)
     expect(query.mock.calls.filter((c) => String(c[0]).includes('INSERT INTO')).length).toBe(connQuery.mock.calls.length);
+    // (T-139) 스위치 연결로 간 문장 = 스위치 SELECT 1문장뿐, 그 연결은 release
+    expect(swConnQuery.mock.calls).toEqual([['SELECT value FROM system_config WHERE `key` = ? LIMIT 1', ['judgment_record_enabled']]]);
+    expect(swEnds()).toEqual([1, 1, 0]);
+    // 카드 id 조회는 풀 query 그대로(어느 연결로도 가지 않는다)
+    expect(callsOf('SELECT id, symbol FROM signals')).toHaveLength(1);
+    expect([...connQuery.mock.calls, ...swConnQuery.mock.calls].some((c) => String(c[0]).includes('SELECT id, symbol FROM signals'))).toBe(false);
   });
 
   test('후보 0건 — 헤더 1문장도 연결로, release 1', async () => {
     await expect(recordJudgment(snapOf({ candidates: [] }))).resolves.toMatchObject({ status: 'written', candidates: 0 });
     expect(ends()).toEqual([1, 1, 0]);
     expect(connQuery).toHaveBeenCalledTimes(1);
+    expect(swEnds()).toEqual([1, 1, 0]);
   });
 
-  test('꺼짐·형식 밖 헤더·분석 실행 아님 → 연결을 받지 않는다', async () => {
+  test('꺼짐·형식 밖 헤더·분석 실행 아님 → INSERT 연결을 받지 않는다((T-139) 스위치 읽기의 연결만)', async () => {
     handlers.switch = () => [[], undefined];
     await expect(recordJudgment(snapOf())).resolves.toEqual({ status: 'disabled' });
     resetRecordSwitchCacheForTest();
     handlers.switch = () => [[{ value: 'true' }], undefined];
     await expect(recordJudgment(snapOf({ validFrom: 'bad' }))).resolves.toEqual({ status: 'invalid' });
     await expect(recordJudgment(snapOf({ recordable: false }))).resolves.toEqual({ status: 'not_recordable' });
-    expect(getConnection).not.toHaveBeenCalled();
+    expect(ends()).toEqual([0, 0, 0]);
+    expect(connQuery).not.toHaveBeenCalled();
+    // (T-139) 꺼짐·형식 밖 헤더는 스위치를 읽었다(캐시를 비웠으므로 2회 — 각각 자기 연결, release), 분석 실행 아님은 I/O 0
+    expect(swEnds()).toEqual([2, 2, 0]);
+    expect(getConnection).toHaveBeenCalledTimes(2);
   });
 
   test.each([
@@ -408,14 +458,16 @@ describe('🔴 (T-135) INSERT 는 연결 하나로 — 상한이면 그 연결�
     handlers[which] = () => { throw Object.assign(new Error('x'), { errno }); };
     await expect(recordJudgment(snapOf())).resolves.toMatchObject(expected);
     expect(ends()).toEqual([1, 0, 1]);
+    expect(swEnds()).toEqual([1, 1, 0]);   // (T-139) 스위치 연결은 INSERT 오류와 무관하게 release
   });
 
   test('연결 받기 실패 → error, INSERT 0, 경고는 예전 풀 실패와 같은 줄(분류 문구 그대로)', async () => {
-    getConnection.mockImplementation(async () => { throw Object.assign(new Error('Pool is closed'), { errno: 2013 }); });
+    insertConnWith(async () => { throw Object.assign(new Error('Pool is closed'), { errno: 2013 }); });
     await expect(recordJudgment(snapOf())).resolves.toEqual({ status: 'error', error: 'Pool is closed' });
     expect(callsOf('INSERT INTO')).toHaveLength(0);
     expect(ownWarns()).toEqual(['[strategy/records/judgment] judgment_run 기록 실패 — 분석 영향 없음: Pool is closed']);
     expect([connRelease.mock.calls.length, connDestroy.mock.calls.length]).toEqual([0, 0]);
+    expect(swEnds()).toEqual([1, 1, 0]);   // (T-139) 실패한 것은 INSERT 연결 받기 — 스위치는 읽혔다
   });
 
   test('🔴 상한 — 헤더 INSERT 가 매달리면 **상한 시점에** 그 연결을 destroy, 늦은 실패가 와도 경고는 timeout 한 줄뿐', async () => {
@@ -434,6 +486,7 @@ describe('🔴 (T-135) INSERT 는 연결 하나로 — 상한이면 그 연결�
     expect(ownWarns()).toEqual([`[strategy/records/judgment] 판단 기록이 ${JUDGMENT_RECORD_TIMEOUT_MS}ms 안에 끝나지 않아 포기 — 분석 영향 없음`]);
     expect(ends()).toEqual([1, 0, 1]);                                     // 늦은 실패도 연결을 다시 건드리지 않는다
     expect(callsOf('INSERT INTO judgment_candidate')).toHaveLength(0);
+    expect(swEnds()).toEqual([1, 1, 0]);                                   // (T-139) 스위치 연결은 INSERT 전에 이미 release
   });
 
   test('🔴 상한 뒤 헤더가 늦게 성공해도 후보 INSERT 를 보내지 않는다(늦은 기록 없음)', async () => {
@@ -453,12 +506,13 @@ describe('🔴 (T-135) INSERT 는 연결 하나로 — 상한이면 그 연결�
   test('🔴 풀이 바빠 상한 뒤에야 받은 연결 — 문장을 보내지 않고 release, 결과는 timeout', async () => {
     jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] });
     let give!: (c: unknown) => void;
-    getConnection.mockImplementation(() => new Promise((r) => { give = r; }));
+    insertConnWith(() => new Promise((r) => { give = r; }));
     const p = recordJudgment(snapOf());
     await jest.advanceTimersByTimeAsync(JUDGMENT_RECORD_TIMEOUT_MS + 1);
     await expect(p).resolves.toEqual({ status: 'timeout' });
-    expect(getConnection).toHaveBeenCalledTimes(1);
-    give({ query: connQuery, release: connRelease, destroy: connDestroy });
+    expect(getConnection).toHaveBeenCalledTimes(2);                       // (T-139) 스위치 연결 1(읽고 release) + INSERT 연결 1(받는 중)
+    expect(swEnds()).toEqual([1, 1, 0]);
+    give(makeConn());
     await flush();
     expect(connQuery).not.toHaveBeenCalled();
     expect(callsOf('INSERT INTO')).toHaveLength(0);

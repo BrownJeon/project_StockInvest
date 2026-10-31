@@ -21,15 +21,17 @@
  *
  * ## 쓰는 법
  *   const r = await withBoundedConn(MS, async (bc) => {
- *     …                                         // 스위치 읽기 등 — 이 연결과 무관(풀 query 그대로)
+ *     …                                         // 스위치 읽기 등 — 이 연결과 무관(T-139 부터 스위치는 자기 withBoundedConn 으로 따로 받는다)
  *     const db = bc.use(getPool());             // getPool() 은 예전과 같은 자리에서 부른다(던지면 예전과 같은 경로로 흡수)
  *     await db.query(sql, params);              // 문장마다 — 첫 문장에서 연결을 받는다
  *   });
  *   if (r === undefined) { … timeout … }        // withBoundedConn 이 이미 연결을 풀에서 뺐다
  *
  * ## 범위 밖 (그대로 둔다)
- * - 스위치 읽기(`record-switch.ts` — 자체 2초 상한, 풀 query), 판단 기록기의 카드 id 조회(`lookupCardIds` — 읽기 SELECT 이고, 그 실패가
- *   쓰기 연결을 오염시키면 "조회가 실패해도 판단 기록은 signal_id NULL 로 남긴다" 규칙이 깨지므로 쓰기 연결과 묶지 않는다).
+ * - 판단 기록기의 카드 id 조회(`lookupCardIds` — 읽기 SELECT 이고, 그 실패가 쓰기 연결을 오염시키면 "조회가 실패해도 판단 기록은
+ *   signal_id NULL 로 남긴다" 규칙이 깨지므로 쓰기 연결과 묶지 않는다).
+ * - (T-139 정정) 스위치 읽기(`record-switch.ts`)는 이제 범위 밖이 아니다 — SELECT 1문장을 이 헬퍼로 **따로** 보내 2초 상한에 destroy 한다
+ *   (기록기의 쓰기 연결과는 다른 연결이고, 기록기가 스위치를 먼저 await 하므로 기록 1회의 동시 점유는 그대로 1개).
  * - `exit-judgment.ts`(T-126 자체 구현) — 이 헬퍼로 합치는 정리는 별도 후속.
  */
 import { withDeadline } from './safe-text';

@@ -111,20 +111,22 @@ interface DbState {
   judgmentRun: 'ok' | Error | Deferred<void>;
   judgmentCandidate: 'ok' | Error;
 }
-/** via — pool: 풀 query · conn: 엔진의 카드 트랜잭션 연결(beginTransaction 을 부른 연결) · poolconn: 풀에서 따로 받은 트랜잭션 없는 연결(T-135 기록기 INSERT) */
-interface Call { seq: number; via: 'pool' | 'conn' | 'poolconn'; sql: string; params: unknown[] }
+/** via — pool: 풀 query · conn: 엔진의 카드 트랜잭션 연결(beginTransaction 을 부른 연결) · poolconn: 풀에서 따로 받은 트랜잭션 없는 연결(T-135 기록기 INSERT,
+ *  T-139 기록 스위치 SELECT). cid — 풀에서 받은 연결의 번호(받은 순서, 1부터) · 풀 query 는 0. 어느 문장들이 같은 연결로 갔는지 가른다. */
+interface Call { seq: number; via: 'pool' | 'conn' | 'poolconn'; cid: number; sql: string; params: unknown[] }
 let db: DbState;
 let calls: Call[];
 let seq: number;
 let commitSeq: number[];
 let cardIdx: number;
+let connSeq: number;
 let query: jest.Mock;
 let conn: { beginTransaction: jest.Mock; query: jest.Mock; commit: jest.Mock; rollback: jest.Mock; release: jest.Mock; destroy: jest.Mock };
 
 const isDeferred = (v: unknown): v is Deferred<unknown> => v != null && typeof v === 'object' && 'promise' in v && 'resolve' in v;
 
-async function route(via: Call['via'], sql: string, params: unknown[] = []): Promise<unknown> {
-  calls.push({ seq: ++seq, via, sql, params });
+async function route(via: Call['via'], sql: string, params: unknown[] = [], cid = 0): Promise<unknown> {
+  calls.push({ seq: ++seq, via, cid, sql, params });
   if (sql.includes('INSERT INTO signals')) {
     const r = db.cardResults[cardIdx++] ?? { affectedRows: 1, insertId: 900 + cardIdx };
     if (r instanceof Error) throw r;
@@ -169,10 +171,11 @@ function wireDb() {
   seq = 0;
   commitSeq = [];
   cardIdx = 0;
+  connSeq = 0;
   query = jest.fn((sql: string, params?: unknown[]) => route('pool', sql, params));
   conn = {
     beginTransaction: jest.fn(async () => undefined),
-    query: jest.fn((sql: string, params?: unknown[]) => route('conn', sql, params)),
+    query: jest.fn((sql: string, params?: unknown[], cid?: number) => route('conn', sql, params, cid)),
     commit: jest.fn(async () => { commitSeq.push(++seq); }),
     rollback: jest.fn(async () => undefined),
     release: jest.fn(),
@@ -185,9 +188,10 @@ function wireDb() {
     query,
     getConnection: jest.fn(async () => {
       let inTx = false;
+      const cid = ++connSeq;
       return {
         beginTransaction: async () => { inTx = true; return conn.beginTransaction(); },
-        query: (sql: string, params?: unknown[]) => (inTx ? conn.query(sql, params) : route('poolconn', sql, params)),
+        query: (sql: string, params?: unknown[]) => (inTx ? conn.query(sql, params, cid) : route('poolconn', sql, params, cid)),
         commit: () => conn.commit(),
         rollback: () => conn.rollback(),
         release: () => conn.release(),
@@ -690,8 +694,15 @@ describe('④ 해외 기록은 트랜잭션 연결을 쓰지 않고 커밋 뒤 �
     expect(viaConn.every((c) => c.sql.includes('INSERT INTO signals'))).toBe(true);
     const rec = o.calls.filter((c) => /INSERT INTO judgment_|SELECT id, symbol FROM signals/.test(c.sql) || c.params[0] === 'judgment_record_enabled');
     expect(rec.length).toBe(4);
-    // (T-135) 스위치 읽기·카드 id 조회는 풀 query, judgment_* INSERT 2문장은 풀에서 따로 받은 연결 하나(트랜잭션 연결이 아니다 — bounded-conn)
-    expect(rec.map((c) => c.via)).toEqual(['pool', 'pool', 'poolconn', 'poolconn']);
+    // (T-135) 카드 id 조회는 풀 query, judgment_* INSERT 2문장은 풀에서 따로 받은 연결 하나(트랜잭션 연결이 아니다 — bounded-conn)
+    // (T-139) 기록 스위치 읽기도 풀에서 따로 받은 연결(트랜잭션 연결이 아니다 — bounded-conn) — INSERT 연결과는 **다른** 연결이다
+    expect(rec.map((c) => c.via)).toEqual(['poolconn', 'pool', 'poolconn', 'poolconn']);
+    const [sw, , run, cand] = rec;
+    expect([sw.params[0], run.sql.includes('INSERT INTO judgment_run'), cand.sql.includes('INSERT INTO judgment_candidate')]).toEqual(['judgment_record_enabled', true, true]);
+    expect(run.cid).toBe(cand.cid);                                   // INSERT 2문장은 연결 하나
+    expect(sw.cid).not.toBe(run.cid);                                 // 스위치 SELECT 는 자기 연결
+    const txCids = new Set(viaConn.map((c) => c.cid));
+    expect([sw.cid, run.cid].some((id) => txCids.has(id))).toBe(false);   // 둘 다 트랜잭션 연결이 아니다
     expect(commitSeq).toHaveLength(1);
     expect(Math.min(...rec.map((c) => c.seq))).toBeGreaterThan(commitSeq[0]);
   });

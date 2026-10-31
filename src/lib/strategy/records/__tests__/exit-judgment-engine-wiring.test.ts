@@ -64,14 +64,29 @@ async function poolQuery(sql: unknown, params?: unknown) {
   if (/INSERT INTO eval_funnel/i.test(c.sql)) return [{ affectedRows: 1 }, []];
   return [[], []];
 }
-/** 기록기가 풀에서 받은 연결의 끝(R1 — 정상 release / 오류·상한 destroy). 받은 수 = release + destroy 여야 한다(누수 0). */
-const connEvents: Array<'acquire' | 'release' | 'destroy'> = [];
+/** 기록기가 풀에서 받은 연결의 끝(R1 — 정상 release / 오류·상한 destroy). 받은 수 = release + destroy 여야 한다(누수 0).
+ *  (T-139) 기록 스위치 읽기(`record-switch.ts`)도 풀에서 연결을 하나 받아 SELECT 를 보낸다. 연결마다 처음 보낸 문장으로 갈라 — 스위치 SELECT 를
+ *  보낸 연결은 `switchConnEvents`, 나머지(INSERT 연결·문장 없이 끝난 연결)는 예전처럼 `connEvents` 로 센다(스위치 연결이 섞이면 "INSERT 를 보낸
+ *  모드만 연결을 받는다" 단언이 흐려진다). 각 목록은 연결을 받은 순서대로 그 연결의 사건(acquire → 끝)을 이어 붙인 것이다. */
+type ConnEvent = 'acquire' | 'release' | 'destroy';
+interface ConnLog { first: { sql: string; params: unknown[] } | null; events: ConnEvent[] }
+const connLogs: ConnLog[] = [];
+const isSwitchConn = (l: ConnLog) => l.first !== null && isRecordSwitchRead(l.first);
+const connEventsOf = (pick: (l: ConnLog) => boolean): ConnEvent[] => connLogs.filter(pick).flatMap((l) => l.events);
 jest.mock('@/lib/db', () => ({
   getPool: () => ({
     query: (...a: unknown[]) => poolQuery(a[0], a[1]),
     getConnection: async () => {
-      connEvents.push('acquire');
-      return { query: (...a: unknown[]) => poolQuery(a[0], a[1]), release: () => { connEvents.push('release'); }, destroy: () => { connEvents.push('destroy'); } };
+      const log: ConnLog = { first: null, events: ['acquire'] };
+      connLogs.push(log);
+      return {
+        query: (...a: unknown[]) => {
+          if (!log.first) log.first = { sql: String(a[0]), params: (a[1] as unknown[] | undefined) ?? [] };
+          return poolQuery(a[0], a[1]);
+        },
+        release: () => { log.events.push('release'); },
+        destroy: () => { log.events.push('destroy'); },
+      };
     },
   }),
 }));
@@ -279,7 +294,7 @@ let recordSpy: jest.SpyInstance;
 function resetAll() {
   jest.clearAllMocks();
   calls.length = 0;
-  connEvents.length = 0;
+  connLogs.length = 0;
   db.exitEngineEnabled = 'true';
   db.exitHardStopEnabled = null;
   db.exitSwitchError = false;
@@ -339,7 +354,10 @@ async function observe(scene: Scene, mode: Mode) {
   }
   release();
   const records = await waitForExitJudgmentRecordsForTest();
-  return { view, records, hangAtReturn, recordCalls: calls.filter(isRecordIo), connEvents: [...connEvents] };
+  return {
+    view, records, hangAtReturn, recordCalls: calls.filter(isRecordIo),
+    connEvents: connEventsOf((l) => !isSwitchConn(l)), switchConnEvents: connEventsOf(isSwitchConn),
+  };
 }
 
 /** INSERT 1문장의 값 → 행(열 이름 키). */
@@ -535,6 +553,11 @@ describe.each(SCENES.map((s) => [s.name, s] as const))('② 🔴 영향 0 (%s) �
     expect(o.connEvents.filter((e) => e !== 'acquire').length).toBe(acq);
     if (mode === 'on_ok' || mode === 'on_insert_hang' || mode === 'switch_read_hang') expect(o.connEvents).toEqual(['acquire', 'release']);
     if (mode === 'on_no_table' || mode === 'on_check_fail') expect(o.connEvents).toEqual(['acquire', 'destroy']);
+    // (T-139) 스위치 읽기의 연결 — 읽은 모드는 연결 1개를 받아 끝낸다(정상·키 없음·늦게 풀린 읽기 = release, 읽기 오류 = destroy), 읽지 않은 모드는 0
+    if (mode === 'switch_read_error') expect(o.switchConnEvents).toEqual(['acquire', 'destroy']);
+    else if (reads.length === 1) expect(o.switchConnEvents).toEqual(['acquire', 'release']);
+    else expect(o.switchConnEvents).toEqual([]);
+    expect(reads.length).toBe(['collector_throws', 'open_throws'].includes(mode) ? 0 : 1);
   });
 });
 

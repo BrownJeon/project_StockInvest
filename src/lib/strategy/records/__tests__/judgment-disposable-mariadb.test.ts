@@ -197,27 +197,32 @@ maybe('E. 🔴 (T-135) 판단 기록 INSERT 가 매달려도 풀 연결을 붙�
     return r;
   }
   /** 받은 연결(획득 1회)마다 release·destroy 횟수 — "기록마다 연결은 정확히 한 번 끝난다" 확인용 */
-  const ends = new Map<object, { r: number; d: number }>();
+  // (T-139) 기록 스위치 읽기(`record-switch.ts`)도 풀에서 **자기** 연결을 받는다 — 연결마다 처음 보낸 문장으로 갈라, 스위치 SELECT 로 시작한
+  //   연결은 swEndStats 로 따로 세고 endStats 는 예전처럼 기록(INSERT) 쪽 연결(문장 없이 끝난 늦은 연결 포함)만 센다.
+  type EndRec = { r: number; d: number; first: string | null };
+  const ends = new Map<object, EndRec>();
   function instrument(p: mysql.Pool): void {
     const real = p.getConnection.bind(p);
     (p as unknown as { getConnection: () => Promise<mysql.PoolConnection> }).getConnection = async () => {
       const c = await real();
-      const e = { r: 0, d: 0 };
+      const e: EndRec = { r: 0, d: 0, first: null };
       ends.set(c, e);
       const rel = c.release.bind(c);
       const des = c.destroy.bind(c);
+      const q = (c.query as unknown as (...a: unknown[]) => unknown).bind(c);
       c.release = () => { e.r++; rel(); };
       c.destroy = () => { e.d++; des(); };
+      (c as unknown as { query: (...a: unknown[]) => unknown }).query = (...a: unknown[]) => { if (e.first === null) e.first = String(a[0]); return q(...a); };
       return c;
     };
   }
-  const endStats = () => {
-    const v = [...ends.values()];
-    return {
-      conns: v.length, releases: v.reduce((a, e) => a + e.r, 0), destroys: v.reduce((a, e) => a + e.d, 0),
-      multi: v.filter((e) => e.r + e.d > 1).length, never: v.filter((e) => e.r + e.d === 0).length,
-    };
-  };
+  const isSwitchConn = (e: EndRec) => e.first !== null && e.first.startsWith('SELECT value FROM system_config');
+  const statsOf = (v: EndRec[]) => ({
+    conns: v.length, releases: v.reduce((a, e) => a + e.r, 0), destroys: v.reduce((a, e) => a + e.d, 0),
+    multi: v.filter((e) => e.r + e.d > 1).length, never: v.filter((e) => e.r + e.d === 0).length,
+  });
+  const endStats = () => statsOf([...ends.values()].filter((e) => !isSwitchConn(e)));
+  const swEndStats = () => statsOf([...ends.values()].filter(isSwitchConn));
   const waiters = async () => {
     const [r] = await monitor.query("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE INFO LIKE 'INSERT INTO judgment_run%' OR INFO LIKE 'INSERT INTO judgment_candidate%'") as [Array<{ n: number }>, unknown];
     return Number(r[0].n);
@@ -260,6 +265,7 @@ maybe('E. 🔴 (T-135) 판단 기록 INSERT 가 매달려도 풀 연결을 붙�
       expect(busy()).toBe(0);
     }
     expect(endStats()).toEqual({ conns: 30, releases: 30, destroys: 0, multi: 0, never: 0 });
+    expect(swEndStats()).toEqual({ conns: 1, releases: 1, destroys: 0, multi: 0, never: 0 });   // (T-139) 스위치는 30초 캐시 — 첫 기록에서 1번, 자기 연결 release
     expect(core()._allConnections.length).toBeLessThanOrEqual(10);
     expect((await rowCounts())[0] - r0).toBe(30);
   }, 60_000);
@@ -310,6 +316,7 @@ maybe('E. 🔴 (T-135) 판단 기록 INSERT 가 매달려도 풀 연결을 붙�
       await locker.query('RENAME TABLE judgment_run_t135bak TO judgment_run');
     }
     expect(endStats()).toEqual({ conns: 5, releases: 0, destroys: 5, multi: 0, never: 0 });
+    expect(swEndStats()).toEqual({ conns: 1, releases: 1, destroys: 0, multi: 0, never: 0 });   // (T-139) 스위치 연결은 표 없음과 무관하게 release
     resetRecordSwitchCacheForTest();
     await expect(recordJudgment(fullTrace().snapshot())).resolves.toMatchObject({ status: 'written' });
     expect(busy()).toBe(0);
