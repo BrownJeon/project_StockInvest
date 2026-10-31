@@ -37,7 +37,7 @@ aliases:
 - [[T-131-t126-t130-followup-candidates]] **2순위 묶음**(안전 스위치 저장 직렬화 + 위험 방향 확인 시트 = 1·2번, 화면 변경 → 디자이너 데모 승인 먼저): **실거래 단계 1 진입 일정이 정해지면 그 1~2주 전에** 시작. 그 밖 후보는 보류 권고.
 - `proposed` 3건 — [[T-124-news-input-misread-truncation]](**보류 권고**: 선결은 11-02 이후 `judgment_record_enabled` 결정, 구현은 11-23 이후) · [[T-125-news-zero-alert-cleanup]](10-30 이후 분석 3회 연속 뉴스 통과·경고 0건 → 전제 약화, **11-02~11-04 국내 3일 관찰 뒤 닫기 권고**) · [[T-131-t126-t130-followup-candidates]](후보 모음 — 승격할 항목을 골라 새 task 로) · 사용자 결정 대기: T-100 보유 손실 통제 초안([[ACTIVE]] 10-27 항목).
 - 서버 정리 승인(worktree `stockinvest-t134`·`t135`·`integ2`·이전 task 것들, 브랜치 `wip/T-134-…`·`wip/T-135-…`, QA 일회용 DB 컨테이너, `~/.node-local/t1*` 로그 폴더). (pm2 로그 회전은 10-31 설정 완료 — [[stockinvest-log-rotation]], 첫 회전 11-01(일) 04:15).
-- **Codex**: 계정은 `gpt-6.1-sol` 을 쓸 수 있다. 실패 원인은 PATH 의 `codex` CLI(npm 전역 **0.156.1**)가 낡아 새 모델을 모르는 것이다(10-31 21:2x 대조 실험: 0.156.1+`gpt-6.1-sol` → 400 / 0.156.1+`gpt-5.6-sol` → OK / 앱 번들 0.166.0-alpha.5.1+`gpt-6.1-sol` → OK). 해결 선택지 3가지(CLI 갱신·`CODEX_BIN` 지정·임시 모델 변경)는 [[T-131-t126-t130-followup-candidates]] 19번 — 사용자 결정 대기. **이 문서와 T-126·T-127·T-128·T-134·T-135 의 이전 표현 「모델 설정 장애」는 틀린 진단이었다(정정 기록 있음).**
+- **Codex 복구됨(10-31 22:1x, 사용자 「CLI 갱신」)**: 계정은 `gpt-6.1-sol` 을 쓸 수 있고, 실패 원인은 PATH 의 `codex` CLI(nvm 25.6.1 전역 0.156.1)가 낡은 것이었다 → **0.166.0 으로 갱신**, 래퍼 끝까지 시험 통과([[T-131-t126-t130-followup-candidates]] 19번). ⚠ `codex` 설치본이 셋(nvm=이것 · Homebrew=깨진 0.116.0 · 앱 번들 alpha)이고 이 셸에서 그냥 `npm i -g` 는 Homebrew 쪽에 깔리니 갱신은 **nvm 의 npm** 으로. 이전 문서(T-126·127·128·134·135)의 「모델 설정 장애」는 틀린 진단이었고 정정 기록이 있다. **사용자 결정 대기: T-126·T-127·T-128 소급 Codex 검토를 돌릴지**(코드 diff 가 OpenAI 로 나가므로 승인 필요).
 
 ### 4. 이어서 한다면 (권고 순서)
 1. 읽기 확인: health · 현재 릴리스 · 위 안전 키 6개(런북 1절 표) · `git log origin/main..main`(문서 커밋만 앞서 있는지).
@@ -53,7 +53,7 @@ aliases:
 - 무거운 시험(`jest`·`tsc`·`next build`·`test-*.sh`)은 `flock /tmp/stockinvest-heavy-tests.lock nice -n 10 …` 직렬(10-28 서버 정지 사고), Node 24.22.2(`~/.node-local/v24.22.2/bin`).
 - **Mac 에서 쓴 파일을 서버에서 곧바로 `git add` 하면 옛 내용이 스테이징될 수 있다** — `git show :경로 | cmp - 경로` 로 대조하는 재시도 루프(8초 간격, 최대 4회)로 전부 일치할 때만 커밋. 문서 커밋은 파일을 명시해 `git add`.
 - 앱 로그: `/home/brownjeon/apps/stockinvest/shared/logs/{pm2-err,pm2-out,cron-err,cron-out}.log`(`~/.pm2/logs` 아님, `cron-out.log` 는 `grep -a`). **11-01 부터 주 1회(또는 20MB) 회전** — 회전 경계를 넘는 시간대는 `*.log-YYYYMMDD`·`.gz`(`zgrep -a`)도 읽는다([[stockinvest-log-rotation]]). grep 0건은 파일 존재·최근 수정 시각과 함께 봐야 의미가 있다.
-- 사용자 보고는 `docs/user-report-format.md` 양식, 확신 태그(`[확실]`/`[가능성 높음]`/`[추측]`). Codex 는 CLI 버전 문제(위 3절)가 풀릴 때까지 호출하지 않는다(호출해도 즉시 실패, 이력서에 사유를 남긴다).
+- 사용자 보고는 `docs/user-report-format.md` 양식, 확신 태그(`[확실]`/`[가능성 높음]`/`[추측]`). Codex 연계는 정상(CLI 0.166.0) — 호출은 judge `codex_gate` 판정을 따르고, 소급·임의 호출은 코드가 외부로 나가므로 사용자 승인 후(호출해도 즉시 실패, 이력서에 사유를 남긴다).
 
 ### 6. 하지 말 것
 - 승인 없이: `DRY_RUN`·킬스위치·청산 스위치 변경, 기록 스위치 켜기, DDL(`--with-migrate` 포함), 운영 DB 쓰기, push·배포, `git commit --no-verify`.
