@@ -155,7 +155,7 @@ SELECT ID, TIME, LEFT(INFO,70) AS q FROM information_schema.PROCESSLIST
  WHERE (INFO LIKE '%job_run_log%' OR INFO LIKE '%judgment_%' OR INFO LIKE '%exit_judgment%') AND INFO NOT LIKE '%PROCESSLIST%';   -- 기록 표 INSERT 가 몇 초 넘게 남아 있으면 이상
 ```
 
-앱 로그는 `~/.pm2/logs/` 가 아니라 **`/home/brownjeon/apps/stockinvest/shared/logs/{pm2-err,pm2-out,cron-err,cron-out}.log`** 다. 파일이 있어야 grep 0건이 의미가 있으니 `wc -l` 과 마지막 수정 시각(`date -r`)을 같이 본다. `cron-out.log` 는 `grep -a` 가 필요하다. 볼 것: `청산 판단 기록` 경고(분류어·errno·시장·개수만 찍힌다), `[exit-engine]` 오류 줄. `pm2 status` 에서 두 앱 restarts 0, `/api/health` green.
+앱 로그는 `~/.pm2/logs/` 가 아니라 **`/home/brownjeon/apps/stockinvest/shared/logs/{pm2-err,pm2-out,cron-err,cron-out}.log`** 다. 파일이 있어야 grep 0건이 의미가 있으니 `wc -l` 과 마지막 수정 시각(`date -r`)을 같이 본다. `cron-out.log` 는 `grep -a` 가 필요하다. **11-01(일) 04:15 부터 로그가 주 1회 회전**하므로([[stockinvest-log-rotation]]) 일요일 04:15 이전 시각을 찾을 때만 `*.log-20261101`(압축 전)도 본다 — 월요일·화요일 첫 틱 점검은 새 파일 안이다. 볼 것: `청산 판단 기록` 경고(분류어·errno·시장·개수만 찍힌다), `[exit-engine]` 오류 줄. `pm2 status` 에서 두 앱 restarts 0, `/api/health` green.
 
 **이상 판단 기준**: 경고가 반복되거나, 기록 INSERT 가 몇 초 넘게 멈춰 있거나, 안전 키가 바뀐 경우. 이때는 **사용자에게 먼저 보고**한다. 이 기능은 *기록 전용*이라 끄는 것이 청산 평가·시그널·주문에 영향을 주지 않는다는 것이 설계(Reviewer 가 변경 전/후 동치 329건·QA 가 확인)다. 끄기(롤백):
 

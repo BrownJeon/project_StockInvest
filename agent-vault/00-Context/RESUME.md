@@ -15,7 +15,7 @@ aliases:
 ## ▶ 최신 — 2026-10-31 21:0x (이 절의 값은 20:52 에 읽어 확인한 것)
 
 ### 1. 지금 운영 상태
-- **릴리스** `20261031-192807-8ed1ba7b` (= `origin/main` `8ed1ba7`). 오늘 배포 4회, 전부 `RELEASE_RESULT ok`·`migrated:false`: 05:20(T-108·T-129) · 14:01(T-132 + T-126·T-127·T-128·T-130 코드) · 19:00(T-133 `getTicker` HTTP200 재시도) · 19:27(T-134·T-135). pm2 `stockinvest`·`stockinvest-cron` online·restarts 0, health green.
+- **릴리스** `20261031-192807-8ed1ba7b` (= `origin/main` `8ed1ba7`). 오늘 **코드** 배포 4회(문서만 올린 푸시도 재배포를 일으키므로 현재 릴리스 이름은 매번 `readlink -f /home/brownjeon/apps/stockinvest/current` 로 확인), 전부 `RELEASE_RESULT ok`·`migrated:false`: 05:20(T-108·T-129) · 14:01(T-132 + T-126·T-127·T-128·T-130 코드) · 19:00(T-133 `getTicker` HTTP200 재시도) · 19:27(T-134·T-135). pm2 `stockinvest`·`stockinvest-cron` online·restarts 0, health green.
 - **안전 상태는 사용자 의도다**(10-30 12:47 「의도한 변경」 확인, [[ACTIVE]] 10-30 항목): `safety_dry_run=true` · `safety_kill_switch=false` · `exit_engine_enabled=true` · `exit_hard_stop_enabled=false`. 뜻: **실주문은 DRY_RUN 으로 막고, 킬스위치는 풀어 시그널 생성·청산 평가는 가동한 채 감사 기간을 지켜본다.** ⚠ `DRY_RUN` 이 false 가 되면 청산 엔진이 실주문을 낼 수 있다(검증 관문은 매수만 막는다). 10-30 15:26 국내 `eod_loss_cut` 발화는 `dry_run` 주문으로만 기록됐다.
   - **낡은 문구 주의**: 이 문서 아래 절과 [[ACTIVE]] 일부, T-080 의 「킬스위치 ON 유지·11-23 경 해제 판단」은 10-30 변경 이전 계획이다. 현재 값은 위와 같다.
 - **기록 스위치·표**: `job_run_log_enabled=true`(10-30 21:05) · `exit_judgment_record_enabled=true`(표 `exit_judgment` 10-31 15:41:30 생성, 스위치 15:41:54, **행 0 — 첫 행은 11-02 장중**) · `judgment_record_enabled` 키 없음(꺼짐).
@@ -24,6 +24,7 @@ aliases:
 ### 2. 시간이 정해진 일
 | 때 | 일 | 방법 |
 |---|---|---|
+| 11-01(일) 04:15 | pm2 로그 **첫 자동 회전**(4개 파일) — 04:30 확인 예약(세션 한정) | [[stockinvest-log-rotation]] 의 확인 명령 |
 | 11-02(월) 09:22 · 11-03(화) 07:20 | `exit_judgment` 첫 틱 행 검증(국내·해외) | Claude 예약은 **세션 한정** — 사라졌으면 [[T-126-exit-judgment-first-tick-check]] 런북(복붙 쿼리·기대값·롤백) |
 | 11-02(월) 16:13 | T-112 `job_run_log` 4회차 점검 + `judgment_record_enabled` 켤지 의견 | 쿼리는 [[ACTIVE]] 10-30 21:05 항목. **켜기는 사용자 승인** |
 | 11-02(월) 장중 | 사용자: 홈 「데이터 이상」 건수 확인(T-134 새 게이트 「청산: 포지션 조회 실패」) | 0 이 아니면 그 게이트를 눌러 본다 |
@@ -35,7 +36,7 @@ aliases:
 - 새 문구 「청산: 포지션 조회 실패」([[T-134-exit-engine-state-load-isolation]], 디자이너 미검토) · 비정상 응답 로그 마스킹 범위([[T-135-recorder-pool-hold-and-runner-tmp]] 최종 요약).
 - [[T-131-t126-t130-followup-candidates]] **2순위 묶음**(안전 스위치 저장 직렬화 + 위험 방향 확인 시트 = 1·2번, 화면 변경 → 디자이너 데모 승인 먼저): **실거래 단계 1 진입 일정이 정해지면 그 1~2주 전에** 시작. 그 밖 후보는 보류 권고.
 - `proposed` 3건 — [[T-124-news-input-misread-truncation]](**보류 권고**: 선결은 11-02 이후 `judgment_record_enabled` 결정, 구현은 11-23 이후) · [[T-125-news-zero-alert-cleanup]](10-30 이후 분석 3회 연속 뉴스 통과·경고 0건 → 전제 약화, **11-02~11-04 국내 3일 관찰 뒤 닫기 권고**) · [[T-131-t126-t130-followup-candidates]](후보 모음 — 승격할 항목을 골라 새 task 로) · 사용자 결정 대기: T-100 보유 손실 통제 초안([[ACTIVE]] 10-27 항목).
-- 서버 정리 승인(worktree `stockinvest-t134`·`t135`·`integ2`·이전 task 것들, 브랜치 `wip/T-134-…`·`wip/T-135-…`, QA 일회용 DB 컨테이너, `~/.node-local/t1*` 로그 폴더). pm2 로그 회전(기준 시간/크기·값·도구·범위 결정 필요 — [[T-131-t126-t130-followup-candidates]] 18번. 급하지 않음: 합쳐 월 약 18MB, 디스크 488GB 여유).
+- 서버 정리 승인(worktree `stockinvest-t134`·`t135`·`integ2`·이전 task 것들, 브랜치 `wip/T-134-…`·`wip/T-135-…`, QA 일회용 DB 컨테이너, `~/.node-local/t1*` 로그 폴더). (pm2 로그 회전은 10-31 설정 완료 — [[stockinvest-log-rotation]], 첫 회전 11-01(일) 04:15).
 - **Codex**: 계정은 `gpt-6.1-sol` 을 쓸 수 있다. 실패 원인은 PATH 의 `codex` CLI(npm 전역 **0.156.1**)가 낡아 새 모델을 모르는 것이다(10-31 21:2x 대조 실험: 0.156.1+`gpt-6.1-sol` → 400 / 0.156.1+`gpt-5.6-sol` → OK / 앱 번들 0.166.0-alpha.5.1+`gpt-6.1-sol` → OK). 해결 선택지 3가지(CLI 갱신·`CODEX_BIN` 지정·임시 모델 변경)는 [[T-131-t126-t130-followup-candidates]] 19번 — 사용자 결정 대기. **이 문서와 T-126·T-127·T-128·T-134·T-135 의 이전 표현 「모델 설정 장애」는 틀린 진단이었다(정정 기록 있음).**
 
 ### 4. 이어서 한다면 (권고 순서)
@@ -51,7 +52,7 @@ aliases:
 - **배포** = push → webhook blue/green(웹+크론 재기동 약 1.5~2.5분). 창은 05:10~06:50 · 15:40~20:00 KST(07:35~07:57 피함). 완료 판정은 웹훅 로그(UTC)에서 **push 한 sha 의 `START` 이후 `END`** 만 인정 — 로그 끝에는 이전 배포의 `RELEASE_RESULT` 가 남아 있다.
 - 무거운 시험(`jest`·`tsc`·`next build`·`test-*.sh`)은 `flock /tmp/stockinvest-heavy-tests.lock nice -n 10 …` 직렬(10-28 서버 정지 사고), Node 24.22.2(`~/.node-local/v24.22.2/bin`).
 - **Mac 에서 쓴 파일을 서버에서 곧바로 `git add` 하면 옛 내용이 스테이징될 수 있다** — `git show :경로 | cmp - 경로` 로 대조하는 재시도 루프(8초 간격, 최대 4회)로 전부 일치할 때만 커밋. 문서 커밋은 파일을 명시해 `git add`.
-- 앱 로그: `/home/brownjeon/apps/stockinvest/shared/logs/{pm2-err,pm2-out,cron-err,cron-out}.log`(`~/.pm2/logs` 아님, `cron-out.log` 는 `grep -a`). grep 0건은 파일 존재·최근 수정 시각과 함께 봐야 의미가 있다.
+- 앱 로그: `/home/brownjeon/apps/stockinvest/shared/logs/{pm2-err,pm2-out,cron-err,cron-out}.log`(`~/.pm2/logs` 아님, `cron-out.log` 는 `grep -a`). **11-01 부터 주 1회(또는 20MB) 회전** — 회전 경계를 넘는 시간대는 `*.log-YYYYMMDD`·`.gz`(`zgrep -a`)도 읽는다([[stockinvest-log-rotation]]). grep 0건은 파일 존재·최근 수정 시각과 함께 봐야 의미가 있다.
 - 사용자 보고는 `docs/user-report-format.md` 양식, 확신 태그(`[확실]`/`[가능성 높음]`/`[추측]`). Codex 는 CLI 버전 문제(위 3절)가 풀릴 때까지 호출하지 않는다(호출해도 즉시 실패, 이력서에 사유를 남긴다).
 
 ### 6. 하지 말 것
