@@ -175,7 +175,11 @@ export function buildAnomalies(
       market: mk === 'domestic' || mk === 'overseas' || mk === 'common' ? mk : undefined, jobStatus: String(j.status),
     });
   }
-  const checked = sources.filter((s) => s.state !== 'error').length;
+  // 확인한 원천 수 = **읽은** 원천 수. 오류(읽지 못함)뿐 아니라 준비 중(prep — 표가 아직 없다)도 읽은 것이 아니므로 뺀다(T-140).
+  // 빼지 않으면 ① 홈이 「0건 · 원천 7개 정상」이라며 읽지 않은 원천까지 정상으로 단정하고, ② 나머지 원천이 전부 오류일 때 prep 한
+  // 줄이 「하나는 읽었다」로 쳐져 all_sources_failed 가 가려진다(가이드 §4.7 「하나도 못 읽으면 error」). 이상 건수는 불변 — prep 은
+  // 위에서도 ANOMALY_STATES 에 없어 이상 항목으로 세지 않는다(「준비 중은 이상이 아니다」, 가이드 §4.0).
+  const checked = sources.filter((s) => s.state !== 'error' && s.state !== 'prep').length;
   if (checked === 0) return metric('error', null, asOf, 'all_sources_failed');
   const known = analysisFailureKnown && jobFailures != null;
   const value = { total: items.length, sourcesChecked: checked, items, analysisFailureKnown: known };

@@ -3,13 +3,17 @@
  */
 jest.mock('@/lib/db', () => ({ getPool: jest.fn() }));
 
-import { ageRow, barsRow, BROKER_LAST_SQL, buildAnomalies, expectedBarDate, newsRows, readDataSources, SNAPSHOT_MAX_SQL } from '../anomalies';
+import {
+  ageRow, barsRow, BROKER_LAST_SQL, buildAnomalies, DATA_SOURCE_IDS, expectedBarDate, FX_ROW_SQL, NEWS_STREAK_SQL, newsRows, readDataSources, SNAPSHOT_MAX_SQL,
+} from '../anomalies';
+import { LAST_BAR_DATE_SQL } from '../daily-bars-read';
 import {
   consecutiveSessionDays, gapMetric, groupExitGates, lastEvalMetric, noRunMetric, summarizeProposals,
 } from '../exit-lines';
 import { homePostmortem, verifyPostmortemRows, type MarketSample } from '../postmortem-sample';
 import { buyableMetric, readOrderMaxPct } from '../live-set';
-import { dbError, fakeReader, kst } from './fake-reader';
+import type { DataSourceId, DataSourceRow, MetricState } from '../types';
+import { dbError, fakeReader, kst, type Route } from './fake-reader';
 
 const NONE = new Set<string>();
 
@@ -165,9 +169,98 @@ describe('원천 신선도', () => {
     const snap = (await readDataSources(fakeReader(now, [[SNAPSHOT_MAX_SQL, dbError(1146)]]), closed)).find((r) => r.id === 'portfolio_snapshot');
     expect(snap).toMatchObject({ state: 'error', reason: 'not_migrated' });
   });
-  it('브로커 원장 준비 중은 데이터 이상(A4) 항목이 아니다 — 조회 실패였을 때만 이상으로 셌다', () => {
-    const rows = [{ id: 'broker_ledger' as const, lastOkAt: null, state: 'prep' as const, dateRef: null, streak: null, reason: 'not_migrated' }];
-    expect(buildAnomalies(rows, [], true, 'x')).toMatchObject({ state: 'zero', value: { total: 0 } });
+  // T-140 — 아래 「A4 — 준비 중(prep) 원천」 블록이 이 자리의 예전 단언(prep 한 줄만 넣고 zero 를 기대 — 확인한 원천 0개인데도 「0건 정상」)을 대체한다.
+});
+
+// ── T-140 — 홈 A4: 준비 중(prep) 원천은 이상 건수에서도, 확인한 원천 수(sourcesChecked)에서도 빠진다 ─────────────────
+// 근거: prep 은 「읽지 못한 원천」이다(표가 아직 없다). 읽은 수로 세면 홈이 「원천 7개 정상」이라고 읽지 않은 것까지 정상으로 단정하고,
+// 나머지 6개가 전부 오류일 때 prep 한 줄이 「하나라도 읽었다」로 쳐져 all_sources_failed 가 가려진다(가이드 §4.7 「하나도 못 읽으면 error」).
+describe('A4 — 준비 중(prep) 원천은 확인한 원천 수에서 뺀다 (T-140)', () => {
+  const rowsOf = (over: Partial<Record<DataSourceId, MetricState>> = {}, streaks: Partial<Record<DataSourceId, number>> = {}): DataSourceRow[] =>
+    DATA_SOURCE_IDS.map((id) => ({ id, lastOkAt: null, state: over[id] ?? 'available', dateRef: null, streak: streaks[id] ?? null }));
+  const BROKER_PREP = { broker_ledger: 'prep' } as const;
+  const OTHERS: DataSourceId[] = DATA_SOURCE_IDS.filter((id) => id !== 'broker_ledger');
+  const allOthers = (state: MetricState): Partial<Record<DataSourceId, MetricState>> => Object.fromEntries(OTHERS.map((id) => [id, state]));
+
+  // 금요일 낮 — 국내·해외 모두 평일, 일봉이 있어야 할 날짜는 2026-10-29. 원천 6개가 전부 available 이 되는 입력.
+  const NOW = kst('2026-10-30 12:00');
+  const CLOSED = { domestic: new Set<string>(), overseas: new Set<string>() };
+  const streak = (market: string) => ({ key: `news_zero_streak:fetch:${market}`, value: '{"streak":0,"lastDate":"2026-10-30","lastOkDate":"2026-10-30"}' });
+  const routes = (broker: unknown[] | Error, others: 'ok' | Error = 'ok'): Route[] => [
+    [SNAPSHOT_MAX_SQL, others === 'ok' ? [{ t: new Date(kst('2026-10-30 11:30')) }] : others],
+    [FX_ROW_SQL, others === 'ok' ? [{ rate: 1380, fetched_at: new Date(kst('2026-10-30 11:55')) }] : others],
+    [LAST_BAR_DATE_SQL, others === 'ok' ? [{ d: '2026-10-29' }] : others],
+    [NEWS_STREAK_SQL, others === 'ok' ? [streak('domestic'), streak('overseas')] : others],
+    [BROKER_LAST_SQL, broker],
+  ];
+  const read = async (broker: unknown[] | Error, others: 'ok' | Error = 'ok') => readDataSources(fakeReader(NOW, routes(broker, others)), CLOSED);
+
+  it('(a) 6개 정상 + 브로커 원장 표 없음(1146) → 이상 0건 · 확인한 원천 6개(7 이 아니다) · 상태 zero', async () => {
+    const rows = await read(dbError(1146));
+    expect(rows.filter((r) => r.id !== 'broker_ledger').map((r) => r.state)).toEqual(Array(6).fill('available'));
+    expect(rows.find((r) => r.id === 'broker_ledger')).toMatchObject({ state: 'prep', reason: 'not_migrated' });
+    expect(buildAnomalies(rows, [], true, 'x')).toMatchObject({ state: 'zero', value: { total: 0, sourcesChecked: 6, items: [], analysisFailureKnown: true } });
+    // 순수 입력으로도 같다(읽는 경로와 무관한 규칙)
+    expect(buildAnomalies(rowsOf(BROKER_PREP), [], true, 'x')).toMatchObject({ state: 'zero', value: { total: 0, sourcesChecked: 6, items: [] } });
+  });
+
+  it('(b) 다른 6개 전부 오류 + 브로커 원장 표 없음 → all_sources_failed (「원천 1개 중 이상 6」으로 새지 않는다)', async () => {
+    const rows = await read(dbError(1146), dbError(1064));
+    expect(rows.filter((r) => r.id !== 'broker_ledger').map((r) => r.state)).toEqual(Array(6).fill('error'));
+    expect(rows.find((r) => r.id === 'broker_ledger')?.state).toBe('prep');
+    expect(buildAnomalies(rows, [], true, 'x')).toEqual({ state: 'error', value: null, asOf: 'x', reason: 'all_sources_failed' });
+    expect(buildAnomalies(rowsOf({ ...allOthers('error'), ...BROKER_PREP }), [], true, 'x')).toMatchObject({ state: 'error', value: null, reason: 'all_sources_failed' });
+  });
+
+  it('(d) 경계 — prep 만 있고 읽은 원천이 없으면 error(예전에는 zero·확인 1개)', () => {
+    expect(buildAnomalies([rowsOf(BROKER_PREP).find((r) => r.id === 'broker_ledger')!], [], true, 'x'))
+      .toEqual({ state: 'error', value: null, asOf: 'x', reason: 'all_sources_failed' });
+  });
+
+  it('(d) 경계 — prep + 오류 5 + 정상 1 → 확인한 원천은 정상 1개뿐(prep 을 더해 2 로 세지 않는다), 이상 5건, prep 은 항목에 없다', () => {
+    const a = buildAnomalies(rowsOf({ ...allOthers('error'), portfolio_snapshot: 'available', ...BROKER_PREP }), [], true, 'x');
+    expect(a).toMatchObject({ state: 'available', value: { total: 5, sourcesChecked: 1 } });
+    expect(a.value?.items.map((i) => i.source)).not.toContain('broker_ledger');
+  });
+
+  it('(d) 경계 — prep + 오래됨·모름·일부 저하 + 정상 3 → 이상 3건, 확인한 원천 6개, prep 은 이상 항목이 아니다', () => {
+    const a = buildAnomalies(rowsOf({ fx_usdkrw: 'stale', daily_bars_us: 'unknown', news_domestic: 'partial', ...BROKER_PREP }, { news_domestic: 2 }), [], true, 'x');
+    expect(a).toMatchObject({ state: 'available', value: { total: 3, sourcesChecked: 6 } });
+    expect(a.value?.items.map((i) => [i.source, i.state])).toEqual([['fx_usdkrw', 'stale'], ['daily_bars_us', 'unknown'], ['news_domestic', 'partial']]);
+  });
+
+  it('(d) 경계 — 분석 실패 모름(analysisFailureKnown=false)이어도 확인한 원천 수는 prep 을 뺀다', () => {
+    expect(buildAnomalies(rowsOf(BROKER_PREP), null, false, 'x'))
+      .toEqual({ state: 'partial', value: { total: 0, sourcesChecked: 6, items: [], analysisFailureKnown: false }, asOf: 'x', reason: 'analysis_failure_unknown' });
+  });
+
+  // ── (c) 동치 — prep 이 없는 입력(운영 현재: 표 있음)의 출력은 변경 전 코드와 바이트 동일. 기대 문자열은 변경 전(a064722) 코드가 낸 JSON 이다. ──
+  const job = (job_id: string, market: string, status: string) => ({ job_id, market, status });
+  const GOLDEN: [string, DataSourceRow[], { job_id: unknown; market: unknown; status: unknown }[] | null, boolean, string][] = [
+    ['S1 전부 정상·잡 실패 0', rowsOf(), [], true,
+      '{"state":"zero","value":{"total":0,"sourcesChecked":7,"items":[],"analysisFailureKnown":true},"asOf":"x"}'],
+    ['S2 전부 정상·실행 기록 모름', rowsOf(), null, false,
+      '{"state":"partial","value":{"total":0,"sourcesChecked":7,"items":[],"analysisFailureKnown":false},"asOf":"x","reason":"analysis_failure_unknown"}'],
+    ['S3 스냅샷 오래됨 + 잡 degraded', rowsOf({ portfolio_snapshot: 'stale' }), [job('post-market-domestic', 'domestic', 'degraded')], true,
+      '{"state":"available","value":{"total":2,"sourcesChecked":7,"items":[{"source":"portfolio_snapshot","state":"stale","label":"포트폴리오 스냅샷","streak":null},{"source":"job_run","state":"partial","label":"post-market-domestic","jobId":"post-market-domestic","market":"domestic","jobStatus":"degraded"}],"analysisFailureKnown":true},"asOf":"x"}'],
+    ['S4 오류 2·모름 1·저하 1 + 잡 failed', rowsOf({ fx_usdkrw: 'error', daily_bars_kr: 'error', daily_bars_us: 'unknown', news_domestic: 'partial' }, { news_domestic: 3 }), [job('post-market-overseas', 'overseas', 'failed')], true,
+      '{"state":"available","value":{"total":5,"sourcesChecked":5,"items":[{"source":"fx_usdkrw","state":"error","label":"환율 USD/KRW","streak":null},{"source":"daily_bars_kr","state":"error","label":"일봉 국내","streak":null},{"source":"daily_bars_us","state":"unknown","label":"일봉 해외","streak":null},{"source":"news_domestic","state":"partial","label":"뉴스 국내","streak":3},{"source":"job_run","state":"error","label":"post-market-overseas","jobId":"post-market-overseas","market":"overseas","jobStatus":"failed"}],"analysisFailureKnown":true},"asOf":"x"}'],
+    ['S5 7개 전부 오류', rowsOf({ ...allOthers('error'), broker_ledger: 'error' }), [], true,
+      '{"state":"error","value":null,"asOf":"x","reason":"all_sources_failed"}'],
+    ['S6 6개 오류 + 브로커 정상', rowsOf(allOthers('error')), [], true,
+      '{"state":"available","value":{"total":6,"sourcesChecked":1,"items":[{"source":"portfolio_snapshot","state":"error","label":"포트폴리오 스냅샷","streak":null},{"source":"fx_usdkrw","state":"error","label":"환율 USD/KRW","streak":null},{"source":"daily_bars_kr","state":"error","label":"일봉 국내","streak":null},{"source":"daily_bars_us","state":"error","label":"일봉 해외","streak":null},{"source":"news_domestic","state":"error","label":"뉴스 국내","streak":null},{"source":"news_overseas","state":"error","label":"뉴스 해외","streak":null}],"analysisFailureKnown":true},"asOf":"x"}'],
+    ['S7 뉴스 해외 오래됨 + 브로커 모름 + 실행 기록 모름', rowsOf({ broker_ledger: 'unknown', news_overseas: 'stale' }), [], false,
+      '{"state":"partial","value":{"total":2,"sourcesChecked":7,"items":[{"source":"news_overseas","state":"stale","label":"뉴스 해외","streak":null},{"source":"broker_ledger","state":"unknown","label":"브로커 원장","streak":null}],"analysisFailureKnown":false},"asOf":"x","reason":"analysis_failure_unknown"}'],
+  ];
+  it.each(GOLDEN)('(c) 동치 — prep 없는 입력 %s: 변경 전 출력과 바이트 동일', (_name, rows, jobs, known, golden) => {
+    expect(JSON.stringify(buildAnomalies(rows, jobs, known, 'x'))).toBe(golden);
+  });
+
+  it('(c) 동치 — 모든 원천 정상(브로커 원장 표 있음, 실제 읽기 경로 7개) → 변경 전과 같은 「원천 7개 정상」 출력', async () => {
+    const rows = await read([{ t: new Date(kst('2026-10-30 08:00')) }]);
+    expect(rows.map((r) => r.state)).toEqual(Array(7).fill('available'));
+    expect(JSON.stringify(buildAnomalies(rows, [], true, 'x')))
+      .toBe('{"state":"zero","value":{"total":0,"sourcesChecked":7,"items":[],"analysisFailureKnown":true},"asOf":"x"}');
   });
 });
 
