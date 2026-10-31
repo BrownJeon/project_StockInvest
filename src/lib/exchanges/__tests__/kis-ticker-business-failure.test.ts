@@ -25,8 +25,6 @@ jest.mock('../kis-http', () => ({
   kisFetch:         jest.fn(),
   isKisRateLimited: jest.fn(() => false),
   kisBodyText:      jest.fn(() => ''),
-  // (T-133 Reviewer Info) 국내 어댑터가 토큰 분기에서 쓴다 — 공장에 없으면 그 분기에 닿는 순간 깨진다.
-  isKisTokenError:  jest.fn(() => false),
 }));
 
 jest.mock('../fx', () => ({ getUsdKrwRate: jest.fn(async () => FX) }));

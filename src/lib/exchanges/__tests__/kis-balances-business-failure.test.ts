@@ -34,9 +34,6 @@ jest.mock('../kis-http', () => ({
   kisFetch:          jest.fn(),
   isKisRateLimited:  jest.fn(() => false),
   kisBodyText:       jest.fn(() => ''),
-  // (T-133 Reviewer Info) 어댑터가 모듈 수준에서 import 하므로 공장에도 있어야 한다.
-  // 이 파일의 시험은 토큰 분기에 닿지 않지만, 빠뜨리면 닿는 순간 "not a function" 으로 깨진다.
-  isKisTokenError:   jest.fn(() => false),
 }));
 
 jest.mock('../fx', () => ({ getUsdKrwRate: jest.fn(async () => 1400) }));

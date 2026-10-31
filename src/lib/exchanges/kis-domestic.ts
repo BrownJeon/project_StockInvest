@@ -2,9 +2,10 @@
  * KIS 국내주식 어댑터 (KOSPI/KOSDAQ).
  * 기존 kis.ts 본문을 그대로 이동. 호출처는 kis.ts Facade를 거침.
  */
-import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
+import { getKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
-import { kisFetch, isKisRateLimited, kisBodyText, isKisTokenError } from './kis-http';
+import { kisFetch, isKisRateLimited, kisBodyText } from './kis-http';
+import { shouldRetryAfterTokenError } from './kis-token-retry';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
 import { submittedQuantity, unusableQuantityReason } from './order-quantity';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
@@ -52,17 +53,16 @@ async function kisHeaders(trId: string, extra?: Record<string, string>): Promise
  * `kisFetch` 3회)의 최악은 **9회**였다 — 즉 상한은 거의 그대로고, 예전 "총 3회" 라는 설명은
  * 레이트리밋 예산을 빼고 센 값이라 틀렸다(T-133 Reviewer L-2).
  *
- * 토큰 만료(`EGW00123`)는 `isTransientKisFailure` 가 제외하므로 게이트웨이가 재시도하지 않는다 —
+ * 토큰 계열 오류(`EGW00121`·`EGW00123`)는 `isTransientKisFailure` 가 제외하므로 게이트웨이가 재시도하지 않는다 —
  * **어댑터가 처리하는 것이 설계다.** 종전 루프는 매 시도 `kisHeaders` 를 다시 불러 **다른 프로세스가
  * 회전시켜 둔 토큰을 주워 왔다**(T-133 Reviewer L-1 이 실증). 응답 루프를 걷어내면 그 복구가 사라지므로
  * 아래에 1회짜리 토큰 루프를 둔다.
  *
- * 🔴 그 루프는 **재발급을 먼저 하지 않는다**(T-133 Reviewer M-2). `getBalances` 처럼 곧바로
- * `invalidateKisToken()` 을 부르면, DB 에 이미 있는 **멀쩡한 새 토큰을 지우고** 재발급을 요청한다.
- * 직전 발급이 1분 안이면 KIS 가 `EGW00133` 으로 거부하고 `issueAndStore` 가 60초를 기다리므로,
- * 그 사이 같은 프로세스의 **모든** `getKisToken()` 호출이 막힌다 — `createOrder` 도 그 경로다.
- * 그래서 먼저 `getKisToken()` 으로 **DB 를 다시 읽고**(이 함수는 호출마다 DB 를 본다),
- * 값이 **이번 요청 헤더에 실린 토큰과 같을 때만** 재발급한다.
+ * 🔴 그 분기의 판단은 **어댑터가 하지 않는다** — 공용 헬퍼 `shouldRetryAfterTokenError` 한 곳에 있고
+ * (T-136), 이 파일의 다른 두 곳과 해외·원장도 같은 헬퍼를 쓴다. 왜 거기에 모았는지와 왜 재발급을
+ * 먼저 하지 않는지(T-133 Reviewer M-2), 같은 토큰에 판단을 하나만 두는 이유(T-136 §동시성)는
+ * `kis-token-retry.ts` 머리글에 있다. 여기서는 **가드를 헬퍼보다 앞에 둔다**는 것만 지킨다 —
+ * 순서를 뒤집으면 재발급이 두 번 불린다(T-136 감사 H-1 이 원장에서 실증).
  */
 export async function getTicker(symbol: string): Promise<Ticker> {
   const url = `${BASE()}/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=${symbol}`;
@@ -80,20 +80,10 @@ export async function getTicker(symbol: string): Promise<Ticker> {
       throw new Error(`KIS getTicker ${symbol}: ${res.status} (레이트리밋 — 백오프 재시도 소진)`);
     }
     const body = await res.text().catch(() => '');
-    // (T-133 QA #2) 토큰 판정은 게이트웨이와 **같은 출처**를 쓴다 — `EGW00121` 도 포함된다.
-    // 손으로 `EGW00123` 만 적으면 게이트웨이는 재시도를 건너뛰는데 여기서는 재발급도 안 하는
-    // 사각지대가 생긴다(종전 코드는 500 이면 무조건 재시도해 그 경우를 우연히 덮고 있었다).
-    if (!tokenRetried && isKisTokenError(body)) {
+    // (T-136) 토큰 분기는 어댑터 전체가 **같은 헬퍼**를 쓴다 — 판정(`EGW00121` 포함)도 재발급 순서도
+    // 한 곳에만 있다. T-133 이 여기 인라인으로 두었던 것을 그대로 옮겼다.
+    if (!tokenRetried && await shouldRetryAfterTokenError(body, usedAuth, 'kis-domestic getTicker')) {
       tokenRetried = true;
-      const fresh = await getKisToken();   // DB 재읽기 — 캐시를 **지우지 않는다**
-      if (`Bearer ${fresh}` !== usedAuth) {
-        // 다른 프로세스가 이미 회전시켜 뒀다. 재발급 없이 그 토큰으로 한 번 더 간다.
-        console.warn('[kis-domestic getTicker] token rotated elsewhere — 재읽기로 재시도');
-        continue;
-      }
-      // DB 토큰도 방금 쓴 것과 같다 — 그때만 재발급한다(60초 대기 위험을 여기로 좁힌다).
-      console.warn('[kis-domestic getTicker] token expired, re-issuing');
-      await invalidateKisToken();
       continue;
     }
     throw new Error(`KIS getTicker ${symbol}: ${res.status}`);
@@ -270,7 +260,7 @@ export async function getBalances(): Promise<Balance[]> {
   let res: Response;
   let body = '';
   const [cano, acntPrdt] = await Promise.all([accountNo(), accountProduct()]);
-  // 토큰 만료(EGW00123) 시 1회 자동 재발급 + 재시도
+  // 토큰 계열 오류(T-136 `isKisTokenError`) 시 1회 재시도 — 재발급은 DB 토큰이 같을 때만
   while (true) {
     const headers = await kisHeaders(trId);
     const url = `${BASE()}/uapi/domestic-stock/v1/trading/inquire-balance`
@@ -282,9 +272,7 @@ export async function getBalances(): Promise<Balance[]> {
     res = await kisFetch(url, { headers }, { label: 'domestic getBalances', transientRetries: 2 });
     if (res.ok) break;
     body = await res.text().catch(() => '');
-    if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-      console.warn('[kis-domestic] token expired, re-issuing');
-      await invalidateKisToken();
+    if (attempt === 0 && await shouldRetryAfterTokenError(body, headers.Authorization, 'kis-domestic getBalances')) {
       attempt++;
       continue;
     }
@@ -668,9 +656,7 @@ export async function getCompletedOrders(
     const res = await kisFetch(url, { headers }, { label: 'domestic getCompletedOrders' });
     if (!res.ok) {
       const body = kisBodyText(res) ?? await res.text().catch(() => '');
-      if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-        console.warn('[kis-domestic getCompletedOrders] token expired, re-issuing');
-        await invalidateKisToken();
+      if (attempt === 0 && await shouldRetryAfterTokenError(body, headers.Authorization, 'kis-domestic getCompletedOrders')) {
         attempt++;
         continue;
       }

@@ -110,6 +110,7 @@ import {
   acquireKisSlot, currentKisPriority, DEFAULT_MAX_QUEUE_WAIT_MS, type KisPriority,
 } from './kis-throttle';
 import { logUsage, opOf, usageClock, usageErrKind } from '@/lib/api-usage';
+import { isKisTokenError } from './kis-token-codes';
 
 export interface KisFetchOptions {
   /** 미지정 시 {@link currentKisPriority} — 즉 `withKisPriority` 컨텍스트를 따른다. */
@@ -212,26 +213,14 @@ function rtCdOf(body: string): string | null {
 }
 
 /**
- * 토큰 계열 오류. HTTP 500 으로 오지만 재시도가 아니라 **재발급**이 답이고, 그것은 호출부가 한다
- * (아래 `isKisTokenError()` → DB 재읽기 → 값이 같을 때만 `invalidateKisToken()` → 1회 재시도).
+ * 토큰 계열 오류는 재시도가 아니라 **재발급**이 답이고, 그것은 호출부가 한다
+ * (`kis-token-retry.shouldRetryAfterTokenError` → DB 재읽기 → 값이 같을 때만 재발급 → 1회 재시도).
  * 여기서 먼저 재시도하면 죽은 토큰으로 두 번 더 때린 뒤에야 재발급에 닿는다. (T-132 Reviewer L-3)
  *
- * (T-133) 호출부가 `body.includes('EGW00123')` 를 손으로 적던 때는 `EGW00121` 이 사각지대였다 —
- * 게이트웨이는 재시도를 건너뛰고 호출부는 재발급도 안 했다. 그래서 판정을 함수로 공개했다.
+ * (T-136) 판정은 의존성 없는 잎 모듈 `kis-token-codes` 가 갖는다 — 게이트웨이와 어댑터 헬퍼가
+ * 같은 것을 쓰면서도 순환 import 가 되지 않게, 그리고 **이 모듈을 모킹한 시험이 판정까지 잃지
+ * 않게** 하기 위해서다.
  */
-const TOKEN_ERROR_PATTERN = /EGW00121|EGW00123|만료된 token/;
-
-/**
- * 응답 본문이 **토큰 계열 오류**인가. 위 패턴과 **같은 출처**를 호출부에 공개한다.
- *
- * (T-133 QA #2) 어댑터들이 저마다 `body.includes('EGW00123')` 를 손으로 적어, 게이트웨이는
- * `EGW00121` 도 토큰 오류로 보고 재시도를 건너뛰는데 호출부는 그걸 재발급 대상으로 보지 않는
- * **드리프트**가 생겼다. 그 결과 `EGW00121` + 토큰 회전 상황에서 시세가 복구되지 않았다.
- * 새로 토큰 분기를 쓰는 호출부는 이 함수를 쓴다.
- */
-export function isKisTokenError(body: string): boolean {
-  return TOKEN_ERROR_PATTERN.test(body);
-}
 
 /**
  * 레이트리밋이 아닌 **일시 실패**인가. `transientRetries` 를 켠 호출부에만 적용된다.
@@ -248,7 +237,7 @@ export function isKisTokenError(body: string): boolean {
  * 이미 백오프를 소진했으므로 **두 번 물러서지 않는다.**
  */
 export function isTransientKisFailure(status: number, body: string): boolean {
-  if (TOKEN_ERROR_PATTERN.test(body)) return false;
+  if (isKisTokenError(body)) return false;
   if (status >= 500) return true;
   const rtCd = rtCdOf(body);
   return rtCd !== null && rtCd !== '0';

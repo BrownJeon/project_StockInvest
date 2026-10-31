@@ -31,6 +31,26 @@ interface TokenCache {
 let refreshInFlight: Promise<string> | null = null;
 
 /**
+ * 토큰 발급 한 번의 **응답 헤더 도착까지의** 상한 (T-136 QA F-A).
+ *
+ * ⚠ 이 상한은 **헤더 도착까지만** 걸린다 — **본문 읽기에는 상한이 없다**(5차 감사 L-5, 3차 QA 실측:
+ *   헤더 즉시 + 본문 13초 정지 시 두 호출이 **13.0초 대기 후 성공**). 즉 F-A 는 **헤더 단계에서만**
+ *   닫혔다. `kisFetch` 는 `finally` 에서 타이머를 지운 뒤
+ *   `res.text()` 를 하므로, 헤더는 왔는데 본문이 멈추면 합류한 호출이 다시 길게 묶인다 —
+ *   같은 기전이고 막지 않았다(운영 163,474건에 본문 단계 정지로 볼 호출 0건, 이 파일을 네 번째로
+ *   고치는 위험이 그 확률보다 크다고 판단). 후속 후보 5 에 적어 둔다.
+ *
+ * 실측(운영 7일): `token-p` 129건의 최대 지연 204ms·1초 초과 0건, KIS 전체 163,474건 p99.9 = 1.2초,
+ * 성공한 가장 느린 호출 4.0초. 5초를 넘은 3건은 모두 같은 순간의 연결 타임아웃(10,248ms)이었다 —
+ * F-A 가 겨냥한 "응답 없는 엔드포인트" 는 실제로 일어난다.
+ *
+ * 값을 고른 기준: 매달림을 **유계로** 만드는 것이 목적이고, 너무 짧으면 느린 응답을 끊어 `EGW00133`
+ * 1분 대기를 불러온다. 시세 조회가 쓰는 5초보다 넉넉하게 두되(발급은 틱마다 일어나지 않는다)
+ * 무계 5분과는 두 자릿수 차이가 나게 10초로 둔다. 최악 시간은 아래 `issueAndStore` 주석에 적는다.
+ */
+const TOKEN_ISSUE_TIMEOUT_MS = 10_000;
+
+/**
  * KIS 토큰. 동일 KIS_APP_KEY를 다른 프로세스(TradingInvest 등)에서 새로 발급하면
  * 기존 토큰이 무효화되므로 EGW00123 또는 401 응답 시 호출자가 invalidateKisToken()을
  * 호출해 캐시 무효화 후 재발급할 수 있도록 export.
@@ -57,6 +77,20 @@ export async function getKisToken(): Promise<string> {
     }
   } catch { /* DB 미연결 시 신규 발급 */ }
 
+  /**
+   * 🔴 (T-136 QA F-1) 발급으로 떨어질 때는 **진행 중인 재발급에 합류한다.**
+   *
+   * 위 캐시 조회가 "행 없음" 을 보는 흔한 이유는 **방금 다른 호출의 `invalidateKisToken()` 이 그 행을
+   * 지웠기 때문**이다. 그때 각자 `issueAndStore` 로 내려가면 같은 순간에 발급이 두 번 일어나고, KIS 의
+   * "앱키당 1분 1회"(`EGW00133`)에 걸린 쪽이 **60초를 기다린다.** 그 대기는 이 함수를 쓰는 모든 경로를
+   * 막는데 `createOrder` 도 그 경로다.
+   *
+   * `invalidateKisToken()` 은 예전부터 `refreshInFlight` 에 합류했지만(아래), **이 경로만 빠져 있었다.**
+   * QA 가 혼합 토큰 시나리오로 재현했다 — 죽은 토큰 두 개가 10ms 차로 실패하면 발급 2회·대기 1회.
+   * 합류하면 1회가 된다. 실패하면 함께 실패한다(fail-closed, `invalidateKisToken` 과 같은 성질).
+   */
+  if (refreshInFlight) return refreshInFlight;
+
   return await issueAndStore(appKey, appSecret);
 }
 
@@ -73,12 +107,28 @@ async function issueAndStore(appKey: string, appSecret: string): Promise<string>
      *    그 제한은 아래 `1분당 1회` 분기와 상위의 `refreshInFlight` 단일화로 이미 다뤄지고
      *    있고, 스로틀은 초당 유량만 본다. `EGW00133` 은 `kis-http` 의 레이트리밋 패턴
      *    (`EGW00201`/`EGW00215`)에 **일부러 포함하지 않았으므로** 이중으로 백오프되지 않는다.
+     *
+     * 🔴 (T-136 QA F-A) **상한이 반드시 있어야 한다.** 예전에는 `timeoutMs` 가 없어 `kisFetch` 기본값
+     *    (무제한)을 썼고, 응답 없는 서버에 걸리면 undici 의 헤더 타임아웃까지 **약 5분**을 매달렸다
+     *    (QA 실측 300,754ms → `UND_ERR_HEADERS_TIMEOUT`). 그 동안 이 함수를 쓰는 **모든** 경로가
+     *    멈추는데 `createOrder` 도 그 경로다. T-136 이 `getKisToken()` 을 `refreshInFlight` 에
+     *    합류시키면서 그 영향 범위가 넓어져(합류한 호출도 함께 매달린다) 상한이 필수가 됐다.
+     *
+     *    트레이드오프: 끊긴 요청이 KIS 쪽에서는 **이미 발급됐을 수 있고**, 그러면 다음 시도가
+     *    `EGW00133`(1분 1회)에 걸린다. 그건 아래 분기가 이미 다루는 경우다.
+     *
+     *    **최악 시간**(3차 QA 실측으로 정정): 타임아웃은 `AbortError` 로 **즉시 던져 재시도를 돌지
+     *    않으므로**, 반복되는 것은 `EGW00133` **응답**뿐이다. 그 응답이 곧바로 오면 대기 3회 =
+     *    **180초**, 응답이 상한 직전(약 10초)에 오면 **약 210초**다. ⚠ **스로틀 대기(회당 최대 30초)와
+     *    본문 읽기 시간은 이 계산에 들어 있지 않다** — 실제 최악은 그만큼 더 길다.
+     *    종전(상한 없음)은 **회차마다 약 5분**이었다.
+     *    내가 처음 적은 "3회 × (10초+대기)" 와 그다음 "약 180초" 는 둘 다 정확하지 않았다.
      */
     const res = await kisFetch(`${kisBaseUrl()}/oauth2/tokenP`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'client_credentials', appkey: appKey, appsecret: appSecret }),
-    }, { priority: 'critical', label: 'tokenP' });
+    }, { priority: 'critical', label: 'tokenP', timeoutMs: TOKEN_ISSUE_TIMEOUT_MS });
     if (res.ok) {
       const data = await res.json();
       if (!data.access_token) throw new Error(`KIS token missing: ${JSON.stringify(data)}`);

@@ -12,9 +12,10 @@
  *
  * 주문 통화는 USD. 호출자(safety/dry-run)에서 KRW 환산 한도 검증 수행.
  */
-import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
+import { getKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
 import { kisFetch, isKisRateLimited, kisBodyText } from './kis-http';
+import { shouldRetryAfterTokenError } from './kis-token-retry';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
 import { parseOverseas, formatOverseas, toOvrsExcgCd, type OverseasExchange } from './kis-symbols';
 import { submittedQuantity, unusableQuantityReason } from './order-quantity';
@@ -441,7 +442,8 @@ export function parseUsdCashFromPresentBalance(data: unknown): ParsedUsdCash {
 }
 
 /**
- * 해외 USD 예수금 조회. **실패하면 던진다**(0 을 돌려주지 않는다). 토큰 만료(EGW00123)만 1회 재발급 후 재시도.
+ * 해외 USD 예수금 조회. **실패하면 던진다**(0 을 돌려주지 않는다). 토큰 계열 오류(T-136 `isKisTokenError` —
+ * `EGW00121`·`EGW00123`)에서만 1회 재시도하고, 재발급은 DB 토큰이 방금 쓴 것과 같을 때만 한다.
  * 호출 수: 예전에 매 해외 잔고마다 실패하던 TTTS3007R 1회를 이 호출 1회가 **대체**한다.
  */
 export async function getUsdCash(): Promise<UsdCashReading> {
@@ -464,8 +466,7 @@ export async function getUsdCash(): Promise<UsdCashReading> {
     const res = await kisFetch(url, { headers }, { label: 'overseas usdCash', transientRetries: 2 });
     if (!res.ok) {
       const body = kisBodyText(res) ?? await res.text().catch(() => '');
-      if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-        await invalidateKisToken();
+      if (attempt === 0 && await shouldRetryAfterTokenError(body, headers.Authorization, 'kis-overseas usdCash')) {
         attempt++;
         continue;
       }
@@ -593,7 +594,7 @@ export function parsePriceDetail(data: unknown, symbol: string): OverseasPriceDe
 
 /**
  * 해외주식 현재가상세 조회(읽기 전용). 실패하면 던진다 — 0·빈 값으로 바꾸지 않는다.
- * 토큰 만료(EGW00123)만 1회 재발급 후 재시도. 스로틀은 `kisFetch` 가 담당한다(호출부가 `withKisPriority('bulk')` 로 감싼다).
+ * 토큰 계열 오류(T-136 `isKisTokenError`)에서만 1회 재시도. 스로틀은 `kisFetch` 가 담당한다(호출부가 `withKisPriority('bulk')` 로 감싼다).
  */
 export async function getPriceDetail(symbol: string): Promise<OverseasPriceDetail> {
   const { excd, ticker } = parseOverseas(symbol);
@@ -605,8 +606,7 @@ export async function getPriceDetail(symbol: string): Promise<OverseasPriceDetai
     const res = await kisFetch(url, { headers }, { timeoutMs: 5_000, label: 'overseas priceDetail' });
     if (!res.ok) {
       const body = kisBodyText(res) ?? await res.text().catch(() => '');
-      if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-        await invalidateKisToken();
+      if (attempt === 0 && await shouldRetryAfterTokenError(body, headers.Authorization, 'kis-overseas priceDetail')) {
         attempt++;
         continue;
       }
@@ -647,8 +647,7 @@ async function fetchBalancesForExchange(
     res = await kisFetch(url, { headers }, { label: 'overseas getBalances', transientRetries: 2 });
     if (res.ok) break;
     body = await res.text().catch(() => '');
-    if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-      await invalidateKisToken();
+    if (attempt === 0 && await shouldRetryAfterTokenError(body, headers.Authorization, `kis-overseas getBalances(${excd})`)) {
       attempt++;
       continue;
     }
@@ -1019,9 +1018,7 @@ export async function getCompletedOrders(
       res = await kisFetch(url, { headers }, { label: 'overseas getCompletedOrders' });
       if (!res.ok) {
         const body = kisBodyText(res) ?? await res.text().catch(() => '');
-        if (attempt === 0 && (body.includes('EGW00123') || body.includes('만료된 token'))) {
-          console.warn('[kis-overseas getCompletedOrders] token expired, re-issuing');
-          await invalidateKisToken();
+        if (attempt === 0 && await shouldRetryAfterTokenError(body, headers.Authorization, 'kis-overseas getCompletedOrders')) {
           attempt++;
           continue;
         }

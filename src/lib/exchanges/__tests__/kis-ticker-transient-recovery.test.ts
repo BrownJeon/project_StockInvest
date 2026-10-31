@@ -178,11 +178,13 @@ describe('국내 시세 — 일시 오류 뒤 복구', () => {
     expect(authOf(1)).toBe('Bearer rotated-by-other-process');
   });
 
-  test('🔴 토큰 만료가 두 번이면 던진다 — 토큰 분기는 1회뿐이다', async () => {
+  test('🔴 토큰 만료가 두 번이어도 재발급은 1회다 (T-136 감사 H-1 계열 가드)', async () => {
+    const { invalidateKisToken } = jest.requireMock('../kis-auth') as { invalidateKisToken: jest.Mock };
     fetchMock.mockImplementation(async () =>
       res(500, '{"rt_cd":"1","msg_cd":"EGW00123","msg1":"기간이 만료된 token"}'));
     await expect(domGetTicker('005930')).rejects.toThrow(/KIS getTicker 005930: 500/);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(invalidateKisToken).toHaveBeenCalledTimes(1);
   });
 
   /**

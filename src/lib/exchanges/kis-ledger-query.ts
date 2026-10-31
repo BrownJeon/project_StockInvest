@@ -23,9 +23,10 @@
  *  - `error` 는 사유 코드 + `rt_cd`/`msg_cd`/HTTP 상태만 담는다. KIS `msg1` 원문·응답 본문은 넣지 않는다.
  *  - 행 원문(`rows`)에는 KIS 가 준 개인·단말 필드가 남아 있을 수 있다 — 저장 전 `sanitizeRawRow` 를 거쳐야 한다(normalize 가 한다).
  */
-import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
+import { getKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
 import { isKisRateLimited, kisBodyText, kisAttempts } from './kis-http';
+import { shouldRetryAfterTokenError } from './kis-token-retry';
 
 export type LedgerMarket = 'domestic' | 'overseas';
 export type LedgerKind = 'fills' | 'realized_pnl' | 'position_snapshot';
@@ -140,7 +141,6 @@ async function ledgerHeaders(trId: string, extra?: Record<string, string>): Prom
 }
 
 const FINGERPRINT_RE = /^[0-9a-f]{16}$/;
-const TOKEN_EXPIRED_RE = /EGW00123|만료된 token/;
 
 /** 오류 코드 문자열에 넣을 수 있는 짧은 식별자만 남긴다(영숫자·_·- 최대 16자). */
 function safeCode(v: unknown): string {
@@ -250,7 +250,7 @@ export async function runLedgerQuery(spec: LedgerQuerySpec, opts: LedgerQueryOpt
     if (opts.deadlineMs != null && now() >= opts.deadlineMs) return stop('time_budget');
     if (out.kisCalls >= maxCalls) return stop('call_budget');
 
-    // ── 한 페이지: 토큰 만료(EGW00123)만 1회 재발급 후 재시도(기존 어댑터와 같은 규칙) ──
+    // ── 한 페이지: 토큰 계열 오류에서만 1회 재시도(T-136 공용 헬퍼 — 어댑터 전체와 같은 규칙) ──
     let res: Response | null = null;
     let tokenRetried = false;
     for (;;) {
@@ -278,11 +278,26 @@ export async function runLedgerQuery(spec: LedgerQuerySpec, opts: LedgerQueryOpt
       }
       if (res.ok) break;
       const body = kisBodyText(res) ?? await res.text().catch(() => '');
-      if (!tokenRetried && TOKEN_EXPIRED_RE.test(body)) {
-        tokenRetried = true;
-        try { await invalidateKisToken(); } catch { return stop('auth_error'); }
-        if (out.kisCalls >= maxCalls) return stop('call_budget');
-        continue;
+      /**
+       * (T-136) 토큰 분기를 공용 헬퍼로 바꿨다 — 자체 정규식(`EGW00123` only)은 `EGW00121` 을 놓쳤고,
+       * 재발급을 먼저 해서 다른 프로세스가 회전시킨 토큰을 지울 수 있었다. 헬퍼는 DB 를 먼저 읽고
+       * 값이 같을 때만 재발급한다. 예외를 `stop('auth_error')` 로 바꾸는 이 사이트의 규칙은 그대로
+       * 두려고 호출을 try/catch 로 감싼다(종전 `invalidateKisToken()` 과 같은 처리).
+       */
+      // 🔴 가드가 **헬퍼보다 먼저**다 (T-136 감사 H-1). 순서를 뒤집으면 재발급 뒤 또 토큰 오류가 날 때
+      //    헬퍼가 한 번 더 돌아 `invalidateKisToken()` 이 2회 불리고, 이 task 가 없애려던 `EGW00133`
+      //    60초 대기를 이 경로에 새로 만든다. 다른 7곳은 모두 `attempt === 0 &&`·`!tokenRetried &&` 를
+      //    앞에 두는데 여기만 달랐다.
+      if (!tokenRetried) {
+        let retryToken = false;
+        try {
+          retryToken = await shouldRetryAfterTokenError(body, headers.Authorization, `kis-ledger ${spec.trId}`);
+        } catch { return stop('auth_error'); }
+        if (retryToken) {
+          tokenRetried = true;
+          if (out.kisCalls >= maxCalls) return stop('call_budget');
+          continue;
+        }
       }
       return stop(`http_${res.status}`);
     }
