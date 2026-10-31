@@ -4,7 +4,12 @@
  */
 const queryMock = jest.fn();
 const switchMock = jest.fn();
-jest.mock('@/lib/db', () => ({ getPool: () => ({ query: queryMock }) }));
+// (T-135) upsert 는 풀에서 받은 연결 하나로 간다 — 문장은 같은 queryMock 에 남기고(기존 단언 그대로), 연결 받기·끝내기만 따로 센다.
+const connQueryMock = jest.fn((sql: string, params?: unknown[]) => queryMock(sql, params));
+const releaseMock = jest.fn();
+const destroyMock = jest.fn();
+const getConnectionMock: jest.Mock = jest.fn(async () => ({ query: connQueryMock, release: releaseMock, destroy: destroyMock }));
+jest.mock('@/lib/db', () => ({ getPool: () => ({ query: queryMock, getConnection: getConnectionMock }) }));
 jest.mock('../record-switch', () => ({ readRecordSwitchState: (...a: unknown[]) => switchMock(...a) }));
 
 import { execFileSync } from 'node:child_process';
@@ -41,6 +46,11 @@ const parsed = (l: string) => parseSpoolLine(l) as SpoolLine;
 
 beforeEach(() => {
   queryMock.mockReset();
+  connQueryMock.mockClear();
+  releaseMock.mockReset();
+  destroyMock.mockReset();
+  getConnectionMock.mockReset();
+  getConnectionMock.mockImplementation(async () => ({ query: connQueryMock, release: releaseMock, destroy: destroyMock }));
   switchMock.mockReset();
   switchMock.mockResolvedValue({ enabled: true, source: 'value' });
   resetJobRunLogWarningsForTest();
@@ -374,6 +384,114 @@ describe('recordSpoolBatch — 스위치·테이블 없음·값 오류·시간 �
     queryMock.mockClear();
     await expect(recordSpoolBatch(many)).resolves.toMatchObject({ status: 'ok', runRows: 150 });
     expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (T-135) upsert 연결 — 배치 1회가 연결 하나만 받고, 정상 = release 1 · 문장 오류가 있었으면 destroy 1 · 상한 = **상한 시점에** destroy ·
+// 상한 뒤에 받은 연결은 쓰지 않고 release · 상한 뒤에는 새 문장을 보내지 않고 경고도 더하지 않는다(실 풀·잠긴 표는 일회용 MariaDB 시험 G)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 (T-135) recordSpoolBatch — upsert 는 연결 하나로, 상한이면 그 연결을 풀에서 뺀다', () => {
+  const L = [
+    line('edgar-sync', 200, '2026-10-30 07:00:01', 5000, { ok: true }),
+    line('entry-watcher', 200, '2026-10-30 07:00:07', 100),
+  ].join('\n');
+  const ends = () => [getConnectionMock.mock.calls.length, releaseMock.mock.calls.length, destroyMock.mock.calls.length];
+  const warns = () => (console.warn as jest.Mock).mock.calls.map((c) => String(c[0]));
+  const flush = async () => { for (let i = 0; i < 50; i++) await Promise.resolve(); };
+
+  it('정상 — 실행 행·롤업 2문장이 같은 연결로, release 1 · 풀 query 로 간 upsert 0', async () => {
+    queryMock.mockResolvedValue([{ affectedRows: 1 }, undefined]);
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'ok', runRows: 1, rollupRows: 1 });
+    expect(ends()).toEqual([1, 1, 0]);
+    expect(connQueryMock).toHaveBeenCalledTimes(2);
+    expect(queryMock).toHaveBeenCalledTimes(2);   // 전부 연결을 거쳐 왔다(풀 query 직접 호출 0)
+  });
+  it('150행(문장 2개로 나뉨) + 롤업 — 문장 3개 모두 연결 하나로', async () => {
+    queryMock.mockResolvedValue([{}, undefined]);
+    const many = Array.from({ length: 150 }, (_, k) => line('portfolio-snapshot', 200, '2026-10-30 10:00:00', 1).replace(/\t(\d{13})\t(\d{13})\t/, (_m, a: string) => `\t${Number(a) + k * 60_000}\t${Number(a) + k * 60_000 + 1}\t`));
+    await expect(recordSpoolBatch([...many, line('entry-watcher', 200, '2026-10-30 10:00:07', 100)].join('\n'))).resolves.toMatchObject({ status: 'ok', runRows: 150, rollupRows: 1 });
+    expect(connQueryMock).toHaveBeenCalledTimes(3);
+    expect(ends()).toEqual([1, 1, 0]);
+  });
+  it('보낼 행이 없거나(형식 오류만) 꺼짐·스위치 못 읽음 → 연결을 받지 않는다', async () => {
+    await expect(recordSpoolBatch('garbage')).resolves.toMatchObject({ status: 'ok', rejected: 1 });
+    switchMock.mockResolvedValue({ enabled: false, source: 'missing' });
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'skipped_disabled' });
+    switchMock.mockResolvedValue({ enabled: false, source: 'read_error' });
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'failed', reason: 'switch_unreadable' });
+    expect(getConnectionMock).not.toHaveBeenCalled();
+  });
+  it('값 오류(4025) 한 줄씩 재시도 — 문장 4개가 같은 연결, 결과는 그대로 · 오류가 났던 연결은 destroy(상태를 믿지 않는다)', async () => {
+    const three = [
+      line('edgar-sync', 200, '2026-10-30 07:00:01', 1, { ok: true }),
+      line('research-cycle-overseas', 200, '2026-10-30 07:00:02', 1, { ok: true }),
+      line('broker-fills', 200, '2026-10-30 07:20:02', 1, { ok: true }),
+    ].join('\n');
+    const chk = Object.assign(new Error('CONSTRAINT failed'), { errno: 4025 });
+    queryMock.mockRejectedValueOnce(chk).mockResolvedValueOnce([{}, undefined]).mockRejectedValueOnce(chk).mockResolvedValueOnce([{}, undefined]);
+    await expect(recordSpoolBatch(three)).resolves.toMatchObject({ status: 'ok', runRows: 3, rowErrors: 1 });
+    expect(connQueryMock).toHaveBeenCalledTimes(4);
+    expect(ends()).toEqual([1, 0, 1]);
+  });
+  it.each([
+    ['테이블 없음(1146)', Object.assign(new Error('x'), { errno: 1146 }), { status: 'skipped_no_table' }],
+    ['연결 오류(ECONNRESET)', Object.assign(new Error('read ECONNRESET'), { errno: -104 }), { status: 'failed', reason: 'db_error' }],
+  ])('%s → 그 연결은 destroy 1(release 0)', async (_n, err, expected) => {
+    queryMock.mockRejectedValue(err);
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject(expected);
+    expect(ends()).toEqual([1, 0, 1]);
+  });
+  it('연결 받기 실패 → failed(db_error), 경고는 예전 풀 실패와 같은 errno 줄 1개, 문장 0', async () => {
+    getConnectionMock.mockImplementation(async () => { throw Object.assign(new Error('connect ECONNREFUSED'), { errno: -111 }); });
+    await expect(recordSpoolBatch(L)).resolves.toMatchObject({ status: 'failed', reason: 'db_error' });
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(warns()).toEqual(['[strategy/records/job-run-log] 기록 실패 errno=-111 — 러너가 다시 보낸다']);
+  });
+  it('🔴 상한 — 실행 행 upsert 가 매달리면 **상한 시점에** 그 연결을 destroy, 늦은 실패에도 줄은 503 timeout 하나 · 롤업 문장은 보내지 않는다', async () => {
+    jest.useFakeTimers();
+    let rejectLate!: (e: unknown) => void;
+    queryMock.mockReturnValueOnce(new Promise((_, rej) => { rejectLate = rej; }));
+    const p = recordSpoolBatch(L, 2500);
+    await flush();
+    expect(connQueryMock).toHaveBeenCalledTimes(1);
+    expect(destroyMock).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(2500);
+    await expect(p).resolves.toMatchObject({ status: 'failed', reason: 'timeout' });
+    expect(ends()).toEqual([1, 0, 1]);                                  // 늦은 실패가 오기 **전에** 이미 뺐다
+    rejectLate(Object.assign(new Error('Connection lost'), { errno: 2013 }));
+    await flush();
+    expect(connQueryMock).toHaveBeenCalledTimes(1);                     // 상한 뒤 새 문장(롤업) 없음
+    expect(warns()).toEqual(['[strategy/records/job-run-log] 503 reason=timeout (deadline=2500ms) — 러너가 스풀을 남겨 다음 가벼운 틱에 다시 보낸다']);
+    expect(ends()).toEqual([1, 0, 1]);
+  });
+  it('🔴 상한 뒤 실행 행 upsert 가 늦게 성공해도 롤업 문장을 보내지 않는다(늦은 기록 없음)', async () => {
+    jest.useFakeTimers();
+    let finishLate!: (v: unknown) => void;
+    queryMock.mockReturnValueOnce(new Promise((r) => { finishLate = r; }));
+    const p = recordSpoolBatch(L, 2500);
+    await flush();
+    jest.advanceTimersByTime(2500);
+    await expect(p).resolves.toMatchObject({ status: 'failed', reason: 'timeout' });
+    finishLate([{ affectedRows: 1 }, undefined]);
+    await flush();
+    expect(connQueryMock).toHaveBeenCalledTimes(1);
+    expect(warns()).toHaveLength(1);
+    expect(ends()).toEqual([1, 0, 1]);
+  });
+  it('🔴 풀이 바빠 상한 뒤에야 받은 연결 — 문장을 보내지 않고 release, 결과는 timeout', async () => {
+    jest.useFakeTimers();
+    let give!: (c: unknown) => void;
+    getConnectionMock.mockImplementation(() => new Promise((r) => { give = r; }));
+    const p = recordSpoolBatch(L, 2500);
+    await flush();
+    jest.advanceTimersByTime(2500);
+    await expect(p).resolves.toMatchObject({ status: 'failed', reason: 'timeout' });
+    give({ query: connQueryMock, release: releaseMock, destroy: destroyMock });
+    await flush();
+    expect(connQueryMock).not.toHaveBeenCalled();
+    expect([releaseMock.mock.calls.length, destroyMock.mock.calls.length]).toEqual([1, 0]);
+    expect(warns()).toHaveLength(1);
   });
 });
 

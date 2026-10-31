@@ -111,7 +111,8 @@ interface DbState {
   judgmentRun: 'ok' | Error | Deferred<void>;
   judgmentCandidate: 'ok' | Error;
 }
-interface Call { seq: number; via: 'pool' | 'conn'; sql: string; params: unknown[] }
+/** via — pool: 풀 query · conn: 엔진의 카드 트랜잭션 연결(beginTransaction 을 부른 연결) · poolconn: 풀에서 따로 받은 트랜잭션 없는 연결(T-135 기록기 INSERT) */
+interface Call { seq: number; via: 'pool' | 'conn' | 'poolconn'; sql: string; params: unknown[] }
 let db: DbState;
 let calls: Call[];
 let seq: number;
@@ -122,7 +123,7 @@ let conn: { beginTransaction: jest.Mock; query: jest.Mock; commit: jest.Mock; ro
 
 const isDeferred = (v: unknown): v is Deferred<unknown> => v != null && typeof v === 'object' && 'promise' in v && 'resolve' in v;
 
-async function route(via: 'pool' | 'conn', sql: string, params: unknown[] = []): Promise<unknown> {
+async function route(via: Call['via'], sql: string, params: unknown[] = []): Promise<unknown> {
   calls.push({ seq: ++seq, via, sql, params });
   if (sql.includes('INSERT INTO signals')) {
     const r = db.cardResults[cardIdx++] ?? { affectedRows: 1, insertId: 900 + cardIdx };
@@ -177,7 +178,23 @@ function wireDb() {
     release: jest.fn(),
     destroy: jest.fn(),
   };
-  mGetPool.mockReturnValue({ query, getConnection: jest.fn(async () => conn) });
+  // (T-135) 풀은 getConnection 마다 **다른** 연결을 준다(운영 mysql2 와 같게) — beginTransaction 을 부른 연결(엔진의 카드 트랜잭션)은 'conn',
+  //   트랜잭션 없이 쓰는 연결(기록기가 INSERT 용으로 따로 받는 것)은 'poolconn'. 예전 목은 매번 같은 트랜잭션 연결을 돌려줘서, 기록기가 풀에서
+  //   연결을 받기 시작하자 둘을 구별하지 못했다. commit·rollback·release·destroy 횟수는 예전처럼 conn 의 목에 모인다.
+  mGetPool.mockReturnValue({
+    query,
+    getConnection: jest.fn(async () => {
+      let inTx = false;
+      return {
+        beginTransaction: async () => { inTx = true; return conn.beginTransaction(); },
+        query: (sql: string, params?: unknown[]) => (inTx ? conn.query(sql, params) : route('poolconn', sql, params)),
+        commit: () => conn.commit(),
+        rollback: () => conn.rollback(),
+        release: () => conn.release(),
+        destroy: () => conn.destroy(),
+      };
+    }),
+  });
 }
 
 const NO_TABLE = Object.assign(new Error("Table 'stock.judgment_run' doesn't exist"), { errno: 1146, code: 'ER_NO_SUCH_TABLE' });
@@ -666,14 +683,15 @@ describe.each(['domestic', 'overseas'] as const)('② 🔴 영향 0 (%s) — 기
 });
 
 describe('④ 해외 기록은 트랜잭션 연결을 쓰지 않고 커밋 뒤 풀로 쓴다', () => {
-  test('judgment_* 문장은 모두 풀(pool)·커밋 뒤, 트랜잭션 연결에는 signals INSERT 만', async () => {
+  test('judgment_* 문장은 모두 트랜잭션 밖(풀 query·풀에서 따로 받은 연결)·커밋 뒤, 트랜잭션 연결에는 signals INSERT 만', async () => {
     const o = await observe('overseas', 'on_ok');
     const viaConn = o.calls.filter((c) => c.via === 'conn');
     expect(viaConn.length).toBeGreaterThan(0);
     expect(viaConn.every((c) => c.sql.includes('INSERT INTO signals'))).toBe(true);
     const rec = o.calls.filter((c) => /INSERT INTO judgment_|SELECT id, symbol FROM signals/.test(c.sql) || c.params[0] === 'judgment_record_enabled');
     expect(rec.length).toBe(4);
-    expect(rec.every((c) => c.via === 'pool')).toBe(true);
+    // (T-135) 스위치 읽기·카드 id 조회는 풀 query, judgment_* INSERT 2문장은 풀에서 따로 받은 연결 하나(트랜잭션 연결이 아니다 — bounded-conn)
+    expect(rec.map((c) => c.via)).toEqual(['pool', 'pool', 'poolconn', 'poolconn']);
     expect(commitSeq).toHaveLength(1);
     expect(Math.min(...rec.map((c) => c.seq))).toBeGreaterThan(commitSeq[0]);
   });

@@ -29,6 +29,12 @@
 #      (정상·앱 다운·스풀 못 씀·무거운 틱 150초 규칙)에서 umask 를 되돌린다 · 하트비트·날짜파일 권한 = 기준 러너(644)
 #  J11. (T-127 ⑤) 전송 실패 줄의 사유: 라우트 503 본문(사유가 100자 뒤) → `HTTP=503 reason=timeout` · 401 → `error=unauthorized` ·
 #      개행·ESC·대문자·긴 낱말·HTML 은 덧붙이지 않음(줄 1개, 주입 없음) · 000 은 예전 줄 그대로 · 응답 파일이 남지 않음
+#  J12. (T-135) call() 의 응답 본문 임시 파일(call-body-tmp 블록): umask 022 로 시작해도 생성 시점부터 600 · 0700 전용 디렉터리 · 무작위 이름 ·
+#      잡 curl 은 umask 0022 그대로 · 정상·비정상 응답 뒤 잔존 0 · 비-200 로그 body= 는 금액 마스킹 뒤 앞 200바이트(모든 라벨, 금액 키가 없으면 예전 그대로) ·
+#      스풀 본문은 예전 라벨 규칙 그대로 · mktemp 실패 → 예전 이름 /tmp/cron-runner-<pid>.out 을 600 으로(호출·stdout = 기준 러너) ·
+#      호출 도중 SIGKILL ×3 → 잔존은 늘 1개(다음 시작이 지움, 누적 없음) · 시작 정리는 죽은 pid 파일만(살아 있는 pid·다른 이름은 둔다)
+#  J13. (T-135) 정적: 블록 표지·위치 · `# T-135` 표지 1줄 · call() 의 경로 줄 3개·마스킹 로그 줄·마지막 줄 rm · 예전 고정 경로는 대체 경로 1곳뿐 ·
+#      jrl_hook 이 CALL_BODY_FILE 을 읽음 · trap 없음 · T-135 를 되돌리면(no_t135) call() = 기준 러너
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 # T112_ONLY="J3 J8" 처럼 주면 그 묶음만 돈다(변이 시험을 빨리 돌리려는 것 — 평소에는 비워 전부 돈다).
 set -u
@@ -61,6 +67,9 @@ want() { [ -z "${T112_ONLY:-}" ] || case " $T112_ONLY " in *" $1 "*) return 0 ;;
 #    | resp(T-127 — 코드 STUB_JCODE, 응답 본문 STUB_JRESP_FILE 을 -o 파일에 씀)
 #  MODE money(T-127): portfolio-snapshot·trade-report·strategy-eval 은 $W/body-ps·body-tr·body-se 본문(있을 때)
 #  ENV STUB_PERMS=1(T-127): 호출마다 umask·스풀 권한, 전송마다 .batch·.resp 권한, 틱 끝마다 상태 디렉터리 권한을 기록(다른 시험의 시간을 늘리지 않게 켤 때만)
+#  ENV STUB_CALLTMP=1(T-135): 잡 호출마다 -o 본문 파일의 권한·디렉터리 권한·그 디렉터리 파일 수·경로(outperm, 스텁이 쓰기 **전** = 생성 시점), 틱 끝마다
+#    call-tmp 파일 수(calltmpcount)를 기록. MODE errbodies(T-135): 비-200 응답 본문($W/eb-se·eb-ps·eb-tr) · MODE killmid(T-135): holding-checker 호출 도중
+#    본문을 반쯤 쓰고 러너를 SIGKILL(본문 파일 이름의 pid)
 #  SEEDS: "이름=내용 ..." — ~/.node-local/stockinvest/ 에 미리 쓴다. ENV: 러너 환경 덧붙임(예 JRL_SPOOL_FILE=).
 # 기록 — calls: "MM-DD HH:MM:SS 틱 경로" · maxtime · posts: "틱 줄수" · received(200 으로 받은 줄) · heartbeats · spoolsize(틱 끝 .sending 크기)
 run_loop() {
@@ -87,6 +96,7 @@ if [ -f "$R/jswitch" ]; then read -r at m < "$R/jswitch"; [ "$n" -ge "$at" ] && 
 s="$R/home/.node-local/stockinvest/job-run-spool.sending"
 if [ -f "$s" ]; then wc -c < "$s" >> "$R/spoolsize"; else echo 0 >> "$R/spoolsize"; fi
 if [ -n "${STUB_PERMS:-}" ]; then ( cd "$R/home/.node-local/stockinvest" && for p in * .[!.]*; do [ -f "$p" ] && echo "$n $(stat -c %a "$p") $p"; done ) >> "$R/perms" 2>/dev/null; fi
+if [ -n "${STUB_CALLTMP:-}" ]; then ls -A "$R/home/.node-local/stockinvest/call-tmp" 2>/dev/null | wc -l | tr -d ' ' >> "$R/calltmpcount"; fi
 if [ $n -ge $(cat "$R/maxticks") ]; then kill -TERM $PPID; fi
 exit 0
 EOF
@@ -113,6 +123,9 @@ if [ -n "${STUB_PERMS:-}" ]; then
   echo "$path $(umask)" >> "$R/umasks"
   sp="$R/home/.node-local/stockinvest/job-run-spool"
   [ "$path" != "/api/cron/job-run-log" ] && [ -f "$sp" ] && stat -c %a "$sp" >> "$R/spoolperm"
+fi
+if [ -n "${STUB_CALLTMP:-}" ] && [ -n "$out" ] && [ "$path" != "/api/cron/job-run-log" ]; then
+  echo "$path $(stat -c %a "$out" 2>/dev/null || echo none) $(stat -c %a "$(dirname "$out")" 2>/dev/null) $(ls -A "$(dirname "$out")" 2>/dev/null | wc -l | tr -d ' ') $out" >> "$R/outperm"
 fi
 if [ "$path" = "/api/cron/job-run-log" ]; then
   f="${data#@}"; n=$(wc -l < "$f" 2>/dev/null || echo 0)
@@ -149,6 +162,23 @@ case "$(cat "$R/mode")" in
       /api/cron/trade-report) [ -f "$R/body-tr" ] && body="$(cat "$R/body-tr")" ;;
       /api/cron/strategy-eval) [ -f "$R/body-se" ] && body="$(cat "$R/body-se")" ;;
     esac ;;
+  errbodies)
+    case "$path" in
+      /api/cron/strategy-eval) code=500; body="$(cat "$R/eb-se")" ;;
+      /api/cron/portfolio-snapshot) code=503; body="$(cat "$R/eb-ps")" ;;
+      /api/cron/trade-report) code=502; body="$(cat "$R/eb-tr")" ;;
+      /api/cron/signal-followup) code=500; body="$(cat "$R/eb-sf")" ;;
+      /api/cron/holding-checker) code=401; body='{"ok":false,"error":"unauthorized"}' ;;
+      /api/cron/entry-watcher) code=000 ;;
+    esac ;;
+  killmid)
+    if [ "$path" = "/api/cron/holding-checker" ] && [ -n "$out" ]; then
+      printf '%s' '{"ok":true,"partial":"body-before-kill"}' > "$out"
+      rp="${out##*/cron-runner-}"; rp="${rp%%.*}"
+      echo "$rp $out" >> "$R/killed"
+      kill -KILL "$rp" 2>/dev/null
+      exit 0
+    fi ;;
 esac
 if [ -n "$mt" ] && [ "$took" -gt "$mt" ]; then took=$mt; code=000; fi
 [ "$took" -gt 0 ] && adv "$took"
@@ -160,14 +190,24 @@ EOF
   chmod +x "$R/bin/date" "$R/bin/sleep" "$R/bin/curl"
   if [ -d "$W/xbin-$name" ]; then cp "$W/xbin-$name"/* "$R/bin/" && chmod +x "$R/bin"/*; fi   # (T-127) 시나리오 전용 스텁(예: 실패하는 sed)
   : > "$R/calls"; : > "$R/maxtime"; : > "$R/posts"; : > "$R/received"; : > "$R/heartbeats"; : > "$R/spoolsize"
+  : > "$R/outperm"; : > "$R/calltmpcount"   # (T-135) 같은 이름으로 다시 돌리면(J12 kill) 그 실행 몫만
   [ -f "$W/body-edgar" ] && cp "$W/body-edgar" "$R/body-edgar"
   for sd in body-ps body-tr body-se code-ps; do [ -f "$W/$sd" ] && cp "$W/$sd" "$R/$sd"; done   # (T-127) money 모드
+  for sd in eb-se eb-ps eb-tr eb-sf; do [ -f "$W/$sd" ] && cp "$W/$sd" "$R/$sd"; done   # (T-135) errbodies 모드
   env PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul \
     STUB_R="$R" STUB_REAL_DATE="$REAL_DATE" "$@" timeout 900 bash "$runner" > "$R/stdout" 2>&1
   echo "$R"
 }
 
 JRE=' /api/cron/job-run-log$'
+# (T-135) call-body-tmp 블록·`# T-135` 표지 줄을 빼고, call() 의 본문 경로(CALL_BODY_FILE)·마스킹 로그 줄을 T-135 이전 모양으로 되돌린다(표준입력 → 표준출력).
+#   J8 의 "추가만"·call() 비교가 T-135 의 의도된 세 줄 변경만 걸러 내고 나머지는 예전처럼 한 글자도 다르지 않은지 보게 한다(J13 이 이 되돌림이 정확히 그 세 줄만 바꾸는지 본다).
+no_t135() {
+  awk '/^# >>> call-body-tmp/{s=1} s{ if (/^# <<< call-body-tmp/) s=0; next } {print}' | grep -v '# T-135$' \
+    | sed -e 's#body=$(head -c 2048 "\$CALL_BODY_FILE" 2>/dev/null | jrl_mask_money 2>/dev/null | head -c 200)#body=$(head -c 200 /tmp/cron-runner-$$.out 2>/dev/null)#' \
+          -e 's#-o "\$CALL_BODY_FILE" -w#-o /tmp/cron-runner-$$.out -w#' \
+          -e 's#^  rm -f "\$CALL_BODY_FILE"$#  rm -f /tmp/cron-runner-$$.out#'
+}
 nojrl()   { grep -vE "$JRE" "$1/calls"; }                                   # 기록 전송을 뺀 호출(시각·틱·경로)
 nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime"; }
 gap()     { awk 'NR>1 { g = $1 - p; if (g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }
@@ -317,13 +357,14 @@ fi
 if want J8; then
 echo "J8. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
-missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' "$RUNNER" "$BASE")"
-eq "🔴 J8: 기준 러너의 모든 줄(주석 포함)이 순서대로 남아 있다(삭제·수정 0, 추가만)" "${missing:-none}" "none"
-eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼면 기준 러너와 같다" \
-   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
+# (T-135) call() 의 본문 경로 세 줄은 T-135 가 의도해 바꿨다 — no_t135 로 되돌린 러너로 비교한다(그 세 줄 밖은 예전 그대로여야 한다)
+missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") "$BASE")"
+eq "🔴 J8: 기준 러너의 모든 줄(주석 포함)이 순서대로 남아 있다(삭제·수정 0, 추가만 — T-135 세 줄은 되돌려 비교)" "${missing:-none}" "none"
+eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼고 T-135 를 되돌리면 기준 러너와 같다" \
+   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
 eq "J8: call() 안 표지 줄 2개, 파일 전체 4개" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -c '# T-112 jrl$') $(grep -c '# T-112 jrl$' "$RUNNER")" "2 4"
 cb="$(awk '/^call\(\) \{/,/^\}/' "$RUNNER")"
-eq "J8: 후크는 로그 줄 뒤·임시 본문 rm 바로 앞" "$(printf '%s\n' "$cb" | grep -A1 'jrl_hook ' | tail -1 | sed 's/^ *//')" 'rm -f /tmp/cron-runner-$$.out'
+eq "J8: 후크는 로그 줄 뒤·임시 본문 rm 바로 앞" "$(printf '%s\n' "$cb" | grep -A1 'jrl_hook ' | tail -1 | sed 's/^ *//')" 'rm -f "$CALL_BODY_FILE"'
 eq "J8: 후크 호출 줄" "$(printf '%s\n' "$cb" | grep 'jrl_hook ' | sed 's/^ *//')" 'jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" 2>/dev/null || true   # T-112 jrl'
 eq "J8: 전송 줄은 i 증가 바로 앞 · 틱 시작 줄은 하트비트 바로 뒤" \
    "$(grep -A1 'jrl_flush "${JRL_TICK_T0:-}"' "$RUNNER" | tail -1 | sed 's/^ *//') | $(grep -B1 'JRL_TICK_T0=$(date +%s' "$RUNNER" | head -1 | sed 's/^ *//')" \
@@ -343,8 +384,11 @@ eq "J8: export-llm-trainset 는 여전히 call() 밖" "$(grep -v '^[[:space:]]*#
 eq "J8: 상단 잡 목록 주석에 기록 후크" "$(sed -n '1,45p' "$RUNNER" | grep -c '^#  - (T-112) 실행·상태 기록 후크')" "1"
 # (T-127) umask·마스킹 범위 고정
 BS="$(grep -n '^# >>> job-run-log-spool' "$RUNNER" | cut -d: -f1)"; BE="$(grep -n '^# <<< job-run-log-spool' "$RUNNER" | cut -d: -f1)"
-eq "🔴 J8(T-127): 블록 밖 실행 줄에 umask 없음 · 블록 안 umask 077 두 줄(jrl_hook·jrl_flush) · 서브셸 umask 없음" \
-   "$(grep -n 'umask' "$RUNNER" | grep -v '^[0-9]*:[[:space:]]*#' | awk -F: -v s="$BS" -v e="$BE" '$1 + 0 < s + 0 || $1 + 0 > e + 0' | wc -l | tr -d ' ') $(printf '%s\n' "$bx" | grep -c 'umask 077') $(grep -v '^[[:space:]]*#' "$RUNNER" | grep -cE '(^|[^$])\([[:space:]]*umask')" "0 2 0"
+# (T-135) call-body-tmp 블록의 call_tmp_open 도 함수 안에서만 umask 077 을 둔다 — 그 블록도 밖 검사에서 빼고 077 이 정확히 한 줄인지 본다
+CS="$(grep -n '^# >>> call-body-tmp' "$RUNNER" | cut -d: -f1)"; CE="$(grep -n '^# <<< call-body-tmp' "$RUNNER" | cut -d: -f1)"
+cbx="$(awk '/^# >>> call-body-tmp/,/^# <<< call-body-tmp/' "$RUNNER" | grep -v '^[[:space:]]*#')"
+eq "🔴 J8(T-127·T-135): 두 블록(job-run-log-spool·call-body-tmp) 밖 실행 줄에 umask 없음 · jrl 블록 umask 077 두 줄(jrl_hook·jrl_flush) · call-body-tmp 블록 한 줄(call_tmp_open) · 서브셸 umask 없음" \
+   "$(grep -n 'umask' "$RUNNER" | grep -v '^[0-9]*:[[:space:]]*#' | awk -F: -v s="$BS" -v e="$BE" -v cs="${CS:-0}" -v ce="${CE:-0}" '($1 + 0 < s + 0 || $1 + 0 > e + 0) && ($1 + 0 < cs + 0 || $1 + 0 > ce + 0)' | wc -l | tr -d ' ') $(printf '%s\n' "$bx" | grep -c 'umask 077') $(printf '%s\n' "$cbx" | grep -c 'umask 077') $(grep -v '^[[:space:]]*#' "$RUNNER" | grep -cE '(^|[^$])\([[:space:]]*umask')" "0 2 1 0"
 eq "🔴 J8(T-127): 마스킹은 portfolio-snapshot·trade-report case 한 줄에서만 · 마스킹 함수 호출 1곳" \
    "$(printf '%s\n' "$bx" | grep -cE '^[[:space:]]+portfolio-snapshot\|trade-report\)') $(printf '%s\n' "$bx" | grep -c '| jrl_mask_money ')" "1 1"
 eq "🔴 J8(T-127): 금액 키 5개 정확히" "$(printf '%s\n' "$bx" | grep -c '"(totalKRW|KRW|USD|headerPnlKRW|lifoPnlKRW)"')" "1"
@@ -506,6 +550,131 @@ eq "J11: 이스케이프 따옴표로 끝나는 사유는 건너뛰고 다음 �
 K="$(run_loop j11-down "$RUNNER" "2026-10-28 10:00:00" 2 ok down "")"
 eq "🔴 J11: HTTP=000 → 예전 줄 그대로" "$(fl "$K")" "job-run-log 전송 실패 HTTP=000$TL"
 eq "J11: 응답 파일(.resp)이 남지 않는다" "$(ls -a "$K/home/.node-local/stockinvest/" "$W"/j11-*/home/.node-local/stockinvest/ 2>/dev/null | grep -c '\.resp$')" "0"
+
+fi
+# ── J12. (T-135) call() 의 응답 본문 임시 파일 ──────────────────────────────────────
+if want J12; then
+echo "J12. (T-135) 응답 본문 임시 파일 — 0600·0700 디렉터리·잔존 0·로그 마스킹·대체 경로·호출 중 kill 뒤 시작 정리"
+CT=".node-local/stockinvest/call-tmp"
+TMPNAME_RE='/\.node-local/stockinvest/call-tmp/cron-runner-[0-9]+\.[A-Za-z0-9]{6}$'
+# ① umask 022 로 시작 — 정상 응답(06:59 시작 3틱: 매 분 잡 + 06시 뉴스·07시 리서치·EDGAR)
+T1="$(umask 022; run_loop t135-um "$RUNNER" "2026-10-28 06:59:00" 3 ok ok "" STUB_PERMS=1 STUB_CALLTMP=1)"
+T1B="$(umask 022; run_loop t135-um-base "$BASE" "2026-10-28 06:59:00" 3 ok ok "")"
+NJ="$(nojrl "$T1" | wc -l | tr -d ' ')"
+eq "(하네스 확인) J12: 잡 호출마다 본문 파일 관측(호출 수와 같음, > 10)" "$(wc -l < "$T1/outperm" | tr -d ' ') $([ "$NJ" -gt 10 ] && echo many)" "$NJ many"
+eq "🔴 J12: 본문 파일은 생성 시점부터 600 · 디렉터리 700 · 그 순간 디렉터리에 그 파일 1개뿐" "$(awk '$2 != "600" || $3 != "700" || $4 != "1"' "$T1/outperm" | wc -l | tr -d ' ')" "0"
+eq "🔴 J12: 경로 = ~/$CT/cron-runner-<러너 pid>.<무작위 6자> · 호출마다 다른 이름" \
+   "$(awk '{print $5}' "$T1/outperm" | grep -cvE "$TMPNAME_RE") $(awk '{print $5}' "$T1/outperm" | sort | uniq -d | wc -l | tr -d ' ')" "0 0"
+eq "🔴 J12: 정상 응답 뒤 잔존 0(틱 끝마다 call-tmp 0개)" "$(tr '\n' ' ' < "$T1/calltmpcount")" "0 0 0 "
+eq "🔴 J12: 잡 curl 은 umask 0022 그대로(call_tmp_open 이 되돌림)" "$(awk '$1 != "/api/cron/job-run-log" && $2 != "0022"' "$T1/umasks" | wc -l | tr -d ' ')" "0"
+eq "J12: 디렉터리 자체는 700" "$(stat -c %a "$T1/home/$CT")" "700"
+same_calls "J12 umask022" "$T1" "$T1B"
+if diff "$T1/stdout" "$T1B/stdout" > /dev/null; then ok "J12: stdout = 기준 러너(정상 응답 — 로그 줄 불변)"; else bad "J12: stdout 이 다르다"; diff "$T1/stdout" "$T1B/stdout" | head -5; fi
+if diff "$T1/heartbeats" "$T1B/heartbeats" > /dev/null; then ok "J12: 하트비트 = 기준 러너"; else bad "J12: 하트비트가 다르다"; fi
+eq "J12: 받은 줄 본문 = 잡 응답 '{}'(후크가 CALL_BODY_FILE 을 읽음)" "$(awk -F'\t' '!($2 == "entry-watcher" || $2 == "holding-checker" || $2 == "stop-alert") && $7 != "e30=" { b++ } END { print b + 0 }' "$T1/received")" "0"
+
+# ② 비-200 응답 — 로그 body= 는 마스킹 뒤 앞 200바이트(모든 라벨). 스풀 본문은 T-127 라벨 규칙 그대로.
+MF="$W/mask-fn-t135.sh"; awk '/^jrl_mask_money\(\) \{/,/^\}/' "$RUNNER" > "$MF"
+mk() { bash -c '. "$1"; jrl_mask_money' _ "$MF"; }
+expl() { printf '%s' "$1" | head -c 2048 | mk | head -c 200; }   # 기대 body= (러너와 같은 함수로 계산)
+logbody() { grep " $2 HTTP=" "$1/stdout" | head -1 | LC_ALL=C sed "s/^\[[^]]*\] $2 HTTP=[0-9]* body=//"; }   # LC_ALL=C — 200바이트에서 잘린 UTF-8 반쪽도 그대로
+EB_SE='{"ok":false,"error":"x","totalKRW":1111111,"detail":"keep 9999 원","cash":{"USD":4321.5}}'
+EB_PS="{\"ok\":false,\"skipped\":\"usd_cash_unavailable\",\"detail\":\"USD 예수금(7777.25 USD) 환산 실패 — $(head -c 120 /dev/zero | tr '\0' 'd')\",\"totalKRW\":987654321,\"cash\":{\"KRW\":12345678,\"USD\":4321.75},\"pad\":\"$(head -c 300 /dev/zero | tr '\0' 'p')\"}"
+EB_TR='{"ok":false,"error":"boom","headerPnlKRW":-3333333,"lifoPnlKRW":2222222}'
+EB_SF="{\"ok\":false,\"error\":\"diag\",\"trace\":\"$(head -c 300 /dev/zero | tr '\0' 't')\"}"
+printf '%s' "$EB_SE" > "$W/eb-se"; printf '%s' "$EB_PS" > "$W/eb-ps"; printf '%s' "$EB_TR" > "$W/eb-tr"; printf '%s' "$EB_SF" > "$W/eb-sf"
+T2="$(umask 022; run_loop t135-err "$RUNNER" "2026-10-28 10:00:00" 1 errbodies ok "" STUB_CALLTMP=1)"
+T2B="$(run_loop t135-err-base "$BASE" "2026-10-28 10:00:00" 1 errbodies ok "")"
+MONEY='1111111|9999|4321|7777\.25|987654321|12345678|3333333|2222222'
+eq "(하네스 확인) J12: 기준 러너(T-135 전)는 로그에 금액 원문을 찍었다" "$([ "$(grep -cE "$MONEY" "$T2B/stdout")" -gt 0 ] && echo leaked)" "leaked"
+eq "🔴 J12: 새 러너 로그 어디에도 금액·detail 원문 없음" "$(grep -cE "$MONEY" "$T2/stdout")" "0"
+eq "🔴 J12: strategy-eval 500(금액 라벨 아님) body= = 마스킹 뒤 앞 200" "$(logbody "$T2" strategy-eval)" "$(expl "$EB_SE")"
+eq "🔴 J12: portfolio-snapshot 503 body= = 마스킹 뒤 앞 200(detail 이 비어 뒤쪽 키가 보인다)" "$(logbody "$T2" portfolio-snapshot)" "$(expl "$EB_PS")"
+eq "J12: (하네스 확인) portfolio-snapshot 마스킹 결과가 200바이트를 넘어 잘린다" "$([ "$(printf '%s' "$EB_PS" | mk | wc -c)" -gt 200 ] && echo cut) $(printf '%s' "$(logbody "$T2" portfolio-snapshot)" | wc -c | tr -d ' ')" "cut 200"
+eq "🔴 J12: trade-report 502 body= = 마스킹 뒤" "$(logbody "$T2" trade-report)" "$(expl "$EB_TR")"
+eq "J12: 금액 키·detail 없는 본문(signal-followup 500, 300바이트)은 예전처럼 원문 앞 200바이트" "$(logbody "$T2" signal-followup)" "$(printf '%s' "$EB_SF" | head -c 200)"
+eq "J12: 401 짧은 본문은 그대로" "$(logbody "$T2" holding-checker)" '{"ok":false,"error":"unauthorized"}'
+eq "J12: 000(curl 실패) 은 body= 빈 값(예전과 같음)" "$(grep -c ' entry-watcher HTTP=000 body=$' "$T2/stdout") $(grep -c ' entry-watcher HTTP=000 body=$' "$T2B/stdout")" "1 1"
+eq "J12: 로그 줄 형식·순서 = 기준 러너(body= 뒤만 다름)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2/stdout" | md5sum)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2B/stdout" | md5sum)"
+dec1() { awk -F'\t' -v l="$2" '$2 == l {print $7}' "$1/received" | head -1 | base64 -d; }
+eq "🔴 J12: 스풀 본문 — strategy-eval 은 원문 그대로(T-127 라벨 규칙 불변) · portfolio-snapshot 은 마스킹" \
+   "$([ "$(dec1 "$T2" strategy-eval)" = "$EB_SE" ] && echo raw) $(dec1 "$T2" portfolio-snapshot | grep -cE "$MONEY")" "raw 0"
+eq "🔴 J12: 비정상 응답 뒤에도 잔존 0 · 생성 시점 600" "$(tr '\n' ' ' < "$T2/calltmpcount") $(awk '$2 != "600"' "$T2/outperm" | wc -l | tr -d ' ')" "0  0"
+same_calls "J12 errbodies" "$T2" "$T2B"
+rm -f "$W/eb-se" "$W/eb-ps" "$W/eb-tr" "$W/eb-sf"
+
+# ③ mktemp 실패(디렉터리를 만들 수 없음) → 예전 이름 /tmp/cron-runner-<pid>.out 을 600 으로 미리 만들어 쓴다 · 호출·stdout = 기준 러너
+: > "$W/afile"
+T3="$(umask 022; run_loop t135-fb "$RUNNER" "2026-10-28 06:59:00" 3 ok ok "" STUB_PERMS=1 STUB_CALLTMP=1 "CALL_TMP_DIR=$W/afile/sub")"
+T3B="$(run_loop t135-fb-base "$BASE" "2026-10-28 06:59:00" 3 ok ok "")"
+FBP="$(awk '{print $5}' "$T3/outperm" | sort -u)"
+eq "🔴 J12 대체: 경로 = /tmp/cron-runner-<pid>.out 한 개 · 생성 시점 600" \
+   "$(printf '%s\n' "$FBP" | grep -cE '^/tmp/cron-runner-[0-9]+\.out$') $(printf '%s\n' "$FBP" | wc -l | tr -d ' ') $(awk '$2 != "600"' "$T3/outperm" | wc -l | tr -d ' ')" "1 1 0"
+eq "🔴 J12 대체: 끝나면 그 파일 잔존 없음" "$([ -e "$FBP" ] && echo left || echo gone)" "gone"
+eq "J12 대체: 잡 curl umask 0022 그대로" "$(awk '$1 != "/api/cron/job-run-log" && $2 != "0022"' "$T3/umasks" | wc -l | tr -d ' ')" "0"
+same_calls "J12 대체" "$T3" "$T3B"
+if diff "$T3/stdout" "$T3B/stdout" > /dev/null; then ok "🔴 J12 대체: stdout = 기준 러너(오류 출력 없음)"; else bad "J12 대체: stdout 이 다르다"; diff "$T3/stdout" "$T3B/stdout" | head -5; fi
+eq "J12 대체: 스풀 본문도 그대로 읽힌다" "$(awk -F'\t' '!($2 == "entry-watcher" || $2 == "holding-checker" || $2 == "stop-alert") && $7 != "e30=" { b++ } END { print b + 0 }' "$T3/received")" "0"
+
+# ④ 호출 도중 SIGKILL ×3 → 매번 잔존 1개(다음 시작이 이전 것을 지움 — 누적 없음) → 정상 시작이면 0
+KCNT=""; KMODE=""
+for k in 1 2 3; do
+  KR="$(run_loop t135-kill "$RUNNER" "2026-10-28 10:0${k}:00" 5 killmid ok "" STUB_CALLTMP=1)"
+  KCNT="$KCNT$(ls -A "$KR/home/$CT" | wc -l | tr -d ' ') "
+  KMODE="$KMODE$(stat -c %a "$KR/home/$CT"/cron-runner-* 2>/dev/null | tr '\n' ',') "
+done
+eq "(하네스 확인) J12 kill: 세 번 모두 호출 도중 죽었다(서로 다른 러너 pid)" "$(awk '{print $1}' "$KR/killed" | sort -u | wc -l | tr -d ' ') $(grep -c 'holding-checker' "$KR/stdout")" "3 0"
+eq "🔴 J12 kill: 죽을 때마다 잔존은 1개(앞 실행의 잔존은 다음 시작이 지웠다 — 누적 없음)" "$KCNT" "1 1 1 "
+eq "🔴 J12 kill: 남은 파일도 600(0700 디렉터리 안)" "$KMODE $(stat -c %a "$KR/home/$CT")" "600, 600, 600,  700"
+eq "J12 kill: 남은 것은 마지막 kill 의 그 파일(본문 반쯤)" "$(cat "$KR/home/$CT"/cron-runner-* 2>/dev/null)" '{"ok":true,"partial":"body-before-kill"}'
+KR="$(run_loop t135-kill "$RUNNER" "2026-10-28 10:05:00" 2 ok ok "" STUB_CALLTMP=1)"
+eq "🔴 J12 kill: 정상 시작 → 첫 호출 전에 이미 지움(첫 호출 때 디렉터리에 자기 파일 1개) · 끝나면 0" \
+   "$(head -1 "$KR/outperm" | awk '{print $4}') $(ls -A "$KR/home/$CT" | wc -l | tr -d ' ')" "1 0"
+
+# ⑤ 시작 정리 범위 — 죽은 pid 파일만 지운다(살아 있는 pid·숫자 아닌 이름·다른 파일은 둔다), 디렉터리 권한은 700 으로 맞춘다
+SW="$W/t135-sweep"; mkdir -p "$SW/home/$CT"; chmod 755 "$SW/home/$CT"
+sleep 300 & LIVE=$!
+( : ) & DEAD=$!; wait "$DEAD" 2>/dev/null
+: > "$SW/home/$CT/cron-runner-$LIVE.keep01"; : > "$SW/home/$CT/cron-runner-$DEAD.dead01"; : > "$SW/home/$CT/cron-runner-x1.weird"; : > "$SW/home/$CT/other.txt"
+SW="$(run_loop t135-sweep "$RUNNER" "2026-10-28 10:00:00" 1 ok ok "" STUB_CALLTMP=1)"
+kill "$LIVE" 2>/dev/null; wait "$LIVE" 2>/dev/null
+eq "🔴 J12 정리: 살아 있는 pid·숫자 아닌 이름·다른 파일은 남고 죽은 pid 파일만 지움" "$(ls -A "$SW/home/$CT" | sort | tr '\n' ' ')" "$(printf '%s\n' "cron-runner-$LIVE.keep01" cron-runner-x1.weird other.txt | sort | tr '\n' ' ')"
+eq "J12 정리: 755 로 있던 디렉터리 → 700" "$(stat -c %a "$SW/home/$CT")" "700"
+rm -f "$W/afile"
+
+fi
+# ── J13. (T-135) 정적 ─────────────────────────────────────────────────────────────
+if want J13; then
+echo "J13. (T-135) 정적"
+eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
+cbk="$(awk '/^# >>> call-body-tmp/,/^# <<< call-body-tmp/' "$RUNNER")"
+cbkx="$(printf '%s\n' "$cbk" | grep -v '^[[:space:]]*#')"
+cb="$(awk '/^call\(\) \{/,/^\}/' "$RUNNER")"
+eq "J13: 블록 표지 1개씩 · call() 정의 앞 · 루프(while true) 앞" \
+   "$(grep -c '^# >>> call-body-tmp' "$RUNNER") $(grep -c '^# <<< call-body-tmp' "$RUNNER") $([ "$(grep -n '^# <<< call-body-tmp' "$RUNNER" | cut -d: -f1)" -lt "$(grep -n '^call() {' "$RUNNER" | cut -d: -f1)" ] && echo yes || echo no)" "1 1 yes"
+eq "🔴 J13: 시작 정리 호출은 블록 안 한 줄(최상위) · 파일 전체 1개" "$(printf '%s\n' "$cbkx" | grep -c '^call_tmp_init$') $(grep -v '^[[:space:]]*#' "$RUNNER" | grep -c 'call_tmp_init$')" "1 1"
+eq "🔴 J13: '# T-135' 표지 줄 = call() 안 call_tmp_open 1줄(jrl_t0 바로 뒤)" \
+   "$(grep -c '# T-135$' "$RUNNER") $(printf '%s\n' "$cb" | grep -A1 'jrl_t0=\$(jrl_now_ms' | tail -1 | sed 's/^ *//')" "1 call_tmp_open   # T-135"
+eq "🔴 J13: call() 의 본문 경로 줄 3개(curl -o · 로그 body= · rm) · 마지막 실행 줄 = rm(반환값)" \
+   "$(printf '%s\n' "$cb" | grep -c '\$CALL_BODY_FILE') $(printf '%s\n' "$cb" | grep -v '^[[:space:]]*#' | grep -v '^}' | tail -1 | sed 's/^ *//')" '3 rm -f "$CALL_BODY_FILE"'
+eq "🔴 J13: 비-200 로그 줄 = 마스킹 뒤 앞 200바이트" "$(printf '%s\n' "$cb" | grep 'HTTP=\$code body=' | sed 's/^ *//')" \
+   'echo "[$ts] $label HTTP=$code body=$(head -c 2048 "$CALL_BODY_FILE" 2>/dev/null | jrl_mask_money 2>/dev/null | head -c 200)"'
+eq "🔴 J13: 예전 고정 경로는 실행 줄에서 대체 경로 1곳뿐(call_tmp_open)" \
+   "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -c 'cron-runner-\$\$\.out') $(printf '%s\n' "$cbkx" | grep -c '^    CALL_BODY_FILE="/tmp/cron-runner-\$\$\.out"$')" "1 1"
+eq "🔴 J13: jrl_hook 은 CALL_BODY_FILE 을 두 번 읽는다(금액 라벨·일반)" "$(awk '/^jrl_hook\(\) \{/,/^\}/' "$RUNNER" | grep -c '"\${CALL_BODY_FILE:-}"')" "2"
+eq "🔴 J13: mktemp 줄 · 기본 디렉터리 줄" \
+   "$(printf '%s\n' "$cbkx" | grep -c '^  CALL_BODY_FILE=\$(mktemp "\${CALL_TMP_DIR:-/nonexistent}/cron-runner-\$\$\.XXXXXX" 2>/dev/null) || CALL_BODY_FILE=""$') $(printf '%s\n' "$cbkx" | grep -c '^CALL_TMP_DIR="\${CALL_TMP_DIR:-\${HOME}/\.node-local/stockinvest/call-tmp}"$')" "1 1"
+cto="$(awk '/^call_tmp_open\(\) \{/,/^\}/' "$RUNNER" | grep -v '^[[:space:]]*#')"
+eq "🔴 J13: call_tmp_open — umask 077 한 줄 · 되돌리기는 return 바로 앞 한 줄" \
+   "$(printf '%s\n' "$cto" | grep -c 'umask 077') $(printf '%s\n' "$cto" | grep -B1 '^  return 0$' | head -1 | sed 's/^ *//')" '1 [ -z "$um" ] || umask "$um" 2>/dev/null || true'
+cti="$(awk '/^call_tmp_init\(\) \{/,/^\}/' "$RUNNER" | grep -v '^[[:space:]]*#')"
+eq "🔴 J13: 시작 정리 — 숫자 pid 만 · 자기 pid 제외 · 살아 있는 pid 제외(kill -0) · rm 은 그 뒤 한 곳" \
+   "$(printf '%s\n' "$cti" | grep -c "case \"\$p\" in ''|\*\[!0-9\]\*) continue ;; esac") $(printf '%s\n' "$cti" | grep -c '\[ "\$p" = "\$\$" \] && continue') $(printf '%s\n' "$cti" | grep -c 'kill -0 "\$p" 2>/dev/null && continue') $(printf '%s\n' "$cti" | grep -c 'rm -f')" "1 1 1 1"
+eq "J13: trap 없음(TERM 에 바로 죽는 러너 동작 불변)" "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -cw 'trap')" "0"
+eq "🔴 J13: T-135 를 되돌리면(no_t135) 블록·표지·세 줄만 사라지고 나머지 줄 수가 맞다" \
+   "$(( $(wc -l < "$RUNNER") - $(no_t135 < "$RUNNER" | wc -l) ))" "$(( $(printf '%s\n' "$cbk" | wc -l) + 1 ))"
+eq "J13: 되돌린 러너에 T-135 흔적 없음(CALL_BODY_FILE 은 jrl_hook 두 줄과 주석뿐)" \
+   "$(no_t135 < "$RUNNER" | grep -v '^[[:space:]]*#' | grep -c 'CALL_BODY_FILE\|call_tmp_')" "2"
 
 fi
 echo

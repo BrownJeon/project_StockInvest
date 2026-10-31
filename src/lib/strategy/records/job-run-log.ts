@@ -23,15 +23,21 @@
  *   수 있다(실행 행은 ODKU 로 무해). (T-127, Reviewer Minor-2) 더 흔한 경로: 처리 상한 {@link JRL_DEADLINE_MS} 를 넘기면 503(timeout)으로
  *   답하지만 `work()` 는 계속 돌아 나중에 커밋된다 → 러너가 같은 줄을 다시 보내 runs·failed 가 두 배가 될 수 있다(T-112 관찰 22:13 — 71 대 68).
  *   롤업 runs 는 근사값이다(T-108 지표 계약 §6). 재전송 중복 억제는 T-127 범위 밖(후속 후보).
+ *   (T-135) 이제 상한에서 연결을 닫으므로 상한 뒤에는 **새 문장을 보내지 않는다** — 상한 순간 이미 서버가 실행한 문장만 남을 수 있다(과대 집계가
+ *   줄지만 0 이 되지는 않는다. 롤업 문장은 실행 행 문장 뒤라 상한에 걸리면 대개 빠지고, 재전송 때 한 번 더해진다).
  * - 스위치 `job_run_log_enabled` 키 없음 = 꺼짐 → 아무것도 쓰지 않고 `skipped_disabled`(러너는 스풀을 비운다). 스위치를 **읽지 못하면**
  *   (DB 오류·시간 초과) 꺼짐으로 보되 `failed` 로 답해 러너가 스풀을 남기게 한다(DB 가 잠깐 아플 때 기록이 사라지지 않게).
  * - 테이블 없음(1146, DDL 적용 전) → `skipped_no_table`(프로세스당 경고 1회, 러너는 스풀을 비운다).
  * - `missing` 행 합성·새 잡·청산 기록은 범위 밖(R4·T-126). `recorder` 값 `route`·`reconciler` 는 쓰지 않는다.
  * - 이 모듈은 외부 호출을 하지 않는다(DB 만). 비밀 값을 로그에 남기지 않는다.
+ * - (T-135) 배치 1회의 upsert 문장(묶음·값 오류 시 한 줄씩 재시도)은 풀에서 받은 **연결 하나**로 보내고, 처리 상한 {@link JRL_DEADLINE_MS} 에
+ *   걸리면 그 연결을 풀에서 뺀다(`bounded-conn.ts` — T-126 R1 과 같은 규칙). 예전에는 상한이 응답만 끊어 표가 잠기면 매달린 upsert 가 풀 연결
+ *   (주문·UI 와 공유, 10개)을 붙잡았다 — 러너가 약 분당 1회 보내므로 잠금이 길면 분마다 하나씩 줄었다. 스위치 읽기는 예전처럼 풀 query 다.
  */
 import { getPool } from '@/lib/db';
+import { isBoundedConnLate, withBoundedConn, type BoundedConnUse, type BoundedPool } from './bounded-conn';
 import { readRecordSwitchState } from './record-switch';
-import { clampText, isNoSuchTable, isRowDataError, withDeadline } from './safe-text';
+import { clampText, isNoSuchTable, isRowDataError } from './safe-text';
 import {
   fallbackSpec, kstDatetime, rollupSlot, slotFor, specFor, type JobSpec,
 } from './job-slots';
@@ -607,7 +613,7 @@ async function upsertAll(db: Queryable, rows: readonly JobRunRow[], odku: string
 export async function recordSpoolBatch(text: string, deadlineMs: number = JRL_DEADLINE_MS): Promise<RecordBatchResult> {
   const lines = typeof text === 'string' ? text.split('\n').filter((l) => l.trim() !== '') : [];
   const base = { received: lines.length, rejected: 0, runRows: 0, rollupRows: 0, rowErrors: 0 };
-  const work = async (): Promise<RecordBatchResult> => {
+  const work = async (bc: BoundedConnUse): Promise<RecordBatchResult> => {
     const sw = await readRecordSwitchState('job_run_log_enabled');
     if (!sw.enabled) {
       if (sw.source === 'missing' || sw.source === 'value') return { ...base, status: 'skipped_disabled' };
@@ -615,7 +621,7 @@ export async function recordSpoolBatch(text: string, deadlineMs: number = JRL_DE
       return { ...base, status: 'failed', reason: 'switch_unreadable' };
     }
     const built = buildRows(lines);
-    const db = getPool() as unknown as Queryable;
+    const db: Queryable = bc.use(getPool() as unknown as BoundedPool);   // (T-135) 이 배치의 문장은 연결 하나로(첫 문장에서 받는다)
     try {
       let rowErrors = await upsertAll(db, built.runRows, RUN_ODKU);
       rowErrors += await upsertAll(db, built.rollupRows, ROLLUP_ODKU);
@@ -624,6 +630,8 @@ export async function recordSpoolBatch(text: string, deadlineMs: number = JRL_DE
         runRows: built.runRows.length, rollupRows: built.rollupRows.length, rowErrors,
       };
     } catch (e) {
+      // (T-135) 상한 뒤 — 바깥이 이미 503(timeout)으로 답하고 사유 줄을 남겼다. 연결이 닫혀 실패한 것까지 줄을 더하지 않는다.
+      if (isBoundedConnLate(e)) return { ...base, status: 'failed', reason: 'timeout', rejected: built.rejected };
       if (e instanceof NoTable) {
         if (!noTableWarned) {
           noTableWarned = true;
@@ -636,7 +644,7 @@ export async function recordSpoolBatch(text: string, deadlineMs: number = JRL_DE
     }
   };
   try {
-    const r = await withDeadline(work(), deadlineMs);
+    const r = await withBoundedConn(deadlineMs, work);   // (T-135) 상한·예외면 upsert 연결을 그 자리에서 풀에서 뺀다
     if (r) return r;
     warn503('timeout', `deadline=${deadlineMs}ms`);
     return { ...base, status: 'failed', reason: 'timeout' };

@@ -35,6 +35,11 @@ const mProvider = getProviderConfig as jest.Mock;
 type Handler = (sql: string, params: unknown[]) => unknown;
 let query: jest.Mock;
 let handlers: { switch: Handler; lookup: Handler; run: Handler; cand: Handler };
+/** (T-135) 풀 연결 — INSERT 는 이 연결로 간다. 문장은 같은 `query` 목에 남기고(기존 단언 그대로), 어느 창구로 왔는지만 따로 센다. */
+let connQuery: jest.Mock;
+let connRelease: jest.Mock;
+let connDestroy: jest.Mock;
+let getConnection: jest.Mock;
 
 function wire() {
   handlers = {
@@ -50,7 +55,11 @@ function wire() {
     if (sql.includes('INSERT INTO judgment_candidate')) return handlers.cand(sql, params);
     throw new Error(`예상하지 못한 SQL: ${sql.slice(0, 60)}`);
   });
-  mGetPool.mockReturnValue({ query });
+  connQuery = jest.fn((sql: string, params?: unknown[]) => query(sql, params));
+  connRelease = jest.fn();
+  connDestroy = jest.fn();
+  getConnection = jest.fn(async () => ({ query: connQuery, release: connRelease, destroy: connDestroy }));
+  mGetPool.mockReturnValue({ query, getConnection });
 }
 const callsOf = (needle: string) => query.mock.calls.filter((c) => String(c[0]).includes(needle));
 const candRows = () => {
@@ -354,5 +363,106 @@ describe('🔴 진입점 recordJudgmentDetached — 기다리지 않고 던지�
     mGetPool.mockImplementation(() => { throw new Error('no pool'); });
     expect(() => recordJudgmentDetached(traceRecordable())).not.toThrow();
     await expect(waitForJudgmentRecordsForTest()).resolves.toEqual([{ status: 'disabled' }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (T-135) INSERT 연결 — 하나만 받고, 정상 = release 1 · 오류 = destroy 1 · 상한 = **상한 시점에** destroy ·
+// 상한 뒤에 받은 연결은 쓰지 않고 release · 상한 뒤에는 새 문장을 보내지 않고 경고도 더하지 않는다(실 풀·잠긴 표는 일회용 MariaDB 시험 E)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 (T-135) INSERT 는 연결 하나로 — 상한이면 그 연결을 풀에서 뺀다', () => {
+  const ownWarns = () => (console.warn as jest.Mock).mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith('[strategy/records/judgment]'));
+  const ends = () => [getConnection.mock.calls.length, connRelease.mock.calls.length, connDestroy.mock.calls.length];
+  const flush = async () => { for (let i = 0; i < 50; i++) await Promise.resolve(); };
+
+  test('정상 — 연결 1개로 INSERT 2문장(헤더·후보), 스위치 읽기·카드 id 조회는 풀 query, 끝나면 release 1', async () => {
+    handlers.lookup = () => [[{ id: 601, symbol: 'NAS:AAA' }], undefined];
+    await expect(recordJudgment(snapOf())).resolves.toEqual({ status: 'written', judgmentRunId: 77, candidates: 2, dropped: 0 });
+    expect(ends()).toEqual([1, 1, 0]);
+    expect(connQuery.mock.calls.map((c) => String(c[0]).trim().split('\n')[0])).toEqual(['INSERT INTO judgment_run', 'INSERT INTO judgment_candidate']);
+    // 연결로 간 문장 = 전체 문장 중 INSERT 전부(스위치·조회는 연결로 가지 않는다)
+    expect(query.mock.calls.filter((c) => String(c[0]).includes('INSERT INTO')).length).toBe(connQuery.mock.calls.length);
+  });
+
+  test('후보 0건 — 헤더 1문장도 연결로, release 1', async () => {
+    await expect(recordJudgment(snapOf({ candidates: [] }))).resolves.toMatchObject({ status: 'written', candidates: 0 });
+    expect(ends()).toEqual([1, 1, 0]);
+    expect(connQuery).toHaveBeenCalledTimes(1);
+  });
+
+  test('꺼짐·형식 밖 헤더·분석 실행 아님 → 연결을 받지 않는다', async () => {
+    handlers.switch = () => [[], undefined];
+    await expect(recordJudgment(snapOf())).resolves.toEqual({ status: 'disabled' });
+    resetRecordSwitchCacheForTest();
+    handlers.switch = () => [[{ value: 'true' }], undefined];
+    await expect(recordJudgment(snapOf({ validFrom: 'bad' }))).resolves.toEqual({ status: 'invalid' });
+    await expect(recordJudgment(snapOf({ recordable: false }))).resolves.toEqual({ status: 'not_recordable' });
+    expect(getConnection).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['헤더 테이블 없음(1146)', 'run', 1146, { status: 'no_table' }],
+    ['헤더 CHECK 위반(4025)', 'run', 4025, { status: 'error' }],
+    ['후보 길이 초과(1406)', 'cand', 1406, { status: 'partial', judgmentRunId: 77 }],
+  ] as const)('%s → 그 연결은 destroy 1(release 0)', async (_n, which, errno, expected) => {
+    handlers[which] = () => { throw Object.assign(new Error('x'), { errno }); };
+    await expect(recordJudgment(snapOf())).resolves.toMatchObject(expected);
+    expect(ends()).toEqual([1, 0, 1]);
+  });
+
+  test('연결 받기 실패 → error, INSERT 0, 경고는 예전 풀 실패와 같은 줄(분류 문구 그대로)', async () => {
+    getConnection.mockImplementation(async () => { throw Object.assign(new Error('Pool is closed'), { errno: 2013 }); });
+    await expect(recordJudgment(snapOf())).resolves.toEqual({ status: 'error', error: 'Pool is closed' });
+    expect(callsOf('INSERT INTO')).toHaveLength(0);
+    expect(ownWarns()).toEqual(['[strategy/records/judgment] judgment_run 기록 실패 — 분석 영향 없음: Pool is closed']);
+    expect([connRelease.mock.calls.length, connDestroy.mock.calls.length]).toEqual([0, 0]);
+  });
+
+  test('🔴 상한 — 헤더 INSERT 가 매달리면 **상한 시점에** 그 연결을 destroy, 늦은 실패가 와도 경고는 timeout 한 줄뿐', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] });
+    let rejectLate!: (e: unknown) => void;
+    handlers.run = () => new Promise((_, rej) => { rejectLate = rej; });
+    const p = recordJudgment(snapOf());
+    await jest.advanceTimersByTimeAsync(JUDGMENT_RECORD_TIMEOUT_MS - 1);
+    expect(callsOf('INSERT INTO judgment_run')).toHaveLength(1);
+    expect(connDestroy).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(2);
+    await expect(p).resolves.toEqual({ status: 'timeout' });
+    expect(ends()).toEqual([1, 0, 1]);                                     // 늦은 실패가 오기 **전에** 이미 뺐다
+    rejectLate(Object.assign(new Error('Connection lost: The server closed the connection.'), { errno: 2013 }));
+    await flush();
+    expect(ownWarns()).toEqual([`[strategy/records/judgment] 판단 기록이 ${JUDGMENT_RECORD_TIMEOUT_MS}ms 안에 끝나지 않아 포기 — 분석 영향 없음`]);
+    expect(ends()).toEqual([1, 0, 1]);                                     // 늦은 실패도 연결을 다시 건드리지 않는다
+    expect(callsOf('INSERT INTO judgment_candidate')).toHaveLength(0);
+  });
+
+  test('🔴 상한 뒤 헤더가 늦게 성공해도 후보 INSERT 를 보내지 않는다(늦은 기록 없음)', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] });
+    let finishLate!: (v: unknown) => void;
+    handlers.run = () => new Promise((r) => { finishLate = r; });
+    const p = recordJudgment(snapOf());
+    await jest.advanceTimersByTimeAsync(JUDGMENT_RECORD_TIMEOUT_MS + 1);
+    await expect(p).resolves.toEqual({ status: 'timeout' });
+    finishLate([{ affectedRows: 1, insertId: 78 }, undefined]);
+    await flush();
+    expect(callsOf('INSERT INTO judgment_candidate')).toHaveLength(0);
+    expect(ends()).toEqual([1, 0, 1]);
+    expect(ownWarns()).toHaveLength(1);
+  });
+
+  test('🔴 풀이 바빠 상한 뒤에야 받은 연결 — 문장을 보내지 않고 release, 결과는 timeout', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'queueMicrotask'] });
+    let give!: (c: unknown) => void;
+    getConnection.mockImplementation(() => new Promise((r) => { give = r; }));
+    const p = recordJudgment(snapOf());
+    await jest.advanceTimersByTimeAsync(JUDGMENT_RECORD_TIMEOUT_MS + 1);
+    await expect(p).resolves.toEqual({ status: 'timeout' });
+    expect(getConnection).toHaveBeenCalledTimes(1);
+    give({ query: connQuery, release: connRelease, destroy: connDestroy });
+    await flush();
+    expect(connQuery).not.toHaveBeenCalled();
+    expect(callsOf('INSERT INTO')).toHaveLength(0);
+    expect([connRelease.mock.calls.length, connDestroy.mock.calls.length]).toEqual([1, 0]);
+    expect(ownWarns()).toHaveLength(1);
   });
 });

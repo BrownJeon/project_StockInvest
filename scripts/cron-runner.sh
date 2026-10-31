@@ -49,17 +49,77 @@ if [ -z "$CRON_SECRET" ]; then
   exit 1
 fi
 
+# >>> call-body-tmp (T-135) — call() 의 응답 본문 임시 파일. scripts/test-cron-runner-job-run-log.sh J12(동작)·J13(정적)이 시험한다
+# 왜: 예전 call() 은 응답 본문을 /tmp/cron-runner-<pid>.out 에 umask 기본값(보통 022 → 644, 다른 사용자가 읽을 수 있음)으로 썼다. 그 파일은 호출 동안
+#   (수 초~수십 초) 남고, 금액을 싣는 라우트(portfolio-snapshot·trade-report)의 **마스킹 전** 원문이 들어간다(T-127 은 스풀만 마스킹·0600 으로 했다).
+#   응답이 200 이 아니면 그 원문 앞 200바이트가 러너 로그(pm2 로그)에도 그대로 찍혔다.
+# 무엇:
+#   - 본문 파일은 전용 디렉터리 CALL_TMP_DIR(로컬 디스크 ~/.node-local/stockinvest/call-tmp, 0700)에 mktemp 로 만든다 — **생성 시점부터 0600**,
+#     이름은 cron-runner-<러너 pid>.<무작위 6자>(예측 불가 — 같은 이름을 미리 만들어 두는 공격이 안 된다). 만들 때만 umask 077 — call_tmp_open
+#     안에서만 바꾸고 curl 앞에서 되돌린다(러너 전체 umask·잡 curl 이 보는 umask 는 그대로, 서브셸로 감싸지 않는다 — T-127 과 같은 방식).
+#   - mktemp 가 실패하면(디렉터리를 못 만듦·디스크 가득) 예전 이름 /tmp/cron-runner-<pid>.out 을 umask 077 아래 미리 만들어(0600) 쓴다. 그것도 못 만들면
+#     curl 이 예전처럼 그 이름에 쓴다 — **본문 파일 실패가 잡 호출·응답 코드를 바꾸지 않는 것**이 우선이다(예전과 같은 결과).
+#   - 경로는 CALL_BODY_FILE 에 둔다 — call() 의 curl·로그 줄·rm 과 jrl_hook(스풀 본문)이 같은 변수를 읽는다. 정상 반환 뒤 잔존 0(call() 의 마지막
+#     rm — call() 의 반환값은 예전처럼 그 rm 이다).
+#   - 비-200 로그 줄 body= 는 jrl_mask_money(job-run-log-spool 블록)로 금액 키 값 0·detail "" 로 바꾼 **뒤** 앞 200바이트(모든 라벨). 마스킹 입력은
+#     앞 2048바이트로 자른다(sed 가 한 줄짜리 큰 본문을 통째로 메모리에 올리지 않게 — 스풀 후크와 같은 크기). 마스킹이 실패하면 body= 가 빈다(원문 없음).
+# 잔존이 쌓이지 않게(러너가 호출 도중 죽는 경우 — pm2 재시작·배포 컷오버·HOME-SERVER 순찰의 restart) **시작할 때 정리**를 골랐다:
+#   러너가 시작할 때(call_tmp_init) CALL_TMP_DIR 안의 cron-runner-<pid>.* 중 **그 pid 의 프로세스가 없는** 파일만 지운다. 그래서 남는 것은 "방금 죽은
+#   러너 몫" 하나뿐이고 다음 시작에 사라진다(누적 없음). 살아 있는 pid 의 파일은 둔다 — 배포 때 옛 러너와 새 러너가 1~3초 겹치면 옛 러너가 아직 쓰는 중이다.
+#   다른 방법을 고르지 않은 이유: trap 은 쓸 수 없다(bash 는 전경 curl 이 끝날 때까지 트랩을 미루고 pm2 는 kill_timeout(설정 없음 = 기본 1.6초) 뒤 SIGKILL 이다 — 게다가 트랩을 걸면
+#   TERM 에 바로 죽던 러너의 동작이 바뀐다). pid 없는 고정 이름은 겹친 두 러너가 같은 파일을 덮어써 본문이 섞인다. 0700 디렉터리만으로는 쌓이는 것을
+#   막지 못한다 → 0700 디렉터리(남이 못 읽음) + mktemp 0600(생성 시점부터) + 시작 시 정리(쌓이지 않음)를 같이 쓴다. /tmp 대신 전용 디렉터리인 이유:
+#   정리 대상을 이 러너의 파일로만 좁히려고(/tmp/cron-runner-* 는 같은 사용자의 다른 러너 — 예 TradingInvest — 와 이름이 겹칠 수 있다).
+# 하트비트: call() 마다 umask 읽기·mktemp(서브셸 2개, 수 ms) — job-run-log-spool 블록의 후크 몫(call() 당 5~15ms)과 같은 크기라 그 블록 290.2초
+#   계산의 남은 여유(약 10초) 안이다. 시작 시 정리는 러너 시작에 한 번(파일 몇 개)이라 틱에 들지 않는다.
+CALL_TMP_DIR="${CALL_TMP_DIR:-${HOME}/.node-local/stockinvest/call-tmp}"
+CALL_BODY_FILE=""
+# call_tmp_init — 러너 시작에 한 번: 디렉터리를 0700 으로 만들고(이미 있으면 0700 으로 맞추고) 죽은 러너가 남긴 본문 파일을 지운다. 반환은 항상 0, 출력 없음.
+call_tmp_init() {
+  local d="${CALL_TMP_DIR:-}" f p
+  [ -n "$d" ] || return 0
+  { mkdir -p "$d" && chmod 700 "$d"; } 2>/dev/null || return 0
+  for f in "$d"/cron-runner-*; do
+    [ -f "$f" ] || continue
+    p="${f##*/cron-runner-}"; p="${p%%.*}"
+    case "$p" in ''|*[!0-9]*) continue ;; esac   # 이 러너가 만든 이름이 아니면 건드리지 않는다
+    [ "$p" = "$$" ] && continue
+    kill -0 "$p" 2>/dev/null && continue          # 살아 있는 러너(배포 겹침)가 쓰는 중 — 둔다
+    rm -f "$f" 2>/dev/null
+  done
+  return 0
+}
+# call_tmp_open — 이번 호출의 본문 파일을 0600 으로 만들고 경로를 CALL_BODY_FILE 에 둔다. 반환은 항상 0, 출력 없음.
+#   umask 077 은 이 함수 안에서만 — 맨 끝 한 곳에서 되돌린다. 현재 umask 를 읽지 못하면 바꾸지 않는다(되돌릴 값이 없으면 077 이 러너 전체로 새므로).
+call_tmp_open() {
+  local um=""
+  um=$(umask 2>/dev/null)
+  case "$um" in [0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) umask 077 2>/dev/null || um="" ;; *) um="" ;; esac
+  CALL_BODY_FILE=$(mktemp "${CALL_TMP_DIR:-/nonexistent}/cron-runner-$$.XXXXXX" 2>/dev/null) || CALL_BODY_FILE=""
+  if [ -z "$CALL_BODY_FILE" ]; then
+    CALL_BODY_FILE="/tmp/cron-runner-$$.out"
+    { rm -f "$CALL_BODY_FILE" && : > "$CALL_BODY_FILE"; } 2>/dev/null || true
+  fi
+  [ -z "$um" ] || umask "$um" 2>/dev/null || true
+  return 0
+}
+call_tmp_init
+# <<< call-body-tmp
+
 # (T-112) 아래 `# T-112 jrl` 표지 두 줄은 실행·상태 기록 후크다(job-run-log-spool 블록). 시작 시각을 재고, 로그 줄을 쓴 뒤·임시 본문 파일을 지우기
 #   전에 스풀에 한 줄을 남긴다. code·CALL_LAST_CODE·본문 파일·반환값(마지막 rm)은 바꾸지 않는다. 후크 함수가 없어도(블록만 잘라 시험) 무해하다.
+# (T-135) 본문 파일은 call-body-tmp 블록이 만든다 — `# T-135` 표지 줄 1개(call_tmp_open)와 경로를 CALL_BODY_FILE 로 바꾼 세 줄(curl -o·로그 body=·rm),
+#   비-200 로그 body= 는 금액 마스킹 뒤 앞 200바이트. 그 밖의 줄(curl 인자·--max-time·CALL_LAST_CODE·로그 형식·후크 자리·반환값)은 그대로다.
 call() {
   local path="$1"
   local label="$2"
   local body="${3:-{}}"
   local code
   local jrl_t0; jrl_t0=$(jrl_now_ms 2>/dev/null)   # T-112 jrl
+  call_tmp_open   # T-135
   # (T-062 Codex C2 ②) CALL_MAX_TIME 이 비어 있지 않을 때만 --max-time 을 붙인다 — 지금은 해외 post-market 호출만 쓴다.
   # 비어 있으면 아래 curl 명령은 예전과 같다(다른 모든 잡 불변).
-  code=$(curl -s ${CALL_MAX_TIME:+--max-time "$CALL_MAX_TIME"} -o /tmp/cron-runner-$$.out -w "%{http_code}" -X POST \
+  code=$(curl -s ${CALL_MAX_TIME:+--max-time "$CALL_MAX_TIME"} -o "$CALL_BODY_FILE" -w "%{http_code}" -X POST \
     -H "x-cron-secret: $CRON_SECRET" -H 'Content-Type: application/json' \
     "$BASE_URL$path" -d "$body" 2>/dev/null) || code="000"
   CALL_LAST_CODE="$code"   # (T-062) 응답 코드를 보는 잡(post-market-overseas)만 읽는다. 다른 잡의 동작은 그대로다.
@@ -67,10 +127,10 @@ call() {
   if [ "$code" = "200" ]; then
     echo "[$ts] $label OK"
   else
-    echo "[$ts] $label HTTP=$code body=$(head -c 200 /tmp/cron-runner-$$.out 2>/dev/null)"
+    echo "[$ts] $label HTTP=$code body=$(head -c 2048 "$CALL_BODY_FILE" 2>/dev/null | jrl_mask_money 2>/dev/null | head -c 200)"
   fi
   jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" 2>/dev/null || true   # T-112 jrl
-  rm -f /tmp/cron-runner-$$.out
+  rm -f "$CALL_BODY_FILE"
 }
 
 # >>> post-market-overseas-retry (T-062 S-2b) — scripts/test-cron-runner-pmo-retry.sh 가 이 블록만 잘라 시험한다
@@ -183,6 +243,7 @@ pmo_finish() {
 #   "" 로 바꾼다. ok·skipped·partial·reason·status·error 같은 분류 신호와 JSON 구조는 그대로라 앱의 분류(classifyRun)·슬롯 표는 바뀌지 않는다
 #   (본문을 통째로 빼면 portfolio-snapshot 의 skipped 신호가 사라져 상태가 전부 ok 가 된다 — 그래서 생략이 아니라 마스킹). 마스킹이 실패하면
 #   본문 칸을 비운다(원문을 싣지 않는다). 같은 원문은 call() 의 임시 본문 파일에 잠깐 있다(그 파일은 이 블록 밖 — 바꾸지 않는다).
+#   (T-135) 그 파일은 이제 0700 디렉터리 안에 mktemp 0600 으로 생기고(call-body-tmp 블록), 후크는 경로를 CALL_BODY_FILE 로 읽는다(예전 고정 경로 대신).
 # (T-127 ②) 스풀 파일 0600: jrl_hook·jrl_flush 안에서만 umask 를 077 로 두고 끝에서 원래 값으로 되돌린다 — 스풀·.fold·.sending·.cap·.batch·.rest·.resp
 #   가 600 으로 생긴다. 러너 전체 umask·디렉터리 권한은 바꾸지 않는다(하트비트·날짜파일은 예전 권한 그대로 — T-037 워치독·순찰이 읽는다).
 #   서브셸로 감싸지 않는다(JRL_FAILING 상태가 서브셸에서 사라져 실패 로그가 매 분 찍힌다). 현재 umask 를 읽지 못하면 바꾸지 않는다(되돌릴 값이
@@ -238,11 +299,11 @@ jrl_hook() {
   #   마스킹이 실패하면 원문이 아니라 빈 본문이 된다(파이프의 마지막 base64 가 빈 입력을 받는다).
   case "$label" in
     portfolio-snapshot|trade-report)
-      b64=$(head -c "$JRL_BODY_MAX_BYTES" "/tmp/cron-runner-$$.out" 2>/dev/null | jrl_mask_money 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
+      b64=$(head -c "$JRL_BODY_MAX_BYTES" "${CALL_BODY_FILE:-}" 2>/dev/null | jrl_mask_money 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
       b64_skip=1 ;;
   esac
   if [ "$b64_skip" = "0" ]; then
-    b64=$(head -c "$JRL_BODY_MAX_BYTES" "/tmp/cron-runner-$$.out" 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
+    b64=$(head -c "$JRL_BODY_MAX_BYTES" "${CALL_BODY_FILE:-}" 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
   fi
   { printf 'v1\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$path" "$hc" "$t0" "$t1" "$b64" >> "$f"; } 2>/dev/null || true
   [ -z "$um" ] || umask "$um" 2>/dev/null || true

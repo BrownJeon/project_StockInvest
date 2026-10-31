@@ -12,6 +12,10 @@
  *  E. 🔴 F6 errno: CHECK 위반 = 4025(mysql2 code 는 엉뚱한 문자열) · 테이블 없음 = 1146
  *  F. recordSpoolBatch 끝에서 끝: 스위치 켜짐 → 저장 · 재전송 → 실행 행 불변(롤업 runs 는 두 배 — 알려진 한계, 초안 §5.2) · 스위치 키 없음 → 0행 ·
  *     테이블 없음 → skipped_no_table
+ *  G. 🔴 (T-135) 실 풀 10개(운영 `db.ts` 와 같은 connectionLimit 10·queueLimit 0)·실 `LOCK TABLES job_run_log WRITE`, 처리 상한 JRL_DEADLINE_MS(2.5초) 그대로:
+ *     G1 정상 30배치 — 매번 연결이 풀로 돌아온다(바쁜 연결 0, 배치마다 연결 하나·release) · G2 표를 잠근 채 12배치 동시 × 2회 — 전부 failed(timeout),
+ *     매번 바쁜 연결 0, 무관한 `SELECT 1` 이 3초 안에 통과, 잠금을 쥔 채로 서버의 대기 upsert 가 사라지고, 잠금 해제 뒤 늦게 써진 행 0 ·
+ *     G3 오류 경로(테이블 없음)도 바쁜 연결 0·연결은 destroy
  *  A·B·C 는 **두 sql_mode** 로 반복한다: 서버 기본(앱 경로 그대로 `query`), 세션에 NO_BACKSLASH_ESCAPES 를 더한 모드(값은 `execute` 준비문 —
  *  클라이언트 쪽 문자열 이스케이프가 NBE 세션에서 값을 바꾸지 않게, T-088 과 같은 방식). D·E·F 는 서버 기본에서만(앱 경로).
  *
@@ -29,12 +33,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import mysql from 'mysql2/promise';
 
-let mockPool: { query: (sql: string, params?: unknown[]) => Promise<unknown> } | null = null;
+// (T-135) 기록기는 upsert 를 풀에서 받은 연결 하나로 보낸다 — 목 풀도 getConnection 을 준다(G 는 실 mysql2 풀).
+let mockPool: { query: (sql: string, params?: unknown[]) => Promise<unknown>; getConnection: () => Promise<unknown> } | mysql.Pool | null = null;
 jest.mock('@/lib/db', () => ({
   getPool: () => { if (!mockPool) throw new Error('운영 풀 사용 금지(시험)'); return mockPool; },
 }));
 
 import {
+  JRL_DEADLINE_MS,
   ROLLUP_ODKU,
   RUN_ODKU,
   buildRows,
@@ -263,7 +269,11 @@ maybe('[서버 기본] 클램프·errno·recordSpoolBatch 끝에서 끝', () => 
     await c.query('DROP TABLE IF EXISTS job_run_log, judgment_run, judgment_candidate');
     await c.query(SQL);
     await c.query('CREATE TABLE IF NOT EXISTS system_config (`key` VARCHAR(100) NOT NULL PRIMARY KEY, value TEXT NULL) DEFAULT CHARSET=utf8mb4');
-    mockPool = { query: (sql: string, params?: unknown[]) => c.query(sql, params) };
+    mockPool = {
+      query: (sql: string, params?: unknown[]) => c.query(sql, params),
+      // (T-135) 이 블록은 연결 하나(c)로 돈다 — release·destroy 는 아무것도 하지 않는다(c 는 다음 시험이 계속 쓴다). 실 풀 동작은 G.
+      getConnection: async () => ({ query: (sql: string, params?: unknown) => c.query(sql, params as unknown[]), release: () => {}, destroy: () => {} }),
+    };
     jest.spyOn(console, 'warn').mockImplementation(() => {});
   });
   afterAll(async () => { mockPool = null; await c?.end(); jest.restoreAllMocks(); });
@@ -344,4 +354,150 @@ maybe('[서버 기본] 클램프·errno·recordSpoolBatch 끝에서 끝', () => 
     await c.query(SQL); // 재적용(되돌리기 → 재적용)
     expect(await rowsOf(c)).toHaveLength(0);
   });
+});
+
+maybe('G. 🔴 (T-135) 표가 잠겨도 upsert 가 풀 연결을 붙잡지 않는다(실물 기록기·실 풀 10개·실 잠금)', () => {
+  let pool: mysql.Pool;
+  let locker: mysql.Connection;    // LOCK TABLES 를 쥐는 세션(풀 밖) — 마이그레이션도 여기서
+  let monitor: mysql.Connection;   // PROCESSLIST·행 수 관찰(풀 밖)
+  const opts = () => ({
+    host: '127.0.0.1', port: Number(PORT), user: 'root', password: process.env.T112_IMPL_DB_PASSWORD, database: DBNAME, timezone: '+09:00',
+  });
+  type CorePool = { _allConnections: { length: number }; _freeConnections: { length: number } };
+  const core = () => (pool as unknown as { pool: CorePool }).pool;
+  const busy = () => core()._allConnections.length - core()._freeConnections.length;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  async function until(cond: () => boolean | Promise<boolean>, ms: number): Promise<boolean> {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (await cond()) return true; await sleep(50); }
+    return cond();
+  }
+  async function within<T>(p: Promise<T>, ms: number): Promise<T | 'late'> {
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const r = await Promise.race([p, new Promise<'late'>((res) => { t = setTimeout(() => res('late'), ms); })]);
+    clearTimeout(t);
+    return r;
+  }
+  /** 받은 연결(획득 1회)마다 release·destroy 횟수 */
+  const ends = new Map<object, { r: number; d: number }>();
+  function instrument(p: mysql.Pool): void {
+    const real = p.getConnection.bind(p);
+    (p as unknown as { getConnection: () => Promise<mysql.PoolConnection> }).getConnection = async () => {
+      const c = await real();
+      const e = { r: 0, d: 0 };
+      ends.set(c, e);
+      const rel = c.release.bind(c);
+      const des = c.destroy.bind(c);
+      c.release = () => { e.r++; rel(); };
+      c.destroy = () => { e.d++; des(); };
+      return c;
+    };
+  }
+  const endStats = () => {
+    const v = [...ends.values()];
+    return {
+      conns: v.length, releases: v.reduce((a, e) => a + e.r, 0), destroys: v.reduce((a, e) => a + e.d, 0),
+      multi: v.filter((e) => e.r + e.d > 1).length, never: v.filter((e) => e.r + e.d === 0).length,
+    };
+  };
+  const waiters = async () => {
+    const [r] = await monitor.query("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE INFO LIKE 'INSERT INTO job_run_log%'") as [Array<{ n: number }>, unknown];
+    return Number(r[0].n);
+  };
+  const rowCount = async () => {
+    const [r] = await monitor.query('SELECT COUNT(*) AS n FROM job_run_log') as [Array<{ n: number }>, unknown];
+    return Number(r[0].n);
+  };
+  /** 배치 k — 하루 1회 잡의 서로 다른 날(k)이라 늦게 써지면 반드시 새 행이 생긴다(멱등 ODKU 에 묻히지 않게) + 매 분 잡 1줄(롤업 문장도 보내게) */
+  const batch = (k: number) => [
+    line('edgar-sync', 200, `2026-0${1 + Math.floor(k / 28)}-${String(1 + (k % 28)).padStart(2, '0')} 07:00:01`, 1000, { ok: true }),
+    line('entry-watcher', 200, `2026-0${1 + Math.floor(k / 28)}-${String(1 + (k % 28)).padStart(2, '0')} 10:00:01`, 100),
+  ].join('\n');
+  const note = (m: string) => { process.stdout.write(`[T-135 G 관찰] ${m}\n`); };
+  let seq = 0;
+
+  beforeAll(async () => {
+    pool = mysql.createPool({ ...opts(), connectionLimit: 10, waitForConnections: true, queueLimit: 0 });
+    instrument(pool);
+    mockPool = pool;
+    locker = await mysql.createConnection({ ...opts(), multipleStatements: true });
+    monitor = await mysql.createConnection(opts());
+    await locker.query(SQL);   // CREATE TABLE IF NOT EXISTS — 이미 있으면 그대로
+    await locker.query('CREATE TABLE IF NOT EXISTS system_config (`key` VARCHAR(100) NOT NULL PRIMARY KEY, value TEXT NULL) DEFAULT CHARSET=utf8mb4');
+    await locker.query("INSERT INTO system_config (`key`, value) VALUES ('job_run_log_enabled', 'true') ON DUPLICATE KEY UPDATE value = 'true'");
+    await locker.query('DELETE FROM job_run_log');
+  });
+  afterAll(async () => {
+    try { await locker?.query('UNLOCK TABLES'); } catch { /* 흡수 */ }
+    await locker?.end();
+    await monitor?.end();
+    await pool?.end();
+    mockPool = null;
+  });
+  beforeEach(() => {
+    ends.clear();
+    resetRecordSwitchCacheForTest();
+    resetJobRunLogWarningsForTest();
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  test('G1. 정상 30배치 — 매번 연결이 풀로 돌아온다(바쁜 연결 0), 배치마다 연결 하나(실행 행·롤업 2문장)·release', async () => {
+    const r0 = await rowCount();
+    for (let i = 0; i < 30; i++) {
+      await expect(recordSpoolBatch(batch(seq++))).resolves.toMatchObject({ status: 'ok', runRows: 1, rollupRows: 1 });
+      expect(busy()).toBe(0);
+    }
+    expect(endStats()).toEqual({ conns: 30, releases: 30, destroys: 0, multi: 0, never: 0 });
+    expect((await rowCount()) - r0).toBe(60);
+  }, 60_000);
+
+  test('🔴 G2. 표를 잠근 채 12배치 동시 × 2회(24배치) — 전부 failed(timeout), 매번 바쁜 연결 0·무관한 SELECT 1 통과, 대기 upsert 소멸, 늦은 행 0', async () => {
+    const before = await rowCount();
+    await locker.query('LOCK TABLES job_run_log WRITE');
+    try {
+      for (let round = 0; round < 2; round++) {
+        const t0 = Date.now();
+        const res = await Promise.all(Array.from({ length: 12 }, () => recordSpoolBatch(batch(seq++))));
+        const ms = Date.now() - t0;
+        expect(res.map((r) => `${r.status}/${r.reason}`)).toEqual(Array(12).fill('failed/timeout'));
+        expect(ms).toBeLessThan(JRL_DEADLINE_MS + 1500);
+        expect(await until(() => busy() === 0, 2000)).toBe(true);
+        const q0 = Date.now();
+        const sel = await within(pool.query('SELECT 1 AS ok'), 3000);
+        expect(sel).not.toBe('late');
+        const selMs = Date.now() - q0;
+        const w0 = await waiters();
+        const gone = await until(async () => (await waiters()) === 0, 10_000);   // 잠금은 쥔 채 — 끊긴 연결의 대기 upsert 를 서버가 거둔다
+        note(`round ${round + 1}: 12배치 ${ms}ms 에 전부 timeout · 풀 all=${core()._allConnections.length} free=${core()._freeConnections.length} busy=${busy()} · 무관한 SELECT 1 ${selMs}ms · 서버 대기 upsert 직후 ${w0}개 → ${gone ? '0개(소멸)' : `${await waiters()}개 남음`}`);
+        expect(gone).toBe(true);
+      }
+    } finally {
+      await locker.query('UNLOCK TABLES');
+    }
+    await sleep(1500);
+    const late = (await rowCount()) - before;
+    note(`잠금 해제 뒤 늦게 써진 행 ${late}개(시도 24배치 — 배치마다 새 행 2개가 될 값) · 연결 ${JSON.stringify(endStats())}`);
+    expect(late).toBe(0);
+    expect(await until(() => endStats().never === 0, 3000)).toBe(true);
+    expect(endStats().multi).toBe(0);
+    resetRecordSwitchCacheForTest();
+    await expect(recordSpoolBatch(batch(seq++))).resolves.toMatchObject({ status: 'ok' });
+    expect(busy()).toBe(0);
+  }, 90_000);
+
+  test('G3. 오류 경로(테이블 없음 1146) 5배치 — 연결은 destroy·바쁜 연결 0, 표를 되돌리면 다시 기록', async () => {
+    await locker.query('RENAME TABLE job_run_log TO job_run_log_t135bak');
+    try {
+      for (let i = 0; i < 5; i++) {
+        await expect(recordSpoolBatch(batch(seq++))).resolves.toMatchObject({ status: 'skipped_no_table' });
+        expect(busy()).toBe(0);
+      }
+    } finally {
+      await locker.query('RENAME TABLE job_run_log_t135bak TO job_run_log');
+    }
+    expect(endStats()).toEqual({ conns: 5, releases: 0, destroys: 5, multi: 0, never: 0 });
+    await expect(recordSpoolBatch(batch(seq++))).resolves.toMatchObject({ status: 'ok' });
+    expect(busy()).toBe(0);
+  }, 30_000);
 });

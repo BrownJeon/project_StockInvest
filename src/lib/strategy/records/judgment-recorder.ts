@@ -11,6 +11,8 @@
  * - 기록 1회 전체에 자체 상한 {@link JUDGMENT_RECORD_TIMEOUT_MS}. 넘으면 경고 1줄 후 포기(늦게 끝난 본문의 오류는 흡수).
  * - 모든 실패(스위치 읽기·설정 읽기·카드 id 조회·INSERT)는 삼킨다. 카드 id 조회가 실패해도 판단 기록은 `signal_id` NULL 로 남긴다.
  * - 해외 카드 트랜잭션 연결을 받지 않는다 — 커밋이 끝난 뒤 `getPool()` 로 따로 쓴다.
+ * - (T-135) INSERT 2문장은 풀에서 받은 **연결 하나**로 보내고, 상한에 걸리면 그 연결을 풀에서 뺀다(`bounded-conn.ts` — T-126 R1 과 같은 규칙).
+ *   상한은 기다림만 끊고 매달린 INSERT 가 풀 연결(주문·UI 와 공유)을 붙잡고 있던 문제를 막는다. 스위치 읽기·카드 id 조회는 예전처럼 풀 query 다.
  *
  * ## 스위치·테이블
  * - `system_config.judgment_record_enabled` — **키 없음 = 꺼짐**(fail-closed, `readRecordSwitch`). 꺼져 있으면 스위치 읽기 외 I/O 0.
@@ -33,8 +35,9 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { getProviderConfig } from '@/lib/llm/provider';
 import { toKstDatetime } from '@/lib/time';
+import { isBoundedConnLate, withBoundedConn, type BoundedConnUse, type BoundedPool } from './bounded-conn';
 import { readRecordSwitch } from './record-switch';
-import { dedupeBy, isCheckViolation, isNoSuchTable, normalizeSymbol, truncateCodePoints, withDeadline } from './safe-text';
+import { dedupeBy, isCheckViolation, isNoSuchTable, normalizeSymbol, truncateCodePoints } from './safe-text';
 import {
   EXCLUSION_CODES,
   type AiDecisionValue,
@@ -290,7 +293,7 @@ export async function lookupCardIds(validFrom: string, symbols: readonly string[
   return out;
 }
 
-async function writeJudgmentRecord(snap: JudgmentRunSnapshot): Promise<JudgmentRecordResult> {
+async function writeJudgmentRecord(snap: JudgmentRunSnapshot, bc: BoundedConnUse): Promise<JudgmentRecordResult> {
   if (!(await readRecordSwitch(JUDGMENT_RECORD_SWITCH_KEY))) return { status: 'disabled' };
 
   const { rows, dropped } = buildJudgmentCandidateRows(snap);
@@ -304,10 +307,11 @@ async function writeJudgmentRecord(snap: JudgmentRunSnapshot): Promise<JudgmentR
   if (!head) return { status: 'invalid' };
   if (dropped > 0) warn(`후보 행 ${dropped}개를 뺐다(형식 불량·중복·상한 ${MAX_CANDIDATE_ROWS}) market=${head.market} valid_from=${head.valid_from}`);
 
-  const pool = getPool();
+  // (T-135) 두 INSERT 는 연결 하나로 — 첫 문장에서 받고, 상한에 걸리면 withBoundedConn 이 그 연결을 풀에서 뺀다.
+  const db = bc.use(getPool() as unknown as BoundedPool);
   let judgmentRunId: number;
   try {
-    const [res] = await pool.query<ResultSetHeader>(
+    const [res] = (await db.query(
       `INSERT INTO judgment_run
          (market, judgment_role, session_d0, valid_from, started_at, ended_at, as_of, candidate_count,
           llm_provider, llm_model, prompt_sha256, rag_context_ids, data_status, engine_release)
@@ -317,9 +321,10 @@ async function writeJudgmentRecord(snap: JudgmentRunSnapshot): Promise<JudgmentR
         head.candidate_count, head.llm_provider, head.llm_model, head.prompt_sha256, head.rag_context_ids, head.data_status,
         head.engine_release,
       ],
-    );
+    )) as [ResultSetHeader, unknown];
     judgmentRunId = Number(res?.insertId);
   } catch (e) {
+    if (isBoundedConnLate(e)) return { status: 'timeout' };   // (T-135) 상한 뒤 — 바깥이 이미 timeout 으로 답하고 경고했다(줄을 더하지 않는다)
     if (isNoSuchTable(e)) {
       if (!warnedNoTable) { warnedNoTable = true; warn('judgment_run 테이블이 없어 판단 기록을 건너뜀(DDL 적용 전) — 이 경고는 프로세스당 1회'); }
       return { status: 'no_table' };
@@ -341,13 +346,14 @@ async function writeJudgmentRecord(snap: JudgmentRunSnapshot): Promise<JudgmentR
     );
   }
   try {
-    await pool.query<ResultSetHeader>(
+    await db.query(
       `INSERT INTO judgment_candidate
          (judgment_run_id, judgment_role, symbol, pattern, exclusion_code, sent_to_llm, ai_decision, confidence, ai_reasoning, signal_id)
        VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
       params,
     );
   } catch (e) {
+    if (isBoundedConnLate(e)) return { status: 'timeout' };   // (T-135) 상한 뒤 — 경고를 더하지 않는다
     warn(`judgment_candidate 기록 실패${isCheckViolation(e) ? '(CHECK 위반 4025)' : ''} — 헤더 id=${judgmentRunId} 만 남음, 분석 영향 없음: ${errMsg(e)}`);
     return { status: 'partial', judgmentRunId, error: errMsg(e) };
   }
@@ -357,11 +363,12 @@ async function writeJudgmentRecord(snap: JudgmentRunSnapshot): Promise<JudgmentR
 /**
  * 기록 1회 — {@link JUDGMENT_RECORD_TIMEOUT_MS} 안에 반드시 돌아오고 절대 던지지 않는다.
  * 분석 실행이 아니면(정상 건너뜀 등) I/O 없이 `not_recordable`.
+ * (T-135) 상한·예외면 INSERT 연결을 그 자리에서 풀에서 뺀다(withBoundedConn) — 결과·경고 문구는 예전 그대로.
  */
 export async function recordJudgment(snap: JudgmentRunSnapshot): Promise<JudgmentRecordResult> {
   try {
     if (!snap || snap.recordable !== true) return { status: 'not_recordable' };
-    const r = await withDeadline(writeJudgmentRecord(snap), JUDGMENT_RECORD_TIMEOUT_MS);
+    const r = await withBoundedConn(JUDGMENT_RECORD_TIMEOUT_MS, (bc) => writeJudgmentRecord(snap, bc));
     if (r === undefined) {
       warn(`판단 기록이 ${JUDGMENT_RECORD_TIMEOUT_MS}ms 안에 끝나지 않아 포기 — 분석 영향 없음`);
       return { status: 'timeout' };
