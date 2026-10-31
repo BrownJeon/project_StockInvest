@@ -162,6 +162,7 @@ demo_gate:
 ## Codex 검토
 
 - [2026-10-31 16:58] **호출하지 않았다.** 사용자 전역 `~/.codex/config.toml` 의 `model = "gpt-6.1-sol"` 이 ChatGPT 계정에서 지원되지 않아 호출하면 즉시 실패한다 — T-126·T-127·T-128 에서 세 번 실패를 기록했고(확인에 호출당 약 7분), 16:58 에 설정이 그대로임을 읽어 확인했다. judge 의 `codex_gate` C1·C2 도 돌리지 않았다. 이 task 의 독립 감사는 Reviewer(PASS)와 QA(PASS)가 맡았다. [[T-131-t126-t130-followup-candidates]] 19번.
+- [2026-10-31 21:2x] **정정 — 위 Codex 실패 원인 진단(「모델이 계정에서 지원되지 않는다」)은 틀렸다.** 사용자가 「계정은 `gpt-6.1-sol` 사용 가능」이라고 알려 재점검했다. 계정 모델 목록 캐시(`~/.codex/models_cache.json`, 21:09 갱신)에 `gpt-6.1-sol` 이 `visibility=list`·`priority 1` 로 있고, 같은 사소한 프롬프트로 CLI 만 바꿔 대조했다: ① PATH 의 `codex` = npm 전역 **CLI 0.156.1** + `gpt-6.1-sol` → 400 `model_not_found`(「not supported when using Codex with a ChatGPT account」, 「모델 메타데이터를 찾지 못했다」 경고 동반) ② 같은 CLI + `gpt-5.6-sol` → OK ③ ChatGPT 앱 번들 CLI **0.166.0-alpha.5.1** + `gpt-6.1-sol` → OK. **원인은 계정·모델이 아니라 `codex` 가 가리키는 CLI 가 낡아 새 모델을 모르는 것**이다(npm 최신 0.166.0). 10-30 14:49·16:04 까지 성공한 실행은 CLI 0.157.1 + `gpt-5.6-sol` 이었고 21:58 에 CLI 0.156.1 + `gpt-6.1-sol` 로 바뀌며 실패했다. 해결 후보는 [[T-131-t126-t130-followup-candidates]] 19번.
 
 ## 최종 요약
 
