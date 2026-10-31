@@ -209,3 +209,11 @@ Leader에게 배정받은 `agent-vault/10-Flow/tasks/<task-id>-<slug>.md` 파일
 완료 후 `20-Log/<오늘 날짜>.md`에 `- [HH:MM][<역할>] task-<id> 완료 → [[task-<id>-<slug>]] 참고` 한 줄만 남긴다(경로가 아니라 위키링크로 — 색인 용도, 본문 중복 금지).
 자세한 규약: [`docs/agent-vault-protocol.md`](../../../docs/agent-vault-protocol.md)
 </agent_vault>
+
+## 프로세스 종료 규칙 (ISS-0002 — 2026-10-07 사고 · 2026-10-25 재발)
+이 서버에는 다른 프로젝트의 운영 pm2 프로세스(`next-server` 등)와 다른 세션의 dev 서버가 **같은 이름으로** 함께 돈다. 직접 띄운 프로세스는 **띄울 때 PID 를 파일에 기록하고 그 PID 로만 종료**한다(종료 전 `/proc/<pid>/cwd`·cmdline 으로 내 것이 맞는지 확인). `pkill -f`·`killall`·이름/패턴 기반 종료와 `pm2 stop|restart|delete|kill` 은 **금지**. 종료 후 `ss -ltn` 으로 내 포트만 비었는지 확인한다.
+
+- 2026-10-07: QA 가 `pkill -f "next-server"` 로 운영 앱 7개(odinue·themeal·stockinvest·thecareer·thethinker·voicevault·thekaiwa)를 재시작시켰다.
+- 2026-10-25: **같은 패턴이 다시 실행됐다**(서브에이전트, 범위 제한 없음). 영향은 아무도 확인하지 못했다 — pm2 가 몇 초 안에 되살리므로 보는 사람이 없으면 흔적이 남지 않는다.
+- 포트·경로로 좁힌 패턴(`pkill -f "http.server 8765"`)도 **다른 세션이 같은 포트를 쓰면 남의 것을 죽인다.** PID 가 유일한 안전한 기준이다.
+- 이 프로젝트의 운영 pm2 앱: `stockinvest` · `stockinvest-cron`

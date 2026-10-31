@@ -270,3 +270,11 @@ roadmap.md 가 아직 없으면 1만 한다. 형식 정본: `TheAdmin/docs/desig
 - **실매매 영향**을 배포 항목 바로 아래에 적는다 — 주문·청산·승인 경로를 바꿨는지, 관련 스위치(텔레그램 승인·청산 엔진·킬스위치 등)의 배포 후 ON/OFF 실측값
 - 확인 시각은 장 일정 기준 KST 날짜·시각으로 쓴다(예: "10-21(화) 09:05 이후", "16:00 post-market 이후"). "첫 관측 대기"는 무엇이 관측되면 정상이고 무엇이면 이상인지까지 쓴다
 - KIS 실계좌 조회·주문처럼 사용자 승인이 필요한 일은 "결정할 것"에 넣고 `waiting: user_decision`
+
+## 프로세스 종료 규칙 (ISS-0002 — 2026-10-07 사고 · 2026-10-25 재발)
+이 서버에는 다른 프로젝트의 운영 pm2 프로세스(`next-server` 등)와 다른 세션의 dev 서버가 **같은 이름으로** 함께 돈다. 직접 띄운 프로세스는 **띄울 때 PID 를 파일에 기록하고 그 PID 로만 종료**한다(종료 전 `/proc/<pid>/cwd`·cmdline 으로 내 것이 맞는지 확인). `pkill -f`·`killall`·이름/패턴 기반 종료와 `pm2 stop|restart|delete|kill` 은 **금지**. 종료 후 `ss -ltn` 으로 내 포트만 비었는지 확인한다.
+
+- 2026-10-07: QA 가 `pkill -f "next-server"` 로 운영 앱 7개(odinue·themeal·stockinvest·thecareer·thethinker·voicevault·thekaiwa)를 재시작시켰다.
+- 2026-10-25: **같은 패턴이 다시 실행됐다**(서브에이전트, 범위 제한 없음). 영향은 아무도 확인하지 못했다 — pm2 가 몇 초 안에 되살리므로 보는 사람이 없으면 흔적이 남지 않는다.
+- 포트·경로로 좁힌 패턴(`pkill -f "http.server 8765"`)도 **다른 세션이 같은 포트를 쓰면 남의 것을 죽인다.** PID 가 유일한 안전한 기준이다.
+- 이 프로젝트의 운영 pm2 앱: `stockinvest` · `stockinvest-cron`

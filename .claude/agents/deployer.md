@@ -258,3 +258,11 @@ APK 를 공개한 배포는 비고(또는 표 아래 한 줄)에 `apk_version=1.
 - [`../../../docs/agent-communication-protocol.md`](../../../docs/agent-communication-protocol.md)
 - [`../../../docs/agent-vault-protocol.md`](../../../docs/agent-vault-protocol.md)
 </references>
+
+## 프로세스 종료 규칙 (ISS-0002 — 2026-10-07 사고 · 2026-10-25 재발)
+이 서버에는 다른 프로젝트의 운영 pm2 프로세스(`next-server` 등)와 다른 세션의 dev 서버가 **같은 이름으로** 함께 돈다. 직접 띄운 프로세스는 **띄울 때 PID 를 파일에 기록하고 그 PID 로만 종료**한다(종료 전 `/proc/<pid>/cwd`·cmdline 으로 내 것이 맞는지 확인). `pkill -f`·`killall`·이름/패턴 기반 종료는 **금지**. `pm2` 명령은 **이 프로젝트의 배포 절차(`scripts/deploy.sh`·배포 문서)로만** 쓰고, 정리 목적으로 `pm2 stop|restart|delete` 를 직접 쓰지 않는다. 종료 후 `ss -ltn` 으로 내 포트만 비었는지 확인한다.
+
+- 2026-10-07: QA 가 `pkill -f "next-server"` 로 운영 앱 7개(odinue·themeal·stockinvest·thecareer·thethinker·voicevault·thekaiwa)를 재시작시켰다.
+- 2026-10-25: **같은 패턴이 다시 실행됐다**(서브에이전트, 범위 제한 없음). 영향은 아무도 확인하지 못했다 — pm2 가 몇 초 안에 되살리므로 보는 사람이 없으면 흔적이 남지 않는다.
+- 포트·경로로 좁힌 패턴(`pkill -f "http.server 8765"`)도 **다른 세션이 같은 포트를 쓰면 남의 것을 죽인다.** PID 가 유일한 안전한 기준이다.
+- 이 프로젝트의 운영 pm2 앱: `stockinvest` · `stockinvest-cron`

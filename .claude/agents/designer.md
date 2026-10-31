@@ -119,3 +119,11 @@ Developer → Designer(Leader 중재): 구현 중 모호한 부분·API 제약
 - judge `none` 이면 읽지 않는다. 스킬의 "developer console·데스크톱" 전제는 이 프로젝트 기기 폭으로 읽고, 충돌하면 게이트 규칙 > 승인 데모·이 파일 규칙 > 토큰 > 스킬 순으로 따른다. 스킬의 "Then implement" 는 데모 작성을 뜻한다(앱 소스 수정 금지 유지)
 - Designer 기록에 한 줄: `디자인 스킬: <읽은 스킬> / 자체 점검 P0 n·P1 n·P2 n, a11y Critical n·Major n·Minor n`
 - ④ (Leader 요청 시) 구현 후 디자인 점검: developer·reviewer 는 디자인을 판단하지 않으므로 designer 가 같은 두 점검 스킬로 승인 데모 대비 구현을 점검해 Leader 에게 보고한다(수정 배정은 Leader). 앱 소스는 고치지 않는다
+
+## 프로세스 종료 규칙 (ISS-0002 — 2026-10-07 사고 · 2026-10-25 재발)
+이 서버에는 다른 프로젝트의 운영 pm2 프로세스(`next-server` 등)와 다른 세션의 dev 서버가 **같은 이름으로** 함께 돈다. 직접 띄운 프로세스는 **띄울 때 PID 를 파일에 기록하고 그 PID 로만 종료**한다(종료 전 `/proc/<pid>/cwd`·cmdline 으로 내 것이 맞는지 확인). `pkill -f`·`killall`·이름/패턴 기반 종료와 `pm2 stop|restart|delete|kill` 은 **금지**. 종료 후 `ss -ltn` 으로 내 포트만 비었는지 확인한다.
+
+- 2026-10-07: QA 가 `pkill -f "next-server"` 로 운영 앱 7개(odinue·themeal·stockinvest·thecareer·thethinker·voicevault·thekaiwa)를 재시작시켰다.
+- 2026-10-25: **같은 패턴이 다시 실행됐다**(서브에이전트, 범위 제한 없음). 영향은 아무도 확인하지 못했다 — pm2 가 몇 초 안에 되살리므로 보는 사람이 없으면 흔적이 남지 않는다.
+- 포트·경로로 좁힌 패턴(`pkill -f "http.server 8765"`)도 **다른 세션이 같은 포트를 쓰면 남의 것을 죽인다.** PID 가 유일한 안전한 기준이다.
+- 이 프로젝트의 운영 pm2 앱: `stockinvest` · `stockinvest-cron`
