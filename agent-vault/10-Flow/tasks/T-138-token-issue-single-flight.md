@@ -1,7 +1,7 @@
 ---
 task_id: T-138
 title: 토큰 발급이 단일화되지 않아 갱신 시각에 발급이 폭주하는 문제 — issueAndStore 단일 비행
-status: ready-to-deploy
+status: deployed
 priority: high
 project: StockInvest
 created: 2026-10-31
@@ -298,3 +298,14 @@ QA 판정은 **PASS(조건부)**(Critical 0 · High 0 · Medium 2 · Low 3). 조
 ### QA 가 확인하지 못한 것 (그대로 남는다)
 
 실 KIS 거동(1분 규칙의 정확한 모양·동시 수락·구 토큰 무효화) · **Next 번들에서 `kis-auth` 모듈 인스턴스가 하나인지**(11-01 실측으로만 확인된다) · 웹·크론 사이의 발급 경쟁 · 실 DB·네트워크 지연 · 안전장치 중 API 호출로 확인하는 항목(DRY_RUN 응답·한도·감사 로그 — 전체 jest 로만 간접 확인) · 가드 순서 울타리 8곳 개수(문자열을 못 찾았다) · lint.
+
+## 배포 기록
+
+- [2026-10-31 23:59] **배포 완료.** 사용자 지시 「지금 배포」. 서버 체크아웃에서 `git push origin main`(`3669090..18896a8`, 커밋 **4개**). 코드가 든 커밋은 **T-136 `a064722`·T-138 `18896a8` 둘**이고 나머지 2개(`287b637`·`0b8b013`)는 다른 세션의 문서다. webhook blue/green 23:58:54 시작 → 00:00:45 완료(`exit=0`).
+- 결과: `RELEASE_RESULT {"status":"ok","release":"20261031-235854-18896a8b","sha":"18896a8bc9788f0cab98b2cba9860d6b3d0414dd","previous":"…/releases/20261031-215102-36690909","migrated":false}`. 마이그레이션·DDL·스위치 변경 없음. 롤백 대상 `20261031-215102-36690909`.
+- 배포 후 확인(00:01, 읽기 전용): ① `current` → 새 릴리스 ② pm2 `stockinvest`·`stockinvest-cron` 둘 다 online·restarts 0·`pm_cwd` 새 릴리스 ③ `cron-runner.sh` **1개**(00:00:26 틱 OK) ④ `/api/health` 200 · `ok:true`·`db:true`·`schemaFatal:false`·`safetyStatus:"green"`·`dryRun:true`·`killSwitch:false` ⑤ `system_config` 안전 키 **6개 값·`updated_at` 전부 배포 전 그대로** ⑥ 배포본에 `kis-token-codes.ts`·`kis-token-retry.ts` 존재, `kis-auth.ts` 에 `issueOnce`/`issueInFlight` 8곳·`TOKEN_ISSUE_TIMEOUT_MS` 2곳, `.next/server/chunks` 2개에 새 메시지 컴파일.
+- 관찰(이상 아님) — `news-peek-overseas-00` 이 00:00:26 에 `degraded capture=failed` 1건. **10-31 00:00:40 에도 같은 것이 있었다** → 자정 틱의 기존 패턴이고 이 배포와 무관하다. 재실행(00:00:30)은 OK.
+- **🔴 실효 확인은 아직이다** — 다음 토큰 갱신이 **2026-11-01 14:02 KST(05:02Z)** 로 배포 시점에서 약 14시간 뒤다. 배포 직후 토큰 로그가 0건인 것은 **"정상"이 아니라 "아직 그 창이 오지 않았다"** 는 뜻이다.
+  - 배포 **직전**(10-31 15:02:07)에 `[kis-auth] issued new token` 이 **같은 초에 3줄** 찍혀 있다 — T-138 이 고치려는 바로 그 동시 발급이고, 문제가 재현 중이라는 증거다.
+  - **11-01 14:02 KST 가 휴장일 리허설 창이다**: `api-usage-2026-11-01.jsonl` 의 `token-p` 가 **1건(많아야 2건)·403 0건**이면 단일 비행 실증. **같은 초 2건 이상 + 403** 이면 비행이 안 걸린 것(Next 번들 간 `kis-auth` 모듈 인스턴스 분리 가능성 — 감사·QA 가 **미검증**으로 남긴 유일한 핵심 가정이다).
+
