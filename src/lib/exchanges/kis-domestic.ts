@@ -4,7 +4,7 @@
  */
 import { getKisToken, invalidateKisToken, kisBaseUrl } from './kis-auth';
 import { getCredential } from '@/lib/credentials';
-import { kisFetch, isKisRateLimited, kisBodyText } from './kis-http';
+import { kisFetch, isKisRateLimited, kisBodyText, isKisTokenError } from './kis-http';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from './kis-throttle';
 import { submittedQuantity, unusableQuantityReason } from './order-quantity';
 import type { Ticker, Candle, Balance, OrderRequest, OrderResult, CancelRequest } from './types';
@@ -34,49 +34,98 @@ async function kisHeaders(trId: string, extra?: Record<string, string>): Promise
 }
 
 // ── 시세 조회 ────────────────────────────────────────────────────────────────
+/**
+ * 🔴 T-017 — **여기가 재시도 증폭의 진원지였다.**
+ *
+ * KIS 레이트리밋(`EGW00201`/`EGW00215`)은 **HTTP 500** 으로 온다. 예전 코드는 `status === 500` 만
+ * 보고 300ms 뒤 재시도했으므로, 레이트리밋을 맞을 때마다 곧바로 한 번 더 때려서 과부하를 스스로
+ * 키웠다. 이제 레이트리밋은 `kisFetch` 안에서 백오프 + 재대기열로 소진되므로 **즉시 던진다.**
+ *
+ * 🔴 T-133 — 진짜 일시 오류의 재시도도 `kisFetch`(`transientRetries`)로 옮겼다. 손으로 만든 루프를
+ * 남긴 채 옵션만 켜면 바깥 루프 × 안쪽 루프로 호출이 곱해져 위 증폭이 그대로 부활하므로, 응답 기반
+ * 루프를 걷어내고 게이트웨이 한 곳에서만 센다. 달라진 것은 ① HTTP 200 업무실패(`rt_cd≠'0'`, 예:
+ * `OPSQ1002 SESSION FULL`)도 재시도 대상이 된다 ② 백오프가 300ms 고정에서 게이트웨이 0.4s·1.2s 로
+ * 바뀐다.
+ *
+ * **호출 상한(레이트리밋까지 센 값)** — `kisFetch` 한 번은 최악 5회다(최초 1 + 일시 2 + 레이트리밋 2).
+ * 아래 토큰 재발급 루프가 최대 1회 더 돌 수 있어 이 함수의 최악은 **10회**다. 종전(3회 루프 ×
+ * `kisFetch` 3회)의 최악은 **9회**였다 — 즉 상한은 거의 그대로고, 예전 "총 3회" 라는 설명은
+ * 레이트리밋 예산을 빼고 센 값이라 틀렸다(T-133 Reviewer L-2).
+ *
+ * 토큰 만료(`EGW00123`)는 `isTransientKisFailure` 가 제외하므로 게이트웨이가 재시도하지 않는다 —
+ * **어댑터가 처리하는 것이 설계다.** 종전 루프는 매 시도 `kisHeaders` 를 다시 불러 **다른 프로세스가
+ * 회전시켜 둔 토큰을 주워 왔다**(T-133 Reviewer L-1 이 실증). 응답 루프를 걷어내면 그 복구가 사라지므로
+ * 아래에 1회짜리 토큰 루프를 둔다.
+ *
+ * 🔴 그 루프는 **재발급을 먼저 하지 않는다**(T-133 Reviewer M-2). `getBalances` 처럼 곧바로
+ * `invalidateKisToken()` 을 부르면, DB 에 이미 있는 **멀쩡한 새 토큰을 지우고** 재발급을 요청한다.
+ * 직전 발급이 1분 안이면 KIS 가 `EGW00133` 으로 거부하고 `issueAndStore` 가 60초를 기다리므로,
+ * 그 사이 같은 프로세스의 **모든** `getKisToken()` 호출이 막힌다 — `createOrder` 도 그 경로다.
+ * 그래서 먼저 `getKisToken()` 으로 **DB 를 다시 읽고**(이 함수는 호출마다 DB 를 본다),
+ * 값이 **이번 요청 헤더에 실린 토큰과 같을 때만** 재발급한다.
+ */
 export async function getTicker(symbol: string): Promise<Ticker> {
   const url = `${BASE()}/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=${symbol}`;
-  // KIS API는 개장 직후나 부하 시 일시적 500을 반환하는 경우가 있음 — 최대 2회 재시도
-  for (let attempt = 0; attempt < 3; attempt++) {
+  let res: Response;
+  let tokenRetried = false;
+  for (;;) {
     const headers = await kisHeaders('FHKST01010100');
-    const res = await kisFetch(url, { headers }, { label: 'domestic getTicker' });
-    if (res.ok) {
-      const data = await res.json();
-      const o = data.output;
-      if (!o) throw new Error(`KIS getTicker no output: ${JSON.stringify(data)}`);
-      return {
-        symbol,
-        price:        Number(o.stck_prpr),
-        timestamp:    Date.now(),
-        open24h:      Number(o.stck_oprc),
-        high24h:      Number(o.stck_hgpr),
-        low24h:       Number(o.stck_lwpr),
-        volume24h:    Number(o.acml_vol),
-        quoteVolume24h: Number(o.acml_tr_pbmn),
-      };
-    }
-    /**
-     * 🔴 T-017 — **여기가 재시도 증폭의 진원지였다.**
-     *
-     * KIS 레이트리밋(`EGW00201`/`EGW00215`)은 **HTTP 500** 으로 온다. 아래 조건은
-     * `status === 500` 만 보고 300ms 뒤 재시도했으므로, 레이트리밋을 맞을 때마다 곧바로
-     * 한 번 더 때려서 과부하를 스스로 키웠다.
-     *
-     * 이제 레이트리밋은 `kisFetch` 안에서 이미 백오프 + 재대기열로 소진된 상태다.
-     * 여기서 또 재시도하면 그 증폭이 그대로 부활하므로 **즉시 던진다.**
-     * 진짜 일시적 5xx(레이트리밋 아님)만 종전대로 재시도한다.
-     */
-    const rateLimited = isKisRateLimited(res);
-    if (rateLimited) {
+    // 이번 요청이 **어떤 토큰으로** 나갔는지 — 아래 만료 분기의 비교 대상이다. `getKisToken()` 을
+    // 한 번 더 부르지 않고 헤더에서 읽는다(T-133 Reviewer L-7): 건강한 경로의 DB SELECT 가 2배가
+    // 되는 것도 막고, 두 번 읽는 사이에 토큰이 회전하는 경쟁도 아예 없앤다.
+    const usedAuth = headers.Authorization;
+    res = await kisFetch(url, { headers }, { label: 'domestic getTicker', transientRetries: 2 });
+    if (res.ok) break;
+    if (isKisRateLimited(res)) {
       throw new Error(`KIS getTicker ${symbol}: ${res.status} (레이트리밋 — 백오프 재시도 소진)`);
     }
-    if (res.status !== 500 || attempt === 2) {
-      throw new Error(`KIS getTicker ${symbol}: ${res.status}`);
+    const body = await res.text().catch(() => '');
+    // (T-133 QA #2) 토큰 판정은 게이트웨이와 **같은 출처**를 쓴다 — `EGW00121` 도 포함된다.
+    // 손으로 `EGW00123` 만 적으면 게이트웨이는 재시도를 건너뛰는데 여기서는 재발급도 안 하는
+    // 사각지대가 생긴다(종전 코드는 500 이면 무조건 재시도해 그 경우를 우연히 덮고 있었다).
+    if (!tokenRetried && isKisTokenError(body)) {
+      tokenRetried = true;
+      const fresh = await getKisToken();   // DB 재읽기 — 캐시를 **지우지 않는다**
+      if (`Bearer ${fresh}` !== usedAuth) {
+        // 다른 프로세스가 이미 회전시켜 뒀다. 재발급 없이 그 토큰으로 한 번 더 간다.
+        console.warn('[kis-domestic getTicker] token rotated elsewhere — 재읽기로 재시도');
+        continue;
+      }
+      // DB 토큰도 방금 쓴 것과 같다 — 그때만 재발급한다(60초 대기 위험을 여기로 좁힌다).
+      console.warn('[kis-domestic getTicker] token expired, re-issuing');
+      await invalidateKisToken();
+      continue;
     }
-    // 500 일시 오류 — 300ms 대기 후 재시도
-    await new Promise(r => setTimeout(r, 300));
+    throw new Error(`KIS getTicker ${symbol}: ${res.status}`);
   }
-  throw new Error(`KIS getTicker ${symbol}: unreachable`);
+  const data = await res.json();
+  /**
+   * (T-133) HTTP 200 인데 업무 실패(`rt_cd≠'0'`) — 2026-10-31 KIS 장애에서 실제로 온 모양이
+   * `rt_cd:"9" OPSQ1002 SESSION FULL` 이다. 예전에는 `output` 이 없어 아래 `no output` 으로 던졌는데,
+   * 본문 JSON 을 통째로 싣는 메시지라 로그에서 원인을 가를 수 없었다. 여기 도달했다는 것은 위
+   * `transientRetries` 를 **이미 소진했다**는 뜻이다.
+   */
+  // (T-133 QA #3) `String()` 으로 정규화한다 — 숫자 `0` 을 업무실패로 오판하지 않기 위해서다.
+  // 종전 코드는 `rt_cd` 를 보지 않아 숫자 0 을 그대로 통과시켰다. KIS 는 문자열을 쓰는 것으로
+  // 보이지만(실측 근거는 T-132 관찰뿐) 회귀를 만들 이유가 없다. 숫자 9 는 그대로 실패다.
+  if (data?.rt_cd != null && String(data.rt_cd) !== '0') {
+    throw new Error(
+      `KIS getTicker ${symbol}: 200 업무실패 rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+      + `msg=${String(data.msg1 ?? '').trim().slice(0, 120)}`,
+    );
+  }
+  const o = data.output;
+  if (!o) throw new Error(`KIS getTicker no output: ${JSON.stringify(data)}`);
+  return {
+    symbol,
+    price:        Number(o.stck_prpr),
+    timestamp:    Date.now(),
+    open24h:      Number(o.stck_oprc),
+    high24h:      Number(o.stck_hgpr),
+    low24h:       Number(o.stck_lwpr),
+    volume24h:    Number(o.acml_vol),
+    quoteVolume24h: Number(o.acml_tr_pbmn),
+  };
 }
 
 // ── 캔들 조회 ────────────────────────────────────────────────────────────────

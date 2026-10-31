@@ -14,6 +14,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import * as ts from 'typescript';
 
 jest.mock('../kis-auth', () => ({
   getKisToken:        jest.fn(async () => 'tok'),
@@ -33,6 +34,9 @@ jest.mock('../kis-http', () => ({
   kisFetch:          jest.fn(),
   isKisRateLimited:  jest.fn(() => false),
   kisBodyText:       jest.fn(() => ''),
+  // (T-133 Reviewer Info) 어댑터가 모듈 수준에서 import 하므로 공장에도 있어야 한다.
+  // 이 파일의 시험은 토큰 분기에 닿지 않지만, 빠뜨리면 닿는 순간 "not a function" 으로 깨진다.
+  isKisTokenError:   jest.fn(() => false),
 }));
 
 jest.mock('../fx', () => ({ getUsdKrwRate: jest.fn(async () => 1400) }));
@@ -97,8 +101,14 @@ describe('해외 보유 — HTTP 200 업무실패', () => {
 });
 
 describe('🔴 transientRetries 는 멱등한 읽기 전용 조회에만 켠다 (주문 중복 방지 울타리)', () => {
-  /** 재시도를 허용한 라벨. 늘릴 때는 "같은 요청을 두 번 보내도 안전한가"를 먼저 답해야 한다. */
-  const ALLOWED = ["label: 'domestic getBalances'", "label: 'overseas getBalances'", "label: 'overseas usdCash'"];
+  /**
+   * 재시도를 허용한 라벨. 늘릴 때는 "같은 요청을 두 번 보내도 안전한가"를 먼저 답해야 한다.
+   * (T-133) 시세 2곳 추가 — 둘 다 GET 조회라 `kisFetch` 런타임 가드를 통과한다.
+   */
+  const ALLOWED = [
+    "label: 'domestic getBalances'", "label: 'overseas getBalances'", "label: 'overseas usdCash'",
+    "label: 'domestic getTicker'",   "label: 'overseas getTicker'",
+  ];
 
   /**
    * `kis-http.ts`(옵션을 정의한 관문)와 시험 파일을 뺀 **교환 계층 전체**를 본다 — 두 파일만 보던
@@ -108,25 +118,89 @@ describe('🔴 transientRetries 는 멱등한 읽기 전용 조회에만 켠다 
    * `kisFetch` 안의 런타임 검사(GET 아닌 method 면 throw)다 — 그쪽 시험은 `kis-http.test.ts`.
    */
   const dir = path.join(__dirname, '..');
+
+  /**
+   * 🔴 호출 지점은 **TypeScript 파서로** 센다 (T-133 QA #1).
+   *
+   * 줄 문자열로 주석을 가려내던 판은 두 번 뚫렸다 — 블록을 같은 줄에서 닫고 코드를 붙인 모양
+   * (T-133 Reviewer M-1)과 첫 글자가 `*` 인 **코드** 줄(T-133 QA #1, 예: 한 줄 제너레이터 메서드).
+   * 규칙을 또 손보는 대신, 주석을 애초에 "모르는" 층으로 내려간다 — 파서는 주석을 trivia 로
+   * 버리므로 주석으로 위장하는 것이 **구조적으로 불가능**하고, 문자열 리터럴 안의 언급도 세지 않는다.
+   * (줄 단위 치환을 쓰지 않은 이유이기도 하다: 문자열 속 `//`·`/*` 가 호출 지점을 지운다.)
+   */
+  type Hit = { f: string; n: number; obj: string };
+  function hitsIn(file: string, src: string): Hit[] {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+    const out: Hit[] = [];
+    const visit = (node: ts.Node): void => {
+      /**
+       * 속성 **대입**만 세면 같은 옵션을 다른 문법으로 적어 비껴갈 수 있다 — 따옴표 키·계산 키·
+       * `o.transientRetries = 2`·`o['transientRetries'] = 2`·getter (T-133 Reviewer M-3 이 7가지로 실증).
+       * 그래서 `transientRetries` 라는 **식별자·문자열 토큰 전부**를 센다. 줄 기반 판(라운드 3)이
+       * 우연히 갖고 있던 커버리지를 파서로 옮기면서 잃었던 것을 되찾는다.
+       */
+      if ((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && node.text === 'transientRetries') {
+        const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+        // 라벨 대조 범위 — 가장 가까운 객체 리터럴, 없으면 감싸는 문장.
+        let scope: ts.Node = node;
+        while (scope.parent && !ts.isObjectLiteralExpression(scope) && !ts.isStatement(scope)) scope = scope.parent;
+        out.push({ f: file, n: line + 1, obj: scope.getText(sf) });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    return out;
+  }
+
   const lines = fs.readdirSync(dir)
     .filter(f => f.endsWith('.ts') && f !== 'kis-http.ts')
-    .flatMap(f => fs.readFileSync(path.join(dir, f), 'utf8')
-      .split('\n')
-      .map((l, i) => ({ f, n: i + 1, l: l.trim() }))
-      .filter(x => x.l.includes('transientRetries')));
+    .flatMap(f => hitsIn(f, fs.readFileSync(path.join(dir, f), 'utf8')));
 
-  test('켜 둔 호출 지점은 허용 라벨 3곳뿐이다 (주문·취소·원장·시세 경로에는 없다)', () => {
+  test('켜 둔 호출 지점은 허용 라벨 5곳뿐이다 (주문·취소·원장 경로에는 없다)', () => {
     expect(lines.map(x => `${x.f}:${x.n}`)).toHaveLength(ALLOWED.length);
     for (const x of lines) {
       // 실패했을 때 어느 파일·줄이 범인인지 보이게 위치를 단언문에 싣는다.
-      expect({ at: `${x.f}:${x.n}`, allowed: ALLOWED.some(a => x.l.includes(a)) })
+      expect({ at: `${x.f}:${x.n}`, allowed: ALLOWED.some(a => x.obj.includes(a)) })
         .toEqual({ at: `${x.f}:${x.n}`, allowed: true });
     }
   });
 
-  test('허용 라벨 3개가 각각 정확히 한 번씩 쓰였다', () => {
+  test('허용 라벨 5개가 각각 정확히 한 번씩 쓰였다', () => {
     for (const a of ALLOWED) {
-      expect(lines.filter(x => x.l.includes(a))).toHaveLength(1);
+      expect(lines.filter(x => x.obj.includes(a))).toHaveLength(1);
+    }
+  });
+
+  /**
+   * 🔴 울타리 **자신**의 회귀 시험. 집계가 느슨해지면 울타리가 조용히 죽으므로, 주석과 코드를
+   * 가르는 경계를 합성 소스로 직접 고정한다. 아래 두 줄(M-1·QA #1)이 예전 판을 각각 뚫은 모양이다.
+   */
+  test('파서 집계는 주석·문자열을 세지 않고, 위장한 코드는 놓치지 않는다', () => {
+    const cases: Array<[string, string, number]> = [
+      ['JSDoc 블록',            '/**\n * transientRetries 는 GET 에만 켠다\n */\nexport const a = 1;', 0],
+      ['한 줄 주석',            '// kisFetch(u, {}, { transientRetries: 2 })\nexport const a = 1;',        0],
+      ['문자열 속 언급',        'export const s = "transientRetries: 2";',                                 0],
+      ['블록 닫고 코드(M-1)',   '/* x */ kisFetch(u, { method: "POST" }, { transientRetries: 2 });',       1],
+      // 🔴 QA #1 의 실제 모양 — 속성이 놓인 **줄의 첫 글자가 `*`** 여야 예전 판을 재현한다.
+      //    한 줄로 적으면 줄이 `class` 로 시작해 변이를 못 잡는다(라운드 5 변이 Q1 에서 실제로 놓쳤다).
+      ['별표로 시작(QA #1)',
+       'class A {\n  *g() { return kisFetch(u, { method: "POST" }, { transientRetries: 2 }); }\n}',      1],
+      ['별표 이어붙인 곱셈 줄',
+       'const n = 1\n  * f({ transientRetries: 2 });',                                                    1],
+      ['줄 끝 주석',            'kisFetch(u, {}, { transientRetries: 2 }); // 메모',                       1],
+      ['변수로 분리',           'const o = { transientRetries: 2 };',                                      1],
+      ['여러 줄 옵션 객체',     'kisFetch(u, {}, {\n  label: "x",\n  transientRetries: 2,\n});',          1],
+      ['따옴표 키',             'kisFetch(u, {}, { "transientRetries": 2 });',                             1],
+      ['계산 키(문자열)',       'kisFetch(u, {}, { ["transientRetries"]: 2 });',                           1],
+      ['계산 키(템플릿)',       'kisFetch(u, {}, { [`transientRetries`]: 2 });',                           1],
+      ['대입문',                'const o: any = {};\no.transientRetries = 2;',                              1],
+      ['요소 대입',             'const o: any = {};\no["transientRetries"] = 2;',                           1],
+      ['getter',                'kisFetch(u, {}, { get transientRetries() { return 2; } });',              1],
+      ['shorthand',             'kisFetch(u, {}, { transientRetries });',                                  1],
+      ['화살표 콜백 안',        'const f = () => kisFetch(u, {}, { transientRetries: 2 });',               1],
+    ];
+    for (const [name, src, expected] of cases) {
+      expect({ name, n: hitsIn('synthetic.ts', src).length }).toEqual({ name, n: expected });
     }
   });
 });

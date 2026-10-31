@@ -61,22 +61,29 @@ async function kisHeaders(trId: string, extra?: Record<string, string>): Promise
 
 // ── 시세 조회 ────────────────────────────────────────────────────────────────
 /**
- * KIS overseas getTicker — 단발 5xx/429/네트워크 hiccup으로 strategy-eval errors가
- * 5분마다 1~6건씩 누적되는 사례(2026-05-16 분석)를 완화하기 위해 timeout+1회 retry 적용.
- * 비교: getBalances 는 이미 retry 루프가 있으나 getTicker 는 단순 fetch였음.
+ * KIS overseas getTicker — 단발 5xx/429/네트워크 hiccup 으로 strategy-eval errors 가 5분마다
+ * 1~6건씩 누적되던 사례(2026-05-16 분석)를 완화하려고 타임아웃 + 재시도를 붙였던 경로다.
  *
- * 정책:
- *  - 타임아웃 5s. KIS 정상 응답은 <500ms.
- *  - retry는 단 1회. 5xx/429/AbortError/network error 만 재시도, 4xx(인증·심볼) 즉시 throw.
- *  - retry 백오프 300ms — strategy-eval cron 5분 주기 안에서 안전 마진 충분.
- *
- * 🔴 T-017 두 가지 변경:
+ * 🔴 T-017 두 가지:
  *  1. 타임아웃을 `AbortController` 직접 관리에서 `kisFetch({ timeoutMs })` 로 옮겼다.
- *     **스로틀 대기 시간이 타임아웃을 잡아먹지 않게** 하기 위함이다 — 타이머를 대기열에
- *     서기 전에 걸면 "5초 타임아웃"이 "대기+통신 합쳐 5초"가 돼, 스로틀이 만든 대기가
- *     그대로 새로운 실패 모드가 된다. `kisFetch` 는 토큰을 받은 **뒤에** 타이머를 건다.
- *  2. 레이트리밋(EGW00201/EGW00215)은 `res.status >= 500` 재시도 분기를 타지 않는다.
- *     `kisFetch` 가 이미 백오프 재시도를 소진했고, 여기서 또 때리면 증폭이 부활한다.
+ *     **스로틀 대기 시간이 타임아웃을 잡아먹지 않게** 하기 위함이다 — 타이머를 대기열에 서기 전에
+ *     걸면 "5초 타임아웃"이 "대기+통신 합쳐 5초"가 돼, 스로틀이 만든 대기가 그대로 새 실패 모드가
+ *     된다. `kisFetch` 는 토큰을 받은 **뒤에** 타이머를 건다(시도마다 새로).
+ *  2. 레이트리밋(EGW00201/EGW00215)은 재시도 분기를 타지 않는다 — `kisFetch` 가 이미 백오프를
+ *     소진했고, 여기서 또 때리면 증폭이 부활한다.
+ *
+ * 🔴 T-133 — **응답 기반 재시도를 게이트웨이로 넘겼다**(`transientRetries: 2`).
+ *  - 손으로 만든 루프를 남긴 채 옵션만 켜면 바깥 × 안쪽으로 호출이 곱해지므로, 응답 분기는 걷어냈다.
+ *  - 이로써 HTTP 500 뿐 아니라 **HTTP 200 업무실패(`rt_cd≠'0'`, 예: `OPSQ1002 SESSION FULL`)도
+ *    재시도 대상**이 된다. 예전에는 `res.ok === true` 라 루프를 비껴가 1회 실패로 끝났고, 호출부
+ *    `portfolio-total` 이 그 종목을 총액에서 제외했다(2026-10-31 하루 11건 — T-133 측정).
+ *  - **던진 예외(타임아웃·네트워크)의 재시도 1회는 남겨 둔다** — `kisFetch` 는 던진 예외를
+ *    재시도하지 않으므로 지우면 기능 후퇴다(실측: 오늘 KIS 1233건 중 `timeout` 3건).
+ *  - **호출 상한(레이트리밋까지 센 값, T-133 Reviewer L-2 정정)**: `kisFetch` 한 번이 최악 5회
+ *    (최초 1 + 일시 2 + 레이트리밋 2)이고 아래 예외 루프가 2회이므로 **최악 10회**다. 종전 최악은
+ *    2 × 3 = **6회**였다(처음 적었던 "6회(이전 2회)" 는 레이트리밋 예산을 빼고 센 값이라 틀렸다).
+ *    최악 벽시계는 **실측 9.0초**, 이론 상한 약 **34초**다("20초 안팎" 도 정정). 장중 틱 시간 영향은
+ *    여전히 측정하지 않았다(T-133 미확인 — QA·운영 관찰로 넘긴다).
  */
 export async function getTicker(symbol: string): Promise<Ticker> {
   const { excd, ticker } = parseOverseas(symbol);
@@ -84,36 +91,45 @@ export async function getTicker(symbol: string): Promise<Ticker> {
   const params = new URLSearchParams({ AUTH: '', EXCD: excd, SYMB: ticker });
   const url = `${BASE()}/uapi/overseas-price/v1/quotations/price?${params}`;
 
-  const MAX_ATTEMPTS = 2;
+  const MAX_THROW_ATTEMPTS = 2;   // 던진 예외(타임아웃·네트워크)만 여기서 재시도한다
   const TIMEOUT_MS = 5_000;
   let res: Response | undefined;
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= MAX_THROW_ATTEMPTS; attempt++) {
     try {
-      res = await kisFetch(url, { headers }, { timeoutMs: TIMEOUT_MS, label: 'overseas getTicker' });
+      res = await kisFetch(url, { headers }, {
+        timeoutMs: TIMEOUT_MS, label: 'overseas getTicker', transientRetries: 2,
+      });
+      break;
     } catch (e) {
-      lastErr = e;
-      if (attempt < MAX_ATTEMPTS) {
+      if (attempt < MAX_THROW_ATTEMPTS) {
         await new Promise(r => setTimeout(r, 300));
         continue;
       }
       throw new Error(`KIS overseas getTicker ${symbol}: ${e instanceof Error ? e.message : String(e)}`);
     }
-    // 5xx/429만 재시도, 그 외 4xx는 즉시 throw (인증·심볼 에러는 retry로 해결 불가)
-    if (res.ok) break;
+  }
+  // 타입 좁히기용 가드다 — 위 루프는 `break`(res 설정) 또는 `throw` 로만 끝나므로 실제로는
+  // 도달하지 않는다(T-133 Reviewer I-4). 삭제하면 `res` 가 `Response | undefined` 로 남는다.
+  if (!res) throw new Error(`KIS overseas getTicker ${symbol}: retries exhausted`);
+  if (!res.ok) {
     if (isKisRateLimited(res)) {
       throw new Error(`KIS overseas getTicker ${symbol}: ${res.status} (레이트리밋 — 백오프 재시도 소진)`);
     }
-    if ((res.status >= 500 || res.status === 429) && attempt < MAX_ATTEMPTS) {
-      await new Promise(r => setTimeout(r, 300));
-      continue;
-    }
     throw new Error(`KIS overseas getTicker ${symbol}: ${res.status}`);
   }
-  if (!res || !res.ok) {
-    throw new Error(`KIS overseas getTicker ${symbol}: retries exhausted ${lastErr ?? ''}`);
-  }
   const data = await res.json();
+  /**
+   * (T-133) HTTP 200 인데 업무 실패 — 위 `transientRetries` 를 **소진한 뒤**에만 여기 온다.
+   * 예전에는 `output` 이 없어 아래 `no output` 으로 던졌는데 본문 JSON 을 통째로 싣는 메시지라
+   * 로그에서 원인(`SESSION FULL` 인지 다른 업무 오류인지)을 가를 수 없었다.
+   */
+  // (T-133 QA #3) 숫자형 `rt_cd` 정규화 — 국내 쪽 같은 지점의 주석 참고.
+  if (data?.rt_cd != null && String(data.rt_cd) !== '0') {
+    throw new Error(
+      `KIS overseas getTicker ${symbol}: 200 업무실패 rt_cd=${data.rt_cd} msg_cd=${data.msg_cd ?? '-'} `
+      + `msg=${String(data.msg1 ?? '').trim().slice(0, 120)}`,
+    );
+  }
   const o = data.output;
   if (!o) throw new Error(`KIS overseas getTicker no output: ${JSON.stringify(data)}`);
   if (process.env.KIS_OVERSEAS_DEBUG === '1') {
