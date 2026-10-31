@@ -38,7 +38,7 @@ let refreshInFlight: Promise<string> | null = null;
  *   닫혔다. `kisFetch` 는 `finally` 에서 타이머를 지운 뒤
  *   `res.text()` 를 하므로, 헤더는 왔는데 본문이 멈추면 합류한 호출이 다시 길게 묶인다 —
  *   같은 기전이고 막지 않았다(운영 163,474건에 본문 단계 정지로 볼 호출 0건, 이 파일을 네 번째로
- *   고치는 위험이 그 확률보다 크다고 판단). 후속 후보 5 에 적어 둔다.
+ *   고치는 위험이 그 확률보다 크다고 판단). [[T-138-token-issue-single-flight]] 후속 후보 2 에 적어 둔다.
  *
  * 실측(운영 7일): `token-p` 129건의 최대 지연 204ms·1초 초과 0건, KIS 전체 163,474건 p99.9 = 1.2초,
  * 성공한 가장 느린 호출 4.0초. 5초를 넘은 3건은 모두 같은 순간의 연결 타임아웃(10,248ms)이었다 —
@@ -88,10 +88,56 @@ export async function getKisToken(): Promise<string> {
    * `invalidateKisToken()` 은 예전부터 `refreshInFlight` 에 합류했지만(아래), **이 경로만 빠져 있었다.**
    * QA 가 혼합 토큰 시나리오로 재현했다 — 죽은 토큰 두 개가 10ms 차로 실패하면 발급 2회·대기 1회.
    * 합류하면 1회가 된다. 실패하면 함께 실패한다(fail-closed, `invalidateKisToken` 과 같은 성질).
+   *
+   * ⚠ (T-138 감사 C-2 · QA F-4) **발급 횟수를 묶는 것은 이 줄이 아니라 아래 `issueOnce` 다.**
+   * 이 줄만 지우는 변이는 시험을 통과하고, QA 가 400회 무작위 재현에서 **발급 횟수·DELETE 횟수가
+   * 완전히 같다**는 것까지 확인했다. 즉 이 줄은 **지금 실질 효과가 없다**(처음 「DELETE 중복까지
+   * 피한다」고 적었는데 틀렸다 — `DELETE` 는 `invalidateKisToken` 안에만 있다). 남겨 두는 이유는
+   * 「진행 중인 삭제+발급 비행이 있으면 그 결과를 쓴다」는 **의도를 코드로 보이는 것**뿐이다.
    */
   if (refreshInFlight) return refreshInFlight;
 
-  return await issueAndStore(appKey, appSecret);
+  // (T-138) 그리고 발급 자체도 단일 비행이다 — 이 폴백끼리의 동시 호출이 갱신 시각 폭주의 원인이었다.
+  return await issueOnce(appKey, appSecret);
+}
+
+/**
+ * 🔴 발급 자체의 **단일 비행** (T-138).
+ *
+ * `issueAndStore` 를 부르는 경로가 둘인데 **한쪽만 합쳐져 있었다** — `invalidateKisToken()` 은
+ * `refreshInFlight` 로 묶지만, `getKisToken()` 의 캐시 미스·만료임박 **폴백은 그 플래그를 세우지
+ * 않는다.** 그래서 폴백끼리는 합류할 대상이 없었다.
+ *
+ * ## 그게 왜 사고로 나타났나 (실측)
+ *
+ * 토큰 수명이 24시간인데 만료 **1시간 전**에 갱신하므로 발급 간격이 약 23시간이다 — 갱신 시각이 매일
+ * 약 1시간 앞당겨진다(추세가 아니라 `24h − 1h` 주기다). 그 시각에 **진행 중인 조회 전부가 동시에**
+ * 캐시 미스를 보고 각자 발급으로 내려간다. 2026-10-30 KST 16:00:03~16:02:10 에 `token-p` 가
+ * **118건 호출돼 111건이 403**(`EGW00133` 앱키당 1분 1회) 거절당했다 — 분당 38·37·36건이 **정확히
+ * 60초 간격으로 세 번** 몰렸고(각자 `issueAndStore` 의 재시도 3회가 다 같이 기다렸다가 다시 몰려간
+ * 것이다) 성공은 7건뿐이라 **약 2분간 토큰이 없었다**. 정상일은 하루 1~5건이다.
+ *
+ * 지금까지 그 창이 **장 밖**이었던 것은 운이고, 23시간 주기는 11-02(월) 13시 전후 — **KRX 장중**으로
+ * 들어온다. 그때 토큰이 2분 없으면 주문·시세·잔고가 모두 실패한다.
+ *
+ * 그래서 **두 경로가 같은 비행을 공유한다.** 40건이 동시에 캐시 미스를 봐도 발급은 **1회**다
+ * (실측: 10-30 재현에서 HEAD 126요청·40실패 → 1요청·0실패).
+ *
+ * ⚠ **"한 번의 대기" 가 아니다**(QA F-1 정정 — 처음 그렇게 적었다). 비행이 `EGW00133` 을 받아 기다리는
+ * 동안 **늦게 도착한 호출**은 그 비행을 기다린 뒤 **자기 차례의 대기를 또 만날 수 있다.** 외부 발급이
+ * 두 번 겹치면 QA 실측 **최대 94.8초**, 이론 상한 **약 180초**다. 같은 조건에서 HEAD 는 코호트 38/40 이
+ * **실패**하므로 방향은 여전히 이득이지만, **늦게 온 주문은 HEAD 보다 오래 묶인다**(대기 중 주문은
+ * `pending` 으로 한도 예약에 합산되고, 송신은 대기 **뒤에** 일어나므로 고아 주문은 없다).
+ *
+ * ⚠ **한 프로세스 안**의 단일화다. 웹·크론처럼 다른 프로세스 사이의 동시 발급은 그대로 남는다 —
+ * 그건 DB 잠금이 필요하고 T-138 후속 후보 3 이다.
+ */
+let issueInFlight: Promise<string> | null = null;
+
+function issueOnce(appKey: string, appSecret: string): Promise<string> {
+  if (issueInFlight) return issueInFlight;
+  issueInFlight = issueAndStore(appKey, appSecret).finally(() => { issueInFlight = null; });
+  return issueInFlight;
 }
 
 async function issueAndStore(appKey: string, appSecret: string): Promise<string> {
@@ -174,7 +220,7 @@ export async function invalidateKisToken(): Promise<string> {
       getCredential('KIS_APP_SECRET'),
     ]);
     if (!appKey || !appSecret) throw new Error('KIS_APP_KEY / KIS_APP_SECRET not set');
-    return await issueAndStore(appKey, appSecret);
+    return await issueOnce(appKey, appSecret);   // (T-138) 발급은 두 경로가 같은 비행을 공유한다
   })().finally(() => { refreshInFlight = null; });
   return refreshInFlight;
 }

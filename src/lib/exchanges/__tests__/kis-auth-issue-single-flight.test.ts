@@ -76,16 +76,62 @@ test('🔴 재발급 진행 중에 getKisToken 이 들어오면 발급은 **1회
  * 않기 때문이다(그 플래그는 `invalidateKisToken()` 만 세운다). T-136 이 고친 것은 "재발급이 진행 중일
  * 때 합류한다" 까지이고, 발급 **자체**의 단일화는 후속 후보 5 다.
  *
- * 그래서 `test.failing` 으로 **원하는 동작을 적고 지금은 실패를 기대한다**(감사 4차 권고). 후속 5 를
- * 하면 이 시험이 "예상과 달리 통과했다" 로 깨지므로, 고쳐진 순간 자동으로 알려 준다 — 단언을
- * 현재 동작에 맞춰 두면(`toBeGreaterThan(1)`) 나쁜 동작을 "정상" 으로 못 박는 셈이 된다.
+ * **T-138 이 이 구멍을 닫았다** — `test.failing` 이던 아래 시험이 이제 정상으로 통과한다. T-136 이
+ * 공백을 시험으로 적어 두고 T-138 이 그것을 통과시킨 것이 이 두 task 의 연결점이다.
+ * (T-136 당시 기록: 단언을 현재 동작에 맞춰 두면 나쁜 동작을 "정상" 으로 못 박는 셈이므로
+ *  `test.failing` 으로 원하는 동작을 적어 뒀다.)
  */
-test.failing('getKisToken 끼리의 동시 호출도 발급 1회여야 한다 — 아직 아니다(후속 후보 5)', async () => {
+test('🔴 getKisToken 끼리의 동시 호출도 발급 1회다 (T-138 — T-136 의 test.failing 을 전환)', async () => {
   const first = getKisToken();
   await new Promise(r => setTimeout(r, 5));
   await Promise.all([first, getKisToken(), getKisToken(), getKisToken()]);
   expect(tokenPCalls).toBe(1);
 });
+
+/**
+ * 🔴 갱신 시각 폭주 재현 (T-138). 2026-10-30 KST 16:00 에 `token-p` 가 118건 호출돼 111건이 403 거절당한
+ * 그 모양이다 — 진행 중인 조회 전부가 같은 순간 캐시 미스를 보고 각자 발급으로 내려갔다.
+ */
+test('🔴 동시 40건이 캐시 미스를 봐도 발급은 1회다 (10-30 폭주 재현)', async () => {
+  const tokens = await Promise.all(Array.from({ length: 40 }, () => getKisToken()));
+  expect(tokenPCalls).toBe(1);
+  expect(new Set(tokens).size).toBe(1);        // 40건이 같은 토큰을 받는다
+});
+
+/**
+ * 🔴 **두 경로가 같은 비행을 공유한다** 의 **나머지 절반** (T-138 감사 C-1).
+ *
+ * 위 시험들은 `getKisToken()` 끼리의 공유만 증명한다. `invalidateKisToken()` 쪽 전환을 되돌리는 변이가
+ * 기존 7건을 전부 통과해 살아남았다(감사 변이 M1) — 코드는 맞는데 **증명이 없었다.**
+ */
+test('🔴 getKisToken 이 띄운 비행에 invalidateKisToken 도 합류한다 (발급 1회)', async () => {
+  const first = getKisToken();                 // 비행 시작(발급 왕복 25ms)
+  await new Promise(r => setTimeout(r, 5));
+  const second = invalidateKisToken();         // 진행 중인 비행에 올라타야 한다
+  const [a, b] = await Promise.all([first, second]);
+  expect(tokenPCalls).toBe(1);
+  expect(a).toBe(b);
+});
+
+test('🔴 발급이 끝난 뒤의 호출은 새 비행을 만든다 (비행이 영구히 남지 않는다)', async () => {
+  await getKisToken();
+  expect(tokenPCalls).toBe(1);
+  await getKisToken();
+  expect(tokenPCalls).toBe(2);                 // 캐시가 항상 "행 없음" 이므로 다시 발급한다
+});
+
+test('🔴 발급이 실패해도 비행이 남지 않는다 — 다음 호출이 다시 시도한다', async () => {
+  const { kisFetch } = jest.requireMock('../kis-http') as { kisFetch: jest.Mock };
+  kisFetch.mockImplementationOnce(async () => {
+    tokenPCalls += 1;
+    return new Response('{"msg_cd":"OTHER"}', { status: 500 });
+  });
+  const settled = await Promise.allSettled([getKisToken(), getKisToken()]);
+  expect(settled.map(r => r.status)).toEqual(['rejected', 'rejected']);   // 같은 비행을 공유해 함께 실패
+  expect(tokenPCalls).toBe(1);
+  okIssue();
+  await expect(getKisToken()).resolves.toMatch(/^tok-/);                  // 비행이 비워져 복구된다
+}, 20_000);
 
 /**
  * 🔴 합류한 발급이 **실패할 때** 함께 실패하는가 (fail-closed).
