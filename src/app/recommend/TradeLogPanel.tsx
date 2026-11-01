@@ -15,7 +15,7 @@ import type { Market, TradeDTO } from '@/lib/ops/metrics/types';
 import type { OrderStatus } from '@/types/order';
 import { EvalFunnelCard, type FunnelMeta } from '@/components/dashboard/EvalFunnelCard';
 import { MyDecisionSection } from '@/components/dashboard/MyDecisionSection';
-import { CHIP, fmtEtSession, fmtKstTime, fmtSessionDate } from '@/components/ops/format';
+import { CHIP, fmtKstTime, fmtSessionDate } from '@/components/ops/format';
 import { UNKNOWN_REASON } from '@/components/ops/reason-copy';
 import { ActivityList, CheckRow, EmptyNote, Rows, RetryButton, Section, SectionBody, SegmentControl, StatusChip, ops } from '@/components/ops/ui';
 import { InPageLink, InPageRow } from './InPageRow';
@@ -127,7 +127,7 @@ export function TradeLogPanel(p: {
   const segItems = meta
     ? ([
         { id: 'domestic', text: `국내 · ${fmtSessionDate(meta.sessions.domestic.session.sessionDate)}${(meta.sessions.domestic.anomalies ?? 0) > 0 ? ` · 이상 ${meta.sessions.domestic.anomalies}` : ''}` },
-        { id: 'overseas', text: `해외 · ${fmtEtSession(meta.sessions.overseas.session.sessionDate)}${(meta.sessions.overseas.anomalies ?? 0) > 0 ? ` · 이상 ${meta.sessions.overseas.anomalies}` : ''}` },
+        { id: 'overseas', text: `해외 · ${fmtSessionDate(meta.sessions.overseas.session.sessionDate)}${(meta.sessions.overseas.anomalies ?? 0) > 0 ? ` · 이상 ${meta.sessions.overseas.anomalies}` : ''}` },
       ] as const)
     : ([{ id: 'domestic', text: '국내' }, { id: 'overseas', text: '해외' }] as const);
 
