@@ -39,6 +39,24 @@ describe('crossCheck', () => {
   it('판독기 자체 실패 → read_error', () => {
     expect(crossCheck(null, { value: 'true' })).toBe('read_error');
   });
+  // T-142 — 비 JSON 원문 값. 예전에는 `JSON.parse` 가 던져 그 자체를 mismatch 로 봤는데(판독기가
+  // env 폴백으로 흘렸으니 실제로 어긋나 있었다), 이제 두 쪽이 같은 헬퍼로 날 값을 함께 해석한다.
+  it('T-142 비 JSON 원문 값도 판독기와 같게 해석한다', () => {
+    expect(crossCheck(true, { value: 'yes' })).toBe(true);
+    expect(crossCheck(false, { value: 'no' })).toBe(false);
+    expect(crossCheck(false, { value: 'yes' })).toBe('mismatch');   // 판독기가 틀린 쪽이면 여전히 잡는다
+  });
+  // T-142 감사 R-3 — 생존 변이 2종(decode 를 지우기 / 키 없음 행을 항상 활성으로)을 사살한다.
+  // 정상 JSON falsy·null·빈칸은 비 JSON 처리와 섞이지 않아야 한다.
+  it('T-142 정상 JSON falsy·null·빈칸 (감사 R-3)', () => {
+    expect(crossCheck(false, { value: '"off"' })).toBe(false);
+    expect(crossCheck(false, { value: 'null' })).toBe(false);   // unset → 판독기 값 그대로
+    expect(crossCheck(true, { value: '' })).toBe(true);         // 빈칸도 unset → 판독기 값 그대로
+  });
+  it('T-142 해석 못 하는 비 JSON 은 양쪽이 활성으로 수렴한다', () => {
+    expect(crossCheck(true, { value: '뭔가이상한값' })).toBe(true);
+    expect(crossCheck(false, { value: '뭔가이상한값' })).toBe('mismatch');
+  });
 });
 
 describe('readSafetyState', () => {

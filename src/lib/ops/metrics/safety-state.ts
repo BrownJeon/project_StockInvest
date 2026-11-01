@@ -22,7 +22,7 @@
 import { ping } from '@/lib/db';
 import { isDryRun } from '@/lib/safety/dry-run';
 import { isKillSwitchActive } from '@/lib/safety/kill-switch';
-import { parseBoolFlag } from '@/lib/safety/flags';
+import { decodeFlagValue, parseBoolFlag } from '@/lib/safety/flags';
 import { liveTradingFromDryRun } from '@/lib/safety/live-trading';
 import { VALIDATED_STATUSES } from '@/lib/safety/validation-gate';
 import { readExitEngineSwitch } from '@/lib/strategy/exit-switch';
@@ -79,16 +79,20 @@ async function deadline<T>(p: Promise<T>): Promise<T | null> {
 }
 
 /**
- * 판독기 결과와 같은 요청의 DB 행 대조 — 순수. 판독기(dry-run.ts·kill-switch.ts)와 같은 해석(`parseBoolFlag(JSON.parse(value))`):
+ * 판독기 결과와 같은 요청의 DB 행 대조 — 순수. 판독기(dry-run.ts·kill-switch.ts)와 같은 해석
+ * (`parseBoolFlag(decodeFlagValue(value))` — T-142 로 둘 다 같은 헬퍼를 쓴다):
  * 해석됨 → 그 값, 해석 불가 → true(두 판독기 모두 안전 쪽 활성), 키 없음 → 판독기 값(env 해석) 그대로. 다르면 'mismatch'.
  * 판독기 자체가 상한 초과·실패(null)면 'read_error'.
+ *
+ * T-142 전에는 여기서 `JSON.parse` 가 던지면 그 자체를 'mismatch' 로 봤다 — 판독기가 비 JSON 값을
+ * **env 폴백으로 흘려버렸으니** 실제로 어긋나 있었기 때문이다. 이제 두 쪽이 같은 헬퍼로 날 값(`yes` 등)을
+ * 함께 해석하므로 비 JSON 이라는 사실만으로는 어긋나지 않는다. 그래도 해석 못 하는 값이면 `unparsable`
+ * 로 양쪽이 **활성**으로 수렴하고, 판독기가 critical 알림·console.error 로 따로 알린다.
  */
 export function crossCheck(reader: boolean | null, row: { value: unknown } | undefined): boolean | 'mismatch' | 'read_error' {
   if (typeof reader !== 'boolean') return 'read_error';
   if (!row) return reader;
-  let raw: unknown;
-  try { raw = typeof row.value === 'string' ? JSON.parse(row.value) : row.value; } catch { return 'mismatch'; }
-  const f = parseBoolFlag(raw);
+  const f = parseBoolFlag(decodeFlagValue(row.value));
   const expected = f.state === 'parsed' ? f.value : f.state === 'unparsable' ? true : reader;
   return expected === reader ? reader : 'mismatch';
 }

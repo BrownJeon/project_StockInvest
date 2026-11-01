@@ -62,6 +62,32 @@ export function parseBoolFlag(val: unknown): BoolFlagResult {
   return { state: 'unparsable', raw };
 }
 
+// ─── system_config 한 칸 되읽기 ──────────────────────────────────────────────
+/**
+ * `system_config.value` 한 칸을 플래그 값으로 되읽는다 (T-142).
+ *
+ * **이 함수는 방어층이다 — 운영 표는 비 JSON 저장을 이미 막는다.** `system_config.value` 에는
+ * `CHECK (json_valid(value))` 가 걸려 있어(운영 스키마 실측) 평범한 INSERT·UPDATE·REPLACE 는 errno 4025
+ * 로 거부된다. 비 JSON 값이 실제로 들어오는 경로는 **제약이 없는 환경**이다 — 복원본·마이그레이션 중
+ * 테이블·`SET SESSION check_constraint_checks=0` 세션·다른 스토리지.
+ *
+ * 그런 환경에서 `yes` 같은 날 값을 만나면, 호출부가 `JSON.parse` 를 DB 조회와 **같은 `try` 안**에서 하고
+ * 있었기 때문에 파싱 예외가 「DB 를 못 읽었다」용 `catch` 에 걸려 **DB 값이 아예 없었던 것처럼** env
+ * 폴백으로 내려갔다. env 가 미설정이면 킬스위치는 `false`(제동 없음)다 — 위 3분기 표의 `unparsable`
+ * 계약과 정반대다(T-141 QA F-2 의 B·G 경로. 그 재현은 **모의 풀**이고, 운영 도달에는 위 제약 우회가 필요하다).
+ *
+ * 그래서 JSON 이 아니면 **원문 문자열을 그대로** 돌려준다. `parseBoolFlag` 가 `yes`·`ON` 을 알아보므로
+ * 대개 `parsed` 로 제대로 해석되고, 그래도 모르는 값이면 `unparsable` 로 분류돼 호출부가 안전 방향으로
+ * 처리한다(킬스위치·DRY_RUN 모두 활성).
+ *
+ * **DB 조회 자체의 실패는 이 함수가 건드리지 않는다** — 그쪽 거동(env 폴백)은 그대로다.
+ * 선례: `order-sync.ts` 가 `broker_payload` 를 같은 방식으로 되읽는다(비 JSON 이면 원문 그대로).
+ */
+export function decodeFlagValue(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw;
+  try { return JSON.parse(raw) as unknown; } catch { return raw; }
+}
+
 // ─── 해석 불가 보고 중복 억제 ────────────────────────────────────────────────
 // isDryRun/isKillSwitchActive 는 주문마다·/api/health 호출마다 실행되므로
 // 같은 값에 대해 매번 로그·알림을 내면 스팸이 된다. (key, raw) 조합당 프로세스 1회로 제한.
