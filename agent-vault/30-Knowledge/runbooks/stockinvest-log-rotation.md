@@ -72,3 +72,4 @@ cp ~/.node-local/stockinvest/logrotate/state /tmp/lr.state && /usr/sbin/logrotat
 ## 이력
 
 - 2026-10-31 설정(사용자 「권고대로(주 1회+20MB)」). 샌드박스 시험 2회 → 실제 설정 드라이런 → 상태 초기화 → crontab 한 줄. **첫 회전 확인은 11-01(일) 04:30 예약 점검 또는 사람이 위 명령으로.**
+- 2026-11-01 04:29 KST 첫 회전 확인(읽기 전용): 04:15 에 4개 파일 모두 회전 — 상태 파일 4건 `2026-11-1-4:15:1` 갱신, `*.log-20261101` 4개 생성(pm2-out 8.33MB · pm2-err 3.82MB · cron-out 9.52MB · cron-err 0.22MB, 압축 안 됨 = 설정대로), 살아 있는 파일은 비워진 뒤 정상 기록 중(cron-out 2925→3104B/30초 증가, pm2-out 353B 는 NUL 0 개라 O_APPEND 확인, pm2-err·cron-err 는 0B = 새 오류 없음), `run.log` 0B(오류 없음), pm2 2개 online·restarts 0·health green(dryRun true·killSwitch false), 안전 키 6개 불변, crontab 활성 4줄 불변. **이상 없음.** 다음 회전은 11-08(일) 04:15 또는 20MB 초과일(그때 `-20261101` 이 `.gz` 로 압축).
