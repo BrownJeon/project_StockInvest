@@ -255,6 +255,7 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
 | 현재 상태 | ✅ **blue/green 컷오버 완료 (2026-09-19, 릴리스 `20260919-225120-31f4ea26`)**. push 하면 webhook 이 release.sh 로 blue/green 배포한다 — NFS 트리에 빌드해도 운영에 반영되지 않는다 |
 
 - 배포는 **`origin` 의 ref 기준**이다 — push 되지 않은 커밋은 나가지 않는다.
+- **push 전에 `bash scripts/git-refs-clean.sh --check`** — `.git/refs` 안에 Synology 확장속성 사이드카(`@eaDir/<파일>@SynoEAStream`)가 끼면 fetch·push 가 `fatal: bad object` 로 멈춘다. `git status`·`git log`·`git for-each-ref` 는 **경고만 내고 통과**하므로 평시 점검으로는 드러나지 않는다(ISS-0013 — 2026-11-01 공유 저장소 12곳 중 11곳 실측, 정리 4시간 뒤 재발). 격리 방법과 근본 대응은 [`docs/deploy-order.md`](docs/deploy-order.md) 2절 ④.
 - `--with-migrate`(DB 마이그레이션)는 **사용자 승인 사항**이다. 개발과 운영이 같은 NAS MariaDB 를 보고, 롤백은 코드만 되돌린다.
 - 배포 실패로 수정했다면 곧바로 재배포하지 않고 **Reviewer 부터 전체 재순환**한다.
 - 앱(APK) 공개·`app_release` 기록은 웹 배포와 별개다 — [`docs/deploy-order.md`](docs/deploy-order.md) 「앱(APK) 배포」 절(사용자 승인 게이트).

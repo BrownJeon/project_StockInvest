@@ -117,11 +117,50 @@ git branch --show-current         # 기대: main
 
 # ③ 커밋되지 않은 변경
 git status --short | head
+
+# ④ ref 저장소에 확장속성 사이드카가 끼었는지 (ISS-0013) — 끼어 있으면 push 가 아예 안 나간다
+bash scripts/git-refs-clean.sh --check
 ```
 
 - `ahead` 가 0 이 아니면 **푸시하거나**, 올리지 않을 커밋이면 사용자에게 확인받는다.
   `deploy.sh` 가 경고하지만 `--yes` 로 넘기면 그 경고도 지나간다.
 - QA(`verdict=PASS`, 결함 0건) 보고가 없으면 기동하지 않는다.
+- `git-refs-clean.sh --check` 가 **exit 1** 이면 그 상태로는 push 가 나가지 않는다. 아래를 읽고 격리한다.
+
+
+### 🔴 ④ 상세 — `.git/refs` 안 확장속성 사이드카 (ISS-0013, 2026-11-01)
+
+맥에서 도는 도구(실측 사례: Codex CLI 의 turn-diff 체크포인트, `git push` 로 만든 브랜치)가 SMB
+공유 체크아웃에 git ref 파일을 쓰면, macOS 가 그 파일에 `com.apple.provenance` 확장속성을 붙이고
+Synology 가 그것을 **`.git/refs` 안** `@eaDir/<파일명>@SynoEAStream` 파일로 저장한다. git 은 그
+파일을 ref 로 읽어 가리키는 객체가 없다고 판단하고 멈춘다:
+
+```
+fatal: bad object refs/heads/@eaDir/codex@SynoEAStream
+error: ... did not send all necessary objects
+```
+
+**이 프로젝트는 push 가 곧 배포다. 그래서 이 고장은 "fetch 가 안 된다"로 끝나지 않고 배포하려는
+순간에 막는다.**
+
+🔴 **평시 명령으로는 보이지 않는다.** `git status`·`git log`·`git for-each-ref` 는 경고만 내고
+통과한다(`for-each-ref` 는 `warning: ignoring broken ref …` 를 내고 **exit 0**). fetch·push 에서만
+터진다. 그래서 배포 전 확인에 명시적으로 넣는다.
+
+```bash
+bash scripts/git-refs-clean.sh --check    # 읽기만 한다. 있으면 exit 1 + 목록
+bash scripts/git-refs-clean.sh            # 격리. 지우지 않고 저장소 밖으로 옮긴다
+```
+
+격리본은 `~/.local/share/git-eadir-quarantine/<시각>/<프로젝트>/` 에 상대경로를 보존해 남는다 —
+**되돌릴 수 있다.** 이름이 정확히 `@eaDir` 인 디렉터리만 옮기고, 옮기기 전후 실제 ref 수가
+다르면 스크립트가 비정상 종료한다. worktree 안에서도 공용 git 디렉터리를 찾는다. 맥 기본
+bash 3.2 에서도 돈다(절차서의 이 절을 맥에서 실행하므로).
+
+⚠ **이것은 완화이고 원인은 남아 있다.** 맥에서 그 도구를 다시 돌리면 또 생긴다(2026-11-01 에
+약 4시간 만에 재발). 2026-11-01 횡단 실측으로 **공유 저장소 12곳 중 11곳**에서 같은 사이드카를
+확인했고 표본 2곳에서 `git fetch` exit=1 을 재현했다. 근본 대응 선택지(맥에서 공유 저장소에
+Codex 미실행 / DSM 확장속성 제외)는 워크스페이스 `issues/` 의 **ISS-0013** 에 있다.
 
 
 ### 🔴 `npm run build` 를 `deploy.yml` 에 그대로 쓰면 안 되는 이유
