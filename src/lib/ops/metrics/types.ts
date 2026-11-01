@@ -50,7 +50,7 @@ export interface SafetyStateDTO {
 // ── 확인 필요 (홈) ─────────────────────────────────────────────────────────
 
 export type CheckKind = 'safety_unknown' | 'kill_switch_on' | 'exit_live_orders' | 'buy_blocked' | 'awaiting_approval' | 'order_rejected'
-  | 'order_blocked' | 'hard_stop_off_hit' | 'virtual_exit' | 'data_anomaly' | 'analysis_unknown';
+  | 'order_blocked' | 'hard_stop_off_hit' | 'virtual_exit' | 'universe_change_proposed' | 'data_anomaly' | 'analysis_unknown';
 /**
  * 확인 필요 1줄. 문구는 화면(`check-copy.ts`)이 kind 로 정한다 — params 는 그 문구의 빈칸 값.
  * kind 별 params (값이 없으면 null):
@@ -63,6 +63,8 @@ export type CheckKind = 'safety_unknown' | 'kill_switch_on' | 'exit_live_orders'
  *  - order_blocked       : symbol, side, reason(blocked_by 분류 코드 — 한도·관문 등, 모든거래차단 제외), market — 오늘 안전장치에 막힌 주문
  *  - hard_stop_off_hit   : symbols(종목 수), days(연속 세션일 수), daysCapped(1 = 30일 이상)
  *  - virtual_exit        : at(ISO), exitKind(내부 이름 — eod_loss_cut 등, 화면이 표시 이름으로), notifyAutoSubmit(1|0|null)
+ *  - universe_change_proposed : first(첫 제안 요약 — 서버가 완성한 문자열, 예 'NAS:AAAA 상장폐지 예정'), more(총건수 − 1)
+ *                          — T-143. 조회 실패는 이 줄을 **빼는 것**이고 섹션을 오류로 만들지 않는다(가이드 §3.4)
  *  - data_anomaly        : source(DataSourceId), label, state(MetricState), streak(뉴스 0건 연속 일수|null), more(같은 kind 가 잘린 수 — 마지막 줄에만)
  *  - analysis_unknown    : market, slotAt(ISO — 마지막 예정 장마감 분석 슬롯)
  */

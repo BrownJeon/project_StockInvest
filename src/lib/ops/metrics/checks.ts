@@ -29,6 +29,13 @@ export interface CheckInput {
   exitFillsToday: number | null;
   /** 데이터 이상 — 모든 단계에서 계산한다(실거래·혼합 단계에서도 「데이터 이상 0」이 평가된 사실이어야 한다) */
   anomalies: ObserveSet['anomalies'] | null;
+  /**
+   * T-143 해외 분석 대상 변경 제안 — 처리하지 않은 수와 첫 줄.
+   * 🔴 **fail-closed 집합이 아니다**: `null`(조회 실패·마이그레이션 전)이면 **그 줄을 그리지 않고 끝낸다** —
+   * 호출자(home.ts)는 이 값 때문에 섹션을 오류로 만들지 않는다(가장 덜 급한 값 하나가 「모든거래차단 ON」을 가리지 않게).
+   * 「확인이 돌지 않은 사실」은 변경 확인 잡의 `job_run_log` → 데이터 이상 줄이 말한다(가이드 §3.4).
+   */
+  universeProposals: { open: number; first: string | null } | null;
   /** 시장별 「마지막 예정 장마감 분석 슬롯에 기록 없음」 — 그 슬롯 ISO */
   slotUnrecorded: ByMarket<string | null>;
 }
@@ -104,6 +111,16 @@ export function buildChecks(x: CheckInput): CheckItem[] {
       kind: 'virtual_exit', severity: 'i', count: prop.virtual,
       params: { at: prop.firstAt, exitKind: prop.firstKind, notifyAutoSubmit: x.safety.notifyAutoSubmit == null ? null : x.safety.notifyAutoSubmit ? 1 : 0 },
       href: '/recommend?tab=log',
+    });
+  }
+  // 7b. (T-143) 해외 분석 대상 변경 제안 — 돈이 즉시 움직이지 않지만 분석 대상이 틀어진다(order_blocked·data_anomaly 와 같은 w 등급).
+  //      `null`(못 읽음)은 줄을 **빼는 것**이지 0 건이 아니다 — 못 읽은 사실은 변경 확인 잡의 데이터 이상 줄이 말한다.
+  const universe = x.universeProposals;
+  if (universe && universe.open >= 1) {
+    out.push({
+      kind: 'universe_change_proposed', severity: 'w', count: universe.open, market: 'overseas',
+      params: { first: universe.first, more: universe.open - 1 },
+      href: '/settings/overseas-universe?tab=proposals',
     });
   }
   // 8. 데이터 이상 — 1건마다 1줄, 최대 3줄. 넘치면 마지막 줄 params.more = 잘린 수

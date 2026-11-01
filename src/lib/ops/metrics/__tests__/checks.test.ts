@@ -32,7 +32,8 @@ function input(over: Partial<CheckInput> = {}): CheckInput {
     approval: { approval: { domestic: 0, overseas: 0 }, earliestExpiry: null },
     rejected: { count: 0, latest: null }, blocked: { count: 0, latest: null }, exit: exit(), exitFillsToday: null,
     anomalies: metric('zero', { total: 0, sourcesChecked: 7, items: [], analysisFailureKnown: true }, 'x'),
-    slotUnrecorded: { domestic: null, overseas: null }, ...over,
+    // T-143 — 기본은 null(조회 실패·마이그레이션 전) → 그 줄을 그리지 않는다. 0 건과 구분한다
+    slotUnrecorded: { domestic: null, overseas: null }, universeProposals: null, ...over,
   };
 }
 

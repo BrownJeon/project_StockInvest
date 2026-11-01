@@ -19,6 +19,7 @@ import { homePostmortem, readPostmortemSample } from './postmortem-sample';
 import { count, createReader, errorCodeOf, section, type OpsReader } from './read-only';
 import { readSafetyState, toSafetyDTO, type SafetyStateExtra } from './safety-state';
 import { currentSessionDay, kstIso, kstSql, loadClosedDays, type ClosedDays } from './sessions';
+import { readUniverseProposalBrief } from './universe-read';
 import { countApproval } from './signal-counts';
 import { metricSetFor } from './stage';
 import type { HomeDTO, Market, ObserveSet, SafetyStateDTO, Section } from './types';
@@ -90,7 +91,7 @@ export async function buildHome(nowMs: number = Date.now(), deps: HomeDeps = DEF
   const r = deps.reader(nowMs);
   const closed = await loadClosedDays(r);
 
-  const [approval, orderIssues, analysis, exit, activity, anomalyParts, postmortem, live] = await Promise.all([
+  const [approval, orderIssues, analysis, exit, activity, anomalyParts, postmortem, live, universeProposals] = await Promise.all([
     section('approval', () => countApproval(r)),
     section('orders', () => readOrderIssuesToday(r)),
     section<AnalysisRunsResult>('analysis', () => readAnalysisRuns(r, closed)),
@@ -99,6 +100,10 @@ export async function buildHome(nowMs: number = Date.now(), deps: HomeDeps = DEF
     section('anomalies', () => readAnomalyParts(r, closed)),
     set === 'observe' ? readPostmortemMetric(r, closed) : Promise.resolve(null),
     set === 'live' ? section('live', () => readLiveSet(r, stage)) : Promise.resolve(null),
+    // T-143 — 해외 분석 대상 변경 제안. **`section()` 으로 감싸지 않는다**: 이 값은 「확인 필요」의 fail-closed 집합
+    // 밖이고(가이드 §3.4) 스스로 실패를 null 로 흡수한다. 섹션 오류 목록에 넣으면 가장 덜 급한 값 하나가
+    // 「모든거래차단 ON」 줄까지 가린다.
+    readUniverseProposalBrief(r, kstSql(nowMs)),
   ]);
 
   const counts: HomeDTO['counts'] = approval.state === 'ok' && orderIssues.state === 'ok'
@@ -132,6 +137,7 @@ export async function buildHome(nowMs: number = Date.now(), deps: HomeDeps = DEF
       stage, safety, killSwitchSince: safety.killSwitchSince, approval: approval.data,
       rejected: orderIssues.data.rejected, blocked: orderIssues.data.blocked, exit: exit.data,
       exitFillsToday, anomalies: anomalies.data, slotUnrecorded: analysis.data.slotUnrecorded,
+      universeProposals,
     };
     checks = { state: 'ok', data: buildChecks(input) };
     checkCoverageV = checkCoverage(input);

@@ -576,6 +576,45 @@ check_hook_sync || true
 #   새로 걸리는 추적 파일(base a16bc0c): 0개 — 이 폴더는 T-116 이 처음 만든다. 옛 목록이 걸던 파일은 전부 그대로.
 #   CLAUDE.md 의 대분류 설명은 바꾸지 않는다(목록 정본은 이 배열).
 #   넣지 않은 것: scripts/migrations/T-116-ci-raw-item.sql(이미 ^scripts/migrations/ 로 감시 중)·docs/design/(문서).
+#
+# T-143 추가 (2026-11-01, Q5 — 사용자 지시 "권고대로 감시목록에 넣어주고 다음 작업 진행해줘", task 이력서 T-143 「Leader」):
+#   해외 분석 대상 심볼 **집합을 실제로 만드는 함수**가 훅 밖이었다. 감시 중인 ^src/lib/strategy/ 가
+#   정적 목록(universe-overseas-static.ts)을 덮지만, 그 목록에 보유·즐겨찾기를 **합쳐 최종 대상을 확정하는 코드**는
+#   src/lib/data/ 에 있어 독립감사 없이 바뀔 수 있었다. T-143 이 이 함수의 원천을 교체하므로 함께 넣는다.
+#   + src/lib/data/us-data-db.ts → (base 2c2308e 의 소스를 읽어 적었다. 줄 번호는 그 base 기준, 전체 59행)
+#                               ① loadUsTargetSymbols(db) (41행) — 해외 수집·분석 대상 = `position_state`(market='overseas')
+#                               ∪ `stock_favorites` ∪ getStaticOverseasUniverse() 합집합을 isOverseasSymbol 로 걸러 정렬해 돌려준다.
+#                               각 SELECT 실패는 출처 이름만 errors 에 남기고 **나머지로 계속**한다(부분 실패가 조용히 대상을 줄인다).
+#                               부르는 곳: post-market-overseas.ts:526(해외 장마감 분석 — 이 집합이 그날 분석·시그널 대상이 된다)·
+#                               kis-fundamentals-snapshot.ts:72·us-edgar/sync-job.ts:145.
+#                               ⚠ 여기서 `stock_favorites` 가 들어온다 — 즐겨찾기에 추가하면 정적 목록에 없는 해외 종목도
+#                               분석 대상이 된다. (정정: 2026-11-01 T-143 Reviewer 지적 — 이 함수가 **유일한** 경로는
+#                               아니다. `getAlwaysIncludeSymbols('overseas')`(src/lib/strategy/universe.ts:343)도
+#                               `stock_favorites JOIN stock_meta` 로 해외 즐겨찾기를 편입하고 engine.ts:429 가 그것을 쓴다.
+#                               다만 그쪽은 `^src/lib/strategy/` 로 이미 감시 중이고, 이 함수를 넣음으로써 **두 경로가
+#                               모두** 감사 대상이 됐다 — 편입 근거는 그대로 유효하다.)
+#                               ② findMissingTables()·isNoSuchTableError() (21·32행) — T-059 테이블이 없을 때 **크래시 대신 건너뛰는**
+#                               fail-open 판정. 느슨해지면 없는 테이블을 있는 것으로 보고 빈 결과를 정상으로 단정한다.
+#                               ③ EDGAR_TABLES·SNAPSHOT_TABLES (17·18행) — ②가 확인하는 테이블 이름 목록.
+#   정확 일치 1줄로 넣는다(^src/lib/data/ 디렉토리 항목은 쓰지 않는다 — 아래 「넣지 않은 것」이 함께 걸린다).
+#   새로 걸리는 추적 파일(base 2c2308e): 정확히 1개(이 파일). 옛 목록이 걸던 파일은 전부 그대로.
+#   회귀망 (2026-11-01 T-143 Reviewer 가 내 최초 서술의 오류를 잡아 정정했다 — 처음에 "세 호출자가 모두 mock 하므로
+#   회귀망이 없다"고 적었으나 **틀렸다**):
+#     - 직접 시험 파일(`__tests__/us-data-db.test.ts`)은 **없다.**
+#     - 그러나 **간접 회귀망이 있다** — `src/lib/data/__tests__/kis-fundamentals-snapshot.test.ts`(24·25행)과
+#       `src/lib/data/us-edgar/__tests__/sync-job.test.ts`(37·38행)은 `us-data-db` 를 **mock 하지 않고**, 가짜 Queryable 로
+#       이 함수가 내는 SQL(`SELECT symbol FROM position_state`·`SELECT symbol FROM stock_favorites`)에 응답해
+#       **실제 loadUsTargetSymbols 를 통과시킨다.** 합집합·필터·정렬이 깨지면 그 두 시험이 깨진다.
+#     - 반면 `src/lib/strategy/__tests__/post-market-overseas.test.ts:37`·
+#       `src/lib/strategy/records/__tests__/judgment-engine-wiring.test.ts:45` 는 이 모듈을 대역으로 바꾼다.
+#     ⚠ 다음 후보: 위 **간접 회귀망 2개는 이 목록 밖이다**(`src/lib/data/__tests__/`·`src/lib/data/us-edgar/__tests__/`).
+#       즉 구현은 감시되지만 그 구현을 지키는 시험은 무검토로 느슨해질 수 있다 — 아래 "넣지 않은 것"의 보류분과 같은 묶음이다.
+#   넣지 않은 것 — 다음 후보이고 이번 범위가 아니다:
+#     - src/lib/data/kis-fundamentals-snapshot.ts·src/lib/data/us-edgar/   둘 다 ①을 부르지만 하는 일은 **자료 수집**이고
+#                               주문·대상 확정 판단이 없다. 다만 감시 중인 라우트(src/app/api/cron/kis-fundamentals-snapshot·
+#                               edgar-sync)가 부르는 구현이라 T-116 이 corp-intel 을 넣은 ③과 같은 논리가 적용된다 —
+#                               넓히는 것은 별도 사용자 결정 사항이라 여기서 하지 않는다.
+#     - src/lib/data/__tests__/kis-fundamentals-snapshot.test.ts·sql-upsert-sim.ts   위 보류분의 시험·대역.
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
@@ -637,6 +676,7 @@ SAFETY_PATHS=(
   '^src/lib/profit-engine/__tests__/backtest-'
   '^src/lib/profit-engine/__tests__/isolation\.test\.ts$'
   '^src/lib/corp-intel/'
+  '^src/lib/data/us-data-db\.ts$'
   '^src/app/api/orders/'
   '^src/app/api/safety/'
   '^src/app/api/cron/'

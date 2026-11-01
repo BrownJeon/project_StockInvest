@@ -95,8 +95,8 @@ export async function GET() {
       } catch { /* token 발급 실패 시 메타 보강 skip */ }
     }
 
-    // 해외 정적 universe도 함께 노출 (이름 없으면 티커로)
-    const overseasCodes = getStaticOverseasUniverse();
+    // 해외 분석 대상 목록도 함께 노출 (이름 없으면 티커로). T-143 — DB > env > 코드 하드코딩
+    const overseasCodes = await getStaticOverseasUniverse();
     for (const sym of overseasCodes) {
       if (!meta[sym]) {
         const idx = sym.indexOf(':');

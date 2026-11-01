@@ -9,6 +9,7 @@ import { ExchangeAccountSection } from './ExchangeAccountSection';
 import { NotifyChannelSection } from './NotifyChannelSection';
 import { RiskPolicySummaryRow } from './RiskPolicySummaryRow';
 import { CashLedgerSummaryRow } from './CashLedgerSummaryRow';
+import { OverseasUniverseSummaryRow } from './OverseasUniverseSummaryRow';
 import { AppSection } from './AppSection';
 import { EnforcedStrip } from '@/components/risk/EnforcedStrip';
 import { liveTradingFromDryRun, dryRunFromLiveTrading, LIVE_TRADING_LABEL } from '@/lib/safety/live-trading';
@@ -860,14 +861,24 @@ export function SettingsPage() {
       <SectionHeader title="전략 설정" />
       <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
 
+        {/* T-143 — 해외 분석 대상 요약 행(자체 조회, 저장 바와 섞이지 않는다). 데모 v1 §0 대로 「동적 종목 선별」 바로 위 */}
+        <OverseasUniverseSummaryRow />
+
         {/* Universe toggle */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
             <div style={{ fontSize: 14 }}>동적 종목 선별 (Universe)</div>
+            {/*
+              T-143 D6 — 코인 시절 문구를 사실대로 고친다(ON·OFF 공통 한 줄).
+              사용자 결정(2026-11-01): 「동적 토글은 항상 켜지는 것으로 동작하면 된다」 → 현 동작이 원하는 동작이므로 기능 변경은 없고,
+              「끌 수 있는 것처럼 보이지 않게」 문구만 바로잡는다. 실제로 `refreshUniverse()` 는 이 스위치와 무관하게
+              `runEngine` 안에서 조건 없이 돈다(`src/lib/strategy/engine.ts`) — 값은 저장되지만 읽는 곳이 설정 화면뿐이다.
+              숫자를 쓰지 않는 이유: 후보 풀·전략별 선별 수는 `universe.ts`·`engine.ts` 상수라 여기 적으면 또 어긋난다
+              — 지운 옛 문구의 수치가 실제 상수(150 · 30/40/30)와 달랐던 것이 그 사례다.
+              토글 자체를 없애는 것은 화면 구조 변경이라 별 task 로 분리했다(Leader L-2).
+            */}
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-              {safety?.universeEnabled
-                ? '거래대금 상위 20개 중 전략별 최적 3종목 자동 선별'
-                : '전략에 하드코딩된 종목 사용 (BTC, ETH)'}
+              거래대금 상위에서 전략별로 자동 선별 — 항상 켜진 상태로 동작합니다 (이 스위치로는 끌 수 없습니다)
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

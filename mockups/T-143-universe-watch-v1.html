@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="demo-version" content="T-143-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="description" content="T-143-v1 — WP-B 나스닥100 수동 목록을 두는 곳(Q1)·수시변경 알림 경로(Q3)·제안을 받고 끝내는 흐름·12월 정기 재구성 일괄 교체의 데모 (합성값)">
+<title>T-143-v1 해외 분석 대상 — 수동 목록·변경 알림</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지) */
+  :root {
+    --bg: #0f1115;
+    --bg2: #171a21;
+    --bg3: #1f2430;
+    --bg4: #262b36;
+    --border: #262b36;
+    --border2: #323848;
+    --text: #e6e8ee;
+    --muted: #8b93a7;
+    --up: #ef4444;
+    --down: #3b82f6;
+    --accent: #f59e0b;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    --fw: 412px;
+  }
+  body[data-w="360"] { --fw: 360px; }
+  body[data-w="1280"] { --fw: 1280px; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+    font-size: 14px; -webkit-text-size-adjust: 100%; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  a { color: inherit; }
+  .num { font-variant-numeric: tabular-nums; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 4px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text); background: var(--bg3); padding: 0 4px; border-radius: 4px; overflow-wrap: anywhere; word-break: break-all; }
+
+  /* ── 데모 문서 틀 (앱 화면 아님) ── */
+  .page { max-width: 1320px; margin: 0 auto; padding: 16px 16px 96px; }
+  header h1 { font-size: 18px; line-height: 1.45; margin: 0 0 8px; word-break: keep-all; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--border2); border-radius: 6px; padding: 2px 8px; margin: 0 6px 6px 0; }
+  .banner { font-size: 12px; line-height: 1.6; color: var(--text); background: var(--bg2); border: 1px dashed var(--border2); border-radius: 8px; padding: 8px 12px; margin: 8px 0 0; word-break: keep-all; overflow-wrap: anywhere; }
+  .banner b { color: var(--text); }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+  .toc a { font-size: 12px; min-height: 44px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--border2); color: var(--text); text-decoration: none; }
+  section.block { margin-top: 40px; }
+  section.block > h2 { font-size: 16px; margin: 0 0 8px; line-height: 1.45; word-break: keep-all; }
+  .lead { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.65; max-width: 900px; word-break: keep-all; overflow-wrap: anywhere; }
+  .lead b { color: var(--text); }
+  h3.sub { font-size: 14px; margin: 24px 0 8px; line-height: 1.45; word-break: keep-all; }
+  .note { margin: 8px 0; font-size: 12px; color: var(--muted); border-left: 2px dashed var(--border2); padding-left: 8px; line-height: 1.6; overflow-wrap: anywhere; word-break: keep-all; max-width: 900px; }
+  .note b { color: var(--text); }
+  .facts { border: 1px solid var(--danger); background: #1d1416; border-radius: 10px; padding: 12px 14px; margin-top: 12px; max-width: 980px; }
+  .facts h2 { margin: 0 0 6px; font-size: 14px; color: #fca5a5; }
+  .facts ol { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.65; }
+  .facts li { margin-bottom: 6px; overflow-wrap: anywhere; word-break: keep-all; }
+  .controls { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 14px 0; max-width: 1180px; }
+  @media (min-width: 900px) { .controls { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  fieldset.seg { border: 1px solid var(--border2); border-radius: 8px; padding: 8px; margin: 0; min-width: 0; }
+  fieldset.seg > legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+  .seg-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg-row label { flex: 1 1 96px; min-width: 0; position: relative; }
+  .seg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .seg-row span { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: 4px 8px; border-radius: 8px; font-size: 12px; font-weight: 600; background: var(--bg3); color: var(--muted); border: 1px solid var(--border); cursor: pointer; line-height: 1.35; overflow-wrap: anywhere; word-break: keep-all; }
+  .seg-row input:checked + span { background: var(--accent); color: #000; border-color: var(--accent); }
+  .seg-row input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+  .sticky-ctl { background: var(--bg); padding: 6px 0; border-bottom: 1px solid var(--border); }
+  @media (min-width: 900px) { .sticky-ctl { position: sticky; top: 0; z-index: 50; } }
+  .sticky-ctl .controls { margin: 0; }
+
+  /* 표 */
+  .tbl-wrap { border: 1px solid var(--border2); border-radius: 8px; max-width: 1100px; overflow: hidden; }
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 1.55; }
+  table.tbl caption { text-align: left; font-size: 12px; font-weight: 700; color: var(--text); padding: 8px 10px; word-break: keep-all; }
+  table.tbl th, table.tbl td { padding: 8px 10px; border-top: 1px solid var(--border); text-align: left; vertical-align: top; overflow-wrap: anywhere; word-break: keep-all; }
+  table.tbl thead th { color: var(--muted); font-weight: 600; background: var(--bg2); }
+  table.tbl tbody th { color: var(--text); font-weight: 600; }
+  table.tbl tr.hl > * { background: rgba(245,158,11,.07); }
+  table.tbl .rec { color: #86efac; font-weight: 700; }
+  @media (max-width: 640px) {
+    table.stk thead { display: none; }
+    table.stk tr { display: block; border-top: 1px solid var(--border2); padding: 4px 0; }
+    table.stk th, table.stk td { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; border-top: 0; padding: 4px 10px; }
+    table.stk th::before, table.stk td::before { content: attr(data-l); color: var(--muted); font-weight: 600; font-size: 11px; }
+  }
+
+  /* 결정 필요 */
+  .decide { border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.06); border-radius: 10px; padding: 12px; margin-top: 14px; max-width: 1100px; }
+  .decide h3 { margin: 0 0 6px; font-size: 14px; color: var(--warn); line-height: 1.45; word-break: keep-all; }
+  .decide > p { margin: 0 0 8px; font-size: 12px; color: var(--muted); line-height: 1.6; word-break: keep-all; }
+  .decide > p b { color: var(--text); }
+  .ab { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 900px) { .ab { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); } }
+  .opt { border: 1px solid var(--border2); background: var(--bg2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.6; min-width: 0; overflow-wrap: anywhere; word-break: keep-all; }
+  .opt h4 { margin: 0 0 4px; font-size: 13px; }
+  .opt.rec { border: 2px solid var(--ok); }
+  .rec-tag { font-size: 11px; font-weight: 700; color: #86efac; margin-left: 6px; white-space: nowrap; border: 1px solid rgba(34,197,94,.5); border-radius: 6px; padding: 0 6px; }
+  .why { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 8px 0 0; word-break: keep-all; }
+  .why b { color: var(--text); }
+
+  /* 현재 ↔ 제안 */
+  .cmp { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 8px; }
+  @media (min-width: 900px) { body:not([data-w="1280"]) .cmp { grid-template-columns: repeat(2, minmax(0, var(--fw))); align-items: start; } }
+  .cmp3 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 8px; }
+  @media (min-width: 1200px) { body:not([data-w="1280"]) .cmp3 { grid-template-columns: repeat(3, minmax(0, var(--fw))); align-items: start; } }
+  .side { min-width: 0; }
+  .cap { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; margin: 0 0 6px; padding: 2px 8px; border-radius: 6px; line-height: 1.5; }
+  .cap.cur { color: var(--muted); border: 1px dashed var(--muted); }
+  .cap.new { color: var(--accent); border: 1px solid var(--accent); }
+  .cap.alt { color: var(--muted); border: 1px solid var(--border2); }
+  .cap small { font-weight: 500; color: var(--muted); font-size: 11px; }
+  .frame { width: 100%; max-width: var(--fw); border: 1px solid var(--border2); border-radius: 12px; overflow: hidden; background: var(--bg); container-type: inline-size; container-name: fr; position: relative; }
+  .frame-flag { font-size: 11px; color: var(--muted); padding: 4px 10px; border-bottom: 1px dashed var(--border2); line-height: 1.5; word-break: keep-all; }
+  .was { border-bottom: 2px dashed #fca5a5; }
+  .chg { background: rgba(245,158,11,.16); border-bottom: 2px solid var(--accent); border-radius: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+  .legend span { display: inline-flex; gap: 6px; align-items: center; }
+
+  /* ── 앱 화면 조각 (src/components/ops + SettingsPage.tsx 와 같은 값) ── */
+  .appbar { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 8px 0 4px; border-bottom: 1px solid var(--border); background: var(--bg2); }
+  .appbar .bk { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; font-size: 18px; color: var(--muted); border-radius: 8px; flex: none; }
+  .appbar h3 { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.3; min-width: 0; word-break: keep-all; }
+  .appbar .rt { margin-left: auto; font-size: 11px; color: var(--muted); padding-right: 4px; white-space: nowrap; }
+
+  .sec { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); min-width: 0; }
+  .sec + .sec { margin-top: 8px; }
+  .sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px 4px 16px; min-height: 44px; }
+  .sec-h h4 { margin: 0; font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .3px; line-height: 1.4; }
+  .sec-h h4 small { font-weight: 500; font-size: 11px; margin-left: 4px; }
+  .sec-foot { font-size: 11px; color: var(--muted); padding: 0 16px 10px; line-height: 1.5; word-break: keep-all; }
+  .lnk { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: flex-end; font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; padding: 0 4px; }
+
+  /* 확인 필요 줄 (CheckRow.tsx) */
+  .rows { border-top: 1px solid var(--border); }
+  .rowl { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 56px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--border); width: 100%; text-align: left; }
+  .rowl:last-child { border-bottom: 0; }
+  .rowl .ic { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; border-radius: 6px; border: 1px solid var(--border2); color: var(--muted); flex: none; }
+  .rowl .ic.e { border-color: var(--danger); color: #fca5a5; }
+  .rowl .ic.w { border-color: rgba(245,158,11,.6); color: var(--accent); }
+  .rowl .ic.i { color: var(--text); }
+  .rowl .t, .rowl .s { display: block; }
+  .rowl .t { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; word-break: keep-all; }
+  .rowl .s { font-size: 12px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; word-break: keep-all; margin-top: 2px; }
+  .rowl .r { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .empty { padding: 14px 16px; font-size: 13px; color: var(--muted); line-height: 1.55; border-top: 1px solid var(--border); word-break: keep-all; }
+  .empty b { color: var(--text); }
+
+  /* 요약 타일 */
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--border); border-top: 1px solid var(--border); }
+  .tile { background: var(--bg2); padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .tile.wide { grid-column: 1 / -1; }
+  .tile .lb { font-size: 12px; color: var(--muted); line-height: 1.4; word-break: keep-all; }
+  .tile .v { font-size: 18px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; }
+  .tile .v small { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+  .tile .meta { font-size: 11px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; word-break: keep-all; }
+
+  /* 상태 칩 */
+  .st { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border2); color: var(--text); background: var(--bg); line-height: 1.4; white-space: nowrap; }
+  .st.auto { border-color: rgba(59,130,246,.5); color: #93c5fd; }
+  .st.manual { border-color: rgba(245,158,11,.55); color: var(--accent); }
+  .st.fav { border-color: var(--border2); color: var(--muted); }
+  .st.held { border-color: rgba(34,197,94,.5); color: #86efac; }
+  .st.unknown { border-style: dashed; color: var(--muted); }
+  .st.error { border-color: var(--danger); color: #fca5a5; }
+
+  /* 탭 (화면 안 탭) */
+  .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
+  .tabs button { flex: 1 1 0; min-width: 0; min-height: 48px; font-size: 13px; font-weight: 700; color: var(--muted); border-bottom: 2px solid transparent; padding: 0 8px; line-height: 1.35; word-break: keep-all; }
+  .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabs button:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+  .tabs .cnt { font-variant-numeric: tabular-nums; }
+
+  /* 제안 카드 */
+  .pcard { margin: 10px 12px; background: var(--bg3); border: 1px solid var(--border2); border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.5; }
+  .pcard.done { opacity: .5; }
+  .pcard .ph { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+  .pcard .sym { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pcard .kind { font-size: 13px; font-weight: 600; }
+  .pcard dl { margin: 8px 0 0; display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 4px 8px; font-size: 12px; line-height: 1.5; }
+  .pcard dt { color: var(--muted); font-weight: 600; }
+  .pcard dd { margin: 0; overflow-wrap: anywhere; word-break: keep-all; }
+  .pcard .warnline { margin-top: 8px; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(245,158,11,.45); background: rgba(245,158,11,.08); font-size: 12px; color: var(--accent); line-height: 1.5; word-break: keep-all; }
+  .pcard .acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .pcard .acts .pri, .pcard .acts .wide { grid-column: 1 / -1; }
+  .pcard .res { margin-top: 8px; }
+
+  .btn { min-height: 44px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 700; border: 1px solid var(--border2); background: var(--bg4); display: inline-flex; align-items: center; justify-content: center; gap: 6px; line-height: 1.3; text-align: center; word-break: keep-all; }
+  .btn.pri { background: var(--accent); color: #000; border-color: var(--accent); }
+  .btn.quiet { background: var(--bg3); color: var(--muted); }
+  .btn.dz { background: #2a1416; color: #fca5a5; border-color: rgba(239,68,68,.6); }
+  .btn[disabled] { opacity: .55; cursor: not-allowed; }
+  .btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  .res { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border2); font-size: 12px; line-height: 1.55; word-break: keep-all; }
+  .res.ok { border-color: rgba(34,197,94,.5); color: #86efac; }
+  .res.e { border-color: var(--danger); color: #fca5a5; }
+  .res:empty { display: none; }
+
+  /* 목록 */
+  .filters { display: flex; gap: 6px; overflow-x: auto; padding: 10px 12px; border-bottom: 1px solid var(--border); -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .filters button { flex: none; min-height: 44px; padding: 0 12px; border-radius: 10px; font-size: 12px; font-weight: 600; background: var(--bg3); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .filters button[aria-pressed="true"] { background: var(--bg4); border-color: var(--accent); color: var(--accent); }
+  .filters button:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+  .ulist { border-top: 1px solid var(--border); }
+  .urow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 56px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--border); }
+  .urow:last-child { border-bottom: 0; }
+  .urow .sy { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .urow .sy small { display: block; font-size: 11px; color: var(--muted); font-weight: 500; margin-top: 2px; }
+  .urow .tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+  .listfoot { padding: 12px; border-top: 1px solid var(--border); }
+  .listfoot .btn { width: 100%; }
+
+  /* 시트 */
+  .mini { position: relative; min-height: 340px; }
+  .sheet-bg { position: absolute; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: flex-end; justify-content: center; z-index: 5; }
+  .sheet-bg[hidden] { display: none; }
+  .sheet { width: 100%; background: var(--bg2); border-top: 1px solid var(--border2); border-radius: 14px 14px 0 0; padding: 14px 16px calc(16px + var(--safe-bottom)); font-size: 13px; line-height: 1.55; max-height: 100%; overflow-y: auto; }
+  .sheet h4 { margin: 0 0 6px; font-size: 15px; line-height: 1.35; word-break: keep-all; }
+  .sheet p { margin: 6px 0; word-break: keep-all; }
+  .sheet .bt { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  @container fr (min-width: 900px) { .sheet-bg { align-items: center; } .sheet { max-width: 520px; border-radius: 14px; border: 1px solid var(--border2); } }
+
+  /* 일괄 교체 */
+  .bulk { padding: 12px 16px; }
+  .bulk label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; word-break: keep-all; }
+  .bulk .hint { font-size: 12px; color: var(--muted); line-height: 1.55; margin: 0 0 8px; word-break: keep-all; }
+  .bulk textarea { width: 100%; min-height: 150px; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.6; padding: 8px 10px; resize: vertical; }
+  .bulk textarea:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+  .bulk .bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .diff { margin-top: 12px; border: 1px solid var(--border2); border-radius: 8px; overflow: hidden; }
+  .diff .dh { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--border); }
+  .diff .dh div { background: var(--bg3); padding: 8px 6px; text-align: center; }
+  .diff .dh .k { display: block; font-size: 11px; color: var(--muted); line-height: 1.4; }
+  .diff .dh .n { display: block; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.3; }
+  .diff ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+  .diff li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: baseline; padding: 7px 12px; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
+  .diff li:last-child { border-bottom: 0; }
+  .diff li .mk { font-weight: 800; font-size: 14px; text-align: center; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .diff li .sy { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .diff li .sy em { font-style: normal; color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .diff li.add { background: rgba(245,158,11,.06); }
+  .diff li.add .mk { color: var(--accent); }
+  .diff li.rm .mk { color: var(--muted); }
+  .diff li.bad { background: rgba(239,68,68,.09); }
+  .diff li.bad .mk { color: #fca5a5; }
+  .diff .dnote { padding: 8px 12px; font-size: 12px; color: var(--muted); line-height: 1.55; border-top: 1px solid var(--border); word-break: keep-all; }
+
+  /* 텔레그램 말풍선 */
+  .tg-wrap { background: #0e1621; border: 1px solid #1f2d3d; border-radius: 12px; padding: 12px; max-width: var(--fw); }
+  .bubble { background: #182533; border-radius: 12px; padding: 10px 12px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; color: #e8eef5; overflow-wrap: anywhere; }
+  .bubble b { font-weight: 700; }
+  .kbd { margin-top: 6px; display: grid; gap: 6px; }
+  .kbd .tbtn { background: #2b5278; border-radius: 8px; text-align: center; padding: 10px 8px; font-size: 12px; color: #e8eef5; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+
+  /* 하단 탭 (BottomTabs.tsx BOTTOM_TABS_CSS 값) */
+  .bn { position: relative; height: calc(var(--nav-h) + var(--safe-bottom)); padding-bottom: var(--safe-bottom); background: var(--bg2); border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(4, 1fr); }
+  .bn.five { grid-template-columns: repeat(5, 1fr); }
+  .bn i { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 56px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; font-style: normal; }
+  .bn i.on { color: var(--accent); }
+  .bn i .g { font-size: 17px; line-height: 1; }
+  .bn i .bar { position: absolute; top: 0; left: 30%; right: 30%; height: 2px; background: var(--accent); border-radius: 0 0 2px 2px; }
+  .bn i.ghost { opacity: .45; }
+
+  /* 뼈대(로딩) */
+  .skel { display: block; height: 14px; border-radius: 4px; background: var(--bg3); }
+  .skrow { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .skrow .skel + .skel { margin-top: 8px; }
+  @keyframes sk { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+  .skel { animation: sk 1.4s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .skel { animation: none; } }
+
+  ul.plain { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.65; max-width: 1000px; }
+  ul.plain li { margin-bottom: 4px; overflow-wrap: anywhere; word-break: keep-all; }
+  .ans { font-size: 13px; line-height: 1.7; background: var(--bg2); border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px; max-width: 1000px; word-break: keep-all; }
+  .flowmap { display: grid; grid-template-columns: 1fr; gap: 8px; max-width: 1000px; }
+  @media (min-width: 900px) { .flowmap { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  .step { border: 1px solid var(--border2); border-radius: 10px; background: var(--bg2); padding: 10px 12px; font-size: 12px; line-height: 1.55; word-break: keep-all; }
+  .step h4 { margin: 0 0 4px; font-size: 12px; color: var(--accent); }
+  .step .w { color: var(--muted); display: block; margin-top: 4px; }
+</style>
+</head>
+<body data-w="412">
+<div class="page">
+  <header>
+    <h1>T-143 데모 v1 — 해외 분석 대상: 나스닥100 수동 목록을 두는 곳(Q1) · 수시변경 알림(Q3) · 제안을 받고 끝내는 흐름 · 12월 정기 재구성</h1>
+    <p>
+      <span class="tag">WP-B 전용 (WP-A 는 화면 없음)</span>
+      <span class="tag">대표 412px · 경계 360px · 데스크톱 1280px</span>
+      <span class="tag">합성 데이터 — 종목 코드는 NAS:AAAA 꼴</span>
+      <span class="tag">요청·저장 없음</span>
+      <span class="tag">안전 스위치 동작 변경 없음</span>
+    </p>
+    <p class="banner">모든 숫자·시각·종목은 <b>합성값</b>입니다(가정 시각 2026-12-02(수) 09:14 KST). 실제 계좌·금액·보유 내역은 없습니다. 「현재」 칸은 <b>운영 중인 코드의 사실</b>을 옮긴 것이고, 「제안」 칸은 이 데모가 권하는 모양입니다. 위쪽 조작줄(미리보기 폭 · Q1 · Q3)은 데모 전용이며 앱에는 없습니다.</p>
+    <p class="banner">표시: <span class="was">점선 밑줄 = 지금 없는 것·바뀔 곳</span> · <span class="chg">실선 밑줄 + 바탕 = 제안</span> · 초록 테두리 = 권고안. 종목 코드는 전부 가상입니다 — 실제 나스닥100 구성이 아니므로 이 목록을 그대로 운영에 붙여서는 안 됩니다.</p>
+
+    <section class="facts" aria-labelledby="facts-h">
+      <h2 id="facts-h">먼저 — 불편한 사실 5가지</h2>
+      <ol>
+        <li><b>[확실] Q1 과 Q3 은 독립이 아닙니다.</b> Q1 에서 환경변수(B)를 고르면, 알림을 받아도 화면에서 반영할 곳이 없습니다 — 서버 <code>.env</code> 를 고치고 pm2 를 재시작해야 합니다. 그러면 알림은 「조치 버튼」이 아니라 「AI 에게 부탁할 일거리」가 됩니다. <b>Q3=A 의 값은 Q1=A 를 전제로 합니다.</b></li>
+        <li><b>[확실] 목록에서 빼도 보유 중이면 계속 분석됩니다.</b> 해외 분석 대상 = 보유 ∪ 즐겨찾기 ∪ 목록(<code>us-data-db.ts:41</code>)입니다. 상장폐지 종목을 들고 있으면 그건 목록 문제가 아니라 <b>매도 문제</b>입니다. 화면이 이 말을 안 하면 「뺐으니 끝」으로 오해합니다 → 제안 카드에 「보유 중」 배지를 넣었습니다.</li>
+        <li><b>[확실] 지금은 나스닥100 이 아예 없습니다.</b> <code>OVERSEAS_UNIVERSE_SYMBOLS</code> 는 운영 <code>.env</code> 에 미설정이라 하드코딩 50종목으로 돌고 있고, 그 50은 나스닥100도 NYSE 상위 50도 아닌 혼합 메이저 50입니다(<code>universe-overseas-static.ts</code>). 「현재」 칸은 <b>빈 화면이 아니라 잘못된 목록</b>입니다.</li>
+        <li><b>[가능성 높음] 알림은 정기 재구성을 못 잡습니다.</b> 인수·합병·상장폐지는 공시로 드러나지만, 나스닥이 「시가총액 순위가 떨어져서」 종목을 교체하는 12월 정기 재구성은 <b>어떤 공시에도 나오지 않습니다</b>. 그래서 12월 수동 1회가 필수이고, <b>알림이 조용한 것은 목록이 맞다는 뜻이 아닙니다</b> → 화면에 「마지막 수동 갱신」 날짜와 「12월 재구성 안내」를 함께 둡니다.</li>
+        <li><b>[확실] 기존 설정 화면에 코인 시절 문구가 남아 있습니다.</b> 「동적 종목 선별 (Universe)」 행의 설명이 <code>거래대금 상위 20개 중 전략별 최적 3종목</code> / <code>전략에 하드코딩된 종목 사용 (BTC, ETH)</code> 입니다(<code>SettingsPage.tsx:866·868</code>). 이 task 범위는 아니지만, 새 행을 같은 섹션에 붙이면 사용자가 모순된 두 설명을 나란히 봅니다 → 결정 D6.</li>
+      </ol>
+    </section>
+
+    <nav class="toc" aria-label="데모 목차">
+      <a href="#s0">0. 어디에 들어가나</a>
+      <a href="#s1">1. Q1 수동 목록을 어디에</a>
+      <a href="#s2">2. Q3 알림 경로</a>
+      <a href="#s3">3. 제안을 받고 끝내는 흐름</a>
+      <a href="#s4">4. 12월 정기 재구성</a>
+      <a href="#s5">5. 상태 모음</a>
+      <a href="#sd">결정 필요 6건</a>
+      <a href="#sm">설계 메모 · 다루지 않은 범위</a>
+    </nav>
+  </header>
+
+  <div class="sticky-ctl">
+    <div class="controls">
+      <fieldset class="seg"><legend>미리보기 폭 (모든 칸에 적용)</legend><div class="seg-row">
+        <label><input type="radio" name="w" value="412" checked><span>412px · 갤럭시 S25+</span></label>
+        <label><input type="radio" name="w" value="360"><span>360px · 경계</span></label>
+        <label><input type="radio" name="w" value="1280"><span>1280px · 데스크톱</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>Q1 — 수동 목록을 어디에 두나</legend><div class="seg-row">
+        <label><input type="radio" name="q1" value="a" checked><span>A · DB + 화면 (권고)</span></label>
+        <label><input type="radio" name="q1" value="b"><span>B · 환경변수</span></label>
+      </div></fieldset>
+      <fieldset class="seg"><legend>Q3 — 알림 경로</legend><div class="seg-row">
+        <label><input type="radio" name="q3" value="a" checked><span>A · 텔레그램 + 홈 (권고)</span></label>
+        <label><input type="radio" name="q3" value="b"><span>B · 홈만</span></label>
+      </div></fieldset>
+    </div>
+  </div>
+
+  <!-- ════════════════ 0. 어디에 들어가나 ════════════════ -->
+  <section class="block" id="s0">
+    <h2>0. 이 화면이 어디에 들어가나</h2>
+    <p class="lead">새 화면은 <b>설정 › 해외 분석 대상</b> 한 곳이고, 라우트는 기존 <code>/settings/risk-policy</code>·<code>/settings/cash-ledger</code> 와 같은 자리인 <code>/settings/overseas-universe</code> 입니다. 변경 제안은 <b>홈 「확인 필요」에 줄 하나</b>로 나타나고 누르면 이 화면의 「변경 제안」 탭으로 갑니다. <b>새 탭·새 메뉴는 만들지 않습니다.</b></p>
+
+    <div class="cmp">
+      <div class="side">
+        <p class="cap cur">현재 하단 탭 <small>BottomTabs.tsx — 4칸</small></p>
+        <div class="frame">
+          <div class="frame-flag">T-113 배포 전이라 실제 코드는 <b>4칸</b>입니다(비서 미포함).</div>
+          <div class="bn" aria-hidden="true">
+            <i><span class="g">🏠</span>홈</i>
+            <i><span class="g">🤝</span>거래</i>
+            <i><span class="g">🔎</span>분석</i>
+            <i class="on"><span class="bar"></span><span class="g">⚙️</span>설정</i>
+          </div>
+        </div>
+      </div>
+      <div class="side">
+        <p class="cap new">T-113 뒤 <small>비서 추가 — 이 task 와 무관</small></p>
+        <div class="frame">
+          <div class="frame-flag">비서(brain)가 들어오면 5칸. <b>이 화면의 자리는 어느 쪽이든 「설정」입니다.</b></div>
+          <div class="bn five" aria-hidden="true">
+            <i><span class="g">🏠</span>홈</i>
+            <i><span class="g">🤝</span>거래</i>
+            <i><span class="g">🔎</span>분석</i>
+            <i class="ghost"><span class="g">💬</span>비서</i>
+            <i class="on"><span class="bar"></span><span class="g">⚙️</span>설정</i>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note"><b>Leader 확인 요청:</b> 지시문은 하단 5탭(홈·거래·분석·비서·설정)이라 했는데 <b>배포된 <code>BottomTabs.tsx</code> 는 4칸</b>입니다(비서는 T-113 때 넣는다는 주석). 이 데모는 4칸을 사실로 그렸습니다 — 둘 중 어느 쪽이 맞는지 알려 주시면 가이드에 반영합니다.</p>
+
+    <h3 class="sub">진입 경로 2가지</h3>
+    <div class="flowmap">
+      <div class="step"><h4>① 설정에서 들어가기</h4>설정 › <b>전략 설정</b> 섹션 › 「해외 분석 대상」 행<span class="w">평소에 목록을 확인하거나 12월에 바꿀 때</span></div>
+      <div class="step"><h4>② 홈 「확인 필요」</h4>홈 › 「해외 분석 대상 변경 제안 3건」 줄<span class="w">수시변경이 생겼을 때 — 제안 탭으로 바로</span></div>
+      <div class="step"><h4>③ 텔레그램 (Q3=A)</h4>「🔗 앱에서 확인」 → App Links 로 앱이 열림<span class="w">홈을 안 열어도 알게 되는 유일한 길</span></div>
+      <div class="step"><h4>안 만드는 것</h4>새 하단 탭 · 새 상단 메뉴 · 거래/분석 탭 안 중복 자리<span class="w">연 5~10건 쓰는 화면에 탭을 줄 이유가 없습니다</span></div>
+    </div>
+
+    <h3 class="sub">설정 › 전략 설정 — 들어가는 행</h3>
+    <div class="cmp">
+      <div class="side">
+        <p class="cap cur">현재 <small>SettingsPage.tsx 「전략 설정」</small></p>
+        <div class="frame">
+          <div class="sec">
+            <div class="sec-h"><h4>전략 설정</h4></div>
+            <div class="rows">
+              <div class="rowl"><span class="ic i">U</span><span><span class="t">동적 종목 선별 (Universe)</span><span class="s was">거래대금 상위 20개 중 전략별 최적 3종목 자동 선별 ← 코인 시절 문구</span></span><span class="r">ON</span></div>
+              <div class="rowl"><span class="ic i">A</span><span><span class="t">분석가 (Analyst)</span><span class="s">시그널 생성 및 전략 실행 활성화</span></span><span class="r">ON</span></div>
+              <div class="rowl"><span class="ic i">⏱</span><span><span class="t">평가 주기</span><span class="s">모든 전략에 동일 적용</span></span><span class="r">30분</span></div>
+            </div>
+            <p class="sec-foot was">해외 분석 대상을 보거나 바꿀 자리가 없습니다 — 지금은 서버 코드·환경변수에만 있습니다.</p>
+          </div>
+        </div>
+      </div>
+      <div class="side">
+        <p class="cap new">제안 <small>행 1개 추가</small></p>
+        <div class="frame">
+          <div class="sec">
+            <div class="sec-h"><h4>전략 설정</h4></div>
+            <div class="rows">
+              <div class="rowl chg" style="border-radius:0"><span class="ic w">3</span><span><span class="t">해외 분석 대상 <span class="st manual">변경 제안 3</span></span><span class="s">150종목 · 수동 98 · 자동 50 · 수동 갱신 2025-12-19</span></span><span class="r">›</span></div>
+              <div class="rowl"><span class="ic i">U</span><span><span class="t">동적 종목 선별 (Universe)</span><span class="s">D6 에서 문구 정정 여부를 결정합니다</span></span><span class="r">ON</span></div>
+              <div class="rowl"><span class="ic i">A</span><span><span class="t">분석가 (Analyst)</span><span class="s">시그널 생성 및 전략 실행 활성화</span></span><span class="r">ON</span></div>
+            </div>
+            <p class="sec-foot">행 높이 56px · 행 전체가 누르는 영역(T-130 에서 교정된 규칙).</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ 1. Q1 ════════════════ -->
+  <section class="block" id="s1">
+    <h2>1. Q1 — 수동 목록(나스닥100 ~100종목)을 어디에 두나</h2>
+    <p class="lead">같은 질문을 <b>사용자가 보게 되는 화면</b>으로 바꿔 놓은 것입니다. 왼쪽이 지금, 가운데가 A(DB + 화면), 오른쪽이 B(환경변수)입니다. <b>B 에서도 화면은 만들 수 있습니다</b> — 다만 <b>읽기만</b> 됩니다.</p>
+
+    <div class="cmp3">
+      <div class="side">
+        <p class="cap cur">현재 <small>화면 없음</small></p>
+        <div class="frame">
+          <div class="appbar"><span class="bk" aria-hidden="true">‹</span><h3>설정</h3></div>
+          <div class="empty" style="border-top:0">
+            해외 분석 대상을 보는 화면이 <b>없습니다</b>.<br><br>
+            <span class="was">지금 무엇이 분석되는지 알려면 서버 코드(<code>universe-overseas-static.ts</code>)를 읽거나, 분석 결과에서 역산해야 합니다.</span><br><br>
+            바꾸려면 <b>AI 에게 부탁해 코드를 고치고 배포</b>해야 합니다.
+          </div>
+        </div>
+      </div>
+
+      <div class="side">
+        <p class="cap new">A · DB + 설정 화면 <small>권고</small></p>
+        <div class="frame">
+          <div class="appbar"><span class="bk" aria-hidden="true">‹</span><h3>해외 분석 대상</h3><span class="rt">12-02 09:14</span></div>
+          <div class="grid2">
+            <div class="tile"><span class="lb">분석 대상</span><span class="v num">150<small>종목</small></span><span class="meta">중복 제거 뒤</span></div>
+            <div class="tile"><span class="lb">변경 제안</span><span class="v num">3<small>건</small></span><span class="meta">확인 필요</span></div>
+            <div class="tile"><span class="lb">수동 — 나스닥100</span><span class="v num">98<small>종목</small></span><span class="meta">갱신 2025-12-19 · <b>349일 전</b></span></div>
+            <div class="tile"><span class="lb">자동 — NYSE 상위 50</span><span class="v num">50<small>종목</small></span><span class="meta">산출 12-01 02:40</span></div>
+          </div>
+          <div class="tabs" role="tablist" aria-label="해외 분석 대상 보기">
+            <button role="tab" aria-selected="true">변경 제안 <span class="cnt">3</span></button>
+            <button role="tab" aria-selected="false">목록 <span class="cnt">150</span></button>
+          </div>
+          <div class="pcard">
+            <div class="ph"><span class="sym">NAS:AAAA</span><span class="st error">상장폐지 예정</span></div>
+            <dl><dt>근거</dt><dd>미국 공시 Form 25 (12-01 수집)</dd><dt>권고</dt><dd>목록에서 빼기 → 수동 98 → 97</dd></dl>
+            <div class="acts"><span class="btn pri">목록에서 빼기</span><span class="btn quiet">보류</span><span class="btn quiet">무시</span></div>
+          </div>
+          <p class="sec-foot chg">여기서 누르면 끝납니다 — DB 에 저장되고 다음 「해외 장마감 분석」부터 반영. 배포·재시작 없음. 변경 이력(누가·언제·무엇을)이 남습니다.</p>
+        </div>
+      </div>
+
+      <div class="side">
+        <p class="cap alt">B · 환경변수 <small>지금 구조 그대로</small></p>
+        <div class="frame">
+          <div class="appbar"><span class="bk" aria-hidden="true">‹</span><h3>해외 분석 대상</h3><span class="rt">읽기 전용</span></div>
+          <div class="grid2">
+            <div class="tile"><span class="lb">분석 대상</span><span class="v num">150<small>종목</small></span><span class="meta">중복 제거 뒤</span></div>
+            <div class="tile"><span class="lb">변경 제안</span><span class="v num">3<small>건</small></span><span class="meta was">화면에서 반영 불가</span></div>
+            <div class="tile wide"><span class="lb">수동 — 나스닥100</span><span class="v num">98<small>종목</small></span><span class="meta was">환경변수 <code>OVERSEAS_UNIVERSE_SYMBOLS</code> — 앱이 읽기만 합니다</span></div>
+          </div>
+          <div class="tabs" role="tablist" aria-label="해외 분석 대상 보기">
+            <button role="tab" aria-selected="true">변경 제안 <span class="cnt">3</span></button>
+            <button role="tab" aria-selected="false">목록 <span class="cnt">150</span></button>
+          </div>
+          <div class="pcard">
+            <div class="ph"><span class="sym">NAS:AAAA</span><span class="st error">상장폐지 예정</span></div>
+            <dl><dt>근거</dt><dd>미국 공시 Form 25 (12-01 수집)</dd><dt>권고</dt><dd>목록에서 빼기</dd></dl>
+            <div class="warnline was">이 화면에서는 반영할 수 없습니다. 서버 <code>.env</code> 의 목록을 고치고 <code>pm2 restart</code> 해야 합니다.</div>
+            <div class="acts"><span class="btn quiet wide" aria-disabled="true">목록에서 빼기 (불가)</span><span class="btn quiet">보류</span><span class="btn quiet">무시</span></div>
+          </div>
+          <p class="sec-foot was">변경 이력이 남지 않습니다 — <code>.env</code> 는 누가 언제 고쳤는지 추적되지 않습니다. 12월에 ~100줄을 손으로 붙여넣고 재시작하며, 오타는 재시작 뒤에나 드러납니다.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="tbl-wrap" style="margin-top:16px">
+      <table class="tbl stk">
+        <caption>A·B 를 같은 기준으로 비교 (합성 상황이 아니라 구조상의 차이)</caption>
+        <thead><tr><th scope="col">기준</th><th scope="col">A · DB + 화면</th><th scope="col">B · 환경변수</th></tr></thead>
+        <tbody>
+          <tr class="hl"><th scope="row" data-l="기준">제안 1건 반영</th><td data-l="A">화면에서 1번 누름</td><td data-l="B">서버 접속 → <code>.env</code> 편집 → pm2 재시작</td></tr>
+          <tr><th scope="row" data-l="기준">12월 ~100종목 교체</th><td data-l="A">붙여넣기 → 대조 → 확인 (§4)</td><td data-l="B">붙여넣기 → 재시작 → 결과를 로그로 확인</td></tr>
+          <tr><th scope="row" data-l="기준">변경 이력</th><td data-l="A">남는다(누가·언제·무엇을·근거)</td><td data-l="B">남지 않는다</td></tr>
+          <tr><th scope="row" data-l="기준">오타 잡기</th><td data-l="A">저장 전에 형식 검사 + 대조 화면</td><td data-l="B">재시작 뒤 분석 실패로 드러남</td></tr>
+          <tr><th scope="row" data-l="기준">사용자 혼자 가능</th><td data-l="A">가능</td><td data-l="B">서버 접근·AI 요청 필요</td></tr>
+          <tr><th scope="row" data-l="기준">구현 비용</th><td data-l="A">표 1개 + 라우트 1개 + API 3개</td><td data-l="B">읽기 화면만(API 1개)</td></tr>
+          <tr><th scope="row" data-l="기준">되돌리기</th><td data-l="A">이력에서 직전 목록으로 복구 가능</td><td data-l="B">직전 <code>.env</code> 를 기억해야 가능</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ════════════════ 2. Q3 ════════════════ -->
+  <section class="block" id="s2">
+    <h2>2. Q3 — 수시 변경을 어떻게 알리나</h2>
+    <p class="lead"><b>변경 제안이 새로 생겼을 때만</b> 1회 알립니다. 보류·무시한 제안은 다시 알리지 않고, 「확인할 변경 없음」은 아무 알림도 내지 않습니다 — 뉴스 0건 경고가 분석일마다 반복된 <b>T-125 의 재발 방지</b>입니다.</p>
+
+    <div class="cmp">
+      <div class="side">
+        <p class="cap new">A · 텔레그램 + 홈 둘 다 <small>권고</small></p>
+        <div class="tg-wrap">
+          <div class="bubble">📋 <b>해외 분석 대상 — 변경 제안 3건</b>
+
+1. NAS:AAAA · 상장폐지 예정
+   근거  미국 공시 Form 25 (12-01)
+   권고  목록에서 빼기
+
+2. NAS:AEEE · 인수 합의
+   근거  미국 공시 8-K · SC 14D9 (11-28)
+   권고  보류 — 거래 종료 전
+   ⚠ 보유 중 2주
+
+3. NAS:AJJJ · 거래소 이동 (→ NYSE)
+   근거  상장 목록 변화 (12-01 산출)
+   권고  코드 바꾸기 NAS:AJJJ → NYS:AJJJ
+
+수동 98종목 · 다 반영하면 97
+수동 갱신 2025-12-19 (349일 전)
+⚠ 12월 정기 재구성은 공시에 안 나옵니다 — 12-19 에 목록을 직접 확인하세요</div>
+          <div class="kbd" aria-hidden="true"><div class="tbtn">🔗 앱에서 확인</div></div>
+        </div>
+        <p class="note"><b>버튼은 「앱에서 확인」 하나뿐입니다.</b> 주문 승인은 되돌릴 수 없고 만료가 있어 텔레그램 즉답이 필요하지만, 목록 변경은 급하지 않고 되돌릴 수 있으며 <b>잘못 누르면 분석 대상이 조용히 틀어집니다</b>. 근거를 보고 결정하는 게 맞습니다 → 결정 D3.</p>
+      </div>
+
+      <div class="side">
+        <p class="cap alt">B · 홈만</p>
+        <div class="frame">
+          <div class="appbar"><h3>홈</h3><span class="rt">12-02 09:14</span></div>
+          <div class="sec">
+            <div class="sec-h"><h4>확인 필요 <small>4건</small></h4></div>
+            <div class="rows">
+              <div class="rowl"><span class="ic w">2</span><span><span class="t">승인 대기 2건 — 국내 1 · 해외 1</span><span class="s">가장 빨리 만료: 005930 12-02 15:40</span></span><span class="r">›</span></div>
+              <div class="rowl chg" style="border-radius:0"><span class="ic w">3</span><span><span class="t">해외 분석 대상 변경 제안 3건</span><span class="s">NAS:AAAA 상장폐지 예정 · 외 2건</span></span><span class="r">›</span></div>
+              <div class="rowl"><span class="ic w">1</span><span><span class="t">데이터 이상·분석 실패 1건</span><span class="s">해외 뉴스 0건 1일 연속</span></span><span class="r">›</span></div>
+            </div>
+          </div>
+          <div class="frame-flag was" style="border-top:1px dashed var(--border2); border-bottom:0">B 의 위험: 홈을 열지 않으면 모릅니다. 12월 재구성은 날짜를 알지만 <b>상장폐지는 언제 날지 모릅니다</b> — 폐지된 종목을 계속 분석 대상에 두면 KIS 조회가 매일 실패해 「데이터 이상」만 늘어납니다.</div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note"><b>A 를 골라도 홈 줄은 그대로 넣습니다</b> — A 는 「텔레그램 <i>추가</i>」입니다. 즉 Q3 의 실제 선택은 <b>텔레그램을 보낼지 말지</b>입니다. 알림 스위치는 기존 <code>설정 › 알람</code> 섹션에 「해외 분석 대상 변경 알림」 토글 하나로 둡니다(기존 4개 토글과 같은 모양).</p>
+
+    <h3 class="sub">홈 「확인 필요」 새 줄 — 기존 줄과 같은 모양인지</h3>
+    <div class="tbl-wrap">
+      <table class="tbl stk">
+        <caption>새 줄은 기존 <code>CheckItem</code> 규격을 그대로 씁니다 (문구만 새로 정함)</caption>
+        <thead><tr><th scope="col">항목</th><th scope="col">값</th><th scope="col">근거 — 같은 모양의 기존 줄</th></tr></thead>
+        <tbody>
+          <tr><th scope="row" data-l="항목">kind</th><td data-l="값"><code>universe_change_proposed</code></td><td data-l="근거">기존 <code>order_blocked</code>·<code>analysis_unknown</code> 과 같은 명명</td></tr>
+          <tr><th scope="row" data-l="항목">severity</th><td data-l="값"><code>w</code> (경고)</td><td data-l="근거">돈이 즉시 움직이지 않지만 분석 대상이 틀어진다 — <code>order_blocked</code>·<code>data_anomaly</code> 와 같은 등급</td></tr>
+          <tr><th scope="row" data-l="항목">글리프</th><td data-l="값">제안 건수 숫자</td><td data-l="근거"><code>awaiting_approval</code> 이 건수를 글리프로 씁니다</td></tr>
+          <tr class="hl"><th scope="row" data-l="항목">제목</th><td data-l="값">해외 분석 대상 변경 제안 3건</td><td data-l="근거">「승인 대기 2건 — …」 과 같은 어순</td></tr>
+          <tr class="hl"><th scope="row" data-l="항목">부제</th><td data-l="값">NAS:AAAA 상장폐지 예정 · 외 2건</td><td data-l="근거">「데이터 이상」 줄의 「앞 2개 + 외 n건」 규칙</td></tr>
+          <tr><th scope="row" data-l="항목">이동</th><td data-l="값"><code>/settings/overseas-universe?tab=proposals</code></td><td data-l="근거"><code>href</code> 에 탭 질의를 붙이는 기존 방식(<code>/recommend?tab=log</code>)</td></tr>
+          <tr><th scope="row" data-l="항목">순서</th><td data-l="값"><code>data_anomaly</code> 바로 앞</td><td data-l="근거">분석 품질 묶음이고 주문·승인보다 급하지 않음 → <code>CHECK_ORDER</code> 에 삽입</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ════════════════ 3. 제안 흐름 ════════════════ -->
+  <section class="block" id="s3">
+    <h2>3. 알림을 받은 사용자가 무엇을 눌러 끝내나 <small style="font-size:12px;color:var(--muted);font-weight:400">— 눌러 보세요</small></h2>
+    <p class="lead">아래 화면은 <b>실제로 동작합니다</b>(저장·요청은 없습니다). 제안 3건은 <b>세 가지 행동</b>을 각각 보여 줍니다 — <b>빼기</b>(상장폐지) · <b>보류</b>(인수 진행 중) · <b>코드 바꾸기</b>(거래소 이동). 「결과」 선택으로 성공·실패를 둘 다 볼 수 있습니다.</p>
+
+    <div class="controls" style="max-width:var(--fw)">
+      <fieldset class="seg"><legend>저장 결과 (데모 전용)</legend><div class="seg-row">
+        <label><input type="radio" name="r3" value="ok" checked><span>성공</span></label>
+        <label><input type="radio" name="r3" value="err"><span>실패 (DB 오류)</span></label>
+      </div></fieldset>
+    </div>
+
+    <div class="frame" id="f3">
+      <div class="appbar"><span class="bk" aria-hidden="true">‹</span><h3>해외 분석 대상</h3><span class="rt" id="f3clock">12-02 09:14</span></div>
+      <div class="grid2">
+        <div class="tile"><span class="lb">분석 대상</span><span class="v num" id="t-total">150<small>종목</small></span><span class="meta">보유 ∪ 즐겨찾기 ∪ 목록</span></div>
+        <div class="tile"><span class="lb">변경 제안</span><span class="v num" id="t-prop">3<small>건</small></span><span class="meta" id="t-prop-meta">확인 필요</span></div>
+        <div class="tile"><span class="lb">수동 — 나스닥100</span><span class="v num" id="t-manual">98<small>종목</small></span><span class="meta">갱신 2025-12-19 · 349일 전</span></div>
+        <div class="tile"><span class="lb">자동 — NYSE 상위 50</span><span class="v num">50<small>종목</small></span><span class="meta">산출 12-01 02:40 · 다음 01-01</span></div>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="해외 분석 대상 보기">
+        <button role="tab" id="tab-p" aria-selected="true" aria-controls="panel-p">변경 제안 <span class="cnt" id="tabcnt">3</span></button>
+        <button role="tab" id="tab-l" aria-selected="false" aria-controls="panel-l">목록 <span class="cnt">150</span></button>
+      </div>
+
+      <div id="panel-p" role="tabpanel" aria-labelledby="tab-p">
+        <div id="plist"></div>
+        <div class="empty" id="pempty" hidden>
+          <span id="pempty-lead">지금 확인할 <b>변경 없음</b>.</span><br>
+          <span style="font-size:12px">마지막 확인 12-02 02:10 — 미국 공시 · 해외 뉴스 · 상장 목록 <b>3곳 모두 확인</b>했습니다.<br>
+          ⚠ 12월 정기 재구성은 공시에 나오지 않습니다 — <b>12-19 에 목록을 직접 확인</b>하세요.</span>
+        </div>
+      </div>
+
+      <div id="panel-l" role="tabpanel" aria-labelledby="tab-l" hidden>
+        <div class="filters" role="group" aria-label="출처로 걸러보기">
+          <button aria-pressed="true">전체 150</button>
+          <button aria-pressed="false">수동 98</button>
+          <button aria-pressed="false">자동 50</button>
+          <button aria-pressed="false">즐겨찾기 7</button>
+          <button aria-pressed="false">보유 4</button>
+        </div>
+        <div class="ulist">
+          <div class="urow"><span class="sy">NAS:AAAA<small>가상 종목 A</small></span><span class="tags"><span class="st manual">수동</span><span class="st error">제안 있음</span></span></div>
+          <div class="urow"><span class="sy">NAS:AEEE<small>가상 종목 E</small></span><span class="tags"><span class="st manual">수동</span><span class="st held">보유 2주</span></span></div>
+          <div class="urow"><span class="sy">NYS:CAAA<small>가상 종목 CA</small></span><span class="tags"><span class="st auto">자동 1위</span></span></div>
+          <div class="urow"><span class="sy">NYS:CBBB<small>가상 종목 CB</small></span><span class="tags"><span class="st auto">자동 2위</span><span class="st held">보유 6주</span></span></div>
+          <div class="urow"><span class="sy">NAS:AJJJ<small>가상 종목 J</small></span><span class="tags"><span class="st manual">수동</span><span class="st fav">즐겨찾기</span></span></div>
+          <div class="urow"><span class="sy">NAS:DKKK<small>가상 종목 DK</small></span><span class="tags"><span class="st fav">즐겨찾기</span></span></div>
+          <div class="urow"><span class="sy">NAS:ATTT<small>가상 종목 T</small></span><span class="tags"><span class="st manual">수동</span></span></div>
+        </div>
+        <p class="sec-foot">종목마다 <b>출처</b>가 보입니다 — 4가지가 섞이기 때문입니다. 「자동 n위」는 시가총액 순위, 「보유 n주」는 그 종목이 <b>목록에서 빠져도 분석된다</b>는 표시입니다. 즐겨찾기·보유는 여기서 바꾸지 않습니다(각자 원래 화면에서).</p>
+        <div class="listfoot"><span class="btn" id="go-bulk">12월 정기 재구성 — 목록 한 번에 바꾸기</span></div>
+      </div>
+
+      <div class="sheet-bg" id="sheet3" hidden>
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh3h">
+          <h4 id="sh3h">목록에서 빼기</h4>
+          <div id="sh3body"></div>
+          <div class="bt"><button class="btn quiet" id="sh3no">취소</button><button class="btn pri" id="sh3yes">빼기</button></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="note"><b>세 가지 행동만 있습니다.</b> 「빼기」·「넣기」·「코드 바꾸기」가 제안을 처리하고, 「보류」는 다음 월간 산출까지 숨기며, 「무시」는 같은 근거로 다시 제안하지 않습니다. <b>「삭제」라는 말은 쓰지 않습니다</b> — 데이터를 지우는 게 아니라 분석 목록에서 빼는 것이라서입니다.</p>
+    <p class="note"><b>색으로 넣기·빼기를 구분하지 않습니다.</b> 이 앱의 빨강·파랑은 <b>상승·하락</b>이라 목록 추가에 빨강을 쓰면 「오른다」로 읽힙니다. 기호(<code>+</code>·<code>−</code>)와 글자(「넣기」·「빼기」)로 구분하고, 강조가 필요한 쪽만 <code>--accent</code> 를 씁니다.</p>
+  </section>
+
+  <!-- ════════════════ 4. 12월 일괄 교체 ════════════════ -->
+  <section class="block" id="s4">
+    <h2>4. 12월 정기 재구성 — ~100종목을 한 번에 갈아끼우기 <small style="font-size:12px;color:var(--muted);font-weight:400">— 눌러 보세요</small></h2>
+    <p class="lead">연 1회, 12월 3째 금요일 뒤에 하는 일입니다. 기존 「차단 종목」 칩 편집기(<code>SymbolEditor</code>)로는 <b>100번 지우고 100번 넣어야</b> 하므로 쓰지 않습니다. <b>붙여넣기 → 대조 → 확인</b> 세 단계입니다. 아래는 동작합니다(저장 없음).</p>
+
+    <div class="frame" id="f4">
+      <div class="appbar"><span class="bk" aria-hidden="true">‹</span><h3>수동 목록 한 번에 바꾸기</h3></div>
+      <div class="bulk">
+        <label for="ta">새 나스닥100 목록 붙여넣기</label>
+        <p class="hint">한 줄에 한 종목. 형식은 <code>NAS:AAAA</code>(거래소:코드). 쉼표·공백·빈 줄은 알아서 정리합니다. <b>여기 내용이 수동 목록 전체를 대신합니다</b> — 즐겨찾기·보유는 건드리지 않습니다.</p>
+        <textarea id="ta" rows="9" spellcheck="false" aria-describedby="tahelp"></textarea>
+        <p class="hint" id="tahelp">데모라 20줄만 씁니다(실제는 ~100줄). 아래 버튼으로 세 가지 입력을 바꿔 볼 수 있습니다.</p>
+        <div class="bar">
+          <button class="btn quiet" data-preset="good">예시 · 정상 (12월안)</button>
+          <button class="btn quiet" data-preset="bad">예시 · 형식 오류 포함</button>
+          <button class="btn quiet" data-preset="empty">예시 · 빈 입력</button>
+          <button class="btn pri" id="cmp4">대조하기</button>
+        </div>
+        <div id="diffbox"></div>
+      </div>
+
+      <div class="sheet-bg" id="sheet4" hidden>
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh4h">
+          <h4 id="sh4h">수동 목록을 바꿀까요?</h4>
+          <div id="sh4body"></div>
+          <div class="bt"><button class="btn quiet" id="sh4no">취소</button><button class="btn pri" id="sh4yes">바꾸기</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls" style="max-width:var(--fw)">
+      <fieldset class="seg"><legend>저장 결과 (데모 전용)</legend><div class="seg-row">
+        <label><input type="radio" name="r4" value="ok" checked><span>성공</span></label>
+        <label><input type="radio" name="r4" value="err"><span>실패 (DB 오류)</span></label>
+      </div></fieldset>
+    </div>
+
+    <p class="note"><b>고위험 취급입니다.</b> 주문은 아니지만 분석 대상이 통째로 바뀌므로 ① 저장 전 <b>대조 화면</b>(넣을 것·뺄 것·그대로) ② <b>확인 대화</b>(바뀌는 수와 그 결과를 글로) ③ 성공·실패·취소 표시 ④ <b>형식 오류가 1건이라도 있으면 저장 버튼이 꺼집니다</b> — 일부만 반영되는 상태를 만들지 않습니다.</p>
+    <p class="note"><b>빈 입력은 막습니다.</b> 목록이 비면 해외 분석은 보유·즐겨찾기만 남아 ~11종목으로 떨어집니다. 「전부 빼기」가 정말 목적일 수 있으니 금지하지는 않되, 확인 대화에서 그 수를 말하고 버튼 문구를 바꿉니다.</p>
+    <p class="note"><b>안전장치와의 관계:</b> 이 화면은 주문을 보내지 않으므로 <b>실거래여부·모든거래차단과 무관</b>합니다(차단 상태에서도 목록은 바꿀 수 있습니다). 이미 만들어진 시그널과 보유 종목에도 영향이 없습니다 — 목록은 <b>다음 「해외 장마감 분석」</b>부터 쓰입니다. 확인 대화에 이 문장을 그대로 넣었습니다.</p>
+  </section>
+
+  <!-- ════════════════ 5. 상태 모음 ════════════════ -->
+  <section class="block" id="s5">
+    <h2>5. 상태 모음 — 로딩 · 빈 · 오류</h2>
+    <p class="lead">데모 게이트가 요구하는 나머지 상태입니다. 「빈」은 <b>무엇을 확인하고 비었는지</b>를 함께 말합니다 — 조회 실패와 섞이면 「확인할 것 없음」이 거짓말이 되기 때문입니다(홈 「확인 필요」가 쓰는 기존 규칙).</p>
+
+    <div class="cmp3">
+      <div class="side">
+        <p class="cap alt">로딩</p>
+        <div class="frame">
+          <div class="appbar"><span class="bk" aria-hidden="true">‹</span><h3>해외 분석 대상</h3></div>
+          <div class="grid2">
+            <div class="tile"><span class="lb">분석 대상</span><span class="skel" style="width:60%;height:22px"></span></div>
+            <div class="tile"><span class="lb">변경 제안</span><span class="skel" style="width:60%;height:22px"></span></div>
+            <div class="tile"><span class="lb">수동 — 나스닥100</span><span class="skel" style="width:70%;height:22px"></span></div>
+            <div class="tile"><span class="lb">자동 — NYSE 상위 50</span><span class="skel" style="width:70%;height:22px"></span></div>
+          </div>
+          <div class="skrow"><span class="skel" style="width:72%"></span><span class="skel" style="width:48%"></span></div>
+          <div class="skrow"><span class="skel" style="width:64%"></span><span class="skel" style="width:40%"></span></div>
+          <p class="sec-foot">숫자 자리를 먼저 잡아 두고 채웁니다(화면이 튀지 않게). 조회는 60초 재조회 없이 1회입니다.</p>
+        </div>
+      </div>
+
+      <div class="side">
+        <p class="cap alt">빈 — 제안 0건</p>
+        <div class="frame">
+          <div class="appbar"><span class="bk" aria-hidden="true">‹</span><h3>해외 분석 대상</h3></div>
+          <div class="tabs" role="tablist" aria-label="해외 분석 대상 보기">
+            <button role="tab" aria-selected="true">변경 제안 <span class="cnt">0</span></button>
+            <button role="tab" aria-selected="false">목록 <span class="cnt">150</span></button>
+          </div>
+          <div class="empty">
+            지금 확인할 <b>변경 없음</b>.<br>
+            <span style="font-size:12px">마지막 확인 12-02 02:10 — 미국 공시 · 해외 뉴스 · 상장 목록 <b>3곳 모두 확인</b>했습니다.<br>
+            ⚠ 12월 정기 재구성은 공시에 나오지 않습니다 — <b>12-19 에 목록을 직접 확인</b>하세요.</span>
+          </div>
+          <p class="sec-foot">「3곳 모두 확인」은 <b>실제로 다 읽었을 때만</b> 씁니다. 한 곳이라도 못 읽었으면 아래 「일부만 확인」으로 바뀝니다.</p>
+        </div>
+      </div>
+
+      <div class="side">
+        <p class="cap alt">오류 · 일부만 확인</p>
+        <div class="frame">
+          <div class="appbar"><span class="bk" aria-hidden="true">‹</span><h3>해외 분석 대상</h3></div>
+          <div class="tabs" role="tablist" aria-label="해외 분석 대상 보기">
+            <button role="tab" aria-selected="true">변경 제안 <span class="cnt">1</span></button>
+            <button role="tab" aria-selected="false">목록 <span class="cnt">?</span></button>
+          </div>
+          <div class="rows">
+            <div class="rowl"><span class="ic e">!</span><span><span class="t">변경 확인이 <b>일부만</b> 끝났습니다</span><span class="s">미국 공시 확인 실패 (12-02 02:10) — 인수·합병·상장폐지를 놓쳤을 수 있습니다</span></span><span class="r">›</span></div>
+          </div>
+          <div class="pcard">
+            <div class="ph"><span class="sym">NAS:AJJJ</span><span class="st">거래소 이동 (→ NYSE)</span></div>
+            <dl><dt>근거</dt><dd>상장 목록 변화 (12-01 산출)</dd></dl>
+            <div class="acts"><span class="btn pri">코드 바꾸기</span><span class="btn quiet">보류</span><span class="btn quiet">무시</span></div>
+          </div>
+          <div class="empty" style="border-bottom:1px solid var(--border)">
+            목록을 불러오지 못했습니다.<br>
+            <span style="font-size:12px">조회 실패 — 잠시 뒤 다시 해 보세요.</span><br><br>
+            <span class="btn quiet" style="min-height:44px">다시 시도</span>
+          </div>
+          <p class="sec-foot">제안 조회와 목록 조회는 <b>따로 실패</b>합니다(기존 홈의 섹션 단위 실패 격리와 같은 방식). 한쪽이 죽어도 다른 쪽은 보입니다.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════ 결정 필요 ════════════════ -->
+  <section class="block" id="sd">
+    <h2>결정 필요 6건</h2>
+    <p class="lead">Q1·Q3 과, 데모를 만들며 새로 드러난 4건입니다. <b>초록 테두리가 권고안</b>이고, 전부 권고대로 가도 모순이 없습니다. D1 만 다른 선택을 하면 D2~D4 가 함께 바뀝니다(불편한 사실 1번).</p>
+
+    <div class="decide">
+      <h3>D1 (= Q1) 수동 목록을 어디에 두나</h3>
+      <p>데모 §1 에서 세 칸으로 나란히 봤습니다. <b>Q2·Q4 는 화면과 무관해 이 데모에 없습니다.</b></p>
+      <div class="ab">
+        <div class="opt rec"><h4>A · DB + 설정 화면<span class="rec-tag">권고</span></h4>화면에서 바꾸고 변경 이력이 남는다. 재배포·재시작 없음. 저장 전 형식 검사·대조 화면이 있다.</div>
+        <div class="opt"><h4>B · 환경변수 <code>OVERSEAS_UNIVERSE_SYMBOLS</code></h4>지금 구조 그대로. 화면은 읽기 전용. 바꿀 때마다 <code>.env</code> 편집 + pm2 재시작, 이력 없음.</div>
+      </div>
+      <p class="why"><b>권고 이유:</b> 알림을 만드는 목적이 「사용자가 눌러서 끝내기」인데, B 는 누를 자리가 없어 알림이 할 일 목록으로 바뀝니다.</p>
+    </div>
+
+    <div class="decide">
+      <h3>D2 (= Q3) 알림 경로</h3>
+      <p>홈 줄은 어느 쪽이든 넣습니다. 실제 선택은 <b>텔레그램을 보낼지</b>입니다.</p>
+      <div class="ab">
+        <div class="opt rec"><h4>A · 텔레그램 + 홈 둘 다<span class="rec-tag">권고</span></h4>제안이 새로 생길 때만 1회. 설정 › 알람에 토글 1개.</div>
+        <div class="opt"><h4>B · 홈만</h4>알림 비용 0. 홈을 열어야 안다.</div>
+      </div>
+      <p class="why"><b>권고 이유:</b> 상장폐지는 날짜를 예고하지 않고, 놓치면 매일 KIS 조회가 실패해 「데이터 이상」만 쌓입니다. 빈도가 연 5~10건이라 소음 위험이 낮습니다.</p>
+    </div>
+
+    <div class="decide">
+      <h3>D3 (새로 드러남) 텔레그램에서 바로 처리할 수 있게 할까</h3>
+      <p>기존 주문 승인 메시지에는 [승인]·[거절] 버튼이 있습니다. 같은 모양을 쓸지가 문제입니다.</p>
+      <div class="ab">
+        <div class="opt rec"><h4>A · 「앱에서 확인」 링크만<span class="rec-tag">권고</span></h4>텔레그램은 알리기만. 결정은 근거를 볼 수 있는 화면에서.</div>
+        <div class="opt"><h4>B · [빼기]·[보류] 버튼도</h4>한 번에 끝난다. 구현은 기존 승인 버튼 구조를 재사용.</div>
+      </div>
+      <p class="why"><b>권고 이유:</b> 주문 승인은 만료가 있어 즉답이 필요하지만 목록 변경은 급하지 않습니다. 반대로 <b>오조작 비용은 더 깁니다</b> — 분석 대상이 조용히 틀어지고, 다음 분석 결과를 봐야 알아차립니다.</p>
+    </div>
+
+    <div class="decide">
+      <h3>D4 (새로 드러남) 「보류」는 얼마나 숨기나</h3>
+      <div class="ab">
+        <div class="opt rec"><h4>A · 다음 월간 산출까지 (약 30일)<span class="rec-tag">권고</span></h4>인수 거래가 끝나거나 공시가 갱신되면 그때 다시 올라온다.</div>
+        <div class="opt"><h4>B · 7일</h4>자주 되올라온다. 진행 중인 인수는 7일마다 같은 제안이 반복될 수 있다.</div>
+      </div>
+      <p class="why"><b>권고 이유:</b> 인수·합병은 몇 달 걸립니다. 7일이면 같은 제안이 10번 넘게 올라와 T-125 와 같은 소음이 됩니다.</p>
+    </div>
+
+    <div class="decide">
+      <h3>D5 (새로 드러남) 변경 확인은 얼마나 자주 도나</h3>
+      <p>WP-A 의 NYSE 상위 50 산출은 월 1회(Q2)입니다. <b>변경 확인은 별개 작업</b>으로 둘 수 있습니다.</p>
+      <div class="ab">
+        <div class="opt rec"><h4>A · 매일 1회 (미국 공시 수집 뒤)<span class="rec-tag">권고</span></h4>이미 받아 둔 공시·뉴스를 읽기만 — 외부 호출 0, 비용 거의 없음. 상장폐지를 하루 안에 안다.</div>
+        <div class="opt"><h4>B · 월 1회 (상위 50 산출과 함께)</h4>작업 1개로 끝난다. 상장폐지를 최대 한 달 뒤에 안다.</div>
+      </div>
+      <p class="why"><b>권고 이유:</b> 거래소 이동·상장 말소는 월간 산출에서만 드러나지만, 인수·상장폐지 공시는 매일 들어옵니다. 늦게 아는 비용이 돌리는 비용보다 큽니다.</p>
+      <p class="why"><b>작업 이름 후보</b>(사전 <code>reason-dictionary.ts</code> 말투에 맞춤 — 「해외 장마감 분석」·「미국 공시 수집」·「보유 종목 개장 전 공시 확인」과 같은 꼴):<br>
+        · 월 1회 산출(WP-A) → <code>overseas-universe-refresh</code> = <b>「해외 분석 대상 갱신」</b><br>
+        · 매일 변경 확인(WP-B) → <code>universe-change-watch</code> = <b>「해외 분석 대상 변경 확인」</b><br>
+        B 를 고르면 작업은 「해외 분석 대상 갱신」 하나뿐입니다.</p>
+    </div>
+
+    <div class="decide">
+      <h3>D6 (새로 드러남) 기존 「동적 종목 선별 (Universe)」 행을 같이 손볼까</h3>
+      <p>그 행의 설명이 코인 시절 문구입니다(불편한 사실 5번). 새 행을 바로 위에 붙이면 나란히 보입니다.</p>
+      <div class="ab">
+        <div class="opt rec"><h4>A · 문구만 이번에 함께 고친다<span class="rec-tag">권고</span></h4>이 스위치가 실제로 무엇을 켜는지 확인한 뒤 한국어 설명을 바로잡는다. 동작은 건드리지 않는다.</div>
+        <div class="opt"><h4>B · 그대로 두고 별도 개선 항목으로</h4>이번 범위를 작게 유지. 모순된 두 설명이 당분간 함께 보인다.</div>
+      </div>
+      <p class="why"><b>권고 이유:</b> 같은 섹션에 새 행을 넣는 작업이라 추가 비용이 거의 없습니다. 단 <b>그 스위치가 지금 해외 분석에서 무슨 일을 하는지 확인되지 않았습니다</b> — 확인 결과 동작까지 바꿔야 하면 별 task 로 빼야 합니다[추측].</p>
+    </div>
+  </section>
+
+  <!-- ════════════════ 설계 메모 ════════════════ -->
+  <section class="block" id="sm">
+    <h2>설계 메모 · 이 데모가 다루지 않은 범위</h2>
+
+    <h3 class="sub">지키거나 새로 정한 말</h3>
+    <div class="ans">
+      <ul class="plain">
+        <li><b>기존 말 그대로:</b> 「시그널」 · 「실거래여부」 · 「모든거래차단」 · 「장마감 전 손절」 · 「건수 적음」 · 「AI 매수 판단」 · 「손실한도 손절」 — 이 화면에 나오는 것은 그중 실거래여부·모든거래차단뿐이고, 둘 다 <b>이 화면과 무관하다는 설명</b>으로만 씁니다.</li>
+        <li><b>새로 정한 말과 이유:</b>
+          <br>· <b>「해외 분석 대상」</b> — 코드의 universe. 「유니버스」는 뜻이 안 보이고 기존 「동적 종목 선별 (Universe)」와 겹칩니다.
+          <br>· <b>「수동 — 나스닥100」 / 「자동 — NYSE 상위 50」</b> — 출처가 4가지라 종목마다 어디서 왔는지 보여야 합니다.
+          <br>· <b>「변경 제안」</b> — 「알림」은 보낸 것, 「제안」은 아직 처리 안 된 것. 홈 줄·텔레그램·탭 이름을 한 말로 맞췄습니다.
+          <br>· <b>「목록에서 빼기」 / 「넣기」 / 「코드 바꾸기」</b> — 「삭제」는 데이터를 지우는 것으로 읽힙니다.
+          <br>· <b>「보류」 / 「무시」</b> — 보류는 다시 올라오고, 무시는 안 올라옵니다.
+        </li>
+        <li><b>나사닥 ↔ 나스닥:</b> 지시문에 「나사닥100」이라 적혀 있었지만 task 이력서 본문과 일반 표기가 <b>「나스닥」</b>이라 그쪽으로 썼습니다. 다른 뜻이면 알려 주세요.</li>
+      </ul>
+    </div>
+
+    <h3 class="sub">모바일 확인</h3>
+    <div class="ans">
+      <ul class="plain">
+        <li>412px(대표)·360px(경계)에서 <b>가로 스크롤·잘림 0건</b>. 유일한 가로 스크롤은 목록 탭의 출처 걸러보기 칩 줄이고, 의도한 것입니다.</li>
+        <li>누르는 것은 전부 <b>44px 이상</b>(목록·설정 행 56px). 제안 카드 버튼은 360px 에서 「빼기」가 한 줄 전체를 쓰고 「보류/무시」가 반씩 나눠 씁니다.</li>
+        <li>글자: 본문 13px · 숫자 14~18px · 레이블 11~12px. <b>11px 미만 없음.</b></li>
+        <li>세로 스크롤은 화면당 1곳. 시트는 내용이 길어지면 시트 안에서만 스크롤합니다(<code>max-height:100%</code>).</li>
+        <li>≥900px 에서 시트가 가운데 모달로 바뀝니다(기존 데모와 같은 <code>@container fr</code> 방식). 1280px 에서는 폭 720px 중앙 고정 — <b>데스크톱 전용 2열 레이아웃은 만들지 않습니다</b>(연 5~10건 쓰는 화면).</li>
+        <li><code>env(safe-area-inset-bottom)</code> 을 시트 하단 여백에 반영.</li>
+      </ul>
+    </div>
+
+    <h3 class="sub">접근성</h3>
+    <div class="ans">
+      <ul class="plain">
+        <li>탭은 <code>role="tablist"</code>/<code>tab</code>/<code>tabpanel</code> + <code>aria-selected</code>, 출처 걸러보기는 <code>aria-pressed</code>, 시트는 <code>role="dialog" aria-modal="true" aria-labelledby</code>.</li>
+        <li>상태를 <b>색만으로</b> 말하지 않습니다 — 출처 칩은 글자(수동·자동·즐겨찾기·보유)를, 대조 목록은 기호(<code>+</code>·<code>−</code>)와 글자를 함께 씁니다.</li>
+        <li>저장 결과는 <code>role="status"</code>(성공) / <code>role="alert"</code>(실패)로 읽히게 합니다.</li>
+        <li>포커스 링은 브라우저 기본 <code>:focus-visible</code> 을 지우지 않습니다. 시트는 열릴 때 첫 버튼으로 포커스를 옮기고, <kbd>Esc</kbd> 로 닫히며, 닫으면 원래 버튼으로 포커스를 돌려줍니다 — 이 데모에서 실제로 동작합니다. <b>배경 가두기(focus trap)는 데모에 없습니다</b> — 구현 때 시트 밖 요소를 <code>inert</code> 로 두는 것을 가이드에 적습니다.</li>
+        <li><code>prefers-reduced-motion</code> 에서 뼈대 깜빡임을 끕니다.</li>
+      </ul>
+    </div>
+
+    <h3 class="sub">일부러 다루지 않은 것</h3>
+    <div class="ans">
+      <ul class="plain">
+        <li><b>WP-A(NYSE 상위 50 자동 산출)에는 화면이 없습니다.</b> 이 데모에 나오는 「자동 50」은 <b>결과를 보여 주기만</b> 합니다. SEC 목록 읽기·<code>tomv</code> 단위 확인·ETP 제외·정렬은 서버 작업이라 데모 대상이 아닙니다.</li>
+        <li><b>Q2(산출 주기 월 1회 vs 분기)·Q4(상위 50 개수)</b> — 화면에 영향이 없어 이 데모에서 묻지 않습니다. 화면은 숫자를 받아 그릴 뿐입니다(「자동 — NYSE 상위 50」의 50과 「산출 12-01」 날짜만 바뀝니다).</li>
+        <li><b>WP-C(시간 예산 실측)</b> — 목록을 ~150개로 넓히기 전 관문이고 화면이 없습니다. <b>이 데모의 「150종목」은 WP-C 통과를 전제한 숫자</b>입니다.</li>
+        <li><b>즐겨찾기·보유 목록 편집</b> — 각자 원래 화면에서 합니다. 여기서는 출처로만 보입니다.</li>
+        <li><b>국내 분석 대상</b> — 이 task 는 해외만입니다. 화면 제목에 「해외」를 명시했습니다.</li>
+        <li><b>DB 표 설계·마이그레이션</b> — Leader·developer 영역입니다. 화면이 필요로 하는 것만 가이드에 사양으로 적습니다(수동 목록 1벌 + 변경 이력 + 제안 + 제안 처리 상태).</li>
+        <li><b>T-137 자산 재사용 판단</b> — 약 60파일의 재사용 여부는 감사 대상이고 화면과 무관합니다.</li>
+      </ul>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ── 미리보기 폭 ── */
+  document.querySelectorAll('input[name="w"]').forEach(function (r) {
+    r.addEventListener('change', function () { document.body.dataset.w = r.value; });
+  });
+
+  /* ── Q1 / Q3 선택 표시 (해당 절로 안내만 — 칸은 모두 보인 상태를 유지) ── */
+  function markChoice(name) {
+    document.querySelectorAll('input[name="' + name + '"]').forEach(function (r) {
+      r.addEventListener('change', function () {
+        var box = document.getElementById('choice-note');
+        if (!box) return;
+        box.textContent = '선택: Q1 = ' + q('q1').toUpperCase() + ' · Q3 = ' + q('q3').toUpperCase()
+          + (q('q1') === 'b' ? ' — Q1=B 이면 제안을 화면에서 반영할 수 없습니다(불편한 사실 1번).' : '');
+      });
+    });
+  }
+  function q(name) {
+    var el = document.querySelector('input[name="' + name + '"]:checked');
+    return el ? el.value : 'a';
+  }
+  var noteHost = document.querySelector('.sticky-ctl');
+  if (noteHost) {
+    var n = document.createElement('p');
+    n.className = 'banner';
+    n.id = 'choice-note';
+    n.style.margin = '8px 0 0';
+    n.textContent = '선택: Q1 = A · Q3 = A (권고안). 바꿔도 아래 칸은 모두 그대로 보입니다 — 비교용 데모입니다.';
+    noteHost.appendChild(n);
+  }
+  markChoice('q1'); markChoice('q3');
+
+  /* ── 공통: 시트 열고 닫기(포커스 되돌리기) ── */
+  function openSheet(bg, firstBtn, opener) {
+    bg.hidden = false;
+    bg.dataset.opener = opener && opener.id ? opener.id : '';
+    bg._opener = opener || null;
+    var sh = bg.querySelector('.sheet');
+    if (sh && sh.scrollIntoView) sh.scrollIntoView({ block: 'center' });
+    if (firstBtn) firstBtn.focus();
+  }
+  function closeSheet(bg) {
+    bg.hidden = true;
+    if (bg._opener && bg._opener.focus) bg._opener.focus();
+    bg._opener = null;
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    document.querySelectorAll('.sheet-bg:not([hidden])').forEach(closeSheet);
+  });
+
+  /* ══════════ §3 제안 흐름 ══════════ */
+  var MANUAL_START = 98;
+  var TOTAL_START = 150;
+
+  var proposals = [
+    {
+      id: 'p1', sym: 'NAS:AAAA', kindChip: '상장폐지 예정', chipCls: 'error',
+      basis: '미국 공시 Form 25 (12-01 수집) · 해외 뉴스 2건',
+      act: '목록에서 빼기', actVerb: '빼기', delta: -1, held: null,
+      effect: '수동 목록에서 빼면 98 → 97 종목, 분석 대상 150 → 149 종목.',
+      done: '목록에서 뺐습니다'
+    },
+    {
+      id: 'p2', sym: 'NAS:AEEE', kindChip: '인수 합의', chipCls: '',
+      basis: '미국 공시 8-K · SC 14D9 (11-28 수집)',
+      act: '목록에서 빼기', actVerb: '빼기', delta: -1, held: '보유 2주',
+      warn: '보유 중입니다 — 목록에서 빼도 <b>분석은 계속됩니다</b>(분석 대상 = 보유 ∪ 즐겨찾기 ∪ 목록). 분석을 멈추려면 먼저 매도해야 합니다.',
+      effect: '수동 목록에서 빼면 98 → 97 종목. <b>보유 중이라 분석 대상 수는 150 그대로</b>입니다.',
+      rec: '보류 — 거래 종료 전',
+      done: '목록에서 뺐습니다 (보유 중이라 분석은 계속)'
+    },
+    {
+      id: 'p3', sym: 'NAS:AJJJ', kindChip: '거래소 이동 (→ NYSE)', chipCls: '',
+      basis: '상장 목록 변화 (12-01 「해외 분석 대상 갱신」에서 드러남)',
+      act: '코드 바꾸기 NAS:AJJJ → NYS:AJJJ', actVerb: '바꾸기', delta: 0, held: null,
+      effect: '수동 목록의 코드만 바뀝니다(98 종목 그대로). 바꾸지 않으면 <b>KIS 조회가 매일 실패</b>해 「데이터 이상」으로 올라옵니다.',
+      done: '코드를 바꿨습니다'
+    }
+  ];
+
+  var state = {};
+  proposals.forEach(function (p) { state[p.id] = 'open'; });
+
+  var plist = document.getElementById('plist');
+  var pempty = document.getElementById('pempty');
+  var sheet3 = document.getElementById('sheet3');
+  var sh3body = document.getElementById('sh3body');
+  var sh3h = document.getElementById('sh3h');
+  var sh3yes = document.getElementById('sh3yes');
+  var sh3no = document.getElementById('sh3no');
+  var pending = null;
+
+  function result3() { return q('r3'); }
+
+  function renderProposals() {
+    var open = 0, touched = 0;
+    plist.innerHTML = '';
+    proposals.forEach(function (p) {
+      var st = state[p.id];
+      // 보류·무시는 「확인 필요」에서 빠진다 — 그것이 보류·무시의 뜻이다(결정 D4).
+      if (st === 'open') open++; else touched++;
+      var card = document.createElement('div');
+      card.className = 'pcard' + (st === 'done' || st === 'ignored' || st === 'failed' ? ' done' : '');
+      var html = '<div class="ph"><span class="sym">' + p.sym + '</span>'
+        + '<span class="st ' + p.chipCls + '">' + p.kindChip + '</span>'
+        + (p.held ? '<span class="st held">' + p.held + '</span>' : '') + '</div>'
+        + '<dl><dt>근거</dt><dd>' + p.basis + '</dd>'
+        + '<dt>권고</dt><dd>' + (p.rec || p.act) + '</dd></dl>'
+        + (p.warn ? '<div class="warnline">' + p.warn + '</div>' : '');
+
+      if (st === 'open') {
+        html += '<div class="acts">'
+          + '<button class="btn pri pri-act" data-p="' + p.id + '" data-do="act">' + p.act + '</button>'
+          + '<button class="btn quiet" data-p="' + p.id + '" data-do="hold">보류</button>'
+          + '<button class="btn quiet" data-p="' + p.id + '" data-do="ignore">무시</button>'
+          + '</div>';
+      } else if (st === 'held') {
+        html += '<div class="res" role="status">보류 — 다음 「해외 분석 대상 갱신」(01-01)까지 숨깁니다. 공시가 갱신되면 그때 다시 올라옵니다.</div>'
+          + '<div class="acts"><button class="btn quiet wide" data-p="' + p.id + '" data-do="reopen">되돌리기</button></div>';
+      } else if (st === 'ignored') {
+        html += '<div class="res" role="status">무시 — 같은 근거로는 다시 제안하지 않습니다.</div>'
+          + '<div class="acts"><button class="btn quiet wide" data-p="' + p.id + '" data-do="reopen">되돌리기</button></div>';
+      } else if (st === 'done') {
+        html += '<div class="res ok" role="status">' + p.done + ' · 다음 「해외 장마감 분석」부터 반영됩니다. 이미 만든 시그널·보유 종목에는 영향 없습니다.</div>';
+      } else if (st === 'failed') {
+        html += '<div class="res e" role="alert">저장하지 못했습니다 — 데이터베이스 오류. <b>목록은 바뀌지 않았습니다.</b> 잠시 뒤 다시 해 보세요.</div>'
+          + '<div class="acts"><button class="btn pri" data-p="' + p.id + '" data-do="act">다시 시도</button></div>';
+      }
+      card.innerHTML = html;
+      plist.appendChild(card);
+    });
+
+    pempty.hidden = open > 0;
+    var lead = document.getElementById('pempty-lead');
+    if (lead) lead.innerHTML = touched > 0
+      ? '확인할 변경을 <b>모두 처리했습니다</b>.'
+      : '지금 확인할 <b>변경 없음</b>.';
+    document.getElementById('tabcnt').textContent = String(open);
+    document.getElementById('t-prop').innerHTML = open + '<small>건</small>';
+    document.getElementById('t-prop-meta').textContent = open > 0 ? '확인 필요' : '지금 확인할 것 없음';
+
+    var manual = MANUAL_START, total = TOTAL_START;
+    proposals.forEach(function (p) {
+      if (state[p.id] !== 'done') return;
+      manual += p.delta;
+      if (p.delta !== 0 && !p.held) total += p.delta;
+    });
+    document.getElementById('t-manual').innerHTML = manual + '<small>종목</small>';
+    document.getElementById('t-total').innerHTML = total + '<small>종목</small>';
+  }
+
+  plist.addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-p]');
+    if (!b) return;
+    var id = b.dataset.p, what = b.dataset.do;
+    var p = proposals.filter(function (x) { return x.id === id; })[0];
+    if (!p) return;
+
+    if (what === 'hold') { state[id] = 'held'; renderProposals(); return; }
+    if (what === 'ignore') { state[id] = 'ignored'; renderProposals(); return; }
+    if (what === 'reopen') { state[id] = 'open'; renderProposals(); return; }
+
+    pending = { id: id, btnId: b.id || null, btn: b };
+    sh3h.textContent = p.act;
+    sh3body.innerHTML = '<p><b>' + p.sym + '</b> · ' + p.kindChip + '</p>'
+      + '<p>' + p.effect + '</p>'
+      + (p.warn ? '<p>' + p.warn + '</p>' : '')
+      + '<p style="color:var(--muted);font-size:12px">주문이 아닙니다 — 실거래여부·모든거래차단과 무관하고, 이미 만든 시그널·보유 종목에도 영향이 없습니다. 다음 「해외 장마감 분석」부터 쓰입니다.</p>';
+    sh3yes.textContent = p.actVerb;
+    openSheet(sheet3, sh3yes, b);
+  });
+
+  sh3no.addEventListener('click', function () {
+    closeSheet(sheet3);
+    if (pending) {
+      var host = plist.querySelector('[data-p="' + pending.id + '"]');
+      if (host) {
+        var r = document.createElement('div');
+        r.className = 'res';
+        r.setAttribute('role', 'status');
+        r.textContent = '취소했습니다 — 목록은 그대로입니다.';
+        host.closest('.pcard').appendChild(r);
+        setTimeout(function () { if (r.parentNode) r.parentNode.removeChild(r); }, 4000);
+      }
+    }
+    pending = null;
+  });
+
+  sh3yes.addEventListener('click', function () {
+    if (!pending) { closeSheet(sheet3); return; }
+    state[pending.id] = result3() === 'ok' ? 'done' : 'failed';
+    closeSheet(sheet3);
+    pending = null;
+    renderProposals();
+  });
+
+  /* 탭 전환 */
+  var tabP = document.getElementById('tab-p'), tabL = document.getElementById('tab-l');
+  var panP = document.getElementById('panel-p'), panL = document.getElementById('panel-l');
+  function showTab(which) {
+    var p = which === 'p';
+    tabP.setAttribute('aria-selected', String(p));
+    tabL.setAttribute('aria-selected', String(!p));
+    panP.hidden = !p; panL.hidden = p;
+  }
+  tabP.addEventListener('click', function () { showTab('p'); });
+  tabL.addEventListener('click', function () { showTab('l'); });
+
+  /* 출처 걸러보기 (표시만) */
+  document.querySelectorAll('#panel-l .filters button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('#panel-l .filters button').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); });
+      b.setAttribute('aria-pressed', 'true');
+    });
+  });
+
+  document.getElementById('go-bulk').addEventListener('click', function () {
+    var el = document.getElementById('s4');
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
+  });
+
+  renderProposals();
+
+  /* ══════════ §4 일괄 교체 ══════════ */
+  var CURRENT = ['NAS:AAAA','NAS:ABBB','NAS:ACCC','NAS:ADDD','NAS:AEEE','NAS:AFFF','NAS:AGGG','NAS:AHHH','NAS:AIII','NAS:AJJJ',
+                 'NAS:AKKK','NAS:ALLL','NAS:AMMM','NAS:ANNN','NAS:AOOO','NAS:APPP','NAS:AQQQ','NAS:ARRR','NAS:ASSS','NAS:ATTT'];
+  var HELD = { 'NAS:AEEE': '보유 2주' };
+
+  var PRESETS = {
+    good: ['NAS:ABBB','NAS:ADDD','NAS:AFFF','NAS:AGGG','NAS:AHHH','NAS:AIII','NAS:AJJJ','NAS:AKKK','NAS:ALLL',
+           'NAS:AMMM','NAS:ANNN','NAS:AOOO','NAS:APPP','NAS:AQQQ','NAS:ARRR','NAS:ASSS','NAS:ATTT','NAS:BXXX','NAS:BYYY','NAS:BZZZ'].join('\n'),
+    bad: ['NAS:ABBB','NAS:ADDD','AAPL','NAS:AFFF','nas:aggg','NAS:','NAS:AIII','NYS:AJJJ','NAS:AKKK','NAS:ALLL',
+          'NAS:AMMM','NAS:ANNN 삼성','NAS:AOOO','NAS:APPP','NAS:AQQQ','NAS:ARRR','NAS:ASSS','NAS:ATTT','NAS:BXXX','NAS:BYYY'].join('\n'),
+    empty: ''
+  };
+
+  var ta = document.getElementById('ta');
+  var diffbox = document.getElementById('diffbox');
+  var sheet4 = document.getElementById('sheet4');
+  var sh4body = document.getElementById('sh4body');
+  var sh4yes = document.getElementById('sh4yes');
+  var sh4no = document.getElementById('sh4no');
+  var cmp4 = document.getElementById('cmp4');
+  var lastDiff = null;
+
+  ta.value = PRESETS.good;
+
+  document.querySelectorAll('[data-preset]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      ta.value = PRESETS[b.dataset.preset];
+      diffbox.innerHTML = '';
+      lastDiff = null;
+    });
+  });
+
+  var OK_RE = /^(NAS|NYS|AMS):[A-Z][A-Z0-9.]{0,6}$/;
+
+  function parse(text) {
+    var raw = String(text).split(/[\n,]/).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+    var good = [], bad = [], seen = {}, dup = [];
+    raw.forEach(function (s) {
+      if (!OK_RE.test(s)) { bad.push(s); return; }
+      if (seen[s]) { dup.push(s); return; }
+      seen[s] = 1; good.push(s);
+    });
+    return { good: good, bad: bad, dup: dup };
+  }
+
+  function buildDiff() {
+    var p = parse(ta.value);
+    var cur = {}; CURRENT.forEach(function (s) { cur[s] = 1; });
+    var nxt = {}; p.good.forEach(function (s) { nxt[s] = 1; });
+    var add = p.good.filter(function (s) { return !cur[s]; });
+    var rm = CURRENT.filter(function (s) { return !nxt[s]; });
+    var same = CURRENT.filter(function (s) { return nxt[s]; });
+    return { add: add, rm: rm, same: same, bad: p.bad, dup: p.dup, next: p.good };
+  }
+
+  function renderDiff() {
+    var d = buildDiff();
+    lastDiff = d;
+    var blocked = d.bad.length > 0;
+    var html = '<div class="diff">'
+      + '<div class="dh">'
+      + '<div><span class="k">넣을 것</span><span class="n">' + d.add.length + '</span></div>'
+      + '<div><span class="k">뺄 것</span><span class="n">' + d.rm.length + '</span></div>'
+      + '<div><span class="k">그대로</span><span class="n">' + d.same.length + '</span></div>'
+      + '</div><ul>';
+
+    d.bad.forEach(function (s) {
+      html += '<li class="bad"><span class="mk" aria-hidden="true">!</span><span class="sy">'
+        + esc(s) + '<em>형식 오류 — <code>NAS:AAAA</code> 꼴이어야 합니다</em></span></li>';
+    });
+    d.dup.forEach(function (s) {
+      html += '<li><span class="mk" aria-hidden="true">=</span><span class="sy">' + esc(s) + '<em>중복 — 1번만 씁니다</em></span></li>';
+    });
+    d.add.forEach(function (s) {
+      html += '<li class="add"><span class="mk" aria-hidden="true">+</span><span class="sy">' + esc(s) + '<em>넣기</em></span></li>';
+    });
+    d.rm.forEach(function (s) {
+      html += '<li class="rm"><span class="mk" aria-hidden="true">&minus;</span><span class="sy">' + esc(s)
+        + '<em>빼기' + (HELD[s] ? ' · ' + HELD[s] + ' — 빼도 분석은 계속' : '') + '</em></span></li>';
+    });
+    html += '</ul>';
+
+    if (blocked) {
+      html += '<div class="dnote" role="alert" style="color:#fca5a5">형식 오류 <b>' + d.bad.length
+        + '건</b>이 있어 저장할 수 없습니다. 일부만 반영되는 상태를 만들지 않습니다 — 고치고 다시 대조하세요.</div>';
+    } else if (d.next.length === 0) {
+      html += '<div class="dnote" role="alert" style="color:var(--accent)">목록이 <b>비어 있습니다</b>. 이대로 저장하면 해외 분석은 보유·즐겨찾기만 남아 <b>약 11종목</b>으로 떨어집니다.</div>';
+    } else {
+      html += '<div class="dnote">저장하면 수동 목록이 <b>' + CURRENT.length + ' → ' + d.next.length
+        + '종목</b>이 됩니다. 즐겨찾기·보유는 건드리지 않습니다. 데모는 20줄 기준입니다(실제 ~100줄).</div>';
+    }
+    html += '</div>';
+
+    html += '<div class="bar" style="margin-top:10px">'
+      + '<button class="btn quiet" id="again4">다시 대조</button>'
+      + '<button class="btn ' + (d.next.length === 0 ? 'dz' : 'pri') + '" id="save4"' + (blocked ? ' disabled' : '') + '>'
+      + (d.next.length === 0 ? '목록 전부 비우기' : '이 내용으로 바꾸기') + '</button></div>'
+      + '<div id="res4"></div>';
+
+    diffbox.innerHTML = html;
+
+    document.getElementById('again4').addEventListener('click', renderDiff);
+    var save = document.getElementById('save4');
+    save.addEventListener('click', function () {
+      var dd = lastDiff;
+      sh4body.innerHTML = '<p>수동 목록을 <b>' + CURRENT.length + ' → ' + dd.next.length + '종목</b>으로 바꿉니다.</p>'
+        + '<p>넣을 것 <b>' + dd.add.length + '</b> · 뺄 것 <b>' + dd.rm.length + '</b> · 그대로 <b>' + dd.same.length + '</b></p>'
+        + (dd.next.length === 0
+            ? '<p style="color:#fca5a5">목록이 비면 해외 분석은 보유·즐겨찾기만 남아 <b>약 11종목</b>이 됩니다. 정말 비울까요?</p>'
+            : '')
+        + (dd.rm.filter(function (s) { return HELD[s]; }).length
+            ? '<p style="color:var(--accent)">빼는 종목 중 <b>보유 중</b>인 것이 있습니다 — 목록에서 빠져도 분석은 계속됩니다.</p>'
+            : '')
+        + '<p style="color:var(--muted);font-size:12px">주문이 아닙니다 — 실거래여부·모든거래차단과 무관하고, 이미 만든 시그널·보유 종목에도 영향이 없습니다. 다음 「해외 장마감 분석」부터 쓰입니다. 바꾼 뒤에도 변경 이력에서 직전 목록으로 되돌릴 수 있습니다.</p>';
+      sh4yes.textContent = dd.next.length === 0 ? '전부 비우기' : '바꾸기';
+      sh4yes.className = 'btn ' + (dd.next.length === 0 ? 'dz' : 'pri');
+      openSheet(sheet4, sh4yes, save);
+    });
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  cmp4.addEventListener('click', renderDiff);
+
+  sh4no.addEventListener('click', function () {
+    closeSheet(sheet4);
+    var host = document.getElementById('res4');
+    if (host) {
+      host.innerHTML = '<div class="res" role="status" style="margin-top:10px">취소했습니다 — 목록은 그대로입니다.</div>';
+      setTimeout(function () { if (host) host.innerHTML = ''; }, 4000);
+    }
+  });
+
+  sh4yes.addEventListener('click', function () {
+    closeSheet(sheet4);
+    var host = document.getElementById('res4');
+    if (!host || !lastDiff) return;
+    if (q('r4') === 'ok') {
+      host.innerHTML = '<div class="res ok" role="status" style="margin-top:10px">바꿨습니다 — 수동 목록 '
+        + lastDiff.next.length + '종목 (넣기 ' + lastDiff.add.length + ' · 빼기 ' + lastDiff.rm.length
+        + '). 변경 이력에 남았습니다. 다음 「해외 장마감 분석」부터 반영됩니다.</div>';
+    } else {
+      host.innerHTML = '<div class="res e" role="alert" style="margin-top:10px">저장하지 못했습니다 — 데이터베이스 오류. '
+        + '<b>목록은 바뀌지 않았습니다</b>(전부 반영되거나 전부 안 되거나 둘 중 하나입니다). 붙여넣은 내용은 그대로 두었으니 다시 저장해 보세요.</div>';
+    }
+  });
+})();
+</script>
+</body>
+</html>

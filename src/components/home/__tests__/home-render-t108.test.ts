@@ -210,7 +210,7 @@ describe('B-2 확인 필요 (§2.3.2)', () => {
     expect(textOf(html)).not.toContain('unauthorized');
   });
   test('문구 함수: 표 순서(가이드 9종 + WP-A 추가 safety_unknown 맨 앞 · order_blocked 거부 뒤) · 데이터 이상은 묶음 한 줄(부제에 앞 2개 + 「외 n건」) · null 빈칸은 구절째 뺀다', () => {
-    expect(CHECK_ORDER).toEqual(['safety_unknown', 'kill_switch_on', 'exit_live_orders', 'buy_blocked', 'awaiting_approval', 'order_rejected', 'order_blocked', 'hard_stop_off_hit', 'virtual_exit', 'data_anomaly', 'analysis_unknown']);
+    expect(CHECK_ORDER).toEqual(['safety_unknown', 'kill_switch_on', 'exit_live_orders', 'buy_blocked', 'awaiting_approval', 'order_rejected', 'order_blocked', 'hard_stop_off_hit', 'virtual_exit', 'universe_change_proposed', 'data_anomaly', 'analysis_unknown']);
     const an = (i: number, more: number | null = null): CheckItem => ({ kind: 'data_anomaly', severity: 'w', params: { source: 'fx_usdkrw', label: `이상 ${i}`, state: 'stale', streak: null, more }, href: '/analytics?tab=data' });
     // 데이터 이상 여러 건 → 한 줄(D3-B). 건수 = 서버가 보낸 항목 수 + 마지막 항목 more(잘린 수)
     const four = checkLines([an(1), an(2), an(3), an(4)], NOW);

@@ -60,3 +60,24 @@ agent-vault/10-Flow/reports/S00-*-local.md
 
 # T-100 보유 종목 손실 통제 초안 — 보유 종목·수량·평단·금액이 들어 있어 커밋하지 않는다(사용자 결정 자료, 이 서버에만 둔다)
 agent-vault/10-Flow/reports/T-100-holdings-loss-control-proposal-*.md
+
+# Synology NAS 메타데이터 사이드카 — SMB/NFS 클라이언트(맥)에서는 보이지 않고
+# 서버(우분투)에서만 보인다. 커밋은 서버에서 하므로 `git add -A` 로 딸려 들어갈 수 있다.
+#
+# ⚠ 이 규칙이 막는 것은 **작업트리** 사이드카의 커밋뿐이다. fetch·push 를 `fatal: bad object`
+# 로 막는 사이드카는 `.git/refs/` **안에** 생기고, .gitignore 는 `.git` 내부를 보지 않으므로
+# 이 규칙으로는 그것을 막을 수 없다(2026-11-01 다른 세션 지적 — 내 최초 주석이 둘을 섞었다).
+# 그쪽 대응은 ISS-0013 이고 도구는 `scripts/git-refs-clean.sh` 다(push 전 `--check`).
+@eaDir/
+*@SynoEAStream
+
+# Agent Vault 인계 산출물(zip·manifest·사본) — 커밋하지 않는다.
+# 이유 2개:
+#  1) 외부 전송 표면: `.claude/tools/codex-review/codex-review.sh` 는 스냅샷을
+#     `git add -A` + `write-tree` 로 만든다(149~150행). 미추적이면 **매 Codex 검토마다
+#     이 2MB(네트워크 trace·로그·핸드오프)가 함께 나간다** — 2026-11-01 T-143 C2 에서 실측.
+#     `.gitignore` 에 넣으면 `add -A` 가 건너뛰어 스냅샷에서 빠진다.
+#  2) 애초에 추적된 적이 없다(이 규칙 추가 시점 `git ls-files` 0건) — 이력이 바뀌지 않는다.
+# ⚠ 여기 있는 파일은 **커밋되지 않으므로 유일한 사본으로 두지 않는다.** 남겨야 할 내용은
+#   task 이력서(`10-Flow/tasks/`) 본문이나 `30-Knowledge/` 로 옮긴다.
+agent-vault/10-Flow/artifacts/

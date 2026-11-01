@@ -20,7 +20,7 @@ export { EXIT_KIND_LABEL, exitKindLabel };
 
 export const CHECK_ORDER: readonly CheckKind[] = [
   'safety_unknown', 'kill_switch_on', 'exit_live_orders', 'buy_blocked', 'awaiting_approval', 'order_rejected', 'order_blocked',
-  'hard_stop_off_hit', 'virtual_exit', 'data_anomaly', 'analysis_unknown',
+  'hard_stop_off_hit', 'virtual_exit', 'universe_change_proposed', 'data_anomaly', 'analysis_unknown',
 ];
 
 /** 안전 상태를 못 읽었을 때 확인 필요 첫 줄·빈 상태 대신 쓰는 문구(「지금 확인할 것 없음」 을 쓰지 않는다). */
@@ -139,6 +139,19 @@ export function checkLine(item: CheckItem, nowMs: number): CheckLine | null {
       return { key: 'virtual-exit', severity: 'i', glyph: 'D',
         title: `가상 청산${n != null ? ` ${n}건` : ''}${when ? ` — ${when} ${exitKindLabel(str(p.exitKind))}` : ''}`,
         sub: join('주문은 기록만, 송신 없음', notifyText), href: item.href };
+    }
+    case 'universe_change_proposed': {
+      // T-143 — 「해외 분석 대상 변경 제안 3건」 / 부제 「NAS:AAAA 상장폐지 예정 · 외 2건」.
+      // 부제 규칙이 data_anomaly 와 다르다(앞 1개 + 외 n−1건) — 종목 코드가 길어 412px 에서 두 개를 넣으면 줄이 넘친다(승인 데모 §2 표).
+      // 종목 코드는 **전체 코드**다 — `formatSymbolShort` 를 쓰지 않는다(거래소 이동 제안을 다루므로 접두사가 뜻을 가진다).
+      // `first` 는 서버가 완성해 준 문자열이라 홈이 조립하지 않는다.
+      const first = str(p.first);
+      const more = num(p.more);
+      // 「외 n건」은 **첫 줄 요약이 있을 때만** 붙인다 — 앞말이 없으면 「외 1건」만 남아 무엇의 밖인지 말하지 못한다
+      // (값이 null 이면 그 빈칸이 든 구절째 뺀다는 공통 규칙)
+      return { key: 'universe-proposed', severity: 'w', glyph: n != null ? String(n) : '!',
+        title: `해외 분석 대상 변경 제안${n != null ? ` ${n}건` : ''}`,
+        sub: first ? join(first, more != null && more >= 1 && `외 ${more}건`) || null : null, href: item.href };
     }
     case 'data_anomaly': {
       const t = anomalyOf(item);

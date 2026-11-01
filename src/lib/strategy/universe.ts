@@ -151,7 +151,10 @@ function scoreForProfile(a: StockAnalysis, profile: StrategyProfile, volScore: n
 }
 
 /**
- * 거래대금 상위 20개 종목을 분석하고 프로파일별 상위 5개를 DB에 저장.
+ * 후보 풀(UNIVERSE_TOP_N = 150)을 거래대금 순으로 추려 분석하고 전략별 선별 결과를 DB에 저장(30·40·30).
+ * (옛 주석의 「상위 20개」·「프로파일별 상위 5개」는 코인 시절 값이라 2026-11-01 에 정정했다 — 전략별 선별 수는
+ *  `engine.ts:426~428` 의 할당이고 **시장과 무관하다**(국내 한정이 아니다).
+ *  숫자는 이 파일의 UNIVERSE_TOP_N 과 engine.ts 의 상수가 정본이므로, 바뀌면 여기도 같이 고친다.)
  * universe 테이블의 refreshed_at이 15분 이내면 스킵 (force=true로 강제 갱신 가능).
  */
 export function refreshUniverse(market: Market = 'domestic', force = false): Promise<{ refreshed: boolean }> {
@@ -217,8 +220,9 @@ async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ re
         .map(t => ({ symbol: t.symbol, quoteVolume24h: t.quoteVolume24h ?? 0 }));
     }
   } else {
-    // 해외: 시총 랭킹 API 부재 → 정적 allowlist + 거래대금 정렬
-    const overseasSyms = getStaticOverseasUniverse();
+    // 해외: 시총 랭킹 API 부재 → 분석 대상 목록(T-143 수동 ∪ 자동, DB > env > 코드) + 거래대금 정렬.
+    // 즉 해외의 「동적 선별」은 이 목록을 **정렬**하는 일이다 — 목록 자체를 바꾸는 곳은 설정 › 해외 분석 대상이다.
+    const overseasSyms = await getStaticOverseasUniverse();
     const tickers = await getKisOverseasTickers(overseasSyms);
     top20 = tickers
       .sort((a, b) => (b.quoteVolume24h ?? 0) - (a.quoteVolume24h ?? 0))
