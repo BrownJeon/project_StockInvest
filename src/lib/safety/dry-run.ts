@@ -105,7 +105,10 @@ interface SubmitOptions {
  *  6. 일일 누적 한도 (2에서 얻은 자기 orderId 만 합산에서 제외 — 다른 주문의 pending 은 합산, T-081 WP-B)
  *  6c. T-072 검증 상태 관문(G6) — 매수만. 미검증·미등록·귀속 없음·조회 실패 → blocked(validation_gate). DRY_RUN 과 무관(F-4)
  *  7. DRY_RUN: 실제 송신 생략 → status=dry_run
- *  8. 실 송신 → status=accepted (상세 상태는 거래소 응답에 따라 후속 업데이트). `realSubmit` 직전에 6c 를 한 번 더(F-15)
+ *  8. 실 송신 → status=accepted (상세 상태는 거래소 응답에 따라 후속 업데이트).
+ *      `realSubmit` 직전에 **킬스위치(3)와 검증 관문(6c)을 각각 한 번 더** 본다 — T-141·T-072 F-15.
+ *      이유: 3~6 사이에 `await` 가 여러 번 들어가고 **5~6 한도 산정이 KIS 를 타기 때문**에(토큰 획득)
+ *      그 구간이 길어질 수 있다. 그동안 내려간 킬스위치·강등된 전략을 놓치지 않는다.
  * 각 단계에서 발생 이벤트는 trade_logs에 기록.
  */
 /**
@@ -244,6 +247,27 @@ async function submitOrderInner(
     // Phase 0: effOrderMax/effDailyMax 는 항상 유한값 (미설정 시 0). Infinity 분기 제거.
     await auditLog(orderId, 'dry_run', { effOrderMax, effDailyMax });
     return { ok: true, orderId, clientOrderId, dryRun: true, blockedBy: 'dry_run' };
+  }
+
+  // 8a-0. 🔴 T-141 — **킬스위치 송신 직전 재확인.** 3단계에서 한 번 보고 여기까지 오는 사이에 `await` 가 여러 번
+  //     들어가는데, 그중 **5~6단계 한도 산정이 KIS 를 탄다**(잔고+시세 → 토큰 획득). 토큰이 죽어 있으면 그 획득이
+  //     길어질 수 있고(T-138 QA F-1: 실측 94.8초·이론 약 180초), 그동안 사용자가 킬스위치를 내려도 **이미 3단계를
+  //     지난 주문은 그대로 나갔다.** 킬스위치는 사용자의 비상 제동이므로 그 지연을 받아들일 수 없다.
+  //
+  //     검증 관문 재확인(아래 8a)보다 **먼저** 본다 — 킬스위치가 주 제동이고, 차단 사유도 그쪽이 더 정확하다
+  //     (`blocked_by` 가 알림 등급을 가른다: `kill_switch`=critical, `validation_gate`=warning).
+  //     차단 모양은 3단계와 동일하다(`kill_switch`). 여기서는 PK 조회 1회뿐이다.
+  //
+  //     ⚠ **틈을 전부 닫지는 못한다**(T-141 감사 F-1 — 처음 「닫는다」고 적었는데 부분 해소다).
+  //     `getMarketTotal` 은 60초 메모리 캐시가 있어(`portfolio-total.ts`) 적중하면 **5~6단계가 KIS 를 타지
+  //     않는다.** 그러면 토큰 대기가 `realSubmit` 안으로 옮겨가 **이 재확인 뒤에** 남는다. 그 캐시는 전략
+  //     사이징·승인 문맥·헬스가 주문 직전에 채워 두므로 자동 주문 흐름에서 적중이 적지 않을 것이다.
+  //     여기서 토큰을 미리 확보해 흡수하는 방법은 **쓰지 않았다** — 이 파일이 KIS 에 직접 묶이고 기존
+  //     안전장치 시험 수십 개가 토큰 경로를 타게 된다. 진짜 해결은 대기 자체를 없애는 것이다
+  //     (T-138 후속 1 serve-stale: 감사자 하네스에서 모든 시나리오 0초·0실패).
+  if (await isKillSwitchActive()) {
+    await markBlocked(orderId, 'kill_switch');
+    return { ok: false, orderId, clientOrderId, blockedBy: 'kill_switch', error: 'KILL_SWITCH_ACTIVE' };
   }
 
   // 8a. 🔴 T-072 F-15 — 송신 **직전** 재검증. 6c 와 여기 사이에 DRY_RUN 조회 등 await 가 끼어 있으므로 그 사이 강등(사용자 SQL)을
