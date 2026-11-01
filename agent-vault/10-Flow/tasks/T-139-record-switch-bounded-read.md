@@ -1,7 +1,7 @@
 ---
 task_id: T-139
 title: 기록 스위치 읽기(record-switch.ts)가 멈춘 조회로 공용 풀 연결을 붙잡는 문제 — 연결 상한(destroy)과 같은 키 조회 합치기
-status: ready-to-deploy
+status: deployed
 priority: medium
 project: StockInvest
 created: 2026-10-31
@@ -145,15 +145,24 @@ demo_gate:
 
 ### [T-139] 기록 스위치 읽기가 멈춘 DB 조회로 공용 풀 연결을 붙잡던 문제 정정
 
-- **상태**: ⏳ 사용자 배포 승인 대기 (구현·Reviewer·QA 완료)
+- **상태**: ✅ 운영 반영 완료 (2026-11-01 09:41 KST) — 구현·Reviewer·QA 완료, 배포 직후 점검 이상 없음(아래 「배포 기록」)
 - **무엇이 바뀌었나**: 판단 기록·잡 실행 기록의 켜짐/꺼짐 스위치를 DB 에서 읽는 조회가 멈춰도 2초 뒤 연결을 끊어 공용 풀(연결 10개)을 붙잡지 않는다. 같은 키의 동시 조회는 1번으로 합친다. 켜짐/꺼짐 판정 규칙(키 없음=꺼짐, 정확히 JSON `true` 만 켜짐, 오류·2초 초과=꺼짐)과 30초 캐시는 그대로다. 화면 변화는 없다.
-- **배포**: ⏸ 미배포 — 커밋 `d14ac78`(서버 side branch `wip/T-139-record-switch-bounded-read`, base `a064722`), push 전. 승인되면 origin/main(`18896a8`) 위에 cherry-pick 후 push(webhook). 같은 배포에 함께 실릴 작업: T-140, 문서 커밋(`6610dc0` 외) — 확인 후 보고에 기재.
+- **배포**: ✅ 2026-11-01 09:39 push(`d0d203c..81a1aab`) → 09:41:41 완료, 릴리스 `20261101-094008-81a1aabe`, `RELEASE_RESULT ok`, 마이그레이션 없음. 이 작업의 코드 커밋은 `3d40f6a`(side branch `d14ac78` 을 T-141 `d0d203c` 위에 cherry-pick). 같은 배포에 실린 것: T-140 `967259f`, 문서 커밋 `81a1aab`. 롤백 대상 `20261101-093319-d0d203cf`.
 - **AI 가 검증한 것**: 독립 Reviewer PASS(결함 critical~low 0 — 시험 공백 Low 2건은 시험 추가로 해소). 일회용 MariaDB 10.11 + 실제 mysql2 풀(연결 10)에서 `LOCK TABLES system_config WRITE` 재현 — 변경 전: 단일 호출 연결 점유 지속·동시 10건 연결 10개 점유·14분 모사 10분째 풀 고갈 → 변경 후 전 장면 점유 0, 서버의 대기 SELECT 약 1초 안에 소멸. 변경 전후 차분 시험 14,722호출 동치(차이는 의도한 합치기뿐), 변이 시험 15종 중 12종 검출(생존 3종은 시험 보강 2건과 동치 1건). 병합 상태(origin/main `18896a8` + T-139 + T-140, tree `83f87014`): 전체 jest 10449 통과·실패 0, `tsc` 0, `next build` 0.
   - 검증 못 한 것: 죽은 TCP(블랙홀) 장면 · 디스크 정지/DDL 메타데이터 잠금 같은 다른 정지 유형 · 운영 풀의 장시간 거동.
-- **👉 사용자가 확인할 것**: 배포 승인 시: ① 배포 직후와 1시간 뒤 `grep -c "\[strategy/records/switch\]" /home/brownjeon/apps/stockinvest/shared/logs/pm2-err.log` 증가분 0줄(기록 스위치 경고 없음) ② `/api/health` 200·`safetyStatus` green ③ 평시 DB `SHOW GLOBAL STATUS LIKE 'Aborted_clients'` 가 분당 수 개 이상 늘지 않는지(문장 오류가 지속될 때만 늘도록 설계) — 오늘 오전부터.
-- **👉 사용자가 결정할 것**: 이 코드를 오늘 05:10~08:30 배포 창(일요일, 시장 휴장)에 T-140 과 함께 내보낼지 — AI 권고: 승인(휴장일·장 시작 전, 영향 경로는 기록 스위치뿐이고 실패 시 꺼짐 쪽으로 떨어짐).
+- **👉 사용자가 확인할 것**: 배포 직후(09:42~09:45) 점검은 AI 가 마쳤다(기록 스위치 경고 0줄·health green·`Aborted_clients` 불변). 남은 확인: ① 약 1시간 뒤(10:45 이후)와 월요일 개장 후  `grep -c "\[strategy/records/switch\]" /home/brownjeon/apps/stockinvest/shared/logs/pm2-err.log` 증가분 0줄(기록 스위치 경고 없음) ② `/api/health` 200·`safetyStatus` green ③ 평시 DB `SHOW GLOBAL STATUS LIKE 'Aborted_clients'` 가 분당 수 개 이상 늘지 않는지(문장 오류가 지속될 때만 늘도록 설계) — 오늘 오전부터.
+- **👉 사용자가 결정할 것**: 없음(배포 완료).
 - **남은 일**: 엔진·주문·`/api/health` 의 스위치 읽기(`readExitEngineSwitch`·`isKillSwitchActive`·`isDryRun`)에는 여전히 상한이 없다 — T-131 #28 설계 결정. `judgment-recorder.ts:15`·`job-run-log.ts:35` 의 낡은 주석 2곳 정정(후속, 동작 무관).
 - **이슈·위험**: 문장 오류가 지속되는 동안 키마다 30초에 한 번 재접속(키 3개 → 분당 최대 6회)하고 DB 로그에 `Aborted connection` 경고가 쌓일 수 있다(풀·DB 부하 아님, DB 알림이 `Aborted_clients` 를 보면 거짓 경보 가능). 롤백: `git revert` 후 push, 또는 기록 스위치 3개 중 필요한 것만 `false`.
+
+## 배포 기록
+
+- [2026-11-01 09:39] **배포 완료.** 사용자 지시 「T-139,T-140 푸시 및 배포 진행해줘」. 서버 체크아웃에서 `git push origin main`(`d0d203c..81a1aab`, 커밋 3개: T-139 `3d40f6a` · T-140 `967259f` · 문서 `81a1aab`). webhook blue/green 09:39:59 시작 → 09:41:41 완료(`exit=0`). `RELEASE_RESULT {"status":"ok","release":"20261101-094008-81a1aabe","sha":"81a1aabe0da0d0b3fe9d5d5f038b7569cd4de2b9","previous":"…/releases/20261101-093319-d0d203cf","migrated":false}`. DDL·스위치 변경 없음.
+- 병합 상태 재검증(배포 전): 승인 후 확인해 보니 그 사이 다른 세션이 T-141(`d0d203c`)을 push·배포(09:33~09:34)해 base 가 바뀌어 있었다. 그 위에 cherry-pick 한 상태(HEAD `967259f`, tree `8ec03ee8`)로 전체 jest **10455 통과·실패 0**(7 suite·245 시험 건너뜀), `tsc` 0, `next build` 0 을 다시 돌렸고, 직전 검증본(tree `83f87014`)과 T-139/T-140 14개 파일의 차이는 0 이다. 검증한 commit 을 그대로 `git merge --ff-only` 로 main 에 올려 push 했다(tree 일치 확인).
+- 배포 시각: 승인 시점의 계획은 05:10~08:30 창이었으나 승인 응답이 09:3x 에 와서 **창 밖(일요일 09:39, 양 시장 휴장일)** 에 나갔다. 영향은 휴장일이라 없었고, 이 점은 사용자에게 보고했다.
+- 배포 후 점검(09:42~09:45, 읽기 전용): ① `current` → 새 릴리스, 소스에 `withBoundedConn` 반영 ② pm2 `stockinvest`·`stockinvest-cron` online·restarts 0·unstable 0·`pm_cwd` 새 릴리스(시작 09:40:41/42) ③ `cron-runner.sh` 1개, 분당 잡 중복 없음 ④ `/api/health` `ok:true`·`db:true`·`schemaFatal:false`·`safetyStatus:"green"`·`dryRun:true`·`killSwitch:false` ⑤ `system_config` 안전 키 6개 값·`updated_at` 전부 불변 ⑥ **`pm2-err.log`·`pm2-out.log`·`cron-err.log` 에 `[strategy/records/switch]` 경고 0줄**, 배포 이후(09:41:30~) `pm2-err.log` 새 줄 0·`cron-err.log` 0B ⑦ `Aborted_clients` 2652(09:42) → 2652(09:43) → 2654(09:44) → 2654(09:44:54) — 공용 MariaDB 전체 카운터(업타임 약 34.7시간에 2,652 ≒ 시간당 76)라 다른 앱 접속 포함, 증가 미미 ⑧ 배포 순간(09:40:41) 새 크론 러너가 웹 기동 전에 부른 4건이 `HTTP=000` 으로 실패해 스풀에 남았고 웹이 뜬 뒤 재전송되어 `job_run_log` 에 기록됐다(run_id 7588~7591, `signal-followup`·`signal-expiry`·`trade-report` 는 `failed/HTTP=000`, `portfolio-snapshot` 은 `skipped`) — **이 기록이 새 웹의 새 스위치 읽기 경로(`job_run_log_enabled`)를 거쳐 들어갔으므로 운영에서 스위치가 켜짐으로 읽힌다는 증거**다. `HTTP=000` 3건은 웹 재시작 순간의 연결 거부로 판단한다(가능성 높음 — 이 배포에서만 확인했고 이전 배포와 비교하지는 않았다). 이 변경과 무관한 재시작 구간의 일시 현상이며, 같은 잡의 다음 주기 정상 기록은 아직 확인하지 않았다.
+- 관찰(이상 아님, 이 변경과 무관): 배포 전 `pm2-err.log` 에 `[strategy/records/job-run-log] 503 reason=timeout (deadline=2500ms)` 가 05:09~06:04 사이 13줄, 06:00:08 `corp-intel` DB 대기 상한 2줄 — DB 가 느렸던 창으로 보이고 배포 이후엔 0건. 옛 코드에는 스위치 읽기에 경고가 없어서 그 창에 스위치 읽기가 멈췄었는지는 알 수 없다.
+- **확인하지 못한 것**: 장중(월요일 개장 후) 엔진·주문 경로의 스위치 읽기 거동 · 평시 1시간 뒤 재측정 · 홈 A4 화면(로그인 필요 — T-140 쪽) · 문장 오류가 지속될 때의 재접속(시험으로만 확인).
 
 ## 데모 검토 (demo gate)
 
