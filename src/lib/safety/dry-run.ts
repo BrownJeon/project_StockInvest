@@ -5,7 +5,7 @@ import type { ExchangeId, OrderRequest, OrderResult } from '@/lib/exchanges/type
 import { withKisPriority } from '@/lib/exchanges/kis-throttle';
 import { sendAlert } from '@/lib/notify';
 import { type AssetClass } from './asset-profile';
-import { parseBoolFlag, shouldReportUnparsable } from './flags';
+import { decodeFlagValue, parseBoolFlag, shouldReportUnparsable } from './flags';
 import { isKillSwitchActive } from './kill-switch';
 import {
   checkDailyMax,
@@ -38,7 +38,7 @@ export async function isDryRun(): Promise<boolean> {
       ['safety_dry_run'],
     );
     if (rows.length > 0) {
-      const r = parseBoolFlag(JSON.parse(rows[0].value));
+      const r = parseBoolFlag(decodeFlagValue(rows[0].value));
       if (r.state === 'parsed') return r.value;
       if (r.state === 'unparsable') {
         if (shouldReportUnparsable('safety_dry_run', r.raw)) {

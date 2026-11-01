@@ -3,7 +3,7 @@ import { getPool } from '@/lib/db';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { checkSnapshotFreshness } from './volatility-guard';
-import { parseBoolFlag, shouldReportUnparsable } from './flags';
+import { decodeFlagValue, parseBoolFlag, shouldReportUnparsable } from './flags';
 import { assessDrawdownComposition, parseSnapshotPositions, type CompositionPosition } from './snapshot-composition';
 import {
   assessHiddenUsdCarry, describeHiddenSides, hasHiddenUsdRow,
@@ -131,7 +131,7 @@ export async function isKillSwitchActive(): Promise<boolean> {
       ['safety_kill_switch'],
     );
     if (rows.length > 0) {
-      const r = parseBoolFlag(JSON.parse(rows[0].value));
+      const r = parseBoolFlag(decodeFlagValue(rows[0].value));
       if (r.state === 'parsed') return r.value;
       if (r.state === 'unparsable') {
         reportUnparsableKillSwitch('system_config.safety_kill_switch', r.raw);

@@ -1,7 +1,7 @@
 ---
 task_id: T-141
 title: 킬스위치를 송신 직전에 다시 확인하지 않는 문제 — 토큰 대기가 벌린 틈을 닫는다
-status: approved-partial-deploy
+status: deployed-partial
 priority: high
 project: StockInvest
 created: 2026-11-01
@@ -232,3 +232,27 @@ QA 판정은 **FAIL**이고 사유는 「변경 자체에는 결함·회귀 없�
 - **결정 2 = F-2① 은 배포 뒤 별 task 로 즉시 착수.** 「고치는 작업 진행해줘」가 그것이다. `kill-switch.ts` 를 열므로 T-141 과 섞지 않고 새 task 로 감사부터 돈다.
 - **위험을 한 번만 적는다**(워크스페이스 규칙 7): 이 배포로 **킬스위치 우회 2건이 남는다** — F-1(잔고 캐시 적중 시 토큰 대기가 재확인 뒤) · F-2(읽기 실패·JSON 아닌 값 → fail-open). 지금은 운영이 `safety_dry_run=true` 라 **실주문이 나가지 않으므로**(QA 실측, 14일 1건) 돈이 걸린 위험은 없고, **DRY_RUN 을 끄기 전에 둘 다 닫혀 있어야 한다.**
 - 커밋 훅 조건은 QA 사전 점검대로 충족한다 — Reviewer 판정 줄(112행) `CONDITIONAL_PASS (scope: src/lib/safety/dry-run.ts, src/lib/safety/__tests__/submit-order-killswitch-presend.test.ts)` 가 staged 안전 파일 2개를 덮고, `reviewer` 헤딩은 하나, `T-141-*.md` 는 1개다. **Mac 에서는 훅이 돌지 않으므로 커밋은 서버에서 한다.**
+
+## 배포 기록 (deployer)
+
+| 항목 | 값 |
+|---|---|
+| 커밋 | `d0d203c` (push 2026-11-01 09:32:53 KST — 로컬 문서 커밋 `6610dc0` 동승) |
+| 릴리스 | `20261101-093319-d0d203cf` · `RELEASE_RESULT {"status":"ok", "migrated":false}` · 09:33:10~09:34:11 (61초) |
+| 이전 릴리스 | `20261031-235854-18896a8b` (롤백 지점) |
+| 방식 | push=webhook blue/green (`scripts/deploy.sh` 를 따로 돌리지 않았다) |
+
+배포 후 확인 (09:35 KST):
+
+- `current` → 새 릴리스 · pm2 `stockinvest`·`stockinvest-cron` **둘 다 online·restarts=0** · cron 프로세스 **1개**(중복 기동 없음)
+- `/api/health` HTTP 200 · `ok=true` · `db=true` · `schemaFatal=false` · `safetyStatus=green` · **`dryRun=true`** · `killSwitch=false`
+- 배포본에 8a-0 재확인 코드 존재(`dry-run.ts:252` 주석) · 빌드 청크에 `KILL_SWITCH_ACTIVE` 2건
+- **QA 확인 ①** 24시간 `orders` **0행** — `kill_switch` 차단 기준선 0 그대로(DRY_RUN 이라 8a-0 에 닿지 않는다는 예측과 일치)
+- **QA 확인 ②** `safety_dry_run=true`·`safety_kill_switch=false`, 둘 다 `updated_at` 10-30 09:08 — **배포가 설정을 바꾸지 않았다**
+- `pm2-err.log` 09:30~09:40 오류 0줄
+
+**실효 확인은 지금 할 수 없다** — 운영이 DRY_RUN 이라 8a-0 에 도달하는 주문이 없다. 실송신 모드로 바꾼 뒤에야 이 재확인이 실제로 동작하는지 운영 데이터로 보인다(QA 확인 ④).
+
+### 후속 — 바로 착수
+
+사용자 지시대로 **F-2① (파싱 실패 → fail-open)** 을 [[T-142-killswitch-parse-failure-fail-closed]] 로 즉시 착수한다. F-1(잔고 캐시 적중 창)과 F-2②(DB 읽기 오류 분기)는 그대로 남아 있다.

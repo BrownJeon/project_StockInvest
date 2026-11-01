@@ -1,10 +1,37 @@
 ---
 project: StockInvest
-updated: 2026-10-31
+updated: 2026-11-01
 tags:
   - type/context
 ---
 # 현재 상태
+
+## 2026-11-01 09:45 — T-139·T-140 운영 배포 완료 (릴리스 `20261101-094008-81a1aabe`)
+
+- **사용자 지시**: 「T-139,T-140 푸시 및 배포 진행해줘. 배포 직후 pm2 로그파일 확인은 너가 검증 후에 결과알려줘」. push `d0d203c..81a1aab` 09:39:37(T-139 `3d40f6a`·T-140 `967259f`·문서 `81a1aab`), webhook 09:39:59~09:41:41 `exit=0`, `RELEASE_RESULT ok`, `migrated:false`, 롤백 대상 `20261101-093319-d0d203cf`.
+- **재검증**: 승인 사이에 다른 세션이 T-141(`d0d203c`)을 배포해 base 가 바뀌어, 그 위에 cherry-pick 한 상태(tree `8ec03ee8`)로 전체 jest **10455 통과·실패 0**, `tsc` 0, `next build` 0 을 다시 돌린 뒤 `--ff-only` 로 main 에 올려 push. 승인 시점 계획의 배포 창(05:10~08:30)은 지났고(승인 응답이 09:3x) 일요일 휴장일에 나갔다.
+- **배포 직후 pm2 로그 점검(요청분) 이상 없음**: 기록 스위치 경고 0줄 · 배포 후 `pm2-err.log` 새 줄 0 · `cron-err.log` 0B · pm2 online·restarts 0 · health green · 안전 키 불변. 배포 전(05:09~06:04) `job-run-log` 타임아웃 13줄은 배포와 무관한 DB 지연 창. 상세는 [[T-139-record-switch-bounded-read]] 「배포 기록」.
+- 같은 체크아웃의 다른 세션(T-142 `src/lib/safety/{dry-run,flags,kill-switch}.ts` 미커밋 수정, T-137)의 파일은 건드리지 않았다.
+
+## 2026-11-01 09:40 — T-141(킬스위치 송신 직전 재확인) 운영 배포 완료 (릴리스 `20261101-093319-d0d203cf`) + T-142 즉시 착수
+
+- **사용자 지시**: 「먼저 T-141 배포 후에 고치는 작업 진행해줘」. **내 권고와 반대 순서**다(나는 「배포 보류 → F-2① 먼저 고치고 한 번에 감사」를 권했다). 사용자 결정이므로 위험을 한 번 적고 그대로 진행했다.
+- **배포**: push `18896a8..d0d203c` 09:32:53(코드 `d0d203c` + 로컬 문서 `6610dc0` 동승) → webhook 09:33:10~09:34:11 `exit=0`, `RELEASE_RESULT ok`, `migrated:false`. 롤백 대상 `20261031-235854-18896a8b`.
+- **배포 후 읽기 확인**: pm2 둘 다 새 릴리스·online·restarts 0 · cron 1개 · health 200 green(`dryRun true`·`killSwitch false`·`schemaFatal false`) · `safety_dry_run`·`safety_kill_switch` 둘 다 10-30 09:08 그대로(배포가 설정을 바꾸지 않았다) · 배포본 `dry-run.ts:252` 8a-0 주석·빌드 청크 `KILL_SWITCH_ACTIVE` 2건 · **24시간 `orders` 0행**(= `kill_switch` 차단 기준선 0 유지) · 오류 로그 0줄.
+- **🔴 QA 판정은 FAIL 이었다 — 변경이 아니라 잔존 결함 때문이다.** 변경 자체는 결함 0·회귀 0(전체 jest 363스위트 10400건, 변이 15종 중 14종 탐지). 남은 것은 킬스위치 우회 **2건**:
+  - **F-1 (사용자 수용)** — `getMarketTotal` 60초 캐시가 적중하면 5~6단계가 KIS 를 타지 않아 **토큰 대기가 재확인 뒤**(`realSubmit` 안)에 남는다. QA 가 `sent=1` 로 재현. 「틈을 닫았다」는 내 표현이 과장이었다 — **「5~6 이 KIS 를 타는 경우에 한해 닫았다」**가 정확하다. 진짜 해결은 **serve-stale**(T-138 후속 1위)이고 그것은 주문 게이트를 건드리지 않는다.
+  - **F-2 ①(T-142 로 착수)·②(사용자 결정 대기)** — 값 해석 실패가 fail-open. QA 가 감사자도 못 본 **B·G**(DB 값·재확인 값이 JSON 아님) 경로를 찾았다.
+- **🔴 지금 실주문은 나가지 않는다**: 운영 `safety_dry_run=true`(10-30 09:08), 14일간 주문 1건(dry_run). 그래서 두 우회가 현재 돈을 움직이지는 않는다. **DRY_RUN 을 끄기 전에 둘 다 닫혀 있어야 한다.**
+- **T-142 결과(10:34)**: **감사 PASS · QA PASS**(결함 0·Critical 0, 변이 23종 전부 사살, 정상 JSON 차분 408건 불일치 0, 실 드라이버 E2E 13건). **🔴 위험 등급이 내려갔다** — 운영 `system_config.value` 에 `CHECK (json_valid(value))` 가 있어 평범한 SQL 로는 비 JSON 값을 넣을 수 없다(감사·QA 각자 실측·운영 101행 중 0행). T-141 QA 의 B·G 재현은 **모의 풀**이고, 내가 적은 「Critical·실주문 재현」은 과장이었다. 이 수정의 값은 ① 제약 우회 환경(복원본·마이그레이션 중 테이블·`check_constraint_checks=0`)에 대한 방어층 ② 코드가 자기 주석을 지키게 하는 것. **M-1 사용자 결정 대기**(비 JSON `no`·`off` 를 값으로 볼지 해석 불가로 볼지 — 권고는 현행 유지) · **커밋 안 함.**
+- **T-142 착수**: [[T-142-killswitch-parse-failure-fail-closed]] — `flags.ts` 에 `decodeFlagValue`(비 JSON 이면 원문 그대로)를 두고 `kill-switch.ts`·`dry-run.ts` 두 호출점에 적용했다. `isDryRun` 쪽은 **env 에 `DRY_RUN=false` 가 있으면 「DB 에 `yes`(모의로 돌려라)」가 실거래로 뒤집히는** 더 위험한 경로라 같이 고쳤다. ops 대조(`safety-state.ts crossCheck`)도 같은 해석으로 맞췄다. 구현·시험 완료, **감사 대기**.
+- **다음**: ① T-142 감사 → QA → 사용자 배포 결정 ② **11-01 14:02 KST(휴장일) 토큰 갱신 리허설** 확인(`token-p` 1건·403 0건이면 T-138 단일 비행 실증) ③ F-1 해결 = serve-stale(11-02 장중 전) ④ F-2②(DB 읽기 오류 → 활성?) 사용자 결정 ⑤ 11-02(월) 장중 관측.
+
+## 2026-11-01 01:32 — T-137 전체 코드 감사·격리 QA 보강, 운영/공식 기록 관문 대기
+
+- 사용자 지시로 현행 모델 정의 팀을 재소집해 [[T-137-dynamic-overseas-universe]] 인계를 이어 진행했다. source main에 직접 반영하지 않고 별도 서버 격리본에서 처리 기아·빈 결과 identity·협조 SEC 갱신의 근거 일관성 3건을 수정했다. 신규표는7개 초안이며 운영DDL 미적용. 최신 main `18896a8bc9788f0cab98b2cba9860d6b3d0414dd`에 정확79파일을 통합·해시고정했고 타main파일은 보존했다.
+- 검증: Reviewer가79파일 전체 변경과 신규/안전시험을 읽고 독립 해시 대조한 코드 범위 조건부 의견을 제출. 전체 통합 Jest385 suites/10,548 tests·tsc·Next/worker build 통과(13suites/252tests skip). QA가775건·DB22건·추가관문183건·worker watchdog 및 실제 Next OFF HTTP6을 독립 확인했고, 전체 합성 cron J1 4,320틱/23조건도 통과했다. J1은 기록 후크 비간섭의 합성 비교이고 T-137 ON/실KIS 성능이 아니다. 상세범위·해시·복원순서는 task 최신 진입점을 따른다.
+- 사용자/운영 대기: 공급계약/API 이용권 없음→Nasdaq 자동수집 권한 미충족. Reviewer 역할의 직접편집금지와 본인기록 요구 충돌→공식 task판정줄 없음/커밋관문 미충족(대필금지). 사용자가 자기감사기록 한정 예외를 명시하거나 정본규정을 정정해야 한다. SEC 공유예산·실KIS150+·실제DB worker전환/구작업drain·운영전체스키마·운영DDL/배포승인도 남았다. task는doing·waiting:user_decision, 전체운영QA/done은 아니다.
+- 최종 읽기(01:32:33 KST): remote main18896/운영릴리스 `20261031-235854-18896a8b`, 웹·cron online·재시작0, healthgreen·DRY_RUNtrue·killfalse·engineenabled. T-137 환경키5개는01:23조회당시 두PM2앱/.env모두미설정. 운영설정/DB쓰기/주문/실원천수집/commit/push/배포 변경 없음. 기존 예약·타task 상태는 아래 이력을 유지한다.
 
 ## 2026-10-31 23:59 — T-136·T-138(KIS 토큰) 운영 배포 완료 (릴리스 `20261031-235854-18896a8b`)
 
