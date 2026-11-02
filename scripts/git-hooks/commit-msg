@@ -615,12 +615,66 @@ check_hook_sync || true
 #                               edgar-sync)가 부르는 구현이라 T-116 이 corp-intel 을 넣은 ③과 같은 논리가 적용된다 —
 #                               넓히는 것은 별도 사용자 결정 사항이라 여기서 하지 않는다.
 #     - src/lib/data/__tests__/kis-fundamentals-snapshot.test.ts·sql-upsert-sim.ts   위 보류분의 시험·대역.
+# T-145 추가 (2026-11-02, 사용자 결정 "넣기 찬성" — T-145 1차에서 developer 가 보고한 감시 밖 세 틈을 Leader 가 올려 받은 결정):
+#   T-145 는 T-143 WP-A(해외 자동 분석 대상)의 **켜기 차단 조건**을 구현했는데, 그 조건이 고치는 코드가
+#   대부분 훅 밖이었다 — 「스위치를 끄면 실제로 꺼진다」를 성립시키는 코드가 독립 감사 없이 바뀔 수 있었다.
+#   (각 항목이 하는 일은 2026-11-02 작업 트리의 소스를 읽어 적었다. 바뀌기 쉬운 세부 — 줄 번호·건수 — 는 적지 않았다.)
+#   + src/lib/universe/   → 해외 분석 대상 **자동 목록**의 산출·판정·저장(디렉토리). 왜 디렉토리인가:
+#                               ① refresh-config.ts — `system_config.overseas_universe_refresh` 의 **스위치 판독 한 벌**.
+#                               T-145 ③ 이 분석 쪽 판독기(`^src/lib/strategy/` 로 이미 감시)가 이 함수를 보게 만들었으므로,
+#                               읽는 쪽만 감시하고 **판독기 자체**를 두면 「꺼짐을 켜짐으로 읽게」 바꾸는 한 줄이 무검토로 들어간다.
+#                               ② refresh-store.ts — 실패의 **일시/영구 판정**(`isRetryableDbError`)과 행 단위 열 폭 가드.
+#                               영구를 일시로 바꾸면 그 달이 영구 실패로 닫히는 것을 막던 장치가 사라지고, 반대로 바꾸면
+#                               깨진 값이 그 달을 삼킨다. ③ refresh-engine.ts — 제안 생성 조건(`kisOk`·`snapshotUsable`)과
+#                               단계·예산. 여기 한 줄이면 수동 목록 전체에 「빼기」 제안이 쏟아지고 지문이 영구 소비된다.
+#                               ④ rank.ts·cap-rule.ts·sec-listing.ts·kis-overseas-master.ts·proposal-rules.ts — 무엇이 상위 N 에
+#                               드는가(= 무엇을 분석하는가)의 판정. ⑤ store.ts — 수동 목록 쓰기(가산 전용 개정판·409 충돌).
+#                               ⑥ 위 전부의 시험·모형(`__tests__/`) — "테스트 파일은 제외하지 않는다" 원칙(안전 경로의 시험은
+#                               그 경로의 회귀망이고 Reviewer·QA 판단 근거다).
+#                               ⚠ 알고 넣는 것: 이 디렉토리 패턴은 **화면 문구 모듈 `proposal-copy.ts`·타입 `types.ts`·
+#                               `actor.ts` 까지 덮는다.** 그것들만 고치는 커밋도 판정 줄이 필요해진다 — 디렉토리 패턴이
+#                               단순하고 `^src/lib/strategy/`(지표·문구·규칙이 섞여 있다) 선례와 같은 방식이라 그대로 둔다.
+#   + scripts/test-cron-runner-   (접두) → 🔴 감시 중인 `scripts/cron-runner.sh`(무인 실행 루프)의 **회귀망**이 전부 훅 밖이었다.
+#                               이 셸 시험들은 러너를 가짜 시각·가짜 curl 로 통째로 돌려 「어느 시각에 무엇을 몇 번 부르는가」와
+#                               「기존 줄을 바꾸지 않았는가」를 고정한다 — 즉 무인 실행 스케줄의 유일한 실행 검증이다. 그 단언을
+#                               느슨하게 고치면 러너 본문을 건드리지 않고도 Reviewer·QA 의 판단 근거가 사라진다.
+#                               편입 시점 8개(daily-bars·holdings-premarket·job-run-log·news-peek·news-split·overseas-universe·
+#                               pmo-retry·stop-alert). 접두라 새로 만드는 러너 시험도 자동으로 걸린다.
+#                               (scope 표기 주의: 접두는 scope 로 쓸 수 없다 — Reviewer 는 건드린 파일을 하나씩 적는다.)
+#   + src/lib/data/__tests__/us-data-db\.test\.ts (정확 일치) → 이미 감시 중인 `us-data-db.ts`(T-143 편입 — 해외 분석 대상
+#                               **집합을 확정하는** `loadUsTargetSymbols`)의 직접 시험. 위 T-143 항목이 「다음 후보」로 적어 둔 것이다.
+#                               구현은 감시되는데 그것을 지키는 시험이 무검토로 느슨해질 수 있던 틈이다.
+#                               **정확 일치로 넣는다** — `^src/lib/data/__tests__/` 를 통째로 넣으면 아직 후보인
+#                               sql-upsert-sim.ts 까지 걸린다(위 T-143 "넣지 않은 것" 참고).
+#   + src/lib/data/kis-fundamentals-snapshot\.ts (정확 일치) → 🔴 **1회 실행 마감(기본 90초)이 여기 있다**(T-145 ⑨-1).
+#                               그 마감이 「08시 틱 길이를 **대상 종목 수와 무관하게** 묶는다」는 안전 성질을 만든다 —
+#                               지워지거나 값이 올라가면 자동 목록을 켠 뒤 그 틱이 300초를 넘고, HOME-SERVER 순찰
+#                               (`HOME-SERVER_CONFIG/servers/linux/autostart/projects.json` 의 `stockinvest-cron`
+#                               `health_type: heartbeat_file`·`max_age_seconds: 300`)이 `stockinvest-cron` 을 재시작한다 →
+#                               **무인 실행 루프 전체가 끊긴다**(2026-10-29 운영 실측 틱 282초 / 한도 300초).
+#                               이어받기(오늘 행이 없는 종목만 돈다)도 이 파일이고, 그것이 깨지면 마감이 있어도 매 틱
+#                               처음부터 다시 돌아 창 안에 끝나지 않는다. 라우트(`^src/app/api/cron/`)는 이미 감시되지만
+#                               **마감·이어받기 로직은 이 lib 에 있다** — 라우트는 결과를 그대로 싣고 503 여부만 가른다.
+#                               디렉토리(`^src/lib/data/`)로 넣지 **않는다**: 그 폴더의 자료 수집(us-edgar/ 등)은 이번 범위가 아니다.
+#   + src/lib/data/__tests__/kis-fundamentals-snapshot\.test\.ts (정확 일치) → 위 구현의 회귀망("테스트 파일은
+#                               제외하지 않는다"). 마감·이어받기·「마감 종료 ≠ 유량 중단」의 경계를 이 시험이 고정한다.
+#                               덧붙여 이 시험은 `us-data-db.ts` 의 `loadUsTargetSymbols` 를 **mock 하지 않고 실제로
+#                               통과시키는 간접 회귀망**이기도 하다(위 T-143 항목의 "회귀망" 절이 적어 둔 둘 중 하나).
+#   기존 제외 규칙은 **건드리지 않았다**: src/lib/auth/__tests__/login-gate.test.ts·request-limits.test.ts(시도 속도·요청 크기
+#   제한의 시험 — 권한을 주고 뺏는 코드가 아니다)·settings/watch-symbols(그 값을 읽는 코드가 src/ 에 0건) 전부 제외 유지.
+#   넣지 않은 것 — 다음 후보이고 이번 사용자 결정 범위가 아니다:
+#     - src/lib/data/us-edgar/__tests__/sync-job.test.ts   위 T-143 항목이 적은 `us-data-db` 의 **간접 회귀망 둘 중 나머지**
+#                               (이 모듈을 mock 하지 않고 실제 `loadUsTargetSymbols` 를 통과시킨다). 이번에 손대지 않았고
+#                               다음 후보로 남긴다 — 사용자 결정 범위가 `kis-fundamentals-snapshot` 쪽까지였다.
+#     - src/lib/data/us-edgar/·src/lib/data/__tests__/sql-upsert-sim.ts   SEC 자료 수집과 upsert 모사 대역. 위 T-143
+#                               "넣지 않은 것"의 판단(자료 수집이고 주문·대상 확정 판단이 없다)을 그대로 유지한다.
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
   '^src/lib/exchanges/'
   '^src/lib/signals/'
   '^src/lib/strategy/'
+  '^src/lib/universe/'
   '^src/lib/broker-ledger/'
   '^src/lib/credentials\.ts$'
   '^src/lib/cron-auth\.ts$'
@@ -677,6 +731,9 @@ SAFETY_PATHS=(
   '^src/lib/profit-engine/__tests__/isolation\.test\.ts$'
   '^src/lib/corp-intel/'
   '^src/lib/data/us-data-db\.ts$'
+  '^src/lib/data/__tests__/us-data-db\.test\.ts$'
+  '^src/lib/data/kis-fundamentals-snapshot\.ts$'
+  '^src/lib/data/__tests__/kis-fundamentals-snapshot\.test\.ts$'
   '^src/app/api/orders/'
   '^src/app/api/safety/'
   '^src/app/api/cron/'
@@ -690,6 +747,7 @@ SAFETY_PATHS=(
   '^src/app/api/settings/blocked-symbols/'
   '^src/app/api/settings/hybrid/'
   '^scripts/cron-runner\.sh$'
+  '^scripts/test-cron-runner-'
   '^scripts/migrations/'
   '^scripts/git-hooks/'
   '^scripts/install-git-hooks\.sh$'

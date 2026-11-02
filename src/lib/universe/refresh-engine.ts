@@ -14,6 +14,14 @@
  *  2. KIS 종목 마스터 zip 1회(`listing`) — 정적 파일, API 키·토큰·초당 한도와 무관하다.
  *  3. KIS 해외 현재가상세 N회(`scan`·`retry`) — `bulk` lane, 동시성 2.
  * **주문·시그널을 만들지 않는다.** `src/lib/safety/**` 를 import 하지 않고 `orders`·`signals` 에 쓰지 않는다.
+ *
+ * ## 🔴 일시 오류로 그 달을 닫지 않는다 (T-145 ⑥-4)
+ * 전에는 **모든** 실패가 `closeRun('failed')` + `final:true` 였다 — 네트워크 블립 한 번, 후보 한 행의 값 하나로
+ * 그 달 산출이 영구히 닫혔고 다음 창은 한 달 뒤였다. 지금은 실패를 둘로 가른다:
+ *  - **영구**(`sec_shape`·`no_scan_targets`·`insufficient_candidates`·`unknown_phase`·DB 제약·형식) → 그 달을 닫는다.
+ *  - **일시**(네트워크·DB 연결·잠금·타임아웃·분류 불명) → **닫지 않고** `final:false` 로 돌아간다. 러너가 창 안에서
+ *    다시 부르고, 창이 끝날 때까지 미완이면 라우트의 창 종료 점검이 **텔레그램 warning 1회**를 보낸다(④-조각).
+ * 「모르면 일시」다 — 영구로 잘못 보면 한 달을 잃고, 일시로 잘못 보면 창 안에서 몇 번 더 시도하고 경고가 울린다.
  */
 import { createHash } from 'node:crypto';
 import {
@@ -28,8 +36,8 @@ import { buildProposals, type ProposalDraft } from './proposal-rules';
 import {
   advanceRun, applyScanOutcome, closeRun, createRun, finalizeRun, insertProposals, isTerminalPhase,
   readFinalizeRows, readPendingCandidates, readPrevTopSymbols, readProgress, readRecentSnapshotSymbols,
-  readRetryCandidates, readRun, readSymbolCikMap, saveListing, type CandidateInsert, type CandidateVerdict,
-  type RunPhase, type ScanOutcome, type ScanProgress,
+  readRetryCandidates, readRun, readRunKisStatus, readSymbolCikMap, saveListing,
+  type CandidateInsert, type CandidateVerdict, type RunPhase, type ScanOutcome, type ScanProgress,
 } from './refresh-store';
 import type { Queryable, TxConnection } from './store';
 
@@ -114,6 +122,17 @@ export interface RefreshResult {
   changes?: { added: string[]; removed: string[]; proposalsCreated: number; firstRun: boolean; top: string[] };
 }
 
+/**
+ * 실패를 어떻게 닫나 — **`permanent` 만 그 달을 닫는다**(T-145 ⑥-4).
+ * `transient` 는 run 을 그 단계에 그대로 두고 `final:false` 로 돌아간다(러너가 창 안에서 다시 부른다).
+ */
+export type FailKind = 'permanent' | 'transient';
+
+/** 저장소의 `retryable` → 이 분류어. 저장소가 모르면 `retryable:true` 를 주므로 일시가 된다. */
+function failKindOf(retryable: boolean): FailKind {
+  return retryable ? 'transient' : 'permanent';
+}
+
 /** `lastError` 의 앞머리 식별자만 — `insufficient_candidates:1/2` → `insufficient_candidates`. 없으면 undefined. */
 export function failCodeOf(error: string): string | undefined {
   const m = /^[a-z][a-z0-9_]{0,47}/.exec(error.trim().toLowerCase());
@@ -178,28 +197,66 @@ export async function runUniverseRefresh(
     run = created.data;
   }
 
-  const fail = async (error: string): Promise<RefreshResult> => {
-    await closeRun({ runId: run!.runId, phase: 'failed', error, nowMs: deps.nowMs(), db: deps.db }).catch(() => undefined);
+  /**
+   * 실패로 돌아간다. **영구**면 run 을 `failed` 로 닫고 `final:true`(그 달 끝), **일시**면 run 을 **그대로 두고**
+   * `final:false`(러너가 창 안에서 다시 부른다 — T-145 ⑥-4).
+   *
+   * 일시일 때도 `ok:false`·`failCode` 는 그대로 싣는다 — 그 회차는 실패한 것이 맞고 `job_run_log` 에 남아야 한다.
+   * 다만 run 의 `last_error` 는 덮지 않는다(닫지 않았으므로 단계·커서가 유일한 상태다).
+   *
+   * 🔴 **종결 기록이 실패하면 「종결됐다」고 말하지 않는다**(Codex C2 지적 2 — Reviewer 채택).
+   * 전에는 `closeRun(...).catch(() => undefined)` 로 삼키고 **무조건** `final:true`·`phase:'failed'` 를 돌려줬다.
+   * 그러면 DB 의 run 은 이전 단계(`scan` 등)에 남아 있는데 응답은 영구 종결을 단정해 **응답·`job_run_log` 와
+   * DB 상태가 어긋난다**(진단 혼선 + 다음 호출이 같은 단계를 다시 수행하며 listing 영구 실패에서는
+   * 마스터 다운로드를 되풀이한다). 이제 **닫힌 것이 확인될 때만** `final:true` 다 —
+   * 「모르면 일시」 원칙이 빠져 있던 자리를 메운다. 그 회차는 여전히 `ok:false`·`failCode` 로 실패로 남는다.
+   */
+  const failAs = async (kind: FailKind, error: string): Promise<RefreshResult> => {
+    const phaseBefore = run!.phase;
+    let closed = false;
+    if (kind === 'permanent') {
+      try {
+        await closeRun({ runId: run!.runId, phase: 'failed', error, nowMs: deps.nowMs(), db: deps.db });
+        closed = true;
+      } catch (e) {
+        // 오류 `code`/`name` 만 남긴다(값·본문 없음). 다음 호출이 같은 영구 실패를 만나 다시 닫는다(자가 치유)
+        const x = e as { code?: string; name?: string } | null;
+        console.error(
+          `[universe/refresh] run 종결 기록 실패 runId=${run!.runId} `
+          + `code=${String(x?.code ?? x?.name ?? 'unknown').slice(0, 60)} — `
+          + '응답을 final:false·원래 단계로 돌린다(응답이 DB 상태를 앞질러 단정하지 않게)',
+        );
+      }
+    }
     const prog = await readProgress({ runId: run!.runId, db: deps.db });
     return done({
-      ok: false, status: 'failed', final: true, runId: run!.runId, phase: 'failed',
-      progress: prog.kind === 'ok' ? prog.data : null, lastError: error, failCode: failCodeOf(error),
+      ok: false,
+      status: 'failed',
+      // 🔴 `kind === 'permanent'` 가 아니라 **실제로 닫혔는지**를 본다(일시 경로는 `closed` 가 늘 false 라 종전과 같다)
+      final: closed,
+      runId: run!.runId,
+      phase: closed ? 'failed' : phaseBefore,
+      progress: prog.kind === 'ok' ? prog.data : null,
+      lastError: error,
+      failCode: failCodeOf(error),
     });
   };
-
   try {
-    if (run.phase === 'listing') return await doListing(deps, cfg, run.runId, runKey, t0, fail, done);
-    if (run.phase === 'scan') return await doScan(deps, run.runId, runKey, t0, 'scan', fail, done);
-    if (run.phase === 'retry') return await doScan(deps, run.runId, runKey, t0, 'retry', fail, done);
-    if (run.phase === 'finalize') return await doFinalize(deps, cfg, run.runId, runKey, t0, fail, done);
-    return await fail(`unknown_phase:${run.phase}`);
+    if (run.phase === 'listing') return await doListing(deps, cfg, run.runId, runKey, t0, failAs, done);
+    if (run.phase === 'scan') return await doScan(deps, run.runId, runKey, t0, 'scan', failAs, done);
+    if (run.phase === 'retry') return await doScan(deps, run.runId, runKey, t0, 'retry', failAs, done);
+    if (run.phase === 'finalize') return await doFinalize(deps, cfg, run.runId, runKey, t0, failAs, done);
+    // 단계 값이 규약 밖이다 — 코드·데이터의 **논리** 오류이고 다시 불러도 같다(영구)
+    return await failAs('permanent', `unknown_phase:${run.phase}`);
   } catch (e) {
-    return await fail(`fatal:${e instanceof Error ? e.message : String(e)}`.slice(0, 250));
+    // 🔴 분류를 모르는 예외다 → **일시**로 둔다(「모르면 일시」). 영구로 보면 버그 하나가 그 달을 삼킨다
+    return await failAs('transient', `fatal:${e instanceof Error ? e.message : String(e)}`.slice(0, 250));
   }
 }
 
 type DoneFn = (r: Omit<RefreshResult, 'elapsedMs' | 'runKey'>) => RefreshResult;
-type FailFn = (error: string) => Promise<RefreshResult>;
+/** 실패 보고 — **분류를 반드시 적는다**(T-145 ⑥-4). 각 자리의 근거는 호출부 주석에 있다. */
+type FailFn = (kind: FailKind, error: string) => Promise<RefreshResult>;
 
 // ── listing ─────────────────────────────────────────────────────────────────
 
@@ -207,13 +264,19 @@ async function doListing(
   deps: RefreshDeps, cfg: RefreshConfig, runId: number, _runKey: string, _t0: number,
   fail: FailFn, done: DoneFn,
 ): Promise<RefreshResult> {
-  if (!deps.fetchSecListing) return await fail('sec_user_agent_missing');
+  /**
+   * 선언 User-Agent 가 없다 — 네트워크도 형식도 아닌 **설정** 문제다. 「모르면 일시」를 따라 그 달을 닫지 않는다:
+   * 창(4시간 40분) 안에 환경변수를 넣고 다시 띄우면 그 달 산출이 살아나고, 끝까지 없으면 창 종료 경고가 알린다.
+   * 외부 호출 0건으로 끝나므로 되풀이 비용도 없다.
+   */
+  if (!deps.fetchSecListing) return await fail('transient', 'sec_user_agent_missing');
 
   let sec: { json: unknown; sha256: string };
   try {
     sec = await deps.fetchSecListing();
   } catch (e) {
-    return await fail(`sec_fetch:${e instanceof Error ? e.message : String(e)}`.slice(0, 250));
+    // SEC HTTP·네트워크 — **일시**
+    return await fail('transient', `sec_fetch:${e instanceof Error ? e.message : String(e)}`.slice(0, 250));
   }
   const secFetchedAt = deps.nowMs();
 
@@ -221,8 +284,9 @@ async function doListing(
   try {
     master = await deps.fetchMaster();
   } catch (e) {
-    // 🔴 마스터 없이 추측 표기로 KIS 를 부르지 않는다 — BRK.B 하나로도 상위 50 의 정확성이 깨진다
-    return await fail(`master_unavailable:${e instanceof Error ? e.message : String(e)}`.slice(0, 250));
+    // 🔴 마스터 없이 추측 표기로 KIS 를 부르지 않는다 — BRK.B 하나로도 상위 50 의 정확성이 깨진다.
+    //   가져오기 실패는 네트워크·압축 해제라 **일시**다(다음 틱에 다시 받는다)
+    return await fail('transient', `master_unavailable:${e instanceof Error ? e.message : String(e)}`.slice(0, 250));
   }
   const masterFetchedAt = deps.nowMs();
 
@@ -233,7 +297,8 @@ async function doListing(
     all = parsed.rows;
     droppedRows = parsed.dropped;
   } catch (e) {
-    return await fail(`sec_shape:${e instanceof Error ? e.message : String(e)}`.slice(0, 250));
+    // 파일 모양이 규약과 다르다 — **형식** 오류라 다시 받아도 같다(영구)
+    return await fail('permanent', `sec_shape:${e instanceof Error ? e.message : String(e)}`.slice(0, 250));
   }
 
   const nyse = nyseRows(all);
@@ -322,7 +387,8 @@ async function doListing(
   counts.top_n = cfg.topN;
   counts.exclude_dr = cfg.excludeDr;
 
-  if (scanTargets === 0) return await fail('no_scan_targets');
+  // 후보가 0 = 두 원천을 다 읽고 **논리적으로** 대상이 없다는 결론이다(영구 — 같은 파일로는 같은 결과다)
+  if (scanTargets === 0) return await fail('permanent', 'no_scan_targets');
 
   const saved = await saveListing({
     runId, candidates,
@@ -335,7 +401,8 @@ async function doListing(
   if (saved.kind === 'not_migrated') {
     return done({ ok: true, status: 'tables_missing', final: true, runId, phase: null, progress: null });
   }
-  if (saved.kind === 'error') return await fail(`listing_save:${saved.error}`);
+  // 저장 실패는 저장소가 가른다(연결·잠금 = 일시 · 제약·형식 = 영구)
+  if (saved.kind === 'error') return await fail(failKindOf(saved.retryable), `listing_save:${saved.error}`);
 
   const prog = await readProgress({ runId, db: deps.db });
   return done({
@@ -355,7 +422,7 @@ async function doScan(
   if (batch.kind === 'not_migrated') {
     return done({ ok: true, status: 'tables_missing', final: true, runId, phase: null, progress: null });
   }
-  if (batch.kind === 'error') return await fail(`${mode}_read:${batch.error}`);
+  if (batch.kind === 'error') return await fail(failKindOf(batch.retryable), `${mode}_read:${batch.error}`);
 
   if (batch.data.length === 0) {
     // 이 단계는 끝났다 — 다음 단계로
@@ -433,7 +500,7 @@ async function doFinalize(
   if (rowsOut.kind === 'not_migrated') {
     return done({ ok: true, status: 'tables_missing', final: true, runId, phase: null, progress: null });
   }
-  if (rowsOut.kind === 'error') return await fail(`finalize_read:${rowsOut.error}`);
+  if (rowsOut.kind === 'error') return await fail(failKindOf(rowsOut.retryable), `finalize_read:${rowsOut.error}`);
 
   const inputs: RankInput[] = rowsOut.data.map((r) => ({
     ord: r.ord, symbol: r.symbol, cik: r.cik, curr: r.curr, etypNm: r.etypNm,
@@ -442,8 +509,9 @@ async function doFinalize(
   const result = rankCandidates(inputs, cfg.topN, { excludeDr: cfg.excludeDr });
 
   if (result.top.length < cfg.topN) {
-    // 🔴 50도 못 채우는 상태는 원천이 깨진 것이다 — 자동 목록을 **바꾸지 않고** 실패로 닫는다
-    return await fail(`insufficient_candidates:${result.top.length}/${cfg.topN}`);
+    // 🔴 50도 못 채우는 상태는 원천이 깨진 것이다 — 자동 목록을 **바꾸지 않고** 실패로 닫는다.
+    //   스캔·재시도가 이미 끝난 뒤의 결론이라 같은 run 을 다시 돌려도 같다(영구).
+    return await fail('permanent', `insufficient_candidates:${result.top.length}/${cfg.topN}`);
   }
 
   const prevOut = await readPrevTopSymbols({ runId, db: deps.db });
@@ -516,12 +584,12 @@ async function doFinalize(
   if (fin.kind === 'not_migrated') {
     return done({ ok: true, status: 'tables_missing', final: true, runId, phase: null, progress: null });
   }
-  if (fin.kind === 'error') return await fail(`finalize_write:${fin.error}`);
+  if (fin.kind === 'error') return await fail(failKindOf(fin.retryable), `finalize_write:${fin.error}`);
 
   // ── 변경 제안 — **수동 목록 종목에만**. 여기서 실패해도 산출은 이미 확정이다(complete 를 되돌리지 않는다)
   let proposalsCreated = 0;
   try {
-    proposalsCreated = await createProposals(deps);
+    proposalsCreated = await createProposals(deps, runId);
   } catch (e) {
     console.warn(`[universe/refresh] 제안 생성 실패(산출은 확정됨): ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -546,7 +614,7 @@ async function doFinalize(
  * 그러면 `kis_ok`(스캔 결과)를 아직 모른다. 둘을 동시에 만족시키는 길이 없어 **SEC 1회를 더 부른다**
  * (월 1회 산출에서 SEC 호출 2회 — 간격 ≥250ms·쿨다운은 `SecClient` 가 지킨다).
  */
-async function createProposals(deps: RefreshDeps): Promise<number> {
+async function createProposals(deps: RefreshDeps, runId: number | null): Promise<number> {
   if (!deps.fetchSecListing) return 0;
   const manual = await deps.readManualList();
   if (manual.length === 0) return 0;
@@ -557,6 +625,8 @@ async function createProposals(deps: RefreshDeps): Promise<number> {
   const byCik = indexByCik(parsed.rows);
   const cikMap = await readSymbolCikMap(deps.db);
   const recent = await readRecentSnapshotSymbols({ days: SNAPSHOT_LOOKBACK_DAYS, db: deps.db });
+  const scanned = runId == null ? new Map<string, boolean>() : await readRunKisStatus({ runId, db: deps.db });
+  const usable = snapshotUsable(recent, manual);
 
   const drafts = buildProposals({
     manual,
@@ -564,8 +634,16 @@ async function createProposals(deps: RefreshDeps): Promise<number> {
     secByCik: byCik,
     cikOf: (s) => cikMap.get(s) ?? null,
     secTickerOf: deps.secTickerOf,
-    // 🔴 표를 못 읽었으면 **모름(null)** 이다 — 모름을 실패로 보면 멀쩡한 종목을 빼라고 제안한다
-    kisOk: (s) => (recent == null ? null : recent.has(s)),
+    /**
+     * 🔴 (T-145 ⑧) 「KIS 조회가 되고 있나」를 **두 원천**으로 본다 — 둘 다 모르면 `null` 이고 제안을 만들지 않는다.
+     *  1. **이 run 의 스캔 결과**(`scanned`) — 이달의 직접 관측이라 **우선한다**(⑧-2).
+     *  2. 최근 3일 `us_fundamentals_snapshot`(`recent`) — 대리값이다. **쓸 만한지 먼저 본다**(아래 `snapshotUsable`).
+     */
+    kisOk: (s) => {
+      const direct = scanned.get(s);
+      if (direct !== undefined) return direct;
+      return usable ? (recent as ReadonlySet<string>).has(s) : null;
+    },
     secShaPrefix: sec.sha256.slice(0, 8),
   });
   if (drafts.length === 0) return 0;
@@ -578,6 +656,26 @@ async function createProposals(deps: RefreshDeps): Promise<number> {
   }
   // 같은 지문이 이미 있으면 INSERT IGNORE 가 0행이다 — **새로 생긴 것만** 센다(알림 조건의 입력)
   return ins.data.inserted.length;
+}
+
+/**
+ * 🔴 **스냅샷 대리값이 「전부 실패」와 구별되는가**(T-145 ⑧-1).
+ *
+ * 결함: `kisOk` 가 「최근 3일 스냅샷 행 존재」인데 **빈 집합을 「전부 실패」로** 읽었다. 스냅샷 잡이 3일 멈추거나
+ * (2026-10 에 실제로 12일 침묵한 적이 있다) 신규 종목이 막 들어온 뒤면 수동 목록 **전체**에
+ * 「KIS 조회 불가 — 빼기」 제안이 쏟아지고, 지문에 달이 없어 `INSERT IGNORE` 로 **영구 소비**된다 —
+ * 그 뒤 진짜 실패가 와도 다시 올라오지 않는다(무시를 누른 뒤에는 되살릴 길이 없다).
+ *
+ * 그래서 **비었거나 수동 목록의 절반 미만만 보이면 쓰지 않는다**(= `kisOk` 가 `null`, 제안 0건).
+ * 왜 절반인가: 「몇 종목이 빠졌다」와 「원천이 멈췄다」를 가르는 선이고, 진짜 대량 실패는 다음 달 산출에서
+ * 커버리지가 회복된 뒤 제안으로 올라온다(한 달 늦는 대신 **영구 소비**를 막는다 — 지문에 달을 넣는 쪽은 별 결정이다).
+ * 경계는 **절반 이상이면 쓴다**(`covered * 2 >= manual.length`).
+ */
+export function snapshotUsable(recent: ReadonlySet<string> | null, manual: readonly string[]): boolean {
+  if (recent == null || recent.size === 0 || manual.length === 0) return false;
+  let covered = 0;
+  for (const s of manual) if (recent.has(s)) covered += 1;
+  return covered > 0 && covered * 2 >= manual.length;
 }
 
 /** `run_key` — KST 벽시계의 `YYYY-MM`. 창이 열린 달이다. */

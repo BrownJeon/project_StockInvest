@@ -245,8 +245,8 @@ eq "P6: 국내 10시 날짜파일 없음(호출 안 했으므로)" "$(df "$NE" n
 # ── P7. 정적 ──────────────────────────────────────────────────────────────────────
 echo "P7. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
-strip_blk() { awk '/^  # >>> (news-fetch-peek|daily-bars-daily|holdings-premarket|overseas-universe-refresh)/{s=1} s{ if (/^  # <<< (news-fetch-peek|daily-bars-daily|holdings-premarket|overseas-universe-refresh)/) s=0; next } {print}' "$1" \
-  | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket·T-143 overseas-universe-refresh) 블록·선언도 제외
+strip_blk() { awk '/^  # >>> (news-fetch-peek|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (news-fetch-peek|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/) s=0; next } {print}' "$1" \
+  | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket·T-143 overseas-universe-refresh·T-145 ⑨ kis-fundamentals-snapshot) 블록·선언·틱 시각 줄도 제외
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
 #   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
 # (T-135) call() 의 본문 임시 파일 변경(최상위 call-body-tmp 블록 · `# T-135` 표지 줄 · call() 의 경로 세 줄과 마스킹 로그 줄)도 이 정적 비교의 대상이 아니다 —
@@ -258,9 +258,13 @@ no_t135() {
           -e 's#^  rm -f "\$CALL_BODY_FILE"$#  rm -f /tmp/cron-runner-$$.out#'
 }
 no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$' | no_t135; }
+# (T-145 ⑨) **기준 러너 쪽**의 옛 kis-fundamentals-snapshot 구간을 범위로 지운다 — 지금 러너 쪽은
+#   `# >>> kis-fundamentals-snapshot` 블록 표식으로 지우지만 기준 ref 에는 그 표식이 없어 한쪽만 지워지면 어긋난다.
+#   (news-split 의 strip_old 가 뉴스 구간을 같은 방식으로 지우는 선례와 같다. 그 잡의 새 모양은 자기 블록 시험이 본다.)
+no_kf_old() { awk '/^  # 매일 08:00 KST: KIS 해외 현재가상세 스냅샷/{s=1} s{ if (/^  fi$/) s=0; next } {print}'; }
 RUNNER_NOJRL="$W/runner-nojrl.sh"; no_jrl "$RUNNER" > "$RUNNER_NOJRL"
-if diff <(strip_blk "$RUNNER_NOJRL") <(strip_blk "$BASEFILE") > /dev/null; then ok "🔴 P7: peek 블록·주석 밖 실행 줄 = 기준 ref $BASE_REF ($(strip_blk "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"
-else bad "P7: peek 블록 밖 실행 줄이 기준 ref $BASE_REF 와 다르다(다른 블록 변경과 합쳤으면 T118_BASE_REF 지정)"; diff <(strip_blk "$RUNNER_NOJRL") <(strip_blk "$BASEFILE") | head -10; fi
+if diff <(strip_blk "$RUNNER_NOJRL") <(no_kf_old < "$BASEFILE" | strip_blk /dev/stdin) > /dev/null; then ok "🔴 P7: peek 블록·주석 밖 실행 줄 = 기준 ref $BASE_REF ($(strip_blk "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"
+else bad "P7: peek 블록 밖 실행 줄이 기준 ref $BASE_REF 와 다르다(다른 블록 변경과 합쳤으면 T118_BASE_REF 지정)"; diff <(strip_blk "$RUNNER_NOJRL") <(no_kf_old < "$BASEFILE" | strip_blk /dev/stdin) | head -10; fi
 eq "P7: call() 함수 본문 = 기준 ref" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASEFILE" | sha256sum)"
 nb="$(awk '/^  # >>> news-fetch-peek/,/^  # <<< news-fetch-peek/' "$RUNNER")"
 nbx="$(printf '%s\n' "$nb" | grep -v '^[[:space:]]*#' | LC_ALL=C sed 's/[[:space:]][[:space:]]*#.*$//')"   # 주석 뺀 실행 줄(LC_ALL=C — ko_KR.UTF-8 의 GNU sed 는 '—' 가 든 줄에서 '.*$' 가 맞지 않았다)

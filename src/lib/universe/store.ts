@@ -17,6 +17,10 @@ import { isOverseasSymbol } from '@/lib/exchanges/kis-symbols';
 import { fallbackOverseasUniverse, parseRevisionSymbols } from '@/lib/strategy/universe-overseas-static';
 import { MANUAL_LIST_MAX, checkManualSymbols } from './parse-manual-list';
 import {
+  AUTO_REFRESH_CONFIG_KEY, AUTO_REFRESH_DEFAULT, parseHhmm, readAutoRefreshConfig, readAutoRefreshSwitch,
+  type AutoRefreshConfig, type AutoRefreshSwitch,
+} from './refresh-config';
+import {
   actionLabel, actionVerb, applyProposalToManual, heldWarnText, proposalDoneText, proposalEffect, proposalKindLabel,
 } from './proposal-copy';
 import type {
@@ -134,76 +138,17 @@ export function parseSymbolArray(v: unknown): { symbols: string[]; valid: boolea
 // ── 설정 (Q2 주기 · Q4 개수) ────────────────────────────────────────────────
 
 /**
- * `system_config.overseas_universe_refresh` — 키가 없거나 해석 불가면 이 기본값(재배포 없이 값만 바꿔 조정한다).
- *
- * 🔴 **매월 1일 02시 KST 를 쓰지 않는다**(W-1, Analyst WP-A 설계 교차 확인 2026-11-01). 그 시각은 평일이면
- * **미국 정규장 한가운데**(정규장 = KST 23:30~06:00)이고 KIS 유량이 가장 빡빡하다. 산출이 1시간 넘게 이어지면
- * 종목마다 **다른 시각의 가격**으로 순위를 매기게 된다.
- * 그래서 **그 달 첫째 일요일 01:10~05:50 KST** 다 — 미국·국내 모두 휴장이고, 금요일 종가 하나로 가격 단면이
- * 통일되며, 06~08시 무거운 틱과 겹치지 않는다.
- *
- * `enabled` 는 **꺼짐이 기본**이다(새 기능 = 꺼짐 — `post_market_overseas_enabled` 와 같은 방향).
- * 산출 로직은 WP-A 범위이고, 이 모듈은 그 값을 **읽어 화면에 보일 뿐** 아무 작업도 켜지 않는다.
+ * 🔴 설정 판독은 **`./refresh-config` 한 벌**이다(T-145 ③). 분석 쪽 판독기
+ * (`src/lib/strategy/universe-overseas-static.ts`)가 자동 목록을 읽기 **전에** 같은 스위치를 봐야 하는데,
+ * 이 모듈은 그 판독기를 거꾸로 import 하므로(위 `fallbackOverseasUniverse`) 그쪽에서 이 모듈을 부르면
+ * `strategy → universe/store → strategy` 순환이 된다. 그래서 설정만 떼어내고 여기서는 **재수출만** 한다 —
+ * `AUTO_REFRESH_CONFIG_KEY` 리터럴과 `enabled` 해석이 두 벌이 되면 한쪽만 고쳐 어긋난다.
+ * 종전 import 경로(`from './store'`)는 그대로 쓸 수 있다.
  */
-export const AUTO_REFRESH_DEFAULT: AutoRefreshConfig = {
-  enabled: false, topN: 50, weekday: 0, nth: 1, windowStart: '01:10', windowEnd: '05:50', excludeDr: true,
+export {
+  AUTO_REFRESH_CONFIG_KEY, AUTO_REFRESH_DEFAULT, parseHhmm, readAutoRefreshConfig, readAutoRefreshSwitch,
 };
-export const AUTO_REFRESH_CONFIG_KEY = 'overseas_universe_refresh';
-
-export interface AutoRefreshConfig {
-  /** 자동 산출을 돌리나 — WP-A 의 관문. 이 모듈은 「다음 예정」을 말할지 정할 때만 본다 */
-  enabled: boolean;
-  /** 자동 목록 개수(Q4) */
-  topN: number;
-  /** KST 요일 0=일 … 6=토 */
-  weekday: number;
-  /** 그 달의 몇 번째 그 요일(1 = 첫째) */
-  nth: number;
-  /** 창 시작·끝 'HH:MM'(KST) — 산출은 이 창 안에서만 돈다(WP-A) */
-  windowStart: string;
-  windowEnd: string;
-  /** DR(주식예탁증서) 종목 제외 — WP-A 가 쓴다 */
-  excludeDr: boolean;
-}
-
-/** 숫자 설정 하나를 범위 안으로. 범위 밖·숫자 아님은 기본값(설정 실수로 화면이 깨지지 않게). */
-function clampInt(v: unknown, def: number, min: number, max: number): number {
-  const n = intOf(v);
-  return n != null && n >= min && n <= max ? n : def;
-}
-/** 'HH:MM'(24시) 만 받는다. 그 밖은 기본값 — 창 문자열이 깨지면 예정 시각이 엉뚱해진다. */
-export function parseHhmm(v: unknown, def: string): string {
-  const t = typeof v === 'string' ? v.trim() : '';
-  return /^([01]\d|2[0-3]):[0-5]\d$/.test(t) ? t : def;
-}
-
-/** 설정을 읽는다. **던지지 않는다** — DB 오류·키 없음은 기본값(이 값은 안전장치가 아니라 표시·예정 계산용이다). */
-export async function readAutoRefreshConfig(db: Queryable = pool()): Promise<AutoRefreshConfig> {
-  let raw: unknown = null;
-  try {
-    const [out] = await db.query<RowDataPacket[]>('SELECT value FROM system_config WHERE `key` = ?', [AUTO_REFRESH_CONFIG_KEY]);
-    raw = rowsOf<RowDataPacket>(out)[0]?.value ?? null;
-  } catch {
-    return { ...AUTO_REFRESH_DEFAULT };
-  }
-  let o: Record<string, unknown> | null = null;
-  if (raw != null) {
-    try {
-      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) o = parsed as Record<string, unknown>;
-    } catch { /* 손으로 넣은 비-JSON 값 — 기본값으로 */ }
-  }
-  return {
-    // 정확히 true 일 때만 켜짐으로 본다(키 없음·'on' 같은 값 = 꺼짐)
-    enabled: o?.enabled === true,
-    topN: clampInt(o?.topN, AUTO_REFRESH_DEFAULT.topN, 1, MANUAL_LIST_MAX),
-    weekday: clampInt(o?.weekday, AUTO_REFRESH_DEFAULT.weekday, 0, 6),
-    nth: clampInt(o?.nth, AUTO_REFRESH_DEFAULT.nth, 1, 5),
-    windowStart: parseHhmm(o?.windowStart, AUTO_REFRESH_DEFAULT.windowStart),
-    windowEnd: parseHhmm(o?.windowEnd, AUTO_REFRESH_DEFAULT.windowEnd),
-    excludeDr: o?.excludeDr !== false,
-  };
-}
+export type { AutoRefreshConfig, AutoRefreshSwitch };
 
 /**
  * 그 달(KST 벽시계)의 `nth` 번째 `weekday` 날짜(1~31). 그 달에 그런 날이 없으면(예: 5번째 일요일) null.

@@ -136,8 +136,10 @@ EOF
 DBRE=' /api/cron/daily-bars$'
 dbc()    { grep -E "$DBRE" "$1/calls"; }
 dbat()   { dbc "$1" | awk '{print $1, $2}' | tr '\n' ' '; }
-nodb()   { grep -vE "$DBRE" "$1/calls" | grep -v ' /api/cron/holdings-premarket$' | awk '{print $1, $2, $4}'; }   # (T-119 병합) holdings-premarket 제외
+nodb()   { grep -vE "$DBRE" "$1/calls" | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }   # (T-119 병합) holdings-premarket·(T-145 ⑨) kis-fundamentals-snapshot 제외 — ⑨ 가 그 잡을 08:30~08:55 창의 매 틱으로 바꿨다(사용자 승인). 그 일정은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 본다
 allc()   { awk '{print $1, $2, $4}' "$1/calls"; }
+# (T-145 ⑨) 기준 러너 쪽에서도 kis-fundamentals-snapshot 을 뺀다 — nodb 가 새 러너에서만 빼면 기준의 08:00 1회가 남아 어긋난다
+allc_nokf() { grep -v ' /api/cron/kis-fundamentals-snapshot$' "$1/calls" | awk '{print $1, $2, $4}'; }
 df()     { cat "$1/home/.node-local/stockinvest/$2" 2>/dev/null || echo none; }
 gap()    { awk 'NR>1 { g = $1 - p; if (g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }
 gapj()   { awk 'NR>1 { g = $1 - p; if (g < 3600 && g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }   # 다음 날 건너뛰기 간격 제외
@@ -145,8 +147,8 @@ ylog()   { grep -c 'daily-bars yield_tick' "$1/stdout"; }
 slog()   { grep -c 'daily-bars skipped' "$1/stdout"; }
 heavyat() { grep -E ' /api/cron/(research-cycle-overseas|edgar-sync|broker-fills)$' "$1/calls" | awk '{ sub(/\/api\/cron\//, "", $4); print $2, $4 }' | tr '\n' ' '; }
 same()   {   # same 라벨 새러너결과 옛러너결과 — daily-bars 를 뺀 호출 목록이 변경 전 러너와 완전히 같은가
-  if diff <(nodb "$2") <(allc "$3") > /dev/null; then ok "🔴 $1: daily-bars 를 뺀 모든 호출 = 변경 전 러너 ($(nodb "$2" | wc -l | tr -d ' ')건)"
-  else bad "$1: daily-bars 를 뺀 호출 목록이 변경 전과 다르다"; diff <(nodb "$2") <(allc "$3") | head -10; fi
+  if diff <(nodb "$2") <(allc_nokf "$3") > /dev/null; then ok "🔴 $1: daily-bars 를 뺀 모든 호출 = 변경 전 러너 ($(nodb "$2" | wc -l | tr -d ' ')건)"
+  else bad "$1: daily-bars 를 뺀 호출 목록이 변경 전과 다르다"; diff <(nodb "$2") <(allc_nokf "$3") | head -10; fi
 }
 TD="2026-10-28"; YD="2026-10-27"
 ALL_TODAY="research-cycle-overseas-last-date=$TD edgar-sync-last-date=$TD broker-fills-last-date=$TD"
@@ -163,8 +165,9 @@ eq "🔴 D1: daily-bars = 07:40 하루 1회" "$(dbat "$NA")" "10-28 07:40 "
 eq "🔴 D1: 07:40~07:54 밖의 daily-bars 호출 0" "$(dbc "$NA" | awk '{print $2}' | grep -cvE '^07:(4[0-9]|5[0-4])$')" "0"
 eq "D1: 본문 = '{}'(본문 없음 → 라우트 기본 대상)" "$(sort -u "$NA/dbody" | tr '\n' ' ')" "{} "
 eq "🔴 D1: daily-bars 호출에 --max-time 120" "$(grep '^/api/cron/daily-bars ' "$NA/maxtime" | tr '\n' ' ')" "/api/cron/daily-bars max-time=120 "
-if diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ') "$BA/maxtime" > /dev/null; then ok "🔴 D1: daily-bars 를 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
-else bad "D1: --max-time 목록이 다르다"; diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ') "$BA/maxtime" | head -5; fi
+# (T-145 ⑨) 스냅샷의 --max-time(110)은 그 블록 시험이 본다 — 여기서는 뺀다
+if diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') "$BA/maxtime" > /dev/null; then ok "🔴 D1: daily-bars 를 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
+else bad "D1: --max-time 목록이 다르다"; diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') "$BA/maxtime" | head -5; fi
 eq "D1: 날짜파일 = 오늘" "$(df "$NA" daily-bars-last-date)" "$TD"
 eq "D1: OK 로그 1줄" "$(grep -c '\] daily-bars OK$' "$NA/stdout")" "1"
 eq "D1: yield 로그 없음(07:00·07:20 틱과 다른 틱)" "$(ylog "$NA")" "0"
@@ -257,9 +260,13 @@ eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 no_peek()   { awk '/^  # >>> news-fetch-peek/{s=1} s{ if (/^  # <<< news-fetch-peek/) s=0; next } {print}' "$1" \
   | awk '/^  # >>> holdings-premarket/{s=1} s{ if (/^  # <<< holdings-premarket/) s=0; next } {print}' | grep -v '^HOLDINGS_PREMARKET_' \
   | awk '/^  # >>> overseas-universe-refresh/{s=1} s{ if (/^  # <<< overseas-universe-refresh/) s=0; next } {print}' | grep -v '^UNIVERSE_CURL_MAX_TIME='; }   # (T-118 병합) peek · (T-119 병합) holdings-premarket · (T-143 병합) overseas-universe-refresh 블록·선언 — 양쪽에서 똑같이
-strip_new() { no_peek "$1" | awk '/^  # >>> daily-bars-daily/{s=1} s{ if (/^  # <<< daily-bars-daily/) s=0; next } {print}' \
-  | grep -v '^DAILY_BARS_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
-strip_old() { no_peek "$1" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
+# (T-145 ⑨) **기준 러너 쪽**의 옛 kis-fundamentals-snapshot 구간을 범위로 지운다 — 지금 러너 쪽은
+#   `# >>> kis-fundamentals-snapshot` 블록 표식으로 지우지만 기준 ref 에는 그 표식이 없어 한쪽만 지워지면 어긋난다.
+#   (news-split 의 strip_old 가 뉴스 구간을 같은 방식으로 지우는 선례와 같다. 그 잡의 새 모양은 자기 블록 시험이 본다.)
+no_kf_old() { awk '/^  # 매일 08:00 KST: KIS 해외 현재가상세 스냅샷/{s=1} s{ if (/^  fi$/) s=0; next } {print}'; }
+strip_new() { no_peek "$1" | awk '/^  # >>> (daily-bars-daily|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (daily-bars-daily|kis-fundamentals-snapshot)/) s=0; next } {print}' \
+  | grep -v '^DAILY_BARS_' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-145 ⑨ kis-fundamentals-snapshot — 일정이 바뀐 잡. 그 일정은 자기 블록의 jest 시뮬레이션 시험이 본다)
+strip_old() { no_peek "$1" | no_kf_old | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
 #   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
 # (T-135) call() 의 본문 임시 파일 변경(최상위 call-body-tmp 블록 · `# T-135` 표지 줄 · call() 의 경로 세 줄과 마스킹 로그 줄)도 이 정적 비교의 대상이 아니다 —

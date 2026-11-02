@@ -1881,6 +1881,167 @@ e2e_commit "(t116-g7) 실 커밋: corp-intelx/·corp-intel.ts 이웃(task ID 없
   'chore: 이웃 정리'
 
 echo ""
+echo "[T-145 — 해외 자동 목록 src/lib/universe/ (디렉토리) · 러너 시험 접두 · 정확 일치 3줄 추가]"
+
+# 사용자 결정 "넣기 찬성"(2026-11-02). 세 항목의 성질이 달라 따로 본다:
+#   ① `^src/lib/universe/`                              디렉토리 — 구현·시험·모형·아직 없는 새 파일이 전부 걸려야 한다
+#   ② `^scripts/test-cron-runner-`                      **접두**(슬래시로 끝나지 않는다) — 이름이 그 접두로 시작하는 파일만
+#   ③ 정확 일치 3줄 — 같은 디렉토리의 **형제는 걸리지 않아야** 한다:
+#      `^src/lib/data/__tests__/us-data-db\.test\.ts$` · `^src/lib/data/kis-fundamentals-snapshot\.ts$`(⑨의 1회 마감) ·
+#      `^src/lib/data/__tests__/kis-fundamentals-snapshot\.test\.ts$`(그 회귀망)
+# 항목마다 ①판정 미기록 → 차단 ②유효 판정(scope 포함) → 통과 ③이웃만 검토한 판정 → 차단 ④다른 안전 경로 판정 차용 → 차단.
+T145_ITEMS=(
+  "src/lib/universe/refresh-config.ts"                       # a1 스위치 판독 한 벌(③의 핵심)
+  "src/lib/universe/refresh-store.ts"                        # a2 일시/영구 판정·행 가드
+  "src/lib/universe/refresh-engine.ts"                       # a3 제안 조건·단계·예산
+  "src/lib/universe/rank.ts"                                 # a4 상위 N 선정(= 무엇을 분석하는가)
+  "src/lib/universe/proposal-copy.ts"                        # a5 화면 문구 — 알고 넣은 과도포함
+  "src/lib/universe/__tests__/refresh-store-row-guards.test.ts"  # a6 시험
+  "src/lib/universe/__tests__/helpers/fake-refresh-store.ts"     # a7 모형(하위 폴더)
+  "src/lib/universe/watch/new-source.ts"                     # a8 아직 없는 하위 폴더의 새 파일
+  "scripts/test-cron-runner-overseas-universe.sh"            # b1 러너 회귀망(이번에 고친 것)
+  "scripts/test-cron-runner-pmo-retry.sh"                    # b2 러너 회귀망(다른 잡)
+  "scripts/test-cron-runner-newjob.sh"                       # b3 아직 없는 새 러너 시험(접두라 자동 포함)
+  "src/lib/data/__tests__/us-data-db.test.ts"                # c1 정확 일치
+  "src/lib/data/kis-fundamentals-snapshot.ts"                # c2 정확 일치 — ⑨의 1회 마감·이어받기
+  "src/lib/data/__tests__/kis-fundamentals-snapshot.test.ts" # c3 정확 일치 — 그 회귀망
+)
+
+cat > "agent-vault/10-Flow/tasks/T-948-hooktest-t145-scoped.md" <<'EOF'
+---
+task_id: T-948
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/universe/, scripts/test-cron-runner-overseas-universe.sh, scripts/test-cron-runner-pmo-retry.sh, scripts/test-cron-runner-newjob.sh, src/lib/data/__tests__/us-data-db.test.ts, src/lib/data/kis-fundamentals-snapshot.ts, src/lib/data/__tests__/kis-fundamentals-snapshot.test.ts)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-948-hooktest-t145-scoped.md")
+
+# ③ 용 — 이웃만 검토한 판정. 슬래시 없는 `src/lib/universe`(그 이름의 파일 하나) · 가짜 접두 디렉토리 ·
+#    같은 이름의 파일 · 위치만 다른 경로 · 러너 본문 · 형제 시험(us-data-db 의 형제).
+cat > "agent-vault/10-Flow/tasks/T-947-hooktest-t145-nearmiss.md" <<'EOF'
+---
+task_id: T-947
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/universe, src/lib/universex/, src/lib/universe-old/, src/lib/universe.ts, foo/src/lib/universe/, scripts/cron-runner.sh, src/lib/data/__tests__/sql-upsert-sim.ts, src/lib/data/us-data-db.ts, src/lib/data/us-edgar/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-947-hooktest-t145-nearmiss.md")
+
+# ④ 용 — 차용 방지: 이 묶음과 함께 바뀌는 다른 안전 경로만 검토한 판정.
+cat > "agent-vault/10-Flow/tasks/T-946-hooktest-t145-borrowed.md" <<'EOF'
+---
+task_id: T-946
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/strategy/, src/app/api/cron/, scripts/cron-runner.sh, scripts/git-hooks/)**
+EOF
+FIXTURES+=("agent-vault/10-Flow/tasks/T-946-hooktest-t145-borrowed.md")
+
+t145_i=0
+for t145_p in "${T145_ITEMS[@]}"; do
+  t145_i=$((t145_i + 1))
+  stage_and_run 1 "(t145-a${t145_i}.1) ${t145_p} + 판정 미기록(T-993) → 차단" \
+    "$(msg 'feat(T-993): 해외 자동 목록')" "$t145_p"
+  stage_and_run_expect "$T075_OK" 0 "(t145-a${t145_i}.2) ${t145_p} + T-948(scope 포함) → 통과" \
+    "$(msg 'feat(T-948): 해외 자동 목록')" "$t145_p"
+  stage_and_run 1 "(t145-a${t145_i}.3) ${t145_p} + T-947(이웃 경로 scope) → 차단" \
+    "$(msg 'feat(T-947): 해외 자동 목록')" "$t145_p"
+  stage_and_run 1 "(t145-a${t145_i}.4) ${t145_p} + T-946(다른 안전 경로 scope) → 차단(차용 방지)" \
+    "$(msg 'feat(T-946): 해외 자동 목록')" "$t145_p"
+done
+
+# 이웃은 감사 대상이 아니다 — task ID 없이도 통과해야 한다(하나라도 잘못 매치되면 exit 1).
+# 겨냥 변이: 끝 `/` 삭제(universe.ts·universex/·universe-old/) · `^` 삭제(foo/·mockups/) · 위치 무시(src/universe/·lib/universe/) ·
+# 대소문자(Universe) · 접두 ② 의 과도 매치(scripts/test-cron-runnerX·scripts/cron-runner-test-…·test-cron-runner-… 가 아닌 이름) ·
+# ③ 의 과도 매치(형제 시험·확장자 다른 이름·디렉토리 통째).
+stage_and_run 0 "(t145-n1) universe 이웃(.ts·universex/·-old/·foo/·mockups/·위치·대소문자) → 통과" \
+  "$(msg 'chore: 이웃 정리')" \
+  "src/lib/universe.ts" "src/lib/universex/rank.ts" "src/lib/universe-old/rank.ts" \
+  "foo/src/lib/universe/rank.ts" "mockups/src/lib/universe/rank.ts" \
+  "src/universe/rank.ts" "lib/universe/rank.ts" "src/lib/Universe/rank.ts"
+stage_and_run 0 "(t145-n2) 러너 시험 접두 이웃(test-cron-runnerX·cron-runner-test-·다른 접두·하위 경로) → 통과" \
+  "$(msg 'chore: 스크립트 정리')" \
+  "scripts/test-cron-runnerX.sh" "scripts/cron-runner-test-a.sh" "scripts/test-cron-x-runner.sh" \
+  "scripts/sub/test-cron-runner-a.sh" "test-cron-runner-a.sh"
+stage_and_run 0 "(t145-n3) 정확 일치 3줄의 형제·비슷한 이름 → 통과(디렉토리를 통째로 넣지 않았다)" \
+  "$(msg 'test: 자료 시험 정리')" \
+  "src/lib/data/__tests__/sql-upsert-sim.ts" "src/lib/data/us-edgar/__tests__/sync-job.test.ts" \
+  "src/lib/data/us-edgar/sync-job.ts" "src/lib/data/__tests__/us-data-db.test.tsx" \
+  "src/lib/data/__tests__/us-data-db-extra.test.ts" "src/lib/data/kis-fundamentals-snapshot.tsx" \
+  "src/lib/data/kis-fundamentals-snapshot-v2.ts" "src/lib/data/__tests__/kis-fundamentals-snapshot.test.tsx"
+
+# 혼합 커밋 — 판정 합집합. T-948(이번 세 항목)·T-946(기존 안전 경로)이 각자 자기 몫만 덮는다.
+T145_MIX=( "README.md" "src/lib/universe/refresh-config.ts" "src/lib/strategy/universe-overseas-static.ts" \
+  "src/app/api/cron/overseas-universe-refresh/route.ts" "scripts/cron-runner.sh" "scripts/test-cron-runner-overseas-universe.sh" )
+stage_and_run 1 "(t145-m1) [문서, universe, strategy, 라우트, 러너, 러너시험] 판정 미기록(T-993) → 차단" \
+  "$(msg 'feat(T-993): 자동 목록 스위치')" "${T145_MIX[@]}"
+stage_and_run 1 "(t145-m2) 같은 묶음 + T-948 만 → strategy·라우트·러너가 범위 밖, 차단" \
+  "$(msg 'feat(T-948): 자동 목록 스위치')" "${T145_MIX[@]}"
+stage_and_run 1 "(t145-m3) 같은 묶음 + T-946 만 → universe·러너시험이 범위 밖, 차단" \
+  "$(msg 'feat(T-946): 자동 목록 스위치')" "${T145_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t145-m4) 같은 묶음 + T-948·T-946 합집합 → 통과" \
+  "$(msg 'feat(T-948,T-946): 자동 목록 스위치')" "${T145_MIX[@]}"
+stage_and_run_expect "$T075_OK" 0 "(t145-m5) 항목 14개 전부 + 문서, T-948 → 통과" \
+  "$(msg 'feat(T-948): T-145 일괄')" "${T145_ITEMS[@]}" "docs/x.md"
+
+echo ""
+echo "[T-145 — 실 커밋 E2E: 일회용 임시 저장소에서 git 이 새 세 항목을 실제로 거르는가]"
+
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-948-hooktest-t145-scoped.md" <<'EOF'
+---
+task_id: T-948
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/universe/, scripts/test-cron-runner-overseas-universe.sh, src/lib/data/__tests__/us-data-db.test.ts, src/lib/data/kis-fundamentals-snapshot.ts)**
+EOF
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-947-hooktest-t145-nearmiss.md" <<'EOF'
+---
+task_id: T-947
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/lib/universe, src/lib/universex/, scripts/cron-runner.sh, src/lib/data/us-data-db.ts)**
+EOF
+mkdir -p "$E2E_REPO/src/lib/universe/__tests__" "$E2E_REPO/src/lib/universex" "$E2E_REPO/src/lib/data/__tests__"
+
+printf 'v1\n' > "$E2E_REPO/src/lib/universe/refresh-config.ts"
+e2e_git add src/lib/universe/refresh-config.ts
+e2e_commit "(t145-g1) 실 커밋: universe/refresh-config.ts(신규) + task ID 없음 → 차단" block "커밋 차단" \
+  'feat: 스위치 판독'
+e2e_commit "(t145-g2) 실 커밋: 같은 변경 + T-947(이웃 경로 scope) → 차단" block "커밋 차단" \
+  'feat(T-947): 스위치 판독'
+e2e_commit "(t145-g3) 실 커밋: 같은 변경 + T-948(scope 포함) → 통과·HEAD 이동" commit "$T075_OK" \
+  'feat(T-948): 스위치 판독'
+
+printf 'v1\n' > "$E2E_REPO/scripts/test-cron-runner-overseas-universe.sh"
+e2e_git add scripts/test-cron-runner-overseas-universe.sh
+e2e_commit "(t145-g4) 실 커밋: 러너 시험(접두 항목) + task ID 없음 → 차단" block "커밋 차단" \
+  'test: 러너 시험'
+e2e_commit "(t145-g5) 실 커밋: 같은 변경 + T-948 → 통과·HEAD 이동" commit "$T075_OK" \
+  'test(T-948): 러너 시험'
+
+printf 'v1\n' > "$E2E_REPO/src/lib/data/__tests__/us-data-db.test.ts"
+e2e_git add src/lib/data/__tests__/us-data-db.test.ts
+e2e_commit "(t145-g6) 실 커밋: us-data-db.test.ts(정확 일치) + task ID 없음 → 차단" block "커밋 차단" \
+  'test: 대상 집합 시험'
+e2e_commit "(t145-g7) 실 커밋: 같은 변경 + T-948 → 통과·HEAD 이동" commit "$T075_OK" \
+  'test(T-948): 대상 집합 시험'
+
+printf 'v1\n' > "$E2E_REPO/src/lib/data/kis-fundamentals-snapshot.ts"
+e2e_git add src/lib/data/kis-fundamentals-snapshot.ts
+e2e_commit "(t145-g8) 실 커밋: kis-fundamentals-snapshot.ts(1회 마감) + task ID 없음 → 차단" block "커밋 차단" \
+  'perf: 수집 마감'
+e2e_commit "(t145-g9) 실 커밋: 같은 변경 + T-948 → 통과·HEAD 이동" commit "$T075_OK" \
+  'perf(T-948): 수집 마감'
+
+printf 'x\n' > "$E2E_REPO/src/lib/universex/a.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/universe.ts"
+printf 'x\n' > "$E2E_REPO/src/lib/data/__tests__/sql-upsert-sim.ts"
+printf 'x\n' > "$E2E_REPO/scripts/test-cron-runnerX.sh"
+e2e_git add src/lib/universex/a.ts src/lib/universe.ts src/lib/data/__tests__/sql-upsert-sim.ts scripts/test-cron-runnerX.sh
+e2e_commit "(t145-g10) 실 커밋: 이웃 4개(universex/·universe.ts·형제 대역·test-cron-runnerX) → 통과" commit "" \
+  'chore: 이웃 정리'
+
+echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
 printf '결과: %d 통과 / %d 실패\n' "$PASS_N" "$FAIL_N"
 echo ""

@@ -9,6 +9,13 @@
  * `orders`·`signals`·`position_state` 에 쓰지 않고 `src/lib/safety/**` 를 import 하지 않는다.
  *
  * 마이그레이션 적용 전에는 errno 1146 을 받아 `not_migrated` 로 돌려준다(라우트가 `tables_missing` 으로 끝낸다).
+ *
+ * ## 🔴 단일 행의 흠이 그 달을 버리게 하지 않는다 (T-145 ⑥ — Reviewer 가 STRICT 실 DB 로 재현한 결함)
+ * `cap_ratio DECIMAL(12,6)` 에 `2e7`(→ "Out of range") · `kis_stis CHAR(1)` 에 2자(→ "Data too long")를 넣으면
+ * **한 종목 때문에 트랜잭션 전체가 깨지고** 호출부가 그 달을 `failed` 로 영구 종결했다. 그래서 이 모듈은
+ *  ① 열 폭(CHAR·DECIMAL)을 **앱이 먼저** 맞춘다 — 넘치는 값은 자르거나 `NULL` 로 두고 **흔적을 남긴다**
+ *  ② 같은 run 에 같은 심볼이 두 번 오면 **첫 행만** 넣는다(`uq_cand_symbol` 1062 회피)
+ *  ③ 실패를 **일시/영구**로 갈라 돌려준다(`StoreOutcome.retryable`) — 일시는 그 달을 닫지 않는다.
  */
 import type { RowDataPacket } from 'mysql2/promise';
 import { getPool } from '@/lib/db';
@@ -50,6 +57,45 @@ function clamp(s: string | null, max: number): string | null {
   return cp.length <= max ? s : cp.slice(0, max).join('');
 }
 
+/**
+ * 🔴 DECIMAL 열에 **들어갈 수 있는 값만** 그대로 두고 그 밖은 `null` 로 바꾼다(T-145 ⑥-1).
+ *
+ * `intDigits` = 정수부 자릿수(= precision − scale), `scale` = 소수 자릿수. DB 가 저장할 때처럼 **먼저 반올림한 뒤**
+ * 자릿수를 본다 — `999999.9999996` 은 DECIMAL(12,6) 에서 `1000000.000000` 으로 반올림돼 **범위를 넘는다**.
+ * `Infinity`·`NaN` 도 null 이다(STRICT DB 가 거부한다).
+ *
+ * 왜 버리지 않고 null 인가: 「값이 없다」와 「값이 이상했다」를 가를 수 있게 호출부가 플래그·로그를 함께 남긴다.
+ * 자르거나(clamp) 상한으로 밀어 넣지 않는다 — 이상한 수를 **그럴듯한 수로 바꾸면** 순위가 조용히 틀린다.
+ */
+function decimalOrNull(v: number | null | undefined, intDigits: number, scale: number): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  const f = 10 ** scale;
+  const rounded = Math.round(v * f) / f;
+  return Number.isFinite(rounded) && Math.abs(rounded) < 10 ** intDigits ? v : null;
+}
+
+/** 후보·자동 목록 열의 폭(`scripts/migrations/T-143-wpa-universe-run.sql`·`T-143-overseas-universe.sql`). */
+export const DECIMAL_COLS = {
+  /** `candidate.tomv` · `cap_used` · `cap_alt` DECIMAL(28,4) */
+  tomv: { intDigits: 24, scale: 4 },
+  /** `candidate.shar` DECIMAL(24,2) */
+  shar: { intDigits: 22, scale: 2 },
+  /** `candidate.last_price` DECIMAL(20,6) */
+  lastPrice: { intDigits: 14, scale: 6 },
+  /** `candidate.cap_ratio` DECIMAL(12,6) — Reviewer 가 `2e7` 로 깨뜨린 그 열 */
+  capRatio: { intDigits: 6, scale: 6 },
+  /** `overseas_universe_auto.market_cap` DECIMAL(24,2) */
+  marketCap: { intDigits: 22, scale: 2 },
+} as const;
+
+function dec(v: number | null | undefined, col: { intDigits: number; scale: number }): number | null {
+  return decimalOrNull(v, col.intDigits, col.scale);
+}
+/** 값이 있었는데 열에 못 들어가 버린 경우 — 로그·플래그의 조건이다. */
+function dropped(orig: number | null | undefined, kept: number | null): boolean {
+  return orig != null && kept == null;
+}
+
 export type RunPhase = 'listing' | 'scan' | 'retry' | 'finalize' | 'complete' | 'failed' | 'expired';
 /** 더 부를 필요가 없는 단계. */
 export const TERMINAL_PHASES: readonly RunPhase[] = ['complete', 'failed', 'expired'];
@@ -68,12 +114,57 @@ export interface RunRow {
   notifiedAt: string | null;
 }
 
-export type StoreOutcome<T> = { kind: 'ok'; data: T } | { kind: 'not_migrated' } | { kind: 'error'; error: string };
+export type StoreOutcome<T> =
+  | { kind: 'ok'; data: T }
+  | { kind: 'not_migrated' }
+  /**
+   * `retryable: true` = **일시** 오류다(다음 호출에서 다시 해 볼 만하다). 호출부는 그 달을 닫지 않는다.
+   * `false` = **영구** — 같은 입력으로 다시 부르면 같은 결과다. 판정 기준은 `isRetryableDbError` 한 곳이다.
+   */
+  | { kind: 'error'; error: string; retryable: boolean };
+
+/**
+ * MySQL/MariaDB 오류 중 **영구**인 것(errno). 「다시 불러도 같은 결과」인 것만 넣는다 — 값·스키마·권한 문제다.
+ * 1146(표 없음)은 호출부가 `not_migrated` 로 먼저 가르므로 여기 닿지 않지만, 분류가 새면 안 되므로 함께 적는다.
+ */
+const PERMANENT_DB_ERRNOS: ReadonlySet<number> = new Set([
+  1044, 1048, 1054, 1062, 1063, 1064, 1136, 1142, 1143, 1146,
+  1264, 1265, 1292, 1366, 1406, 1451, 1452, 1690, 3819, 4025,
+]);
+/** 같은 뜻의 `code` 문자열(드라이버가 errno 를 주지 않는 경로 대비). */
+const PERMANENT_DB_CODES: ReadonlySet<string> = new Set([
+  'ER_ACCESS_DENIED_ERROR', 'ER_BAD_FIELD_ERROR', 'ER_BAD_NULL_ERROR', 'ER_CHECK_CONSTRAINT_VIOLATED',
+  'ER_CONSTRAINT_FAILED', 'ER_DATA_OUT_OF_RANGE', 'ER_DATA_TOO_LONG', 'ER_DBACCESS_DENIED_ERROR',
+  'ER_DUP_ENTRY', 'ER_DUP_FIELDNAME', 'ER_NO_REFERENCED_ROW_2', 'ER_NO_SUCH_TABLE', 'ER_PARSE_ERROR',
+  'ER_ROW_IS_REFERENCED_2', 'ER_TABLEACCESS_DENIED_ERROR', 'ER_TRUNCATED_WRONG_VALUE',
+  'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD', 'ER_WARN_DATA_OUT_OF_RANGE', 'ER_WRONG_VALUE_COUNT_ON_ROW',
+  'WARN_DATA_TRUNCATED',
+]);
+
+/**
+ * 🔴 **「일시」와 「영구」를 가르는 유일한 자리**(T-145 ⑥-4).
+ *
+ * 기준: **네트워크·연결·잠금·타임아웃·서버 종료는 일시**(값은 멀쩡한데 지금 못 썼다) ·
+ * **형식·논리·제약·권한은 영구**(다시 불러도 같다) · **모르면 일시**.
+ *
+ * 왜 모르면 일시인가 — 비용이 비대칭이다. 영구로 잘못 보면 **그 달 산출이 통째로 날아가고** 다음 창은
+ * 한 달 뒤다. 일시로 잘못 보면 창(약 4시간 40분) 안에서 몇 번 더 시도하고 — 외부 호출은 단계마다 제한돼
+ * 있으므로 유량 증폭이 아니다 — 창이 끝날 때 **텔레그램 warning 1회**가 미완을 알린다(④-조각).
+ */
+export function isRetryableDbError(e: unknown): boolean {
+  const x = e as { code?: unknown; errno?: unknown } | null;
+  if (typeof x?.errno === 'number' && PERMANENT_DB_ERRNOS.has(x.errno)) return false;
+  if (typeof x?.code === 'string' && PERMANENT_DB_CODES.has(x.code)) return false;
+  return true;   // 모르면 일시
+}
 
 function wrap<T>(e: unknown, label: string): StoreOutcome<T> {
   if (isNoSuchTable(e)) return { kind: 'not_migrated' };
-  console.error(`[universe/refresh-store] ${label} 실패: ${errText(e).slice(0, 200)}`);
-  return { kind: 'error', error: errText(e) };
+  const retryable = isRetryableDbError(e);
+  console.error(
+    `[universe/refresh-store] ${label} 실패(${retryable ? '일시' : '영구'}): ${errText(e).slice(0, 200)}`,
+  );
+  return { kind: 'error', error: errText(e), retryable };
 }
 
 const RUN_SELECT = `SELECT run_id, run_key, phase, top_n, cursor_pos, sec_sha256, last_error, notified_at
@@ -124,7 +215,8 @@ export async function createRun(
     }
     const again = await readRun(args.runKey, db);
     if (again.kind !== 'ok') return again;
-    if (!again.data) return { kind: 'error', error: 'run 을 만들었는데 다시 읽지 못함' };
+    // 넣었는데 안 보인다 — 복제 지연·경합 같은 **일시** 상태로 본다(다음 호출이 다시 읽는다)
+    if (!again.data) return { kind: 'error', error: 'run 을 만들었는데 다시 읽지 못함', retryable: true };
     return { kind: 'ok', data: again.data };
   } catch (e) {
     return wrap(e, 'run 생성');
@@ -171,7 +263,27 @@ export async function saveListing(args: {
       ? await args.getConnection()
       : ((await getPool().getConnection()) as unknown as TxConnection);
   } catch (e) {
-    return { kind: 'error', error: `connection:${errText(e)}` };
+    // 연결을 못 얻은 것은 **일시**다(풀 소진·네트워크) — 그 달을 닫을 이유가 아니다
+    return { kind: 'error', error: `connection:${errText(e)}`, retryable: true };
+  }
+  /**
+   * 🔴 같은 run 에 같은 심볼이 두 번 오면 **첫 행만** 넣는다(T-145 ⑥-3). `uq_cand_symbol (run_id, symbol)` 이
+   * 둘째 행에서 1062 를 내고, 그 1062 가 트랜잭션을 깨 **그 달이 영구 실패**로 닫혔다.
+   * SEC 파일에 같은 티커가 두 거래소로 중복 등재되면(2026-11-01 실측 0건이지만 목록은 매달 바뀐다)
+   * `internalSymbolFor('NYS', …)` 가 같은 내부 심볼을 두 번 만든다. 첫 행(= SEC 파일 순서가 앞)을 남기는 것은
+   * `ord` 가 run 안에서 불변이어야 하기 때문이다 — 뒤 행을 남기면 커서 기준이 바뀐다.
+   * 버린 수는 로그로만 남긴다(값은 남기지 않는다).
+   */
+  const seenSymbols = new Set<string>();
+  const candidates: CandidateInsert[] = [];
+  let dupSymbols = 0;
+  for (const c of args.candidates) {
+    if (seenSymbols.has(c.symbol)) { dupSymbols += 1; continue; }
+    seenSymbols.add(c.symbol);
+    candidates.push(c);
+  }
+  if (dupSymbols > 0) {
+    console.warn(`[universe/refresh-store] listing 후보에 중복 심볼 ${dupSymbols}건 — 첫 행만 넣는다(uq_cand_symbol)`);
   }
   // T-139 규칙 — 되돌리기까지 실패한 연결은 풀에 돌려주지 않고 버린다(열린 트랜잭션이 남은 연결이 재사용되지 않게)
   let discard = false;
@@ -180,14 +292,18 @@ export async function saveListing(args: {
     try {
       // 재시작 뒤 같은 run 이 다시 listing 을 돌 수 있다 — 이전 시도의 후보를 비우고 다시 넣는다(멱등)
       await conn.query('DELETE FROM overseas_universe_candidate WHERE run_id = ?', [args.runId]);
-      for (let i = 0; i < args.candidates.length; i += CANDIDATE_INSERT_CHUNK) {
-        const chunk = args.candidates.slice(i, i + CANDIDATE_INSERT_CHUNK);
+      for (let i = 0; i < candidates.length; i += CANDIDATE_INSERT_CHUNK) {
+        const chunk = candidates.slice(i, i + CANDIDATE_INSERT_CHUNK);
         const placeholders = chunk.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
         const params: unknown[] = [];
         for (const c of chunk) {
           params.push(
             args.runId, c.ord, clamp(c.symbol, 32), clamp(c.secTicker, 16), c.cik, clamp(c.secName, 200),
-            clamp(c.kisSymb, 16), clamp(c.kisEnam, 200), c.kisStis, c.kisIsdr, c.kisEtyp, c.status, clamp(c.exclusion, 32),
+            clamp(c.kisSymb, 16), clamp(c.kisEnam, 200),
+            // 🔴 CHAR 열도 앱이 먼저 맞춘다(T-145 ⑥-2) — `kis_stis` CHAR(1)·`kis_isdr` CHAR(1)·`kis_etyp` CHAR(3).
+            //   마스터 파일의 열 폭이 바뀌거나 공백·여러 글자가 섞여 오면 STRICT DB 가 "Data too long" 으로
+            //   **트랜잭션 전체**를 깬다(Reviewer 가 `kis_stis` 에 2자를 넣어 재현). 값 뜻은 1글자 코드다.
+            clamp(c.kisStis, 1), clamp(c.kisIsdr, 1), clamp(c.kisEtyp, 3), c.status, clamp(c.exclusion, 32),
           );
         }
         await conn.query(`INSERT INTO overseas_universe_candidate ${CANDIDATE_COLS} VALUES ${placeholders}`, params);
@@ -214,7 +330,7 @@ export async function saveListing(args: {
   } finally {
     if (discard) conn.destroy(); else conn.release();
   }
-  return { kind: 'ok', data: { inserted: args.candidates.length } };
+  return { kind: 'ok', data: { inserted: candidates.length } };
 }
 
 export interface PendingCandidate {
@@ -293,13 +409,37 @@ export async function applyScanOutcome(
   const db = args.db ?? pool();
   const o = args.outcome;
   if (o.status === 'ok') {
+    /**
+     * 🔴 KIS 원값도 **열 폭을 먼저 맞춘다**(T-145 ⑥-1 과 같은 이유, 호출부가 다르다).
+     *
+     * 이 UPDATE 는 종목마다 따로 보내고 호출부가 `.catch()` 로 삼키므로 트랜잭션을 깨지는 않는다. 그 대신
+     * **그 행이 `pending` 으로 남고 `attempts` 도 늘지 않아** 다음 청크가 같은 종목을 다시 집는다 —
+     * 한 종목의 말도 안 되는 값 하나가 창(4시간 40분)을 다 쓰고 그 달을 미완으로 끝낼 수 있다.
+     * 그래서 열에 못 들어가는 값은 `null` 로 두고 **진행은 시킨다**(그 종목은 finalize 에서 `tomv_null` 로 빠진다).
+     *
+     * ⚠ `error` 열에는 적지 않는다 — 그 열이 비어 있는 것이 「KIS 가 답했다」의 표식이고
+     * (`readRunKisStatus`) 거기에 값을 넣으면 **멀쩡한 종목에 「KIS 조회 불가」 제안**이 뜬다.
+     */
+    const tomv = dec(o.tomv, DECIMAL_COLS.tomv);
+    const shar = dec(o.shar, DECIMAL_COLS.shar);
+    const last = dec(o.last, DECIMAL_COLS.lastPrice);
+    const oob = [
+      dropped(o.tomv, tomv) ? 'tomv' : null,
+      dropped(o.shar, shar) ? 'shar' : null,
+      dropped(o.last, last) ? 'last_price' : null,
+    ].filter(Boolean);
+    if (oob.length > 0) {
+      console.warn(
+        `[universe/refresh-store] 원값이 열 범위를 넘어 null 로 둔다 run=${args.runId} ord=${o.ord} 열=${oob.join(',')}`,
+      );
+    }
     await db.query(
       `UPDATE overseas_universe_candidate
           SET status = 'ok', tomv = ?, shar = ?, last_price = ?, curr = ?, etyp_nm = ?, rsym = ?,
               attempts = attempts + 1, error = NULL, fetched_at = ?
         WHERE run_id = ? AND ord = ?`,
       [
-        o.tomv, o.shar, o.last, clamp(o.curr, 8), clamp(o.etypNm, 64), clamp(o.rsym, 32),
+        tomv, shar, last, clamp(o.curr, 8), clamp(o.etypNm, 64), clamp(o.rsym, 32),
         kstSql(args.nowMs), args.runId, o.ord,
       ],
     );
@@ -498,17 +638,46 @@ export async function finalizeRun(args: {
   nowMs: number;
   getConnection?: () => Promise<TxConnection>;
 }): Promise<StoreOutcome<{ autoRows: number }>> {
-  if (args.auto.length === 0) return { kind: 'error', error: 'empty_top — 자동 목록을 바꾸지 않는다' };
+  // 상위 N 이 비는 것은 원천이 깨진 **논리** 상태다 — 다시 불러도 같다(영구)
+  if (args.auto.length === 0) {
+    return { kind: 'error', error: 'empty_top — 자동 목록을 바꾸지 않는다', retryable: false };
+  }
   let conn: TxConnection;
   try {
     conn = args.getConnection
       ? await args.getConnection()
       : ((await getPool().getConnection()) as unknown as TxConnection);
   } catch (e) {
-    return { kind: 'error', error: `connection:${errText(e)}` };
+    return { kind: 'error', error: `connection:${errText(e)}`, retryable: true };
   }
   let discard = false;
   const now = kstSql(args.nowMs);
+  /**
+   * 🔴 판정 수치를 **열 폭에 맞춘 뒤** 쓴다(T-145 ⑥-1). Reviewer 가 STRICT 실 DB 로 재현한 결함이 여기다 —
+   * `cap_ratio DECIMAL(12,6)` 에 `2e7` 하나가 들어오면 "Out of range value" 로 **이 트랜잭션 전체**가 깨지고
+   * 2,000종목의 산출이 버려졌다. 범위 밖 값은 `null` 로 두고 `cap_flag` 에 `+oob` 를 붙여
+   * 「값이 이상했다」를 남긴다(그냥 버리면 왜 null 인지 알 수 없다).
+   *
+   * `cap_ratio` 가 넘치는 것은 실제로 일어난다 — `basis_mismatch`(기준 주수가 다름)의 비는 상한이 없고
+   * `unit_mismatch` 의 `10^6` 밴드는 이미 경계값이다(`cap-rule.ts`).
+   * `cap_used`·`cap_alt` 는 `shar × last` 라 **곱이 폭주할 수 있다**(DECIMAL(28,4) = 1e24). 상위 N 은
+   * `isImplausibleCap`(2e13 미만)을 지나므로 닿지 않지만, 제외된 행도 같은 트랜잭션에 쓰이므로 함께 맞춘다.
+   */
+  const verdicts: CandidateVerdict[] = args.verdicts.map((v) => {
+    const capUsed = dec(v.capUsed, DECIMAL_COLS.tomv);
+    const capAlt = dec(v.capAlt, DECIMAL_COLS.tomv);
+    const capRatio = dec(v.capRatio, DECIMAL_COLS.capRatio);
+    const oob = dropped(v.capUsed, capUsed) || dropped(v.capAlt, capAlt) || dropped(v.capRatio, capRatio);
+    return {
+      ...v, capUsed, capAlt, capRatio,
+      // VARCHAR(24) 안에 들어간다 — 가장 긴 조합이 `basis_mismatch+oob`(18자)다
+      capFlag: oob ? `${v.capFlag ?? 'unverified'}+oob` : v.capFlag,
+    };
+  });
+  const oobRows = verdicts.filter((v) => (v.capFlag ?? '').endsWith('+oob')).length;
+  if (oobRows > 0) {
+    console.warn(`[universe/refresh-store] 판정 수치가 열 범위를 넘은 후보 ${oobRows}건 — null + cap_flag '+oob' 로 둔다`);
+  }
   try {
     await conn.beginTransaction();
     try {
@@ -524,7 +693,7 @@ export async function finalizeRun(args: {
        * `exclusion = COALESCE(exclusion, ?)` — listing 때 이미 붙은 사유를 덮지 않는다.
        * `status = IF(? IS NULL, status, 'excluded')` — 제외 사유가 있을 때만 상태를 바꾼다(상위 N 은 `ok` 로 남는다).
        */
-      for (const v of args.verdicts) {
+      for (const v of verdicts) {
         await conn.query(
           `UPDATE overseas_universe_candidate
               SET cap_used = ?, cap_alt = ?, cap_source = ?, cap_ratio = ?, cap_flag = ?,
@@ -539,7 +708,8 @@ export async function finalizeRun(args: {
       await conn.query('DELETE FROM overseas_universe_auto');
       const placeholders = args.auto.map(() => '(?,?,?,?)').join(',');
       const params: unknown[] = [];
-      for (const a of args.auto) params.push(clamp(a.symbol, 32), a.rankNo, a.marketCap, now);
+      // `market_cap DECIMAL(24,2)` — 상위 N 은 2e13 미만이라 닿지 않지만 같은 규칙을 둔다(한 행이 목록 교체를 깨지 않게)
+      for (const a of args.auto) params.push(clamp(a.symbol, 32), a.rankNo, dec(a.marketCap, DECIMAL_COLS.marketCap), now);
       await conn.query(
         `INSERT INTO overseas_universe_auto (symbol, rank_no, market_cap, computed_at) VALUES ${placeholders}`,
         params,
@@ -672,6 +842,39 @@ export async function readRecentSnapshotSymbols(
   } catch (e) {
     console.warn(`[universe/refresh-store] 최근 스냅샷 조회 실패(모름으로 진행): ${errText(e).slice(0, 120)}`);
     return null;
+  }
+}
+
+/**
+ * 🔴 이 run 에서 **KIS 가 실제로 답했는가**(종목별) — 제안 규칙 E·D 가 스냅샷 대리값보다 **이것을 먼저** 본다
+ * (T-145 ⑧-2). 이 달의 직접 관측이기 때문이다.
+ *
+ * 판정은 `status` 가 아니라 **`fetched_at`·`error`** 로 한다: `finalizeRun` 이 제외된 후보의 `status` 를
+ * `excluded` 로 덮으므로 「스캔은 됐다」는 사실이 `status` 에 남지 않는다.
+ *   `fetched_at IS NULL` → 아직 부른 적 없다 → **지도에 넣지 않는다**(모름)
+ *   `error IS NULL`      → KIS 가 답했다 → `true`
+ *   그 밖                → 조회 실패 → `false`
+ * 조회가 실패하면 **빈 맵**이다(모름 — 추측하지 않는다. 호출부가 다른 원천으로 넘어간다).
+ */
+export async function readRunKisStatus(
+  args: { runId: number; db?: Queryable },
+): Promise<Map<string, boolean>> {
+  const db = args.db ?? pool();
+  try {
+    const [out] = await db.query<RowDataPacket[]>(
+      `SELECT symbol, error FROM overseas_universe_candidate
+        WHERE run_id = ? AND fetched_at IS NOT NULL`,
+      [args.runId],
+    );
+    const m = new Map<string, boolean>();
+    for (const r of rowsOf<RowDataPacket>(out)) {
+      const s = strOf(r.symbol);
+      if (s && !m.has(s)) m.set(s, strOf(r.error) == null);
+    }
+    return m;
+  } catch (e) {
+    console.warn(`[universe/refresh-store] run 스캔 상태 조회 실패(모름으로 진행): ${errText(e).slice(0, 120)}`);
+    return new Map();
   }
 }
 

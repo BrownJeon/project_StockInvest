@@ -6,6 +6,8 @@
  *   ② **빈 목록(일부러 비움)과 기록 없음(아직 전환 전)을 구분한다** — 빈 목록을 환경변수로 되돌리면
  *      「전부 비우기」가 조용히 무시되고 확인 시트에서 한 말이 거짓이 된다.
  *   ③ 어떤 DB 실패에도 **던지지 않고** 떨어진다 — 목록을 못 읽는다고 그날 분석을 비우지 않는다.
+ *   ⑤ (T-145 ③) **자동 목록은 스위치가 켜져 있을 때만** 합집합에 들어간다 — 꺼짐이면 표에 행이 있어도 질의조차
+ *      보내지 않는다. 꺼짐은 `degraded` 가 아니고(`autoDisabled` 로만 말한다), 설정 **판독 실패**는 「꺼짐 + degraded」다.
  *   ④ (Reviewer high-1) 실패하면 **마지막으로 제대로 읽은 목록**을 환경변수·하드코딩보다 먼저 쓰고, `degraded` 로 알리고,
  *      경고를 **실패마다** 남긴다. 해석 불가한 JSON 은 「일부러 비움」이 아니라 읽기 실패다.
  *      — 대상이 조용히 줄어드는 것(운영에서 확인된 WMT·BRK.B 12일 침묵과 같은 유형)을 막는 장치다.
@@ -16,6 +18,9 @@ import {
   SP500_TOP50, __resetUniverseCacheForTest, envOverseasUniverse, getStaticOverseasUniverse, parseRevisionSymbols,
   readOverseasUniverse, type Queryable,
 } from '../universe-overseas-static';
+
+/** `system_config.overseas_universe_refresh` 의 **켜짐** 값. 아래 대역들의 기본값이다. */
+const SWITCH_ON = JSON.stringify({ enabled: true, topN: 50 });
 
 const ORIG_A = process.env.OVERSEAS_UNIVERSE_SYMBOLS;
 const ORIG_B = process.env.ALLOWED_SYMBOLS_OVERSEAS;
@@ -31,11 +36,30 @@ afterEach(() => {
 
 type Rows = Record<string, unknown>[];
 
-/** 수동 개정판·자동 목록 응답을 흉내 내는 대역. `manual=null` 이면 개정판 0건, `throwOn` 이면 그 표 조회가 실패한다. */
-function db(opts: { manual?: string[] | null; auto?: string[]; throwOn?: 'revision' | 'auto'; errno?: number }): Queryable {
+/**
+ * 수동 개정판·자동 목록·**자동 산출 스위치** 응답을 흉내 내는 대역. `manual=null` 이면 개정판 0건,
+ * `throwOn` 이면 그 조회가 실패한다.
+ *
+ * 🔴 `refresh` 를 생략하면 스위치는 **켜짐**이다(T-145 ③). 이 파일의 종전 시험들은 「자동 목록이 합집합에
+ * 들어간다」를 단언하므로 그 전제를 그대로 둔다 — 꺼짐·키 없음·해석 불가·판독 실패는 아래 ⑤ describe 가 본다.
+ * `refresh: null` = 키 없음(행 0건) · 그 밖의 값 = 그 값이 `system_config.value` 로 온다.
+ */
+function db(opts: {
+  manual?: string[] | null; auto?: string[]; throwOn?: 'revision' | 'auto' | 'config';
+  errno?: number; refresh?: unknown;
+}): Queryable {
   return {
     async query<T>(sql: string): Promise<[T, unknown]> {
       const s = sql.replace(/\s+/g, ' ');
+      if (s.includes('system_config')) {
+        if (opts.throwOn === 'config') {
+          const e = new Error('boom') as Error & { errno?: number };
+          if (opts.errno != null) e.errno = opts.errno;
+          throw e;
+        }
+        const v = opts.refresh === undefined ? SWITCH_ON : opts.refresh;
+        return [(v === null ? [] : [{ value: v }]) as T, undefined];
+      }
       if (s.includes('overseas_universe_revision')) {
         if (opts.throwOn === 'revision') {
           const e = new Error('boom') as Error & { errno?: number };
@@ -130,7 +154,9 @@ describe('폴백 — 던지지 않는다', () => {
     const seen: string[] = [];
     const spy: Queryable = {
       async query<T>(sql: string): Promise<[T, unknown]> {
-        seen.push(sql.replace(/\s+/g, ' ').trim());
+        // 🔴 `overseas_universe_*` 질의만 센다 — 스위치(`system_config`)는 이 단언의 대상이 아니다(T-145 ③)
+        if (sql.includes('overseas_universe')) seen.push(sql.replace(/\s+/g, ' ').trim());
+        if (sql.includes('system_config')) return [[{ value: SWITCH_ON }] as unknown as T, undefined];
         if (sql.includes('overseas_universe_revision')) { const e = new Error('boom') as Error & { errno?: number }; e.errno = 1146; throw e; }
         return [[{ symbol: 'NYS:CAAA' }] as unknown as T, undefined];
       },
@@ -227,6 +253,7 @@ describe('폴백 — 던지지 않는다', () => {
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const q: Queryable = {
       async query<T>(sql: string): Promise<[T, unknown]> {
+        if (sql.includes('system_config')) return [[{ value: SWITCH_ON }] as unknown as T, undefined];
         if (sql.includes('overseas_universe_revision')) throw new Error('boom');          // db_error — 깃발이 서지 않는다
         if (sql.includes('overseas_universe_auto')) {
           const e = new Error('no table') as Error & { errno?: number };
@@ -277,7 +304,9 @@ describe('🔴 ② 자동 조회 건너뛰기는 1146 계열뿐이다', () => {
     const q: Queryable = {
       async query<T>(sql: string): Promise<[T, unknown]> {
         const t = sql.replace(/\s+/g, ' ').trim();
-        seen.push(t);
+        // `overseas_universe_*` 질의만 센다(스위치 질의는 이 단언의 대상이 아니다 — T-145 ③)
+        if (t.includes('overseas_universe')) seen.push(t);
+        if (t.includes('system_config')) return [[{ value: SWITCH_ON }] as unknown as T, undefined];
         if (t.includes('overseas_universe_revision')) {
           if (manualFail === 'db_error') throw new Error('boom');
           return [[{ symbols: 'not json' }] as unknown as T, undefined];
@@ -315,7 +344,8 @@ describe('🔴 ② 자동 조회 건너뛰기는 1146 계열뿐이다', () => {
     const q: Queryable = {
       async query<T>(sql: string): Promise<[T, unknown]> {
         const t = sql.replace(/\s+/g, ' ').trim();
-        seen.push(t);
+        if (t.includes('overseas_universe')) seen.push(t);
+        if (t.includes('system_config')) return [[{ value: SWITCH_ON }] as unknown as T, undefined];
         if (t.includes('overseas_universe_revision')) {
           const e = new Error('no table') as Error & { errno?: number };
           e.errno = 1146;
@@ -384,19 +414,35 @@ describe('🔴 ③ 개정판 원소는 전부 아니면 전무로 읽는다', ()
 });
 
 describe('안전 경계', () => {
-  it('주문·안전장치를 건드리지 않는다 — 이 모듈은 DB SELECT 2개만 보낸다', async () => {
+  it('주문·안전장치를 건드리지 않는다 — 이 모듈은 DB SELECT 3개만 보낸다(개정판·스위치·자동)', async () => {
     const seen: string[] = [];
     const spy: Queryable = {
       async query<T>(sql: string): Promise<[T, unknown]> {
         seen.push(sql.replace(/\s+/g, ' ').trim());
+        // 스위치 질의에 **켜짐**을 돌려줘야 자동 질의까지 간다(T-145 ③)
+        if (sql.includes('system_config')) return [[{ value: SWITCH_ON }] as unknown as T, undefined];
         return [[] as unknown as T, undefined];
       },
     };
     await getStaticOverseasUniverse(spy);
-    expect(seen).toHaveLength(2);                       // 개정판 1개 + 자동 목록 1개(W-3 — 0건이어도 자동은 읽는다)
+    expect(seen).toHaveLength(3);                       // 개정판 → 스위치 → 자동(W-3 — 0건이어도 자동은 읽는다)
     expect(seen[0]).toMatch(/^SELECT symbols FROM overseas_universe_revision /);
-    expect(seen[1]).toMatch(/^SELECT symbol FROM overseas_universe_auto /);
+    expect(seen[1]).toMatch(/^SELECT value FROM system_config /);
+    expect(seen[2]).toMatch(/^SELECT symbol FROM overseas_universe_auto /);
     for (const s of seen) expect(s).not.toMatch(/\b(INSERT|UPDATE|DELETE|orders|signals)\b/i);
+  });
+
+  it('🔴 꺼짐이면 질의가 2개다 — 자동 표를 **아예 부르지 않는다**(T-145 ③-1)', async () => {
+    const seen: string[] = [];
+    const spy: Queryable = {
+      async query<T>(sql: string): Promise<[T, unknown]> {
+        seen.push(sql.replace(/\s+/g, ' ').trim());
+        return [[] as unknown as T, undefined];       // 스위치 키 없음 = 꺼짐
+      },
+    };
+    await getStaticOverseasUniverse(spy);
+    expect(seen).toHaveLength(2);
+    expect(seen.some((s) => s.includes('overseas_universe_auto'))).toBe(false);
   });
 
   it('🔴 F-1 — SP500_TOP50 의 월마트는 NAS:WMT 다(2024-12 나스닥 이전). NYS:BRK.B 는 그대로 둔다(표기 미정)', () => {
@@ -405,5 +451,104 @@ describe('안전 경계', () => {
     expect(SP500_TOP50).toContain('NYS:BRK.B');
     expect(SP500_TOP50).toHaveLength(50);
     expect(new Set(SP500_TOP50).size).toBe(50);              // 중복 없음
+  });
+});
+
+/**
+ * 🔴 ⑤ (T-145 ③) **스위치가 자동 목록을 실제로 끈다.**
+ *
+ * 고치는 결함: `enabled` 를 보는 곳이 산출 라우트의 관문 하나뿐이어서, 끄면 **다음 산출만** 멈추고
+ * 이미 `overseas_universe_auto` 에 들어간 행은 **계속 분석 대상**이었다 → 「켜 보고 끈다」가 불가능했고
+ * 되돌리려면 사람이 운영 DB 에 `DELETE` 를 쳐야 했다(그 절차는 어느 문서에도 없다).
+ */
+describe('🔴 ⑤ 자동 산출 스위치 (T-145 ③)', () => {
+  const MANUAL = ['NAS:AAAA'];
+  const AUTO = ['NYS:CAAA', 'NYS:CBBB'];
+
+  it('🔴 **이것이 이 조건의 본질** — 꺼짐인데 자동 표에 행이 있어도 합집합에 들어가지 않는다', async () => {
+    const r = await readOverseasUniverse(db({ manual: MANUAL, auto: AUTO, refresh: JSON.stringify({ enabled: false }) }));
+    expect(r.symbols).toEqual(MANUAL);                       // 자동 2종목이 들어오지 않았다
+    expect(r.autoDisabled).toBe(true);
+    // 꺼짐은 고장이 아니다 — 홈 「데이터 이상」이 상시 켜지면 경보 피로가 된다(③-3)
+    expect(r.degraded).toBe(false);
+    expect(r.autoDegraded).toBe(false);
+    expect(r.reason).toBeNull();
+  });
+
+  it('켜짐이면 자동 목록이 합집합에 들어간다(종전 동작)', async () => {
+    const r = await readOverseasUniverse(db({ manual: MANUAL, auto: AUTO }));
+    expect(r.symbols).toEqual([...MANUAL, ...AUTO]);
+    expect(r).toMatchObject({ autoDisabled: false, degraded: false, autoDegraded: false, reason: null });
+  });
+
+  it('키가 없으면 꺼짐이다(새 기능 = 꺼짐) — 저하는 아니다', async () => {
+    const r = await readOverseasUniverse(db({ manual: MANUAL, auto: AUTO, refresh: null }));
+    expect(r.symbols).toEqual(MANUAL);
+    expect(r).toMatchObject({ autoDisabled: true, degraded: false, reason: null });
+  });
+
+  it('해석 불가(비-JSON·`enabled` 가 true 아님)도 꺼짐이다 — 저하는 아니다', async () => {
+    for (const v of ['on', 'true', '{', JSON.stringify({ enabled: 'true' }), JSON.stringify({ enabled: 1 }), JSON.stringify([])]) {
+      const r = await readOverseasUniverse(db({ manual: MANUAL, auto: AUTO, refresh: v }));
+      expect(r.symbols).toEqual(MANUAL);
+      expect(r).toMatchObject({ autoDisabled: true, degraded: false, reason: null });
+    }
+  });
+
+  it('🔴 설정 **판독 실패**는 「꺼짐 + degraded」다(③-4) — 조용히 빠지면 대상이 줄어든 줄 아무도 모른다', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const r = await readOverseasUniverse(db({ manual: MANUAL, auto: AUTO, throwOn: 'config' }));
+    expect(r.symbols).toEqual(MANUAL);
+    expect(r).toMatchObject({ autoDisabled: true, autoDegraded: true, degraded: true, reason: 'auto_config_error' });
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('설정 판독 실패 + 수동도 실패면 사유는 **수동 쪽**을 먼저 말한다(더 중대하다)', async () => {
+    process.env.OVERSEAS_UNIVERSE_SYMBOLS = 'NAS:ENV1';
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const q: Queryable = {
+      async query<T>(sql: string): Promise<[T, unknown]> {
+        throw new Error('boom');                            // 모든 질의 실패
+      },
+    };
+    const r = await readOverseasUniverse(q);
+    expect(r).toMatchObject({ degraded: true, reason: 'db_error', autoDegraded: true, autoDisabled: true });
+    expect(r.symbols).toEqual(['NAS:ENV1']);
+  });
+
+  it('🔴 꺼짐일 때 `lastGoodAuto` 폴백을 타지 않는다(③-5) — 캐시로 되살아나면 스위치가 다시 거짓말을 한다', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // 1회차: 켜짐 — 자동 목록을 읽어 프로세스 메모리에 기억한다
+    expect(await getStaticOverseasUniverse(db({ manual: MANUAL, auto: AUTO }))).toEqual([...MANUAL, ...AUTO]);
+    // 2회차: 껐다 — 기억해 둔 목록도 쓰지 않는다
+    const off = await readOverseasUniverse(db({ manual: MANUAL, auto: AUTO, refresh: JSON.stringify({ enabled: false }) }));
+    expect(off.symbols).toEqual(MANUAL);
+    // 3회차: 꺼짐 + 자동 표 1146 — 그래도 캐시를 쓰지 않는다(꺼짐 분기가 1146 분기보다 앞이다)
+    const gone = await readOverseasUniverse(db({ manual: MANUAL, throwOn: 'auto', errno: 1146, refresh: JSON.stringify({ enabled: false }) }));
+    expect(gone.symbols).toEqual(MANUAL);
+    expect(gone.autoDisabled).toBe(true);
+  });
+
+  it('🔴 꺼짐 + **수동 표 1146** 이어도 자동 캐시가 새지 않는다(③-5 — 그 분기는 켜짐일 때 캐시를 합친다)', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    delete process.env.OVERSEAS_UNIVERSE_SYMBOLS;
+    delete process.env.ALLOWED_SYMBOLS_OVERSEAS;
+    await getStaticOverseasUniverse(db({ manual: MANUAL, auto: AUTO }));          // 수동·자동 캐시를 채운다
+    const r = await readOverseasUniverse(db({ throwOn: 'revision', errno: 1146, refresh: JSON.stringify({ enabled: false }) }));
+    // 수동은 마지막 성공 목록으로 되돌아간다(종전 동작) — 거기에 **자동 2종목이 섞이지 않는 것**이 ③-5 다
+    expect(r.symbols).toEqual(MANUAL);
+    for (const a of AUTO) expect(r.symbols).not.toContain(a);
+    expect(r).toMatchObject({ degraded: true, reason: 'table_missing', manualSource: 'last_good', autoDisabled: true });
+  });
+
+  it('연결을 못 얻으면 스위치도 모른다 → 자동 쪽을 빼고 표시한다(③-5)', async () => {
+    process.env.OVERSEAS_UNIVERSE_SYMBOLS = 'NAS:ENV1';
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await getStaticOverseasUniverse(db({ manual: MANUAL, auto: AUTO }));          // 수동·자동 캐시를 채운다
+    const r = await readOverseasUniverse();                                       // 풀 예외
+    // 수동은 마지막 성공 목록(종전 동작), 자동은 **빠진다** — 전에는 `lastGoodAuto` 를 합쳤다
+    expect(r.symbols).toEqual(MANUAL);
+    for (const a of AUTO) expect(r.symbols).not.toContain(a);
+    expect(r).toMatchObject({ degraded: true, reason: 'pool', autoDisabled: true, autoDegraded: true });
   });
 });

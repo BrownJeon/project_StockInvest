@@ -169,6 +169,18 @@ BROKER_FILLS_CURL_MAX_TIME=90
 DAILY_BARS_CURL_MAX_TIME=120
 # (T-143 WP-A) 해외 분석 대상 월간 산출 호출 한 번의 curl 시간 상한(초). 라우트 자체 예산이 100초라 네트워크 여유를 더해 120 이다.
 UNIVERSE_CURL_MAX_TIME=120
+# (T-145 ⑨) KIS 해외 현재가상세 스냅샷 호출 한 번의 curl 전체 시간 상한(초). **전에는 상한이 없었다** —
+# 라우트에 마감도 없어 대상 종목 수에 비례해 한 호출이 길어졌고(2026-10-29 운영 실측 156초), 자동 목록을 켜
+# 대상이 +30~50 늘면 그 틱이 300초(순찰 재시작 기준)를 넘는다. 라우트 자체 마감은 90초(`SNAPSHOT_DEFAULT_BUDGET_MS`)이고
+# 그 앞의 대상·오늘 수집분 조회와 마지막 종목의 왕복이 더 걸릴 수 있어 여유를 둔 값이다.
+# 하트비트 최악(08:30~08:55 창의 한 틱): 110 + stop-alert 20 + 매 분 잡 약 30 + sleep 60 = 약 220초 < 300초.
+# 상한에 걸리면 curl 이 000 으로 끝나지만 서버 쪽 upsert 는 끝난 종목까지 남고, 창의 다음 틱이 **DB 로 이어받는다**.
+KIS_FUND_CURL_MAX_TIME=110
+# (T-145 ⑨) 이 틱이 이미 이만큼(초) 지났으면 스냅샷은 이번 틱을 건너뛰고 창의 다음 틱에 넘긴다.
+# 왜: post-market-overseas 는 하루 3회까지 10분 간격으로 재시도하므로(pmo_due) 러너가 08:2x 에 재기동되면 그 재시도가
+# 창(08:30~08:55) 안으로 들어올 수 있다. 그러면 pmo 120 + 스냅샷 110 + 매 분 잡 50 + sleep 60 = 340초로 순찰 한도를 넘는다.
+# 창이 26틱이라 한 틱 미루는 비용은 없다(`broker-fills`·`daily-bars` 가 07시 틱에 쓰는 yield 규칙과 같은 뜻이다).
+KIS_FUND_TICK_YIELD_SEC=60
 CALL_MAX_TIME=""
 # 시도 기록 파일 한 줄: "<YYYY-MM-DD> <그날 시도 횟수> <마지막 시도 시각 epoch 초(시작에 기록, 끝나면 종료 시각으로 갱신)>"
 # pmo_due TODAY NOW DONE_FILE ATTEMPT_FILE → 0(지금 부를 차례) / 1(부르지 않음)
@@ -435,6 +447,10 @@ while true; do
   { printf '%s\n' "$(date +%s)" > "${CRON_HEARTBEAT_FILE}.tmp" \
       && mv -f "${CRON_HEARTBEAT_FILE}.tmp" "${CRON_HEARTBEAT_FILE}"; } 2>/dev/null || true
   JRL_TICK_T0=$(date +%s 2>/dev/null)   # T-112 jrl
+  # (T-145 ⑨) 이 틱의 시작 시각 — 아래 kis-fundamentals-snapshot 블록이 「이 틱이 이미 길어졌나」를 본다.
+  #   T-112 의 `JRL_TICK_T0` 를 쓰지 않는다: 그쪽은 **관찰 전용**이고 「기록이 실패·지연돼도 잡 호출·순서가 바뀌지
+  #   않는다」가 규약이다(위 jrl 블록 주석). 그 변수로 호출 여부를 정하면 그 규약이 깨진다.
+  KIS_FUND_TICK_T0=$(date +%s 2>/dev/null)
 
   # 매 1분: entry-watcher — 진입 구간 도달 시 자동 주문 실행
   call /api/cron/entry-watcher "entry-watcher"
@@ -493,14 +509,50 @@ while true; do
       pmo_finish "$TODAY" "$(date +%s)" "$CALL_LAST_CODE" "$POST_MARKET_OVERSEAS_LAST_RUN_FILE" "$POST_MARKET_OVERSEAS_ATTEMPT_FILE"
     fi
   fi
+  # >>> kis-fundamentals-snapshot (T-145 ⑨) — src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 이 블록을 잘라 시험한다
   # 매일 08:00 KST: KIS 해외 현재가상세 스냅샷 (T-059) — 미국장 마감 뒤·국내장(09:00) 개장 전이라 장중 KIS 호출과 겹치지 않는다.
   # 07시(EDGAR·research)와 다른 tick 으로 둬 한 tick 의 동기 대기 시간을 나눈다. 종목 수(약 55) × 직렬 GET, bulk 우선순위.
   # post-market-overseas(같은 08시)와 **독립된 블록**이다.
+  #
+  # 🔴 (T-145 ⑨) **위 세 줄은 이 작업 전의 설명이다.** 「기존 줄 변경 0 — HEAD 대비 추가만」 규약
+  #   (`src/app/api/cron/broker-fills/__tests__/cron-runner-block.test.ts`)이 있어 지우지 않고 아래에 정정을 적는다.
+  #   · **시각**: 08시 대의 **30~55분**(자기 틱)이다. 08:00 틱에는 post-market-overseas(curl 상한 120초)가 돌아, 두
+  #     호출이 한 틱에 겹치면 하트비트 최악이 280+60=340초로 순찰 한도 300초를 넘는다(2026-10-29 실측 틱 282초).
+  #     뒤로 미뤄도 안전한 근거: 10-23~10-31 로그 전부에서 **이미 post-market-overseas 가 먼저 돌았다** → 해외 장마감
+  #     분석은 이미 전날 스냅샷을 읽고 있어 읽는 값이 바뀌지 않는다. KRX 09:00 개장 전이고 pmo 재시도 창 밖이다.
+  #   · **횟수**: 하루 1회가 아니라 **창 안에서 매 틱**이다. 라우트가 1회 90초 마감으로 스스로 끊고 「오늘 행이 없는
+  #     종목」만 돌기 때문에(멱등·이어받기) 남은 일이 없으면 **KIS 호출 0으로 즉시** 끝난다(가벼운 SELECT 몇 개).
+  #   · **종목 수**: 약 55 가 아니라 대상 집합에 따라 변한다(보유 ∪ 즐겨찾기 ∪ 수동·자동 목록. 2026-10-31 실측 54).
+  #     자동 목록을 켜면 +30~50 이다 — 틱 길이를 **종목 수와 무관하게** 묶는 것이 이 블록의 목적이다.
+  #   · **날짜파일**(`$KIS_FUNDAMENTALS_LAST_RUN_FILE`)은 아래 쓰기로 계속 남지만 **판정에 쓰이지 않는다**
+  #     (아래에서 `LAST_KIS_FUND` 를 덮어쓴다). 「오늘 한 번이라도 불렀다」는 흔적일 뿐이고, 이어받기의 상태는
+  #     DB 의 오늘 행이다 — 러너는 이 잡의 진행 상태를 **갖지 않는다**(사양 9-2: 새 상태를 만들지 않는다).
   LAST_KIS_FUND=$(cat "$KIS_FUNDAMENTALS_LAST_RUN_FILE" 2>/dev/null || echo "")
+  # (추가 — T-145 ⑨) 창 판정. 아래 **기존 if** 는 이 변수만 보므로 기존 줄을 고치지 않고 동작을 바꿀 수 있다.
+  KIS_FUND_MM=$(date '+%M')
+  case "$KIS_FUND_MM" in [0-5][0-9]) ;; *) KIS_FUND_MM="" ;; esac   # 분을 읽을 수 없으면 이 틱은 돌지 않는다
+  if [ -n "$KIS_FUND_MM" ] && [ "$((10#$KIS_FUND_MM))" -ge 30 ] && [ "$((10#$KIS_FUND_MM))" -le 55 ]; then
+    LAST_KIS_FUND=""         # 창 안 — 완료 여부와 무관하게 부른다(라우트가 멱등하고, 남은 일이 없으면 즉시 끝낸다)
+  else
+    LAST_KIS_FUND="$TODAY"   # 창 밖 — 아래 기존 if 가 거짓이 된다(날짜파일은 건드리지 않는다)
+  fi
+  # (추가 — T-145 ⑨) 이 틱이 이미 오래 걸렸으면 이번 틱은 건너뛴다(위 KIS_FUND_TICK_YIELD_SEC 근거).
+  #   시각을 읽을 수 없으면 **미루지 않는다** — 판단 불가로 잡을 멈추지 않는다(종전 동작 유지).
+  KIS_FUND_NOW=$(date '+%s' 2>/dev/null)
+  KIS_FUND_T0="${KIS_FUND_TICK_T0:-}"
+  case "${KIS_FUND_NOW:-}" in ''|*[!0-9]*) KIS_FUND_NOW="" ;; esac
+  case "$KIS_FUND_T0" in ''|*[!0-9]*) KIS_FUND_T0="" ;; esac
+  if [ -n "$KIS_FUND_NOW" ] && [ -n "$KIS_FUND_T0" ] \
+     && [ "$((KIS_FUND_NOW - KIS_FUND_T0))" -ge "$KIS_FUND_TICK_YIELD_SEC" ]; then
+    LAST_KIS_FUND="$TODAY"
+  fi
   if [ "$HH" = "08" ] && [ "$LAST_KIS_FUND" != "$TODAY" ]; then
+    CALL_MAX_TIME="$KIS_FUND_CURL_MAX_TIME"   # (추가 — T-145 ⑨) 이 호출에만 시간 상한
     call "/api/cron/kis-fundamentals-snapshot" "kis-fundamentals-snapshot"
+    CALL_MAX_TIME=""                          # (추가 — T-145 ⑨)
     echo "$TODAY" > "$KIS_FUNDAMENTALS_LAST_RUN_FILE"
   fi
+  # <<< kis-fundamentals-snapshot
   # 매일 16:00 KST: 국내장 마감 후 익일 시나리오 분석 (15:30 마감 → 30분 데이터 반영 대기)
   LAST_POST_DOM=$(cat "$POST_MARKET_DOMESTIC_LAST_RUN_FILE" 2>/dev/null || echo "")
   if [ "$HH" = "16" ] && [ "$LAST_POST_DOM" != "$TODAY" ]; then
@@ -780,6 +832,15 @@ while true; do
   # 요일·회차·창은 **러너와 라우트 둘 다** 검사한다(러너는 비용 절약, 라우트는 안전). 러너는 `system_config` 를 읽지
   # 못하므로 아래 값은 **상수**다 — 설정(`overseas_universe_refresh`)을 바꾸면 이 블록도 함께 바꾼다.
   # 이 틱 최악 = curl 상한 120 + stop-alert 20 + 매 분 잡 약 30 + sleep 60 = 약 230초 < 300초(순찰 재시작 기준).
+  # 호출 수: 창 280분 ÷ 2분 = 140 + 종료 점검 1 = **141**(여전히 `job_run_log.attempt` TINYINT 255 안이다).
+  #
+  # 🔴 창이 **끝난 직후 한 틱**(05:50)도 부른다 — T-145 ④-조각. 그 호출에서 라우트는 관문 3으로 「창 밖」을
+  #   돌려주면서, 그 전에 이달 run 이 **미완**인지 보고 미완이면 텔레그램 warning 을 1회 보낸다.
+  #   왜 필요한가: T-145 ⑥-4 로 **일시 오류가 그 달을 닫지 않게** 바꿨다 → 창이 끝날 때 `failed` 조차 남지 않는
+  #   미완 경로가 생겼고, 러너가 창 안에서만 부르면 그 상태를 **아무도 보지 않는다.**
+  #   비용: 월 1회, 외부 호출 0건(run 1줄 + 집계 1줄만 읽는다).
+  #   ⚠ 설정(`overseas_universe_refresh.windowEnd`)의 창 끝을 바꾸면 **아래 05:50 도 함께 바꾼다**
+  #     (러너는 `system_config` 를 읽지 못해 이 값이 상수다 — 이 블록의 다른 상수들과 같은 제약이다).
   UNIV_DOW=$(date '+%u')
   UNIV_DOM=$(date '+%d')
   UNIV_MM=$(date '+%M')
@@ -792,6 +853,10 @@ while true; do
       05) [ "$UNIV_MM" -lt 50 ] && UNIV_WINDOW=yes ;;
     esac
   fi
+  # 🔴 T-145 ④-조각 — 창 끝 분(05:50)에 **한 틱만** 더 켠다. 위 줄들을 고치지 않고 **더하기만** 한다
+  #   (`src/app/api/cron/broker-fills/__tests__/cron-runner-block.test.ts` 「기존 줄 변경 0」 규약).
+  #   `UNIV_MM` 은 분을 읽지 못했으면 빈 문자열이라 이 비교가 저절로 거짓이 된다.
+  if [ "$HH" = "05" ] && [ "$UNIV_MM" = "50" ]; then UNIV_WINDOW=yes; fi
   if [ "$UNIV_DOW" = "7" ] && [ "$UNIV_DOM" -le 7 ] && [ "$UNIV_WINDOW" = "yes" ]; then
     CALL_MAX_TIME="$UNIVERSE_CURL_MAX_TIME"   # 이 호출에만 시간 상한
     call "/api/cron/overseas-universe-refresh" "overseas-universe-refresh"

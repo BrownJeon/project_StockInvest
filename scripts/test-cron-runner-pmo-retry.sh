@@ -208,10 +208,19 @@ eq "200 시나리오: 날짜파일 = 오늘" \
    "$(cat "$RS/home/.node-local/stockinvest/post-market-overseas-last-date" 2>/dev/null || echo none)" "2026-10-21"
 # (T-068) 매 분 stop-alert 호출은 별도 시험(test-cron-runner-stop-alert.sh)이 본다 — 여기서는 빼고 나머지 잡이 HEAD 와 같은지만 본다.
 # (T-087) 07:20 이후 브로커 원장 수집(broker-fills)도 별도 시험(src/app/api/cron/broker-fills/__tests__/cron-runner-block.test.ts)이 본다 — 같은 방식으로 뺀다.
-others() { grep -v 'market=overseas' "$1/calls" | grep -v ' /api/cron/stop-alert$' | grep -v ' /api/cron/broker-fills$'; }
-# HEAD 7cd47e7 의 cron-runner.sh 를 같은 하네스(07:58~09:57, 120틱)로 돌린 해외 외 호출 목록(305줄 "HH:MM 경로")의 sha256.
+# (T-145 ⑨) kis-fundamentals-snapshot 은 08:30~08:55 창의 매 틱 호출로 바뀌었다(사용자 승인) — 이 창이 이 시험의 시각대(07:58~09:57)와
+#   겹치므로 「다른 잡 = 고정」 비교에서 뺀다. 그 잡의 새 일정은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 본다.
+others() { grep -v 'market=overseas' "$1/calls" | grep -v ' /api/cron/stop-alert$' | grep -v ' /api/cron/broker-fills$' | grep -v ' /api/cron/kis-fundamentals-snapshot$'; }
+# HEAD 의 cron-runner.sh 를 같은 하네스(07:58~09:57, 120틱)로 돌린 해외 외 호출 목록("HH:MM 경로")의 sha256.
 # 다른 잡의 시각·조건이 바뀌면 이 값이 달라진다(Reviewer L-1 B07·B10).
-HEAD_OTHERS_SHA=5ac28175b82a11f6d570a92e28455c5acb6bbb387d1df8b16f331fb03109babd
+# (T-145 ⑨ 2026-11-02) 값을 한 번 갱신했다. 옛 값 5ac28175…(7cd47e7 기준, 305줄)는 `others()` 가
+#   kis-fundamentals-snapshot 을 세던 때의 것이다. ⑨ 가 그 잡의 일정을 사용자 승인으로 바꿔(하루 1회 → 08:30~08:55 창의
+#   매 틱) `others()` 에서 그 잡을 빼면서 목록이 그 한 줄만큼 줄었다(305 → 304줄).
+#   🔴 **이 값이 「지금 러너의 값」이 아니라 「변경 전 러너의 값」임을 따로 확인했다** — 같은 날
+#   scripts/test-cron-runner-overseas-universe.sh 의 U4 가 하루 1440틱으로 「kis-fundamentals-snapshot 을 뺀 모든 호출이
+#   변경 전 러너(63f1044)와 완전히 같다」를 통과한다. 즉 두 러너의 비 kis-fund 호출 목록이 동일하므로 이 sha 는
+#   변경 전 러너에 같은 필터를 적용한 값과 같다. (그 U4 가 깨지면 이 값도 다시 확인해야 한다.)
+HEAD_OTHERS_SHA=1c087fcb08b5c9578ad9cfe2748762eb1210343397e93373bbc40df0ad7da956
 if diff <(others "$RF") <(others "$RS") > /dev/null; then ok "🔴 다른 잡 호출 목록이 두 시나리오에서 완전히 같다 ($(others "$RF" | wc -l)건)"; else bad "다른 잡 호출 목록이 다르다"; fi
 eq "🔴 다른 잡 호출 목록 = HEAD 고정 목록(200 시나리오, sha256)" "$(others "$RS" | sha256sum | cut -d' ' -f1)" "$HEAD_OTHERS_SHA"
 eq "🔴 다른 잡 호출 목록 = HEAD 고정 목록(502 시나리오, sha256)" "$(others "$RF" | sha256sum | cut -d' ' -f1)" "$HEAD_OTHERS_SHA"
@@ -226,7 +235,8 @@ eq "M-1 재시작: 날짜파일 없음" \
 # (T-068) stop-alert 의 --max-time(20)은 test-cron-runner-stop-alert.sh 가 따로 본다 — 여기서는 그 줄을 빼고 해외 post-market 만 본다.
 # (T-087) broker-fills 의 --max-time(90)도 그 블록 시험이 따로 본다 — 여기서는 뺀다.
 # (T-118) 09시 해외 peek(news-fetch?…&mode=peek)의 --max-time(40)은 scripts/test-cron-runner-news-peek.sh 가 따로 본다 — 같은 방식으로 뺀다.
-pmo_mt() { grep -v '^/api/cron/stop-alert ' "$1/maxtime" | grep -v '^/api/cron/broker-fills ' | grep -v 'mode=peek max-time='; }
+# (T-145 ⑨) kis-fundamentals-snapshot 의 --max-time(110)도 그 블록 시험이 따로 본다 — 같은 방식으로 뺀다.
+pmo_mt() { grep -v '^/api/cron/stop-alert ' "$1/maxtime" | grep -v '^/api/cron/broker-fills ' | grep -v 'mode=peek max-time=' | grep -v '^/api/cron/kis-fundamentals-snapshot '; }
 eq "🔴 --max-time 은 (stop-alert 외) 해외 post-market 호출에만(200 시나리오)" "$(pmo_mt "$RS" | cut -d' ' -f1 | sort -u)" "/api/cron/post-market-analysis?market=overseas"
 eq "--max-time 값 120" "$(pmo_mt "$RS" | cut -d' ' -f2 | sort -u)" "max-time=120"
 eq "--max-time 이 붙은 호출 수 = 해외 호출 수(502 시나리오 3)" "$(pmo_mt "$RF" | wc -l)" "3"
@@ -238,7 +248,10 @@ eq "🔴 curl 상한 초과 → 날짜파일 없음" \
    "$(cat "$RT/home/.node-local/stockinvest/post-market-overseas-last-date" 2>/dev/null || echo none)" "none"
 eq "curl 상한 초과 → 시도 기록 3" "$(cut -d' ' -f2 "$RT/home/.node-local/stockinvest/post-market-overseas-attempts")" "3"
 grep -q 'post-market-overseas HTTP=000' "$RT/stdout" && ok "상한 초과는 HTTP=000 으로 로그" || bad "HTTP=000 로그 없음"
-eq "kis-fundamentals-snapshot 은 그대로 1회" "$(grep -c 'kis-fundamentals-snapshot' "$RF/calls")" "1"
+# (T-145 ⑨) 「하루 1회」가 아니라 **08:30~08:55 창 안에서만** 부른다 — 창 밖(08:00~08:29·08:56~09:57) 호출 0 을 여기서도 지킨다
+#   (호출 **수**는 틱 길이에 따라 달라지므로 세지 않는다. 그 수와 틱 yield 는 그 블록의 jest 시뮬레이션 시험이 본다).
+eq "kis-fundamentals-snapshot 은 창(08:30~08:55) 안에서만" \
+   "$(grep 'kis-fundamentals-snapshot' "$RF/calls" | cut -d' ' -f1 | awk -F: '{ m = $1 * 60 + $2; if (m < 510 || m > 535) print }' | wc -l | tr -d ' ')" "0"
 eq "entry-watcher 는 매 틱(120회)" "$(grep -c '/api/cron/entry-watcher' "$RF/calls")" "120"
 grep -q 'post-market-overseas 오늘 3회 모두 실패' "$RF/stdout" && ok "3회 실패 로그 한 줄" || bad "3회 실패 로그 없음"
 

@@ -254,13 +254,17 @@ no_t135() {
 eq "H9: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
 # (T-143 병합) overseas-universe-refresh 블록·선언은 이 정적 비교의 대상이 아니다 — 양쪽에서 똑같이 뺀다
 #   (기준 ref 에는 없으므로 기준 쪽에서는 무효다). 그 블록 자체는 scripts/test-cron-runner-overseas-universe.sh 가 본다.
-noc() { awk '/^  # >>> overseas-universe-refresh/{s=1} s{ if (/^  # <<< overseas-universe-refresh/) s=0; next } {print}' "$1" | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
+noc() { awk '/^  # >>> (overseas-universe-refresh|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (overseas-universe-refresh|kis-fundamentals-snapshot)/) s=0; next } {print}' "$1" | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-143 overseas-universe-refresh·T-145 ⑨ kis-fundamentals-snapshot) 블록·선언·틱 시각 줄 제외
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
 #   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
 no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$' | no_t135; }
+# (T-145 ⑨) **기준 러너 쪽**의 옛 kis-fundamentals-snapshot 구간을 범위로 지운다 — 지금 러너 쪽은
+#   `# >>> kis-fundamentals-snapshot` 블록 표식으로 지우지만 기준 ref 에는 그 표식이 없어 한쪽만 지워지면 어긋난다.
+#   (news-split 의 strip_old 가 뉴스 구간을 같은 방식으로 지우는 선례와 같다. 그 잡의 새 모양은 자기 블록 시험이 본다.)
+no_kf_old() { awk '/^  # 매일 08:00 KST: KIS 해외 현재가상세 스냅샷/{s=1} s{ if (/^  fi$/) s=0; next } {print}'; }
 STRIPPED_NOJRL="$W/runner-stripped-nojrl.sh"; no_jrl "$STRIPPED" > "$STRIPPED_NOJRL"
-if diff <(noc "$STRIPPED_NOJRL") <(noc "$BEFORE") > /dev/null; then ok "🔴 H9: 블록·선언·머리 주석 밖 실행 줄 = 변경 전($BASE_REF)과 동일 ($(noc "$STRIPPED_NOJRL" | wc -l | tr -d ' ')줄)"
-else bad "H9: 블록 밖 실행 줄이 변경 전($BASE_REF)과 다르다 — 다른 task 와 합친 뒤라면 T119_BASE_REF 를 지정"; diff <(noc "$STRIPPED_NOJRL") <(noc "$BEFORE") | head -10; fi
+if diff <(noc "$STRIPPED_NOJRL") <(no_kf_old < "$BEFORE" | noc /dev/stdin) > /dev/null; then ok "🔴 H9: 블록·선언·머리 주석 밖 실행 줄 = 변경 전($BASE_REF)과 동일 ($(noc "$STRIPPED_NOJRL" | wc -l | tr -d ' ')줄)"
+else bad "H9: 블록 밖 실행 줄이 변경 전($BASE_REF)과 다르다 — 다른 task 와 합친 뒤라면 T119_BASE_REF 를 지정"; diff <(noc "$STRIPPED_NOJRL") <(no_kf_old < "$BEFORE" | noc /dev/stdin) | head -10; fi
 eq "H9: 지운 줄 = 블록 + 선언 1 + 머리 주석 1" "$(( $(wc -l < "$RUNNER") - $(wc -l < "$STRIPPED") ))" "$(( $(printf '%s\n' "$nb" | wc -l) + 2 ))"
 
 echo

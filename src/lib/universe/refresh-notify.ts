@@ -20,6 +20,11 @@
  * ## 이 모듈은 주문·시그널을 만들지 않는다
  * 보유 중인 종목에 「빼기」 제안이 있으면 수준을 `warning` 으로 올려 **사람이 결정하게** 한다.
  * 자동 매도는 `createSignal → submitOrder` 안전장치 경로 밖에서 만들지 않는다.
+ *
+ * ## 🔴 창이 끝났는데 미완이면 한 번 알린다 (T-145 ④-조각 — `notifyUniverseWindowIncomplete`)
+ * ⑥-4 로 **일시 오류가 그 달을 닫지 않게** 바꾸면서 새 침묵이 생긴다: 전에는 영구 실패로 닫혀 적어도
+ * `failed` 가 남았지만, 재시도로 바꾸면 창이 끝날 때 **아무 종결 기록 없이 미완**(`scan` 등)으로 남는다.
+ * 그래서 창이 닫힌 뒤 첫 호출이 그 상태를 보고 **warning 1회**를 보낸다. 홈 「데이터 이상」 질의 교체는 범위 밖이다.
  */
 import type { RowDataPacket } from 'mysql2/promise';
 import { dispatchAlertWithTelegram } from '@/lib/notify';
@@ -28,7 +33,7 @@ import { sendTelegramMessage, type BotCallResult, type InlineKeyboard, type Sent
 import { sendTelegramAlert } from '@/lib/notify/telegram';
 import { NOTIFY_OK, NOTIFY_SKIPPED, notifyFailed, type NotifyResult } from '@/lib/notify/result';
 import { applyProposalToManual, proposalKindLabel } from './proposal-copy';
-import { markProposalsNotified, markRunNotified } from './refresh-store';
+import { isTerminalPhase, markRunNotified, markProposalsNotified, readProgress, readRun } from './refresh-store';
 import { kstSql, readUniverseParts, type Queryable } from './store';
 import type { ProposalActionType } from './types';
 
@@ -364,4 +369,86 @@ export async function notifyUniverseRefresh(args: {
     sent: true, reason: null, proposals: proposals.length,
     added: added.length, removed: removed.length, firstRun, level: msg.level,
   };
+}
+
+/** 창 종료 점검 결과 — 라우트가 응답에 싣는다(로그·관측용). */
+export interface WindowIncompleteOutcome {
+  /** 경고를 보냈나 */
+  sent: boolean;
+  /**
+   * 보내지 않은 이유 — `no_run`(이달 run 이 아예 없다) · `complete`(끝났다) ·
+   * `closed`(`failed`·`expired` — 종전 경로가 이미 기록한다) · `already_notified` · `toggle_off` ·
+   * `send_failed` · `read_failed`.
+   */
+  reason: string | null;
+  /** 미완이었던 단계(있을 때만) */
+  phase: string | null;
+}
+
+/**
+ * 창이 끝났는데 이달 산출이 **미완**이면 텔레그램 warning 을 **1회** 보낸다(T-145 ④-조각). **던지지 않는다.**
+ *
+ * 무엇을 집나: `phase` 가 `listing`·`scan`·`retry`·`finalize` 인 이달 run. `complete` 는 알릴 것이 없고,
+ * `failed`·`expired` 는 **집지 않는다** — 그쪽은 `job_run_log.error_code` 와 다음 달 `prevMonthIncomplete` 로
+ * 이미 드러나고, 여기서 또 보내면 같은 사건을 두 경로로 알린다.
+ *
+ * 🔴 중복 발송을 막는 수단은 **기존 `overseas_universe_run.notified_at`** 이다(새 열·새 DDL 을 들이지 않는다).
+ * 그 열은 「자동 목록 변동을 알렸다」용인데 그 알림은 **`complete` 일 때만** 나가므로(`notifyUniverseRefresh`)
+ * 미완 run 에서는 비어 있고, 창이 끝난 뒤 이달 run 이 다시 진행될 경로도 없다(라우트 관문 3이 창 밖 호출을
+ * 거절한다) → 두 알림이 같은 열을 다툴 수 없다.
+ *
+ * 보낸 **뒤에** 표시한다(이 모듈의 기존 규칙과 같다) — 발송이 실패하면 표시하지 않아 사람이 다시 부르면
+ * 한 번 더 해 볼 수 있다. 대가는 **같은 순간에 두 호출이 겹치면 두 번 갈 수 있다**는 것이고,
+ * pm2 `stockinvest` 가 `instances: 1` 이고 러너가 직렬이라는 기존 전제에서 그 창은 사실상 없다.
+ */
+export async function notifyUniverseWindowIncomplete(args: {
+  runKey: string;
+  nowMs: number;
+  db: Queryable;
+}): Promise<WindowIncompleteOutcome> {
+  const { runKey, nowMs, db } = args;
+  const run = await readRun(runKey, db);
+  if (run.kind !== 'ok') {
+    // 표가 없거나(아직 적용 전) 조회가 실패했다 — 알릴 근거가 없다(산출을 막지 않는다)
+    return { sent: false, reason: 'read_failed', phase: null };
+  }
+  if (!run.data) return { sent: false, reason: 'no_run', phase: null };
+  const phase = run.data.phase;
+  if (phase === 'complete') return { sent: false, reason: 'complete', phase };
+  if (isTerminalPhase(phase)) return { sent: false, reason: 'closed', phase };
+  if (run.data.notifiedAt != null) return { sent: false, reason: 'already_notified', phase };
+
+  // 토글은 이 잡의 텔레그램 전체를 끄는 사용자 스위치다 — 꺼 둔 알림을 경고라는 이름으로 우회하지 않는다
+  if (!(await readNotifyToggle(db))) return { sent: false, reason: 'toggle_off', phase };
+
+  const prog = await readProgress({ runId: run.data.runId, db });
+  const p = prog.kind === 'ok' ? prog.data : null;
+  const h = escapeAlertText;
+  const title = `해외 분석 대상 — 자동 목록 산출 미완 (${runKey})`;
+  const lines = [
+    `⚠ ${runKey} NYSE 상위 목록 산출이 창 안에 끝나지 않았습니다 (단계 ${phase})`,
+    p ? `   후보 ${p.total}종목 · 조회 완료 ${p.ok} · 남음 ${p.pending} · 조회 실패 ${p.kisError + p.kisMissing}` : null,
+    '   자동 목록은 바뀌지 않았습니다 — 지난 산출 결과가 그대로입니다',
+    '   다음 창은 다음 달 첫째 일요일입니다',
+  ].filter((x): x is string => x != null);
+  const plain = lines.join('\n');
+  const html = lines.map((l, i) => (i === 0 ? `⚠ <b>${h(l.slice(2).trim())}</b>` : h(l))).join('\n');
+
+  let delivered = false;
+  try {
+    const d = await dispatchAlertWithTelegram('warning', title, plain, async () => {
+      const r = await sendTelegramMessage(html, undefined);
+      if (r.ok || r.skipped) return toNotifyResult(r);
+      console.error(`[universe/refresh-notify] 미완 경고 전송 실패 → 평문으로 대체: ${r.error}`);
+      return sendTelegramAlert('warning', title, plain);
+    });
+    delivered = d.delivered.length > 0;
+  } catch (e) {
+    console.error(`[universe/refresh-notify] 미완 경고 발송 실패: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!delivered) return { sent: false, reason: 'send_failed', phase };
+  await markRunNotified({ runId: run.data.runId, nowMs, db }).catch((e) => {
+    console.warn(`[universe/refresh-notify] 미완 경고 표시 실패: ${e instanceof Error ? e.message : String(e)}`);
+  });
+  return { sent: true, reason: null, phase };
 }

@@ -37,8 +37,13 @@ interface Opts {
   manual?: string[] | null;
   auto?: string[];
   /** 이 표 조회를 실패시킨다 */
-  throwOn?: 'revision' | 'auto' | 'position_state' | 'stock_favorites';
+  throwOn?: 'revision' | 'auto' | 'position_state' | 'stock_favorites' | 'config';
   errno?: number;
+  /**
+   * `system_config.overseas_universe_refresh` 의 value(T-145 ③). 생략하면 **켜짐** —
+   * 이 파일의 시험들은 자동 목록이 합집합에 들어가는 전제를 쓴다. `null` = 키 없음(= 꺼짐).
+   */
+  refresh?: unknown;
 }
 
 function db(o: Opts = {}): Queryable {
@@ -57,6 +62,11 @@ function db(o: Opts = {}): Queryable {
       if (s.includes('stock_favorites')) {
         if (o.throwOn === 'stock_favorites') boom();
         return [(o.favorites ?? []).map((symbol) => ({ symbol })) as T, undefined];
+      }
+      if (s.includes('system_config')) {
+        if (o.throwOn === 'config') boom();
+        const v = o.refresh === undefined ? JSON.stringify({ enabled: true }) : o.refresh;
+        return [(v === null ? [] : [{ value: v }]) as T, undefined];
       }
       if (s.includes('overseas_universe_revision')) {
         if (o.throwOn === 'revision') boom();
@@ -87,6 +97,7 @@ describe('🔴 C-3 — 목록 조회 실패가 errors 에 남는다', () => {
   it('해석 불가한 개정판 JSON 도 읽기 실패로 남긴다', async () => {
     const broken: Queryable = {
       async query<T>(sql: string): Promise<[T, unknown]> {
+        if (sql.includes('system_config')) return [[{ value: JSON.stringify({ enabled: true }) }] as unknown as T, undefined];
         if (sql.includes('overseas_universe_revision')) return [[{ symbols: 'not json' }] as unknown as T, undefined];
         return [[] as unknown as T, undefined];
       },
@@ -103,6 +114,7 @@ describe('🔴 C-3 — 목록 조회 실패가 errors 에 남는다', () => {
   it('🔴 ③ 개정판 원소가 손상되면(비문자열·형식 무효) 남긴다 — 걸러 내고 정상처럼 쓰지 않는다', async () => {
     const bad = (symbols: string): Queryable => ({
       async query<T>(sql: string): Promise<[T, unknown]> {
+        if (sql.includes('system_config')) return [[{ value: JSON.stringify({ enabled: true }) }] as unknown as T, undefined];
         if (sql.includes('overseas_universe_revision')) return [[{ symbols }] as unknown as T, undefined];
         return [[] as unknown as T, undefined];
       },

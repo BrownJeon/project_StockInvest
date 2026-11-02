@@ -3,13 +3,17 @@
  *
  * 🔴 **침묵이 기본값이다**: 「변경 없음」을 보내지 않는다(T-125 재발 방지). 그 조건을 수치로 고정한다.
  */
-import { buildMessage, notifyUniverseRefresh, type NotifiableProposal } from '../refresh-notify';
+import {
+  buildMessage, notifyUniverseRefresh, notifyUniverseWindowIncomplete, type NotifiableProposal,
+} from '../refresh-notify';
 
 const dispatch = jest.fn();
 const sendTelegramMessage = jest.fn();
 const sendTelegramAlert = jest.fn();
 const markProposalsNotified = jest.fn();
 const markRunNotified = jest.fn();
+const readRun = jest.fn();
+const readProgress = jest.fn();
 
 jest.mock('@/lib/notify', () => ({ dispatchAlertWithTelegram: (...a: unknown[]) => dispatch(...a) }));
 jest.mock('@/lib/notify/telegram-api', () => ({ sendTelegramMessage: (...a: unknown[]) => sendTelegramMessage(...a) }));
@@ -17,6 +21,10 @@ jest.mock('@/lib/notify/telegram', () => ({ sendTelegramAlert: (...a: unknown[])
 jest.mock('../refresh-store', () => ({
   markProposalsNotified: (...a: unknown[]) => markProposalsNotified(...a),
   markRunNotified: (...a: unknown[]) => markRunNotified(...a),
+  readRun: (...a: unknown[]) => readRun(...a),
+  readProgress: (...a: unknown[]) => readProgress(...a),
+  // 순수 헬퍼는 실제와 같은 값이어야 한다(모형이 다르면 그 차이만큼 시험이 아무것도 지키지 않는다)
+  isTerminalPhase: (ph: string) => ['complete', 'failed', 'expired'].includes(ph),
 }));
 
 const NOW = Date.parse('2026-12-06T02:14:00+09:00');
@@ -349,5 +357,132 @@ describe('본문 조립', () => {
     const m = buildMessage({ ...base, proposals: [prop({ kind: 'brand_new_kind' })] });
     expect(m.plain).toContain('· 알 수 없는 변경');
     expect(m.plain).not.toContain('brand_new_kind');
+  });
+});
+
+/**
+ * 🔴 T-145 ④-조각 — **창이 끝났는데 미완이면 warning 1회.**
+ *
+ * 왜 필요한가: ⑥-4 로 일시 오류가 그 달을 닫지 않게 바꾸면서, 창이 끝날 때 `failed` 조차 남지 않는
+ * **미완** 경로가 생겼다. 전에는 영구 실패로 닫혀 적어도 종결 기록이 남았다.
+ * 중복 발송은 기존 `overseas_universe_run.notified_at` 로 막고, **발송 실패가 산출을 막지 않는다.**
+ */
+describe('🔴 창 종료 점검 — 미완이면 warning 1회 (T-145 ④-조각)', () => {
+  const KEY = '2026-12';
+  const run = (o: Partial<{ phase: string; notifiedAt: string | null }> = {}) => ({
+    kind: 'ok' as const,
+    data: {
+      runId: 7, runKey: KEY, phase: o.phase ?? 'scan', topN: 50, cursorPos: 100,
+      secSha256: null, lastError: null, notifiedAt: o.notifiedAt ?? null,
+    },
+  });
+  const prog = {
+    kind: 'ok' as const,
+    data: { pending: 1200, ok: 800, excluded: 700, kisMissing: 10, kisError: 5, total: 2715 },
+  };
+
+  beforeEach(() => {
+    readProgress.mockResolvedValue(prog);
+    dispatch.mockImplementation(async (_l: unknown, _t: unknown, _b: unknown, tg?: () => Promise<unknown>) => {
+      if (tg) await tg();
+      return { delivered: ['telegram'] };
+    });
+  });
+
+  it('🔴 미완(scan)이면 warning 을 보내고 run 을 「알렸음」으로 표시한다', async () => {
+    readRun.mockResolvedValue(run({ phase: 'scan' }));
+    const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+    expect(r).toEqual({ sent: true, reason: null, phase: 'scan' });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0]).toBe('warning');
+    const body = String(dispatch.mock.calls[0][2]);
+    expect(body).toContain('2026-12');
+    expect(body).toContain('단계 scan');
+    expect(body).toContain('자동 목록은 바뀌지 않았습니다');   // 사용자가 알아야 할 결론
+    expect(markRunNotified).toHaveBeenCalledWith(expect.objectContaining({ runId: 7 }));
+  });
+
+  it('listing·retry·finalize 도 미완이다(네 단계 모두 집는다)', async () => {
+    for (const phase of ['listing', 'retry', 'finalize']) {
+      jest.clearAllMocks();
+      readProgress.mockResolvedValue(prog);
+      markRunNotified.mockResolvedValue(undefined);
+      dispatch.mockResolvedValue({ delivered: ['telegram'] });
+      readRun.mockResolvedValue(run({ phase }));
+      expect((await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never })).sent).toBe(true);
+    }
+  });
+
+  it('complete 면 보내지 않는다(알릴 것이 없다)', async () => {
+    readRun.mockResolvedValue(run({ phase: 'complete' }));
+    const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+    expect(r).toEqual({ sent: false, reason: 'complete', phase: 'complete' });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('🔴 failed·expired 는 집지 않는다 — 종전 경로(job_run_log·prevMonthIncomplete)가 이미 알린다', async () => {
+    for (const phase of ['failed', 'expired']) {
+      jest.clearAllMocks();
+      readRun.mockResolvedValue(run({ phase }));
+      const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+      expect(r).toEqual({ sent: false, reason: 'closed', phase });
+      expect(dispatch).not.toHaveBeenCalled();
+    }
+  });
+
+  it('🔴 이미 알렸으면 다시 보내지 않는다 — **1회**다', async () => {
+    readRun.mockResolvedValue(run({ phase: 'scan', notifiedAt: '2026-12-06 05:50:01' }));
+    const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+    expect(r).toEqual({ sent: false, reason: 'already_notified', phase: 'scan' });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('이달 run 이 아예 없으면 보내지 않는다(④ 의 나머지 — 범위 밖)', async () => {
+    readRun.mockResolvedValue({ kind: 'ok', data: null });
+    const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+    expect(r).toEqual({ sent: false, reason: 'no_run', phase: null });
+  });
+
+  it('표가 없거나 조회가 실패하면 조용히 끝낸다(던지지 않는다)', async () => {
+    for (const out of [{ kind: 'not_migrated' }, { kind: 'error', error: 'db down', retryable: true }]) {
+      jest.clearAllMocks();
+      readRun.mockResolvedValue(out);
+      const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+      expect(r).toEqual({ sent: false, reason: 'read_failed', phase: null });
+    }
+  });
+
+  it('토글이 꺼져 있으면 보내지 않는다(사용자 스위치를 경고라는 이름으로 우회하지 않는다)', async () => {
+    readRun.mockResolvedValue(run({ phase: 'scan' }));
+    const r = await notifyUniverseWindowIncomplete({
+      runKey: KEY, nowMs: NOW, db: fakeDb({ toggle: 'false' }) as never,
+    });
+    expect(r).toEqual({ sent: false, reason: 'toggle_off', phase: 'scan' });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('🔴 발송이 실패하면 **표시하지 않는다** — 사람이 다시 부르면 한 번 더 해 볼 수 있다', async () => {
+    readRun.mockResolvedValue(run({ phase: 'scan' }));
+    dispatch.mockResolvedValue({ delivered: [] });
+    const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+    expect(r).toEqual({ sent: false, reason: 'send_failed', phase: 'scan' });
+    expect(markRunNotified).not.toHaveBeenCalled();
+  });
+
+  it('발송이 **던져도** 던지지 않는다(알림 실패가 산출·응답을 막지 않는다)', async () => {
+    readRun.mockResolvedValue(run({ phase: 'scan' }));
+    dispatch.mockRejectedValue(new Error('boom'));
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+    expect(r.sent).toBe(false);
+    expect(r.reason).toBe('send_failed');
+  });
+
+  it('진행 집계를 못 읽어도 보낸다(숫자 줄만 빠진다)', async () => {
+    readRun.mockResolvedValue(run({ phase: 'scan' }));
+    readProgress.mockResolvedValue({ kind: 'error', error: 'x', retryable: true });
+    const r = await notifyUniverseWindowIncomplete({ runKey: KEY, nowMs: NOW, db: fakeDb({}) as never });
+    expect(r.sent).toBe(true);
+    expect(String(dispatch.mock.calls[0][2])).not.toContain('후보');
   });
 });

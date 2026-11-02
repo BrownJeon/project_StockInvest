@@ -13,6 +13,9 @@
  *  1. **수동 쪽** — 개정판이 있으면 그 목록, **없으면(행 0건)** 환경변수 `OVERSEAS_UNIVERSE_SYMBOLS`
  *     (호환 폴백 `ALLOWED_SYMBOLS_OVERSEAS`), 그것도 비어 있으면 코드 하드코딩 `SP500_TOP50`.
  *  2. **자동 쪽** — `overseas_universe_auto`(WP-A 가 채운다). 비어 있으면 빈 목록.
+ *     🔴 **스위치(`system_config.overseas_universe_refresh.enabled`)가 꺼져 있으면 질의조차 보내지 않는다**
+ *     (T-145 ③). 꺼짐은 `autoDisabled: true` 이고 **`degraded` 가 아니다**; 설정을 **못 읽은** 것은
+ *     「꺼짐 + degraded(`auto_config_error`)」다. 자세한 근거는 `readOverseasUniverse` 주석에 있다.
  *  3. **조회가 실패하면**(DB 오류·해석 불가·원소 손상) 그 쪽만 **마지막으로 제대로 읽은 값 → 환경변수 →
  *     코드 하드코딩** 순으로 대체하고 `degraded: true` 로 알린다. 손상된 값은 **캐시에 넣지 않는다**.
  *  4. 표 자체가 없으면(errno 1146) **언제나 `degraded: true`** 이고 **사유만** 가른다 — 본 적 없으면
@@ -49,6 +52,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { isOverseasSymbol } from '@/lib/exchanges/kis-symbols';
+import { readAutoRefreshSwitch } from '@/lib/universe/refresh-config';
 
 export const SP500_TOP50: ReadonlyArray<string> = [
   // Mega cap (NASDAQ)
@@ -109,12 +113,22 @@ export interface OverseasUniverseResult {
    * 짧은 분류어 — 전부 `degraded: true` 와 함께 온다. `null` 만 정상이다.
    *  - 수동 쪽: `not_migrated`(표 없음 · 본 적 없음) · `table_missing`(표 없음 · 본 적 있음) ·
    *    `bad_json`(열을 JSON 배열로 못 읽음) · `bad_symbols`(원소가 종목 코드가 아님) · `db_error` · `pool`
-   *  - 자동 쪽: `auto_not_migrated` · `auto_table_missing` · `auto_db_error`
+   *  - 자동 쪽: `auto_not_migrated` · `auto_table_missing` · `auto_db_error` ·
+   *    `auto_config_error`(스위치 설정을 못 읽어 자동 쪽을 뺐다 — T-145 ③-4)
    */
   reason: string | null;
   manualSource: OverseasUniverseSource;
   /** 자동 목록을 못 읽었나(수동과 따로 실패한다) */
   autoDegraded: boolean;
+  /**
+   * 🔴 **스위치가 꺼져 있어 자동 목록을 아예 읽지 않았다**(T-145 ③). `degraded` 와 **다른 축**이다 —
+   * 꺼짐은 고장이 아니라 사용자가 그렇게 둔 상태이고, 이것을 `degraded` 로 올리면 홈 「데이터 이상」이
+   * 상시 켜져 경보 피로가 된다(③-3). 설정 **판독 실패**는 「꺼짐 + degraded」다(③-4) —
+   * 그때는 이 값과 `autoDegraded` 가 **둘 다** true 다.
+   *
+   * 연결조차 얻지 못한 경우(`reason: 'pool'`)도 true 다 — 스위치를 **모르면** 자동 쪽을 빼는 것이 보수적이다.
+   */
+  autoDisabled: boolean;
 }
 
 /**
@@ -220,6 +234,26 @@ function isNotMigrated(e: unknown): boolean {
   return errnoOf(e) === 1146;
 }
 
+/**
+ * 🔴 자동 산출 스위치 — **던지지 않는다.** 예상 못 한 예외도 「꺼짐 + 판독 실패」로 본다
+ * (`readAutoRefreshSwitch` 자체가 이미 삼키지만, 이 판독기는 **어떤 경우에도** 분석을 멈추지 않아야 한다).
+ */
+async function readSwitch(conn: Queryable): Promise<{ enabled: boolean; readFailed: boolean }> {
+  try {
+    return await readAutoRefreshSwitch(conn);
+  } catch {
+    return { enabled: false, readFailed: true };
+  }
+}
+
+/** 설정을 못 읽어 자동 쪽을 뺐다 — 조용히 빼지 않는다(③-4). 값은 남기지 않는다. */
+function warnAutoConfigUnreadable(): void {
+  console.warn(
+    '[universe-overseas] 자동 산출 스위치를 읽지 못했습니다(auto_config_error) — ' +
+    '자동 목록을 빼고 진행합니다. 분석 대상이 실제 설정과 다를 수 있습니다.',
+  );
+}
+
 interface PartRead { symbols: string[]; source: OverseasUniverseSource; degraded: boolean; reason: string | null }
 
 /** 수동 쪽 — 개정판 → (실패 시) 마지막 성공 → 환경변수 → 코드 하드코딩. */
@@ -309,10 +343,40 @@ export async function readOverseasUniverse(db?: Queryable): Promise<OverseasUniv
     const used = lastGoodManual ?? fb.symbols;
     const source: OverseasUniverseSource = lastGoodManual ? 'last_good' : fb.source;
     warnDegraded('manual', 'pool', source, used.length);
-    return { symbols: union(used, lastGoodAuto ?? []), degraded: true, reason: 'pool', manualSource: source, autoDegraded: true };
+    // 🔴 연결이 없으면 스위치도 읽을 수 없다 → 자동 쪽은 **빼고** 그 사실을 표시한다(T-145 ③-5).
+    //   전에는 `lastGoodAuto` 를 합쳤는데, 그러면 「스위치를 끈 뒤 풀이 아픈」 구간에 자동 목록이 되살아난다.
+    return {
+      // `union(…, [])` — 자동 쪽이 빈 합집합이라는 뜻이다. 직접 넘기면 수동 쪽 중복 제거가 함께 사라진다
+      symbols: union(used, []), degraded: true, reason: 'pool', manualSource: source,
+      autoDegraded: true, autoDisabled: true,
+    };
   }
 
   const manual = await readManualPart(conn);
+
+  /**
+   * 🔴 ③ (T-145) — 자동 목록을 **읽기 전에** 스위치를 본다. 전에는 `enabled:false` 가 **다음 산출만** 멈추고
+   * 이미 들어간 `overseas_universe_auto` 행은 **계속 분석 대상**이었다 → 「켜 보고 끈다」가 불가능했다
+   * (되돌리려면 사람이 운영 DB 에 `DELETE` 를 쳐야 했고 그 절차는 어느 문서에도 없다).
+   *
+   * 꺼짐이면 **질의를 보내지 않고** 자동 쪽을 `[]` 로 둔다. `lastGoodAuto` 폴백도 **타지 않는다**(③-5) —
+   * 캐시된 지난 목록으로 되살아나면 스위치가 다시 거짓말을 한다.
+   * 이 검사는 **1146 분기보다 앞**이다: 그 분기가 `lastGoodAuto` 를 합치므로 뒤에 두면 꺼짐이 새어 나간다.
+   */
+  const sw = await readSwitch(conn);
+  if (!sw.enabled) {
+    if (sw.readFailed) warnAutoConfigUnreadable();
+    return {
+      symbols: union(manual.symbols, []),         // 자동 쪽 없음(캐시도 쓰지 않는다). `union` 으로 중복 제거는 유지한다
+      degraded: manual.degraded || sw.readFailed,
+      // 사유는 수동 쪽이 더 중대하다. 정상 꺼짐은 사유가 없다(고장이 아니다)
+      reason: manual.degraded ? manual.reason : (sw.readFailed ? 'auto_config_error' : null),
+      manualSource: manual.source,
+      autoDegraded: sw.readFailed,                // 정상 꺼짐은 저하가 아니다(③-3)
+      autoDisabled: true,
+    };
+  }
+
   // 🔴 ② — 자동 조회를 **건너뛰는 것은 1146 계열뿐**이다. 두 표는 같은 마이그레이션에 있으므로 「표가 없다」면
   //   자동 표도 없다(쓸모없는 질의를 보내지 않는다). 그러나 `bad_json`·`bad_symbols`·`db_error` 는 **그 행·그 질의의**
   //   문제라 자동 표가 멀쩡할 수 있다 — 거기서 건너뛰면 **WP-A 가 채운 자동 목록이 수동 쪽 손상 때문에 사라진다.**
@@ -324,6 +388,7 @@ export async function readOverseasUniverse(db?: Queryable): Promise<OverseasUniv
       reason: manual.reason,
       manualSource: manual.source,
       autoDegraded: true,          // 읽지 않았으니 「정상」이라고 말하지 않는다
+      autoDisabled: false,         // 스위치는 켜져 있다(표가 없어서 못 읽은 것이다)
     };
   }
 
@@ -335,6 +400,7 @@ export async function readOverseasUniverse(db?: Queryable): Promise<OverseasUniv
     reason: manual.degraded ? manual.reason : (auto.degraded ? auto.reason : null),
     manualSource: manual.source,
     autoDegraded: auto.degraded,
+    autoDisabled: false,
   };
 }
 

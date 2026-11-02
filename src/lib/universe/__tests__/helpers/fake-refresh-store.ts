@@ -40,7 +40,26 @@ interface State {
   countsJson: string | null;
   notMigrated: boolean;
   pendingError: Error | null;
+  /** `readPendingCandidates` 가 **분류된 오류**를 돌려주게 한다(T-145 ⑥-4 — 일시/영구 분기). */
+  pendingFail: { error: string; retryable: boolean } | null;
+  /**
+   * 🔴 (Reviewer M-2) `saveListing`·`finalizeRun` 도 분류된 오류를 돌려주게 한다. 전에는 `scan_read` 한 곳만
+   * 주입할 수 있어서 엔진의 `listing_save`·`finalize_write` 가 **항상 영구로 닫아도** 시험 52개가 전부 통과했다.
+   * ⑥ 이 실제로 고친 결함은 finalize 쪽이라, 그 배선이 회귀하면 고친 결함이 조용히 돌아온다.
+   */
+  listingFail: { error: string; retryable: boolean } | null;
+  finalizeFail: { error: string; retryable: boolean } | null;
+  /**
+   * 🔴 (Codex C2 지적 2) `closeRun` 이 **던지게** 한다. 실제 `closeRun` 은 try 없이 `await db.query` 라
+   * DB 오류를 그대로 던진다 — 전에는 엔진이 그 예외를 삼키고 「종결됐다」고 응답했고, 그 경로를
+   * 어떤 시험도 보지 못했다(모형이 던질 수 없었다).
+   */
+  closeFail: { code: string } | null;
   proposalsInserted: number;
+  /** 최근 스냅샷 집합(T-145 ⑧-1). `null` = 조회 실패(모름). */
+  recentSnapshot: Set<string> | null;
+  /** 이 run 의 스캔 결과(T-145 ⑧-2) — 심볼 → KIS 가 답했나. */
+  runKisStatus: Map<string, boolean>;
 }
 
 const s: State = blank();
@@ -49,7 +68,8 @@ function blank(): State {
   return {
     run: null, cands: [], auto: [], autoComputedAt: [], verdicts: [], finalizeRows: null,
     prevTop: [], listingMeta: null, countsJson: null, notMigrated: false, pendingError: null,
-    proposalsInserted: 0,
+    pendingFail: null, listingFail: null, finalizeFail: null, closeFail: null,
+    proposalsInserted: 0, recentSnapshot: new Set(), runKisStatus: new Map(),
   };
 }
 
@@ -68,6 +88,18 @@ export function __setAuto(rows: AutoRow[]): void { s.auto = rows; }
 export function __setPrevTop(xs: string[]): void { s.prevTop = xs; }
 export function __setNotMigrated(v: boolean): void { s.notMigrated = v; }
 export function __throwOnPending(e: Error): void { s.pendingError = e; }
+/** T-145 ⑥-4 — 저장소가 「일시/영구」를 가려 돌려주는 경로를 흉내 낸다. `null` 이면 해제(회복). */
+export function __failPending(fail: { error: string; retryable: boolean } | null): void { s.pendingFail = fail; }
+/** (Reviewer M-2) `saveListing` 이 분류된 오류를 돌려주게 한다. `null` 이면 해제. */
+export function __failListing(fail: { error: string; retryable: boolean } | null): void { s.listingFail = fail; }
+/** (Reviewer M-2) `finalizeRun` 이 분류된 오류를 돌려주게 한다. `null` 이면 해제. */
+export function __failFinalize(fail: { error: string; retryable: boolean } | null): void { s.finalizeFail = fail; }
+/** (Codex C2 지적 2) `closeRun` 이 던지게 한다(= 종결 기록 실패). `null` 이면 해제(회복). */
+export function __failClose(fail: { code: string } | null): void { s.closeFail = fail; }
+/** T-145 ⑧-1 — 최근 스냅샷 집합(`null` = 조회 실패). */
+export function __setRecentSnapshot(v: Set<string> | null): void { s.recentSnapshot = v; }
+/** T-145 ⑧-2 — 이 run 의 스캔 결과(심볼 → KIS 가 답했나). */
+export function __setRunKisStatus(m: Map<string, boolean>): void { s.runKisStatus = m; }
 export function __setRun(r: RunRow): void { s.run = r; }
 export function __setPhase(p: RunPhase): void { if (s.run) s.run.phase = p; }
 export function __setFinalizeRows(rows: FinalizeRow[]): void { s.finalizeRows = rows; }
@@ -132,6 +164,7 @@ export async function saveListing(args: {
   master: { fetchedAtMs: number; sha256: string; rows: number };
   countsJson: string;
 }): Promise<StoreOutcome<{ inserted: number }>> {
+  if (s.listingFail) return { kind: 'error', error: s.listingFail.error, retryable: s.listingFail.retryable };
   if (s.notMigrated) return { kind: 'not_migrated' };
   s.cands = args.candidates.map((c) => ({
     ord: c.ord, symbol: c.symbol, kisSymb: c.kisSymb, kisEnam: c.kisEnam, kisStis: c.kisStis, kisIsdr: c.kisIsdr,
@@ -145,6 +178,7 @@ export async function saveListing(args: {
 
 export async function readPendingCandidates(args: { runId: number; limit: number }): Promise<StoreOutcome<PendingCandidate[]>> {
   if (s.pendingError) throw s.pendingError;
+  if (s.pendingFail) return { kind: 'error', error: s.pendingFail.error, retryable: s.pendingFail.retryable };
   if (s.notMigrated) return { kind: 'not_migrated' };
   return ok(s.cands.filter((c) => c.status === 'pending').sort((a, b) => a.ord - b.ord).slice(0, args.limit)
     .map((c) => ({ ord: c.ord, symbol: c.symbol, kisSymb: c.kisSymb, attempts: c.attempts })));
@@ -170,6 +204,8 @@ export async function advanceRun(args: { runId: number; phase?: RunPhase; cursor
 }
 
 export async function closeRun(args: { runId: number; phase: 'failed' | 'expired'; error: string }): Promise<void> {
+  // 실제 저장소와 같은 계약 — `closeRun` 은 DB 오류를 **던진다**(try 로 감싸지 않는다)
+  if (s.closeFail) throw Object.assign(new Error('close failed'), { code: s.closeFail.code });
   if (!s.run) return;
   s.run.phase = args.phase;
   s.run.lastError = args.error;
@@ -192,7 +228,9 @@ export async function finalizeRun(args: {
   runId: number; verdicts: readonly CandidateVerdict[]; auto: readonly AutoRow[];
   countsJson: string; added: readonly string[]; removed: readonly string[]; nowMs: number;
 }): Promise<StoreOutcome<{ autoRows: number }>> {
-  if (args.auto.length === 0) return { kind: 'error', error: 'empty_top' };
+  if (s.finalizeFail) return { kind: 'error', error: s.finalizeFail.error, retryable: s.finalizeFail.retryable };
+  // 실제 저장소와 같은 계약 — 상위가 비는 것은 **영구**다(T-145 ⑥-4)
+  if (args.auto.length === 0) return { kind: 'error', error: 'empty_top', retryable: false };
   if (s.notMigrated) return { kind: 'not_migrated' };
   s.verdicts = [...args.verdicts];
   s.auto = args.auto.map((a) => ({ ...a }));
@@ -221,7 +259,12 @@ export async function readProgress(): Promise<StoreOutcome<ScanProgress>> {
 }
 
 export async function readRecentSnapshotSymbols(): Promise<Set<string> | null> {
-  return new Set();
+  return s.recentSnapshot;
+}
+
+/** T-145 ⑧-2 — 실제 저장소와 같은 계약: 모르는 종목은 **지도에 없다**(false 가 아니다). */
+export async function readRunKisStatus(): Promise<Map<string, boolean>> {
+  return s.runKisStatus;
 }
 
 export async function readSymbolCikMap(): Promise<Map<string, number>> {

@@ -208,14 +208,26 @@ no_t135() {
           -e 's#-o "\$CALL_BODY_FILE" -w#-o /tmp/cron-runner-$$.out -w#' \
           -e 's#^  rm -f "\$CALL_BODY_FILE"$#  rm -f /tmp/cron-runner-$$.out#'
 }
+# (T-145 ⑨ 2026-11-02) kis-fundamentals-snapshot 은 사용자 승인으로 **일정이 바뀐 잡**이다(하루 1회 08:00 →
+#   08:30~08:55 창의 매 틱 + curl 상한 110). 이 시험의 비교 기준 러너(T112_BASE_REF)에는 그 변경이 없고,
+#   「그 변경은 있고 T-112 는 없는 ref」를 만들 수도 없다(T-112 가 먼저다) → 호출·로그·상한 비교에서 **그 잡만 뺀다**.
+#   뺀 자리는 비지 않는다: 그 잡의 창·틱 yield·상한은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 본다.
+KF_RE=' /api/cron/kis-fundamentals-snapshot$'
 nojrl()   { grep -vE "$JRE" "$1/calls"; }                                   # 기록 전송을 뺀 호출(시각·틱·경로)
-nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime"; }
+# 🔴 (T-145 ⑨) **기준 러너와 비교할 때만** 스냅샷을 추가로 뺀다. `nojrl` 자체를 좁히면 「후크가 호출당 한 줄을
+#   남긴다」·「경로별 줄 수 = 경로별 호출 수」 같은 **자기 정합 검사**가 스풀(그 잡 포함)과 어긋난다 —
+#   실제로 그렇게 고쳤다가 J1 두 건이 깨졌다(기대 5098 / 실제 5124 = 그 잡 호출 수만큼).
+nojrl_cmp() { nojrl "$1" | grep -vE "$KF_RE"; }
+nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot '; }
+nokfout() { grep -v 'kis-fundamentals-snapshot' "$1"; }                     # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다
 gap()     { awk 'NR>1 { g = $1 - p; if (g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }
 spool()   { cat "$1/home/.node-local/stockinvest/job-run-spool" "$1/home/.node-local/stockinvest/job-run-spool.sending" 2>/dev/null; }
-dfiles()  { ( cd "$1/home/.node-local/stockinvest" && for f in *-last-date *-attempts; do [ -f "$f" ] && echo "$f=$(cat "$f")"; done ) 2>/dev/null | sort; }
+# (T-145 ⑨) kis-fundamentals-snapshot 의 날짜파일은 **판정에 쓰이지 않는 흔적**이 됐고(러너 블록 주석),
+#   호출 시각이 08:00 → 08:30~08:55 로 바뀌어 짧은 시나리오에서는 기준 러너와 존재 여부가 갈린다 → 비교에서 뺀다.
+dfiles()  { ( cd "$1/home/.node-local/stockinvest" && for f in *-last-date *-attempts; do [ -f "$f" ] && echo "$f=$(cat "$f")"; done ) 2>/dev/null | grep -v '^kis-fundamentals-snapshot-last-date=' | sort; }
 same_calls() {   # same_calls 라벨 새 기준
-  if diff <(nojrl "$2") <(nojrl "$3") > /dev/null; then ok "🔴 $1: 기록 전송을 뺀 모든 호출(시각·틱·경로) = 기준 러너 ($(nojrl "$2" | wc -l | tr -d ' ')건)"
-  else bad "$1: 기록 전송을 뺀 호출 목록이 기준 러너와 다르다"; diff <(nojrl "$2") <(nojrl "$3") | head -10; fi
+  if diff <(nojrl_cmp "$2") <(nojrl_cmp "$3") > /dev/null; then ok "🔴 $1: 기록 전송·⑨ 스냅샷을 뺀 모든 호출(시각·틱·경로) = 기준 러너 ($(nojrl_cmp "$2" | wc -l | tr -d ' ')건)"
+  else bad "$1: 기록 전송을 뺀 호출 목록이 기준 러너와 다르다"; diff <(nojrl_cmp "$2") <(nojrl_cmp "$3") | head -10; fi
 }
 # 받은 줄 + 남은 스풀 줄의 경로별 개수 = 호출 목록의 경로별 개수
 path_counts_calls() { nojrl "$1" | awk '{print $4}' | sort | uniq -c; }
@@ -231,8 +243,8 @@ eq "J1: 1440틱 완주(새·기준·끔)" "$(cat "$NA/ticks") $(cat "$BA/ticks")
 same_calls "J1 새" "$NA" "$BA"
 same_calls "J1 끔" "$NO" "$BA"
 if diff <(nojrlmt "$NA") "$BA/maxtime" > /dev/null; then ok "🔴 J1: 기록 전송을 뺀 --max-time 목록 = 기준 러너"; else bad "J1: --max-time 목록이 다르다"; fi
-if diff "$NA/stdout" "$BA/stdout" > /dev/null; then ok "🔴 J1: stdout(로그 줄) = 기준 러너 ($(wc -l < "$NA/stdout" | tr -d ' ')줄)"; else bad "J1: stdout 이 다르다"; diff "$NA/stdout" "$BA/stdout" | head -5; fi
-if diff "$NO/stdout" "$BA/stdout" > /dev/null; then ok "J1: 후크 끈 러너 stdout = 기준 러너"; else bad "J1: 후크 끈 러너 stdout 이 다르다"; fi
+if diff <(nokfout "$NA/stdout") <(nokfout "$BA/stdout") > /dev/null; then ok "🔴 J1: stdout(로그 줄) = 기준 러너 ($(wc -l < "$NA/stdout" | tr -d ' ')줄)"; else bad "J1: stdout 이 다르다"; diff <(nokfout "$NA/stdout") <(nokfout "$BA/stdout") | head -5; fi
+if diff <(nokfout "$NO/stdout") <(nokfout "$BA/stdout") > /dev/null; then ok "J1: 후크 끈 러너 stdout = 기준 러너"; else bad "J1: 후크 끈 러너 stdout 이 다르다"; fi
 if diff "$NA/heartbeats" "$BA/heartbeats" > /dev/null; then ok "🔴 J1: 하트비트 기록 = 기준 러너(1440개)"; else bad "J1: 하트비트가 다르다"; fi
 if diff <(dfiles "$NA") <(dfiles "$BA") > /dev/null; then ok "J1: 날짜파일·시도 기록 = 기준 러너 ($(dfiles "$NA" | wc -l | tr -d ' ')개)"; else bad "J1: 날짜파일이 다르다"; diff <(dfiles "$NA") <(dfiles "$BA") | head -5; fi
 NCALLS="$(nojrl "$NA" | wc -l | tr -d ' ')"
@@ -282,14 +294,23 @@ echo "J3. 08시 최악 틱 + 느린 기록 라우트(3초 상한) — 08:00:00 �
 NW="$(run_loop new-worst "$RUNNER" "2026-10-28 08:00:00" 4 worst08 slow "")"
 BW="$(run_loop base-worst "$BASE" "2026-10-28 08:00:00" 4 worst08 ok "")"
 eq "J3: 4틱 완주" "$(cat "$NW/ticks") $(cat "$BW/ticks")" "4 4"
-if diff <(nojrl "$NW" | awk '{print $1, substr($2,1,5), $4}') <(nojrl "$BW" | awk '{print $1, substr($2,1,5), $4}') > /dev/null; then ok "J3: 호출 목록(분 단위)·순서 = 기준 러너"; else bad "J3: 호출 목록이 다르다"; diff <(nojrl "$NW" | awk '{print $1, substr($2,1,5), $4}') <(nojrl "$BW" | awk '{print $1, substr($2,1,5), $4}') | head; fi
+# 🔴 (T-145 ⑨) 이 시나리오(최악 틱)에서는 **분 단위**로 비교할 수 없다 — ⑨ 가 kis-fundamentals-snapshot(이 하네스에서
+#   60초)을 08:00 틱에서 빼면서 그 틱이 **짧아져** 뒤 호출들의 분 라벨이 기준 러너보다 앞으로 당겨진다. 그것은 이 시험이
+#   막으려는 변화가 아니라 ⑨ 가 **의도한 개선**이고, 바로 아래 「최대 간격 ≤ 기준」(실측 230 ≤ 290)이 그 크기를 잰다.
+#   그래서 J3 은 **호출 경로의 순서·개수**를 본다(후크가 호출을 더하거나 빼거나 순서를 바꾸지 않는다 = J3 의 본래 뜻).
+#   분 단위 고정은 J1(하루 1440틱, 정상 응답)이 그대로 유지한다 — 거기서는 두 러너의 틱이 같은 분 안에 끝난다.
+if diff <(nojrl_cmp "$NW" | awk '{print $4}') <(nojrl_cmp "$BW" | awk '{print $4}') > /dev/null; then ok "J3: 호출 경로 순서·개수 = 기준 러너 ($(nojrl_cmp "$NW" | wc -l | tr -d ' ')건)"; else bad "J3: 호출 목록이 다르다"; diff <(nojrl_cmp "$NW" | awk '{print $4}') <(nojrl_cmp "$BW" | awk '{print $4}') | head; fi
 HT="$(nojrl "$NW" | awk '$4 ~ /post-market-analysis\?market=overseas/ {print $3}')"
 eq "(하네스 확인) J3: 08:00 틱에 해외 분석이 돌았다" "$(nojrl "$NW" | awk '$4 ~ /post-market-analysis\?market=overseas/ {print substr($2,1,5)}')" "08:00"
 eq "🔴 J3: 무거운 틱(경과 ≥ 150초)에는 전송하지 않는다" "$(awk -v t="$HT" '$1 == t' "$NW/posts" | wc -l | tr -d ' ')" "0"
 eq "J3: 가벼운 틱은 전송했다(나머지 3틱)" "$(wc -l < "$NW/posts" | tr -d ' ')" "3"
 gN="$(gap "$NW")"; gB="$(gap "$BW")"
 eq "(하네스 확인) J3: 기준 러너 최대 간격 = 230 + 60 = 290초" "$gB" "290"
-eq "🔴 J3: 새 러너 최대 간격 = 기준(290초) — 후크가 최악 틱을 늘리지 않음" "$gN" "$gB"
+# (T-145 ⑨) 기준과 **같다**가 아니라 **늘지 않았다**로 본다. ⑨ 가 kis-fundamentals-snapshot 을 08시 첫 틱에서
+#   빼면서 그 틱의 최악 간격이 기준보다 **줄었다**(실측 290 → 230초) — 이 시험이 지키려는 것은 「후크가 최악 틱을
+#   늘리지 않는다」이므로 줄어든 것은 통과여야 한다. 늘어나면 여전히 실패한다.
+if [ "$gN" -le "$gB" ]; then ok "🔴 J3: 새 러너 최대 간격 ${gN}초 ≤ 기준 ${gB}초 — 후크가 최악 틱을 늘리지 않음"
+else bad "J3: 새 러너 최대 간격이 기준보다 크다 (새 ${gN}초 > 기준 ${gB}초)"; fi
 if [ "$gN" -lt 300 ]; then ok "🔴 J3: 하트비트 최대 간격 ${gN}초 < 300초(워치독·순찰 한도)"; else bad "J3: 하트비트 ${gN}초 ≥ 300"; fi
 eq "J3: 가벼운 틱 간격 = 기준 + 3초(전송 curl 상한)" \
    "$(paste -d' ' <(awk 'NR>1 { print $1 - p } { p = $1 }' "$NW/heartbeats") <(awk 'NR>1 { print $1 - p } { p = $1 }' "$BW/heartbeats") | awk '$2 != 290 && $1 != $2 + 3 { b++ } END { print b + 0 }')" "0"
@@ -335,7 +356,7 @@ NU="$(run_loop new-unw "$RUNNER" "2026-10-28 07:00:00" 30 ok ok "" "JRL_SPOOL_FI
 BU="$(run_loop base-unw "$BASE" "2026-10-28 07:00:00" 30 ok ok "")"
 eq "🔴 J6: 러너 생존(30틱 완주)" "$(cat "$NU/ticks")" "30"
 same_calls "J6" "$NU" "$BU"
-if diff "$NU/stdout" "$BU/stdout" > /dev/null; then ok "🔴 J6: stdout = 기준 러너(오류 출력이 새지 않음)"; else bad "J6: stdout 이 다르다"; diff "$NU/stdout" "$BU/stdout" | head -5; fi
+if diff <(nokfout "$NU/stdout") <(nokfout "$BU/stdout") > /dev/null; then ok "🔴 J6: stdout = 기준 러너(오류 출력이 새지 않음)"; else bad "J6: stdout 이 다르다"; diff <(nokfout "$NU/stdout") <(nokfout "$BU/stdout") | head -5; fi
 if diff "$NU/heartbeats" "$BU/heartbeats" > /dev/null; then ok "J6: 하트비트 = 기준 러너"; else bad "J6: 하트비트가 다르다"; fi
 eq "J6: 전송 0(보낼 줄이 없음)" "$(wc -l < "$NU/posts" | tr -d ' ')" "0"
 
@@ -569,7 +590,7 @@ eq "🔴 J12: 정상 응답 뒤 잔존 0(틱 끝마다 call-tmp 0개)" "$(tr '\n
 eq "🔴 J12: 잡 curl 은 umask 0022 그대로(call_tmp_open 이 되돌림)" "$(awk '$1 != "/api/cron/job-run-log" && $2 != "0022"' "$T1/umasks" | wc -l | tr -d ' ')" "0"
 eq "J12: 디렉터리 자체는 700" "$(stat -c %a "$T1/home/$CT")" "700"
 same_calls "J12 umask022" "$T1" "$T1B"
-if diff "$T1/stdout" "$T1B/stdout" > /dev/null; then ok "J12: stdout = 기준 러너(정상 응답 — 로그 줄 불변)"; else bad "J12: stdout 이 다르다"; diff "$T1/stdout" "$T1B/stdout" | head -5; fi
+if diff <(nokfout "$T1/stdout") <(nokfout "$T1B/stdout") > /dev/null; then ok "J12: stdout = 기준 러너(정상 응답 — 로그 줄 불변)"; else bad "J12: stdout 이 다르다"; diff <(nokfout "$T1/stdout") <(nokfout "$T1B/stdout") | head -5; fi
 if diff "$T1/heartbeats" "$T1B/heartbeats" > /dev/null; then ok "J12: 하트비트 = 기준 러너"; else bad "J12: 하트비트가 다르다"; fi
 eq "J12: 받은 줄 본문 = 잡 응답 '{}'(후크가 CALL_BODY_FILE 을 읽음)" "$(awk -F'\t' '!($2 == "entry-watcher" || $2 == "holding-checker" || $2 == "stop-alert") && $7 != "e30=" { b++ } END { print b + 0 }' "$T1/received")" "0"
 
@@ -613,7 +634,7 @@ eq "🔴 J12 대체: 경로 = /tmp/cron-runner-<pid>.out 한 개 · 생성 시�
 eq "🔴 J12 대체: 끝나면 그 파일 잔존 없음" "$([ -e "$FBP" ] && echo left || echo gone)" "gone"
 eq "J12 대체: 잡 curl umask 0022 그대로" "$(awk '$1 != "/api/cron/job-run-log" && $2 != "0022"' "$T3/umasks" | wc -l | tr -d ' ')" "0"
 same_calls "J12 대체" "$T3" "$T3B"
-if diff "$T3/stdout" "$T3B/stdout" > /dev/null; then ok "🔴 J12 대체: stdout = 기준 러너(오류 출력 없음)"; else bad "J12 대체: stdout 이 다르다"; diff "$T3/stdout" "$T3B/stdout" | head -5; fi
+if diff <(nokfout "$T3/stdout") <(nokfout "$T3B/stdout") > /dev/null; then ok "🔴 J12 대체: stdout = 기준 러너(오류 출력 없음)"; else bad "J12 대체: stdout 이 다르다"; diff <(nokfout "$T3/stdout") <(nokfout "$T3B/stdout") | head -5; fi
 eq "J12 대체: 스풀 본문도 그대로 읽힌다" "$(awk -F'\t' '!($2 == "entry-watcher" || $2 == "holding-checker" || $2 == "stop-alert") && $7 != "e30=" { b++ } END { print b + 0 }' "$T3/received")" "0"
 
 # ④ 호출 도중 SIGKILL ×3 → 매번 잔존 1개(다음 시작이 이전 것을 지움 — 누적 없음) → 정상 시작이면 0

@@ -18,6 +18,14 @@
  *  D. (DB) `readPrevMonthRunPhase` — 1월이 **직전 해 12월**을 읽는다(연말 경계) · 행 없으면 null ·
  *     미완료 단계(`scan`)와 `complete` 를 구분한다
  *  E. (DB) 변이 감도 자가 점검 — 이 시험이 S1·S2 를 **실제로 잡는지** 같은 SQL 을 손으로 변형해 확인한다
+ *  G. (DB) 🔴 **(Reviewer M-3) `readRunKisStatus` 의 SQL 의미** — ⑧-2(스캔 결과를 스냅샷 대리값보다 우선)의
+ *     저장소 쪽 절반인데 **어떤 시험에도 없었다**: 반환값을 항상 `true` 로 바꾸거나 `fetched_at IS NOT NULL` 조건을
+ *     빼도 DB 를 켠 상태의 92개가 전부 통과했다. 회귀하면 멀쩡한 종목에 「KIS 조회 불가 — 빼기」 제안이 뜨고
+ *     그 지문이 `INSERT IGNORE` 로 **영구 소비**된다.
+ *  F. (DB) 🔴 **T-145 ⑥ — 단일 행의 흠이 그 달을 버리게 하지 않는다.** Reviewer 가 STRICT 실 DB 로 재현한 셋을
+ *     같은 DB 에서 **고쳐졌음**으로 고정한다: `cap_ratio` 범위 초과 · CHAR 열 초과 · 같은 심볼 두 행 ·
+ *     스캔 원값 범위 초과. 각 항목에 **감도 짝**(가드를 거치지 않은 생 SQL 은 STRICT 가 거부한다)을 붙여,
+ *     「원래도 통과하는 시험」이 아님을 같은 파일에서 보인다.
  *
  * 실행(운영·공용 DB 금지 — 127.0.0.1 에만 묶인 일회용 컨테이너, 끝나면 제거. 비밀번호는 환경변수로만):
  *   T143_WPA_DB_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -dc A-Za-z0-9 | head -c 24)"; export T143_WPA_DB_PASSWORD
@@ -39,7 +47,7 @@ jest.mock('@/lib/db', () => ({
 
 import {
   prevRunKey, readPrevMonthRunPhase, createRun, saveListing, applyScanOutcome, advanceRun,
-  readFinalizeRows, type CandidateInsert,
+  finalizeRun, readFinalizeRows, readRunKisStatus, type CandidateInsert, type CandidateVerdict,
 } from '../refresh-store';
 
 const PORT = process.env.T143_WPA_DB_PORT;
@@ -48,6 +56,11 @@ const DB_ON = Boolean(PORT && PASSWORD);
 const dbIt = DB_ON ? it : it.skip;
 
 const DDL = path.join(process.cwd(), 'scripts/migrations/T-143-wpa-universe-run.sql');
+/**
+ * `finalizeRun` 은 WP-B 소유 표(`overseas_universe_auto`)를 한 트랜잭션에서 통째로 교체하므로, F군을 돌리려면
+ * 그 DDL 도 함께 올려야 한다(없으면 1146 으로 `not_migrated` 가 되어 **아무것도 검증하지 못한다**).
+ */
+const DDL_WPB = path.join(process.cwd(), 'scripts/migrations/T-143-overseas-universe.sql');
 
 // ── A. 순수 함수 — DB 없이도 늘 돈다(연말 경계. Reviewer r3 S3 가 통과해 버린 자리)
 describe('prevRunKey — 직전 달 키', () => {
@@ -94,11 +107,15 @@ describe('refresh-store 실 DB 왕복', () => {
     });
     // DDL 을 파일에서 그대로 적용한다(문서가 아니라 실제 적용될 파일을 쓴다).
     // 문장 쪼개기는 선례와 같은 방식 — 줄마다 `--` 뒤를 떼고 `;` 로 나눈다(`job-run-log-disposable-mariadb.test.ts`).
-    const sql = fs.readFileSync(DDL, 'utf8');
-    const stmts = sql.split('\n').map((l) => l.replace(/--.*$/, '')).join('\n')
-      .split(';').map((s) => s.trim()).filter(Boolean);
-    expect(stmts.length).toBe(3);   // SET SESSION 1 + CREATE TABLE 2 — 늘면 이 시험이 먼저 알려 준다
-    for (const stmt of stmts) await pool.query(stmt);
+    const apply = async (file: string, expected: number) => {
+      const sql = fs.readFileSync(file, 'utf8');
+      const stmts = sql.split('\n').map((l) => l.replace(/--.*$/, '')).join('\n')
+        .split(';').map((x) => x.trim()).filter(Boolean);
+      expect(stmts.length).toBe(expected);   // 늘면 이 시험이 먼저 알려 준다
+      for (const stmt of stmts) await (pool as mysql.Pool).query(stmt);
+    };
+    await apply(DDL, 3);          // SET SESSION 1 + CREATE TABLE 2 (run·candidate)
+    await apply(DDL_WPB, 5);      // SET SESSION 1 + CREATE TABLE 4 (revision·proposal·auto·watch)
   }, 60_000);
 
   afterAll(async () => { if (pool) await pool.end(); });
@@ -254,4 +271,196 @@ describe('refresh-store 실 DB 왕복', () => {
     if (rows.kind !== 'ok') throw new Error('readFinalizeRows 실패');
     expect(rows.data[0].kisEnam).toBeNull();   // 버려지면 이 모양이 된다 → B1 이 깨진다
   }, 30_000);
+  // ── F. 🔴 T-145 ⑥ — 단일 행의 흠이 그 달을 버리게 하지 않는다 (Reviewer 가 STRICT 실 DB 로 재현한 셋)
+
+  const verdict = (over: Partial<CandidateVerdict> = {}): CandidateVerdict => ({
+    ord: 0, capUsed: 1e11, capAlt: null, capSource: 'tomv', capRatio: 1,
+    capFlag: 'consistent', exclusion: null, rankNo: 1, ...over,
+  });
+
+  dbIt('🔴 F1 `cap_ratio` 에 2e7 이 와도 finalize 가 **깨지지 않는다** — NULL + `cap_flag +oob` 로 남는다', async () => {
+    const runId = await seedOk([cand({ ord: 0, symbol: 'NYS:ZZG', secTicker: 'ZZG', cik: 9999601 })]);
+    const fin = await finalizeRun({
+      runId,
+      // Reviewer 가 "Out of range value for column 'cap_ratio'" 를 낸 그 값이다
+      verdicts: [verdict({ ord: 0, capRatio: 2e7, capFlag: 'basis_mismatch' })],
+      auto: [{ symbol: 'NYS:ZZG', rankNo: 1, marketCap: 1e11 }],
+      countsJson: '{}', added: [], removed: [], nowMs: Date.UTC(2099, 0, 4, 16, 40),
+      getConnection: async () => (await (pool as mysql.Pool).getConnection()) as never,
+    });
+    expect(fin.kind).toBe('ok');          // 전에는 여기서 트랜잭션이 깨지고 그 달이 영구 실패로 닫혔다
+    const [raw] = await (pool as mysql.Pool).query<mysql.RowDataPacket[]>(
+      'SELECT cap_ratio, cap_flag, rank_no FROM overseas_universe_candidate WHERE run_id = ? AND ord = 0', [runId],
+    );
+    expect(raw[0].cap_ratio).toBeNull();
+    expect(raw[0].cap_flag).toBe('basis_mismatch+oob');
+    expect(Number(raw[0].rank_no)).toBe(1);   // 순위는 그대로 — 그 종목을 버리지 않았다
+  }, 30_000);
+
+  dbIt('🔴 F1-감도 가드를 거치지 않은 생 UPDATE 는 STRICT 가 **거부한다**(F1 이 원래도 통과하는 시험이 아니다)', async () => {
+    const runId = await seedOk([cand({ ord: 0, symbol: 'NYS:ZZH', secTicker: 'ZZH', cik: 9999602 })]);
+    await expect((pool as mysql.Pool).query(
+      'UPDATE overseas_universe_candidate SET cap_ratio = ? WHERE run_id = ? AND ord = 0', [2e7, runId],
+    )).rejects.toThrow(/[Oo]ut of range/);
+  }, 30_000);
+
+  dbIt('🔴 F2 `kis_stis` 에 2자가 와도 listing 이 깨지지 않는다 — 1자로 잘려 들어간다', async () => {
+    const runId = await seedOk([cand({
+      ord: 0, symbol: 'NYS:ZZI', secTicker: 'ZZI', cik: 9999603,
+      kisStis: '23', kisIsdr: 'YN', kisEtyp: '0012',
+    })]);
+    const [raw] = await (pool as mysql.Pool).query<mysql.RowDataPacket[]>(
+      'SELECT kis_stis, kis_isdr, kis_etyp FROM overseas_universe_candidate WHERE run_id = ? AND ord = 0', [runId],
+    );
+    expect([raw[0].kis_stis, raw[0].kis_isdr, raw[0].kis_etyp]).toEqual(['2', 'Y', '001']);
+  }, 30_000);
+
+  dbIt('🔴 F2-감도 생 INSERT 로 2자를 넣으면 STRICT 가 **거부한다**', async () => {
+    const run = await createRun({ runKey: nextKey(), topN: 50, nowMs: Date.UTC(2099, 0, 4, 16, 10), db: q() });
+    if (run.kind !== 'ok') throw new Error('createRun 실패');
+    await expect((pool as mysql.Pool).query(
+      `INSERT INTO overseas_universe_candidate (run_id, ord, symbol, sec_ticker, cik, kis_stis, status)
+       VALUES (?, 0, 'NYS:ZZJ', 'ZZJ', 9999604, '23', 'pending')`, [run.data.runId],
+    )).rejects.toThrow(/too long|Data truncated/i);
+  }, 30_000);
+
+  dbIt('🔴 F3 같은 심볼이 두 번 와도 listing 이 깨지지 않는다 — 첫 행만 들어간다(uq_cand_symbol)', async () => {
+    const runId = await seedOk([
+      cand({ ord: 0, symbol: 'NYS:ZZK', secTicker: 'ZZK', cik: 9999701, secName: 'First Row' }),
+      cand({ ord: 1, symbol: 'NYS:ZZK', secTicker: 'ZZK2', cik: 9999702, secName: 'Second Row' }),
+    ]);
+    const [raw] = await (pool as mysql.Pool).query<mysql.RowDataPacket[]>(
+      'SELECT ord, sec_name FROM overseas_universe_candidate WHERE run_id = ? ORDER BY ord', [runId],
+    );
+    expect(raw).toHaveLength(1);
+    expect([Number(raw[0].ord), raw[0].sec_name]).toEqual([0, 'First Row']);
+  }, 30_000);
+
+  dbIt('🔴 F3-감도 생 INSERT 로 두 행을 넣으면 STRICT 가 **1062 로 거부한다**', async () => {
+    const run = await createRun({ runKey: nextKey(), topN: 50, nowMs: Date.UTC(2099, 0, 4, 16, 10), db: q() });
+    if (run.kind !== 'ok') throw new Error('createRun 실패');
+    await expect((pool as mysql.Pool).query(
+      `INSERT INTO overseas_universe_candidate (run_id, ord, symbol, sec_ticker, cik, status) VALUES
+         (?, 0, 'NYS:ZZL', 'ZZL', 9999801, 'pending'), (?, 1, 'NYS:ZZL', 'ZZL2', 9999802, 'pending')`,
+      [run.data.runId, run.data.runId],
+    )).rejects.toThrow(/Duplicate entry/i);
+  }, 30_000);
+
+  dbIt('🔴 F4 스캔 원값이 열 범위를 넘어도 그 행이 **진행한다**(status=ok · 값은 NULL · error 는 비어 있다)', async () => {
+    const key = nextKey();
+    const run = await createRun({ runKey: key, topN: 50, nowMs: Date.UTC(2099, 0, 4, 16, 10), db: q() });
+    if (run.kind !== 'ok') throw new Error('createRun 실패');
+    const saved = await saveListing({
+      runId: run.data.runId, candidates: [cand({ ord: 0, symbol: 'NYS:ZZM', secTicker: 'ZZM', cik: 9999901 })],
+      sec: { fetchedAtMs: Date.UTC(2099, 0, 4, 16, 10), sha256: 'a'.repeat(64), rows: 1 },
+      master: { fetchedAtMs: Date.UTC(2099, 0, 4, 16, 10), sha256: 'b'.repeat(64), rows: 1 },
+      countsJson: '{}', nowMs: Date.UTC(2099, 0, 4, 16, 10),
+      getConnection: async () => (await (pool as mysql.Pool).getConnection()) as never,
+    });
+    if (saved.kind !== 'ok') throw new Error('saveListing 실패');
+    // 1e30 은 DECIMAL(28,4) 밖이다 — 전에는 이 UPDATE 가 실패해 그 행이 영원히 `pending` 으로 남았다
+    await applyScanOutcome({
+      runId: run.data.runId, nowMs: Date.UTC(2099, 0, 4, 16, 20), db: q(),
+      outcome: { ord: 0, status: 'ok', tomv: 1e30, shar: 1e30, last: 1e20, curr: 'USD', etypNm: null, rsym: 'NYSZZM' },
+    });
+    const [raw] = await (pool as mysql.Pool).query<mysql.RowDataPacket[]>(
+      'SELECT status, tomv, shar, last_price, attempts, error FROM overseas_universe_candidate WHERE run_id = ? AND ord = 0',
+      [run.data.runId],
+    );
+    expect(raw[0].status).toBe('ok');
+    expect([raw[0].tomv, raw[0].shar, raw[0].last_price]).toEqual([null, null, null]);
+    expect(Number(raw[0].attempts)).toBe(1);     // 다시 집지 않는다(창을 다 쓰지 않는다)
+    expect(raw[0].error).toBeNull();             // 「KIS 가 답했다」의 표식을 지우지 않는다(⑧-2)
+  }, 30_000);
+
+  dbIt('🔴 F4-감도 생 UPDATE 로 1e30 을 넣으면 STRICT 가 **거부한다**', async () => {
+    const runId = await seedOk([cand({ ord: 0, symbol: 'NYS:ZZN', secTicker: 'ZZN', cik: 9999902 })]);
+    await expect((pool as mysql.Pool).query(
+      'UPDATE overseas_universe_candidate SET tomv = ? WHERE run_id = ? AND ord = 0', [1e30, runId],
+    )).rejects.toThrow(/[Oo]ut of range/);
+  }, 30_000);
+  // ── G. 🔴 (Reviewer M-3) `readRunKisStatus` — 「KIS 가 답했나」의 SQL 의미
+
+  /** 세 종목을 깔고 **각자 다른 스캔 상태**로 둔다: 답함 · 실패 · 아직 부른 적 없음. */
+  async function seedKisStatus(): Promise<number> {
+    const key = nextKey();
+    const run = await createRun({ runKey: key, topN: 50, nowMs: Date.UTC(2099, 0, 4, 16, 10), db: q() });
+    if (run.kind !== 'ok') throw new Error('createRun 실패');
+    const cands: CandidateInsert[] = [
+      cand({ ord: 0, symbol: 'NYS:ZOK', secTicker: 'ZOK', cik: 9990001 }),     // 답함
+      cand({ ord: 1, symbol: 'NYS:ZERR', secTicker: 'ZERR', cik: 9990002 }),   // 조회 실패
+      cand({ ord: 2, symbol: 'NYS:ZPEND', secTicker: 'ZPEND', cik: 9990003 }), // 부른 적 없음
+      cand({ ord: 3, symbol: 'NYS:ZOOB', secTicker: 'ZOOB', cik: 9990004 }),   // 답했으나 값이 범위 밖
+    ];
+    const saved = await saveListing({
+      runId: run.data.runId, candidates: cands,
+      sec: { fetchedAtMs: Date.UTC(2099, 0, 4, 16, 10), sha256: 'a'.repeat(64), rows: cands.length },
+      master: { fetchedAtMs: Date.UTC(2099, 0, 4, 16, 10), sha256: 'b'.repeat(64), rows: cands.length },
+      countsJson: '{}', nowMs: Date.UTC(2099, 0, 4, 16, 10),
+      getConnection: async () => (await (pool as mysql.Pool).getConnection()) as never,
+    });
+    if (saved.kind !== 'ok') throw new Error('saveListing 실패');
+    await applyScanOutcome({
+      runId: run.data.runId, nowMs: Date.UTC(2099, 0, 4, 16, 20), db: q(),
+      outcome: { ord: 0, status: 'ok', tomv: 1e11, shar: 1e9, last: 100, curr: 'USD', etypNm: null, rsym: 'NYSZOK' },
+    });
+    await applyScanOutcome({
+      runId: run.data.runId, nowMs: Date.UTC(2099, 0, 4, 16, 21), db: q(),
+      outcome: { ord: 1, status: 'kis_error', error: 'HTTP 500' },
+    });
+    // ord 2 는 손대지 않는다(pending · fetched_at NULL)
+    await applyScanOutcome({
+      runId: run.data.runId, nowMs: Date.UTC(2099, 0, 4, 16, 22), db: q(),
+      outcome: { ord: 3, status: 'ok', tomv: 1e30, shar: 1e30, last: 1e20, curr: 'USD', etypNm: null, rsym: 'NYSZOOB' },
+    });
+    return run.data.runId;
+  }
+
+  dbIt('🔴 G1 답한 종목 true · 조회 실패 false · **부른 적 없는 종목은 지도에 없다**(false 가 아니다)', async () => {
+    const runId = await seedKisStatus();
+    const m = await readRunKisStatus({ runId, db: q() });
+    expect(m.get('NYS:ZOK')).toBe(true);
+    expect(m.get('NYS:ZERR')).toBe(false);
+    // 🔴 `fetched_at IS NOT NULL` 이 빠지면 이 종목이 error NULL 이라 **true** 로 들어온다 → 「답했다」고 거짓 보고
+    expect(m.has('NYS:ZPEND')).toBe(false);
+    expect(m.get('NYS:ZPEND')).toBeUndefined();
+  });
+
+  dbIt('🔴 G2 「답했다/못 했다」를 `error` 열로 가른다 — 둘을 같은 값으로 만들면 제안이 쏟아진다', async () => {
+    const runId = await seedKisStatus();
+    const m = await readRunKisStatus({ runId, db: q() });
+    expect(m.get('NYS:ZOK')).not.toBe(m.get('NYS:ZERR'));     // 두 값이 구별된다
+    expect([...m.values()].filter((v) => v === false)).toHaveLength(1);
+    expect([...m.values()].filter((v) => v === true)).toHaveLength(2);   // ZOK · ZOOB
+  });
+
+  dbIt('🔴 G3 값이 범위를 넘어 NULL 로 저장된 종목도 **답한 것**이다(⑥ 가드와 ⑧-2 가 충돌하지 않는다)', async () => {
+    const runId = await seedKisStatus();
+    const [raw] = await (pool as mysql.Pool).query<mysql.RowDataPacket[]>(
+      'SELECT status, tomv, error FROM overseas_universe_candidate WHERE run_id = ? AND ord = 3', [runId],
+    );
+    expect([raw[0].status, raw[0].tomv, raw[0].error]).toEqual(['ok', null, null]);
+    const m = await readRunKisStatus({ runId, db: q() });
+    expect(m.get('NYS:ZOOB')).toBe(true);                     // 「KIS 조회 불가」로 잘못 읽히지 않는다
+  });
+
+  dbIt('G4 `finalize` 가 status 를 excluded 로 덮어도 「답했다」가 유지된다(status 가 아니라 fetched_at·error 로 본다)', async () => {
+    const runId = await seedKisStatus();
+    await (pool as mysql.Pool).query(
+      "UPDATE overseas_universe_candidate SET status = 'excluded', exclusion = 'cik_dup' WHERE run_id = ? AND ord = 0", [runId],
+    );
+    const m = await readRunKisStatus({ runId, db: q() });
+    expect(m.get('NYS:ZOK')).toBe(true);
+  });
+
+  dbIt('G5 다른 run 의 행이 섞이지 않는다(run_id 로 묶인다)', async () => {
+    const a = await seedKisStatus();
+    const b = await seedKisStatus();
+    const ma = await readRunKisStatus({ runId: a, db: q() });
+    const mb = await readRunKisStatus({ runId: b, db: q() });
+    expect(ma.size).toBe(3);
+    expect(mb.size).toBe(3);
+    const empty = await readRunKisStatus({ runId: 999999, db: q() });
+    expect(empty.size).toBe(0);
+  });
 });
