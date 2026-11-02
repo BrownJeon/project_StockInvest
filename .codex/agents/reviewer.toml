@@ -111,12 +111,6 @@ Tester(qa)와의 차이:
 - 근거 없는 비판
 </operation_contract>
 
-<editable_files>
-## 직접 편집 가능 파일
-
-Reviewer는 어떤 파일도 직접 편집하지 않습니다. 읽기(Read)만 수행합니다.
-</editable_files>
-
 <checklist>
 ## 실매매 특화 체크리스트 (최우선)
 
