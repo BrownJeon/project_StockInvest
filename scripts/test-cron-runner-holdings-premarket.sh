@@ -252,7 +252,9 @@ no_t135() {
           -e 's#^  rm -f "\$CALL_BODY_FILE"$#  rm -f /tmp/cron-runner-$$.out#'
 }
 eq "H9: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
-noc() { grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$'; }
+# (T-143 병합) overseas-universe-refresh 블록·선언은 이 정적 비교의 대상이 아니다 — 양쪽에서 똑같이 뺀다
+#   (기준 ref 에는 없으므로 기준 쪽에서는 무효다). 그 블록 자체는 scripts/test-cron-runner-overseas-universe.sh 가 본다.
+noc() { awk '/^  # >>> overseas-universe-refresh/{s=1} s{ if (/^  # <<< overseas-universe-refresh/) s=0; next } {print}' "$1" | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
 #   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
 no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$' | no_t135; }

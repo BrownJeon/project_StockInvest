@@ -86,6 +86,16 @@ export const ANALYSIS_REASON_KO: Readonly<Record<string, string>> = {
   candle_scale_suspect: '일봉 단위 의심',
   rag_fail: '뉴스 참고 자료 조회 실패',
   no_symbols: '대상 종목 없음',
+  // (T-143 WP-A) 해외 분석이 **대상 목록 원천을 읽지 못해 폴백으로** 돈 회차. 분석 자체는 성공해도 `ok` 가 아니다 —
+  //   목록이 조용히 줄어든 채 몇 주가 지나는 것이 이 프로젝트가 반복해서 겪은 실패 유형이라 홈에 올린다.
+  symbol_source_fail: '분석 대상 목록 원천 조회 실패',
+  // (T-143 WP-A) 해외 분석 대상 자동 산출 스위치가 꺼져 있어 그 달 산출을 하지 않았다
+  universe_disabled: '해외 분석 대상 자동 산출 꺼짐',
+  // (T-143 WP-A) 지난 달 산출이 창 안에 끝나지 않아 만료로 닫혔다 — 자동 목록은 그 전 달 것으로 남아 있다
+  universe_run_expired: '해외 분석 대상 산출 미완료(만료)',
+  // (T-143 WP-A · M-8) 관문 거절이 성공으로 묻히지 않게. 설정(`system_config`)과 러너 상수가 어긋났다는 뜻이다.
+  universe_wrong_weekday: '해외 분석 대상 산출 — 설정된 요일·회차가 아님',
+  universe_outside_window: '해외 분석 대상 산출 — 설정된 시간 창 밖',
 };
 
 /** 분석 사유 코드 → 말. 없으면 null, 모르는 코드는 「알 수 없는 사유」. */
@@ -226,6 +236,8 @@ export const JOB_NAME_KO: Readonly<Record<string, string>> = {
   'holdings-premarket': '보유 종목 개장 전 공시 확인',
   'holding-checker': '보유 종목 점검',
   'stop-alert': '손절 알림',
+  // (T-143 WP-A) 월 1회 산출. 가이드 0.2 의 이름을 쓴다 — 폐기된 T-137 의 「해외 분석 종목 갱신」이 아니다
+  'overseas-universe-refresh': '해외 분석 대상 갱신',
 };
 const NEWS_PEEK = /^news-peek-(domestic|overseas)-(\d{2})$/;
 

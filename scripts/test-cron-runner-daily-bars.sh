@@ -255,7 +255,8 @@ eq "D5: 같은 조건 변경 전 러너 최대 간격도 260초(daily-bars 가 �
 echo "D6. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 no_peek()   { awk '/^  # >>> news-fetch-peek/{s=1} s{ if (/^  # <<< news-fetch-peek/) s=0; next } {print}' "$1" \
-  | awk '/^  # >>> holdings-premarket/{s=1} s{ if (/^  # <<< holdings-premarket/) s=0; next } {print}' | grep -v '^HOLDINGS_PREMARKET_'; }   # (T-118 병합) peek · (T-119 병합) holdings-premarket 블록·선언 — 양쪽에서 똑같이
+  | awk '/^  # >>> holdings-premarket/{s=1} s{ if (/^  # <<< holdings-premarket/) s=0; next } {print}' | grep -v '^HOLDINGS_PREMARKET_' \
+  | awk '/^  # >>> overseas-universe-refresh/{s=1} s{ if (/^  # <<< overseas-universe-refresh/) s=0; next } {print}' | grep -v '^UNIVERSE_CURL_MAX_TIME='; }   # (T-118 병합) peek · (T-119 병합) holdings-premarket · (T-143 병합) overseas-universe-refresh 블록·선언 — 양쪽에서 똑같이
 strip_new() { no_peek "$1" | awk '/^  # >>> daily-bars-daily/{s=1} s{ if (/^  # <<< daily-bars-daily/) s=0; next } {print}' \
   | grep -v '^DAILY_BARS_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 strip_old() { no_peek "$1" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }

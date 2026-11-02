@@ -146,6 +146,94 @@ describe('classifyRun (§2.3)', () => {
     expect(full.length).toBeGreaterThan(2048);
     expect(classifyRun('post-market-domestic', 200, full.slice(0, 2048))).toMatchObject({ status: 'failed', errorCode: 'ai_fail' });
   });
+  it('🔴 (T-143) 해외 분석이 대상 목록 원천을 못 읽고 폴백으로 돌았으면 200 이어도 degraded', () => {
+    // 지금까지 이 신호는 pm2 로그·응답 본문까지만 갔다 → 홈 「서버 최근 활동」에 올린다.
+    // 목록이 조용히 줄어든 채 몇 주가 지나는 것이 반복해서 겪은 실패 유형이다(WMT·BRK.B 12일 침묵).
+    const base = { ok: true, market: 'overseas', symbolsEvaluated: 50, candidatesFound: 3, signalsCreated: 0 };
+    expect(C('post-market-overseas', 200, { ...base, errors: ['symbol_source_fail:universe_list'] }))
+      .toMatchObject({ status: 'degraded', errorCode: null, degradedReason: 'symbol_source_fail' });
+    expect(C('post-market-overseas', 200, { ...base, errors: ['symbol_source_fail:position_state', 'symbol_source_fail:universe_list'] }))
+      .toMatchObject({ status: 'degraded', degradedReason: 'symbol_source_fail' });
+    // 접두가 같기만 한 다른 코드는 걸리지 않는다
+    expect(C('post-market-overseas', 200, { ...base, errors: ['symbol_source_failure_x'] })).toMatchObject({ status: 'ok' });
+    // 사유 없는 정상 회차는 그대로 ok
+    expect(C('post-market-overseas', 200, { ...base, errors: [] })).toMatchObject({ status: 'ok', degradedReason: null });
+    // 건너뜀이 더 중대하다 — 그쪽이 이긴다
+    expect(C('post-market-overseas', 200, { ...base, errors: ['symbol_source_fail:universe_list'], skipped: 'fx_unknown' }))
+      .toMatchObject({ status: 'skipped', degradedReason: 'skip:fx_unknown' });
+    // 국내 분기는 건드리지 않았다(그쪽 errors 규칙 그대로)
+    expect(C('post-market-domestic', 200, { ok: true, market: 'domestic', errors: ['symbol_source_fail:universe_list'] }))
+      .toMatchObject({ status: 'ok' });
+    // 🔴 해외의 candle_fail 판정은 **바꾸지 않았다**(국내처럼 partial 로 올리는 것은 이 작업 범위가 아니다)
+    expect(C('post-market-overseas', 200, { ...base, errors: ['candle_fail:NYS:X:boom'] })).toMatchObject({ status: 'ok' });
+  });
+  it('🔴 (T-143 M-2) 월간 산출의 실패·만료가 기록에 남는다 — 전에는 왜 실패했는지 사라지고 만료는 아예 안 올랐다', () => {
+    // 실패: `status:'failed'` 때문에 error_code 가 늘 `failed` 로만 남던 것을 `failCode` 로 가른다
+    expect(C('overseas-universe-refresh', 200, { ok: false, status: 'failed', failCode: 'insufficient_candidates', lastError: 'insufficient_candidates:49/50' }))
+      .toMatchObject({ status: 'failed', errorCode: 'insufficient_candidates' });
+    expect(C('overseas-universe-refresh', 200, { ok: false, status: 'expired', failCode: 'window_passed' }))
+      .toMatchObject({ status: 'failed', errorCode: 'window_passed' });
+    // failCode 가 없으면 status, 그것도 없으면 고정값
+    expect(C('overseas-universe-refresh', 200, { ok: false, status: 'failed' })).toMatchObject({ errorCode: 'failed' });
+    expect(C('overseas-universe-refresh', 200, { ok: false })).toMatchObject({ errorCode: 'universe_failed' });
+    // 「직전 달 산출이 완료되지 않았다」는 **매 호출 되풀이되는** 조건이라 슬롯 최종값에 남는다
+    expect(C('overseas-universe-refresh', 200, { ok: true, status: 'listing', prevMonthIncomplete: true }))
+      .toMatchObject({ status: 'degraded', degradedReason: 'universe_run_expired' });
+    expect(C('overseas-universe-refresh', 200, { ok: true, status: 'listing', prevMonthIncomplete: false }))
+      .toMatchObject({ status: 'ok' });
+    // 🔴 「닫은 수」로는 판정하지 않는다 — 한 호출에만 있어 ODKU 가 덮어쓴다(Reviewer r2 ②)
+    expect(C('overseas-universe-refresh', 200, { ok: true, status: 'listing', expiredRuns: 1 }))
+      .toMatchObject({ status: 'ok' });
+    // 꺼짐·표 없음은 건너뜀 그대로
+    expect(C('overseas-universe-refresh', 200, { ok: true, status: 'disabled', skipped: 'universe_disabled' }))
+      .toMatchObject({ status: 'skipped', degradedReason: 'skip:universe_disabled' });
+    // 다른 잡은 이 분기에 걸리지 않는다
+    expect(C('edgar-sync', 200, { ok: true, prevMonthIncomplete: true })).toMatchObject({ status: 'ok' });
+  });
+
+  it('🔴 (Reviewer r2 ③) **슬롯 최종값**까지 본다 — 분류기 한 줄만 보면 덮어쓰기를 놓친다', () => {
+    // 왜 이 시험이 필요한가: 창 안 호출이 전부 같은 슬롯(01:10)으로 모이고 `RUN_ODKU` 가
+    //   `IF(VALUES(ended_at) > ended_at, VALUES(status), status)` 로 **마지막 호출 상태를 남긴다.**
+    //   한 호출만 degraded 이면 그 뒤 ok 가 지운다 — 분류기 단위 시험으로는 보이지 않는다.
+    const t0 = Date.parse('2026-12-06T01:10:00+09:00');
+    const spool = (minute: number, body: unknown) => [
+      'v1', 'overseas-universe-refresh', '/api/cron/overseas-universe-refresh', '200',
+      String(t0 + minute * 60_000), String(t0 + minute * 60_000 + 1_000),
+      Buffer.from(JSON.stringify(body), 'utf8').toString('base64'),
+    ].join('\t');
+
+    // (a) 덮어쓰기 규칙이 실제로 「마지막 호출이 이긴다」인지 SQL 에서 확인한다(모형을 손으로 옮기지 않는다)
+    expect(RUN_ODKU).toContain("status = IF(VALUES(ended_at) > IFNULL(ended_at, '1000-01-01 00:00:00'), VALUES(status), status)");
+    expect(RUN_ODKU).toContain('degraded_reason = IF(');
+
+    // (b) 되풀이되는 조건: 창 안 모든 호출이 prevMonthIncomplete → 마지막 행도 degraded
+    const repeated = buildRows([
+      spool(0, { ok: true, status: 'listing', prevMonthIncomplete: true, expiredRuns: 1 }),
+      spool(4, { ok: true, status: 'scan_partial', prevMonthIncomplete: true, expiredRuns: 0 }),
+      spool(140, { ok: true, status: 'complete', final: true, prevMonthIncomplete: true, expiredRuns: 0 }),
+    ]).runRows;
+    expect(new Set(repeated.map((r) => r.scheduled_slot_at)).size).toBe(1);   // 한 슬롯으로 모인다
+    const lastRepeated = [...repeated].sort((a, b) => (a.ended_at < b.ended_at ? -1 : 1)).at(-1)!;
+    expect([lastRepeated.status, lastRepeated.degraded_reason]).toEqual(['degraded', 'universe_run_expired']);
+
+    // (c) 되풀이되지 않는 조건(옛 방식): 첫 호출만 신호 → 마지막 행은 ok = **슬롯에서 사라진다**
+    const once = buildRows([
+      spool(0, { ok: true, status: 'listing', expiredRuns: 1 }),
+      spool(4, { ok: true, status: 'scan_partial', expiredRuns: 0 }),
+      spool(140, { ok: true, status: 'complete', final: true, expiredRuns: 0 }),
+    ]).runRows;
+    const lastOnce = [...once].sort((a, b) => (a.ended_at < b.ended_at ? -1 : 1)).at(-1)!;
+    expect([lastOnce.status, lastOnce.degraded_reason]).toEqual(['ok', null]);
+
+    // (d) 실패는 종결 분기가 되풀이하므로 마지막에도 남는다
+    const failed = buildRows([
+      spool(0, { ok: true, status: 'listing', prevMonthIncomplete: false }),
+      spool(4, { ok: false, status: 'failed', failCode: 'insufficient_candidates' }),
+      spool(140, { ok: false, status: 'failed', failCode: 'insufficient_candidates' }),
+    ]).runRows;
+    const lastFailed = [...failed].sort((a, b) => (a.ended_at < b.ended_at ? -1 : 1)).at(-1)!;
+    expect([lastFailed.status, lastFailed.error_code]).toEqual(['failed', 'insufficient_candidates']);
+  });
   it('해외 200 정상 건너뜀(overseas_disabled·no_new_session·us_session_open) → skipped', () => {
     for (const w of ['overseas_disabled', 'no_new_session', 'us_session_open']) {
       expect(C('post-market-overseas', 200, { ok: true, status: 'ok', skipped: w })).toMatchObject({ status: 'skipped', degradedReason: `skip:${w}` });

@@ -2,7 +2,7 @@
  * T-130 WP1 — 설정 화면 터치 영역·키보드 (데모 v1 승인: D1-A 값 행 전체 탭 · D2-A 스위치 button · D9-A 확인 시트 없음).
  *
  * 무엇을 고정하나
- *  (a) 스위치 13개: `<button type="button" role="switch">` 이고 이름(aria-label) = 행 제목. Space·Enter 는 **브라우저가** 포커스된 button 의
+ *  (a) 스위치 14개(수는 `SWITCH_LABELS.length` 로 센다): `<button type="button" role="switch">` 이고 이름(aria-label) = 행 제목. Space·Enter 는 **브라우저가** 포커스된 button 의
  *      click 으로 바꿔 주는 기본 동작이다. 여기(jsdom 없음)서는 그 전제 — 네이티브 button · `disabled` 속성 없음(포커스 유지) · tabIndex 없음 ·
  *      키 처리기는 **Enter 길게 누름(반복)만** 기본 동작을 취소(Reviewer F2) — 와 click 경로(onClick)를 본다. 실제 키 입력은 QA 가 브라우저에서 확인한다.
  *      잠김(aria-disabled)·disabled 이면 click 이 아무것도 바꾸지 않는다. 스위치 행은 행 전체를 누르게 하지 않는다.
@@ -131,7 +131,7 @@ function baseSafety(over: Record<string, unknown> = {}): Record<string, unknown>
     ...over,
   };
 }
-const NOTIFY = { autoSubmit: true, pending: false, entry: true, manual: true };
+const NOTIFY = { autoSubmit: true, pending: false, entry: true, manual: true, universe: true };
 const EXCHANGES = { kis: { configured: true, mock: false, overseasEnabled: true } };
 const REPORT = { enabled: true, channel: 'telegram', mode: 'rolling', intervalMin: 60, anchorKst: null, lastSentAt: null };
 const STRATS = [{ id: 's1', enabled: true, backtestIntervalM: 5, nextBacktestAt: null }];
@@ -178,7 +178,10 @@ function nestedInteractive(html: string): string[] {
 const SWITCH_LABELS = [
   '승인 후 진입 감시 (하이브리드)', LIVE_TRADING_LABEL, '모든거래차단', '자동 청산 엔진', '해외 장마감 후 분석 (미국 시나리오)',
   '변동폭 가드 활성화', '동적 종목 선별 (Universe)', '분석가 (Analyst)',
-  '자동 제출 알람', '승인 요청 알람', '진입 감시 발동 알람', '수동 시나리오 등록 알람', '리포트 수신 활성화',
+  '자동 제출 알람', '승인 요청 알람', '진입 감시 발동 알람', '수동 시나리오 등록 알람',
+  // (T-143 WP-A) 해외 분석 대상 변경 알림 — 알람 4개 뒤·리포트 앞. 아래 수치 단언은 이 배열 길이를 쓴다
+  '해외 분석 대상 변경 알림',
+  '리포트 수신 활성화',
 ];
 const SAFETY_SWITCHES = [LIVE_TRADING_LABEL, '모든거래차단', '자동 청산 엔진'];
 const VALUE_ROWS = ['1회 주문 최대 (%)', '일일 누적 최대 (%)', '비교 윈도우', '경고 임계치', '차단 임계치', '패닉 임계치', '평가 주기'];
@@ -211,11 +214,11 @@ afterEach(() => {
 
 // ─── (a) 스위치 ─────────────────────────────────────────────────────────────
 
-describe('(a) 스위치 13개 — button role=switch, 이름 = 행 제목, 키보드로 닿음 (D2-A)', () => {
-  test('SSR: 스위치 13개가 모두 <button type="button" role="switch">, aria-label 순서 = 행 제목, div 스위치·tabindex·disabled 속성 없음', () => {
+describe('(a) 스위치 전부 — button role=switch, 이름 = 행 제목, 키보드로 닿음 (D2-A)', () => {
+  test('SSR: 스위치 전부가 <button type="button" role="switch">, aria-label 순서 = 행 제목, div 스위치·tabindex·disabled 속성 없음', () => {
     const html = ssr();
     const tags = html.match(/<[a-z]+ [^>]*role="switch"[^>]*>/g) ?? [];
-    expect(tags).toHaveLength(13);
+    expect(tags).toHaveLength(SWITCH_LABELS.length);
     for (const t of tags) {
       expect(t.startsWith('<button type="button" role="switch" aria-checked="')).toBe(true);
       expect(t).not.toMatch(/tabindex|\sdisabled=""/);
@@ -229,7 +232,7 @@ describe('(a) 스위치 13개 — button role=switch, 이름 = 행 제목, 키�
   test('스위치 button: 누르는 영역 44×44(-10px 여백으로 행 높이 그대로), 안쪽 그림 44×24·손잡이 20×20 그대로', () => {
     const html = ssr();
     const tags = html.match(/<button type="button" role="switch"[^>]*style="([^"]*)"><span style="([^"]*)"><span style="([^"]*)">/g) ?? [];
-    expect(tags).toHaveLength(13);
+    expect(tags).toHaveLength(SWITCH_LABELS.length);
     for (const tag of tags) {
       const [, outer, pic, knob] = /style="([^"]*)"><span style="([^"]*)"><span style="([^"]*)">/.exec(tag)!;
       expect(outer).toContain('width:44px;height:44px;margin:-10px 0');
@@ -295,7 +298,7 @@ describe('(a) 스위치 13개 — button role=switch, 이름 = 행 제목, 키�
       seen += 1;
       expect(ancestors.filter(a => typeof a.props.onClick === 'function')).toHaveLength(0);
     });
-    expect(seen).toBe(13);
+    expect(seen).toBe(SWITCH_LABELS.length);
     expect(nestedInteractive(ssr())).toEqual([]);
     expect(nestedInteractive(ssr({ dirty: true }))).toEqual([]);
   });
@@ -517,9 +520,9 @@ describe('(b) 값 행 7개 — 행 전체가 버튼, 입력칸 44px, 저장 방�
 // ─── (c) 잠김 ───────────────────────────────────────────────────────────────
 
 describe('(c) 안전 값을 못 읽음 → 세 안전 스위치 잠김 유지', () => {
-  test('SSR safety=null: aria-disabled 는 실거래여부·모든거래차단·자동 청산 엔진 3개만, 나머지 10개는 잠기지 않는다', () => {
+  test('SSR safety=null: aria-disabled 는 실거래여부·모든거래차단·자동 청산 엔진 3개만, 나머지 11개는 잠기지 않는다', () => {
     const tags = ssr({ safety: null }).match(/<button type="button" role="switch"[^>]*>/g) ?? [];
-    expect(tags).toHaveLength(13);
+    expect(tags).toHaveLength(SWITCH_LABELS.length);
     const locked = tags.filter(t => t.includes('aria-disabled="true"')).map(t => /aria-label="([^"]+)"/.exec(t)?.[1]);
     expect(locked).toEqual(SAFETY_SWITCHES);
   });

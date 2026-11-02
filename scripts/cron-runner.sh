@@ -167,6 +167,8 @@ BROKER_FILLS_CURL_MAX_TIME=90
 # 아래 daily-bars 블록의 yield 규칙으로 같은 틱에 겹치지 않는다. 상한에 걸리면 curl 이 000 으로 끝나고(그날 날짜파일은 기록 — 재시도 없음)
 # 서버 쪽 실행은 끝까지 갈 수 있다(라우트 single-flight 가 겹침을 막고, 저장은 가산 upsert 라 다음 날 증분이 이어받는다).
 DAILY_BARS_CURL_MAX_TIME=120
+# (T-143 WP-A) 해외 분석 대상 월간 산출 호출 한 번의 curl 시간 상한(초). 라우트 자체 예산이 100초라 네트워크 여유를 더해 120 이다.
+UNIVERSE_CURL_MAX_TIME=120
 CALL_MAX_TIME=""
 # 시도 기록 파일 한 줄: "<YYYY-MM-DD> <그날 시도 횟수> <마지막 시도 시각 epoch 초(시작에 기록, 끝나면 종료 시각으로 갱신)>"
 # pmo_due TODAY NOW DONE_FILE ATTEMPT_FILE → 0(지금 부를 차례) / 1(부르지 않음)
@@ -758,6 +760,44 @@ while true; do
     # 성공·실패 무관하게 기록 (날짜파일 선언부 주석 참고) — 실패해도 하루 1회로 끝낸다.
     echo "$TODAY" > "$TRAINSET_LAST_RUN_FILE"
   fi
+  # >>> overseas-universe-refresh (T-143 WP-A) — scripts/test-cron-runner-overseas-universe.sh 가 이 블록을 가짜 시각으로 시험한다
+  # 매월 **첫째 일요일 01:10~05:50 KST**, 창 안에서 **2분마다** 1회. 라우트가 100초 예산 안에서 한 단계만
+  # (listing → scan 청크 → retry → finalize) 처리하고 커서를 DB 에 저장하므로 **한 번에 끝나지 않는다** —
+  # 후보 약 2,000종목 × 실측 0.46~0.93초 = 15~43분이라 300초 하트비트에 들어갈 수가 없다.
+  #
+  # 왜 평일이 아니라 일요일인가: 평일 야간은 전부 **미국 정규장**(KST 23:30~06:00)이다. 그 시간에 30~75분 걸리는
+  # 산출을 돌리면 01시 종목과 05시 종목을 **다른 시각의 가격**으로 비교하게 된다 — 시총 순위에서 받아들일 수 없다.
+  # 일요일 KST = 토요일 ET 라 미국·국내 모두 닫혀 있고 모든 종목이 금요일 종가 하나다(서머타임과도 무관하다).
+  #
+  # 🔴 왜 「끝났으면 그만 부르기」를 응답 본문으로 판정하지 않는가: `call()` 이 응답 본문 파일을 함수 끝에서 지우고
+  #   (`rm -f "$CALL_BODY_FILE"`), 그 구조는 scripts/test-cron-runner-job-run-log.sh J8·J13 이 **줄 단위로 고정**한다
+  #   (call() 안 CALL_BODY_FILE 참조는 jrl_hook 두 줄뿐이어야 한다). 본문을 보려고 call() 을 고치면 그 시험을 깨야 하므로
+  #   그렇게 하지 않는다. 대신 **호출 수를 창·간격으로 묶는다**: 창 280분 ÷ 2분 = 최대 140회.
+  #   이달 일이 끝난 뒤의 호출은 라우트가 **외부 호출 0건**으로 끝낸다(run 이 complete/failed/expired 면 run 1줄만 읽고
+  #   `final:true` 를 돌려준다). 140 회는 `job_run_log.attempt`(TINYINT UNSIGNED, 255) 안이고, 창 전체가 한 슬롯이라
+  #   기록은 **run 1건 = 행 1건**이다(재시도 = 같은 슬롯 → ODKU attempt+1).
+  #
+  # 요일·회차·창은 **러너와 라우트 둘 다** 검사한다(러너는 비용 절약, 라우트는 안전). 러너는 `system_config` 를 읽지
+  # 못하므로 아래 값은 **상수**다 — 설정(`overseas_universe_refresh`)을 바꾸면 이 블록도 함께 바꾼다.
+  # 이 틱 최악 = curl 상한 120 + stop-alert 20 + 매 분 잡 약 30 + sleep 60 = 약 230초 < 300초(순찰 재시작 기준).
+  UNIV_DOW=$(date '+%u')
+  UNIV_DOM=$(date '+%d')
+  UNIV_MM=$(date '+%M')
+  case "$UNIV_MM" in [0-5][0-9]) ;; *) UNIV_MM="" ;; esac   # 분을 읽을 수 없으면 이 틱은 돌지 않는다
+  UNIV_WINDOW=no
+  if [ -n "$UNIV_MM" ] && [ $((10#$UNIV_MM % 2)) -eq 0 ]; then
+    if [ "$HH" = "01" ] && [ "$UNIV_MM" -ge 10 ]; then UNIV_WINDOW=yes; fi
+    case "$HH" in
+      02|03|04) UNIV_WINDOW=yes ;;
+      05) [ "$UNIV_MM" -lt 50 ] && UNIV_WINDOW=yes ;;
+    esac
+  fi
+  if [ "$UNIV_DOW" = "7" ] && [ "$UNIV_DOM" -le 7 ] && [ "$UNIV_WINDOW" = "yes" ]; then
+    CALL_MAX_TIME="$UNIVERSE_CURL_MAX_TIME"   # 이 호출에만 시간 상한
+    call "/api/cron/overseas-universe-refresh" "overseas-universe-refresh"
+    CALL_MAX_TIME=""
+  fi
+  # <<< overseas-universe-refresh
   jrl_flush "${JRL_TICK_T0:-}" 2>/dev/null || true   # T-112 jrl
   i=$(( (i + 1) % 1440 ))   # 24h 사이클
   sleep 60

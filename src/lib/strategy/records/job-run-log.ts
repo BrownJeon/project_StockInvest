@@ -326,6 +326,28 @@ export function classifyRun(label: string, http: number, body: string | null): C
     return res('failed', `HTTP=${String(http).padStart(3, '0')}${w ? `:${w}` : ''}`, codeWord(b.skipped) ?? codeWord(b.aborted));
   }
   // 200
+  /**
+   * (T-143 WP-A · Reviewer M-2) 해외 분석 대상 **월간 산출** — 실패·만료가 사람에게 닿게 한다.
+   *
+   * 왜 일반 `ok:false` 분기보다 **먼저** 보나: 그 분기는 `firstWord(b.status, …)` 를 쓰고 이 라우트의
+   * `status` 가 `'failed'`·`'expired'` 라서 **error_code 가 늘 `failed` 로만** 남는다(왜 실패했는지 사라진다).
+   * 이 잡은 `failCode`(분류어)를 따로 싣는다.
+   *
+   * `prevMonthIncomplete` = **직전 달 run 이 `complete` 가 아니다**. 그 회차 자체는 정상이지만 「한 달 산출이
+   * 끝나지 않았다」는 사실은 남아야 한다 → `degraded`.
+   *
+   * 🔴 **`expiredRuns`(닫은 수)를 쓰지 않는다**(Reviewer r2 ②). 그 값은 지난 달 run 을 닫는 **단 한 호출**에서만
+   * 0보다 크고, 창 안 호출이 전부 같은 슬롯(01:10)으로 모여 `RUN_ODKU` 가 `IF(VALUES(ended_at) > ended_at, …)` 로
+   * **마지막 호출 상태로 덮어쓰므로** 그 신호는 슬롯 최종값에서 사라진다(실측 탐침: 01:10 degraded → 01:14 ok →
+   * 최종 ok). `prevMonthIncomplete` 는 라우트가 **매 호출 다시 읽어** 같은 값을 주므로 끝까지 남는다 —
+   * 실패 쪽이 살아남는 것과 같은 방식이다(이후 호출이 같은 `ok:false` 를 되풀이한다).
+   */
+  if (label === 'overseas-universe-refresh') {
+    if (b.ok === false) {
+      return res('failed', firstWord(b.failCode, b.status) ?? 'universe_failed');
+    }
+    if (b.prevMonthIncomplete === true) return res('degraded', null, 'universe_run_expired');
+  }
   if (b.ok === false) return res('failed', firstWord(b.status, b.error, b.skipped, b.aborted) ?? 'ok_false');
 
   if (label === 'post-market-domestic' && Array.isArray(b.errors)) {
@@ -355,6 +377,22 @@ export function classifyRun(label: string, http: number, body: string | null): C
   if (b.partial === true) {
     const r = num(b.remaining);
     return res('partial', null, r !== null ? `remaining=${r}` : 'partial');
+  }
+  /**
+   * (T-143 WP-A) 해외 장마감 분석이 **대상 목록 원천을 읽지 못한 채** 폴백으로 돈 회차 → `ok` 가 아니라 `degraded`.
+   *
+   * 왜 여기인가: 이 신호는 지금 pm2 로그와 응답 본문(`errors`)까지만 가고 **홈 화면에 오지 않는다.**
+   * 목록이 조용히 줄어든 채 몇 주가 지나는 것이 이 프로젝트가 반복해서 겪은 실패 유형이라(WMT·BRK.B 12일 침묵)
+   * 사람이 홈 「서버 최근 활동」에서 보게 한다.
+   *
+   * 자리는 **건너뜀·부분 판정 뒤**다 — 그쪽이 더 중대한 상태이고, 이 저하는 「분석은 됐지만 입력이 의심스럽다」다.
+   * `candle_fail`(일부 종목 일봉 실패)을 국내처럼 `partial` 로 올리는 것은 **이 작업 범위가 아니다** —
+   * 해외 분기의 기존 판정을 넓히면 지금 쓰이는 홈 지표의 뜻이 함께 바뀐다.
+   */
+  if (label === 'post-market-overseas' && Array.isArray(b.errors)) {
+    const src = b.errors.filter((e): e is string => typeof e === 'string')
+      .filter((e) => e === 'symbol_source_fail' || e.startsWith('symbol_source_fail:'));
+    if (src.length > 0) return res('degraded', null, 'symbol_source_fail');
   }
   if (isNewsIngestLabel(label) && counts && counts.processed === 0) return res('degraded', null, 'news=0');
   if (isPeekLabel(label) && Array.isArray(b.capture)) {

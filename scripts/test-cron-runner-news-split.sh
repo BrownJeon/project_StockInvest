@@ -211,8 +211,8 @@ eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 # (T-115) 새 뉴스 블록 news-fetch-domestic-pm 도 뉴스 블록이라 같이 뺀다(선언 NEWS_FETCH_DOMESTIC_PM_* 는 아래 '^NEWS_FETCH_' 가 뺀다).
 #   그 블록이 바꾼 것이 없는지는 F 의 정적 비교(T-103 러너 대비)가 따로 본다.
 # (T-117) daily-bars-daily·(T-119) holdings-premarket 블록과 DAILY_BARS_*·HOLDINGS_PREMARKET_* 선언도 뺀다(그 블록 밖이 바뀌지 않았는지는 test-cron-runner-daily-bars.sh D6 가 T-116 러너 대비로 본다).
-strip_new() { awk '/^  # >>> (news-fetch-(split|domestic-pm|peek)|daily-bars-daily|holdings-premarket)/{s=1} s{ if (/^  # <<< (news-fetch-(split|domestic-pm|peek)|daily-bars-daily|holdings-premarket)/) s=0; next } {print}' "$1" \
-  | grep -v '^NEWS_FETCH_' | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
+strip_new() { awk '/^  # >>> (news-fetch-(split|domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh)/{s=1} s{ if (/^  # <<< (news-fetch-(split|domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh)/) s=0; next } {print}' "$1" \
+  | grep -v '^NEWS_FETCH_' | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-143 병합) overseas-universe-refresh 추가
 strip_old() { awk '/^  # 매일 06:00 KST: M4 KB 뉴스 fetch/{s=1} s{ if (/^  fi$/) s=0; next } {print}' "$1" \
   | grep -v '^NEWS_FETCH_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
@@ -331,8 +331,8 @@ if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime" | grep -v '^/api/cron/da
    [ "$(grep '^/api/cron/news-fetch' "$NA/maxtime" | grep -vc 'mode=peek')" = "0" ]; then ok "F6: --max-time 목록 = T-103 러너(뉴스 ingest 에는 없음 — T-118 peek 상한은 peek 시험)"; else bad "F6: --max-time 목록이 다르다"; fi
 
 # F7. 정적 — 새 블록·선언·주석을 빼면 T-103 러너와 실행 줄이 한 글자도 같다
-strip115() { awk '/^  # >>> (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket)/{s=1} s{ if (/^  # <<< (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket)/) s=0; next } {print}' "$1" \
-  | grep -v '^NEWS_FETCH_DOMESTIC_PM_' | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket) 블록·선언 제외
+strip115() { awk '/^  # >>> (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh)/{s=1} s{ if (/^  # <<< (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh)/) s=0; next } {print}' "$1" \
+  | grep -v '^NEWS_FETCH_DOMESTIC_PM_' | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket·T-143 overseas-universe-refresh) 블록·선언 제외
 strip103() { grep -v '^[[:space:]]*#' "$1" | grep -v '^[[:space:]]*$'; }
 if diff <(strip115 "$RUNNER_NOJRL") <(strip103 "$BEFORE115") > /dev/null; then ok "🔴 F7: 새 블록·선언·주석 밖 실행 줄 = T-103 러너 ($(strip115 "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"; else bad "F7: 새 블록 밖 실행 줄이 T-103 과 다르다"; diff <(strip115 "$RUNNER_NOJRL") <(strip103 "$BEFORE115") | head -10; fi
 nb="$(awk '/^  # >>> news-fetch-domestic-pm/,/^  # <<< news-fetch-domestic-pm/' "$RUNNER")"

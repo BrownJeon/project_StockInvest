@@ -77,6 +77,10 @@ export async function GET() {
   const notifySignalPending    = overrides['notify_signal_pending']     !== undefined ? Boolean(overrides['notify_signal_pending'])     : true;
   const notifySignalEntry      = overrides['notify_signal_entry']       !== undefined ? Boolean(overrides['notify_signal_entry'])       : true;
   const notifySignalManual     = overrides['notify_signal_manual']      !== undefined ? Boolean(overrides['notify_signal_manual'])      : true;
+  // (T-143 WP-A) 해외 분석 대상(수동 목록 변경 제안 · 자동 NYSE 상위 목록 변동) 알림. 꺼져 있으면 **텔레그램만** 멈춘다 —
+  //   홈 「확인 필요」의 제안 줄은 제안 행 존재로 독립 동작하므로 이 토글과 무관하게 늘 나온다(가이드 §7.3).
+  //   키 이름은 `notify_signal_%` LIKE 패턴 안이라 `getOverrides()` 가 이미 읽어 온다(별도 조회 없음).
+  const notifySignalUniverse   = overrides['notify_signal_universe']    !== undefined ? Boolean(overrides['notify_signal_universe'])    : true;
 
   const volGuardEnabled   = overrides['vol_guard_enabled']    !== undefined ? Boolean(overrides['vol_guard_enabled'])    : (process.env.VOL_GUARD_ENABLED === 'true');
   const volGuardWindowMin = overrides['vol_guard_window_min'] !== undefined ? Number(overrides['vol_guard_window_min'])  : Number(process.env.VOL_GUARD_WINDOW_MIN ?? 60);
@@ -163,6 +167,7 @@ export async function GET() {
       pending:    notifySignalPending,
       entry:      notifySignalEntry,
       manual:     notifySignalManual,
+      universe:   notifySignalUniverse,
     },
     report: {
       enabled:     overrides['report_trade_enabled']      !== undefined ? Boolean(overrides['report_trade_enabled'])    : false,
@@ -214,6 +219,8 @@ const ALLOWED_PATCH_KEYS: Record<string, string> = {
   notifySignalPending:     'notify_signal_pending',
   notifySignalEntry:       'notify_signal_entry',
   notifySignalManual:      'notify_signal_manual',
+  // (T-143 WP-A) 판독기는 `src/lib/universe/refresh-notify.ts` 의 NOTIFY_UNIVERSE_KEY — 같은 리터럴이어야 한다
+  notifySignalUniverse:    'notify_signal_universe',
 };
 
 // 시장별·KRW 고정 한도 키는 정책 변경(2026-04-26)으로 폐기. 한도는 단일 pct만 사용.

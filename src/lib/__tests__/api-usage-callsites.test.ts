@@ -315,6 +315,7 @@ describe('src 의 기록 지점 고정 — op 리터럴·배선이 바뀌면 깨
     'lib/research/data/yahoo-finance-source.ts trackCall yahoo-finance chart.daily',
     'lib/strategy/ai-filter.ts trackChild claude-cli ai-filter.select',
     'lib/strategy/market-context-client.ts trackCall m4 market-context',
+    'lib/universe/kis-overseas-master.ts trackCall kis-master download.nyse',
   ].sort();
 
   it('기록 지점 목록이 기대값과 정확히 같다(op 오타·호출 삭제·새 지점 추가 모두 여기서 깨진다)', () => {
@@ -353,7 +354,7 @@ describe('🔒 금지 정보 — 위 시험을 모두 돈 줄에 토큰·URL·�
       'bot.get-updates', 'alert.send-message', 'test.send-message', 'test.get-me', 'webhook.send', 'test.webhook',
       'market-context', 'news.fetch', 'chat', 'kb.upsert', 'kb.search', 'kb.ensure-collection', 'llm.call',
       'ai-filter.select', 'send-mail', 'chart.daily', 'token.exchange', 'profile.get', 'verify.token-p',
-      'download.kospi', 'download.kosdaq', 'latest.frankfurter', 'latest.open-er-api', 'latest.exchangerate-host',
+      'download.kospi', 'download.kosdaq', 'download.nyse', 'latest.frankfurter', 'latest.open-er-api', 'latest.exchangerate-host',
     ];
     for (const op of OPS_LOCAL) expect(checkOp(op)).toBeNull();
     expect([...OPS_LOCAL].sort()).toEqual([...OPS].sort());
@@ -366,5 +367,5 @@ const OPS = [
   'bot.get-updates', 'alert.send-message', 'test.send-message', 'test.get-me', 'webhook.send', 'test.webhook',
   'market-context', 'news.fetch', 'chat', 'kb.upsert', 'kb.search', 'kb.ensure-collection', 'llm.call',
   'ai-filter.select', 'send-mail', 'chart.daily', 'token.exchange', 'profile.get', 'verify.token-p',
-  'download.kospi', 'download.kosdaq', 'latest.frankfurter', 'latest.open-er-api', 'latest.exchangerate-host',
+  'download.kospi', 'download.kosdaq', 'download.nyse', 'latest.frankfurter', 'latest.open-er-api', 'latest.exchangerate-host',
 ];

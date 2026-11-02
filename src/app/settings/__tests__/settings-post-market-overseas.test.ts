@@ -65,7 +65,7 @@ function baseSafety(over: Record<string, unknown> = {}): Record<string, unknown>
     ...over,
   };
 }
-const NOTIFY = { autoSubmit: true, pending: true, entry: true, manual: true };
+const NOTIFY = { autoSubmit: true, pending: true, entry: true, manual: true, universe: true };
 const EXCHANGES = { kis: { configured: true, mock: false, overseasEnabled: true } };
 
 function text(html: string): string {

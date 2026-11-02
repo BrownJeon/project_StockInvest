@@ -245,8 +245,8 @@ eq "P6: 국내 10시 날짜파일 없음(호출 안 했으므로)" "$(df "$NE" n
 # ── P7. 정적 ──────────────────────────────────────────────────────────────────────
 echo "P7. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
-strip_blk() { awk '/^  # >>> (news-fetch-peek|daily-bars-daily|holdings-premarket)/{s=1} s{ if (/^  # <<< (news-fetch-peek|daily-bars-daily|holdings-premarket)/) s=0; next } {print}' "$1" \
-  | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket) 블록·선언도 제외
+strip_blk() { awk '/^  # >>> (news-fetch-peek|daily-bars-daily|holdings-premarket|overseas-universe-refresh)/{s=1} s{ if (/^  # <<< (news-fetch-peek|daily-bars-daily|holdings-premarket|overseas-universe-refresh)/) s=0; next } {print}' "$1" \
+  | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket·T-143 overseas-universe-refresh) 블록·선언도 제외
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
 #   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
 # (T-135) call() 의 본문 임시 파일 변경(최상위 call-body-tmp 블록 · `# T-135` 표지 줄 · call() 의 경로 세 줄과 마스킹 로그 줄)도 이 정적 비교의 대상이 아니다 —

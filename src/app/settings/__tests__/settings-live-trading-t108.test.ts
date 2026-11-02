@@ -56,7 +56,7 @@ function baseSafety(over: Record<string, unknown> = {}): Record<string, unknown>
     ...over,
   };
 }
-const NOTIFY = { autoSubmit: true, pending: true, entry: true, manual: true };
+const NOTIFY = { autoSubmit: true, pending: true, entry: true, manual: true, universe: true };
 const EXCHANGES = { kis: { configured: true, mock: false, overseasEnabled: true } };
 // SettingsPage useState 순서 (소스 사실): 0 safety · 1 notifySignal · 2 report · 3 exchanges · 4 strategies · 5 loading
 // · 6 saveState · 7 saveError · 8 isDirty · 9 hybridMode · 10 hybridSaving — T-108 은 useState 를 더하지 않았다

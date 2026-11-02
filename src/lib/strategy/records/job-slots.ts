@@ -88,6 +88,11 @@ export const JOB_SPECS: readonly JobSpec[] = [
     jobId: 'holdings-premarket', runKind: 'ingest', market: 'overseas', target: 'sec', kind: 'et_daily',
     slotTime: '08:00', windowMin: 65, rollup: false, bodyOmittedOnOk: false,
   },
+  // (T-143 WP-A) 해외 분석 대상 월간 산출 — 매월 첫째 일요일 01:10~05:50 KST 창에서 2분마다 호출된다.
+  //   창 전체(285분 = 01:10~05:55)를 **한 슬롯**으로 둔다 → 같은 run 의 청크 호출이 전부 01:10 슬롯으로 모여
+  //   ODKU attempt+1 이 되고 기록은 **run 1건 = 행 1건**이다. 창 ÷ 간격 = 최대 140회라 attempt(TINYINT, 255) 안이다.
+  //   `missing` 합성은 v1 에 없으므로(job-run-log.ts) 매일 돌지 않아도 「데이터 이상」이 뜨지 않는다.
+  daily('overseas-universe-refresh', 'ingest', 'overseas', 'kis', '01:10', 285),
 ];
 
 /**

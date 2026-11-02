@@ -598,6 +598,34 @@ export function parsePriceDetail(data: unknown, symbol: string): OverseasPriceDe
  */
 export async function getPriceDetail(symbol: string): Promise<OverseasPriceDetail> {
   const { excd, ticker } = parseOverseas(symbol);
+  return getPriceDetailByExcd(excd, ticker, symbol);
+}
+
+/**
+ * 같은 조회를 **거래소 코드 + KIS 표기로 직접** 한다 (T-143 WP-A). `parseOverseas` 를 거치지 않는다.
+ *
+ * ## 왜 이 입구가 따로 필요한가
+ * 내부 심볼 규약은 **점**이고(`NYS:BRK.B` — `OVERSEAS_PATTERN` 이 `/` 를 거부한다) **KIS 가 받는 표기는
+ * 슬래시**다(`BRK/B`). 2026-11-01 KIS 종목 마스터(`nysmst.cod`) 실측에서 클래스주 23종이 전부 슬래시였고,
+ * 그래서 `NYS:BRK.B` 는 2026-10-21~11-01 **11일 연속** 현재가상세 조회에 실패했다(NYSE 시총 상위 종목이
+ * 조용히 빠졌다).
+ *
+ * 🔴 **기존 경로는 한 글자도 바뀌지 않는다.** `parseOverseas`·`OVERSEAS_PATTERN`·`kis-symbols.ts` 를 건드리지
+ * 않았고, `getPriceDetail(symbol)` 은 전과 같은 값을 전과 같은 방식으로 돌려준다(위에서 이 함수에 위임할 뿐이다).
+ * 내부 심볼 → KIS 표기 변환은 **이 어댑터가 아니라** 호출부(`src/lib/universe/`)가 종목 마스터를 보고 정한다 —
+ * 어댑터가 표기를 추측하기 시작하면 54종목 경로의 동작이 조용히 달라진다.
+ *
+ * @param excd 거래소 코드(NAS·NYS·AMS)
+ * @param symb KIS 가 받는 표기(마스터 `symb` 열 그대로 — 클래스주는 `BRK/B`)
+ * @param label 오류 메시지·판정에 쓸 이름. 생략하면 `EXCD:SYMB`
+ */
+export async function getPriceDetailByExcd(
+  excd: OverseasExchange,
+  symb: string,
+  label?: string,
+): Promise<OverseasPriceDetail> {
+  const symbol = label ?? `${excd}:${symb}`;
+  const ticker = symb;
   const params = new URLSearchParams({ AUTH: '', EXCD: excd, SYMB: ticker });
   const url = `${BASE()}/uapi/overseas-price/v1/quotations/price-detail?${params}`;
   let attempt = 0;

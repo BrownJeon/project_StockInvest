@@ -94,7 +94,13 @@ describe('4-3 분석 사유', () => {
       no_new_session: '새 세션 없음', holidays_unknown: '휴장표 모름', fx_unknown: '환율 모름', fx_inconsistent: '환율 불일치',
       earnings_unknown: '실적 일정 모름', candles_unavailable: '일봉 없음', candle_scale_suspect: '일봉 단위 의심',
     });
-    expect(Object.keys(dict.ANALYSIS_REASON_KO)).toHaveLength(15);
+    // (T-143 WP-A) symbol_source_fail·universe_disabled·universe_run_expired 가 더해져 18, 그 뒤
+    //   M-8 의 universe_wrong_weekday·universe_outside_window 로 20 — 전부 「조용히 안 돈 것」을 홈에서 말로 보이게 한다
+    expect(Object.keys(dict.ANALYSIS_REASON_KO)).toHaveLength(20);
+    expect(dict.ANALYSIS_REASON_KO).toMatchObject({
+      universe_wrong_weekday: '해외 분석 대상 산출 — 설정된 요일·회차가 아님',
+      universe_outside_window: '해외 분석 대상 산출 — 설정된 시간 창 밖',
+    });
   });
   test('모르는 코드는 「알 수 없는 사유」 — 「사유 코드 x」 로 영문을 보이지 않는다', () => {
     expect(dict.analysisReasonText('brand_new')).toBe('알 수 없는 사유');
@@ -140,9 +146,11 @@ describe('4-5 잡 이름', () => {
     ['news-fetch-overseas', '해외 뉴스 수집'], ['sync-stock-meta', '국내 종목 정보 동기화'], ['rs-update-domestic', '국내 상대강도 갱신'],
     ['research-cycle-domestic', '국내 리서치'], ['research-cycle-overseas', '해외 리서치'], ['kis-fundamentals-snapshot', '해외 재무 지표 수집'],
     ['edgar-sync', '미국 공시 수집'], ['holdings-premarket', '보유 종목 개장 전 공시 확인'], ['holding-checker', '보유 종목 점검'], ['stop-alert', '손절 알림'],
+    // (T-143 WP-A) 해외 분석 대상 월간 산출 — 매월 첫째 일요일 창에서 돈다
+    ['overseas-universe-refresh', '해외 분석 대상 갱신'],
   ];
   test.each(TABLE)('%s → %s', (id, name) => { expect(dict.jobNameText(id)).toBe(name); });
-  test('표 전체(키 22개) — 위 표와 같다', () => {
+  test('표 전체(키 23개) — 위 표와 같다', () => {
     expect(dict.JOB_NAME_KO).toEqual(Object.fromEntries(TABLE));
   });
   test('뉴스 확인(peek): {HH} 는 id 의 두 자리 그대로', () => {

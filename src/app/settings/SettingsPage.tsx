@@ -59,6 +59,8 @@ interface NotifySignalData {
   pending: boolean;
   entry: boolean;
   manual: boolean;
+  /** (T-143 WP-A) 해외 분석 대상 변경 알림 — 꺼도 홈 「확인 필요」 줄은 그대로 나온다(텔레그램만 멈춘다). */
+  universe: boolean;
 }
 
 interface ReportData {
@@ -239,7 +241,7 @@ function StatusBadge({ ok, labelOk, labelNo }: { ok: boolean; labelOk: string; l
 
 export function SettingsPage() {
   const [safety, setSafety]               = useState<SafetyData | null>(null);
-  const [notifySignal, setNotifySignal]   = useState<NotifySignalData>({ autoSubmit: true, pending: true, entry: true, manual: true });
+  const [notifySignal, setNotifySignal]   = useState<NotifySignalData>({ autoSubmit: true, pending: true, entry: true, manual: true, universe: true });
   const [report, setReport]               = useState<ReportData | null>(null);
   const [exchanges, setExchanges]         = useState<ExchangeData | null>(null);
   const [strategies, setStrategies]       = useState<StrategyItem[]>([]);
@@ -368,6 +370,7 @@ export function SettingsPage() {
           notifySignalPending:    notifySignal.pending,
           notifySignalEntry:      notifySignal.entry,
           notifySignalManual:     notifySignal.manual,
+          notifySignalUniverse:   notifySignal.universe,
           ...(report ? {
             reportEnabled:     report.enabled,
             reportChannel:     report.channel,
@@ -971,12 +974,21 @@ export function SettingsPage() {
           </div>
           <Toggle checked={notifySignal.entry} label="진입 감시 발동 알람" onChange={v => { setNotifySignal(s => ({ ...s, entry: v })); setIsDirty(true); }} />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
           <div>
             <div style={{ fontSize: 14 }}>수동 시나리오 등록 알람</div>
             <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>내 시나리오 만들기 등록 완료 시 발송</div>
           </div>
           <Toggle checked={notifySignal.manual} label="수동 시나리오 등록 알람" onChange={v => { setNotifySignal(s => ({ ...s, manual: v })); setIsDirty(true); }} />
+        </div>
+        {/* (T-143 WP-A) 해외 분석 대상 변경 알림 — 알람 4개 뒤·정기 거래 리포트 앞. 위 네 행과 같은 모양·같은 저장 흐름이다.
+            꺼도 홈 「확인 필요」 줄은 그대로 나온다(이 토글은 텔레그램만 멈춘다). */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px' }}>
+          <div>
+            <div style={{ fontSize: 14 }}>해외 분석 대상 변경 알림</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>변경 제안이 새로 생기거나 자동 목록이 바뀔 때 발송 · 꺼도 홈 「확인 필요」에는 그대로 올라옵니다</div>
+          </div>
+          <Toggle checked={notifySignal.universe} label="해외 분석 대상 변경 알림" onChange={v => { setNotifySignal(s => ({ ...s, universe: v })); setIsDirty(true); }} />
         </div>
       </div>
 
