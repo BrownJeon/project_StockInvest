@@ -5,7 +5,7 @@ status: done
 priority: medium
 project: StockInvest
 created: 2026-10-30
-updated: 2026-11-02
+updated: 2026-11-03
 base_ref: ec6723c17e510aeb4baa8cbd3174c1183d1805d6
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa]
@@ -16,7 +16,7 @@ tags:
   - domain/exit
 aliases:
   - 청산판단기록
-waiting: [11-03(화) 07:20 해외 첫 틱의 exit_judgment 행 검증(예약, 세션 한정) · 이상이면 스위치 false — 국내 첫 틱은 11-02 통과]
+waiting: [fired 행 첫 발생 시 signal_id 조인·익절 임계 부호·트레일링 필드 확인(국내·해외 모두 아직 0건) — 기록 경로 검증은 국내 11-02·해외 11-03 통과]
 ---
 
 # T-126 청산 판단 영구 보존 기록 (후보 — 착수 전)
@@ -234,6 +234,17 @@ waiting: [11-03(화) 07:20 해외 첫 틱의 exit_judgment 행 검증(예약, �
   - ⑥ **릴리스** — 행의 `engine_release`=`20261102-002939-cec935ac` = `readlink -f …/current` 의 마지막 요소(일치). 이 릴리스는 11-01 09:40 의 T-139·T-140 릴리스(`20261101-094008-81a1aabe`)가 아니라 **그 뒤 11-02 00:29 에 나간 다른 세션의 배포**다(pm2 `stockinvest`·`stockinvest-cron` online·restarts 0).
   - ⑦ **안전 키** — `safety_dry_run`=`true`(10-30 09:08:14) · `exit_engine_enabled`=`true`(10-30 09:08:29) · `exit_hard_stop_enabled`=`false`(07-02 16:39:53) **불변**. **`safety_kill_switch` 는 값이 `false`(hex `66616C7365`) 로 그대로인데 `updated_at` 이 `2026-11-01 09:53:56` 이다 — 기대한 10-30 09:08:18 과 다르다.** **→ 해결(2026-11-02, 사용자 채팅 확인): 사용자 본인이 직접 설정한 것이다 — 의도한 변경이며 조치 불필요.** (값은 `false` 로 유지됐고, 어느 화면·경로로 설정했는지는 묻지 않았다. 아래 「출처는 모른다」·「[추측]」은 점검 시점의 서술이라 이 확인으로 대체된다.) 시점: 11-01 09:42~09:45 의 T-139·T-140 배포 후 점검에서는 불변이었으므로 그 뒤(09:53:56)에 어느 쓰기가 있었다. 근거 없이 단정하지 않는다 — 출처는 **모른다**: 로그(`pm2-out`·`pm2-err`·`cron-out`)의 09:53~09:56 에는 쓰기 흔적이 없고(평시 `cron OK` 줄뿐) 감사 테이블도 없다. `ACTIVE.md` 11-01 절에 다른 세션이 같은 관측을 이미 적어 두었다(출처 미확인). 영향 확인: `/api/health` green(`dryRun true`·`killSwitch false`·`safetyStatus green`), `orders` 11-01 09:30 이후 **0행**(차단·주문 모두 없음). [추측] 설정 화면 저장(같은 값 재저장도 `updated_at` 을 올린다)이거나 다른 세션의 시험 — 확인 수단이 없다. 값이 바뀌지 않았으므로 스위치를 끄는 등 조치는 하지 않았다.
   - **조치 없음** — 스위치는 켠 채 유지(경고 반복·멈춘 INSERT 없음). 남은 것: 4번째 틱 funnel 대조(위) · 11-03(화) 07:20 해외 첫 틱 검증(예약 `60bb8ee9`; 세션이 끝났으면 [[T-126-exit-judgment-first-tick-check]] 런북으로) · (`safety_kill_switch` `updated_at` 출처는 사용자가 직접 설정한 것으로 확인 — 종결, 위 ⑦ 참조).
+- [2026-11-03 07:20] **해외 첫 장중 틱 검증(예약 점검 `60bb8ee9`, 읽기 전용 — 쓰기·스위치 조작 0)** — 결과: **기록 경로 정상, 행 누락·이중 기록·멈춘 INSERT 0건. 단 `청산 판단 기록 실패(timeout)` 경고 2건(행은 존재)과 소수점 보유 2종목 미기록(엔진 보유 목록 밖) 관측이 있다.** 대상: 미국 정규장 11-02(월) 23:30~11-03(화) 06:00 KST. 로그 4개는 먼저 존재·최근 쓰기를 확인했다(`pm2-err` 99줄·06:30 · `pm2-out` 4612줄·07:20 · `cron-err` 0줄(0B) · `cron-out` 10326줄·07:20).
+  - ① **스위치 유지** — `exit_judgment_record_enabled`=`true`, `updated_at` 10-31 15:41:54 불변.
+  - ② **틱·행 수** — 해외 **65틱**(23:31:34~05:56:55, 간격 5~7분), 총 276행. 틱 누락 없음: 같은 시간대 `eval_funnel` 해외 run 65개 = `exit_judgment` run 65개. 23:31~04:19 의 49틱은 **4행·4종목**(AAPL·MU·SMH·ORCL), `overseas-202611030425`(04:25)부터 16틱은 **5행·5종목**(`NYS:CVX` 추가). `(run_id, symbol)` 중복 0. `session_date_et` 전부 `2026-11-02`(KST 자정을 넘긴 틱도 뉴욕 날짜 11-02).
+  - ②-1 **CVX 신규 편입(04:25~)** — 앱 주문이 아니다: `orders` 11-03 0행(11-02 이후 전체로도 `005930` dry_run 1건뿐). `broker_position_snapshots`(id 62)에 오늘 매수체결 1주(`thdt_buy_ccld_qty1`=1, 평단 228.06 USD) → 사용자가 KIS 에서 직접 매수한 것 [가능성 높음 — 사용자에게 확인하지 않았다].
+  - ②-2 **소수점 보유 2종목은 행이 없다** — 브로커 스냅샷에는 `NAS:MSFT` 0.071471주·`NAS:TSLA` 0.005924주(10-25 첫 스냅샷부터 같은 수량)가 있는데 `exit_judgment` 에는 없다. 청산 엔진의 보유 목록(`getHeldAmounts` ← `kis-overseas.ts` `ovrs_cblc_qty`)에 잡히지 않는다는 뜻이고, `eval_funnel` 도 이 두 종목을 `rule_no_fire`/`sell_not_held` 로만 남긴다. 기록기는 엔진이 평가한 것만 쓰므로 **이 task 의 결함이 아니라 기존 엔진 범위**다. 원인(조회 API 가 소수점 수량을 안 주는지 필터인지)은 확인하지 못했다 [추측].
+  - ③ **통화·가격** — `currency`=`KRW` **276/276**, NULL 0(`price`·`entry_price`·`pnl_pct` NULL 도 0). 값은 원화 환산: AAPL 가격 451,214~459,218원 · MU 1,116,299~1,190,279원 · SMH 681,011~713,402원 · ORCL 159,348~167,459원 · CVX 306,060~307,054원. `entry_price` 는 틱마다 환율이 반영돼 조금씩 움직인다(AAPL 458,438~461,057원 ≈ 평단 343.33 USD × 환율 1,335~1,343, 스냅샷 `bass_exrt` 1,337.2 와 같은 범위).
+  - ④ **판정·대조** — `skip_policy`/`exit_hard_stop_disabled`/`hard_stop` **221행**, `no_fire`/`exit_no_fire`/`none` **55행**, `fired` 0 · `error` 0. 같은 run_id·종목의 `eval_funnel` 청산 게이트와 **276/276 일치**(`exit_hard_stop_disabled` 221·`exit_no_fire` 55, 불일치 0). `pnl_pct` 는 `(price−entry)/entry×100` 손계산과 **0/276 불일치**. `hard_stop` 행 `pnl_pct` −31.4777~−1.5088(전부 임계 `threshold_pct`=−1.5000 이하), `no_fire` 행 −1.4767~+0.2587(임계 위) → 부호·경계 일관. `engine_release`=`20261102-225046-8f101d03` = 현재 릴리스(`readlink -f …/current`). **`fired` 가 없어 `signal_id`↔`signals.id` 조인·익절 임계(양수)·트레일링 필드는 이번에도 검증하지 못했다**(국내 11-02 와 같은 사유).
+  - ④-1 **관측(기록 내용이 드러낸 사실)** — 보유 5종목 중 4종목이 손절선(−1.5%) 아래다(가격/진입가 범위로 계산: ORCL 약 −31%, MU −17~−22%, SMH −10~−14%, AAPL −1.5% 안팎에서 오르내림). `exit_hard_stop_enabled`=`false`(07-02) 라서 틱마다 `skip_policy` 로 기록될 뿐 청산은 발화하지 않는다 — 10-30 사용자 의도 그대로의 거동이며 이 task 가 바꾼 것이 아니다.
+  - ⑤ **풀·경고** — `processlist` 에 `INSERT INTO exit_judgment` 0건(연결 12개 전부 `Sleep`, 24초 이하). 로그 4개의 `청산 판단 기록 실패`: `pm2-err` **2줄**(05:31:40·05:44:17, `(timeout)` market=overseas), 나머지 3개 0줄. **두 틱(`overseas-202611030531`·`…0544`)의 행은 5/5 모두 존재하고 중복도 없다** → 상한(`EXIT_JUDGMENT_RECORD_TIMEOUT_MS`=4000ms)을 넘겼다고 판정했지만 INSERT 는 서버에서 끝난 경우 = **유실 0, 경고만 남은 것**. 발생률 2/65 틱(3%); 원인은 DB 응답 지연으로 [추측] — 확인 수단 없음. 다음 틱은 정상(05:38·05:50 행 5/5). `일시 실패 재시도` 3줄(01:48:41~43)은 **domestic** `getBalances` 이고 01:49 해외 틱은 4행 정상 → `balances_unknown` 틱 0. `읽기 2000ms 초과`는 11-02 16:02:06 의 `judgment_record_enabled` 1건뿐(해외 틱과 무관).
+  - ⑥ **안전 키** — `safety_dry_run`=`true`(10-30 09:08:14) · `exit_engine_enabled`=`true`(10-30 09:08:29) · `exit_hard_stop_enabled`=`false`(07-02 16:39:53) **불변**. `safety_kill_switch`=`false`, `updated_at` 11-01 09:53:56(사용자가 직접 설정한 것으로 위 11-02 ⑦ 에서 종결 — 예약 프롬프트의 기대값 10-30 09:08:18 은 낡은 값이다). `/api/health` 200.
+  - **조치 없음** — 스위치는 켠 채 유지(경고 반복·멈춘 INSERT 없음). 남은 것: `fired` 행 첫 발생 시 `signal_id` 조인·익절 임계 부호·트레일링 필드 확인(국내·해외 모두 아직 0건) · `(timeout)` 경고가 늘어나는지 관찰 · 소수점 보유 2종목을 청산 평가 범위에 넣을지는 사용자 판단 사항(이 task 범위 밖).
 
 ## 진행 기록
 - [2026-10-30 16:16] 후보 등록(Leader). 사용자 "권고안 확정" — D11 (c).
