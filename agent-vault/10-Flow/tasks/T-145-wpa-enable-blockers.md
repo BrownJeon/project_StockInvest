@@ -1,7 +1,7 @@
 ---
 task_id: T-145
 title: T-143 WP-A 켜기 차단 조건 묶음 1 — 되돌릴 수 없는 셋(롤백·M-3·M-5) + 08시 시간 예산 실측 + DB 시험 실행
-status: review
+status: done
 priority: high
 project: StockInvest
 created: 2026-11-02
@@ -18,7 +18,7 @@ tags:
 aliases:
   - WP-A 켜기 차단 조건
   - T-145
-waiting: "사용자 커밋 승인 대기 — 커밋은 서버에서 한다(Mac 세션은 commit-msg 훅이 돌지 않는다). push 는 별도 승인(main push = 즉시 배포). 켜기는 운영 DB 쓰기 2건(WP-A DDL · system_config 행)으로 각각 별도 승인."
+waiting: "11-03 08:30~08:55 첫 슬롯 실측 대기 — ⑨ 틱 길이는 시뮬레이션(220~240초)으로만 검증됐다. 해외 자동 목록 켜기는 운영 DB 쓰기 2건(WP-A DDL · system_config 행)으로 각각 별도 사용자 승인. 켜기 전 남은 것: ADR 판정 · 1회차 문구 · ④ 나머지 · BRK.B · L-9 · L-10."
 ---
 
 ## 발단
@@ -643,3 +643,16 @@ waiting: "사용자 커밋 승인 대기 — 커밋은 서버에서 한다(Mac �
 - **이번 세션에 「대역이 실물을 대신하며 결함을 통과시킨다」가 4건**(M-1·M-2·M-3 + Codex 지적 1). 특히 `route.test.ts` 가 판독기 자체를 mock 해 결함을 가렸고, 그 mock 을 걷어낸 것이 이번 수정의 핵심이다.
 - **보고 산술 오류 2건**(developer, 「6개→7개」·「569→669」)은 Reviewer 재실행이 잡았다. 내(Leader) 계측도 가짜 신호를 **여러 번** 냈다(`$$` 불일치 · `pgrep` 자가 매치 · 지운 `GIT_INDEX_FILE` 로 32줄이 3064줄 · `tail` 로 판정 줄 3개가 1개 · mtime 을 내용 변경으로 오독 · `cd` 실패로 빈 디렉토리 검사). **전부 보고 전에 걸렀지만 반복 패턴이라 `/이슈기록` 후보다.**
 - Reviewer 1라운드에서 `pkill -f` 1회(ISS-0002 위반, 스스로 공개 · 영향은 자기 하네스뿐 · 운영 pm2 무영향).
+
+### 배포 기록 (T-145)
+
+- **push**: `f6b32b0..9738a86` → `main` **fast-forward**(강제·거부 없음), 2026-11-02 21:32 KST. 나간 커밋 **2개** — `9738a86`(T-145) + `20cabc6`(T-143 배포기록, 문서). push 직전 `git-refs-clean --check` **깨끗**(실제 ref 21개, ISS-0013).
+- **방식**: push = webhook → `release.sh` blue/green(`--ref main`, health timeout 120s). `scripts/deploy.sh` 를 따로 돌리지 않았다(이중 배포 방지).
+- **결과**: `RELEASE_RESULT {"status":"ok","release":"20261102-213256-9738a861","sha":"9738a861fb240af5efdae6b151a09d11f2644b2c","previous":".../20261102-095756-f6b32b09","migrated":false}` · 로그 `exit=0` · `current -> 20261102-213256-9738a861`.
+- 🔴 **`migrated:false`** — DB 마이그레이션 **0**. 의도대로다(이 작업에 DDL 변경이 없다).
+- **배포 직후 점검**(내가 직접): pm2 `stockinvest`·`stockinvest-cron` 둘 다 **online · restarts 0** · `/api/health` **HTTP 200**(`ok:true` · `db:true` · `schemaFatal:false` · `safetyStatus:"green"` · `dryRun:true` · `killSwitch:false`) · cron 틱 정상(21:43·21:44 잡 `OK`) · **하트비트 22초 전 갱신**(한도 300초).
+- **배포본에 ⑨ 가 들어간 것 확인**: `current/scripts/cron-runner.sh` 에 `KIS_FUND_CURL_MAX_TIME=110`(178행) · `KIS_FUND_TICK_T0`(453행) · 그 호출에만 시간 상한을 거는 줄(550행).
+- **운영 DB 는 그대로**(읽기 전용 확인): `system_config.overseas_universe_refresh` **0행(= 꺼짐)** · WP-A 표 `overseas_universe_run%` **없음** · `overseas_universe_auto`·`_watch`·`_proposal`·`_revision` **각 0행**. **해외 자동 분석 대상은 배포 뒤에도 꺼진 채다.**
+- **이 배포로 실제 달라지는 것**: `kis-fundamentals-snapshot` 이 08:30~08:55 전용 슬롯으로 옮겨가고 1회 실행에 90초 마감이 걸린다 → **08시 틱이 짧아진다**(종전 최악 282초). 방향은 안전 쪽이다.
+- **남은 정리(이번 배포와 무관하지만 기록)**: 공유 트리(`.../NFS/.../StockInvest`)의 로컬 `main` 이 **`33e2b7b` 로 낡았다** — `origin/main`(이제 `9738a86`)보다 10커밋 뒤처지고 미푸시 문서 커밋 1개(`33e2b7b`, T-126 장중 틱 기록)를 들고 있다. 그 트리에 미커밋 98줄이 있어 이번에 합치지 않았다. **운영은 `9738a86` 인데 그 트리는 그보다 뒤처진 상태를 보고 있으니, 다음 작업 전에 맞춰야 한다.**
+- 👉 **사용자가 확인할 것**: **내일(11-03) 08:30~08:55 첫 슬롯**. 어디서: `pm2 logs stockinvest-cron` 또는 `job_run_log` 의 `kis-fundamentals-snapshot`. 정상 기준: 틱 간격이 300초를 넘지 않고 `stockinvest-cron` 재시작이 0, 스냅샷이 `ok` 또는 `partial`(마감으로 끊겨도 다음 틱이 이어받는다)로 남는 것. **⑨ 의 틱 길이는 시뮬레이션(220~240초)으로만 검증됐고 실제 KIS 응답 시간은 이때 처음 만난다.**
