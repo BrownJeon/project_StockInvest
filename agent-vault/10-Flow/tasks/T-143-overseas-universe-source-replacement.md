@@ -862,6 +862,19 @@ Q1·Q3 은 WP-B 데모에서 함께 본다. Q5 는 구현 착수 전에만 정�
 - [02:0x] **🔴 커밋 전 반드시 — Reviewer 판정 줄이 공유 NFS 사본에만 있다.** 커밋 훅은 **커밋하는 트리의 사본**을 읽으므로, worktree(`~/.node-local/stockinvest-t143`)로 옮기지 않으면 **훅이 막는다.** Reviewer 가 스스로 알려 준 것이다.
   - Reviewer 가 재실행하지 못한 것: **일회용 MariaDB DDL 36/36**(하네스가 저장소 밖이고 컨테이너 기동이 「DDL 실행 금지」와 겹쳐 보여 돌리지 않았다). developer 실행값만 있다.
 
+- [09:26] **WP-A 커밋·push 완료 — 운영은 건드리지 않았다.** 사용자 승인 「커밋·push 진행」.
+  - 커밋 `27f40b7` on `wip/T-143-overseas-universe`(부모 `63f1044` = WP-B), **40파일 6,808 추가 / 26 삭제**. 명시 경로 22개로만 stage 했고, stage 후 「미스테이징 0 · `.env` 0건 · 다른 세션 파일 0건」을 확인했다(변경 40개 전부가 WP-A 였다).
+  - **훅 통과**: `✅ [commit-msg] Reviewer 감사 기록 확인: T-143`. 서버 worktree 에서 커밋했고 `core.hooksPath` 가 그 머신에서 유효함을 커밋 직전 `ls` 로 확인했다(Mac 에서는 무검사). 원본↔shim 불일치 경고 0건.
+  - 커밋 전 모의 실행으로 먼저 확인했다 — 임시 index 에 40파일을 올려 훅을 직접 돌려 **exit 0**. 마지막 판정 줄(`[03:18]` CONDITIONAL_PASS)의 scope 8항목이 🔴 9파일을 전부 덮는다(디렉토리 1개가 그 안 2파일을 포함).
+  - **push**: `63f1044..27f40b7` → `refs/heads/wip/T-143-overseas-universe`. **`refs/heads/main` 은 `cec935ac` 그대로.** 배포 webhook 은 `~/.local/webhook-deploy/server.js:125` 가 `/main`·`/master` 로 끝나지 않는 ref 를 `202 ignored` 로 흘리므로 **트리거 0건** — webhook 로그 마지막 항목이 11-01 15:30:52(`cec935ac`) 그대로다. 운영 `current` = `20261102-002939-cec935ac`, pm2 두 앱 online·재시작 0.
+  - push 직전 `git-refs-clean.sh --check` **exit 0**(worktree·공유 트리 양쪽, 실제 ref 20개).
+  - **운영 DB 재확인**: WP-B 표 `overseas_universe_{revision,auto,watch,proposal}` **전부 0행** · WP-A 표 `overseas_universe_{run,candidate}` **존재하지 않음**(DDL 미적용) · `system_config` 에 `overseas_universe_refresh` 행 **없음** → 「키 없음·해석 불가 = 꺼짐」 규칙으로 스위치 꺼짐. 즉 이 커밋이 배포돼도 산출은 돌지 않는다.
+- [09:26] **내가 센 🔴 수가 처음 8 로 나왔다 — 집계 명령의 함정을 남긴다.** `git status --porcelain` 은 **untracked 디렉토리를 한 줄로 접는다.** `src/app/api/cron/overseas-universe-refresh/` 가 1항목으로 보여 그 안 2파일이 1로 세졌다. `-uall` 로 펼치니 **🔴 9 / 🟢 31** 로 developer 값과 글자 그대로 일치. **커밋 경계 집계는 `-uall` 로만 한다** — 접힌 집계는 조용히 축소 보고한다.
+- [09:26] **경계 틈 1건 — 이번에 고치지 않는다.** `scripts/test-cron-runner-*.sh` 5개(이번에 4개 수정 + 1개 신설)는 🔴 `scripts/cron-runner.sh` 의 회귀망인데 `SAFETY_PATHS` **밖**이다 — `^scripts/cron-runner` 는 `scripts/test-cron-runner-…` 를 매치하지 않는다. CLAUDE.md 「테스트 파일은 제외하지 않는다」(안전 경로의 시험은 그 경로의 회귀망이고 Reviewer·QA 판단 근거다)와 어긋난다. 목록에 넣는 변경 자체가 🔴 라 새 판정이 필요하므로 **별 건**으로 둔다. `us-data-db.ts` 의 간접 회귀망 2개와 `src/lib/universe/**` 편입 여부와 같은 묶음이다.
+- [09:26] **`/이슈기록` 후보 2건** — 둘 다 이번 task 에서 **독립적으로 두 번** 난 패턴이라 정식 등록 대상이다(사용자 확인 후).
+  - ① **변이 시험 하네스의 실행 실패가 「변이를 안 잡음」으로 읽힌다.** Reviewer r3(스크래치 복사본에 `scripts/cron-runner.sh` 누락 → `Tests: 0`)와 developer r4(heredoc Python SyntaxError → 변이 미적용인데 「35 passed」). 둘 다 스스로 알아채 하네스를 고쳤다(치환 적용 단언·`HARNESS-ERROR` 분리·기준선 선통과 요구). 잘못된 「안전하다」로 이어지는 실패라 비용보다 품질 위험이다.
+  - ② **developer 의 「유령 편집」 보고** 2회(저장되지 않은 DDL 주석 수정 · 시험 파일만 고치고 본문도 고쳤다고 보고). 절차를 편집 → grep → 보고로 바꿨다.
+
 ## 데모 검토 (demo gate)
 
 > 실행 판정 정본은 frontmatter `demo_gate` 이다. 이 표는 check.mjs 가 함께 기록하는 사람용 이력이다(docs/demo-review-gate.md).
