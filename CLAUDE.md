@@ -226,6 +226,10 @@ Reviewer는 `## Reviewer` 섹션 **마지막에 아래 한 줄**을 반드시 �
 
 **우회**: 오탐 시 `git commit --no-verify`로 우회할 수 있다. 이는 **사용자(사람) 전용 권한**이며, 에이전트가 임의로 사용하는 것은 금지한다(이 훅의 존재 이유가 무력화된다).
 
+## task 상태 값 (agent-vault) — `deployed` 금지
+
+`agent-vault/10-Flow/tasks/*.md` frontmatter `status` 는 **`todo · doing · review · done · hold` 다섯 값만** 쓴다. `deployed`·`deployed-partial`·`merged`·`in-progress` 같은 값을 새로 만들지 않는다 — 배포를 마쳤어도 Leader 최종 요약을 썼으면 `done`, 요약 전이면 `review` 다. 사용자 확인·관찰·결정을 기다리는 사정은 상태 값이 아니라 frontmatter `waiting:` 에 적는다. 정본: `.claude/agents/leader.md` 「task 완료 시 상태·roadmap 갱신」. 2026-11-02 사용자 지시로 `deployed` 22건을 정리했고, `.claude/hooks/vault-status/guard.sh`(PreToolUse)가 `status: deployed*` 를 쓰는 Edit·Write·MultiEdit 를 차단한다(Bash `sed -i`·Codex 세션은 못 막으니 직접 쓰지 않는다).
+
 ## Compact instructions
 
 컴팩트 시에는 **변경된 파일 경로, Phase 진행 상태, 미해결 결정 사항, 실매매 안전장치 관련 이슈**를 우선 보존한다. 상세 탐색 결과와 중간 디버깅 출력은 버린다.

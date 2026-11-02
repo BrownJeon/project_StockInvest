@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: StockInvest
-updated: 2026-10-06
+updated: 2026-11-02
 phases:
   - { id: 0, name: "안전 기반",              status: done }
   - { id: 1, name: "관측·소생 핫픽스",       status: done }
@@ -47,6 +47,7 @@ tags: [type/roadmap]
 - [x] (8) 주문 동기화 판단보류 배지 [[T-022-order-sync-alert-escalation]]
 
 ### /recommend | 추천
+- [x] (8) 거래 운영 기록 해외 탭의 ET 표시 제거(세션 날짜 계산 유지) [[T-144-trade-log-overseas-label]]
 - [x] (6) 승인 대기 시그널 카드(승인·거절)
 - [x] (6) 진입 감시 중 목록·승인 철회
 - [x] (6) 내 시나리오 만들기 진입

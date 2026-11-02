@@ -1,11 +1,11 @@
 ---
 task_id: T-128
 title: T-108 후속 정리 후보 — 설정 화면 기존 컨트롤 터치 영역·초기 조회 실패 처리·문구 정리·배포 후 관찰 항목
-status: deployed
+status: done
 priority: low
 project: StockInvest
 created: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-02
 base_ref: ec6723c17e510aeb4baa8cbd3174c1183d1805d6
 risk_level: R1
 roles_involved: [leader, designer, developer, reviewer, qa]
@@ -160,3 +160,6 @@ judge 첫 접수(전체 묶음)는 `demo=full`·`ask_user` 였다. 화면 레이
 - [08:42] **9. 확인하지 못한 것 (NOT_VERIFIED)**: 화면 렌더(360·412px 레이아웃, 다크 토큰, 가로 스크롤) — 운영 DB 를 보는 dev 서버를 띄우지 않는다는 규칙에 따라 실행하지 않았다. A1~A4 는 문구·로직 변경이고 레이아웃·CSS 변경이 없음을 diff 로 확인했다. 텔레그램 실제 발송 문구(실 봇 발송 안 함, 표시 함수 시험으로 대체). lint(저장소에 ESLint 설정 없음). A3(d) 계약 문서 대조(위 6번). 전체 9853건 재실행. T-128 #8 배포 후 관찰 항목(구현 아님). 스크린샷·`/tmp/qa-artifacts` 산출물 없음.
 - [08:42] **QA 판정: PASS** (Critical 0 · High 0 · Medium 0 · Low 1 — 8번). 체크리스트 1~7 전부 실행 증거와 함께 통과. 8번은 차단이 아니며, 수정할지(Reviewer 재순환 필요) T-130 으로 넘길지는 Leader 가 정한다. A3(d) 문서 위치 확인도 Leader 몫이다.
 - [10:32][qa] 통합 회귀(T-126 QA 가 4커밋 합본 `0116228` 으로 수행): 이 task 의 안전 파일 14개가 Reviewer 판정 scope 안(대조 PASS), 전체 jest 에서 이 task 관련 실패 0, `tsc`·`next build` 통과 → [[T-126-exit-judgment-persistence]] `## QA` 참고 (합본 전체는 T-130 기인 결함 #1 로 FAIL)
+
+## 최종 요약
+(Leader 최종 요약 미작성 — 2026-11-02 사용자 지시로 `done` 처리. 구현·감사·QA·배포 근거는 위 각 절 참조. `leader.md` 규칙(최종 요약과 같은 편집에서 done)과 다른 예외 전환이다.)

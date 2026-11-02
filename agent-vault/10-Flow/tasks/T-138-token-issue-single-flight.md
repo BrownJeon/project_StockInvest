@@ -1,11 +1,11 @@
 ---
 task_id: T-138
 title: 토큰 발급이 단일화되지 않아 갱신 시각에 발급이 폭주하는 문제 — issueAndStore 단일 비행
-status: deployed
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-02
 base_ref: origin/main 90f858f (로컬 main a064722 = T-136 커밋)
 risk_level: R2
 roles_involved: [leader, reviewer, qa]
@@ -309,3 +309,7 @@ QA 판정은 **PASS(조건부)**(Critical 0 · High 0 · Medium 2 · Low 3). 조
   - 배포 **직전**(10-31 15:02:07)에 `[kis-auth] issued new token` 이 **같은 초에 3줄** 찍혀 있다 — T-138 이 고치려는 바로 그 동시 발급이고, 문제가 재현 중이라는 증거다.
   - **11-01 14:02 KST 가 휴장일 리허설 창이다**: `api-usage-2026-11-01.jsonl` 의 `token-p` 가 **1건(많아야 2건)·403 0건**이면 단일 비행 실증. **같은 초 2건 이상 + 403** 이면 비행이 안 걸린 것(Next 번들 간 `kis-auth` 모듈 인스턴스 분리 가능성 — 감사·QA 가 **미검증**으로 남긴 유일한 핵심 가정이다).
 
+## 최종 요약
+(Leader 최종 요약 미작성 — 2026-11-02 사용자 지시로 `done` 처리. 구현·감사·QA·배포 근거는 위 각 절 참조. `leader.md` 규칙(최종 요약과 같은 편집에서 done)과 다른 예외 전환이다.)
+
+- 배포 후 실효 확인(2026-11-02 읽기 전용, `api-usage-2026-11-01.jsonl`): UTC 04~06시 `token-p` **1건** — `2026-11-01T05:03:43.829Z` status 200 ok. 403 0건. 위 판정 기준(1건·403 0건)을 충족해 단일 비행이 실증됐다 [확실, 로그 직접 읽음]. 기준선은 10-31 06:02:07 같은 초 3건.

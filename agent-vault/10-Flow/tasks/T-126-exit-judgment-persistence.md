@@ -1,11 +1,11 @@
 ---
 task_id: T-126
 title: 청산 판단 영구 보존 기록 후보 — `exit_judgment`(가칭): 청산 엔진 평가·스킵·발화를 감사 기간 이후에도 남기는 기록
-status: deployed
+status: done
 priority: medium
 project: StockInvest
 created: 2026-10-30
-updated: 2026-10-31
+updated: 2026-11-02
 base_ref: ec6723c17e510aeb4baa8cbd3174c1183d1805d6
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa]
@@ -16,7 +16,7 @@ tags:
   - domain/exit
 aliases:
   - 청산판단기록
-waiting: [11-02(월) 09:22 국내 첫 틱·11-03(화) 07:20 해외 첫 틱의 exit_judgment 행 검증(예약, 세션 한정) · 이상이면 스위치 false]
+waiting: [11-03(화) 07:20 해외 첫 틱의 exit_judgment 행 검증(예약, 세션 한정) · 이상이면 스위치 false — 국내 첫 틱은 11-02 통과]
 ---
 
 # T-126 청산 판단 영구 보존 기록 (후보 — 착수 전)
@@ -225,6 +225,15 @@ waiting: [11-02(월) 09:22 국내 첫 틱·11-03(화) 07:20 해외 첫 틱의 ex
 - **롤백**: 스위치를 `false` 로(`UPDATE system_config SET value='false' WHERE key='exit_judgment_record_enabled'`, 즉시·데이터 보존, 서버 캐시 30초). 표 삭제(`DROP TABLE exit_judgment`)는 쌓인 기록이 사라지므로 사용자 승인 사항.
 - **다음(예약, 세션 한정)**: 11-02(월) 09:22 국내 첫 틱 행 검증 · 11-03(화) 07:20 해외 첫 틱 행 검증 — 행 수 = 보유 종목 수, 종목당 1행, `decision_code` = 같은 틱 eval_funnel 마지막 게이트, `signal_id` ↔ `signals` 조인, `currency`·`threshold_pct` 부호, `engine_release` = 현재 릴리스. 예약은 이 세션이 끝나면 사라지므로 그 경우 사람이 같은 쿼리를 읽는다.
 - [2026-10-31 21:10] **사람용 수동 점검 런북 작성**: 예약 점검(11-02 09:22 국내 · 11-03 07:20 해외)이 세션 종료로 사라져도 같은 검증을 할 수 있도록 복붙 쿼리·기대값·정상 패턴(금요일 실측)·롤백을 [[T-126-exit-judgment-first-tick-check]] 에 정리했다. 쿼리 14개는 운영 DB 에서 **구문만** 검증했다(표가 비어 있어 결과 행은 못 봄); 검증 중 `eval_funnel` 의 `side='sell'` 에는 청산 엔진 밖 경로의 게이트(`sell_not_held` 등)도 섞여 있음을 발견해 「청산 트랙 단계 21~29(미리보기 `sell_proposal_preview` 제외) + 발화 `signal_created`(`strategy_id='exit-engine-v1'`, 단계 99)」로 걸러내도록 쿼리를 고쳤다.
+- [2026-11-02 09:25] **국내 첫 장중 틱 검증(예약 점검, 읽기 전용 — 쓰기·스위치 조작 0)** — 결과: **기록 경로 정상, 이상(행 누락·이중 기록·경고·멈춘 INSERT) 0건. 단 기대와 다른 관측 1건(안전 키 `safety_kill_switch` 의 `updated_at`, ⑦)이 있다.** 로그 4개는 먼저 존재·최근 쓰기를 확인했다(`pm2-err` 39줄·마지막 수정 08:35:56 · `pm2-out` 1336줄·09:21:44 · `cron-err` 0줄(0B, 11-01 04:15 회전 이후 비어 있음) · `cron-out` 6258줄·09:23:59) — grep 0건이 「파일 없음」이 아님.
+  - ① **스위치 유지** — `exit_judgment_record_enabled`=`true`, `updated_at` 10-31 15:41:54 불변.
+  - ② **틱·행 수** — `exit_judgment` 전체 4행(스위치를 켠 10-31 15:41 이후 처음이자 전부; 토·일 휴장이라 이전 틱은 행이 없었다): `domestic-202611020902`(09:02:31) · `…0909`(09:09:24) · `…0917`(09:17:45) · `…0924`(09:25:00), 각 **1행·1종목(005930)**, 중복 0. 국내 보유 = `position_state` market=domestic 1건(005930, 13주, 진입 238,000, 고점 235,500) → 틱당 행 수 = 보유 종목 수 일치. 같은 틱 `eval_funnel` 행은 103~115개(다른 평가 단계 포함 — 청산 행 수와 무관한 숫자).
+  - ③ **decision_code ↔ eval_funnel** — 앞 3개 틱 모두 `decision_code`=`exit_hard_stop_disabled`, 같은 run_id 의 `eval_funnel`(`side='sell'`, 종목 005930, 단계 25, 게이트 `exit_hard_stop_disabled`, verdict skip, detail `{"exitKind":"hard_stop"}`)와 일치. 국내 `side='sell'`·`gate LIKE '%exit%'` 행은 이 게이트 3행뿐. `eval_funnel.ts` 는 `evaluated_at` 보다 1분 48초~3분 16초 늦다(게이트 기록 시각 vs 틱 평가 시각; 순서는 같다). 네 번째 틱(09:25:00)의 funnel 행은 점검 시각(09:25:56)에 아직 없어 **대조하지 못했다**(funnel 쓰기가 평가 후 1~3분 뒤).
+  - ④ **행 내용** — `decision=skip_policy`·`trigger_kind=hard_stop`·`threshold_pct=-1.5000`(손절 임계 음수)·`currency=KRW`·`exit_engine_enabled=1`·`exit_hard_stop_enabled=0`(현재 설정과 일치 — 마스터 ON·손실한도 손절 OFF 라서 `skip_policy` 가 나오는 것이 설계 그대로). `pnl_pct` −8.1933 / −8.6134 / −8.2983 은 `(price−entry)/entry` 손계산과 일치(예: (218,500−238,000)/238,000 = −8.193%). **`decision='fired'` 가 아직 없어 `signal_id`↔`signals.id` 조인, 익절 임계(양수), 트레일링·시나리오 NULL 은 이번에 검증하지 못했다**(해당 행 자체가 없음 — 이 환경에서 발화할 일이 생기면 그때 본다). 실제 의미: 005930 은 평가손 −8%대인데 손실한도 손절이 꺼져 있어 청산 판단이 틱마다 `skip_policy` 로 기록된다 — 10-30 사용자 의도(「실거래만 막고 킬스위치 해제… 청산 로직 켜 둔 채 관찰」) 그대로의 거동.
+  - ⑤ **풀·경고** — `information_schema.processlist` 에 `INSERT INTO exit_judgment` 0건(20초 이상 체류 연결은 유휴 2개 `info NULL` 뿐) · 로그 4개에서 `청산 판단 기록 실패` **0줄**·`exit_judgment` 언급 0줄 → 분류어 없음 · 주문 승인·UI 지연 보고 없음(이 세션이 받은 것 기준). 참고로 `pm2-err` 의 11-02 줄은 `job-run-log 503 reason=timeout` 2(00:00:16·08:01:00) · `corp-intel/status … DB 대기 상한` 1(00:00:14) · `telegram-poller getUpdates ETIMEDOUT` 4(00:30·08:35) 뿐이며 청산 판단 기록과 무관한 기존 계열.
+  - ⑥ **릴리스** — 행의 `engine_release`=`20261102-002939-cec935ac` = `readlink -f …/current` 의 마지막 요소(일치). 이 릴리스는 11-01 09:40 의 T-139·T-140 릴리스(`20261101-094008-81a1aabe`)가 아니라 **그 뒤 11-02 00:29 에 나간 다른 세션의 배포**다(pm2 `stockinvest`·`stockinvest-cron` online·restarts 0).
+  - ⑦ **안전 키** — `safety_dry_run`=`true`(10-30 09:08:14) · `exit_engine_enabled`=`true`(10-30 09:08:29) · `exit_hard_stop_enabled`=`false`(07-02 16:39:53) **불변**. **`safety_kill_switch` 는 값이 `false`(hex `66616C7365`) 로 그대로인데 `updated_at` 이 `2026-11-01 09:53:56` 이다 — 기대한 10-30 09:08:18 과 다르다.** **→ 해결(2026-11-02, 사용자 채팅 확인): 사용자 본인이 직접 설정한 것이다 — 의도한 변경이며 조치 불필요.** (값은 `false` 로 유지됐고, 어느 화면·경로로 설정했는지는 묻지 않았다. 아래 「출처는 모른다」·「[추측]」은 점검 시점의 서술이라 이 확인으로 대체된다.) 시점: 11-01 09:42~09:45 의 T-139·T-140 배포 후 점검에서는 불변이었으므로 그 뒤(09:53:56)에 어느 쓰기가 있었다. 근거 없이 단정하지 않는다 — 출처는 **모른다**: 로그(`pm2-out`·`pm2-err`·`cron-out`)의 09:53~09:56 에는 쓰기 흔적이 없고(평시 `cron OK` 줄뿐) 감사 테이블도 없다. `ACTIVE.md` 11-01 절에 다른 세션이 같은 관측을 이미 적어 두었다(출처 미확인). 영향 확인: `/api/health` green(`dryRun true`·`killSwitch false`·`safetyStatus green`), `orders` 11-01 09:30 이후 **0행**(차단·주문 모두 없음). [추측] 설정 화면 저장(같은 값 재저장도 `updated_at` 을 올린다)이거나 다른 세션의 시험 — 확인 수단이 없다. 값이 바뀌지 않았으므로 스위치를 끄는 등 조치는 하지 않았다.
+  - **조치 없음** — 스위치는 켠 채 유지(경고 반복·멈춘 INSERT 없음). 남은 것: 4번째 틱 funnel 대조(위) · 11-03(화) 07:20 해외 첫 틱 검증(예약 `60bb8ee9`; 세션이 끝났으면 [[T-126-exit-judgment-first-tick-check]] 런북으로) · (`safety_kill_switch` `updated_at` 출처는 사용자가 직접 설정한 것으로 확인 — 종결, 위 ⑦ 참조).
 
 ## 진행 기록
 - [2026-10-30 16:16] 후보 등록(Leader). 사용자 "권고안 확정" — D11 (c).
@@ -267,4 +276,4 @@ waiting: [11-02(월) 09:22 국내 첫 틱·11-03(화) 07:20 해외 첫 틱의 ex
 - [23:15] **⑦ 확인하지 못한 것** — 운영 MariaDB(10.11.11)에서 끊긴 클라이언트의 메타데이터 잠금 대기 SELECT 가 정리되는 시간(일회용 10.11.19 에서 약 1초, 운영은 미확인) · 죽은 TCP 의 커널 타이머 실측(계산값만) · 운영 `lock_wait_timeout` GLOBAL 86400 은 이 task Reviewer 1차의 읽기 SELECT 값을 인용(이번엔 운영 DB 를 읽지 않았다; 일회용 DB 의 `ENV` 줄 `lock_wait_timeout 5` 는 DDL 적용 세션의 값이고 풀 세션은 35초 넘게 붙잡혀 있었다) · 실제 Next 번들에서 모듈 상태(캐시·진행 중 조회)가 라우트별로 복제되는지 · `/api/health` 의 실제 호출 빈도(SafetyBar 마운트당 1회만 확인) · 야간에 전략 평가 틱이 `readExitEngineSwitch` 를 읽는지 · 운영 풀의 실제 동시 사용 패턴.
 
 ## 최종 요약
-(미작성)
+(Leader 최종 요약 미작성 — 2026-11-02 사용자 지시로 `done` 처리. 구현·감사·QA·배포 근거는 위 각 절 참조. `leader.md` 규칙(최종 요약과 같은 편집에서 done)과 다른 예외 전환이다.)

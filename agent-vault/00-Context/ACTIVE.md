@@ -1,10 +1,50 @@
 ---
 project: StockInvest
-updated: 2026-11-01
+updated: 2026-11-02
 tags:
   - type/context
 ---
 # 현재 상태
+
+## 2026-11-02 10:02 — T-143 WP-A(해외 분석 대상 월 1회 자동 산출) **운영 배포 완료 — 꺼진 상태로 나갔다**
+
+- [[T-143-overseas-universe-source-replacement]] WP-A: 사용자 승인 「커밋·push 진행」 → 「운영에도 배포되도록 푸시해줘」 로 **운영 반영까지 끝났다**. 릴리스 **`20261102-095756-f6b32b09`**, `RELEASE_RESULT status=ok`, webhook `exit=0`(push 09:57:35 → END 09:59:25), **`migrated:false`**. 내용은 `27f40b7`(WP-A 코드 40파일·6,808 추가/26 삭제) + `2967478`(기록) + `f6b32b0`(main 병합, 충돌 0 — 교집합 파일 0). 롤백 지점 `20261102-002939-cec935ac`.
+- **배포 전 검증을 병합 트리에서 다시 받았다**(병합 전 수치로 대신하지 않았다): `tsc` 0 · `jest` 384 suites / 10,892 통과 / 실패 0 · `next build` 0 · `git-refs-clean --check` 0 · 배포 직전 운영 표 4개 0행·스위치 행 0개 재확인.
+- **배포 후**: 두 앱 모두 새 릴리스·online·재시작 0 · **`stockinvest-cron` 1행** · health 가 배포 전과 같다(`ok:true`·`db:true`·`safetyStatus:"green"`·`dryRun:true`·`killSwitch:false`·`engine.enabled:true`·`autopilotMode:"assist"`) · 배포 후 새 에러 0건(`pm2-err` 마지막 줄 09:36:34, `cron-err` 0바이트) · 24h `orders` 0행.
+- **컷오버 공백 7건**: 09:58:27~28 `HTTP=000`(strategy-eval·signal-followup·signal-expiry·portfolio-snapshot·trade-report·job-run-log) — 배포 스크립트가 예고한 cron 재등록 중단이고 09:58:29 복귀, `job-run-log` 는 스풀 재전송. 장외라 주문·시세 판단에 걸린 것 없음. 재등록 후 cron 이 3분 45초 무기록이던 것은 **10:02:14 `strategy-eval OK`** 로 「긴 잡 진행 중」이 확정됐다.
+- **커밋 훅이 실제로 돌았다** — 서버 worktree(`~/.node-local/stockinvest-t143`)에서 커밋, `✅ [commit-msg] Reviewer 감사 기록 확인: T-143`. 커밋 전 임시 index 로 모의 실행해 exit 0 을 먼저 봤다. 마지막 판정 줄 `[03:18] CONDITIONAL_PASS` 의 scope 가 🔴 9파일을 전부 덮는다. push 직전 `git-refs-clean.sh --check` exit 0.
+- **🔴 배포됐지만 산출은 돌지 않는다**: `system_config` 에 `overseas_universe_refresh` 행이 **없고**(배포 후 재확인), 라우트가 「키 없음·해석 불가 = 꺼짐」으로 읽어 외부 호출 0건으로 끝낸다. WP-A 표 `overseas_universe_{run,candidate}` 는 **여전히 미생성**(DDL `T-143-wpa-universe-run.sql` 미적용 — 적용은 별도 승인). WP-B 표 4개 전부 **0행**. 새 잡 호출 기록 **0건** — 창이 아니다(다음 12-06(일) 01:10).
+- **Reviewer r4 CONDITIONAL_PASS**(critical 0 · high 2) — **「꺼진 상태로 커밋·배포」에 한한 판정**이다. 켜기·DDL 적용·1회차 호출은 포함하지 않는다. 검증: tsc 0 · jest 384 suites / 10,892 통과 / 실패 0 · 산출 경로 변이 감도 5/5.
+- **다음은 「켜기」 하나이고 사용자 승인 사항이다** — 아래 조건 선행. 켜려면 ① WP-A DDL 적용(`run`·`candidate` 2표) ② `system_config.overseas_universe_refresh` 행 추가, 둘 다 운영 DB 쓰기라 각각 승인이 필요하다. **배포 기록 커밋 `20cabc6` 은 `wip` 에만 있다** — 문서 전용 push 가 또 한 번의 운영 재빌드·cron 공백을 만들기 때문이고, 다음 기능 push 에 함께 실린다.
+- **켜기 전 조건**(task 정본에 전문): ADR/블랙아웃을 `isdr` 라벨이 아니라 실제 위험으로 판정 · 1회차 알림 문구 · 롤백 절차(또는 판독기가 스위치를 따르게) · 만료·실패가 사람에게 닿는 경로(M-2) · DB 시험을 `T143_WPA_DB_PORT` 로 QA 가 실행(없으면 핵심 변이 4개가 살아남는다) · 1회차 전 `kis_enam` 비어 있지 않은지 SELECT · M-3~M-6 · WP-C 08시 틱 실측 · BRK.B 표기(별 task).
+- **미해결 경계 틈**(별 건): `scripts/test-cron-runner-*.sh` 5개가 🔴 `cron-runner.sh` 의 회귀망인데 `SAFETY_PATHS` 밖이다 — 편입 자체가 🔴 라 새 판정이 필요하다. `us-data-db.ts` 간접 회귀망 2개·`src/lib/universe/**` 편입 여부와 같은 묶음.
+
+## 2026-11-02 00:00 — T-144 거래 운영 기록 해외 탭 ET 문구 제거 운영 반영 완료
+
+- [[T-144-trade-log-overseas-label]]: 해외 세그먼트의 `ET` 표시만 제거했으며 날짜 계산·주문 필터·다른 화면은 불변이다. 사용자 commit/push 승인 아래 최신 remote main `63f1044` 위에 UI 1파일+task만 커밋 `fff0293`으로 올렸다. 공유 main(`2c2308e`)·타 세션 dirty 변경은 보존했다.
+- webhook SHA `fff0293`: 11-01 23:58:34 시작 → 11-02 00:00:32 종료(`exit=0`), `RELEASE_RESULT ok`·릴리스 `20261101-235837-fff0293a`·`migrated:false`. 후속 health green·DRY_RUN true·kill false·engine enabled·assist, pm2 두 앱 online·재시작 0·cron 1개 및 배포 소스 해시 일치를 확인했다.
+- 독립 Reviewer 채팅 판정 수신·QA 표시/날짜 범위 통과. Reviewer 자기기록 규정 충돌은 미완료로 분리했고 안전경로 밖 문구 수정에 추가 승인 관문을 만들지 않았다. Claude C2는 조건 미충족으로 미전송·미검토. 실제 로그인 운영 화면은 미확인이다. 기동 중 health 첫 timeout은 회복했지만 배포 직후 telegram timeout·공시 상태 deadline·작업 기록 503 경고가 각 1건 있어 신규 경고 0건은 아니다.
+- 이 추가 현황 문서는 타 세션 편집과 섞여 미커밋으로 보존한다. 아래 T-143의 미배포 표시는 이력이며 현재 운영 부모는 T-143 `63f1044`였음을 이번 읽기에서 확인했다. T-143 남은 WP-A/WP-C 판단은 해당 task 정본을 따른다.
+
+## 2026-11-01 21:0x — T-143(해외 분석 대상 원천 교체) WP-B: 운영 DDL 적용 완료, **코드는 미커밋·미배포**
+
+- **지금 상태**: WP-B 구현 완료 → Reviewer PASS(`[20:14]`) → Codex C2 지적 5건 전부 반영 → QA 「DDL 적용 게이트 통과」(`[20:59]`) → **운영 DDL 적용**(사용자 승인 「적용 진행」·「QA가 통과되면」·「직접 실행해주세요」, 실행 주체 Leader — `docs/deploy-order.md` §471).
+- **운영 DB**: `overseas_universe_{revision,proposal,auto,watch}` **4개 표 생성, 전부 0행.** 전체 표 50 → 54, 기존 표 무변경. `chk_rev_count <= 500`(앱 상한 150 과 다른 의도된 백스톱). **배포본 `fe6775a` 에 이 표를 읽는 코드가 없어 운영 동작은 바뀌지 않았다**(QA 확인).
+- **🔴 상시 주의**: 표가 존재하므로 `overseas_universe_revision` 에 **행 하나만 들어가도 코드 배포 순간 그것이 실제 해외 분석 대상이 된다.** 운영 쓰기 금지, 공유 DB 를 보는 dev 서버에서 `PUT …/manual`·`POST …/proposals/[id]` 호출 금지, 쓰기 검증은 일회용 MariaDB 로만. **코드 배포 직전 `COUNT(*) = 0` 재확인.**
+- **브라우저 실측 완료**(격리 환경 — 일회용 `mariadb:10.11.11` + 터널, 운영 무접촉 사후 확인): 360·412·1280px 가로 스크롤 0·44px 미만 터치 영역 0 · Esc 로 포커스 트리거 복귀 · 배경 `inert` · 오류 상태에 내부 분류어 유출 0건.
+- **남은 것**: ① task frontmatter 에 `base_ref` 추가 ② **`fe6775a` 기준 재검증**(지금 증빙은 전부 `2c2308e` 기준) ③ **서버 worktree 에서 경로 지정 커밋**(신규 파일이 대부분이라 `git diff` 로는 안 보인다) ④ 코드 배포 — **별도 승인**, 그 전에 QA 가 남긴 6건(제안 카드 화면·빈 상태 2변형 등 WP-A 의존분 포함)을 다시 따진다.
+- **WP-A**(NYSE 상위 50 자동 산출): 설계 완료([`docs/design/2026-11-01-t143-wpa-nyse50-spec.md`](../../docs/design/2026-11-01-t143-wpa-nyse50-spec.md)), **미구현**. 1회차 자동 실행 예정 2026-12-06(일) 01:10 KST. **WP-C**(대상 ~150 확대 전 시간 예산 실측): 거래일 실측 대기 — 08시 틱 최악 287~359초로 **300초 초과 위험**이라 실측 전 확대 금지.
+- **T-137 은 닫히지 않았다** — 아래 별도 항목 참조.
+
+## 2026-11-01 11:08 — T-142(안전 플래그 비 JSON 값) 운영 배포 완료 (릴리스 `20261101-110613-0dbf6c9a`)
+
+- **사용자 결정**: 「네, 현행대로 배포」 — M-1(비 JSON `no`·`off` 를 값으로 존중할지) **현행 유지**. Leader 권고와 같다.
+- **배포**: merge `0dbf6c9`(1부모 `9f6f980` 다른 세션 `.codex` 정책 · 2부모 `2c2308e` T-142), push 11:05:49 → webhook 11:06:04~11:07:51 `exit=0`, `RELEASE_RESULT ok`, `migrated:false`. 롤백 지점 `20261101-095812-9f6f9809`.
+- **배포 후 확인**: pm2 둘 다 online·restarts 0 · cron 1개 · health green(`dryRun true`·`killSwitch false`, 배포 전과 같다) · 배포본 4파일에 `decodeFlagValue` · `system_config` 101행 전부 유효 JSON·비 JSON 0행 · 로그 `해석할 수 없음` 0건 → **거동이 바뀐 것 없음**(예측대로) · 24h `orders` 0행.
+- **🔴 push 가 한 번 막혔고 저장소를 수리했다**: `.git/refs/` 안 Synology 확장속성 사이드카(`@eaDir/*@SynoEAStream` 8개) 때문에 `git fetch` 가 `fatal: bad object refs/codex/@eaDir/turn-diffs@SynoEAStream` 로 하드 실패했다. 삭제하지 않고 `~/.local/share/stockinvest-eadir-quarantine/20261101-110414/` 로 격리(진짜 ref 13개 불변, 격리 후 fetch 정상). **Codex 가 `refs/codex/*` 를 쓰면 재발한다** — 근본 조치(Synology 색인 제외 / `.git` 을 로컬 디스크로 / Codex ref 미사용)는 미정, `/이슈기록` 후보.
+- **공유 트리는 origin 보다 1커밋 뒤에 있다**: 다른 세션이 `.codex/agents/leader.toml` 을 커밋 전으로 들고 있어 공유 트리 merge 가 막혀 별도 worktree(`~/.node-local/t142-push`, 사용 후 제거)에서 합쳐 push 했다. 로컬 `main`(`2c2308e`)은 `0dbf6c9` 의 조상이라 그 세션이 커밋한 뒤 `git merge --ff-only origin/main` 으로 따라온다. **그 세션에 알렸다.** 그래서 이 배포 기록·board·ACTIVE 갱신은 **커밋하지 않았다**(커밋하면 다시 갈라져 그 세션의 ff 를 막는다).
+- **⚠ 관측(내 작업 아님)**: `safety_kill_switch` 의 `updated_at` 이 **09:53:56** 로 바뀌어 있다 — 값은 `false` 그대로이고 health 도 평시다. 설정 화면 PATCH 나 다른 세션으로 보이지만 **출처는 확인하지 못했다.** → **해결(2026-11-02): 사용자가 직접 설정한 것으로 채팅 확인 — 의도한 변경, 조치 불필요.** 이후 점검의 `safety_kill_switch` 기대 `updated_at` 은 11-01 09:53:56 이다(옛 10-30 09:08:18 은 낡음).
+- **다음**: ① **11-01 14:02 KST(휴장일) 토큰 갱신 리허설** — `api-usage-2026-11-01.jsonl` 의 `token-p` 가 1건(많아야 2건)·403 0건이면 T-138 단일 비행 실증 ② **F-1 = serve-stale**(T-138 후속 1위, 11-02 장중 전) ③ **O-2 블랙리스트 별 task** 열지 사용자 결정 ④ **F-2②**(DB 읽기 오류 → 활성?) 사용자 결정 ⑤ 11-02(월) 장중 관측(T-133 시세 재시도 소진율·`[portfolio-total] 시세 조회 실패` 감소).
 
 ## 2026-11-01 09:45 — T-139·T-140 운영 배포 완료 (릴리스 `20261101-094008-81a1aabe`)
 

@@ -1,11 +1,11 @@
 ---
 task_id: T-142
 title: 킬스위치·DRY_RUN 의 값 해석 실패가 fail-open 이다 — 비 JSON 값을 문서화된 의도대로 안전 방향으로 돌린다
-status: approved-deploy
+status: done
 priority: high
 project: StockInvest
 created: 2026-11-01
-updated: 2026-11-01
+updated: 2026-11-02
 base_ref: origin/main d0d203c (릴리스 20261101-093319-d0d203cf)
 risk_level: R2
 roles_involved: [leader, reviewer, qa]
@@ -91,7 +91,7 @@ const r = parseBoolFlag(JSON.parse(rows[0].value));   // ← JSON.parse 가 try 
 1. **`isKillSwitchActive`·`isDryRun` 은 주문 경로만이 아니라 `/api/health`·스냅샷·설정 화면도 쓴다.** 이 변경이 그쪽 의미를 바꾸는가(감사자 F-2 권고는 「다른 호출점의 의미는 바꾸지 않는다」였다 — 나는 **함수 하나를 고쳐 전부 바꾸는 쪽**을 골랐다. 문서화된 의도가 호출점별로 다르지 않기 때문인데, 이 판단을 독립 확인해 달라).
 2. **기존 시험이 지금의 fail-open 을 고정하고 있는지.** 있으면 그 시험이 의도적이었는지(= 내가 교리를 잘못 읽었는지) 판단해 달라.
 3. **`decodeFlagValue` 가 바꾸는 값의 집합.** 정상 JSON 에 대해서는 거동이 완전히 같아야 한다. `"true"`(따옴표 포함)·` "yes" `(공백 포함)·`null`·`{}` 같은 경계를 직접 깨 보라.
-4. **알림 폭주 가능성** — 파싱 실패가 `unparsable` 로 분류되면 `reportUnparsableKillSwitch` 가 critical 알림을 쏜다. `shouldReportUnparsable` 이 (key, raw) 당 프로세스 1회로 억제하지만, 프로세스가 2개(web·cron)이고 재기동마다 초기화된다. 지금까지 **조용히 무시**되던 값이 갑자기 알림을 내게 되는 것이 운영상 문제인지 판단해 달라.
+4. **알림 폭주 가능성** — 파싱 실패가 `unparsable` 로 분류되면 `reportUnparsableKillSwitch` 가 critical 알림을 쏜다. `shouldReportUnparsable` 이 (key, raw) 당 프로세스 1회로 억제하지만, 프로세스가 2개(web·cron)이고 재기동마다 초기화된다. 🔴 **이 줄의 「프로세스 2개」는 틀렸다**(아래 「검증 5」·「내가 두 번 과장했고」 참조) — `stockinvest-cron` 은 `scripts/cron-runner.sh` 의 bash+curl 이라 플래그를 평가하는 Node 프로세스는 web 하나다(`ecosystem.config.js` `instances: 1`, `cron-runner.sh` 의 `BASE_URL=http://localhost:3003`). 질문 자체는 당시 적은 대로 남긴다. 지금까지 **조용히 무시**되던 값이 갑자기 알림을 내게 되는 것이 운영상 문제인지 판단해 달라.
 5. **운영 DB 의 현재 값이 비 JSON 인지 먼저 확인할 것** — `safety_kill_switch` 가 `false`, `safety_dry_run` 이 `true`(둘 다 JSON 으로 유효)인 것은 확인했다. 다른 안전 플래그 행에 비 JSON 값이 있으면 **이 배포 순간 거동이 바뀐다**(알림 또는 차단). 내가 본 것은 두 행뿐이다.
 
 ## 진행 기록
@@ -234,3 +234,39 @@ const r = parseBoolFlag(JSON.parse(rows[0].value));   // ← JSON.parse 가 try 
 **「네, 현행대로 배포」** — M-1 은 **현행 유지**(비 JSON `no`·`off` 를 값으로 존중, env 와 같은 규칙)로 확정됐다. Leader 권고와 같다. 코드 변경이 없으므로 **재감사 없이** 커밋·push 한다.
 
 수용된 거동을 다시 적는다(제약 우회 환경에서만 도달): DB 에 비 JSON `no`·`off`·`n` 이 있으면 **DRY_RUN 은 OFF(실거래 방향)**, **킬스위치는 비활성(차단 해제)** 이 되고 env 값보다 세다. 같은 효과는 `"off"`·`false` 로 HEAD 에서도 가능했다.
+
+## 배포 기록 (deployer)
+
+| 항목 | 값 |
+|---|---|
+| 커밋 | `2c2308e`(T-142) → merge `0dbf6c9`(1부모 `9f6f980` = 다른 세션의 `.codex` 정책, 2부모 `2c2308e`) |
+| push | 11:05:49 KST, 별도 worktree `~/.node-local/t142-push` 에서 `HEAD:main` |
+| 릴리스 | **`20261101-110613-0dbf6c9a`** · `RELEASE_RESULT {"status":"ok","migrated":false}` · 11:06:04~11:07:51 (107초) |
+| 이전 릴리스 | `20261101-095812-9f6f9809` (롤백 지점) |
+| 동승한 다른 작업 | 다른 세션의 `.codex/agents/*.toml` 역할 모델 정책(`1142051`·`9f6f980`)과 로컬 문서 커밋 `af73bf6`(T-139·T-140 배포 기록) |
+
+### 🔴 push 가 한 번 막혔다 — 저장소 ref 가 깨져 있었다
+
+`git push` 가 non-fast-forward 로 거부됐는데 `git fetch` 가 **`fatal: bad object refs/codex/@eaDir/turn-diffs@SynoEAStream`** 로 실패해 따라잡을 수 없었다.
+
+- **원인**: 이 저장소가 Synology 공유 위에 있어 `.git/refs/` 안에 Synology 확장속성 사이드카(`@eaDir/<이름>@SynoEAStream`, 각 163바이트)가 생기고, git 이 그 파일을 **ref 로 읽는다**. Codex 가 `refs/codex/turn-diffs/...` 와 `refs/heads/codex/...` 를 쓰면서 드러났다. `git for-each-ref` 는 「ignoring broken ref」 경고로 넘기지만 **`fetch` 는 하드 실패**한다.
+- **조치**: `.git/refs/` 아래 `@eaDir` 디렉터리 **8개를 삭제하지 않고** `~/.local/share/stockinvest-eadir-quarantine/20261101-110414/` 로 옮겼다(원래 경로 구조 보존). 진짜 ref 파일 13개는 손대지 않았고, 옮긴 뒤 깨진 ref 경고 0·`fetch` 정상.
+- **재발 가능**: Codex 가 다시 ref 를 쓰면 Synology 가 또 사이드카를 만든다. 근본 조치는 ① 이 저장소를 Synology 색인에서 제외 ② Codex 가 `refs/codex/*` 를 쓰지 않게 하거나 `.git` 을 로컬 디스크로 옮기는 것. → **`/이슈기록` 후보**.
+- **공유 트리에서 merge 하지 않은 이유**: 다른 세션이 `.codex/agents/leader.toml` 을 커밋 전 상태로 들고 있어(나머지 7개는 origin 과 내용 동일) merge 가 그 파일을 덮어쓰려 해 막힌다. 그 세션의 작업물을 stash·reset 하지 않기 위해 별도 worktree 에서 합쳐 push 했다. 공유 트리의 로컬 `main`(`2c2308e`)은 `0dbf6c9` 의 **조상**이라 그 세션이 leader.toml 을 커밋한 뒤 `git merge --ff-only origin/main` 으로 따라온다. 그 세션에 알렸다.
+
+### 배포 후 확인 (11:08 KST, QA 항목대로)
+
+- `current` → 새 릴리스 · pm2 `stockinvest`·`stockinvest-cron` 둘 다 online·restarts 0 · **cron 프로세스 1개**
+- `/api/health` HTTP 200 · `ok=true` · `db=true` · `schemaFatal=false` · `safetyStatus=green` · **`dryRun=true`** · `killSwitch=false` — 배포 전과 같다
+- 배포본 4파일에 `decodeFlagValue` 존재(`flags.ts` 1 · `kill-switch.ts` 2 · `dry-run.ts` 2 · `safety-state.ts` 3). **빌드 청크 grep 은 근거로 쓰지 않는다** — 이 변경은 새 런타임 문자열을 만들지 않고 주석은 압축에서 지워지므로 0건이 정상이다(근거는 릴리스 소스 + 빌드 성공 + health)
+- `system_config` **101행 전부 유효 JSON · 비 JSON 0행**(배포 후 재확인) · 로그에 `해석할 수 없음` **0건** → **배포 순간 거동이 바뀐 것은 없다**(예측대로)
+- 24시간 `orders` **0행**(`kill_switch` 차단 0·`failed` 0)
+- 배포 후 오류 로그: `[strategy/records/job-run-log] 503 reason=timeout` 1줄 — T-127·T-135 때부터 관찰된 기존 패턴이고 스풀로 재전송된다. T-142 와 무관하다
+- ⚠ **관측 1건(내 작업 아님)**: `safety_kill_switch` 의 `updated_at` 이 **2026-11-01 09:53:56** 로 바뀌어 있다(값은 `false` 그대로). 내 변경은 설정을 쓰지 않으므로 다른 출처다(설정 화면 PATCH 또는 다른 세션). 값·health 는 모두 평시와 같지만 **누가 썼는지는 확인하지 못했다.** → **해결(2026-11-02, 사용자 채팅 확인): 사용자 본인이 직접 설정한 것 — 의도한 변경, 조치 불필요**(T-126 `## 배포 기록` 11-02 09:25 점검에서 발견·확인).
+
+### 미배포 문서
+
+이 「배포 기록」과 board·ACTIVE 갱신은 **커밋하지 않았다.** 공유 트리의 로컬 `main` 위에 커밋하면 origin(`0dbf6c9`)과 다시 갈라져 다른 세션의 fast-forward 를 막는다. 그 세션이 `.codex/agents/leader.toml` 을 커밋해 트리가 따라잡은 뒤에 커밋한다(또는 다음 기능 push 에 동승).
+
+## 최종 요약
+(Leader 최종 요약 미작성 — 2026-11-02 사용자 지시로 `done` 처리. 구현·감사·QA·배포 근거는 위 각 절 참조. `leader.md` 규칙(최종 요약과 같은 편집에서 done)과 다른 예외 전환이다.)

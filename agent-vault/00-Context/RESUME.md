@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-10-31
+updated: 2026-11-01
 tags:
   - type/context
 aliases:
@@ -10,7 +10,32 @@ aliases:
 
 # ▶ 이어서 작업 — 재개 진입점
 
-> **🟢 아래 「최신 — 2026-10-31」 절이 정본이다.** 그 아래 10-30 이전 절들은 **이력**이며 현재 사실과 다른 곳이 있다(특히 킬스위치·청산 엔진·"다음 task 번호"). 세부 경과는 [[ACTIVE]] 맨 위.
+## ▶ T-137 최신 재개 기준 — 2026-11-01 01:32 KST
+
+1. [[T-137-dynamic-overseas-universe]] 맨 위 최신 진입점과 마지막 Leader·Developer·QA·Judge 절을 읽는다. 이전 Windows/10-31 ZIP만으로 복원하지 않는다. 최신79파일 통합본은 main18896 기준 `agent-vault/10-Flow/artifacts/T-137-main18896-integration-review-20261101-r2.zip`, 정확경로/해시는 `T-137-integration-source-manifest79-20261101-r2.json`에 있다.
+2. 전체 코드 감사의 조건부 의견과 격리 QA는 보강됐다(통합10,548건, DB22건, 전체합성cron4,320틱, 실제Next OFF6조건). 그러나 공식 Reviewer 기록은 역할편집금지 충돌로 아직 없고, 원천계약/API권한도 없으며 실제기능ON·KIS150+·실DBworker/운영전환은 미검증이다. task는doing/user_decision이다.
+3. 다음은 사용자의 데이터 공급/대체원천 결정과 T-137 Reviewer 자기기록 한정 예외 또는 정본규정 정정이다. 그 뒤 동일 독립감사자가 실제scope로 직접기록하며 Leader대필/no-verify금지. 운영DDL·스위치·commit/push/배포는 별도 유효승인과 검증 전 금지.01:32읽기 당시 remote main/운영릴리스18896, healthgreen·DRY_RUNtrue·killfalse·engineenabled.
+4. 아래10-31 절의 예약·타task 일정은 삭제하지 않았고 여전히 참고한다. T-137의 최신 상태·자료와 예전 인계의 충돌은 이 절 및 task 최신절을 우선한다.
+
+
+> **🟢 T-137은 위 「T-137 최신 재개 기준 — 2026-11-01」이 정본이다.** 그 밖의 10-31 업무·예약은 아래 「최신 — 2026-10-31」을 참고한다. 10-30 이전 절들은 **이력**이며 현재 사실과 다른 곳이 있다(특히 킬스위치·청산 엔진·"다음 task 번호"). 세부 경과는 [[ACTIVE]] 맨 위.
+
+## ▶ 최신 — 2026-11-01 09:45 (T-139·T-140 운영 배포 완료 — 이 절이 아래 00:55 절보다 우선한다)
+
+- **운영은 `origin/main` `81a1aab` / 릴리스 `20261101-094008-81a1aabe`** — push `d0d203c..81a1aab`(09:39:37), webhook 09:39:59~09:41:41 `exit=0`, `RELEASE_RESULT ok`, `migrated:false`. 안에 T-139(`3d40f6a`)·T-140(`967259f`)·문서(`81a1aab`). 바로 앞 배포는 다른 세션의 T-141(`d0d203c`, 09:33). 롤백 대상 `20261101-093319-d0d203cf`.
+- **배포 후 점검 이상 없음(09:42~09:45, 읽기 전용)**: pm2 두 앱 online·restarts 0 · `/api/health` green(dryRun true·killSwitch false) · 안전 키 6개 불변 · `pm2-err/out/cron-err` 에 `[strategy/records/switch]` 경고 0줄·배포 후 새 err 줄 0 · `Aborted_clients` 불변 수준(공용 DB 전체 카운터) · `cron-runner.sh` 1개. 근거·미확인은 [[T-139-record-switch-bounded-read]] 「배포 기록」.
+- **승인 시점 계획(05:10~08:30 창)과 달리 승인 응답이 09:3x 에 와서 일요일 09:39(휴장일)에 나갔다** — 사용자에게 보고함. base 가 T-141 로 바뀌어 병합 상태를 다시 검증했다(tree `8ec03ee8`, jest 10455 통과·실패 0, tsc 0, build 0).
+- **사용자/후속 확인 대기**: 홈 → 운용현황 A4 「데이터 이상」 숫자 불변(T-140, AI 는 로그인이 없어 못 봄) · 약 10:45 이후와 월요일(11-02) 개장 후 `grep -c "\[strategy/records/switch\]" …/pm2-err.log` 증가분 0 · 평시 `Aborted_clients` 증가 없음. 이전부터의 사용자 대기 항목은 아래 00:55 절 마지막 줄 그대로 유효(T-139·T-140 승인 건만 해소).
+- 로컬 미커밋 문서: `ACTIVE`·`RESUME`·`board` 는 다른 세션(T-137·T-141·T-142)의 편집과 섞여 있어 이번에 커밋하지 않았다.
+
+## ▶ 최신 — 2026-11-01 00:55 (보고 직전 읽은 값; 아래 10-31 절과 어긋나면 이 절이 맞다. **단 「승인 대기: T-139+T-140」·「T-141 미커밋」 줄은 09:45 에 해소됨**)
+
+- **운영은 `origin/main` `18896a8` / 릴리스 `20261031-235854-18896a8b`** — T-136·T-138(KIS 토큰, 다른 세션)이 23:59 에 push 로 배포됨(문서 커밋 2개 `0b8b013`·`287b637` 도 함께 나감). pm2 `stockinvest`·`stockinvest-cron` online restarts 0, `/api/health` green(DRY_RUN true·킬스위치 false). 로컬 `main`(`6610dc0`)은 origin 보다 **문서 커밋 1개** 앞(다른 세션의 T-136/T-138 배포 기록, 미push).
+- **승인 대기: T-139(기록 스위치 읽기 상한, R2) + T-140(준비 중 원천 수, R1)** — 둘 다 구현·Reviewer·QA PASS, `status: ready-to-deploy`. 코드는 **서버 side branch 에만** 있다(main·origin 미반영): `wip/T-139-record-switch-bounded-read`=`d14ac78`, `wip/T-140-prep-source-count`=`cbc85ee`(둘 다 base `a064722`). 병합 상태(origin `18896a8` 위에 d14ac78+cbc85ee cherry-pick) 검증 완료 — worktree `~/.node-local/stockinvest-integ4`, HEAD `385b836`, **tree `83f870141c09b5f1bf7d1583ea95a876e0378fd0`**, 전체 jest 10449 통과·0 실패, `tsc` 0, `next build` 0. 배포하려면: ① 사용자 승인 ② 05:10~08:30 또는 15:40~22:20 KST 창(07:35~07:57 피함) ③ 서버 main 에 `git cherry-pick d14ac78 cbc85ee` — **결과 tree 가 위 tree 와 같은지 `git rev-parse HEAD^{tree}` 로 대조**(다르면 push 하지 않는다. 로컬 main 의 문서 커밋 `6610dc0` 때문에 tree 가 다를 수 있으니 코드 파일 14개의 diff 로 대조) ④ push → 웹훅 ⑤ 배포 완료는 `START … sha=<푸시 sha>` 이후의 `END` 만 인정 ⑥ 배포 후 확인은 각 task `## 최종 요약`.
+- **같은 체크아웃의 다른 세션**: T-141(킬스위치 송신 직전 재확인, `src/lib/safety/dry-run.ts` **미커밋 수정 중**)·T-137(해외 분석 대상 갱신, Doing). 건드리지 않는다. `.codex/agents/*.toml`·`AGENTS.md` 의 미커밋 변경도 동기화 도구 산물로 보이며 내 것이 아니다.
+- **취소한 예약**: 11-01 05:15 문서 푸시 크론(가드 `origin==3669090` 이 더 이상 성립하지 않고, 문서는 승인된 배포 push 에 함께 싣는 편이 재시작 1회로 끝난다). 남은 예약(세션 한정): 11-01 04:30 로그 회전 확인 · 11-02 09:22·11-03 07:20 exit_judgment 첫 틱 · 11-02 16:13 T-112 4회차.
+- **T-136 실효 확인은 11-01 14:02 KST 토큰 갱신 창**(다른 세션 소관) — 그 전에 배포해도 토큰 로직은 안 바뀌지만 프로세스가 재시작된다(토큰은 DB 에 있어 재읽기).
+- 사용자 대기 항목(이전부터): 러너 하드닝 4건(T-131 #27) 지금/보류(권고 보류) · T-125 관찰 종료일 · T-124 보류 · T-131 승격 항목 · #28 설계 결정 · 정리 승인(서버 worktree `stockinvest-t1xx`·`integ*`·`wip/*` 브랜치).
 
 ## ▶ 최신 — 2026-10-31 21:0x (이 절의 값은 20:52 에 읽어 확인한 것)
 
@@ -37,7 +62,7 @@ aliases:
 - [[T-131-t126-t130-followup-candidates]] **2순위 묶음**(안전 스위치 저장 직렬화 + 위험 방향 확인 시트 = 1·2번, 화면 변경 → 디자이너 데모 승인 먼저): **실거래 단계 1 진입 일정이 정해지면 그 1~2주 전에** 시작. 그 밖 후보는 보류 권고.
 - `proposed` 3건 — [[T-124-news-input-misread-truncation]](**보류 권고**: 선결은 11-02 이후 `judgment_record_enabled` 결정, 구현은 11-23 이후) · [[T-125-news-zero-alert-cleanup]](10-30 이후 분석 3회 연속 뉴스 통과·경고 0건 → 전제 약화, **11-02~11-04 국내 3일 관찰 뒤 닫기 권고**) · [[T-131-t126-t130-followup-candidates]](후보 모음 — 승격할 항목을 골라 새 task 로) · 사용자 결정 대기: T-100 보유 손실 통제 초안([[ACTIVE]] 10-27 항목).
 - 서버 정리 승인(worktree `stockinvest-t134`·`t135`·`integ2`·이전 task 것들, 브랜치 `wip/T-134-…`·`wip/T-135-…`, QA 일회용 DB 컨테이너, `~/.node-local/t1*` 로그 폴더). (pm2 로그 회전은 10-31 설정 완료 — [[stockinvest-log-rotation]], 첫 회전 11-01(일) 04:15).
-- **Codex 복구됨(10-31 22:1x, 사용자 「CLI 갱신」)**: 계정은 `gpt-6.1-sol` 을 쓸 수 있고, 실패 원인은 PATH 의 `codex` CLI(nvm 25.6.1 전역 0.156.1)가 낡은 것이었다 → **0.166.0 으로 갱신**, 래퍼 끝까지 시험 통과([[T-131-t126-t130-followup-candidates]] 19번). ⚠ `codex` 설치본이 셋(nvm=이것 · Homebrew=깨진 0.116.0 · 앱 번들 alpha)이고 이 셸에서 그냥 `npm i -g` 는 Homebrew 쪽에 깔리니 갱신은 **nvm 의 npm** 으로. 이전 문서(T-126·127·128·134·135)의 「모델 설정 장애」는 틀린 진단이었고 정정 기록이 있다. **소급 Codex 검토 5건(T-126·127·128·134·135)은 사용자 승인됨(10-31 22:3x)** — 22:30 첫 시도가 **계정 사용 한도 초과**(재시도 가능 시각 11-01 02:15)로 실패해 11-01 02:25 자동 재시도를 예약했다(세션 한정). 예약이 사라졌으면 [[retro-codex]] README 대로 수동 실행(한 번에 하나씩, 한도 오류가 나면 더 두드리지 않는다). 결과가 나오면 독립 Reviewer 가 지적별로 채택·오탐을 판정하고 채택분만 새 task 로.
+- **Codex 복구됨(10-31 22:1x, 사용자 「CLI 갱신」)**: 계정은 `gpt-6.1-sol` 을 쓸 수 있고, 실패 원인은 PATH 의 `codex` CLI(nvm 25.6.1 전역 0.156.1)가 낡은 것이었다 → **0.166.0 으로 갱신**, 래퍼 끝까지 시험 통과([[T-131-t126-t130-followup-candidates]] 19번). ⚠ `codex` 설치본이 셋(nvm=이것 · Homebrew=깨진 0.116.0 · 앱 번들 alpha)이고 이 셸에서 그냥 `npm i -g` 는 Homebrew 쪽에 깔리니 갱신은 **nvm 의 npm** 으로. 이전 문서(T-126·127·128·134·135)의 「모델 설정 장애」는 틀린 진단이었고 정정 기록이 있다. **소급 Codex 검토 5건 완료**(사용자 승인 10-31 22:3x; 한도는 사용자가 초기화) — 지적 6건, 독립 Reviewer 판정은 **전부 Low~Medium 이하(부분 채택 또는 채택·Low)**, `critical`·`high` 확정 0. 후속 코드: [[T-139-record-switch-bounded-read]](기록 스위치 읽기 연결 상한)·[[T-140-anomalies-prep-source-count]](prep 원천 수 정정) — 별도 브랜치에서 진행, 배포 승인 전. 러너 하드닝 4건은 묶음 후보([[T-131-t126-t130-followup-candidates]] 27번). **실거래 전 별도 결정: 엔진·주문의 스위치 읽기 정체 비대칭(28번)**. 입력·수동 실행법은 [[retro-codex]].
 
 ### 4. 이어서 한다면 (권고 순서)
 1. 읽기 확인: health · 현재 릴리스 · 위 안전 키 6개(런북 1절 표) · `git log origin/main..main`(문서 커밋만 앞서 있는지).
