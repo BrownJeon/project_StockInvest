@@ -1,8 +1,8 @@
 ---
 task_id: T-147
 title: cron 틱 묶임 — 장중 분당 잡(손절 알림) 굶음 해소
-status: review
-waiting: 사용자 배포 승인 — push=즉시 blue/green 배포라 장 상황을 보고 결정한다
+status: done
+waiting: 다음 영업일(11-04) 국내 장중 09:00~15:30 에 손절 알림 매 분 유지 + 텔레그램 중복 없음 사용자 확인
 priority: high
 project: StockInvest
 created: 2026-11-03
@@ -249,6 +249,22 @@ n=24 · 합 **3748초** = 측정 구간 전체 시간의 **37%** · 100초 초�
 - [19:58] 미확인·한계 — 운영에서 티커의 실제 stop-alert 응답과 텔레그램 중복 발송 여부는 관찰하지 못했다. 락 비지원 파일시스템의 flock 오류는 재현하지 못했다. 서버 지연 조건의 두 호출 겹침은 재현하지 못했다. 09:54~10:00 손절선 돌파 여부는 확인하지 못했다.
 - [19:58] deployer 인계 시 post_deploy_checks 제안 — Reviewer 관찰 ①~⑦ 전부, 추가로 (a) 배포 로그에 "stop-alert 티커 시작 — pid" 1줄이 있고 "레거시 모드"·"띄우지 못했다"·"사라졌다" 줄이 0개인지 (b) 기동 후 ps 에 러너 1 + 티커 자식 1 (c) 긴 틱(100초 초과) 동안 틱 끝에 cron-heartbeat 가 갱신되는지 (d) 한 틱 안 출력 공백이 300초를 넘는 건수(entry-watcher 무응답 재발 여부). 커밋·배포는 사용자 승인 뒤.
 
+## 배포 기록
+
+| 시각 (KST) | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
+|---|---|---|---|---|---|
+| 2026-11-03 20:24:11 → 20:25:46 | 20261103-202418-17a4257f | 17a4257 | T-147 (본 작업) · 1db9103 (T-146 문서 전용 — 배포 기록·QA 판정·최종 요약, 코드 변경 없음) | ✅ ok (exit 0) | push = webhook blue/green · 마이그레이션 없음 · 직전 릴리스 20261103-093323-1dfd57d6 |
+
+- **방식**: 사용자 명시 승인 후 `git push origin main` (origin/main 1dfd57d → 17a4257) → Gitea webhook → `deploy-stockinvest.sh` → `release.sh` blue/green. `scripts/deploy.sh --yes` 는 돌리지 않았다(이중 배포 방지). 같은 날 `--dry-run`(SSH 없음)·`--status`(읽기)만 실행.
+- **판정**: `RELEASE_RESULT {"status":"ok","release":"20261103-202418-17a4257f","sha":"17a4257f2ee432e513cd7ad7c763c80d6e21ebf1","previous":"…/releases/20261103-093323-1dfd57d6","migrated":false}` · 로그 `END … exit=0`. 마이그레이션 없음(`--with-migrate` 미사용).
+- **배포 전 확인**: `git-refs-clean.sh --check` rc=0(push 직전 재실행) · QA PASS(조건부, NOT_VERIFIED 2건 — 아래) · Reviewer PASS(scope 13개). 작업본 미커밋 9건(T-112·T-145 vault, `public/mockups` 삭제, `.codex*`·`.claude/agents/claude.md` 등)은 **배포에 들어가지 않았다**(release 는 origin/main 기준).
+- **컷오버 중 짧은 중단**: release.sh 가 web·cron 을 `delete` 후 재등록(수 초). 그 사이 옛 cron 의 잡 기록 1건 전송 실패(HTTP=000 — 스풀에 남아 다음 틱에 재전송, 잡 동작 무관).
+- **🔴 컷오버 1초 창 — 같은 분 stop-alert 2회 (보고 대상)**: 20:24:22 옛 러너 정상 틱 + 20:24:46 옛 러너 재기동 틱(메인 루프 `stop-alert` 포함). 20:24:46 기동 줄에는 티커 결정 줄이 없었고, 옛 릴리스(1dfd57d6)의 `cron-runner.sh` 에는 티커 코드가 0줄이므로 **옛 코드 러너**로 판단한다 [가능성 높음 — 옛 파일 grep 0건으로 확인]. 20:24:47 release.sh 의 delete 로 제거되고 새 러너가 티커를 띄웠다. 그 시각 웹도 재기동 중이었다(job-run-log HTTP=000). **20:24:46 호출의 실제 발송 여부는 미확인.** 동시 호출은 관찰되지 않았다(티커의 첫 호출은 20:25:00).
+- **steady state (20:25:00 ~ 20:30:00, 6분 실측)**: `stop-alert` 매 분 :00 에 정확히 1회(6회). 20:24:47 이후 메인 루프 틱 줄에 `stop-alert` 0건. 러너 pid 491794 + 티커 자식 pid 491802(ppid 491794) 1쌍, 옛 러너 pid 3098067 소멸·고아 없음. `cron-heartbeat` 나이 52~53초(4 샘플). 20:24:47 이후 로그 33줄, **틱 간 최대 공백 52초**(300초 기준 미달). `cron-err.log` 비어 있음, `pm2-err.log` 20:24 이후 줄 없음, 🔴·🔶·FAIL·skip 줄 0건.
+- **헬스·안전장치**: 127.0.0.1:3003 `/api/health` 200 · 공개 도메인 `/api/health` 200 · 본문 `ok:true, db:true, safetyStatus:"green", safety.dryRun:true, killSwitch:false, limitsConfigured:true, authConfigured:true, cronSecretConfigured:true`. 공개 `/` 307(로그인 리다이렉트). 배포 전 health 본문은 기록하지 않아 전후 직접 대조는 못 했다. KIS 실연동 상태는 health 본문에 없어 **미확인**.
+- **pm2 재시작 횟수**: 재등록으로 두 앱 모두 ↺0 으로 리셋됐다. 배포 전 baseline 은 stockinvest ↺0 · stockinvest-cron ↺1. "재시작 증가 없음"은 재등록 이후 기준으로만 판정 가능. `stockinvest-cron` 은 1행(id 100).
+- **미확인·남은 일**: ① 손절 알림 실제 수신·텔레그램 중복 발송 여부(20:24:46 포함) — 미관찰 ② QA NOT_VERIFIED 2건 중 「안전장치 회로 4종 런타임 재시험」 미수행, 「운영 배포 후 관찰」은 장외 6분뿐 — 장중 손절선 돌파 시 실발송 관찰 필요 ③ 긴 틱(100초 초과) 중 heartbeat 갱신 — 미관찰 ④ 메인 화면 렌더링 — 브라우저 미확인(공개 `/` 307 만 확인) ⑤ 장 개시(23:30 KST) 이후 틱 주기 60초대 유지 재확인.
+
 ## Leader
 
 - [12:2x] **설계 성립 근거를 먼저 확인했다 — KIS lane 경합은 일어나지 않는다.** 티커로 떼어낸 `stop-alert` 는 `normal` lane 인데 평가 본체도 `normal` 이다(`withKisPriority` 선언이 `refreshUniverse`·`updateRsRatings` 둘뿐 — `src/lib/strategy/universe.ts:168`, `rs-rating.ts:77`). 같은 lane 이면 FIFO 라 티커가 150건 뒤에 줄 서서 굶을 위험을 의심했으나, 평가 루프가 **직렬**이라(`engine.ts:1455` `for (const symbol of symbols) { await collectCandidates(…) }`) `normal` 대기열 깊이가 1 을 넘지 않는다. 레이트 5/s 중 평가가 약 1/s 만 쓰므로 티커의 시세 요청은 바로 토큰을 받는다. 서버 응답성도 실측 — 장중 `/api/health` 25회 표본 median 0.00초·최장 2.05초(이벤트 루프가 막히지 않는다 = 평가가 I/O 대기라 동시 요청이 처리된다). **이 확인 없이는 채택 설계가 "티커는 60초마다 돌지만 그 시간 동안 시세를 못 받아 실패"로 끝날 수 있었다.**
@@ -288,3 +304,8 @@ n=24 · 합 **3748초** = 측정 구간 전체 시간의 **37%** · 100초 초�
   - **기존 하네스 8개가 이제 기본 경로가 아니라 레거시 경로를 지킨다**(감사자 지적). 기본 경로는 신규 하네스가 본다. 그리고 `ALERT_TICKER_DISABLE` 이 운영에 없음을 보장하는 **기계적 가드가 없다**(현재는 실측으로만 0건 확인).
   - **내 실측 오류 2건을 정정했다**(이 문서 `실측 ④`): ⓐ "워치독 재시작 0회"는 틀렸다 — 4건이고 그중 하나는 오늘 10:00:02 장중이다 ⓑ "그때 돌던 평가가 중단됐다"도 틀렸다 — `strategy-eval` 은 09:59:31 에 정상 완료하고 재시작은 sleep 중에 일어나 **중단된 잡도, DB 피해도 없었다**(QA 확인: 09:40~10:10 `orders`·`trade_logs` 0행, 10:00 롤업 failed 0). ⓒ "같은 원인의 반복"도 과장이다 — 4건 중 2건만 틱 길이이고(이번 변경으로 막힌다), 1건은 `entry-watcher` 무응답, 1건은 원인 불명이다.
   - **실제 피해는 재시작이 아니라 알림 공백이다**: 국내 장중 `stop-alert` 간격 824건 중 **10.7% 가 늦고 7.4% 는 3분 이상 늦다**(최악 411초). 오늘 09:54:34 → 10:00:05 공백 5분 31초의 원인도 재시작이 아니라 297초짜리 틱이다. 이번 수정이 겨냥한 것이 바로 이것이다.
+
+- **[20:40] 배포 완료 — 릴리스 `20261103-202418-17a4257f` `status: ok`.** 사용자 지시 「네, 지금 배포」(20:0x). 커밋 `17a4257`(15파일, 커밋 훅 `✅ Reviewer 감사 기록 확인: T-147` 통과) → `git push origin main` → Gitea webhook → `release.sh` blue/green, 20:24:18~20:25. `migrated: false`. 롤백 지점 `20261103-093323-1dfd57d6`. **같은 push 에 `1db9103`(T-146 배포 기록 문서)이 조상으로 함께 나갔다** — 코드 변경 0. `scripts/deploy.sh` 는 돌리지 않았다(이중 배포 방지). push 직전 `git-refs-clean.sh --check` rc=0.
+- **[20:40] 배포 후 실측**: 기동 로그 `[cron-runner] stop-alert 티커 시작 — pid 491802, 분 경계마다 1회(락 …/stop-alert.lock)` **1줄**, 🔴·🔶 **0줄**. `stop-alert` 가 20:25:00 부터 **매 분 정확히 `:00` 에 1회**(20:25~20:34 전수 확인, 간격 60초) · **메인 루프 호출 0회** · 자식 프로세스 **1개**(옛 러너 소멸) · 하트비트 나이 52~53초 · 두 앱 online·새 릴리스·health `safetyStatus green`·`dryRun true`·`killSwitch false` · `cron-err.log` 비어 있음. 컷오버 중 잡 기록 1건 전송 실패는 스풀에 남아 재전송(설계대로).
+- **[20:40] 🔴 deployer 가 보고한 「같은 분 `stop-alert` 2회」는 중복 발송이 아니다 — 내가 로그·DB 로 확인했다.** 20:24 분에 두 번 찍힌 것(20:24:22 · 20:24:46)은 **둘 다 옛 코드 러너의 메인 루프 호출**이다 — 20:24:46 줄은 pm2 reload 가 되살린 옛 릴리스 러너이고(그 러너에는 티커 코드가 0줄, 기동 로그에 티커 줄이 없다), 새 러너는 20:24:47 에 티커와 함께 떴다. 즉 **티커·메인 루프가 동시에 부른 것이 아니라, 배포 재시작 때 옛 러너가 두 번 돈 것**이고 T-147 이전에도 배포마다 일어났던 일이다. 게다가 **실제 발송은 0건**이다 — `system_config.risk_stop_alert_state` 가 `sentToday: 0` 이고 마지막 갱신이 04:27:21(배포 전)이라 **오늘 손절 알림이 한 건도 나가지 않았다**. 텔레그램 중복 발송은 일어날 수 없었다.
+- **[20:40] 아직 확인 못 한 것(사용자 확인 대상)**: 장중 긴 틱이 실제로 돌 때 `stop-alert` 가 매 분 유지되는지 · 그때 텔레그램 중복이 없는지 · 긴 틱 끝 하트비트 갱신의 실효 · 23:30 미국 정규장 개장 후 틱 주기. 배포 후 관찰은 **장외 10분**뿐이다.
