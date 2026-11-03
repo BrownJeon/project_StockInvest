@@ -1,12 +1,13 @@
 ---
 task_id: T-148
 title: 전략 평가 직렬 팬아웃 해소 — 장중 strategy-eval 194초 → 동시성 4
-status: doing
+status: review
+waiting: 사용자 배포 승인 — push=즉시 blue/green 이고 지금은 미국 정규장(23:30~06:00 KST) 금지 시간대. 권고 창 06:00~09:00 KST. 완료 기준 ①②③(장중 소요·시그널 동등성·틱 주기 max)은 배포 후 장중 로그로만 확인된다
 priority: high
 project: StockInvest
 created: 2026-11-03
-updated: 2026-11-03
-base_ref: origin/main 1dfd57d (릴리스 20261103-093323-1dfd57d6) · 로컬 main 17a4257(T-147, 미push)
+updated: 2026-11-04
+base_ref: 커밋 42fac88 (로컬 main, 미push) · 조상에 다른 세션 문서 4커밋 동승 · 운영 릴리스는 20261103-202418-17a4257f(T-147)
 risk_level: R2
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks:
