@@ -13,7 +13,8 @@
  *  3. 이 틱이 이미 `KIS_FUND_TICK_YIELD_SEC` 이상 지났으면 **건너뛴다**(pmo 재시도가 창에 들어온 경우 — 틱 340초 방지).
  *  4. `CALL_MAX_TIME` 이 그 호출에만 붙고 **뒤에서 비워진다**(다른 잡에 새지 않는다).
  *  5. 분을 읽을 수 없으면 그 틱은 돌지 않는다 · 시각을 읽을 수 없으면 **미루지 않는다**(판단 불가로 잡을 멈추지 않는다).
- *  6. 정적: 상수 2개 · 호출 줄 1개 · **기존 줄 삭제·변경 0**(HEAD 대비 추가만).
+ *  6. 정적: 상수 2개 · 호출 줄 1개 · 상한 켜고 끄기 · 비밀 없음 · `JRL_TICK_T0` 미사용 · `bash -n`.
+ *     (T-147) 「**기존 줄 삭제·변경 0**(HEAD 대비 추가만)」 케이스는 삭제했다 — 이유는 파일 끝 주석.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -175,19 +176,17 @@ describe('cron-runner kis-fundamentals-snapshot 정적', () => {
     expect(() => execFileSync('bash', ['-n', RUNNER])).not.toThrow();
   });
 
-  test('🔴 기존 줄 변경 0 — HEAD 대비 추가만(git 이 있을 때)', () => {
-    let head: string;
-    try {
-      head = execFileSync('git', ['-C', REPO, 'show', 'HEAD:scripts/cron-runner.sh'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    } catch {
-      return;   // git 없는 환경(배포 사본 등) — 건너뜀
-    }
-    const cur = SRC.split('\n');
-    let j = 0;
-    for (const line of head.split('\n')) {
-      while (j < cur.length && cur[j] !== line) j++;
-      expect([line, j < cur.length]).toEqual([line, true]);
-      j++;
-    }
-  });
+  /**
+   * (T-147) 「🔴 기존 줄 변경 0 — HEAD 대비 추가만(부분 수열)」 케이스를 **삭제했다**.
+   *  - 왜: T-147 이 메인 루프의 `stop-alert` 호출 3줄을 **의도적으로 뺐다**(알림 전용 잡을 분당 티커 자식으로 옮김 —
+   *    러너의 `# >>> alert-ticker` 블록). HEAD 의 모든 줄이 현재 파일의 부분 수열이어야 한다는 단정은 그 삭제로 성립하지 않는다.
+   *  - 그 단정의 뜻: T-145 ⑨(와 선례 T-087)가 "내 블록이 남의 줄을 건드리지 않았다"를 지키려 둔 **개발 중 가드**였고,
+   *    이후 작업이 러너를 의도적으로 바꾸는 것을 금지하는 규칙이 아니었다. 금지·검토 규칙은 `SAFETY_PATHS` 커밋 훅
+   *    (`^scripts/cron-runner\.sh$`) + Reviewer 독립감사가 맡는다 — 둘 다 이 테스트와 무관하게 그대로 돈다.
+   *  - 나머지 단정(창 08:30~55 · 매 틱 호출 · 틱 yield · 상수 2개 · 호출 줄 1개 · 상한 켜고 끄기 · 비밀 없음 ·
+   *    `JRL_TICK_T0` 미사용 · `bash -n`)은 유지한다. 이 블록이 지키는 것은 「08시 틱 길이를 종목 수와 무관하게 묶는다」이고,
+   *    그건 위 시뮬레이션과 남은 정적 단정들이 직접 본다.
+   *  ⚠ 러너 주석 중 이 단정을 "규약"으로 인용한 곳(T-145 ④-조각의 `overseas-universe-refresh` 블록 주석)은 T-147 범위 밖이라
+   *    고치지 않았다 — Reviewer 판단 사항으로 남긴다.
+   */
 });

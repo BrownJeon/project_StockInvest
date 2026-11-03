@@ -123,7 +123,10 @@ printf '%s' "\$code"
 EOF
   chmod +x "$R/bin/date" "$R/bin/sleep" "$R/bin/curl"
   : > "$R/calls"; : > "$R/maxtime"
-  PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul \
+  # (T-147) ALERT_TICKER_DISABLE=1 = 레거시 모드(티커 자식 없음 · 메인 루프가 매 틱 stop-alert 호출 · 하트비트 추가 쓰기 없음)
+  #   = **T-147 이전 동작**. 이 하네스는 자기 잡의 회귀망이고 기대값(일정·호출 목록·하트비트 간격)이 그 동작 기준이므로 그대로 쓴다.
+  #   기본 모드(티커가 분 경계마다 부르고 죽으면 메인 루프가 이어받는다)는 scripts/test-cron-runner-alert-ticker.sh 가 본다.
+  PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul ALERT_TICKER_DISABLE=1 \
     timeout 600 bash "$runner" > "$R/stdout" 2>&1
   echo "$R"
 }
@@ -215,9 +218,15 @@ eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 #   `# >>> kis-fundamentals-snapshot` 블록 표식으로 지우지만 기준 ref 에는 그 표식이 없어 한쪽만 지워지면 어긋난다.
 #   (news-split 의 strip_old 가 뉴스 구간을 같은 방식으로 지우는 선례와 같다. 그 잡의 새 모양은 자기 블록 시험이 본다.)
 no_kf_old() { awk '/^  # 매일 08:00 KST: KIS 해외 현재가상세 스냅샷/{s=1} s{ if (/^  fi$/) s=0; next } {print}'; }
-strip_new() { awk '/^  # >>> (news-fetch-(split|domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (news-fetch-(split|domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/) s=0; next } {print}' "$1" \
+# (T-147) T-147 은 블록을 **더하고**(최상위 alert-ticker · 메인 루프의 alert-ticker-supervise·stop-alert-fallback·heartbeat-refresh)
+#   메인 루프의 옛 stop-alert 호출 4줄(주석 1 + 실행 3)을 **의도적으로 조건부로 옮겼다**(호출자는 플래그 하나로 항상 하나). 그래서
+#   한쪽만 지우면 어긋난다 — 지금 러너 쪽은 블록 표식으로, **기준 ref 쪽**은 그 4줄과 머리 주석 1줄을 범위로 지운다(위 no_kf_old 선례와 같다).
+#   T-147 의 새 모양(호출자 하나·fail-open·감독·분 경계)은 scripts/test-cron-runner-alert-ticker.sh 가 본다.
+no_t147()     { awk '/^ *# >>> (alert-ticker|stop-alert-fallback|heartbeat-refresh)/{s=1} s{ if (/^ *# <<< (alert-ticker|stop-alert-fallback|heartbeat-refresh)/) s=0; next } {print}'; }
+no_t147_old() { awk '/^  # 매 1분: stop-alert/{s=1} s{ if (/^  CALL_MAX_TIME=""$/) s=0; next } {print}' | grep -v '^#  - stop-alert        : 1분'; }
+strip_new() { no_t147 < "$1" | awk '/^  # >>> (news-fetch-(split|domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (news-fetch-(split|domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/) s=0; next } {print}' \
   | grep -v '^NEWS_FETCH_' | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-143 병합) overseas-universe-refresh · (T-145 ⑨ kis-fundamentals-snapshot — 일정이 바뀐 잡. 그 일정은 자기 블록의 jest 시뮬레이션 시험이 본다)
-strip_old() { no_kf_old < "$1" | awk '/^  # 매일 06:00 KST: M4 KB 뉴스 fetch/{s=1} s{ if (/^  fi$/) s=0; next } {print}' \
+strip_old() { no_kf_old < "$1" | no_t147_old | awk '/^  # 매일 06:00 KST: M4 KB 뉴스 fetch/{s=1} s{ if (/^  fi$/) s=0; next } {print}' \
   | grep -v '^NEWS_FETCH_' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
 #   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
@@ -337,9 +346,9 @@ if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime" | grep -v '^/api/cron/da
    [ "$(grep '^/api/cron/news-fetch' "$NA/maxtime" | grep -vc 'mode=peek')" = "0" ]; then ok "F6: --max-time 목록 = T-103 러너(뉴스 ingest 에는 없음 — T-118 peek 상한은 peek 시험)"; else bad "F6: --max-time 목록이 다르다"; fi
 
 # F7. 정적 — 새 블록·선언·주석을 빼면 T-103 러너와 실행 줄이 한 글자도 같다
-strip115() { awk '/^  # >>> (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/) s=0; next } {print}' "$1" \
+strip115() { no_t147 < "$1" | awk '/^  # >>> (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (news-fetch-(domestic-pm|peek)|daily-bars-daily|holdings-premarket|overseas-universe-refresh|kis-fundamentals-snapshot)/) s=0; next } {print}' \
   | grep -v '^NEWS_FETCH_DOMESTIC_PM_' | grep -v '^DAILY_BARS_' | grep -v '^HOLDINGS_PREMARKET_' | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-117 daily-bars·T-119 holdings-premarket·T-143 overseas-universe-refresh·T-145 ⑨ 스냅샷) 블록·선언 제외
-strip103() { no_kf_old < "$1" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
+strip103() { no_kf_old < "$1" | no_t147_old | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
 if diff <(strip115 "$RUNNER_NOJRL") <(strip103 "$BEFORE115") > /dev/null; then ok "🔴 F7: 새 블록·선언·주석 밖 실행 줄 = T-103 러너 ($(strip115 "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"; else bad "F7: 새 블록 밖 실행 줄이 T-103 과 다르다"; diff <(strip115 "$RUNNER_NOJRL") <(strip103 "$BEFORE115") | head -10; fi
 nb="$(awk '/^  # >>> news-fetch-domestic-pm/,/^  # <<< news-fetch-domestic-pm/' "$RUNNER")"
 eq "F7: 새 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> news-fetch-domestic-pm' "$RUNNER") $(grep -c '^  # <<< news-fetch-domestic-pm' "$RUNNER")" "1 1"

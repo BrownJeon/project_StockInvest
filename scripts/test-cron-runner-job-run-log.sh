@@ -194,7 +194,10 @@ EOF
   [ -f "$W/body-edgar" ] && cp "$W/body-edgar" "$R/body-edgar"
   for sd in body-ps body-tr body-se code-ps; do [ -f "$W/$sd" ] && cp "$W/$sd" "$R/$sd"; done   # (T-127) money 모드
   for sd in eb-se eb-ps eb-tr eb-sf; do [ -f "$W/$sd" ] && cp "$W/$sd" "$R/$sd"; done   # (T-135) errbodies 모드
-  env PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul \
+  # (T-147) ALERT_TICKER_DISABLE=1 = 레거시 모드(티커 자식 없음 · 메인 루프가 매 틱 stop-alert 호출 · 하트비트 추가 쓰기 없음)
+  #   = **T-147 이전 동작**. 이 하네스는 자기 잡의 회귀망이고 기대값(일정·호출 목록·하트비트 간격)이 그 동작 기준이므로 그대로 쓴다.
+  #   기본 모드(티커가 분 경계마다 부르고 죽으면 메인 루프가 이어받는다)는 scripts/test-cron-runner-alert-ticker.sh 가 본다.
+  env PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul ALERT_TICKER_DISABLE=1 \
     STUB_R="$R" STUB_REAL_DATE="$REAL_DATE" "$@" timeout 900 bash "$runner" > "$R/stdout" 2>&1
   echo "$R"
 }
@@ -219,7 +222,11 @@ nojrl()   { grep -vE "$JRE" "$1/calls"; }                                   # �
 #   실제로 그렇게 고쳤다가 J1 두 건이 깨졌다(기대 5098 / 실제 5124 = 그 잡 호출 수만큼).
 nojrl_cmp() { nojrl "$1" | grep -vE "$KF_RE"; }
 nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot '; }
-nokfout() { grep -v 'kis-fundamentals-snapshot' "$1"; }                     # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다
+# (T-147) 기동 로그의 레거시 모드 한 줄(`🔶 ALERT_TICKER_DISABLE=1 — 레거시 모드 …`)은 기준 러너에 없다 — 이 하네스가 그 모드로
+#   러너를 돌리기 때문에 생기는 **의도된 추가 한 줄**이라 로그 줄 비교에서 뺀다. 그 줄 자체(모드 표시·티커 미기동)는
+#   scripts/test-cron-runner-alert-ticker.sh E1 이 본다.
+no_t147_log() { grep -v 'ALERT_TICKER_DISABLE=1 — 레거시 모드'; }
+nokfout() { grep -v 'kis-fundamentals-snapshot' "$1" | no_t147_log; }       # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다 · (T-147) 레거시 모드 줄 제외
 gap()     { awk 'NR>1 { g = $1 - p; if (g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }
 spool()   { cat "$1/home/.node-local/stockinvest/job-run-spool" "$1/home/.node-local/stockinvest/job-run-spool.sending" 2>/dev/null; }
 # (T-145 ⑨) kis-fundamentals-snapshot 의 날짜파일은 **판정에 쓰이지 않는 흔적**이 됐고(러너 블록 주석),
@@ -379,7 +386,13 @@ if want J8; then
 echo "J8. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 # (T-135) call() 의 본문 경로 세 줄은 T-135 가 의도해 바꿨다 — no_t135 로 되돌린 러너로 비교한다(그 세 줄 밖은 예전 그대로여야 한다)
-missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") "$BASE")"
+# (T-147) T-147 은 블록을 **더하고**(최상위 alert-ticker · 메인 루프의 alert-ticker-supervise·stop-alert-fallback·heartbeat-refresh)
+#   메인 루프의 옛 stop-alert 호출 4줄(주석 1 + 실행 3)을 **의도적으로 조건부로 옮겼다**(호출자는 플래그 하나로 항상 하나). 그래서
+#   한쪽만 지우면 어긋난다 — 지금 러너 쪽은 블록 표식으로, **기준 ref 쪽**은 그 4줄과 머리 주석 1줄을 범위로 지운다(위 no_kf_old 선례와 같다).
+#   T-147 의 새 모양(호출자 하나·fail-open·감독·분 경계)은 scripts/test-cron-runner-alert-ticker.sh 가 본다.
+no_t147()     { awk '/^ *# >>> (alert-ticker|stop-alert-fallback|heartbeat-refresh)/{s=1} s{ if (/^ *# <<< (alert-ticker|stop-alert-fallback|heartbeat-refresh)/) s=0; next } {print}'; }
+no_t147_old() { awk '/^  # 매 1분: stop-alert/{s=1} s{ if (/^  CALL_MAX_TIME=""$/) s=0; next } {print}' | grep -v '^#  - stop-alert        : 1분'; }
+missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") <(no_t147_old < "$BASE"))"
 eq "🔴 J8: 기준 러너의 모든 줄(주석 포함)이 순서대로 남아 있다(삭제·수정 0, 추가만 — T-135 세 줄은 되돌려 비교)" "${missing:-none}" "none"
 eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼고 T-135 를 되돌리면 기준 러너와 같다" \
    "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
@@ -616,7 +629,7 @@ eq "🔴 J12: trade-report 502 body= = 마스킹 뒤" "$(logbody "$T2" trade-rep
 eq "J12: 금액 키·detail 없는 본문(signal-followup 500, 300바이트)은 예전처럼 원문 앞 200바이트" "$(logbody "$T2" signal-followup)" "$(printf '%s' "$EB_SF" | head -c 200)"
 eq "J12: 401 짧은 본문은 그대로" "$(logbody "$T2" holding-checker)" '{"ok":false,"error":"unauthorized"}'
 eq "J12: 000(curl 실패) 은 body= 빈 값(예전과 같음)" "$(grep -c ' entry-watcher HTTP=000 body=$' "$T2/stdout") $(grep -c ' entry-watcher HTTP=000 body=$' "$T2B/stdout")" "1 1"
-eq "J12: 로그 줄 형식·순서 = 기준 러너(body= 뒤만 다름)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2/stdout" | md5sum)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2B/stdout" | md5sum)"
+eq "J12: 로그 줄 형식·순서 = 기준 러너(body= 뒤만 다름)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2/stdout" | no_t147_log | md5sum)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2B/stdout" | no_t147_log | md5sum)"
 dec1() { awk -F'\t' -v l="$2" '$2 == l {print $7}' "$1/received" | head -1 | base64 -d; }
 eq "🔴 J12: 스풀 본문 — strategy-eval 은 원문 그대로(T-127 라벨 규칙 불변) · portfolio-snapshot 은 마스킹" \
    "$([ "$(dec1 "$T2" strategy-eval)" = "$EB_SE" ] && echo raw) $(dec1 "$T2" portfolio-snapshot | grep -cE "$MONEY")" "raw 0"

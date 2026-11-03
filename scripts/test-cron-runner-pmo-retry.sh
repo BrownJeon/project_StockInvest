@@ -162,7 +162,10 @@ EOF
   : > "$R/calls"
   if [ "$mode" = "restart" ]; then
     # $! 가 러너 bash 자신이어야 한다(timeout 으로 감싸면 timeout 만 죽고 러너가 살아남아 두 러너가 겹친다)
-    PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul \
+    # (T-147) ALERT_TICKER_DISABLE=1 = 레거시 모드(티커 자식 없음 · 메인 루프가 매 틱 stop-alert 호출 · 하트비트 추가 쓰기 없음)
+    #   = **T-147 이전 동작**. 이 하네스는 자기 잡의 회귀망이고 기대값(일정·호출 목록·하트비트 간격)이 그 동작 기준이므로 그대로 쓴다.
+    #   기본 모드(티커가 분 경계마다 부르고 죽으면 메인 루프가 이어받는다)는 scripts/test-cron-runner-alert-ticker.sh 가 본다.
+    PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul ALERT_TICKER_DISABLE=1 \
       bash "$RUNNER" > "$R/stdout1" 2>&1 &
     local pid=$!
     echo "$pid" > "$R/pid"
@@ -175,10 +178,12 @@ EOF
     kill "$(cat "$R/guard.pid" 2>/dev/null)" 2>/dev/null
     wait "$guard" 2>/dev/null
     # 같은 HOME·같은 시각에서 새 러너 시작(pm2 restart 흉내)
-    PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul \
+    # (T-147) 레거시 모드 — 위 주석 참고
+    PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul ALERT_TICKER_DISABLE=1 \
       timeout 60 bash "$RUNNER" > "$R/stdout" 2>&1
   else
-    PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul \
+    # (T-147) 레거시 모드 — 위 주석 참고
+    PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul ALERT_TICKER_DISABLE=1 \
       timeout 60 bash "$RUNNER" > "$R/stdout" 2>&1
   fi
   echo "$R"

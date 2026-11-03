@@ -3,6 +3,13 @@
 #
 # 실행: bash scripts/test-cron-runner-stop-alert.sh   (NFS noexec 경로라 반드시 bash 경유)
 #
+# 🔴 (T-147) 이 시험이 보는 것은 이제 **레거시 모드의 동작**이다. T-147 이 기본 호출자를 메인 루프 → 알림 티커 자식으로 바꿨고,
+#   이 하네스는 `ALERT_TICKER_DISABLE=1` 로 러너를 돌려 **T-147 이전 동작**(메인 루프가 매 틱 호출)을 그대로 검증한다.
+#   그 모드는 죽은 코드가 아니다 — fail-open 경로(flock 없음·락 파일 못 만듦·티커가 죽어 부모가 이어받음)에서 러너가 실제로
+#   이 동작으로 돌아오므로, 아래 단정들은 **그 되돌림 경로의 회귀망**이다.
+#   기본 모드(티커가 분 경계마다 1회 · 겹침 flock · 고아 방지 · 감독 인수 · 하트비트 중간 갱신)는
+#   **scripts/test-cron-runner-alert-ticker.sh** 가 본다. 아래 A 절의 상수·호출 줄 단정도 그쪽이 새 구조로 다시 본다.
+#
 # cron-runner.sh 를 **그대로** 돌린다 — curl·date·sleep 만 가짜(PATH 앞 스텁)로 바꿔 07:58 KST 부터 20틱을 흉내 낸다.
 #  1. stop-alert 는 매 틱 1회, holding-checker 뒤·strategy-eval 앞, --max-time 20 이 그 호출에만 붙는다
 #  2. stop-alert 가 상한까지 늘어져도(000) 틱이 막히지 않고 하트비트 간격이 300초 미만이다 — 08시 해외 post-market 상한(120초)과
@@ -24,7 +31,10 @@ trap 'rm -rf "$W"' EXIT
 
 echo "A. 상수"
 eq "stop-alert curl 상한 20초" "$(grep -E '^STOP_ALERT_CURL_MAX_TIME=' "$RUNNER")" "STOP_ALERT_CURL_MAX_TIME=20"
-eq "stop-alert 호출 줄은 1개" "$(grep -c 'call /api/cron/stop-alert ' "$RUNNER")" "1"
+# (T-147) 러너 전체 호출 줄은 2개 — 티커 블록 1 + 메인 루프 fallback 1. 레거시 모드에서 도는 것은 fallback 쪽이고,
+#   「호출자는 항상 정확히 하나」(플래그 ALERT_TICKER_ACTIVE)는 scripts/test-cron-runner-alert-ticker.sh A 절이 본다.
+eq "stop-alert 호출 줄 2개(티커 + 메인 루프 fallback)" "$(grep -c 'call /api/cron/stop-alert ' "$RUNNER")" "2"
+eq "그중 메인 루프 fallback 블록 안 1개" "$(awk '/^  # >>> stop-alert-fallback/{f=1} f{print} /^  # <<< stop-alert-fallback/{f=0}' "$RUNNER" | grep -c 'call /api/cron/stop-alert ')" "1"
 
 # run_loop MODE — ok | hang(stop-alert 가 상한까지 늘어짐: 000·exit 28) | err(500) | worst(hang + 해외 post-market 도 상한 초과)
 run_loop() {
@@ -78,7 +88,10 @@ printf '200'
 EOF
   chmod +x "$R/bin/date" "$R/bin/sleep" "$R/bin/curl"
   : > "$R/calls"; : > "$R/maxtime"
-  PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul \
+  # (T-147) ALERT_TICKER_DISABLE=1 = 레거시 모드(티커 자식 없음 · 메인 루프가 매 틱 stop-alert 호출 · 하트비트 추가 쓰기 없음)
+  #   = **T-147 이전 동작**. 이 하네스는 자기 잡의 회귀망이고 기대값(일정·호출 목록·하트비트 간격)이 그 동작 기준이므로 그대로 쓴다.
+  #   기본 모드(티커가 분 경계마다 부르고 죽으면 메인 루프가 이어받는다)는 scripts/test-cron-runner-alert-ticker.sh 가 본다.
+  PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul ALERT_TICKER_DISABLE=1 \
     timeout 60 bash "$RUNNER" > "$R/stdout" 2>&1
   echo "$R"
 }

@@ -44,7 +44,14 @@ describe('🔴 E11 — 슬롯 표 ↔ 러너 라벨 정합', () => {
 
   it('정적 call 라벨을 읽었다(하네스 확인)', () => {
     expect(staticLabels.length).toBeGreaterThanOrEqual(20);
-    expect(new Set(staticLabels).size).toBe(staticLabels.length); // 라벨 중복 없음
+    // (T-147) 라벨 중복은 `stop-alert` 하나만 허용한다 — 호출 줄이 2개다(알림 티커 자식 · 메인 루프 fallback).
+    //   둘은 플래그 `ALERT_TICKER_ACTIVE` 로 **동시에 참이 될 수 없어** 호출자는 항상 하나이고(그 배타성은
+    //   scripts/test-cron-runner-alert-ticker.sh A 절이 정적으로 고정한다), 라벨·슬롯·주기는 하나 그대로다.
+    //   나머지 라벨은 여전히 중복이 없어야 한다(같은 잡을 두 번 부르는 실수를 잡는 원래 목적).
+    const dups = staticLabels.filter((l, i) => staticLabels.indexOf(l) !== i);
+    expect(dups).toEqual(['stop-alert']);
+    expect(staticLabels.filter((l) => l === 'stop-alert')).toHaveLength(2);
+    expect(new Set(staticLabels).size).toBe(staticLabels.length - 1);
   });
 
   it('peek 규칙 = 표의 시각 목록(해외 19 · 국내 2)', () => {

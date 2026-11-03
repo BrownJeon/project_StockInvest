@@ -24,7 +24,11 @@
 #  - export-llm-trainset: 매일 03:00 KST — signals+followup → LoRA 학습 JSONL 생성·전송
 #  - edgar-sync        : 매일 07:00 KST — SEC EDGAR 공시·XBRL 재무 읽기 전용 수집 (T-059, 주문·시그널 없음)
 #  - kis-fundamentals-snapshot: 매일 08:00 KST — KIS 해외 현재가상세(PER·PBR 등) 원값 스냅샷 (T-059, 읽기 전용 GET)
-#  - stop-alert        : 1분 — 손절가 도달 텔레그램 알림 (T-068, 알림만, curl 상한 STOP_ALERT_CURL_MAX_TIME)
+#  - stop-alert        : 1분 — 손절가 도달 텔레그램 알림 (T-068, 알림만, curl 상한 STOP_ALERT_CURL_MAX_TIME).
+#                        기본은 **메인 루프가 아니라 알림 티커 자식이 분 경계마다 호출한다**(T-147 — 아래 alert-ticker 블록).
+#                        장중 긴 틱(실측 틱 주기 max 412초 · 틱 길이 max 352초, 3,119틱)에 이 알림이 함께 굶지 않게 떼어낸 것이고,
+#                        주문·시그널 잡은 메인 루프 그대로다. 티커를 띄울 수 없거나 티커가 죽으면 메인 루프가 매 틱 직접 부른다
+#                        (fail-open — `# >>> stop-alert-fallback` 블록). 호출자는 플래그 `ALERT_TICKER_ACTIVE` 로 **항상 하나**다.
 #  - broker-fills      : 매일 07:20 KST 이후 첫 틱 — 브로커 체결 원장 "앞으로 수집" (T-087, KIS 읽기 전용 GET·주문 없음, 스위치 기본 꺼짐,
 #                        curl 상한 BROKER_FILLS_CURL_MAX_TIME, research-cycle-overseas·edgar-sync 가 같은 틱에 돌면 다음 틱으로 미룸)
 #  - news-peek-<시장>-<HH>: 뉴스 최초 관측 캡처용 peek (T-116, ?market=…&mode=peek — M4 는 피드만 읽고 임베딩·적재 안 함). 국내 10·13시,
@@ -272,6 +276,8 @@ pmo_finish() {
 #   - export-llm-trainset(03시)은 call() 을 거치지 않아 기록되지 않는다(bash 스크립트를 직접 돌린다 — 초안 §0-6).
 # 겹침: 배포 때 러너 두 개가 1~3초 겹칠 수 있다(설계서 §11 LOW). 한 줄(< 4KB) 덧붙이기는 섞이지 않고, 그 몇 초 동안 접기·전송이 겹치면 줄이 한 번 더
 #   가거나(멱등) 드물게 한 줄 빠질 수 있다 — 기록 전용이라 허용.
+#   (T-147) 겹침 출처가 하나 늘었다: **알림 티커 자식**(아래 alert-ticker 블록)이 분 경계마다 call() 을 돌려 이 스풀에 한 줄을 덧붙인다.
+#   `>>` 는 O_APPEND 라 4KB 미만 한 줄은 섞이지 않지만, 부모의 jrl_flush 가 접는(`mv`) 순간과 겹치면 그 한 줄이 빠질 수 있다 — 위와 같은 이유로 허용.
 JRL_SPOOL_FILE="${JRL_SPOOL_FILE-${HOME}/.node-local/stockinvest/job-run-spool}"
 JRL_SPOOL_MAX_BYTES=2097152
 JRL_SPOOL_KEEP_BYTES=1048576
@@ -422,6 +428,156 @@ mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 # 이제 /api/cron/news-fetch 라우트가 process.env로 직접 읽는다. `.env`의 값 자체는
 # 다른 코드(src/lib/rag/m4-kb.ts 등)도 쓰므로 그대로 둔다.
 
+# >>> alert-ticker (T-147) — 손절 알림(stop-alert) 전용 60초 티커(자식 프로세스 1개). scripts/test-cron-runner-alert-ticker.sh 가 이 블록을 잘라 시험한다
+# 왜: 아래 메인 루프는 **동기 호출의 직렬 사슬**이라, 장중 `strategy-eval`(국내 150종목 직렬 평가) 한 번이 끝날 때까지 분당 잡이
+#   전부 멈춘다 — 2026-11-03 운영 cron 로그 **3,119틱** 실측: 틱 **주기** mean 66.3초 · max 412초 · 300초 초과 12틱 /
+#   틱 **길이** mean 6.4초 · max 352초 · 300초 초과 4틱. 장중 `strategy-eval` 은 매회 53~297초(24회 합 3748초 = 그 구간의 37%)이고
+#   `stop-alert` 사이 최장 간격이 297초였다. 그 사슬에서 **알림만 하는 잡 하나**를 떼어낸다.
+# 왜 stop-alert 만: 이 잡은 주문·매도·시그널을 하지 않는다(시세 읽기 + 텔레그램 발송뿐 — 위 머리 주석 27행·라우트). 주문 경로를 같은
+#   방법으로 뺄 수 없는 이유는 `src/lib/safety/order-sync.ts:1226-1227` 이 `SELECT … FOR UPDATE`·`GET_LOCK()` 을 **명시적으로 기각**해
+#   뒀고 일일 누적 한도가 check-then-act 라, **지금의 무제한 동기 호출이 cron 끼리의 주문 직렬화 장치**이기 때문이다.
+#   그래서 `entry-watcher`·`holding-checker`·`strategy-eval` 은 이 티커로 옮기지 않는다(그 셋은 메인 루프 그대로 — T-147 설계).
+# 호출자는 하나여야 한다: 라우트의 재발송 가드가 **프로세스 메모리 Map 의 check-then-act**
+#   (`src/app/api/cron/stop-alert/route.ts:62-71`, RESEND_GUARD_MS 10분)라 두 호출자가 겹치면 같은 알림이 두 번 간다.
+#   → 그래서 플래그 **하나**(`ALERT_TICKER_ACTIVE`)가 호출자를 정한다: 1 이면 티커만, 0 이면 메인 루프만
+#   (아래 `# >>> stop-alert-fallback` 블록). 두 값이 동시에 참일 수 없으니 호출자는 항상 정확히 하나다.
+# 🔴 fail-open(T-147 Leader 보정 ①): `flock` 이 없거나 락 파일을 못 만들면 **티커를 띄우지 않고 ACTIVE=0 으로 두어 메인 루프가
+#   예전처럼 매 틱 직접 부른다.** 처음 구현은 그 경우 로그 한 줄만 남기고 아무도 부르지 않았다 — 안전장치의 fail-closed 가 아니라
+#   **알림 소실**이다(T-147 이전에는 어떤 환경에서든 매 틱 돌았다). 최악의 경우는 "알림 없음"이 아니라 "T-147 이전 동작"이어야 한다.
+# 🔴 부모의 감독(같은 보정 ①): 티커가 바쁜 루프 가드로 끝나거나 어떤 이유로든 죽으면, 감독이 없으면 **다음 재기동까지 손절 알림이
+#   영구 정지**다. 메인 루프가 매 틱 `alert_ticker_alive` 로 확인하고 죽어 있으면 ACTIVE=0 으로 내려 그 틱부터 직접 부른다
+#   (`kill -0` 이 성공하는 동안은 자식이 살아 있으니 두 호출자가 겹치지 않는다).
+# ALERT_TICKER_DISABLE=1 (같은 보정 ②): **T-147 전체를 되돌린 레거시 모드** — 티커를 띄우지 않고(ACTIVE=0 → 메인 루프가 매 틱 호출)
+#   아래 `# >>> heartbeat-refresh` 의 추가 쓰기도 건너뛴다. 기존 러너 시험 하네스 8개(`scripts/test-cron-runner-*.sh` 중 이 블록
+#   전용 시험을 뺀 것들)가 **자기 기능의 회귀망**인데, 그 하네스들은 `sleep` 을 즉시 반환
+#   ⚠ 이 주석에 **다른 잡의 라벨 이름을 적지 않는다** — 어떤 하네스는 「자기 블록을 지운 러너에 자기 잡 이름이 0건」을 단정하므로
+#     설명하려고 이름만 적어도 그 시험이 깨진다(2026-11-03 실제로 한 번 깨뜨려 이 줄을 남긴다).
+#   스텁으로 바꿔 가짜 시계를 밀기 때문에 티커 자식이 끼면 모든 일정이 1~3분 밀린다. 그 8개를 T-147 인식형으로 고치면 안전경로 시험
+#   8개가 이 task 하나에 얽히므로, 대신 이 변수 한 줄로 **예전과 똑같이** 돌게 해 행동 단정을 수정 없이 통과시킨다.
+#   ⚠ 시험 전용이다 — `.env.example`·`ecosystem.config.js`·운영 환경 어디에도 넣지 않는다(기동 로그에 모드를 눈에 띄게 남긴다).
+# 겹침 방지: `flock -n` 전용 락 하나. 배포 컷오버 때 옛 러너와 새 러너가 1~3초 겹치는 창에서 두 티커가 같은 알림을 두 번 보내는 것을 막는다.
+#   락을 못 잡으면 **그 회차만 건너뛴다**(에러가 아니다 — 다음 분에 다시 시도). 락 파일은 하트비트·날짜파일과 같은 로컬 디스크
+#   디렉터리에 둔다(~/.node-local/stockinvest — NFS 가 아니다. 위 `mkdir -p "$(dirname "$META_LAST_RUN_FILE")"` 가 이 디렉터리를 보장한다).
+#   락은 inode 에 걸리므로 겹친 두 러너가 같은 경로를 쓰면 서로 보인다(`: >` 는 내용만 비우고 inode 를 바꾸지 않는다).
+# 🔴 고아 방지: pm2 가 부모만 죽이고 자식이 남으면 **중지된 러너의 티커가 계속 손절 알림을 보낸다**(눈에 보이지 않는 좀비).
+#   매 회차 깨어날 때 부모 pid 를 `kill -0` 으로 확인하고 없으면 자식이 스스로 끝낸다(부모가 자는 동안 죽으면 최대 60초 늦게 끝난다).
+#   `trap` 은 쓰지 않는다 — bash 는 전경 curl 이 끝날 때까지 트랩을 미루고 pm2 는 kill_timeout(설정 없음 = 기본 1.6초) 뒤 SIGKILL 이다
+#   (위 call-body-tmp 블록 69행과 같은 근거). 그래서 "부모 확인"은 신호가 아니라 **회차마다 묻는 방식**이다.
+# CALL_MAX_TIME: 자식 안에서만 STOP_ALERT_CURL_MAX_TIME(20) 으로 세팅한다. `alert_ticker_loop &` 는 서브셸이므로 그 대입이
+#   **부모의 CALL_MAX_TIME 에 영향을 주지 않는다**(메인 루프의 다른 잡에 상한이 새지 않는다 — 시험 ⑤). 그래서 호출 뒤 되돌리는 줄이 없다.
+# 바쁜 루프 방지: 한 회차가 실제로 최소 ALERT_TICKER_MIN_CYCLE_SEC 초는 걸려야 호출한다. 판정은 bash 내장 `SECONDS`(실시간 — 외부
+#   `date` 를 거치지 않는다)로 하고, 짧은 회차가 연속 ALERT_TICKER_MAX_FAST_CYCLES 번이면 로그 한 줄을 남기고 티커를 끝낸다.
+#   `sleep` 이 즉시 돌아오는 환경(시험 하네스의 즉시 반환 스텁·sleep 파손)에서 알림 라우트를 초당 수십 번 때리는 것을 막는다. 운영에서는
+#   한 회차가 약 60초라 이 가드가 발동하지 않는다. 티커가 끝나면 **부모의 감독이 그것을 보고 메인 루프가 호출을 이어받는다**(위 보정 ①).
+# 기록: 자식의 call() 도 jrl_hook 을 거쳐 스풀에 한 줄을 덧붙인다(O_APPEND · 4KB 미만이라 줄이 섞이지 않는다). 부모의 jrl_flush 가
+#   접는 순간과 겹치면 드물게 한 줄이 빠질 수 있다 — 기록 전용이라 허용(위 job-run-log-spool 블록 「겹침」 주석에 T-147 로 덧붙였다).
+ALERT_TICKER_LOCK_FILE="${ALERT_TICKER_LOCK_FILE:-${HOME}/.node-local/stockinvest/stop-alert.lock}"
+ALERT_TICKER_PARENT_PID=$$
+ALERT_TICKER_MIN_CYCLE_SEC=5
+ALERT_TICKER_MAX_FAST_CYCLES=3
+ALERT_TICKER_LOCK_BUSY_RC=1    # `flock -n` 이 「이미 점유」로 끝낼 때의 종료 코드(위 alert_ticker_once 주석의 측정값)
+ALERT_TICKER_MAX_LOCK_SKIPS=3  # 경합으로 연속 이만큼 건너뛰면 경고 한 줄(한 번만). 호출자는 늘리지 않는다
+ALERT_TICKER_DISABLE="${ALERT_TICKER_DISABLE:-}"   # 1 = 레거시 모드(T-147 이전 동작). 시험 전용 — 운영에 넣지 않는다
+ALERT_TICKER_ACTIVE=0   # 유일한 호출자 플래그. 1 = 티커가 부른다 / 0 = 메인 루프가 부른다. 기동 시 정하고, 감독이 1 → 0 으로만 내린다
+ALERT_TICKER_PID=""
+# alert_ticker_wait_sec — 다음 분 경계까지 남은 초(1~60). 시각을 읽을 수 없거나 계산이 범위를 벗어나면 60.
+alert_ticker_wait_sec() {
+  local now="" rem=60
+  now=$(date +%s 2>/dev/null)
+  case "$now" in ''|*[!0-9]*) printf '60'; return 0 ;; esac
+  rem=$((60 - now % 60))
+  [ "$rem" -ge 1 ] && [ "$rem" -le 60 ] || rem=60
+  printf '%s' "$rem"
+}
+# alert_ticker_once — 이 회차 1회분. 락을 잡은 동안만 stop-alert 를 부른다. 반환: 0 = 불렀다 / 1 = **경합**으로 건너뜀 / 2 = **진짜 오류**.
+#   락은 **회차마다 열고 닫는다** — fd 를 티커 수명 동안 열어 두면 한 번 잡은 락이 끝까지 유지돼, 겹친 옛 티커가 락을 쥔 채
+#   새 티커를 영구히 굶긴다. 락 파일을 열 수 없으면(리다이렉션 실패) 그룹이 돌지 않아 `rc` 가 초기값(255)으로 남고 2 가 된다.
+#   bash 가 그 이유를 로그에 적는 것을 `2>/dev/null` 로 덮지 않는다(알림이 조용히 멈추는 것보다 시끄러운 쪽이 낫다).
+# 🔴 왜 경합과 오류를 가르나(T-147 Leader 보정): `flock -n` 실패의 원인이 둘이고 올바른 응답이 **서로 다르다**.
+#   - **경합**(겹친 옛 러너의 티커가 락을 쥠): 그 티커가 **지금 알림을 보내고 있다** → 이 회차만 건너뛰는 게 맞다(알림은 멈추지 않았다).
+#     호출자를 늘리면 같은 알림이 두 번 간다(라우트의 재발송 가드가 프로세스 메모리 check-then-act).
+#   - **진짜 오류**(락 파일을 열 수 없음·flock 자체 오류·flock 없음): 다른 티커가 없으니 알림이 **정말 멈춘다**. 그리고 이 경우
+#     두 번째 호출자가 존재하지 않으므로 메인 루프로 넘겨도 **이중 발송 위험이 구조적으로 없다** → 티커를 끝내 감독이 넘기게 한다.
+#   측정(2026-11-03 서버 `flock from util-linux 2.37.2`, `/tmp/t147-flockrc.sh`): 다른 프로세스 점유 = **1** · 공유락 점유 중 배타락 = 1 ·
+#   fd 9 가 열려 있지 않음 = **65** · `flock` 없음(셸) = 127 · 디렉터리 fd = 0. 즉 **구조적 오류는 1 이 아니다**.
+#   ⚠ 측정에서 **읽기전용 fd(`9<`)도 1** 이 나왔다(경합이 아닌데 1). 이 코드는 락 fd 를 **항상 `9>`(쓰기)로** 열어 그 조건이
+#     구조적으로 생길 수 없어 1 을 경합으로 읽는다 — 그 전제가 깨지면(이 블록의 리다이렉션을 `9<` 로 바꾸면) 이 판정도 깨진다.
+#     락을 지원하지 않는 파일시스템에서의 flock(2) 오류는 재현할 마운트가 없어 **측정하지 못했다**(위 ② 처럼 sysexits 코드로 끝날 것으로 본다).
+alert_ticker_once() {
+  local rc=255   # 리다이렉션(락 파일 열기)이 실패하면 아래 그룹이 돌지 않아 이 값이 남는다 → 진짜 오류
+  { flock -n 9; rc=$?
+    if [ "$rc" = "0" ]; then
+      CALL_MAX_TIME="$STOP_ALERT_CURL_MAX_TIME"
+      call /api/cron/stop-alert "stop-alert"
+    fi
+  } 9>"$ALERT_TICKER_LOCK_FILE"
+  case "$rc" in
+    0) return 0 ;;
+    "$ALERT_TICKER_LOCK_BUSY_RC") return 1 ;;
+    *) return 2 ;;
+  esac
+}
+# alert_ticker_loop — 자식 본체. 분 경계까지 자고 → 부모 생존 확인 → 바쁜 루프 가드 → 1회 호출. 반환하면 자식이 끝난다.
+alert_ticker_loop() {
+  local w=60 fast=0 t0=0 lim=0 lockskip=0 rc=0
+  while :; do
+    t0=$SECONDS
+    w=$(alert_ticker_wait_sec)
+    sleep "$w" 2>/dev/null || true
+    kill -0 "$ALERT_TICKER_PARENT_PID" 2>/dev/null || return 0
+    # 가드 기준은 min(요청한 대기, ALERT_TICKER_MIN_CYCLE_SEC) — 분 경계 직전에 티커가 시작되면 첫 회차의 정상 대기가
+    # 1~4초일 수 있고(그때 w 가 그 값이다), 고정 5초로 재면 그 정상 회차를 「바쁜 루프」로 오인해 1분을 거른다.
+    lim="$ALERT_TICKER_MIN_CYCLE_SEC"
+    [ "$w" -lt "$lim" ] && lim="$w"
+    if [ $((SECONDS - t0)) -lt "$lim" ]; then
+      fast=$((fast + 1))
+      if [ "$fast" -ge "$ALERT_TICKER_MAX_FAST_CYCLES" ]; then
+        echo "[$(date '+%F %T')] stop-alert 티커 종료 — 대기(sleep ${w}초)가 실제로 돌지 않는다(바쁜 루프 방지). 메인 루프·다른 잡은 영향 없음"
+        return 0
+      fi
+      continue
+    fi
+    fast=0
+    # 반환 해석(위 alert_ticker_once 주석): 0 불렀다 / 1 경합 — 겹친 티커가 보내는 중이니 이 회차만 건너뛴다 / 그 밖 진짜 오류 → 끝낸다.
+    #   경고는 연속 ALERT_TICKER_MAX_LOCK_SKIPS 번째 **한 번만** 찍는다(카운터는 계속 올라가므로 다시 같아지지 않는다 — 매 분 로그를 더럽히지 않는다).
+    alert_ticker_once; rc=$?
+    case "$rc" in
+      0) lockskip=0 ;;
+      1) lockskip=$((lockskip + 1))
+         if [ "$lockskip" = "$ALERT_TICKER_MAX_LOCK_SKIPS" ]; then
+           echo "[$(date '+%F %T')] stop-alert 티커가 ${lockskip}회 연속 락을 잡지 못했다(경합 — 겹친 러너의 티커가 쥐고 있고 알림은 그쪽이 보낸다). 러너가 둘 돌고 있지 않은지 확인하라. 이 경고는 한 번만 찍는다"
+         fi ;;
+      *) echo "[$(date '+%F %T')] 🔴 stop-alert 티커 종료 — 락을 쓸 수 없다(flock rc=$rc, 경합 아님: 락 파일을 열 수 없거나 flock 자체 오류). 다음 틱에 메인 루프가 호출을 이어받는다"
+         return 0 ;;
+    esac
+  done
+}
+# alert_ticker_alive — 티커 자식이 아직 돌고 있는가(메인 루프의 감독이 매 틱 부른다). 0 = 살아 있음.
+#   `kill -0` 만으로는 **좀비**(부모가 아직 reap 하지 않은 종료 상태)를 살아 있다고 보므로 `/proc/<pid>/stat` 의 상태 문자도 본다.
+#   실측(2026-11-03 서버 bash 5.1.16): 비대화형 bash 는 SIGCHLD 로 배경 자식을 곧 reap 해서 `kill -0` 이 바로 실패했다 —
+#   /proc 검사는 전경 curl 때문에 reap 이 미뤄진 짧은 창을 덮는 보조 장치다. /proc 을 읽을 수 없으면 `kill -0` 결과를 그대로 믿는다.
+alert_ticker_alive() {
+  local st=""
+  [ -n "$ALERT_TICKER_PID" ] || return 1
+  kill -0 "$ALERT_TICKER_PID" 2>/dev/null || return 1
+  if [ -r "/proc/$ALERT_TICKER_PID/stat" ]; then
+    st=$(sed -e 's/^.*) //' -e 's/ .*//' "/proc/$ALERT_TICKER_PID/stat" 2>/dev/null) || st=""
+    [ "$st" = "Z" ] && return 1
+  fi
+  return 0
+}
+if [ "$ALERT_TICKER_DISABLE" = "1" ]; then
+  echo "[cron-runner] 🔶 ALERT_TICKER_DISABLE=1 — 레거시 모드(T-147 이전 동작): 티커 없음 · 메인 루프가 매 틱 stop-alert 호출 · 하트비트 추가 쓰기 없음. 시험 전용 설정이다"
+elif command -v flock > /dev/null 2>&1 && : > "$ALERT_TICKER_LOCK_FILE" 2>/dev/null; then
+  alert_ticker_loop &
+  ALERT_TICKER_PID=$!
+  ALERT_TICKER_ACTIVE=1
+  echo "[cron-runner] stop-alert 티커 시작 — pid $ALERT_TICKER_PID, 분 경계마다 1회(락 $ALERT_TICKER_LOCK_FILE)"
+else
+  echo "[cron-runner] 🔴 stop-alert 티커를 띄우지 못했다(flock 없음 또는 락 파일을 만들 수 없음: $ALERT_TICKER_LOCK_FILE) — 메인 루프가 매 틱 직접 부른다(T-147 이전 동작)"
+fi
+# <<< alert-ticker
+
 # 분 단위 카운터 (동기 호출이라 60초 슬립으로 간략)
 i=0
 while true; do
@@ -456,10 +612,27 @@ while true; do
   call /api/cron/entry-watcher "entry-watcher"
   # 매 1분: holding-checker — 보유기간 초과 텔레그램 알림
   call /api/cron/holding-checker "holding-checker"
+  # >>> alert-ticker-supervise (T-147) — 티커 자식이 살아 있는지 매 틱 확인하고, 죽었으면 호출을 메인 루프로 되돌린다
+  # 왜: 티커가 바쁜 루프 가드로 끝나거나 어떤 이유로든 죽으면, 감독이 없으면 **다음 재기동까지 손절 알림이 영구 정지**다.
+  #   ACTIVE 는 1 → 0 으로만 내려간다(되살리지 않는다 — 그래야 「호출자는 하나」가 유지되고, 죽은 원인을 사람이 보게 된다).
+  #   로그는 전환 때 한 줄만 남긴다(ACTIVE 가 이미 0 이면 이 블록은 아무것도 하지 않는다 — 매 분 같은 줄을 찍지 않는다).
+  if [ "$ALERT_TICKER_ACTIVE" = "1" ] && ! alert_ticker_alive; then
+    ALERT_TICKER_ACTIVE=0
+    echo "[$(date '+%F %T')] 🔴 stop-alert 티커(pid ${ALERT_TICKER_PID:-?})가 사라졌다 — 이 틱부터 메인 루프가 직접 부른다(T-147 이전 동작)"
+  fi
+  # <<< alert-ticker-supervise
+  # >>> stop-alert-fallback (T-147) — 티커가 부르지 않을 때만 메인 루프가 부른다(호출자는 항상 정확히 하나)
   # 매 1분: stop-alert — 손절가 도달 텔레그램 알림 (T-068, 알림만 — 주문·매도·시그널 없음). 이 호출에만 시간 상한.
-  CALL_MAX_TIME="$STOP_ALERT_CURL_MAX_TIME"
-  call /api/cron/stop-alert "stop-alert"
-  CALL_MAX_TIME=""
+  #   기본(ACTIVE=1)에는 위 alert-ticker 블록의 자식이 분 경계마다 부르므로 여기서는 부르지 않는다. ACTIVE=0 인 경우는 셋뿐이다 —
+  #   ① `flock` 없음·락 파일 못 만듦 ② `ALERT_TICKER_DISABLE=1`(레거시 모드) ③ 티커가 죽어 위 감독이 내렸을 때. 세 경우 모두
+  #   **T-147 이전과 똑같이** 매 틱 이 자리에서 부른다(알림 소실 없음). 라우트의 재발송 가드가 프로세스 메모리 Map 의
+  #   check-then-act(`src/app/api/cron/stop-alert/route.ts:62-71`)라 호출자가 둘이면 같은 알림이 두 번 가므로, 플래그로 하나만 고른다.
+  if [ "$ALERT_TICKER_ACTIVE" != "1" ]; then
+    CALL_MAX_TIME="$STOP_ALERT_CURL_MAX_TIME"
+    call /api/cron/stop-alert "stop-alert"
+    CALL_MAX_TIME=""
+  fi
+  # <<< stop-alert-fallback
   # 매 5분: strategy-eval
   if [ $((i % 5)) -eq 0 ]; then
     call /api/cron/strategy-eval "strategy-eval"
@@ -853,8 +1026,10 @@ while true; do
       05) [ "$UNIV_MM" -lt 50 ] && UNIV_WINDOW=yes ;;
     esac
   fi
-  # 🔴 T-145 ④-조각 — 창 끝 분(05:50)에 **한 틱만** 더 켠다. 위 줄들을 고치지 않고 **더하기만** 한다
-  #   (`src/app/api/cron/broker-fills/__tests__/cron-runner-block.test.ts` 「기존 줄 변경 0」 규약).
+  # 🔴 T-145 ④-조각 — 창 끝 분(05:50)에 **한 틱만** 더 켠다. 위 줄들을 고치지 않고 **더하기만** 한다.
+  #   (T-147) 이 주석이 근거로 들던 `cron-runner-block.test.ts` 의 「기존 줄 변경 0」 단정은 **삭제됐다** — T-147 이 메인 루프의
+  #   `stop-alert` 호출을 의도적으로 조건부로 바꿨기 때문이다(그 파일 끝 주석에 이유가 있다). 「더하기만」은 이제 테스트가 강제하는
+  #   규약이 아니라 **이 블록이 스스로 지키는 방식**이다(러너 변경의 검토는 `SAFETY_PATHS` 커밋 훅 + Reviewer 독립감사가 맡는다).
   #   `UNIV_MM` 은 분을 읽지 못했으면 빈 문자열이라 이 비교가 저절로 거짓이 된다.
   if [ "$HH" = "05" ] && [ "$UNIV_MM" = "50" ]; then UNIV_WINDOW=yes; fi
   if [ "$UNIV_DOW" = "7" ] && [ "$UNIV_DOM" -le 7 ] && [ "$UNIV_WINDOW" = "yes" ]; then
@@ -863,6 +1038,33 @@ while true; do
     CALL_MAX_TIME=""
   fi
   # <<< overseas-universe-refresh
+  # >>> heartbeat-refresh (T-147) — 무거운 블록들이 끝난 뒤 하트비트를 **한 번 더** 쓴다(틱 시작 기록은 그대로 둔다)
+  # 하트비트는 틱 **시작**에만 썼다(위 T-037 블록). 감시자는 둘이고 임계가 같다 — HOME-SERVER 순찰(`stockinvest-cron`,
+  #   health_type heartbeat_file, max_age_seconds 300, crontab */5 check-and-recover.sh --periodic)과 앱 워치독
+  #   (`src/lib/ops/cron-watchdog.ts`, `CRON_HEARTBEAT_STALE_SEC` 기본 300 — "cron 정지" critical).
+  #
+  # 🔴 효과를 정확히 적는다(T-147 Leader 보정 ④ — 처음 주석의 계산은 **틀렸다**):
+  #   - 하트비트 나이의 최악은 **쓰기 사이의 최대 간격**이다. 변경 전에는 쓰기가 틱 시작 하나뿐이라 그 간격 = **틱 주기**
+  #     (틱 길이 + sleep 60)였다. 갱신을 더하면 긴 틱 구간의 간격이 **틱 길이**로 줄고, sleep 구간은 60초로 묶인다.
+  #   - 2026-11-03 운영 cron 로그 **3,119틱** 실측: 틱 주기 mean 66.3 · max **412**초 · 300초 초과 **12틱** /
+  #     틱 길이 mean 6.4 · max **352**초 · 300초 초과 **4틱**. 즉 이 한 줄은 노출을 12틱 → 4틱으로 **좁히지만 닫지는 못한다**
+  #     (352 > 300). 처음 주석에 적었던 "최악이 sleep 60 + 약 1초로 줄어든다(틱 길이와 무관)"는 **성립하지 않는다** —
+  #     긴 잡은 틱 **안**에서 돌고 갱신은 틱 **끝**에 있어서, 긴 틱이 도는 동안의 최신 기록은 여전히 그 틱의 **시작** 기록이다.
+  #     (옛 주석의 "328 + 60 = 388초"도 중복 계산이었다. 328 은 이미 sleep 을 포함한 **주기**다.)
+  #   - 왜 여기서 더 닫지 않는가: ⓐ `call()` 마다 쓰면 최악이 **단일 잡 길이**가 되는데 `strategy-eval` 한 번이 최장 약 298초라
+  #     여유가 2초뿐이다(측정 잡음에 바로 뚫린다) ⓑ 임계(300) 상향은 HOME-SERVER 설정이라 **사용자 결정**이다 ⓒ 배경 프로세스가
+  #     하트비트를 쓰면 메인 루프가 영구히 멈춰도 두 감시자가 **영원히 발동하지 않는다**(그래서 위 티커 자식은 하트비트를 쓰지 않는다)
+  #     ⓓ 근본 해결은 `src/lib/strategy/engine.ts:1455` 의 직렬 평가 루프에 동시성 제한을 두는 것 — **별건**이다.
+  # 틱 시작 기록을 지우지 않는 이유: T-037 의 "직전 틱까지는 살아 있었다"는 의미를 유지한다(느린 잡 하나를 사망으로 오인하지 않게).
+  #   또한 틱 **중간**에 영구히 멈춘 경우의 탐지력은 변경 전과 같다(그때 최신 기록은 그 틱의 시작 기록이다).
+  # 쓰기는 틱 시작과 같은 tmp→mv 원자 쓰기이고 실패는 `|| true` 로 삼킨다(하트비트 기록 실패가 루프를 멈추면 본말전도).
+  # 레거시 모드(`ALERT_TICKER_DISABLE=1`)에서는 이 쓰기를 건너뛴다 — T-147 이전 동작을 그대로 재현해야 기존 하네스의
+  #   하트비트 간격 정확 비교가 수정 없이 통과한다(위 alert-ticker 블록 ② 주석).
+  if [ "$ALERT_TICKER_DISABLE" != "1" ]; then
+    { printf '%s\n' "$(date +%s)" > "${CRON_HEARTBEAT_FILE}.tmp" \
+        && mv -f "${CRON_HEARTBEAT_FILE}.tmp" "${CRON_HEARTBEAT_FILE}"; } 2>/dev/null || true
+  fi
+  # <<< heartbeat-refresh
   jrl_flush "${JRL_TICK_T0:-}" 2>/dev/null || true   # T-112 jrl
   i=$(( (i + 1) % 1440 ))   # 24h 사이클
   sleep 60

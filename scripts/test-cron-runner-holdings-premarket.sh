@@ -123,7 +123,10 @@ exit 0
 EOF
   chmod +x "$R/bin/date" "$R/bin/sleep" "$R/bin/curl"
   : > "$R/calls"; : > "$R/maxtime"
-  env PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul $extra \
+  # (T-147) ALERT_TICKER_DISABLE=1 = 레거시 모드(티커 자식 없음 · 메인 루프가 매 틱 stop-alert 호출 · 하트비트 추가 쓰기 없음)
+  #   = **T-147 이전 동작**. 이 하네스는 자기 잡의 회귀망이고 기대값(일정·호출 목록·하트비트 간격)이 그 동작 기준이므로 그대로 쓴다.
+  #   기본 모드(티커가 분 경계마다 부르고 죽으면 메인 루프가 이어받는다)는 scripts/test-cron-runner-alert-ticker.sh 가 본다.
+  env PATH="$R/bin:$PATH" HOME="$R/home" PROJECT_DIR="$R/proj" BASE_URL="http://stub" TZ=Asia/Seoul ALERT_TICKER_DISABLE=1 $extra \
     timeout 900 bash "$runner" > "$R/stdout" 2>&1
   echo "$R"
 }
@@ -262,9 +265,15 @@ no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool
 #   `# >>> kis-fundamentals-snapshot` 블록 표식으로 지우지만 기준 ref 에는 그 표식이 없어 한쪽만 지워지면 어긋난다.
 #   (news-split 의 strip_old 가 뉴스 구간을 같은 방식으로 지우는 선례와 같다. 그 잡의 새 모양은 자기 블록 시험이 본다.)
 no_kf_old() { awk '/^  # 매일 08:00 KST: KIS 해외 현재가상세 스냅샷/{s=1} s{ if (/^  fi$/) s=0; next } {print}'; }
+# (T-147) T-147 은 블록을 **더하고**(최상위 alert-ticker · 메인 루프의 alert-ticker-supervise·stop-alert-fallback·heartbeat-refresh)
+#   메인 루프의 옛 stop-alert 호출 4줄(주석 1 + 실행 3)을 **의도적으로 조건부로 옮겼다**(호출자는 플래그 하나로 항상 하나). 그래서
+#   한쪽만 지우면 어긋난다 — 지금 러너 쪽은 블록 표식으로, **기준 ref 쪽**은 그 4줄과 머리 주석 1줄을 범위로 지운다(위 no_kf_old 선례와 같다).
+#   T-147 의 새 모양(호출자 하나·fail-open·감독·분 경계)은 scripts/test-cron-runner-alert-ticker.sh 가 본다.
+no_t147()     { awk '/^ *# >>> (alert-ticker|stop-alert-fallback|heartbeat-refresh)/{s=1} s{ if (/^ *# <<< (alert-ticker|stop-alert-fallback|heartbeat-refresh)/) s=0; next } {print}'; }
+no_t147_old() { awk '/^  # 매 1분: stop-alert/{s=1} s{ if (/^  CALL_MAX_TIME=""$/) s=0; next } {print}' | grep -v '^#  - stop-alert        : 1분'; }
 STRIPPED_NOJRL="$W/runner-stripped-nojrl.sh"; no_jrl "$STRIPPED" > "$STRIPPED_NOJRL"
-if diff <(noc "$STRIPPED_NOJRL") <(no_kf_old < "$BEFORE" | noc /dev/stdin) > /dev/null; then ok "🔴 H9: 블록·선언·머리 주석 밖 실행 줄 = 변경 전($BASE_REF)과 동일 ($(noc "$STRIPPED_NOJRL" | wc -l | tr -d ' ')줄)"
-else bad "H9: 블록 밖 실행 줄이 변경 전($BASE_REF)과 다르다 — 다른 task 와 합친 뒤라면 T119_BASE_REF 를 지정"; diff <(noc "$STRIPPED_NOJRL") <(no_kf_old < "$BEFORE" | noc /dev/stdin) | head -10; fi
+if diff <(no_t147 < "$STRIPPED_NOJRL" | noc /dev/stdin) <(no_kf_old < "$BEFORE" | no_t147_old | noc /dev/stdin) > /dev/null; then ok "🔴 H9: 블록·선언·머리 주석 밖 실행 줄 = 변경 전($BASE_REF)과 동일 ($(no_t147 < "$STRIPPED_NOJRL" | noc /dev/stdin | wc -l | tr -d ' ')줄)"
+else bad "H9: 블록 밖 실행 줄이 변경 전($BASE_REF)과 다르다 — 다른 task 와 합친 뒤라면 T119_BASE_REF 를 지정"; diff <(no_t147 < "$STRIPPED_NOJRL" | noc /dev/stdin) <(no_kf_old < "$BEFORE" | no_t147_old | noc /dev/stdin) | head -10; fi
 eq "H9: 지운 줄 = 블록 + 선언 1 + 머리 주석 1" "$(( $(wc -l < "$RUNNER") - $(wc -l < "$STRIPPED") ))" "$(( $(printf '%s\n' "$nb" | wc -l) + 2 ))"
 
 echo

@@ -7,7 +7,8 @@
  *  2. 🔴 재기동(07:25 첫 틱 — research·edgar 날짜파일이 어제): 그 틱에 research·edgar 가 돌고 broker-fills 는 yield_tick(날짜파일 안 씀),
  *     다음 틱에 1회 — 날짜파일을 다시 읽으면 미루기가 발동하지 않는 N-2 함정을 고정한다.
  *  3. 둘 중 하나만 이 틱에 돌아도 미룬다 · 분을 읽을 수 없으면 돌지 않는다 · 호출 뒤 CALL_MAX_TIME 은 비운다.
- *  4. 정적: 상수 90, 호출 줄 1개, 블록이 edgar 블록 뒤, 원래 줄 삭제·변경 0(HEAD 대비 추가만).
+ *  4. 정적: 상수 90, 호출 줄 1개, 블록이 edgar 블록 뒤, yield 판단이 LAST_* 변수, `bash -n`.
+ *     (T-147) 「원래 줄 삭제·변경 0(HEAD 대비 추가만)」 케이스는 삭제했다 — 이유는 파일 끝 주석.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -140,20 +141,14 @@ describe('cron-runner 정적', () => {
     expect(() => execFileSync('bash', ['-n', RUNNER])).not.toThrow();
   });
 
-  test('기존 줄 변경 0 — HEAD 대비 추가만(git 이 있을 때)', () => {
-    let head: string;
-    try {
-      head = execFileSync('git', ['-C', REPO, 'show', 'HEAD:scripts/cron-runner.sh'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    } catch {
-      return;   // git 없는 환경(배포 사본 등) — 건너뜀
-    }
-    // HEAD 의 모든 줄이 순서대로 현재 파일에 있어야 한다(부분 수열)
-    const cur = SRC.split('\n');
-    let j = 0;
-    for (const line of head.split('\n')) {
-      while (j < cur.length && cur[j] !== line) j++;
-      expect([line, j < cur.length]).toEqual([line, true]);
-      j++;
-    }
-  });
+  /**
+   * (T-147) 「기존 줄 변경 0 — HEAD 대비 추가만(부분 수열)」 케이스를 **삭제했다**.
+   *  - 왜: T-147 이 메인 루프의 `stop-alert` 호출 3줄을 **의도적으로 뺐다**(알림 전용 잡을 분당 티커 자식으로 옮김 —
+   *    러너의 `# >>> alert-ticker` 블록). HEAD 의 모든 줄이 현재 파일의 부분 수열이어야 한다는 단정은 그 삭제로 성립하지 않는다.
+   *  - 그 단정의 뜻: T-087·T-145 가 "내 블록이 남의 줄을 건드리지 않았다"를 지키려 둔 **개발 중 가드**였고, 이후 작업이
+   *    러너를 의도적으로 바꾸는 것을 금지하는 규칙이 아니었다. 금지·검토 규칙은 `SAFETY_PATHS` 커밋 훅(`^scripts/cron-runner\.sh$`)
+   *    + Reviewer 독립감사가 맡는다 — 둘 다 이 테스트와 무관하게 그대로 돈다.
+   *  - 나머지 단정(블록 존재·상수 90·호출 줄 1개·블록 순서·yield 판단 방식·`bash -n`)은 유지한다. 이 블록이 지키는 것은
+   *    「07시 틱에 broker-fills 가 겹치지 않는다」이고, 그건 위 시뮬레이션과 아래 정적 단정들이 직접 본다.
+   */
 });
