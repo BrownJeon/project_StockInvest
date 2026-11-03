@@ -1,11 +1,21 @@
 ---
 project: StockInvest
-updated: 2026-11-02
+updated: 2026-11-03
 tags:
   - type/context
 ---
 # 현재 상태
 
+## 2026-11-03 10:05 — T-146 해외 목록 125종목 주입 + 상한 제거 **운영 반영 완료**
+
+- [[T-146-manual-list-cap-removal]]: 해외 분석 대상이 **54 → 126종목**이 됐다. 나스닥100(101) + 기존 NYSE 24 = 125종목을 `overseas_universe_revision` **개정판 1**(1,325바이트·`seed`)로 주입했다 — 코드 변경 0, DB 한 줄. 성공 판독은 캐시하지 않으므로 재시작·배포 없이 즉시 반영됐다.
+- **운영 실측(추정 아님)**: 08:00:49 `post-market-overseas` `evaluated` **126** · **55초** · `ok` · `candidates` 7 · `llm_input` 1 · `created` 0 · **일봉 실패 0건** · `[universe-overseas]` 경고 0건. 08:30:12 `kis-fundamentals-snapshot` **125행**(전날 53) · `ok` → **[[T-145-wpa-enable-blockers]] ⑨ 창 안 DB 이어받기가 실전에서 처음 작동**했다(90초 틱으로는 125종목이 안 끝난다). 125행인 것은 `NYS:BRK.B` 가 종전처럼 실패해서다(예측과 일치).
+- **상한 제거**: `MANUAL_LIST_MAX` 150→**500**(표 백스톱 `chk_rev_count` 와 같은 수), `AUTO_TOP_N_MAX = 150` 신규로 WP-A `topN` 천장은 **분리해 그대로 둠**. 커밋 `1dfd57d`(훅 통과) → 릴리스 **`20261103-093323-1dfd57d6`** `status: ok` · **`migrated: false`** · 09:33:13→09:34:52(89초). 롤백 지점 `20261102-225046-8f101d03`.
+- **배포 후**: `current` 심링크 전환 · health `ok:true`·`safetyStatus:green`·`dryRun:true`·`killSwitch:false` · pm2 둘 다 `online`·재시작 0 · 배포된 상수 500/150 · 목록 125종목 불변 · WP-A 여전히 **꺼짐**(`system_config` 설정 행 없음 → `AUTO_REFRESH_DEFAULT.enabled=false`, `overseas_universe_auto` 0행). 컷오버 공백은 09:33:53~54 `HTTP=000` 5건, 09:33:55 러너 재시작 후 정상.
+- 🔴 **지금 살아 있는 구멍**: 종전에는 상한 150 이 **우연히** 151종목 적재를 막아 주고 있었고 그 보호가 사라졌다. 151줄을 붙여넣으면 저장되고, 154종목 초과분은 `post-market-overseas.ts:545` 의 무제한 `Promise.allSettled` 팬아웃(H-1)에서 **오류·경고 없이 누락**된다. **코드 가드 없음.** 사용자가 보고받고 「지금 배포 · 151종목은 H-1 수정 뒤」를 선택했다. 현재 126종목은 한계 154 까지 여유 28.
+- **NYSE 상위 50 은 들어가지 않았다** — WP-A(월 1회 자동 산출) 경로다. 켜려면 WP-A DDL 적용 + 스위치 행 추가(각각 사용자 승인) + T-145 잔여 조건이 먼저다.
+- ⚠ **범위 밖 발견(기존 결함)**: `cron-runner.sh` 의 `call()` 은 `CALL_MAX_TIME` 이 설정된 잡에만 `--max-time` 을 붙이는데 `strategy-eval` 에는 없다 → 러너가 **145~348초** 묶이고 그 사이 분당 `entry-watcher`·`holding-checker`·**`stop-alert`** 가 전부 굶는다(보유 6종목 손절 알림 공백). 11-02 에 278초로 이미 있었고(내 변경 탓 아님), 11-02 ACTIVE 기록의 「cron 3분 45초 무기록」도 같은 현상이다. 하트비트는 `:446~448` 에서 **틱 시작에만** 기록되고 순찰은 crontab 5분 샘플·임계 300초라 **재시작 0회는 안전해서가 아니라 샘플이 비켜간 것**이며, 거꾸로 장중 무작위 재시작도 가능하다 → 별 task 권고.
+- QA 는 **배포 뒤에** 돌았다(`CONDITIONAL_PASS`·신규 결함 0) — 사용자가 배포를 먼저 결정했기 때문이고 순서상 이탈이다.
 ## 2026-11-02 10:02 — T-143 WP-A(해외 분석 대상 월 1회 자동 산출) **운영 배포 완료 — 꺼진 상태로 나갔다**
 
 - [[T-143-overseas-universe-source-replacement]] WP-A: 사용자 승인 「커밋·push 진행」 → 「운영에도 배포되도록 푸시해줘」 로 **운영 반영까지 끝났다**. 릴리스 **`20261102-095756-f6b32b09`**, `RELEASE_RESULT status=ok`, webhook `exit=0`(push 09:57:35 → END 09:59:25), **`migrated:false`**. 내용은 `27f40b7`(WP-A 코드 40파일·6,808 추가/26 삭제) + `2967478`(기록) + `f6b32b0`(main 병합, 충돌 0 — 교집합 파일 0). 롤백 지점 `20261102-002939-cec935ac`.

@@ -1,14 +1,18 @@
 ---
 task_id: T-146
 title: 해외 수동 목록 125종목 주입(나스닥100) + MANUAL_LIST_MAX 상한 제거
-status: doing
+status: done
 priority: high
 project: StockInvest
 created: 2026-11-03
 updated: 2026-11-03
 base_ref: origin/main 8f101d0 (릴리스 20261102-225046-8f101d03)
 risk_level: R2
-roles_involved: [leader, developer, reviewer, qa]
+roles_involved: [leader, developer, reviewer, qa, deployer]
+waiting: >-
+  후속 2건 대기 — ① H-1(post-market-overseas 무제한 팬아웃) 수정 전에는 수동 목록을 151종목 이상으로
+  늘리지 않는다(상한은 500 이지만 실질 안전 한계는 약 154, 코드 가드 없음). ② M-1 화면 문구(view.ts:243)
+  거짓 이유 절은 designer 경유 수정 또는 사용자 수용 결정 대기.
 related_tasks:
   - T-143-overseas-universe-source-replacement
   - T-145-wpa-enable-blockers
@@ -20,7 +24,6 @@ aliases:
   - 나스닥100 주입
   - MANUAL_LIST_MAX 제거
   - T-146
-waiting: "08:00 pmo·08:30~08:55 스냅샷 창과 겹치지 않게 배포는 08:55 이후. 125종목 효과 실측은 11-04 08시 분부터(오늘 08시 분은 주입 전 상태)."
 ---
 
 ## 발단
@@ -170,6 +173,33 @@ API(`manual/route.ts:70`)·화면(`DIFF_TOO_MANY_NOTE`)·제안 경로(`store.ts
 - [07:58] **최종 판정: CONDITIONAL_PASS (scope: src/lib/universe/)**
 
 ## QA
+- [09:52] **QA 사후 회귀 검증(배포 후) — 대상 커밋 `1dfd57d`.** 운영 `current` → `releases/20261103-093323-1dfd57d6` 과 NFS HEAD 가 같은 커밋임을 확인했다. 배포 게이트가 아니라 회귀 검증이다. 코드·설정 수정 0, 커밋 0, KIS 호출 0, dev 서버 기동 0, 운영 DB 쓰기 0(SELECT·SHOW 만). NFS 트리 `git status` 는 시작 시점과 같다.
+- [09:52] **실행 ① typecheck** — 서버 `npm run typecheck` → `TSC_EXIT=0` (로그 `~/.node-local/qa-t146/tsc.log`).
+- [09:52] **실행 ② 전체 jest** — 서버 `npm test`(flock 직렬) → Test Suites 386 passed · 7 skipped, Tests 11,021 passed · 267 skipped · 0 failed, `JEST_EXIT=0`. 신규 시험 두 파일(`parse-manual-list`·`auto-refresh-schedule`) 모두 PASS 확인. (로그 `~/.node-local/qa-t146/jest.log`)
+- [09:52] **실행 ③ 경계·topN probe** — 격리 사본에서 `qa-t146-probe.test.ts` 23건 전부 통과, 저장소 파일은 건드리지 않았다.
+  - 고유 500: 서버 통과, 화면 `tooMany=false`·`blocked=false`·`next=500`. 고유 501: 서버 `too_many`, 화면 `tooMany=true`·`blocked=true`. 경계 500/501 판정이 화면과 서버에서 일치한다.
+  - 중복 1개 포함 501줄(고유 500): 화면 통과(`next` 500), 서버 재검사 통과. 중복 2개 포함 501줄(고유 499): 화면 통과(`next` 499), 서버 통과. 화면이 보내는 값은 중복 제거 후 `next` 라서 사용자 경로는 유효·고유 개수로 판정된다.
+  - 같은 중복 입력을 원시 배열 501개로 API 에 직접 보내면 서버는 중복 제거 전 길이로 `too_many` 를 낸다. 사용자 화면 경로에서는 나오지 않는다. 기존 동작이고 T-146 이 만든 차이가 아니다(관찰, 결함 아님).
+  - 빈 줄 10개 포함 500줄은 통과(빈 줄 미계수). 501줄 중 형식 오류 1개: 서버는 길이 검사가 형식보다 먼저라 `too_many`, 화면은 `tooMany=false`·`blocked=true`(형식 오류 사유). 차단은 양쪽 모두 일치하고 표시 사유만 다르다.
+  - topN(`readAutoRefreshConfig` 실경로, 가짜 DB): 0→50 · 1→1 · 149→149 · 150→150 · 151→50 · 500→50 · 1e9→50 · `"150"`→150 · `"500"`→50 · -5→50 · 미설정→50. 상수 확인: `MANUAL_LIST_MAX=500`, `AUTO_TOP_N_MAX=150`, `AUTO_REFRESH_DEFAULT.topN=50`. topN 천장은 500 과 분리되어 150 그대로다.
+  - probe 1차 실행에서 2건이 실패했다. 둘 다 시험 쪽 원인이었다(생성기 ID 충돌, 화면 `tooMany` 기대값 오류). 고친 뒤 23/23. 제품 결함은 아니다.
+- [09:52] **소비처 일관성** — `MANUAL_LIST_MAX` 참조는 `manual/route.ts:70`(문구)·`ManualListDiff.tsx:45`·`store.ts:793`(제안 재검사 문구)·`parse-manual-list.ts` 내부 2곳으로 모두 상수를 쓴다. `src/` 에 상한 용도의 하드코딩 150 은 없다.
+- [09:52] **운영 실측(읽기 전용)** — `/api/health`: `ok:true`, `db:true`, `safetyStatus:green`, `dryRun:true`, `killSwitch:false`, `authConfigured:true`, `cronSecretConfigured:true`(값이 아니라 여부만 확인). pm2: `stockinvest`·`stockinvest-cron` 각 1개 `online`, restarts 0, cwd 는 릴리스 `1dfd57d6`. 최신 개정판 `revision_no=1`·`symbol_count=125`·`change_source=seed`. 운영 DB 의 `chk_rev_count` 가 `symbol_count <= 500` 으로 실제 존재함을 `information_schema` 로 확인했다(백스톱 전제 충족).
+- [09:52] **안전장치 체크리스트** — 이 변경은 주문·한도·Kill Switch·DRY_RUN 경로를 건드리지 않는다. 근거: 변경 src 는 `src/lib/universe/` 4파일이고 diff 에 SQL 변경 0줄. `parse-manual-list.ts` 는 import 가 없고 `refresh-config.ts` 는 `mysql2` 타입·`@/lib/db` 만 가져오며, 둘 다 `safety`·`exchanges`·주문 함수를 import 하지 않는다. 주문 엔드포인트 호출 시험(DRY_RUN 응답·KILL_SWITCH 차단·ORDER_MAX·화이트리스트·감사 로그)은 **미실행, NOT_VERIFIED**다. developer 가 준 실매매 시험 명령이 없어 실행하지 않았고, 변경과도 무관하다.
+- [09:52] **보안 점검** — 헬스 응답에 비밀값 없음(불리언만). diff 에 SQL·신규 입력 경로 0.
+- [09:52] **화면 검증 — NOT_VERIFIED.** 바뀐 화면 요소는 문구 숫자(150→500) 하나라 레이아웃·색·터치 대상 변화는 없다. 실제 렌더는 로그인된 운영 세션이 필요해 QA 가 확인하지 못했고(자격증명을 쓰지 않는다), dev 서버 기동도 금지다. 문구 내용은 소스로만 확인했다(`view.ts:242-243`).
+- [09:52] **Reviewer 발견 재확인**
+  - **M-1 (medium) — 확인됨.** `view.ts:243` 이유 절 「분석 시간 예산을 넘기지 않으려는 제한입니다」는 지금 상한(표 백스톱)과 맞지 않는 설명이다. 501줄 붙여넣기에서 이 문구가 나간다(소스 확인, 브라우저 재현은 NOT_VERIFIED).
+  - **L-3 (low) — 확인됨.** `tooMany` 를 단언하는 저장소 시험이 0건이다(`grep -rln tooMany src --include=*.test.*` 결과 없음). 이번 probe 가 경계를 고정했지만 그 시험은 저장소에 없다.
+  - **L-1·L-2 — 확인됨.** `parse-manual-list.ts:35` 가 여전히 `errno 3819` 라고 적고 있다(운영 MariaDB 10.11.11 에서는 4025). `T-143-overseas-universe.sql:14` 의 「두 수가 다른 것은 의도된 설계」 정오표는 아직 없다.
+  - **H-1 (high, Reviewer 보고) — QA 미재현, NOT_VERIFIED.** 코드 사실만 확인했다. `post-market-overseas.ts:545` 가 `Promise.allSettled(symbols.map(...))` 로 동시성 제한 없이 발사하고 `withKisPriority` 가 없다. Reviewer 의 실모듈 측정(한도 약 154, 초과분 조용히 누락)은 인용만 했다. 운영 목록 125종목은 여유 안이지만, 151 이상을 막는 코드 가드는 지금 없다.
+  - **M-2 (medium) — NOT_VERIFIED.** 코드 산술이고 실측은 없다.
+- [09:52] **QA 신규 결함: 0건.** Critical·High·Medium·Low 신규 없음. 위 원시 배열 판정 차이는 관찰 1건이고 기존 동작이다.
+- [09:52] **Leader 결정 필요 2건** — ① M-1 문구: 이유 절을 고칠지, 사용자가 수용할지. QA 는 이것을 이유로 반송하지 않았다. 사용자가 배포를 이미 결정했고 UI 문구는 designer 경유로 미뤄진 상태다. 고치기로 하면 이 4파일 밖이라 별도 task 와 재순환이 필요하다. ② H-1: 151 이상 적재를 막는 가드(코드 또는 운영 절차)가 없다는 점을 사용자가 알고 수용했는지 확인.
+- [09:52] **미검증 목록(NOT_VERIFIED)** — 브라우저 화면(다크·라이트, 412/1280, 가로 스크롤) · H-1 실재현 · M-2 실측 · 주문 경로 안전장치 시험 · `next build` 재실행(커밋 메시지·Reviewer 보고 인용, QA 는 `.next` 를 공유 트리에 만들지 않으려고 실행하지 않았다).
+- [09:52] **산출물 정리** — 서버 임시 사본(`proj`, 소스 복사본과 node_modules symlink) 삭제 완료. 로그와 probe 시험 파일은 근거 재현용으로 서버 `~/.node-local/qa-t146/` 에 남긴다(`jest.log`·`tsc.log`·`probe.log`·`qa-t146-probe.test.ts`). 스크린샷과 프로젝트 내 산출물은 0개다.
+- [09:52] **QA 판정: CONDITIONAL_PASS (근거: 전체 jest 386 suites·11,021 passed·0 failed, typecheck 0, 경계·topN probe 23/23, 신규 결함 0 · 조건: M-1 거짓 이유 문구는 사용자 결정 대기, H-1 은 실재현하지 않은 채 사용자 수용 상태로 남음)**
+
 
 ## Leader
 
@@ -268,3 +298,103 @@ Reviewer 조건 ①(H-1·M-2 를 보고하고 결정을 남길 것) **충족**:
 - 🔴 **이 결정이 남기는 것**: 상한은 500 이 되지만 **실질 안전 한계는 154**다(코드가 막지 않는다). 151종목을 넣으려면 H-1 수정이 선행 조건이고, 그것은 이 task 가 아니다.
 
 Reviewer 조건 ②(M-1 문구) — **사용자가 정하지 않았으므로 그대로 둔다.** `src/components/universe/view.ts:243` 은 이번 4파일 밖이고 UI 문구라 designer 경유가 맞다. 후속으로 올린다.
+
+- [09:58] **QA 판정 접수: conditional_pass · 신규 결함 0건.** QA 가 내 주장들을 **독립적으로 재현**했다 — 고유 500 통과/501 거절이 화면·서버에서 일치, `topN` 0→50·150→150·151→50·500→50(천장 150 분리 확인), 운영 DB 에 `chk_rev_count (symbol_count <= 500)` 실존(`information_schema`), 전체 jest 386 suites·11,021 passed·0 failed·typecheck 0. 안전장치 경로 무접촉도 import 근거로 확인했다.
+- [09:58] **QA 결정요청 ① M-1 문구 → 고치지 않고 둔다.** `src/components/universe/view.ts:242-243` 의 「분석 시간 예산을 넘기지 않으려는 제한입니다」는 이제 거짓 이유다(실제로는 표 백스톱). 다만 ⓐ 이번 4파일 밖이고 ⓑ UI 문구라 designer 경유가 규칙이며 ⓒ 501줄을 붙여넣을 때만 보이는 문구다. 사용자가 정하지 않았으므로 **후속 task 로 올린다**. 고치면 Reviewer 부터 재순환이다.
+- [09:58] **QA 결정요청 ② H-1 수용 여부 → 사용자가 알고 수용했다.** Leader 가 H-1 을 「보고되지 않은 네 번째 위험」으로 명시해 보고하고 두 선택지를 냈으며, 사용자가 **①(지금 배포 · 151종목은 H-1 수정 뒤)** 를 골랐다. 즉 수용 범위는 **「상한을 500 으로 올리는 것」까지이고 「151종목을 실제로 넣는 것」은 아니다.**
+- [09:58] 🔴 **그래서 지금 살아 있는 구멍 하나를 분명히 적어 둔다.** 종전에는 상한 150 이 **우연히** 151종목 적재를 막아 주고 있었다. 그 우연한 보호가 이 배포로 사라졌다 — 지금 화면에 151줄을 붙여넣으면 **저장이 되고**, 다음 08시 해외 분석에서 154종목을 넘는 초과분이 `post-market-overseas.ts:545` 에서 **조용히 누락**될 수 있다(오류도 경고도 없이). **코드 가드는 없다.** 현재 운영은 125종목(`evaluated` 126)으로 여유 28 이라 발현하지 않는다. 151종목을 넣으려면 H-1 수정이 **선행 조건**이다.
+
+### 🚀 배포 기록 (2026-11-03 09:34 KST) — ① 결정에 따른 운영 반영
+
+| 항목 | 값 |
+|---|---|
+| 커밋 | `1dfd57d` (`feat(T-146): 수동 목록 상한 제거 …`) |
+| 릴리스 | **`20261103-093323-1dfd57d6`** (이전 `20261102-225046-8f101d03`) |
+| 방식 | push = webhook blue/green (`git push origin main`, `8f101d0..1dfd57d`) |
+| 시각 | 09:33:13 시작 → 09:34:52 종료 (**89초**) |
+| 결과 | `RELEASE_RESULT {"status":"ok", …, "migrated":false}` · `END … exit=0` |
+| 마이그레이션 | **없음** (`migrated: false`) — 이 변경은 코드 상수뿐이다 |
+| 같은 배포에 실린 다른 작업 | `0387b1b`(T-126 문서 1파일) · `9d767df`(T-145 문서 1파일) — **둘 다 `agent-vault/` 문서, 코드 변경 0**. `0387b1b` 메시지에 「push 안 함」이라 적혀 있으나 조상 커밋이라 함께 나갔다(배포 내용은 바뀌지 않는다) |
+
+**커밋 전 검증(서버 재실행)**: `tsc --noEmit` exit 0 · `jest` 전체 **386 suites / 11,021 passed / 267 skipped / 0 failed** exit 0 · `src/lib/universe` 13 suites / 306 passed exit 0 · `next build` exit 0.
+
+**커밋 안전장치**: 서버에서 커밋했고 훅이 돌았다 — `✅ [commit-msg] Reviewer 감사 기록 확인: T-146`. (Mac 에서는 `core.hooksPath` 가 우분투 경로라 훅이 무음으로 건너뛰어진다 — 안전경로 커밋은 서버에서만.) push 전 `git-refs-clean.sh --check` **깨끗**(실제 ref 22개), push 후 재점검도 깨끗.
+
+**배포 후 확인(직접 실측)**:
+
+| 확인 | 결과 |
+|---|---|
+| `current` 심링크 | → `releases/20261103-093323-1dfd57d6` ✅ |
+| `/api/health` | `ok:true` · `safetyStatus:"green"` · `dryRun:true` · `killSwitch:false` ✅ |
+| pm2 | `stockinvest`·`stockinvest-cron` 둘 다 `online` · `restart_time=0` · 09:33:54/55 reload ✅ |
+| 배포된 상수 | `parse-manual-list.ts:50` `MANUAL_LIST_MAX = 500` · `refresh-config.ts:23` `AUTO_TOP_N_MAX = 150` ✅ |
+| 운영 목록 | `overseas_universe_revision` 개정판 **1 = 125종목**(1,325바이트·`seed`) **변화 없음** ✅ |
+| WP-A | `system_config` 에 자동갱신 설정 행 **없음** → `AUTO_REFRESH_DEFAULT.enabled=false` 로 **꺼짐** · `overseas_universe_auto` **0행** ✅ |
+| 장중 재기동 영향 | 09:33:53~54 에 cron 호출 `HTTP=000` 5건(web 재기동 중 — 예상된 것) → 09:33:55 러너 재시작 후 `entry-watcher`·`holding-checker`·`stop-alert` 정상 ✅ |
+
+**AI 가 검증하지 못한 것**: 상한 변경의 **실제 효과**(151종목 붙여넣기가 저장되는지)는 운영 DB 쓰기라 확인하지 않았다 — 사용자 결정대로 151종목은 H-1 수정 뒤로 미뤘다. 지금 검증된 것은 ⓐ 배포된 코드의 상수값, ⓑ 시험·빌드, ⓒ 운영 무중단·목록 불변까지다.
+
+### 🔴 배포 확인 중 발견 — `strategy-eval` 이 러너를 묶어 분당 잡이 굶는다 (기존 결함, 이 변경과 무관)
+
+배포 직후 cron 로그가 **145초간 멈춘 것**을 보고 추적했다.
+
+[확실] **원인**: `scripts/cron-runner.sh:113` 의 `call()` 은 `CALL_MAX_TIME` 이 **비어 있지 않을 때만** `--max-time` 을 붙인다(`:120~122`). `strategy-eval`(`:465`)은 전용 상한이 없어 **curl 이 무한정 기다린다**. 러너는 단일 순차 루프라 그 동안 분당 잡(`entry-watcher`·`holding-checker`·**`stop-alert`**)이 전부 멈춘다.
+
+[확실] **실측(2026-11-03)**:
+
+| 측정 | 값 |
+|---|---|
+| 배포 직후 블록 | 09:33:56 → **09:36:21** = **145초** (`ps` 로 `strategy-eval` curl 이 106초째 살아 있는 것을 직접 확인) |
+| 그 사이 `stop-alert` | **0회** — 보유 **6종목**의 손절 알림이 145초 공백 |
+| 하트비트 최대 나이 | **168초** (임계 300초 — 이번엔 안 걸렸다) |
+| 오늘 09:00 슬롯 최악 | `job_run_log` rollup `maxMs` = **347,800ms (348초)** |
+| 전날(11-02, 125종목 주입 전) | `maxMs` **278,264ms (278초)** · `failed 2` · `partial` |
+| pm2 재시작 | **0회** (두 프로세스 모두 무중단) |
+
+[확실] **내 변경 탓이 아니다** — 278초짜리 실행이 125종목 주입 **전날**에 이미 있었다. 오늘이 70초 더 길지만 `failed` 2→**0**, `status` partial→**ok** 로 오히려 나아졌다. [추측] 그 +70초가 125종목 때문인지 단순 편차인지는 `strategy-eval` 라우트를 읽지 않아 가릴 수 없다.
+
+[가능성 높음] **순찰이 막아 주지 않는다**: 하트비트는 `cron-runner.sh:446~448` 에서 **틱 시작에만** 기록되고, 순찰은 crontab `*/5 * * * * check-and-recover.sh --periodic` 으로 **5분마다 샘플링**하며 임계는 `max_age_seconds: 300`(`HOME-SERVER_CONFIG/.../projects.json:84`)이다. 348초 블록이면 하트비트가 300초를 넘기지만, 그 초과 구간(≈48초)에 5분 샘플이 걸릴 때만 재시작된다. 즉 **재시작 0회는 안전해서가 아니라 샘플이 비켜간 것**이고, 거꾸로 **장중에 무작위로 cron 이 재시작될 수도 있다**.
+
+👉 **후속 task 후보**(이 task 범위 밖 — `scripts/cron-runner.sh` 는 `SAFETY_PATHS` 라 Reviewer 재감사가 필요하다): ⓐ `STRATEGY_EVAL_CURL_MAX_TIME` 신설, ⓑ 블록 중에도 하트비트를 갱신할지(그러면 굶는 것을 순찰이 영구히 못 본다 — 설계 판단 필요), ⓒ `strategy-eval` 이 왜 145~348초인지(분당 잡과 같은 루프에 둘 일인지).
+
+## 최종 요약 (Leader, 2026-11-03 10:05)
+
+### [T-146] 해외 종목목록 125종목(나스닥100) 주입 + 목록 상한 제거
+
+**상태**: 운영 반영 완료 · 후속 2건 대기
+
+**무엇이 바뀌었나**
+1. **해외 분석 대상이 54종목 → 126종목**이 됐다. 나스닥100(101종목) + 기존 NYSE 24종목 = 125종목을 `overseas_universe_revision` 개정판 1로 넣었다(코드 변경 0 — DB 한 줄). 종목 선정은 나스닥 공개 구성 + **SEC 공개 자료로 티커·거래소를 대조**해 확정했다(`api.nasdaq.com` 은 이용 권리가 없어 쓰지 않았다).
+2. **수동 목록 상한 150 → 500.** 표 백스톱 `chk_rev_count CHECK (symbol_count <= 500)` 과 같은 수로 맞췄다. 검사 자체는 남겼다 — 지우면 깔끔한 400 응답이 표 CHECK 위반으로 바뀌어 요청에 없던 실패 경로가 생긴다.
+3. **WP-A `topN` 천장은 150 그대로 분리**했다(`AUTO_TOP_N_MAX` 신규). 같이 올리면 `system_config` 값 하나로 바뀌는 **무인 경로**의 천장이 500 이 되는데, 지시는 「수동 목록 상한 제거」였다.
+
+**배포**: 커밋 `1dfd57d` → 릴리스 **`20261103-093323-1dfd57d6`**, push=webhook blue/green, 09:33:13→09:34:52(89초), `status: ok`, **`migrated: false`**. 같은 배포에 실린 다른 작업: `0387b1b`(T-126 문서)·`9d767df`(T-145 문서) — 둘 다 `agent-vault/` 문서 1파일, 코드 변경 0.
+
+**AI 가 검증한 것**
+- 운영 실측: 08:00 `post-market-overseas` **`evaluated` 54→126 · 55초 · `ok` · 일봉 실패 0건 · 목록 판독 경고 0건** → KIS 가 새 75종목을 전부 처리했다. 08:30 `kis-fundamentals-snapshot` **53행→125행 · `ok`** → T-145 ⑨ 창 안 이어받기가 실전에서 처음 작동했다.
+- 코드: `tsc` 0 · `jest` 386묶음 11,021건 0실패 · `next build` 0 · Reviewer 돌연변이 11종 중 10종 탐지 · QA 경계 probe 23/23(고유 500 통과·501 거절, `topN` 151·500→기본값 50).
+- 배포 후: `current` 심링크·health `green`·`dryRun:true`·pm2 둘 다 online·재시작 0 · 배포된 상수 500/150 · 운영 목록 125종목 불변 · WP-A 꺼짐(설정 행 없음·자동 표 0행).
+- 커밋 훅이 실제로 돌았다 — `✅ [commit-msg] Reviewer 감사 기록 확인: T-146`(서버에서 커밋. Mac 은 훅이 무음으로 건너뛰어진다).
+
+**AI 가 검증하지 못한 것**
+- **151종목이 실제로 저장되는지** — 운영 DB 쓰기라 하지 않았다(사용자 결정으로 미룬 부분).
+- 브라우저 실제 화면(로그인 필요) · H-1 실재현 · M-2 실측 · 주문 경로 안전장치 시험(이 변경과 무관).
+
+**👉 사용자가 확인할 것**
+- **어디서**: 내일(11-04) 08:00 이후 해외 분석 결과와 텔레그램 알림. **무엇을**: 분석 대상이 126종목으로 유지되고 후보·알림이 오는지. **정상 기준**: 오늘과 같이 `evaluated` 126 전후, 일봉 실패 0. **언제부터**: 이미 적용돼 있다(오늘 08시부터).
+- 화면에서 보려면 설정 → 해외 분석 대상 목록이 125종목으로 보이면 된다.
+
+**👉 사용자가 결정할 것**
+1. **M-1 화면 문구** — 501줄을 붙여넣을 때 나오는 「분석 시간 예산을 넘기지 않으려는 제한입니다」가 이제 거짓 이유다(실제로는 표 백스톱). **권고: 후속으로 designer 를 거쳐 고친다**(이번 4파일 밖이라 지금 고치면 Reviewer 부터 재순환).
+2. **H-1 수정을 할지** — 아래 「이슈·위험」의 첫 항목. **권고: 151종목을 넣고 싶다면 선행 필수.**
+
+**남은 일**
+- H-1 수정(`post-market-overseas.ts:545` 동시성 제한 + `bulk` 레인). 500종목에서는 일봉만 ~100초가 되어 `LLM_TIMEOUT_MS` 90→60 도 함께 가야 한다.
+- M-1 문구 수정(designer 경유) · L-3 `tooMany` 경계 시험 저장소 반영 · L-1·L-2 주석 정오표.
+- **NYSE 상위 50 은 이 task 로 들어가지 않았다** — WP-A(월 1회 자동 산출) 경로이고, 켜려면 WP-A DDL 적용 + 스위치 행 추가(각각 사용자 승인) + T-145 잔여 조건이 먼저다.
+- 이 문서 커밋은 **push 하지 않았다**(push=배포라 장중 재배포를 피했다). 다음 기능 push 에 함께 나간다.
+
+**이슈·위험**
+- 🔴 **종전에는 상한 150 이 우연히 151종목 적재를 막아 주고 있었고, 그 보호가 이 배포로 사라졌다.** 지금 151줄을 붙여넣으면 저장되고, 154종목을 넘는 초과분이 다음 08시 분석에서 **오류도 경고도 없이 누락**될 수 있다(H-1). 코드 가드는 없다. 현재 125종목은 여유 28 로 발현하지 않는다.
+- ⚠ **`strategy-eval` 이 러너를 묶어 분당 잡이 굶는다**(기존 결함, 이 변경과 무관). 오늘 실측 145초, 오늘 최악 348초, 전날 278초. 그 사이 보유 6종목의 손절 알림(`stop-alert`)이 멈춘다. 하트비트가 틱 시작에만 갱신되고 순찰은 5분 샘플·임계 300초라, **재시작 0회는 안전해서가 아니라 샘플이 비켜간 것**이다. 거꾸로 장중 무작위 재시작도 가능하다.
+- QA 가 `CONDITIONAL_PASS`(신규 결함 0)로 통과했으나 **배포 뒤에 돌았다** — 사용자 결정으로 배포를 먼저 했기 때문이고, 순서상 이탈이다.
