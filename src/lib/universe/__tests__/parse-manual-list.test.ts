@@ -135,6 +135,14 @@ describe('checkManualSymbols — 서버 재검사(§4.3)', () => {
     expect(checkManualSymbols(Array.from({ length: MANUAL_LIST_MAX }, () => 'NAS:AAAA')).ok).toBe(true);
   });
 
+  test('🔴 상한은 **500** — 표 백스톱 `chk_rev_count CHECK (symbol_count <= 500)` 과 같은 수다 (T-146)', () => {
+    // 전에는 150(앱 정책) 과 500(표 백스톱)이 **일부러** 달랐다. 2026-11-03 사용자 지시로 정책 상한을 없애고
+    // 둘을 같은 수로 맞췄다 — 검사를 지우면 500 초과가 표의 CHECK(errno 3819)로 떨어져 깔끔한 400 이 사라진다.
+    // 위의 상한 시험은 `MANUAL_LIST_MAX` **상대값**이라 수가 바뀌어도 통과한다 → 절대값은 여기서만 고정된다.
+    // 이 수를 바꿀 때는 `scripts/migrations/T-143-overseas-universe.sql` 의 CHECK 도 같이 본다(그 반대도 같다).
+    expect(MANUAL_LIST_MAX).toBe(500);
+  });
+
   test('빈 배열은 통과한다(규칙 6 — 금지하지 않되 화면이 경고한다)', () => {
     expect(checkManualSymbols([])).toEqual({ ok: true, symbols: [], dropped: [] });
   });

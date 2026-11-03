@@ -13,6 +13,8 @@ jest.mock('@/lib/db', () => ({ getPool: jest.fn(() => { throw new Error('pool no
 import {
   AUTO_REFRESH_DEFAULT, nextAutoRefreshAt, nthWeekdayOfMonth, parseHhmm, readAutoRefreshConfig, type Queryable,
 } from '../store';
+import { AUTO_TOP_N_MAX } from '../refresh-config';
+import { MANUAL_LIST_MAX } from '../parse-manual-list';
 
 const kst = (s: string) => Date.parse(`${s.replace(' ', 'T')}+09:00`);
 
@@ -78,6 +80,18 @@ describe('readAutoRefreshConfig — 던지지 않는다', () => {
     expect(cfg.windowStart).toBe('01:10');
     expect(cfg.windowEnd).toBe('05:50');
   });
+  it('🔴 topN 천장은 150 — 수동 목록 상한(500)과 **분리**돼 있다 (T-146)', async () => {
+    // 2026-11-03 `MANUAL_LIST_MAX` 가 150 → 500 으로 올랐다(사용자 지시). 그때까지 이 clamp 이 그 상수를 함께 썼으므로
+    // 그대로 두면 `topN` 천장이 500 이 되는데, `topN` 은 `system_config` 값 하나로 바뀌는 **무인 경로**이고
+    // 지시는 「수동 목록 상한 제거」였다 → 요청에 없던 변경이다. 그래서 분리하고 종전 동작(150)을 유지한다.
+    expect(AUTO_TOP_N_MAX).toBe(150);
+    expect(AUTO_TOP_N_MAX).not.toBe(MANUAL_LIST_MAX);
+    // 범위 밖은 bound 로 깎이지 않고 **기본값**으로 떨어진다(clampInt 규약 — 위 '범위 밖·형식 오류' 시험과 같다)
+    expect((await readAutoRefreshConfig(db(JSON.stringify({ topN: 150 })))).topN).toBe(150);
+    expect((await readAutoRefreshConfig(db(JSON.stringify({ topN: 151 })))).topN).toBe(AUTO_REFRESH_DEFAULT.topN);
+    expect((await readAutoRefreshConfig(db(JSON.stringify({ topN: 500 })))).topN).toBe(AUTO_REFRESH_DEFAULT.topN);
+  });
+
   it('excludeDr 은 **명시적 false** 일 때만 끈다(기본 제외)', async () => {
     expect((await readAutoRefreshConfig(db(JSON.stringify({})))).excludeDr).toBe(true);
     expect((await readAutoRefreshConfig(db(JSON.stringify({ excludeDr: false })))).excludeDr).toBe(false);

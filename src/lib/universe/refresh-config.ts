@@ -14,7 +14,13 @@
  */
 import type { RowDataPacket } from 'mysql2/promise';
 import { getPool } from '@/lib/db';
-import { MANUAL_LIST_MAX } from './parse-manual-list';
+/**
+ * WP-A `topN`(NYSE 상위 N) 설정값의 천장. **전에는 `MANUAL_LIST_MAX` 를 함께 썼다** — 2026-11-03 그 상수가
+ * 150 → 500 으로 올라갈 때(T-146, 사용자 지시) 여기까지 따라 오르면 **요청에 없던 변경**이 된다:
+ * `topN` 은 `system_config` 값 하나로 바뀌는 **무인 경로**이고 지시는 「수동 목록 상한 제거」였다.
+ * 그래서 분리하고 **종전 동작인 150 을 그대로 둔다**. 기본값은 50(`AUTO_REFRESH_DEFAULT.topN`)이다.
+ */
+export const AUTO_TOP_N_MAX = 150;
 
 /**
  * 최소 쿼리 인터페이스 — mysql2 Pool 과 시험 대역이 모두 만족한다.
@@ -145,7 +151,7 @@ export async function readAutoRefreshConfigChecked(db: Queryable = pool()): Prom
   return {
     cfg: {
       enabled: enabledOf(o),
-      topN: clampInt(o?.topN, AUTO_REFRESH_DEFAULT.topN, 1, MANUAL_LIST_MAX),
+      topN: clampInt(o?.topN, AUTO_REFRESH_DEFAULT.topN, 1, AUTO_TOP_N_MAX),
       weekday: clampInt(o?.weekday, AUTO_REFRESH_DEFAULT.weekday, 0, 6),
       nth: clampInt(o?.nth, AUTO_REFRESH_DEFAULT.nth, 1, 5),
       windowStart: parseHhmm(o?.windowStart, AUTO_REFRESH_DEFAULT.windowStart),
