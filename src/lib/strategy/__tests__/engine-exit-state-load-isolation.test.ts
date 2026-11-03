@@ -232,7 +232,9 @@ describe('정적 — 격리 형태가 이웃(시세·state upsert)과 같다', (
   });
 
   test('게이트 등록 — 목록 끝 append, stage 23(이웃과 같은 단계), 한글 라벨, VARCHAR(48) 이내', () => {
-    expect(FUNNEL_GATES[FUNNEL_GATES.length - 1]).toBe('exit_state_load_failed');
+    // T-148 이 뒤에 `collect_threw` 를 append 했으므로 "마지막"이 아니라 **직전**이다
+    // (append-only 규약이 지켜졌는지를 보는 것이므로 꼬리 위치 자체가 계약은 아니다).
+    expect(FUNNEL_GATES[FUNNEL_GATES.length - 2]).toBe('exit_state_load_failed');
     expect(FUNNEL_GATES.filter((g) => g === 'exit_state_load_failed')).toHaveLength(1);
     expect(GATE_STAGE.exit_state_load_failed).toBe(23);
     expect(GATE_STAGE.exit_state_load_failed).toBe(GATE_STAGE.exit_state_missing);

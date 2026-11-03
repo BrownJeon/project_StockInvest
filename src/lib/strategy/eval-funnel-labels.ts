@@ -153,6 +153,15 @@ export const FUNNEL_GATES = [
    * 그 종목을 평가하지 않고 건너뛰었다(시그널·쿨다운·추가 쓰기 없음, 같은 틱의 다른 종목은 계속 평가). 행이 **없는** 것(`exit_state_missing`)과 다르다.
    */
   'exit_state_load_failed',
+  /**
+   * T-148 — stage 1. 수집(`collectCandidates`)이 **잡히지 않은 예외로 중단**됐다(지표 계산·룰 함수 등).
+   * `ticker_error` 와 섞지 않는다: 저쪽은 `collectCandidates` 가 스스로 잡아 기록하는 **예상된** 실패고
+   * 이쪽은 코드 결함에 가깝다. 수집을 동시성 팬아웃으로 바꾸면서 생긴 라벨이다 — 직렬이었을 때 이 예외는
+   * 런 전체를 중단시켰고 funnel 에 아무 행도 남지 않았다.
+   * ⚠️ stage 1 은 `ticker_error` 와 맞춘 값이고 실제 예외 지점은 stage 2~4(지표·룰)일 수 있다 —
+   *    단계별 감쇠율을 볼 때 이 행은 "티커 단계 사망"이 아니라 "수집 중단"으로 읽어야 한다.
+   */
+  'collect_threw',
 ] as const;
 
 export type FunnelGate = (typeof FUNNEL_GATES)[number];
@@ -174,6 +183,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   balances_unknown: 0,
 
   ticker_error: 1,
+  collect_threw: 1,
 
   market_state_preclassify_failed: 2,
   market_state_rule_inactive: 2,
@@ -261,6 +271,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   balances_unknown: '잔고 조회 실패 — 보유 미확인 (평가 전체 생략)',
 
   ticker_error: '시세 조회 실패',
+  collect_threw: '수집 중단 — 처리되지 않은 예외',
 
   market_state_preclassify_failed: '국면 분류 불가',
   market_state_rule_inactive: '국면상 룰 비활성',

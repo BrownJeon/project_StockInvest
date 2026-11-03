@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { kis, getBalancesDetailed } from '@/lib/exchanges/kis';
+import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
 import { getMarketFromSymbol, type Market } from '@/lib/exchanges/kis-symbols';
 import { getCurrentMarket, isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
 import { createSignal, type CreateSignalErrorCode } from '@/lib/signals/service';
@@ -175,6 +176,32 @@ type OutcomeTracker = ReturnType<typeof createOutcomeTracker>;
  * market-state 라벨 · 룰 지표 · 승인 카드가 **전부 이 축의 같은 summary 객체**에서 나온다.
  */
 const INTRADAY_INTERVAL = '1h';
+
+/**
+ * T-148 — 수집 팬아웃의 `collect_threw` 가 이 수(또는 아래 비율)를 넘으면 push 알림을 띄운다.
+ * 1~2건은 로그·퍼널 행으로만 둔다(종목 하나의 데이터 이상일 수 있다). 임계를 넘으면 코드 결함
+ * 쪽이고, 그러면 신규 진입과 룰 기반 매도가 통째로 멈춘다.
+ */
+const COLLECT_THREW_ALERT_MIN = 3;
+const COLLECT_THREW_ALERT_RATIO = 0.25;
+
+/**
+ * 던져진 값을 **절대 던지지 않고** 사람이 읽을 문구로 만든다 (T-148 QA L-3).
+ *
+ * `String(x)` 는 던질 수 있다 — `Object.create(null)` 은 `toString` 이 없어 TypeError 고,
+ * `toString` 이 던지는 객체도 마찬가지다. 격리 분기 안에서 그 일이 나면 **격리가 깨지고 런
+ * 전체가 중단된다**(격리를 만든 목적이 정확히 그것을 막는 것이다). 던진 값은 우리가 고른 것이
+ * 아니므로 신뢰하지 않는다.
+ */
+function safeReasonText(reason: unknown): string {
+  try {
+    if (reason instanceof Error) return `${reason.name}: ${reason.message}`.slice(0, 300);
+    return String(reason).slice(0, 300);
+  } catch {
+    // 문자열화 불가 — 타입만이라도 남긴다(무기록보다 낫다)
+    return `<unstringifiable ${typeof reason}>`;
+  }
+}
 
 /** 룰이 선언한 interval 을 엔진 실행 축으로 정규화한다. 1d 룰만 1d, 나머지는 전부 1h. */
 export function resolveEngineInterval(declared: string): string {
@@ -1451,9 +1478,58 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
 
   // ─── ② 룰 발화 + ③ 억제 — 심볼별 후보 수집 (AI 호출 없음) ────────────────
+  //
+  // T-148 — **수집만** 동시성 4로 팬아웃한다. 아래 ④(시그널 생성·쿨다운 기록)는 직렬 그대로다.
+  //
+  // 왜 수집만 안전한가: `collectCandidates` 는 읽기 전용이다 — DB 쓰기가 없고, 쿨다운도
+  // 사전 로드된 `cooldowns` 를 **조회**만 한다. 쓰기(`setCooldown`·`createSignalGuarded`)는
+  // 전부 ④ 에 있다. 공유 가변 상태는 `rec` 뿐이고 `record()` 는 배열 push 로 끝나며 throw 하지
+  // 않는다. `candleCache` 는 호출마다 지역 변수다.
+  //
+  // 왜 `allSettled(symbols.map(...))` 가 아닌가: 그러면 `normal` 대기열 깊이가 심볼 수 × 호출
+  // 수(실측 258)가 되어, 같은 lane 을 쓰는 **손절 알림 티커(T-147)가 258/5 = 52초를 기다린다.**
+  // `mapWithLimit` 은 워커가 각자 1건만 들고 있어 깊이가 ≤4 로 유지된다(대기 ≤0.8초).
+  // T-146 H-1(무제한 팬아웃 + 실패 미집계)의 반대쪽 재발을 여기서 막는다.
+  //
+  // 왜 lane 을 `bulk` 로 내리지 않는가: T-017 reviewer HIGH-1. 또한 룰 기반 `sell` 후보가
+  // 포지션 축소에 관여하므로 lane 문서의 "안전에 관여하는 경로는 bulk 로 내리지 않는다"에 걸린다.
+  //
+  // ⚠️ 동시성은 **지연 바운드일 때만** 효과가 있다. 실측(T-148, 2026-11-03 국내 장중 평가 버스트
+  //    50회 · 회차당 median 279 호출): wall median 136초 · max 257초 · 100초 초과 38/50.
+  //    그중 약 4할이 in-flight 84% 이상(= 한 번에 하나만 떠 있는 직렬 포화)이었고, **7회차(14%)는
+  //    KIS 가 빨라 이미 4.7~5.1/s · 52~56초**로 끝났다 — 즉 55초는 이론값이 아니라 **이미 관측된
+  //    레이트 상한 바닥**이고, 이 변경의 목표는 모든 회차를 그 7회차처럼 만드는 것이다.
+  //    해외는 지연이 약 15ms 라 직렬이어도 이미 상한(5/s)에 닿아 있어 **이 변경으로 바뀌지 않는다.**
+  //    국내도 N=4 에서 상한에 닿으므로 N 을 더 올려도 (호출수/5) 아래로는 내려가지 않는다.
+  const collected = await mapWithLimit(
+    symbols,
+    DEFAULT_FANOUT_CONCURRENCY,
+    (symbol) => collectCandidates(symbol, activeStrategies, heldAmounts, defaultAmountKRW, style, rec, cooldowns),
+  );
+
+  // 결과 반영은 **심볼 순서대로 직렬**이다 — `mapWithLimit` 이 입력과 같은 순서를 보장하므로
+  // `outcome`·`errors`·`results`·`contexts` 가 변경 전과 동일하게 쌓인다(시그널 생성 입력 불변).
   const contexts: CollectedContext[] = [];
-  for (const symbol of symbols) {
-    const ctx = await collectCandidates(symbol, activeStrategies, heldAmounts, defaultAmountKRW, style, rec, cooldowns);
+  let collectRejected = 0;
+  for (let i = 0; i < symbols.length; i++) {
+    const symbol = symbols[i];
+    const settled = collected[i];
+    // 수집이 **던진** 경우. 직렬 루프였을 때는 런 전체가 중단됐다 — 이제는 그 심볼만 실패로
+    // 집계하고 런을 계속한다. **삼키지 않는다**: funnel·런 errors[]·stderr 세 곳에 남긴다.
+    if (settled.status === 'rejected') {
+      collectRejected++;
+      // 🔴 QA L-3 — 문자열화 자체가 던질 수 있다(`Object.create(null)` 을 던지면 `String()` 이
+      // TypeError). 그러면 **격리하려고 만든 이 분기가 런 전체를 중단시킨다.** 던진 값은 우리가
+      // 고른 것이 아니므로 신뢰하지 않는다.
+      const detail = safeReasonText(settled.reason);
+      rec.error('collect_threw', { symbol, detail: { error: detail } });
+      outcome.kill(symbol, 1, 'collect_threw');
+      errors.push(`${symbol}: collect_threw:${detail}`);
+      results.set(symbol, { symbol, signalsCreated: 0, error: `collect_threw:${detail}` });
+      console.error(`[strategy-eval:collect-threw] symbol=${symbol} reason=${detail}`);
+      continue;
+    }
+    const ctx = settled.value;
     if (!ctx) continue;
     // collect 단계의 지역 추적 결과를 런 전체 tracker로 승계 (final 행의 축)
     if (ctx.outcomeGate) outcome.kill(symbol, ctx.outcomeStage, ctx.outcomeGate);
@@ -1475,6 +1551,55 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       continue;
     }
     contexts.push(ctx);
+  }
+
+  // 부분 실패 집계 — 심볼별 1줄로는 "몇 개가 죽었나"가 안 보인다. 팬아웃 전체의 실패율을
+  // 한 줄로 남겨 둔다(T-146 H-1 재발 방지: 실패를 세지 않는 팬아웃을 만들지 않는다).
+  if (collectRejected > 0) {
+    console.error(
+      `[strategy-eval:${market}] 수집 팬아웃 부분 실패 — ${collectRejected}/${symbols.length} 종목이 예외로 중단됐다 ` +
+      `(동시성 ${DEFAULT_FANOUT_CONCURRENCY}). 직렬이었다면 런 전체가 중단됐을 실패다.`,
+    );
+    errors.push(`${market}_collect_threw_${collectRejected}of${symbols.length}`);
+
+    // 🔴 T-148 reviewer M-1 — **가시성 후퇴를 메운다.** 직렬이었을 때 이 예외는 라우트까지 올라가
+    // HTTP 500 → `job_run_log.status='failed'` → 운영 이상 목록에 떴다. 종목 단위로 흡수하면
+    // 응답이 200 `{ok:true}` 가 되고 `classifyRun` 은 `errors[]` 를 보지 않으므로 **사람에게는
+    // "정상"으로 보인다.** 남는 신호가 로그와 퍼널 행뿐인데 둘 다 열어 봐야 보이는 pull 신호다.
+    //
+    // 던질 수 있는 지점이 지표·룰 함수(순수 계산)라서 원인은 거의 **코드 결함**이고(KIS 실패는
+    // `ticker_error`·`candles_fetch_failed` 가 이미 흡수한다), 결함이면 전 종목이 같은 틱에 같이
+    // 죽어 신규 진입과 룰 기반 매도가 통째로 멈춘다.
+    //
+    // 임계는 **건수 3 이상 또는 비율 25% 이상**이다(OR). ⚠️ QA L-2 — 이것은 "1~2건이면 절대
+    // 안 울린다"가 아니다: 평가 종목이 적으면 비율 조항이 먼저 걸려 N≤4 에서 1건, N≤8 에서
+    // 2건으로도 울린다. 그 경우 실패 1건이 곧 universe 의 25% 라서 울리는 편이 맞다. 국내
+    // 43종목에서는 건수 조항(3건)이 먼저 걸린다(25% = 11건).
+    const rejectRatio = symbols.length > 0 ? collectRejected / symbols.length : 0;
+    if (collectRejected >= COLLECT_THREW_ALERT_MIN || rejectRatio >= COLLECT_THREW_ALERT_RATIO) {
+      // 🔴 QA L-1 — 전수와 부분을 **구분해서** 쓴다. 부분 실패인데 "정지"라고 단정하면 운영자가
+      // 신규 진입 전체가 멈춘 것으로 오인한다(실제로는 실패 종목만 빠지고 나머지는 ④ 까지 간다).
+      const total = collectRejected >= symbols.length;
+      sendAlertThrottled(
+        // 🔴 reviewer L-7 — 전수는 **별도 키**다. 같은 키면 부분 실패 알림 직후 전수로 악화돼도
+        // 30분 스로틀이 두 번째 알림을 억제한다 — 악화가 가장 중요한 순간인데 그때 조용해진다.
+        total ? `collect_threw_all:${market}` : `collect_threw:${market}`,
+        // `warning` — 자금이 직접 새는 사건은 아니다(청산·손절은 앞단에서 이미 돌았고 영향받지
+        // 않는다). 멈추는 것은 **신규 진입과 룰 기반 매도**다. regime gate 의 "신규 매수 차단"
+        // 알림과 같은 수준으로 맞췄다.
+        'warning',
+        total
+          ? `수집 전수 중단 — ${market} 신규 진입·룰 매도 정지`
+          : `수집 일부 중단 — ${market} ${collectRejected}종목 평가 생략`,
+        `평가 종목 ${symbols.length}개 중 ${collectRejected}개가 처리되지 않은 예외로 중단됐습니다 `
+        + `(${Math.round(rejectRatio * 100)}%). 지표 계산·룰 함수의 코드 결함일 가능성이 높습니다.\n`
+        + (total
+            ? '이 시장의 신규 진입과 룰 기반 매도가 이번 틱에 전부 멈췄습니다.\n'
+            : `나머지 ${symbols.length - collectRejected}종목은 정상 평가됐습니다.\n`)
+        + `청산 엔진(손절·익절)은 앞단에서 이미 실행되어 영향받지 않습니다.\n`
+        + `확인: eval_funnel 의 collect_threw 행 · 로그의 [strategy-eval:collect-threw]`,
+      );
+    }
   }
 
   // ─── ④ 안전·집행 — 프리필터·장마감·포트폴리오 가드 통과분을 즉시 시그널로 만든다 ──
