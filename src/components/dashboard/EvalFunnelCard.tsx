@@ -142,16 +142,16 @@ export function EvalFunnelCard({ reloadKey, market, source = 'legacy', onMeta, o
   return (
     <section style={sx.card}>
       <div
-        onClick={() => setExpanded(v => !v)}
-        style={{ ...sx.cardHeader, cursor: 'pointer', userSelect: 'none' as const }}
+        onClick={session ? undefined : () => setExpanded(v => !v)}
+        style={session ? sx.cardHeader : { ...sx.cardHeader, cursor: 'pointer', userSelect: 'none' as const }}
       >
         <span style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: '.6px', textTransform: 'uppercase' }}>
-          {session ? '평가 깔때기' : '오늘의 평가 깔때기'}
+          {session ? '평가 필터' : '오늘의 평가 필터'}
         </span>
-        <span style={{
+        {!session && <span style={{
           fontSize: 14, color: 'var(--muted)', transition: 'transform .15s',
           display: 'inline-block', transform: expanded ? 'rotate(180deg)' : 'rotate(0)',
-        }}>▾</span>
+        }}>▾</span>}
       </div>
 
       {/* 헤더(결론) */}
@@ -184,19 +184,19 @@ export function EvalFunnelCard({ reloadKey, market, source = 'legacy', onMeta, o
         )}
       </div>
 
-      {expanded && (
+      {(session || expanded) && (
         <>
           {/* 6단계 미니 깔때기 바 */}
           <div style={{ padding: '4px 14px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
             {data.steps.map(s => (
-              <FunnelStepBar key={s.key} step={s} maxCount={evaluated} />
+              <FunnelStepBar key={s.key} step={s} maxCount={evaluated} session={session} />
             ))}
           </div>
 
           {/* exit 트랙 — 위 6단계와 모수가 달라 사슬에 합산하지 않는다 (T-004) */}
           {data.exitSignals > 0 && (
             <div style={{ padding: '0 14px 12px', fontSize: 11, color: 'var(--muted)' }}>
-              청산(보유관리) 매도 {data.exitSignals}건 — 깔때기 별도 트랙
+              청산(보유관리) 매도 {data.exitSignals}건 — 평가 필터와 별도 트랙
             </div>
           )}
 
@@ -224,7 +224,7 @@ export function EvalFunnelCard({ reloadKey, market, source = 'legacy', onMeta, o
   );
 }
 
-function FunnelStepBar({ step, maxCount }: { step: FunnelStepCount; maxCount: number }) {
+function FunnelStepBar({ step, maxCount, session }: { step: FunnelStepCount; maxCount: number; session: boolean }) {
   // count가 0이면 막대를 아예 그리지 않는다. Math.max(2,…)를 무조건 적용하면
   // "프리필터 통과 0" 같은 0건 단계도 2% 막대가 남아 잔존 종목이 있는 것처럼 보인다.
   const widthPct = step.count > 0 && maxCount > 0
@@ -232,8 +232,8 @@ function FunnelStepBar({ step, maxCount }: { step: FunnelStepCount; maxCount: nu
     : 0;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
-      <div style={{ width: 68, flexShrink: 0, color: 'var(--muted)' }}>{step.label}</div>
-      <div style={{ flex: 1, background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden', height: 14 }}>
+      <div style={{ width: session ? 86 : 68, flexShrink: 0, whiteSpace: session ? 'nowrap' : undefined, color: 'var(--muted)' }}>{step.label}</div>
+      <div style={{ flex: 1, minWidth: session ? 0 : undefined, background: 'var(--bg3)', borderRadius: 4, overflow: 'hidden', height: 14 }}>
         <div style={{ width: `${widthPct}%`, background: 'var(--accent)', height: '100%', opacity: 0.8 }} />
       </div>
       <div className="num" style={{ width: 70, flexShrink: 0, textAlign: 'right' as const, color: 'var(--text)' }}>
