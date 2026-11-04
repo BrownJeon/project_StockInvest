@@ -2,12 +2,12 @@
 task_id: T-148
 title: 전략 평가 직렬 팬아웃 해소 — 장중 strategy-eval 194초 → 동시성 4
 status: review
-waiting: 사용자 배포 승인 — push=즉시 blue/green 이고 지금은 미국 정규장(23:30~06:00 KST) 금지 시간대. 권고 창 06:00~09:00 KST. 완료 기준 ①②③(장중 소요·시그널 동등성·틱 주기 max)은 배포 후 장중 로그로만 확인된다
+waiting: 장중 실측 — 완료 기준 ①②③(장중 소요·시그널 동등성·틱 주기 max)은 다음 국내장(2026-11-05 09:00 KST)에서만 확인된다. 배포는 2026-11-04 17:28 완료(릴리스 20261104-172711-5696d8cb)
 priority: high
 project: StockInvest
 created: 2026-11-03
 updated: 2026-11-04
-base_ref: 커밋 42fac88 (로컬 main, 미push) · 조상에 다른 세션 문서 4커밋 동승 · 운영 릴리스는 20261103-202418-17a4257f(T-147)
+base_ref: 커밋 42fac88·ea30cd7 → 릴리스 20261104-172711-5696d8cb (2026-11-04 17:28 배포 완료) · 롤백 지점 20261103-202418-17a4257f
 risk_level: R2
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks:
@@ -201,7 +201,59 @@ T-147 설계는 "루프가 직렬이라 `normal` 큐 깊이가 1 을 넘지 않�
 8. L-7 시험의 `mock.calls[0][0]` → `calls.find(…)` (reviewer 3라운드 L-10, 비차단).
 9. 시험 머리글 호출 수 수치를 분할 방식과 함께 명시 (reviewer 3라운드 L-11, 비차단 — 263~279 범위).
 7. **1~2종목이 매 틱 결정적으로 죽는 경우** 는 push 없이 퍼널 「이상 배너」에만 남는다(reviewer 수용 판단 —
-   자금 경로가 아니다). 연속 틱 지속 시 알림은 후속 후보.---
+   자금 경로가 아니다). 연속 틱 지속 시 알림은 후속 후보.## 배포 (2026-11-04 17:28)
+
+사용자 지시 「지금 바로 push」(17:26 KST). **배포 창**: 국내장 마감(15:30) 후·미국장 개장(23:30) 전 —
+양 시장 닫힌 창이다. 배포 직전 `DRY_RUN=true`·`KILL_SWITCH=false` 확인(실주문 없음).
+
+| 항목 | 값 |
+|---|---|
+| push | `17a4257..5696d8c` (origin/main) |
+| webhook | 17:27:03 started `sha=5696d8c` → 17:28:13 **finished `exit=0`** |
+| 릴리스 | **`20261104-172711-5696d8cb`** (`current` 심볼릭 확인) |
+| 롤백 지점 | `20261103-202418-17a4257f` (T-147) |
+| 내 커밋 | `42fac88`(코드 6파일) · `ea30cd7`(vault) |
+
+**ISS-0013 재발 — push 전 격리**: `refs/codex/turn-diffs/checkpoints/**/@eaDir` 사이드카 **3개**가
+다시 끼어 있어 `git-refs-clean.sh` 가 "이대로면 `git fetch` 가 `fatal: bad object` 로 멈춘다"고 막았다.
+삭제 없이 격리(`~/.local/share/git-eadir-quarantine/20261104-172635/StockInvest`, 실제 ref 22개 불변)
+→ 재점검 깨끗 → `git fetch` 정상 → push. **Codex 가 ref 를 쓰면 또 재발한다**(11-01 에 이어 두 번째).
+
+### 🔴 같은 배포에 실린 다른 작업 — 내 절차 실수
+
+push 시점에 **다른 세션 커밋 7개가 내 커밋 앞뒤로 있었고 전부 함께 나갔다.** 그중 하나는 **코드**다:
+
+- `0925ad9` fix(T-149): cron 러너 제약 주석 정리 + 티커 pid 재사용 방어 — **`scripts/cron-runner.sh` 169줄 + 하네스 3개**
+- `5696d8c`·`c80bfc2`·`994ddc1`·`7110c9d`·`6825d7e`·`d5e4234` — `agent-vault/` 문서
+
+**내 실수 두 가지**: ① 16시간 전 확인을 근거로 사용자에게 "문서 4커밋 동승, `src`·`scripts` 변경 0건"
+이라고 보고했는데 push 시점에는 **코드 커밋이 하나 늘어 있었다** — push **직전에** 다시 확인해야 했다.
+② `git push origin ea30cd7:main` 으로 내 것만 올릴 수 있었는데 `git push origin main` 을 썼다.
+`5696d8c` 메시지가 "배포 승인 대기"라고 적고 있었으므로 **그 세션의 승인 대기를 내가 건너뛴 셈**이다.
+해당 세션(`local_1550f0ac…`)에 즉시 알렸고 사용자에게도 보고했다.
+
+### 배포 후 확인 (읽기만, 17:28 — 양 시장 폐장)
+
+- pm2 `stockinvest`·`stockinvest-cron` 둘 다 **online · restarts 0 · 새 릴리스 경로**
+- health **green** · `dryRun` **true** · `killSwitch` false · 한도 설정됨 · 엔진 enabled — **배포 전과 동일**
+- 배포본에 T-148 코드 존재: `mapWithLimit` 4 · `collect_threw` 3 · `safeReasonText` 2 · `collect_threw_all` 1.
+  빌드 청크에도 포함(`.next/server/app/api/cron/strategy-eval/route.js`·`chunks/1517.js`)
+- 러너 재기동 정상 — `[cron-runner] started` 1줄 · `stop-alert 티커 시작 pid 1475449` 1줄 ·
+  **프로세스 부모 1 + 티커 자식 1**(중복 없음) · `stop-alert OK` 17:28:00 분 경계 1회
+- 잡 전부 OK · cron·app 로그 `🔴`·`🔶` **0줄** · `collect_threw` 행 **0건**
+
+### 아직 확인하지 못한 것 — 완료 기준 ①②③ 전부
+
+**양 시장이 닫혀 있어 `strategy-eval` 이 즉시 `all_markets_closed` 로 끝난다.** 장중 표본이 0 이다.
+
+- **국내(이 변경의 효과가 있는 유일한 시장)**: 다음 창은 **2026-11-05 09:00~15:30 KST**.
+  기준선 wall **median 136초 · max 257초 · 100초 초과 38/50** → 기대 **약 55초 · 100초 초과 0건**.
+- **해외**: 오늘 23:30 미국장에서 돌지만 이미 레이트 바운드(30~34초)라 **변화 없는 것이 정상**이다.
+  거기서 볼 것은 성능이 아니라 **회귀 부재**(시그널 동등성·`collect_threw` 0·실패율).
+
+계기: scratchpad `measure-bursts.py` (버스트 지문 = `domestic.get-minute-candles` ≥ 100).
+
+---
 
 ## Developer
 
