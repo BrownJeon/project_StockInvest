@@ -1,13 +1,13 @@
 ---
 task_id: T-149
 title: cron 러너의 틀린 제약 주석 정리 + pid 재사용 방어(R-1) — entry-watcher 상한은 근거 없음으로 기각
-status: doing
-waiting: 하네스 9개 + jest 직렬 실행 결과 → Reviewer 독립감사 → 사용자 배포 승인(11-04 장중 T-147 관찰과 섞이지 않게 시점을 묻는다)
+status: done
+waiting: 사용자 배포 승인(시점) — 커밋 `0925ad9` 완료·미push. push = 즉시 blue/green 배포라 ① 국내 장중(09:00~15:30 KST)·미국 정규장(23:30~06:00 KST) 금지 ② 11-04 국내 장중에 사용자가 T-147 티커의 텔레그램 중복 없음을 확인하기로 했으므로 그 관찰이 끝난 뒤가 맞다
 priority: medium
 project: StockInvest
 created: 2026-11-03
 updated: 2026-11-03
-base_ref: origin/main 17a4257 (T-147, 릴리스 20261103-202418-17a4257f 배포 완료) · 문서 커밋 d5e4234(미push)
+base_ref: origin/main 17a4257 (T-147, 릴리스 20261103-202418-17a4257f 배포 완료) · 이 task 커밋 d5e4234(조사)·0925ad9(구현) 둘 다 미push
 risk_level: R2
 roles_involved: [leader, developer, reviewer]
 related_tasks:
