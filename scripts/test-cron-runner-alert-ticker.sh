@@ -121,6 +121,58 @@ eq "⑨ 틱 시작 기록은 레거시 가드 밖이다(언제나 쓴다)" \
 eq "④ 러너 주석이 틀린 하트비트 계산을 더는 담지 않는다" "$(grep -c 'sleep 60 + 다음 틱의 분당 잡' "$RUNNER")" "0"
 eq "④ 주석의 실측값이 전체 로그 수치다(주기 412 · 길이 352)" \
    "$(printf '%s\n' "$HBR" | grep -c 'max \*\*412\*\*초') $(printf '%s\n' "$HBR" | grep -c 'max \*\*352\*\*초')" "1 1"
+
+# ── ⑬ T-149 — 러너 주석에 「측정으로 뒷받침되지 않는 제약 서술」이 되살아나지 않게 고정한다 ──────────────
+# 왜 시험으로 박는가: 안전 파일 주석의 틀린 제약은 다음 사람이 그걸 **진짜 제약으로 믿고** 설계를 포기하게 만든다.
+#   아래 네 문구는 T-147 이 실제로 적었고 T-149 가 실측으로 반증한 것이다(근거: agent-vault T-149 이력서).
+eq "🔴 ⑬ 「주문 직렬화가 러너에 걸려 있다」가 없다(T-081 WP-B 가 DB 에서 막는다)" \
+   "$(grep -c '주문 직렬화 장치' "$RUNNER") $(grep -c '일일 누적 한도가 check-then-act' "$RUNNER")" "0 0"
+eq "🔴 ⑬ 그 자리에 올바른 근거가 있다(T-043 선점 · T-081 WP-B 예약 후 검사)" \
+   "$(printf '%s\n' "$BLOCK" | grep -c 'T-043') $(printf '%s\n' "$BLOCK" | grep -c 'T-081 WP-B')" "1 1"
+eq "🔴 ⑬ 단일 호출자의 근거가 횟수 규칙이다(이중 발송이 아니다)" \
+   "$(grep -c '두 호출자가 겹치면 같은 알림이 두 번 간다' "$RUNNER") $(printf '%s\n' "$BLOCK" | grep -c 'rearmConfirm: 2')" "0 1"
+# ⑬ 「국내 150종목」(측정 없는 추론)이 없고, 그 자리에 **전체 기간** `ran=` 분포가 있다. 왜 긴지의 진단은 T-148 범위이므로
+#   이 블록이 원인을 단정하지 않는지도 같이 본다 — 「종목 수 때문」도 「유량 상한 때문」도 단정이면 틀린다(T-148 §②: 지연 바운드).
+# ⑬ 「국내 150종목」(측정 없는 추론)이 없고, 그 자리에 **휘발성 분포를 박아 두지도 않는다** — `ran=` 분포는 로그가 쌓이면
+#   바뀌어서 주석에 적는 순간부터 낡는다. 그래서 「수십 종목대」 + **재현 명령**만 둔다.
+eq "⑬ 「국내 150종목」 추론이 없고 휘발성 분포를 박아 두지 않는다(재현 명령만)" \
+   "$(grep -c '150종목' "$RUNNER") $(printf '%s\n' "$BLOCK" | grep -c '수십 종목대') $(printf '%s\n' "$BLOCK" | grep -c "grep -o 'ran=")" "0 1 1"
+# 🔴 ⑬ 이 블록은 strategy-eval 이 긴 원인을 **추론하지 않고 측정 문서를 가리킨다**(T-148 §②). 그리고 그 수치를 믿고
+#   유량 상한을 올리는 **오조작을 유도하지 않아야** 한다 — 그 상한은 주문 경로까지 같이 쓰는 실매매 유량이다.
+#   이 task 에서 「정정하면서 새 틀린 근거를 넣는 일」이 두 번 났으므로(인계 원문 · 1차 교정) 문구를 시험으로 박는다.
+eq "🔴 ⑬ 원인을 추론하지 않고 측정 문서를 가리킨다(T-148 §② 인용)" \
+   "$(printf '%s\n' "$BLOCK" | grep -c '측정한 문서를 가리킨다') $(printf '%s\n' "$BLOCK" | grep -c '레이트 바운드가 아니라 지연 바운드')" "1 1"
+eq "🔴 ⑬ 유량 상한 상향이 해법이 아님을 명시한다(오조작 방지)" \
+   "$(printf '%s\n' "$BLOCK" | grep -c 'kis_rate_limit_per_sec.*올리는 것은 이 문제의 해법이 아니다')" "1"
+eq "⑬ flock 측정의 틀린 항목이 없다(자유 락은 9> · 9< 둘 다 0)" \
+   "$(grep -c '읽기전용 fd(`9<`)도 1' "$RUNNER") $(printf '%s\n' "$BLOCK" | grep -c '읽기전용 fd(`9<`) 도 0')" "0 1"
+eq "⑬ 하트비트가 「틱 시작에만」 쓰인다는 낡은 전제가 없다" \
+   "$(grep -c '하트비트는 tick 시작에만 쓰이므로' "$RUNNER") $(grep -c '하트비트는 틱 시작에만 쓰므로' "$RUNNER")" "0 0"
+eq "⑬ 자기 주석의 수정 이력을 서술하지 않는다" \
+   "$(grep -c '처음 주석에 적었던' "$RUNNER") $(grep -c '옛 주석의' "$RUNNER")" "0 0"
+eq "⑬ strategy-eval 소요 수치에 측정 시점이 붙어 있다(T-148 이 바꾼다)" \
+   "$(printf '%s\n' "$BLOCK" | grep -c 'T-148 평가 동시성 적용 전')" "1"
+# ⑬ pid 재사용 방어가 **양쪽**에 있다(감독 → 자식, 자식 → 부모). 동작은 아래 ⑬ 절이 본다.
+eq "🔴 ⑬ 감독이 ppid 를 대조한다(\$\$ 와 비교)" "$(printf '%s\n' "$BLOCK" | grep -c '"\$pp" != "\$\$"')" "1"
+# 🔴 `BASHPID` 는 **명령치환 밖에서** 변수에 담아야 한다 — `$( )` 안에서 전개하면 그 치환 서브셸의 pid 가 나와 ppid 가 티커 자신이 되고,
+#   살아 있는 정상 티커가 스스로 종료한다(E3 가 잡은 실제 결함). 그래서 `$( )` 안에 `BASHPID` 가 **0건**임을 함께 고정한다.
+eq "🔴 ⑬ 자식도 부모 ppid 를 대조한다(BASHPID 를 먼저 변수에 담아 자기 stat 을 읽는다)" \
+   "$(printf '%s\n' "$BLOCK" | grep -c '^    mypid="\${BASHPID:-0}"$') $(printf '%s\n' "$BLOCK" | grep -c '"\$opp" != "\$ALERT_TICKER_PARENT_PID"')" "1 1"
+eq "🔴 ⑬ BASHPID 를 명령치환 안에서 전개하지 않는다" \
+   "$(printf '%s\n' "$BLOCK" | grep -c '\$(.*BASHPID')" "0"
+# 🔴 ⑬ 생존·ppid 판정은 **외부 명령을 쓰지 않는다**(bash 내장 read + 파라미터 확장). 이 자리는 깨어난 뒤 **호출 직전**이므로
+#   fork 를 늘리지 않는 쪽이 낫다. ⚠ 효과는 입증되지 않았다 — `sed` 를 쓰던 판이 이 하네스 8회 중 1회에서 첫 호출이 `:01` 로
+#   밀렸고(같은 라운드 HEAD 러너는 0/8) fork 제거 후 0/8 이지만, **1/8 과 0/8 은 통계적으로 갈리지 않는다.** 러너 주석의
+#   같은 단락에 그 한계와 감사자 추정치를 적어 뒀다. 이 핀의 목적은 「fork 가 늘지 않게 고정」하는 것뿐이다.
+# `2>/dev/null` 은 입력 리다이렉션 **앞**이어야 한다 — 뒤에 두면 없는 pid 일 때 리다이렉션 실패 메시지가 stderr 로 샌다(실측).
+eq "🔴 ⑬ ppid·상태 판정에 외부 명령이 없다(내장 read 2곳, 2>/dev/null 이 리다이렉션 앞)" \
+   "$(printf '%s\n' "$BLOCK" | grep -c 'read -r rest 2>/dev/null < "/proc/\$ALERT_TICKER_PID/stat"') $(printf '%s\n' "$BLOCK" | grep -c 'read -r opp 2>/dev/null < "/proc/\$mypid/stat"')" "1 1"
+eq "🔴 ⑬ 블록 실행 줄에 sed·awk·cut 이 없다(fork 0 — 분 경계 지연 방지)" \
+   "$(printf '%s\n' "$BLOCK" | grep -v '^[[:space:]]*#' | grep -cE '(^|[^[:alnum:]])(sed|awk|cut) ')" "0"
+# 🔴 ⑬ 탐욕 `##` 이어야 한다 — comm 에 `") "` 가 들 수 있어 비탐욕(`#`)은 거기서 멈춰 상태·ppid 를 틀리게 읽는다(실측).
+# 주석에도 같은 문구가 설명으로 들어 있으므로 **실행 줄**에서만 센다(주석을 고쳐도 이 핀이 흔들리지 않게).
+eq "🔴 ⑬ stat 파싱은 탐욕 ## 로 comm 을 버린다(비탐욕 # 는 틀린다)" \
+   "$(printf '%s\n' "$BLOCK" | grep -v '^[[:space:]]*#' | grep -c '{rest##\*") "}') $(printf '%s\n' "$BLOCK" | grep -v '^[[:space:]]*#' | grep -c '{opp##\*") "}')" "1 1"
 if bash -n "$RUNNER" 2>"$W/bashn"; then ok "⑥ bash -n 통과"; else bad "⑥ bash -n 실패: $(head -2 "$W/bashn")"; fi
 
 # ── 동작 시험 공통 ───────────────────────────────────────────────────────────
@@ -133,6 +185,13 @@ STOP_ALERT_CURL_MAX_TIME=20
 CALL_MAX_TIME=""
 call() { printf 'call %s max=%s\n' "$1" "${CALL_MAX_TIME:-none}" >> "$CALLS"; }
 . "$BLOCKFILE"
+# (T-149) 이 절의 시험들은 `alert_ticker_loop` 를 **이 셸에서 직접** 부른다(배경 자식이 아니다 — 출력·회차를 결정적으로 보려고).
+#   러너에서는 블록 안 `ALERT_TICKER_PARENT_PID=$$` 가 러너 pid 이고 티커는 그 **자식**이라, 자식 쪽 ppid 대조
+#   (`/proc/<자기 pid>/stat` 의 ppid == 기록된 부모)가 성립한다. 그런데 여기서는 이 셸이 티커 역할이므로 그대로 두면
+#   기록된 부모가 **자기 자신**이 되어 대조가 늘 불일치하고 티커가 즉시 끝난다. 그래서 기록된 부모를 **이 셸의 실제 부모**로
+#   맞춘다 — 그러면 production 과 같은 의미(「내 부모가 아직 그 부모인가」)가 된다. 아래 EXTRA 줄에서 다시 대입하는
+#   시험(④ 부모 사망)은 이 줄 뒤에 붙으므로 그쪽이 이긴다.
+ALERT_TICKER_PARENT_PID=$PPID
 SH
   printf '%s\n' "$@" >> "$W/t.sh"
   : > "$calls"
@@ -226,18 +285,42 @@ out="$(run_block "$W/c-orphan" \
   'alert_ticker_loop; printf "exited=%s\n" "$?"')"
 eq "🔴 ④ 부모가 없으면 티커가 끝난다" "$(printf '%s\n' "$out" | grep -c '^exited=0$')" "1"
 eq "🔴 ④ 끝내기 전에 호출하지 않는다" "$(grep -c '^call ' "$W/c-orphan")" "0"
+# 🔴 ⑬ (T-149 감사 L-7) 부모 pid **재사용** 분기 — 기록된 부모가 「살아 있지만 내 부모가 아닌」 pid 일 때.
+#   ④ 와 다르다: ④ 는 `kill -0` 이 실패하는 죽은 pid 이고, 여기는 `kill -0` 이 **성공**하므로 ppid 대조만이 걸러낸다.
+#   이것이 뚫리면 고아 티커가 계속 돌아 새 러너의 티커와 함께 호출자가 둘이 되고, 위 「호출자는 하나여야 한다」가 깨진다.
+#   `$$` 는 이 하네스의 pid 다 — 살아 있지만 t.sh 의 부모(timeout)가 아니다.
+out="$(run_block "$W/c-ppidreuse" \
+  "ALERT_TICKER_PARENT_PID=$$" \
+  'sleep() { :; }' \
+  'alert_ticker_loop; printf "exited=%s\n" "$?"')"
+eq "🔴 ⑬ 부모 pid 가 재사용된 경우(살아 있지만 내 부모가 아니다) 티커가 끝낸다" \
+   "$(printf '%s\n' "$out" | grep -c '^exited=0$')" "1"
+eq "🔴 ⑬ 그때 호출 0회(고아 티커가 두 번째 호출자가 되지 않는다)" "$(grep -c '^call ' "$W/c-ppidreuse")" "0"
+# 🔴 ⑬ (T-149 감사 M-3) 위 두 단정만으로는 **가드를 가르지 못한다** — `sleep` 이 스텁이라 가드를 지운 변이판도 바쁜 루프
+#   가드에 걸려 똑같이 `exited=0` · 호출 0회로 끝난다. 두 경로를 가르는 것은 **로그**다: ppid 대조는 **조용히** 반환하고
+#   (판정 재료가 사람 눈에 띌 일이 아니다), 바쁜 루프 가드는 「티커 종료 — 대기(sleep …)가 실제로 돌지 않는다」를 찍는다.
+#   그래서 종료 로그가 **0줄**임을 함께 단정한다 — 변이판은 여기서 깨진다(T-149 가 변이판으로 실측 확인).
+eq "🔴 ⑬ 그 종료는 ppid 대조 때문이다(바쁜 루프 가드가 아니다 — 종료 로그 0줄)" \
+   "$(printf '%s\n' "$out" | grep -c '티커 종료')" "0"
 out="$(run_block "$W/c-fast" \
   'sleep() { :; }' \
   'alert_ticker_loop; printf "exited=%s\n" "$?"')"
 eq "🔴 ⑦ 대기가 돌지 않으면 호출 0회로 티커를 끝낸다" "$(grep -c '^call ' "$W/c-fast")" "0"
 eq "⑦ 끝낼 때 로그 한 줄" "$(printf '%s\n' "$out" | grep -c 'stop-alert 티커 종료')" "1"
+# ⑪⑬ 생존 판정. `ALERT_TICKER_PID=$$` 는 **이 하네스의** pid 라 t.sh 입장에서는 「살아 있지만 내 자식이 아닌」 pid 다 —
+#   T-149(감사 R-1) 이전에는 그것도 alive 였고(= pid 재사용에 속는다), 지금은 ppid 대조로 gone 이다. 진짜 직계 자식은 그대로 alive 여야
+#   한다(방어가 정상 티커를 죽이면 손절 알림이 매 틱 메인 루프로 떨어진다 — 기능은 살지만 T-147 의 목적이 사라진다).
 out="$(run_block "$W/c-alive" \
   "ALERT_TICKER_PID=$DEAD" 'printf "dead=%s\n" "$(alert_ticker_alive && echo alive || echo gone)"' \
   'ALERT_TICKER_PID=""' 'printf "empty=%s\n" "$(alert_ticker_alive && echo alive || echo gone)"' \
-  "ALERT_TICKER_PID=$$" 'printf "self=%s\n" "$(alert_ticker_alive && echo alive || echo gone)"')"
+  "ALERT_TICKER_PID=$$" 'printf "foreign=%s\n" "$(alert_ticker_alive && echo alive || echo gone)"' \
+  'sleep 60 & ALERT_TICKER_PID=$!' \
+  'printf "child=%s\n" "$(alert_ticker_alive && echo alive || echo gone)"' \
+  'kill "$ALERT_TICKER_PID" 2>/dev/null; wait "$ALERT_TICKER_PID" 2>/dev/null')"
 eq "🔴 ⑪ 끝난 pid → gone" "$(printf '%s\n' "$out" | grep -c '^dead=gone$')" "1"
 eq "⑪ pid 가 비어 있으면 gone(티커를 띄우지 않은 경우)" "$(printf '%s\n' "$out" | grep -c '^empty=gone$')" "1"
-eq "⑪ 살아 있는 pid → alive" "$(printf '%s\n' "$out" | grep -c '^self=alive$')" "1"
+eq "🔴 ⑬ 살아 있지만 내 자식이 아닌 pid → gone (pid 재사용 방어 — T-149 R-1)" "$(printf '%s\n' "$out" | grep -c '^foreign=gone$')" "1"
+eq "🔴 ⑬ 직계 자식 pid → alive (방어가 진짜 티커를 죽이지 않는다)" "$(printf '%s\n' "$out" | grep -c '^child=alive$')" "1"
 
 # 🔴 ⑫ 진짜 오류(락 파일을 만들 수 없는 경로) — 회차 반환 2 · 루프는 로그 1줄 남기고 끝낸다(감독이 메인 루프로 넘긴다)
 out="$(ALERT_TICKER_LOCK_FILE="$W/no-such-dir/lock" CALLS="$W/c-err" BLOCKFILE="$W/block.sh" timeout 30 bash -c '
@@ -246,6 +329,7 @@ STOP_ALERT_CURL_MAX_TIME=20
 CALL_MAX_TIME=""
 call() { printf "call %s\n" "$1" >> "$CALLS"; }
 . "$BLOCKFILE"
+ALERT_TICKER_PARENT_PID=$PPID   # (T-149) run_block 과 같은 이유 — 이 셸이 티커 역할이라 기록된 부모를 실제 부모로 맞춘다
 : > "$CALLS"
 alert_ticker_once; printf "rc=%s\n" "$?"
 sleep() { :; }

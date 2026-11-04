@@ -273,6 +273,11 @@ no_kf_old() { awk '/^  # 매일 08:00 KST: KIS 해외 현재가상세 스냅샷/
 #   T-147 의 새 모양(호출자 하나·fail-open·감독·분 경계)은 scripts/test-cron-runner-alert-ticker.sh 가 본다.
 no_t147()     { awk '/^ *# >>> (alert-ticker|stop-alert-fallback|heartbeat-refresh)/{s=1} s{ if (/^ *# <<< (alert-ticker|stop-alert-fallback|heartbeat-refresh)/) s=0; next } {print}'; }
 no_t147_old() { awk '/^  # 매 1분: stop-alert/{s=1} s{ if (/^  CALL_MAX_TIME=""$/) s=0; next } {print}' | grep -v '^#  - stop-alert        : 1분'; }
+# (T-149) 기준 ref 쪽에서 **주석 1줄**을 뺀다 — T-062 선언 머리의 「하트비트는 tick 시작에만 쓰인다」는 전제가 T-147 의 틱 끝 갱신
+#   이후로 더는 참이 아니어서 러너에서 문구를 고쳤다(계산·결론·실행 줄은 그대로. 바뀐 것은 전제 서술과 "보수적 과대 추정"이라는 단서뿐).
+#   아래 "추가만" 대조는 **주석을 포함**하므로 한쪽만 바꾸면 어긋난다(위 no_kf_old·no_t147_old 선례와 같다. strip_new/strip_old
+#   경로는 주석을 전부 지우므로 영향 없다). 기준 ref 와 러너 양쪽에서 각각 정확히 1줄만 걸린다(접두 유일 — 실측).
+no_t149_old() { grep -v '^# (T-062 Codex C2 ②) 해외 post-market'; }
 strip_new() { no_peek "$1" | no_t147 | awk '/^  # >>> (daily-bars-daily|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (daily-bars-daily|kis-fundamentals-snapshot)/) s=0; next } {print}' \
   | grep -v '^DAILY_BARS_' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-145 ⑨ kis-fundamentals-snapshot — 일정이 바뀐 잡. 그 일정은 자기 블록의 jest 시뮬레이션 시험이 본다)
 strip_old() { no_peek "$1" | no_kf_old | no_t147_old | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }
@@ -292,8 +297,12 @@ if diff <(strip_new "$RUNNER_NOJRL") <(strip_old "$BEFORE") > /dev/null; then ok
 else bad "D6: 블록 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER_NOJRL") <(strip_old "$BEFORE") | head -10; fi
 # 변경 전 러너의 모든 줄(주석 포함)이 순서대로 새 러너에 있다 = 삭제·수정 0, 추가만
 # (T-135) call() 의 본문 경로 세 줄은 T-135 가 의도해 바꿨다 — 그 세 줄만 되돌린 러너(no_t135)로 비교한다
-missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") <(no_t147_old < "$BEFORE"))"
+missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") <(no_t147_old < "$BEFORE" | no_t149_old))"
 eq "🔴 D6: 변경 전 러너의 모든 줄이 순서대로 남아 있다(추가만)" "${missing:-none}" "none"
+# (T-149 감사 L-7) 스트리퍼는 기준 ref 쪽에서 그 1줄을 지우므로, **지금 러너에서 그 줄이 사라져도** 위 대조가 깨지지 않는다.
+#   그래서 러너 쪽에 그 줄이 정확히 1개 있다는 단정을 따로 둔다 — 없으면 스트리퍼가 가린 범위가 무검사로 넓어진다.
+eq "🔴 D6: no_t149_old 가 노리는 주석 줄이 지금 러너에 정확히 1개 있다" \
+   "$(grep -c '^# (T-062 Codex C2 ②) 해외 post-market' "$RUNNER")" "1"
 eq "D6: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
 nb="$(awk '/^  # >>> daily-bars-daily/,/^  # <<< daily-bars-daily/' "$RUNNER")"
 eq "D6: 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> daily-bars-daily' "$RUNNER") $(grep -c '^  # <<< daily-bars-daily' "$RUNNER")" "1 1"

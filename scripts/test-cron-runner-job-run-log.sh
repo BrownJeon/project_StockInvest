@@ -392,8 +392,17 @@ eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 #   T-147 의 새 모양(호출자 하나·fail-open·감독·분 경계)은 scripts/test-cron-runner-alert-ticker.sh 가 본다.
 no_t147()     { awk '/^ *# >>> (alert-ticker|stop-alert-fallback|heartbeat-refresh)/{s=1} s{ if (/^ *# <<< (alert-ticker|stop-alert-fallback|heartbeat-refresh)/) s=0; next } {print}'; }
 no_t147_old() { awk '/^  # 매 1분: stop-alert/{s=1} s{ if (/^  CALL_MAX_TIME=""$/) s=0; next } {print}' | grep -v '^#  - stop-alert        : 1분'; }
-missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") <(no_t147_old < "$BASE"))"
+# (T-149) 기준 ref 쪽에서 **주석 1줄**을 뺀다 — T-062 선언 머리의 「하트비트는 tick 시작에만 쓰인다」는 전제가 T-147 의 틱 끝 갱신
+#   이후로 더는 참이 아니어서 러너에서 문구를 고쳤다(계산·결론·실행 줄은 그대로). 아래 J8 "추가만" 대조는 **주석을 포함**하므로
+#   한쪽만 바꾸면 어긋난다(위 no_t147_old 선례와 같다). 기준 ref·러너 양쪽에서 각각 정확히 1줄만 걸린다(접두 유일 — 실측).
+#   `call()` 본문 해시 비교(아래 J8)에는 영향이 없다 — 이 줄은 `call()` 밖이다.
+no_t149_old() { grep -v '^# (T-062 Codex C2 ②) 해외 post-market'; }
+missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") <(no_t147_old < "$BASE" | no_t149_old))"
 eq "🔴 J8: 기준 러너의 모든 줄(주석 포함)이 순서대로 남아 있다(삭제·수정 0, 추가만 — T-135 세 줄은 되돌려 비교)" "${missing:-none}" "none"
+# (T-149 감사 L-7) 스트리퍼는 기준 ref 쪽에서 그 1줄을 지우므로, **지금 러너에서 그 줄이 사라져도** 위 대조가 깨지지 않는다.
+#   그래서 러너 쪽에 그 줄이 정확히 1개 있다는 단정을 따로 둔다 — 없으면 스트리퍼가 가린 범위가 무검사로 넓어진다.
+eq "🔴 J8: no_t149_old 가 노리는 주석 줄이 지금 러너에 정확히 1개 있다" \
+   "$(grep -c '^# (T-062 Codex C2 ②) 해외 post-market' "$RUNNER")" "1"
 eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼고 T-135 를 되돌리면 기준 러너와 같다" \
    "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
 eq "J8: call() 안 표지 줄 2개, 파일 전체 4개" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -c '# T-112 jrl$') $(grep -c '# T-112 jrl$' "$RUNNER")" "2 4"
