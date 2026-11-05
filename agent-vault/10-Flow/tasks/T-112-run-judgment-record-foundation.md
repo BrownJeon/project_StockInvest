@@ -1,11 +1,11 @@
 ---
 task_id: T-112
-title: 실행·판단 기록 기반 — `job_run_log`(실행·상태 기록)와 기준 판단(baseline) 기록 — 구현·배포 완료(기록 스위치 꺼짐)
+title: 실행·판단 기록 기반 — `job_run_log`(실행·상태 기록)와 기준 판단(baseline) 기록 — 구현·배포 완료(기록 스위치 둘 다 켜짐 — 관찰 중)
 status: done
 priority: high
 project: StockInvest
 created: 2026-10-30
-updated: 2026-10-30
+updated: 2026-11-05
 base_ref: origin/main 9d087a4
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa]
@@ -18,7 +18,7 @@ tags:
 aliases:
   - 기록기반
   - job_run_log
-waiting: [구현 단계 착수 지시(DP1 ~11-05 순서 결정), 일회용 MariaDB DDL 시험, DDL 적용 사용자 승인(건별), 국내 D0 정의(Analyst), T-104 1단계 순서]
+waiting: [T-104 1단계 순서 (T-104 는 아직 planned), 국내 D0 정의 (Analyst 질문 ⑤ — 이 파일에 해결 기록 없음; 국내 judgment_run 은 11-03 16:00 부터 기록 중), T-108 구현의 engine_release IS NOT NULL 집계 반영 (확인 안 함), 매일 post-market ok 행 수 ↔ judgment_run 행 수 대조 지속 (11-03~11-05 6/6 일치; 예약 점검 없음)]
 demo_gate:
   required: false
   level: "none"
@@ -234,6 +234,7 @@ DDL 일회용 MariaDB 10.11 시험은 **90/90 통과**(두 sql_mode)이고 DDL �
 - [16:30] **관찰 4회차(예약 점검, 약 67시간, 11-02 월 국내 첫 평일 사이클 후)**: 본 기능 영향의 확실한 증거 없음 → `job_run_log_enabled` 유지, 코드·스위치 변경 없음. `job_run_log` 662행(10-31 231·11-01 239·11-02 16:11 현재 163, 표 208KB — `AUTO_INCREMENT` 13547 은 ODKU 가 번호를 소모한 것이라 행 수가 아니다)·`missing` 0·스풀 파일 없음(잔존 0). 국내 잡 슬롯 기록이 로그와 일치: news-fetch-domestic 06:00·news-peek-domestic-10/13·news-fetch-domestic-pm 15:30·post-market-domestic 16:00 ok(evaluated 43·candidates 8·created 0·blocked 4·skipped 5 = 앱 로그 「검증 관문 4·금액 초과 1」)·research-cycle-domestic ok(앱 로그 total 2·failed 0). 주말(10-31·11-01) post-market-domestic 는 둘 다 `skipped:weekend`, 나머지 국내 잡은 주말에도 ok. `rs-update-domestic` 은 17:30 슬롯이라 아직 안 옴(주말 2회 ok). `failed` 후크 행은 전부 HTTP=000(앱 무응답) 또는 22:56 DB 거부이며 11-02 의 6행은 09:57·09:58 배포 순간(10-31 14:00·19:00 정시 news-peek 2행은 원인 미확인 [추측: 앱 일시 무응답]). 전송 실패 누계 77건(503 61·000 16 — 10-30 12·10-31 31·11-01 28·11-02 6)·회복 59·스풀 유실 0, pm2-err 의 기록 관련은 503 타임아웃 경고와 16:02:06 스위치(`judgment_record_enabled`) 읽기 2초 초과 1건(post-market 직후 DB 혼잡, 설계대로 꺼짐 처리)뿐. 롤업 `runs` 이중 집계는 로그 틱 수 대비 10-31 +4.6%(1439 대 1376)·11-01 +3.5%·11-02 +0.5% 로 타임아웃 503 건수와 함께 줄어듦(근사값 — 영향 없음). 안전 설정: dry_run·order_max_pct·daily_order_max_pct 시각 불변, kill_switch 는 11-01 09:53:56 사용자 직접 설정(값 false), `judgment_record_enabled` 키 없음(별개 스위치 `exit_judgment_record_enabled` 는 10-31 15:41:54 켜짐 그대로). 국내 장중 틱 간격이 10-30 보다 길다(>200초 12→29건, 최대 281→370초)는 별건 관찰: 시간은 앱 안 strategy-eval 의 분봉 API 일봉 대체 호출에서 쓰이고 후크가 잰 값(maxMs 307892)과 일치 — 후크 원인 아님 [가능성 높음]. `judgment_record_enabled` 켜기 AI 의견: **조건부 가능**(야간에 켜서 11-03 08:00 해외 분석부터 보기·사용자 승인 필요 — 위험·조건은 사용자 보고 참조).
 - [17:09] **`judgment_record_enabled` 켬**(사용자 승인 원문 "지금 켜기", 위 16:30 AI 의견에 대한 답): `system_config.judgment_record_enabled`=`true`(17:09:16, `INSERT … ON DUPLICATE KEY UPDATE` 한 문장). 켠 뒤 안전 설정 4개 시각 불변·health green·`dryRun` true·kill false. 서버 캐시 30초 → 첫 기록 실행은 **11-03 08:00 해외 분석**. 점검 조건: ① `judgment_run` 1행·후보 수 = 앱 로그 candidates ② `signals` 생성 수·소요 시간이 10-31(evaluated 54·candidates 1·created 0·blocked 1) 대비 불변 ③ pm2-err 무오류 ④ 매일 post-market ok 행 수와 `judgment_run` 행 수 대조(조용한 공백 탐지). 하나라도 어긋나면 `UPDATE system_config SET value='false' WHERE key='judgment_record_enabled'`(즉시·데이터 보존). 현재 `judgment_run`·`judgment_candidate` 0행.
 - [2026-11-03 08:10] **`judgment_record_enabled` 첫 기록 실행 점검(예약, 읽기 전용)**: 기록 정상·분석 영향 증거 없음 → 스위치 유지, 코드·스위치 변경 없음. ① `judgment_run` 1행(overseas·baseline·`candidate_count`=7·`valid_from` 11-03 23:30·`engine_release`=현재 릴리스 `20261102-225046-8f101d03`·`data_status.candles`=partial) = 앱 로그 `evaluated=126 candidates=7 llm=1 created=0 skipped=1`의 candidates·llm 과 일치. `judgment_candidate` 8행 = 후보 7(사전 금액 초과 6·검증 관문 NFLX 1 → `signal_id` 19870 = `signals` skipped 08:01:41) + `stale_candle` 1(BRK.B, 로그 「오래된 봉 1」) — 로그 분류와 건수까지 일치. ② `job_run_log` post-market-overseas ok(08:00:49~08:01:44, `{"evaluated":126,"candidates":7,"llm_input":1,"created":0,"blocked":1,"skipped":1}`): created·blocked·skipped·llm_input 은 10-31 과 같고 **evaluated 54→126·candidates 1→7 은 스위치 때문이 아니다** — 11-03 07:20:06 에 `overseas_universe_revision` 1번(125종목, `change_source=seed`, `updated_by=manual-sql`)이 들어가 분석 대상이 코드 기본 목록(~50)에서 늘었다(+보유·즐겨찾기 합집합 126). 소요 55초 vs 10-31 38초의 +17초는 LLM 호출 전(후보 수집, 08:00:49→08:01:15 vs 08:00:39→08:00:50)에서 생겼고 LLM 23.8초 vs 24.5초·시그널 생성→종료 3초 vs 2초라 기록 구간은 ≤1초 수준 [가능성 높음 — 기록기 자체 시간은 직접 못 쟀다]. 08:00 틱 하트비트 최대 117초(08:00:49→08:02:46, 10-31 149초). ③ pm2-err 에 07:00 이후 줄 없음·판단 기록/스위치 경고는 켜기 전인 11-02 16:02:06 의 1건뿐(그때는 키가 없어 어차피 꺼짐 — 기록 누락과 무관). ④ 안전 설정 4개 시각 불변(kill 11-01 09:53:56·dry_run 10-30 09:08:14·order_max_pct 10-22 23:19:11·daily 08-03 13:05:30)·health green. 미확인: 기록기 단독 소요, 국내 `judgment_run`(11-03 16:00 첫 국내 실행), 같은 유니버스 크기에서의 스위치 on/off 비교(비교군 없음).
+- [2026-11-05] **`judgment_record_enabled` 사흘째 대조(읽기 전용, 상태 필드 정리 때 확인)**: 11-03~11-05 `job_run_log` post-market-overseas·domestic 6건 전부 ok ↔ `judgment_run` 6행(시장별 하루 1행, baseline) 일치, 각 행의 `candidate_count` 가 `job_run_log` counts 의 candidates 와 6/6 같다(overseas 7·10·10, domestic 8·9·1). 11-03 16:00:44 첫 국내 `judgment_run` 이 확인돼 위 08:10 점검의 「미확인: 국내」를 닫는다. `judgment_candidate` 행 수는 해외가 candidate_count 보다 하루 1행씩 많다(8·11·11 대 7·10·10 — 11-03 은 stale_candle 1건으로 확인, 11-04·11-05 의 초과분 종류는 확인 안 함), 국내는 같다(8·9·1). 스위치 3개 시각 불변(job_run_log 10-30 21:05:27 · exit_judgment_record 10-31 15:41:54 · judgment_record 11-02 17:09:16), dry_run true · kill false. 미확인: 11-05 국내 candidates=1 이 시장 상황 때문인지, 기록기 단독 소요. frontmatter 의 title·updated·waiting 을 현재 상태로 정리했다(본문 「최종 요약」은 10-30 시점 기록이라 그대로 둠).
 
 ## Codex 검토
 ### [2026-10-30 19:50] C2 review focus=none — done
