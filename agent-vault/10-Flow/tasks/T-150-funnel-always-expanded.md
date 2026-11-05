@@ -5,7 +5,7 @@ status: review
 priority: low
 project: StockInvest
 created: 2026-11-04
-updated: 2026-11-04
+updated: 2026-11-05
 base_ref: 5696d8cb069650025471d877817116f902390a92
 risk_level: R2
 roles_involved: [leader, judge, designer, developer, reviewer, qa]
@@ -19,20 +19,21 @@ aliases:
 demo_gate:
   required: true
   level: "delta"
-  status: "review_requested"
+  status: "approved"
   version: 2
   repo_path: "mockups/T-150-funnel-always-expanded-v2.html"
   artifact_url: ""
   content_sha256: "389cfb9eb6f8f595a452139aa7f58e274cc6d149812ec9bb90413753ce89f587"
   decided_by: "judge"
   rule_id: "JV-ui_change"
-  approved_by: ""
-  approved_at: ""
-  approval_quote: ""
+  approved_by: "user"
+  approved_at: "2026-11-04T03:40:29.064Z"
+  approval_quote: "데모 확인했어. 이대로 적용해주고"
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
   active: false
+  approval_source: "historical"
 ---
 
 # T-150 거래 운영 기록의 장중 룰 평가 깔때기 상세 상시 표시
@@ -116,3 +117,4 @@ demo_gate:
 | v1 | 검토요청 | mockups/T-150-funnel-always-expanded-v1.html | - | 사용자 검토 요청 | 11-04 12:27 |
 | v2 | 작성중 | mockups/T-150-funnel-always-expanded-v1.html | - | - | 11-04 12:28 |
 | v2 | 검토요청 | mockups/T-150-funnel-always-expanded-v2.html | - | 사용자 검토 요청 | 11-04 12:28 |
+| v2 | 승인 | mockups/T-150-funnel-always-expanded-v2.html | - | historical transcript (consent interpreted separately) | 11-04 12:40 |
