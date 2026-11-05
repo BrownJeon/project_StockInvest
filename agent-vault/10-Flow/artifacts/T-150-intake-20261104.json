@@ -1,0 +1,97 @@
+{
+  "schema": "judge-result@2",
+  "engine": "jev",
+  "kind": "intake",
+  "checkpoint": null,
+  "task_id": "T-150",
+  "project": "StockInvest",
+  "spec_version": "dev-judge@0.2.0",
+  "rules_version": "dev-rules@0.5.0",
+  "model": "jev-1.13.0",
+  "decision": {
+    "task_type": "feature",
+    "complexity": 0.84,
+    "needs_info": false,
+    "risk": "R2",
+    "developer_model": "opus",
+    "roles": [
+      "designer",
+      "prompt-engineer?",
+      "developer",
+      "reviewer",
+      "qa"
+    ],
+    "demo": {
+      "required": true,
+      "level": "delta",
+      "owner": "designer",
+      "publish": "artifact+repo",
+      "source": "jev",
+      "rule_id": "JV-ui_change",
+      "rule_ids": [
+        "JV-ui_change",
+        "DM-kw-risky-cta"
+      ],
+      "waiver_requested": false,
+      "configuration_error": null
+    },
+    "next": "demo_first",
+    "next_actions": [
+      "prepare_demo",
+      "request_demo_approval",
+      "assign_developer"
+    ],
+    "blocking_gate": "demo"
+  },
+  "signals": {
+    "task_type": {
+      "choice": "feature",
+      "confidence": 0.58
+    },
+    "complexity": {
+      "score": 0.84,
+      "confidence": 0.82
+    },
+    "needs_info": {
+      "noul": 0.16
+    },
+    "risk": {
+      "choice": "normal",
+      "probabilities": {
+        "low": 0.17,
+        "normal": 0.83,
+        "high": 0
+      }
+    },
+    "ui_detect": "listed",
+    "ui_change": {
+      "valid": true,
+      "choice": "behavior_change",
+      "confidence": 0.83,
+      "probabilities": {
+        "none": 0,
+        "minor_visual": 0.04,
+        "partial_restructure": 0.1,
+        "behavior_change": 0.86,
+        "overhaul": 0,
+        "new_screen": 0
+      }
+    }
+  },
+  "rule_overrides": [
+    {
+      "field": "risk",
+      "value": "R2",
+      "rule_id": "R2-kw-payment"
+    },
+    {
+      "field": "developer_model",
+      "value": "opus",
+      "rule_id": "MD-r2-opus"
+    }
+  ],
+  "fallback": null,
+  "input_tokens": 1346,
+  "cost_usd": 0.000057,
+  "latency_ms": 879
+}

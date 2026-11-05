@@ -322,6 +322,33 @@ describe('거래 틀 (TradePage)', () => {
 });
 
 describe('깔때기 카드 세션 모드 (§2.4.5)', () => {
+  const summary = {
+    runs: 1, fullEvalRuns: 1, symbolsEvaluated: 8, buySignals: 1, sellSignals: 0, exitSignals: 1,
+    steps: [{ key: 'evaluated', label: '평가 종목', count: 8, pctOfPrev: null }],
+    bottlenecks: [{ gate: 'rule', label: '룰 미발화', count: 3 }], anomalies: [], neutralPct: 10,
+  };
+  const renderCard = (session: boolean, expanded: boolean) => {
+    mockStateQueue.length = 0;
+    mockStateQueue.push(summary, null, expanded);
+    return renderToStaticMarkup(h(EvalFunnelCard, { reloadKey: 0, source: session ? 'session' : 'legacy' }));
+  };
+  test('세션 상세는 초기 접힘 상태에서도 보이고 화살표는 없다', () => {
+    const html = renderCard(true, false);
+    expect(text(html)).toContain('평가 종목');
+    expect(text(html)).toContain('최다 차단');
+    expect(text(html)).toContain('청산(보유관리) 매도 1건 — 평가 필터와 별도 트랙');
+    expect(text(html)).toContain('시장상태 neutral 비율 10%');
+    expect(html).not.toContain('▾');
+    expect(html).not.toContain('깔때기');
+  });
+  test('기존 모드는 접힘·펼침 상태를 유지한다', () => {
+    const closed = renderCard(false, false);
+    const open = renderCard(false, true);
+    expect(closed).toContain('▾');
+    expect(text(closed)).not.toContain('평가 종목');
+    expect(text(open)).toContain('평가 종목');
+    expect(open).not.toContain('깔때기');
+  });
   test('새 읽기 라우트 — market 없으면 서버 기본 시장, 있으면 그 시장', () => {
     expect(sessionFunnelUrl()).toBe('/api/ops/funnel');
     expect(sessionFunnelUrl('overseas')).toBe('/api/ops/funnel?market=overseas');
@@ -364,6 +391,6 @@ describe('깔때기 기준 세션 조회 실패(basis.state=error) — 추정 �
     const t = text(html);
     expect(t).toContain('! 조회 실패 · DB 오류 세션일을 읽지 못해 오늘 주문을 거를 수 없습니다 — 비어 있는 것이 아닙니다');
     expect(t).not.toContain('오늘 이 상태의 주문 없음');
-    expect(html).toMatch(/aria-label="깔때기 시장"><button type="button" aria-pressed="true">국내<\/button><button type="button" aria-pressed="false">해외<\/button>/);
+    expect(html).toMatch(/aria-label="평가 필터 시장"><button type="button" aria-pressed="true">국내<\/button><button type="button" aria-pressed="false">해외<\/button>/);
   });
 });

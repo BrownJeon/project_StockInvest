@@ -182,9 +182,9 @@ export function TradeLogPanel(p: {
   return (
     <div className={ops.scr}>
       <div className={ops.col}>
-        <Section id="t-funnel" title="장중 룰 평가 깔때기">
+        <Section id="t-funnel" title="장중 룰 평가 필터">
           <SectionBody>
-            <SegmentControl label="깔때기 시장" items={segItems} value={(selected ?? 'domestic') as Market} onChange={(m) => setMarket(m)} />
+            <SegmentControl label="평가 필터 시장" items={segItems} value={(selected ?? 'domestic') as Market} onChange={(m) => setMarket(m)} />
           </SectionBody>
           <EvalFunnelCard source="session" market={market} reloadKey={p.reloadKey + retry} onMeta={onMeta} onMetaError={setMetaError} />
           <div className={ops['sec-foot']}>
