@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
+import { parseThreadId, ownedThread, requireChatUser } from '@/lib/chat/ownership';
 import { runLlm, getActiveProvider, getProviderConfig } from '@/lib/llm/provider';
 import { resolveSymbolsInText } from '@/lib/chat/symbol-resolver';
 import { buildSymbolContexts, formatSymbolContextsAsText } from '@/lib/chat/context-builder';
@@ -22,8 +23,10 @@ interface BodyShape {
  * 응답을 사용자가 검토·편집 후 POST /messages로 확정 전송.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const threadId = Number((await params).id);
-  if (!Number.isFinite(threadId) || threadId <= 0) {
+  const auth = await requireChatUser(req);
+  if (!auth.ok) return auth.res;
+  const threadId = parseThreadId((await params).id);
+  if (threadId === null) {
     return NextResponse.json({ ok: false, error: 'invalid thread id' }, { status: 400 });
   }
   const body = (await req.json().catch(() => ({}))) as BodyShape;
@@ -32,10 +35,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const pool = getPool();
   // thread 존재 확인 (스레드 없는데 draft만 시도하는 경우 차단)
-  const [threadRows] = await pool.query<RowDataPacket[]>(
-    'SELECT id FROM chat_threads WHERE id = ? LIMIT 1', [threadId],
-  );
-  if (threadRows.length === 0) {
+  if (!(await ownedThread(pool, threadId, auth.userId))) {
     return NextResponse.json({ ok: false, error: 'thread not found' }, { status: 404 });
   }
 
@@ -51,9 +51,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // 최근 대화 (이전 메시지 컨텍스트)
   const [historyRows] = await pool.query<RowDataPacket[]>(
-    `SELECT role, content FROM chat_messages WHERE thread_id = ?
-     ORDER BY id DESC LIMIT ?`,
-    [threadId, RECENT_HISTORY_LIMIT],
+    `SELECT m.role, m.content FROM chat_messages m
+     INNER JOIN chat_threads t ON t.id = m.thread_id
+     INNER JOIN users u ON u.id = t.user_id
+     WHERE m.thread_id = ? AND t.user_id = ?
+     ORDER BY m.id DESC LIMIT ?`,
+    [threadId, auth.userId, RECENT_HISTORY_LIMIT],
   );
   const recentMessages = historyRows
     .reverse()
@@ -82,6 +85,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   });
   const draftLatencyMs = Date.now() - t0;
 
+  // A thread can be removed or transferred while the model is running.
+  if (!(await ownedThread(pool, threadId, auth.userId))) {
+    return NextResponse.json({ ok: false, error: 'thread not found' }, { status: 404 });
+  }
   return NextResponse.json({
     ok: true,
     draftPrompt: draftPrompt.trim(),

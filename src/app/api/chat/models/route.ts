@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { requireChatUser } from '@/lib/chat/ownership';
 import { getActiveProvider, getProviderConfig } from '@/lib/llm/provider';
 
 export const dynamic = 'force-dynamic';
@@ -8,7 +9,9 @@ export const dynamic = 'force-dynamic';
  *  - claude: sonnet/opus/haiku 중 사용자 선택
  *  - home-m4-api: 설정값으로 고정 (단일 옵션, fixed=true)
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireChatUser(req);
+  if (!auth.ok) return auth.res;
   const provider = await getActiveProvider();
   if (provider === 'claude') {
     return NextResponse.json({

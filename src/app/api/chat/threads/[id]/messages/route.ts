@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
+import { databaseId, parseThreadId, ownedThread, requireChatUser } from '@/lib/chat/ownership';
 import { runLlm } from '@/lib/llm/provider';
 import { getActiveProvider, getProviderConfig } from '@/lib/llm/provider';
 import { resolveSymbolsInText } from '@/lib/chat/symbol-resolver';
@@ -27,23 +28,32 @@ interface BodyShape {
 }
 
 /** GET — thread 메시지 목록 */
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const threadId = Number((await params).id);
-  if (!Number.isFinite(threadId) || threadId <= 0) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireChatUser(req);
+  if (!auth.ok) return auth.res;
+  const threadId = parseThreadId((await params).id);
+  if (threadId === null) {
     return NextResponse.json({ ok: false, error: 'invalid thread id' }, { status: 400 });
   }
   const pool = getPool();
+  if (!(await ownedThread(pool, threadId, auth.userId))) {
+    return NextResponse.json({ ok: false, error: 'thread not found' }, { status: 404 });
+  }
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT id, role, content, draft_prompt, draft_prompt_raw, context_attached,
-            llm_provider, llm_model, latency_ms, created_at
-     FROM chat_messages WHERE thread_id = ?
-     ORDER BY id ASC`,
-    [threadId],
+    `SELECT m.id, m.role, m.content, m.draft_prompt, m.draft_prompt_raw, m.context_attached,
+            m.llm_provider, m.llm_model, m.latency_ms, m.created_at
+     FROM chat_messages m INNER JOIN chat_threads t ON t.id = m.thread_id
+     INNER JOIN users u ON u.id = t.user_id
+     WHERE m.thread_id = ? AND t.user_id = ? ORDER BY m.id ASC`,
+    [threadId, auth.userId],
   );
+  if (rows.some(r => databaseId(r.id) === null)) {
+    return NextResponse.json({ ok: false, error: 'unsafe identifier' }, { status: 503 });
+  }
   return NextResponse.json({
     ok: true,
     messages: rows.map(r => ({
-      id:             Number(r.id),
+      id:             databaseId(r.id),
       role:           r.role as 'user' | 'assistant' | 'system',
       content:        r.content as string,
       draftPrompt:    r.draft_prompt as string | null,
@@ -61,8 +71,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 /** POST — 사용자 정제 프롬프트(또는 원문)로 본 응답 생성 + DB 저장 */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const threadId = Number((await params).id);
-  if (!Number.isFinite(threadId) || threadId <= 0) {
+  const auth = await requireChatUser(req);
+  if (!auth.ok) return auth.res;
+  const threadId = parseThreadId((await params).id);
+  if (threadId === null) {
     return NextResponse.json({ ok: false, error: 'invalid thread id' }, { status: 400 });
   }
 
@@ -74,12 +86,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // thread 존재 확인
   const [threadRows] = await pool.query<RowDataPacket[]>(
-    'SELECT id, title FROM chat_threads WHERE id = ? LIMIT 1', [threadId],
+    'SELECT t.id FROM chat_threads t INNER JOIN users u ON u.id = t.user_id WHERE t.id = ? AND t.user_id = ? LIMIT 1', [threadId, auth.userId],
   );
   if (threadRows.length === 0) {
     return NextResponse.json({ ok: false, error: 'thread not found' }, { status: 404 });
   }
-  const currentTitle = String(threadRows[0].title);
 
   // 컨텍스트 — body.attachedContext가 있으면 echo, 없으면 재계산
   let symbolContexts: SymbolContext[];
@@ -98,9 +109,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // 최근 8개 메시지 (컨텍스트 윈도우)
   const [historyRows] = await pool.query<RowDataPacket[]>(
-    `SELECT role, content FROM chat_messages WHERE thread_id = ?
-     ORDER BY id DESC LIMIT ?`,
-    [threadId, RECENT_HISTORY_LIMIT],
+    `SELECT m.role, m.content FROM chat_messages m
+     INNER JOIN chat_threads t ON t.id = m.thread_id
+     INNER JOIN users u ON u.id = t.user_id
+     WHERE m.thread_id = ? AND t.user_id = ?
+     ORDER BY m.id DESC LIMIT ?`,
+    [threadId, auth.userId, RECENT_HISTORY_LIMIT],
   );
   const recentMessages = historyRows
     .reverse()
@@ -147,32 +161,61 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   });
   const latencyMs = Date.now() - t0;
 
-  // DB 저장 — user 메시지 + assistant 메시지
-  const contextJson = symbolContexts.length > 0 ? JSON.stringify(symbolContexts) : null;
-  const [userIns] = await pool.query<ResultSetHeader>(
-    `INSERT INTO chat_messages (thread_id, role, content, draft_prompt, draft_prompt_raw, context_attached)
-     VALUES (?, 'user', ?, ?, ?, ?)`,
-    [threadId, userContent, draftPrompt, draftPromptRaw, contextJson],
-  );
-  const [asstIns] = await pool.query<ResultSetHeader>(
-    `INSERT INTO chat_messages (thread_id, role, content, llm_provider, llm_model, latency_ms)
-     VALUES (?, 'assistant', ?, ?, ?, ?)`,
-    [threadId, responseText, provider, finalModel, latencyMs],
-  );
-
-  // thread 갱신 — message_count 증가, title 자동 (첫 메시지면)
-  const newTitle = currentTitle === '새 대화' && userContent.length > 0
-    ? userContent.slice(0, 30)
-    : currentTitle;
-  await pool.query(
-    `UPDATE chat_threads SET message_count = message_count + 2, title = ? WHERE id = ?`,
-    [newTitle, threadId],
-  );
+  // Lock only the short persistence transaction, never while waiting for the LLM.
+  // Re-check ownership under lock so concurrent deletion/reassignment cannot write
+  // a response into a thread that no longer belongs to this user.
+  const connection = await pool.getConnection();
+  let userMessageId: number;
+  let assistantMessageId: number;
+  let newTitle: string;
+  try {
+    await connection.beginTransaction();
+    const [locked] = await connection.query<RowDataPacket[]>(
+      'SELECT t.id, t.title FROM chat_threads t INNER JOIN users u ON u.id = t.user_id WHERE t.id = ? AND t.user_id = ? FOR UPDATE',
+      [threadId, auth.userId],
+    );
+    if (locked.length === 0) {
+      await connection.rollback();
+      return NextResponse.json({ ok: false, error: 'thread not found' }, { status: 404 });
+    }
+    const contextJson = symbolContexts.length > 0 ? JSON.stringify(symbolContexts) : null;
+    const [userIns] = await connection.query<ResultSetHeader>(
+      `INSERT INTO chat_messages (thread_id, role, content, draft_prompt, draft_prompt_raw, context_attached)
+       VALUES (?, 'user', ?, ?, ?, ?)`,
+      [threadId, userContent, draftPrompt, draftPromptRaw, contextJson],
+    );
+    const [asstIns] = await connection.query<ResultSetHeader>(
+      `INSERT INTO chat_messages (thread_id, role, content, llm_provider, llm_model, latency_ms)
+       VALUES (?, 'assistant', ?, ?, ?, ?)`,
+      [threadId, responseText, provider, finalModel, latencyMs],
+    );
+    const currentTitle = String(locked[0].title);
+    newTitle = currentTitle === '새 대화' && userContent.length > 0
+      ? userContent.slice(0, 30) : currentTitle;
+    await connection.query(
+      `UPDATE chat_threads SET message_count = message_count + 2, title = ? WHERE id = ? AND user_id = ?`,
+      [newTitle, threadId, auth.userId],
+    );
+    const safeUserMessageId = databaseId(userIns.insertId);
+    const safeAssistantMessageId = databaseId(asstIns.insertId);
+    if (safeUserMessageId === null || safeAssistantMessageId === null) {
+      await connection.rollback();
+      return NextResponse.json({ ok: false, error: 'unsafe identifier' }, { status: 503 });
+    }
+    await connection.commit();
+    userMessageId = safeUserMessageId;
+    assistantMessageId = safeAssistantMessageId;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 
   return NextResponse.json({
     ok: true,
-    userMessageId: userIns.insertId,
-    assistantMessageId: asstIns.insertId,
+    userMessageId,
+    assistantMessageId,
     response: responseText,
     llmProvider: provider,
     llmModel: finalModel,

@@ -1001,13 +1001,15 @@ async function setupDB(): Promise<void> {
   await p.query(`
     CREATE TABLE IF NOT EXISTS chat_threads (
       id            BIGINT PRIMARY KEY AUTO_INCREMENT,
+      user_id       INT UNSIGNED NULL DEFAULT NULL,
       title         VARCHAR(120) NOT NULL DEFAULT '새 대화',
       symbol        VARCHAR(32) NULL,
       created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       message_count INT NOT NULL DEFAULT 0,
       archived      TINYINT(1) NOT NULL DEFAULT 0,
-      INDEX idx_threads_updated (updated_at DESC)
+      INDEX idx_threads_updated (updated_at DESC),
+      INDEX idx_chat_threads_user_archived_updated (user_id, archived, updated_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   await p.query(`
