@@ -1,7 +1,7 @@
 ---
 task_id: T-032
 title: 즐겨찾기 연동 사이클 패턴 리서치 기능 (급등·급락 반복 패턴 통계 검증)
-status: deployed
+status: done
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-025, T-031]
 tags:

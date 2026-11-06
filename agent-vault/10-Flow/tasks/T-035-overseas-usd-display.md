@@ -1,7 +1,7 @@
 ---
 task_id: T-035
 title: 해외 종목의 종목별 금액을 USD로 표기 (리서치분석 + 텔레그램 리포트)
-status: deployed
+status: done
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-032, T-033, T-034]
 tags:

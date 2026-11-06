@@ -1,7 +1,7 @@
 ---
 task_id: T-034
 title: 매수/매도 목표가를 차트 지표 기반으로 재설계 (진입가·과거평균 의존 제거)
-status: deployed
+status: done
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-032, T-033]
 tags:

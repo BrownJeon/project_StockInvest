@@ -5,7 +5,7 @@ status: proposed
 priority: medium
 project: StockInvest
 created: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-06
 base_ref: ec6723c17e510aeb4baa8cbd3174c1183d1805d6
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa]
@@ -16,7 +16,7 @@ tags:
   - domain/ui
 aliases:
   - 후속후보모음
-waiting: [사용자 착수 결정 — 항목별 우선순위]
+waiting: [실거래 1단계 일정 확정 — 진입 1~2주 전 1·2번 착수]
 ---
 
 # T-131 후속 후보 모음 (착수 전)
@@ -69,6 +69,7 @@ waiting: [사용자 착수 결정 — 항목별 우선순위]
 이 파일 작성으로는 코드·DB·스위치를 바꾸지 않는다. 착수는 사용자 결정(항목 번호로 지시).
 
 ## 진행 기록
+- [2026-11-06][leader/Codex] 사용자 결정에 따라 실거래 1단계 진입 1~2주 전에 1·2번을 착수한다. 1번의 안전 스위치 저장·위험 방향 확인 UI와 2번의 진입 감시 저장 실패 처리를 묶어 검토하고, 화면 변경은 데모 승인부터 진행한다. 실거래 일정 확정 대기. 28번은 별도 설계 결정으로 남긴다.
 - [2026-10-31 19:32] 3번 → T-134, 4·15번 → T-135 운영 반영 완료(릴리스 `20261031-192807-8ed1ba7b`). 남은 착수 대상: 1·2번(2순위 묶음 — 실거래 단계 진입 전), 5~14번, 16~25번.
 - [2026-10-31 17:55] 사용자 「권고대로 착수」 — 1순위 ①(`getTicker` HTTP200)은 다른 세션의 [[T-133-ticker-business-failure-retry]] 가 진행 중이라 제외하고, 3번 → [[T-134-exit-engine-state-load-isolation]], 4·15번 → [[T-135-recorder-pool-hold-and-runner-tmp]] 로 착수(16번은 제외). 코드는 서버 worktree 별도 브랜치에 커밋(`bf9980a`·`0957125`), `main`·운영에는 아직 없다. E 절 추가.
 - [2026-10-31 11:00] 등록(Leader). T-126·T-127·T-128·T-130 의 Reviewer·QA·Developer 범위 밖 발견을 모음.

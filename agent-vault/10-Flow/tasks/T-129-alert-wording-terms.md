@@ -1,7 +1,7 @@
 ---
 task_id: T-129
 title: 용어 정정 서버 쪽 마무리(T-108 WP-D) — 텔레그램·경보·리포트·설정 요약 문구의 옛 용어를 승인된 용어로
-status: deployed
+status: done
 priority: medium
 project: StockInvest
 created: 2026-10-31

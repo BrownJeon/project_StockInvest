@@ -1,7 +1,7 @@
 ---
 task_id: T-140
 title: 운영 지표 「확인한 원천 수」가 준비 중(prep) 원천을 읽은 것으로 세는 문제 — 홈이 읽지 못한 원천을 「정상」으로 단정하는 경로 정정 (T-128 A3 후속)
-status: deployed
+status: done
 priority: low
 project: StockInvest
 created: 2026-10-31

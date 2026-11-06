@@ -1,7 +1,7 @@
 ---
 task_id: T-133
 title: 시세 조회(getTicker)가 HTTP 200 업무실패(SESSION FULL)를 재시도 없이 실패로 끝내는 문제 — 일시 실패 재시도 + 업무실패 명시 실패
-status: deployed
+status: done
 priority: medium
 project: StockInvest
 created: 2026-10-31

@@ -1,7 +1,7 @@
 ---
 task_id: T-033
 title: 리서치분석 매수/매도 추천(Phase 1) + 거래 리포트 08:00 개선(Phase 2)
-status: deployed
+status: done
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-032]
 tags:

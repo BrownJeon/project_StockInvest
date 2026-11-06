@@ -1,7 +1,7 @@
 ---
 task_id: T-108
 title: 자동매매 중심 메뉴·홈·분석·비서 개편 — 접수·지표 계약·데모 준비 (구현은 데모 승인 뒤)
-status: deployed
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-28

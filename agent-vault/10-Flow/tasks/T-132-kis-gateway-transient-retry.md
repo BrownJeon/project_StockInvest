@@ -1,7 +1,7 @@
 ---
 task_id: T-132
 title: KIS 게이트웨이 일시 오류(EGW00300·OPSQ1002 SESSION FULL)에 잔고·예수금 조회가 1회 실패로 끝나는 문제 — 일시 실패 재시도 + 업무실패(rt_cd≠0) 명시 실패
-status: deployed
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-31

@@ -1,7 +1,7 @@
 ---
 task_id: T-106
 title: 뉴스가 연속 3회 0건이면 알림 — 수집 단계·분석 검색 단계 감시 (T-105 재발 방지)
-status: deployed
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-28

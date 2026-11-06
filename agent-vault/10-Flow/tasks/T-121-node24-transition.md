@@ -1,7 +1,7 @@
 ---
 task_id: T-121
 title: 시스템 Node 20→24 전환 영향 정리 — 골든 시험 1건 실패 + 다음 배포부터 StockInvest 가 Node 24 로 기동
-status: deployed
+status: done
 priority: medium
 project: StockInvest
 created: 2026-10-29

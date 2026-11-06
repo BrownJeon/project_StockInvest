@@ -1,7 +1,7 @@
 ---
 task_id: T-134
 title: 청산 엔진 — 보유 종목 상태 조회(loadPositionState) 실패 한 번이 그 시장 틱의 남은 종목 손절·익절 평가를 통째로 멈추는 문제 (종목 단위 격리)
-status: deployed
+status: done
 priority: high
 project: StockInvest
 created: 2026-10-31

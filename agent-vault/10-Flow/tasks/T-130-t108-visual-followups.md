@@ -1,7 +1,7 @@
 ---
 task_id: T-130
 title: T-108 화면 후속 — 설정 화면 터치 영역 44px·확인 필요 머리 숫자 의미·영문 사유 코드 문구·「차단」 표기 규칙·분석 skipped 표기·용어 혼재 (데모 검토 게이트 대상)
-status: deployed
+status: done
 priority: low
 project: StockInvest
 created: 2026-10-31

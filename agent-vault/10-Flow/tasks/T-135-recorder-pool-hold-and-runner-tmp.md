@@ -1,7 +1,7 @@
 ---
 task_id: T-135
 title: T-112 기록기(judgment-recorder·job-run-log)의 매달린 INSERT 풀 연결 점유 상한 + 크론 러너 call() 의 /tmp 본문 파일(644) 보호
-status: deployed
+status: done
 priority: medium
 project: StockInvest
 created: 2026-10-31

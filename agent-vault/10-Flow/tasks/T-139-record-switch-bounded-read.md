@@ -1,7 +1,7 @@
 ---
 task_id: T-139
 title: 기록 스위치 읽기(record-switch.ts)가 멈춘 조회로 공용 풀 연결을 붙잡는 문제 — 연결 상한(destroy)과 같은 키 조회 합치기
-status: deployed
+status: done
 priority: medium
 project: StockInvest
 created: 2026-10-31

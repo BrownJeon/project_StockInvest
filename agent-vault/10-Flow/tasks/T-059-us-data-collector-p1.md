@@ -1,7 +1,7 @@
 ---
 task_id: T-059
 title: 미국 종목 데이터 수집기 P1 — SEC EDGAR·KIS price-detail 수집, 신규 테이블 5개, cron 2개 (T-057 설계 구현)
-status: deployed
+status: done
 priority: high
 roles_involved: [leader, developer, reviewer, judge, codex]
 related_tasks: [T-057, T-056, T-055, T-046, T-058]
