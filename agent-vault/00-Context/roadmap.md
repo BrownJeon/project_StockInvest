@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: StockInvest
-updated: 2026-11-02
+updated: 2026-11-06
 phases:
   - { id: 0, name: "안전 기반",              status: done }
   - { id: 1, name: "관측·소생 핫픽스",       status: done }
@@ -113,6 +113,7 @@ tags: [type/roadmap]
 - [x] (0) 안전장치(공통)·거래 보호 [[T-001-phase0-safety-foundation]] [[T-007-telegram-silent-failure]]
 - [x] (6) 변동폭 가드·전략 설정
 - [x] (8) 자동 청산 마스터 스위치 표시 [[T-015-disable-auto-exit-engine]]
+- [x] (2) 국내·해외 공통 자동승인모드 전환 [[T-154-auto-approval-mode-setting]]
 - [ ] (8) AI 제공자 M4 주소 설정·표시 [[T-038-llm-base-url-setting]]
 - [x] (6) 거래소 계정·알람 채널·정기 거래 리포트
 
