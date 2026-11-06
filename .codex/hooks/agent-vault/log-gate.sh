@@ -13,11 +13,19 @@ vault="$project_dir/agent-vault"
 
 [ -d "$vault" ] || exit 0
 
+# StockInvest's shared .git directory belongs to its primary checkout.
+if ! common_dir="$(git -C "$project_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ||
+   [[ "$common_dir" != */.git ]] || [ ! -d "${common_dir%/.git}/agent-vault" ]; then
+  printf 'StockInvest 원본 Vault 경로를 확인할 수 없습니다 (%s).\n' "$project_dir" >&2
+  exit 2
+fi
+vault="${common_dir%/.git}/agent-vault"
+
 today="$(date +%F)"
 log="$vault/20-Log/${today}.md"
 
 if [ ! -f "$log" ]; then
-  echo "오늘(${today}) agent-vault/20-Log/${today}.md 에 아직 기록이 없습니다. 완료 처리 전에 '- [HH:MM][역할] task-<id> 완료 → [[task-<id>-<slug>]] 참고' 한 줄을 append하세요(경로가 아니라 위키링크로). (규약: docs/agent-vault-protocol.md)" >&2
+  echo "오늘(${today}) ${log} 에 아직 기록이 없습니다. 완료 처리 전에 '- [HH:MM][역할] task-<id> 완료 → [[task-<id>-<slug>]] 참고' 한 줄을 append하세요(경로가 아니라 위키링크로). (규약: docs/agent-vault-protocol.md)" >&2
   exit 2
 fi
 
