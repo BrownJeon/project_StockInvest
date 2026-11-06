@@ -290,8 +290,7 @@ function AutoApprovalModeRow() {
           style={{ width: 'calc(100% - 32px)', maxWidth: 420, padding: 16, borderRadius: 12, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--muted)' }}>
           <h2 id="auto-approval-confirm-title" style={{ margin: '0 0 8px', fontSize: 17 }}>자동승인모드를 켤까요?</h2>
           <div id="auto-approval-confirm-text" style={{ fontSize: 13, lineHeight: 1.5 }}>
-            국내·해외 신규 시그널의 주문이 조건을 충족하면 승인 없이 제출됩니다.
-            <div style={{ fontWeight: 600, marginTop: 8 }}>{tradingModeText(confirmation)}</div>
+            국내·해외 신규 시그널이 조건을 충족하면 승인 없이 주문 단계로 넘어갑니다.
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
             <button type="button" autoFocus style={autoApprovalButtonStyle}

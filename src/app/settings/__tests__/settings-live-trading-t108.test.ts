@@ -118,6 +118,25 @@ afterEach(() => {
 });
 
 describe('문구 — 이름과 방향 표시', () => {
+  test('자동승인모드 확인창은 주문 단계 안내만 표시한다', () => {
+    function findAutoApprovalRow(node: unknown): El | undefined {
+      if (Array.isArray(node)) return node.map(findAutoApprovalRow).find(Boolean);
+      if (!isEl(node)) return undefined;
+      if (typeof node.type === 'function' && node.type.name === 'AutoApprovalModeRow') return node;
+      return findAutoApprovalRow(node.props.children);
+    }
+    const row = findAutoApprovalRow(callPage(baseSafety({ killSwitch: true })));
+    expect(row).toBeDefined();
+    const confirmation = { ok: true, mode: 'assist', dryRun: true, killSwitch: true };
+    hookMode.direct = false;
+    hookMode.queue = [confirmation, confirmation];
+    const html = renderToStaticMarkup(row as ReactNS.ReactElement);
+    expect(hookMode.queue).toHaveLength(0);
+    const dialog = html.match(/<dialog\b[^>]*aria-labelledby="auto-approval-confirm-title"[^>]*>[\s\S]*?<\/dialog>/)?.[0];
+    expect(text(dialog ?? '')).toBe(
+      '자동승인모드를 켤까요? 국내·해외 신규 시그널이 조건을 충족하면 승인 없이 주문 단계로 넘어갑니다. 취소 자동형으로 저장',
+    );
+  });
   test('관찰(dryRun=true·kill=false): 실거래여부 OFF · 모든거래차단 OFF · 둘째 줄 설명', () => {
     const t = text(renderPage(baseSafety()));
     expect(t).toContain('실거래여부 OFF — 실거래 차단(기록만) ON 이면 주문이 거래소로 나가고, OFF 이면 기록만 남깁니다 OFF');
