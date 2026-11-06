@@ -149,7 +149,9 @@ function setupMockDB(signalRow?: Record<string, unknown>): Captured {
     if (/FROM strategies/i.test(sql)) return [params[0] === VALIDATED_SID ? [{ validation_status: 'backtested' }] : []];
     return [[]];
   });
-  (getPool as jest.Mock).mockReturnValue({ query });
+  (getPool as jest.Mock).mockReturnValue({ query, getConnection: async () => ({
+    query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {},
+  }) });
   (getAccountId as jest.Mock).mockResolvedValue(1);
   return cap;
 }

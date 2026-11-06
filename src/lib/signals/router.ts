@@ -152,7 +152,7 @@ export async function getEngineSwitches(): Promise<EngineSwitches> {
   //      DB 조회 자체가 실패했을 때(위 catch)뿐이고, 그 상황에서는 다른 모든 것도 이미 멈춘다.
   //
   //    따라서 `AUTOPILOT_MODE` env 는 "명시적 동의 채널"이 **아니다** — 부팅 후에는 무력하다.
-  //    `auto` 로 가는 실질 경로는 `system_config.autopilot_mode` 직접 기입 하나뿐이다.
+  //    `auto` 는 운영자가 `system_config.autopilot_mode` 를 명시적으로 저장할 때만 적용된다.
   //    (env 파싱을 남겨 둔 이유는 최초 부팅 전·DB 장애 시의 안전한 기본값 결정 때문이다.
   //     방향은 안전한 쪽 — auto 도달이 더 어려워지는 쪽 — 이라 그대로 둔다.)
   const envEngineRaw = process.env.ENGINE_ENABLED ?? process.env.ANALYST_ENABLED ?? 'false';
@@ -215,7 +215,7 @@ export async function syncEngineSwitchesFromLegacy(): Promise<EngineSwitches | n
     //
     //    쓰지 않음으로써 양방향 사고를 동시에 막는다:
     //      - 상향(assist→auto): 레이블이 말하지 않는 무인 주문 송신 활성화 — reviewer HIGH
-    //      - 하향(auto→assist): 운영자가 명시적으로 정한 모드를 무관한 토글이 조용히 되돌림
+    //      - 하향(auto→assist): 명시적으로 정한 모드를 무관한 토글이 조용히 되돌림
     //
     //    키가 없으면 `getEngineSwitches()` 가 구 키에서 **추론(assist 상한)** 하므로 공백도 없다.
     const autopilotMode = inferAutopilotModeFromLegacy(analystOn, hybridOn);
@@ -289,7 +289,7 @@ export function routeSignal(
       return { route: 'pending_approval', status: 'detected', expiresAt };
     case 'auto': {
       // ⚠️ 미해결 결정 — auto 모드를 켜기 전에 반드시 판단할 것.
-      //    (켜는 방법은 `system_config.autopilot_mode='auto'` 직접 기입뿐이다)
+      //    (T-154 설정 UI는 사용자 확인 뒤 `system_config.autopilot_mode` 를 저장한다.)
       //    (T-006 reviewer #4 / Leader 2026-08-06: 현재는 의도적으로 그대로 둔다)
       //
       //    비보호 청산(target_profit / trailing_stop)이 신규 진입과 **같은 금액 상한·격하 경로**를

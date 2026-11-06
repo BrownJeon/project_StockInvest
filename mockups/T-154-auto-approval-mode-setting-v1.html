@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="demo-version" content="T-154-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<title>설정 · 자동승인모드 — T-154 v1</title>
+<style>
+:root{--bg:#0f1115;--bg2:#171a21;--bg3:#1f2430;--bg4:#262b36;--border:#262b36;--border2:#323848;--text:#e6e8ee;--muted:#8b93a7;--accent:#f59e0b;--ok:#22c55e;--up:#ef4444;--down:#3b82f6;--nav-h:60px}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Noto Sans KR",sans-serif;overflow-wrap:anywhere}
+main{max-width:560px;margin:auto;padding: max(16px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+h1,h2,h3,p{margin:0}
+h1{font-size:24px;margin-bottom:4px}
+h2{font-size:13px;color:var(--muted);padding:8px 0 4px}
+h3{font-size:14px;font-weight:600}
+header{margin-bottom:16px}
+.eyebrow,.caption,.desc,small{font-size:12px;color:var(--muted)}
+.eyebrow{color:var(--accent);font-weight:700;margin-bottom:4px}
+.comparison{display:grid;gap:16px}
+.comparison > section{min-width:0}
+.variant{color:var(--text);font-size:15px}
+.card,.fixture,.notes{background:var(--bg2);border:1px solid var(--border);border-radius:12px}
+.card{overflow:hidden}
+.fixture,.notes{padding:12px 16px;margin-bottom:12px}
+.notes{margin:16px 0 0}
+.fixture-grid{display:grid;gap:8px;margin-top:8px}
+label{display:grid;gap:4px;color:var(--muted);font-size:12px}
+button,select{font:inherit;color:var(--text);min-height:44px;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);padding:0 12px}
+button{cursor:pointer}
+[aria-disabled=true]{cursor:not-allowed}
+button:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.enforced{padding:8px 16px;border-bottom:1px solid var(--border);color:var(--accent);font-size:12px}
+.setting-row{min-height:56px;padding:14px 16px;display:flex;gap:10px;justify-content:space-between;align-items:center}
+.setting-row+.setting-row,.mode,.setting-row.after{border-top:1px solid var(--border)}
+.setting-copy{min-width:0}
+.desc{margin-top:2px}
+.tag{font-size:12px;font-weight:650;white-space:nowrap}
+.good{color:var(--ok)}
+.warn{color:var(--accent)}
+.switch-box{display:flex;align-items:center;gap:8px;flex:none}
+.switch{width:44px;padding:0;display:grid;place-items:center;background:transparent;border:0}
+.track{width:44px;height:24px;display:block;position:relative;background:var(--bg3);border:1px solid var(--muted);border-radius:12px}
+.track::after{content:"";position:absolute;top:1px;left:1px;width:20px;height:20px;border-radius:50%;background:var(--text)}
+.switch[aria-checked=true] .track{background:var(--ok);border-color:var(--ok)}
+.switch[aria-checked=true] .track::after{left:21px;background:var(--bg)}
+.mode{background:var(--bg3)}
+.mode .track{background:var(--bg2)}
+.mode .setting-row{padding-bottom:8px}
+.mode-note,.mode-action{padding:0 16px 12px}
+.mode-note{font-size:12px}
+.mode-action button{background:var(--bg2)}
+.status{font-size:12px;color:var(--accent)}
+.status:not(:empty){padding:0 16px 12px}
+dialog{width:calc(100% - 32px);max-width:420px;max-height:calc(100% - 32px);padding:16px;margin:auto;color:var(--text);background:var(--bg2);border:1px solid var(--muted);border-radius:12px}
+dialog::backdrop{background:rgba(15,17,21,.85)}
+dialog h2{color:var(--text);font-size:17px;padding:0}
+dialog p{margin-top:8px}
+.confirm-safety{padding:8px 12px;background:var(--bg3);border-radius:8px}
+.dialog-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.primary{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:700}
+[hidden]{display:none!important}
+@media(min-width:900px){main{max-width:1024px;padding-left:24px;padding-right:24px}.comparison,.fixture-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">StockInvest · T-154 v1 검토용</p>
+    <h1>설정</h1>
+    <p class="caption">자동승인모드 추가 · 아래 설정값과 결과는 모두 데모용입니다.</p>
+  </header>
+
+  <section class="fixture" aria-labelledby="fixtures">
+    <h3 id="fixtures">데모 상황 선택</h3>
+    <div class="fixture-grid">
+      <label>처음 읽은 상태
+        <select id="scenario">
+          <option value="virtual">운영자 · 승인형 · 실거래 OFF</option>
+          <option value="live">운영자 · 승인형 · 실거래 ON</option>
+          <option value="blocked">운영자 · 승인형 · 모든거래차단 ON</option>
+          <option value="auto">운영자 · 자동형 · 실거래 OFF</option>
+          <option value="manual">운영자 · 기존 수동형</option>
+          <option value="unread">안전 설정 조회 실패</option>
+          <option value="readonly">변경 권한 없음 · 승인형</option>
+        </select>
+      </label>
+      <label>다음 저장 응답
+        <select id="outcome">
+          <option value="success">성공 · 적용 모드 확인</option>
+          <option value="failed">실패 · 재조회로 이전 모드 확인</option>
+          <option value="unknown">저장 결과 및 재조회 확인 실패</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <div class="comparison">
+    <section aria-labelledby="proposal">
+      <h2 class="variant" id="proposal">제안 · 토글을 눌러 보세요</h2>
+      <h2 id="safety">안전장치 (공통)</h2>
+      <div class="card" aria-labelledby="safety">
+        <p class="enforced">● 집행 중 · 주문에 적용되는 설정</p>
+        <div class="setting-row"><div class="setting-copy"><h3>실거래여부</h3><p id="live-desc" class="desc"></p></div><span id="live-tag" class="tag"></span></div>
+        <div class="setting-row"><div class="setting-copy"><h3>모든거래차단</h3><p id="block-desc" class="desc"></p></div><span id="block-tag" class="tag"></span></div>
+        <div class="setting-row"><div class="setting-copy"><h3>자동 청산 엔진</h3><p id="exit-desc" class="desc"></p></div><span id="exit-tag" class="tag"></span></div>
+        <div id="approval-mode" class="mode">
+          <div class="setting-row">
+            <div class="setting-copy"><h3 id="mode-name">자동승인모드</h3><p class="desc" id="mode-desc"></p></div>
+            <div class="switch-box">
+              <span id="mode-tag" class="tag"></span>
+              <button type="button" id="toggle" class="switch" role="switch" aria-checked="false" aria-labelledby="mode-name" aria-describedby="mode-desc mode-note"><span class="track" aria-hidden="true"></span></button>
+            </div>
+          </div>
+          <p id="mode-note" class="mode-note caption"></p>
+          <div class="mode-action" id="mode-action" hidden><button type="button" id="action"></button></div>
+          <p class="status" id="status" role="status" aria-atomic="true"></p>
+        </div>
+        <div class="setting-row after"><div class="setting-copy"><h3>손실한도 손절</h3><p class="desc">읽기 전용 표시</p></div><span id="stop-tag" class="tag"></span></div>
+      </div>
+    </section>
+    <section aria-labelledby="current">
+      <h2 class="variant" id="current">현재 · 비교용</h2>
+      <h2>안전장치 (공통)</h2>
+      <div class="card">
+        <p class="enforced">● 집행 중 · 주문에 적용되는 설정</p>
+        <div class="setting-row"><div class="setting-copy"><h3>실거래여부</h3><p class="desc">실거래 차단(기록만)</p></div><span class="tag good">OFF</span></div>
+        <div class="setting-row"><div class="setting-copy"><h3>모든거래차단</h3><p class="desc">이 스위치로는 막지 않음</p></div><span class="tag good">OFF</span></div>
+        <div class="setting-row"><div class="setting-copy"><h3>자동 청산 엔진</h3><p class="desc">손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 자동 매도 동작 중</p></div><span class="tag good">ON</span></div>
+        <div class="setting-row"><div class="setting-copy"><h3>손실한도 손절</h3><p class="desc">읽기 전용 표시</p></div><span class="tag good">ON</span></div>
+      </div>
+    </section>
+  </div>
+
+  <aside class="notes">
+    <h3>함께 확인할 설명</h3>
+    <p class="caption">‘승인 후 진입 감시’는 승인한 주문을 언제 넣을지 정합니다. ‘자동승인모드’는 새 시그널에 사람 승인이 필요한지 정합니다. 손실한도 손절과 장마감 전 손절의 자동 제출은 기존대로 청산 엔진 설정을 따릅니다.</p>
+  </aside>
+</main>
+
+<dialog id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-desc confirm-safety">
+  <h2 id="confirm-title">자동승인모드를 켤까요?</h2>
+  <p id="confirm-desc">국내·해외에서 자동 제출 조건을 충족한 새 시그널은 사람 승인 없이 주문을 제출합니다. 기존 주문 한도와 안전장치는 계속 적용됩니다.</p>
+  <p id="confirm-safety" class="confirm-safety"></p>
+  <div class="dialog-actions">
+    <button type="button" id="cancel" autofocus>취소</button>
+    <button type="button" id="confirm-on" class="primary">자동형으로 저장</button>
+  </div>
+</dialog>
+
+<script>
+const el=id=>document.getElementById(id);
+const toggle=el('toggle'), dialog=el('confirm'), action=el('action');
+let mode, confirmedMode, live, block, editor, pending, intent, timer;
+const tag=(id,value,kind='')=>{el(id).textContent=value;el(id).className='tag '+kind};
+const status=message=>el('status').textContent=message;
+function render(){
+  const known=mode!==null, normal=mode==='assist'||mode==='auto', isAuto=mode==='auto';
+  const lock=()=>known?'ON':'—';
+  tag('exit-tag',lock(),known?'good':'');tag('stop-tag',lock(),known?'good':'');
+  tag('live-tag',!known?'—':live?'ON':'OFF',known?(live?'warn':'good'):'');
+  tag('block-tag',!known?'—':block?'ON':'OFF',known?(block?'warn':'good'):'');
+  el('live-desc').textContent=!known?'현재 상태를 읽지 못했습니다.':live?'실제 주문 가능':'가상 주문 · 실제 송신 없음';
+  el('block-desc').textContent=!known?'현재 상태를 읽지 못했습니다.':block?'모든 주문 차단':'이 스위치로는 막지 않음';
+  el('exit-desc').textContent=known?'손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 시그널 판단 중':'현재 상태를 읽지 못했습니다.';
+  tag('mode-tag',normal?(isAuto?'ON':'OFF'):known?'수동형':'잠김',isAuto?'good':known?'':'warn');
+  toggle.hidden=!normal;
+  toggle.setAttribute('aria-checked',String(isAuto));
+  toggle.setAttribute('aria-disabled',String(pending||!editor||!normal));
+  el('mode-desc').textContent=isAuto?'자동형 · 조건을 충족한 새 시그널은 승인 없이 제출':mode==='assist'?'승인형 · 승인한 시그널의 주문을 제출':known?'현재 수동형 · 기존 설정을 유지합니다.':'현재 모드를 확인할 수 없어 변경할 수 없습니다.';
+  el('mode-note').textContent=pending?'처리 중에는 모드를 바꿀 수 없습니다.':!known?'안전 설정을 다시 읽은 뒤 변경할 수 있습니다.':!editor?'변경 권한이 없습니다. 현재 모드만 볼 수 있습니다.':isAuto?(live?'실거래 ON · 실제 주문 가능':'실거래 OFF · 가상 주문')+(block?' · 모든거래차단 ON':'')+' · 국내·해외 공통':normal?'국내·해외 공통 · 손실한도 손절과 장마감 전 손절은 기존 자동 제출 규칙을 따릅니다.':'국내·해외 공통 · 승인형으로 바꾸면 자동승인모드가 OFF로 표시됩니다.';
+  el('mode-action').hidden=normal||(known&&!editor);
+  action.textContent=known?'승인형으로 변경':'다시 읽기';
+  action.setAttribute('aria-disabled',String(pending));
+}
+function reset(){
+  clearTimeout(timer);
+  const value=el('scenario').value;
+  confirmedMode=value==='manual'?'manual':value==='auto'?'auto':'assist';
+  mode=value==='unread'?null:confirmedMode;
+  live=value==='live'||value==='blocked'; block=value==='blocked';editor=value!=='readonly';pending=false;
+  render();status('');
+}
+function save(next){
+  if(pending||!editor||mode===null) return;
+  const outcome=el('outcome').value;
+  const wasManual=mode==='manual';
+  pending=true;render();status('저장 중 · 현재 표시를 유지합니다.');
+  timer=setTimeout(()=>{
+    if(outcome==='success') {confirmedMode=next;mode=next;status(next==='auto'?'자동형으로 저장했습니다.':'승인형으로 저장했습니다.');}
+    if(outcome==='failed'){mode=confirmedMode;status('저장하지 못했습니다. 다시 읽어 이전 모드가 유지된 것을 확인했습니다.');}
+    if(outcome==='unknown'){mode=null;status('저장 결과를 확인하지 못했습니다. 안전 설정을 다시 읽으세요.');}
+    pending=false;render();
+    if(outcome==='unknown') action.focus();
+    if(outcome==='success'&&wasManual) toggle.focus();
+  },420);
+}
+toggle.addEventListener('click',()=>{
+  if(pending||!editor||mode===null||mode==='manual')return;
+  if(mode==='auto'){save('assist');return;}
+  el('confirm-safety').textContent=(live?'실거래여부 ON → 실제 주문 가능':'실거래여부 OFF → 가상 주문')+(block?' · 현재 모든거래차단 ON: 주문 차단':'');
+  intent=false;dialog.showModal();el('cancel').focus();
+});
+toggle.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.repeat)e.preventDefault()});
+el('cancel').addEventListener('click',()=>dialog.close());
+el('confirm-on').addEventListener('click',()=>{intent=true;dialog.close()});
+dialog.addEventListener('close',()=>{
+  toggle.focus();
+  if(intent)save('auto');
+  else status('자동형 전환을 취소했습니다. 현재 모드가 유지됩니다.');
+});
+action.addEventListener('click',()=>{
+  if(pending)return;
+  if(mode==='manual'){save('assist');return;}
+  if(mode!==null)return;
+  pending=true;render();status('안전 설정을 다시 읽는 중입니다.');
+  timer=setTimeout(()=>{mode=confirmedMode;pending=false;render();status('현재 모드를 다시 읽었습니다.');if(mode==='manual')action.focus();else toggle.focus()},420);
+});
+el('scenario').addEventListener('change',reset);
+reset();
+</script>
+</body>
+</html>

@@ -13,14 +13,8 @@ import { OverseasUniverseSummaryRow } from './OverseasUniverseSummaryRow';
 import { AppSection } from './AppSection';
 import { EnforcedStrip } from '@/components/risk/EnforcedStrip';
 import { liveTradingFromDryRun, dryRunFromLiveTrading, LIVE_TRADING_LABEL } from '@/lib/safety/live-trading';
+import type { AutopilotMode } from '@/lib/signals/autopilot';
 
-/**
- * T-108 — 손실한도 손절 기본 임계(%) 안내 문구용. `@/lib/risk/defaults` 의 `EXIT_ENGINE_DEFAULT_HARD_STOP_PCT`·
- * `@/lib/strategy/style.ts` 의 `DEFAULT_STYLE_CONFIG.hardStopPct` 와 같은 값이다. 이 화면은 risk 모듈을 import 할 수 없고
- * (`risk/__tests__/isolation.test.ts` 가 import 2줄을 고정), style.ts 는 DB 모듈을 끌고 와 클라이언트에서 쓸 수 없어 여기 둔다.
- * 세 값이 어긋나면 `settings-live-trading-t108.test.ts` 가 실패한다. 실제 적용값은 운영 설정이 바꿀 수 있어 「기본」이라고 쓴다.
- */
-export const HARD_STOP_DEFAULT_PCT = 1.5;
 /** 안전 값을 못 읽었을 때(safety 없음) — OFF·ON 어느 쪽도 단정하지 않는다(R-UI ①) */
 const SAFETY_UNREAD = '값을 읽지 못했습니다 — 지금 상태를 알 수 없습니다';
 
@@ -146,7 +140,7 @@ export async function patchSetting(url: string, body: unknown): Promise<SaveFail
  *  - 행 전체를 누르게 하지 않는다(스크롤 중 실거래여부·모든거래차단 오조작 방지 — 데모 D2-A). 이 버튼 안에 다른 버튼·입력칸을 넣지 않는다.
  *  - `label` = 행 제목 그대로(스크린리더가 「실거래여부, 스위치, 꺼짐」처럼 읽는다). 포커스 링은 브라우저 기본 `:focus-visible` 을 지우지 않는다.
  */
-function Toggle({ checked, onChange, danger, disabled, label }: { checked: boolean; onChange: (v: boolean) => void; danger?: boolean; disabled?: boolean; label: string }) {
+function Toggle({ checked, onChange, danger, disabled, label, descriptionId }: { checked: boolean; onChange: (v: boolean) => void; danger?: boolean; disabled?: boolean; label: string; descriptionId?: string }) {
   return (
     <button
       type="button"
@@ -154,6 +148,7 @@ function Toggle({ checked, onChange, danger, disabled, label }: { checked: boole
       aria-checked={checked}
       aria-disabled={disabled ? true : undefined}
       aria-label={label}
+      aria-describedby={descriptionId}
       onClick={() => { if (!disabled) onChange(!checked); }}
       onKeyDown={e => { if (e.key === 'Enter' && e.repeat) e.preventDefault(); }}
       style={{
@@ -180,6 +175,140 @@ function Toggle({ checked, onChange, danger, disabled, label }: { checked: boole
     </button>
   );
 }
+
+const AUTOPILOT_URL = '/api/settings/safety/autopilot';
+
+interface AutopilotSnapshot {
+  ok: true;
+  mode: AutopilotMode | null;
+  dryRun: boolean;
+  killSwitch: boolean;
+}
+
+function isAutopilotSnapshot(data: unknown): data is AutopilotSnapshot {
+  if (!data || typeof data !== 'object') return false;
+  const { ok, mode, dryRun, killSwitch } = data as Record<string, unknown>;
+  return ok === true && (mode === null || mode === 'assist' || mode === 'auto' || mode === 'manual')
+    && typeof dryRun === 'boolean' && typeof killSwitch === 'boolean';
+}
+
+async function readAutopilot() {
+  const result = await requestJson(AUTOPILOT_URL, { cache: 'no-store' });
+  return result.ok && isAutopilotSnapshot(result.data) ? result.data : null;
+}
+
+function tradingModeText({ dryRun, killSwitch }: AutopilotSnapshot): string {
+  const trading = dryRun ? '실거래여부 OFF · 가상 주문' : '실거래여부 ON · 실제 주문 가능';
+  return killSwitch ? `${trading} · 모든거래차단 ON` : trading;
+}
+
+function AutoApprovalModeRow() {
+  const [snapshot, setSnapshot] = useState<AutopilotSnapshot | null>(null);
+  const [confirmation, setConfirmation] = useState<AutopilotSnapshot | null>(null);
+  const [pending, setPending] = useState(true);
+  const [notice, setNotice] = useState('');
+  const inFlight = useRef(false);
+  const dialog = useRef<HTMLDialogElement>(null);
+
+  const reload = useCallback(async (confirmAuto = false) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    setNotice('');
+    const current = await readAutopilot();
+    setSnapshot(current);
+    if (confirmAuto && current?.mode === 'assist') setConfirmation(current);
+    inFlight.current = false;
+    setPending(false);
+  }, []);
+
+  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => {
+    if (confirmation && dialog.current && !dialog.current.open) dialog.current.showModal();
+  }, [confirmation]);
+
+  async function save(mode: 'assist' | 'auto', expected: AutopilotSnapshot) {
+    if (inFlight.current || !expected.mode) return;
+    inFlight.current = true;
+    setPending(true);
+    setNotice('저장 중입니다.');
+    const result = await requestJson(AUTOPILOT_URL, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, expectedMode: expected.mode, expectedDryRun: expected.dryRun, expectedKillSwitch: expected.killSwitch }),
+    });
+    if (result.ok && isAutopilotSnapshot(result.data) && result.data.mode === mode) {
+      setSnapshot(result.data);
+      setNotice(mode === 'auto' ? '자동형으로 저장했습니다.' : '승인형으로 저장했습니다. 이미 생성된 자동 시그널의 주문은 계속 처리될 수 있습니다.');
+    } else {
+      const current = await readAutopilot();
+      setSnapshot(current);
+      setNotice(current?.mode
+        ? '저장 응답을 확인하지 못해 현재 모드를 다시 읽었습니다.'
+        : '저장 결과를 확인하지 못했습니다. 다시 읽어 주세요.');
+    }
+    inFlight.current = false;
+    setPending(false);
+  }
+
+  const mode = snapshot?.mode;
+  const checked = mode === 'auto';
+  const isToggle = mode === 'auto' || mode === 'assist';
+  const modeText = checked ? '자동형 · 조건을 충족한 새 시그널은 승인 없이 제출'
+    : mode === 'assist' ? '승인형 · 승인한 시그널의 주문을 제출'
+    : mode === 'manual' ? '현재 수동형'
+    : pending ? '자동승인모드를 읽는 중입니다.' : '현재 모드를 읽지 못했습니다.';
+
+  return (
+    <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14 }}>자동승인모드</div>
+          <div id="auto-approval-mode-description" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+            {modeText}
+          </div>
+        </div>
+        {isToggle && snapshot && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: checked ? 'var(--ok)' : 'var(--muted)' }}>{checked ? 'ON' : 'OFF'}</span>
+            <Toggle label="자동승인모드" descriptionId="auto-approval-mode-description" checked={checked} disabled={pending}
+              onChange={enabled => { if (enabled) void reload(true); else void save('assist', snapshot); }} />
+          </div>
+        )}
+      </div>
+      {snapshot && checked && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{tradingModeText(snapshot)} · 국내·해외 공통</div>}
+      {(!mode || mode === 'manual') && !pending && (
+        <button type="button" style={autoApprovalButtonStyle}
+          onClick={() => { if (mode === 'manual' && snapshot) void save('assist', snapshot); else void reload(); }}>
+          {mode === 'manual' ? '승인형으로 변경' : '다시 읽기'}
+        </button>
+      )}
+      {notice && <div role="status" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{notice}</div>}
+      {confirmation && (
+        <dialog ref={dialog} aria-labelledby="auto-approval-confirm-title" aria-describedby="auto-approval-confirm-text"
+          onClose={() => setConfirmation(null)} onCancel={() => setNotice('자동형 전환을 취소했습니다.')}
+          style={{ width: 'calc(100% - 32px)', maxWidth: 420, padding: 16, borderRadius: 12, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--muted)' }}>
+          <h2 id="auto-approval-confirm-title" style={{ margin: '0 0 8px', fontSize: 17 }}>자동승인모드를 켤까요?</h2>
+          <div id="auto-approval-confirm-text" style={{ fontSize: 13, lineHeight: 1.5 }}>
+            국내·해외 신규 시그널의 주문이 조건을 충족하면 승인 없이 제출됩니다.
+            <div style={{ fontWeight: 600, marginTop: 8 }}>{tradingModeText(confirmation)}</div>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
+            <button type="button" autoFocus style={autoApprovalButtonStyle}
+              onClick={() => { setNotice('자동형 전환을 취소했습니다.'); dialog.current?.close(); }}>취소</button>
+            <button type="button" style={autoApprovalButtonStyle}
+              onClick={() => { dialog.current?.close(); void save('auto', confirmation); }}>자동형으로 저장</button>
+          </div>
+        </dialog>
+      )}
+    </div>
+  );
+}
+
+const autoApprovalButtonStyle = {
+  minHeight: 44, marginTop: 8, padding: '0 12px', borderRadius: 8,
+  background: 'var(--bg3)', color: 'var(--text)', border: '1px solid var(--border)', cursor: 'pointer',
+};
 
 /**
  * T-101 — 안전장치 카드의 '해외 장마감 후 분석' 행. 모양은 같은 카드의 실거래·KILL_SWITCH·자동 청산 행과 같고,
@@ -501,10 +630,8 @@ export function SettingsPage() {
                  UI 의 거짓 안전 보장은 모호한 문구보다 나쁘므로 예외를 눈에 띄게 명시한다.
             */}
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
-              ℹ️ 이 설정은 <b>승인한 주문을 언제 넣을지</b>만 정합니다. 어느 쪽이든{' '}
-              <b>신규 진입(매수) 주문은 사람이 승인해야 나갑니다.</b> 승인 없이 신규 진입을
-              자동 주문하는 동작은 이 스위치로는 절대 켜지지 않고, 별도의 자동조종 설정
-              (<code>autopilot_mode</code>)에서만 켤 수 있습니다.
+              이 설정은 <b>승인한 주문을 언제 넣을지</b> 정합니다. 새 시그널의 주문에 사람이 승인할지는
+              아래 <b>자동승인모드</b>에서 설정합니다.
             </div>
             {/*
               🔕 T-015 — 이 안내는 **자동 청산 엔진이 켜져 있을 때만 참**이다.
@@ -530,7 +657,7 @@ export function SettingsPage() {
                 ⚠️ <b>예외 — 보유 종목 보호 청산은 승인 없이 즉시 주문됩니다.</b><br />
                 손실한도 손절과 장마감 전 손절 매도는 <b>이 설정·자동조종 모드와 무관하게</b> 자동
                 제출됩니다. 손실이 커지는 것을 막는 기능이라 사람의 응답을 기다리지 않습니다.
-                (목표 익절·트레일링 스탑 매도는 일반 승인 경로를 따릅니다.)
+                (목표 익절·트레일링 스탑 매도는 현재 주문 모드를 따릅니다.)
               </div>
             )}
           </div>
@@ -642,7 +769,7 @@ export function SettingsPage() {
                 {!safety
                   ? SAFETY_UNREAD
                   : safety.exitEngineEnabled
-                  ? `ON — 손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 자동 매도 동작 중${safety?.exitHardStopEnabled === false ? ' (손실한도 손절만 개별 OFF)' : ''}`
+                  ? `ON — 손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 시그널 판단 중${safety.exitHardStopEnabled === false ? ' (손실한도 손절만 개별 OFF)' : ''}`
                   : 'OFF — 자동 손절·익절 매도 주문을 내지 않습니다'}
               </div>
             </div>
@@ -691,19 +818,7 @@ export function SettingsPage() {
           )}
         </div>
 
-        {/* T-108 §2.6 — 손실한도 손절(hard_stop 하위 스위치) 읽기 전용 줄. 값은 GET 응답 exitHardStopEnabled 그대로이고,
-            설정 API(PATCH) 대상이 아니다 — 토글을 두지 않는다. */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 14 }}>손실한도 손절</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-              손실이 한도(기본 −{HARD_STOP_DEFAULT_PCT}%)에 닿으면 바로 매도 · 읽기 전용 표시 — 설정 API 대상 아님
-            </div>
-          </div>
-          <span style={{ fontSize: 12, fontWeight: 600, flexShrink: 0, color: safety?.exitHardStopEnabled === true ? 'var(--ok)' : '#f59e0b' }}>
-            {safety?.exitHardStopEnabled === true ? 'ON' : safety?.exitHardStopEnabled === false ? 'OFF' : '—'}
-          </span>
-        </div>
+        <AutoApprovalModeRow />
 
         {/* T-101 해외 장마감 후 분석 — 같은 카드의 토글들처럼 즉시 저장, 실패 시 서버 값으로 되돌림 */}
         <PostMarketOverseasRow

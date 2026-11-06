@@ -43,7 +43,9 @@ function setupDb() {
     if (/UPDATE signals/.test(sql)) return [{ affectedRows: 1 }];
     return [[]];
   });
-  (getPool as jest.Mock).mockReturnValue({ query });
+  (getPool as jest.Mock).mockReturnValue({ query, getConnection: async () => ({
+    query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {},
+  }) });
 }
 
 async function flush() { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); }

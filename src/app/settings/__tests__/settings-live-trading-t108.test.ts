@@ -4,7 +4,7 @@
  *  - 「실거래여부」(ON = 실거래 가능) 토글: 화면 방향은 내부 dryRun 과 반대지만 **PATCH 본문 키·값은 이전과 같다**
  *    (ON → `{ dryRun: false }`, OFF → `{ dryRun: true }`). 방향 변환은 `src/lib/safety/live-trading.ts` 한 곳.
  *  - 「모든거래차단」 토글: PATCH 본문 `{ killSwitch: v }` 그대로.
- *  - 손실한도 손절은 읽기 전용 줄(토글 없음) · 자동매매 자금 2행은 이동 전용(조회·저장 없음).
+ *  - 손실한도 손절 상태는 청산 엔진 설명에 표시 · 자동매매 자금 2행은 이동 전용(조회·저장 없음).
  *
  * 방식은 `settings-post-market-overseas.test.ts` 와 같다(jsdom 없음): useState 만 감싸 조회 뒤 값을 넣고,
  * 직접 호출 모드에서 `SettingsPage()` 가 돌려준 요소 트리의 토글 `onChange` 를 불러 실제 autoSave 경로를 탄다.
@@ -40,9 +40,7 @@ jest.mock('next/navigation', () => ({ useRouter: () => ({ push: jest.fn() }), us
 
 (globalThis as unknown as { React: typeof ReactNS }).React = ReactNS;
 
-import { SettingsPage, HARD_STOP_DEFAULT_PCT } from '@/app/settings/SettingsPage';
-import { EXIT_ENGINE_DEFAULT_HARD_STOP_PCT } from '@/lib/risk/defaults';
-import { DEFAULT_STYLE_CONFIG } from '@/lib/strategy/style';
+import { SettingsPage } from '@/app/settings/SettingsPage';
 
 function baseSafety(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -149,30 +147,24 @@ describe('문구 — 이름과 방향 표시', () => {
     expect(t).not.toMatch(/OFF — 실거래 차단|OFF — 이 스위치로는 막지 않음|OFF — 차단 안 함|OFF — 자동 손절/);
     expect(t).not.toContain('실거래여부가 ON 입니다');
   });
-  test('손실한도 손절 기본 임계 상수 = risk/defaults = style.ts 기본값 (드리프트 방지)', () => {
-    expect(HARD_STOP_DEFAULT_PCT).toBe(EXIT_ENGINE_DEFAULT_HARD_STOP_PCT);
-    expect(HARD_STOP_DEFAULT_PCT).toBe(DEFAULT_STYLE_CONFIG.hardStopPct);
-  });
-  test('자동 청산 엔진 설명 + 손실한도 손절 읽기 전용 줄(엔진 아래·해외 장마감 후 분석 앞)', () => {
-    const t = text(renderPage(baseSafety()));
-    // T-130 10a(D8-A) — 청산 이름 「트레일링 스탑」·「목표 익절」
-    expect(t).toContain('ON — 손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 자동 매도 동작 중 (손실한도 손절만 개별 OFF)');
-    const exit = t.indexOf('자동 청산 엔진');
-    const hard = t.indexOf('손실한도 손절 손실이 한도(기본 −1.5%)에 닿으면 바로 매도 · 읽기 전용 표시 — 설정 API 대상 아님 OFF');
-    const pmo = t.indexOf('해외 장마감 후 분석 (미국 시나리오)');
-    expect(hard).toBeGreaterThan(exit);
-    expect(pmo).toBeGreaterThan(hard);
-    expect(text(renderPage(baseSafety({ exitHardStopEnabled: true })))).toContain('설정 API 대상 아님 ON');
-  });
-  test('손실한도 손절 줄에는 토글이 없다(읽기 전용) — 라벨부터 다음 행(해외 장마감 후 분석) 사이에 스위치 0개', () => {
+  test('청산 엔진에 하위 손절 OFF를 표시하고 별도의 손실한도 손절 행을 그리지 않는다', () => {
     const html = renderPage(baseSafety());
-    const from = html.indexOf('>손실한도 손절</div>');
-    const to = html.indexOf('해외 장마감 후 분석 (미국 시나리오)');
-    expect(from).toBeGreaterThan(-1);
-    expect(to).toBeGreaterThan(from);
-    expect(html.slice(from, to)).not.toContain('role="switch"');
-    // 대조: 바로 앞 자동 청산 엔진 행에는 스위치가 있다(이 검사가 빈 구간을 보는 게 아님)
-    expect(html.slice(html.indexOf('>자동 청산 엔진</div>'), from)).toContain('role="switch"');
+    const t = text(html);
+    // T-130 10a(D8-A) — 청산 이름 「트레일링 스탑」·「목표 익절」
+    expect(t).toContain('ON — 손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 시그널 판단 중 (손실한도 손절만 개별 OFF)');
+    expect(html).not.toContain('>손실한도 손절</div>');
+    const enabled = renderPage(baseSafety({ exitHardStopEnabled: true }));
+    expect(enabled).not.toContain('>손실한도 손절</div>');
+    expect(text(enabled)).not.toContain('손실한도 손절만 개별 OFF');
+  });
+  test('자동승인모드 행은 자동 청산 엔진 다음에 있고 서버 값을 읽기 전에는 토글을 그리지 않는다', () => {
+    const html = renderPage(baseSafety());
+    const engine = html.indexOf('>자동 청산 엔진</div>');
+    const mode = html.indexOf('>자동승인모드</div>');
+    expect(engine).toBeGreaterThan(-1);
+    expect(mode).toBeGreaterThan(engine);
+    expect(html.indexOf('해외 장마감 후 분석 (미국 시나리오)')).toBeGreaterThan(mode);
+    expect(html).not.toContain('aria-label="자동승인모드"');
   });
   test('자동매매 자금 — 운용액 배정(누를 곳 없음) · 손익 기준(→ /settings/cash-ledger), 안전장치 카드 아래·거래 보호 앞', () => {
     const html = renderPage(baseSafety());

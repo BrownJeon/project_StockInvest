@@ -178,7 +178,9 @@ function setupMockDB(opts: MockOpts = {}): Captured {
     throw new Error(`unexpected SQL: ${sql}`);
   });
 
-  (getPool as jest.Mock).mockReturnValue({ query });
+  (getPool as jest.Mock).mockReturnValue({ query, getConnection: async () => ({
+    query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {},
+  }) });
   (getAccountId as jest.Mock).mockResolvedValue(1);
   return cap;
 }

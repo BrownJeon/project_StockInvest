@@ -19,6 +19,7 @@ import {
   type ValidationGateVerdict,
 } from '@/lib/safety/validation-gate';
 import { COOLDOWN_TTL_MIN, claimCooldown, type CooldownClaimOutcome } from '@/lib/strategy/cooldowns';
+import { parseStoredAutopilotMode } from './autopilot';
 import {
   type EngineSwitches,
   type RouterConfig,
@@ -590,7 +591,7 @@ export async function createSignal(
 
   // T-003 §4-1 전이표 — ENGINE_ENABLED × AUTOPILOT_MODE 가 status·주문 경로를 결정한다.
   // (구 hybrid_mode_enabled 는 getEngineSwitches 안에서 autopilot_mode 로 이관·폴백된다)
-  const decision = routeSignal(input, cfg, switches);
+  let decision = routeSignal(input, cfg, switches);
 
   // AI 결과가 있으면 scenario 카드 생성 후 indicators에 merge
   let enrichedIndicators = input.indicators;
@@ -612,34 +613,9 @@ export async function createSignal(
       }
     }
   }
-  const initialStatus = decision.status;
-  if (decision.demoted) {
-    console.log(
-      `[signal-route] ${input.symbol} ${input.side} auto→assist 격하: ` +
-      `금액 ${Math.round(input.amountKRW)} > SIGNAL_AUTO_SUBMIT_MAX_KRW`,
-    );
-  }
   const pool = getPool();
   const { getMarketFromSymbol } = await import('@/lib/exchanges/kis-symbols');
   const market = getMarketFromSymbol(input.symbol);
-
-  // 동일 심볼+방향의 활성 시그널 중복 방지:
-  // 승인 대기 상태(신규 awaiting_approval + 구 pending/pending_approval)와 manual 모드의
-  // 관측 기록(detected)이 이미 있으면 생성하지 않는다.
-  // (exit-engine tick 중복, 룰 재발화 중복 모두 차단)
-  if (decision.route !== 'auto_submit') {
-    const [dup] = await pool.query<RowDataPacket[]>(
-      `SELECT id FROM signals
-       WHERE symbol = ? AND side = ? AND status IN (${sqlStatusList([...AWAITING_APPROVAL_STATUSES, 'detected'])})
-         AND expires_at > NOW()
-       LIMIT 1`,
-      [input.symbol, input.side],
-    );
-    if ((dup as RowDataPacket[]).length > 0) {
-      const dupId = (dup as RowDataPacket[])[0].id as number;
-      return { ok: false, signalId: dupId, autoSubmitted: false, error: 'duplicate_active_signal', errorCode: 'duplicate_active_signal' };
-    }
-  }
 
   // 🔴 T-097 — `indicators.sizing` 기록(수량·단가·실현액·한도 기준 금액). 주문 경로와 **같은** `buildOrderRequest`(옵션 없음)로 계산한다.
   //    기록 전용이다: 실패해도 시그널 생성·`amount_krw`·이후 주문 경로는 그대로이고 `sizing` 키만 빠진다.
@@ -653,27 +629,68 @@ export async function createSignal(
     console.warn(`[signal-sizing] indicators.sizing 기록 생략 ${input.symbol}:`, e instanceof Error ? e.message : String(e));
   }
 
-  const [ins] = await pool.query<ResultSetHeader>(
-    `INSERT INTO signals
-     (strategy_id, symbol, side, order_type, price, quantity, amount_krw,
-      reasoning, indicators, status, expires_at, market)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.strategyId ?? null,
-      input.symbol,
-      input.side,
-      input.orderType,
-      input.price ?? null,
-      input.quantity ?? null,
-      input.amountKRW,
-      input.reasoning ?? null,
-      enrichedIndicators != null ? JSON.stringify(enrichedIndicators) : null,
-      initialStatus,
-      decision.expiresAt,
-      market,
-    ],
-  );
-  const signalId = ins.insertId;
+  async function persistSignal(db: Pick<typeof pool, 'query'>): Promise<{ id: number; duplicate: boolean }> {
+    // 기존 승인 대기·수동 관측 기록은 동일 심볼과 방향으로 중복 생성하지 않는다.
+    if (decision.route !== 'auto_submit') {
+      const [duplicates] = await db.query<RowDataPacket[]>(
+        `SELECT id FROM signals
+         WHERE symbol = ? AND side = ? AND status IN (${sqlStatusList([...AWAITING_APPROVAL_STATUSES, 'detected'])})
+           AND expires_at > NOW()
+         LIMIT 1`,
+        [input.symbol, input.side],
+      );
+      if (duplicates.length > 0) return { id: Number(duplicates[0].id), duplicate: true };
+    }
+    const [insert] = await db.query<ResultSetHeader>(
+      `INSERT INTO signals
+       (strategy_id, symbol, side, order_type, price, quantity, amount_krw,
+        reasoning, indicators, status, expires_at, market)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [input.strategyId ?? null, input.symbol, input.side, input.orderType, input.price ?? null,
+        input.quantity ?? null, input.amountKRW, input.reasoning ?? null,
+        enrichedIndicators != null ? JSON.stringify(enrichedIndicators) : null,
+        decision.status, decision.expiresAt, market],
+    );
+    return { id: insert.insertId, duplicate: false };
+  }
+
+  let stored: Awaited<ReturnType<typeof persistSignal>>;
+  if (!decision.forcedExit) {
+    // T-154 — 시그널 등록은 공유 잠금, 모드 변경은 같은 행의 배타 잠금을 쓴다.
+    // 전환 후 등록하는 시그널은 먼저 읽었던 값과 관계없이 새 모드를 따른다.
+    // 거래소 송신은 이 트랜잭션을 커밋하고 커넥션을 반환한 뒤 수행한다.
+    const connection = await pool.getConnection();
+    let committed = false;
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.query<(RowDataPacket & { value: string })[]>(
+        'SELECT value FROM system_config WHERE `key` = ? LOCK IN SHARE MODE', ['autopilot_mode'],
+      );
+      const mode = rows.length === 0 && switches.source === 'env'
+        ? switches.autopilotMode
+        : parseStoredAutopilotMode(rows[0]?.value) ?? 'assist';
+      if (mode !== switches.autopilotMode) decision = routeSignal(input, cfg, { ...switches, autopilotMode: mode });
+      stored = await persistSignal(connection);
+      await connection.commit();
+      committed = true;
+    } finally {
+      if (!committed) await connection.rollback().catch(() => connection.destroy());
+      connection.release();
+    }
+  } else {
+    stored = await persistSignal(pool);
+  }
+  if (decision.demoted) {
+    console.log(
+      `[signal-route] ${input.symbol} ${input.side} auto→assist 격하: ` +
+      `금액 ${Math.round(input.amountKRW)} > SIGNAL_AUTO_SUBMIT_MAX_KRW`,
+    );
+  }
+  const signalId = stored.id;
+  if (stored.duplicate) {
+    return { ok: false, signalId, autoSubmitted: false, error: 'duplicate_active_signal', errorCode: 'duplicate_active_signal' };
+  }
+  const initialStatus = decision.status;
 
   // Phase AB — RAG 인덱싱 (fire-and-forget, 실패 시 main flow 영향 없음)
   // D-12: dynamic import 실패 silently 무시 X — warn 로그로 진단 가능하게

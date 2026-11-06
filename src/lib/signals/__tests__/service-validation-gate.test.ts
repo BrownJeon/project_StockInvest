@@ -63,6 +63,8 @@ interface World {
   events: string[];
   signalInserts: Array<{ sql: string; params: unknown[] }>;
   paper: Map<unknown, unknown[]>;
+  lockedMode: string | null;
+  transactionEvents: string[];
 }
 let w: World;
 
@@ -101,13 +103,21 @@ function setupDb() {
     }
     if (/INSERT INTO signals/.test(sql)) { w.signalInserts.push({ sql, params }); return [{ insertId: nextSignal++ }]; }
     if (/FROM system_config WHERE `key` = \?/.test(sql)) {
+      if (params[0] === 'autopilot_mode' && sql.endsWith('LOCK IN SHARE MODE')) {
+        return [w.lockedMode === null ? [] : [{ value: JSON.stringify(w.lockedMode) }]];
+      }
       if (params[0] === 'notify_skip_unexecutable') return [[{ value: 'false' }]];
       return [[]];
     }
     if (/FROM fx_rates/.test(sql)) return [[{ rate: '1400.0000', age_sec: 30 }]];
     return [[]];
   });
-  (getPool as jest.Mock).mockReturnValue({ query });
+  (getPool as jest.Mock).mockReturnValue({ query, getConnection: async () => ({
+    query, beginTransaction: async () => { w.transactionEvents.push('begin'); },
+    commit: async () => { w.transactionEvents.push('commit'); },
+    rollback: async () => { w.transactionEvents.push('rollback'); },
+    release: () => { w.transactionEvents.push('release'); },
+  }) });
 }
 
 /** 감사 행인가(status 파라미터가 'skipped') — 감사 INSERT 는 status 를 9번째 자리 파라미터로 넘긴다 */
@@ -133,6 +143,7 @@ beforeEach(() => {
     strategies: { 'rsi-oversold-v1': 'unvalidated', 'ok-bt-v1': 'backtested', 'ok-pv-v1': 'paper_validated', 'weird-v1': 'BACKTESTED',
       'boom-v1': Object.assign(new Error("Unknown column 'validation_status'"), { code: 'ER_BAD_FIELD_ERROR' }) },
     cooldowns: new Map(), cooldownThrows: false, throwOn: null, sql: [], events: [], signalInserts: [], paper: new Map(),
+    lockedMode: 'assist', transactionEvents: [],
   };
   setupDb();
   (getStyleConfig as jest.Mock).mockResolvedValue({ ...DEFAULT_STYLE_CONFIG, limitChasePct: 0.005 });
@@ -235,6 +246,7 @@ describe('1c. 🔴 WP-2d — createSignal 맨 앞 방향 정규화: 이후 모�
 
   test("검증된 전략 + side='buy ' + 자동 제출(auto) → submitOrder 에 정확히 'buy' · 호가 추격은 매수 방향(+0.5%)", async () => {
     (getEngineSwitches as jest.Mock).mockResolvedValue({ engineEnabled: true, autopilotMode: 'auto', source: 'config' });
+    w.lockedMode = 'auto';
     process.env.SIGNAL_AUTO_SUBMIT_MAX_KRW = '100000000';
     try {
       const r = await createSignal(domBuy({ side: 'buy ' as 'buy', strategyId: 'ok-bt-v1' }));
@@ -244,7 +256,40 @@ describe('1c. 🔴 WP-2d — createSignal 맨 앞 방향 정규화: 이후 모�
       expect(req.price).toBeCloseTo(70_000 * 1.005, 6);   // 원문이면 매도 방향(× 0.995)
       expect(req.quantity).toBe(4);                         // floor(300,000 / 70,350)
       expect(w.events.join('')).toMatch(/^SB/);
+      expect(w.transactionEvents).toEqual(['begin', 'commit', 'release']);
     } finally { delete process.env.SIGNAL_AUTO_SUBMIT_MAX_KRW; }
+  });
+
+  test.each([
+    ['auto', 'assist', 'awaiting_approval', false], ['assist', 'auto', 'auto_submitted', true],
+  ] as const)('처리 중 %s → %s 전환 시 잠금으로 확인한 새 모드로 등록한다', async (initialMode, lockedMode, status, autoSubmitted) => {
+    (getEngineSwitches as jest.Mock).mockResolvedValue({ engineEnabled: true, autopilotMode: initialMode, source: 'config' });
+    w.lockedMode = lockedMode;
+    const result = await createSignal(domBuy({ strategyId: 'ok-bt-v1' }));
+    expect(result).toMatchObject({ ok: true, autoSubmitted });
+    const locked = w.sql.findIndex(x => x.sql.endsWith('LOCK IN SHARE MODE'));
+    const insert = w.sql.findIndex(x => /INSERT INTO signals/.test(x.sql));
+    expect(locked).toBeGreaterThanOrEqual(0);
+    expect(insert).toBeGreaterThan(locked);
+    expect(mainStatus(approvable()[0])).toBe(status);
+    expect(submitOrder).toHaveBeenCalledTimes(autoSubmitted ? 1 : 0);
+  });
+
+  test('이전에 설정으로 읽은 자동형의 키가 없어지면 승인 대기로 등록한다', async () => {
+    (getEngineSwitches as jest.Mock).mockResolvedValue({ engineEnabled: true, autopilotMode: 'auto', source: 'config' });
+    w.lockedMode = null;
+    const result = await createSignal(domBuy({ strategyId: 'ok-bt-v1' }));
+    expect(result).toMatchObject({ ok: true, autoSubmitted: false });
+    expect(mainStatus(approvable()[0])).toBe('awaiting_approval');
+    expect(submitOrder).not.toHaveBeenCalled();
+  });
+
+  test('모드 잠금 조회 실패 시 시그널 없이 롤백하고 커넥션을 반환한다', async () => {
+    w.throwOn = /LOCK IN SHARE MODE/;
+    await expect(createSignal(domBuy({ strategyId: 'ok-bt-v1' }))).rejects.toThrow('boom');
+    expect(w.transactionEvents).toEqual(['begin', 'rollback', 'release']);
+    expect(w.signalInserts).toHaveLength(0);
+    expect(submitOrder).not.toHaveBeenCalled();
   });
 
   test("매도 변형 'SELL' → 정확히 'sell' 로 INSERT, 관문 조회 0", async () => {

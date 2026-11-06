@@ -32,7 +32,7 @@ const AUTONOMY_RANK: Record<AutopilotMode, number> = { manual: 0, assist: 1, aut
  *    무인 주문 송신을 켜게 된다.
  *
  * 📌 **`auto` 에 실제로 도달하는 유일한 경로**: `system_config.autopilot_mode` 에 `"auto"` 를
- *    직접 기입하는 것(수동 DB/API 조작). 이 앱에는 그 값을 쓰는 UI 도, 코드 경로도 없다.
+ *    설정 화면이나 DB 관리에서 명시적으로 저장하는 것.
  *    (`AUTOPILOT_MODE` env 는 아래 `getEngineSwitches` 주석 참고 — 부팅 시드 이후로는
  *     사실상 도달하지 않는다.)
  */
@@ -41,6 +41,11 @@ export const MAX_INFERRED_AUTOPILOT_MODE: AutopilotMode = 'assist';
 export function parseAutopilotMode(raw: unknown): AutopilotMode | null {
   const v = typeof raw === 'string' ? raw.trim().toLowerCase() : null;
   return v != null && (AUTOPILOT_MODES as readonly string[]).includes(v) ? (v as AutopilotMode) : null;
+}
+
+export function parseStoredAutopilotMode(raw: string | undefined): AutopilotMode | null {
+  if (raw === undefined) return null;
+  try { return parseAutopilotMode(JSON.parse(raw)); } catch { return null; }
 }
 
 /**

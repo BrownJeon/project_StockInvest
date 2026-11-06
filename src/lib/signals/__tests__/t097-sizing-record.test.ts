@@ -50,7 +50,9 @@ function setupDb() {
     if (/UPDATE signals/.test(sql)) return [{ affectedRows: 1 }];
     return [[]];
   });
-  (getPool as jest.Mock).mockReturnValue({ query });
+  (getPool as jest.Mock).mockReturnValue({ query, getConnection: async () => ({
+    query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {},
+  }) });
 }
 
 async function flush() { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); }
@@ -115,7 +117,9 @@ test('호가 추격 꺼짐 스위치(safety_limit_chase_disabled) — 기록도 
     if (/INSERT INTO signals/.test(sql)) { inserts.push(params); return [{ insertId: 1 }]; }
     return [[]];
   });
-  (getPool as jest.Mock).mockReturnValue({ query });
+  (getPool as jest.Mock).mockReturnValue({ query, getConnection: async () => ({
+    query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {},
+  }) });
   await createSignal(buy());
   expect(col(inserts[0]).indicators.sizing).toMatchObject({ chasePct: 0, quantity: 2, unitPriceKrw: 50_000, realizedKrw: 100_000, limitBasisKrw: 100_000 });
 });

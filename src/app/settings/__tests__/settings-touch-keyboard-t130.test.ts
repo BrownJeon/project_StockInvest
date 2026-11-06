@@ -638,7 +638,7 @@ describe('44px 이상 선언 — 선택칸·발송 방식·검색칸·칩 ×·[�
   test('승인 데모 v1 문구 2줄(5번·10a) — 모든거래차단 OFF 부제, 자동 청산 엔진 ON 부제', () => {
     const t = text(ssr({ safety: baseSafety({ killSwitch: false, exitEngineEnabled: true, exitHardStopEnabled: true }) }));
     expect(t).toContain('모든거래차단 OFF — 이 스위치로는 막지 않음');
-    expect(t).toContain('ON — 손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 자동 매도 동작 중');
+    expect(t).toContain('ON — 손실한도 손절·장마감 전 손절·트레일링 스탑·목표 익절 시그널 판단 중');
     expect(t).not.toMatch(/OFF — 차단 안 함|트레일링·익절/);
   });
 });
