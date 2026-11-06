@@ -4,7 +4,7 @@ import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { checkSnapshotFreshness } from './volatility-guard';
 import { decodeFlagValue, parseBoolFlag, shouldReportUnparsable } from './flags';
-import { assessDrawdownComposition, parseSnapshotPositions, type CompositionPosition } from './snapshot-composition';
+import { assessDrawdownComposition, parseSnapshotPositions, VANISH_MIN_SHARE, type CompositionPosition } from './snapshot-composition';
 import {
   assessHiddenUsdCarry, describeHiddenSides, hasHiddenUsdRow,
   HIDDEN_USD_CARRY_HISTORY_LIMIT, HIDDEN_USD_CARRY_WINDOW_HOURS, type CarryPrior,
@@ -68,6 +68,33 @@ export function transitionRawNote(applied: boolean, rawBaselineKRW: unknown, raw
     return `기록상(USD 포함) 24h ${pctText} (${amtText}) — 전환 24h 한정 비교(아래 수치는 USD 를 양쪽에서 뺀 값).\n`;
   } catch {
     return '';
+  }
+}
+
+/**
+ * (T-155) 스냅샷 positions 원문에서 미결제 매도 대금(`ustl_sll_amt_smtl`) 합을 읽는다.
+ *
+ * 크론이 USD 행에만, 그리고 양수일 때만 기록하고(`src/app/api/cron/portfolio-snapshot/route.ts:166`),
+ * **T-056 설계상 `total_krw` 에는 들어가지 않는다** — 해외 매도 뒤 결제(T+2) 전까지는 그만큼 총액이 작게
+ * 잡혀 손실률이 부풀어 보인다. 2026-11-06 00:03 첫 실제 발동이 그 경우였다(대금 1,408,391원).
+ *
+ * **문구 전용이다.** 무엇이 들어와도 던지지 않고 0 을 돌려준다 — 이 값으로 발동을 보류하거나 손실률을
+ * 다시 계산하지 않는다(그러면 미결제 대금의 결제 기준 미판정 문제가 판정에 들어온다. T-056·M-3 참조).
+ * 알려진 한계: 파싱 불가와 "미결제 대금 없음"을 구별하지 않는다(둘 다 0 → 문구 없음).
+ */
+export function unsettledSellKRW(raw: unknown): number {
+  try {
+    const rows: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!Array.isArray(rows)) return 0;
+    let sum = 0;
+    for (const r of rows) {
+      if (!r || typeof r !== 'object') continue;
+      const v = (r as { ustl_sll_amt_smtl?: unknown }).ustl_sll_amt_smtl;
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) sum += v;
+    }
+    return sum;
+  } catch {
+    return 0;
   }
 }
 
@@ -473,12 +500,68 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
               + ')이 있어 관측 불능으로 보지 않음'
             : ` · 보유 소실 [${codes}] 중 설명되지 않는 ${won(a.unexplainedKRW)}원 포함, 이를 제외하면 `
               + (a.adjustedDrawdownPct != null ? `${a.adjustedDrawdownPct.toFixed(1)}%` : '계산 불가');
+        } else if (a.vanished.length > 0) {
+          // (T-155) 미설명 몫이 VANISH_MIN_SHARE 미달이라 *보류 판정*에는 끼지 않는다 — 그 판정은 그대로 둔다.
+          // 그런데 그때 문구가 아무 말도 하지 않아, 사람이 원시 손실률만 보고 실제 손실인지 판단해야 했다
+          // (2026-11-06 00:03 첫 실제 발동: AAPL 매도 대금이 미결제라 cashDelta=0 → 미설명 6.8% < 10%,
+          //  원시 -17.7% 뒤에 설명이 한 줄도 없었다). 이미 계산돼 있는 값만 덧붙인다.
+          const won = (n: number) => Math.round(n).toLocaleString('ko-KR');
+          compositionNote = a.unexplainedKRW > 0
+            // 미설명 몫이 남는다 — 보정값을 적고, 사람이 실손실인지 가릴 방법(체결내역)을 덧붙인다 (Reviewer M-2)
+            ? ` · 보유 소실 [${a.vanished.join(', ')}] ${won(a.vanishedKRW)}원 중 현금 증가·신규 보유로 `
+              + `설명되지 않는 ${won(a.unexplainedKRW)}원(기준 총액의 ${(a.unexplainedShare * 100).toFixed(1)}% — `
+              + `보류 임계 ${(VANISH_MIN_SHARE * 100).toFixed(0)}% 미달이라 판정에 반영하지 않음), `
+              + '이를 제외한 같은 조건 비교는 '
+              + (a.adjustedDrawdownPct != null ? `${a.adjustedDrawdownPct.toFixed(1)}%` : '계산 불가')
+              + ' · KIS 체결내역에 그 매도가 있는지 확인하세요'
+            // 대금이 전액 현금·신규 보유로 설명되는 평범한 매도 — "설명되지 않는 0원" 은 잡음이다 (Reviewer L-3)
+            : ` · 보유 소실 [${a.vanished.join(', ')}] ${won(a.vanishedKRW)}원은 현금 증가·신규 보유로 전액 설명된다`
+              + '(손실률 판정에 영향 없음)';
         }
       }
     } catch (e) {
       // 이 단계는 *보류*를 결정하는 유일한 경로다. 검증을 못 했으면 보류할 근거가 없다 → 총액 기준으로 발동한다.
       console.error(`[kill-switch:drawdown] 구성 검증 실패 — 보정 없이 총액 기준으로 발동: ${e instanceof Error ? e.message : String(e)}`);
       compositionNote = ' · 구성 검증 실패(보정 없이 발동)';
+    }
+
+    // (T-155) 미결제 매도 대금은 T-056 설계상 총액에 없다. 판정은 바꾸지 않고 사실만 남긴다
+    // (`unsettledSellKRW` 는 던지지 않는다). **치우치는 방향은 양쪽 차이가 정한다** (Reviewer M-1):
+    // 보고 손실률은 (현재-기준)/기준 이고 양쪽 총액이 각자 미결제분만큼 작게 잡혀 있으므로,
+    //  · 현재 쪽이 크면  → 분자가 더 음수가 되어 손실이 부풀어 보인다
+    //  · 기준 쪽이 크면  → 분자가 덜 음수가 되어 손실이 작게 보인다(결제가 진행된 경우. 현재 쪽이 0 이
+    //                        아니면 부분 결제이므로 문구에서 "결제 완료"를 단정하지 않는다 — QA L-QA1)
+    //  · 같으면         → 금액은 그대로이고 분모만 작아 손실률만 크게 보인다
+    // 한 문장으로 "그만큼 손실로 보인다"고 쓰면 뒤 두 경우에 거꾸로 말하게 된다.
+    // INSERT 보다 앞에서 계산한다 — 지금은 던질 수 없지만 순서로 보장해 둔다 (Reviewer L-4).
+    //
+    // 🔴 이 블록 전체가 try 안이다 (Reviewer L-4′). 인자 `snapRows[0].positions` 의 **평가는 함수 밖**에서
+    // 일어나므로 `unsettledSellKRW` 의 내부 try 로는 못 막는다 — 행 속성이 던지면 예외가 상위 catch 로
+    // 올라가 `status:'skipped'` 가 되고 **킬스위치가 켜지지 않는다(fail-open)**. 문구 때문에 발동을
+    // 잃을 수는 없으므로 여기서 삼키고 문구만 버린다.
+    let unsettledNote = '';
+    try {
+      const baseUnsettled = unsettledSellKRW(snapRows[0].positions);
+      const curUnsettled = unsettledSellKRW(curRows[0].positions);
+      // (Reviewer L-8) 전환 규칙 E 가 적용됐으면 양쪽에서 USD 행을 이미 뺐다 — 미결제 대금은 그 행에만
+      // 붙으므로 치우침의 전제가 사라진다. 그때 "작게/크게 보인다"고 적으면 틀린 말이 된다 → 문구 없음.
+      if (!usdNorm.applied && (baseUnsettled > 0 || curUnsettled > 0)) {
+        unsettledNote = ` · 미결제 매도 대금(기준 ${won0(baseUnsettled)}원·현재 ${won0(curUnsettled)}원)은 총액에 넣지 않는다(T-056) — `
+          + (curUnsettled > baseUnsettled
+            ? `현재 쪽이 ${won0(curUnsettled - baseUnsettled)}원 많아 그만큼 손실이 부풀어 보인다`
+            // (QA L-QA1) 「(결제 완료)」를 붙이지 않는다 — 이 분기는 기준 쪽이 크다는 것만 말하고,
+            // 현재 쪽이 0 이 아니면 부분 결제다. 금액 방향은 맞지만 결제 완료는 확인한 사실이 아니다.
+            : baseUnsettled > curUnsettled
+              ? `기준 쪽이 ${won0(baseUnsettled - curUnsettled)}원 많아 그만큼 손실이 작게 보인다`
+              // (Reviewer L-7) 정도를 단정하지 않는다 — u/B 가 크면 "조금" 은 틀린 완화가 된다
+              : '양쪽이 같아 손실 금액은 그대로이고 기준이 작게 잡혀 손실률만 크게 보인다');
+      }
+    } catch {
+      // (Reviewer L-10) 예외를 문자열화하지 않는다 — 프로토타입 없는 값이 던져지면 `String(e)` 가 다시
+      // 던져 이 catch 가 상위로 새고, 그러면 문구 때문에 발동을 잃는다(이 블록의 존재 이유와 정반대).
+      // 진단 가치보다 발동 보존이 우선이라 고정 문구만 남긴다.
+      console.error('[kill-switch:drawdown] 미결제 매도 대금 문구 생략(발동·판정은 그대로)');
+      unsettledNote = '';
     }
 
     // Kill Switch 영속 저장 (DB SSOT)
@@ -488,7 +571,7 @@ export async function checkAndTriggerDrawdownKillSwitch(thresholdPct = 10): Prom
     );
 
     const lostKRW = current - baseline;
-    const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과${compositionNote}${carryNote}${usdNote}`;
+    const msg = `24h 손실 ${drawdownPct.toFixed(1)}% (${lostKRW.toLocaleString('ko-KR')}원) — 임계 -${thresholdPct}% 초과${compositionNote}${carryNote}${unsettledNote}${usdNote}`;
     console.error(`[kill-switch:drawdown] 자동 발동: ${msg}`);
     sendAlert('critical', '모든거래차단 자동 발동', msg);
     return { status: 'evaluated', drawdownPct, triggered: true, ...usdFlag };

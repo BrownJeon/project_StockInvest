@@ -34,7 +34,7 @@ jest.mock('@/lib/safety/snapshot-composition', () => {
 const query = jest.fn();
 jest.mock('@/lib/db', () => ({ getPool: () => ({ query: (...a: unknown[]) => query(...a) }) }));
 
-import { checkAndTriggerDrawdownKillSwitch } from '@/lib/safety/kill-switch';
+import { checkAndTriggerDrawdownKillSwitch, unsettledSellKRW } from '@/lib/safety/kill-switch';
 import * as composition from '@/lib/safety/snapshot-composition';
 
 const HOUR = 60 * 60_000;
@@ -550,5 +550,236 @@ describe('🔴 M-1 · M-2 — 감사가 찾은 보류 우회는 발동으로 닫
     const r = await checkAndTriggerDrawdownKillSwitch(10);
     expect(r).toMatchObject({ status: 'skipped', reason: 'composition_change_suspected' });
     expect(inserted()).toHaveLength(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// T-155 — 발동은 맞게 했는데 **문구가 손실의 출처를 말하지 않았다**
+//
+// 2026-11-06 00:03:30 첫 실제 자동 발동의 운영 로그 그대로:
+//   `24h 손실 -17.7% (-3,689,878원) — 임계 -10% 초과`  ← 뒤에 설명이 한 줄도 없다.
+// 실제로는 사용자가 NAS:AAPL 3주를 직접 매도했고 그 대금(1,408,391원)이 T+2 미결제라
+// USD 행 `ustl_sll_amt_smtl` 에만 있었다(T-056 설계상 total_krw 에 넣지 않는다).
+// 그래서 cashDelta = 0 → 미설명 몫 6.8% → `VANISH_MIN_SHARE`(10%) 미달 → `suspected` false
+// → `if (a.suspected)` 블록 전체가 건너뛰어져 compositionNote 가 빈 문자열로 남았다.
+//
+// 계약: **판정은 그대로 두고**(보정 -11.7% 도 임계 초과라 발동이 맞다) 문구에 출처를 남긴다.
+// ═══════════════════════════════════════════════════════════════════════════
+const row = (currency: string, value_krw: number, extra: Record<string, unknown> = {}) =>
+  ({ currency, qty: 1, price: value_krw, value_krw, ...extra });
+const usdRow = (value_krw: number, extra: Record<string, unknown> = {}) =>
+  ({ currency: 'USD', qty: 144.34, price: 1338.58, value_krw, locked: 0, src: 'CTRP6504R', ...extra });
+
+const T155_BASELINE: Snap = {
+  total: 20_795_029,
+  positions: [
+    row('KRW', 12), usdRow(193_211), row('005930', 2_879_500), row('NAS:AAPL', 1_415_829),
+    row('NYS:CVX', 294_555), row('NAS:MU', 12_228_598), row('NYS:ORCL', 1_024_817), row('NAS:SMH', 2_758_507),
+  ],
+};
+const T155_CURRENT: Snap = {
+  total: 17_105_150,
+  positions: [
+    row('KRW', 12), usdRow(193_211, { ustl_sll_amt_smtl: 1_408_391 }), row('005930', 2_619_500),
+    row('NYS:CVX', 295_753), row('NAS:MU', 10_522_189), row('NYS:ORCL', 953_939), row('NAS:SMH', 2_520_546),
+  ],
+};
+
+describe('T-155 — 미설명 몫이 보류 임계 미달이어도 문구가 출처를 설명한다', () => {
+  test('2026-11-06 실발동 재현: 발동은 그대로, 문구에 소실 종목·미설명 금액·보정 손실률이 들어간다', async () => {
+    mockState(T155_BASELINE, T155_CURRENT);
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+
+    // ① 판정 불변 — 보정 -11.7% 도 임계 -10% 를 넘으므로 발동이 맞다
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true });
+    expect((r as { drawdownPct: number }).drawdownPct).toBeCloseTo(-17.744, 2);   // (L-9) 원시 손실률 자체도 고정한다
+    expect(inserted()).toHaveLength(1);
+    expect(sendAlertThrottled).not.toHaveBeenCalled();          // 보류 알림이 아니다
+
+    // ② 문구에 출처가 있다 (고치기 전에는 '임계 -10% 초과' 뒤가 비어 있었다)
+    const msg = String(sendAlert.mock.calls[0][2]);
+    expect(msg).toContain('-17.7%');                            // 원시 손실률은 그대로 보고한다
+    expect(msg).toContain('보유 소실 [NAS:AAPL]');
+    expect(msg).toContain('1,415,829');                         // 소실 평가액 = 미설명 금액
+    expect(msg).toContain('6.8%');                              // 기준 총액 대비 미설명 비중
+    expect(msg).toContain('보류 임계 10% 미달이라 판정에 반영하지 않음');
+    expect(msg).toContain('-11.7%');                            // 미설명분 제외 보정 손실률
+  });
+
+  test('미결제 매도 대금이 총액에 없다는 사실을 문구에 남긴다', async () => {
+    mockState(T155_BASELINE, T155_CURRENT);
+    await checkAndTriggerDrawdownKillSwitch(10);
+    const msg = String(sendAlert.mock.calls[0][2]);
+    expect(msg).toContain('미결제 매도 대금');
+    expect(msg).toContain('1,408,391');
+    expect(msg).toContain('T-056');
+    expect(msg).toContain('기준 0원·현재 1,408,391원');          // 기준선에는 그 필드가 없다
+  });
+
+  test('기준선에만 미결제 대금이 있어도 양쪽을 적는다(비대칭을 숨기지 않는다)', async () => {
+    mockState(
+      { total: T155_BASELINE.total, positions: [row('KRW', 12), usdRow(193_211, { ustl_sll_amt_smtl: 500_000 }), row('NAS:MU', 20_601_806)] },
+      { total: T155_CURRENT.total, positions: [row('KRW', 12), usdRow(193_211), row('NAS:MU', 16_911_927)] },
+    );
+    await checkAndTriggerDrawdownKillSwitch(10);
+    expect(String(sendAlert.mock.calls[0][2])).toContain('기준 500,000원·현재 0원');
+  });
+
+  test('미결제 대금이 없으면 그 문구를 넣지 않는다(평시 문구 오염 금지)', async () => {
+    mockState(
+      { total: 10_000_000, positions: [row('KRW', 1_000_000), row('A', 9_000_000)] },
+      { total: 8_500_000, positions: [row('KRW', 1_000_000), row('A', 7_500_000)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true });
+    const msg = String(sendAlert.mock.calls[0][2]);
+    expect(msg).not.toContain('미결제 매도 대금');
+    expect(msg).not.toContain('보유 소실');                      // 소실도 없다 → 기존 문구 그대로
+  });
+
+  test('소실이 없으면 새 분기가 돌지 않는다 — 미결제 대금만 있는 평시 매도 직후', async () => {
+    // ⚠ 양쪽에 USD 행을 둔다. 한쪽만 두면 전환 규칙 E 가 적용돼 미결제 문구가 (정당하게) 빠진다 — L-8.
+    mockState(
+      { total: 10_000_000, positions: [row('KRW', 1_000_000), usdRow(193_211), row('A', 8_806_789)] },
+      { total: 8_500_000, positions: [row('KRW', 1_000_000), usdRow(193_211, { ustl_sll_amt_smtl: 300_000 }), row('A', 7_306_789)] },
+    );
+    const msg0 = await checkAndTriggerDrawdownKillSwitch(10).then(() => String(sendAlert.mock.calls[0][2]));
+    expect(msg0).toContain('미결제 매도 대금');
+    expect(msg0).toContain('현재 쪽이 300,000원 많아');
+    expect(msg0).not.toContain('보유 소실');
+    expect(msg0).not.toContain('전환 규칙 E');                 // E 가 적용되지 않는 구성이어야 의미가 있다
+  });
+
+  test('기존 보류 판정은 바뀌지 않는다 — 2026-10-03 실사고는 여전히 보류다', async () => {
+    mockState(INCIDENT_BASELINE, INCIDENT_CURRENT);
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'skipped', reason: 'composition_change_suspected' });
+    expect(inserted()).toHaveLength(0);
+  });
+});
+
+describe('T-155 — unsettledSellKRW 는 문구 전용이라 절대 던지지 않는다', () => {
+  test('USD 행의 양수 값을 읽고, 여러 행이면 합산한다', () => {
+    expect(unsettledSellKRW([usdRow(1, { ustl_sll_amt_smtl: 1_408_391 })])).toBe(1_408_391);
+    expect(unsettledSellKRW([usdRow(1, { ustl_sll_amt_smtl: 100 }), usdRow(1, { ustl_sll_amt_smtl: 200 })])).toBe(300);
+  });
+  test('mysql2 가 JSON 문자열로 줘도 같다', () => {
+    expect(unsettledSellKRW(JSON.stringify([usdRow(1, { ustl_sll_amt_smtl: 7_000 })]))).toBe(7_000);
+  });
+  test('없음·0·음수·NaN·문자열 숫자는 0 으로 본다(총액을 부풀리지 않는 쪽)', () => {
+    expect(unsettledSellKRW([usdRow(1)])).toBe(0);
+    expect(unsettledSellKRW([usdRow(1, { ustl_sll_amt_smtl: 0 })])).toBe(0);
+    expect(unsettledSellKRW([usdRow(1, { ustl_sll_amt_smtl: -5 })])).toBe(0);
+    expect(unsettledSellKRW([usdRow(1, { ustl_sll_amt_smtl: Number.NaN })])).toBe(0);
+    expect(unsettledSellKRW([usdRow(1, { ustl_sll_amt_smtl: '1408391' })])).toBe(0);
+  });
+  test('파싱 불가·배열 아님·null·행이 객체가 아님 — 던지지 않고 0', () => {
+    for (const bad of ['{{{', '', null, undefined, 42, {}, [null], ['x'], [[]]]) {
+      expect(() => unsettledSellKRW(bad)).not.toThrow();
+      expect(unsettledSellKRW(bad)).toBe(0);
+    }
+  });
+});
+
+// ── Reviewer 라운드 1 지적 반영분 (M-1·M-2·L-3) ────────────────────────────
+describe('T-155 r2 — 미결제 대금이 손실률을 어느 쪽으로 치우치게 하는지 문구가 구분한다', () => {
+  // 보고 손실률은 (현재-기준)/기준 이고 양쪽 총액이 각자 미결제분만큼 작게 잡혀 있다.
+  // 한 문장으로 "그만큼 손실로 보인다"고 쓰면 아래 두 경우에 거꾸로 말한다 (Reviewer M-1).
+  test('현재 쪽이 크다 → 부풀어 보인다 + 차액을 적는다', async () => {
+    mockState(T155_BASELINE, T155_CURRENT);
+    await checkAndTriggerDrawdownKillSwitch(10);
+    const msg = String(sendAlert.mock.calls[0][2]);
+    expect(msg).toContain('현재 쪽이 1,408,391원 많아 그만큼 손실이 부풀어 보인다');
+    expect(msg).not.toContain('작게 보인다');
+  });
+
+  test('기준 쪽이 크다 → 손실이 작게 보인다고만 적는다(결제 완료를 단정하지 않는다 — QA L-QA1)', async () => {
+    mockState(
+      { total: 20_795_029, positions: [row('KRW', 12), usdRow(193_211, { ustl_sll_amt_smtl: 500_000 }), row('NAS:MU', 20_601_806)] },
+      { total: 17_105_150, positions: [row('KRW', 12), usdRow(193_211), row('NAS:MU', 16_911_927)] },
+    );
+    await checkAndTriggerDrawdownKillSwitch(10);
+    const msg = String(sendAlert.mock.calls[0][2]);
+    expect(msg).toContain('기준 쪽이 500,000원 많아 그만큼 손실이 작게 보인다');
+    expect(msg).not.toContain('부풀어 보인다');
+    expect(msg).not.toContain('결제 완료');                    // 확인하지 않은 사실을 단정하지 않는다
+  });
+
+  test('양쪽이 같다 → 금액은 그대로이고 손실률만 크게 보인다고 적는다(정도는 단정하지 않는다)', async () => {
+    mockState(
+      { total: 20_795_029, positions: [row('KRW', 12), usdRow(193_211, { ustl_sll_amt_smtl: 700_000 }), row('NAS:MU', 20_601_806)] },
+      { total: 17_105_150, positions: [row('KRW', 12), usdRow(193_211, { ustl_sll_amt_smtl: 700_000 }), row('NAS:MU', 16_911_927)] },
+    );
+    await checkAndTriggerDrawdownKillSwitch(10);
+    const msg = String(sendAlert.mock.calls[0][2]);
+    expect(msg).toContain('양쪽이 같아 손실 금액은 그대로이고 기준이 작게 잡혀 손실률만 크게 보인다');
+    expect(msg).not.toContain('조금 크게');                       // (L-7) 정도를 단정하지 않는다
+  });
+
+  test('미설명 몫이 남으면 확인 방법(체결내역)을 덧붙인다 (M-2)', async () => {
+    mockState(T155_BASELINE, T155_CURRENT);
+    await checkAndTriggerDrawdownKillSwitch(10);
+    expect(String(sendAlert.mock.calls[0][2])).toContain('KIS 체결내역에 그 매도가 있는지 확인하세요');
+  });
+
+  test('대금이 전액 현금으로 설명되는 평범한 매도는 "설명되지 않는 0원" 대신 그렇게 적는다 (L-3)', async () => {
+    mockState(
+      { total: 20_000_000, positions: [row('KRW', 1_000_000), row('A', 9_000_000), row('B', 10_000_000)] },
+      { total: 17_500_000, positions: [row('KRW', 10_000_000), row('B', 7_500_000)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true });   // -12.5% — 판정 불변
+    const msg = String(sendAlert.mock.calls[0][2]);
+    expect(msg).toContain('보유 소실 [A] 9,000,000원은 현금 증가·신규 보유로 전액 설명된다');
+    expect(msg).toContain('손실률 판정에 영향 없음');
+    expect(msg).not.toContain('설명되지 않는 0원');
+    expect(msg).not.toContain('KIS 체결내역');                           // 미설명 몫이 없으면 안내도 없다
+  });
+});
+
+// ── Reviewer 라운드 2 지적 반영분 (L-4′·L-8) ───────────────────────────────
+describe('T-155 r3 — 문구 계산이 발동을 잃게 만들 수 없다', () => {
+  test('🔴 positions 속성이 던져도 발동·INSERT 는 그대로고 문구만 빠진다 (L-4′ fail-open 금지)', async () => {
+    checkSnapshotFreshness.mockResolvedValue({
+      latestTs: new Date(Date.now() - 5 * 60_000), ageMs: 5 * 60_000, level: 'ok', session: 'open', effectiveAgeMs: 5 * 60_000,
+    });
+    const basePos = [row('KRW', 1_000_000), row('A', 19_000_000)];
+    const curPos = [row('KRW', 1_000_000), row('A', 15_000_000)];
+    // 인자 평가는 unsettledSellKRW 바깥에서 일어난다 — 그 함수의 내부 try 로는 막지 못하는 경로다.
+    // 1회차는 usdNorm 의 parseSnapshotPositions, 2회차가 미결제 문구 호출이다.
+    let reads = 0;
+    const curRow: Record<string, unknown> = { total_krw: 16_000_000 };
+    Object.defineProperty(curRow, 'positions', {
+      enumerable: true,
+      get() { reads += 1; if (reads >= 2) throw new Error('positions getter 폭발'); return curPos; },
+    });
+    query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (/SELECT value FROM system_config/.test(sql) && params[0] === 'safety_kill_switch') return [[{ value: 'false' }]];
+      if (/INSERT INTO system_config/.test(sql)) return [{ affectedRows: 1 }];
+      if (/ORDER BY ABS\(TIMESTAMPDIFF/.test(sql)) {
+        return [[{ total_krw: 20_000_000, positions: basePos, ts: new Date(Date.now() - 24 * HOUR) }]];
+      }
+      if (/ORDER BY ts DESC/.test(sql)) return [[curRow]];
+      return [[]];
+    });
+
+    const r = await checkAndTriggerDrawdownKillSwitch(10);   // -20%
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true });   // skipped/error 가 아니다
+    expect(inserted()).toHaveLength(1);                                  // 킬스위치가 실제로 켜진다
+    expect(String(sendAlert.mock.calls[0][2])).not.toContain('미결제 매도 대금');
+  });
+
+  test('전환 규칙 E 가 적용되면 미결제 문구를 넣지 않는다 (L-8 — 그 전제가 사라진다)', async () => {
+    // 기준에만 USD 행이 있다 → 규칙 E 가 양쪽에서 USD 를 뺀다. 미결제 대금은 그 행에만 붙으므로
+    // "총액에 안 들어가 손실이 치우친다"는 서술이 성립하지 않는다.
+    mockState(
+      { total: 20_000_000, positions: [row('KRW', 1_000_000), usdRow(1_000_000, { ustl_sll_amt_smtl: 800_000 }), row('A', 18_000_000)] },
+      { total: 16_000_000, positions: [row('KRW', 1_000_000), row('A', 15_000_000)] },
+    );
+    const r = await checkAndTriggerDrawdownKillSwitch(10);
+    expect(r).toMatchObject({ status: 'evaluated', triggered: true });
+    const msg = String(sendAlert.mock.calls[0][2]);
+    expect(msg).toContain('전환 규칙 E');                     // E 가 적용된 사실은 기존 문구가 적는다
+    expect(msg).not.toContain('미결제 매도 대금');
   });
 });
