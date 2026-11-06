@@ -177,6 +177,7 @@ function Toggle({ checked, onChange, danger, disabled, label, descriptionId }: {
 }
 
 const AUTOPILOT_URL = '/api/settings/safety/autopilot';
+const AUTO_APPROVAL_GUIDANCE = '국내·해외 신규 시그널이 조건을 충족하면 승인 없이 주문 단계로 넘어갑니다.';
 
 interface AutopilotSnapshot {
   ok: true;
@@ -254,7 +255,7 @@ function AutoApprovalModeRow() {
   const mode = snapshot?.mode;
   const checked = mode === 'auto';
   const isToggle = mode === 'auto' || mode === 'assist';
-  const modeText = checked ? '자동형 · 조건을 충족한 새 시그널은 승인 없이 제출'
+  const modeText = checked ? AUTO_APPROVAL_GUIDANCE
     : mode === 'assist' ? '승인형 · 승인한 시그널의 주문을 제출'
     : mode === 'manual' ? '현재 수동형'
     : pending ? '자동승인모드를 읽는 중입니다.' : '현재 모드를 읽지 못했습니다.';
@@ -290,7 +291,7 @@ function AutoApprovalModeRow() {
           style={{ width: 'calc(100% - 32px)', maxWidth: 420, padding: 16, borderRadius: 12, background: 'var(--bg2)', color: 'var(--text)', border: '1px solid var(--muted)' }}>
           <h2 id="auto-approval-confirm-title" style={{ margin: '0 0 8px', fontSize: 17 }}>자동승인모드를 켤까요?</h2>
           <div id="auto-approval-confirm-text" style={{ fontSize: 13, lineHeight: 1.5 }}>
-            국내·해외 신규 시그널이 조건을 충족하면 승인 없이 주문 단계로 넘어갑니다.
+            {AUTO_APPROVAL_GUIDANCE}
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
             <button type="button" autoFocus style={autoApprovalButtonStyle}
