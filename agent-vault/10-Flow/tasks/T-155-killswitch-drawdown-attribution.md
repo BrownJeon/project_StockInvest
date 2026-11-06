@@ -2,13 +2,14 @@
 task_id: T-155
 title: 킬스위치 발동 문구가 손실의 출처를 설명하지 않는다(보정 침묵)
 project: StockInvest
-status: doing
+status: done
 base_ref: 18c1dc737b177c6c802056c67583e5b6e5b161dd
 roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-041, T-056, T-080, T-153]
 tags: [type/task, domain/safety, domain/killswitch]
 created: 2026-11-06
 updated: 2026-11-06
+waiting: "정산 후 ustl_sll_amt_smtl 소거·USD 행 상승 관측(「기준>현재」 갈래의 전제) · cron-runner 자식 2개 구조 평시 확인 · 커밋 메시지의 과거 task ID 인용이 훅 게이트를 만족시키는 문제의 /이슈기록 등록 여부 — 사용자 결정"
 execution_context:
   schema_version: 1
   origin_tool: claude
@@ -176,3 +177,32 @@ execution_context:
 - [09:13] **11. 산출물 정리**: 격리 worktree 는 symlink 를 먼저 끊고 `git worktree remove --force` 와 `prune` 으로 제거했다(`worktree list` 에 qa-t155 없음, 공유 `node_modules` 온전). 로그와 덤프는 프로젝트 밖 `~/.node-local/qa-t155/` 에 남긴다. 저장소 파일은 수정하지 않았다.
 - [09:13] **요약(QA)**: critical 0 · high 0 · medium 0 · low 1(L-QA1 「결제 완료」 괄호). 회귀, 계약 4종, fail-open 재현, 문구 방향, 엣지는 실행 결과로 확인했다. 주문 경로 체크리스트와 정산 후 관측은 10번의 NOT_VERIFIED 다. 그래서 「검증 통과」 전체 선언은 하지 않고, 이 통과 판정은 본 작업 범위에 한정한다. 이 판정은 배포 승인이 아니다.
 - [09:13] **QA 판정: PASS (범위: src/lib/safety/kill-switch.ts, src/lib/safety/__tests__/kill-switch-composition.test.ts)**
+
+## 배포 기록
+
+- [09:1x] **서버 커밋 `1927e70`**(우분투 공유 체크아웃에서 — Mac 은 `commit-msg` 훅이 무검사라 안전 경로 파일을 커밋하지 않는다). 4파일 509 추가/3 삭제: `src/lib/safety/kill-switch.ts`(+87/-3) · `src/lib/safety/__tests__/kill-switch-composition.test.ts`(+233) · 이 task 파일 · `agent-vault/00-Context/ACTIVE.md`(킬스위치 사건 기록 14줄, 전부 내 것). 커밋 전 인덱스↔작업파일 `cmp` 4/4 일치(NFS/SMB 지연 대비), 훅 모의 실행 exit 0 확인 후 커밋.
+- [09:1x] **훅이 실제로 돌았다**: `✅ [commit-msg] Reviewer 감사 기록 확인: T-056 T-155`. Reviewer 라운드 5 `PASS` 의 scope 가 staged 안전 파일 2개를 정확히 덮는다.
+- [09:2x] 🔴 **그런데 훅 통과 근거가 하나가 아니었다 — 내 커밋 메시지 관행의 문제다.** 메시지 본문에 설명용으로 `T-056` 을 인용했는데, 훅은 메시지의 **모든** task ID 를 보고 「그중 하나라도 조건을 만족하면 통과」시킨다. 그리고 [[T-056-usd-cash-snapshot]] 의 마지막 판정은 `PASS (scope: src/lib/exchanges/, src/lib/safety/, …)` 로 **`src/lib/safety/` 를 통째로 덮는다.** 즉 T-155 판정이 없었어도 이 커밋은 통과했을 것이다. 이번 커밋 자체는 정당하다(T-155 자체의 라운드 5 PASS 가 같은 두 파일을 정확히 덮는다). 문제는 **관행**이다 — 프로젝트 `CLAUDE.md` 가 금지한 「무관한 과거 task ID를 편의상 인용」에 해당하고, 이 저장소는 `related_tasks` 로 과거 task 를 엮는 것이 일상적이라 **악의 없이도 쉽게 트리거된다**(그 문서가 경고한 그대로다).
+  - **앞으로**: 커밋 메시지 본문에 다른 task ID 를 쓸 때는 설명 의도를 분명히 하거나(예: 「T-056 설계상」 대신 「미결제 대금 설계상」) 아예 쓰지 않는다. 설계 근거는 task 이력서에 적는다.
+  - **구조적 후보**: 훅이 「메시지의 아무 task ID 하나」가 아니라 「`T-NNN` 중 **이 커밋이 선언한** task」만 보게 하거나, 넓은 scope(디렉터리 전체) 판정을 안전 파일 게이트에서 제외하는 안. `/이슈기록` 등록 후보이고 **사용자 결정 사항**이다.
+- [09:2x] (이력) 커밋 시점에는 push 를 보류했다 — 국내 정규장 개장 중이었고 창은 15:40~20:00 KST 였다. **사용자가 위험을 듣고 「지금 push」로 결정해 09:57 에 국내 장중 배포했다**(아래).
+- [09:57] 🔴 **ISS-0013 재발 — push 전에 격리했다.** `refs/codex/turn-diffs/checkpoints/**/@eaDir` 사이드카 **7개**가 생겨 `git fetch` 가 `did not send all necessary objects` 로 이미 실패하는 상태였다. `scripts/git-refs-clean.sh`(--check 없이)로 **격리**(삭제 아님, `~/.local/share/git-eadir-quarantine/20261106-095638/StockInvest`), 실제 ref 26개 불변, 재점검 깨끗, fetch 정상 복구. Codex 가 `refs/codex/*` 를 쓰면 또 생긴다.
+- [09:57~09:59] **운영 배포 완료**: push `18c1dc7..1927e70`(09:57:0x), webhook `START sha=1927e70`(00:57:11 UTC) → `END exit=0`(00:59:37 UTC), **릴리스 `20261106-095719-1927e705`** · `RELEASE_RESULT status=ok` · **`migrated:false`** · 롤백 지점 `20261106-000207-18c1dc73`. **동승 커밋 `86571cc`**(다른 세션 T-150 `demo_gate` 기록, 문서 1파일 7추가/5삭제, **코드 0건**)가 조상이라 함께 나갔다 — 선택적으로 뺄 수 없어 push 전에 내용을 확인해 사용자에게 알렸다.
+- [10:0x] **배포 후 점검(전부 실측)**: 배포본 소스에 `unsettledSellKRW` 5회·`결제 완료` 3회(**전부 주석**, 내보내는 문구에는 없음) · pm2 두 앱 `online`·**재시작 0** · health `green`·`ok:true`·`db:true` · **`dryRun:true`·`killSwitch:true`·`engine:true`**(배포 전과 동일) · DB 안전 키 3개 값·`updated_at` 불변(`safety_kill_switch` 는 00:03:30 그대로 — 배포가 건드리지 않았다) · **🔴 `stop-alert` 09:50~10:00 매 분 정확히 1회**(컷오버 구간 09:57~09:59 포함, 누락·중복 0 — 보유 종목 손절 알림이 끊기지 않았다) · 컷오버 `HTTP=000` **6건**(trade-report·strategy-eval·signal-followup·signal-expiry·portfolio-snapshot·job-run-log 각 1, 09:57:49 에 끝) · `cron-err` **0바이트** · 배포(09:59:37) 이후 새 `pm2-err` 줄 **0** · 킬스위치 로그에 재발동·해제 없음(마지막은 00:03:31 그 발동) · 24h `orders` 3건 **전부 `dry_run`**.
+- [10:0x] ⚠ **미확인 1건**: `cron-runner.sh` 프로세스가 부모 1(254631) + 자식 2(254639·254710)다. 254639 는 로그가 말하는 stop-alert 티커이고, **254710 은 티커 시작 로그가 없어 무엇인지 특정하지 못했다**(`STAT S`·`WCHAN do_wait`·같은 나이라 잡 서브셸로 보이지만 단정하지 않는다). 00:02 배포 후에도 3개였으니 이번 배포가 만든 구조는 아닐 가능성이 높다. **중복 티커는 아니다** — 티커 락은 하나이고 `stop-alert` 가 분당 1회다. 확인 방법: 평시(배포 직후가 아닌 때)에 같은 `ps -eo pid,ppid,cmd` 를 돌려 상시 2자식인지 본다.
+- [09:2x] **커밋에서 뺀 것**: `agent-vault/20-Log/2026-11-06.md` — Reviewer·QA 가 T-155 색인 6줄을 적었지만 같은 파일에 다른 세션의 T-154 줄 5개가 섞여 있어 제외했다(남의 미커밋을 내 커밋에 싣지 않는다). 그 세션이 커밋할 몫이다.
+
+## 최종 요약
+
+### [T-155] 킬스위치가 왜 발동했는지 문구만 보고 알 수 있게 했다
+
+- **상태**: 완료. 운영 배포까지 끝났다(릴리스 `20261106-095719-1927e705`).
+- **무엇이 바뀌었나**: 킬스위치 24h drawdown **발동 문구**가 손실의 출처를 설명한다 — 사라진 보유 종목과 그 금액, 현금으로 설명되지 않는 몫과 기준 총액 대비 비중, 그것을 제외한 보정 손실률, 미결제 매도 대금이 총액에 없어 손실률이 **어느 쪽으로** 치우치는지, 그리고 확인 방법(KIS 체결내역). **발동 여부 판정·임계·`total_krw` 산정·보류 조건은 한 줄도 바꾸지 않았다.**
+- **왜 필요했나**: 2026-11-06 00:03:30 첫 실제 발동이 `24h 손실 -17.7% (-3,689,878원) — 임계 -10% 초과` 로 끝나 버려서, 사용자와 AI 가 그게 실제 손실인지 가릴 수 없었다. 확인에 스냅샷 원문 대조가 필요했다. 원인은 사용자가 `NAS:AAPL` 을 직접 매도했고 대금 1,408,391원이 T+2 미결제라 USD 행에만 있어(T-056 설계상 총액 미반영) `cashDelta=0` → 미설명 몫 6.808% < `VANISH_MIN_SHARE`(10%) → `suspected=false` → **이미 계산돼 있던 보정 수치가 쓰이지 않은** 것이다. 발동 자체는 옳았다(보정 -11.73%·대금 가산 -10.97% 모두 임계 초과, 실제 원인은 `NAS:MU` -14%).
+- **배포**: 커밋 `1927e70`(서버에서 — Mac 은 훅 무검사) → 사용자 지시 「지금 push」로 09:57 **국내 장중** 배포, `RELEASE_RESULT ok`·`migrated:false`, 롤백 지점 `20261106-000207-18c1dc73`. **같은 배포에 실린 다른 작업**: `86571cc`(다른 세션 T-150 `demo_gate` 기록, 문서 1파일·코드 0건). push 전 ISS-0013 사이드카 7개 격리.
+- **AI 가 검증한 것**: `tsc --noEmit` 0 · `jest src/lib/safety` **41 스위트 1,089 통과·0 실패** · 수정 없는 `18c1dc7` 에서 새 시험 **8건 실패**(민감도) · 안전장치 계약 4종 통과 · fail-open 시험이 try 제거 시 정확히 1건 실패 · **Reviewer 5라운드 PASS**(M-1 방향 오류 · L-4′ 내가 만든 fail-open · L-7 · L-8 · L-10) · **QA PASS**(L-QA1 「(결제 완료)」 단정 삭제) · 배포 후 손절 알림 분당 1회·안전 키 불변·새 에러 0.
+- **AI 가 못 한 것**: 실제 텔레그램 전송과 문구 길이는 확인하지 않았다(코드 읽기·출력 문구까지만) · **다음 실제 발동 때 새 문구가 어떻게 보이는지는 그때만 확인된다** · 정산 후 `ustl_sll_amt_smtl` 소거·USD 행 상승 미관측 · 주문 경로 체크리스트(DRY_RUN HTTP·한도·심볼·멱등·감사 로그)는 이 diff 가 주문 경로를 건드리지 않아 돌리지 않았다 · `cron-runner` 자식 2개 구조 미특정.
+- **👉 사용자가 확인할 것**: 없음(운영 거동 변화 없음 — 발동 문구만 길어진다). 다음에 킬스위치가 발동하면 텔레그램 문구에 소실 종목·보정률·미결제 대금이 보이는지 봐 두면 된다.
+- **👉 사용자가 결정할 것**: ① ~~킬스위치 유지/해제~~ → **2026-11-06 사용자 「유지」 결정**(권고와 같다. 해제는 사용자 전용이므로 AI 가 건드리지 않는다) ② 커밋 메시지에 과거 task ID 를 인용하면 그 task 의 넓은 scope 판정이 훅 게이트를 만족시키는 문제(이번에 `T-056` 이 그랬다)를 `/이슈기록` 에 등록할지 ③ 남은 low(L-3′·L-5·L-11) 처분.
+- **남은 일**: 정산 시점 관측 · `cron-runner` 자식 구조 평시 확인. 둘 다 코드 작업이 아니다.
+- **이슈·위험**: 🔴 **커밋 메시지의 과거 task ID 인용이 안전 게이트를 우회할 수 있다** — 이번 커밋은 T-155 자체의 PASS 로 정당하지만, 메시지에 적은 `T-056` 의 판정 scope(`src/lib/safety/` 전체)만으로도 통과했을 것이다. 관행과 구조 양쪽의 문제이고 위 ②가 그 결정이다. ISS-0013 은 Codex 가 ref 를 쓸 때마다 재발한다.
