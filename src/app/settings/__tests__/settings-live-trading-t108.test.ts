@@ -118,7 +118,7 @@ afterEach(() => {
 });
 
 describe('문구 — 이름과 방향 표시', () => {
-  test('자동승인모드 확인창은 주문 단계 안내만 표시한다', () => {
+  test('자동승인모드 ON 스위치 바로 아래와 확인창은 주문 단계 안내만 표시한다', () => {
     function findAutoApprovalRow(node: unknown): El | undefined {
       if (Array.isArray(node)) return node.map(findAutoApprovalRow).find(Boolean);
       if (!isEl(node)) return undefined;
@@ -129,6 +129,14 @@ describe('문구 — 이름과 방향 표시', () => {
     expect(row).toBeDefined();
     const confirmation = { ok: true, mode: 'assist', dryRun: true, killSwitch: true };
     hookMode.direct = false;
+    hookMode.queue = [{ ...confirmation, mode: 'auto' }, null, false];
+    const onHtml = renderToStaticMarkup(row as ReactNS.ReactElement);
+    expect(onHtml).toContain('aria-checked="true"');
+    const underSwitch = onHtml.match(/<\/button><\/div><\/div><div id="auto-approval-mode-description"[^>]*>([^<]*)<\/div>/)?.[1];
+    expect(underSwitch).toBe('국내·해외 신규 시그널이 조건을 충족하면 승인 없이 주문 단계로 넘어갑니다.');
+    expect(onHtml).not.toMatch(/실거래여부|모든거래차단/);
+    expect(hookMode.queue).toHaveLength(0);
+
     hookMode.queue = [confirmation, confirmation];
     const html = renderToStaticMarkup(row as ReactNS.ReactElement);
     expect(hookMode.queue).toHaveLength(0);

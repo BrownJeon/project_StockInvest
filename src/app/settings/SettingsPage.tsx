@@ -198,11 +198,6 @@ async function readAutopilot() {
   return result.ok && isAutopilotSnapshot(result.data) ? result.data : null;
 }
 
-function tradingModeText({ dryRun, killSwitch }: AutopilotSnapshot): string {
-  const trading = dryRun ? '실거래여부 OFF · 가상 주문' : '실거래여부 ON · 실제 주문 가능';
-  return killSwitch ? `${trading} · 모든거래차단 ON` : trading;
-}
-
 function AutoApprovalModeRow() {
   const [snapshot, setSnapshot] = useState<AutopilotSnapshot | null>(null);
   const [confirmation, setConfirmation] = useState<AutopilotSnapshot | null>(null);
@@ -255,8 +250,7 @@ function AutoApprovalModeRow() {
   const mode = snapshot?.mode;
   const checked = mode === 'auto';
   const isToggle = mode === 'auto' || mode === 'assist';
-  const modeText = checked ? AUTO_APPROVAL_GUIDANCE
-    : mode === 'assist' ? '승인형 · 승인한 시그널의 주문을 제출'
+  const modeText = mode === 'assist' ? '승인형 · 승인한 시그널의 주문을 제출'
     : mode === 'manual' ? '현재 수동형'
     : pending ? '자동승인모드를 읽는 중입니다.' : '현재 모드를 읽지 못했습니다.';
 
@@ -265,9 +259,9 @@ function AutoApprovalModeRow() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 14 }}>자동승인모드</div>
-          <div id="auto-approval-mode-description" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+          {!checked && <div id="auto-approval-mode-description" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
             {modeText}
-          </div>
+          </div>}
         </div>
         {isToggle && snapshot && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
@@ -277,7 +271,9 @@ function AutoApprovalModeRow() {
           </div>
         )}
       </div>
-      {snapshot && checked && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{tradingModeText(snapshot)} · 국내·해외 공통</div>}
+      {checked && <div id="auto-approval-mode-description" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+        {AUTO_APPROVAL_GUIDANCE}
+      </div>}
       {(!mode || mode === 'manual') && !pending && (
         <button type="button" style={autoApprovalButtonStyle}
           onClick={() => { if (mode === 'manual' && snapshot) void save('assist', snapshot); else void reload(); }}>
