@@ -1,7 +1,8 @@
 ---
 task_id: T-113
 title: 챗봇 대화 소유권과 서버 인가
-status: review
+status: done
+waiting: "사용자 화면 확인 — /ai 에 기존 대화 13건이 보이는지(2026-11-06 23:19 백필 후)"
 project: StockInvest
 created: 2026-11-04
 updated: 2026-11-06
@@ -65,6 +66,23 @@ aliases: [ADP-010-C01-ownership]
 - [22:59] [사실] 11-04 정적 통과 판정 이후 변경 여부: T-113 관련 작업 트리 파일의 수정 시각이 모두 11-04 22:13~23:30(ownership.ts 22:19, 라우트 22:19, db.ts 22:13, DDL 22:14, 라우트 테스트 22:20)이고 11-06 이후 수정 흔적 없음. 단, 미커밋 파일이라 git 이력으로 통과 판정 시점 대비 내용 동일성은 증명할 수 없고, QA 의 11파일 매니페스트 해시는 정규화 방식을 몰라 재현하지 못했다. base `41cc3c0..HEAD` 20커밋(과업 서술은 19; 개수 불일치는 서술 오차)의 비문서 변경은 `src/lib/safety/kill-switch.ts`·그 테스트·`TradeLogPanel.tsx`·`EvalFunnelCard.tsx`·`t108-trade-render.test.ts` 5개뿐이고, `src/app/api/chat`·`src/lib/chat`·`src/lib/db.ts`·`src/lib/auth`·`src/middleware.ts`·`src/app/ai`·`scripts/migrations` 는 base→HEAD 사이 diff 0. 조정자 메모의 `origin/main 6d15894`(HEAD 보다 9커밋 앞)도 로컬 ref 로 대조했다: 비문서 변경은 `src/app/api/settings/safety/autopilot/**`·`src/app/settings/**`·`src/lib/signals/**` 뿐이고 위 채팅 경로와 `src/lib/db.ts` 는 HEAD↔origin/main diff 0 이라 작업 트리 변경이 그대로 얹힌다.
 - [22:59] [미검증] 현재 HEAD(또는 origin/main) 기준 jest·tsc 재실행(QA 24/24·8/8 은 base 기준 사본), 운영 DB 실제 상태·앱 계정의 ALTER/INDEX 권한, 배포 시 `stockinvest-cron` 동반 재시작의 매매 영향(배포 게이트 소관), 운영 `next-server` 단일성, MariaDB 에서 `updated_at=updated_at` 재실측, `docs/design/T-113-cutover-access-drain.md`·`T-113-chat-ownership-migration.md` 정독(판정 근거에 쓰지 않음).
 - [22:59] **최종 판정: PASS (scope: src/app/api/chat/models/route.ts, src/app/api/chat/threads/route.ts, src/app/api/chat/threads/[id]/route.ts, src/app/api/chat/threads/[id]/messages/route.ts, src/app/api/chat/threads/[id]/draft/route.ts, src/lib/chat/ownership.ts, src/lib/db.ts, scripts/migrations/T-113-chat-ownership.sql, src/lib/chat/__tests__/t113-migration-contract.test.ts, src/lib/chat/__tests__/t113-backfill-contract.test.ts, src/app/ai/ChatPage.tsx; 읽기 전용 참조: HEAD 전체 git grep, base..HEAD·HEAD..origin/main 변경 파일 목록)** — 이관 순서(재측정→백업→DDL→배포→백필→확인)는 구버전 호환·신규 코드 fail closed·DDL 선행 요건이 코드로 확인되어 안전하다고 판단한다. Critical 0·High 0·Medium 2·Low 3. 조건: 위 ⑤ 가드·종료 확인(Medium)과 커밋 구성(Medium)을 실행 전에 반영할 것. 본 판정은 DDL·백필·배포 실행 승인이 아니며 `docs/design/T-113-*.md` 와 `T-113-chat-ownership-backfill-plan.sql` 은 scope 밖이다(db.ts 는 chat_threads 정의 부분 diff 와 ALTER 부재 확인만).
+
+- [00:20] **2026-11-07 후속 커밋 감사(독립, 코드·문서 읽기와 서버 시험 2건만 — 운영 DB·서비스 접근 없음, 코드·문서 무수정).** 이 감사의 범위는 사용자 지시 「T-113 미커밋 산출물 커밋 및 푸시」로 추가될 파일(operator·backfill·drill 스크립트 6개, 백필 계약 시험, 설계 문서 4개, 인계문, 이력서)뿐이다. 앞선 c33e467 커밋(소유권 코드·DDL) 때의 판정과는 별개이며, 아래 마지막 판정 줄이 이번 커밋 범위의 판정이다.
+- [00:20] [사실] 자동 실행 경로 없음. `package.json` scripts(dev/build/start/lint/typecheck/test)는 `scripts/migrations/`를 참조하지 않는다. `deploy.yml`의 migrate 는 주석(미사용)이고 build 는 `npm ci` + `next build`뿐이다. `ecosystem.config.js` 두 앱은 `next start`·`scripts/cron-runner.sh`이며 cron-runner 와 git-hooks 는 migrations 를 glob 하지 않는다. 훅 문서(commit-msg L254)도 「배포가 자동 실행하지는 않는다」고 적었다. `tsconfig.json`은 `allowJs:false`라 `.mjs` 를 타입검사에 넣지 않고 `__tests__`·`*.test.ts` 를 제외한다.
+- [00:20] [사실] 루트 jest(`roots:[src]`, testMatch `**/*.test.ts`)는 `t113-backfill-contract.test.ts` 만 수집하고 `T-113-operator.test.mjs`(scripts/ 아래, `.mjs`)는 수집하지 않는다. 후자는 `node --test` 로 수동 실행하는 시험이다(package.json 에 연결 없음). 서버(`home_ubuntu`, node v24.22.2)에서 공용 락 + `env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp TZ=Asia/Seoul` 로 직접 실행: jest `src/lib/chat/__tests__/t113-backfill-contract.test.ts` 3/3 통과(0.27s), `node --test scripts/migrations/T-113-operator.test.mjs` 7/7 통과. 두 시험 모두 DB 연결을 만들지 않는다(계약 시험은 소켓 정규식 검사에서 mysql2 import 전에 종료, operator 시험은 모의 db 객체).
+- [00:20] [사실] 계약 시험은 repo 루트 cwd 를 가정(`process.cwd()` + 상대경로)하지만 jest 는 항상 루트에서 돈다. backfill.mjs 단독 커밋 상태(ownership.ts 없음)에서도 의존성이 없어 통과한다.
+- [00:20] [사실] operator.mjs 는 기본 비활성이다. `T113_UNREVIEWED_PROTOTYPE` 정확한 문자열이 없으면 `PROTOTYPE_DISABLED` 로 첫 줄에서 종료하고, 켜도 호스트·포트·CA 경로·계정은 0600 소유자 전용 설정 파일에서만 받으며(`protectedRead`: O_NOFOLLOW·mode&077·uid·5MB), `expectedHost/Port/serverId` 가 실제 서버 신원과 다르면 중단하고, apply 는 manifest sha256 인자와 서버 신원까지 일치해야 한다. 저장소에 기본 대상 호스트·비밀·실데이터는 없다(fixture 값 `fixture-password`·합성 제목뿐). 오류는 코드명으로만 출력해 설정·행 내용을 찍지 않는다. 한계: 환경변수 문자열은 저장소에 공개된 리터럴이라 권한이 아니라 실수 방지 장치일 뿐이다.
+- [00:20] [사실] 현재 운영 상태에서 operator 는 사실상 불활성이다. DDL·백필이 이미 끝나 `chat_threads.user_id` 가 존재하고 13건이 모두 소유 상태라, capture 는 `OWNER_COLUMN_STATE`, apply 는 `NON_NULL_OWNER_FOUND`(또는 데이터 지문 불일치)로 UPDATE 이전에 중단된다. 다만 apply 는 SERIALIZABLE 트랜잭션에서 읽기 잠금을 잡은 뒤 롤백하므로 「접속하면 무변경」이지 「접속하지 않음」은 아니다(명시 설정이 있어야만 일어난다).
+- [00:20] [사실] backfill.mjs 는 `--fixture-only` 인자 정확히 1개와 `T113_FIXTURE_SOCKET=/tmp/t113-own-fixture.<영숫자 8자>/mysql.sock`(부모 realpath 동일·소켓 파일) 만 받고, 서버 `@@hostname='t113-fixture-node'`·`skip_networking=1`·DB `t113_fixture_demo` 와 고정된 합성 행 전체가 일치해야 UPDATE 한다. URL·호스트·DB·소유자·ID 를 인자로 줄 수 없고 `.env` 를 읽지 않는다. 운영 MariaDB 는 원격 TCP 라 이 소켓 경로로 도달할 수 없다. `root`/빈 비밀번호는 이 고정 합성 서버 전용 값이다.
+- [00:20] [사실] drill 스크립트 2개는 인자를 받지 않고(`$# -ne 0` 거부) 외부 DB 설정을 읽지 않는다. 대상은 `docker run --network none --pull never --tmpfs … mariadb:10.11.11 --skip-networking` 일회용 컨테이너뿐이며 비밀번호는 빈 root(컨테이너 안 한정), GPG 문구는 매 실행 `/dev/urandom`, 작업 디렉터리는 `mktemp -d` 이고 trap 에서 컨테이너·gpg-agent·임시 디렉터리를 정리한다. `rm -rf -- "$work"` 는 mktemp 결과에만 쓴다. 운영 호스트·계정·DB 를 기본값으로 갖지 않는다. 이번 감사에서 drill 은 실행하지 않았다(미검증).
+- [00:20] [사실] `T-113-chat-ownership-backfill-plan.sql` 은 비어 있지 않은 모든 줄이 `--` 주석이다(비주석 줄 0건 확인). `mysql < 파일` 로 실행해도 문장이 없다.
+- [00:20] [사실] 하드코딩 비밀 점검: 6개 스크립트·계약 시험·문서 4개·인계문·이력서에서 IPv4(`0.0.0.0`·`127.0.0.1` 외 없음)·토큰·API 키·개인 키·실제 비밀번호 값 패턴은 발견되지 않았다. 문서에는 내부 구성 정보(호스트명 `home-dev-x600`, 3003 `0.0.0.0` 리슨, 백업 파일·복호 비밀 파일의 경로와 백업 SHA-256)가 있으나 비밀 값 자체는 없다.
+- [00:20] [Low] 설계 문서가 「사용되지 않은 다중 사용자 이관 설계」라는 점을 스스로 밝히지 않는다. 문서 4개는 11-04 작성 시점의 상태 문구를 그대로 갖는다 — `T-113-cutover-access-drain.md` 「진행 불가(BLOCKED)」, `T-113-backfill-execution.md` 「운영 실행 불가」, `T-113-backup-restore.md`·`T-113-chat-ownership-migration.md` 「실행 전 검토안/검토용」 — 그리고 11-06 의 실제 이관(단일 사용자 전제의 대안 순서: 백업 → DDL → 배포 → `BEGIN NOT ATOMIC` 한 블록 UPDATE)이 이 문서·operator·drill 과 무관하게 끝났다는 문구가 없다(문서 안의 `11-06`·`완료`·`대체` 검색 0건, 연관 언급은 이력서 최종 요약 한 곳). 인계문(`T-113-T-152-claude-handover-2026-11-05.md`)도 「최종 검증 전」 상태 그대로다. 오해 위험: 이관이 아직 안 끝났다고 읽히거나, 이 도구·차단 절차가 실제 사용된 검증된 경로로 읽히거나, 다중 사용자 상황에 그대로 재사용될 수 있다. 권고: 각 문서 맨 위에 2~3줄 배너(「2026-11-06 단일 사용자 대안 순서로 이관 완료 · 이 문서/도구는 미사용 · 다중 사용자 전제의 보관용 · 재사용 전 재검토」)를 넣거나 최소한 커밋 메시지·이력서에 같은 문장을 남긴다. 문서는 이번에 수정하지 않았다.
+- [00:20] [Low, 커밋 절차] 이 Mac 작업 트리의 로컬 `main`(HEAD `f47cf28`)은 `origin/main`(`c33e467`)보다 한 커밋 뒤처져 있다(`HEAD` 가 `origin/main` 의 조상, merge-base=HEAD). 여기서 커밋하면 push 는 non-fast-forward 로 거절되고, 당겨오려 하면 미추적/수정 상태의 T-113 파일 10개(`ownership.ts`·`T-113-chat-ownership.sql`·시험 2개·`db.ts`·라우트 5개)가 「덮어쓰기」 충돌을 낸다. 10개 모두 `git hash-object` 가 `origin/main` blob 과 같음을 확인했다(내용 동일). 앞선 배포가 서버 로컬 clone(`~/.node-local/stockinvest-t113-clone`)에서 만들어 push 한 이유다. 권고: 같은 서버 clone 에서 origin/main 위에 이번 파일만 복사해 커밋·push 하거나, Mac 트리 정리(동일 10개 정리 후 pull)는 다른 세션의 병행 변경을 건드리지 않도록 사용자 확인 뒤 수행한다.
+- [00:20] [Low] 파일 모드. 디스크상 7개 모두 `rwx------`(0700)라 `core.fileMode=true` 인 서버 clone 에서 커밋하면 `.sql`·`.test.mjs` 까지 100755 로 들어간다(기존 `T-113-chat-ownership.sql` 이 이미 100755, 다른 마이그레이션 SQL 은 100644). 실행 위험은 없다(plan.sql 은 전부 주석, operator 는 환경변수 가드). 권고: `.sql`·`.test.mjs` 는 `git update-index --chmod=-x`.
+- [00:20] [참고] push 는 webhook 으로 `stockinvest`·`stockinvest-cron` 두 pm2 앱을 새 릴리스로 재기동한다. 이번 커밋은 런타임 코드 변경이 없고(스크립트·시험·문서만) 앞선 배포 때도 같은 절차로 헬스 200 이었으나, 재기동 시점(현재 미국장 시간대)은 Deployer 와 사용자 판단이다.
+- [00:20] [미검증] drill 두 스크립트의 실제 실행(Docker 필요, 앞선 작성자 실행 기록만 문서에 있음), operator.mjs 의 실 MariaDB TLS 동작(모의 시험 7건과 작성자 기록뿐), 문서 4개·인계문·이력서 전문 정독(상태 문구·키워드 검색·머리말 위주로 확인), 전체 jest·tsc·lint·next build 재실행, 훅 자체의 실제 통과 여부(커밋 시점 확인 필요), 서버 clone 의 origin 최신 여부.
+- [00:20] **최종 판정: PASS (scope: scripts/migrations/T-113-backup-restore-drill.sh, scripts/migrations/T-113-chat-ownership-backfill-plan.sql, scripts/migrations/T-113-chat-ownership-backfill.mjs, scripts/migrations/T-113-chat-ownership-operator.mjs, scripts/migrations/T-113-gpg-pipeline-drill.sh, scripts/migrations/T-113-operator.test.mjs, scripts/migrations/T-113-chat-ownership.sql, src/lib/chat/__tests__/t113-backfill-contract.test.ts, docs/design/T-113-backfill-execution.md, docs/design/T-113-backup-restore.md, docs/design/T-113-chat-ownership-migration.md, docs/design/T-113-cutover-access-drain.md, docs/handovers/T-113-T-152-claude-handover-2026-11-05.md, jest.config.js, package.json, deploy.yml, ecosystem.config.js, tsconfig.json, scripts/git-hooks/commit-msg)**
 
 ## Claude 검토
 
@@ -180,7 +198,45 @@ aliases: [ADP-010-C01-ownership]
 - 백필 가드(Reviewer Medium 1 반영): `BEGIN NOT ATOMIC` 한 블록에서 users `FOR UPDATE` 로 1명 확인, NULL 대상 수가 직전 재측정값과 같은지, `ROW_COUNT()`=대상 수, 잔여 NULL 0 — 하나라도 어긋나면 ROLLBACK. 일회용 MariaDB 10.11.11 시험 4경우(대상 수 불일치·사용자 2명 → 무변경 / 정상 → 2건 귀속·`updated_at` 보존 / 재실행 → 0건) 확인. 실행 전 3003 리스너 1개·새 릴리스 cwd 를 확인한다.
 - 커밋 구성(Reviewer Medium 2 반영): 백필 계약 시험(`t113-backfill-contract.test.ts`)과 operator·backfill·drill 스크립트, `docs/design/T-113-*.md` 는 커밋하지 않는다(미커밋으로 남김).
 
+## Deployer
+
+- 판정: **성공(ok)**. 롤백 없음.
+- 커밋: `c33e467 feat(T-113): 챗봇 대화 소유권·서버 인가` (부모 `f47cf28`, 운영 직전 릴리스와 동일). 11개 파일 +693/-71.
+- push 전 확인(23:15): 서버 clone `/home/brownjeon/.node-local/stockinvest-t113-clone` `git fetch origin` 결과 origin/main = `f47cf28`(움직이지 않음). 동승 커밋 없음(`f47cf28..c33e467` 는 이 커밋 1개). `git-refs-clean.sh --check` exit 0(실제 ref 2개, 사이드카 없음).
+- push: `git push origin main` 23:15:53 KST, `f47cf28..c33e467`. 공유 NFS 저장소에서는 push 하지 않았다.
+- 배포 경로: webhook(`deploy-stockinvest.sh` → `release.sh`), `--migrate` 없음(`migrated:false`). 빌드·헬스·전환 로그 `project_StockInvest.log` 의 START sha=c33e467 ~ END exit=0(KST 23:15:57 ~ 23:18:12).
+- 릴리스: `20261106-231601-c33e4678`. `RELEASE_RESULT {"status":"ok","release":"20261106-231601-c33e4678","sha":"c33e467848ad59dfad59849fa5ceed1aade6c3eb","previous":"/home/brownjeon/apps/stockinvest/releases/20261106-230448-f47cf28a","migrated":false}`
+- 전환: `current` → `releases/20261106-231601-c33e4678` (23:16:33 확인). 직전 릴리스 `20261106-230448-f47cf28a` 는 보관(롤백 지점, 실행 안 함).
+- 확인 결과(23:18):
+  - `/api/health` 200 (로컬 `127.0.0.1:3003`, 응답 4.2초). `ok:true, db:true, schemaFatal:false, safetyStatus:green, dryRun:true, killSwitch:true, limitsConfigured:true, authConfigured:true, cronSecretConfigured:true, engine.enabled:true, autopilotMode:auto`. 킬스위치·DRY_RUN 값은 건드리지 않았다. 이 응답의 `dryRun:true` 는 배포 전 값을 기록하지 않아 비교하지 못했다(미확인 항목 아님, 현재 값만 기록).
+  - 무세션 `GET /api/chat/threads` → 401.
+  - pm2: `stockinvest` id 141 online, pid 511094, restarts 0, cwd 새 릴리스. `stockinvest-cron` id 142 online, pid 511163, restarts 0, cwd 새 릴리스. `stockinvest-cron` 은 정확히 1개(이전 id 140 은 release.sh 가 삭제 후 재등록).
+  - 3003 LISTEN 1행(소켓 소유 프로세스 `PM2 v6.0.14: Go` pid 1928 = God Daemon). 실제 서빙 워커 511094 의 cwd 가 새 릴리스.
+  - 최근 에러 로그(`pm2-err.log`·`pm2-out.log`·`cron-out.log`): `Unknown column`/`ER_BAD_FIELD` 0건. 23:15 이후 err 로그 1줄: `[strategy/records/job-run-log] 503 reason=timeout (deadline=2500ms)`(기동 직후 23:16:34, 러너가 스풀 후 재전송 — 같은 메시지가 22:59 에도 있었음).
+  - 부팅 로그: `자동 청산 엔진 ON`(system_config.exit_engine_enabled=true) 기록. 설정은 바꾸지 않았다.
+- 미실행: 백필(`BEGIN NOT ATOMIC` 블록), DB 쓰기, pm2 조작(배포 스크립트 외), 롤백. 실화면(브라우저)과 로그인 세션을 통한 채팅 소유권 동작은 확인하지 않았다(미확인).
+- 이상 징후: 없음. 헬스 최초 몇 분간 3003 health 000(기동 중) — 재기동 직후 정상 전환 범위.
+
+
+## 운영 이관 완료 (2026-11-06 23:19, 메인 세션)
+
+- **⑤ 백필(23:19:03)**: 가드 통과 — current = `20261106-231601-c33e4678`, 릴리스 디렉터리에서 도는 프로세스 전부 새 릴리스(구 릴리스 0, next-server 1). 직전 재측정 NULL 13 → `BEGIN NOT ATOMIC` 블록 `COMMITTED 13 0`. 귀속 13·NULL 0·소유 대화의 메시지 32. 백필 전후 다른 열 지문(대화 7열·메시지 11열, `updated_at` 포함) 동일. 대상 목록(id·이전 owner·updated_at)은 앱 호스트 `~/backups/stockinvest-t113/backfill-targets-*.tsv`(0600)에 남겼다 — 되돌릴 때는 이 목록으로 행 단위 `user_id=NULL` 복원(표 복원 금지, Reviewer Low).
+- **⑥ 화면 확인**: 운영 `/ai` 는 로그인 필요라 AI 가 확인하지 못했다(계정 로그인은 하지 않는다) → 사용자 확인 대기.
+- 배포 커밋 `c33e467`(부모 `f47cf28`)은 공유 NFS 작업 트리가 아니라 서버 로컬 clone `~/.node-local/stockinvest-t113-clone` 에서 만들고 push 했다(서버 commit-msg 훅 「Reviewer 감사 기록 확인: T-113」 통과). 처음 만든 공유 저장소 worktree 는 다른 세션의 정리로 메타데이터가 사라져 버렸다(남은 디렉터리 `~/.node-local/stockinvest-t113-deploy` 는 미사용).
+
 ## 최종 요약
+
+### [T-113] 챗봇 대화 소유권·서버 인가 — 운영 반영 (2026-11-06)
+- **상태**: done · 사용자 화면 확인 대기(`waiting`).
+- **무엇이 바뀌었나**: 채팅 API 5개가 로그인 계정 본인의 대화만 읽기·쓰기·삭제하고, 남의 대화·소유자 없는 대화는 404, 세션 없음·삭제 계정은 401. LLM 호출 전후로 소유권을 다시 확인한다. DB `chat_threads.user_id` 추가, 기존 대화 13건을 현재 계정으로 귀속.
+- **배포**: 커밋 `c33e467` → 2026-11-06 23:15:53 push → 릴리스 `20261106-231601-c33e4678`(23:18:12 완료, `migrated:false`, 롤백 지점 `20261106-230448-f47cf28a`). 같은 배포에 실린 다른 작업 없음. DDL 23:12:08(수동 1회), 백필 23:19:03.
+- **AI 가 검증한 것**: 운영 재측정(users 1·13/32), 암호화 백업의 격리 복원 지문 일치, DDL 전후·백필 전후 데이터 지문 불변, 배포 후 health 200·pm2 정상·무세션 401·`Unknown column` 0. QA(origin/main 기준) Jest 27/27·tsc 0·실 MariaDB 인가 16/16·구버전 호환. Reviewer PASS.
+- **AI 가 못 한 것**: 로그인한 실제 화면·실제 계정 세션으로의 채팅 동작, 브라우저 UI, 구·신 인스턴스 동시 쓰기.
+- **👉 사용자가 확인할 것**: 웹/앱 `/ai`(AI 탭)에서 **기존 대화 13건이 목록에 보이고, 하나를 열어 메시지가 보이며, 새 질문 1건이 저장되는지**. 비어 보이거나 오류가 나면 바로 알려 주세요(백필 대상 목록으로 즉시 되돌릴 수 있다).
+- **남은 일**: ① `ChatPage.tsx` 오류 처리 보완(QA — 401 에서 로그인 이동 없음, 404 때 이전 메시지 잔존, 삭제 버튼이 응답을 보지 않음; 저~중) — T-152 연결 어댑터와 함께 다루는 것을 권고. ② 커밋하지 않은 T-113 산출물: 설계 문서 4개·operator/backfill/drill 스크립트·백필 계약 시험(공유 작업 트리에 미추적으로 남음 — 보관 또는 정리 결정 필요). ③ 공유 NFS 작업 트리의 `main` 은 origin 보다 뒤처져 있고 T-113 파일이 미커밋 상태로 남아 있어, 다음 `git pull` 때 「덮어쓰기」 충돌이 날 수 있다(내용은 origin 과 같다).
+- **이슈·위험**: 11-04 의 차단·drain 설계는 다중 사용자 전제로 대체하지 않고 남겨 두었다 — **사용자가 2명 이상이 되기 전에** 구버전 호환 경로 없이 운영하므로 문제없지만, 같은 방식의 이관을 다중 사용자 상황에 재사용하면 안 된다. 킬스위치 true·DRY_RUN true 는 그대로다.
+
+### 이전 요약 (2026-11-04)
 
 - 상태: 소유권·서버 인가 코드 및 수동 DDL/백필 검토안 작성, 독립 정적 감사 PASS·격리 QA 조건부 PASS. 운영 스키마 이관·기존 이력 귀속·실제 채팅 연동은 미완료.
 - 변경: `src/app/api/chat/` 라우트·`src/lib/chat/ownership.ts`·신규 생성 스키마·수동 DDL·시험과 이관 계획. 기존 채팅 API를 소유자별로 제한하되, 기존 미분류 대화는 백필 전 비노출이다.

@@ -3,6 +3,7 @@ project: StockInvest
 task: T-108
 created: 2026-10-30
 status: guide-v1
+updated: 2026-11-07 (§1.1 비서 탭 — T-157)
 author: designer
 approved_demo: mockups/T-108-menu-home-v3.html
 approved_demo_sha256: f3230e69cd05df1c7c7fdcfab74aad20a048a33dc5f740d63a6775f144d8a0a5
@@ -33,11 +34,11 @@ tags: [type/design, domain/ui, domain/analytics]
 
 | 구분 | 확정 내용 | 근거 |
 |---|---|---|
-| ① 하단 탭 | 홈·거래·분석·(비서)·설정. **T-113 배포 전 4칸** = 홈·거래·분석·설정 | 데모 D ①A, task 21:15 |
+| ① 하단 탭 | 홈·거래·분석·(비서)·설정. **T-113 배포 전 4칸** = 홈·거래·분석·설정 → **T-157 에서 5칸(비서 4번째)으로 전환**(2026-11-07 갱신, §1.1) | 데모 D ①A, task 21:15 |
 | ② 홈 순서 | 띠 → 확인 필요 → 운용현황 → 청산 로직 → 오늘의 분석 → 최근 활동. 지표 2×2, 칸 안 국내·해외 두 줄 | D ②A |
 | ③ 분석 3분류 | 오늘 분석 · 검증·성과 · 데이터 상태 | D ③A |
 | ④ 거래 하위 | 운용 현황 · 보유·주문 · 운영 기록, 기본 = 운용 현황, `?tab=` 딥링크 | D ④A |
-| ⑤ 비서 범위 | 운영 기록만, 계좌 보유는 종목 수까지 — **이번 구현 범위 밖(탭 숨김)** | D ⑤A |
+| ⑤ 비서 범위 | 운영 기록만, 계좌 보유는 종목 수까지 — **이번 구현 범위 밖(탭 숨김)**. T-157 은 탭만 열고 화면은 기존 `/ai` 그대로 — 비서 조회 범위(D ⑤A)는 여전히 미구현 | D ⑤A |
 | ⑥ 청산 로직 | 운용현황 바로 아래 독립 영역, 0 이어도 항상 | D ⑥A |
 | ⑦ 깔때기 토글 | 거래 › 운영 기록 머리 국내/해외 세그먼트, 기본 = 마지막 세션이 더 최근인 시장 | D ⑦A |
 | D1 | 홈 「분석」 = 장마감 AI 분석만 + 「청산 로직」 지표 신설 | 계약 §7·§11 |
@@ -57,7 +58,7 @@ tags: [type/design, domain/ui, domain/analytics]
 
 ### 0.3 하지 않는 것
 
-- **비서 탭 노출 없음**(T-113 대화 소유권 전). `/ai` 라우트·`ChatPage.tsx`·채팅 API 는 그대로 두고 손대지 않는다.
+- **비서 탭 노출 없음**(T-113 대화 소유권 전). `/ai` 라우트·`ChatPage.tsx`·채팅 API 는 그대로 두고 손대지 않는다. *(2026-11-07 갱신: T-113 운영 반영(릴리스 `20261106-231601-c33e4678`) 뒤 [[T-157-assistant-tab-and-chat-errors]] 가 비서 탭을 열고 `ChatPage.tsx` 오류 처리만 보완한다 — §1.1·§2.7.)*
 - **주문·승인·거절·취소·스위치·설정의 쓰기 동작 변경 없음.** 기존 API(`/api/signals/custom/confirm`·`/api/signals/[id]/reject`·`DELETE /api/signals/[id]`·`PATCH /api/settings/safety` 등) 호출 지점·요청 본문·확인 단계 그대로. 새 라우트는 전부 `GET` 읽기 전용.
 - **DDL·새 테이블·마이그레이션·`db.ts` 변경 없음.** 이미 있는 `job_run_log`·`judgment_run`·`judgment_candidate` 를 읽기만 한다.
 - **안전 로직 변경 없음** — `src/lib/safety/**`·`src/lib/strategy/**`·`src/lib/signals/**` 의 판정 코드는 바꾸지 않는다(예외: §3.5 의 순수 표시 함수 신규 1파일, WP-D 의 문구 문자열).
@@ -91,7 +92,8 @@ tags: [type/design, domain/ui, domain/analytics]
 | 3 | 분석 | `/analytics` | `startsWith('/analytics')` · `startsWith('/favorites')` | `scan-search` |
 | 4 | 설정 | `/settings` | `startsWith('/settings')` · `startsWith('/profile')` | `settings` |
 
-- 4칸 `grid-template-columns: repeat(4, 1fr)`. 비서(`brain`) 정의는 배열에 **두지 않는다**(데모의 「보류」 칸은 비교용 — E 절 8). T-113 때 4번째에 끼운다.
+- ~~4칸 `grid-template-columns: repeat(4, 1fr)`. 비서(`brain`) 정의는 배열에 **두지 않는다**(데모의 「보류」 칸은 비교용 — E 절 8). T-113 때 4번째에 끼운다.~~
+- **2026-11-07 갱신(T-157)**: T-113 운영 반영에 따라 예정대로 **5칸** `repeat(5, 1fr)` — 순서 홈·거래·분석·**비서**·설정(데모 v3 536행 `TABS`). 비서 = `/ai`, 활성 `startsWith('/ai')`, 아이콘 Lucide `brain`(데모 v3 `IC.ai` 의 SVG 도형 8개 그대로, `NavIcons.tsx`). 데모의 「보류」 표지는 옮기지 않는다. 위 표 4행 뒤 「설정」 앞에 비서 행이 들어간다고 읽는다. 상태: 구현 완료·Reviewer/QA·배포 진행 중(배포 전까지 운영은 4칸).
 - 아이콘: 데모 v3 529~534행의 SVG `<path>`·`<circle>` 를 그대로 옮긴 `src/components/nav/NavIcons.tsx`(신규, WP-B). 파일 머리에 `lucide-react 1.24.0 (ISC) 원본 경로` 주석. 도형 수 stone 3·handshake 5·scan-search 6·settings 2 [확실: 데모 소스]. `viewBox 0 0 24 24`, 22px, `fill:none; stroke:currentColor; stroke-width:2; round`.
 - 스타일(데모 236~242행): 라벨 **11px**(지금 10px — E 절 7), `font-weight:600`, 비활성 `--muted`, 활성 `--accent` + 위쪽 2px 막대(`::before` 대신 `<span aria-hidden>` 로 그려도 됨). `aria-current="page"` 는 활성 링크에만. `nav aria-label="주 메뉴"`.
 - `≥900px`: 바를 가운데 720px, 위 모서리 둥글게(데모 280행).
@@ -401,6 +403,8 @@ API·본문·편집 폼·확인 단계 변경 0. `handleApprove`/`handleReject` 
 
 하단 탭에 없음. `/ai` 그대로. 이번 구현에서 비서 관련 파일 변경 0.
 
+*2026-11-07 갱신*: [[T-157-assistant-tab-and-chat-errors]] 에서 하단 4번째 탭으로 노출(§1.1). 화면은 기존 `ChatPage.tsx` 이며 오류 처리만 보완(401 → `/login?next=%2Fai`, 대화 404 시 선택 해제·목록 재조회, 삭제는 서버 `ok:true` 뒤 목록 제거, 대화 목록 오버레이 안 오류 띠). 비서 조회 범위(D ⑤A)·새 공통 UI([[T-152-independent-chat-library]]) 연결은 별도.
+
 ---
 
 ## 3. 용어 변경 전수 계획
@@ -690,7 +694,7 @@ WP-D: A 완료 뒤, 별도 커밋·별도 Reviewer 줄
 | A-7 | A | `exit-zone.test.ts` | 임계 경계(−1.5 정확히·+2.5 정확히)·트레일링 override 3.5/1.2 · 기본값이 `style.ts` 값과 같음 · 경계 비교 방향(`≤`·`≥`)이 `exit-engine.ts` 조건과 같음(계약 §11.1 표) |
 | A-8 | A | `postmortem.test.ts` | `postmortem-core.js` 와 같은 입력 3개 → 같은 출력(구현했을 때) |
 | A-9 | A | 라우트 5개 `route.test.ts` | 봉투·섹션 실패 격리(한 섹션 throw → HTTP 200 + 그 섹션 error)·전체 실패 503·`dynamic` |
-| B-1 | B | `bottom-tabs-t108.test.ts` | 링크 4개 순서·라벨·href, 비서 없음, 활성 규칙(`/strategy`→거래, `/favorites`→분석, `/ai`→없음), `aria-current` 1개, 라벨 11px, SVG 도형 수 3·5·6·2, `HIDDEN_PATHS` 값 불변 |
+| B-1 | B | `bottom-tabs-t108.test.ts` | 링크 4개 순서·라벨·href, 비서 없음, 활성 규칙(`/strategy`→거래, `/favorites`→분석, `/ai`→없음), `aria-current` 1개, 라벨 11px, SVG 도형 수 3·5·6·2, `HIDDEN_PATHS` 값 불변 — *2026-11-07 T-157 갱신: 링크 5개·비서 4번째, `/ai`→비서 활성, 「보류」 없음, 도형 수 3·5·6·8·2(brain 은 데모 `IC.ai` 와 문자열 전수 대조)* |
 | B-2 | B | `home-render-t108.test.ts` | 합성 DTO × 단계 4 × 데이터 상태 6 → 섹션 순서·데모 핵심 문구(§2.2~2.3.7 표의 굵은 문구) 존재, 「0」 은 `zero` 일 때만, 관찰 단계에 손익 숫자 없음, 띠 `unknown` 문구 |
 | B-3 | B | `format.test.ts` | §2.1 각 행, U+2212, fallback 환산 숨김 |
 | C-1 | C | `route-resolve.test.ts` | §1.2 표의 모든 행(옛 `?tab=` 8종 포함) |
@@ -730,7 +734,7 @@ WP-D: A 완료 뒤, 별도 커밋·별도 Reviewer 줄
 | 9 | 배포 — **웹 배포만**(push = blue/green). `--with-migrate` 없음(DDL 없음). APK 재빌드·`versionCode` 변경 없음 | `/api/health` · 운영 홈 |
 
 **완료 기준(DONE WHEN)**
-- 승인 데모 v3 의 홈·거래·분석·설정 구조와 §2 문구가 화면에 있고, 비서는 없다(4칸).
+- 승인 데모 v3 의 홈·거래·분석·설정 구조와 §2 문구가 화면에 있고, 비서는 없다(4칸). *(T-157 이후: 비서 포함 5칸.)*
 - **첫 배포 상태가 빈 화면이 아니다**: 운영 DB 그대로에서 홈이 — 띠 「관찰 (실거래 차단)」·칩 실거래여부 OFF·모든거래차단 OFF·검증 통과 0/16·청산 엔진 ON·손실한도 손절 OFF — 를 보이고, A1 은 배포 시각에 따라 해외/국내 줄이 `◌ 미수집 — 실행 기록 전` 또는 값, AI 매수 판단·제외 사유는 `준비 중`(판단 기록 꺼짐), 청산 로직은 국내 마지막 평가 시각 또는 `장외`, 확인 필요에 「손실한도 손절 OFF — 한도 도달 n종목」(조건 충족 중이면)과 「분석 실패 여부는 아직 알 수 없습니다」(해당 시장 기록 전이면)가 보인다. 「0」 이 아닌 곳에 0 이 없다.
 - 옛 URL(§1.2) 전부 도착, 텔레그램 링크 `/` 정상.
 - 360·412px 가로 넘침 0, 1280px 두 열.
@@ -753,7 +757,7 @@ WP-D: A 완료 뒤, 별도 커밋·별도 Reviewer 줄
 | 5 | 손실한도 손절 한도 도달을 확인 필요에도 | 그대로(§2.3.2 #6) |
 | 6 | 최근 활동 원천 | §2.3.7 — 첫 배포엔 `orders`·`signals` 만, 분석 완료 줄은 `job_run_log` 행이 생긴 뒤 |
 | 7 | 하단 탭 글자 11px | 그대로 |
-| 8 | 비서 5칸 「보류」 표지 | 구현하지 않음 — 4칸(①A) |
+| 8 | 비서 5칸 「보류」 표지 | 구현하지 않음 — 4칸(①A). T-157 에서 5칸으로 바꿀 때도 「보류」 표지는 옮기지 않음 |
 | 9 (신규) | 설정 머리 미니 띠 | v1 생략(§2.6 이유) — Leader 확인 |
 
 ### 8.2 자체 점검 P2 3건 · a11y Minor 3건

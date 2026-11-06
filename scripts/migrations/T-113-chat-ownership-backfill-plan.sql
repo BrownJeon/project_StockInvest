@@ -1,0 +1,146 @@
+-- T-113 legacy ownership BACKFILL PLAN ONLY -- NOT EXECUTABLE SQL.
+-- Every line in this file is a SQL comment. Never un-comment or execute this
+-- file against any database as-is. These are review templates with unresolved
+-- placeholders and human stop/go gates, not an operational migration script.
+-- The old approved policy was to assign legacy threads AND messages to the
+-- original first registrant. This proposal scopes messages via their parent
+-- thread and is a DIFFERENT intermediate schema requiring decision/review.
+-- The operational DDL in T-113-chat-ownership.sql requires its own explicit
+-- approval under the project deployment procedure. A backfill/DML plan is a
+-- separate state-changing operation whose authorization, scope, evidence and
+-- execution window must be checked against existing user instructions; do not
+-- assume previous approval is revoked or demand redundant approval by default.
+--
+-- 0. Stop all old app/API instances and relevant writers; close their access
+-- routes and drain in-flight LLM requests. Keep isolation until secured code
+-- and server authorization are verified. Do NOT equate a hidden tab with API
+-- denial. Record a reversible cutover plan and avoid stopping trading processes
+-- unless their separate operational scope expressly permits it.
+--
+-- 1. User confirmed: "현재 계정이 기존 대화의 소유자이고 삭제된 이전 계정이 없습니다".
+-- This is an affirmative ownership input consistent with the 8월 first-user
+-- attribution policy; do not ask the same question again. The authenticated
+-- operator must still bind that confirmed account to a uniquely verified live
+-- users.id in an access-controlled session and check user count=1 immediately
+-- before change. Do not infer a numeric ID in a report or from MIN(id) alone.
+-- Confirm scope includes all existing legacy threads, including archived rows.
+-- If count, identity, ownership or exact target set contradicts the above or
+-- changes during cutover: STOP and present only the newly missing decision.
+--
+-- 2. After separately approved DDL and appropriate access quiescence, inspect
+-- SHOW CREATE TABLE chat_threads; SHOW CREATE TABLE chat_messages;
+-- Confirm user_id INT UNSIGNED NULL DEFAULT NULL; expected composite index;
+-- unchanged chat_messages.thread_id FK and no incompatible partial migration.
+-- Verify a tested encrypted/access-controlled backup of relevant users,
+-- chat_threads and chat_messages plus restoration procedure. Record a protected
+-- exact set of scoped thread IDs and before values (id, user_id, updated_at),
+-- counts of threads/archived/messages, and immutable validation fingerprints.
+-- Do not place IDs, account details, conversation content or backup data in a
+-- public report. Refresh counts at the cutover; 2026-11-04 22:28 KST counts
+-- (1 user, 13 threads, 32 messages) are historical observations only.
+--
+-- 3. Example aggregate preflight, to adapt and review before any execution:
+-- SELECT COUNT(*) AS users FROM users; -- require exactly 1; then bind its id privately
+-- SELECT COUNT(*) AS total, SUM(user_id IS NULL) AS unowned,
+--        SUM(user_id IS NOT NULL) AS owned FROM chat_threads;
+-- SELECT COUNT(*) AS orphan_messages FROM chat_messages m
+--   LEFT JOIN chat_threads t ON t.id = m.thread_id WHERE t.id IS NULL;
+-- SELECT COUNT(*) AS scoped_messages FROM chat_messages m
+--   JOIN chat_threads t ON t.id = m.thread_id WHERE t.user_id IS NULL;
+-- The historical owner statement is already provided by the user; the count
+-- query alone does not bind it to a verified live account. Privately verify
+-- the target users row still exists and meets the project-defined session/account
+-- validity policy; do not assume an active/status column exists.
+-- Recheck under quiescence and stop on drift, mixed versions, orphan messages,
+-- unsupported schema, unknown ownership, missing backup, or unclear user policy.
+--
+-- 3a. Operator checklist and session skeleton (all lines remain COMMENTS):
+-- Responsible: Leader/deployer runs after Reviewer/QA and scoped approvals;
+-- a second reviewer verifies DB identity, access barrier, backup and results.
+-- The user confirmed the sole current account owns the historical conversations;
+-- do not repeat that settled ownership question absent conflicting new evidence.
+-- Approval for actual operational DDL remains explicitly required by project
+-- rules; separately determine whether the contemplated DML is covered by current
+-- instructions, recording any additional action-specific authorization that is
+-- actually required. This plan itself authorizes no production action.
+-- Connect only through an approved least-privilege operator profile; do not put
+-- passwords in CLI arguments, logs, this plan or a shared report. Pin the target
+-- DB identity, file SHA, intended transaction and expected evidence in the
+-- change record before any DDL/DML. Exact approved app ingress restrictions,
+-- source of truth for in-flight requests, backup restore drill and operator
+-- credentials/access are NOT YET RESOLVED; execution must STOP until verified.
+-- Recheck count and verified account in an access-controlled private session:
+-- SELECT COUNT(*) AS users_count FROM users; -- require exactly 1.
+-- SELECT id FROM users; -- preflight only; compare privately to confirmed account.
+-- This preflight is not a durable lock. Stop account creation/deletion throughout
+-- the transition; repeat the final user check after START TRANSACTION using the
+-- SAME connection and FOR UPDATE. Account-writer exclusion remains separate.
+-- SELECT COUNT(*) AS legacy_count FROM chat_threads WHERE user_id IS NULL;
+-- SELECT COUNT(*) AS already_owned FROM chat_threads WHERE user_id IS NOT NULL;
+-- SELECT COUNT(*) AS foreign_owned FROM chat_threads
+--   WHERE user_id IS NOT NULL AND user_id <> <verified-target-user-id>;
+-- SELECT COUNT(*) AS legacy_message_count FROM chat_messages m
+--   JOIN chat_threads t ON t.id = m.thread_id WHERE t.user_id IS NULL;
+-- If a now-owned thread belongs to a different ID, or any legacy scope is
+-- unclear, STOP for reconciliation, never overwrite it. Existing same-owner
+-- rows may be retained but do not add them to the update set. Capture all
+-- unowned IDs (including archived) and original updated_at in protected backup;
+-- compare count/IDs/message counts and created/updated_at against a secure
+-- manifest, not just a historical aggregate. Owner messages follow the parent.
+-- If unrelated writers, user creation/deletion, or a previous app version can
+-- still act, quiescence is NOT achieved; row locks alone do not make it safe.
+-- 13 threads / 32 messages are not constants or allowed hardcoded IDs.
+--
+-- Suggested exact-set transaction uses a pre-created SESSION TEMPORARY TABLE
+-- with only verified thread IDs and prior updated_at copied from protected
+-- snapshot. Its exact MariaDB commands, permissions, isolation level, collision
+-- checks, select-for-update semantics, transaction timeout, and guarantees for
+-- account INSERT/DELETE are still TO BE TESTED before a runnable tool is made.
+-- As a minimum require two-way ID equality between this table and the locked
+-- current NULL set; counts alone are insufficient. Prior owners must all be
+-- NULL and timestamps must equal snapshot. Deny duplicate/missing target IDs.
+-- The following is pseudocode for a reviewed transaction, not directly runnable.
+--
+-- 4. Transaction outline, not executable as written:
+-- START TRANSACTION;
+-- SELECT id FROM users FOR UPDATE; -- final recheck on this same connection.
+-- SELECT id, user_id, updated_at FROM chat_threads
+--   WHERE id IN (<verified exact protected legacy ID set>) FOR UPDATE;
+-- Compare locked IDs and values with protected snapshot and expected counts;
+-- abort and ROLLBACK on ANY mismatch, missing target user, non-NULL owner or
+-- unexpected newly-created legacy row. Quiescence must also prohibit inserts;
+-- a row lock alone does not establish all writers are stopped.
+-- UPDATE chat_threads AS t
+--   INNER JOIN <session-verified-target-ids> AS scoped ON scoped.id = t.id
+--   SET t.user_id = <verified-current-user-id>, t.updated_at = scoped.previous_updated_at
+--   WHERE t.user_id IS NULL;
+-- SELECT ROW_COUNT() AS affected_threads; -- execute immediately after UPDATE.
+-- Require affected_threads equals verified legacy_count and exact target set.
+-- Verify ROW_COUNT() against the protected preflight NULL count; verify owner
+-- distribution, exact ID set, archived status,
+-- parent/message counts and unchanged prior updated_at; ensure no unrelated rows
+-- changed. Explicit updated_at assignment is intended to preserve the column's
+-- existing ON UPDATE semantics; MariaDB behavior must be independently tested.
+-- COMMIT only when every assertion and authorization is satisfied; otherwise
+-- ROLLBACK. SQL templates do not enforce these assertions automatically.
+-- A disconnect or lost COMMIT acknowledgement is an UNKNOWN outcome: keep
+-- access blocked, inspect live state and backup and never blindly retry.
+--
+-- 5. After commit, new scoped APIs: target user can read exactly intended
+-- threads/messages and another user cannot list/read/change/delete/draft or
+-- cause LLM calls for them. Confirm original content/IDs/counts/timestamps and
+-- archived state, test fail-closed for any remaining NULL owner, verify target
+-- user still exists and satisfies current account/session policy (no active flag is
+-- assumed). Preserve access controls until checks and deployment steps
+-- pass. No new user_id column was added to messages in this intermediate plan.
+--
+-- 6. Rollback: never switch to a pre-T-113 server with user access enabled;
+-- it ignores ownership. Quiesce access/writers again. If a reviewed restore
+-- is necessary, restore only the exact backed-up affected ownership values and
+-- timestamps under guarded transaction, after checking no post-backfill changes;
+-- never NULL all rows or restore a stale whole DB over later user data. Verify
+-- affected IDs and counts, preserve backup and keep access blocked until safe
+-- serving code is available. DDL is not reversed by transactional ROLLBACK.
+-- Restoring owners to NULL temporarily makes legacy history inaccessible again.
+-- Actual SQL, data restore, ownership correction, schema drop and service
+-- restart require their applicable operational approvals and runbook.
