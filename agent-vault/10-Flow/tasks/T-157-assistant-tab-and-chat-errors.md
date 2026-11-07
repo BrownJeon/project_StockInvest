@@ -1,7 +1,8 @@
 ---
 task_id: T-157
 title: 하단 비서 탭 공개 + 기존 챗봇 화면 오류 처리 보완
-status: doing
+status: done
+waiting: "사용자 실화면 확인 — 하단 5칸·비서 탭·대화 목록(웹·앱), 360/412px 라벨 잘림. 그리고 후속 task 방향 결정(초안 검토 상태의 대화 소속)과 교훈 등록 여부."
 project: StockInvest
 created: 2026-11-06
 updated: 2026-11-07
@@ -423,6 +424,47 @@ demo_gate:
 
 ## Deployer
 
+배포 시각은 KST, 실측치만 적는다. 확인하지 않은 항목은 「미확인」이다.
+
+| 시각(KST) | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
+|---|---|---|---|---|---|
+| 11-07 11:58:32 push → 11:59:38 END | 20261107-115837-013d88f6 | 013d88f637bfb1610eede97ab65cb02b6211885e | T-157 (이 커밋 1개. 직전 f712c1b = T-160 은 직전 배포 20261107-114546-f712c1bd 에 이미 실림) | ✅ ok | 웹 전용 · 마이그레이션 없음 · APK·app_release 없음 |
+
+**배포 전 확인**
+- 서버 clone `~/.node-local/stockinvest-t157`: HEAD=013d88f, 부모=f712c1b, working tree 깨끗. `git fetch origin main` 후 origin/main=f712c1b 확인, `origin/main..013d88f` = 이 커밋 1개.
+- `bash scripts/git-refs-clean.sh --check` exit 0 (실제 ref 6개).
+- 기준선: current=20261107-114546-f712c1bd · stockinvest·stockinvest-cron online restarts=0 · cron 1행 · `/api/health` 200 · safetyStatus green · dryRun true · killSwitch false.
+- push: `git push origin 013d88f637bfb1610eede97ab65cb02b6211885e:main` → `f712c1b..013d88f`, exit 0.
+
+**RELEASE_RESULT (`~/.local/webhook-deploy/logs/project_StockInvest.log`, 원문)**
+`{"status":"ok","release":"20261107-115837-013d88f6","sha":"013d88f637bfb1610eede97ab65cb02b6211885e","previous":"/home/brownjeon/apps/stockinvest/releases/20261107-114546-f712c1bd","migrated":false}`
+
+`scripts/deploy.sh` 는 이 저장소에 없다(서버 clone 에도 없음). 그래서 `--dry-run`·`--yes`·`--status` 를 돌리지 않았고, 배포는 push → webhook(release.sh) 한 경로만 탔다.
+
+**배포 후 확인 (실측)**
+- `current` = `/home/brownjeon/apps/stockinvest/releases/20261107-115837-013d88f6`.
+- pm2 `stockinvest` pid 775798 · `stockinvest-cron` pid 775867, 둘 다 online · cwd 새 릴리스 · restarts=0. 재등록으로 카운터가 0 으로 돌아가 배포 전 값과 직접 비교할 수 없다.
+- `stockinvest-cron` pm2 행 **1개**.
+- `/api/health`(127.0.0.1:3003) 200 · safetyStatus green · dryRun true · killSwitch false · limitsConfigured true · effectiveLimitsResolved domestic/overseas true · authConfigured true · cronSecretConfigured true. 배포 전과 동일.
+- 공개 도메인 `/api/health` 200(같은 safety) · `/` 307(로그인 리다이렉트).
+- 변경 실물(서버 prerender `.next/server/app/settings.html`): `href="/ai"` 1건 · `repeat(5, 1fr)` 1건 · `&quot;` 0건 · `aria-current="page"` 이스케이프 없음. 로그인 후 실화면의 하단 5칸·비서 탭은 **미확인**(사용자 확인 몫, 시도하지 않음).
+- cron 로그 `shared/logs/cron-out.log`: 11:59:07 새 프로세스 기동 후 entry-watcher·holding-checker·strategy-eval·signal-followup·signal-expiry·portfolio-snapshot·trade-report 모두 OK. 전환 구간 job-run-log 전송 `HTTP=000` 1회(스풀에 남겨 재전송, 잡 동작과 무관). `cron-err.log` 0행.
+- `pm2-err.log`: 배포 후 `[telegram-poller] getUpdates 실패(1회 연속): fetch failed (ETIMEDOUT)` 1건(11:59:37). 같은 메시지가 오늘 이전에도 간헐적으로 있었다. 재발 여부는 미확인.
+- 재기동 구간의 정확한 길이는 미측정(확인 가능한 흔적은 11:59:06 cron HTTP=000 뿐).
+
+**미확인·미수행**
+- KIS OpenAPI 연동 상태 직접 확인: 미확인(KIS 호출을 하지 않았다).
+- 로그인 후 실화면 렌더링·탭 5칸: 미확인.
+- 두 앱 재시작 횟수 추세: 재등록 직후 0. 이후 추적 필요.
+- APK·`app_release`·`build-apk.sh --publish`·DDL·`--with-migrate`: 해당 없음, 실행하지 않음.
+
+**이슈**
+- `docs/deploy-order.md` §0·§3 과 `.claude/agents/deployer.md` 가 `scripts/deploy.sh` 를 배포 명령으로 적고 있으나 파일이 없다. 현행 경로(push = webhook)는 deploy-order §0 각주와 일치 — 문서 정정이 필요하다(Leader 판단).
+- `.claude/agents/deployer.md` 금기 목록의 `git push` 와 현행 절차(push = 배포)가 충돌한다. 이번 push 는 사용자 명시 승인과 Leader 지시에 따랐다.
+- 장중(KST 11:58~11:59) 배포. 사용자 승인(11:38 KST) 범위 안이다.
+
+**상태**: 웹 배포 완료(push ok · 헬스·cron 1개·safety 동일 확인). 실화면·KIS 연동 확인은 미확인. 이 섹션은 워킹트리에만 기록했고 커밋하지 않았다.
+
 ## 인계 (2026-11-07 00:2x, Claude 데스크톱 세션 → StockInvest 폴더 새 세션)
 
 - 인계 사유: 이 세션은 폴더 없이 시작 후 이동해 `CLAUDE_PROJECT_DIR` 가 비어 있고, 데모 게이트 발화 기록 훅(`prompt-log.sh`)이 동작하지 않는다 → 사용자 생략 발화를 `waive` 가 찾지 못함. 기록 파일 직접 작성은 증거 위조라 하지 않았다. 사용자가 StockInvest 폴더 새 세션에서 이어가기로 결정.
@@ -440,6 +482,31 @@ demo_gate:
 - **비밀·백업 위치(값 아님)**: T-113 백업 `home_ubuntu:~/backups/stockinvest-t113/`(암호문·백필 대상 목록), 복호 비밀은 Mac `~/.stockinvest-secrets/t113-chat-backup-20261106.pass`(0600).
 
 ## 최종 요약
+
+### [T-157] 하단 메뉴에 「비서」 탭이 보이고, 채팅 화면이 오류를 조용히 삼키지 않는다
+
+- **상태**: 운영 반영 완료 · 사용자 실화면 확인 대기
+- **무엇이 바뀌었나**
+  - 하단 탭이 4칸 → **5칸**(홈·거래·분석·**비서**·설정). 비서는 4번째(설정 앞), 아이콘은 T-108 승인 데모 v3 의 `brain` 도형 그대로, 경로 `/ai`, `/ai` 하위에서 활성 표시.
+  - 채팅 화면 오류 처리 3건 — ① 로그인 만료(401) → `/login?next=%2Fai` 로 이동 ② 대화 메시지 조회 404(삭제된·남의 대화) → 이전 대화 메시지를 그대로 두지 않고 목록 갱신 + 안내 ③ 삭제는 서버가 성공을 돌려줄 때만 목록에서 사라진다. JSON 이 아닌 응답(500 등)에서도 조용히 멈추지 않는다.
+  - 늦게 도착한 응답이 화면을 덮어쓰지 않도록 가드 두 겹(대화 ID + 요청 순번). 순번은 활성 대화의 조회에만 매긴다.
+  - `BottomTabs` 의 CSS 주입을 저장소 관례(`dangerouslySetInnerHTML`)로 맞췄다 — **운영 출력은 바뀌지 않는다**(아래 검증).
+- **배포**: 커밋 `013d88f` → push 11-07 **11:58:32 KST** = webhook blue/green. 릴리스 **`20261107-115837-013d88f6`**, `RELEASE_RESULT status: ok`, `migrated: false`. **같은 배포에 실린 다른 작업 없음**(내 커밋 1개만 나갔다). 롤백 지점은 직전 릴리스 `20261107-114546-f712c1bd`(T-160). 웹 전용 — APK·`app_release`·DDL 없음.
+- **AI 가 검증한 것**: 실제로 커밋되는 트리에서 jest **80/80**(ChatPage 오류 42 + 하단 탭 38) · `tsc --noEmit` exit 0 · 5파일 해시가 Reviewer 판정값과 일치. Reviewer 독립 감사 **9라운드**(최종 PASS, scope 5파일) · QA PASS(차단 결함 0) · Codex C2 지적 2건 판정 완료(둘 다 후속 권고). 배포 후 실측: `origin/main` = 내 커밋 · `current`·pm2 2개 cwd = 새 릴리스 · 둘 다 online · cron **러너 1개**(OS 프로세스 2개는 부모-자식, 옛 릴리스 cron 0) · `/api/health` safety 가 배포 전과 **동일**(`dryRun: true`·`killSwitch: false`·한도·auth·cronSecret true) · 새 릴리스 prerender 3개 페이지(settings·profile·recommend) 모두 `href="/ai"` 1건·`repeat(5, 1fr)` 1건·`&quot;` **0건**.
+- **AI 가 못 한 것**: 로그인 후 실화면(브라우저 픽셀) · 앱 WebView 실기기 · KIS 연동 상태 · 「브라우저가 `<style>` 안의 엔티티를 풀지 않는다」는 규격 서술(측정 아님) · **jest·tsc 를 Reviewer 가 독립 재현하지 못했다** — 내 ssh 명령의 `trap` 이 clone 의 `node_modules` 링크를 지운 탓이고 내 실수다. 그 숫자는 내가 측정한 값이며, Reviewer 판정은 「코드 변경 0줄」을 diff 로 증명한 데 기댄다.
+- 👉 **사용자가 확인할 것** (지금부터)
+  1. 웹(stock.미라클펭귄.com)과 앱(다시 열면 반영 — 재설치 불필요)에서 하단 탭이 **5칸**이고 4번째가 「비서」인지, 눌러 들어가면 T-113 의 대화 목록이 보이는지.
+  2. 360·412px 폭에서 라벨 5개가 잘리지 않는지.
+  3. 채팅에서 로그인 만료·삭제된 대화 열기 때 안내가 뜨는지(조용히 멈추지 않는지).
+- 👉 **사용자가 결정할 것**
+  1. 후속 task(초안 검토 상태의 대화 소속 정리) 방향 — ⓐ 대화 전환 시 검토 카드를 지운다(사용자가 고친 초안이 사라진다) vs ⓑ 확인을 원래 보낸 대화로 보낸다. **권고 ⓑ**.
+  2. 교훈 2건의 `/이슈기록` 등록 여부 — 「겹치는 가드를 더 넣으면 기존 가드마다 단독 제거 변이를 다시 돌린다」·「후보 시험을 넘길 때 빈 단언·미사용 변수를 점검한다」.
+- **남은 일**: 위 결정 1 의 후속 task 등록 · QA Low 1건(POST 200 + 재조회 500 일 때 전송됐는지 문구가 말해 주지 않음) · `agent-vault/20-Log/2026-11-07.md`·`board.md`·`ACTIVE.md` 는 다른 세션(T-154·156·158·159·160)의 미커밋 기록이 섞여 있어 **이 커밋에서 뺐다** — 그 파일들을 커밋하는 세션이 함께 가져간다.
+- **이슈·위험**
+  - **장중(11:58) 배포**였다. 재기동 1.5~2.5분 동안 매 분 잡(entry-watcher·holding-checker·stop-alert) 1~2틱이 빠졌다. `DRY_RUN=true` 라 실주문 영향은 없고, 11:59:07 기동 후 전 잡 OK·12:00~12:01 틱 OK 를 확인했다(11:59:06 job-run-log 전송 `HTTP=000` 1회는 스풀 재전송으로 회복). 내가 권고한 창은 17:30~19:50 이었고 사용자 지시로 지금 진행했다.
+  - 공유 트리 `.git/refs` 에 **ISS-0013 사이드카 7개 재발**(`refs/codex/turn-diffs/…` 6 + `refs/remotes/origin/@eaDir` 1). 공유 트리에서의 fetch·push 가 막혀 있다. 이번 배포는 서버 로컬 clone → git 서버 경로라 영향 없었다.
+  - `docs/deploy-order.md`·`deployer.md` 의 `scripts/deploy.sh` 는 **워크스페이스 루트**(`project/scripts/deploy.sh`)에 있고 프로젝트 안에는 없다 — deployer 가 「파일 없음」으로 읽었다. 경로 표기 보완 후보(기능 문제는 아니다: 이 프로젝트는 push = webhook 배포).
+  - 배포와 무관한 관측: `safety_kill_switch` 가 **11-07 00:53:12 부터 `false`**, `safety_order_max_pct`·`safety_daily_order_max_pct` 가 10(00:55:54). `ACTIVE.md` 의 「11-06 00:03 자동 발동(24h -17.7%)」 기록은 그 뒤 해제됐으므로 최신이 아니다. `DRY_RUN` 은 계속 `true`.
 
 ## 데모 검토 (demo gate)
 
