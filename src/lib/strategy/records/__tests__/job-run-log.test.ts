@@ -120,6 +120,8 @@ describe('classifyRun (§2.3)', () => {
 
   it('000(연결 끊김·curl 상한) → failed HTTP=000', () => {
     expect(C('edgar-sync', 0)).toMatchObject({ status: 'failed', errorCode: 'HTTP=000', degradedReason: null });
+    expect(C('stop-alert', 0, { curl_exit: 28 })).toMatchObject({ status: 'failed', errorCode: 'HTTP=000/curl=28' });
+    expect(C('stop-alert', 0, { curl_exit: 256 })).toMatchObject({ status: 'failed', errorCode: 'HTTP=000' });
   });
   it('🔴 해외 분석 503 data_unknown → failed + error_code, 사유는 degraded_reason(G-J1 #2)', () => {
     expect(C('post-market-overseas', 503, { ok: false, status: 'data_unknown', skipped: 'holidays_unknown', symbolsEvaluated: 0 }))
@@ -307,8 +309,8 @@ describe('행 조립 — 슬롯·클램프(F3)·롤업(U2)', () => {
     const b = buildRows([
       line('entry-watcher', 200, '2026-10-30 10:00:01', 100),
       line('entry-watcher', 500, '2026-10-30 10:01:02', 900, { ok: false, error: 'boom: something broke' }),
-      line('entry-watcher', 200, '2026-10-30 10:02:03', 300),
-      line('entry-watcher', 200, '2026-10-30 11:00:01', 50),
+      line('entry-watcher', 200, '2026-10-30 10:02:03', 300, { ok: true }),
+      line('entry-watcher', 200, '2026-10-30 11:00:01', 50, { ok: true }),
     ]);
     expect(b.runRows).toHaveLength(1);
     expect(b.runRows[0]).toMatchObject({ recorder: 'runner_hook', status: 'failed', scheduled_slot_at: '2026-10-30 10:01:00', error_code: 'HTTP=500' });
@@ -316,9 +318,10 @@ describe('행 조립 — 슬롯·클램프(F3)·롤업(U2)', () => {
     expect(b.rollupRows[0]).toMatchObject({
       recorder: 'runner_rollup', status: 'partial', scheduled_slot_at: '2026-10-30 10:00:00',
       started_at: '2026-10-30 10:00:01', ended_at: '2026-10-30 10:02:03', http_code: null,
-      counts_json: '{"runs":3,"failed":1,"maxMs":900}', session_date_et: null,
+      counts_json: JSON.stringify({ runs: 3, failed: 1, maxMs: 900, lastOkStartMs: kst('2026-10-30 10:02:03') }), session_date_et: null,
     });
-    expect(b.rollupRows[1]).toMatchObject({ status: 'ok', scheduled_slot_at: '2026-10-30 11:00:00', counts_json: '{"runs":1,"failed":0,"maxMs":50}' });
+    expect(b.rollupRows[1]).toMatchObject({ status: 'ok', scheduled_slot_at: '2026-10-30 11:00:00',
+      counts_json: JSON.stringify({ runs: 1, failed: 0, maxMs: 50, lastOkStartMs: kst('2026-10-30 11:00:01') }) });
   });
   it('롤업 상태: 모두 실패 → failed · skipped 는 실패가 아니다', () => {
     const allFail = buildRows([line('stop-alert', 0, '2026-10-30 10:00:01', 20_000), line('stop-alert', 0, '2026-10-30 10:01:21', 20_000)]);
@@ -327,6 +330,22 @@ describe('행 조립 — 슬롯·클램프(F3)·롤업(U2)', () => {
     const skip = buildRows([line('strategy-eval', 200, '2026-10-30 03:00:01', 10, { ok: true, errors: ['all_markets_closed'] })]);
     expect(skip.runRows).toHaveLength(0);
     expect(skip.rollupRows[0]).toMatchObject({ status: 'ok', counts_json: '{"runs":1,"failed":0,"maxMs":10}' });
+    const unconfirmed = buildRows([
+      line('stop-alert', 200, '2026-10-30 03:00:01', 10),
+      line('stop-alert', 200, '2026-10-30 03:01:01', 10, { ok: true, skipped: 'in_progress' }),
+      line('stop-alert', 200, '2026-10-30 03:02:01', 10, { ok: true, errors: ['upstream_failure'] }),
+      line('stop-alert', 200, '2026-10-30 03:03:01', 10).replace(/[^\t]*$/, b64('{"ok":true,')),
+    ]);
+    expect(JSON.parse(unconfirmed.rollupRows[0].counts_json!)).not.toHaveProperty('lastOkStartMs');
+    const partial = buildRows([line('portfolio-snapshot', 200, '2026-10-30 03:00:01', 10, { ok: true, failed: 1 })]);
+    expect(partial.runRows[0].counts_json).toBeNull();
+  });
+  it('거래 리포트의 빈 실패 목록은 확인 근거가 되고 비어 있지 않으면 제외한다', () => {
+    const at = '2026-10-30 03:00:01';
+    for (const failed of [[], ['report_failure']]) {
+      const b = buildRows([line('trade-report', 200, at, 10, { ok: true, partial: false, failed })]);
+      expect(JSON.parse(b.rollupRows[0].counts_json!).lastOkStartMs).toBe(failed.length === 0 ? kst(at) : undefined);
+    }
   });
   it('portfolio-snapshot(60틱)·하루 1회·peek 는 실행마다 1줄, 형식 오류 줄은 rejected, 빈 줄은 무시', () => {
     const b = buildRows([
@@ -337,7 +356,8 @@ describe('행 조립 — 슬롯·클램프(F3)·롤업(U2)', () => {
     expect(b.runRows.map((r) => r.job_id)).toEqual(['portfolio-snapshot', 'news-peek-overseas-10']);
     expect(b.rollupRows).toHaveLength(0);
     expect(b.rejected).toBe(2);
-    expect(b.runRows[1]).toMatchObject({ run_kind: 'peek', scheduled_slot_at: '2026-10-30 10:00:00', counts_json: '{"fetched":3,"new":1}' });
+    expect(b.runRows[1]).toMatchObject({ run_kind: 'peek', scheduled_slot_at: '2026-10-30 10:00:00',
+      counts_json: JSON.stringify({ fetched: 3, new: 1, lastOkStartMs: kst('2026-10-30 10:00:40') }) });
   });
   it('표에 없는 라벨도 남긴다(보수적 기본값 — 정합 시험이 이 경우를 막는다)', () => {
     const b = buildRows([line('brand-new-job', 200, '2026-10-30 10:00:00', 5)]);
@@ -354,7 +374,7 @@ describe('SQL — b′(F1)·롤업', () => {
     expect(RUN_ODKU).not.toMatch(/GREATEST/);
   });
   it('롤업 ODKU: status 를 counts_json 보다 먼저(옛 값 + 새 값으로 계산)', () => {
-    expect(ROLLUP_ODKU.indexOf('status = CASE')).toBeLessThan(ROLLUP_ODKU.indexOf('counts_json = JSON_OBJECT'));
+    expect(ROLLUP_ODKU.indexOf('status = CASE')).toBeLessThan(ROLLUP_ODKU.indexOf('counts_json = JSON_MERGE_PATCH'));
     expect(ROLLUP_ODKU).toContain('started_at = LEAST(started_at, VALUES(started_at))');
   });
   it('buildUpsert: 열 16개 · 행마다 자리표시자 · 값 순서', () => {

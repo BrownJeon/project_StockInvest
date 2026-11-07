@@ -290,9 +290,20 @@ export interface DataSourceRow { id: DataSourceId; lastOkAt: string | null; stat
 export interface UptimeRow { group: 'analysis' | 'collection'; days: number; ok: number; expected: number | null; state: MetricState; reason?: string;
   /** job_run_log 첫 행 시각 — 「기록 {n}일째」 */
   firstRecordAt: string | null }
+export interface AnalysisAnomalyRow {
+  id: string;
+  kind: 'source' | 'job';
+  label: string;
+  at: string | null;
+  summary: string;
+  reason: string;
+  evidence: string | null;
+  laterOkAt: string | null;
+}
 export interface AnalysisDataDTO {
   part: 'data'; generatedAt: string;
   sources: Section<DataSourceRow[]>;
   uptime: Section<UptimeRow[]>;
+  anomalyDetails?: Section<{ date: string; rows: AnalysisAnomalyRow[] }>;
 }
 export type AnalysisDTO = AnalysisTodayDTO | AnalysisVerifyDTO | AnalysisDataDTO;

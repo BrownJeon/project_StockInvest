@@ -11,6 +11,7 @@ import { JOB_SPECS } from '@/lib/strategy/records/job-slots';
 import { addDaysYmd } from '@/lib/strategy/us-session';
 import { noRowMetric, POST_MARKET_JOB, readAnalysisRuns, type NoRowReason } from './analysis-runs';
 import { readDataSources } from './anomalies';
+import { readAnomalyDetails } from './anomaly-details';
 import { readExitDetail } from './exit-lines';
 import { readJudgmentSkipRows } from './judgment-read';
 import { counted, metric } from './metric';
@@ -158,8 +159,9 @@ function expectedAnalysisRuns(nowMs: number, closed: ClosedDays): number | null 
 
 export async function buildAnalysisData(r: OpsReader, closed: ClosedDays): Promise<AnalysisDataDTO> {
   const jobs = uptimeJobs();
-  const [sources, uptime] = await Promise.all([
-    section('analysis.sources', () => readDataSources(r, closed)),
+  const sourcesPromise = readDataSources(r, closed);
+  const [sources, uptime, anomalyDetails] = await Promise.all([
+    section('analysis.sources', () => sourcesPromise),
     section('analysis.uptime', async () => {
       const from = addDaysYmd(kstDateOf(r.nowMs), -UPTIME_DAYS);
       let first: Record<string, unknown>[];
@@ -184,8 +186,9 @@ export async function buildAnalysisData(r: OpsReader, closed: ClosedDays): Promi
         uptimeRow('collection', past, jobs.collection, firstMs, r.nowMs, jobs.collection.length * UPTIME_DAYS),
       ];
     }),
+    section('analysis.anomalyDetails', () => readAnomalyDetails(r, sourcesPromise)),
   ]);
-  return { part: 'data', generatedAt: kstIso(r.nowMs), sources, uptime };
+  return { part: 'data', generatedAt: kstIso(r.nowMs), sources, uptime, anomalyDetails };
 }
 
 export async function buildAnalysis(part: AnalysisPart, nowMs: number = Date.now(), reader: OpsReader = createReader({ nowMs })) {

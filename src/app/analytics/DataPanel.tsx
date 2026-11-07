@@ -10,6 +10,7 @@ import type { AnalysisDataDTO, DataSourceId, DataSourceRow, UptimeRow } from '@/
 import { useOpsPoll } from '@/components/ops/useOpsPoll';
 import { fmtEtSession, fmtKstTime, fmtSessionDate, kstDateKey, kstParts } from '@/components/ops/format';
 import { CheckRow, Rows, Section, StatusChip, ops } from '@/components/ops/ui';
+import { AnomalyDetails } from './AnomalyDetails';
 import { ANALYSIS_POLL_MS, FailBody, LoadingBody, analysisUrl, stateChip } from './panel-parts';
 
 export const SOURCE_LABEL: Record<DataSourceId, string> = {
@@ -112,20 +113,24 @@ export function DataPanel(p: { nowMs?: number }) {
   }
 
   return (
-    <div className={ops.scr}>
-      <div className={ops.col}>
-        <Section id="d-up" title="가동률" small="세션일 · 주 단위">{uptime}</Section>
+    <>
+      <div className={ops.scr}>
+        <div className={ops.col}>
+          <Section id="d-up" title="가동률" small="세션일 · 주 단위">{uptime}</Section>
+        </div>
+        <div className={ops.col}>
+          <Section id="d-src" title="원천별 신선도">
+            {sources}
+            <div className={ops['sec-foot']} style={{ paddingTop: 8 }}>「날짜 파일이 있다」는 성공 증거가 아닙니다 — 마지막 성공 시각 기준</div>
+            {/* L-1 — /markets(시장 상태 상세) 입구. 옛 홈 시장 배지가 유일한 입구였다 */}
+            <Rows>
+              <CheckRow severity="n" glyph="◷" href="/markets" title="시장 개장 상태" />
+            </Rows>
+          </Section>
+        </div>
       </div>
-      <div className={ops.col}>
-        <Section id="d-src" title="원천별 신선도">
-          {sources}
-          <div className={ops['sec-foot']} style={{ paddingTop: 8 }}>「날짜 파일이 있다」는 성공 증거가 아닙니다 — 마지막 성공 시각 기준</div>
-          {/* L-1 — /markets(시장 상태 상세) 입구. 옛 홈 시장 배지가 유일한 입구였다 */}
-          <Rows>
-            <CheckRow severity="n" glyph="◷" href="/markets" title="시장 개장 상태" />
-          </Rows>
-        </Section>
-      </div>
-    </div>
+      <AnomalyDetails details={poll.status === 'stale' ? undefined : d?.anomalyDetails}
+        loading={poll.status === 'loading'} onRetry={poll.refresh} />
+    </>
   );
 }

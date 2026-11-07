@@ -155,6 +155,8 @@ case "$(cat "$R/mode")" in
     case "$path" in
       /api/cron/edgar-sync) body="$(cat "$R/body-edgar")" ;;
       /api/cron/entry-watcher) code=500; body='{"ok":false,"error":"x"}' ;;
+      /api/cron/holding-checker) body='{"ok":true,"symbols":["synthetic-symbol"]}' ;;
+      /api/cron/stop-alert) body='{"ok":true,"skipped":"in_progress"}' ;;
     esac ;;
   money)
     case "$path" in
@@ -308,6 +310,8 @@ eq "J3: 4틱 완주" "$(cat "$NW/ticks") $(cat "$BW/ticks")" "4 4"
 #   분 단위 고정은 J1(하루 1440틱, 정상 응답)이 그대로 유지한다 — 거기서는 두 러너의 틱이 같은 분 안에 끝난다.
 if diff <(nojrl_cmp "$NW" | awk '{print $4}') <(nojrl_cmp "$BW" | awk '{print $4}') > /dev/null; then ok "J3: 호출 경로 순서·개수 = 기준 러너 ($(nojrl_cmp "$NW" | wc -l | tr -d ' ')건)"; else bad "J3: 호출 목록이 다르다"; diff <(nojrl_cmp "$NW" | awk '{print $4}') <(nojrl_cmp "$BW" | awk '{print $4}') | head; fi
 HT="$(nojrl "$NW" | awk '$4 ~ /post-market-analysis\?market=overseas/ {print $3}')"
+eq "J3: 손절 알림 타임아웃은 v1 스풀에 종료 코드 28만 남긴다" \
+   "$(spool "$NW" | awk -F'\t' '$2 == "stop-alert" && $4 == "000" && !found++ { print $7 }' | base64 -d)" '{"curl_exit":28}'
 eq "(하네스 확인) J3: 08:00 틱에 해외 분석이 돌았다" "$(nojrl "$NW" | awk '$4 ~ /post-market-analysis\?market=overseas/ {print substr($2,1,5)}')" "08:00"
 eq "🔴 J3: 무거운 틱(경과 ≥ 150초)에는 전송하지 않는다" "$(awk -v t="$HT" '$1 == t' "$NW/posts" | wc -l | tr -d ' ')" "0"
 eq "J3: 가벼운 틱은 전송했다(나머지 3틱)" "$(wc -l < "$NW/posts" | tr -d ' ')" "3"
@@ -352,7 +356,10 @@ EL="$(awk -F'\t' '$2 == "edgar-sync"' "$NB/received")"
 eq "J5: edgar-sync 한 줄(7칸)" "$(printf '%s\n' "$EL" | awk -F'\t' 'NF == 7' | wc -l | tr -d ' ')" "1"
 if cmp -s <(printf '%s\n' "$EL" | awk -F'\t' '{print $7}' | base64 -d) <(head -c 2048 "$W/body-edgar"); then ok "🔴 J5: base64 를 풀면 본문 앞 2048바이트 그대로"; else bad "J5: 본문이 다르다"; fi
 eq "J5: 매 분 잡 500 은 본문 있음(entry-watcher)" "$(awk -F'\t' '$2 == "entry-watcher" && $4 == "500" && $7 != "" ' "$NB/received" | head -1 | awk -F'\t' '{print $7}' | base64 -d)" '{"ok":false,"error":"x"}'
-eq "J5: 매 분 잡 200 은 본문 없음(holding-checker)" "$(awk -F'\t' '$2 == "holding-checker" && $7 != ""' "$NB/received" | wc -l | tr -d ' ')" "0"
+eq "J5: 매 분 잡 200 성공은 종목 정보 없이 고정 마커만 기록(holding-checker)" \
+   "$(awk -F'\t' '$2 == "holding-checker" && $4 == "200" && !found++ { print $7 }' "$NB/received" | base64 -d)" '{"ok":true}'
+eq "J5: 매 분 잡 200 건너뜀은 정상 실행 마커 없음(stop-alert)" \
+   "$(awk -F'\t' '$2 == "stop-alert" && $7 != ""' "$NB/received" | wc -l | tr -d ' ')" "0"
 eq "J5: 받은 줄 수 = 호출 수(줄이 깨지지 않음)" "$(wc -l < "$NB/received" | tr -d ' ')" "$(nojrl "$NB" | wc -l | tr -d ' ')"
 
 fi
@@ -397,18 +404,20 @@ no_t147_old() { awk '/^  # 매 1분: stop-alert/{s=1} s{ if (/^  CALL_MAX_TIME="
 #   한쪽만 바꾸면 어긋난다(위 no_t147_old 선례와 같다). 기준 ref·러너 양쪽에서 각각 정확히 1줄만 걸린다(접두 유일 — 실측).
 #   `call()` 본문 해시 비교(아래 J8)에는 영향이 없다 — 이 줄은 `call()` 밖이다.
 no_t149_old() { grep -v '^# (T-062 Codex C2 ②) 해외 post-market'; }
-missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") <(no_t147_old < "$BASE" | no_t149_old))"
-eq "🔴 J8: 기준 러너의 모든 줄(주석 포함)이 순서대로 남아 있다(삭제·수정 0, 추가만 — T-135 세 줄은 되돌려 비교)" "${missing:-none}" "none"
+# T-160은 curl 종료 코드를 기록용 변수에만 복사한다. 그 두 줄만 기준 형태로 되돌려 비교한다.
+no_t160() { sed -e 's/^  local code curl_exit=0$/  local code/' -e 's/|| { curl_exit=\$?; code="000"; }$/|| code="000"/'; }
+missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER" | no_t160) <(no_t147_old < "$BASE" | no_t149_old))"
+eq "🔴 J8: 기준 러너의 모든 줄(주석 포함)이 순서대로 남아 있다(T-135·T-160 변경만 되돌려 비교)" "${missing:-none}" "none"
 # (T-149 감사 L-7) 스트리퍼는 기준 ref 쪽에서 그 1줄을 지우므로, **지금 러너에서 그 줄이 사라져도** 위 대조가 깨지지 않는다.
 #   그래서 러너 쪽에 그 줄이 정확히 1개 있다는 단정을 따로 둔다 — 없으면 스트리퍼가 가린 범위가 무검사로 넓어진다.
 eq "🔴 J8: no_t149_old 가 노리는 주석 줄이 지금 러너에 정확히 1개 있다" \
    "$(grep -c '^# (T-062 Codex C2 ②) 해외 post-market' "$RUNNER")" "1"
-eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼고 T-135 를 되돌리면 기준 러너와 같다" \
-   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
+eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼고 T-135·T-160을 되돌리면 기준 러너와 같다" \
+   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
 eq "J8: call() 안 표지 줄 2개, 파일 전체 4개" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -c '# T-112 jrl$') $(grep -c '# T-112 jrl$' "$RUNNER")" "2 4"
 cb="$(awk '/^call\(\) \{/,/^\}/' "$RUNNER")"
 eq "J8: 후크는 로그 줄 뒤·임시 본문 rm 바로 앞" "$(printf '%s\n' "$cb" | grep -A1 'jrl_hook ' | tail -1 | sed 's/^ *//')" 'rm -f "$CALL_BODY_FILE"'
-eq "J8: 후크 호출 줄" "$(printf '%s\n' "$cb" | grep 'jrl_hook ' | sed 's/^ *//')" 'jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" 2>/dev/null || true   # T-112 jrl'
+eq "J8: 후크 호출 줄" "$(printf '%s\n' "$cb" | grep 'jrl_hook ' | sed 's/^ *//')" 'jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" "$curl_exit" 2>/dev/null || true   # T-112 jrl'
 eq "J8: 전송 줄은 i 증가 바로 앞 · 틱 시작 줄은 하트비트 바로 뒤" \
    "$(grep -A1 'jrl_flush "${JRL_TICK_T0:-}"' "$RUNNER" | tail -1 | sed 's/^ *//') | $(grep -B1 'JRL_TICK_T0=$(date +%s' "$RUNNER" | head -1 | sed 's/^ *//')" \
    'i=$(( (i + 1) % 1440 ))   # 24h 사이클 | && mv -f "${CRON_HEARTBEAT_FILE}.tmp" "${CRON_HEARTBEAT_FILE}"; } 2>/dev/null || true'

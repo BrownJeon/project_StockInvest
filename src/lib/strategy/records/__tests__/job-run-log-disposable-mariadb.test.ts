@@ -179,7 +179,7 @@ for (const [modeName, nbe] of MODES) {
       await upsert(runRowsOf(L2), RUN_ODKU);
       const [b] = await rowsOf(c, "job_id = 'post-market-overseas'");
       expect(b).toMatchObject({ status: 'ok', http_code: 200, error_code: null, degraded_reason: null, attempt: 2 });
-      expect(JSON.parse(String(b.counts))).toEqual({ evaluated: 55, candidates: 9, created: 2 });
+      expect(JSON.parse(String(b.counts))).toEqual({ evaluated: 55, candidates: 9, created: 2, lastOkStartMs: kst('2026-10-30 08:10:05') });
     });
     test('🔴 B2. 변이가 잡힌다 — IFNULL 제거 / ended_at 대입을 맨 앞으로', async () => {
       const noIfnull = RUN_ODKU.split("IFNULL(ended_at, '1000-01-01 00:00:00')").join('ended_at');

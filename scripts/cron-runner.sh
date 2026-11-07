@@ -127,14 +127,14 @@ call() {
   local path="$1"
   local label="$2"
   local body="${3:-{}}"
-  local code
+  local code curl_exit=0
   local jrl_t0; jrl_t0=$(jrl_now_ms 2>/dev/null)   # T-112 jrl
   call_tmp_open   # T-135
   # (T-062 Codex C2 ②) CALL_MAX_TIME 이 비어 있지 않을 때만 --max-time 을 붙인다 — 지금은 해외 post-market 호출만 쓴다.
   # 비어 있으면 아래 curl 명령은 예전과 같다(다른 모든 잡 불변).
   code=$(curl -s ${CALL_MAX_TIME:+--max-time "$CALL_MAX_TIME"} -o "$CALL_BODY_FILE" -w "%{http_code}" -X POST \
     -H "x-cron-secret: $CRON_SECRET" -H 'Content-Type: application/json' \
-    "$BASE_URL$path" -d "$body" 2>/dev/null) || code="000"
+    "$BASE_URL$path" -d "$body" 2>/dev/null) || { curl_exit=$?; code="000"; }
   CALL_LAST_CODE="$code"   # (T-062) 응답 코드를 보는 잡(post-market-overseas)만 읽는다. 다른 잡의 동작은 그대로다.
   local ts; ts=$(date '+%F %T')
   if [ "$code" = "200" ]; then
@@ -142,7 +142,7 @@ call() {
   else
     echo "[$ts] $label HTTP=$code body=$(head -c 2048 "$CALL_BODY_FILE" 2>/dev/null | jrl_mask_money 2>/dev/null | head -c 200)"
   fi
-  jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" 2>/dev/null || true   # T-112 jrl
+  jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" "$curl_exit" 2>/dev/null || true   # T-112 jrl
   rm -f "$CALL_BODY_FILE"
 }
 
@@ -313,10 +313,11 @@ jrl_mask_money() {
     -e 's/("detail"[[:space:]]*:[[:space:]]*")([^"\\]|\\.)*"/\1"/g' \
     -e 's/("detail"[[:space:]]*:[[:space:]]*")([^"\\]|\\.)*\\?$/\1/'
 }
-# jrl_hook LABEL PATH CODE T0_MS — call() 끝(임시 본문 파일을 지우기 전)에서 스풀에 한 줄. 실패는 전부 삼킨다. 반환은 항상 0.
+# jrl_hook LABEL PATH CODE T0_MS CURL_EXIT — call() 끝에서 스풀에 한 줄. 실패는 전부 삼킨다.
 #   (T-127 ②) 스풀 0600 — 함수 안에서만 umask 077, 반환(맨 끝 하나)직전에 되돌린다. 앞의 이른 return 은 umask 를 바꾸기 전이다.
 jrl_hook() {
   local label="${1:-}" path="${2:-}" hc="${3:-}" t0="${4:-}" t1="" b64="" b64_skip=0 f="${JRL_SPOOL_FILE:-}"
+  local curl_exit="${5:-0}"
   local um=""
   [ -n "$f" ] || return 0
   um=$(umask 2>/dev/null)
@@ -327,13 +328,36 @@ jrl_hook() {
   case "$label" in
     entry-watcher|holding-checker|stop-alert) [ "$hc" = "200" ] && b64_skip=1 ;;
   esac
+  if [ "$b64_skip" = "1" ]; then
+    # 성공 응답의 본문 대신 고정 마커만 남긴다. 제한에 걸린 본문과 파싱 실패는 근거 없음으로 처리한다.
+    b64=$(head -c "$((JRL_BODY_MAX_BYTES + 1))" "${CALL_BODY_FILE:-}" 2>/dev/null | timeout -k 0.1s 0.25s node -e '
+      try {
+        const raw = require("node:fs").readFileSync(0);
+        if (raw.length > Number(process.argv[1])) process.exit(0);
+        const b = JSON.parse(raw);
+        if (b?.ok === true && !b.skipped && !b.partial && !b.aborted && !b.error
+            && (b.status == null || ["ok", "complete", "success"].includes(b.status))
+            && (b.errors == null || (Array.isArray(b.errors) && b.errors.length === 0))
+            && [b.failed, b.deferred, b.tickerFailed, b.fxRejected].every(n =>
+              n == null || n === 0 || n === false || (Array.isArray(n) && n.length === 0))) {
+          process.stdout.write(Buffer.from("{\"ok\":true}").toString("base64"));
+        }
+      } catch {}
+    ' "$JRL_BODY_MAX_BYTES" 2>/dev/null) || b64=""
+  fi
   # (T-127 ①) 금액을 싣는 두 라벨은 여기서 마스킹한 본문을 싣고, 아래 일반 경로(원문 base64)는 건너뛴다(b64_skip=1 = "아래 줄을 돌리지 않음").
   #   마스킹이 실패하면 원문이 아니라 빈 본문이 된다(파이프의 마지막 base64 가 빈 입력을 받는다).
-  case "$label" in
-    portfolio-snapshot|trade-report)
-      b64=$(head -c "$JRL_BODY_MAX_BYTES" "${CALL_BODY_FILE:-}" 2>/dev/null | jrl_mask_money 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
-      b64_skip=1 ;;
-  esac
+  if [ "$hc" = "000" ] && [[ "$curl_exit" =~ ^[1-9][0-9]{0,2}$ ]]; then
+    # v1 스풀 그대로. 응답이 끊긴 경우 본문 대신 curl의 종료 코드만 보낸다.
+    b64=$(printf '{"curl_exit":%s}' "$curl_exit" | base64 -w0 2>/dev/null) || b64=""
+    b64_skip=1
+  else
+    case "$label" in
+      portfolio-snapshot|trade-report)
+        b64=$(head -c "$JRL_BODY_MAX_BYTES" "${CALL_BODY_FILE:-}" 2>/dev/null | jrl_mask_money 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
+        b64_skip=1 ;;
+    esac
+  fi
   if [ "$b64_skip" = "0" ]; then
     b64=$(head -c "$JRL_BODY_MAX_BYTES" "${CALL_BODY_FILE:-}" 2>/dev/null | base64 -w0 2>/dev/null) || b64=""
   fi

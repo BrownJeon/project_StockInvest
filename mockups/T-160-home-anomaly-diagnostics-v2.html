@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta name="demo-version" content="T-160-v2">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<meta name="demo-ops-css-source" content="src/components/ops/ops.module.css@sha256:6c23c87d1444">
+<title>StockInvest · 데이터 이상 상세 v2</title>
+<!-- 기존 앱 정적 마크업: git 2ce01869cd95992a49b35ec198cbed1a72193037.
+     React renderToStaticMarkup: RootLayout + HomePage / Analytics Page.
+     HomeScreen → HomeView → CheckSection; AnalyticsPage → DataPanel; BottomTabs.
+     useOpsPoll, useSafetyState, useSymbolMeta는 합성 DTO/빈 조회, Next 라우터는 데모 경로로 대체.
+     분석의 초기 세그먼트는 URL 적용 직후의 data 상태로 주입. CSS Modules는 시험용 클래스명 방식으로 인라인.
+     SSR 마크업은 현재·제안이 공유. 제안은 DataPanel 뒤에 내역만 붙이고 홈 알림 href의 해시만 추가. -->
+<style>
+:root {
+  --bg: #0f1115;
+  --bg2: #171a21;
+  --bg3: #1f2430;
+  --bg4: #262b36;
+  --border: #262b36;
+  --border2: #323848;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --up: #ef4444;    /* 한국 관습: 상승 빨강 */
+  --down: #3b82f6;  /* 한국 관습: 하락 파랑 */
+  --accent: #f59e0b;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-h: 60px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  max-width: 100vw;     /* 자식의 intrinsic 폭 초과 시에도 layout viewport 제한 — 모바일 fit-to-page 줌아웃 차단 */
+  overflow-x: clip;     /* 수평 페이지 오버플로우 차단 — sticky 포지셔닝 유지됨 */
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+  font-size: 14px;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: contain;
+}
+/* 가로 폭만 viewport에 제한, 세로 스크롤은 막지 않음 */
+body { width: 100%; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+.num { font-variant-numeric: tabular-nums; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+@keyframes ti-spin { to { transform: rotate(360deg); } }
+
+/*
+ * T-108 운용 화면 공용 스타일 — 승인 데모 v3(mockups/T-108-menu-home-v3.html) 112~235행 「앱 화면」 클래스를 이름 그대로 옮겼다.
+ * (데모 문서 틀 .page·.controls·.decide·.phone·.frm·.scrl·.cur 와 비서 화면 .bubble·.qchips·.compose 는 옮기지 않음)
+ *
+ * - CSS Module 이라 클래스가 이 파일 안에서만 유효하다(전역 .card·.btn·.sec-h 등과 섞이지 않음).
+ *   단 .num·.up·.down 은 globals.css 전역 클래스를 그대로 쓴다(컴포넌트가 className 에 같이 붙인다).
+ * - 색은 globals.css 토큰 이름만. 리터럴 #fca5a5·#86efac·#2a1416·rgba(…) 는 데모 값 그대로(새 토큰 아님 — 가이드 §2.0).
+ * - 데모의 @container app (min-width: 900px) → @media (min-width: 900px) (T-084 선례, 가이드 §0.4).
+ * - 데모에 없던 것(가이드 §8.4 재량 — 시각 결과 같음): 포커스 링을 클래스마다 붙임(데모는 전역 :focus-visible),
+ *   스피너 keyframes 를 이 모듈 안에 둠(모듈 안 animation 이름은 지역화되므로), .scr 아래 여백 16px(데모 .scrl 몫),
+ *   .gate·.res·.btrow 를 시트 밖에서도 쓰게 단독 선택자로(데모는 .sheet 아래), 띠 칩 줄 오른쪽 끝 페이드(.sws.fade — 가이드 §8.2 P2),
+ *   foot 안 링크 밑줄·44px(.sec-foot a), 미니 띠 제목(.strip-title — 데모는 인라인 style), a.stage 44px(미니 띠 배지가 링크).
+ */
+
+/* ── 안전 상태 띠 (홈·거래 공통, 스크롤해도 보임) ── */
+.strip { position: sticky; top: 0; z-index: 6; background: var(--bg2); border-bottom: 1px solid var(--border); padding: 8px 12px 10px; }
+.strip-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.stage { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border2); white-space: nowrap; }
+.stage .dot { width: 8px; height: 8px; flex: none; }
+a.stage, button.stage { min-height: 44px; flex: none; }
+.stage.obs { color: var(--accent); border-color: rgba(245,158,11,.5); }
+.stage.obs .dot { background: var(--accent); border-radius: 50%; }
+.stage.live { color: #fca5a5; border-color: rgba(239,68,68,.6); background: #2a1416; }
+.stage.live .dot { background: var(--danger); border-radius: 1px; transform: rotate(45deg); }
+.stage.mixed { color: #fca5a5; border-color: rgba(239,68,68,.6); }
+.stage.mixed .dot { background: var(--danger); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.stage.halt { color: var(--text); border-color: var(--border2); background: var(--bg3); }
+.stage.halt .dot { background: var(--muted); border-radius: 1px; }
+.stage.err { color: #fca5a5; border-color: var(--danger); }
+.stage.err .dot { background: transparent; border: 2px solid var(--danger); border-radius: 50%; }
+.strip-sum { font-size: 12px; color: var(--muted); line-height: 1.45; min-width: 0; flex: 1; overflow-wrap: anywhere; word-break: keep-all; }
+.strip-sum b { color: var(--text); }
+.strip-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.strip-go { flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.sws { display: flex; gap: 6px; overflow-x: auto; margin-top: 8px; scrollbar-width: none; }
+.sws::-webkit-scrollbar { display: none; }
+.sws.fade { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.sw { flex: none; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border2); background: var(--bg3); color: var(--text); white-space: nowrap; line-height: 1.4; }
+.sw i { font-style: normal; color: var(--muted); font-weight: 500; margin-right: 4px; }
+.sw.bad { border-color: rgba(239,68,68,.6); background: #2a1416; color: #fca5a5; }
+.sw.warn { border-color: rgba(245,158,11,.5); color: var(--accent); }
+.sw.sep { background: transparent; border-style: dashed; }
+.strip-alert { margin-top: 8px; font-size: 12px; line-height: 1.5; color: #fca5a5; background: #2a1416; border: 1px solid rgba(239,68,68,.5); border-left: 3px solid var(--danger); border-radius: 6px; padding: 6px 8px; word-break: keep-all; overflow-wrap: anywhere; }
+
+/* ── 화면 공통 ── */
+.scr { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 0 16px; }
+.col { display: grid; gap: 8px; min-width: 0; align-content: start; }
+.sec { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); min-width: 0; }
+.sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px 4px 16px; min-height: 44px; }
+.sec-h h2 { margin: 0; font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .3px; line-height: 1.4; }
+.sec-h h2 small { font-weight: 500; font-size: 11px; margin-left: 4px; }
+.lnk { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px; font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; padding: 0 4px; }
+.sec-b { padding: 0 16px 12px; }
+.sec-foot { font-size: 11px; color: var(--muted); padding: 0 16px 10px; line-height: 1.5; }
+/* foot 안 링크(계좌 전체 손익 → 자산 기록, 401 → 로그인): 밑줄로 링크임을 보이고(색만 쓰지 않음) 터치 44px */
+.sec-foot a { text-decoration: underline; display: inline-flex; align-items: center; min-height: 44px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--border); border-top: 1px solid var(--border); }
+.tile { background: var(--bg2); padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tile.wide { grid-column: 1 / -1; }
+.tile .lb { font-size: 12px; color: var(--muted); line-height: 1.4; word-break: keep-all; }
+.tile .v { font-size: 18px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tile .v small { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+.tile .mk { font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; word-break: keep-all; }
+.tile .mk i { font-style: normal; color: var(--muted); display: inline-block; min-width: 28px; }
+.tile .meta { font-size: 11px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; word-break: keep-all; }
+.tile.dim .v, .tile.dim .mk { color: var(--muted); }
+.st { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border2); color: var(--text); background: var(--bg); line-height: 1.4; white-space: normal; overflow-wrap: anywhere; word-break: keep-all; }
+/* T-130 D4-A — 분석 › 데이터 상태에서만 한국어 칩 뒤에 붙는 영문 원인 코드 */
+.stCode { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 600; margin-left: 4px; }
+.st.zero { border-color: rgba(34,197,94,.5); color: #86efac; }
+.st.unknown { border-style: dashed; color: var(--muted); }
+.st.error { border-color: var(--danger); color: #fca5a5; }
+.st.stale { border-style: dotted; border-color: var(--muted); color: var(--muted); }
+.st.partial { border-color: rgba(245,158,11,.5); color: var(--accent); }
+.st.blocked { border-color: rgba(239,68,68,.6); color: #fca5a5; background: #2a1416; }
+.st.off { color: var(--muted); }
+.st.prep { border-style: dashed; border-color: var(--muted); color: var(--muted); }
+.retry { min-height: 44px; align-self: flex-start; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg3); font-size: 12px; font-weight: 600; }
+.skel { display: block; height: 14px; border-radius: 4px; background: var(--bg3); }
+.skel.big { height: 22px; width: 60%; }
+.skel.w80 { width: 80%; }
+.skel.w50 { width: 50%; }
+.rows { border-top: 1px solid var(--border); }
+.rowl { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 56px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--border); width: 100%; text-align: left; }
+.rowl:last-child { border-bottom: 0; }
+.rowl .ic { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; border-radius: 6px; border: 1px solid var(--border2); color: var(--muted); }
+.rowl .ic.e { border-color: var(--danger); color: #fca5a5; }
+.rowl .ic.w { border-color: rgba(245,158,11,.6); color: var(--accent); }
+.rowl .ic.i { color: var(--text); }
+.rowl .t, .rowl .s { display: block; }
+.rowl .t { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; word-break: keep-all; }
+.rowl .s { font-size: 12px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; word-break: keep-all; margin-top: 2px; }
+.rowl .r { font-size: 12px; color: var(--muted); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.empty { padding: 14px 16px; font-size: 13px; color: var(--muted); line-height: 1.55; border-top: 1px solid var(--border); word-break: keep-all; }
+.empty b { color: var(--text); }
+.lines { border-top: 1px solid var(--border); }
+.ln { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 9px 16px; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 1.5; align-items: start; }
+.ln:last-child { border-bottom: 0; }
+.ln .k { font-size: 12px; color: var(--muted); font-weight: 600; padding-top: 1px; }
+.ln .d { overflow-wrap: anywhere; word-break: keep-all; min-width: 0; }
+.ln .d .m { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.mt { width: 100%; border-collapse: collapse; font-size: 13px; border-top: 1px solid var(--border); }
+.mt caption { caption-side: bottom; text-align: left; font-size: 11px; color: var(--muted); padding: 6px 16px 10px; line-height: 1.5; }
+.mt th, .mt td { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: right; font-variant-numeric: tabular-nums; vertical-align: top; }
+.mt th:first-child, .mt td:first-child { text-align: left; padding-left: 16px; color: var(--muted); font-weight: 600; font-size: 12px; }
+.mt thead th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--bg2); }
+.mt thead th small { display: block; font-weight: 500; font-size: 11px; }
+.mt td.dim { color: var(--muted); }
+.act { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
+.act:last-child { border-bottom: 0; }
+.act .tm { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.act .s { display: block; font-size: 12px; color: var(--muted); }
+.seg2 { display: flex; gap: 4px; background: var(--bg3); padding: 3px; border-radius: 8px; }
+.seg2 button { flex: 1 1 0; min-height: 44px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.seg2 button[aria-pressed="true"] { background: var(--bg4); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.subnav { position: sticky; top: var(--strip-h, 0px); z-index: 5; background: var(--bg); padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.btn { min-height: 44px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 700; border: 1px solid var(--border2); background: var(--bg3); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn.pri { background: var(--accent); color: #221a05; border-color: var(--accent); }
+.btn.dz { background: #2a1416; color: #fca5a5; border-color: rgba(239,68,68,.6); }
+.btn[disabled] { opacity: .55; cursor: not-allowed; }
+.btn .d { font-size: 11px; font-weight: 600; opacity: .85; }
+.card { margin: 0 12px 8px; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.5; }
+.card .h { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 700; }
+.card .s { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; word-break: keep-all; }
+.card .bt { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.pill { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border2); color: var(--muted); }
+.pill.buy { color: #fca5a5; border-color: rgba(239,68,68,.5); }
+.pill.sell { color: #93c5fd; border-color: rgba(59,130,246,.5); }
+.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; align-items: center; min-height: 52px; }
+.kv:last-child { border-bottom: 0; }
+.kv .s { grid-column: 1 / -1; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.bar { height: 6px; border-radius: 3px; background: var(--bg4); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--muted); }
+
+/* 승인 안내·결과(데모 .sheet .gate / .sheet .res — 시트 밖 ScenarioDetail 에서도 쓰게 단독 선택자) */
+.gate { margin: 10px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(245,158,11,.5); background: rgba(245,158,11,.06); font-size: 12px; line-height: 1.55; word-break: keep-all; }
+.gate.bad { border-color: rgba(239,68,68,.6); background: #2a1416; color: #fca5a5; }
+.res { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border2); font-size: 12px; line-height: 1.55; word-break: keep-all; }
+.res.ok { border-color: rgba(34,197,94,.5); color: #86efac; }
+.res.e { border-color: var(--danger); color: #fca5a5; }
+.btrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.btrow .full { grid-column: 1 / -1; }
+
+/* 스피너 — globals.css 의 ti-spin 과 같은 모양을 이 모듈 안에 둔다(모듈 안 animation 이름은 지역화된다) */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+/* 화면 읽기 전용 글자(보이지 않음) */
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* 포커스 링(데모 전역 :focus-visible 을 클래스마다) */
+.lnk:focus-visible, .rowl:focus-visible, .retry:focus-visible, .strip-go:focus-visible, .stage:focus-visible,
+.seg2 button:focus-visible, .btn:focus-visible, .sec-foot a:focus-visible, .res:focus-visible {
+  outline: 2px solid var(--text); outline-offset: 2px; border-radius: 4px;
+}
+
+/* ── 데스크톱 복원 (≥900px) ── */
+@media (min-width: 900px) {
+  .scr { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px 16px; }
+  .scr.one { grid-template-columns: minmax(0, 760px); justify-content: center; }
+  .sec { border: 1px solid var(--border); border-radius: 10px; }
+  .strip { padding: 10px 24px; }
+  .subnav { padding: 8px 16px; }
+  .subnav .seg2 { max-width: 520px; }
+}
+
+</style>
+<style>
+.demo-controls { background: var(--bg3); color: var(--text); border-bottom: 1px solid var(--border2); padding: 8px 12px 12px; }
+.demo-controls > div { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px 16px; }
+.demo-controls p { margin: 4px 0 8px; color: var(--muted); font-size: 12px; }
+.demo-controls label { display: grid; gap: 4px; font-size: 12px; }
+.demo-controls select { font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--border2); border-radius: 6px; min-height: 44px; padding-inline: 8px; }
+#demo-analysis:focus { outline: none; }
+#run-anomalies { scroll-margin-top: var(--diagnostic-offset, 112px); }
+#run-anomalies:focus-visible, .diagnostic-row summary:focus-visible, .demo-controls select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#diagnostic-section { margin-bottom: 12px; }
+#diagnostic-section h3 { margin: 0; padding: 8px 16px; background: var(--bg3); font-size: 13px; }
+.diagnostic-date { margin: 0; color: var(--muted); font-size: 12px; }
+.diagnostic-row summary { cursor: pointer; grid-template-columns: minmax(0, 1fr) auto; list-style: none; }
+.diagnostic-row summary::-webkit-details-marker { display: none; }
+.diagnostic-row + .diagnostic-row { border-top: 1px solid var(--border); }
+.diagnostic-label small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.diagnostic-chevron::after { content: '▾'; color: var(--muted); }
+.diagnostic-row[open] .diagnostic-chevron::after { content: '▴'; }
+.diagnostic-row dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; margin: 0 12px 12px; padding: 8px 12px; background: var(--bg3); border-radius: 6px; }
+.diagnostic-row dt { color: var(--muted); font-size: 12px; }
+.diagnostic-row dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+.diagnostic-ok { color: var(--ok); }
+.diagnostic-visually-hidden { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
+@media (min-width: 900px) { #diagnostic-section { width: min(100% - 32px, 1120px); margin-inline: auto; } }
+</style>
+</head>
+<body>
+<aside class="demo-controls" aria-labelledby="demo-title">
+  <strong id="demo-title">T-160 v2 · 검토 도구</strong>
+  <p>합성 데이터 · 아래는 출시 버전의 앱 화면입니다. 제안은 분석의 기존 영역 뒤에 내역을 추가합니다.</p>
+  <div>
+    <label>비교 화면
+      <select id="demo-version"><option value="proposal">제안</option><option value="current">현재</option></select>
+    </label>
+    <label>추가 내역 상태
+      <select id="demo-state"><option value="records">기록 있음</option><option value="empty">빈 결과</option><option value="loading">불러오는 중</option><option value="error">조회 실패</option></select>
+    </label>
+  </div>
+</aside>
+<div id="demo-home">
+<div style="min-height:100dvh;padding-bottom:calc(var(--nav-h) + var(--safe-bottom))"><div class="strip"><div class="strip-h"><span class="stage obs"><span class="dot" aria-hidden="true"></span>관찰 (실거래 차단)</span><span class="strip-sum"><b>신규 매수 차단</b> — 검증 통과 전략 0/16 · 주문은 기록만(실거래여부 OFF)</span><a class="strip-go" aria-label="안전장치 설정 보기" href="/settings">설정 ›</a></div><div class="sws" role="list" aria-label="안전 스위치"><span role="listitem" class="sw"><i>실거래여부</i>OFF · 실거래 차단</span><span role="listitem" class="sw"><i>모든거래차단</i>OFF</span><span role="listitem" class="sw warn"><i>검증 통과</i>0/16</span><span role="listitem" class="sw sep"><i>청산 엔진</i>ON</span><span role="listitem" class="sw sep warn"><i>손실한도 손절</i>OFF</span></div></div><div class="scr"><div class="col"><section class="sec" aria-labelledby="h-check"><div class="sec-h"><h2 id="h-check">확인 필요<small>3가지</small></h2></div><div class="rows"><a class="rowl" href="/analytics?tab=verify"><span class="ic w" aria-hidden="true">⊘</span><span><span class="t">손실한도 손절 OFF — 한도 도달 1종목 · 1일째</span><span class="s">손실 한도에 닿았지만 스위치가 꺼져 손절 시그널을 만들지 않습니다</span></span><span class="r">›</span></a><a class="rowl" href="/recommend?tab=log"><span class="ic i" aria-hidden="true">D</span><span><span class="t">가상 청산 1건 — 오늘 15:26 장마감 전 손절</span><span class="s">주문은 기록만, 송신 없음 · 텔레그램 자동 제출 알림은 꺼져 있음</span></span><span class="r">›</span></a><a class="rowl" href="/analytics?tab=data"><span class="ic w" aria-hidden="true">!</span><span><span class="t">데이터 이상·분석 실패 5건</span><span class="s">일봉 해외 오래됨 · 해외 뉴스 수집 일부만 완료 외 3건</span></span><span class="r">›</span></a></div><div class="sec-foot">승인 대기 0 · 주문 오류 0 · 기준 10:08</div></section><section class="sec" aria-labelledby="h-ops"><div class="sec-h"><h2 id="h-ops">운용현황<small>관찰 기간</small></h2><a class="lnk" aria-label="분석 탭 오늘 분석 보기" href="/analytics?tab=today">분석 ›</a></div><div class="grid2"><div class="tile"><span class="lb">분석 완료 종목</span><span class="mk"><i>국내</i>44종목 · 04-17 16:00</span><span class="mk"><i>해외</i>51종목 · ET 04-16 · 08:00</span><span class="meta">장마감 AI 분석 · D0 확정봉 기준</span></div><div class="tile"><span class="lb">분석 후보 종목</span><span class="mk"><i>국내</i>후보 5 → 시그널 1</span><span class="mk"><i>해외</i>후보 3 → 시그널 1</span><span class="st blocked">⊘ 시그널 2건 모두 검증 관문 차단</span><span class="meta">검증 관문 = 검증 통과 전 전략의 신규 매수를 막는 장치</span></div><div class="tile"><span class="lb">사후 결과 추적</span><span class="v">8<small>건</small></span><span class="mk">추적 완료 2 · 추적 중 6</span><span class="st partial">건수 적음 (30건 미만)</span><span class="meta">30건 이상 쌓여야 성과를 판단할 수 있어 지금은 참고용 · 진입 d1open · D+1·3·5·10</span></div><div class="tile"><span class="lb">데이터 이상·분석 실패</span><span class="v">5<small>건</small></span><span class="mk">일봉 해외 오래됨</span><span class="meta">원천 7개 중 이상 1 · 실행 실패 4 · 오래됨</span></div></div><div class="sec-foot">손익은 표시하지 않습니다 — 실거래 전환일 첫 스냅샷에서 기준을 잡습니다(D5). 가상 진입(paper_fills)은 분석 › 검증·성과에 따로.</div></section><section class="sec" aria-labelledby="h-exit"><div class="sec-h"><h2 id="h-exit">청산 로직<small>감사 관찰 대상</small></h2><a class="lnk" aria-label="청산 로직 상세 보기" href="/analytics?tab=verify">상세 ›</a></div><div class="lines"><div class="ln"><span class="k">가동</span><span class="d">청산 엔진 ON · <b>손실한도 손절 OFF</b><span class="m">국내 마지막 평가 15:21(장 마감) · 해외 <span class="st off">장외</span> 개장 22:30 KST (04-21부터 23:30)</span></span></div><div class="ln"><span class="k">판정</span><span class="d">손실한도 손절 OFF — 한도 도달 <b>1종목</b> · 1일째<span class="m">해당 없음 1종목 · 데이터 이상 0 · 해외 미평가(장외)</span></span></div><div class="ln"><span class="k">청산</span><span class="d"><b>가상 청산 1건</b> — 장마감 전 손절 15:26<span class="m">승인 대기 청산 0 · 실 송신 0</span></span></div></div></section></div><div class="col"><section class="sec" aria-labelledby="h-ana"><div class="sec-h"><h2 id="h-ana">오늘의 분석·판단</h2><a class="lnk" aria-label="분석 탭에서 오늘 분석 전체 보기" href="/analytics?tab=today">전체 ›</a></div><table class="mt"><caption><b>AI 매수 판단</b> = AI 가 「지금 살 만하다」고 본 종목 수(그 외는 「매수 안 함」) · 장마감 AI 분석만(D1) · 국내 = KST 세션일, 해외 = ET 세션일 · 다음 분석 국내 04-18 16:00 · 해외 04-18 08:00 KST(스케줄 표에서 읽음)</caption><thead><tr><th scope="col">단계</th><th scope="col">국내<small>04-17 · 16:00 실행</small></th><th scope="col">해외<small>ET 04-16 · 08:00 실행</small></th></tr></thead><tbody><tr><th scope="row">평가 종목</th><td>44</td><td>51</td></tr><tr><th scope="row">규칙 후보</th><td>5</td><td>3</td></tr><tr><th scope="row">AI 매수 판단</th><td>1</td><td>1</td></tr><tr><th scope="row">시그널 생성</th><td>1</td><td>1</td></tr><tr><th scope="row">검증 관문 차단</th><td>1</td><td>1</td></tr><tr><th scope="row">제외 사유 1위</th><td>AI 신뢰도 60 미만 3</td><td>진입 구간이 범위 밖 2</td></tr></tbody></table></section><section class="sec" aria-labelledby="h-act"><div class="sec-h"><h2 id="h-act">최근 활동</h2><a class="lnk" aria-label="거래 탭 운영 기록 보기" href="/recommend?tab=log">기록 ›</a></div><div class="rows"><div class="act"><span class="tm">16:00</span><span>국내 장마감 분석 완료<span class="s">44종목 · 시그널 1건 → 검증 관문 차단</span></span></div><div class="act"><span class="tm">15:26</span><span>가상 청산 기록 — 종목 A 매도<span class="s">장마감 전 손절 · 주문 송신 없음</span></span></div><div class="act"><span class="tm">13:32</span><span>장중 매수 시그널 차단<span class="s">검증 관문 · 오늘 22건 모두 차단</span></span></div><div class="act"><span class="tm">04-16 16:05</span><span>어제 기록<span class="s">날짜가 붙어야 한다</span></span></div></div></section></div></div></div><nav class="bn" aria-label="주 메뉴"><style>
+.bn { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--nav-h) + var(--safe-bottom)); padding-bottom: var(--safe-bottom); background: var(--bg2); border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(4, 1fr); z-index: 20; }
+.bn a { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 56px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; }
+.bn a svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.bn a[aria-current=&quot;page&quot;] { color: var(--accent); }
+.bn .bar { position: absolute; top: 0; left: 30%; right: 30%; height: 2px; background: var(--accent); border-radius: 0 0 2px 2px; }
+.bn a:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; border-radius: 4px; }
+@media (min-width: 900px) {
+  .bn { left: 50%; right: auto; width: 720px; transform: translateX(-50%); border: 1px solid var(--border); border-bottom: 0; border-radius: 14px 14px 0 0; }
+}
+</style><a aria-current="page" href="/"><span class="bar" aria-hidden="true"></span><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11.264 2.205A4 4 0 0 0 6.42 4.211l-4 8a4 4 0 0 0 1.359 5.117l6 4a4 4 0 0 0 4.438 0l6-4a4 4 0 0 0 1.576-4.592l-2-6a4 4 0 0 0-2.53-2.53z"></path><path d="M11.99 22 14 12l7.822 3.184"></path><path d="M14 12 8.47 2.302"></path></svg><span>홈</span></a><a href="/recommend"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m11 17 2 2a1 1 0 1 0 3-3"></path><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"></path><path d="m21 3 1 11h-2"></path><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"></path><path d="M3 4h8"></path></svg><span>거래</span></a><a href="/analytics"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><circle cx="12" cy="12" r="3"></circle><path d="m16 16-1.9-1.9"></path></svg><span>분석</span></a><a href="/settings"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg><span>설정</span></a></nav><div style="position:fixed;top:calc(var(--safe-top, 0px) + 16px);left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:8px;z-index:9999;pointer-events:none"></div>
+</div>
+<div id="demo-analysis" tabindex="-1" hidden>
+<div style="min-height:100dvh;padding-bottom:calc(var(--nav-h) + var(--safe-bottom))"><div style="display:flex;flex-direction:column;--strip-h:0px"><div class="strip"><div class="strip-h"><span class="strip-sum strip-title">분석</span><a class="stage obs" aria-label="안전 상태 관찰 (실거래 차단) — 홈에서 자세히" href="/"><span class="dot" aria-hidden="true"></span>관찰 (실거래 차단)</a></div></div><div class="subnav"><div class="seg2" role="group" aria-label="분석 하위 화면"><button id="ana-seg-today" type="button" aria-pressed="false">오늘 분석</button><button id="ana-seg-verify" type="button" aria-pressed="false">검증·성과</button><button id="ana-seg-data" type="button" aria-pressed="true">데이터 상태</button></div></div><div class="scr"><div class="col"><section class="sec" aria-labelledby="d-up"><div class="sec-h"><h2 id="d-up">가동률<small>세션일 · 주 단위</small></h2></div><div class="rows"><div class="kv"><span>장마감 분석 (국내·해외)</span><span class="num" style="font-weight:700">9/11 (82%)</span><span class="s">예정 회차 대비 정상 회차 — 분자는 ok 만(D6), 일부 완료·입력 저하는 별도 선</span></div><div class="kv"><span>데이터 수집 (뉴스·일봉·스냅샷·공시)</span><span class="num" style="font-weight:700">22/28 (79%)</span><span class="s">실행 기록(job_run_log, T-112) 이 쌓인 날부터 — 지난 기록은 소급 불가</span></div></div></section></div><div class="col"><section class="sec" aria-labelledby="d-src"><div class="sec-h"><h2 id="d-src">원천별 신선도</h2></div><div class="rows"><div class="kv"><span>포트폴리오 스냅샷 <span class="num" style="color:var(--muted);font-size:12px">· 09:10</span></span><span class="st zero">정상</span></div><div class="kv"><span>환율 USD/KRW <span class="num" style="color:var(--muted);font-size:12px">· 09:11</span></span><span class="st zero">정상</span></div><div class="kv"><span>일봉 국내 <span class="num" style="color:var(--muted);font-size:12px">· 04-16</span></span><span class="st zero">정상</span></div><div class="kv"><span>일봉 해외 <span class="num" style="color:var(--muted);font-size:12px">· ET 04-15</span></span><span class="st stale">오래됨 · 기준 09:13</span></div><div class="kv"><span>뉴스 국내 <span class="num" style="color:var(--muted);font-size:12px">· 09:14</span></span><span class="st zero">정상</span></div><div class="kv"><span>뉴스 해외 <span class="num" style="color:var(--muted);font-size:12px">· 09:15</span></span><span class="st zero">정상</span></div><div class="kv"><span>브로커 원장 <span class="num" style="color:var(--muted);font-size:12px">· 09:16</span></span><span class="st zero">정상</span></div></div><div class="sec-foot" style="padding-top:8px">「날짜 파일이 있다」는 성공 증거가 아닙니다 — 마지막 성공 시각 기준</div><div class="rows"><a class="rowl" href="/markets"><span class="ic" aria-hidden="true">◷</span><span><span class="t">시장 개장 상태</span></span><span class="r">›</span></a></div></section></div></div></div></div><nav class="bn" aria-label="주 메뉴"><style>
+.bn { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--nav-h) + var(--safe-bottom)); padding-bottom: var(--safe-bottom); background: var(--bg2); border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(4, 1fr); z-index: 20; }
+.bn a { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 56px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; }
+.bn a svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.bn a[aria-current=&quot;page&quot;] { color: var(--accent); }
+.bn .bar { position: absolute; top: 0; left: 30%; right: 30%; height: 2px; background: var(--accent); border-radius: 0 0 2px 2px; }
+.bn a:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; border-radius: 4px; }
+@media (min-width: 900px) {
+  .bn { left: 50%; right: auto; width: 720px; transform: translateX(-50%); border: 1px solid var(--border); border-bottom: 0; border-radius: 14px 14px 0 0; }
+}
+</style><a href="/"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11.264 2.205A4 4 0 0 0 6.42 4.211l-4 8a4 4 0 0 0 1.359 5.117l6 4a4 4 0 0 0 4.438 0l6-4a4 4 0 0 0 1.576-4.592l-2-6a4 4 0 0 0-2.53-2.53z"></path><path d="M11.99 22 14 12l7.822 3.184"></path><path d="M14 12 8.47 2.302"></path></svg><span>홈</span></a><a href="/recommend"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m11 17 2 2a1 1 0 1 0 3-3"></path><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4"></path><path d="m21 3 1 11h-2"></path><path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3"></path><path d="M3 4h8"></path></svg><span>거래</span></a><a aria-current="page" href="/analytics"><span class="bar" aria-hidden="true"></span><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 7V5a2 2 0 0 1 2-2h2"></path><path d="M17 3h2a2 2 0 0 1 2 2v2"></path><path d="M21 17v2a2 2 0 0 1-2 2h-2"></path><path d="M7 21H5a2 2 0 0 1-2-2v-2"></path><circle cx="12" cy="12" r="3"></circle><path d="m16 16-1.9-1.9"></path></svg><span>분석</span></a><a href="/settings"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path><circle cx="12" cy="12" r="3"></circle></svg><span>설정</span></a></nav><div style="position:fixed;top:calc(var(--safe-top, 0px) + 16px);left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:8px;z-index:9999;pointer-events:none"></div>
+</div>
+<template id="diagnostic-template"><div id="diagnostic-section"><section class="sec" aria-labelledby="run-anomalies"><div class="sec-h"><h2 id="run-anomalies">데이터 이상·실행 실패 내역<small><span id="diagnostic-count" class="num">5건</span></small></h2></div><div class="sec-b"><p class="diagnostic-date num">2031.04.17 · 한국 시간(KST)</p></div><div id="diagnostic-records"><section aria-labelledby="diagnostic-sources"><h3 id="diagnostic-sources">데이터 원천 문제</h3><div class="rows"><details class="diagnostic-row"><summary class="rowl"><span class="diagnostic-label"><strong>일봉 해외</strong><small class="num">08:36 · 최신 데이터 지연</small></span><span aria-hidden="true" class="diagnostic-chevron"></span></summary><dl><dt>사유</dt><dd>예상 시각까지 새 일봉이 확인되지 않았습니다.</dd><dt>근거</dt><dd>마지막 확인 일봉은 2031.04.15 미국 동부 날짜입니다.</dd><dt>이후 상태</dt><dd>최신 데이터 아직 미확인</dd></dl></details></div></section><section aria-labelledby="diagnostic-jobs"><h3 id="diagnostic-jobs">작업 실행 문제</h3><div class="rows"><details class="diagnostic-row"><summary class="rowl"><span class="diagnostic-label"><strong>해외 뉴스 수집</strong><small class="num">08:24 · 일부 기록 지연</small></span><span aria-hidden="true" class="diagnostic-chevron"></span></summary><dl><dt>사유</dt><dd>뉴스는 저장됐으며 수집 상태 기록 일부가 제한 시간 안에 끝나지 않았습니다.</dd><dt>근거</dt><dd>수집 상태 일부 기록 · 제한 시간 도달</dd><dt>이후 상태</dt><dd class="diagnostic-ok num">다음 정상 실행 확인 · 09:04</dd></dl></details><details class="diagnostic-row"><summary class="rowl"><span class="diagnostic-label"><strong>포트폴리오 스냅샷</strong><small class="num">07:52 · 연결 실패</small></span><span aria-hidden="true" class="diagnostic-chevron"></span></summary><dl><dt>사유</dt><dd>작업 요청을 서버에 연결하지 못했습니다.</dd><dt>근거</dt><dd>요청 도구 종료 코드 7</dd><dt>이후 상태</dt><dd class="diagnostic-ok num">다음 정상 실행 확인 · 08:02</dd></dl></details><details class="diagnostic-row"><summary class="rowl"><span class="diagnostic-label"><strong>해외 재무 지표 수집</strong><small class="num">07:18 · 제한 시간 초과</small></span><span aria-hidden="true" class="diagnostic-chevron"></span></summary><dl><dt>사유</dt><dd>제한 시간 안에 작업 응답을 받지 못했습니다.</dd><dt>근거</dt><dd>요청 도구 종료 코드 28</dd><dt>이후 상태</dt><dd>이후 정상 실행 미확인</dd></dl></details><details class="diagnostic-row"><summary class="rowl"><span class="diagnostic-label"><strong>손절 알림</strong><small class="num">06:43 · 응답 없음</small></span><span aria-hidden="true" class="diagnostic-chevron"></span></summary><dl><dt>사유</dt><dd>응답 없음 · 세부 원인 미기록</dd><dt>근거</dt><dd>기존 실행 기록에는 응답을 받지 못한 사실만 남아 있습니다.</dd><dt>이후 상태</dt><dd>이후 정상 실행 미확인</dd></dl></details></div></section></div><div id="diagnostic-empty" hidden=""><div class="empty">이 날짜에 기록된 이상 내역이 없습니다.</div></div><div id="diagnostic-loading" hidden=""><div class="sec-b"><div aria-busy="true" style="display:grid;gap:6px"><span style="display:block;height:14px;width:80%;border-radius:4px;background:var(--bg3)"></span><span style="display:block;height:14px;width:50%;border-radius:4px;background:var(--bg3)"></span></div></div></div><div id="diagnostic-error" hidden=""><div class="sec-b"><span class="st error">이상 내역 조회 실패</span><p>현재 내역을 확인할 수 없습니다.</p><span id="diagnostic-retry"><button type="button" class="retry">다시 시도</button></span></div></div><p class="diagnostic-visually-hidden" id="diagnostic-announcement" role="status"></p></section></div></template>
+<script>
+  const id = (name) => document.getElementById(name);
+  const currentHref = '/analytics?tab=data';
+  const proposedHref = currentHref + '#run-anomalies';
+  const home = id('demo-home');
+  const analysis = id('demo-analysis');
+  const analyticsShell = analysis.querySelector('.subnav').parentElement;
+  const homeAlert = home.querySelector('[aria-labelledby="h-check"] a[href="' + currentHref + '"]');
+  const template = id('diagnostic-template');
+  const version = id('demo-version');
+  const state = id('demo-state');
+  const headings = () => analyticsShell.querySelector('.strip').offsetHeight + analyticsShell.querySelector('.subnav').offsetHeight;
+  function syncSticky() {
+    analyticsShell.style.setProperty('--strip-h', analyticsShell.querySelector('.strip').offsetHeight + 'px');
+    analyticsShell.style.setProperty('--diagnostic-offset', (headings() + 8) + 'px');
+  }
+  new ResizeObserver(syncSticky).observe(analyticsShell.querySelector('.strip'));
+
+  function renderState() {
+    if (!id('diagnostic-section')) return;
+    for (const key of ['records','empty','loading','error']) id('diagnostic-' + key).hidden = state.value !== key;
+    id('diagnostic-count').hidden = !['records','empty'].includes(state.value);
+    id('diagnostic-count').textContent = state.value === 'records' ? '5건' : '0건';
+    id('diagnostic-announcement').textContent = {
+      records: '내역을 불러왔습니다. 5건.',
+      empty: '이 날짜에 기록된 이상 내역이 없습니다.',
+      loading: '이상 내역을 불러오는 중입니다.',
+      error: '이상 내역 조회 실패.'
+    }[state.value];
+  }
+
+  function renderVersion() {
+    const proposed = version.value === 'proposal';
+    homeAlert.setAttribute('href', proposed ? proposedHref : currentHref);
+    state.disabled = !proposed;
+    if (proposed && !id('diagnostic-section')) {
+      analyticsShell.append(template.content.cloneNode(true));
+      id('run-anomalies').tabIndex = -1;
+      id('diagnostic-retry').querySelector('button').addEventListener('click', () => {
+        state.value = 'records';
+        renderState();
+        id('run-anomalies').focus({preventScroll:true});
+      });
+    }
+    if (!proposed) id('diagnostic-section')?.remove();
+    renderState();
+  }
+
+  function show(route, focus = true) {
+    const active = route !== 'home';
+    home.hidden = active;
+    analysis.hidden = !active;
+    if (active) syncSticky();
+    if (!focus) return;
+    const heading = route === 'details' && id('run-anomalies');
+    if (heading) {
+      heading.focus({preventScroll:true});
+      heading.scrollIntoView({block:'start'});
+    } else {
+      (active ? analysis : homeAlert).focus({preventScroll:true});
+      window.scrollTo(0,0);
+    }
+  }
+
+  function go(route) {
+    const hash = '#' + route;
+    if (location.hash === hash) show(route);
+    else location.hash = hash;
+  }
+
+  document.addEventListener('click', (event) => {
+    const anchor = event.target.closest('a[href]');
+    if (!anchor) return;
+    event.preventDefault();
+    const href = anchor.getAttribute('href');
+    if (href === proposedHref) go('details');
+    else if (href === '/analytics' || href === currentHref) go('data');
+    else if (href === '/') go('home');
+  });
+  document.addEventListener('auxclick', (event) => {
+    if (event.target.closest('a[href]')) event.preventDefault();
+  });
+  version.addEventListener('change', () => {
+    renderVersion();
+    if (location.hash === '#details') {
+      history.replaceState(null,'','#data');
+      show('data',false);
+    }
+  });
+  state.addEventListener('change', renderState);
+  window.addEventListener('hashchange', () => show(location.hash.slice(1) || 'home'));
+  renderVersion();
+  show(location.hash.slice(1) || 'home',Boolean(location.hash));
+</script>
+</body>
+</html>

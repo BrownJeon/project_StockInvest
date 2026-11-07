@@ -131,7 +131,7 @@ export function buildChecks(x: CheckInput): CheckItem[] {
     out.push({
       kind: 'data_anomaly', severity: 'w', market: it.market === 'domestic' || it.market === 'overseas' ? it.market : undefined,
       params: { source: it.source, label: it.label, state: it.state, streak: it.streak ?? null, jobId: it.jobId ?? null, jobStatus: it.jobStatus ?? null, more },
-      href: '/analytics?tab=data',
+      href: '/analytics?tab=data#run-anomalies',
     });
   });
   // 9. 분석 실행 기록 없음(시장별)

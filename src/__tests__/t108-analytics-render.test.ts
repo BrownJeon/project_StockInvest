@@ -284,6 +284,34 @@ describe('상태 칩 공용(panel-parts) — 차단 사유·코드 병기 규칙
 });
 
 describe('데이터 상태', () => {
+  test('T-160은 기존 영역 뒤에 사유와 검증된 후속 실행을 추가한다', () => {
+    polls.set('/api/ops/analysis?part=data', {
+      ...DATA,
+      anomalyDetails: { state: 'ok', data: { date: '2026-10-31', rows: [
+        { id: 'fx_usdkrw', kind: 'source', label: '환율 USD/KRW', at: null, summary: '최신 데이터 지연', reason: '기준 시각까지 새 데이터가 확인되지 않았습니다.', evidence: null, laterOkAt: null },
+        { id: 'run-1', kind: 'job', label: '손절 알림', at: '2026-10-31T08:36:00+09:00', summary: '제한 시간 초과', reason: '서버 응답을 받지 못했습니다.', evidence: '요청 도구 종료 코드 28', laterOkAt: '2026-10-31T08:38:00+09:00' },
+        { id: 'run-2', kind: 'job', label: '시그널 사후 추적', at: '2026-10-31T08:35:00+09:00', summary: '응답 없음', reason: '응답 없음 · 세부 원인 미기록', evidence: null, laterOkAt: null },
+      ] } },
+    });
+    const html = renderToStaticMarkup(h(DataPanel, { nowMs: NOW }));
+    const t = text(html);
+    expect(html).toContain('id="run-anomalies" tabindex="-1"');
+    expect(t.indexOf('데이터 이상·실행 실패 내역')).toBeGreaterThan(t.indexOf('시장 개장 상태'));
+    expect(t).toContain('데이터 원천 문제 환율 USD/KRW');
+    expect(t).toContain('손절 알림 08:36 · 제한 시간 초과');
+    expect(t).toContain('요청 도구 종료 코드 28 이후 상태 이후 정상 실행 확인 · 08:38');
+    expect(t).toContain('응답 없음 · 세부 원인 미기록');
+    expect(t).toContain('이후 정상 실행 미확인');
+  });
+  test('T-160은 내역 조회 실패를 0건으로 표시하지 않는다', () => {
+    polls.set('/api/ops/analysis?part=data', { ...DATA, anomalyDetails: { state: 'error', error: 'db_error' } });
+    const error = text(renderToStaticMarkup(h(DataPanel, { nowMs: NOW })));
+    expect(error).toContain('가동률');
+    expect(error).toContain('이상 내역 조회 실패 현재 내역을 확인할 수 없습니다. 다시 조회');
+    expect(error).not.toContain('기록된 이상 내역이 없습니다.');
+    polls.set('/api/ops/analysis?part=data', { ...DATA, anomalyDetails: { state: 'ok', data: { date: '2026-10-31', rows: [] } } });
+    expect(text(renderToStaticMarkup(h(DataPanel, { nowMs: NOW })))).toContain('이 날짜에 기록된 이상 내역이 없습니다.');
+  });
   test('가동률(기록 n일째) · 원천별 신선도 칩 · /markets 입구(L-1)', () => {
     polls.set('/api/ops/analysis?part=data', DATA);
     const html = renderToStaticMarkup(h(DataPanel, { nowMs: NOW }));

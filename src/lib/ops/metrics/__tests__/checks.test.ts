@@ -62,6 +62,10 @@ describe('buildChecks', () => {
     expect(c[1]).toMatchObject({ count: 3, params: { domestic: 2, overseas: 1, earliestSymbol: '005930' } });
     expect(c[7].params.more).toBe(1);
     expect(c[5].params.more).toBeNull();
+    expect(c.slice(5).map(x => x.href)).toEqual([
+      '/analytics?tab=data#run-anomalies', '/analytics?tab=data#run-anomalies', '/analytics?tab=data#run-anomalies',
+      '/analytics?tab=data', '/analytics?tab=data',
+    ]);
   });
 
   it('혼합 단계 — 청산 실주문(엔진 ON) + 신규 매수 차단, 가상 청산 줄은 없다', () => {

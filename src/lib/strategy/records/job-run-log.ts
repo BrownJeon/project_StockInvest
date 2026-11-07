@@ -238,6 +238,21 @@ export function readBody(body: string | null): BodyView {
   }
 }
 
+/** 회복 이력에는 잘린 본문이나 관측 근거 없는 HTTP 200을 사용하지 않는다. */
+function confirmedOk(body: string | null): boolean {
+  if (!body) return false;
+  try {
+    const b = JSON.parse(body) as BodyView | null;
+    return b?.ok === true && !b.skipped && !b.partial && !b.aborted && !b.error
+      && (b.errors == null || (Array.isArray(b.errors) && b.errors.length === 0))
+      && (b.status == null || (typeof b.status === 'string' && ['ok', 'complete', 'success'].includes(b.status)))
+      && [b.failed, b.deferred, b.tickerFailed, b.fxRejected].every(n =>
+        n == null || n === 0 || n === false || (Array.isArray(n) && n.length === 0));
+  } catch {
+    return false;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 상태 분류기 (초안 §2.3 + G-J1 #2 — 해외 503 data_unknown = failed + error_code)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -319,7 +334,10 @@ export function classifyRun(label: string, http: number, body: string | null): C
   const res = (status: JrlStatus, errorCode: string | null = null, degradedReason: string | null = null): Classified =>
     ({ status, errorCode, degradedReason, counts });
 
-  if (http === 0) return res('failed', 'HTTP=000');
+  if (http === 0) {
+    const exit = num(b.curl_exit);
+    return res('failed', exit !== null && exit > 0 && exit <= 255 ? `HTTP=000/curl=${exit}` : 'HTTP=000');
+  }
   if (http !== 200) {
     const w = firstWord(b.status, b.error, b.skipped, b.aborted);
     // 해외 분석 503 data_unknown 등: 판단이 그 회차에 안 나왔다 → failed(G-J1 #2). 건너뛴 이유는 degraded_reason 에 그대로(지표 계약 §6).
@@ -460,6 +478,8 @@ function specOf(label: string): JobSpec {
 export function runRow(line: SpoolLine, c: Classified = classifyRun(line.label, line.http, line.body)): JobRunRow {
   const spec = specOf(line.label);
   const slot = slotFor(spec, line.startMs);
+  const counts = c.status === 'ok' && confirmedOk(line.body)
+    ? { ...c.counts, lastOkStartMs: line.startMs } : c.counts;
   return clampRow({
     job_id: line.label,
     run_kind: spec.runKind,
@@ -471,7 +491,7 @@ export function runRow(line: SpoolLine, c: Classified = classifyRun(line.label, 
     status: c.status,
     attempt: 1,
     http_code: line.http,
-    counts_json: countsJson(c.counts),
+    counts_json: countsJson(counts),
     error_code: c.errorCode,
     degraded_reason: c.degradedReason,
     session_date_kst: slot.sessionDateKst,
@@ -480,7 +500,10 @@ export function runRow(line: SpoolLine, c: Classified = classifyRun(line.label, 
   });
 }
 
-interface RollupAcc { spec: JobSpec; slotMs: number; startMs: number; endMs: number; runs: number; failed: number; maxMs: number }
+interface RollupAcc {
+  spec: JobSpec; slotMs: number; startMs: number; endMs: number;
+  runs: number; failed: number; maxMs: number; lastOkStartMs: number;
+}
 
 /** 롤업 집계 결과 → 롤업 행. 상태 = failed 0 → ok, failed = runs → failed, 그 밖 → partial. */
 function rollupRow(a: RollupAcc): JobRunRow {
@@ -497,7 +520,7 @@ function rollupRow(a: RollupAcc): JobRunRow {
     status,
     attempt: 1,
     http_code: null,
-    counts_json: countsJson({ runs: a.runs, failed: a.failed, maxMs: a.maxMs }),
+    counts_json: countsJson({ runs: a.runs, failed: a.failed, maxMs: a.maxMs, ...(a.lastOkStartMs > 0 ? { lastOkStartMs: a.lastOkStartMs } : {}) }),
     error_code: null,
     degraded_reason: null,
     session_date_kst: slot.sessionDateKst,
@@ -522,9 +545,10 @@ export function buildRows(lines: readonly string[]): BuiltRows {
     if (spec.rollup) {
       const slotMs = rollupSlot(spec, line.startMs).slotMs;
       const key = `${spec.jobId}|${slotMs}`;
-      const a = acc.get(key) ?? { spec, slotMs, startMs: line.startMs, endMs: line.endMs, runs: 0, failed: 0, maxMs: 0 };
+      const a = acc.get(key) ?? { spec, slotMs, startMs: line.startMs, endMs: line.endMs, runs: 0, failed: 0, maxMs: 0, lastOkStartMs: 0 };
       a.runs++;
       if (c.status === 'failed') a.failed++;
+      if (c.status === 'ok' && confirmedOk(line.body)) a.lastOkStartMs = Math.max(a.lastOkStartMs, line.startMs);
       a.startMs = Math.min(a.startMs, line.startMs);
       a.endMs = Math.max(a.endMs, line.endMs);
       a.maxMs = Math.max(a.maxMs, line.endMs - line.startMs);
@@ -558,6 +582,7 @@ export const RUN_ODKU =
   `ended_at = IF(${NEWER}, VALUES(ended_at), ended_at)`;
 
 const J = (expr: string, k: string) => `CAST(IFNULL(JSON_VALUE(${expr}, '$.${k}'), 0) AS UNSIGNED)`;
+const LAST_OK = `GREATEST(${J('counts_json', 'lastOkStartMs')}, ${J('VALUES(counts_json)', 'lastOkStartMs')})`;
 /**
  * 롤업 행 ODKU — 배치마다 runs·failed 를 더하고 maxMs 는 큰 값. status 는 **counts_json 보다 먼저** 두어 옛 counts_json + 새 값으로 계산한다
  * (왼쪽부터 대입이든 동시 대입이든 같은 결과).
@@ -567,9 +592,10 @@ export const ROLLUP_ODKU =
   `status = CASE WHEN ${J('counts_json', 'failed')} + ${J('VALUES(counts_json)', 'failed')} = 0 THEN 'ok' ` +
   `WHEN ${J('counts_json', 'failed')} + ${J('VALUES(counts_json)', 'failed')} >= ${J('counts_json', 'runs')} + ${J('VALUES(counts_json)', 'runs')} THEN 'failed' ` +
   "ELSE 'partial' END, " +
-  `counts_json = JSON_OBJECT('runs', ${J('counts_json', 'runs')} + ${J('VALUES(counts_json)', 'runs')}, ` +
+  `counts_json = JSON_MERGE_PATCH(JSON_OBJECT('runs', ${J('counts_json', 'runs')} + ${J('VALUES(counts_json)', 'runs')}, ` +
   `'failed', ${J('counts_json', 'failed')} + ${J('VALUES(counts_json)', 'failed')}, ` +
   `'maxMs', GREATEST(${J('counts_json', 'maxMs')}, ${J('VALUES(counts_json)', 'maxMs')})), ` +
+  `IF(${LAST_OK} > 0, JSON_OBJECT('lastOkStartMs', ${LAST_OK}), '{}')), ` +
   'started_at = LEAST(started_at, VALUES(started_at)), ' +
   'ended_at = GREATEST(IFNULL(ended_at, VALUES(ended_at)), VALUES(ended_at))';
 

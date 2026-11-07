@@ -1,0 +1,22 @@
+.panel { margin-bottom: 12px; }
+.panel h2 { scroll-margin-top: calc(var(--strip-h, 0px) + 70px); }
+.panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.panel h3 { margin: 0; padding: 8px 16px; background: var(--bg3); font-size: 13px; }
+.date, .message { margin: 0; color: var(--muted); font-size: 12px; }
+.message { margin: 8px 0; }
+.row + .row { border-top: 1px solid var(--border); }
+.row summary { cursor: pointer; grid-template-columns: minmax(0, 1fr) auto; list-style: none; }
+.row summary::-webkit-details-marker { display: none; }
+.row summary small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+.row summary strong { overflow-wrap: anywhere; }
+.chevron::after { content: '▾'; color: var(--muted); }
+.row[open] .chevron::after { content: '▴'; }
+.row dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; margin: 0 12px 12px; padding: 8px 12px; background: var(--bg3); border-radius: 6px; }
+.row dt { color: var(--muted); font-size: 12px; }
+.row dd { margin: 0; overflow-wrap: anywhere; font-size: 13px; }
+.ok { color: var(--ok); }
+.announcement { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
+
+@media (min-width: 900px) {
+  .panel { width: min(100% - 32px, 1120px); margin-inline: auto; }
+}

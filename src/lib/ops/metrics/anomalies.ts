@@ -38,10 +38,10 @@ export const SNAPSHOT_MAX_SQL = 'SELECT MAX(ts) AS t FROM portfolio_snapshots';
 export const FX_ROW_SQL = "SELECT rate, fetched_at FROM fx_rates WHERE pair = 'USD_KRW' LIMIT 1";
 export const NEWS_STREAK_SQL = "SELECT `key`, value FROM system_config WHERE `key` LIKE 'news_zero_streak:%'";
 export const BROKER_LAST_SQL = "SELECT MAX(started_at) AS t FROM broker_fill_runs WHERE status = 'complete'";
-export const JOB_FAILURES_SQL =
-  `SELECT job_id, market, status FROM job_run_log
+export const JOB_FAILURES_SCOPE_SQL = `FROM job_run_log
     WHERE session_date_kst = ? AND status IN ('failed', 'missing', 'degraded') AND recorder <> 'runner_rollup'
-    ORDER BY started_at DESC LIMIT 20`;
+    ORDER BY started_at DESC, run_id DESC LIMIT 20`;
+export const JOB_FAILURES_SQL = `SELECT job_id, market, status ${JOB_FAILURES_SCOPE_SQL}`;
 
 function row(id: DataSourceId, state: MetricState, lastOkAt: string | null, extra: Partial<DataSourceRow> = {}): DataSourceRow {
   return { id, lastOkAt, state, dateRef: null, streak: null, ...extra };
@@ -157,6 +157,10 @@ export async function readDataSources(r: OpsReader, closed: ClosedDays): Promise
 
 const ANOMALY_STATES: ReadonlySet<MetricState> = new Set<MetricState>(['stale', 'error', 'unknown', 'partial']);
 
+export function anomalySources(sources: readonly DataSourceRow[]): DataSourceRow[] {
+  return sources.filter((source) => ANOMALY_STATES.has(source.state));
+}
+
 /** 홈 A4 조립 — 순수. jobFailures=null 은 실행 기록을 읽지 못함(표 없음 포함). */
 export function buildAnomalies(
   sources: readonly DataSourceRow[],
@@ -165,8 +169,8 @@ export function buildAnomalies(
   asOf: string,
 ): ObserveSet['anomalies'] {
   const items: AnomalyItem[] = [];
-  for (const s of sources) {
-    if (ANOMALY_STATES.has(s.state)) items.push({ source: s.id, state: s.state, label: DATA_SOURCE_LABEL[s.id], streak: s.streak });
+  for (const s of anomalySources(sources)) {
+    items.push({ source: s.id, state: s.state, label: DATA_SOURCE_LABEL[s.id], streak: s.streak });
   }
   for (const j of jobFailures ?? []) {
     const mk = String(j.market);
