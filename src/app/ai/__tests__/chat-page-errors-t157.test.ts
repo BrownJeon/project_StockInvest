@@ -64,6 +64,7 @@ import {
   CHAT_LOGIN_PATH, THREAD_GONE_MESSAGE, ChatPage, ThreadListOverlay, chatFetch, readChatResponse,
   // T-161 — 초안 검토 카드의 대화 소속(ⓑ)·전송 뒤 재조회 실패 문구
   DRAFT_THREAD_GONE_MESSAGE, SENT_NOTICE_PREFIX, SENT_RELOAD_FAILED_PREFIX, SENT_TO_OTHER_THREAD_MESSAGE,
+  sentReloadFailedMessage,
 } from '@/app/ai/ChatPage';
 
 // ─── fetch · window 모킹 ────────────────────────────────────────────────────
@@ -1204,5 +1205,108 @@ describe('ChatPage — ⑫ 초안은 자기 대화로 전송된다 (T-161)', () 
     await review(p).onConfirm();
     await p.settle();
     expect(sentBody('POST /api/chat/threads/7/messages').content).toBe('7번 질문');
+  });
+});
+
+// ─── ⑬ 승인 문구 고정 (T-161 N-2) ──────────────────────────────────────────
+// 데모 v1(`mockups/T-161-draft-review-ownership-v1.html`)의 「띠 문구 3종 — 각 2안과 권고」와 「결정 1-A
+// 머리글 한 줄」을 사용자가 2026-11-07 「권고안으로 승인」 했다. 그런데 ⑫ 의 문구 단언은 **대부분**
+// `SENT_*`·`DRAFT_*` 상수를 가져다 써서 비교하므로, 문구 1·2 와 문구 3 **앞부분**을 다시 쓰면 상수와
+// 단언이 함께 바뀌어 그대로 통과한다(문구 3 의 뒤 문장과 머리글 글자는 ⑫-8·9·12·13 이 리터럴로 이미
+// 고정하고 있다 — 접두만 바꾼 변이가 ⑬ 만 깨고 뒤 문장을 바꾼 변이는 ⑫-8·9·13 도 깨는 것이 그 증거).
+// 그래서 아래는 상수를 쓰지 않고 데모에 적힌 글자를 그대로 적는다. **이 중복이 이 시험의 전부다**:
+// 「DRY 하게」 상수 import 로 바꾸면 아무것도 지키지 않는다. 문구를 바꿀 때는 데모를 다시 승인받고 이
+// 줄도 같이 고친다 — 그 수정이 승인 없는 문구 변경을 눈에 보이게 만든다.
+describe('ChatPage — ⑬ 띠·머리글 문구는 승인 데모 v1 글자 그대로다 (T-161 N-2)', () => {
+  /** 데모의 합성 예시 제목. 같은 값을 써서 데모 HTML 과 글자 단위로 대조할 수 있게 한다. */
+  const DEMO_TITLE = '반도체 섹터 전망';
+  const DRAFT = { ok: true, draftPrompt: '정제됨', attachedContext: [], draftProvider: 'claude', draftModel: 'sonnet', draftLatencyMs: 10 };
+  const prop = (p: ReturnType<typeof mount>, name: string) => findAll(p.render(), (el) => typeName(el) === name)[0];
+  /** 마크업에서 글자만 뽑아 한 칸으로 이은다 — 태그·주석은 지우고 빈 조각은 버린다. */
+  const textOf = (html: string) =>
+    html.replace(/<[^>]*>/g, '\u0000').split('\u0000').map((s) => s.trim()).filter(Boolean).join(' ');
+  /**
+   * 띠가 **렌더한** 글자. `errorBars()` 는 요소의 props 만 읽으므로 본문에서 접두를 떼는 변이
+   * (`{message.replace(SENT_NOTICE_PREFIX, '')}`)가 살아남는다 — 마지막 한 칸을 여기서 막는다.
+   * 끝의 닫기 `×` 는 글자가 아니라 버튼이라 뗀다.
+   */
+  const renderedBar = (p: ReturnType<typeof mount>) =>
+    textOf(renderToStaticMarkup(prop(p, 'ChatErrorBar') as unknown as ReactNS.ReactElement)).replace(/\s*×$/, '');
+
+  /** ⑫ 의 `toReview` 와 같은 흐름 — 대화 7 의 제목만 데모 예시 값이고, 전송 뒤 재조회 응답을 바꿀 수 있다. */
+  const toReview = async (reloadAfterSend?: Spec) => {
+    routes['GET /api/chat/threads'] = { status: 200, body: { ok: true, threads: [T(7, DEMO_TITLE), T(8)] } };
+    routes['GET /api/chat/models'] = { status: 200, body: MODELS };
+    routes['GET /api/chat/threads/7/messages'] = [
+      { status: 200, body: { ok: true, messages: [M(1, '첫 질문')] } },
+      reloadAfterSend ?? { status: 200, body: { ok: true, messages: [M(1, '첫 질문'), M(2, '7번 질문')] } },
+    ];
+    routes['GET /api/chat/threads/8/messages'] = { status: 200, body: { ok: true, messages: [M(9, 'B 질문')] } };
+    routes['POST /api/chat/threads/7/draft'] = { status: 200, body: DRAFT };
+    routes['POST /api/chat/threads/7/messages'] = { status: 200, body: { ok: true } };
+    const p = mount();
+    await p.settle();
+    (await p.overlay()).onSelect(7);
+    await p.settle();
+    prop(p, 'Composer').props.onInputChange('7번 질문');
+    await p.settle();
+    await prop(p, 'Composer').props.onSend();
+    await p.settle();
+    expect(prop(p, 'DraftReview')?.props.prompt).toBe('정제됨');
+    return p;
+  };
+
+  test('1. 문구 1 — 다른 대화로 전송 성공 (데모 「문구 1 · 2안 권고」)', () => {
+    expect(SENT_TO_OTHER_THREAD_MESSAGE(DEMO_TITLE)).toBe(
+      '전송 완료 — 「반도체 섹터 전망」 대화에 저장했습니다. 보려면 그 대화를 여세요.',
+    );
+    // 접두 자체도 승인 문구다 — 띠의 색·`role` 을 이 글자로 가르므로(ChatErrorBar) 바뀌면 뜻이 흔들린다.
+    expect(SENT_NOTICE_PREFIX).toBe('전송 완료 — ');
+  });
+
+  test('2. 문구 2 — 보낼 대화가 없어졌다 (데모 「문구 2 · 2안 권고」)', () => {
+    // 이 글자를 **어느 경로에서** 띠에 올리는지는 ⑫-4(확정 404)·⑫-5(검토 중 삭제)가 지킨다.
+    expect(DRAFT_THREAD_GONE_MESSAGE).toBe(
+      '보낼 대화가 삭제돼 전송하지 못했습니다. 검토 중이던 초안도 닫혔습니다 — 질문을 다시 입력해 주세요.',
+    );
+  });
+
+  test('3. 문구 3 — 전송은 됐고 화면 갱신만 실패 (데모 「문구 3 · 2안 권고」)', () => {
+    expect(SENT_RELOAD_FAILED_PREFIX).toBe('전송 완료 — 화면 갱신만 실패했습니다');
+    // 데모에 적힌 완성형. `(HTTP 500)` 은 `chatFetch` 가, 뒤 문장은 `sentReloadFailedMessage` 가 붙인다.
+    expect(sentReloadFailedMessage('전송 완료 — 화면 갱신만 실패했습니다 (HTTP 500)')).toBe(
+      '전송 완료 — 화면 갱신만 실패했습니다 (HTTP 500). 대화를 다시 열면 답변이 보입니다.',
+    );
+  });
+
+  test('4. 실제 전송 경로가 문구 1 을 띠에 그대로 올린다', async () => {
+    // 1~3 은 상수·함수를 본다. 이 건과 5 는 **사용자가 보는 띠**의 글자 — 조립 과정에서 다른 문구가
+    // 끼어들거나 제목이 다른 꼴로 들어가지 않는지 — 를 ⑫ 와 같은 흐름으로 확인한다.
+    const p = await toReview();
+    (await p.overlay()).onSelect(8);
+    await p.settle();
+    await prop(p, 'DraftReview').props.onConfirm();
+    await p.settle();
+    expect(p.errorBars()).toEqual(['전송 완료 — 「반도체 섹터 전망」 대화에 저장했습니다. 보려면 그 대화를 여세요.']);
+    expect(renderedBar(p)).toBe('전송 완료 — 「반도체 섹터 전망」 대화에 저장했습니다. 보려면 그 대화를 여세요.');
+  });
+
+  test('5. 실제 전송 경로가 문구 3 을 띠에 그대로 올린다 (HTTP 코드 포함)', async () => {
+    const p = await toReview({ status: 500, body: HTML });
+    await prop(p, 'DraftReview').props.onConfirm();
+    await p.settle();
+    expect(p.errorBars()).toEqual(['전송 완료 — 화면 갱신만 실패했습니다 (HTTP 500). 대화를 다시 열면 답변이 보입니다.']);
+    expect(renderedBar(p)).toBe('전송 완료 — 화면 갱신만 실패했습니다 (HTTP 500). 대화를 다시 열면 답변이 보입니다.');
+  });
+
+  test('6. 머리글 한 줄은 승인된 그 한 줄 그대로다 (순서·덧붙임까지)', async () => {
+    // ⑫-12 는 `toContain` 두 건이라 두 조각의 **순서를 바꿔도**, 앞뒤에 글자를 **덧붙여도** 통과한다.
+    // 여기서는 `↩` 를 품은 **가장 안쪽** div 하나만 떼어 글자를 통째로 비교한다(↩ 는 `aria-hidden` 장식).
+    const p = await toReview();
+    (await p.overlay()).onSelect(8);
+    await p.settle();
+    const html = renderToStaticMarkup(prop(p, 'DraftReview') as unknown as ReactNS.ReactElement);
+    const row = html.match(/<div[^>]*>(?:(?!<div)[\s\S])*?aria-hidden="true">↩[\s\S]*?<\/div>/)?.[0] ?? '';
+    expect(textOf(row)).toBe('↩ 「반도체 섹터 전망」 대화로 전송합니다');
   });
 });
