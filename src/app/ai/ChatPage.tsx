@@ -44,6 +44,48 @@ type Stage = 'idle' | 'drafting' | 'review' | 'generating';
 const SKIP_DRAFT_KEY = 'chat_skip_draft';
 const CLAUDE_MODEL_KEY = 'chat_claude_model';
 
+/** T-157 — 채팅 API 가 401(세션 만료·없는 계정)을 주면 로그인 화면으로. 로그인 뒤 비서(/ai)로 돌아온다. */
+export const CHAT_LOGIN_PATH = '/login?next=%2Fai';
+/** T-157 — 대화가 지워졌거나 내 대화가 아닐 때(404) 안내. 이전 대화 메시지는 남기지 않고 목록을 다시 읽는다. */
+export const THREAD_GONE_MESSAGE = '삭제됐거나 열 수 없는 대화입니다. 대화 목록을 새로 불러왔습니다.';
+
+/** 채팅 API 응답 분류 — `error` 는 기존 오류 띠에 그대로 쓰는 문구. */
+export type ChatResponse =
+  | { kind: 'ok'; body: Record<string, any> }
+  | { kind: 'unauthorized' }
+  | { kind: 'not_found'; error: string }
+  | { kind: 'error'; error: string };
+
+/**
+ * 응답을 401 · 404 · 오류(5xx·비JSON·`ok:true` 아님) · 정상으로 나눈다. 본문이 JSON 이 아니어도 던지지 않는다.
+ * `fallback` 은 화면의 기존 오류 문구(예: '응답 실패') — 서버가 `error` 를 주지 않을 때만 쓰고 HTTP 상태를 붙인다.
+ */
+export async function readChatResponse(
+  res: Pick<Response, 'status' | 'ok' | 'json'>,
+  fallback: string,
+): Promise<ChatResponse> {
+  if (res.status === 401) return { kind: 'unauthorized' };
+  let body: unknown = null;
+  try { body = await res.json(); } catch { body = null; }
+  const obj = body !== null && typeof body === 'object' ? (body as Record<string, any>) : null;
+  const serverError = obj && typeof obj.error === 'string' && obj.error ? (obj.error as string) : null;
+  if (res.status === 404) return { kind: 'not_found', error: serverError ?? `${fallback} (HTTP 404)` };
+  if (!res.ok || !obj || obj.ok !== true) return { kind: 'error', error: serverError ?? `${fallback} (HTTP ${res.status})` };
+  return { kind: 'ok', body: obj };
+}
+
+/** fetch + 분류. 네트워크 오류도 `error` 로 돌려준다(던지지 않음). 401 이면 여기서 로그인 화면으로 보낸다. */
+export async function chatFetch(url: string, fallback: string, init?: RequestInit): Promise<ChatResponse> {
+  let r: ChatResponse;
+  try {
+    r = await readChatResponse(await fetch(url, init), fallback);
+  } catch (e) {
+    r = { kind: 'error', error: String(e) };
+  }
+  if (r.kind === 'unauthorized' && typeof window !== 'undefined') window.location.replace(CHAT_LOGIN_PATH);
+  return r;
+}
+
 export function ChatPage() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
@@ -63,14 +105,46 @@ export function ChatPage() {
   const [error, setError] = useState<string | null>(null);
 
   const listEndRef = useRef<HTMLDivElement>(null);
+  /** 비동기 응답이 도착했을 때의 활성 대화(404 처리에서 다른 대화를 지우지 않으려고). */
+  const activeIdRef = useRef<number | null>(null);
+  activeIdRef.current = activeThreadId;
+  /**
+   * 메시지 조회 순번 — **같은 대화 안에서** 조회가 겹쳤을 때 늦게 끝난 옛 조회가 최신 결과를 덮지 않게 한다.
+   * `activeIdRef` 는 대화 **ID** 를 비교하므로 대화 사이의 경합만 막는다. 최초 로드가 보류된 동안 같은 대화에서
+   * 전송·재조회가 먼저 끝나면 ID 가 **같아서** 그 가드를 통과하고, 뒤늦게 온 실패가 방금 받은 메시지를 지우거나
+   * 오래된 스냅샷으로 되돌린다(T-157 Codex C2 지적 1 — 메시지 조회는 `stage` 를 바꾸지 않아 조회 중에도
+   * 전송할 수 있다). 두 가드는 막는 경합이 달라 **함께** 둔다.
+   *
+   * ⚠ 순번은 **활성 대화의 조회에만** 매긴다(0 부터 증가하므로 `-1` 은 어떤 조회의 순번과도 같지 않다).
+   * 비활성 대화의 재조회가 순번을 올리면 그 재조회는 ID 가드로 버려지는데 **활성 대화의 진행 중 조회까지**
+   * 순번 불일치로 함께 버려져, 아무도 화면을 쓰지 않은 채 옛 대화의 메시지가 남는다(라운드 5 회귀).
+   */
+  const msgSeqRef = useRef(0);
+
+  const loadThreads = useCallback(async () => {
+    const r = await chatFetch('/api/chat/threads', '대화 목록 조회 실패');
+    if (r.kind === 'ok') setThreads(r.body.threads ?? []);
+    else if (r.kind !== 'unauthorized') setError(r.error);
+  }, []);
+
+  /** 대화가 없어졌다(404) — 그 대화를 보고 있었다면 선택 해제·메시지 비움, 안내 후 목록 다시 읽기. */
+  const handleThreadGone = useCallback((tid: number) => {
+    if (activeIdRef.current === tid) {
+      activeIdRef.current = null;
+      setActiveThreadId(null);
+      setMessages([]);
+    }
+    setError(THREAD_GONE_MESSAGE);
+    void loadThreads();
+  }, [loadThreads]);
 
   // 초기 로드
   useEffect(() => {
-    fetch('/api/chat/threads').then(r => r.json()).then(d => {
-      if (d.ok) setThreads(d.threads ?? []);
-    });
-    fetch('/api/chat/models').then(r => r.json()).then((d: ModelInfo & { ok: boolean }) => {
-      if (d.ok) {
+    void loadThreads();
+    chatFetch('/api/chat/models', '모델 정보 조회 실패').then(r => {
+      if (r.kind === 'error' || r.kind === 'not_found') { setError(r.error); return; }
+      if (r.kind === 'ok') {
+        const d = r.body as ModelInfo & { ok: boolean };
         setModelInfo(d);
         const stored = typeof localStorage !== 'undefined' ? localStorage.getItem(CLAUDE_MODEL_KEY) : null;
         const fallback = d.default;
@@ -83,13 +157,22 @@ export function ChatPage() {
     }
   }, []);
 
-  // 활성 스레드 메시지 로드
+  // 활성 스레드 메시지 로드 — 늦게 온 이전 대화 응답은 버린다. 실패하면 이전 대화 메시지를 남기지 않는다.
   useEffect(() => {
     if (activeThreadId == null) { setMessages([]); return; }
-    fetch(`/api/chat/threads/${activeThreadId}/messages`).then(r => r.json()).then(d => {
-      if (d.ok) setMessages(d.messages ?? []);
+    const tid = activeThreadId;
+    const seq = ++msgSeqRef.current;
+    let stale = false;
+    chatFetch(`/api/chat/threads/${tid}/messages`, '메시지 조회 실패').then(r => {
+      if (stale) return;
+      // 같은 대화의 더 새로운 조회가 **시작됐다**(끝났는지와 무관하다) — 화면은 그 조회가 쓸 것이라 건드리지 않는다.
+      if (msgSeqRef.current !== seq) return;
+      if (r.kind === 'ok') setMessages(r.body.messages ?? []);
+      else if (r.kind === 'not_found') handleThreadGone(tid);
+      else if (r.kind === 'error') { setMessages([]); setError(r.error); }
     });
-  }, [activeThreadId]);
+    return () => { stale = true; };
+  }, [activeThreadId]); // eslint-disable-line react-hooks/exhaustive-deps -- handleThreadGone 은 setter·ref 만 쓴다
 
   // 새 메시지 도착 시 스크롤
   useEffect(() => {
@@ -113,35 +196,48 @@ export function ChatPage() {
 
   const ensureThread = useCallback(async (): Promise<number | null> => {
     if (activeThreadId != null) return activeThreadId;
-    const res = await fetch('/api/chat/threads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    const d = await res.json();
-    if (!d.ok) return null;
+    const r = await chatFetch('/api/chat/threads', '스레드 생성 실패', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (r.kind !== 'ok') {
+      if (r.kind !== 'unauthorized') setError('스레드 생성 실패');
+      return null;
+    }
+    const d = r.body;
+    activeIdRef.current = d.id as number;
     setActiveThreadId(d.id);
     setThreads(prev => [{ id: d.id, title: '새 대화', symbol: null, updatedAt: new Date().toISOString(), messageCount: 0, archived: false }, ...prev]);
     return d.id as number;
   }, [activeThreadId]);
+
+  /**
+   * 보낸 글을 입력칸에서 지운다 — 그동안 입력칸 내용이 달라졌으면(다른 대화로 옮겨 새로 쓴 글 등) 건드리지 않는다.
+   * T-157 QA 결함 #1 — 입력칸은 「지금 보고 있는 대화」의 것이라 늦게 끝난 전송이 남의 글을 지우면 안 된다.
+   * 보낸 글이 그대로 남아 있으면(전환 여부와 무관) 지운다 — 이미 보낸 글을 그냥 두면 다른 대화에 다시 보낼 수 있다.
+   */
+  const clearSentInput = useCallback((sent: string) => {
+    setInput(prev => (prev.trim() === sent ? '' : prev));
+  }, []);
 
   const handleSend = useCallback(async () => {
     if (!input.trim() || stage !== 'idle') return;
     setError(null);
 
     const tid = await ensureThread();
-    if (tid == null) { setError('스레드 생성 실패'); return; }
+    if (tid == null) return; // 오류 표시·로그인 이동은 ensureThread 가 했다
 
     const content = input.trim();
     if (skipDraft) {
       // 직진 모드: 바로 본 응답
       setStage('generating');
       try {
-        const res = await fetch(`/api/chat/threads/${tid}/messages`, {
+        const r = await chatFetch(`/api/chat/threads/${tid}/messages`, '응답 실패', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content, modelOverride: selectedModel, skipDraftStage: true }),
         });
-        const d = await res.json();
-        if (!d.ok) { setError(d.error ?? '응답 실패'); return; }
+        if (r.kind === 'not_found') { handleThreadGone(tid); return; }
+        if (r.kind !== 'ok') { if (r.kind === 'error') setError(r.error); return; }
         await reloadMessages(tid);
-        setInput('');
+        clearSentInput(content);
       } catch (e) {
         setError(String(e));
       } finally {
@@ -153,13 +249,18 @@ export function ChatPage() {
     // 2단계 흐름: drafting → review → generating
     setStage('drafting');
     try {
-      const res = await fetch(`/api/chat/threads/${tid}/draft`, {
+      const r = await chatFetch(`/api/chat/threads/${tid}/draft`, '정제 실패', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, modelOverride: selectedModel }),
       });
-      const d = await res.json();
-      if (!d.ok) { setError(d.error ?? '정제 실패'); setStage('idle'); return; }
+      if (r.kind !== 'ok') {
+        if (r.kind === 'not_found') handleThreadGone(tid);
+        else if (r.kind === 'error') setError(r.error);
+        setStage('idle');
+        return;
+      }
+      const d = r.body;
       setDraftPrompt(d.draftPrompt as string);
       setDraftContext((d.attachedContext ?? []) as SymbolContext[]);
       setDraftMeta({ provider: d.draftProvider, model: d.draftModel, latencyMs: d.draftLatencyMs });
@@ -169,36 +270,52 @@ export function ChatPage() {
       setError(String(e));
       setStage('idle');
     }
-  }, [input, stage, ensureThread, skipDraft, selectedModel]);
+  }, [input, stage, ensureThread, skipDraft, selectedModel, handleThreadGone, clearSentInput]);
 
+  /**
+   * 메시지를 다시 읽는다. 응답이 도착했을 때 사용자가 이미 다른 대화로 옮겼으면(늦은 응답) 화면(메시지·오류 띠)은
+   * 그 다른 대화의 것이므로 건드리지 않고 목록만 갱신한다 — T-157 QA 결함 #1.
+   * 대화 전환 로드 effect 의 `stale` 가드는 그 effect 의 조회만 막는다(여기는 전송·확정 뒤 재조회 경로라 그 가드가 닿지 않는다).
+   */
   const reloadMessages = useCallback(async (tid: number) => {
-    const r = await fetch(`/api/chat/threads/${tid}/messages`);
-    const d = await r.json();
-    if (d.ok) setMessages(d.messages ?? []);
+    // 대상이 활성 대화일 때만 순번을 매긴다. 비활성이면 순번을 **건드리지 않고**(활성 대화의 진행 중 조회를
+    // 무효화하지 않게) `-1` 로 둬 아래 가드에서 반드시 버려지게 한다 — 결과는 어차피 화면에 쓸 것이 아니다.
+    const seq = activeIdRef.current === tid ? ++msgSeqRef.current : -1;
+    const r = await chatFetch(`/api/chat/threads/${tid}/messages`, '메시지 조회 실패');
+    if (r.kind === 'unauthorized') return;      // 로그인 화면으로 이동 중 — 아무 상태도 쓰지 않는다
+    // 늦은 응답 두 경우 — 보고 있는 대화가 바뀌었거나(ID), 같은 대화에서 더 새로운 조회가 시작됐다(순번).
+    // 시작할 때 비활성이었던 재조회도 `seq === -1` 로 여기서 걸린다.
+    // 화면(메시지·오류 띠)은 최신 결과의 것이므로 건드리지 않고, 목록만 갱신한다(보낸 메시지로 updatedAt 이 바뀐다).
+    if (activeIdRef.current !== tid || msgSeqRef.current !== seq) { void loadThreads(); return; }
+    if (r.kind === 'not_found') { handleThreadGone(tid); return; }
+    if (r.kind === 'ok') setMessages(r.body.messages ?? []);
+    else setError(r.error);
     // 스레드 목록 갱신
-    fetch('/api/chat/threads').then(r => r.json()).then(td => {
-      if (td.ok) setThreads(td.threads ?? []);
-    });
-  }, []);
+    void loadThreads();
+  }, [handleThreadGone, loadThreads]);
 
   const handleConfirmDraft = useCallback(async () => {
     if (activeThreadId == null) return;
+    const tid = activeThreadId;
+    const content = input.trim();
     setStage('generating');
     try {
-      const res = await fetch(`/api/chat/threads/${activeThreadId}/messages`, {
+      const r = await chatFetch(`/api/chat/threads/${tid}/messages`, '응답 실패', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: input.trim(),
+          content,
           draftPrompt,
           attachedContext: draftContext,
           modelOverride: selectedModel,
         }),
       });
-      const d = await res.json();
-      if (!d.ok) { setError(d.error ?? '응답 실패'); return; }
-      await reloadMessages(activeThreadId);
-      setInput('');
+      if (r.kind === 'not_found') { handleThreadGone(tid); return; }
+      if (r.kind !== 'ok') { if (r.kind === 'error') setError(r.error); return; }
+      await reloadMessages(tid);
+      clearSentInput(content);
+      // 초안은 이 전송이 쓴 것이다. 전송 중(stage 'generating')에는 handleSend 가 막혀 새 초안이 생길 수 없으므로
+      // 다른 대화로 옮겼더라도 여기서 지울 초안은 이 전송 것뿐이다(화면에도 stage 가 'review' 가 아니라 안 보인다).
       setDraftPrompt('');
       setDraftContext([]);
       setDraftMeta(null);
@@ -207,7 +324,7 @@ export function ChatPage() {
     } finally {
       setStage('idle');
     }
-  }, [activeThreadId, input, draftPrompt, draftContext, selectedModel, reloadMessages]);
+  }, [activeThreadId, input, draftPrompt, draftContext, selectedModel, reloadMessages, handleThreadGone, clearSentInput]);
 
   const handleCancelDraft = useCallback(() => {
     setStage('idle');
@@ -217,6 +334,7 @@ export function ChatPage() {
   }, []);
 
   const handleNewThread = useCallback(async () => {
+    activeIdRef.current = null;   // 늦은 응답 가드가 렌더 시점에 기대지 않게(아래 onSelect 도 같다)
     setActiveThreadId(null);
     setMessages([]);
     setShowThreadList(false);
@@ -224,10 +342,13 @@ export function ChatPage() {
 
   const handleDeleteThread = useCallback(async (id: number) => {
     if (!confirm('이 대화를 삭제할까요?')) return;
-    await fetch(`/api/chat/threads/${id}`, { method: 'DELETE' });
+    // 서버가 ok:true 로 답했을 때만 목록에서 뺀다. 실패하면 목록을 그대로 두고 오류를 보인다.
+    const r = await chatFetch(`/api/chat/threads/${id}`, '삭제 실패', { method: 'DELETE' });
+    if (r.kind === 'not_found') { handleThreadGone(id); return; }
+    if (r.kind !== 'ok') { if (r.kind === 'error') setError(r.error); return; }
     setThreads(prev => prev.filter(t => t.id !== id));
-    if (activeThreadId === id) { setActiveThreadId(null); setMessages([]); }
-  }, [activeThreadId]);
+    if (activeIdRef.current === id) { activeIdRef.current = null; setActiveThreadId(null); setMessages([]); }
+  }, [handleThreadGone]);
 
   const dropContext = (symbol: string) =>
     setDraftContext(prev => prev.filter(c => c.symbol !== symbol));
@@ -314,24 +435,33 @@ export function ChatPage() {
         />
       )}
 
-      {error && (
-        <div style={{ padding: 8, background: 'rgba(239,68,68,.15)', color: 'var(--down)', fontSize: 12, textAlign: 'center' }}>
-          {error}
-          <button onClick={() => setError(null)} style={{ marginLeft: 8, background: 'none', border: 'none', color: 'var(--down)', cursor: 'pointer' }}>×</button>
-        </div>
-      )}
+      {/* 대화 목록이 열려 있으면 오류 띠는 목록 안에 보인다(덮개 아래에 겹쳐 두 번 읽히지 않게) */}
+      {error && !showThreadList && <ChatErrorBar message={error} onClose={() => setError(null)} />}
 
       {/* Thread list overlay */}
       {showThreadList && (
         <ThreadListOverlay
           threads={threads}
           activeId={activeThreadId}
-          onSelect={(id) => { setActiveThreadId(id); setShowThreadList(false); }}
+          onSelect={(id) => { activeIdRef.current = id; setActiveThreadId(id); setShowThreadList(false); }}
           onDelete={handleDeleteThread}
           onClose={() => setShowThreadList(false)}
           onNew={handleNewThread}
+          error={error}
+          onDismissError={() => setError(null)}
         />
       )}
+    </div>
+  );
+}
+
+// ── Error ───────────────────────────────────────────────────────────────
+/** 기존 오류 띠(모양 그대로). 대화 목록이 열려 있으면 목록 안에도 같은 띠를 보인다(덮개에 가려지지 않게 — T-157 삭제 실패). */
+function ChatErrorBar({ message, onClose }: { message: string; onClose: () => void }) {
+  return (
+    <div role="alert" style={{ padding: 8, background: 'rgba(239,68,68,.15)', color: 'var(--down)', fontSize: 12, textAlign: 'center' }}>
+      {message}
+      <button onClick={onClose} aria-label="오류 닫기" style={{ marginLeft: 8, background: 'none', border: 'none', color: 'var(--down)', cursor: 'pointer' }}>×</button>
     </div>
   );
 }
@@ -540,8 +670,8 @@ function Composer({
 }
 
 // ── ThreadList overlay ─────────────────────────────────────────────────
-function ThreadListOverlay({
-  threads, activeId, onSelect, onDelete, onClose, onNew,
+export function ThreadListOverlay({
+  threads, activeId, onSelect, onDelete, onClose, onNew, error = null, onDismissError,
 }: {
   threads: Thread[];
   activeId: number | null;
@@ -549,6 +679,8 @@ function ThreadListOverlay({
   onDelete: (id: number) => void;
   onClose: () => void;
   onNew: () => void;
+  error?: string | null;
+  onDismissError?: () => void;
 }) {
   return (
     <div
@@ -577,6 +709,7 @@ function ThreadListOverlay({
             background: 'var(--accent)', color: '#000', border: 'none', fontWeight: 700, cursor: 'pointer',
           }}
         >+ 새 대화</button>
+        {error && <ChatErrorBar message={error} onClose={onDismissError ?? (() => {})} />}
         <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
           {threads.length === 0 && (
             <div style={{ padding: 16, textAlign: 'center', fontSize: 11, color: 'var(--muted)' }}>대화 없음</div>

@@ -2,16 +2,16 @@
  * T-108 하단 탭 아이콘 — lucide-react 1.24.0 (ISC) 원본 경로.
  *
  * 승인 데모 `mockups/T-108-menu-home-v3.html` 529~534행의 SVG 도형을 그대로 옮겼다(직접 그린 도형 없음).
- * 아이콘 선택 근거: `docs/design/2026-10-27-navigation-icon-decisions.md` (홈 stone · 거래 handshake · 분석 scan-search · 설정 settings).
- * 비서(brain)는 T-113 배포 전이라 이번에 두지 않는다(가이드 §1.1).
+ * 아이콘 선택 근거: `docs/design/2026-10-27-navigation-icon-decisions.md` (홈 stone · 거래 handshake · 분석 scan-search · 비서 brain · 설정 settings).
+ * 비서(brain)는 T-113(대화 소유권) 운영 반영 뒤 T-157 에서 더했다(가이드 §1.1 「T-113 때 4번째」) — 데모 `IC.ai` 도형 그대로.
  * `lucide-react` 의존성은 추가하지 않는다(가이드 §0.3) — 경로만 인라인.
  *
- * 도형 수: stone 3 · handshake 5 · scan-search 6 · settings 2 (B-1 시험이 센다).
+ * 도형 수: stone 3 · handshake 5 · scan-search 6 · brain 8 · settings 2 (B-1 시험이 센다).
  * ISC License — Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT).
  * All other copyright (c) for Lucide are held by Lucide Contributors 2022.
  */
 
-export type NavIconName = 'stone' | 'handshake' | 'scan-search' | 'settings';
+export type NavIconName = 'stone' | 'handshake' | 'scan-search' | 'brain' | 'settings';
 
 /** 렌더할 때 만든다(모듈 로드 시점 JSX 없음 — jest 고전 런타임은 React 가 전역에 놓인 뒤에만 JSX 를 평가할 수 있다). */
 const SHAPES: Record<NavIconName, () => JSX.Element> = {
@@ -39,6 +39,18 @@ const SHAPES: Record<NavIconName, () => JSX.Element> = {
       <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
       <circle cx="12" cy="12" r="3" />
       <path d="m16 16-1.9-1.9" />
+    </>
+  ),
+  brain: () => (
+    <>
+      <path d="M12 18V5" />
+      <path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4" />
+      <path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5" />
+      <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77" />
+      <path d="M18 18a4 4 0 0 0 2-7.464" />
+      <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517" />
+      <path d="M6 18a4 4 0 0 1-2-7.464" />
+      <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77" />
     </>
   ),
   settings: () => (
