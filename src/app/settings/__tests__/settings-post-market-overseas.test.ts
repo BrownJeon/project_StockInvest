@@ -281,7 +281,7 @@ describe('토글 저장 — 같은 카드의 KILL_SWITCH·자동 청산 토글�
 });
 
 describe('저장 바 일괄 저장은 이 스위치를 보내지 않는다 (자기 토글로만 저장)', () => {
-  test('다른 필드는 그대로 보내고 postMarketOverseasEnabled 만 빠진다', async () => {
+  test('일괄 저장은 즉시 저장 스위치와 편집하지 않은 매수 한도를 보내지 않는다', async () => {
     // 성공 시 handleSave 가 거는 2초 '저장됨' 해제 타이머가 워커에 남지 않게 가짜 타이머로 돌린다
     jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
     const fetchMock = jest.fn().mockResolvedValue(jsonRes(200, { ok: true }));
@@ -298,7 +298,10 @@ describe('저장 바 일괄 저장은 이 스위치를 보내지 않는다 (자�
     expect(safetyCalls).toHaveLength(1);
     const body = JSON.parse(String((safetyCalls[0] as [string, RequestInit])[1].body)) as Record<string, unknown>;
     expect(body).not.toHaveProperty('postMarketOverseasEnabled');
-    expect(body).toMatchObject({ killSwitch: true, analystEnabled: true, orderMaxPct: 5, dryRun: false });
+    expect(body).toMatchObject({ analystEnabled: true });
+    for (const key of ['killSwitch', 'dryRun', 'exitEngineEnabled', 'orderMaxPct', 'dailyOrderMaxPct', 'buyLimitEdits']) {
+      expect(body).not.toHaveProperty(key);
+    }
     expect(hookMode.setters[S_DIRTY]).toHaveBeenCalledWith(false);
     expect(hookMode.setters[S_SAVE_STATE]).toHaveBeenCalledWith('saved');
     jest.runOnlyPendingTimers();

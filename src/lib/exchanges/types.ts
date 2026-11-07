@@ -16,6 +16,8 @@ export interface OrderRequest {
   market?: 'domestic' | 'overseas';
   /** 가격 통화 (해외주식은 'USD'). 디폴트 'KRW' */
   currency?: 'KRW' | 'USD';
+  /** USD 지정가를 잔금과 대조한 뒤 submitOrder가 송신용 요청에만 지정한다. */
+  verifiedAdaptiveLimitUsd?: number;
 }
 
 export interface OrderResult {

@@ -4,14 +4,13 @@ import { kis, getBalancesDetailed } from '@/lib/exchanges/kis';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
 import { getMarketFromSymbol, type Market } from '@/lib/exchanges/kis-symbols';
 import { getCurrentMarket, isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
-import { createSignal, type CreateSignalErrorCode } from '@/lib/signals/service';
+import { createSignal, getEffectiveChasePct, type CreateSignalErrorCode } from '@/lib/signals/service';
 import { getEngineSwitches } from '@/lib/signals/router';
 import type { AutopilotMode, SignalInput } from '@/lib/signals/router';
 import { getEffectiveOrderMax } from '@/lib/safety/order-limits';
-// ⚠️ D4 — 장중 AI 완전 제거 (T-003 §1). `ai-filter` 에서 가져오는 것은 **순수 지표 계산기**
-//    `buildMarketSummary` 와 그 타입뿐이다. AI 호출 함수(aiSelectSignal·aiSelectSignalBatch)와
-//    `claude` CLI spawn 경로는 이 파일에서 완전히 사라졌다.
-//    (ai-filter.ts 자체를 순수 모듈과 AI 모듈로 쪼개는 정리는 별도 backlog)
+import { isBuyLimitConfigured, UNLIMITED_BUY_LIMIT } from '@/lib/safety/buy-limit-config';
+import { allocateAdaptiveBuys } from './adaptive-buy-sizing';
+// 장중 룰 판정에는 순수 지표만 사용한다. T-159의 모델은 명시적 무제한 매수의 금액 배정만 제안한다.
 import {
   buildMarketSummary,
   type MarketSummary,
@@ -1106,6 +1105,7 @@ async function applyFilters(
   rec: EvalFunnelRecorder,
   outcome: OutcomeTracker,
   autopilotMode: AutopilotMode,
+  deferPortfolioGuard = false,
 ): Promise<Candidate[]> {
   const pool = getPool();
   const { symbol, candidates, summary, summaryCandles, ticker } = ctx;
@@ -1187,6 +1187,23 @@ async function applyFilters(
     if (survived.length === 0) return [];
   }
 
+  return deferPortfolioGuard
+    ? survived
+    : applyPortfolioGuard(ctx, survived, style, market, heldAmounts, rec, outcome, autopilotMode);
+}
+
+async function applyPortfolioGuard(
+  ctx: CollectedContext,
+  survived: Candidate[],
+  style: StyleConfig,
+  market: Market,
+  heldAmounts: Map<string, HeldEntry>,
+  rec: EvalFunnelRecorder,
+  outcome: OutcomeTracker,
+  autopilotMode: AutopilotMode,
+): Promise<Candidate[]> {
+  const pool = getPool();
+  const { symbol, ticker } = ctx;
   // 1.5) portfolio stability 가드 — buy 시그널만 검사 (sell·해외는 자동 pass).
   if (market === 'domestic') {
     const guarded: Candidate[] = [];
@@ -1249,8 +1266,6 @@ async function applyFilters(
     survived = guarded;
   }
 
-  // ③ dedup(regime 버킷) 은 §4-3 통합 쿨다운(scope='entry')으로 대체돼 여기서 사라졌다.
-  //   버킷 경계 진동으로 우회되던 결함 + AI 스킵 이력 의존이 함께 제거된다.
   return survived;
 }
 
@@ -1427,11 +1442,9 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   const MICRO_VARIATION_BUFFER_PCT = 0.0007;
   const FEE_BUFFER_PCT = roundTripCostPct(style) / 100 + MICRO_VARIATION_BUFFER_PCT;
   const rawMax = await getEffectiveOrderMax('kis', market);
-  // Phase 0 fail-safe: rawMax 0 = 한도 미설정(DB 키 부재) 또는 포트폴리오 평가액 조회 실패.
-  // 이전에는 Infinity → ORDER_MAX_KRW env 폴백(최소 10만원)으로 매수를 계속 발화했다(fail-open).
-  // 이제는 신규 매수 후보를 전면 스킵한다. 매도·청산(exit-engine, sell 후보)은 그대로 진행.
-  const orderLimitConfigured = Number.isFinite(rawMax) && rawMax > 0;
-  const defaultAmountKRW = orderLimitConfigured ? Math.floor(rawMax * (1 - FEE_BUFFER_PCT)) : 0;
+  const adaptive = rawMax === UNLIMITED_BUY_LIMIT;
+  const orderLimitConfigured = isBuyLimitConfigured(rawMax);
+  const defaultAmountKRW = !adaptive && orderLimitConfigured ? Math.floor(rawMax * (1 - FEE_BUFFER_PCT)) : 0;
 
   const errors: string[] = [];
   if (!orderLimitConfigured) {
@@ -1605,6 +1618,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   // ─── ④ 안전·집행 — 프리필터·장마감·포트폴리오 가드 통과분을 즉시 시그널로 만든다 ──
   // regime gate 발동 또는 주문 한도 미설정(fail-safe) 시 buy 후보를 사전 제거 (sell·보유 종목 매도는 유지)
   const buyBlocked = regimeGateBlocked || !orderLimitConfigured;
+  const deferred = new Map<Candidate, CollectedContext>();
   for (const ctx of contexts) {
     if (buyBlocked && ctx.candidates.some(c => c.side === 'buy')) {
       // buy 후보만 제거 — sell은 통과
@@ -1618,12 +1632,40 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
         continue;
       }
     }
-    const survived = await applyFilters(
-      ctx, style, market, heldAmounts, rec, outcome, switches.autopilotMode,
+    let survived = await applyFilters(
+      ctx, style, market, heldAmounts, rec, outcome, switches.autopilotMode, adaptive,
     );
+    if (adaptive) {
+      for (const cand of survived) if (cand.side === 'buy') deferred.set(cand, ctx);
+      survived = survived.filter(cand => cand.side === 'sell');
+    }
+    await publish(ctx, survived);
+  }
+
+  if (deferred.size > 0) {
+    const chasePct = await getEffectiveChasePct(style.limitChasePct);
+    const allocation = await allocateAdaptiveBuys(market, [...deferred.keys()], chasePct, heldAmounts);
+    for (const [candidate, ctx] of deferred) {
+      const sized = allocation.orders.get(candidate);
+      if (!sized) {
+        rec.skip('adaptive_buy_sizing', {
+          symbol: ctx.symbol, strategyId: candidate.strategyId, side: 'buy',
+          reason: allocation.reason === 'allocated' ? 'candidate_not_allocated' : allocation.reason,
+        });
+        outcome.kill(ctx.symbol, 8, 'adaptive_buy_sizing');
+        continue;
+      }
+      const allowed = await applyPortfolioGuard(ctx, [sized], style, market, heldAmounts, rec, outcome, switches.autopilotMode);
+      await publish(ctx, allowed);
+    }
+  }
+
+  async function publish(ctx: CollectedContext, survived: Candidate[]) {
     if (survived.length === 0) {
-      results.set(ctx.symbol, { symbol: ctx.symbol, signalsCreated: 0, candidateCount: 0, rawCandidates: ctx.rawCandidateCount });
-      continue;
+      if (!results.has(ctx.symbol)) results.set(ctx.symbol, {
+        symbol: ctx.symbol, signalsCreated: 0, candidateCount: 0, rawCandidates: ctx.rawCandidateCount,
+      });
+      return;
     }
     // ④ 통과 = 시그널 생성. AI 관문이 사라져 여기가 곧 터미널이다.
     outcome.advance(ctx.symbol, 11);
@@ -1648,12 +1690,13 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
         await setCooldown({ scope: 'rebuy', symbol: ctx.symbol }, COOLDOWN_TTL_MIN.rebuy, 'sell_signal');
       }
     }
+    const previous = results.get(ctx.symbol);
     results.set(ctx.symbol, {
       symbol: ctx.symbol,
-      signalsCreated: createdCount,
-      selectedStrategy: survived[0]?.strategyId,
-      side: survived[0]?.side as 'buy' | 'sell' | undefined,
-      candidateCount: survived.length,
+      signalsCreated: (previous?.signalsCreated ?? 0) + createdCount,
+      selectedStrategy: previous?.selectedStrategy ?? survived[0]?.strategyId,
+      side: previous?.side ?? survived[0]?.side,
+      candidateCount: (previous?.candidateCount ?? 0) + survived.length,
       rawCandidates: ctx.rawCandidateCount,
     });
   }

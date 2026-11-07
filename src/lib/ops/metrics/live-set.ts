@@ -4,16 +4,14 @@
  * **지금 운영 단계(관찰)에서는 그려지지 않는다** — 실데이터 대조가 불가능해 합성 DTO 시험만 있다(가이드 §6).
  * KIS 실시간 호출 없음: 매수 가능액(B7)도 최신 스냅샷 현금 행 기준이다(가이드 B7 「v1 = 최신 portfolio_snapshots 현금 행」).
  *
- * B7 한도: 주문 경로의 `getEffectiveOrderMax` 는 평가액을 KIS 잔고로 다시 읽을 수 있어 쓰지 않는다. 대신 같은 설정
- * (`safety_order_max_pct` — 주문 경로 `readPctOverride` 와 같은 해석 `Number(JSON.parse(value))`)에 **스냅샷 기준 시장별 평가액**을 곱한
- * 근사다(reason 'limit_from_snapshot' — 1회 한도만, 일일 한도·실시간 예수금 미반영). 키 없음·숫자 아님·≤0 이면 주문 경로처럼
- * 0 = 매수 차단(`blocked`/order_max_unset). **조회 실패는 `unknown`**(order_max_unknown) — `getOrderMaxPct` 는 DB 오류를 0 으로 삼켜
- * 「미설정」과 구분할 수 없어 쓰지 않는다.
+ * B7은 KIS를 호출하지 않고 스냅샷의 시장별 평가액과 1회 한도를 사용한다.
+ * 명시적 무제한이면 스냅샷 현금만 표시한다. 일일 한도와 실시간 예수금은 반영하지 않는다.
  *
  * USD 예수금: 스냅샷 positions 의 현금 행을 `cash.get('USD')` 로 읽는다 — T-056 이 스냅샷에 남기는 USD 행이다(잔고 배열이 아니다).
  * 행이 없으면 `unknown`(0 금지 — T-056). 환율은 `fx_rates` 행이 24시간 이내일 때만 환산한다(그 밖 krw=null·fxSource='fallback').
  */
 import { EXIT_STRATEGY_ID } from '@/lib/strategy/exit-engine';
+import { decodeBuyLimit, UNLIMITED_BUY_LIMIT, type BuyLimit } from '@/lib/safety/buy-limit-config';
 import { FX_LIMIT_MS, FX_ROW_SQL } from './anomalies';
 import { marketOfSymbol, readAutoSymbols, readLatestSnapshot, SNAPSHOT_MAX_AGE_MS, type SnapshotView } from './holdings';
 import { counted, metric } from './metric';
@@ -38,15 +36,9 @@ export async function readFillsToday(r: OpsReader, market: Market): Promise<{ fi
 export const ORDER_MAX_PCT_SQL = "SELECT value FROM system_config WHERE `key` = 'safety_order_max_pct' LIMIT 1";
 
 /** 1회 한도 pct — 키 없음·해석 불가 0(주문 경로와 같은 fail-safe), 조회 실패는 던진다(호출자가 unknown). */
-export async function readOrderMaxPct(r: OpsReader): Promise<number> {
+export async function readOrderMaxPct(r: OpsReader): Promise<BuyLimit> {
   const rows = await r.rows<{ value: unknown }>(ORDER_MAX_PCT_SQL);
-  if (rows.length === 0) return 0;
-  try {
-    const v = Number(JSON.parse(String(rows[0].value)));
-    return Number.isFinite(v) ? v : 0;
-  } catch {
-    return 0;
-  }
+  return decodeBuyLimit(rows[0]?.value);
 }
 
 export interface FxView { rate: number | null; atMs: number | null }
@@ -72,36 +64,35 @@ export function snapshotMarketTotals(s: SnapshotView): ByMarket<number> {
 }
 
 /** B7 — 순수. stage mixed 면 금액 대신 차단 사유. */
-export function buyableMetric(market: Market, stage: OpsStage, snap: SnapshotView | null, pct: number | null, fx: FxView, nowMs: number): LiveSet['buyable']['domestic'] {
+export function buyableMetric(market: Market, stage: OpsStage, snap: SnapshotView | null, pct: BuyLimit | null, fx: FxView, nowMs: number): LiveSet['buyable']['domestic'] {
   if (stage === 'mixed') return metric('blocked', null, null, 'validation_gate');
   if (!snap) return metric('unknown', null, null, 'no_snapshot');
   const asOf = kstIso(snap.ts);
   const stale = nowMs - snap.ts > SNAPSHOT_MAX_AGE_MS;
   if (pct == null) return metric('unknown', null, asOf, 'order_max_unknown');
-  if (!(pct > 0)) return metric('blocked', null, asOf, 'order_max_unset');
-  const totals = snapshotMarketTotals(snap);
-  const limitKrw = totals[market] * (pct / 100);
+  if (pct !== UNLIMITED_BUY_LIMIT && !(pct > 0)) return metric('blocked', null, asOf, 'order_max_unset');
+  const limitKrw = pct === UNLIMITED_BUY_LIMIT ? null : snapshotMarketTotals(snap)[market] * (pct / 100);
   const fxFresh = fx.rate != null && fx.atMs != null && nowMs - fx.atMs <= FX_LIMIT_MS;
   const fxAt = fx.atMs != null ? kstIso(fx.atMs) : null;
   let v: NonNullable<LiveSet['buyable']['domestic']['value']>;
-  let reason = 'limit_from_snapshot';
+  let reason = limitKrw === null ? 'cash_from_snapshot' : 'limit_from_snapshot';
   if (market === 'domestic') {
     const cash = snap.cash.get('KRW');
     const q = cash ? num(cash.qty) : null;
     if (q == null) return metric('unknown', null, asOf, 'krw_cash_unknown');
-    const native = Math.max(0, Math.min(q, limitKrw));
+    const native = Math.max(0, limitKrw === null ? q : Math.min(q, limitKrw));
     v = { native, currency: 'KRW', krw: native, fxAt: null, fxSource: null };
   } else {
     const cash = snap.cash.get('USD');
     const q = cash ? num(cash.qty) : null;
     if (q == null) return metric('unknown', null, asOf, 'usd_cash_unknown');
     if (fxFresh) {
-      const native = Math.max(0, Math.min(q, limitKrw / (fx.rate as number)));
+      const native = Math.max(0, limitKrw === null ? q : Math.min(q, limitKrw / (fx.rate as number)));
       v = { native, currency: 'USD', krw: native * (fx.rate as number), fxAt, fxSource: 'fx_rates' };
     } else {
       // 환율이 없거나 24시간 넘음 — 한도(원화)를 달러로 바꿀 수 없다. 예수금만 보이고 환산은 숨긴다.
       v = { native: Math.max(0, q), currency: 'USD', krw: null, fxAt, fxSource: 'fallback' };
-      reason = 'limit_not_applied_fx';
+      if (limitKrw !== null) reason = 'limit_not_applied_fx';
     }
   }
   return metric(stale ? 'stale' : v.native > 0 ? 'available' : 'zero', v, asOf, stale ? 'snapshot_old' : reason);

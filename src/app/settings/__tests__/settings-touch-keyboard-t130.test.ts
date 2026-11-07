@@ -138,7 +138,7 @@ const STRATS = [{ id: 's1', enabled: true, backtestIntervalM: 5, nextBacktestAt:
 
 type PageOpts = { safety?: Record<string, unknown> | null; report?: unknown; strategies?: unknown[]; dirty?: boolean };
 // SettingsPage useState 순서(소스 사실 — 다른 설정 시험과 같다): 0 safety · 1 notifySignal · 2 report · 3 exchanges · 4 strategies
-// · 5 loading · 6 saveState · 7 saveError · 8 isDirty · 9 hybridMode · 10 hybridSaving — 그다음 11 = 첫 조회 useEffect. T-130 은 훅을 더하지 않았다.
+// · 5 loading · 6 saveState · 7 saveError · 8 isDirty · 9 hybridMode · 10 hybridSaving — 11 = 편집한 매수 한도 ref · 12 = 첫 조회 useEffect.
 const P = { safety: 0, saveState: 6, saveError: 7, dirty: 8 } as const;
 function pageValues(o: PageOpts): unknown[] {
   return [
@@ -149,7 +149,7 @@ function pageValues(o: PageOpts): unknown[] {
 function pageFiber(o: PageOpts = {}): Fiber { return { slots: pageValues(o) }; }
 function renderPage(f: Fiber): El {
   const tree = render(f, SettingsPage, {}, { effects: false });   // 첫 조회 effect 는 돌리지 않는다(fetch 없음)
-  expect(f.slots).toHaveLength(12);                                // 훅 순서 전제 확인 — 바뀌면 여기서 멈춘다
+  expect(f.slots).toHaveLength(13);                                // 훅 순서 전제 확인 — 바뀌면 여기서 멈춘다
   return tree;
 }
 function ssr(o: PageOpts = {}): string {
@@ -326,15 +326,15 @@ describe('(b) 값 행 7개 — 행 전체가 버튼, 입력칸 44px, 저장 방�
     const html = ssr();
     const rows = [...html.matchAll(/<button type="button" aria-label="([^"]+), 현재 ([^"]+), 바꾸기" style="([^"]*)">(.*?)<\/button>/g)];
     expect(rows.map(r => r[1])).toEqual(VALUE_ROWS);
-    expect(rows.map(r => r[2])).toEqual(['미적용', '10%', '60분', '-2%', '-4%', '-7%', '5분']);
+    expect(rows.map(r => r[2])).toEqual(['미구성', '10%', '60분', '-2%', '-4%', '-7%', '5분']);
     for (const r of rows) {
       expect(r[3]).toContain('display:flex');
       expect(r[3]).toContain('width:100%;min-height:56px');
       expect(r[3]).toContain('text-align:left');
     }
     const t = text(html);
-    expect(t).toContain('1회 주문 최대 (%) 포트폴리오 평가총액 × pct%. 0 = 무제한 미적용 ›');
-    expect(t).toContain('일일 누적 최대 (%) 포트폴리오 평가총액 × pct%. 오늘 0시~자정 누적 상한. 0 = 무제한 10% ›');
+    expect(t).toContain('1회 주문 최대 (%) 시장별 평가액 × 비율. 0을 직접 입력해 저장하면 무제한 미구성 ›');
+    expect(t).toContain('일일 누적 최대 (%) 시장별 오늘 누적 상한. 0을 직접 입력해 저장하면 무제한 10% ›');
     expect(t).toContain('비교 윈도우 이 시간 내 변동률 기준 (분) 60분 ›');
     expect(t).toContain('경고 임계치 로그만 기록 (주문 차단 없음) -2% ›');
     expect(t).toContain('차단 임계치 신규 주문 차단 + Slack 경고 -4% ›');
@@ -371,7 +371,7 @@ describe('(b) 값 행 7개 — 행 전체가 버튼, 입력칸 44px, 저장 방�
     const row: Fiber = { slots: [] };
     let ui = render(row, om.type, om.props);
     expect(ui.type).toBe('button');
-    expect(ui.props['aria-label']).toBe('1회 주문 최대 (%), 현재 미적용, 바꾸기');
+    expect(ui.props['aria-label']).toBe('1회 주문 최대 (%), 현재 미구성, 바꾸기');
     const rowNode = nodeOf(ui.ref);
 
     (ui.props.onClick as () => void)();
@@ -381,7 +381,7 @@ describe('(b) 값 행 7개 — 행 전체가 버튼, 입력칸 44px, 저장 방�
     let input = one(ui, el => el.type === 'input');
     expect(input.props.autoFocus).toBe(true);
     expect(input.props['aria-label']).toBe('1회 주문 최대 (%)');
-    expect(input.props.value).toBe('0');
+    expect(input.props.value).toBe('');
     expect(input.props.inputMode).toBe('decimal');
     expect(input.props.style).toMatchObject({ minHeight: 44, width: 96 });
     expect((ui.props.style as Record<string, unknown>).minHeight).toBe(56);
@@ -395,9 +395,9 @@ describe('(b) 값 행 7개 — 행 전체가 버튼, 입력칸 44px, 저장 방�
     (input.props.onKeyDown as (e: KeyEv) => void)(enter);
     expect(enter.preventDefault).toHaveBeenCalledTimes(1);   // F1 — keypress 가 행 버튼으로 새지 않게
 
-    // 저장은 하지 않는다 — 상태(safety)와 isDirty 만 바뀐다
+    // 저장 전 편집값만 바뀐다. 일반 설정의 isDirty와는 구분한다.
     expect((page.slots[P.safety] as Record<string, unknown>).orderMaxPct).toBe(7);
-    expect(page.slots[P.dirty]).toBe(true);
+    expect(page.slots[P.dirty]).toBe(false);
     ui = render(row, om.type, om.props);
     expect(ui.type).toBe('button');
     expect(rowNode.focus).toHaveBeenCalledTimes(1);
@@ -408,6 +408,56 @@ describe('(b) 값 행 7개 — 행 전체가 버튼, 입력칸 44px, 저장 방�
     const save = one(tree, el => el.type === 'button' && el.props.children === '저장');
     expect((save.props.style as Record<string, unknown>).minHeight).toBe(44);
     expect(valueRowEl(tree, '1회 주문 최대 (%)').props.value).toBe(7);
+  });
+
+  test('기존 0 행의 빈 입력은 무제한을 켜지 않고, 직접 입력한 0은 한도만 저장한다', async () => {
+    const page = pageFiber();
+    const row: Fiber = { slots: [] };
+    const edit = (value?: string) => {
+      const field = valueRowEl(renderPage(page), '1회 주문 최대 (%)');
+      const button = render(row, field.type, field.props);
+      (button.props.onClick as () => void)();
+      const input = () => one(render(row, field.type, field.props), el => el.type === 'input');
+      if (value !== undefined) (input().props.onChange as (e: unknown) => void)({ target: { value } });
+      (input().props.onKeyDown as (e: KeyEv) => void)(keyEv('Enter'));
+    };
+    edit();
+    expect(findAll(renderPage(page), el => el.type === 'button' && el.props.children === '저장')).toHaveLength(0);
+    edit('0');
+    const fetchSpy = mockFetch(jest.fn().mockResolvedValue(jsonRes(200, { ok: true })));
+    jest.useFakeTimers();
+    try {
+      const save = one(renderPage(page), el => el.type === 'button' && el.props.children === '저장');
+      await (save.props.onClick as () => Promise<void>)();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchSpy.mock.calls[0];
+      expect(url).toBe('/api/settings/safety');
+      expect(JSON.parse(String(init?.body))).toEqual({ buyLimitEdits: { orderMaxPct: 0 } });
+    } finally {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
+    }
+  });
+
+  test('매수 한도와 경고 임계치를 함께 편집하면 한 번의 안전 설정 요청으로 보낸다', async () => {
+    const page = pageFiber({ safety: baseSafety({ volGuardEnabled: true }) });
+    for (const [title, typed] of [['1회 주문 최대 (%)', '0'], ['경고 임계치', '-3']]) {
+      const field = valueRowEl(renderPage(page), title);
+      const row: Fiber = { slots: [] };
+      const button = render(row, field.type, field.props);
+      (button.props.onClick as () => void)();
+      const input = () => one(render(row, field.type, field.props), el => el.type === 'input');
+      (input().props.onChange as (e: unknown) => void)({ target: { value: typed } });
+      (input().props.onKeyDown as (e: KeyEv) => void)(keyEv('Enter'));
+    }
+    const fetchSpy = mockFetch(jest.fn().mockResolvedValue(jsonRes(500, { ok: false, error: 'fixture failure' })));
+    const save = one(renderPage(page), el => el.type === 'button' && el.props.children === '저장');
+    await (save.props.onClick as () => Promise<void>)();
+    const [[url, init]] = fetchSpy.mock.calls;
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(url).toBe('/api/settings/safety');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ buyLimitEdits: { orderMaxPct: 0 }, volGuardWarnPct: -3 });
+    expect(page.slots[P.dirty]).toBe(true);
   });
 
   /** 값 행 하나를 열고 글자를 넣은 뒤 `finish` 로 닫는다 → onChange 호출·행 포커스 호출을 돌려준다. */

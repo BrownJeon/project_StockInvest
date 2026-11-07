@@ -1,10 +1,14 @@
 import { getAccountId, getPool } from '@/lib/db';
 import type { OrderRequest } from '@/lib/exchanges/types';
+import { readAdaptiveCashBudget } from '@/lib/signals/adaptive-buy-cash';
 import { submitOrder } from '../dry-run';
 
 jest.mock('@/lib/db', () => ({
   getPool: jest.fn(),
   getAccountId: jest.fn(),
+}));
+jest.mock('@/lib/signals/adaptive-buy-cash', () => ({
+  ...jest.requireActual('@/lib/signals/adaptive-buy-cash'), readAdaptiveCashBudget: jest.fn(),
 }));
 
 // T-056: 한도는 시장별 *상태*(`getMarketTotal`)를 읽는다. 값은 종전과 같은 1,000,000 (ok).
@@ -42,8 +46,8 @@ interface Captured {
 interface MockOpts {
   filledAutoOn?: boolean;
   dailySum?: number;
-  orderMaxPct?: number;   // DB safety_order_max_pct override (default: 1%)
-  dailyMaxPct?: number;   // DB safety_daily_order_max_pct override (default: 5%)
+  orderMaxPct?: number | 'unlimited';
+  dailyMaxPct?: number | 'unlimited';
 }
 
 function setupMockDB(opts: MockOpts = {}): Captured {
@@ -76,8 +80,8 @@ function setupMockDB(opts: MockOpts = {}): Captured {
     // system_config: 한도 DB override — order-limits.ts는 `key` 컬럼으로 WHERE 파라미터 바인딩
     if (/FROM system_config/i.test(sql)) {
       const keyParam = String(params[0] ?? '');
-      if (keyParam === 'safety_order_max_pct') return [[{ value: String(opts.orderMaxPct ?? 1) }]];
-      if (keyParam === 'safety_daily_order_max_pct') return [[{ value: String(opts.dailyMaxPct ?? 5) }]];
+      if (keyParam === 'safety_order_max_pct') return [[{ value: JSON.stringify(opts.orderMaxPct ?? 1) }]];
+      if (keyParam === 'safety_daily_order_max_pct') return [[{ value: JSON.stringify(opts.dailyMaxPct ?? 5) }]];
       return [[]]; // 기타 config 키는 미설정
     }
     // T-072 — 검증 상태 관문(G6). 이 파일의 매수는 검증된 전략 귀속(VALIDATED)으로 낸다 — 관문 자체는 submit-order-validation-gate.test.ts.
@@ -129,6 +133,32 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
   afterEach(() => {
     process.env = { ...origEnv };
     jest.clearAllMocks();
+  });
+
+  const adaptiveBuy: OrderRequest = {
+    exchange: 'kis', symbol: 'NAS:MU', market: 'overseas', side: 'buy', type: 'limit',
+    price: 130_520, quantity: 2, amountKRW: 300_000,
+  };
+
+  test('adaptive buy blocks when fresh USD cash cannot cover the rounded price and fees', async () => {
+    setupMockDB({ orderMaxPct: 'unlimited', dailyMaxPct: 'unlimited' });
+    jest.mocked(readAdaptiveCashBudget).mockResolvedValue({ availableMinor: 20_039, krwPerMinor: 13 });
+    const send = jest.fn();
+    const r = await submitOrder(adaptiveBuy, send, { ...VALIDATED, adaptiveBuy: true });
+    expect(r).toMatchObject({ ok: false, blockedBy: 'order_limit', error: 'adaptive_buy_cash_unavailable_or_exceeded' });
+    expect(readAdaptiveCashBudget).toHaveBeenCalledWith('overseas', 1, 1000);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test('adaptive buy preserves DRY_RUN, and the live wrapper would pass the verified USD price to its adapter', async () => {
+    setupMockDB({ orderMaxPct: 'unlimited', dailyMaxPct: 'unlimited' });
+    jest.mocked(readAdaptiveCashBudget).mockResolvedValue({ availableMinor: 20_040, krwPerMinor: 13 });
+    const send = jest.fn(async (_req: OrderRequest) => ({ ok: true, exchangeOrderId: 'mock' }));
+    expect(await submitOrder(adaptiveBuy, send, { ...VALIDATED, adaptiveBuy: true })).toMatchObject({ dryRun: true });
+    expect(send).not.toHaveBeenCalled();
+    process.env.DRY_RUN = 'false';
+    expect(await submitOrder(adaptiveBuy, send, { ...VALIDATED, adaptiveBuy: true })).toMatchObject({ ok: true });
+    expect(send).toHaveBeenCalledWith({ ...adaptiveBuy, verifiedAdaptiveLimitUsd: 100 });
   });
 
   test('1. DRY_RUN 정상 주문 → status=dry_run + trade_logs 2건 + realSubmit 미호출', async () => {
@@ -228,15 +258,17 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
   // ── T-042 — "결과 불명"(outcomeUnknown): 재시도하면 같은 주문이 두 번 나갈 수 있는 실패 ────────────────────────
   describe('outcomeUnknown — 주문이 접수됐는지 알 수 없는 실패', () => {
     test.each([
-      ['송신 중 예외 (연결 끊김)', () => jest.fn().mockRejectedValue(new Error('fetch failed (ECONNRESET)'))],
-      ['KIS 5xx 응답', () => jest.fn().mockResolvedValue({ ok: false, error: 'HTTP 502 bad gateway' })],
-      ['네트워크 타임아웃 응답', () => jest.fn().mockResolvedValue({ ok: false, error: 'request timeout' })],
-    ])('🔴 %s → outcomeUnknown=true', async (_name, makeSubmit) => {
+      ['송신 중 예외 (연결 끊김)', 'failed', 'submit_outcome_unknown', () => jest.fn().mockRejectedValue(new Error('fetch failed (ECONNRESET)'))],
+      ['KIS 5xx 응답', 'rejected', 'kis_5xx', () => jest.fn().mockResolvedValue({ ok: false, error: 'HTTP 502 bad gateway' })],
+      ['네트워크 타임아웃 응답', 'rejected', 'network_error', () => jest.fn().mockResolvedValue({ ok: false, error: 'request timeout' })],
+      ['어댑터 결과 불명', 'rejected', 'submit_outcome_unknown', () => jest.fn().mockResolvedValue({ ok: false, outcomeUnknown: true })],
+    ] as const)('🔴 %s → outcomeUnknown=true', async (_name, status, blockedBy, makeSubmit) => {
       process.env.DRY_RUN = 'false';
-      setupMockDB();
+      const cap = setupMockDB();
       const r = await submitOrder(baseReq, makeSubmit(), VALIDATED);
       expect(r.ok).toBe(false);
       expect(r.outcomeUnknown).toBe(true);
+      expect(cap.updates).toContainEqual(expect.objectContaining({ status, blockedBy }));
     });
 
     test('🔴 KIS 가 접수한 직후 orders UPDATE 가 실패해도 결과 불명이다 (거래소엔 주문이 있다)', async () => {
@@ -256,6 +288,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
       expect(realSubmit).toHaveBeenCalledTimes(1);            // 거래소엔 이미 나갔다
       expect(r.ok).toBe(false);                               // 그러나 우리는 ok:false 를 돌려준다
       expect(r.outcomeUnknown).toBe(true);                    // → 호출처가 재시도하면 안 된다는 표시
+      expect(cap.updates).toContainEqual(expect.objectContaining({ status: 'failed', blockedBy: 'submit_outcome_unknown' }));
       expect(cap.logs.map((l) => l.event)).toContain('error');
     });
 
@@ -301,6 +334,7 @@ describe('submitOrder — 안전장치 회로 end-to-end', () => {
         expect(r.ok).toBe(false);
         expect(r.error).toBe('guard gone');                    // 바깥 catch 를 지났다는 증거
         expect(r.outcomeUnknown).toBeUndefined();              // 🔴 송신 전 실패에 불명 표시를 붙이면 멀쩡한 시그널이 잠긴다
+        expect(cap.updates).toContainEqual(expect.objectContaining({ status: 'failed', blockedBy: 'submit_not_sent' }));
         expect(cap.logs.map((l) => l.event)).toContain('error');
       } finally {
         jest.dontMock('../volatility-guard');

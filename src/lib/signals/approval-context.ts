@@ -147,8 +147,8 @@ export async function assessExecutability(args: {
   //    (그 순간 주문 경로도 막히므로 자금 위험은 없다 — 위험은 알림 누락이다.) 양의 한도가 있고 금액이 그걸 넘을 때만 사유로 센다.
   try {
     const [orderMax, dailyMax] = await Promise.all([getEffectiveOrderMax('kis', market), getEffectiveDailyMax('kis', market)]);
-    const orderMaxKnown = Number.isFinite(orderMax) && orderMax > 0;
-    const dailyMaxKnown = Number.isFinite(dailyMax) && dailyMax > 0;
+    const orderMaxKnown = typeof orderMax === 'number' && Number.isFinite(orderMax) && orderMax > 0;
+    const dailyMaxKnown = typeof dailyMax === 'number' && Number.isFinite(dailyMax) && dailyMax > 0;
     if (orderMaxKnown && exceedsLimit(checkOrderMax(req, orderMax))) reasons.push('order_limit');
     if (dailyMaxKnown && exceedsLimit(await checkDailyMax(req, dailyMax))) reasons.push('daily_limit');
     if (dailyMaxKnown) {

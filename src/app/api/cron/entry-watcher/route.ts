@@ -1,3 +1,4 @@
+import { hasAdaptiveBuyAllocation } from '@/lib/signals/adaptive-buy-cash';
 /**
  * entry-watcher cron — 승인 대기 시그널의 진입 구간 도달 여부를 감시해 자동 주문 실행.
  *
@@ -494,6 +495,7 @@ export async function POST(req: NextRequest) {
         source: 'auto',
         // T-072 — 전략 귀속(G6). 이 행의 전략 그대로 — 위 G5 가 같은 값으로 판정했다.
         attribution: { kind: 'strategy', strategyId: row.strategy_id ?? null, signalId },
+        adaptiveBuy: hasAdaptiveBuyAllocation(row.indicators) || undefined,
       });
     } catch (e) {
       // submitOrder 가 **던졌다**. 송신 이후의 예외는 submitOrder 가 `outcomeUnknown` 결과로 돌려주므로(T-042) 여기는 송신 전 실패다

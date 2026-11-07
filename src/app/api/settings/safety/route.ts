@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { isDryRun } from '@/lib/safety/dry-run';
+import { parseBuyLimit, UNLIMITED_BUY_LIMIT } from '@/lib/safety/buy-limit-config';
 import { isOverseasEnabled } from '@/lib/exchanges/market-flags';
 import { syncEngineSwitchesFromLegacy } from '@/lib/signals/router';
 import { readExitEngineSwitch, describeExitEngineSwitch } from '@/lib/strategy/exit-switch';
@@ -18,6 +19,11 @@ export const dynamic = 'force-dynamic';
  * export 하지 않는다 — App Router route 파일은 HTTP 메서드·라우트 설정 외의 export 를 빌드 타입 검사에서 거부한다.
  */
 const POST_MARKET_OVERSEAS_KEY = 'post_market_overseas_enabled';
+
+// Match parseBuyLimit on persisted JSON. Compare strings case-sensitively.
+const STORED_UNLIMITED = `(JSON_TYPE(value) = 'STRING' AND BINARY JSON_UNQUOTE(value) = '${UNLIMITED_BUY_LIMIT}')
+  OR (JSON_TYPE(value) = 'OBJECT' AND JSON_LENGTH(value) = 1
+      AND JSON_TYPE(JSON_EXTRACT(value, '$.unlimitedPrevious')) = 'STRING')`;
 
 async function getOverrides(): Promise<Record<string, unknown>> {
   try {
@@ -61,8 +67,10 @@ export async function GET() {
   const dryRun           = await isDryRun();
   const killSwitch       = overrides['safety_kill_switch']       !== undefined ? Boolean(overrides['safety_kill_switch'])       : (process.env.KILL_SWITCH === 'true');
   // 정책: 한도는 무조건 설정 메뉴(DB) 값만 기준. .env fallback 제거.
-  const orderMaxPct      = overrides['safety_order_max_pct']     !== undefined ? Number(overrides['safety_order_max_pct'])      : 0;
-  const dailyOrderMaxPct = overrides['safety_daily_order_max_pct'] !== undefined ? Number(overrides['safety_daily_order_max_pct']) : 0;
+  const orderLimit = parseBuyLimit(overrides['safety_order_max_pct']);
+  const dailyLimit = parseBuyLimit(overrides['safety_daily_order_max_pct']);
+  const orderMaxPct = orderLimit === UNLIMITED_BUY_LIMIT ? 0 : orderLimit;
+  const dailyOrderMaxPct = dailyLimit === UNLIMITED_BUY_LIMIT ? 0 : dailyLimit;
   const universeEnabled          = overrides['strategy_universe_enabled']           !== undefined ? Boolean(overrides['strategy_universe_enabled'])           : (process.env.UNIVERSE_ENABLED === 'true');
   const analystEnabled           = overrides['strategy_analyst_enabled']            !== undefined ? Boolean(overrides['strategy_analyst_enabled'])            : (process.env.ANALYST_ENABLED === 'true');
   const blockedSymbols   = overrides['safety_blocked_symbols'] !== undefined
@@ -147,6 +155,8 @@ export async function GET() {
       exitSwitchSummary: describeExitEngineSwitch(exitSwitch),
       orderMaxPct,
       dailyOrderMaxPct,
+      orderMaxUnlimited: orderLimit === UNLIMITED_BUY_LIMIT,
+      dailyOrderMaxUnlimited: dailyLimit === UNLIMITED_BUY_LIMIT,
       universeEnabled,
       analystEnabled,
       /** T-101 — 해외 장마감 후 분석(미국 정규장이 열린 날의 다음 날 아침 08:00 KST 미국 시나리오) on/off. 엔진과 같은 판정. */
@@ -275,6 +285,32 @@ export async function PATCH(req: NextRequest) {
     .filter(([field]) => field in body)
     .filter(([field, allowed]) => !allowed.includes(String(body[field])))
     .map(([field, allowed]) => `${field}=${JSON.stringify(body[field])} (허용: ${allowed.join('|')})`);
+  const limitFields = ['orderMaxPct', 'dailyOrderMaxPct'];
+  const explicitEdits = body.buyLimitEdits;
+  const limitWrites: Array<[string, string]> = [];
+  if ('buyLimitEdits' in body) {
+    if (req.headers.get('sec-fetch-site') !== 'same-origin') {
+      return NextResponse.json({ ok: false, error: '같은 사이트의 설정 화면에서 매수 한도를 변경하세요.' }, { status: 403 });
+    }
+    const separateFields = [...limitFields, 'dryRun', 'killSwitch', 'exitEngineEnabled', 'postMarketOverseasEnabled'];
+    if (separateFields.some(field => field in body) || !explicitEdits || typeof explicitEdits !== 'object' || Array.isArray(explicitEdits)
+      || Object.keys(explicitEdits).length === 0) {
+      invalid.push('buyLimitEdits 형식 오류');
+    } else {
+      for (const [field, value] of Object.entries(explicitEdits)) {
+        if (!limitFields.includes(field) || typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+          invalid.push('매수 한도는 0 이상의 유한한 숫자로 지정하세요.');
+        } else {
+          limitWrites.push([ALLOWED_PATCH_KEYS[field], JSON.stringify(value === 0 ? UNLIMITED_BUY_LIMIT : value)]);
+        }
+      }
+    }
+  }
+  for (const field of limitFields) {
+    if (!(field in body)) continue;
+    const value = body[field];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) invalid.push(`${field} 형식 오류`);
+  }
   for (const field of PATCH_STRICT_BOOLEANS) {
     if (field in body && typeof body[field] !== 'boolean') {
       invalid.push(`${field}=${JSON.stringify(body[field])} (허용: true|false)`);
@@ -294,13 +330,36 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  for (const [field, dbKey] of Object.entries(ALLOWED_PATCH_KEYS)) {
-    if (field in body) {
-      const val = body[field];
-      await pool.query(
-        'INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
-        [dbKey, JSON.stringify(val)],
-      );
+  if (limitWrites.length > 0) {
+    // The settings save button can apply both limits and other safety settings.
+    // One statement makes that save atomic if any row fails validation in MariaDB.
+    const writes = [...limitWrites];
+    for (const [field, key] of Object.entries(ALLOWED_PATCH_KEYS)) {
+      if (field in body) writes.push([key, JSON.stringify(body[field])]);
+    }
+    await pool.query(
+      `INSERT INTO system_config (\`key\`, value) VALUES ${writes.map(() => '(?, ?)').join(', ')}
+       ON DUPLICATE KEY UPDATE value = CASE
+         WHEN VALUES(\`key\`) NOT IN ('safety_order_max_pct', 'safety_daily_order_max_pct')
+           OR BINARY JSON_UNQUOTE(VALUES(value)) <> '${UNLIMITED_BUY_LIMIT}' THEN VALUES(value)
+         WHEN ${STORED_UNLIMITED} THEN value
+         WHEN VALUES(\`key\`) = 'safety_order_max_pct' THEN JSON_OBJECT('unlimitedPrevious', CAST(value AS CHAR))
+         ELSE VALUES(value)
+       END`,
+      writes.flat(),
+    );
+    if (Object.keys(body).length === 1) return NextResponse.json({ ok: true });
+  } else {
+    for (const [field, dbKey] of Object.entries(ALLOWED_PATCH_KEYS)) {
+      if (field in body) {
+        const val = body[field];
+        // A stale bulk save may carry either zero or the old positive limit.
+        await pool.query(
+          `INSERT INTO system_config (\`key\`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value =
+            ${limitFields.includes(field) ? `CASE WHEN ${STORED_UNLIMITED} THEN value ELSE VALUES(value) END` : 'VALUES(value)'}`,
+          [dbKey, JSON.stringify(val)],
+        );
+      }
     }
   }
 

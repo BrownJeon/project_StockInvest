@@ -85,7 +85,7 @@ jest.mock('@/lib/strategy/position-state', () => ({
   loadPositionState: jest.fn(async () => null),
 }));
 const createSignal = jest.fn();
-jest.mock('@/lib/signals/service', () => ({ createSignal: (...a: unknown[]) => createSignal(...a) }));
+jest.mock('@/lib/signals/service', () => ({ createSignal: (...a: unknown[]) => createSignal(...a), getEffectiveChasePct: async () => 0 }));
 jest.mock('@/lib/notify', () => ({ sendAlert: jest.fn() }));
 const sendAlertThrottled = jest.fn();
 jest.mock('@/lib/notify/throttle', () => ({ sendAlertThrottled: (...a: unknown[]) => sendAlertThrottled(...a), resetAlertThrottle: () => {} }));
@@ -113,8 +113,12 @@ jest.mock('@/lib/strategy/universe', () => ({
   getAlwaysIncludeSymbols: async () => evalSymbols.slice(),
 }));
 jest.mock('@/lib/strategy/macro', () => ({ fetchMacroIndicators: async () => ({ kospiChangePct: 0, sp500ChangePct: 0 }) }));
-jest.mock('@/lib/safety/order-limits', () => ({ getEffectiveOrderMax: async () => 100_000 }));
-jest.mock('@/lib/strategy/portfolio-stability', () => ({ checkPortfolioStability: async () => ({ verdict: 'pass' }) }));
+let orderMax: number | 'unlimited' = 100_000;
+jest.mock('@/lib/safety/order-limits', () => ({ getEffectiveOrderMax: async () => orderMax }));
+const portfolioGuard = jest.fn(async (_input: unknown) => ({ verdict: 'pass' }));
+jest.mock('@/lib/strategy/portfolio-stability', () => ({ checkPortfolioStability: (input: unknown) => portfolioGuard(input) }));
+const allocate = jest.fn();
+jest.mock('@/lib/strategy/adaptive-buy-sizing', () => ({ allocateAdaptiveBuys: (...args: unknown[]) => allocate(...args) }));
 /**
  * ④ 의 **첫 per-candidate 단계**. `applyFilters` 가 `contexts` 순서로 호출하므로, 이 호출 순서가
  * 곧 집행 순서다 — reviewer M-2 가 지적한 "순서에 실제로 민감한 소비처"의 계기로 쓴다.
@@ -173,6 +177,7 @@ function resetAll() {
   delayFor.clear();
   evalSymbols.length = 0; evalSymbols.push(...SYMBOLS);
   ruleFires = false;
+  orderMax = 100_000;
   prefilterCandidate.mockReturnValue({ verdict: 'pass' });
   resetHeldUnknownState();
   createSignal.mockResolvedValue({ ok: true, signalId: 777, autoSubmitted: true });
@@ -198,6 +203,23 @@ afterAll(() => { jest.useRealTimers(); });
 
 /** 수집 단계가 남기는 종목별 1행 */
 const collectRows = () => funnelRows.filter((r) => r.gate === 'collect');
+
+test('명시적 무제한의 장중 매수는 배정된 금액으로 포트폴리오 검사를 거쳐 한 후보만 발행한다', async () => {
+  orderMax = 'unlimited';
+  ruleFires = true;
+  allocate.mockImplementation((_market, [first]) => ({
+    orders: new Map([[first, { ...first, amountKRW: 155_000, quantity: 2 }]]), reason: 'allocated',
+  }));
+  const result = await runAll({ market: 'domestic' });
+  expect(result.errors).toEqual([]);
+  expect(allocate).toHaveBeenCalledTimes(1);
+  expect(allocate.mock.calls[0][1]).toHaveLength(SYMBOLS.length);
+  expect(portfolioGuard).toHaveBeenCalledTimes(1);
+  expect(portfolioGuard.mock.calls[0][0]).toMatchObject({ amountKRW: 155_000, symbol: SYMBOLS[0] });
+  expect(createSignal).toHaveBeenCalledTimes(1);
+  expect(createSignal.mock.calls[0][0]).toMatchObject({ amountKRW: 155_000, quantity: 2, symbol: SYMBOLS[0] });
+  expect(funnelRows.filter(row => row.gate === 'adaptive_buy_sizing' && row.verdict === 'skip')).toHaveLength(SYMBOLS.length - 1);
+});
 
 // ─── (a) 종목 누락·중복·순서 ─────────────────────────────────────────────────
 describe('(a) 팬아웃이 종목을 누락·중복시키지 않고 순서를 유지한다', () => {

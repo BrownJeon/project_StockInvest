@@ -173,8 +173,9 @@ export async function readDomesticAvailableCashKRW(
 export async function readAvailableCash(
   now: () => number = Date.now,
   timeoutMs: number = CASH_READ_TIMEOUT_MS,
+  maxCacheAgeMs: number = ENTRY_CASH_CACHE_TTL_MS,
 ): Promise<AvailableCash | null> {
-  if (cache && now() - cache.at < ENTRY_CASH_CACHE_TTL_MS) return cache.value;
+  if (maxCacheAgeMs > 0 && cache && now() - cache.at < maxCacheAgeMs) return cache.value;
   if (inFlight) {
     const remaining = timeoutMs - (now() - inFlight.startedAt);
     if (remaining <= 0) return null;                                    // 공유 마감이 지났다 — 기다리지 않는다(판단불가)

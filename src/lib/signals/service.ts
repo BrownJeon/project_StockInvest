@@ -1,3 +1,4 @@
+import { hasAdaptiveBuyAllocation } from './adaptive-buy-cash';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { kis } from '@/lib/exchanges/kis';
@@ -52,7 +53,7 @@ import {
 import { displayExitReason } from './exit-reason-display';
 
 /** safety_limit_chase_disabled = true 면 chasePct 0 강제 (즉시 무력화 스위치). */
-async function getEffectiveChasePct(stylePct: number): Promise<number> {
+export async function getEffectiveChasePct(stylePct: number): Promise<number> {
   try {
     const pool = getPool();
     const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
@@ -764,6 +765,7 @@ export async function createSignal(
     source: 'auto',
     // T-072 — 전략 귀속(G6 판정 근거). 이 시그널 행의 전략 그대로 — 위 G1 이 같은 전략으로 이미 통과시켰다.
     attribution: { kind: 'strategy', strategyId: input.strategyId ?? null, signalId },
+    adaptiveBuy: hasAdaptiveBuyAllocation(input.indicators) || undefined,
   });
   if (orderResult.orderId) {
     await pool.query(`UPDATE signals SET consumed_order_id=? WHERE id=?`, [orderResult.orderId, signalId]);
@@ -893,6 +895,7 @@ export async function approveSignal(id: number): Promise<CreateSignalResult> {
       source: 'signal',
       // T-072 — 전략 귀속(G6). 승인한 그 행의 전략 — G4 가 같은 값으로 판정했다(G6 는 송신 직전까지 다시 본다).
       attribution: { kind: 'strategy', strategyId: row.strategy_id ?? null, signalId: id },
+      adaptiveBuy: hasAdaptiveBuyAllocation(row.indicators) || undefined,
     });
   } catch (e) {
     await releaseClaim(pool, id, row.status).catch(() => { /* 복귀 실패는 원 예외를 가리지 않는다 */ });

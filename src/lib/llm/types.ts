@@ -10,6 +10,8 @@ export interface LlmCallOptions {
   timeoutMs?: number;
   /** JSON 응답 강제 (지원하는 provider에서만 효과). 기본 'json' */
   responseFormat?: 'json' | 'text';
+  /** Text-only decisions must have no CLI tools or MCP access. */
+  toolFree?: boolean;
   /** Claude provider 전용: 모델 동적 선택 (sonnet|opus|haiku). 미지정 시 기본 sonnet. home-m4-api는 무시 */
   model?: ClaudeModel | string;
   /**

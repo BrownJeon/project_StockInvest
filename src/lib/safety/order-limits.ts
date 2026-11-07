@@ -4,6 +4,8 @@ import type { ExchangeId, OrderRequest } from '@/lib/exchanges/types';
 import type { Market } from '@/lib/exchanges/kis-symbols';
 import { getMarketFromSymbol } from '@/lib/exchanges/kis-symbols';
 import { kstTodayStart } from '@/lib/time';
+import { decodeBuyLimit, decodePreviousOrderPct, UNLIMITED_BUY_LIMIT, type BuyLimit } from './buy-limit-config';
+import { AMBIGUOUS_ORDER_PREDICATE } from './submission-outcome';
 
 export interface LimitCheck {
   ok: boolean;
@@ -96,45 +98,46 @@ export const checkSymbolWhitelist = checkSymbolBlacklist;
  *
  * 정책: 한도는 무조건 설정 메뉴(DB) 값만 기준. .env fallback 없음.
  * **fail-safe (Phase 0, 2026-08-02)**: 키 부재 / 파싱 실패 / DB 조회 실패 모두 0을 반환한다.
- * 0은 "무제한"이 아니라 "미설정 → 매수 전면 거부"를 의미한다.
+ * 숫자 0은 차단 상태다. 명시적으로 저장된 unlimited만 상한을 생략한다.
  */
-async function readPctOverride(key: string, _envKey: string): Promise<number> {
+async function readPctOverride(key: string, previousOrderPct = false): Promise<BuyLimit> {
   try {
     const pool = getPool();
     const [rows] = await pool.query<(RowDataPacket & { value: string })[]>(
       'SELECT value FROM system_config WHERE `key` = ? LIMIT 1', [key],
     );
-    if (rows.length > 0) {
-      const v = Number(JSON.parse(rows[0].value));
-      if (Number.isFinite(v)) return v;
-    }
+    if (rows.length > 0) return previousOrderPct ? decodePreviousOrderPct(rows[0].value) : decodeBuyLimit(rows[0].value);
   } catch { /* fall through to safe default */ }
   return 0;  // DB 키 부재 → 0 (= 미설정, 호출부가 매수를 전면 거부)
 }
 
 /** DB에 설정된 1회 주문 한도 pct (미설정·조회 실패 시 0). 진단·표시용. */
-export async function getOrderMaxPct(): Promise<number> {
-  return readPctOverride('safety_order_max_pct', 'ORDER_MAX_PCT');
+export async function getOrderMaxPct(): Promise<BuyLimit> {
+  return readPctOverride('safety_order_max_pct');
 }
 
 /** DB에 설정된 일일 누적 한도 pct (미설정·조회 실패 시 0). 진단·표시용. */
-export async function getDailyMaxPct(): Promise<number> {
-  return readPctOverride('safety_daily_order_max_pct', 'DAILY_ORDER_MAX_PCT');
+export async function getDailyMaxPct(): Promise<BuyLimit> {
+  return readPctOverride('safety_daily_order_max_pct');
 }
 
 /**
  * 1회 주문 최대 KRW = **해당 시장(국내/해외)** 평가액 × pct%.
  *
- * **fail-safe (Phase 0, 2026-08-02)**: pct 미설정(≤0) 또는 해당 시장 평가액 조회 실패(≤0)
- * 시 **0**을 반환한다. 이전에는 Infinity(=무제한)를 반환해 안전장치가 fail-open이었다.
+ * 미설정·평가액 조회 실패는 0(차단)으로, 명시적 무제한은 별도 상태로 반환한다.
  * 0은 곧 "신규 매수 전면 거부" — 호출부는 반드시 0을 매수 스킵으로 처리해야 한다.
  * (매도/청산은 1회·일일 한도 적용 대상이 아니므로 영향 없음 — dry-run.ts 참조)
  *
  * 정책 (2026-04-27): 시장별 분리 한도. 국내 주문은 국내 평가액 기준, 해외 주문은 해외 평가액 기준.
  * 시장 무관 합산 한도는 폐기 — 한쪽 시장 비중이 작아도 다른 쪽 합계로 한도가 부풀려지는 문제 방지.
  */
-export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
-  return effectiveMaxFromPct('safety_order_max_pct', 'ORDER_MAX_PCT', '1회', market);
+export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<BuyLimit> {
+  return effectiveMaxFromPct('safety_order_max_pct', '1회', market);
+}
+
+export async function getLegacyAnalystSellAmount(): Promise<number> {
+  const amount = await effectiveMaxFromPct('safety_order_max_pct', '기존 RSI 매도', 'domestic', true);
+  return typeof amount === 'number' ? amount : 0;
 }
 
 /**
@@ -142,12 +145,12 @@ export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Marke
  *
  * **fail-safe (Phase 0, 2026-08-02)**: getEffectiveOrderMax와 동일 — 미설정·조회 실패 시 0.
  */
-export async function getEffectiveDailyMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<number> {
-  return effectiveMaxFromPct('safety_daily_order_max_pct', 'DAILY_ORDER_MAX_PCT', '일일', market);
+export async function getEffectiveDailyMax(_exchange?: ExchangeId, market: Market = 'domestic'): Promise<BuyLimit> {
+  return effectiveMaxFromPct('safety_daily_order_max_pct', '일일', market);
 }
 
 /**
- * 1회·일일 한도 공통 본체 — **숫자를 돌려주고 절대 던지지 않는다** (T-056 불변식).
+ * 1회·일일 한도 공통 본체 — **절대 던지지 않는다** (T-056 불변식).
  *
  * 🔴 왜 "던지지 않음"이 필수인가: `submitOrder`(`dry-run.ts`)는 이 두 함수를 매수·매도 구분 없이 **먼저** 호출한다(결과는
  *    매도면 쓰지 않는다). 여기서 하나라도 던지면 매도 주문이 바깥 catch 로 떨어져 `failed` 가 된다 = **청산 불가**.
@@ -156,9 +159,10 @@ export async function getEffectiveDailyMax(_exchange?: ExchangeId, market: Marke
  * 평가액 상태가 `unknown`(USD 예수금·환율·KRW 예수금 확인 불가, 잔고 실패에 직전값 없음)이면 사유를 남기고 0 —
  * 그 시장 신규 매수 차단. `unknown` 을 숫자 0 으로 받아 캐시 폴백이 되살리는 경로(Codex C1-2)는 portfolio-total 이 막는다.
  */
-async function effectiveMaxFromPct(key: string, envKey: string, label: string, market: Market): Promise<number> {
+async function effectiveMaxFromPct(key: string, label: string, market: Market, previousOrderPct = false): Promise<BuyLimit> {
   try {
-    const pct = await readPctOverride(key, envKey);
+    const pct = await readPctOverride(key, previousOrderPct);
+    if (pct === UNLIMITED_BUY_LIMIT) return pct;
     if (!(pct > 0)) {
       console.warn(`[order-limits] ${key} 미설정 → ${label} 한도 0 (${market} 신규 매수 차단)`);
       return 0;
@@ -196,14 +200,15 @@ export function getEnvDailyMax(_exchange?: ExchangeId): number {
 /**
  * 1회 주문 한도 체크.
  * @param effectiveMax  getEffectiveOrderMax() 결과. **0이면 한도 미설정 → 전면 거부** (fail-safe).
- *                      Infinity(무제한) 경로는 Phase 0에서 제거됨.
+ *                      명시적 unlimited만 비교를 생략한다.
  */
-export function checkOrderMax(req: OrderRequest, effectiveMax: number): LimitCheck {
+export function checkOrderMax(req: OrderRequest, effectiveMax: BuyLimit): LimitCheck {
   const amount = resolveOrderAmountKRW(req);
   // 🔴 T-027 — `amount <= 0` 이 아니라 `!(amount > 0)`. NaN 은 **모든** 관계연산에서 false 라
   //    `<= 0` 도 `> effectiveMax` 도 통과시켜 한도 검사 전체가 무력화된다. 부정형으로 뒤집으면
   //    NaN 이 여기서 멈춘다. 유한한 양수에 대해서는 두 식이 완전히 동치라 회귀가 없다.
-  if (!(amount > 0)) return { ok: false, reason: 'order_limit', detail: 'amount unresolved' };
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, reason: 'order_limit', detail: 'amount unresolved' };
+  if (effectiveMax === UNLIMITED_BUY_LIMIT) return { ok: true };
   if (!Number.isFinite(effectiveMax) || effectiveMax <= 0) {
     return { ok: false, reason: 'order_limit', detail: 'order limit not configured (0) — buy blocked' };
   }
@@ -225,35 +230,17 @@ export function checkOrderMax(req: OrderRequest, effectiveMax: number): LimitChe
  *    `approval-context.ts`)은 생략 → 오늘 `pending` 전부를 합산한다. 양의 정수가 아니면 아무 행도 빼지 않는다(자기 행이 있다면 이중 계산 →
  *    자기 주문 거부 = fail-closed).
  */
-export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number, selfOrderId?: number): Promise<LimitCheck> {
-  // fail-safe (Phase 0): 한도 미설정(0)·비정상값이면 무제한이 아니라 전면 거부.
-  if (!Number.isFinite(effectiveDailyMax) || effectiveDailyMax <= 0) {
+export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: BuyLimit, selfOrderId?: number): Promise<LimitCheck> {
+  if (effectiveDailyMax !== UNLIMITED_BUY_LIMIT && (!Number.isFinite(effectiveDailyMax) || effectiveDailyMax <= 0)) {
     return { ok: false, reason: 'daily_limit', detail: 'daily limit not configured (0) — buy blocked' };
   }
   const amount = await resolveOrderAmountKRWAsync(req);
-  // 🔴 T-027 — `checkOrderMax` 와 동일 이유로 부정형. NaN 이면 `already + NaN > max` 도
-  //    false 라 일일 누적 한도까지 통째로 빠져나간다.
-  if (!(amount > 0)) return { ok: false, reason: 'daily_limit', detail: 'amount unresolved' };
+  if (!Number.isFinite(amount) || amount <= 0) return { ok: false, reason: 'daily_limit', detail: 'amount unresolved' };
+  if (effectiveDailyMax === UNLIMITED_BUY_LIMIT) return { ok: true };
 
   try {
-    const pool = getPool();
-    const start = kstTodayStart();
     const market = inferMarket(req);
-    // 일일 한도 = 매수 capital deployment. 매도는 자본 회수 (checkOrderMax 와 일관).
-    // cancelled = 자본 환불 → 한도에서 제외 (자동 취소가 한도 점유 못 하도록).
-    // pending = 다른 주문의 송신 중 예약은 합산, **자기 행만** 제외(T-081 WP-B). id 0 은 AUTO_INCREMENT 에 없다 → 아무것도 빼지 않음.
-    const selfId = typeof selfOrderId === 'number' && Number.isSafeInteger(selfOrderId) && selfOrderId > 0 ? selfOrderId : 0;
-    const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(amount_krw), 0) AS sum_krw
-       FROM orders
-       WHERE created_at >= ?
-         AND market = ?
-         AND side = 'buy'
-         AND status NOT IN ('rejected','failed','blocked','cancelled')
-         AND NOT (status = 'pending' AND id = ?)`,
-      [start, market, selfId],
-    );
-    const already = Number(rows[0]?.sum_krw ?? 0);
+    const already = await readDailyBuyUsage(market, selfOrderId);
     if (already + amount > effectiveDailyMax) {
       return { ok: false, reason: 'daily_limit', detail: `${market} ${already}+${amount} > ${effectiveDailyMax}` };
     }
@@ -262,4 +249,23 @@ export async function checkDailyMax(req: OrderRequest, effectiveDailyMax: number
     console.error('[order-limits] daily aggregate failed:', e);
     return { ok: false, reason: 'daily_limit', detail: 'aggregate query failed' };
   }
+}
+
+
+/** T-081: 다른 주문의 pending을 포함하고, 지정된 자기 pending 행만 제외한다. */
+export async function readDailyBuyUsage(market: Market, selfOrderId?: number): Promise<number> {
+  const selfId = typeof selfOrderId === 'number' && Number.isSafeInteger(selfOrderId) && selfOrderId > 0 ? selfOrderId : 0;
+  const [rows] = await getPool().query<RowDataPacket[]>(
+    `SELECT COALESCE(SUM(amount_krw), 0) AS sum_krw
+     FROM orders o
+     WHERE created_at >= ?
+       AND market = ?
+       AND side = 'buy'
+       AND (status NOT IN ('rejected','failed','blocked','cancelled') OR ${AMBIGUOUS_ORDER_PREDICATE})
+       AND NOT (status = 'pending' AND id = ?)`,
+    [kstTodayStart(), market, selfId],
+  );
+  const used = Number(rows[0]?.sum_krw ?? 0);
+  if (!Number.isFinite(used) || used < 0) throw new Error('invalid daily buy usage');
+  return used;
 }

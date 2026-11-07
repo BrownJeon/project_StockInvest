@@ -8,7 +8,7 @@
  *  ② 순차: 앞 주문이 `accepted` 가 된 뒤의 주문은 거부된다.
  *  ③ KST 자정 경계: 23:59:59 행은 "어제", 00:00:00 행은 "오늘". 미국 정규장(KST 22:30~05:00)이 자정에 둘로 나뉘는 현행 동작을
  *     **문서화만** 한다(정책 이슈 — 이번에 고치지 않음).
- *  ④ 기존 의미 불변: `cancelled`·`rejected`·`failed`·`blocked` 제외, 시장 분리, `sell` 제외, `dry_run`·`filled` 등은 합산.
+ *  ④ 확정 실패 제외, 접수 불명 합산, 시장 분리, `sell` 제외, `dry_run`·`filled` 등은 합산.
  *
  * 실행(운영·공용 DB 금지 — 127.0.0.1 에만 묶인 일회용 컨테이너, 끝나면 제거. 이 환경의 `.env`/DB_* 는 쓰지 않는다):
  *   docker run -d --rm --name t081b-mariadb -p 127.0.0.1:33081:3306 -e TZ=Asia/Seoul -e MARIADB_ROOT_PASSWORD=t081btest \
@@ -49,6 +49,7 @@ const DDL = `CREATE TABLE orders (
   side ENUM('buy','sell') NOT NULL,
   amount_krw DECIMAL(18,2) NULL,
   status ENUM(${STATUSES.map((s) => `'${s}'`).join(',')}) NOT NULL DEFAULT 'pending',
+  blocked_by VARCHAR(32) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   market ENUM('domestic','overseas') NOT NULL DEFAULT 'domestic',
   INDEX idx_orders_market (market, created_at DESC)
@@ -68,10 +69,10 @@ const req = (amountKRW: number, market: Mkt = 'domestic'): OrderRequest =>
 
 const now = () => mockNow ?? new Date();
 
-async function insertOrder(o: { amount: number | null; status?: Status; side?: 'buy' | 'sell'; market?: Mkt; at?: Date }): Promise<number> {
+async function insertOrder(o: { amount: number | null; status?: Status; side?: 'buy' | 'sell'; market?: Mkt; at?: Date; blockedBy?: string }): Promise<number> {
   const [r] = await mockPool!.query<mysql.ResultSetHeader>(
-    'INSERT INTO orders (side, amount_krw, status, created_at, market) VALUES (?, ?, ?, ?, ?)',
-    [o.side ?? 'buy', o.amount, o.status ?? 'pending', o.at ?? now(), o.market ?? 'domestic'],
+    'INSERT INTO orders (side, amount_krw, status, created_at, market, blocked_by) VALUES (?, ?, ?, ?, ?, ?)',
+    [o.side ?? 'buy', o.amount, o.status ?? 'pending', o.at ?? now(), o.market ?? 'domestic', o.blockedBy ?? null],
   );
   return r.insertId;
 }
@@ -100,9 +101,15 @@ maybe('T-081 WP-B 일일 한도 경합 — 일회용 MariaDB', () => {
     });
     await mockPool.query('DROP TABLE IF EXISTS orders');
     await mockPool.query(DDL);
+    await mockPool.query('DROP TABLE IF EXISTS trade_logs');
+    await mockPool.query('CREATE TABLE trade_logs (order_id BIGINT, event VARCHAR(32), payload JSON NOT NULL, INDEX idx_order_event (order_id, event))');
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
-  beforeEach(async () => { mockNow = null; await mockPool!.query('TRUNCATE TABLE orders'); });
+  beforeEach(async () => {
+    mockNow = null;
+    await mockPool!.query('TRUNCATE TABLE orders');
+    await mockPool!.query('TRUNCATE TABLE trade_logs');
+  });
   afterAll(async () => { await mockPool?.end(); mockPool = null; });
 
   test('환경: 운영과 같은 STRICT sql_mode · 10.11 계열', async () => {
@@ -179,12 +186,25 @@ maybe('T-081 WP-B 일일 한도 경합 — 일회용 MariaDB', () => {
     expect(Number(s.s)).toBe(180);
   });
 
-  test('R4 ④ 기존 의미: cancelled·rejected·failed·blocked 제외, dry_run·accepted·partially_filled·filled 합산', async () => {
-    for (const st of ['cancelled', 'rejected', 'failed', 'blocked'] as const) await insertOrder({ amount: 1000, status: st });
+  test('R4 ④ 확정 종료·실패 제외, dry_run·accepted·partially_filled·filled 합산', async () => {
+    for (const st of ['cancelled', 'rejected', 'blocked'] as const) await insertOrder({ amount: 1000, status: st });
+    await insertOrder({ amount: 1000, status: 'failed', blockedBy: 'submit_not_sent' });
     for (const st of ['dry_run', 'accepted', 'partially_filled', 'filled'] as const) await insertOrder({ amount: 10, status: st });
     const self = await insertOrder({ amount: 60 });
     await expect(checkDailyMax(req(60), 100, self)).resolves.toEqual({ ok: true });         // 40 + 60 = 100
     await expect(checkDailyMax(req(61), 100, self)).resolves.toMatchObject({ ok: false, detail: 'domestic 40+61 > 100' });
+  });
+
+  test('T-159 — 명시적·과거 접수 불명 금액을 합산하고, 송신 전 실패가 기록된 과거 주문만 제외', async () => {
+    const legacyNotSent = await insertOrder({ amount: 80, status: 'failed' });
+    await mockPool!.query("INSERT INTO trade_logs VALUES (?, 'error', ?)", [legacyNotSent, '{"phase":"safety_check"}']);
+    const legacyUnknown = await insertOrder({ amount: 20, status: 'failed' });
+    await mockPool!.query("INSERT INTO trade_logs VALUES (?, 'error', ?)", [legacyUnknown, '{"error":"timeout"}']);
+    await insertOrder({ amount: 10, status: 'failed' });
+    await insertOrder({ amount: 15, status: 'failed', blockedBy: 'submit_outcome_unknown' });
+    await insertOrder({ amount: 5, status: 'rejected', blockedBy: 'kis_5xx' });
+    await expect(checkDailyMax(req(50), 100)).resolves.toEqual({ ok: true });
+    await expect(checkDailyMax(req(51), 100)).resolves.toMatchObject({ ok: false, detail: 'domestic 50+51 > 100' });
   });
 
   test('R4b ④ 기존 의미: 다른 시장·sell 은 합산 밖 (accepted·pending 모두)', async () => {

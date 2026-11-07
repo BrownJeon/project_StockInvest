@@ -65,7 +65,11 @@ export class ClaudeCliCaller implements LlmCaller {
 
       const proc = spawn('claude', [
         '--print', prompt,
-        '--permission-mode', 'bypassPermissions',
+        ...(opts.toolFree
+          ? ['--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+              '--setting-sources', '', '--settings', '{"disableAllHooks":true}',
+              '--disable-slash-commands', '--no-session-persistence']
+          : ['--permission-mode', 'bypassPermissions']),
         '--model', model,
       ], {
         timeout: timeoutMs,

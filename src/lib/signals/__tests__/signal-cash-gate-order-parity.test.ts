@@ -60,3 +60,13 @@ test.each(CASES)('원화 %d · 환율 %d → 게이트 단가 = 송신 OVRS_ORD_
   expect(Number(body.OVRS_ORD_UNPR)).toBe(overseasLimitUnitUsd(krwPrice, fx));
   expect(body.ORD_QTY).toBe('3');
 });
+
+test('잔금 검증을 마친 해외 지정가는 환율을 다시 읽지 않고 검증된 가격 그대로 송신한다', async () => {
+  const req: OrderRequest = {
+    exchange: 'kis', symbol: 'NAS:AAPL', side: 'buy', type: 'limit', price: 140_000, quantity: 2,
+    amountKRW: 300_000, market: 'overseas', currency: 'USD', verifiedAdaptiveLimitUsd: 99,
+  };
+  expect((await createOverseasOrder(req)).ok).toBe(true);
+  expect(getUsdKrwRate).not.toHaveBeenCalled();
+  expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toMatchObject({ OVRS_ORD_UNPR: '99', ORD_QTY: '2' });
+});

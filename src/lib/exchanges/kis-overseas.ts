@@ -795,14 +795,18 @@ export async function createOrder(req: OrderRequest): Promise<OrderResult> {
 
   // KIS 해외 주문은 지정가(ORD_DVSN='00')만 지원 — '01'은 장전시간외(오류 유발).
   // 가격은 USD 단가: ticker.price가 KRW로 환산되어 있으므로 FX로 역산.
-  const fx = await fetchUsdKrwRate().catch(() => 1400);
+  const verifiedUsd = req.verifiedAdaptiveLimitUsd;
+  if (verifiedUsd !== undefined && (!isBuy || req.type !== 'limit' || !Number.isFinite(verifiedUsd) || verifiedUsd <= 0)) {
+    return { ok: false, error: '검증된 USD 지정가가 유효하지 않습니다.' };
+  }
+  const fx = verifiedUsd === undefined ? await fetchUsdKrwRate().catch(() => 1400) : 1;
   const usdPrice = krwPrice > 0 ? krwPrice / fx : 0;
   // market 주문은 매도 -0.5% / 매수 +0.5% 공격적 호가로 즉시 체결 유도.
-  const adjPrice = usdPrice > 0
+  const adjPrice = verifiedUsd ?? (usdPrice > 0
     ? (req.type === 'market'
         ? (isBuy ? usdPrice * 1.005 : usdPrice * 0.995)
         : usdPrice)
-    : 0;
+    : 0);
   if (adjPrice <= 0) return { ok: false, error: 'USD 가격 계산 실패 (FX 환산 오류)' };
 
   const [headers, cano, acntPrdt] = await Promise.all([kisHeaders(trId), accountNo(), accountProduct()]);

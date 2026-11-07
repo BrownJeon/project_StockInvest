@@ -13,6 +13,7 @@ import {
   getDailyMaxPct,
   getEffectiveDailyMax,
   getEffectiveOrderMax,
+  getLegacyAnalystSellAmount,
   getOrderMaxPct,
 } from '../order-limits';
 
@@ -134,6 +135,25 @@ describe('pct 진단 헬퍼 (/api/health 표시용)', () => {
 });
 
 describe('한도 0이면 매수 주문 거부 (수용 기준 1)', () => {
+  test.each([['4', 40_000], ['0', 0], ['"unlimited"', 0]])(
+    '무제한에서 기존 RSI 매도에만 이전 한도 %s를 사용한다', async (previous, amount) => {
+      mockConfig({ safety_order_max_pct: JSON.stringify({ unlimitedPrevious: previous }) });
+      await expect(getEffectiveOrderMax('kis', 'domestic')).resolves.toBe('unlimited');
+      await expect(getLegacyAnalystSellAmount()).resolves.toBe(amount);
+    },
+  );
+
+  test('명시적 무제한은 평가액·일일 합계 조회를 생략하고, 유한한 주문 금액만 통과시킨다', async () => {
+    const query = mockConfig({ safety_order_max_pct: '"unlimited"', safety_daily_order_max_pct: '"unlimited"' });
+    const one = await getEffectiveOrderMax('kis', 'overseas');
+    const daily = await getEffectiveDailyMax('kis', 'overseas');
+    expect(checkOrderMax(buyReq, one).ok).toBe(true);
+    expect((await checkDailyMax(buyReq, daily)).ok).toBe(true);
+    expect(checkOrderMax({ ...buyReq, amountKRW: Infinity }, one).ok).toBe(false);
+    expect((await checkDailyMax({ ...buyReq, amountKRW: NaN }, daily)).ok).toBe(false);
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(getMarketTotal).not.toHaveBeenCalled();
+  });
   test('checkOrderMax(0) → 거부', () => {
     const r = checkOrderMax(buyReq, 0);
     expect(r.ok).toBe(false);

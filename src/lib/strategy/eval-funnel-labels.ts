@@ -67,6 +67,7 @@ export const FUNNEL_GATES = [
   'regime_gate_macro_error',
   /** SI 확장 — Phase 0 fail-safe. 주문 한도 미설정 시 신규 매수 전면 스킵 (engine.ts) */
   'order_limit_unconfigured',
+  'adaptive_buy_sizing',
   // ─── stage 7 — 프리필터·장마감 ────────────────────────────────────
   'prefilter_bypassed_no_summary',
   'prefilter_liquidity_dead',
@@ -202,6 +203,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   regime_gate_macro_bear: 6,
   regime_gate_macro_error: 6,
   order_limit_unconfigured: 6,
+  adaptive_buy_sizing: 8,
 
   prefilter_bypassed_no_summary: 7,
   prefilter_liquidity_dead: 7,
@@ -290,6 +292,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   regime_gate_macro_bear: '거시 급락 매수 차단',
   regime_gate_macro_error: '거시 지표 조회 실패',
   order_limit_unconfigured: '주문 한도 미설정',
+  adaptive_buy_sizing: '가용 잔금 배분',
 
   prefilter_bypassed_no_summary: '프리필터 생략(지표 없음)',
   prefilter_liquidity_dead: '유동성 고갈',

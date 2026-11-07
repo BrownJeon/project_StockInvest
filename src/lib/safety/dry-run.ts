@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getAccountId, getPool } from '@/lib/db';
 import type { ExchangeId, OrderRequest, OrderResult } from '@/lib/exchanges/types';
 import { withKisPriority } from '@/lib/exchanges/kis-throttle';
+import { adaptiveLimitUnit, adaptiveOrderCostMinor, readAdaptiveCashBudget } from '@/lib/signals/adaptive-buy-cash';
 import { sendAlert } from '@/lib/notify';
 import { type AssetClass } from './asset-profile';
 import { decodeFlagValue, parseBoolFlag, shouldReportUnparsable } from './flags';
@@ -18,6 +19,7 @@ import {
 } from './order-limits';
 import { describeValidationBlock, evaluateValidationGate, normalizeOrderSide, type ValidationGateVerdict } from './validation-gate';
 import { checkVolatilityGuard } from './volatility-guard';
+import { isAmbiguousRejection, SUBMIT_NOT_SENT, SUBMIT_OUTCOME_UNKNOWN } from './submission-outcome';
 
 /**
  * DB system_config override takes precedence over env var.
@@ -90,6 +92,7 @@ interface SubmitOptions {
   clientOrderId?: string;
   /** T-072 — 미지정이면 `{ kind:'strategy', strategyId:null }` 로 취급 → **매수 차단**. 매도에는 영향 없음. */
   attribution?: OrderAttribution;
+  adaptiveBuy?: boolean;
 }
 
 /**
@@ -241,10 +244,27 @@ async function submitOrderInner(
     return { ok: false, orderId, clientOrderId, blockedBy: 'validation_gate', error: `validation_gate: ${detail}` };
   }
 
+  // Adaptive sizing must still fit the latest cash, pending orders and the candidate's allocation.
+  let verifiedAdaptiveLimitUsd: number | undefined;
+  if (req.side === 'buy' && options.adaptiveBuy) {
+    const budget = await readAdaptiveCashBudget(market, accountId, orderId).catch(() => null);
+    const unit = budget ? adaptiveLimitUnit(market, req.price ?? 0, budget.krwPerMinor) : null;
+    const qty = req.quantity ?? 0;
+    const cost = unit != null ? adaptiveOrderCostMinor(unit, qty) : NaN;
+    if (req.type !== 'limit' || !budget || unit == null || !Number.isSafeInteger(qty) || qty <= 0
+      || !Number.isSafeInteger(cost) || cost <= 0 || cost > budget.availableMinor
+      || cost > Math.floor(amountKRW / budget.krwPerMinor)) {
+      const detail = 'adaptive_buy_cash_unavailable_or_exceeded';
+      await markBlocked(orderId, 'order_limit', detail);
+      return { ok: false, orderId, clientOrderId, blockedBy: 'order_limit', error: detail };
+    }
+    if (market === 'overseas') verifiedAdaptiveLimitUsd = unit / 100;
+  }
+
   // 7. DRY_RUN
   if (await isDryRun()) {
     await pool.query(`UPDATE orders SET status='dry_run' WHERE id=?`, [orderId]);
-    // Phase 0: effOrderMax/effDailyMax 는 항상 유한값 (미설정 시 0). Infinity 분기 제거.
+    // 미설정은 0, 명시적 무제한은 문자열 상태로 남긴다.
     await auditLog(orderId, 'dry_run', { effOrderMax, effDailyMax });
     return { ok: true, orderId, clientOrderId, dryRun: true, blockedBy: 'dry_run' };
   }
@@ -282,7 +302,7 @@ async function submitOrderInner(
   // 8. 실 송신
   try {
     sendReached = true;
-    const result = await realSubmit(req);
+    const result = await realSubmit(verifiedAdaptiveLimitUsd === undefined ? req : { ...req, verifiedAdaptiveLimitUsd });
     // T-042 — 거래소가 5xx 를 돌려줬거나 연결이 끊긴 경우 주문이 접수됐는지 알 수 없다(KIS 가 처리한 뒤 응답만 잃을 수 있다).
     let outcomeUnknown = false;
     if (result.ok) {
@@ -294,8 +314,10 @@ async function submitOrderInner(
     } else {
       // KIS createOrder 응답에 blockedBy 필드 없음 → error 메시지에서 카테고리 자동 분류.
       // raw error 는 trade_logs(audit) 에 보존, blocked_by 컬럼엔 짧은 카테고리만.
-      const blockedBy = result.blockedBy ?? categorizeRejectReason(result.error);
-      outcomeUnknown = blockedBy === 'kis_5xx' || blockedBy === 'network_error';
+      const category = result.blockedBy ?? categorizeRejectReason(result.error);
+      const ambiguous = isAmbiguousRejection(category);
+      outcomeUnknown = ambiguous || result.outcomeUnknown === true;
+      const blockedBy = outcomeUnknown && !ambiguous ? SUBMIT_OUTCOME_UNKNOWN : category;
       await pool.query(
         `UPDATE orders SET status='rejected', blocked_by=? WHERE id=?`,
         [blockedBy, orderId],
@@ -305,7 +327,7 @@ async function submitOrderInner(
     return { ...result, orderId, clientOrderId, ...(outcomeUnknown ? { outcomeUnknown: true } : {}) };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
-    await pool.query(`UPDATE orders SET status='failed' WHERE id=?`, [orderId]);
+    await pool.query(`UPDATE orders SET status='failed', blocked_by=? WHERE id=?`, [SUBMIT_OUTCOME_UNKNOWN, orderId]);
     await auditLog(orderId, 'error', { error });
     // T-042 — 송신 단계의 예외는 거래소가 주문을 받은 뒤(예: 접수 직후 orders UPDATE 실패)에도 날 수 있다 → 결과 불명.
     return { ok: false, orderId, clientOrderId, error, outcomeUnknown: true };
@@ -314,7 +336,9 @@ async function submitOrderInner(
   } catch (e) {
     // step 3~7 사이 예외 — pending 상태로 남지 않도록 failed 처리
     const error = e instanceof Error ? e.message : String(e);
-    await pool.query(`UPDATE orders SET status='failed' WHERE id=?`, [orderId]).catch(() => {});
+    await pool.query(`UPDATE orders SET status='failed', blocked_by=? WHERE id=?`, [
+      sendReached ? SUBMIT_OUTCOME_UNKNOWN : SUBMIT_NOT_SENT, orderId,
+    ]).catch(() => {});
     await auditLog(orderId, 'error', { error, phase: sendReached ? 'post_send' : 'safety_check' });
     // 송신 전 예외는 확정 실패(거래소에 나가지 않았다). 송신 시작 후라면 결과 불명 — 호출처가 재시도하면 이중 주문이 될 수 있다.
     return sendReached

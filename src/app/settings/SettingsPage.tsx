@@ -35,6 +35,7 @@ interface SafetyData {
   exitSwitchSource: 'config' | 'absent' | 'unparsable' | 'db_error';
   exitSwitchSummary: string;
   orderMaxPct: number; dailyOrderMaxPct: number;
+  orderMaxUnlimited?: boolean; dailyOrderMaxUnlimited?: boolean;
   universeEnabled: boolean;
   analystEnabled: boolean;
   /** T-101 — 해외 장마감 후 분석(system_config.post_market_overseas_enabled). 엔진과 같은 판정(키 없음 = false). */
@@ -376,6 +377,7 @@ export function SettingsPage() {
   const [isDirty, setIsDirty]             = useState(false);
   const [hybridMode, setHybridMode]       = useState<boolean>(false);
   const [hybridSaving, setHybridSaving]   = useState(false);
+  const buyLimitEdits = useRef<Partial<Record<'orderMaxPct' | 'dailyOrderMaxPct', number>>>({});
 
   useEffect(() => {
     Promise.all([
@@ -481,15 +483,28 @@ export function SettingsPage() {
 
   const handleSave = useCallback(async () => {
     if (!safety) return;
+    const limitEdits = buyLimitEdits.current;
     setSaveState('saving');
     setSaveError(null);
     try {
-      // T-101 — 해외 장마감 후 분석 스위치는 자기 토글(autoSave)로만 저장한다. 저장 바의 일괄 저장이 다른 필드를
-      // 저장하면서 이 키를 화면에 남은(오래됐을 수 있는) 값으로 덮어쓰지 않게 뺀다.
-      const { postMarketOverseasEnabled: _postMarketOverseasOwnToggle, ...safetyForBulkSave } = safety;
+      // 즉시 저장하는 스위치는 일괄 저장에서 제외한다. 편집한 한도와 안전 설정은 한 번에 저장한다.
+      const { postMarketOverseasEnabled: _postMarketOverseasOwnToggle, orderMaxPct: _orderMaxPct,
+        dailyOrderMaxPct: _dailyOrderMaxPct, orderMaxUnlimited: _orderMaxUnlimited,
+        dailyOrderMaxUnlimited: _dailyOrderMaxUnlimited, dryRun: _dryRun,
+        killSwitch: _killSwitch, exitEngineEnabled: _exitEngineEnabled, ...safetyForBulkSave } = safety;
       void _postMarketOverseasOwnToggle;
-      const results = await Promise.all([
-        patchSetting('/api/settings/safety', {
+      void _orderMaxPct;
+      void _dailyOrderMaxPct;
+      void _orderMaxUnlimited;
+      void _dailyOrderMaxUnlimited;
+      void _dryRun;
+      void _killSwitch;
+      void _exitEngineEnabled;
+      const hasLimitEdits = Object.keys(limitEdits).length > 0;
+      const safetyFailure = isDirty || hasLimitEdits
+        ? await patchSetting('/api/settings/safety', {
+          ...(hasLimitEdits ? { buyLimitEdits: limitEdits } : {}),
+          ...(isDirty ? {
           ...safetyForBulkSave,
           notifySignalAutoSubmit: notifySignal.autoSubmit,
           notifySignalPending:    notifySignal.pending,
@@ -503,26 +518,31 @@ export function SettingsPage() {
             reportIntervalMin: report.intervalMin,
             reportAnchorKst:   report.anchorKst,
           } : {}),
-        }),
-        ...strategies.map(s =>
+          } : {}),
+        })
+        : null;
+      const results = isDirty && !safetyFailure
+        ? await Promise.all(strategies.map(s =>
           patchSetting('/api/settings/strategies', {
             id: s.id, enabled: s.enabled, backtestIntervalM: s.backtestIntervalM,
           })
-        ),
-      ]);
+        ))
+        : [];
 
-      const failures = results.filter((r): r is SaveFailure => r !== null);
+      const noNewLimitEdit = buyLimitEdits.current === limitEdits;
+      if (!safetyFailure && noNewLimitEdit) buyLimitEdits.current = {};
+      const failures = [safetyFailure, ...results].filter((r): r is SaveFailure => r !== null);
       if (failures.length > 0) {
         // 거부 사유(사용자가 고칠 수 있는 정보)를 네트워크 오류보다 우선 노출한다.
         const primary = failures.find(f => f.kind === 'rejected') ?? failures[0];
         const extra = failures.length > 1 ? ` (외 ${failures.length - 1}건 실패)` : '';
-        setSaveError(primary.message + extra);
+        setSaveError((safetyFailure ? '' : '전략 — ') + primary.message + extra);
         setSaveState('error');
         return;   // isDirty 유지 — 저장 버튼이 남아 바로 재시도할 수 있다
       }
 
       setSaveState('saved');
-      setIsDirty(false);
+      if (noNewLimitEdit) setIsDirty(false);
       setTimeout(() => setSaveState('idle'), 2000);
     } catch (e) {
       // patchSetting 은 던지지 않지만, 예기치 못한 예외로 '저장 중…'에 갇혀
@@ -530,25 +550,26 @@ export function SettingsPage() {
       setSaveError(e instanceof Error ? e.message : String(e));
       setSaveState('error');
     }
-  }, [safety, notifySignal, report, strategies]);
+  }, [safety, isDirty, notifySignal, report, strategies]);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted)' }}>불러오는 중…</div>;
 
   // T-108 §3.5 — 화면 「실거래여부」(ON = 실거래 가능)는 내부 dryRun 과 방향이 반대다. 뒤집기는 live-trading.ts 한 곳에서만.
   // 값을 못 읽었으면(safety 없음) dryRun=true 로 보고 실거래 아님(OFF)으로 그린다 — 토글·경고 상자가 같은 값을 쓴다.
   const liveTrading = liveTradingFromDryRun(safety?.dryRun ?? true);
+  const hasEdits = isDirty || Object.keys(buyLimitEdits.current).length > 0;
 
   return (
     <div style={{ overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
       {/* Save bar */}
-      {(isDirty || saveState !== 'idle') && (
+      {(hasEdits || saveState !== 'idle') && (
         <div style={{
           position: 'sticky', top: 0, zIndex: 20,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
           padding: '10px 14px', borderRadius: 10, marginBottom: 4,
-          background: saveState === 'error' ? 'rgba(239,68,68,.12)' : isDirty ? 'rgba(251,191,36,.12)' : 'rgba(34,197,94,.1)',
-          border: `1px solid ${saveState === 'error' ? 'rgba(239,68,68,.45)' : isDirty ? 'rgba(251,191,36,.4)' : 'rgba(34,197,94,.3)'}`,
+          background: saveState === 'error' ? 'rgba(239,68,68,.12)' : hasEdits ? 'rgba(251,191,36,.12)' : 'rgba(34,197,94,.1)',
+          border: `1px solid ${saveState === 'error' ? 'rgba(239,68,68,.45)' : hasEdits ? 'rgba(251,191,36,.4)' : 'rgba(34,197,94,.3)'}`,
         }}>
           {/* 저장 실패는 사용자가 값을 고쳐야 풀리므로 자동 소멸하는 토스트가 아니라
               재시도 버튼 옆 sticky 바에 계속 남긴다 (minWidth:0 — 긴 사유도 줄바꿈으로 수용) */}
@@ -556,7 +577,7 @@ export function SettingsPage() {
             role={saveState === 'error' ? 'alert' : undefined}
             style={{
               fontSize: 12, fontWeight: 600, minWidth: 0, flex: 1, wordBreak: 'break-word',
-              color: saveState === 'error' ? '#ef4444' : isDirty ? 'var(--accent)' : 'var(--ok)',
+              color: saveState === 'error' ? '#ef4444' : hasEdits ? 'var(--accent)' : 'var(--ok)',
             }}
           >
             {saveState === 'saving' ? '저장 중…'
@@ -564,7 +585,7 @@ export function SettingsPage() {
               : saveState === 'error' ? `저장 실패 — ${saveError ?? '알 수 없는 오류'}`
               : '변경 사항 있음'}
           </span>
-          {isDirty && (
+          {hasEdits && (
             <button
               onClick={handleSave}
               disabled={saveState === 'saving'}
@@ -829,9 +850,14 @@ export function SettingsPage() {
         {/* 1회 주문 최대 — T-130 D1-A: 행 전체가 버튼(값 컴포넌트가 행을 함께 그린다), 저장은 예전처럼 저장 바 [저장] */}
         <LimitInput
           title="1회 주문 최대 (%)"
-          sub="포트폴리오 평가총액 × pct%. 0 = 무제한"
+          disabled={!safety || saveState === 'saving'}
+          sub="시장별 평가액 × 비율. 0을 직접 입력해 저장하면 무제한"
           value={safety?.orderMaxPct ?? 0}
-          onChange={v => update({ orderMaxPct: v })}
+          unlimited={safety?.orderMaxUnlimited}
+          onChange={v => {
+            buyLimitEdits.current = { ...buyLimitEdits.current, orderMaxPct: v };
+            setSafety(prev => prev ? { ...prev, orderMaxPct: v, orderMaxUnlimited: v === 0 } : prev);
+          }}
           allowZero
           suffix="%"
         />
@@ -839,9 +865,14 @@ export function SettingsPage() {
         {/* 일일 누적 최대 */}
         <LimitInput
           title="일일 누적 최대 (%)"
-          sub="포트폴리오 평가총액 × pct%. 오늘 0시~자정 누적 상한. 0 = 무제한"
+          disabled={!safety || saveState === 'saving'}
+          sub="시장별 오늘 누적 상한. 0을 직접 입력해 저장하면 무제한"
           value={safety?.dailyOrderMaxPct ?? 0}
-          onChange={v => update({ dailyOrderMaxPct: v })}
+          unlimited={safety?.dailyOrderMaxUnlimited}
+          onChange={v => {
+            buyLimitEdits.current = { ...buyLimitEdits.current, dailyOrderMaxPct: v };
+            setSafety(prev => prev ? { ...prev, dailyOrderMaxPct: v, dailyOrderMaxUnlimited: v === 0 } : prev);
+          }}
           allowZero
           suffix="%"
         />
@@ -1249,7 +1280,7 @@ function valueRowBox({ padding = '14px 16px', last, dim }: Pick<ValueRowLayout, 
  *  - `open` 은 한 번 닫힌 편집에 뒤늦게 오는 blur(입력칸이 빠질 때 브라우저가 보내는 경우)가 다시 확정하지 않게 막는다 — Esc 로 취소한 값이
  *    blur 로 저장되거나, Enter 확정이 두 번 불리는 일이 없다.
  */
-function ValueEditor({ title, sub, padding, last, dim, value, display, color, inputMode, parse, onChange }: ValueRowLayout & {
+function ValueEditor({ title, sub, padding, last, dim, value, display, color, inputMode, parse, onChange, requireInput, disabled }: ValueRowLayout & {
   value: number;
   /** 행에 보이는 값 글자(예 「미적용」「60분」「-2%」) */
   display: string;
@@ -1259,11 +1290,14 @@ function ValueEditor({ title, sub, padding, last, dim, value, display, color, in
   /** 입력 글자 → 받아들일 값, 범위 밖·숫자 아님이면 null (값 컴포넌트마다 예전 검증 그대로) */
   parse: (draft: string) => number | null;
   onChange: (v: number) => void;
+  requireInput?: boolean;
+  disabled?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft]     = useState('');
   const rowRef  = useRef<HTMLButtonElement>(null);
   const open    = useRef(false);
+  const typed   = useRef(false);
   const refocus = useRef(false);
 
   useEffect(() => {
@@ -1273,11 +1307,16 @@ function ValueEditor({ title, sub, padding, last, dim, value, display, color, in
     }
   }, [editing]);
 
-  const start = () => { open.current = true; setDraft(String(value)); setEditing(true); };
+  const start = () => {
+    open.current = true;
+    typed.current = false;
+    setDraft(requireInput && value === 0 ? '' : String(value));
+    setEditing(true);
+  };
   const close = (save: boolean, backToRow: boolean) => {
     if (!open.current) return;
     open.current = false;
-    if (save) {
+    if (save && (!requireInput || typed.current)) {
       const n = parse(draft);
       if (n !== null) onChange(n);
     }
@@ -1302,7 +1341,7 @@ function ValueEditor({ title, sub, padding, last, dim, value, display, color, in
           aria-label={title}
           inputMode={inputMode}
           value={draft}
-          onChange={e => setDraft(e.target.value)}
+          onChange={e => { typed.current = true; setDraft(e.target.value); }}
           onBlur={e => close(true, e.relatedTarget === null)}
           onKeyDown={e => {
             // T-130 Reviewer F1 — Enter keydown 의 기본 동작을 **먼저** 취소한다. 안 그러면 close 가 렌더·effect 로 포커스를 행 버튼에
@@ -1326,6 +1365,7 @@ function ValueEditor({ title, sub, padding, last, dim, value, display, color, in
     <button
       type="button"
       ref={rowRef}
+      disabled={disabled}
       onClick={start}
       aria-label={`${title}, 현재 ${display}, 바꾸기`}
       style={{ ...box, textAlign: 'left', cursor: 'pointer' }}
@@ -1498,22 +1538,25 @@ function SymbolEditor({ symbols, onChange, label = '차단 심볼', chipColor = 
 }
 
 /**
- * 한도 값 행(1회 주문 최대·일일 누적 최대) — 보이는 값: 0 이고 allowZero 면 `미적용`(%)·`무제한`, 아니면 `{n}{suffix}`·`₩{n}`(강조색).
- * 받아들이는 값: 쉼표를 지운 숫자, allowZero 면 0 이상·아니면 0 초과(예전 그대로).
+ * 한도 값 행 — 0은 서버의 명시적 무제한 상태와 미구성 상태를 구분해 표시한다.
+ * 빈 입력이나 포커스 이동만으로는 무제한을 저장하지 않는다.
  */
-function LimitInput({ value, onChange, allowZero, suffix, ...row }: ValueRowLayout & { value: number; onChange: (v: number) => void; allowZero?: boolean; suffix?: string }) {
+function LimitInput({ value, onChange, allowZero, suffix, unlimited, ...row }: ValueRowLayout & { value: number; onChange: (v: number) => void; allowZero?: boolean; suffix?: string; unlimited?: boolean; disabled?: boolean }) {
   return (
     <ValueEditor
       {...row}
       value={value}
       display={allowZero && value === 0
-        ? (suffix === '%' ? '미적용' : '무제한')
+        ? (unlimited ? '무제한' : '미구성')
         : suffix ? `${value}${suffix}` : `₩${fmtNum(value)}`}
       color="var(--accent)"
       inputMode="decimal"
+      requireInput
       parse={draft => {
-        const n = Number(draft.replace(/,/g, ''));
-        return !isNaN(n) && (allowZero ? n >= 0 : n > 0) ? n : null;
+        const value = draft.replace(/,/g, '').trim();
+        if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return null;
+        const n = Number(value);
+        return Number.isFinite(n) && (allowZero || n > 0) ? n : null;
       }}
       onChange={onChange}
     />

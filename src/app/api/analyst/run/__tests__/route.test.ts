@@ -7,6 +7,8 @@
 import { POST } from '../route';
 import { createSignal } from '@/lib/signals/service';
 import { simpleRsiMomentum } from '@/lib/analyst/rules';
+import { getEffectiveOrderMax, getLegacyAnalystSellAmount } from '@/lib/safety/order-limits';
+import { allocateAdaptiveBuys } from '@/lib/strategy/adaptive-buy-sizing';
 
 jest.mock('@/lib/exchanges/kis', () => ({ kis: { getTicker: jest.fn(async () => ({ price: 70_000 })), getCandles: jest.fn(async () => []) } }));
 jest.mock('@/lib/analyst/rules', () => ({ simpleRsiMomentum: jest.fn() }));
@@ -14,8 +16,13 @@ jest.mock('@/lib/signals/router', () => ({
   getRouterConfig: jest.fn(async () => ({ defaultTtlMin: 30 })),
   isEngineEnabled: jest.fn(async () => true),
 }));
-jest.mock('@/lib/safety/order-limits', () => ({ getEffectiveOrderMax: jest.fn(async () => 350_000) }));
-jest.mock('@/lib/signals/service', () => ({ createSignal: jest.fn() }));
+jest.mock('@/lib/safety/order-limits', () => ({
+  getEffectiveOrderMax: jest.fn(async () => 350_000),
+  getLegacyAnalystSellAmount: jest.fn(),
+}));
+jest.mock('@/lib/signals/service', () => ({ createSignal: jest.fn(), getEffectiveChasePct: jest.fn(async () => 1) }));
+jest.mock('@/lib/strategy/adaptive-buy-sizing', () => ({ allocateAdaptiveBuys: jest.fn() }));
+jest.mock('@/lib/strategy/style', () => ({ getStyleConfig: jest.fn(async () => ({ limitChasePct: 1 })) }));
 jest.mock('@/lib/strategy/market-hours', () => ({ isDomesticOpen: jest.fn(async () => true) }));
 
 const mockedCreate = createSignal as jest.Mock;
@@ -79,3 +86,33 @@ test('범위 밖 현행 고정: duplicate_active_signal 등 다른 ok:false 는 
   const { body } = await run();
   expect(body.data.created.map((c) => c.signalId)).toEqual([777, 777]);
 });
+
+test.each([[350_000, 350_000], ['unlimited', 350_000], ['unlimited', 0]] as const)(
+  'one-order limit %s with sell amount %s keeps buy and sell sizing separate', async (limit, sellAmount) => {
+    (getEffectiveOrderMax as jest.Mock).mockResolvedValueOnce(limit);
+    (getLegacyAnalystSellAmount as jest.Mock).mockResolvedValueOnce(sellAmount);
+    const mockAllocate = allocateAdaptiveBuys as jest.Mock;
+    mockAllocate.mockImplementationOnce(async (_market, [buy]) => ({
+      reason: 'allocated', orders: new Map([[buy, { ...buy, amountKRW: 140_000 }]]),
+    }));
+    mockedCreate.mockResolvedValue({ ok: true, signalId: 1, autoSubmitted: false });
+    rules.mockImplementation(({ symbol }, { baseAmountKRW }) => (
+      symbol === '005930' ? ['buy', 'sell'].map(side => ({ symbol, side, amountKRW: baseAmountKRW })) : []
+    ));
+
+    const { status, body } = await run();
+    expect(status).toBe(200);
+    const published = mockedCreate.mock.calls.map(([signal]) => signal);
+    expect(published).toContainEqual({ symbol: '005930', side: 'buy', amountKRW: limit === 'unlimited' ? 140_000 : limit });
+    if (sellAmount > 0) {
+      expect(published).toContainEqual({ symbol: '005930', side: 'sell', amountKRW: sellAmount });
+    } else {
+      expect(published).toHaveLength(1);
+      expect(body.data.skipped).toContainEqual({ symbol: '005930', reason: 'sell_amount_unavailable' });
+    }
+    expect(getLegacyAnalystSellAmount).toHaveBeenCalledTimes(limit === 'unlimited' ? 1 : 0);
+    expect(mockAllocate).toHaveBeenCalledTimes(limit === 'unlimited' ? 1 : 0);
+    mockAllocate.mockReset();
+    (getLegacyAnalystSellAmount as jest.Mock).mockReset();
+  },
+);

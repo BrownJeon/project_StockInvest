@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="demo-version" content="T-159-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<title>매수 주문 한도 데모 · T-159 v1</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0f1115; --bg2:#171a21; --bg3:#1f2430; --bg4:#262b36;
+    --border:#262b36; --border2:#323848; --text:#e6e8ee; --muted:#8b93a7;
+    --accent:#f59e0b; --ok:#22c55e; --danger:#ef4444;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Noto Sans KR",sans-serif; }
+  button,input { font:inherit; }
+  button { color:inherit; cursor:pointer; }
+  button:disabled { cursor:default; opacity:.65; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  [hidden] { display:none !important; }
+  main { max-width:560px; margin:auto; padding:24px 16px 32px; }
+  h1,h2,h3,p { margin:0; }
+  h1 { font-size:23px; line-height:1.25; margin:4px 0 8px; }
+  h2 { font-size:16px; }
+  h3 { color:var(--muted); font-size:12px; font-weight:700; margin-bottom:6px; }
+  .muted { color:var(--muted); }
+  .eyebrow { font-size:12px; font-weight:700; color:var(--accent); }
+  .layout, .preview, .comparison { display:grid; gap:12px; align-content:start; min-width:0; }
+  .layout { margin-top:24px; }
+  .steps { padding-left:22px; margin:0; color:var(--muted); font-size:13px; }
+  .steps li + li { margin-top:4px; }
+  strong { color:var(--text); }
+  .panel { background:var(--bg2); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .row { width:100%; min-height:56px; padding:14px 16px; display:flex; gap:10px; align-items:center; justify-content:space-between; text-align:left; border:0; border-bottom:1px solid var(--border); background:transparent; }
+  .panel > :last-child, .row-slot:last-child .row { border-bottom:0; }
+  .row:focus-visible { outline-offset:-3px; }
+  button.row:hover:not(:disabled) { background:var(--bg3); }
+  .row-text { min-width:0; flex:1; }
+  .row-title,.sub { display:block; }
+  .sub { margin-top:2px; font-size:12px; color:var(--muted); }
+  .value { color:var(--accent); flex:none; white-space:nowrap; font-weight:600; font-variant-numeric:tabular-nums; }
+  .arrow { color:var(--muted); margin-left:4px; }
+  .strip { padding:8px 16px; background:rgba(34,197,94,.08); color:var(--ok); font-size:12px; font-weight:700; border-bottom:1px solid var(--border); }
+  .row input { width:96px; min-height:44px; flex:none; text-align:right; font-weight:600; padding:4px 8px; border-radius:8px; border:1px solid var(--accent); background:var(--bg3); color:var(--text); }
+  .save-bar { position:sticky; top:4px; z-index:2; min-height:56px; display:flex; gap:10px; align-items:center; justify-content:space-between; padding:10px 14px; border:1px solid rgba(251,191,36,.4); border-radius:10px; background:#262113; color:var(--accent); font-size:12px; font-weight:600; }
+  .save-bar[data-phase="saved"] { color:var(--ok); border-color:rgba(34,197,94,.3); background:#10231a; }
+  .save-bar[data-phase="error"] { color:#fca5a5; border-color:rgba(239,68,68,.45); background:#321a1c; }
+  .save-bar span { min-width:0; overflow-wrap:anywhere; }
+  .save-bar button, .controls button { min-height:44px; border-radius:8px; font-weight:700; }
+  .save-bar button { flex:none; padding:6px 18px; border:0; background:var(--accent); color:#000; font-size:13px; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  .controls button { background:var(--bg3); color:var(--text); border:1px solid var(--border2); padding:0 10px; font-size:12px; }
+  .check { display:flex; align-items:center; gap:8px; min-height:44px; font-size:12px; color:var(--muted); }
+  .check input { accent-color:var(--accent); width:18px; height:18px; }
+  .fixture,.state-note { border:1px solid var(--border); border-radius:12px; padding:12px; background:var(--bg2); }
+  .state-note { display:grid; gap:4px; font-size:12px; }
+  .state-note p + p { margin-top:4px; }
+  .state-note output { font-weight:700; }
+  .summary { display:grid; gap:8px; font-size:13px; }
+  .summary ul { margin:0; padding-left:20px; }
+  .summary li + li { margin-top:4px; }
+  @media (min-width:900px) {
+    main { max-width:1088px; padding:32px 24px; }
+    .layout { grid-template-columns:minmax(0,1fr) minmax(0,1.16fr); gap:24px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">주식캐기 · 설정 변경 데모 · T-159 v1</p>
+    <h1>매수 주문 한도에서 0% 저장</h1>
+    <p class="muted">설정 → 안전장치 (공통). 아래 값은 데모용이며 저장은 이 화면에서만 재현합니다.</p>
+  </header>
+
+  <div class="layout">
+    <section class="comparison" aria-labelledby="before-heading">
+      <h2 id="before-heading">현재 화면</h2>
+      <div class="panel">
+        <div class="strip">● 집행 중</div>
+        <div class="row">
+          <div class="row-text"><span class="row-title">1회 주문 최대 (%)</span><span class="sub">포트폴리오 평가총액 × pct%. 0 = 무제한</span></div>
+          <span class="value">미적용 <span class="arrow" aria-hidden="true">›</span></span>
+        </div>
+        <div class="row">
+          <div class="row-text"><span class="row-title">일일 누적 최대 (%)</span><span class="sub">포트폴리오 평가총액 × pct%. 오늘 0시~자정 누적 상한. 0 = 무제한</span></div>
+          <span class="value">10% <span class="arrow" aria-hidden="true">›</span></span>
+        </div>
+      </div>
+      <div class="summary">
+        <p>기존에 저장된 0%는 화면에서 <strong>미적용</strong>으로 보이며 신규 매수는 미구성으로 처리됩니다.</p>
+        <ul class="muted">
+          <li><strong>미구성</strong>은 신규 매수를 막습니다.</li>
+          <li><strong>양수</strong>는 해당 시장의 평가액 대비 매수 상한입니다.</li>
+          <li><strong>무제한</strong>은 해당 비율 상한을 적용하지 않습니다. 1회가 무제한이면 판단 에이전트가 시장별 가용 잔금에 맞춰 매수 후보별 금액을 정합니다. 일일 한도가 양수이면 그 상한은 적용합니다.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="preview" aria-labelledby="after-heading">
+      <h2 id="after-heading">제안 화면 · 눌러서 체험</h2>
+      <ol class="steps">
+        <li>한도 행을 눌러 <strong>0</strong>을 입력하고 Enter를 누르거나 입력칸 밖을 누릅니다. Esc로 취소할 수 있습니다.</li>
+        <li><strong>저장</strong>을 누른 뒤 아래의 저장된 값이 바뀌는지 확인합니다.</li>
+        <li><strong>경고 임계치</strong>만 바꿔 저장하면 두 한도는 보존됩니다.</li>
+      </ol>
+      <div id="save-bar" class="save-bar" hidden>
+        <span id="save-feedback" role="status"></span>
+        <button id="save" type="button">저장</button>
+      </div>
+      <div>
+        <h3>안전장치 (공통)</h3>
+        <div class="panel">
+          <div class="strip">● 집행 중</div>
+          <div class="row">
+            <div class="row-text"><span class="row-title">실거래여부</span><span class="sub">OFF — 실거래 차단(기록만)</span></div>
+            <span class="muted">OFF</span>
+          </div>
+          <div class="row">
+            <div class="row-text"><span class="row-title">모든거래차단</span><span class="sub">ON — 모든 주문 차단</span></div>
+            <span class="muted">ON</span>
+          </div>
+          <div class="row-slot" data-setting="order"></div>
+          <div class="row-slot" data-setting="daily"></div>
+        </div>
+      </div>
+      <div>
+        <h3>변동폭 가드</h3>
+        <div class="panel"><div class="row-slot" data-setting="warning"></div></div>
+      </div>
+      <div class="state-note">
+        <p class="muted">데모에서 저장된 값</p>
+        <output id="stored">1회 미구성 · 일일 10% · 경고 -2%</output>
+      </div>
+      <div class="fixture">
+        <h3>데모 체험 도구</h3>
+        <p class="muted">실패를 켜고 저장하면 저장된 값을 보존합니다. 실패를 끈 뒤 다시 시도할 수 있습니다.</p>
+        <div class="controls">
+          <label class="check"><input id="fail-save" type="checkbox">저장 실패 재현</label>
+          <button id="reset" type="button">데모 초기화</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+  const fields = {
+    order: { title:'1회 주문 최대 (%)', help:'시장별 평가액 × 비율. 0을 직접 입력해 저장하면 무제한' },
+    daily: { title:'일일 누적 최대 (%)', help:'시장별 오늘 누적 상한. 0을 직접 입력해 저장하면 무제한' },
+    warning: { title:'경고 임계치', help:'로그만 기록 (주문 차단 없음)' },
+  };
+  const initial = { order:null, daily:10, warning:-2 };
+  const slots = Object.fromEntries([...document.querySelectorAll('[data-setting]')].map(slot => [slot.dataset.setting, slot]));
+  const bar = document.getElementById('save-bar');
+  const feedback = document.getElementById('save-feedback');
+  const save = document.getElementById('save');
+  const failure = document.getElementById('fail-save');
+  const reset = document.getElementById('reset');
+  const stored = document.getElementById('stored');
+  let persisted = { ...initial };
+  let edits = {};
+  let phase = 'idle';
+  let timer;
+
+  function formatted(value) {
+    if (value === null) return '미구성';
+    if (value === 0) return '무제한';
+    return `${value}%`;
+  }
+  function valueFor(key) {
+    return Object.hasOwn(edits, key) ? edits[key] : persisted[key];
+  }
+  function parse(key, text) {
+    const value = text.replace(/,/g, '').trim();
+    const valid = key === 'warning' ? /^-?(?:\d+(?:\.\d*)?|\.\d+)$/ : /^(?:\d+(?:\.\d*)?|\.\d+)$/;
+    if (!valid.test(value)) return null;
+    const amount = Number(value);
+    return Number.isFinite(amount) ? amount : null;
+  }
+  function titleFor(key) {
+    const label = document.createElement('span');
+    const title = document.createElement('span');
+    const help = document.createElement('span');
+    label.className = 'row-text';
+    title.className = 'row-title';
+    help.className = 'sub';
+    title.textContent = fields[key].title;
+    help.textContent = fields[key].help;
+    label.append(title, help);
+    return label;
+  }
+  function renderRow(key) {
+    const button = document.createElement('button');
+    const value = document.createElement('span');
+    const arrow = document.createElement('span');
+    const display = formatted(valueFor(key));
+    button.type = 'button';
+    button.className = 'row';
+    button.disabled = phase === 'saving';
+    button.setAttribute('aria-label', `${fields[key].title}, 현재 ${display}, 바꾸기`);
+    value.className = 'value';
+    value.textContent = display;
+    value.setAttribute('aria-hidden', 'true');
+    arrow.className = 'arrow';
+    arrow.textContent = '›';
+    value.append(arrow);
+    button.append(titleFor(key), value);
+    button.addEventListener('click', () => openEditor(key));
+    slots[key].replaceChildren(button);
+    return button;
+  }
+  function openEditor(key) {
+    const row = document.createElement('div');
+    const input = document.createElement('input');
+    const value = valueFor(key);
+    let typed = false;
+    let open = true;
+    row.className = 'row';
+    input.value = value === null || value === 0 ? '' : String(value);
+    input.inputMode = key === 'warning' ? 'text' : 'decimal';
+    input.setAttribute('aria-label', fields[key].title);
+    input.addEventListener('input', () => { typed = true; });
+
+    function close(apply, focusRow) {
+      if (!open) return;
+      open = false;
+      if (apply && typed) {
+        const amount = parse(key, input.value);
+        if (amount !== null) {
+          edits[key] = amount;
+          updateSaveBar();
+        }
+      }
+      const button = renderRow(key);
+      if (focusRow) button.focus({ preventScroll:true });
+    }
+    input.addEventListener('blur', event => close(true, !event.relatedTarget));
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        event.preventDefault();
+        close(event.key === 'Enter', true);
+      }
+    });
+    row.append(titleFor(key), input);
+    slots[key].replaceChildren(row);
+    input.focus({ preventScroll:true });
+  }
+  function updateSaveBar() {
+    const dirty = Object.keys(edits).length > 0;
+    bar.dataset.phase = phase;
+    bar.hidden = !dirty && phase === 'idle';
+    save.hidden = !dirty;
+    save.disabled = phase === 'saving';
+    reset.disabled = phase === 'saving';
+    feedback.textContent = {
+      idle:'변경 사항 있음', saving:'저장 중…', saved:'저장됨 ✓', error:'저장 실패 — 데모에서 선택한 저장 오류',
+    }[phase];
+    save.textContent = phase === 'error' ? '다시 시도' : '저장';
+  }
+  function renderStored() {
+    stored.textContent = `1회 ${formatted(persisted.order)} · 일일 ${formatted(persisted.daily)} · 경고 ${formatted(persisted.warning)}`;
+  }
+  save.addEventListener('click', () => {
+    clearTimeout(timer);
+    const shouldFail = failure.checked;
+    phase = 'saving';
+    updateSaveBar();
+    Object.keys(fields).forEach(renderRow);
+    timer = setTimeout(() => {
+      if (shouldFail) {
+        phase = 'error';
+      } else {
+        persisted = { ...persisted, ...edits };
+        edits = {};
+        phase = 'saved';
+        renderStored();
+        timer = setTimeout(() => {
+          phase = 'idle';
+          updateSaveBar();
+        }, 2000);
+      }
+      updateSaveBar();
+      Object.keys(fields).forEach(renderRow);
+      if (shouldFail) save.focus({ preventScroll:true });
+    }, 350);
+  });
+  reset.addEventListener('click', () => {
+    clearTimeout(timer);
+    failure.checked = false;
+    persisted = { ...initial };
+    edits = {};
+    phase = 'idle';
+    Object.keys(fields).forEach(renderRow);
+    renderStored();
+    updateSaveBar();
+  });
+
+  Object.keys(fields).forEach(renderRow);
+</script>
+</body>
+</html>

@@ -2,6 +2,7 @@ import { ensureSetup, getSetupFatalError, ping } from '@/lib/db';
 import { isAuthConfigured } from '@/lib/auth/session';
 import { isDryRun } from '@/lib/safety/dry-run';
 import { isKillSwitchActive } from '@/lib/safety/kill-switch';
+import { isBuyLimitConfigured } from '@/lib/safety/buy-limit-config';
 import {
   getDailyMaxPct,
   getEffectiveDailyMax,
@@ -41,15 +42,15 @@ export async function GET() {
   ]);
 
   // 한도 pct가 DB에 설정돼 있는가 (값 자체는 노출하지 않는다)
-  const limitsConfigured     = orderMaxPct > 0 && dailyMaxPct > 0;
+  const limitsConfigured     = isBuyLimitConfigured(orderMaxPct) && isBuyLimitConfigured(dailyMaxPct);
   const authConfigured       = isAuthConfigured();
   const cronSecretConfigured = !!(process.env.CRON_SECRET ?? '').trim();
 
   // 실효 한도가 실제로 산출되는가 (0 이면 포트폴리오 평가액 조회 실패 등으로 매수 전면 차단 상태).
   // 금액은 노출하지 않고 "양수인지" 여부만 시장별로 알린다.
   const effectiveLimitsResolved = {
-    domestic: orderMaxDom > 0 && dailyMaxDom > 0,
-    overseas: orderMaxOvs > 0 && dailyMaxOvs > 0,
+    domestic: isBuyLimitConfigured(orderMaxDom) && isBuyLimitConfigured(dailyMaxDom),
+    overseas: isBuyLimitConfigured(orderMaxOvs) && isBuyLimitConfigured(dailyMaxOvs),
   };
 
   // green/red 종합 판정. 값이 아니라 "구성 결함"만 본다.

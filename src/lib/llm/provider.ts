@@ -128,6 +128,7 @@ async function buildCaller(opts?: { stage?: 1 | 2; domain?: 'domestic' | 'overse
 export interface RunLlmOptions {
   timeoutMs?: number;
   responseFormat?: 'json' | 'text';
+  toolFree?: boolean;
   /** Claude provider 전용: 모델 동적 선택 (sonnet|opus|haiku). home-m4-api는 무시. */
   model?: string;
   /** Hybrid 모드 stage. provider==='hybrid' 일 때 1=Ollama 도메인, 2=Claude. */
@@ -143,6 +144,7 @@ export async function runLlmOnce(prompt: string, opts: RunLlmOptions | number = 
   return caller.call(prompt, {
     timeoutMs: o.timeoutMs ?? 90000,
     responseFormat: o.responseFormat ?? 'json',
+    ...(o.toolFree ? { toolFree: true } : {}),
     model: o.model,
   });
 }
@@ -169,7 +171,7 @@ export async function runLlm(prompt: string, opts: RunLlmOptions | number = {}):
     let lastErr: unknown;
     for (let tries = 0; tries < 3; tries++) {
       try {
-        return await caller.call(prompt, { timeoutMs, responseFormat, model });
+        return await caller.call(prompt, { timeoutMs, responseFormat, model, ...(o.toolFree ? { toolFree: true } : {}) });
       } catch (e) {
         lastErr = e;
         const msg = e instanceof Error ? e.message : String(e);
