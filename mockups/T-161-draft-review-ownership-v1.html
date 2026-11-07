@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="demo-version" content="T-161-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<title>초안 검토 카드의 대화 소속 데모 · T-161 v1</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0f1115; --bg2:#171a21; --bg3:#1f2430; --bg4:#262b36;
+    --border:#262b36; --border2:#323848; --text:#e6e8ee; --muted:#8b93a7;
+    --up:#ef4444; --down:#3b82f6;
+    --accent:#f59e0b; --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444;
+    --nav-h:60px;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Noto Sans KR",sans-serif; }
+  button,textarea,select { font:inherit; }
+  button { color:inherit; cursor:pointer; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  main { max-width:412px; margin:auto; padding:20px 16px 40px; }
+  h1,h2,h3,h4,p { margin:0; }
+  h1 { font-size:22px; line-height:1.25; margin:4px 0 8px; }
+  h2 { font-size:17px; margin-bottom:4px; }
+  h3 { font-size:14px; margin-bottom:2px; }
+  h4 { font-size:12px; font-weight:700; color:var(--muted); margin-bottom:6px; }
+  p { font-size:13px; }
+  .muted { color:var(--muted); }
+  .eyebrow { font-size:12px; font-weight:700; color:var(--accent); }
+  strong { color:var(--text); }
+  section { margin-top:28px; }
+  .sec-lead { color:var(--muted); font-size:13px; margin-top:4px; }
+  .case { margin-top:20px; padding-top:16px; border-top:1px solid var(--border); }
+  .case:first-of-type { border-top:0; padding-top:0; }
+  .tag { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:6px; margin-bottom:6px; }
+  .tag-base { background:var(--bg3); color:var(--muted); border:1px solid var(--border2); }
+  .tag-bug  { background:rgba(239,68,68,.15); color:#fca5a5; border:1px solid rgba(239,68,68,.45); }
+  .tag-fix  { background:rgba(34,197,94,.12); color:var(--ok); border:1px solid rgba(34,197,94,.35); }
+  .pair { display:grid; gap:14px; margin-top:12px; }
+  .col { min-width:0; display:grid; gap:6px; align-content:start; }
+  .col-head { font-size:12px; font-weight:700; }
+  .col-head.now { color:#fca5a5; }
+  .col-head.next { color:var(--ok); }
+  .col-note { font-size:12px; color:var(--muted); }
+
+  /* ── 화면 복제 (src/app/ai/ChatPage.tsx 값 그대로) ───────────────── */
+  .phone { width:100%; max-width:412px; border:1px solid var(--border2); border-radius:12px; overflow:hidden; background:var(--bg); }
+  .phone.w360 { max-width:360px; }
+  .ph-head { display:flex; align-items:center; justify-content:space-between; padding:6px 12px; border-bottom:1px solid var(--border); background:var(--bg2); height:38px; }
+  .ph-burger { font-size:18px; color:var(--text); background:none; border:0; }
+  .ph-title { font-size:13px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:60%; }
+  .ph-plus { font-size:18px; color:var(--accent); font-weight:700; background:none; border:0; }
+  .ph-main { padding:10px 12px; display:flex; flex-direction:column; gap:10px; min-height:96px; }
+  .ph-empty { padding:24px 0; text-align:center; color:var(--muted); font-size:13px; }
+  .ph-empty small { display:block; font-size:11px; margin-top:8px; }
+  .bub { max-width:85%; padding:10px 12px; border-radius:14px; font-size:13px; white-space:pre-wrap; word-break:break-word; }
+  .bub-me { align-self:flex-end; background:rgba(251,191,36,.15); border:1px solid rgba(251,191,36,.3); }
+  .bub-ai { align-self:flex-start; background:var(--bg2); border:1px solid var(--border); }
+  .bub-ai .meta { font-size:10px; color:var(--muted); margin-bottom:4px; }
+  .ph-status { align-self:flex-start; padding:8px 12px; border-radius:12px; background:var(--bg3); font-size:12px; color:var(--muted); }
+
+  .dr { border-top:2px solid var(--accent); padding:8px 10px; background:var(--bg2); }
+  .dr-meta { font-size:10px; color:var(--muted); margin-bottom:4px; }
+  /* 제안에서 조건부로 나타나는 한 줄 — 새 요소가 아니라 머리글의 둘째 줄. 12px 로 올려 11px 미만 금지를 지킨다. */
+  .dr-owner { font-size:12px; color:var(--accent); font-weight:600; margin:0 0 5px; display:flex; gap:4px; align-items:baseline; }
+  .dr-owner b { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dr textarea { width:100%; padding:6px; font-size:12px; border-radius:8px; border:1px solid var(--border); background:var(--bg3); color:var(--text); resize:vertical; min-height:72px; }
+  .chips { display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
+  .chip { display:inline-flex; align-items:center; gap:4px; font-size:10px; padding:2px 6px; border-radius:8px; background:var(--bg3); color:var(--muted); border:1px solid var(--border2); }
+  .chip b { color:var(--text); font-weight:600; }
+  .chip .n { font-variant-numeric:tabular-nums; }
+  .chip .up { color:var(--up); }
+  .chip .dn { color:var(--down); }
+  .dr-btns { display:flex; gap:6px; margin-top:6px; justify-content:flex-end; flex-wrap:wrap; }
+  .btn-cancel { padding:6px 12px; font-size:12px; border-radius:8px; background:var(--bg3); color:var(--muted); border:1px solid var(--border); }
+  .btn-go { padding:6px 12px; font-size:12px; border-radius:8px; background:var(--accent); color:#000; border:0; font-weight:600; }
+
+  .cmp { border-top:1px solid var(--border); background:var(--bg2); padding:6px 8px; }
+  .cmp-row { display:flex; gap:6px; align-items:flex-end; }
+  .cmp textarea { flex:1; padding:8px 10px; font-size:13px; border-radius:10px; border:1px solid var(--border); background:var(--bg3); color:var(--text); resize:none; min-height:38px; line-height:1.4; }
+  .cmp-send { padding:0 12px; height:38px; border-radius:10px; border:0; background:var(--bg3); color:var(--muted); font-weight:700; font-size:12px; flex:none; }
+  .cmp-send.on { background:var(--accent); color:#000; }
+  .cmp-opts { display:flex; align-items:center; gap:6px; margin-top:4px; font-size:10px; }
+  .cmp-opts .mode { background:var(--bg3); border:1px solid var(--border); color:var(--muted); font-size:10px; padding:2px 8px; border-radius:6px; }
+  .cmp-opts .sel { font-size:10px; padding:3px 6px; border-radius:6px; background:var(--bg3); color:var(--text); border:1px solid var(--border); }
+  .cmp-opts .hint { margin-left:auto; color:var(--muted); font-size:9px; }
+
+  /* 안내·오류 띠 — 현재 구현은 이 한 종류뿐이다 */
+  .bar { padding:8px; background:rgba(239,68,68,.15); color:var(--down); font-size:12px; text-align:center; }
+  .bar .x { margin-left:8px; background:none; border:0; color:var(--down); }
+  /* 대안(결정 필요 2-B) — 새 색이 아니라 --accent 재사용. 같은 패턴이 설정 화면 role="alert" 띠에 이미 있다. */
+  .bar.info { background:rgba(245,158,11,.15); color:var(--accent); }
+  .bar.info .x { color:var(--accent); }
+
+  .ph-nav { height:var(--nav-h); border-top:1px solid var(--border); background:var(--bg2); display:flex; }
+  .ph-nav span { flex:1; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--muted); }
+  .ph-nav span.on { color:var(--accent); font-weight:700; }
+
+  /* ── 결정 필요 ──────────────────────────────────────────────────── */
+  .decide { border:1px solid var(--accent); border-radius:12px; background:#1b1709; padding:14px; margin-top:14px; }
+  .decide h3 { color:var(--accent); font-size:14px; }
+  .opt { margin-top:12px; padding:12px; border-radius:10px; background:var(--bg2); border:1px solid var(--border2); }
+  .opt-lab { font-size:12px; font-weight:700; margin-bottom:6px; }
+  .opt.rec { border-color:rgba(34,197,94,.45); }
+  .opt.rec .opt-lab { color:var(--ok); }
+  .opt ul { margin:8px 0 0; padding-left:20px; font-size:12px; color:var(--muted); }
+  .opt li + li { margin-top:3px; }
+  .frag { border:1px solid var(--border2); border-radius:10px; overflow:hidden; }
+
+  /* ── 문구 표 ────────────────────────────────────────────────────── */
+  .copy { margin-top:14px; border:1px solid var(--border); border-radius:12px; background:var(--bg2); padding:12px; }
+  .copy h3 { font-size:13px; }
+  .copy .which { font-size:12px; color:var(--muted); margin-top:2px; }
+  .cand { margin-top:10px; padding:10px; border-radius:8px; background:var(--bg3); border:1px solid var(--border2); }
+  .cand.rec { border-color:rgba(34,197,94,.45); }
+  .cand .nm { font-size:11px; font-weight:700; color:var(--muted); }
+  .cand.rec .nm { color:var(--ok); }
+  .cand .tx { font-size:13px; margin-top:4px; }
+  .cand .why { font-size:12px; color:var(--muted); margin-top:5px; }
+
+  ul.plain { margin:10px 0 0; padding-left:20px; font-size:13px; }
+  ul.plain li + li { margin-top:6px; }
+  .note { margin-top:14px; border-left:3px solid var(--border2); padding:4px 0 4px 12px; font-size:12px; color:var(--muted); }
+  .note b { color:var(--text); }
+
+  @media (min-width:900px) {
+    main { max-width:1120px; padding:32px 24px 56px; }
+    .pair { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px; }
+    .decide .ab { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; }
+    .decide .ab .opt { margin-top:0; }
+    .copy-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; align-items:start; }
+    .copy { margin-top:0; }
+    .widths { display:grid; grid-template-columns:auto auto auto; gap:24px; justify-content:start; align-items:start; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <p class="eyebrow">주식캐기 · 비서(/ai) 채팅 · delta 데모 · T-161 v1</p>
+  <h1>초안 검토 카드가 자기 대화를 기억한다</h1>
+  <p class="muted">2단계 모드에서 「전송」을 누르면 정제된 초안이 검토 카드로 옵니다. 그 카드가 열린 채 다른 대화로 옮기면 지금은 「확정 전송」이 <strong>보고 있는 대화</strong>로 가거나 아무 반응이 없습니다. 바뀐 뒤에는 <strong>초안을 만든 대화</strong>로 갑니다.</p>
+  <p class="muted" style="margin-top:8px">바뀌는 것은 두 가지뿐입니다 — ① 검토 카드가 「어느 대화로 보낼지」 미리 알리는 방식, ② 기존 안내 띠에 들어가는 문구 3종. 새 화면·새 버튼·새 카드·레이아웃 이동은 없습니다. 아래 종목·금액·대화 제목은 모두 합성 예시입니다.</p>
+</header>
+
+<!-- ══════════════════════════ 결정 필요 ══════════════════════════ -->
+<section aria-labelledby="d-h">
+  <h2 id="d-h">결정 필요</h2>
+  <p class="sec-lead">두 가지만 결정해 주시면 나머지는 그대로 진행합니다.</p>
+
+  <div class="decide">
+    <h3>결정 1 — 「다른 대화로 간다」를 어떻게 미리 알릴까</h3>
+    <p class="muted" style="margin-top:4px">누르기 <strong>전에</strong> 알아야 하므로 확정 버튼 주변에서 해결합니다.</p>
+    <div class="ab">
+
+      <div class="opt rec">
+        <p class="opt-lab">A · 머리글에 대화 이름 한 줄 (권고)</p>
+        <div class="frag">
+          <div class="dr">
+            <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+            <p class="dr-owner"><span aria-hidden="true">↩</span> <b>「반도체 섹터 전망」</b> 대화로 전송합니다</p>
+            <textarea rows="3" aria-label="정제 프롬프트 (예시 A)">반도체 섹터의 최근 5거래일 흐름과 NVDA·AMD의 RSI·MACD를 근거로 단기 전망을 정리해 주세요.</textarea>
+            <div class="dr-btns">
+              <button type="button" class="btn-cancel">취소</button>
+              <button type="button" class="btn-go">확정 전송 ▶</button>
+            </div>
+          </div>
+        </div>
+        <ul>
+          <li><strong>어느</strong> 대화인지 이름으로 말해 줍니다.</li>
+          <li>보고 있는 대화와 같을 때는 이 줄이 <strong>나타나지 않습니다</strong> — 평소 화면은 지금과 똑같습니다.</li>
+          <li>버튼 라벨이 <strong>지금의 두 가지로 유지됩니다</strong> — 누르는 버튼의 글자가 상황에 따라 바뀌지 않습니다.</li>
+          <li>비용: 검토 카드 머리글 블록에 조건부 한 줄(12px). 새 요소·새 색은 없습니다.</li>
+        </ul>
+      </div>
+
+      <div class="opt">
+        <p class="opt-lab">B · 버튼 라벨만 바꾸기</p>
+        <div class="frag">
+          <div class="dr">
+            <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+            <textarea rows="3" aria-label="정제 프롬프트 (예시 B)">반도체 섹터의 최근 5거래일 흐름과 NVDA·AMD의 RSI·MACD를 근거로 단기 전망을 정리해 주세요.</textarea>
+            <div class="dr-btns">
+              <button type="button" class="btn-cancel">취소</button>
+              <button type="button" class="btn-go">편집됨 — 다른 대화로 전송 ▶</button>
+            </div>
+          </div>
+        </div>
+        <ul>
+          <li>바꾸는 곳이 한 군데입니다.</li>
+          <li>다만 <strong>어느</strong> 대화인지 말하지 못합니다. 대화가 여러 개면 「다른」이 어디인지 모릅니다.</li>
+          <li>편집 여부와 곱해져 라벨이 네 가지가 됩니다. <strong>잘리지는 않습니다</strong> — 360px에서 취소 47px + 확정 164px = 217px로 쓸 수 있는 340px 안에 한 줄로 들어갑니다(이 데모에서 실측). 대신 가장 긴 라벨이 카드 폭의 절반을 차지하고, 같은 버튼의 글자가 상황에 따라 바뀌어 눌러 온 손이 멈칫합니다.</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="decide">
+    <h3>결정 2 — 안내 띠 색을 그대로 둘까</h3>
+    <p class="muted" style="margin-top:4px">지금 띠는 빨강(오류) 한 종류뿐입니다. 아래 상태 3은 <strong>전송이 성공한</strong> 경우인데도 같은 빨강으로 보입니다.</p>
+    <div class="ab">
+
+      <div class="opt">
+        <p class="opt-lab">A · 기준안 — 빨강 그대로, 문구만 구분</p>
+        <div class="frag">
+          <div class="bar">전송 완료 — 「반도체 섹터 전망」 대화에 저장했습니다. 보려면 그 대화를 여세요.<button type="button" class="x" aria-label="닫기">×</button></div>
+        </div>
+        <ul>
+          <li>이 delta의 범위를 넘지 않습니다. 코드 변경이 문구뿐입니다.</li>
+          <li>성공을 오류색으로 알립니다 — 사용자가 실패로 읽고 <strong>다시 보낼</strong> 위험이 남습니다.</li>
+          <li>지금 조합(빨강 배경 + 파랑 글자)의 명암비는 <strong>4.43:1</strong>로, 12px 본문 기준 4.5:1에 못 미칩니다(계산값, 실측 아님).</li>
+        </ul>
+      </div>
+
+      <div class="opt rec">
+        <p class="opt-lab">B · 안내는 호박색 (권고)</p>
+        <div class="frag">
+          <div class="bar info">전송 완료 — 「반도체 섹터 전망」 대화에 저장했습니다. 보려면 그 대화를 여세요.<button type="button" class="x" aria-label="닫기">×</button></div>
+          <div class="bar">메시지 조회 실패 (HTTP 500)<button type="button" class="x" aria-label="닫기">×</button></div>
+        </div>
+        <ul>
+          <li><strong>새 색이 아닙니다</strong> — 이미 쓰는 <code>--accent</code>(#f59e0b)이고, 같은 호박색 안내 띠가 설정 화면에 이미 있습니다.</li>
+          <li>명암비 <strong>6.87:1</strong>(계산값). 성공과 실패가 눈으로 갈립니다.</li>
+          <li>안내는 읽어 주는 방식도 「경고」가 아니라 「상태」가 맞습니다.</li>
+          <li>비용: 띠에 종류 구분 1개 추가 + 띠 모양을 글자 단위로 고정한 기존 시험 1줄 수정. 그래서 <strong>문구만 바꾸기</strong>보다 조금 넓습니다 — 승인해 주시면 이 task에 넣고, 아니면 A로 갑니다.</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ 상태 5가지 ══════════════════════════ -->
+<section aria-labelledby="s-h">
+  <h2 id="s-h">바뀌는 동작 5가지</h2>
+  <p class="sec-lead">아래 그림은 모두 폭 412px(갤럭시 S25+ 크롬) 기준이며, 하단 탭 바까지 함께 그려 띠가 어디에 뜨는지 보입니다. 클릭 동작은 흉내 내지 않습니다.</p>
+
+  <!-- ── 상태 1 ── -->
+  <div class="case">
+    <span class="tag tag-base">상태 1 · 변화 없음</span>
+    <h3>같은 대화에서 검토 → 확정 전송</h3>
+    <p class="muted">지금과 똑같이 동작합니다. 비교용 1컷입니다.</p>
+    <div class="pair">
+      <div class="col">
+        <p class="col-head">현재 = 제안</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">반도체 섹터 전망</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main">
+            <div class="bub bub-me">반도체 요즘 어때?</div>
+            <div class="bub bub-ai"><div class="meta">🤖 claude-cli · sonnet · 8.4s</div>최근 5거래일 반도체 섹터는 지수 대비 강세였습니다. NVDA는 RSI 62로 과열 전 구간…</div>
+          </div>
+          <div class="dr">
+            <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+            <textarea rows="3" aria-label="정제 프롬프트 (상태 1)">반도체 섹터의 최근 5거래일 흐름과 NVDA·AMD의 RSI·MACD를 근거로 단기 전망을 정리해 주세요.</textarea>
+            <div class="chips">
+              <span class="chip"><b>엔비디아</b><span class="n">184.20</span><span class="n up">+3.4%</span><button type="button" aria-label="제외" style="background:none;border:0;color:var(--muted);padding:0">×</button></span>
+              <span class="chip"><b>AMD</b><span class="n">162.05</span><span class="n dn">-1.2%</span><button type="button" aria-label="제외" style="background:none;border:0;color:var(--muted);padding:0">×</button></span>
+            </div>
+            <div class="dr-btns">
+              <button type="button" class="btn-cancel">취소</button>
+              <button type="button" class="btn-go">확정 전송 ▶</button>
+            </div>
+          </div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">머리글에 대화 이름 줄이 <strong>없습니다</strong> — 보고 있는 대화와 초안의 대화가 같기 때문입니다. 띠도 뜨지 않습니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 상태 2 ── -->
+  <div class="case">
+    <span class="tag tag-bug">상태 2 · 누르기 전</span>
+    <h3>검토 카드가 열린 채 다른 대화로 옮겼다</h3>
+    <p class="muted">「반도체 섹터 전망」에서 초안을 받아 손으로 고치던 중, 대화 목록에서 「엔비디아 실적」을 열었습니다.</p>
+    <div class="pair">
+      <div class="col">
+        <p class="col-head now">현재</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">엔비디아 실적</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main">
+            <div class="bub bub-me">엔비디아 실적 발표 언제야?</div>
+            <div class="bub bub-ai"><div class="meta">🤖 claude-cli · sonnet · 6.1s</div>다음 분기 실적 발표는 현지 기준 2월 하순으로 예정돼 있습니다…</div>
+          </div>
+          <div class="dr">
+            <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+            <textarea rows="3" aria-label="정제 프롬프트 (상태 2 현재)">반도체 섹터의 최근 5거래일 흐름과 NVDA·AMD의 RSI·MACD를 근거로 단기 전망을 정리해 주세요. (내가 손으로 고친 문장)</textarea>
+            <div class="dr-btns">
+              <button type="button" class="btn-cancel">취소</button>
+              <button type="button" class="btn-go">편집됨 — 전송 ▶</button>
+            </div>
+          </div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">누르면 「엔비디아 실적」 대화에 저장됩니다. 초안은 「반도체 섹터 전망」의 지난 대화를 읽어 만든 것이라 <strong>엉뚱한 대화에 엉뚱한 질문</strong>이 쌓입니다. 화면에는 아무 경고가 없습니다.</p>
+      </div>
+      <div class="col">
+        <p class="col-head next">제안</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">엔비디아 실적</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main">
+            <div class="bub bub-me">엔비디아 실적 발표 언제야?</div>
+            <div class="bub bub-ai"><div class="meta">🤖 claude-cli · sonnet · 6.1s</div>다음 분기 실적 발표는 현지 기준 2월 하순으로 예정돼 있습니다…</div>
+          </div>
+          <div class="dr">
+            <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+            <p class="dr-owner"><span aria-hidden="true">↩</span> <b>「반도체 섹터 전망」</b> 대화로 전송합니다</p>
+            <textarea rows="3" aria-label="정제 프롬프트 (상태 2 제안)">반도체 섹터의 최근 5거래일 흐름과 NVDA·AMD의 RSI·MACD를 근거로 단기 전망을 정리해 주세요. (내가 손으로 고친 문장)</textarea>
+            <div class="dr-btns">
+              <button type="button" class="btn-cancel">취소</button>
+              <button type="button" class="btn-go">편집됨 — 전송 ▶</button>
+            </div>
+          </div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">누르기 전에 어디로 갈지 읽을 수 있습니다. 고친 초안은 <strong>그대로 남습니다</strong>(이 상태에서는 버리지 않습니다). 보내지 않으려면 「취소」를 누릅니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 상태 3 ── -->
+  <div class="case">
+    <span class="tag tag-bug">상태 3 · 누른 뒤</span>
+    <h3>다른 대화를 보는 중에 확정 전송이 끝났다</h3>
+    <p class="muted">상태 2에서 「편집됨 — 전송 ▶」을 눌렀습니다. 보낸 곳은 「반도체 섹터 전망」이고, 화면은 「엔비디아 실적」입니다 — 보낸 메시지가 화면에 <strong>안 보입니다</strong>.</p>
+    <div class="pair">
+      <div class="col">
+        <p class="col-head now">현재</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">엔비디아 실적</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main">
+            <div class="bub bub-me">엔비디아 실적 발표 언제야?</div>
+            <div class="bub bub-ai"><div class="meta">🤖 claude-cli · sonnet · 6.1s</div>다음 분기 실적 발표는 현지 기준 2월 하순으로 예정돼 있습니다…</div>
+            <div class="bub bub-me">반도체 섹터의 최근 5거래일 흐름과 NVDA·AMD의 RSI·MACD를 근거로… (내가 손으로 고친 문장)</div>
+            <div class="bub bub-ai"><div class="meta">🤖 claude-cli · sonnet · 9.2s</div>반도체 섹터 단기 전망을 말씀드리면…</div>
+          </div>
+          <div class="cmp">
+            <div class="cmp-row">
+              <textarea rows="1" aria-label="질문 입력 (상태 3 현재)" placeholder="종목·전망·기업 분석을 자유롭게 질문하세요"></textarea>
+              <button type="button" class="cmp-send">전송</button>
+            </div>
+            <div class="cmp-opts"><span class="mode">⚡ 검토</span><span class="sel">Sonnet</span><span class="hint">전송 버튼으로 보내기</span></div>
+          </div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">보고 있는 「엔비디아 실적」 대화에 <strong>남의 질문과 답</strong>이 들어갔습니다. 안내도 없습니다.</p>
+      </div>
+      <div class="col">
+        <p class="col-head next">제안</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">엔비디아 실적</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main">
+            <div class="bub bub-me">엔비디아 실적 발표 언제야?</div>
+            <div class="bub bub-ai"><div class="meta">🤖 claude-cli · sonnet · 6.1s</div>다음 분기 실적 발표는 현지 기준 2월 하순으로 예정돼 있습니다…</div>
+          </div>
+          <div class="cmp">
+            <div class="cmp-row">
+              <textarea rows="1" aria-label="질문 입력 (상태 3 제안)" placeholder="종목·전망·기업 분석을 자유롭게 질문하세요"></textarea>
+              <button type="button" class="cmp-send">전송</button>
+            </div>
+            <div class="cmp-opts"><span class="mode">⚡ 검토</span><span class="sel">Sonnet</span><span class="hint">전송 버튼으로 보내기</span></div>
+          </div>
+          <div class="bar">전송 완료 — 「반도체 섹터 전망」 대화에 저장했습니다. 보려면 그 대화를 여세요.<button type="button" class="x" aria-label="닫기">×</button></div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">보고 있는 대화는 깨끗하고, 띠가 어디로 갔는지 말합니다. <strong>결정 2를 B로 하면</strong> 이 띠가 호박색이 됩니다(위 결정 2 참조).</p>
+      </div>
+    </div>
+
+    <h4 style="margin-top:16px">같은 상태의 변형 — 검토 중 「+ 새 대화」를 눌렀다</h4>
+    <div class="pair">
+      <div class="col">
+        <p class="col-head now">현재</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">새 대화</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main"><div class="ph-empty">종목 추천·전망·기업 분석 등 자유롭게 질문해보세요.<small>예) &quot;삼성전자 어때?&quot; · &quot;반도체 섹터 전망&quot;</small></div></div>
+          <div class="dr">
+            <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+            <textarea rows="2" aria-label="정제 프롬프트 (새 대화 현재)">반도체 섹터의 최근 5거래일 흐름과… (내가 손으로 고친 문장)</textarea>
+            <div class="dr-btns">
+              <button type="button" class="btn-cancel">취소</button>
+              <button type="button" class="btn-go">편집됨 — 전송 ▶</button>
+            </div>
+          </div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">누르면 <strong>아무 일도 일어나지 않습니다</strong> — 버튼이 눌린 티도, 오류도, 안내도 없습니다. 사용자는 고장으로 읽습니다.</p>
+      </div>
+      <div class="col">
+        <p class="col-head next">제안</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">새 대화</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main"><div class="ph-empty">종목 추천·전망·기업 분석 등 자유롭게 질문해보세요.<small>예) &quot;삼성전자 어때?&quot; · &quot;반도체 섹터 전망&quot;</small></div></div>
+          <div class="cmp">
+            <div class="cmp-row">
+              <textarea rows="1" aria-label="질문 입력 (새 대화 제안)" placeholder="종목·전망·기업 분석을 자유롭게 질문하세요"></textarea>
+              <button type="button" class="cmp-send">전송</button>
+            </div>
+            <div class="cmp-opts"><span class="mode">⚡ 검토</span><span class="sel">Sonnet</span><span class="hint">전송 버튼으로 보내기</span></div>
+          </div>
+          <div class="bar">전송 완료 — 「반도체 섹터 전망」 대화에 저장했습니다. 보려면 그 대화를 여세요.<button type="button" class="x" aria-label="닫기">×</button></div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">전송은 원래 대화로 가고, 빈 새 대화 화면은 그대로 남습니다. 상태 3과 <strong>같은 문구</strong>를 씁니다(문구를 늘리지 않습니다).</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 상태 4 ── -->
+  <div class="case">
+    <span class="tag tag-bug">상태 4 · 보낼 곳이 없다</span>
+    <h3>초안을 만든 대화가 사라졌다 (목록에서 삭제했거나 404)</h3>
+    <p class="muted">검토 카드를 열어 둔 채 그 대화를 🗑으로 삭제했거나, 서버가 그 대화를 더 못 찾습니다. 보낼 곳이 없으므로 <strong>이때만</strong> 고친 초안을 버립니다.</p>
+    <div class="pair">
+      <div class="col">
+        <p class="col-head now">현재</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">새 대화</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main"><div class="ph-empty">종목 추천·전망·기업 분석 등 자유롭게 질문해보세요.<small>예) &quot;삼성전자 어때?&quot; · &quot;반도체 섹터 전망&quot;</small></div></div>
+          <div class="dr">
+            <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+            <textarea rows="2" aria-label="정제 프롬프트 (상태 4 현재)">반도체 섹터의 최근 5거래일 흐름과… (내가 손으로 고친 문장)</textarea>
+            <div class="dr-btns">
+              <button type="button" class="btn-cancel">취소</button>
+              <button type="button" class="btn-go">편집됨 — 전송 ▶</button>
+            </div>
+          </div>
+          <div class="bar">삭제됐거나 열 수 없는 대화입니다. 대화 목록을 새로 불러왔습니다.<button type="button" class="x" aria-label="닫기">×</button></div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">검토 카드가 <strong>그대로 열려 있고</strong> 버튼은 눌러도 무반응입니다. 띠는 목록을 다시 읽었다고만 말합니다.</p>
+      </div>
+      <div class="col">
+        <p class="col-head next">제안</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">새 대화</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main"><div class="ph-empty">종목 추천·전망·기업 분석 등 자유롭게 질문해보세요.<small>예) &quot;삼성전자 어때?&quot; · &quot;반도체 섹터 전망&quot;</small></div></div>
+          <div class="cmp">
+            <div class="cmp-row">
+              <textarea rows="1" aria-label="질문 입력 (상태 4 제안)" placeholder="종목·전망·기업 분석을 자유롭게 질문하세요"></textarea>
+              <button type="button" class="cmp-send">전송</button>
+            </div>
+            <div class="cmp-opts"><span class="mode">⚡ 검토</span><span class="sel">Sonnet</span><span class="hint">전송 버튼으로 보내기</span></div>
+          </div>
+          <div class="bar">보낼 대화가 삭제돼 전송하지 못했습니다. 검토 중이던 초안도 닫혔습니다 — 질문을 다시 입력해 주세요.<button type="button" class="x" aria-label="닫기">×</button></div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">검토 카드가 닫히고 입력칸이 돌아옵니다. 띠는 ① 전송이 <strong>안 됐다</strong> ② 초안이 사라진 이유 ③ 다음에 할 일을 말합니다. 여기는 실제 실패이므로 빨강이 맞습니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 상태 5 ── -->
+  <div class="case">
+    <span class="tag tag-bug">상태 5 · 보낸 건지 알 수 없다</span>
+    <h3>전송은 성공(200)했는데 뒤이은 메시지 재조회가 실패(500)</h3>
+    <p class="muted">서버는 질문과 답을 저장했지만, 화면을 다시 그리려고 메시지를 읽어 오는 단계에서 실패했습니다.</p>
+    <div class="pair">
+      <div class="col">
+        <p class="col-head now">현재</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">반도체 섹터 전망</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main"><div class="ph-empty" style="padding:32px 0">메시지가 비어 보입니다</div></div>
+          <div class="cmp">
+            <div class="cmp-row">
+              <textarea rows="1" aria-label="질문 입력 (상태 5 현재)" placeholder="종목·전망·기업 분석을 자유롭게 질문하세요"></textarea>
+              <button type="button" class="cmp-send">전송</button>
+            </div>
+            <div class="cmp-opts"><span class="mode">⚡ 검토</span><span class="sel">Sonnet</span><span class="hint">전송 버튼으로 보내기</span></div>
+          </div>
+          <div class="bar">메시지 조회 실패 (HTTP 500)<button type="button" class="x" aria-label="닫기">×</button></div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">입력칸은 비었고 목록에 새 메시지도 없고 띠는 「조회 실패」라고만 합니다. 사용자는 <strong>보내진 건지 알 수 없어</strong> 다시 보냅니다 — 같은 질문이 두 번 저장됩니다.</p>
+      </div>
+      <div class="col">
+        <p class="col-head next">제안</p>
+        <div class="phone">
+          <div class="ph-head"><button class="ph-burger" type="button" aria-label="대화 목록">☰</button><span class="ph-title">반도체 섹터 전망</span><button class="ph-plus" type="button" aria-label="새 대화">+</button></div>
+          <div class="ph-main"><div class="ph-empty" style="padding:32px 0">메시지가 비어 보입니다</div></div>
+          <div class="cmp">
+            <div class="cmp-row">
+              <textarea rows="1" aria-label="질문 입력 (상태 5 제안)" placeholder="종목·전망·기업 분석을 자유롭게 질문하세요"></textarea>
+              <button type="button" class="cmp-send">전송</button>
+            </div>
+            <div class="cmp-opts"><span class="mode">⚡ 검토</span><span class="sel">Sonnet</span><span class="hint">전송 버튼으로 보내기</span></div>
+          </div>
+          <div class="bar">전송 완료 — 화면 갱신만 실패했습니다 (HTTP 500). 대화를 다시 열면 답변이 보입니다.<button type="button" class="x" aria-label="닫기">×</button></div>
+          <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+        </div>
+        <p class="col-note">「전송 완료」를 먼저 말하므로 다시 보낼 이유가 사라집니다. <strong>「다시 보내지 마세요」 같은 금지문은 쓰지 않았습니다</strong> — 성공을 먼저 알리면 같은 효과가 나고, 금지문은 오히려 불안을 키웁니다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ 문구 3종 ══════════════════════════ -->
+<section aria-labelledby="c-h">
+  <h2 id="c-h">띠 문구 3종 — 각 2안과 권고</h2>
+  <p class="sec-lead">모두 기존 띠 한 줄에 들어가는 글입니다. 띠가 뜨는 자리는 입력칸 아래·하단 탭 바 위로 지금과 같습니다.</p>
+
+  <div class="copy-grid">
+    <div class="copy">
+      <h3>문구 1</h3>
+      <p class="which">상태 3 — 다른 대화를 보는 중 전송이 성공했다 (「+ 새 대화」 변형도 같은 문구)</p>
+      <div class="cand">
+        <p class="nm">1안</p>
+        <p class="tx">「반도체 섹터 전망」 대화로 보냈습니다. 지금 보고 있는 대화가 아니라 초안을 만든 대화에 저장됐습니다.</p>
+        <p class="why">부정문(「…가 아니라」)이 먼저 오고, 다음에 무엇을 하라는 말이 없습니다. 줄 수는 2안과 같은 두 줄이라(실측) 길이로 가릴 문제는 아닙니다.</p>
+      </div>
+      <div class="cand rec">
+        <p class="nm">2안 · 권고</p>
+        <p class="tx">전송 완료 — 「반도체 섹터 전망」 대화에 저장했습니다. 보려면 그 대화를 여세요.</p>
+        <p class="why">결과를 앞세워 「실패했나?」를 끊고, 어디로 갔는지 이름으로 말하고, 다음 행동을 줍니다. 360·412px 모두 두 줄입니다(실측).</p>
+      </div>
+    </div>
+
+    <div class="copy">
+      <h3>문구 2</h3>
+      <p class="which">상태 4 — 보낼 대화가 없어졌다 (삭제·404)</p>
+      <div class="cand">
+        <p class="nm">1안 (기존 문구 재사용)</p>
+        <p class="tx">삭제됐거나 열 수 없는 대화입니다. 대화 목록을 새로 불러왔습니다.</p>
+        <p class="why">이미 있는 문구라 새로 만들 것이 없습니다. 그러나 <strong>손으로 고친 초안이 버려졌다</strong>는 사실을 말하지 않아, 사용자는 글이 사라진 이유를 모릅니다.</p>
+      </div>
+      <div class="cand rec">
+        <p class="nm">2안 · 권고</p>
+        <p class="tx">보낼 대화가 삭제돼 전송하지 못했습니다. 검토 중이던 초안도 닫혔습니다 — 질문을 다시 입력해 주세요.</p>
+        <p class="why">전송이 안 됐다(중복 전송 걱정 차단) + 초안이 사라진 이유 + 다음 행동을 모두 말합니다. 기존 문구는 다른 경로(메시지 조회 404 등)에서 그대로 쓰고, 이 경우에만 새 문구를 씁니다.</p>
+      </div>
+    </div>
+
+    <div class="copy">
+      <h3>문구 3</h3>
+      <p class="which">상태 5 — 전송 200, 재조회 실패</p>
+      <div class="cand">
+        <p class="nm">1안</p>
+        <p class="tx">전송은 됐지만 화면 갱신에 실패했습니다 (HTTP 500). 다시 보내지 마세요 — 대화를 다시 열면 보입니다.</p>
+        <p class="why">중복 전송을 직접 막지만 금지문이 불안을 키우고, 「…은 됐지만」은 실패를 강조합니다.</p>
+      </div>
+      <div class="cand rec">
+        <p class="nm">2안 · 권고</p>
+        <p class="tx">전송 완료 — 화면 갱신만 실패했습니다 (HTTP 500). 대화를 다시 열면 답변이 보입니다.</p>
+        <p class="why">성공을 먼저 말해 다시 보낼 동기를 없앱니다. 「갱신<strong>만</strong>」이 범위를 좁혀 줍니다. (HTTP 500)은 기존 띠 형식과 이어 둡니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>세 문구의 공통 규칙</b> — ① 성공·실패를 첫 단어로 말한다 ② 「다시 보내라/보내지 마라」를 명령하지 않고 사실로 말한다 ③ 대화를 가리킬 때는 「다른 대화」가 아니라 <b>제목을 꺾쇠에 넣어</b> 쓴다 ④ HTTP 코드는 기존 띠와 같은 꼴로 끝에 붙인다.
+  </div>
+</section>
+
+<!-- ══════════════════════════ 폭 확인 ══════════════════════════ -->
+<section aria-labelledby="w-h">
+  <h2 id="w-h">폭 확인</h2>
+  <p class="sec-lead">대표 412px(갤럭시 S25+ 크롬) · 경계 360px · 데스크톱 복원 1280px. 가장 글자가 긴 조합만 모았습니다. 이 페이지 자체도 같은 기준으로 봅니다 — 900px 미만에서는 한 칸, 그 이상에서는 현재·제안이 나란히 섭니다.</p>
+
+  <div class="widths">
+    <div class="col">
+      <p class="col-head">360px · 결정 1-A (권고)</p>
+      <div class="phone w360">
+        <div class="dr">
+          <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+          <p class="dr-owner"><span aria-hidden="true">↩</span> <b>「반도체 섹터 전망」</b> 대화로 전송합니다</p>
+          <textarea rows="2" aria-label="정제 프롬프트 (360 A)">반도체 섹터의 최근 5거래일 흐름과…</textarea>
+          <div class="dr-btns">
+            <button type="button" class="btn-cancel">취소</button>
+            <button type="button" class="btn-go">편집됨 — 전송 ▶</button>
+          </div>
+        </div>
+      </div>
+      <p class="col-note">버튼 두 개가 한 줄에 남습니다. 대화 제목이 길면 그 한 줄만 말줄임표로 줄어듭니다.</p>
+    </div>
+
+    <div class="col">
+      <p class="col-head">360px · 결정 1-B (대안)</p>
+      <div class="phone w360">
+        <div class="dr">
+          <div class="dr-meta">🤖 분석가 정제 프롬프트 · sonnet · 2.1s</div>
+          <textarea rows="2" aria-label="정제 프롬프트 (360 B)">반도체 섹터의 최근 5거래일 흐름과…</textarea>
+          <div class="dr-btns">
+            <button type="button" class="btn-cancel">취소</button>
+            <button type="button" class="btn-go">편집됨 — 다른 대화로 전송 ▶</button>
+          </div>
+        </div>
+      </div>
+      <p class="col-note">가장 긴 라벨도 <strong>한 줄에 들어갑니다</strong>(360px에서 두 버튼 217px / 쓸 수 있는 340px — 실측). 폭은 문제가 아니고, 어느 대화인지 말하지 못하는 것이 문제입니다.</p>
+    </div>
+
+    <div class="col">
+      <p class="col-head">360px · 가장 긴 띠 문구</p>
+      <div class="phone w360">
+        <div class="bar">보낼 대화가 삭제돼 전송하지 못했습니다. 검토 중이던 초안도 닫혔습니다 — 질문을 다시 입력해 주세요.<button type="button" class="x" aria-label="닫기">×</button></div>
+        <div class="ph-nav"><span>홈</span><span>거래</span><span>분석</span><span class="on">비서</span><span>설정</span></div>
+      </div>
+      <p class="col-note">360·412px 모두 <strong>두 줄</strong>(높이 53px)로 접히고 하단 탭 바를 밀지 않습니다. 가로 스크롤·잘림 없습니다. 지금의 한 줄 띠(35px)보다 18px 높아져 메시지 영역이 그만큼 줄어듭니다 — 띠는 닫기(×)를 누르거나 다음 동작에서 사라집니다.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════ 확인 지점 ══════════════════════════ -->
+<section aria-labelledby="k-h">
+  <h2 id="k-h">승인하실 때 봐 주실 곳</h2>
+  <ul class="plain">
+    <li><strong>결정 1</strong> — 「다른 대화로 간다」를 <strong>대화 이름 한 줄</strong>(A 권고)로 알릴지, <strong>버튼 라벨</strong>(B)로 알릴지.</li>
+    <li><strong>결정 2</strong> — 성공 안내 띠를 지금의 <strong>빨강 그대로</strong>(A, 범위 안) 둘지 <strong>호박색</strong>(B 권고, 시험 1줄 수정 포함)으로 가를지.</li>
+    <li><strong>문구 3종</strong>이 그대로 괜찮은지. 특히 상태 4의 「<strong>초안도 닫혔습니다</strong>」가 받아들일 만한지 — 보낼 곳이 사라진 경우에만 고친 초안을 버립니다.</li>
+    <li>상태 2의 제안에서 <strong>초안을 버리지 않는</strong> 선택이 맞는지. 지난번 선택지 ⓐ(대화를 옮기면 초안을 지운다)는 이미 물러난 안이지만, 「옮겼으면 그냥 지워라」가 더 편하다면 지금 말씀해 주세요.</li>
+    <li>상태 3·5의 띠는 <strong>입력칸 아래·하단 탭 바 위</strong>에 뜹니다(지금과 같은 자리). 엄지가 닿는 자리라 가려지지 않는지.</li>
+  </ul>
+  <div class="note">
+    <b>이 데모가 보이지 않는 것</b> — 클릭 동작·애니메이션은 흉내 내지 않았습니다. 폭·줄 수·버튼 크기는 이 데모를 360·412px에서 브라우저로 재어 확인했지만, 갤럭시 S25+ 실기기에서는 재지 않았습니다. 명암비 4.43:1·6.87:1은 토큰 값으로 계산한 수치이고 실제 기기 측정값이 아닙니다. 검토 카드의 취소·확정 버튼은 지금도 높이 31px, 띠의 × 닫기 버튼은 그보다 작아 모두 권장 터치 크기(44px)에 못 미칩니다 — 이번 작업에서 손대지 않고 후속 후보로 남깁니다. 화면 밖 동작(서버·DB·인증)은 바뀌지 않습니다.
+  </div>
+</section>
+
+</main>
+</body>
+</html>
