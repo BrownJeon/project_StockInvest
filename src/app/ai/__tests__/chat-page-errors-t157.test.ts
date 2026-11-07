@@ -62,6 +62,8 @@ jest.mock('react', () => {
 
 import {
   CHAT_LOGIN_PATH, THREAD_GONE_MESSAGE, ChatPage, ThreadListOverlay, chatFetch, readChatResponse,
+  // T-161 — 초안 검토 카드의 대화 소속(ⓑ)·전송 뒤 재조회 실패 문구
+  DRAFT_THREAD_GONE_MESSAGE, SENT_NOTICE_PREFIX, SENT_RELOAD_FAILED_PREFIX, SENT_TO_OTHER_THREAD_MESSAGE,
 } from '@/app/ai/ChatPage';
 
 // ─── fetch · window 모킹 ────────────────────────────────────────────────────
@@ -491,7 +493,11 @@ describe('ChatPage — ⑥ 늦게 도착한 송신·확정 응답은 전환한 �
     await p.settle();
     expect(reloads()).toBe(2);
     expect(p.messages()).toEqual(['B 질문']);
-    expect(p.errorBars()).toEqual([]);
+    // T-161 — 확정 전송은 **초안을 만든 대화(7)** 로 가므로, 8 을 보는 중이면 어디에 저장했는지 알린다(ⓑ).
+    // T-157 에서도 전송은 클릭 시점의 대화(7)로 갔다(이 시험은 `POST …/7/messages` 만 모의한다) —
+    // 달라진 것은 「어디에 저장했는지 알린다」뿐이라 그때는 띠가 없었다.
+    // 이 단언이 away 를 **응답이 온 뒤**에 판정하는 것을 지키는 유일한 시험이다(Reviewer 질문 1).
+    expect(p.errorBars()).toEqual([SENT_TO_OTHER_THREAD_MESSAGE('대화7')]);
     expect((await p.overlay()).activeId).toBe(8);
   });
 
@@ -859,5 +865,344 @@ describe('ChatPage — ⑪ handleThreadGone 은 보고 있던 대화일 때만 �
     expect((await p.overlay()).error).toBe(THREAD_GONE_MESSAGE);
     expect(p.errorBars()).toEqual([]);
     expect(calls.filter((c) => c === 'GET /api/chat/threads').length).toBeGreaterThanOrEqual(2); // 목록 재조회
+  });
+});
+
+// ─── ⑫ T-161 초안 검토 카드의 대화 소속(ⓑ) · 전송 뒤 재조회 실패 문구 ──────────
+/**
+ * T-157 까지 `handleConfirmDraft` 는 **클릭 시점의 `activeThreadId`** 로 보냈다. 초안은 자기가 어느 대화의
+ * 이력으로 만들어졌는지를 기억하지 않아, 검토 카드가 열린 채 활성 대화가 바뀌면 ① 남의 대화에 저장되거나
+ * (「7번 질문이 8번에 들어간다」) ② 활성 대화가 없어져 **버튼이 무반응**이 됐다. 사용자 결정 ⓑ 는
+ * 「확인을 원래 보낸 대화로 보낸다」이므로, 초안이 자기 대화(`draftThreadIdRef`)를 들고 다니게 하고
+ * 보고 있는 대화가 아니면 **어디에 저장했는지 알린다**. 보낼 대화가 사라진 때만 초안을 버린다.
+ *
+ * 2 는 전송 뒤 재조회 실패(POST 200 · GET 실패)를 「메시지 조회 실패」가 아니라 「전송 완료 — 화면 갱신만
+ * 실패」로 말하게 한 것이다 — 실패로 읽히면 사용자가 같은 글을 다시 보낸다(T-157 QA 신규 Low).
+ */
+describe('ChatPage — ⑫ 초안은 자기 대화로 전송된다 (T-161)', () => {
+  const composer = (p: ReturnType<typeof mount>) => findAll(p.render(), (el) => typeName(el) === 'Composer')[0]?.props;
+  const review = (p: ReturnType<typeof mount>) => findAll(p.render(), (el) => typeName(el) === 'DraftReview')[0]?.props;
+  const reviewEl = (p: ReturnType<typeof mount>) =>
+    findAll(p.render(), (el) => typeName(el) === 'DraftReview')[0] as unknown as ReactNS.ReactElement;
+  const pending = () => { let release!: (v: { status: number; body: unknown }) => void; const q = new Promise<{ status: number; body: unknown }>((r) => { release = r; }); return { q, release }; };
+  /** 그 요청에 실제로 실린 본문 — 「어느 대화로」는 URL, 「어떤 글이」는 본문으로만 확인된다. */
+  const sentBody = (key: string): Record<string, unknown> => {
+    const call = fetchMock.mock.calls.find((c) => `${c[1]?.method ?? 'GET'} ${c[0]}` === key) as
+      [string, { method?: string; body?: string }] | undefined;
+    return JSON.parse(call?.[1]?.body ?? '{}');
+  };
+  const DRAFT = { ok: true, draftPrompt: '정제됨', attachedContext: [], draftProvider: 'claude', draftModel: 'sonnet', draftLatencyMs: 10 };
+  const RELOAD_FAILED = `${SENT_RELOAD_FAILED_PREFIX} (HTTP 500). 대화를 다시 열면 답변이 보입니다.`;
+
+  /** 대화 7 = 초안을 만드는 곳(메시지 1회차 = 처음 로드, 2회차 = 전송 뒤), 대화 8 = 옮겨 갈 곳. */
+  const base = () => {
+    routes['GET /api/chat/threads'] = { status: 200, body: { ok: true, threads: [T(7), T(8)] } };
+    routes['GET /api/chat/models'] = { status: 200, body: MODELS };
+    routes['GET /api/chat/threads/7/messages'] = [
+      { status: 200, body: { ok: true, messages: [M(1, '첫 질문')] } },
+      { status: 200, body: { ok: true, messages: [M(1, '첫 질문'), M(2, '7번 질문'), M(3, '7번 답')] } },
+    ];
+    routes['GET /api/chat/threads/8/messages'] = { status: 200, body: { ok: true, messages: [M(9, 'B 질문')] } };
+    routes['POST /api/chat/threads/7/draft'] = { status: 200, body: DRAFT };
+    routes['POST /api/chat/threads/7/messages'] = { status: 200, body: { ok: true } };
+  };
+  /** 대화 7 에서 검토 단계까지 — 초안이 7 에 속한 상태를 만든다. */
+  const toReview = async () => {
+    const p = mount();
+    await p.settle();
+    (await p.overlay()).onSelect(7);
+    await p.settle();
+    composer(p).onInputChange('7번 질문');
+    await p.settle();
+    await composer(p).onSend();
+    await p.settle();
+    expect(review(p)?.prompt).toBe('정제됨');
+    return p;
+  };
+
+  test('1. 다른 대화(8)를 보는 중 확정 → 7 로 전송하고 어디에 저장했는지 알린다', async () => {
+    base();
+    const p = await toReview();
+    (await p.overlay()).onSelect(8);                   // 검토 카드를 띄운 채 대화 8 로 옮긴다
+    await p.settle();
+    expect(p.messages()).toEqual(['B 질문']);
+    await review(p).onConfirm();
+    await p.settle();
+    expect(calls).toContain('POST /api/chat/threads/7/messages');
+    expect(calls).not.toContain('POST /api/chat/threads/8/messages');   // 남의 대화에 저장되면 회귀
+    expect(sentBody('POST /api/chat/threads/7/messages').content).toBe('7번 질문');
+    expect(p.messages()).toEqual(['B 질문']);          // 보고 있는 8 번 화면은 그대로
+    expect(p.errorBars()).toEqual([SENT_TO_OTHER_THREAD_MESSAGE('대화7')]);
+    expect(review(p)).toBeUndefined();                 // 성공·실패 모두 카드는 닫힌다(기존 동작)
+  });
+
+  test('2. 검토 중 「+ 새 대화」 → 확정은 7 로 간다(버튼이 무반응이 되지 않는다)', async () => {
+    base();
+    const p = await toReview();
+    (await p.overlay()).onNew();
+    await p.settle();
+    expect(review(p)?.prompt).toBe('정제됨');           // 초안은 살아 있다
+    expect(review(p)?.awayTitle).toBe('대화7');
+    await review(p).onConfirm();
+    await p.settle();
+    expect(calls.filter((c) => c === 'POST /api/chat/threads/7/messages')).toHaveLength(1);
+    expect(calls).not.toContain('POST /api/chat/threads');              // 새 대화를 만들지 않는다
+    expect(p.errorBars()).toEqual([SENT_TO_OTHER_THREAD_MESSAGE('대화7')]);
+  });
+
+  test('3. 다른 대화(8)의 404 로 선택이 해제돼도 초안은 살아 있고 확정은 7 로 간다', async () => {
+    base();
+    routes['GET /api/chat/threads/8/messages'] = { status: 404, body: { ok: false, error: 'thread not found' } };
+    const p = await toReview();
+    (await p.overlay()).onSelect(8);
+    await p.settle();
+    expect(p.errorBars()).toEqual([THREAD_GONE_MESSAGE]);               // 초안의 대화가 아니라 기존 안내
+    expect(review(p)?.prompt).toBe('정제됨');                            // 초안은 버리지 않는다
+    await review(p).onConfirm();
+    await p.settle();
+    expect(calls).toContain('POST /api/chat/threads/7/messages');
+    expect(sentBody('POST /api/chat/threads/7/messages').content).toBe('7번 질문');
+    expect(p.errorBars()).toEqual([SENT_TO_OTHER_THREAD_MESSAGE('대화7')]);
+  });
+
+  test('4. 확정했는데 그 대화가 404 → 카드를 닫고 보낼 대화가 사라졌다고 알린다', async () => {
+    base();
+    routes['POST /api/chat/threads/7/messages'] = { status: 404, body: { ok: false, error: 'thread not found' } };
+    const p = await toReview();
+    await review(p).onConfirm();
+    await p.settle();
+    expect(review(p)).toBeUndefined();
+    expect(p.errorBars()).toEqual([DRAFT_THREAD_GONE_MESSAGE]);
+    expect(composer(p).disabled).toBe(false);          // 입력 단계로 돌아온다
+    expect(composer(p).input).toBe('7번 질문');         // 쓴 글은 남는다(다시 보낼 수 있게)
+  });
+
+  test('5. 검토 중인 대화를 목록에서 지우면 카드를 닫고 같은 안내를 한다', async () => {
+    base();
+    routes['DELETE /api/chat/threads/7'] = { status: 200, body: { ok: true } };
+    const p = await toReview();
+    await (await p.overlay()).onDelete(7);
+    await p.settle();
+    expect(review(p)).toBeUndefined();
+    expect((await p.overlay()).error).toBe(DRAFT_THREAD_GONE_MESSAGE);  // 목록이 열려 있어 목록 안 띠로 보인다
+    expect(p.errorBars()).toEqual([]);
+    expect(calls).not.toContain('POST /api/chat/threads/7/messages');
+  });
+
+  test('6. 정제가 도는 중 대화를 바꿔도 확정은 정제를 요청한 대화(7)로 간다', async () => {
+    base();
+    const draft = pending();
+    routes['POST /api/chat/threads/7/draft'] = draft.q;
+    const p = mount();
+    await p.settle();
+    (await p.overlay()).onSelect(7);
+    await p.settle();
+    composer(p).onInputChange('7번 질문');
+    await p.settle();
+    const drafting = composer(p).onSend();             // 정제 요청 — 보류
+    await p.settle();
+    (await p.overlay()).onSelect(8);                   // 정제 중 대화 8 로 옮긴다
+    await p.settle();
+    draft.release({ status: 200, body: DRAFT });
+    await drafting;
+    await p.settle();
+    expect(review(p)?.awayTitle).toBe('대화7');
+    await review(p).onConfirm();
+    await p.settle();
+    expect(calls).toContain('POST /api/chat/threads/7/messages');
+    expect(calls).not.toContain('POST /api/chat/threads/8/messages');
+    expect(sentBody('POST /api/chat/threads/7/messages').content).toBe('7번 질문');
+  });
+
+  test('7. 같은 대화에서 확정하면 안내 띠가 뜨지 않는다(away 오탐)', async () => {
+    base();
+    const p = await toReview();
+    expect(review(p)?.awayTitle).toBeNull();
+    await review(p).onConfirm();
+    await p.settle();
+    expect(p.messages()).toEqual(['첫 질문', '7번 질문', '7번 답']);
+    expect(p.errorBars()).toEqual([]);
+    expect(composer(p).input).toBe('');
+  });
+
+  test('8. 직진 전송 200 + 재조회 500 → 「전송 완료 — 화면 갱신만 실패했습니다」', async () => {
+    base();
+    routes['GET /api/chat/threads/7/messages'] = [
+      { status: 200, body: { ok: true, messages: [M(1, '첫 질문')] } },
+      { status: 500, body: HTML },
+    ];
+    const p = mount();
+    await p.settle();
+    composer(p).onToggleSkipDraft();                   // 직진 모드
+    (await p.overlay()).onSelect(7);
+    await p.settle();
+    composer(p).onInputChange('7번 질문');
+    await p.settle();
+    await composer(p).onSend();
+    await p.settle();
+    expect(p.errorBars()).toEqual([RELOAD_FAILED]);
+    expect(p.messages()).toEqual(['첫 질문']);          // 전송은 됐고 화면만 못 갱신했다
+  });
+
+  test('9. 확정 전송 200 + 재조회 500 → 같은 문구(전송 성공을 먼저 말한다)', async () => {
+    base();
+    routes['GET /api/chat/threads/7/messages'] = [
+      { status: 200, body: { ok: true, messages: [M(1, '첫 질문')] } },
+      { status: 500, body: HTML },
+    ];
+    const p = await toReview();
+    await review(p).onConfirm();
+    await p.settle();
+    expect(p.errorBars()).toEqual([RELOAD_FAILED]);
+    expect(p.errorBars()[0].startsWith(SENT_NOTICE_PREFIX)).toBe(true);
+  });
+
+  test('10. 대화 전환 로드 500 은 기존 문구 그대로(전송 뒤 재조회가 아니다)', async () => {
+    base();
+    routes['GET /api/chat/threads/8/messages'] = { status: 500, body: HTML };
+    const p = mount();
+    await p.settle();
+    (await p.overlay()).onSelect(8);
+    await p.settle();
+    expect(p.errorBars()).toEqual(['메시지 조회 실패 (HTTP 500)']);
+    expect(p.errorBars()[0].startsWith(SENT_NOTICE_PREFIX)).toBe(false);
+  });
+
+  test('11. 안내 띠는 role=status·호박색·「안내 닫기」, 오류 띠는 role=alert·빨강·「오류 닫기」', () => {
+    const props = { threads: [T(7)], activeId: null, onSelect: () => {}, onDelete: () => {}, onClose: () => {}, onNew: () => {} };
+    const bar = (error: string) => renderToStaticMarkup(h(ThreadListOverlay, { ...props, error, onDismissError: () => {} }));
+    const notice = bar(SENT_TO_OTHER_THREAD_MESSAGE('대화7'));
+    expect(notice).toContain('<div role="status" style="padding:8px;background:rgba(245,158,11,.15);color:var(--accent);font-size:12px;text-align:center">');
+    expect(notice).not.toContain('role="alert"');
+    // 성공 안내를 「오류 닫기」로 읽히게 두지 않는다(Reviewer 질문 5 — 이 단언이 없으면 되돌려도 잡히지 않는다).
+    expect(notice).toContain('aria-label="안내 닫기"');
+    expect(notice).not.toContain('aria-label="오류 닫기"');
+    expect(bar(RELOAD_FAILED)).toContain('role="status"');              // 재조회 실패 안내도 같은 접두
+    expect(bar(RELOAD_FAILED)).toContain('aria-label="안내 닫기"');
+    const err = bar(THREAD_GONE_MESSAGE);
+    expect(err).toContain('<div role="alert" style="padding:8px;background:rgba(239,68,68,.15);color:var(--down);font-size:12px;text-align:center">');
+    expect(err).not.toContain('role="status"');
+    expect(err).toContain('aria-label="오류 닫기"');                     // 기존 오류 경로의 레이블은 그대로다
+    expect(err).not.toContain('aria-label="안내 닫기"');
+    expect(bar(DRAFT_THREAD_GONE_MESSAGE)).toContain('role="alert"');   // 보낼 대화 소멸은 실제 전송 실패다
+  });
+
+  test('12. 검토 카드 머리글: 다른 대화를 볼 때만 「제목」 대화로 전송합니다 한 줄', async () => {
+    base();
+    const p = await toReview();
+    expect(review(p)?.awayTitle).toBeNull();
+    expect(renderToStaticMarkup(reviewEl(p))).not.toContain('대화로 전송합니다');
+    (await p.overlay()).onSelect(8);
+    await p.settle();
+    expect(review(p)?.awayTitle).toBe('대화7');
+    const html = renderToStaticMarkup(reviewEl(p));
+    expect(html).toContain('「대화7」');
+    expect(html).toContain('대화로 전송합니다');
+    expect(html).toContain('aria-hidden="true"');                       // ↩ 는 장식이라 읽지 않는다
+  });
+
+  // ── 이 task 가 스스로 내건 가드의 회귀망 (T-161 Reviewer M-1 — 변이 R1~R5 가 전부 살아남던 구멍) ──
+  // 아래 6건은 「현재 동작이 맞다」를 보는 게 아니라, **그 동작을 만드는 가드를 지우면 깨지는지**를 고정한다.
+  // 각 시험 끝에 어떤 변이를 죽이는지 적는다(R1~R5·M8 — Reviewer 가 실측한 생존 변이 번호).
+
+  test('13. 재조회 실패 문구는 서버가 자기 오류 문구를 줘도 「전송 완료」 접두를 잃지 않는다 [R1]', async () => {
+    // 접두를 잃으면 띠가 빨강·role=alert 로 바뀌어 **전송이 실패한 것처럼** 읽힌다 — 목표 2 와 정면 충돌.
+    // 신규 8·9 는 비JSON 500(= chatFetch 의 기본 문구 경로)만 써서 이 분기를 지나지 않았다.
+    base();
+    routes['GET /api/chat/threads/7/messages'] = [
+      { status: 200, body: { ok: true, messages: [M(1, '첫 질문')] } },
+      { status: 500, body: { ok: false, error: 'DB down' } },           // 서버가 준 error 가 기본 문구를 이긴다
+    ];
+    const p = await toReview();
+    await review(p).onConfirm();
+    await p.settle();
+    expect(p.errorBars()).toEqual([`${SENT_RELOAD_FAILED_PREFIX} — DB down. 대화를 다시 열면 답변이 보입니다.`]);
+    expect(p.errorBars()[0].startsWith(SENT_NOTICE_PREFIX)).toBe(true);
+  });
+
+  test('14. 확정 200 뒤 재조회가 404 → 「전송하지 못했습니다」가 아니라 기존 404 안내 하나 [R2·L-1]', async () => {
+    // 전송(POST)은 이미 ok 로 끝났다 — 그 뒤 대화가 사라져도 「보낼 대화가 삭제돼 전송하지 못했습니다」는
+    // 거짓이다(Reviewer L-1). 동시에 away 안내가 그 404 안내를 덮지도 않아야 한다(`draftAlive` 가드).
+    base();
+    routes['GET /api/chat/threads/7/messages'] = [
+      { status: 200, body: { ok: true, messages: [M(1, '첫 질문')] } },
+      { status: 404, body: { ok: false, error: 'thread not found' } },
+    ];
+    const p = await toReview();
+    await review(p).onConfirm();
+    await p.settle();
+    expect(p.errorBars()).toEqual([THREAD_GONE_MESSAGE]);               // 띠는 하나, 문구는 기존 것
+    expect(p.errorBars()[0]).not.toContain('전송하지 못했습니다');
+    expect(p.errorBars()[0]).not.toBe(SENT_TO_OTHER_THREAD_MESSAGE('대화7'));
+    expect(review(p)).toBeUndefined();                                  // 초안은 그대로 버린다
+    expect(composer(p).disabled).toBe(false);
+  });
+
+  test('15. 확정 전송을 마친 뒤 그 대화를 지워도 초안 안내가 뜨지 않는다 [R5]', async () => {
+    // 확정 `finally` 의 `clearDraft()` 가 ref 를 비우지 않으면, 소비된 초안이 남아 이후 그 대화의
+    // 삭제·404 때 「검토 중이던 초안도 닫혔습니다」가 엉뚱하게 뜬다(낡은 tid 회귀).
+    base();
+    routes['DELETE /api/chat/threads/7'] = { status: 200, body: { ok: true } };
+    const p = await toReview();
+    await review(p).onConfirm();
+    await p.settle();
+    expect(p.errorBars()).toEqual([]);                                  // 같은 대화 전송 — 안내 없음
+    await (await p.overlay()).onDelete(7);
+    await p.settle();
+    expect((await p.overlay()).error).toBeNull();                       // 지울 초안이 없으니 아무 안내도 없다
+  });
+
+  test('16. 검토를 취소한 뒤 그 대화를 지워도 초안 안내가 뜨지 않는다 [R4]', async () => {
+    // `clearDraft` 가 ref 를 비우는 것이 취소 경로의 유일한 보장이다(상태만 비우면 ref 가 남는다).
+    base();
+    routes['DELETE /api/chat/threads/7'] = { status: 200, body: { ok: true } };
+    const p = await toReview();
+    review(p).onCancel();
+    await p.settle();
+    expect(review(p)).toBeUndefined();
+    await (await p.overlay()).onDelete(7);
+    await p.settle();
+    expect((await p.overlay()).error).toBeNull();
+  });
+
+  test('17. 확정 전송이 도는 중 그 대화를 지워도 전송 중 상태가 풀리지 않는다 [R3]', async () => {
+    // `discardDraft` 가 stage 를 무조건 `idle` 로 만들면 전송이 끝나지 않았는데 입력칸이 열려
+    // 같은 글을 다시 보낼 수 있게 된다. `review` 일 때만 `idle` 로 돌리는 것이 그 가드다.
+    base();
+    const sent = pending();
+    routes['POST /api/chat/threads/7/messages'] = sent.q;
+    routes['DELETE /api/chat/threads/7'] = { status: 200, body: { ok: true } };
+    const p = await toReview();
+    const sending = review(p).onConfirm();                              // 전송 보류 — stage 'generating'
+    await p.settle();
+    expect(composer(p).disabled).toBe(true);
+    await (await p.overlay()).onDelete(7);                              // 전송 중 그 대화를 지운다
+    await p.settle();
+    expect(composer(p).disabled).toBe(true);                            // 아직 전송 중이다
+    sent.release({ status: 200, body: { ok: true } });
+    await sending;
+    await p.settle();
+    expect(composer(p).disabled).toBe(false);                           // 전송이 끝나면 풀린다
+  });
+
+  test('18. 확정 전송은 초안을 만든 그 글을 보낸다 — 입력칸이 그 사이 달라져도 [M8]', async () => {
+    // 실 UI 는 검토 중 Composer 를 렌더하지 않지만(그래서 두 값이 갈라질 수 없다), 본문 선택이 그 UI
+    // 조건에 기대지 않는다는 것을 고정한다 — 기존 「전송 중 입력칸 내용이 달라지면」 시험과 같은 방식.
+    base();
+    const p = mount();
+    await p.settle();
+    (await p.overlay()).onSelect(7);
+    await p.settle();
+    const onInputChange = composer(p).onInputChange as (s: string) => void;  // 검토 **이전에** 잡아 둔 핸들
+    onInputChange('7번 질문');
+    await p.settle();
+    await composer(p).onSend();
+    await p.settle();
+    expect(review(p)?.prompt).toBe('정제됨');
+    onInputChange('다른 글');                                            // 검토 중에 입력칸만 바꾼다
+    await p.settle();
+    await review(p).onConfirm();
+    await p.settle();
+    expect(sentBody('POST /api/chat/threads/7/messages').content).toBe('7번 질문');
   });
 });

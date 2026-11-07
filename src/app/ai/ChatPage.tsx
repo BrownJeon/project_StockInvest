@@ -49,6 +49,30 @@ export const CHAT_LOGIN_PATH = '/login?next=%2Fai';
 /** T-157 — 대화가 지워졌거나 내 대화가 아닐 때(404) 안내. 이전 대화 메시지는 남기지 않고 목록을 다시 읽는다. */
 export const THREAD_GONE_MESSAGE = '삭제됐거나 열 수 없는 대화입니다. 대화 목록을 새로 불러왔습니다.';
 
+/**
+ * T-161 — 「전송은 됐다」로 시작하는 **안내** 띠의 접두. `ChatErrorBar` 는 이 접두만 보고 오류 띠(빨강·`alert`)와
+ * 안내 띠(호박색·`status`)를 가른다. `error` 가 단일 문자열 상태이고 `setError` 호출이 열 곳을 넘어, 종류를
+ * 상태로 들고 다니면 한 곳만 빠져도 색이 틀린다(Leader 결정 — 상태를 늘리지 않고 문구로 유도한다).
+ */
+export const SENT_NOTICE_PREFIX = '전송 완료 — ';
+/** T-161 — 초안을 만든 대화가 사라져 보낼 곳이 없다. **이때만** 검토 중이던 초안을 버린다. */
+export const DRAFT_THREAD_GONE_MESSAGE =
+  '보낼 대화가 삭제돼 전송하지 못했습니다. 검토 중이던 초안도 닫혔습니다 — 질문을 다시 입력해 주세요.';
+/** T-161 — 초안을 만든 대화(= 지금 보고 있는 대화가 아니다)로 전송했을 때 어디에 저장됐는지 알린다. */
+export const SENT_TO_OTHER_THREAD_MESSAGE = (title: string) =>
+  `${SENT_NOTICE_PREFIX}「${title}」 대화에 저장했습니다. 보려면 그 대화를 여세요.`;
+/** T-161 — 전송(POST)은 200 인데 뒤이은 메시지 재조회가 실패했다. 전송 성공을 **먼저** 말해 중복 전송을 막는다. */
+export const SENT_RELOAD_FAILED_PREFIX = `${SENT_NOTICE_PREFIX}화면 갱신만 실패했습니다`;
+/**
+ * 재조회 실패 안내 조립. `detail` 은 `chatFetch` 가 만든 문구 — 기본값이면 이미 접두로 시작하므로
+ * `… (HTTP 500). 대화를…` 형식이 그대로 나오고, 서버가 자기 `error` 를 줬으면 접두를 앞에 붙인다.
+ * 접두가 빠지면 띠가 빨강(실패)으로 보여 「전송은 됐다」는 뜻이 뒤집히므로 여기서 반드시 보장한다.
+ */
+export function sentReloadFailedMessage(detail: string): string {
+  const head = detail.startsWith(SENT_RELOAD_FAILED_PREFIX) ? detail : `${SENT_RELOAD_FAILED_PREFIX} — ${detail}`;
+  return `${head}. 대화를 다시 열면 답변이 보입니다.`;
+}
+
 /** 채팅 API 응답 분류 — `error` 는 기존 오류 띠에 그대로 쓰는 문구. */
 export type ChatResponse =
   | { kind: 'ok'; body: Record<string, any> }
@@ -98,6 +122,10 @@ export function ChatPage() {
   const [draftMeta, setDraftMeta] = useState<{ provider: string; model: string; latencyMs: number } | null>(null);
   const [draftContext, setDraftContext] = useState<SymbolContext[]>([]);
   const [draftEdited, setDraftEdited] = useState(false);
+  /** T-161 — 초안을 만든 대화. 「확정 전송」은 지금 보고 있는 대화가 아니라 이 대화로 간다(ⓑ). */
+  const [draftThreadId, setDraftThreadId] = useState<number | null>(null);
+  /** T-161 — 초안을 만든 **그 글**. 확정 시점의 입력칸 값이 아니다(그 사이 다른 대화에서 새로 썼을 수 있다). */
+  const [draftContent, setDraftContent] = useState('');
 
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [selectedModel, setSelectedModel] = useState<string>('sonnet');
@@ -120,6 +148,28 @@ export function ChatPage() {
    * 순번 불일치로 함께 버려져, 아무도 화면을 쓰지 않은 채 옛 대화의 메시지가 남는다(라운드 5 회귀).
    */
   const msgSeqRef = useRef(0);
+  /**
+   * T-161 — 초안을 만든 대화 ID. `activeIdRef` 와 같은 패턴으로 **바꾸는 지점에서 즉시 대입**해 비동기
+   * 가드에서 읽는다(콜백 deps 를 늘리지 않기 위함). 렌더에서 상태를 되비추지 **않는다** — 초안이 아직
+   * 살아 있는지를 이 ref 하나로 판정하기 때문이다(`handleConfirmDraft` 의 재조회 404 처리).
+   */
+  const draftThreadIdRef = useRef<number | null>(null);
+
+  /** 초안 상태만 비운다 — `stage` 는 건드리지 않는다(전송 중 stage 를 덮지 않으려고). */
+  const clearDraft = useCallback(() => {
+    draftThreadIdRef.current = null;
+    setDraftThreadId(null);
+    setDraftContent('');
+    setDraftPrompt('');
+    setDraftContext([]);
+    setDraftMeta(null);
+  }, []);
+
+  /** 검토 중이던 초안을 버린다 — 검토 화면이면 입력 단계로 돌아간다(전송 중이면 stage 는 그대로 둔다). */
+  const discardDraft = useCallback(() => {
+    clearDraft();
+    setStage(s => (s === 'review' ? 'idle' : s));
+  }, [clearDraft]);
 
   const loadThreads = useCallback(async () => {
     const r = await chatFetch('/api/chat/threads', '대화 목록 조회 실패');
@@ -127,16 +177,25 @@ export function ChatPage() {
     else if (r.kind !== 'unauthorized') setError(r.error);
   }, []);
 
-  /** 대화가 없어졌다(404) — 그 대화를 보고 있었다면 선택 해제·메시지 비움, 안내 후 목록 다시 읽기. */
-  const handleThreadGone = useCallback((tid: number) => {
+  /**
+   * 대화가 없어졌다(404) — 그 대화를 보고 있었다면 선택 해제·메시지 비움, 안내 후 목록 다시 읽기.
+   * `sent` 는 **전송(POST)이 이미 `ok` 로 끝난 뒤**의 404 라는 뜻이다(전송 뒤 재조회). 그때는 초안이
+   * 이미 소비됐으므로 「보낼 대화가 삭제돼 전송하지 못했습니다」가 사실이 아니다 — 초안은 그대로
+   * 버리되 문구는 기존 404 안내를 쓴다(T-161 Reviewer L-1).
+   */
+  const handleThreadGone = useCallback((tid: number, opts?: { sent?: boolean }) => {
     if (activeIdRef.current === tid) {
       activeIdRef.current = null;
       setActiveThreadId(null);
       setMessages([]);
     }
-    setError(THREAD_GONE_MESSAGE);
+    // T-161 — 그 대화로 보낼 초안이 걸려 있으면 보낼 곳이 없다. 초안을 버리고 그 사실을 알린다.
+    // 다른 대화의 404 는 초안을 건드리지 않고 기존 안내 그대로다.
+    const draftGone = draftThreadIdRef.current === tid;
+    if (draftGone) discardDraft();
+    setError(draftGone && opts?.sent !== true ? DRAFT_THREAD_GONE_MESSAGE : THREAD_GONE_MESSAGE);
     void loadThreads();
-  }, [loadThreads]);
+  }, [loadThreads, discardDraft]);
 
   // 초기 로드
   useEffect(() => {
@@ -236,7 +295,7 @@ export function ChatPage() {
         });
         if (r.kind === 'not_found') { handleThreadGone(tid); return; }
         if (r.kind !== 'ok') { if (r.kind === 'error') setError(r.error); return; }
-        await reloadMessages(tid);
+        await reloadMessages(tid, { afterSend: true });   // T-161 — 재조회가 실패해도 「전송은 됐다」를 먼저 알린다
         clearSentInput(content);
       } catch (e) {
         setError(String(e));
@@ -261,6 +320,11 @@ export function ChatPage() {
         return;
       }
       const d = r.body;
+      // T-161 — 이 초안은 `tid` 대화의 이력으로 만들어졌다. 확정 전송의 목적지를 **지금** 고정한다
+      // (정제가 도는 동안 사용자가 다른 대화로 옮겼더라도 초안은 요청한 대화에 속한다).
+      draftThreadIdRef.current = tid;
+      setDraftThreadId(tid);
+      setDraftContent(content);
       setDraftPrompt(d.draftPrompt as string);
       setDraftContext((d.attachedContext ?? []) as SymbolContext[]);
       setDraftMeta({ provider: d.draftProvider, model: d.draftModel, latencyMs: d.draftLatencyMs });
@@ -277,27 +341,37 @@ export function ChatPage() {
    * 그 다른 대화의 것이므로 건드리지 않고 목록만 갱신한다 — T-157 QA 결함 #1.
    * 대화 전환 로드 effect 의 `stale` 가드는 그 effect 의 조회만 막는다(여기는 전송·확정 뒤 재조회 경로라 그 가드가 닿지 않는다).
    */
-  const reloadMessages = useCallback(async (tid: number) => {
+  const reloadMessages = useCallback(async (tid: number, opts?: { afterSend?: boolean }) => {
+    // T-161 — `afterSend` 면 POST 가 이미 200 이었다. 조회가 실패해도 「전송이 됐는지」를 문구가 말해야 한다.
+    // 기본 문구를 바꿔 넘겨 `(HTTP nnn)` 형식을 유지하고, 조립은 `sentReloadFailedMessage` 가 보장한다.
+    const afterSend = opts?.afterSend === true;
     // 대상이 활성 대화일 때만 순번을 매긴다. 비활성이면 순번을 **건드리지 않고**(활성 대화의 진행 중 조회를
     // 무효화하지 않게) `-1` 로 둬 아래 가드에서 반드시 버려지게 한다 — 결과는 어차피 화면에 쓸 것이 아니다.
     const seq = activeIdRef.current === tid ? ++msgSeqRef.current : -1;
-    const r = await chatFetch(`/api/chat/threads/${tid}/messages`, '메시지 조회 실패');
+    const r = await chatFetch(
+      `/api/chat/threads/${tid}/messages`,
+      afterSend ? SENT_RELOAD_FAILED_PREFIX : '메시지 조회 실패',
+    );
     if (r.kind === 'unauthorized') return;      // 로그인 화면으로 이동 중 — 아무 상태도 쓰지 않는다
     // 늦은 응답 두 경우 — 보고 있는 대화가 바뀌었거나(ID), 같은 대화에서 더 새로운 조회가 시작됐다(순번).
     // 시작할 때 비활성이었던 재조회도 `seq === -1` 로 여기서 걸린다.
     // 화면(메시지·오류 띠)은 최신 결과의 것이므로 건드리지 않고, 목록만 갱신한다(보낸 메시지로 updatedAt 이 바뀐다).
     if (activeIdRef.current !== tid || msgSeqRef.current !== seq) { void loadThreads(); return; }
-    if (r.kind === 'not_found') { handleThreadGone(tid); return; }
+    // `afterSend` 면 POST 가 이미 200 이었다 — 「전송하지 못했습니다」로 안내하지 않는다(L-1).
+    if (r.kind === 'not_found') { handleThreadGone(tid, { sent: afterSend }); return; }
     if (r.kind === 'ok') setMessages(r.body.messages ?? []);
-    else setError(r.error);
+    else setError(afterSend ? sentReloadFailedMessage(r.error) : r.error);
     // 스레드 목록 갱신
     void loadThreads();
   }, [handleThreadGone, loadThreads]);
 
   const handleConfirmDraft = useCallback(async () => {
-    if (activeThreadId == null) return;
-    const tid = activeThreadId;
-    const content = input.trim();
+    // T-161 (ⓑ) — 목적지는 **초안을 만든 대화**다. 클릭 시점의 `activeThreadId` 를 쓰지 않는다. 그러지 않으면
+    // 옛 대화 이력으로 만든 초안이 지금 보고 있는 남의 대화에 저장된다(「7번 질문이 8번에 들어간다」).
+    const tid = draftThreadIdRef.current;
+    if (tid == null) { discardDraft(); setError(DRAFT_THREAD_GONE_MESSAGE); return; }
+    // 본문은 초안을 만든 그 글이다 — 그 사이 입력칸이 달라졌을 수 있다.
+    const content = draftContent;
     setStage('generating');
     try {
       const r = await chatFetch(`/api/chat/threads/${tid}/messages`, '응답 실패', {
@@ -312,26 +386,29 @@ export function ChatPage() {
       });
       if (r.kind === 'not_found') { handleThreadGone(tid); return; }
       if (r.kind !== 'ok') { if (r.kind === 'error') setError(r.error); return; }
-      await reloadMessages(tid);
+      await reloadMessages(tid, { afterSend: true });
       clearSentInput(content);
-      // 초안은 이 전송이 쓴 것이다. 전송 중(stage 'generating')에는 handleSend 가 막혀 새 초안이 생길 수 없으므로
-      // 다른 대화로 옮겼더라도 여기서 지울 초안은 이 전송 것뿐이다(화면에도 stage 가 'review' 가 아니라 안 보인다).
-      setDraftPrompt('');
-      setDraftContext([]);
-      setDraftMeta(null);
+      // 보고 있는 대화가 보낸 대화가 아니면 어디에 저장했는지 알린다 — 판정은 **응답이 온 뒤**에 한다
+      // (전송하는 동안 옮겼을 수 있다). 재조회가 404 였으면 `handleThreadGone` 이 초안을 버려 ref 가
+      // 비어 있으므로 그 404 안내를 이 문구로 덮지 않는다.
+      const draftAlive = draftThreadIdRef.current === tid;
+      if (draftAlive && activeIdRef.current !== tid) {
+        setError(SENT_TO_OTHER_THREAD_MESSAGE(threads.find(t => t.id === tid)?.title ?? '대화'));
+      }
     } catch (e) {
       setError(String(e));
     } finally {
+      // 성공·실패 모두 검토 카드를 닫는다(기존 동작). 전송 중에는 handleSend 가 막혀 새 초안이 생길 수 없으므로
+      // 여기서 지울 초안은 이 전송 것뿐이다.
+      clearDraft();
       setStage('idle');
     }
-  }, [activeThreadId, input, draftPrompt, draftContext, selectedModel, reloadMessages, handleThreadGone, clearSentInput]);
+  }, [draftContent, draftPrompt, draftContext, selectedModel, threads, reloadMessages, handleThreadGone, clearSentInput, clearDraft, discardDraft]);
 
   const handleCancelDraft = useCallback(() => {
     setStage('idle');
-    setDraftPrompt('');
-    setDraftContext([]);
-    setDraftMeta(null);
-  }, []);
+    clearDraft();
+  }, [clearDraft]);
 
   const handleNewThread = useCallback(async () => {
     activeIdRef.current = null;   // 늦은 응답 가드가 렌더 시점에 기대지 않게(아래 onSelect 도 같다)
@@ -348,10 +425,21 @@ export function ChatPage() {
     if (r.kind !== 'ok') { if (r.kind === 'error') setError(r.error); return; }
     setThreads(prev => prev.filter(t => t.id !== id));
     if (activeIdRef.current === id) { activeIdRef.current = null; setActiveThreadId(null); setMessages([]); }
-  }, [handleThreadGone]);
+    // T-161 — 지운 대화로 보낼 초안이 걸려 있으면 보낼 곳이 없다(「확정 전송」이 무반응이 되던 경로).
+    if (draftThreadIdRef.current === id) { discardDraft(); setError(DRAFT_THREAD_GONE_MESSAGE); }
+  }, [handleThreadGone, discardDraft]);
 
   const dropContext = (symbol: string) =>
     setDraftContext(prev => prev.filter(c => c.symbol !== symbol));
+
+  /**
+   * T-161 — 초안을 만든 대화가 지금 보고 있는 대화와 **다를 때만** 그 제목(검토 카드 머리글 한 줄용).
+   * 같으면 null → 한 줄이 나타나지 않는다. 목록에 없는 대화(막 지워졌다 등)는 헤더와 같은 표기(`대화`)를 쓴다.
+   */
+  const draftAwayTitle = useMemo(() => {
+    if (draftThreadId == null || draftThreadId === activeThreadId) return null;
+    return threads.find(t => t.id === draftThreadId)?.title ?? '대화';
+  }, [draftThreadId, activeThreadId, threads]);
 
   const stageLabel = useMemo(() => {
     if (stage === 'drafting')   return '🤖 분석가가 정제 중...';
@@ -415,6 +503,7 @@ export function ChatPage() {
           onDropContext={dropContext}
           meta={draftMeta}
           edited={draftEdited}
+          awayTitle={draftAwayTitle}
           onConfirm={handleConfirmDraft}
           onCancel={handleCancelDraft}
         />
@@ -456,12 +545,17 @@ export function ChatPage() {
 }
 
 // ── Error ───────────────────────────────────────────────────────────────
-/** 기존 오류 띠(모양 그대로). 대화 목록이 열려 있으면 목록 안에도 같은 띠를 보인다(덮개에 가려지지 않게 — T-157 삭제 실패). */
+/**
+ * 기존 오류 띠(모양 그대로). 대화 목록이 열려 있으면 목록 안에도 같은 띠를 보인다(덮개에 가려지지 않게 — T-157 삭제 실패).
+ * T-161 — `SENT_NOTICE_PREFIX` 로 시작하는 문구는 **전송이 성공한** 안내다. 빨강으로 두면 실패로 읽혀
+ * 사용자가 같은 글을 다시 보내게 되므로 호박색 + `role="status"` 로 바꾼다(`--accent` 재사용, 새 색 아님).
+ */
 function ChatErrorBar({ message, onClose }: { message: string; onClose: () => void }) {
+  const notice = message.startsWith(SENT_NOTICE_PREFIX);
   return (
-    <div role="alert" style={{ padding: 8, background: 'rgba(239,68,68,.15)', color: 'var(--down)', fontSize: 12, textAlign: 'center' }}>
+    <div role={notice ? 'status' : 'alert'} style={{ padding: 8, background: notice ? 'rgba(245,158,11,.15)' : 'rgba(239,68,68,.15)', color: notice ? 'var(--accent)' : 'var(--down)', fontSize: 12, textAlign: 'center' }}>
       {message}
-      <button onClick={onClose} aria-label="오류 닫기" style={{ marginLeft: 8, background: 'none', border: 'none', color: 'var(--down)', cursor: 'pointer' }}>×</button>
+      <button onClick={onClose} aria-label={notice ? '안내 닫기' : '오류 닫기'} style={{ marginLeft: 8, background: 'none', border: 'none', color: notice ? 'var(--accent)' : 'var(--down)', cursor: 'pointer' }}>×</button>
     </div>
   );
 }
@@ -541,7 +635,7 @@ function StatusBubble({ label }: { label: string }) {
 
 // ── DraftReview ─────────────────────────────────────────────────────────
 function DraftReview({
-  prompt, onPromptChange, context, onDropContext, meta, edited, onConfirm, onCancel,
+  prompt, onPromptChange, context, onDropContext, meta, edited, onConfirm, onCancel, awayTitle = null,
 }: {
   prompt: string;
   onPromptChange: (p: string) => void;
@@ -551,6 +645,8 @@ function DraftReview({
   edited: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** T-161 — 초안을 만든 대화가 보고 있는 대화와 다를 때 그 제목. 같으면 null(한 줄이 나타나지 않는다). */
+  awayTitle?: string | null;
 }) {
   return (
     <div style={{ borderTop: '2px solid var(--accent)', padding: '8px 10px', background: 'var(--bg2)', flexShrink: 0 }}>
@@ -558,6 +654,14 @@ function DraftReview({
         🤖 분석가 정제 프롬프트
         {meta && <span style={{ marginLeft: 6 }}>· {meta.model} · {(meta.latencyMs / 1000).toFixed(1)}s</span>}
       </div>
+      {/* T-161 — 어느 대화로 가는지 누르기 전에 알린다. 색만으로 전달하지 않고 글로 담는다(↩ 는 장식). */}
+      {awayTitle && (
+        <div style={{ display: 'flex', gap: 4, alignItems: 'baseline', marginBottom: 5, fontSize: 12, color: 'var(--accent)', fontWeight: 600 }}>
+          <span aria-hidden="true">↩</span>
+          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 700 }}>「{awayTitle}」</span>
+          <span style={{ flexShrink: 0 }}>대화로 전송합니다</span>
+        </div>
+      )}
       <textarea
         value={prompt}
         onChange={(e) => onPromptChange(e.target.value)}
