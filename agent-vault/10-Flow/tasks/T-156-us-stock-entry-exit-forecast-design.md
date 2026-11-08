@@ -2,7 +2,7 @@
 task_id: T-156
 title: 미국 종목분석의 매수·매도 시점 개선안 조사
 status: doing
-waiting: ["승인된 UI v2의 자동 승인 기록 실패 처리 방식 응답", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
+waiting: ["검증된 M40 조회 화면 운영 반영", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
 priority: medium
 base_ref: 8984f69ddd5581c45c919193a535f5b1b359765d
 roles_involved: [leader, developer, reviewer, qa]
@@ -14,27 +14,28 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "분석 탭 M40 조회 화면 추가. 실제 사용자 v2 승인·계정 확인 완료, 전용 viewer 연결/실DB읽기 검증 완료. 자동 데모 승인 영수증 미연결 처리 선택 대기, 화면 소스·배포 미착수. 실거래 OFF 유지"
-  last_event_id: exec-047
+  current_scope: "분석 탭 M40 조회 화면 추가. 실제 사용자 v2 승인·계정 확인 완료, 전용 viewer 연결/실DB읽기 검증 완료. 공통 승인 도구 지원 보완193검사·실제v2승인연결/check통과. 승인된 화면 구현 진행, 실거래 OFF 유지"
+  last_event_id: exec-050
 created: 2026-11-06
 updated: 2026-11-08
 demo_gate:
   required: true
   level: "full"
-  status: "review_requested"
+  status: "approved"
   version: 2
   repo_path: "mockups/T-156-m40-paper-analysis-v2.html"
   artifact_url: "http://127.0.0.1:8786/T-156-m40-paper-analysis-v2.html"
   content_sha256: "9d1197c42d99fc3d64bd20d3b6d267702174ea1f637ea0fdf9bc4b569db6cb07"
   decided_by: "judge"
   rule_id: "JV-ui_change"
-  approved_by: ""
-  approved_at: ""
-  approval_quote: ""
+  approved_by: "user"
+  approved_at: "2026-11-08T15:57:06+09:00"
+  approval_quote: "v2 구성으로 구현 진행"
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
-  active: false
+  active: true
+  approval_source: "codex_native_transcript"
 ---
 
 # T-156 — 미국 종목분석의 매수·매도 시점 개선안 조사
@@ -90,6 +91,9 @@ demo_gate:
 | exec-045 | 2026-11-08 | user_approval | codex → codex / codex_scoped | 실제질문응답원문‘v2 구성으로 구현 진행’과조회계정이메일확인. 동일승인·이메일재질문금지 | 실제user role native응답,이메일원문repo미보존 |
 | exec-046 | 2026-11-08 | gate_record_refused | codex → codex / codex_scoped | approve-codex-context가승인기록미연결로거부. 실제승인과도구실패분리,상태임의수정/영수증재생/훅재생안함. 이번작업예외or도구지원보완처리방식응답대기 | 자동거부원문·Reviewer절차대조 |
 | exec-047 | 2026-11-08 15:14 | db_bind / read_verify | codex → codex / codex_scoped | 승인된계정1개조회권한연결·원장/설정불변. 실제reader출처4그룹/적격123/리허설시그널4/비viewer거부확인. 화면코드·배포는미착수 | paper-viewer-binding-receipt.json/paper-view-operating-read-receipt.json |
+| exec-048 | 2026-11-08 15:31 사용자 답변 | tool_support_approved | codex → codex / codex_scoped | 사용자 ‘승인 도구 지원부터 보완’ 선택. 공통 도구의 질문응답·등록 worktree 지원을 격리 사본에서 수정·독립감사한 뒤 기존 실제 v2 승인을 연결한다. 같은 승인 재질문·수동 상태변경·훅 재생 금지 | 실제 native 사용자 응답. 기존 승인·실거래 OFF 유지 |
+| exec-049 | 2026-11-08 15:57 | tool_support / native_approval_verified | codex → codex / codex_scoped | 공유승인도구14파일보완·독립review/QA/적용후193개통과. 실제원래v2답변native복구성공·check/activate통과. 화면구현재개,실거래OFF | finalmanifest985d1bd6/독립보고서/실제source codex_native_transcript 영수증 |
+| exec-050 | 2026-11-08 16:20 | ui_implementation / QA / CUA | codex → codex / codex_scoped | 기존메뉴보존M40조회4영역구현,선정미매수제약whitelist보완,독립정적감사/360tests/타입/build/360·412·1280CUA통과. 최종실DBreadonly123적격/4모의신호/비viewer거부. 운영반영준비 | UI보고서/manifest8c9301db/독립리뷰0393dd16/QAfd65d085/운영읽기영수증 |
 
 ## 목표
 
@@ -1610,6 +1614,8 @@ Reviewer 후속 정적 재검토: 초기 후보군 미확정이면 부분 입력
 Reviewer 조건 갱신: 루트가 수정 후 격리 MariaDB/실제 런타임 12개 검사 전체 통과를 보고했다. 부분 초기 응답의 blocked·종이 시그널 0·후보군 미확정에서 같은 날 전체 응답의 rehearsal·123종목 동결로 복구되는 사례가 포함된다. QA는 수정본 23개 SHA 9157803c5cd774db8c09fe22c9010cf334c0610cc47526eb6c327e962af86aae 기준 65 suites / 1,594 tests 통과, 15 skipped, tsc/build 성공을 보고했다. 위 통합·QA 조건은 전달된 실행 결과 기준 충족이며 Reviewer가 직접 실행하거나 원격 영수증을 독립 확인한 것은 아니다. 기존 CONDITIONAL_PASS scope와 운영 배포·실거래·수익성은 별개라는 제한을 유지한다.
 Codex 독립 Reviewer t156_reviewer 추가 정적 감사: owner 로그인·명시 viewer 확인 뒤 일관 읽기, 종이 신호·판단의 제한된 응답, 공개 범위와 raw JSON 미반환, forward 관측점 기반 성과와 blocked/stale 구분을 확인했다. 불확실한 트랜잭션 연결 폐기, 출처별 집계, 유효 UTC 시각 검증 지적은 수정 후 코드/시험 본문을 재검토했다. 최종 시각 수정 이후 focused QA와 tsc 및 실제 격리 DB 권한·쿼리 재검증은 별도 진행 조건이며 Reviewer가 실행하지 않았다. 화면 데모 v2 사용자 승인과 owner 이메일/명시 viewer 연결은 미완료이고 운영 반영이나 실거래 승인으로 해석하지 않는다. 기존 범위를 보존해 여섯 신규 파일을 최종 scope에 추가한다.
 최종 판정: CONDITIONAL_PASS (scope: src/lib/strategy/m40/types.ts, src/lib/strategy/m40/core.ts, src/lib/strategy/m40/load-input.ts, src/lib/strategy/m40/archive-reader.ts, src/lib/strategy/m40/runner.ts, src/lib/strategy/m40/advisory.ts, src/lib/strategy/m40/observer.ts, src/lib/analysis-data/types.ts, src/lib/analysis-data/store.ts, src/lib/analysis-data/capture-operating-data.ts, src/app/api/cron/m40-analysis/route.ts, src/app/api/cron/post-market-analysis/route.ts, src/app/api/research/t156/route.ts, src/lib/profit-engine/daily-bars-store.ts, scripts/t156/archive-lib.mjs, scripts/t156/archive-operator.mjs, scripts/t156/transform-dump.mjs, scripts/t156/source-manifest.py, scripts/migrations/T-156-analysis-archive.sql, src/lib/strategy/m40/__tests__/advisory.test.ts, src/lib/strategy/m40/__tests__/core.test.ts, src/lib/strategy/m40/__tests__/load-input.test.ts, src/lib/strategy/m40/__tests__/observer.test.ts, src/lib/strategy/m40/__tests__/routes.test.ts, src/lib/strategy/m40/__tests__/runner.test.ts, src/lib/analysis-data/__tests__/capture-operating-data.test.ts, src/lib/analysis-data/__tests__/store.test.ts, src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts, src/lib/profit-engine/__tests__/daily-bars-collector.test.ts, scripts/t156/archive-lib.test.mjs, scripts/t156/verify-restore.py, scripts/t156/archive-import.mjs, scripts/t156/archive-import.test.mjs, src/lib/strategy/m40/__tests__/archive-reader.test.ts, src/lib/strategy/m40/load-evidence.ts, src/lib/strategy/m40/operating-evidence.ts, src/lib/strategy/m40/__tests__/load-evidence.test.ts, src/lib/strategy/m40/__tests__/operating-evidence.test.ts, src/lib/strategy/m40/forward-types.ts, src/lib/strategy/m40/forward-input.ts, src/lib/strategy/m40/forward-calendar.ts, src/lib/strategy/m40/forward-sources.ts, src/lib/strategy/m40/forward-store.ts, src/lib/strategy/m40/forward-runtime.ts, src/lib/strategy/m40/paper-ledger.ts, src/lib/strategy/m40/__tests__/forward-input.test.ts, src/lib/strategy/m40/__tests__/forward-calendar.test.ts, src/lib/strategy/m40/__tests__/forward-sources.test.ts, src/lib/strategy/m40/__tests__/forward-store.test.ts, src/lib/strategy/m40/__tests__/forward-route.test.ts, src/lib/strategy/m40/__tests__/paper-ledger.test.ts, src/app/api/cron/m40-forward/route.ts, src/lib/safety/dry-run.ts, src/lib/safety/__tests__/m40-paper-order-fence.test.ts, src/lib/exchanges/types.ts, scripts/cron-runner.sh, scripts/test-cron-runner-m40-forward.sh, scripts/migrations/T-156-forward-paper.sql, src/lib/safety/__tests__/order-limits.test.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/__tests__/paper-view.test.ts, src/lib/strategy/m40/__tests__/paper-view-route.test.ts, src/app/api/research/t156/paper/route.ts, scripts/migrations/T-156-paper-viewer.sql)
+- [16:10] Codex 독립 Reviewer `approval_support_review`가 승인 v2와 M40 조회 화면·새 warning 투영 11파일을 정적 감사했다. 실제 공통 게이트 재검사에서 approved/v2·원본 SHA 일치를 직접 확인했다. M40 진입 시 제목 노출·복귀 focus와 선정됐지만 매매 의도가 없는 종목의 저장된 제약 사유 누락을 지적했고, 수정된 코드·회귀시험 본문을 재검토했다. warning은 같은 회차 종목·허용 코드만 최대150개 반환하며 원문 message·금액·임의 JSON은 제외한다. 서명 로그인·명시 viewer/users 확인 후 읽기 전용 일관 스냅샷, GET 재조회, 오류 때 비공개 DTO 제거, blocked/이전 저장분·리허설/전진·결측/0 구분을 확인했다. `git diff --check` 외 기능시험은 Reviewer가 실행하지 않았으며 Ubuntu QA·type/build·CUA·실제 로그인 화면·배포는 별도 증거다. 판정 근거: `agent-vault/10-Flow/artifacts/T-156-m40-ui-implementation-review/review-result.json`, 11파일 manifest SHA `308781e186454b1146beedadff4c9445caf549ed96ae0257094ba67d28b16ae3`. 이후 소스 변경 시 이 판정은 재검토한다.
+- [16:10] **최종 판정: PASS (scope: src/app/analytics/AnalyticsPage.tsx, src/app/analytics/TodayPanel.tsx, src/app/analytics/route-resolve.ts, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/M40PaperPanel.module.css, src/app/analytics/m40-paper-copy.ts, src/__tests__/fixtures/t156-paper-view.ts, src/__tests__/t156-paper-view-render.test.ts, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/__tests__/paper-view.test.ts)**
 ## QA
 
 Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했다. Jest 55 suites / 1,343 tests 통과, 기존 별도 MariaDB 경합 suite 1개·15 tests는 미실행으로 분리한다. 새 T-156 MariaDB 저장소 14 tests 통과(실제 InnoDB 대기 확인 경합2 포함), tsc 및 archive 4 tests 통과. DRY_RUN·킬스위치·한도·블랙리스트·감사로그·검증 관문의 모의 회귀를 포함하며 whitelist는 현재 항상허용 규칙이다.
@@ -1656,6 +1662,7 @@ F14 최종 보완: c296116배포(RELEASE_RESULTok/END0,20261108-135514-c2961167)
 |---|---|---|---|---|---|
 | - | 작성중 | - | - | judge: full (JV-ui_change) | 11-08 14:48 |
 | v2 | 검토요청 | mockups/T-156-m40-paper-analysis-v2.html | http://127.0.0.1:8786/T-156-m40-paper-analysis-v2.html | 사용자 검토 요청 | 11-08 14:58 |
+| v2 | 승인 | mockups/T-156-m40-paper-analysis-v2.html | http://127.0.0.1:8786/T-156-m40-paper-analysis-v2.html | "v2 구성으로 구현 진행" | 11-08 15:57 |
 
 
 ### F15 M40 모의분석 앱 조회 — 사용자 승인·자동 기록 실패 분리
@@ -1675,3 +1682,13 @@ QA는시각수정전관련27 suites/533 PASS/2 SKIP·tsc0,이전합성실DB권�
 증거원본은Ubuntu `~/.node-local/t156-implementation-20261108/`의paper-view-qa/paper-view-final-qa/paper-view-time-final-qa 및binding/read영수증에보존한다. 격리합성DB는QA가종료후삭제했고,실제실행toolinput에서복원한fixture는복원출처와원본hash독립대조불가를표시했다. QA가시작한전용컨테이너는중지·볼륨보존했다. 앱화면/실제세션/배포성공/전체UI완료로확대하지않는다.
 
 F15 준비본은 로컬 브랜치 28bcf08로커밋했고 push/새코드배포는하지않았다. source6파일·데모2개·합성스크린샷·QA3판본·명시적권한연결/실제읽기영수증을 원본 파일별 SHA 목록과 함께 paper-view-preparation-evidence-20261108.tar.gz(145,639bytes,SHAe8a8b3e0a61b6562bbf57b1518346e22cf84bb248d8e4e2763019ad953455290)로묶어DB테스트이력에저장/복원SHA일치했다. 실제모의금액/보유수량/이메일/인증정보/원본입력은포함하지않았다. 현재남은일은자동승인기록실패처리방식응답후승인된v2화면소스구현·기존화면보존검증·통합리뷰/QA/배포이다.
+
+### F16 승인 도구 지원 보완 착수 (2026-11-08)
+
+사용자가 기록 예외 대신 ‘승인 도구 지원부터 보완’을 선택했다. 현재 공유 도구는 `request_user_input_async` 응답과 등록된 Codex worktree의 경로를 지원하지 않는다. 원본 사용자 승인은 유효하며, 도구 영수증 미연결과 구분한다. 도구 소스는 Git 저장소가 아닌 워크스페이스 공통 경로에 있어, 원본 SHA 목록을 보존한 격리 사본에서 구현·회귀검증·독립감사하고 파일별 사전 SHA 대조 후 반영한다. 기존 96개 회귀검사는 모두 통과했다. 실제 과거 응답은 transcript에서 원래 질문 ID·사용자 메시지 ID·세션·작업 경로·검토 버전/파일 SHA를 대조하는 명시적 복구 절차로만 연결하며, 과거 훅 실행이나 영수증을 만들어 내지 않는다. 당시 질문은 검토 등록보다 약13초 빨랐으나 응답은 등록 이후여서, 이 순서도 숨기지 않고 별도 복구 판정으로 검증한다. 화면 구현은 정상 check 통과 뒤에 시작한다.
+
+F16 완료: 독립 감사·QA 및 공유 원본 적용 후193/193 통과, 실제 원래v2승인 연결·check/activate 통과. 수동 gate편집/훅재생/재승인 없음. 상세 `docs/implementation/2026-11-08-t156-approval-tool-support.md`. 승인된 화면 구현을 이어가며 미래전진 표본은 별도 대기다.
+
+### F17 M40 조회 화면 최종 구현·검증
+
+기존3분류/5메뉴를 유지하고 M40 입구·4영역·권한오류시비공개자료숨김·최신차단/이전자료구분을 구현했다. source11파일 독립정적감사통과, Ubuntu20스위트360검사/tsc/build통과 및 실제컴포넌트CUA360/412/1280검증완료. 운영DB 최종읽기는125참조/123적격/126판단대상/제약5/리허설신호4이며 전진은미시작·쓰기/실주문없음. 상세 `docs/implementation/2026-11-08-t156-m40-ui-implementation.md`. 운영 반영 후 실제인증화면/안드로이드는 사용자확인 범위로 구분한다.

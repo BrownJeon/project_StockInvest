@@ -4,6 +4,7 @@ export interface PaperViewCycle {
  collection:{referenceCount:number|null;qualifiedCount:number|null;cutoffAt:null;actualReceiptAt:string|null;provenanceStatus:'available'|'unknown';sources:{sourceId:string;kind:string;sourceVariant:string;observations:number;symbolCount:number;latestSession:string;firstReceiptAt:string;lastReceiptAt:string;lastAvailableAt:string;publicationAt:null}[];news:'unknown';disclosures:'unknown';issues:string[]};
  eligibility:{symbol:string;eligible:boolean;inFrozenCohort:boolean;issues:string[]}[];
  candidates:{symbol:string;status:string;momentum:number|null;rank:number|null;selected:boolean;reason:string}[];
+ warnings:{symbol?:string;code:string}[];
  decisions:{symbol:string;action:string;reason:string;quantity:number|null}[];
  judgments:{stage:string;status:string;reason:string|null}[];
 }

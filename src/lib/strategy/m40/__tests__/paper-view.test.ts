@@ -1,6 +1,6 @@
 import { gzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
-import { paperPerformance,paperViewLimits,readPaperView,PaperViewError,readPaperSourceSummary,projectPaperSignal } from '../paper-view';
+import { paperPerformance,paperViewLimits,readPaperView,PaperViewError,readPaperSourceSummary,projectPaperSignal,projectPaperWarnings } from '../paper-view';
 import type { ArchiveQueryable } from '@/lib/analysis-data/types';
 const point=(session:string,mode:string,equityUsd:number)=>({session,mode,payload_json:{equityUsd,returnSinceClone:999,drawdown:-999}});
 describe('owner paper viewer',()=>{
@@ -88,6 +88,11 @@ describe('owner paper viewer',()=>{
  }
  const projected=projectPaperSignal({symbol:'NAS:AAPL',createdAt:'2026-11-08T01:02:03.123456Z',outcome_json:{observedAt:'2026-11-08T01:02:03Z'}});
  expect(projected?.createdAt).toBe('2026-11-08T01:02:03.123456Z');expect(projected?.outcome?.observedAt).toBe('2026-11-08T01:02:03.000000Z');
+ });
+
+ test('plan warning projection keeps known causes for this run roster only and strips private fields',()=>{
+ const result=projectPaperWarnings([{symbol:'NAS:AAPL',code:'insufficient_settled_cash',message:'PRIVATE cash amount',privateKey:'PRIVATE'},{symbol:'NAS:UNRELATED',code:'account_slot_limit'},{symbol:'unprefixed',code:'account_slot_limit'},{symbol:'NAS:AAPL',code:'invented',message:'PRIVATE'},{code:'market_history_missing',message:'PRIVATE'}],new Set(['NAS:AAPL']));
+ expect(result).toEqual([{symbol:'NAS:AAPL',code:'insufficient_settled_cash'},{code:'market_history_missing'}]);expect(JSON.stringify(result)).not.toContain('PRIVATE');
  });
 
 });

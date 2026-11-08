@@ -107,6 +107,7 @@ export function TodayPanel(p: { stage: OpsStage | null; displaySymbol: (s: strin
             <InPageRow href="?tab=research" onGo={() => p.onGoDetail('research')} glyph="▤" title={researchTitle} sub="기존 리서치분석 — 과거 통계 관찰용, 자동매매와 별개" />
             <InPageRow href="?tab=leaderboard" onGo={() => p.onGoDetail('leaderboard')} glyph="▲" title="주도주" sub="기존 화면 그대로" />
             <CheckRow severity="n" glyph="☆" href="/favorites" title="관심 종목 관리 (현재 즐겨찾기)" sub="추가·삭제·메모·리서치 추적 설정 그대로 — 분석 대상 입력이므로 없애지 않음" />
+            <InPageRow href="?tab=m40" onGo={() => p.onGoDetail('m40')} glyph="▤" title="M40 모의분석" sub="수집 · 종목 판단 · 모의 매수·매도 · 모의성과 / 실주문 없음" />
           </Rows>
           {d && rc && !hasValue(rc) && rc.state === 'error' ? <EmptyNote><StatusChip kind="error">{CHIP.error(rc.reason ?? 'error')}</StatusChip></EmptyNote> : null}
         </Section>

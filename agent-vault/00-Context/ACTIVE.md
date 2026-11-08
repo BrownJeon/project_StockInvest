@@ -6,11 +6,18 @@ tags:
 ---
 # 현재 상태
 
+## 2026-11-08 15:57 — T-156 승인 도구 지원 보완·실제 v2 승인 연결 완료
+
+- 사용자가 예외 대신 도구 지원 보완을 선택해 공유 도구14파일을 격리 수정·독립 감사/QA·원본 해시 대조/백업 후 반영했다. 독립/적용 후 각193개 검사 통과. 훅 정의/신뢰/강제모드·운영DB·거래설정 변경 없음.
+- 실제 원래v2 사용자 답변·질문ID·메시지/완료이벤트·등록worktree·데모SHA를 대조한 명시적 native 복구 성공, 공식check/activate통과. 훅재생/수동승인/재질문 없음. 원본 대화·이메일을 제외한 증거 archive SHA d0b66dc1d6f8cc5f2b8300b5edc0ad3c0f8518a1849a79e9ac04f88ee25cfa7c.
+- 승인된 화면 구현 재개. 상세 `docs/implementation/2026-11-08-t156-approval-tool-support.md`, task F16. 아래15:14의 처리 선택 대기는 해소됐다. 실거래OFF 유지.
+
+
 ## 2026-11-08 15:14 — T-156 M40 조회 화면 준비·자동 승인 기록 처리 대기
 
 - 사용자 v2 데모 승인(‘v2 구성으로 구현 진행’)과 조회 이메일 확인은 완료. 전용 viewer 한 계정만 연결·원장/설정 불변, 실제 SELECT reader125참조/123적격/리허설4신호·비viewer거부 검산.
 - 기존 메뉴를 유지한 v2 데모를360/412/1280 CUA로확인. 신규readonly API6파일·시험준비, 최종15 tests/tsc통과(이전533/2skip·합성DB2와범위분리).
-- 자동 approve-codex-context는원문영수증미연결로거부. demo_gate는review_requested/v2그대로,수동승인/훅재생없음. Reviewer가check未통과화면수정을보류하여,이번T156만기록예외또는도구지원보완처리방식응답대기. 같은v2승인/이메일은다시묻지않음.
+- 자동 approve-codex-context는원문영수증미연결로거부. demo_gate는review_requested/v2그대로,수동승인/훅재생없음. Reviewer가check未통과화면수정을보류하여,사용자가‘승인도구지원부터보완’을선택.공유도구보완193검사통과·실제v2원문복구/check통과하여화면구현재개. 같은v2승인/이메일은다시묻지않음.
 - 화면 소스·배포는 아직 미착수이며 기존실거래OFF. 상세 [[T-156-us-stock-entry-exit-forecast-design]] F15 및 docs/design/2026-11-08-t156-m40-paper-view-review.md.
 
 

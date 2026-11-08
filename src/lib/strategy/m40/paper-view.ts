@@ -51,6 +51,15 @@ export async function readPaperSourceSummary(hash:unknown,db:ArchiveQueryable):P
  return {sources,actualReceiptAt,provenanceStatus:'available'};
  }catch{return unknown;}
 }
+const PAPER_WARNING_CODES=new Set(['symbol_owned_by_other_strategy','account_slot_limit','insufficient_settled_cash','entry_quote_unknown','symbol_history_missing','market_history_missing','universe_incomplete','invalid_account_input','invalid_session_input','invalid_price_observation','invalid_raw_quote','membership_unknown','holding_membership_missing']);
+/** Only known diagnostic codes; raw warning text and unrelated symbols are never exposed. */
+export function projectPaperWarnings(input:unknown,allowedSymbols:ReadonlySet<string>):PaperViewCycle['warnings'] {
+ return array(input).slice(0,150).flatMap(w=>{
+ if(typeof w.code!=='string'||!PAPER_WARNING_CODES.has(w.code))return [];
+ if(w.symbol===undefined)return [{code:w.code}];
+ const sym=symbol(w.symbol);return sym&&allowedSymbols.has(sym)?[{symbol:sym,code:w.code}]:[];
+ });
+}
 async function projectCycle(row:Row, referenceCount:number|null,db:ArchiveQueryable):Promise<PaperViewCycle>{
  const payload=object(row.payload_json),eligibility=object(payload.eligibility);
  const runId=typeof payload.sourceRunId==='string'&&/^[a-zA-Z0-9_-]{1,96}$/.test(payload.sourceRunId)?payload.sourceRunId:null;
@@ -58,10 +67,12 @@ async function projectCycle(row:Row, referenceCount:number|null,db:ArchiveQuerya
  if(runId){const [runs]=await db.query<Row[]>('SELECT plan_json FROM t156_analysis_run WHERE run_id=?',[runId]);plan=object(runs[0]?.plan_json);[judgments]=await db.query<Row[]>(`SELECT stage,status,JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.reason')) reason FROM t156_judgment WHERE run_id=? ORDER BY stage LIMIT 4`,[runId]);}
  const perSymbol=array(eligibility.perSymbol).slice(0,150);
  const sourceSummary=await readPaperSourceSummary(payload.provenanceBlobSha256,db);
+ const allowedSymbols=new Set([...perSymbol,...array(plan.candidates).slice(0,150)].flatMap(p=>{const s=symbol(p.symbol);return s?[s]:[];}));
  return {id:String(row.id),session:day(row.session)??'unknown',decisionAt:time(row.decisionAt)??'unknown',mode:row.mode as PaperViewCycle['mode'],sourceRunId:runId,errorCode:payload.errorCode?code(payload.errorCode):null,
  collection:{referenceCount,qualifiedCount:eligibility.perSymbol?perSymbol.filter(p=>p.eligible===true).length:null,cutoffAt:null,...sourceSummary,news:'unknown',disclosures:'unknown',issues:codes(eligibility.issues)},
  eligibility:perSymbol.flatMap(p=>{const s=symbol(p.symbol);return s?[{symbol:s,eligible:p.eligible===true,inFrozenCohort:p.inFrozenCohort===true,issues:codes(p.issues)}]:[];}),
  candidates:array(plan.candidates).slice(0,150).flatMap(p=>{const s=symbol(p.symbol);return s?[{symbol:s,status:code(p.status),momentum:finite(p.momentum),rank:amount(p.rank),selected:p.selected===true,reason:code(p.reason)}]:[];}),
+ warnings:projectPaperWarnings(plan.warnings,allowedSymbols),
  decisions:array(plan.decisions).slice(0,150).flatMap(p=>{const s=symbol(p.symbol);return s?[{symbol:s,action:['buy','sell','hold'].includes(String(p.action))?String(p.action):'unknown',reason:code(p.reason),quantity:amount(p.quantity)}]:[];}),
  judgments:judgments.map(j=>({stage:code(j.stage),status:code(j.status),reason:safeReason(j.reason)}))};
 }

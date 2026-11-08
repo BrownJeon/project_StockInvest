@@ -11,7 +11,7 @@
  * 주소를 읽는다 — 본문은 hydration 불일치 없이 서버 렌더 그대로, 하단 탭 재탭·뒤로 가기에도 주소를 따른다.
  * 화면 안 이동은 상태 + `router.replace('?tab=…', { scroll: false })`.
  */
-import { Suspense, useCallback, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
 import { useSafetyState } from '@/components/ops/useSafetyState';
@@ -22,6 +22,7 @@ import { SignalDiagnosticsTab }  from './components/SignalDiagnosticsTab';
 import { LeaderboardTab }        from './components/LeaderboardTab';
 import { ResearchTab }           from './components/ResearchTab';
 import { ANALYTICS_DETAILS, ANALYTICS_SEGMENTS, analyticsQuery, resolveAnalyticsRoute, type AnalyticsDetail, type AnalyticsSegment } from './route-resolve';
+import { M40PaperPanel } from './M40PaperPanel';
 import { TodayPanel } from './TodayPanel';
 import { VerifyPanel } from './VerifyPanel';
 import { DataPanel } from './DataPanel';
@@ -39,6 +40,25 @@ export function AnalyticsPage() {
   const router = useRouter();
   const [view, setView] = useState<View>({ seg: 'today', detail: null });
   const [stripH, setStripH] = useState(0);
+  const previousDetail = useRef<AnalyticsDetail | null>(null);
+  useEffect(() => {
+    const previous = previousDetail.current;
+    previousDetail.current = view.detail;
+    if (view.detail === 'm40') {
+      const heading = document.getElementById('m40-detail-title');
+      if (!heading) return;
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+      const tabs = document.querySelector('[aria-label="분석 하위 화면"]')?.parentElement;
+      const stickyBottom = tabs?.getBoundingClientRect().bottom ?? stripH + 60;
+      window.scrollBy({ top: heading.getBoundingClientRect().top - stickyBottom - 12, behavior: 'auto' });
+    } else if (previous === 'm40' && view.detail === null && view.seg === 'today') {
+      document.querySelector<HTMLAnchorElement>('a[href="?tab=m40"]')?.focus();
+    }
+    // Focus changes only when entering/leaving this detail, not on safety-strip polls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.detail, view.seg]);
+
   const safety = useSafetyState();
   const { displaySymbol } = useSymbolMeta();
 
@@ -62,8 +82,9 @@ export function AnalyticsPage() {
     const d = ANALYTICS_DETAILS[view.detail];
     body = (
       <>
-        <DetailHead segText={segText(d.seg)} title={d.title} onBack={() => go({ seg: d.seg, detail: null })} />
+        <DetailHead id={view.detail === 'm40' ? 'm40-detail-title' : undefined} segText={segText(d.seg)} title={d.title} onBack={() => go({ seg: d.seg, detail: null })} />
         <div style={{ padding: '12px 16px' }}>
+          {view.detail === 'm40' && <M40PaperPanel />}
           {view.detail === 'portfolio'   && <PortfolioTab />}
           {view.detail === 'leaderboard' && <LeaderboardTab />}
           {view.detail === 'research'    && <ResearchTab />}
