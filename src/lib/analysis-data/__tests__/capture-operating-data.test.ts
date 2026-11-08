@@ -159,6 +159,30 @@ describe('operating collector incremental research capture', () => {
     expect(new Set(db.sourceRecords('daily_bars').map(record => record.record_key)).size).toBe(2);
   });
 
+  test('ASCII binary key comparison preserves the UTF-8 source version hash and deduplicates non-ASCII news', async () => {
+    const db = new CaptureDb();
+    const unicode = item({ title: '분기 실적 🧾', snippet: '매출 변화：＋３％' });
+    const sourceVersion = String(unicode.capture_version_json);
+    const expectedKey = `v1:ci_raw_item:${sha256(sourceVersion)}`;
+    expect(sha256(sourceVersion)).not.toBe(sha256(Buffer.from(sourceVersion, 'ascii')));
+    db.sourceRows.daily_bars = [daily()];
+    db.sourceRows.us_filings = [filing()];
+    db.sourceRows.ci_raw_item = [unicode];
+    const result = await captureOperatingData({ cutoff }, db);
+    expect(result.sources.map(source => source.status)).toEqual(['published', 'published', 'published']);
+    const archived = db.sourceRecords('ci_raw_item')[0];
+    expect(archived.record_key).toBe(expectedKey);
+    expect(db.payload(archived)).toMatchObject({ sourceVersionJson: sourceVersion,
+      sourceRow: { title: '분기 실적 🧾', snippet: '매출 변화：＋３％' } });
+    const reads = db.calls.filter(call => /FROM (daily_bars|us_filings|ci_raw_item) s/.test(call.sql));
+    expect(reads).toHaveLength(3);
+    expect(reads.every(call => call.sql.includes('r.record_key=CONVERT(CONCAT('))).toBe(true);
+    expect(reads.every(call => call.sql.includes(',256)) USING ascii) COLLATE ascii_bin)'))).toBe(true);
+    const replay = await captureOperatingData({ cutoff }, db);
+    expect(replay.sources.every(source => source.status === 'empty')).toBe(true);
+    expect(db.sourceRecords('ci_raw_item')).toHaveLength(1);
+  });
+
   test('new last-seen observations retain the first-seen proof and both immutable versions', async () => {
     const db = new CaptureDb(); db.sourceRows.ci_raw_item = [item()];
     await captureOperatingData({ cutoff }, db);

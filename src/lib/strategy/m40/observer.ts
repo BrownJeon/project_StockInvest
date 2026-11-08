@@ -5,7 +5,7 @@ import { saveAnalysisRun,putJudgment,findJudgment,putSignalDraft,jsonSha256 } fr
 import type { JsonValue } from '@/lib/analysis-data/types';
 import { loadM40Input } from './load-input';
 import { runM40Analysis,askConfiguredM40Agent } from './runner';
-import { readResearchEvidence } from './archive-reader';
+import { loadM40Evidence } from './load-evidence';
 import { captureOperatingData } from '@/lib/analysis-data/capture-operating-data';
 
 type Observation={status:string;runId?:string;reason?:string;draftCount?:number};
@@ -20,8 +20,8 @@ async function runDailyObservation():Promise<Observation> {
   const capture=await captureOperatingData({cutoff,limit:450});
   try {
    const input=await loadM40Input({decisionAt:cutoff});
-   const evidence=await readResearchEvidence(cutoff);
-   const result=await runM40Analysis({input,evidence,triggers:evidence.length?['new_evidence']:['optional_data_gap'],
+   const {evidence,issues}=await loadM40Evidence(input.decisionTime);
+   const result=await runM40Analysis({input,evidence,optionalDataIssues:issues,triggers:[...(evidence.length?['new_evidence' as const]:[]),...(!evidence.length||issues.length?['optional_data_gap' as const]:[])],
     timeoutMs:2000,modelEnabled:process.env.T156_M40_AGENT_ENABLED==='true',modelPolicyVersion:process.env.T156_M40_AGENT_POLICY_VERSION},
     {store:{saveAnalysisRun,putJudgment,findJudgment,putSignalDraft},askAgent:askConfiguredM40Agent});
    return {status:result.plan.status,runId:result.runId,draftCount:result.draftCount};

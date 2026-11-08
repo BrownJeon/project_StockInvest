@@ -119,3 +119,10 @@ describe('M40 saved base plan and bounded shadow intervention', () => {
     expect(rejected.plan).toEqual(mature.plan);
   });
 });
+
+it('retains the exact optional context and source failures without changing the base plan',async()=>{
+ const input=fixture(),store=memoryStore(),askAgent=jest.fn(respond);
+ const result=await runM40Analysis({input,evidence:[],triggers:['optional_data_gap'],optionalDataIssues:['operating_evidence_unavailable'],modelEnabled:true,modelPolicyVersion:'fixture-model-v1'},{store,askAgent});
+ expect(result.plan).toEqual(planM40(input));expect(askAgent).not.toHaveBeenCalled();
+ for(const row of result.judgments)expect(row.payload).toEqual(expect.objectContaining({coverageIssues:['operating_evidence_unavailable'],request:expect.objectContaining({decisionTime:input.decisionTime,evidence:[]})}));
+});

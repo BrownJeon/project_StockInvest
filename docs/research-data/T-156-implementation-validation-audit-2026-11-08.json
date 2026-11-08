@@ -1,0 +1,950 @@
+{
+  "schemaVersion": 1,
+  "kind": "implementation_validation_audit",
+  "createdAt": "2026-11-08T02:39:28.311297+00:00",
+  "protocol": {
+    "task": "T-156",
+    "mode": "shadow_only_no_orders",
+    "researchDatasetId": "t156-research-db-20261108",
+    "feeBpsOneWay": 25,
+    "newProfitabilitySimulation": false,
+    "qualification": "migration_integrity_and_implementation_validation; not live trading authorization"
+  },
+  "code": {
+    "baseCommit": "8248226",
+    "headBeforeFinalCommit": "53a9aa5ee868ef4926a8ca2ea6d3653493b14bcb",
+    "files": {
+      ".env.example": "18bf13810a0f83e04140c5c0fb7f321f3c02438174e1a3e40f474298727cdaf1",
+      "scripts/migrations/T-156-analysis-archive.sql": "d394f78be00d51f27a5a04f0989696f661b3b0ea0f8b5e4c030b8c089fc2950d",
+      "scripts/t156/archive-import.mjs": "0fedb9b38582872051436b242fe642a94323560e76102568806f9c12fd4aa4bf",
+      "scripts/t156/archive-import.test.mjs": "ea3d8c3aa5ed1f441688cb903576add84d30b5dce9b23e9eaa0f9e842f75567e",
+      "scripts/t156/archive-lib.mjs": "15c2491c2646f54165272b9eb05c900c1075066cd47a24453b54d171d9ce506b",
+      "scripts/t156/archive-lib.test.mjs": "58ab2199976253a618dbaf623ee06c3616a582d73911ba0e96bf7d537cbb041f",
+      "scripts/t156/archive-operator.mjs": "ac7cd7e8d0f283406e906ca004bb193be33e96ad08aaabcfcf4c77daf0faf00b",
+      "scripts/t156/source-manifest.py": "1d341ff38e452683a8fdf141197517d0c7831fbaf53260ea5ffaf6b9033204fa",
+      "scripts/t156/transform-dump.mjs": "529681cc561cfdde071002d324f2755ef56f1081bf8b9603b18d2f4b0690508b",
+      "scripts/t156/verify-restore.py": "b258c358a05bbf2626d4a5dea7a5541144c8d49a10ac02e4992ae2638ec885b1",
+      "src/app/api/cron/m40-analysis/route.ts": "e5e3a67a3b204053ad46cb633c35614b90d4d3544a7c38d1a36ea9508169fd97",
+      "src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts": "1b30459ada91ba1e38485593177c0a16840e01127a4b575aa11ccb1eec230dfa",
+      "src/app/api/cron/post-market-analysis/route.ts": "49f7c781736c359a6974d631f3260960ba923d805c80353ea7aec2a0643e94d4",
+      "src/app/api/research/t156/route.ts": "35655435541d35985d924a761a2ef8277a12f3386c6f94ace6db3ed3b2ad21df",
+      "src/lib/analysis-data/__tests__/capture-operating-data.test.ts": "3fb8483b91a00329ff3638f767306cef809767a952104d250e5b05d805135018",
+      "src/lib/analysis-data/__tests__/store.test.ts": "3f53d4562bb5b0a01ea9b6426ce52ac62867ab3144d4c474b2ca5a0c418c7e2f",
+      "src/lib/analysis-data/capture-operating-data.ts": "98db9b89f03be3d17ca972a3d0c0ab1da91681aedce811b589902e188954af2e",
+      "src/lib/analysis-data/store.ts": "92372f437369c54d0596219e71734d9a438fb7dbe90ee7e27db96fd680b9c888",
+      "src/lib/analysis-data/types.ts": "995f90ec6471583fe24bfc4cdec72eb6be5843db62850ae0f0b18a277a8a95c8",
+      "src/lib/profit-engine/__tests__/daily-bars-collector.test.ts": "72ef2590eab6ab76109bdf28ae110eebd0fd949803bc3e6acd7a7b691fafae1b",
+      "src/lib/profit-engine/daily-bars-store.ts": "49fd84b2846ea3cc249fddadf2f0adfa5471b1f9a900a2dd3931a6f9f6ad6172",
+      "src/lib/strategy/m40/__tests__/advisory.test.ts": "8311e8c28eb16b283d39daf341e00c280f6dd881243082019eed9d84cbcc5446",
+      "src/lib/strategy/m40/__tests__/archive-reader.test.ts": "8f6cc31461cf5be6cd2c0646abe3dc8c2e76f66d1443a08d27f3d463dcaed3f6",
+      "src/lib/strategy/m40/__tests__/core.test.ts": "57ee230304ad5097ef38e6d18e558bcf31f4a3b0b86ab0c2d6824d09ffe866a7",
+      "src/lib/strategy/m40/__tests__/load-evidence.test.ts": "ef26075ed59a289c4b245f58a0a167e1919653e5661c37d81eaa4135e9ba8d5c",
+      "src/lib/strategy/m40/__tests__/load-input.test.ts": "276be656aeaa7ccb9de9440a8e080d22351be9a370f0fdc64a02b07765ddcfcb",
+      "src/lib/strategy/m40/__tests__/observer.test.ts": "106d1c8b3bd774dce83702a5b7af0d192bee66533df4cbe193ae7bac851bf205",
+      "src/lib/strategy/m40/__tests__/operating-evidence.test.ts": "079d30b9dd42997446d8ff2baadd92e40bd4219e4f1b6089420873efb18914f5",
+      "src/lib/strategy/m40/__tests__/routes.test.ts": "e3045f9ad7ed29faa91f3ccb435667005ed7ff2574cc4e69b2101589cd9f8a08",
+      "src/lib/strategy/m40/__tests__/runner.test.ts": "d9c708670bab3a6bd352ea7f1954d5aabd5168415bf92883cfd9305fa5881fc9",
+      "src/lib/strategy/m40/advisory.ts": "52def34b92050788b19f7a571442257b566ea8a51748395c6dded91213eadcf7",
+      "src/lib/strategy/m40/archive-reader.ts": "e1d66cc46b94ad7405d3abfbf9b78f4938e61871ece0d9205b723d831e96fb81",
+      "src/lib/strategy/m40/core.ts": "1548dd659290a451f92af1c567a87e2ecf6a3ab5861a6bce56ab1b13956604f2",
+      "src/lib/strategy/m40/load-evidence.ts": "d8aa1220a012d90408d1c6bd716d9d2fd9c2091e26e66564c367bf8caab775a0",
+      "src/lib/strategy/m40/load-input.ts": "f60fb5be3125a852493f6a785179f0209ca050cbd3c0c3c07e9b32a1353da7bb",
+      "src/lib/strategy/m40/observer.ts": "ddda2223892b6de1d7b22d2eb97871bc77a3e1492a16755d7164d853cce9a1f1",
+      "src/lib/strategy/m40/operating-evidence.ts": "264bb261407f5b0903b9ff37acf66574c1a61717fbf60c2cef7b267dcffcdf62",
+      "src/lib/strategy/m40/runner.ts": "675ae99ce7574849dcb0ee92bc2ecb730f7dc51e4b9863e5e766f02da0fc84c1",
+      "src/lib/strategy/m40/types.ts": "81c64c7f783b450c8007f81f9d82ce3266134823f05f8ccf027c9d3a078712a9"
+    },
+    "sourceManifestSha256": "02fdd6048ea524b014e790d028304f4ec84c0c103d86e4e29c6acceee9e30278"
+  },
+  "testResults": {
+    "jestPassed": 1426,
+    "jestSkipped": 15,
+    "jestTotal": 1441,
+    "jestFailed": 0,
+    "typescriptExit": 0,
+    "productionBuildExit": 0,
+    "nodeArchiveTestsPassed": 11,
+    "realStoreTestsIncludedInJest": 14,
+    "skipsReason": "existing separate daily-limit real DB fixture; not counted as pass",
+    "notChecked": [
+      "logged-in production UI",
+      "live broker fills",
+      "new forward profitability",
+      "full historical universe or news completeness"
+    ]
+  },
+  "sourceManifest": {
+    "sourceDatabase": "t156_research_20261106",
+    "createdAt": "2026-11-08T00:12:47.474690+00:00",
+    "tables": [
+      {
+        "table": "backfill_breadth_daily",
+        "rows": 15587,
+        "checksum": "1692359215"
+      },
+      {
+        "table": "backfill_coverage_gap",
+        "rows": 18,
+        "checksum": "2917998065"
+      },
+      {
+        "table": "backfill_document",
+        "rows": 29005,
+        "checksum": "3450736515"
+      },
+      {
+        "table": "backfill_membership",
+        "rows": 813,
+        "checksum": "2254554837"
+      },
+      {
+        "table": "backfill_price_gap",
+        "rows": 3147,
+        "checksum": "3633098999"
+      },
+      {
+        "table": "backfill_sec_index",
+        "rows": 419599,
+        "checksum": "2660066783"
+      },
+      {
+        "table": "backfill_session",
+        "rows": 9281,
+        "checksum": "4022468024"
+      },
+      {
+        "table": "backfill_source_file",
+        "rows": 578,
+        "checksum": "1252966219"
+      },
+      {
+        "table": "backfill_stock_bar",
+        "rows": 2714056,
+        "checksum": "3820416511"
+      },
+      {
+        "table": "closed_trade",
+        "rows": 16515,
+        "checksum": "2687328180"
+      },
+      {
+        "table": "daily_analysis",
+        "rows": 67800,
+        "checksum": "1109486696"
+      },
+      {
+        "table": "daily_context",
+        "rows": 6780,
+        "checksum": "654168780"
+      },
+      {
+        "table": "market_close",
+        "rows": 27839,
+        "checksum": "716975467"
+      },
+      {
+        "table": "market_session",
+        "rows": 9282,
+        "checksum": "3024264533"
+      },
+      {
+        "table": "price_decision",
+        "rows": 312008,
+        "checksum": "2881642684"
+      },
+      {
+        "table": "public_macro_daily_coverage",
+        "rows": 1695,
+        "checksum": "61547280"
+      },
+      {
+        "table": "public_macro_release_observation",
+        "rows": 137,
+        "checksum": "74362235"
+      },
+      {
+        "table": "qqq_nport_holding",
+        "rows": 2748,
+        "checksum": "1632546867"
+      },
+      {
+        "table": "replay_run",
+        "rows": 4,
+        "checksum": "230827591"
+      },
+      {
+        "table": "sec_daily_coverage",
+        "rows": 116955,
+        "checksum": "486289801"
+      },
+      {
+        "table": "sec_filing",
+        "rows": 217389,
+        "checksum": "201551117"
+      },
+      {
+        "table": "sec_issuer_body_sample",
+        "rows": 4,
+        "checksum": "1799956043"
+      },
+      {
+        "table": "session_cutoff",
+        "rows": 1695,
+        "checksum": "3292913667"
+      },
+      {
+        "table": "source_import",
+        "rows": 16,
+        "checksum": "1191772247"
+      },
+      {
+        "table": "stock_bar",
+        "rows": 410041,
+        "checksum": "4173792871"
+      },
+      {
+        "table": "symbol_cik",
+        "rows": 69,
+        "checksum": "2538390503"
+      },
+      {
+        "table": "symbol_reference",
+        "rows": 125,
+        "checksum": "1057308031"
+      }
+    ],
+    "dumpSha256": "7fc5bfd44ce23e4a90a4d9be944d210e106067ccdaeba58a56080ac737981aaa"
+  },
+  "restoreVerification": {
+    "kind": "isolated_full_restore",
+    "verifiedAt": "2026-11-08T00:17:10.792154+00:00",
+    "tables": [
+      {
+        "table": "backfill_breadth_daily",
+        "rows": 15587,
+        "checksum": "1692359215",
+        "match": true
+      },
+      {
+        "table": "backfill_coverage_gap",
+        "rows": 18,
+        "checksum": "2917998065",
+        "match": true
+      },
+      {
+        "table": "backfill_document",
+        "rows": 29005,
+        "checksum": "3450736515",
+        "match": true
+      },
+      {
+        "table": "backfill_membership",
+        "rows": 813,
+        "checksum": "2254554837",
+        "match": true
+      },
+      {
+        "table": "backfill_price_gap",
+        "rows": 3147,
+        "checksum": "3633098999",
+        "match": true
+      },
+      {
+        "table": "backfill_sec_index",
+        "rows": 419599,
+        "checksum": "2660066783",
+        "match": true
+      },
+      {
+        "table": "backfill_session",
+        "rows": 9281,
+        "checksum": "4022468024",
+        "match": true
+      },
+      {
+        "table": "backfill_source_file",
+        "rows": 578,
+        "checksum": "1252966219",
+        "match": true
+      },
+      {
+        "table": "backfill_stock_bar",
+        "rows": 2714056,
+        "checksum": "3820416511",
+        "match": true
+      },
+      {
+        "table": "closed_trade",
+        "rows": 16515,
+        "checksum": "2687328180",
+        "match": true
+      },
+      {
+        "table": "daily_analysis",
+        "rows": 67800,
+        "checksum": "1109486696",
+        "match": true
+      },
+      {
+        "table": "daily_context",
+        "rows": 6780,
+        "checksum": "654168780",
+        "match": true
+      },
+      {
+        "table": "market_close",
+        "rows": 27839,
+        "checksum": "716975467",
+        "match": true
+      },
+      {
+        "table": "market_session",
+        "rows": 9282,
+        "checksum": "3024264533",
+        "match": true
+      },
+      {
+        "table": "price_decision",
+        "rows": 312008,
+        "checksum": "2881642684",
+        "match": true
+      },
+      {
+        "table": "public_macro_daily_coverage",
+        "rows": 1695,
+        "checksum": "61547280",
+        "match": true
+      },
+      {
+        "table": "public_macro_release_observation",
+        "rows": 137,
+        "checksum": "74362235",
+        "match": true
+      },
+      {
+        "table": "qqq_nport_holding",
+        "rows": 2748,
+        "checksum": "1632546867",
+        "match": true
+      },
+      {
+        "table": "replay_run",
+        "rows": 4,
+        "checksum": "230827591",
+        "match": true
+      },
+      {
+        "table": "sec_daily_coverage",
+        "rows": 116955,
+        "checksum": "486289801",
+        "match": true
+      },
+      {
+        "table": "sec_filing",
+        "rows": 217389,
+        "checksum": "201551117",
+        "match": true
+      },
+      {
+        "table": "sec_issuer_body_sample",
+        "rows": 4,
+        "checksum": "1799956043",
+        "match": true
+      },
+      {
+        "table": "session_cutoff",
+        "rows": 1695,
+        "checksum": "3292913667",
+        "match": true
+      },
+      {
+        "table": "source_import",
+        "rows": 16,
+        "checksum": "1191772247",
+        "match": true
+      },
+      {
+        "table": "stock_bar",
+        "rows": 410041,
+        "checksum": "4173792871",
+        "match": true
+      },
+      {
+        "table": "symbol_cik",
+        "rows": 69,
+        "checksum": "2538390503",
+        "match": true
+      },
+      {
+        "table": "symbol_reference",
+        "rows": 125,
+        "checksum": "1057308031",
+        "match": true
+      }
+    ],
+    "totalRows": 4383186,
+    "passed": true
+  },
+  "productionTransferVerification": {
+    "phase": "publish",
+    "datasetId": "t156-research-db-20261108",
+    "tables": [
+      {
+        "table": "backfill_breadth_daily",
+        "rows": 15587,
+        "checksum": "1692359215",
+        "match": true
+      },
+      {
+        "table": "backfill_coverage_gap",
+        "rows": 18,
+        "checksum": "2917998065",
+        "match": true
+      },
+      {
+        "table": "backfill_document",
+        "rows": 29005,
+        "checksum": "3450736515",
+        "match": true
+      },
+      {
+        "table": "backfill_membership",
+        "rows": 813,
+        "checksum": "2254554837",
+        "match": true
+      },
+      {
+        "table": "backfill_price_gap",
+        "rows": 3147,
+        "checksum": "3633098999",
+        "match": true
+      },
+      {
+        "table": "backfill_sec_index",
+        "rows": 419599,
+        "checksum": "2660066783",
+        "match": true
+      },
+      {
+        "table": "backfill_session",
+        "rows": 9281,
+        "checksum": "4022468024",
+        "match": true
+      },
+      {
+        "table": "backfill_source_file",
+        "rows": 578,
+        "checksum": "1252966219",
+        "match": true
+      },
+      {
+        "table": "backfill_stock_bar",
+        "rows": 2714056,
+        "checksum": "3820416511",
+        "match": true
+      },
+      {
+        "table": "closed_trade",
+        "rows": 16515,
+        "checksum": "2687328180",
+        "match": true
+      },
+      {
+        "table": "daily_analysis",
+        "rows": 67800,
+        "checksum": "1109486696",
+        "match": true
+      },
+      {
+        "table": "daily_context",
+        "rows": 6780,
+        "checksum": "654168780",
+        "match": true
+      },
+      {
+        "table": "market_close",
+        "rows": 27839,
+        "checksum": "716975467",
+        "match": true
+      },
+      {
+        "table": "market_session",
+        "rows": 9282,
+        "checksum": "3024264533",
+        "match": true
+      },
+      {
+        "table": "price_decision",
+        "rows": 312008,
+        "checksum": "2881642684",
+        "match": true
+      },
+      {
+        "table": "public_macro_daily_coverage",
+        "rows": 1695,
+        "checksum": "61547280",
+        "match": true
+      },
+      {
+        "table": "public_macro_release_observation",
+        "rows": 137,
+        "checksum": "74362235",
+        "match": true
+      },
+      {
+        "table": "qqq_nport_holding",
+        "rows": 2748,
+        "checksum": "1632546867",
+        "match": true
+      },
+      {
+        "table": "replay_run",
+        "rows": 4,
+        "checksum": "230827591",
+        "match": true
+      },
+      {
+        "table": "sec_daily_coverage",
+        "rows": 116955,
+        "checksum": "486289801",
+        "match": true
+      },
+      {
+        "table": "sec_filing",
+        "rows": 217389,
+        "checksum": "201551117",
+        "match": true
+      },
+      {
+        "table": "sec_issuer_body_sample",
+        "rows": 4,
+        "checksum": "1799956043",
+        "match": true
+      },
+      {
+        "table": "session_cutoff",
+        "rows": 1695,
+        "checksum": "3292913667",
+        "match": true
+      },
+      {
+        "table": "source_import",
+        "rows": 16,
+        "checksum": "1191772247",
+        "match": true
+      },
+      {
+        "table": "stock_bar",
+        "rows": 410041,
+        "checksum": "4173792871",
+        "match": true
+      },
+      {
+        "table": "symbol_cik",
+        "rows": 69,
+        "checksum": "2538390503",
+        "match": true
+      },
+      {
+        "table": "symbol_reference",
+        "rows": 125,
+        "checksum": "1057308031",
+        "match": true
+      }
+    ],
+    "status": "published"
+  },
+  "compressedDocumentHashes": {
+    "originalCompressedDocuments": 1455,
+    "sourceTargetManifestSha256": "30661f6ccee1b624ba8020e33b7218bcc93c9681c99db494b62f6d55db319306",
+    "allMatch": true,
+    "rawCompressedBytes": 360906162
+  },
+  "originalTestArtifactInventory": {
+    "scope": "prior simulation/research artifacts; not proof of strategy validation",
+    "files": [
+      {
+        "file": "docs/research-data/T-156-annual15-strategy-search-2026-11-07.json",
+        "bytes": 1019189,
+        "sha256": "fdb3e6ca1025686c297fa38fd66afd0e6d589611a05f8b8008978ab4729d3053",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-blind-agent-replay-2026-11-06.json",
+        "bytes": 72668,
+        "sha256": "f61ae353a5b4377276105b8e52c68e66753c00fa111e11667233cc09de834306",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-collection-audit-2026-11-07.json",
+        "bytes": 740296,
+        "sha256": "4455a07573ae414b2e178bc1ae2368643e0f144ec6980db6a7f88d51445bdc21",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-daily-db-replay-2020-2026-2026-11-06.json",
+        "bytes": 54382,
+        "sha256": "1d131b967ddafe5303c4f08ec9c2c78de991b7e859645e5430d49a797a22f64a",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-event-agent-replay-2026-11-06.json",
+        "bytes": 316447,
+        "sha256": "e3c5460ab6eaaa1f837451020d638d957cb91af2954db66286e73bb3e8a25ff4",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-forecast-ledger-2026-11-06.json",
+        "bytes": 1015867,
+        "sha256": "1af057b763986de95e6965805a7d7376d68a62d5acabce6c56a5a1e3beb221f4",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-free-data-additions-2026-11-07.json",
+        "bytes": 343842,
+        "sha256": "2ed72124a87bc2a1f2a644f4f53d76c8b39f1930453ea34c46ca54f6ab6c30cc",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-historical-research-db-backfill-2026-11-07.json",
+        "bytes": 429000,
+        "sha256": "90005cfe0ed211f79136ef2be8997813ad8f68e45ffbb4dfd4d490b336942c25",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-kis-fee25-regime-replay-2026-11-06.json",
+        "bytes": 82797,
+        "sha256": "99e260f2e0bc3689c723190c8fcfa7e0c73da4829a77bfc63bdd39f9928bc5b4",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-limited-agent-holdout-2006-2011-2026-11-07.json",
+        "bytes": 3192121,
+        "sha256": "6efef07017587bc27414ce20800994938b54ff8cd42cf0bab1421f35d29a69e6",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-limited-agent-holdout-2015-2016-2026-11-07.json",
+        "bytes": 1079718,
+        "sha256": "300fe13eb094e6714aaebbf29674ddb8531300245e95995c58debb23a8fccd28",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-long-price-source-evaluation-2026-11-06.json",
+        "bytes": 19132,
+        "sha256": "044fda418b468b4529d114a02b432f2397817cb1df6257478b2a59506a82e385",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-m40-5y-10y-100-final-2026-11-07.json",
+        "bytes": 9002794,
+        "sha256": "dc25f540664a63b4715db231477b6cd97733af93be711828e46812034b4011c7",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-m40-e3-r02-agent-replay-2026-11-07.json",
+        "bytes": 8661125,
+        "sha256": "77bf5eddc40846938cfb24c6a7e37bf95e2ea4325d9026bcf39d0237dc1c6791",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-m40-final-input-2026-11-07.npz",
+        "bytes": 8117976,
+        "sha256": "6dbfd20605dab42d547732e8f847ee009386280e46e20b10c990e5a3a39ddb23",
+        "type": ".npz"
+      },
+      {
+        "file": "docs/research-data/T-156-market-regime-switch-2026-11-06.json",
+        "bytes": 188688,
+        "sha256": "a60c7dc14529b631cde1d1e7078edb6c809a77dec16e39b64d6f6eb5ccdb7f77",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-pattern-input-125-2026-11-07.npz",
+        "bytes": 4055055,
+        "sha256": "9dd806217ae60fd7a6abcb19db1c6093389b343bc3db81ee317b79da4d55b1ea",
+        "type": ".npz"
+      },
+      {
+        "file": "docs/research-data/T-156-pattern-observations-2026-11-07.jsonl.gz",
+        "bytes": 3948165,
+        "sha256": "d0a005a7551821667a4cd723e21b3a4526589d0f725bfa1e46c78d7ee245c60b",
+        "type": ".gz"
+      },
+      {
+        "file": "docs/research-data/T-156-pattern-reference-library-2026-11-07.jsonl.gz",
+        "bytes": 1905285,
+        "sha256": "a7687fd36dd1df04e8e307542a90d50ab32d51a7b7106d9720f6f55550c020de",
+        "type": ".gz"
+      },
+      {
+        "file": "docs/research-data/T-156-pattern-vs-rules-portfolio-2026-11-07.json",
+        "bytes": 4492856,
+        "sha256": "7a9511785b9f8b24da41890e78eb0b1ed675e31c3c6cc9de992cb344b1d4f80c",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-point-in-time-daily-replay-2026-11-07.json",
+        "bytes": 3807320,
+        "sha256": "eb0e8da7bbe5270eac7062a4ea706a954b5ec9f18e581a2785032dd4437cd878",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-price-only-forward-sample-2026-11-06.json",
+        "bytes": 19870,
+        "sha256": "53655ed200b3c80150fe4de0147a5b4a4dfb28aa5027dafb993e623cd8c0d51d",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-price-pattern-repeat-review-2026-11-07.json",
+        "bytes": 974199,
+        "sha256": "fe9ebf2e63a2cafc491b38dc049fa31f4321d6f93367e5b4a4030b091e1f2376",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-profit-iterations-2026-11-06.json",
+        "bytes": 757107,
+        "sha256": "cc336e77c085773311dec5a860c88603783cf686b90cb47e86bf3423fe5b1814",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-rebound-risk-replay-2026-11-07.json",
+        "bytes": 72529,
+        "sha256": "443bac086e754b85ac94441d6178022054985e4be5c1665f2995b024a882be52",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-v01-historical-replay-2026-11-06.json",
+        "bytes": 844362,
+        "sha256": "e8de347d68acc2a379b9cfea4f038ebe9d2b3115559b4603d7b71f62fef44b38",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-weekly-market-regimes.json",
+        "bytes": 1467387,
+        "sha256": "ffd7e52ee228ebc729767b6f29762fc0f11792b9d1a15c95ce481daf11fd0d91",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-weekly-vix-breadth.json",
+        "bytes": 658934,
+        "sha256": "de9045da9bd455641c0f4dbe281dd6f685e4377e6642dbeaac23c1394f44e3d5",
+        "type": ".json"
+      }
+    ],
+    "total_bytes": 57339111
+  },
+  "importerDrain": {
+    "oldImporterProcessStopped": true,
+    "oldImportSqlActive": 0
+  },
+  "realImporterFixture": {
+    "kind": "real_mariadb_import_resume",
+    "partialResume": {
+      "statements": 4,
+      "insertedStatements": 3,
+      "skippedInsertStatements": 0,
+      "skippedTables": [],
+      "committedBatches": 2,
+      "committedSqlBytes": 1200341,
+      "oversizedStatements": 1
+    },
+    "completeResume": {
+      "statements": 1,
+      "insertedStatements": 0,
+      "skippedInsertStatements": 3,
+      "skippedTables": [
+        "probe_source_t156"
+      ],
+      "committedBatches": 0,
+      "committedSqlBytes": 0,
+      "oversizedStatements": 0
+    },
+    "checksumMatch": true,
+    "originalQuotedTextAndBlobPreserved": true,
+    "compressedConnection": true,
+    "isolatedDb": "t156_store_test_20261108"
+  },
+  "realReaderFixture": {
+    "kind": "real_mariadb_reader_fixture",
+    "isolated": true,
+    "beforeCloseRows": 1,
+    "afterCloseRows": 2,
+    "archiveObservationBeforeRows": 2,
+    "archiveObservationAfterRows": 3,
+    "nullPublicationPreserved": true,
+    "microsecondBoundaryChecked": true,
+    "holidayFutureUnknownSourceExcluded": true,
+    "decimalAndBigIntStringsPreserved": true,
+    "unadjustedNotPromoted": true,
+    "writeAttempts": 0,
+    "passed": true
+  },
+  "realCaptureFixture": {
+    "kind": "real_mariadb_capture_fixture",
+    "isolated": true,
+    "firstSourceRows": [
+      1,
+      1,
+      1
+    ],
+    "secondSourceRows": [
+      0,
+      0,
+      0
+    ],
+    "unicodeSourceAndSqlHashPreserved": true,
+    "allThreeCollationQueriesPass": true,
+    "operatingEvidenceRows": 2,
+    "passed": true
+  },
+  "actualOperatingSmoke": {
+    "kind": "actual_operating_archive_smoke",
+    "cutoff": "2026-11-08T02:26:52.059Z",
+    "sourceRows": 4383186,
+    "liveEligible": false,
+    "marketRows": 18,
+    "stockRows": 127,
+    "stockLatestSession": "2026-11-06",
+    "stockQualification": "research_only",
+    "stockAvailabilityBasis": "verified_archive_observation",
+    "stockOriginalPublishedAt": null,
+    "stockAvailableAt": "2026-11-08T01:53:37.234000Z",
+    "archiveVerifiedAt": "2026-11-08T01:53:37.234Z",
+    "operatingEvidenceRows": 6,
+    "documentRows": 1,
+    "capture": {
+      "cutoff": "2026-11-08T02:26:52.059000Z",
+      "windowStart": "2026-10-25T02:26:52.059000Z",
+      "status": "partial",
+      "sources": [
+        {
+          "source": "daily_bars",
+          "status": "published",
+          "datasetId": "op-v1-daily_bars-b5b7950b152c20fe67632fa154d90cd516d7b2b801959297c89b685ff591de3d",
+          "rowCount": 10,
+          "excludedCount": 0,
+          "unknownAvailabilityCount": 0,
+          "partial": true
+        },
+        {
+          "source": "us_filings",
+          "status": "published",
+          "datasetId": "op-v1-us_filings-494d6213ed5442ed32ac9ebd8adc447d8c041d3977d1867e284611711ed98520",
+          "rowCount": 10,
+          "excludedCount": 0,
+          "unknownAvailabilityCount": 0,
+          "partial": true
+        },
+        {
+          "source": "ci_raw_item",
+          "status": "published",
+          "datasetId": "op-v1-ci_raw_item-360c8ebc641d0e05bfc16f2b1dc3b8cf7048f24e9fb96666b3b4f1bf4c86eff0",
+          "rowCount": 10,
+          "excludedCount": 0,
+          "unknownAvailabilityCount": 0,
+          "partial": true
+        }
+      ]
+    },
+    "elapsedMs": 274329,
+    "observation": {
+      "status": "blocked",
+      "reason": "m40_policy_not_configured",
+      "runId": "m40-blocked-92bd9fbb01b12846deaf5d0864551d3fa939f06d42d43f8edbe55fc146bf5aeb"
+    },
+    "settingsBeforeHash": "ae581ef4b807a7efc96ed42591a8e5e463eba22c49c544a47c97c97408811acc",
+    "settingsAfterHash": "ae581ef4b807a7efc96ed42591a8e5e463eba22c49c544a47c97c97408811acc",
+    "settingsUnchanged": true,
+    "mutatedTables": [
+      "t156_analysis_run",
+      "t156_dataset",
+      "t156_record"
+    ],
+    "forbiddenWrites": 0,
+    "forbiddenAttempts": 0,
+    "brokerCalled": false
+  },
+  "actualDocumentRead": {
+    "kind": "actual_operating_sec_clock_read",
+    "cutoff": "2026-11-08T02:38:31.481Z",
+    "totalRecentDocuments": 194,
+    "secAcceptanceProxyDocuments": 193,
+    "originalPublishedNullPreserved": true,
+    "sourceAllowlist": [
+      "free_sec_original_20261107",
+      "sec_edgar_priority"
+    ],
+    "evidenceRows": 6,
+    "proxyContextLabelPresent": true,
+    "historicalCutoff": "2026-10-22T20:00:00Z",
+    "historicalRows": 0,
+    "futureObservationExcluded": true,
+    "writeAttempts": 0,
+    "passed": true
+  },
+  "initialFailures": [
+    {
+      "phase": "mac_validation",
+      "result": "incomplete",
+      "reason": "NFS/native SWC binding; isolated Ubuntu rerun authoritative"
+    },
+    {
+      "phase": "initial_remote_validation",
+      "result": "failed",
+      "reason": "AppleDouble metadata wrongly read as tests; only metadata excluded for rerun"
+    },
+    {
+      "phase": "operating_stock_read",
+      "result": "failed_before_writes",
+      "reason": "unknown original publication; preserved NULL and qualified post-verification availability"
+    },
+    {
+      "phase": "operating_capture",
+      "result": "failed",
+      "reason": "ascii_bin versus utf8mb4 collation; fixed comparison key only; original failure statuses retained"
+    },
+    {
+      "phase": "sec_document_read",
+      "result": "insufficient_coverage",
+      "reason": "193 SEC rows have accepted timestamp but NULL publication; explicit allowlisted proxy plus observation cutoff required"
+    }
+  ],
+  "limitations": [
+    "published research data is not live eligible",
+    "stock publication NULL only available after actual archive verification; never retroactive",
+    "SEC acceptance proxy is not proof of actual dissemination",
+    "raw price and incomplete identity/corporate actions preserved",
+    "historical Nasdaq100/NYSE50 membership and press original coverage incomplete",
+    "runtime capture capped/partial; context max6/64k is not full coverage",
+    "common M40 epoch and qualified input snapshot pending; no active signal registration"
+  ],
+  "logHashes": {
+    "operating-smoke-attempt1.log": {
+      "sha256": "9fb322ab2f27ea343429c87b353ddd96794f8971a1ed79099cd3195aca1bd2fc",
+      "bytes": 49
+    },
+    "t156-qa-final-build.log": {
+      "sha256": "7c83cab46c2d3d1465fe747b651e242ef885e07795b740726b00d65455e0614f",
+      "bytes": 12467
+    },
+    "t156-qa-final-jest.log": {
+      "sha256": "3aa171a54b98a941db2613ca38202d820587d0c8914c84c05221931cba25a876",
+      "bytes": 35031
+    },
+    "t156-qa-final-tsc.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "t156-qa-import-final.log": {
+      "sha256": "0618861fc59436f8a8aecf6c8f6106bb60405d047f49c11dfdcfdbb3214f83be",
+      "bytes": 1082
+    }
+  },
+  "rootFixtureScripts": {
+    "t156-reader-fixture.cjs": "const path=require('node:path'),fs=require('node:fs'),Module=require('node:module'),assert=require('node:assert/strict');const base='/home/brownjeon/.node-local/t156-implementation-20261108/validation';const pkg=Module.createRequire(path.join(base,'package.json'));const mysql=pkg('mysql2/promise'),swc=pkg('@swc/core');\nconst originalResolve=Module._resolveFilename;Module._resolveFilename=function(request,...rest){if(request.startsWith('@/'))request=path.join(base,'src',request.slice(2));return originalResolve.call(this,request,...rest);};Module._extensions['.ts']=(m,p)=>m._compile(swc.transformSync(fs.readFileSync(p,'utf8'),{filename:p,jsc:{target:'es2022',parser:{syntax:'typescript'}},module:{type:'commonjs'}}).code,p);const stub=new Module(path.join(base,'src/lib/db.ts'));stub.exports={getPool:()=>{throw Error('unexpected_default_database');}};require.cache[stub.id]=stub;\n(async()=>{const name='t156_reader_fixture_'+Date.now();const admin=await mysql.createConnection({host:'127.0.0.1',port:9012,user:'root',password:''});let db;try{await admin.query('CREATE DATABASE `'+name+'`');db=await mysql.createConnection({host:'127.0.0.1',port:9012,user:'root',password:'',database:name,dateStrings:true});await db.query('CREATE TABLE t156_dataset(id VARCHAR(96) PRIMARY KEY,status VARCHAR(16),metadata_json JSON)');await db.query(\"INSERT INTO t156_dataset VALUES('t156-research-db-20261108','published',NULL)\");await db.query('CREATE TABLE t156_research_backfill_session(trade_date DATE PRIMARY KEY,closes_at_utc DATETIME(6))');await db.query(\"INSERT INTO t156_research_backfill_session VALUES('2019-04-17','2019-04-17 20:00:00'),('2019-04-18','2019-04-18 20:00:00'),('2019-04-22','2019-04-22 20:00:00')\");await db.query('CREATE TABLE t156_research_backfill_stock_bar(source_id VARCHAR(50),vendor_ticker VARCHAR(24),trade_date DATE,o DECIMAL(22,8),h DECIMAL(22,8),l DECIMAL(22,8),c DECIMAL(22,8),volume BIGINT UNSIGNED,is_unadjusted TINYINT,identity_status VARCHAR(56),published_at_utc DATETIME(6),PRIMARY KEY(source_id,vendor_ticker,trade_date))');for(const [source,day,pub,raw]of[['test','2019-04-17',null,1],['test','2019-04-18','2019-04-18 20:00:00',1],['test','2019-04-19','2019-04-19 20:00:00',1],['test','2019-04-22','2019-04-22 20:00:00',0],['legacy','2019-04-18','2019-04-18 20:00:00',1]])await db.execute('INSERT INTO t156_research_backfill_stock_bar VALUES(?,?,?,150.12345678,151,149,150.12345678,?, ?,?,?)',[source,'AAPL',day,'9007199254740993',raw,'unknown_identity',pub]);const query=db.query.bind(db);let writes=0;db.query=(sql,...args)=>{if(!/^SELECT/i.test(sql.trim())){writes++;throw Error('reader_write');}return query(sql,...args);};const {readResearchStockBars}=require(path.join(base,'src/lib/strategy/m40/archive-reader.ts'));const options={sourceId:'test',vendorTicker:'AAPL',throughSession:'2019-04-22',cutoff:'2019-04-22T19:59:00Z'};const a=await readResearchStockBars(options,db);assert.deepEqual(a.rows.map(r=>r.session),['2019-04-18']);assert.equal(a.rows[0].volume,'9007199254740993');assert.equal(a.rows[0].c,'150.12345678');assert.equal(a.rows[0].price_basis,'raw');assert.equal(a.liveEligible,false);assert.equal(a.firstObservedAt,null);const b=await readResearchStockBars({...options,cutoff:'2019-04-22T20:01:00Z'},db);assert.equal(b.rows.length,2);assert.equal(b.rows[0].price_basis,'unknown_adjusted');await query('UPDATE t156_dataset SET metadata_json=?',[JSON.stringify({verification:{verifiedAt:'2026-11-08T01:00:00.123Z'}})]);const pre=await readResearchStockBars({...options,cutoff:'2026-11-08T01:00:00.122999Z'},db);assert.equal(pre.rows.length,2);const post=await readResearchStockBars({...options,cutoff:'2026-11-08T01:00:00.123000Z'},db);assert.equal(post.rows.length,3);const unknown=post.rows.find(r=>r.session==='2019-04-17');assert.equal(unknown.published_at,null);assert.equal(unknown.available_at,'2026-11-08T01:00:00.123000Z');assert.equal(unknown.availability_basis,'verified_archive_observation');assert.equal(post.rows[0].availability_basis,'source_time');assert.equal(writes,0);console.log(JSON.stringify({kind:'real_mariadb_reader_fixture',isolated:true,beforeCloseRows:a.rows.length,afterCloseRows:b.rows.length,archiveObservationBeforeRows:pre.rows.length,archiveObservationAfterRows:post.rows.length,nullPublicationPreserved:true,microsecondBoundaryChecked:true,holidayFutureUnknownSourceExcluded:true,decimalAndBigIntStringsPreserved:true,unadjustedNotPromoted:true,writeAttempts:writes,passed:true}));}finally{if(db)await db.end();await admin.query('DROP DATABASE `'+name+'`');await admin.end();}})().catch(e=>{console.error(e.code??e.message);process.exitCode=1;});\n",
+    "t156-capture-fixture.cjs": "const path=require('node:path'),fs=require('node:fs'),Module=require('node:module'),assert=require('node:assert/strict'),crypto=require('node:crypto');\nconst base='/home/brownjeon/.node-local/t156-implementation-20261108/validation';const pkg=Module.createRequire(path.join(base,'package.json')),mysql=pkg('mysql2/promise'),swc=pkg('@swc/core');\nconst old=Module._resolveFilename;Module._resolveFilename=function(r,...a){if(r.startsWith('@/'))r=path.join(base,'src',r.slice(2));return old.call(this,r,...a);};Module._extensions['.ts']=(m,p)=>m._compile(swc.transformSync(fs.readFileSync(p,'utf8'),{filename:p,jsc:{target:'es2022',parser:{syntax:'typescript'}},module:{type:'commonjs'}}).code,p);const stub=new Module(path.join(base,'src/lib/db.ts'));stub.exports={getPool:()=>{throw Error('default_db_forbidden');}};require.cache[stub.id]=stub;\nconst sources={daily_bars:{market:'US',symbol:'NAS:AAPL',trade_date:'2026-11-06',open:'123.0000',high:'125.0000',low:'122.0000',close:'124.1234',volume:'9007199254740993',turnover:null,currency:'USD',adj_mode:'raw',is_final:'1',flags:null,source:'synthetic',fetched_at:'2026-11-07 06:30:00'},us_filings:{accession:'0000320193-26-000001',cik:'320193',form:'8-K',items:'2.02',report_date:'2026-11-05',filed:'2026-11-06',accepted_at:'2026-11-07 05:00:00',primary_doc_url:'https://www.sec.gov/Archives/example.htm',is_earnings_release:'1',created_at:'2026-11-07 05:01:00',updated_at:'2026-11-07 05:02:00'},ci_raw_item:{raw_id:'9007199254740995',source_kind:'rss',source_key:'a'.repeat(64),version:'1',content_sha256:'c'.repeat(64),availability:'captured',published_at:'2026-11-07 06:00:00',first_seen_at:'2026-11-07 06:01:00',last_seen_at:'2026-11-07 06:10:00',url:'https://example.com/article',guid:'test-original',feed_host:'example.com',publisher:null,title:'분기 실적 🧾',snippet:'매출 변화：＋３％',payload_ref:null,parser_version:'rss-v1',run_id:null}};\n(async()=>{const name='t156_capture_fixture_'+Date.now(),admin=await mysql.createConnection({host:'127.0.0.1',port:9012,user:'root',password:'',charset:'utf8mb4'});let db;try{await admin.query('CREATE DATABASE `'+name+'` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci');db=mysql.createPool({host:'127.0.0.1',port:9012,user:'root',password:'',database:name,charset:'utf8mb4_general_ci',dateStrings:true,connectionLimit:2});\nfor(const sql of fs.readFileSync(path.join(base,'scripts/migrations/T-156-analysis-archive.sql'),'utf8').split(/;\\s*(?:\\n|$)/).filter(s=>s.trim()))await db.query(sql);\nfor(const [table,row]of Object.entries(sources)){const columns=Object.keys(row).map(k=>'`'+k+'` '+(k.endsWith('_at')?'DATETIME(6)':['trade_date','filed','report_date'].includes(k)?'DATE':['volume','raw_id','cik'].includes(k)?'BIGINT UNSIGNED':['open','high','low','close','turnover'].includes(k)?'DECIMAL(24,8)':'TEXT')+' NULL');await db.query('CREATE TABLE '+table+'('+columns.join(',')+') DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci');await db.query('INSERT INTO '+table+'('+Object.keys(row).map(k=>'`'+k+'`').join(',')+') VALUES('+Object.keys(row).map(()=>'?').join(',')+')',Object.values(row));}\nconst {captureOperatingData}=require(path.join(base,'src/lib/analysis-data/capture-operating-data.ts'));const cutoff='2026-11-08T00:00:00Z';const first=await captureOperatingData({cutoff,limit:30},db);assert.deepEqual(first.sources.map(s=>s.status),['published','published','published']);const second=await captureOperatingData({cutoff,limit:30},db);assert.deepEqual(second.sources.map(s=>s.status),['empty','empty','empty']);const [rows]=await db.query(\"SELECT record_key,payload_json FROM t156_record WHERE record_type='operating_corporate_item'\");assert.equal(rows.length,1);const payload=JSON.parse(rows[0].payload_json);assert.equal(payload.sourceRow.title,sources.ci_raw_item.title);assert.equal(payload.sourceRow.snippet,sources.ci_raw_item.snippet);const digest=crypto.createHash('sha256').update(payload.sourceVersionJson).digest('hex');assert.equal(rows[0].record_key,'v1:ci_raw_item:'+digest);const {readOperatingM40Evidence}=require(path.join(base,'src/lib/strategy/m40/operating-evidence.ts'));const evidence=await readOperatingM40Evidence(cutoff,db);assert.equal(evidence.length,2);console.log(JSON.stringify({kind:'real_mariadb_capture_fixture',isolated:true,firstSourceRows:first.sources.map(s=>s.rowCount),secondSourceRows:second.sources.map(s=>s.rowCount),unicodeSourceAndSqlHashPreserved:true,allThreeCollationQueriesPass:true,operatingEvidenceRows:evidence.length,passed:true}));}finally{if(db)await db.end();await admin.query('DROP DATABASE `'+name+'`');await admin.end();}})().catch(e=>{console.log(JSON.stringify({passed:false,code:e.code??e.message}));process.exitCode=1;});\n",
+    "t156-document-smoke.cjs": "const path=require('node:path'),fs=require('node:fs'),Module=require('node:module'),assert=require('node:assert/strict');const base='/home/brownjeon/.node-local/t156-implementation-20261108/validation',pkg=Module.createRequire(path.join(base,'package.json')),mysql=pkg('mysql2/promise'),swc=pkg('@swc/core');const old=Module._resolveFilename;Module._resolveFilename=function(r,...a){if(r.startsWith('@/'))r=path.join(base,'src',r.slice(2));return old.call(this,r,...a);};Module._extensions['.ts']=(m,p)=>m._compile(swc.transformSync(fs.readFileSync(p,'utf8'),{filename:p,jsc:{target:'es2022',parser:{syntax:'typescript'}},module:{type:'commonjs'}}).code,p);const stub=new Module(path.join(base,'src/lib/db.ts'));stub.exports={getPool:()=>{throw Error('default_db_forbidden');}};require.cache[stub.id]=stub;\n(async()=>{const db=await mysql.createConnection({host:process.env.DB_HOST,port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,password:process.env.DB_PWD,database:process.env.DB_NAME,dateStrings:true});let writes=0;const q=db.query.bind(db);db.query=(sql,...a)=>{if(!/^SELECT/i.test(sql.trim())){writes++;throw Error('reader_write');}return q(sql,...a);};try{const reader=require(path.join(base,'src/lib/strategy/m40/archive-reader.ts'));const cutoff=new Date().toISOString(),docs=await reader.readResearchDocuments({cutoff,days:14,limit:500},db),proxies=docs.rows.filter(r=>r.publication_basis==='sec_acceptance_proxy');assert.equal(proxies.length,193);assert(proxies.every(r=>r.published_at===null&&r.accepted_at===r.effective_publication_at));assert(docs.rows.every(r=>Date.parse(r.observed_at)<=Date.parse(cutoff)));const evidence=await reader.readResearchEvidence(cutoff,db);assert.equal(evidence.length,6);assert(evidence.every(e=>e.content.includes('SEC acceptance-time proxy; real dissemination time unknown')));const historicalCutoff='2026-10-22T20:00:00Z',historical=await reader.readResearchDocuments({cutoff:historicalCutoff,days:14,limit:500},db);assert(historical.rows.every(r=>Date.parse(r.observed_at)<=Date.parse(historicalCutoff)));assert.equal(writes,0);console.log(JSON.stringify({kind:'actual_operating_sec_clock_read',cutoff,totalRecentDocuments:docs.rows.length,secAcceptanceProxyDocuments:proxies.length,originalPublishedNullPreserved:true,sourceAllowlist:['free_sec_original_20261107','sec_edgar_priority'],evidenceRows:evidence.length,proxyContextLabelPresent:true,historicalCutoff,historicalRows:historical.rows.length,futureObservationExcluded:true,writeAttempts:writes,passed:true}));}finally{await db.end();}})().catch(e=>{console.log(JSON.stringify({passed:false,code:e.code??e.message}));process.exitCode=1;});\n",
+    "t156-operating-smoke.cjs": "/* One-off authorized archive smoke. No application setup, account, broker or order code. */\nconst path=require('node:path');const fs=require('node:fs');const Module=require('node:module');const crypto=require('node:crypto');\nconst base=process.env.T156_SOURCE_ROOT;const pkg=Module.createRequire(path.join(base,'package.json'));const mysql=pkg('mysql2/promise');const swc=pkg('@swc/core');\nconst sha=v=>crypto.createHash('sha256').update(v).digest('hex');\nconst writes=new Set();let forbiddenAttempts=0;const guard=sql=>{const m=String(sql).trim().match(/^(?:INSERT(?:\\s+IGNORE)?\\s+INTO|UPDATE|DELETE\\s+FROM|CREATE\\s+TABLE|ALTER\\s+TABLE)\\s+`?([a-z0-9_]+)/i);if(m){if(!m[1].startsWith('t156_')){forbiddenAttempts++;throw Error('non_archive_write_forbidden');}writes.add(m[1]);}};\nconst pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT||3306),user:process.env.DB_USER,password:process.env.DB_PWD,database:process.env.DB_NAME,connectionLimit:2,dateStrings:true,charset:'utf8mb4'});\nfunction protect(q){if(q.__t156Guard)return q;q.__t156Guard=true;for(const k of ['query','execute']){const original=q[k].bind(q);q[k]=(...a)=>{guard(a[0]);return original(...a);};}return q;}\nprotect(pool);const acquire=pool.getConnection.bind(pool);pool.getConnection=async()=>protect(await acquire());\nconst oldResolve=Module._resolveFilename;Module._resolveFilename=function(request,...args){if(request.startsWith('@/'))request=path.join(base,'src',request.slice(2));return oldResolve.call(this,request,...args);};\nModule._extensions['.ts']=(module,file)=>module._compile(swc.transformSync(fs.readFileSync(file,'utf8'),{filename:file,jsc:{target:'es2022',parser:{syntax:'typescript'}},module:{type:'commonjs'}}).code,file);\nconst dbPath=path.join(base,'src/lib/db.ts');const stub=new Module(dbPath);stub.exports={getPool:()=>pool};require.cache[dbPath]=stub;\n(async()=>{const cutoff=new Date().toISOString();\n try{\n const [[published]]=await pool.query(\"SELECT status,row_count,live_eligible FROM t156_dataset WHERE id='t156-research-db-20261108'\");if(published?.status!=='published')throw Error('archive_not_published');\n const [before]=await pool.query(\"SELECT `key`,value FROM system_config WHERE `key` IN ('safety_dry_run','safety_kill_switch','autopilot_mode','post_market_overseas_enabled') ORDER BY `key`\");\n const reader=require(path.join(base,'src/lib/strategy/m40/archive-reader.ts'));\n const market=await reader.readResearchMarket({throughSession:'2026-11-06',limit:6},pool);\n const stock=await reader.readResearchStockBars({sourceId:'kibot_free_regular_raw_20261107',vendorTicker:'AAPL',cutoff,throughSession:'2026-11-06',limit:127},pool);\n if(stock.rows.length!==127||stock.rows[0].session!=='2026-11-06'||stock.liveEligible!==false)throw Error('actual_stock_reader_failed');\n const documents=await reader.readResearchDocuments({cutoff,days:14,limit:10},pool);\n const {captureOperatingData}=require(path.join(base,'src/lib/analysis-data/capture-operating-data.ts'));\n const start=Date.now();const capture=await captureOperatingData({cutoff,limit:30},pool);\n const {readOperatingM40Evidence}=require(path.join(base,'src/lib/strategy/m40/operating-evidence.ts'));\n const operatingEvidence=await readOperatingM40Evidence(cutoff,pool);\n const {observeM40Daily}=require(path.join(base,'src/lib/strategy/m40/observer.ts'));const observation=await observeM40Daily();\n const [after]=await pool.query(\"SELECT `key`,value FROM system_config WHERE `key` IN ('safety_dry_run','safety_kill_switch','autopilot_mode','post_market_overseas_enabled') ORDER BY `key`\");\n const report={kind:'actual_operating_archive_smoke',cutoff,sourceRows:Number(published.row_count),liveEligible:Number(published.live_eligible)===1,marketRows:market.rows.length,stockRows:stock.rows.length,stockLatestSession:stock.rows[0].session,stockQualification:stock.qualification,stockAvailabilityBasis:stock.rows[0].availability_basis,stockOriginalPublishedAt:stock.rows[0].published_at,stockAvailableAt:stock.rows[0].available_at,archiveVerifiedAt:stock.archive_verified_at,operatingEvidenceRows:operatingEvidence.length,documentRows:documents.rows.length,capture,elapsedMs:Date.now()-start,observation,settingsBeforeHash:sha(JSON.stringify(before)),settingsAfterHash:sha(JSON.stringify(after)),settingsUnchanged:JSON.stringify(before)===JSON.stringify(after),mutatedTables:[...writes].sort(),forbiddenWrites:0,forbiddenAttempts,brokerCalled:false};\n if(forbiddenAttempts)throw Error('non_archive_attempt_detected');\n if(!report.settingsUnchanged)throw Error('settings_changed_during_smoke');\n fs.writeFileSync(process.env.T156_SMOKE_REPORT,JSON.stringify(report,null,2)+'\\n');console.log(JSON.stringify(report));if(capture.sources.some(s=>s.status==='failed'))throw Error('operating_source_capture_failed');\n }finally{await pool.end();}\n})().catch(e=>{console.log(JSON.stringify({ok:false,code:e.code??e.message}));process.exitCode=1;});\n"
+  }
+}

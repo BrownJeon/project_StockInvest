@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { M40Plan } from './types';
 
-export const M40_ADVISORY_POLICY = 't156-m40-shadow-v3';
+export const M40_ADVISORY_POLICY = 't156-m40-shadow-v4';
 export const M40_STAGES = ['interpretation', 'observation', 'condition', 'priority'] as const;
 export type M40Stage = typeof M40_STAGES[number];
 export type AdvisoryTrigger = 'new_evidence' | 'material_event' | 'review_session' | 'optional_data_gap' | 'evidence_conflict' | 'near_rank_tie';
@@ -58,6 +58,7 @@ export interface AdvisoryRequest {
   decisionTime: string;
   triggers: AdvisoryTrigger[];
   evidence: M40Evidence[];
+  coverageIssues?: readonly string[];
   /** Ranking and objective gates only: no future outcomes or account identifiers. */
   base: Pick<M40Plan, 'asOfSession' | 'isReviewSession' | 'gates' | 'candidates'>;
 }

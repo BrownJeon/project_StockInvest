@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkCronAuth } from '@/lib/cron-auth';
+import { loadM40Evidence } from '@/lib/strategy/m40/load-evidence';
 import { loadM40Input } from '@/lib/strategy/m40/load-input';
 import { runM40Analysis, askConfiguredM40Agent } from '@/lib/strategy/m40/runner';
 import { saveAnalysisRun, putJudgment, findJudgment, putSignalDraft } from '@/lib/analysis-data/store';
@@ -19,7 +20,9 @@ export async function POST(req: NextRequest) {
   }
   try {
     const input = await loadM40Input({ session, decisionAt });
-    const result = await runM40Analysis({ input,
+    const {evidence,issues}=await loadM40Evidence(input.decisionTime);
+    const result = await runM40Analysis({ input,evidence,optionalDataIssues:issues,
+      triggers:[...(evidence.length?['new_evidence' as const]:[]),...(!evidence.length||issues.length?['optional_data_gap' as const]:[])],
       modelEnabled: process.env.T156_M40_AGENT_ENABLED === 'true',
       modelPolicyVersion: process.env.T156_M40_AGENT_POLICY_VERSION,
     }, { store: { saveAnalysisRun, putJudgment, findJudgment, putSignalDraft }, askAgent: askConfiguredM40Agent });

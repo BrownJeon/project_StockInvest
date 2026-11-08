@@ -7,6 +7,7 @@ import { loadM40Input } from '../load-input';
 import { runM40Analysis } from '../runner';
 import { listDatasets, listTestArtifacts } from '@/lib/analysis-data/store';
 
+jest.mock('../load-evidence',()=>({loadM40Evidence:jest.fn(async()=>({evidence:[],issues:[]}))}));
 jest.mock('@/lib/cron-auth', () => ({ checkCronAuth: jest.fn() }));
 jest.mock('@/lib/auth/current-user', () => ({ requireUserId: jest.fn() }));
 jest.mock('../load-input', () => ({ loadM40Input: jest.fn() }));

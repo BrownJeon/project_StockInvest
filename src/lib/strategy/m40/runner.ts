@@ -1,5 +1,6 @@
 import type { JsonValue, SignalDraft, StoredAnalysisRun, StoredJudgment } from '@/lib/analysis-data/types';
 import { planM40 } from './core';
+import type { M40EvidenceIssue } from './load-evidence';
 import type { M40Input, M40Plan } from './types';
 import {
   advisoryPrompt, contentHash, eligiblePatternReferences, M40_ADVISORY_POLICY,
@@ -28,6 +29,7 @@ export interface M40RunOptions {
   /** Audit version identifying the caller/model configuration, not self confidence. */
   modelPolicyVersion?: string;
   timeoutMs?: number;
+  optionalDataIssues?: readonly M40EvidenceIssue[];
 }
 
 export interface M40RunDependencies {
@@ -85,6 +87,7 @@ export async function askConfiguredM40Agent(prompt: string, _request: AdvisoryRe
 export async function runM40Analysis(options: M40RunOptions, dependencies: M40RunDependencies): Promise<M40RunResult> {
   const input = deepFreeze(JSON.parse(stableJson(options.input)) as M40Input);
   const evidence = deepFreeze(JSON.parse(stableJson(options.evidence ?? [])) as M40Evidence[]);
+  const coverageIssues = [...new Set(options.optionalDataIssues ?? [])].sort();
   const requestedTriggers = [...new Set(options.triggers ?? [])];
   const suppliedPatterns = JSON.parse(stableJson(options.patterns ?? [])) as M40PatternReference[];
   const inputSha256 = contentHash(input);
@@ -130,9 +133,9 @@ export async function runM40Analysis(options: M40RunOptions, dependencies: M40Ru
     const base = { asOfSession: plan.asOfSession, isReviewSession: plan.isReviewSession,
       gates: plan.gates, candidates: plan.candidates };
     const eventHash = contentHash({ policy: M40_ADVISORY_POLICY, modelPolicyVersion, enabled, timeoutMs, stage,
-      inputSha256, reasons: stageReasons, evidence, patterns, queryStartSessionByWindow });
+      inputSha256, reasons: stageReasons, evidence, patterns, queryStartSessionByWindow, coverageIssues });
     const request: AdvisoryRequest = { stage, policyVersion: M40_ADVISORY_POLICY, eventHash,
-      decisionTime: input.decisionTime, triggers: stageReasons, evidence, base };
+      decisionTime: input.decisionTime, triggers: stageReasons, evidence, base, coverageIssues };
     let status = 'skipped';
     let payload: JsonValue;
     if (!stageReasons.length) {
@@ -183,7 +186,7 @@ export async function runM40Analysis(options: M40RunOptions, dependencies: M40Ru
         payload = { reason: safeCode, policyVersion: M40_ADVISORY_POLICY, modelPolicyVersion };
       }
     }
-    const judgment: StoredJudgment = { runId, stage, eventHash, status, payload };
+    const judgment: StoredJudgment = { runId, stage, eventHash, status, payload: json({ ...(payload as Record<string, JsonValue>), coverageIssues, request }) };
     await dependencies.store.putJudgment(judgment);
     judgments.push(judgment);
   }

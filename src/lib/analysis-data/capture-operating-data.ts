@@ -131,6 +131,9 @@ function versionExpression(spec: SourceSpec): string {
 }
 function selectSql(spec: SourceSpec): string {
   const version = versionExpression(spec);
+  // Archive keys are ascii_bin. Convert only the ASCII prefix/hash result;
+  // changing the JSON's encoding here would change existing immutable versions.
+  const archiveKey = `CONVERT(CONCAT('v1:${spec.source}:',SHA2(${version},256)) USING ascii) COLLATE ascii_bin`;
   const scope = `${spec.scope}>=? AND ${spec.scope}<=?`;
   const fallback = spec.dateFallback ? ` OR (${spec.scope} IS NULL AND ${spec.dateFallback}>=? AND ${spec.dateFallback}<=?)` : '';
   return `SELECT ${spec.fields.map(([name, expression]) => `${expression} AS \`${name}\``).join(',')},
@@ -139,7 +142,7 @@ function selectSql(spec: SourceSpec): string {
     AND NOT EXISTS (
       SELECT 1 FROM t156_record r JOIN t156_dataset d ON d.id=r.dataset_id
       WHERE d.status='published' AND r.record_type='${spec.recordType}'
-        AND r.record_key=CONCAT('v1:${spec.source}:',SHA2(${version},256)))
+        AND r.record_key=${archiveKey})
     ORDER BY ${spec.order} LIMIT ?`;
 }
 

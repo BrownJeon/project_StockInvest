@@ -14,8 +14,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "M40 shadow 분석·4단계 판단·증분 보존 구현과 격리 검증 완료, 승인된 연구 DB 운영 이관 및 테스트 원본 복원 검산 진행"
-  last_event_id: exec-036
+  current_scope: "M40 shadow·4단계 판단·증분 보존 구현/검증 완료, 연구 27표 게시·테스트 원본28개 DB 복원 검산 완료, 운영 연동 최종 확인"
+  last_event_id: exec-037
 created: 2026-11-06
 updated: 2026-11-08
 ---
@@ -62,6 +62,7 @@ updated: 2026-11-08
 | exec-034 | 2026-11-08 08:29 사전 점검 | resume | codex → codex / codex_scoped | 사용자가 승인한 구현·운영 DB 자료 이관·테스트 이력 저장의 실제 스키마/권한/모드 점검, 28개 자료 해시 목록 및 실행·복구 계획 준비. 담당 방식 확인 중이며 구현/운영 쓰기는 아직 미실행 | 최신 사용자 지시로 분석 전용 제약 해제. AGENTS의 큰 구현 Claude 인계 규칙 때문에 담당 방식만 비동기로 확인 요청 |
 | exec-035 | 2026-11-08 사용자 답변 반영 | scope approval | codex → codex / codex_scoped | Codex가 T-156 구현·DB 이관까지 직접 수행. 이번 작업의 큰 구현 담당 제한은 명시 예외 승인됨. 원본 보존·실거래 보호·검증 관문 유지 | 사용자: “이번 T-156은 Codex가 구현·DB 이관까지 직접 진행” |
 | exec-036 | 2026-11-08 09:45 중간 기록 | implement / verify / import | codex → codex / codex_scoped | 새 worktree에서 M40·보관·shadow·인증 API 구현, Reviewer 지적 수정, Ubuntu 1,343 tests 및 실 MariaDB 경합 2건 검증. 운영 신규 DDL 후 연구 27표 적재 중(staged), 게시·배포 미완료 | 사용자 직접 구현·DB 이관 승인 exec-035. 실제 결과는 F13/구현 보고서의 영수증으로 구분 |
+| exec-037 | 2026-11-08 11:32 중간 기록 | publish / final QA | codex → codex / codex_scoped | 연구 27표 4,383,186행 게시·전체 COUNT/CHECKSUM, 압축원문1,455건 해시, 테스트 원본28개 DB 복원 검산 완료. 최종1,417 tests·타입·build PASS, 공개시각/문자 비교 보완. 운영 증분 연동 재확인 중 | exec-035 승인 범위의 실제 DB/QA 영수증. 실주문 활성화 없음 |
 
 ## 목표
 
@@ -1552,7 +1553,7 @@ PNG를 제외한 실제 연구/시뮬레이션 파일 **28개·57,339,111바이�
 - 기존 수집기 대상에 해외 분석 목록을 추가하고, 기존 수집 행의 신규 관측·갱신을 불변 자료판으로 보관한다. 과거 발표일과 지금 최초 관측을 바꾸지 않는다.
 - 기존 해외 분석 응답 후 Next after 콜백에서 관측한다. 기존 응답/재시도와 보호 청산은 대기하지 않으며 에이전트 제안은 기본 순위를 바꾸지 않는다.
 - 현재 버전의 신호 산출물은 shadow 초안이다. M40 일반 실매매 발행/기존 보유 자동 이관/검증 상태 승급은 실행하지 않았다. F09와 전진 검증은 별도 남은 관문이다.
-- 격리 복원 COUNT/CHECKSUM은 27표 전체 일치. 현재 운영은 신규 표에 적재 중이며 게시·배포 완료는 아직 주장하지 않는다.
+- 격리 복원과 운영 대상 COUNT/CHECKSUM은 27표 전체 일치. 운영 dataset은 published, live_eligible=false다. 압축원문1,455건 해시와 테스트 원본28개 전체 readback SHA 일치를 확인했다. 코드 배포는 별도 영수증으로 구분한다.
 
 ## Reviewer
 
@@ -1570,8 +1571,16 @@ Codex 하위 역할 `t156_reviewer`가 구현과 시험 본문을 읽고 정적 
 
 최종 판정: CONDITIONAL_PASS (scope: src/lib/strategy/m40/types.ts, src/lib/strategy/m40/core.ts, src/lib/strategy/m40/load-input.ts, src/lib/strategy/m40/archive-reader.ts, src/lib/strategy/m40/runner.ts, src/lib/strategy/m40/advisory.ts, src/lib/strategy/m40/observer.ts, src/lib/analysis-data/types.ts, src/lib/analysis-data/store.ts, src/lib/analysis-data/capture-operating-data.ts, src/app/api/cron/m40-analysis/route.ts, src/app/api/cron/post-market-analysis/route.ts, src/app/api/research/t156/route.ts, src/lib/profit-engine/daily-bars-store.ts, scripts/t156/archive-lib.mjs, scripts/t156/archive-operator.mjs, scripts/t156/transform-dump.mjs, scripts/t156/source-manifest.py, scripts/migrations/T-156-analysis-archive.sql, src/lib/strategy/m40/__tests__/advisory.test.ts, src/lib/strategy/m40/__tests__/core.test.ts, src/lib/strategy/m40/__tests__/load-input.test.ts, src/lib/strategy/m40/__tests__/observer.test.ts, src/lib/strategy/m40/__tests__/routes.test.ts, src/lib/strategy/m40/__tests__/runner.test.ts, src/lib/analysis-data/__tests__/capture-operating-data.test.ts, src/lib/analysis-data/__tests__/store.test.ts, src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts, src/lib/profit-engine/__tests__/daily-bars-collector.test.ts, scripts/t156/archive-lib.test.mjs, scripts/t156/verify-restore.py, scripts/t156/archive-import.mjs, scripts/t156/archive-import.test.mjs, src/lib/strategy/m40/__tests__/archive-reader.test.ts)
 
+최종 근거 연결·시각·문자 비교 보완은 독립 Reviewer가 지정 구현/시험15파일을 정적 재검토해 PASS로 회신했다. 아래는 기존 실제 판정과 최종 회신의 합집합이다. 적재기의 단일 실행·전체 검산 조건은 실제 충족했다. Reviewer의 시험 실행으로 표기하지 않는다.
+
+최종 판정: CONDITIONAL_PASS (scope: src/lib/strategy/m40/types.ts, src/lib/strategy/m40/core.ts, src/lib/strategy/m40/load-input.ts, src/lib/strategy/m40/archive-reader.ts, src/lib/strategy/m40/runner.ts, src/lib/strategy/m40/advisory.ts, src/lib/strategy/m40/observer.ts, src/lib/analysis-data/types.ts, src/lib/analysis-data/store.ts, src/lib/analysis-data/capture-operating-data.ts, src/app/api/cron/m40-analysis/route.ts, src/app/api/cron/post-market-analysis/route.ts, src/app/api/research/t156/route.ts, src/lib/profit-engine/daily-bars-store.ts, scripts/t156/archive-lib.mjs, scripts/t156/archive-operator.mjs, scripts/t156/transform-dump.mjs, scripts/t156/source-manifest.py, scripts/migrations/T-156-analysis-archive.sql, src/lib/strategy/m40/__tests__/advisory.test.ts, src/lib/strategy/m40/__tests__/core.test.ts, src/lib/strategy/m40/__tests__/load-input.test.ts, src/lib/strategy/m40/__tests__/observer.test.ts, src/lib/strategy/m40/__tests__/routes.test.ts, src/lib/strategy/m40/__tests__/runner.test.ts, src/lib/analysis-data/__tests__/capture-operating-data.test.ts, src/lib/analysis-data/__tests__/store.test.ts, src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts, src/lib/profit-engine/__tests__/daily-bars-collector.test.ts, scripts/t156/archive-lib.test.mjs, scripts/t156/verify-restore.py, scripts/t156/archive-import.mjs, scripts/t156/archive-import.test.mjs, src/lib/strategy/m40/__tests__/archive-reader.test.ts, src/lib/strategy/m40/load-evidence.ts, src/lib/strategy/m40/operating-evidence.ts, src/lib/strategy/m40/__tests__/load-evidence.test.ts, src/lib/strategy/m40/__tests__/operating-evidence.test.ts)
+
 ## QA
 
 Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했다. Jest 55 suites / 1,343 tests 통과, 기존 별도 MariaDB 경합 suite 1개·15 tests는 미실행으로 분리한다. 새 T-156 MariaDB 저장소 14 tests 통과(실제 InnoDB 대기 확인 경합2 포함), tsc 및 archive 4 tests 통과. DRY_RUN·킬스위치·한도·블랙리스트·감사로그·검증 관문의 모의 회귀를 포함하며 whitelist는 현재 항상허용 규칙이다.
 
 로컬 Next dev에서 실제 after/정본 observer/store의 응답 후 기록 생성을 확인했다. DB와 누락 API-usage 모듈을 격리 대체했고 실제 LLM/증권사/운영 DB 호출은 없었다. 최초 AppleDouble 5개 구문 오류 뒤 메타파일만 제외한 재실행 결과를 기록한다. 광역 프로젝트 전체·수익성·운영 서버 lifetime PASS로 확대하지 않는다.
+
+최종 소스 재검증: Jest58 suites / 1,417 PASS, 기존 별도 DB 경합1 suite / 15 SKIP, 0 FAIL. opt-in T-156 실제 격리 MariaDB14건 포함. 최종 tsc/build exit0, 정본과 검증본 파일 SHA 일치. 실제 MariaDB reader 마이크로초/NULL 시험과 capture 세 소스·한글/이모지 해시·중복 배제는 root가 별도 실행해 PASS다. 과거1,343/1,403건과 중복 합산하지 않는다.
+
+최종 SEC 시각 보완 재검증: 두 알려진 SEC 원천의 raw 발행시각 NULL을 유지하고 접수시각 대용을 표시했다. 실제 가용시각의 마이크로초 절삭 지적도 수정 후 Reviewer 재검토 PASS. 최종 지정58 suites/1,426 PASS, 15 SKIP, 0 FAIL·tsc/build exit0. 실제 운영 최근 문서194개 중 SEC 대용193개/근거6개, 10/22 cutoff자료0개·쓰기0을 확인했다. 이 결과가 최종 소스 기준이며 앞선 시험과 합산하지 않는다.
