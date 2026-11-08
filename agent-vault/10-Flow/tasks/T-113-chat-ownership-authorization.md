@@ -2,7 +2,7 @@
 task_id: T-113
 title: 챗봇 대화 소유권과 서버 인가
 status: done
-waiting: "사용자 화면 확인 — /ai 에 기존 대화 13건이 보이는지(2026-11-06 23:19 백필 후)"
+waiting: "사용자 화면 확인 — /ai 에 기존 대화 **13건**이 보이는지(2026-11-06 23:19 백필 후). 2026-11-08 사용자가 실기기에서 비서 챗봇 화면을 확인했으나 대화 건수는 항목별 보고가 없다."
 project: StockInvest
 created: 2026-11-04
 updated: 2026-11-06
@@ -217,6 +217,12 @@ aliases: [ADP-010-C01-ownership]
 - 미실행: 백필(`BEGIN NOT ATOMIC` 블록), DB 쓰기, pm2 조작(배포 스크립트 외), 롤백. 실화면(브라우저)과 로그인 세션을 통한 채팅 소유권 동작은 확인하지 않았다(미확인).
 - 이상 징후: 없음. 헬스 최초 몇 분간 3003 health 000(기동 중) — 재기동 직후 정상 전환 범위.
 
+
+- **2차 배포 (2026-11-07 00:23 KST, 문서·스크립트 보관 커밋)**: 사용자 명시 지시로 `git push origin main` 실행. 범위 `c33e467..2ce0186` (커밋 1개: `2ce0186 docs(T-113): 미커밋 산출물 보관 + 메뉴 구현 가이드 비서 탭 갱신`). push 직전 `git fetch` 로 origin/main = `c33e467` 확인(움직이지 않음), `git-refs-clean.sh --check` 깨끗함. push 00:23:20 KST. 서버 clone `/home/brownjeon/.node-local/stockinvest-t113-clone` 에서 실행, 공유 NFS 저장소에서는 push 하지 않았다. 런타임 src 변화 없음(`c33e467..2ce0186` 의 src 변경은 시험 파일 1개 추가뿐).
+- 배포 경로: webhook(release.sh), `--migrate` 없음. `RELEASE_RESULT {"status":"ok","release":"20261107-002331-2ce01869","sha":"2ce01869cd95992a49b35ec198cbed1a72193037","previous":"/home/brownjeon/apps/stockinvest/releases/20261106-231601-c33e4678","migrated":false}`. 로그 START 00:23:25 ~ END 00:24:50 KST, exit=0. `current` → `releases/20261107-002331-2ce01869`. 롤백 지점 `20261106-231601-c33e4678` 보관, 실행하지 않음.
+- 확인 결과(00:25 KST): `/api/health` 200, `ok:true`, `db:true`, `schemaFatal:false`, `safety.dryRun:true`, `safety.killSwitch:true`(건드리지 않음). pm2 `stockinvest` id 143 online·restarts 0·cwd 새 릴리스, `stockinvest-cron` id 144 online·restarts 0·cwd 새 릴리스, cron 정확히 1개. 릴리스 디렉터리 밖에서 도는 StockInvest 프로세스 0. 무세션 `GET /api/chat/threads` 401. 00:23:31 이후 pm2-err·cron-err 에 `Unknown column`·예외 0건.
+- **판정 주의: `safetyStatus: red`** (`safetyReasons: ["order_limits_unconfigured"]`). DB `system_config` 의 `safety_order_max_pct`·`safety_daily_order_max_pct` 가 미설정으로 읽혀 1회·일일 한도가 0이 되었고, 신규 매수는 차단된다(fail-safe). 11-06 23:18 점검 때는 green 이었다. 로그상 첫 `미설정` 은 00:00:40 KST 이며, 그 약 1분 전 23:59:43 에 `[settings:safety]`(자동 청산 엔진 ON, KIS 유량 5 req/s) 저장 로그가 있다. 이번 배포는 src 를 바꾸지 않았으므로 배포가 직접 원인은 아니다(배포 전 00:00:40 부터 발생). 원인은 확정하지 못했다(운영 DB 직접 조회 금지로 미확인). 조치하지 않았다(DB 쓰기 금지, 롤백 무의미). **한도 값 확인·재설정은 사용자 판단 사항이다.**
+- 이상 징후·미확인: `shared/.env` mtime 2026-11-07 00:02(내용 미열람). 자동 청산 엔진이 ON 상태이며, 킬스위치 true 에서 매도가 실제로 막히는지는 미확인. 로그인 세션 기반 채팅 화면 동작은 미확인. 이 배포 커밋에는 이 task 파일이 포함되어 있어 이 기록은 다음 커밋 때 올라간다.
 
 ## 운영 이관 완료 (2026-11-06 23:19, 메인 세션)
 

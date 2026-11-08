@@ -5,7 +5,7 @@ status: done
 project: StockInvest
 created: 2026-11-07
 updated: 2026-11-08
-waiting: "사용자 화면 확인(검토 카드 머리글 한 줄·안내 띠·「+ 새 대화」 확정) + 결정 1건(QA-L1 수정 여부)"
+waiting: "결정 1건(QA-L1 수정 여부)"
 execution_context:
   schema_version: 1
   origin_tool: claude
@@ -240,6 +240,7 @@ demo_gate:
 - [19:06] **앱(APK) 변경 없음** — `android/**`·`capacitor.config.ts`·`public/app-shell/` 변경 0건이라 재설치가 필요 없다. 앱은 WebView 라 다시 열면 반영된다.
 - [23:51] 후속 1(N-2 시험) 배포 — 커밋 `24027b7`(시험 1파일 + 이 이력서) → 23:49:50 push = webhook blue/green → 릴리스 `20261107-235004-24027b7f`, `RELEASE_RESULT {"status":"ok",…,"migrated":false}`, END exit=0. 롤백 지점 `20261107-191215-ad3c3837`. 배포 후 확인: `current` 전환 · pm2 `stockinvest`·`stockinvest-cron` 각 1행 online · `GET /api/health` 200(`ok:true`·`db:true`·`safetyStatus:"green"`·`safetyReasons:[]`) · 안전장치 값 배포 전과 동일(`dryRun:true`·`killSwitch:false`·`limitsConfigured:true`). **시험 전용이라 런타임 동작 변화 0건.** 다만 push 시각이 미국장 개장(23:30 KST) 뒤라 blue/green 컷오버가 웹·cron 프로세스를 재시작했다 — `DRY_RUN=true` 라 주문 영향은 없다.
 - [2026-11-08 08:30] **후속 1 종료** — 사용자 지시 「여기서 멈추고 작업 마무리해줘」(2026-11-08)로 **N-1 은 메우지 않고 보류**한다. 위 배포 결과 줄은 이 커밋에 함께 넣었다 — 미국장이 06:00 KST 에 닫혀 「기록 한 줄 때문에 장중 재시작」 우려가 사라졌다. push(=운영 blue/green 배포) 는 사용자 승인 사항이라 별도로 받는다. `board.md`·`ACTIVE.md`·`20-Log` 는 여전히 공유 트리에만 있다(그 트리가 원격보다 6커밋 뒤처져 다른 세션 변경이 섞인다).
+- [2026-11-08 09:08] 기록 커밋 `6c67160`(이 이력서 1파일, 코드 0건) 사용자 승인 후 push(09:06:32 KST) → 릴리스 `20261108-090655-6c671602`, `RELEASE_RESULT {"status":"ok",…,"migrated":false}`, END exit=0. 롤백 지점 `20261107-235004-24027b7f`. 배포 후 확인: `current` 전환 · pm2 `stockinvest`·`stockinvest-cron` 각 1행 online(restarts=0) · `GET /api/health` 200(`ok:true`·`db:true`·`safetyStatus:"green"`·`safetyReasons:[]`·`dryRun:true`·`killSwitch:false`·`limitsConfigured:true`). 미국장 마감(06:00 KST) 뒤라 컷오버가 장중 재시작을 만들지 않았다. **이 줄과 `board.md`·`ACTIVE.md`·`20-Log` 는 공유 트리에만 있는 미커밋 기록이다**(서버 clone 사본은 `6c67160` 상태로 깨끗하게 둔다).
 
 
 ## 최종 요약
@@ -282,3 +283,8 @@ demo_gate:
 - [23:50] **정정**: 배포 보고의 N-2 서술(「승인 문구를 시험이 지키지 않는다」)은 과했다. 문구 3 의 뒤 문장(`. 대화를 다시 열면 답변이 보입니다.`)·머리글 조각·띠 style 문자열은 ⑫-8·9·11·12·13 이 이미 리터럴로 고정하고 있었다(M-N4 가 그 증거). 실제 공백은 **문구 1·2 전체와 문구 3 접두, 머리글 한 줄의 순서·덧붙임**이었다.
 - [23:50] 넣지 않은 것: Reviewer I-1(확정 버튼 라벨 `확정 전송 ▶`·`편집됨 — 전송 ▶`·`취소` 가 어느 시험에도 고정되지 않음 — 기존 공백) · I-2(목록에 없는 대화의 제목 폴백 `'대화'` 가 데모에 없고 `「대화」 대화에 저장했습니다` 로 어색 — designer 판단) · I-3(`tid == null` 방어 분기의 문구). 이 지시 범위(승인 문구 3종·머리글) 밖이라 「남은 일」로 넘긴다.
 - [23:50] 미확인: 브라우저 실화면·실제 React 렌더러·갤럭시 S25+·TalkBack — 0건(시험은 전부 하네스·`renderToStaticMarkup`). 시험 전용 변경이라 화면 동작은 바뀌지 않는다. judge C2·Codex 검토 없음, QA 재실행 없음(운영 코드 변경 0건 — Reviewer 가 jest·tsc 를 독립 재실행했다).
+
+## 사용자 확인 (2026-11-08)
+
+- [09:50] 사용자 발화: 「실기기에서 비서메뉴의 챗봇화면 확인했으며 지금까지의 작업들에 대해서 미커밋된 것들을 커밋 및 푸시진행해줘」(2026-11-08). 실기기(안드로이드 「주식캐기」)에서 **비서 메뉴의 챗봇 화면을 확인**했고 이상 보고는 없었다.
+- 그래서 frontmatter `waiting` 에서 화면 확인 항목을 뺀다. 다만 **항목별 결과를 보고받은 것은 아니다** — 화면 진입·표시가 정상이라는 확인으로만 기록한다. 개별 항목(아래 「사용자가 확인할 것」)의 결과가 필요하면 다시 확인받는다.

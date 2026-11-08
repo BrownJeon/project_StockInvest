@@ -1,7 +1,7 @@
 ---
 task_id: T-159
 title: 매수 주문 한도에서 명시적으로 저장한 0%를 무제한으로 처리
-status: review
+status: done
 project: StockInvest
 created: 2026-11-07
 updated: 2026-11-07
@@ -184,3 +184,18 @@ demo_gate:
 - 승인본과 실제 후보의 혼합 저장 차이를 수정했다. 명시 한도와 다른 안전 설정은 단일 PATCH·단일 MariaDB 문장으로 저장한다. 안전 저장 실패 시 전략 요청도 시작하지 않는다. 즉시 안전 스위치와 구형 한도 필드는 명시 한도 요청에 혼합할 수 없다. 수정 대상 4개 파일 포함 최종 후보 32개가 Mac/Ubuntu SHA-256 일치했다. 관련 회귀 3 스위트 84건, 타입 검사와 Next.js 빌드를 확인했다.
 - 실제 후보 Next.js와 일회용 MariaDB 10.11.11, Chromium 격리 프로필 및 테스트 로그인으로 검증했다. legacy 0 미구성, 빈 입력·Escape의 설정 보존, 1회·일일 각각 0 저장 후 재조회 무제한, 다른 설정 저장 후 보존, 4%·8% 복귀를 확인했다. 실제 MariaDB 트리거 오류로 혼합 저장 PATCH가 한 번 실패한 뒤 두 DB 값이 그대로였고, 재시도는 200으로 두 값이 함께 변경됐다.
 - 360·412·1280px에서 화면의 가로 넘침은 0이고 한도 행은 각각 81·65·65px였다. 합성 계정으로 서버 정상 로그인 API가 세션을 발급했다. 운영 계정·증권사·실주문 테스트는 수행하지 않았다.
+
+## 배포 기록
+
+| 시각 (KST) | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
+|---|---|---|---|---|---|
+| 2026-11-07 09:22 | 20261107-092140-fb3b9bbb | fb3b9bbb | T-159 명시적 무제한 매수 한도·판단 에이전트 잔금 기반 주문 금액 | ✅ ok | 사용자 승인 v1, QA 최종 PASS 후 Leader push가 시작한 webhook 배포. exact SHA `fb3b9bbb2a95f2c4aaa101c51d818343193aae7f`, RELEASE_RESULT status=ok, webhook END exit=0. DB 마이그레이션·APK 없음. |
+
+- [09:23] 배포 후 독립 확인: `scripts/deploy.sh StockInvest --status`에서 current 릴리스가 위 SHA와 일치, 웹·cron 각 1개 online이며 두 앱의 cwd가 새 릴리스, 로컬 헬스 200. 공개 `/api/health` HTTP 200, `ok=true`, DB 정상, safety green, DRY_RUN=true·KILL_SWITCH=false·limitsConfigured=true·국내/해외 한도 해석 완료. 읽기 전용 Chrome에서 운영 홈이 렌더링되고 “실거래여부 OFF · 실거래 차단”으로 표시됨을 확인했다.
+- cron 로그는 컷오버 직후 일부 내부 요청 HTTP=000/503 timeout을 기록했으나 다음 틱에서 portfolio-snapshot·trade-report 및 job-run-log 전송이 회복됐고, 이후 cron 잡은 정상으로 기록됐다. KIS OpenAPI 상태 및 PM2 재시작 횟수는 독립 확인하지 않았다. 운용 한도·DB·거래 상태는 변경하지 않았다.
+
+## 완료 — Codex
+
+- 최종 Reviewer와 QA 통과 이후 Ubuntu safety commit-msg 훅을 통과했다. 코드·시험 32개, 승인 데모와 작업문서만 포함한 `fb3b9bbb2a95f2c4aaa101c51d818343193aae7f`를 main에 fast-forward 푸시했다. 공유 체크아웃의 별도 변경은 릴리스 후보에 포함하지 않았다.
+- 2026-11-07 09:22:59 KST, 웹훅의 exact SHA `RELEASE_RESULT` status ok 및 END exit=0. current `20261107-092140-fb3b9bbb`이며 웹·cron 각 1개가 새 cwd에서 online, 각각 재시작 0. 초기 헬스 요청은 시간 초과됐고 최종 확인은 HTTP 200, DB true, safety green, DRY_RUN true, 킬스위치 false, 한도 구성 및 국내·해외 실효 한도 확인 true. 로그인 진입 HTTP 200.
+- 마이그레이션은 없었다. 운영 한도 저장·실주문은 실행하지 않았다. 0% 저장 검증은 운영과 같은 후보 코드의 격리 화면·API·일회용 DB에서 수행했다.
