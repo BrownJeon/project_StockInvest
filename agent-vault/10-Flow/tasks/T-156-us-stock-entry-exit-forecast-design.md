@@ -1673,3 +1673,5 @@ F14 최종 보완: c296116배포(RELEASE_RESULTok/END0,20261108-135514-c2961167)
 QA는시각수정전관련27 suites/533 PASS/2 SKIP·tsc0,이전합성실DB권한/readonly2검사를분리했다. 최종UTC수정뒤집중2 suites/15 tests PASS·tsc0과6파일SHA일치를확인했다(전범위를다시실행했다고하지않음). 실제운영DB의최종reader에서소유자조회/출처4그룹/리허설4신호/4판단단계/전진지표null,비승인식별자403·privateSELECT0·DB쓰기0을추가검증했다. 첫운영smoke는루트검증용allowlist에정본READ ONLY START명령이빠져거부됐고,allowlist보완후성공한것이며제품결함이아니다. 개인정보/모의금액은로그·데모·공개영수증에출력하지않았다.
 
 증거원본은Ubuntu `~/.node-local/t156-implementation-20261108/`의paper-view-qa/paper-view-final-qa/paper-view-time-final-qa 및binding/read영수증에보존한다. 격리합성DB는QA가종료후삭제했고,실제실행toolinput에서복원한fixture는복원출처와원본hash독립대조불가를표시했다. QA가시작한전용컨테이너는중지·볼륨보존했다. 앱화면/실제세션/배포성공/전체UI완료로확대하지않는다.
+
+F15 준비본은 로컬 브랜치 28bcf08로커밋했고 push/새코드배포는하지않았다. source6파일·데모2개·합성스크린샷·QA3판본·명시적권한연결/실제읽기영수증을 원본 파일별 SHA 목록과 함께 paper-view-preparation-evidence-20261108.tar.gz(145,639bytes,SHAe8a8b3e0a61b6562bbf57b1518346e22cf84bb248d8e4e2763019ad953455290)로묶어DB테스트이력에저장/복원SHA일치했다. 실제모의금액/보유수량/이메일/인증정보/원본입력은포함하지않았다. 현재남은일은자동승인기록실패처리방식응답후승인된v2화면소스구현·기존화면보존검증·통합리뷰/QA/배포이다.
