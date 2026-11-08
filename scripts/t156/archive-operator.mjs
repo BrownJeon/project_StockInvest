@@ -4,7 +4,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { createHash } from 'node:crypto';
-import { PREFIX, identifier, statements, mapStatement, executeDumpStatement, sha256 } from './archive-lib.mjs';
+import { PREFIX, identifier, sha256 } from './archive-lib.mjs';
+import { importDump } from './archive-import.mjs';
 const args = process.argv.slice(2);
 const option = key => args[args.indexOf(key)+1];
 const phase = args.includes('--phase') ? option('--phase') : 'plan';
@@ -16,7 +17,8 @@ if (!tables.length || new Set(tables).size !== tables.length) throw Error('inval
 tables.forEach(t=>identifier(PREFIX+t));
 const require = createRequire(resolve(process.env.T156_NODE_PACKAGE_ROOT ?? process.cwd(), 'package.json'));
 const mysql = require('mysql2/promise');
-const db = await mysql.createConnection({host:process.env.DB_HOST,port:Number(process.env.DB_PORT??3306),user:process.env.DB_USER,password:process.env.DB_PWD,database:process.env.DB_NAME,charset:'utf8mb4',dateStrings:true,supportBigNumbers:true,bigNumberStrings:true,multipleStatements:false});
+// mysql2 3.11.3 supports negotiated compression; opt in with --compress.
+const db = await mysql.createConnection({host:process.env.DB_HOST,port:Number(process.env.DB_PORT??3306),user:process.env.DB_USER,password:process.env.DB_PWD,database:process.env.DB_NAME,charset:'utf8mb4',dateStrings:true,supportBigNumbers:true,bigNumberStrings:true,multipleStatements:false,compress:args.includes('--compress')});
 const datasetId='t156-research-db-20261108';
 const log = value => process.stdout.write(JSON.stringify(value)+'\n');
 async function fileHash(path) {const h=createHash('sha256'); for await(const b of createReadStream(path)) h.update(b); return h.digest('hex');}
@@ -42,18 +44,9 @@ try {
         if(have.length) throw Error('unowned_target_tables_exist');
         await db.query(`INSERT INTO t156_dataset(id,kind,source_key,status,live_eligible,content_sha256,row_count,metadata_json,created_at) VALUES(?,?,?,'staged',0,?,0,?,UTC_TIMESTAMP(6))`,[datasetId,'research_database','t156_research_20261106',dumpSha,JSON.stringify({manifest,tablePrefix:PREFIX,liveEligibility:'research-only; per-source availability/identity/adjustment qualification required'})]);
       }
-      await db.query('SET FOREIGN_KEY_CHECKS=0');
       await db.query("SET SESSION sql_mode='STRICT_TRANS_TABLES,NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'");
-      let count=0;
-      for await (const source of statements(dumpPath)) {
-        let sql=mapStatement(source,tables);
-        if(!sql) continue;
-        sql=sql.replace(/^CREATE TABLE /,'CREATE TABLE IF NOT EXISTS ').replace(/^INSERT INTO /,'INSERT IGNORE INTO ');
-        await executeDumpStatement(db,sql);
-        if(++count%500===0) log({phase,statements:count});
-      }
-      await db.query('SET FOREIGN_KEY_CHECKS=1');
-      log({phase,statements:count,ok:true,status:'staged'});
+      const result=await importDump(db,{manifest,dumpPath,datasetId,dumpSha,onProgress:value=>log({phase,...value})});
+      log({phase,...result,ok:true,status:'staged'});
     } else if(phase==='verify'||phase==='publish') {
       const [dataset]=await db.query('SELECT content_sha256,status FROM t156_dataset WHERE id=?',[datasetId]);
       if(dataset.length!==1 || dataset[0].content_sha256!==manifest.dumpSha256 || dataset[0].status==='rejected') throw Error('dataset_manifest_conflict');
