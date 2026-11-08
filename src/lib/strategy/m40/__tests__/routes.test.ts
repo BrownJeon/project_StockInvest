@@ -6,12 +6,14 @@ import { requireUserId } from '@/lib/auth/current-user';
 import { loadM40Input } from '../load-input';
 import { runM40Analysis } from '../runner';
 import { listDatasets, listTestArtifacts } from '@/lib/analysis-data/store';
+import { paperForwardSummary } from '../forward-store';
 
 jest.mock('../load-evidence',()=>({loadM40Evidence:jest.fn(async()=>({evidence:[],issues:[]}))}));
 jest.mock('@/lib/cron-auth', () => ({ checkCronAuth: jest.fn() }));
 jest.mock('@/lib/auth/current-user', () => ({ requireUserId: jest.fn() }));
 jest.mock('../load-input', () => ({ loadM40Input: jest.fn() }));
 jest.mock('../runner', () => ({ runM40Analysis: jest.fn(), askConfiguredM40Agent: jest.fn() }));
+jest.mock('../forward-store', () => ({ paperForwardSummary: jest.fn(async () => ({ initialized: false })) }));
 jest.mock('@/lib/analysis-data/store', () => ({ saveAnalysisRun: jest.fn(), putJudgment: jest.fn(),
   findJudgment: jest.fn(), putSignalDraft: jest.fn(), listDatasets: jest.fn(), listTestArtifacts: jest.fn() }));
 
@@ -51,6 +53,7 @@ describe('T-156 authenticated archive and cron entry points', () => {
     expect(response.status).toBe(401);
     expect(listDatasets).not.toHaveBeenCalled();
     expect(listTestArtifacts).not.toHaveBeenCalled();
+    expect(paperForwardSummary).not.toHaveBeenCalled();
   });
 
   it('exposes a limited inventory without snapshot, account or artifact metadata payloads', async () => {
@@ -66,5 +69,6 @@ describe('T-156 authenticated archive and cron entry points', () => {
     expect(JSON.stringify(body)).not.toContain('private-');
     expect(body.datasets[0].metadata).toBeUndefined();
     expect(body.testArtifacts[0].metadata).toBeUndefined();
+    expect(paperForwardSummary).toHaveBeenCalledTimes(1);
   });
 });

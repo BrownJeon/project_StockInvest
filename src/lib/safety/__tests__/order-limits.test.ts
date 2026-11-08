@@ -5,6 +5,9 @@ import {
   resolveOrderAmountKRW,
 } from '../order-limits';
 
+// This suite verifies the environment fallback; never open a real DB pool.
+jest.mock('@/lib/db', () => ({ getPool: () => { throw new Error('fixture_db_unavailable'); } }));
+
 const base: OrderRequest = {
   exchange: 'coinone',
   symbol: 'KRW-BTC',

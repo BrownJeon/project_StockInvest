@@ -31,7 +31,7 @@ export interface OrderResult {
    * T-072 WP-2d — `'invalid_side'`: `side` 를 정규화(trim·소문자)해도 `'buy'`·`'sell'` 이 아니라 `submitOrder` 가 **orders 행·거래소 호출 없이**
    * 끝냈다(orders.side ENUM 이 그 값을 받지 않는다). 입구 검증이 있으면 평소 0건 — 발동 = 호출부 결함 신호.
    */
-  blockedBy?: 'kill_switch' | 'order_limit' | 'daily_limit' | 'symbol_not_allowed' | 'dry_run' | 'validation_gate' | 'invalid_side';
+  blockedBy?: 'kill_switch' | 'order_limit' | 'daily_limit' | 'symbol_not_allowed' | 'dry_run' | 'validation_gate' | 'invalid_side' | 'paper_only';
   exchangeOrderId?: string;
   raw?: unknown;
   error?: string;

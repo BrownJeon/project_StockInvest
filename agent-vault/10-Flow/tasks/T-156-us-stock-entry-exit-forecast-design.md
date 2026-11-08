@@ -2,7 +2,7 @@
 task_id: T-156
 title: 미국 종목분석의 매수·매도 시점 개선안 조사
 status: doing
-waiting: ["F09 운영 기준과 적격 입력 생성·게시 및 전진 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
+waiting: ["전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
 priority: medium
 base_ref: 8984f69ddd5581c45c919193a535f5b1b359765d
 roles_involved: [leader, developer, reviewer, qa]
@@ -14,8 +14,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "M40 shadow 기반 구현·연구27표 운영 이관·원본28개/신규 검증이력 보존·배포 검증 완료. F09·적격 입력·실매매 연결과 전진 검증 대기"
-  last_event_id: exec-038
+  current_scope: "DRY_RUN 전용 입력 적격성·실계좌 복제 모의 장부·전용 시그널 연결 구현. 첫 적격 거래일 T0 고정과 한정 후보군 시험판 승인 반영. 실제 전진 성과는 관측 시작 후 평가"
+  last_event_id: exec-041
 created: 2026-11-06
 updated: 2026-11-08
 ---
@@ -64,6 +64,9 @@ updated: 2026-11-08
 | exec-036 | 2026-11-08 09:45 중간 기록 | implement / verify / import | codex → codex / codex_scoped | 새 worktree에서 M40·보관·shadow·인증 API 구현, Reviewer 지적 수정, Ubuntu 1,343 tests 및 실 MariaDB 경합 2건 검증. 운영 신규 DDL 후 연구 27표 적재 중(staged), 게시·배포 미완료 | 사용자 직접 구현·DB 이관 승인 exec-035. 실제 결과는 F13/구현 보고서의 영수증으로 구분 |
 | exec-037 | 2026-11-08 11:32 중간 기록 | publish / final QA | codex → codex / codex_scoped | 연구 27표 4,383,186행 게시·전체 COUNT/CHECKSUM, 압축원문1,455건 해시, 테스트 원본28개 DB 복원 검산 완료. 최종1,417 tests·타입·build PASS, 공개시각/문자 비교 보완. 운영 증분 연동 재확인 중 | exec-035 승인 범위의 실제 DB/QA 영수증. 실주문 활성화 없음 |
 | exec-038 | 2026-11-08 11:44 확인 | deployment / archive complete | codex → codex / codex_scoped | 연구27표 게시·원본28개 및 신규 검증이력 DB보존, 구현소스39개 시험해시와 배포판 일치. 릴리스9237fff RELEASE_RESULT ok/END0·health200·web/cron각1·인증API 차단동작 확인. F09·적격입력·전진검증은 대기 | exec-035 직접수행 승인, 운영 DB readback/독립QA 1,426 PASS·15 SKIP와 실제 배포 검증 JSON |
+| exec-039 | 2026-11-08 사용자 후속 | scope approval | codex → codex / codex_scoped | 남은 T0·자료 적격성·전진 검증을 진행해 DRY_RUN 종목분석→시그널 연결. 실거래 해제 금지 | 사용자 후속 명시 지시 |
+| exec-040 | 2026-11-08 사용자 선택 | policy decisions | codex → codex / codex_scoped | 첫 적격 거래일 T0 1회 고정, 현재 실계좌를 복제한 독립 모의 장부, 한정 후보군 모의 시험판 승인 | 비동기 질문 3개 사용자 답변. 실제 보유·잔고·전략 검증 상태 변경 승인 아님 |
+| exec-041 | 2026-11-08 13:50 | implement / verify | codex → codex / codex_scoped | 독립모의장부·source자격·T0영구고정·paper시그널 구현/최종QA,운영복사+11/06리허설4개. 코드배포 후검증과미래전진표본은분리 | 사용자3개선택,독립감사,1,594tests/SQL11검사/운영영수증 |
 
 ## 목표
 
@@ -1576,6 +1579,11 @@ Codex 하위 역할 `t156_reviewer`가 구현과 시험 본문을 읽고 정적 
 
 최종 판정: CONDITIONAL_PASS (scope: src/lib/strategy/m40/types.ts, src/lib/strategy/m40/core.ts, src/lib/strategy/m40/load-input.ts, src/lib/strategy/m40/archive-reader.ts, src/lib/strategy/m40/runner.ts, src/lib/strategy/m40/advisory.ts, src/lib/strategy/m40/observer.ts, src/lib/analysis-data/types.ts, src/lib/analysis-data/store.ts, src/lib/analysis-data/capture-operating-data.ts, src/app/api/cron/m40-analysis/route.ts, src/app/api/cron/post-market-analysis/route.ts, src/app/api/research/t156/route.ts, src/lib/profit-engine/daily-bars-store.ts, scripts/t156/archive-lib.mjs, scripts/t156/archive-operator.mjs, scripts/t156/transform-dump.mjs, scripts/t156/source-manifest.py, scripts/migrations/T-156-analysis-archive.sql, src/lib/strategy/m40/__tests__/advisory.test.ts, src/lib/strategy/m40/__tests__/core.test.ts, src/lib/strategy/m40/__tests__/load-input.test.ts, src/lib/strategy/m40/__tests__/observer.test.ts, src/lib/strategy/m40/__tests__/routes.test.ts, src/lib/strategy/m40/__tests__/runner.test.ts, src/lib/analysis-data/__tests__/capture-operating-data.test.ts, src/lib/analysis-data/__tests__/store.test.ts, src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts, src/lib/profit-engine/__tests__/daily-bars-collector.test.ts, scripts/t156/archive-lib.test.mjs, scripts/t156/verify-restore.py, scripts/t156/archive-import.mjs, scripts/t156/archive-import.test.mjs, src/lib/strategy/m40/__tests__/archive-reader.test.ts, src/lib/strategy/m40/load-evidence.ts, src/lib/strategy/m40/operating-evidence.ts, src/lib/strategy/m40/__tests__/load-evidence.test.ts, src/lib/strategy/m40/__tests__/operating-evidence.test.ts)
 
+
+Codex 독립 Reviewer t156_reviewer — 전진 모의운용 추가 범위를 정적 재검토했다. 달력 종료 범위·T0 증거·매도 선행 조건·분할 기준 보존·부분 응답의 후보군 동결·원천 재시도 지적의 수정과 paper-only 주문 차단을 확인했다. 기존 연구자료 판정 범위는 위 이력을 그대로 이어받는다. 실제 QA 및 격리 MariaDB/런타임 통합 검증은 Reviewer가 실행하지 않았고 진행 중이므로 이 결과를 선행조건으로 한다. 초기 두 종목 제외 증거는 2026-11-06 원본과 정확히 일치할 때만 유효해 해당 스냅샷을 놓치면 후보군 확정이 보류될 수 있다. 실제 체결·실거래 승인·수익성이나 전체 시스템 통과 판정은 아니다.
+
+Reviewer 추가 기록: 두 QA 수정 시험의 본문과 변경을 정적 검토했다. 루트가 synthetic 계좌·공개 원본 자료의 격리 MariaDB/런타임 통합 11개 검사를 통과했다고 전달했으며 Reviewer가 직접 실행하거나 영수증을 독립 확인한 결과는 아니다. 광범위 QA는 65 suites / 1,594 tests 통과·15 skipped로 전달됐고 tsc/build는 진행 중이다. 격리 통합 실행 조건의 루트 보고는 충족됐으나 QA 잔여 결과와 실제 배포·운영 관측은 별도로 확인한다.
+최종 판정: CONDITIONAL_PASS (scope: src/lib/strategy/m40/types.ts, src/lib/strategy/m40/core.ts, src/lib/strategy/m40/load-input.ts, src/lib/strategy/m40/archive-reader.ts, src/lib/strategy/m40/runner.ts, src/lib/strategy/m40/advisory.ts, src/lib/strategy/m40/observer.ts, src/lib/analysis-data/types.ts, src/lib/analysis-data/store.ts, src/lib/analysis-data/capture-operating-data.ts, src/app/api/cron/m40-analysis/route.ts, src/app/api/cron/post-market-analysis/route.ts, src/app/api/research/t156/route.ts, src/lib/profit-engine/daily-bars-store.ts, scripts/t156/archive-lib.mjs, scripts/t156/archive-operator.mjs, scripts/t156/transform-dump.mjs, scripts/t156/source-manifest.py, scripts/migrations/T-156-analysis-archive.sql, src/lib/strategy/m40/__tests__/advisory.test.ts, src/lib/strategy/m40/__tests__/core.test.ts, src/lib/strategy/m40/__tests__/load-input.test.ts, src/lib/strategy/m40/__tests__/observer.test.ts, src/lib/strategy/m40/__tests__/routes.test.ts, src/lib/strategy/m40/__tests__/runner.test.ts, src/lib/analysis-data/__tests__/capture-operating-data.test.ts, src/lib/analysis-data/__tests__/store.test.ts, src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts, src/lib/profit-engine/__tests__/daily-bars-collector.test.ts, scripts/t156/archive-lib.test.mjs, scripts/t156/verify-restore.py, scripts/t156/archive-import.mjs, scripts/t156/archive-import.test.mjs, src/lib/strategy/m40/__tests__/archive-reader.test.ts, src/lib/strategy/m40/load-evidence.ts, src/lib/strategy/m40/operating-evidence.ts, src/lib/strategy/m40/__tests__/load-evidence.test.ts, src/lib/strategy/m40/__tests__/operating-evidence.test.ts, src/lib/strategy/m40/forward-types.ts, src/lib/strategy/m40/forward-input.ts, src/lib/strategy/m40/forward-calendar.ts, src/lib/strategy/m40/forward-sources.ts, src/lib/strategy/m40/forward-store.ts, src/lib/strategy/m40/forward-runtime.ts, src/lib/strategy/m40/paper-ledger.ts, src/lib/strategy/m40/__tests__/forward-input.test.ts, src/lib/strategy/m40/__tests__/forward-calendar.test.ts, src/lib/strategy/m40/__tests__/forward-sources.test.ts, src/lib/strategy/m40/__tests__/forward-store.test.ts, src/lib/strategy/m40/__tests__/forward-route.test.ts, src/lib/strategy/m40/__tests__/paper-ledger.test.ts, src/app/api/cron/m40-forward/route.ts, src/lib/safety/dry-run.ts, src/lib/safety/__tests__/m40-paper-order-fence.test.ts, src/lib/exchanges/types.ts, scripts/cron-runner.sh, scripts/test-cron-runner-m40-forward.sh, scripts/migrations/T-156-forward-paper.sql, src/lib/safety/__tests__/order-limits.test.ts)
 ## QA
 
 Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했다. Jest 55 suites / 1,343 tests 통과, 기존 별도 MariaDB 경합 suite 1개·15 tests는 미실행으로 분리한다. 새 T-156 MariaDB 저장소 14 tests 통과(실제 InnoDB 대기 확인 경합2 포함), tsc 및 archive 4 tests 통과. DRY_RUN·킬스위치·한도·블랙리스트·감사로그·검증 관문의 모의 회귀를 포함하며 whitelist는 현재 항상허용 규칙이다.
@@ -1586,6 +1594,10 @@ Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했�
 
 최종 SEC 시각 보완 재검증: 두 알려진 SEC 원천의 raw 발행시각 NULL을 유지하고 접수시각 대용을 표시했다. 실제 가용시각의 마이크로초 절삭 지적도 수정 후 Reviewer 재검토 PASS. 최종 지정58 suites/1,426 PASS, 15 SKIP, 0 FAIL·tsc/build exit0. 실제 운영 최근 문서194개 중 SEC 대용193개/근거6개, 10/22 cutoff자료0개·쓰기0을 확인했다. 이 결과가 최종 소스 기준이며 앞선 시험과 합산하지 않는다.
 
+DRY_RUN 연결 최종 QA: 지정65 suites/1,594 PASS,기존별도DB경합1 suite/15 SKIP,exit0. 신규집중168건과opt-in 실제MariaDB저장소14건은이총계에포함한다. tsc/build각exit0,변경src/scripts집합SHA22d319a0b5535b1528d46f1ec92d3ec2f9b58bfe279b0bb717abf48edf4db0c9일치. cron블록시간창/2회/15분/날짜리셋PASS. 첫전체시도는기존2시험mock누락으로빈계정localhost인증거부+late로그exit1이었고통과로세지않았다. 모킹보완독립검토후닫힌genericDB포트로전체재실행했다.
+
+루트의 실제격리MariaDB검증11건: 실제공개250판본→정본builder/core/runtime/store로123종목리허설6시그널,초기화1회복사·경합임대1개·중복차단·리허설비체결·불관련이력결측시확정편출1개만·실제DB기록시각·보유분할기준누락보류/원장불변·계좌정지·DRY_RUN필수·네트워크0. 합성계좌만사용했고운영자료/계좌성공으로확대하지않는다. 별도운영실행은F14영수증을본다.
+
 ## 배포 기록
 
 | 시각(KST) | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
@@ -1593,3 +1605,14 @@ Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했�
 | 2026-11-08 11:44 | 20261108-114326-9237fffb | 9237fff | T-156 M40 shadow·자료 이관/조회·판단 이력 | RELEASE_RESULT ok, END0 | 별도 승인 DDL/적재는 이미 완료, release.migrated=false. health200·DRY_RUN유지, web/cron각1. 적격 입력 미확정 M40 POST503, 비로그인 목록401 |
 
 이번 사용자 승인 범위의 기반 구현·DB 이관·테스트 보존과 코드 배포 확인은 완료했다. 원본28개+구현 검증 JSON+배포 검증 JSON을 별도 시험 자료로 보존한다. parent task의 doing/대기는 F09·당시 구성·가격/뉴스 자격과 전진/실매매 연결의 미완료를 뜻하며 이번 자료 이관이 진행 중이라는 뜻은 아니다.
+
+### F14 DRY_RUN 시그널·전진 관측 연결 착수
+
+사용자는 T0·자료 적격성·전진 검증을 진행하고 DRY_RUN에서 종목분석→시그널을 연결하도록 승인했다. 첫 적격 거래일을 T0로1회 고정하고, 현재 실계좌의 해외 보유·USD 순예수금을 독립 모의 장부로 복제하며, 한정 후보군 시험판을 정식 전체 M40과 구분하기로 선택했다. 국내/KRW는 미국주식 시험 장부에 환전·편입하지 않는다. 모의 복사본의 M40 귀속만 부여하며 실제 보유·기존 귀속·주문·검증 상태를 바꾸지 않는다.
+
+기존 미검증 매수 감사 경로는 매도·청산 장부가 아니므로 그대로 재사용하지 않는다. `t156_paper_account/cycle/signal`로 모의 신호·입력·다음 개장 고정 수량 가정·양쪽25bp·결제 대금을 격리한다. 정상 주문/시그널 어댑터를 부르지 않으며 예약 paper 전략·client ID가 주문 송신 관문에 잘못 들어와도 양 방향 차단한다. T0 이전 연결 리허설과 등록 후 실제 전진 회차를 나누고, 미래12주·100거래·에이전트 직접변경20일을 지금 완료로 표시하지 않는다.
+
+원천 보완에서125종목×원주/분할조정250판본114,900행을 실제 수집했다. 127거래일 연속성 충족123개, HONA102행·SPCX내부102거래일공백을 분리했다. 원문·판본·실제 관측 시각·SHA 보존, guest 평가용 자격이며 live 적격 승급은 아니다. S&P500 CSV는IPv4재시도실제확보로11/5까지 확인,11/6을 채워 넣지 않는다. 이후 시행·시험·DDL·배포 결과는 별도 영수증으로 기록한다.
+
+
+F14 실행 결과: 운영전용3표 생성, 공개입력18,097,630bytes(SHA65d66b...902903) 압축저장/복원동일, 실계좌snapshot5667의미국보유4개+USD순예수금1회복사(원본·기존설정불변). 2026-11-08 13:46:17KST등록후11/06자료는리허설1회/시그널4개로만저장,체결0/전진0/T0null. 초기운영복사검산의JSON키정렬오탐은canonical비교로수정/재검산했으며 재복사나원본수정없음. 새판본수집/장부보호/주문영구차단/복구및전진최소기준은 `docs/implementation/2026-11-08-t156-forward-paper-pilot.md` 참조. 배포후실제API/after확인은다음영수증으로구분한다.

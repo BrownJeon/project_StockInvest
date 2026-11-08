@@ -133,6 +133,14 @@ export async function submitOrder(
   realSubmit: (req: OrderRequest) => Promise<OrderResult>,
   options: SubmitOptions = {},
 ): Promise<OrderResult & { orderId?: number; clientOrderId?: string }> {
+  // T-156: paper provenance never becomes order authority, even after global
+  // DRY_RUN or strategy validation is changed. Applies equally to buy and sell,
+  // before any DB/order/balance/provider I/O.
+  if(options.attribution?.strategyId==='m40-paper-v1'
+    ||(typeof options.clientOrderId==='string'&&options.clientOrderId.startsWith('m40p_'))
+    ||(typeof req.clientOrderId==='string'&&req.clientOrderId.startsWith('m40p_'))) {
+    return {ok:false,blockedBy:'paper_only',error:'paper_signal_not_orderable'};
+  }
   return withKisPriority('critical', () => submitOrderInner(req, realSubmit, options));
 }
 

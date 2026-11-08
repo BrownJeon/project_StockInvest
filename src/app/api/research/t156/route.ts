@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserId } from '@/lib/auth/current-user';
 import { listDatasets, listTestArtifacts } from '@/lib/analysis-data/store';
+import { paperForwardSummary } from '@/lib/strategy/m40/forward-store';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,8 +15,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'limit_must_be_1_to_100' }, { status: 400 });
   }
   try {
-    const [datasets, artifacts] = await Promise.all([listDatasets({ limit }), listTestArtifacts(limit)]);
+    const [datasets, artifacts,forward] = await Promise.all([listDatasets({ limit }), listTestArtifacts(limit),
+      paperForwardSummary().catch(()=>({initialized:false,status:'unavailable'}))]);
     return NextResponse.json({ ok: true,
+      forward,
       datasets: datasets.map(dataset => ({ id: dataset.id, kind: dataset.kind, sourceKey: dataset.sourceKey,
         status: dataset.status, liveEligible: dataset.liveEligible, contentSha256: dataset.contentSha256,
         rowCount: dataset.rowCount, createdAt: dataset.createdAt })),

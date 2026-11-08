@@ -450,6 +450,7 @@ NEWS_FETCH_DOMESTIC_PM_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/news-fetch
 POST_MARKET_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-domestic-last-date"
 POST_MARKET_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-last-date"
 POST_MARKET_OVERSEAS_ATTEMPT_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-attempts"   # (T-062 S-2b) 그날 시도 횟수
+M40_FORWARD_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/m40-forward-last-date"  # T-156 isolated paper evaluation
 RS_UPDATE_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/rs-update-last-date"
 RESEARCH_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-domestic-last-date"
 RESEARCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-overseas-last-date"
@@ -944,6 +945,30 @@ while true; do
     DBARS_SKIP_LOGGED="$TODAY"
   fi
   # <<< daily-bars-daily
+  # >>> m40-forward-daily
+  # T-156: independent paper evaluation; 202 schedules work, not completion.
+  # The route requires DB DRY_RUN=true, an explicitly initialized paper account,
+  # a persistent lease and a once-per-session ledger. No KIS/order submission.
+  # At most two attempts, separated by 15 minutes (longer than the 12-minute
+  # persisted lease). A 202 is not a completed cycle. Repeated calls are cheap
+  # after completion because the DB once-per-session check returns immediately.
+  M40_FORWARD_DAY=""; M40_FORWARD_ATTEMPTS=0; M40_FORWARD_LAST_TS=0
+  read -r M40_FORWARD_DAY M40_FORWARD_ATTEMPTS M40_FORWARD_LAST_TS 2>/dev/null < "$M40_FORWARD_LAST_RUN_FILE" || true
+  [ "$M40_FORWARD_DAY" = "$TODAY" ] || { M40_FORWARD_ATTEMPTS=0; M40_FORWARD_LAST_TS=0; }
+  case "$M40_FORWARD_ATTEMPTS" in 0|1|2) ;; *) M40_FORWARD_ATTEMPTS=2 ;; esac
+  case "$M40_FORWARD_LAST_TS" in ''|*[!0-9]*) M40_FORWARD_LAST_TS=0 ;; esac
+  M40_FORWARD_NOW_TS=$(date '+%s')
+  case "$M40_FORWARD_NOW_TS" in ''|*[!0-9]*) M40_FORWARD_NOW_TS=0 ;; esac
+  M40_FORWARD_MM=$(date '+%M')
+  case "$M40_FORWARD_MM" in [0-5][0-9]) ;; *) M40_FORWARD_MM=00 ;; esac
+  M40_FORWARD_WINDOW=no
+  if { [ "$HH" = "08" ] && [ "$M40_FORWARD_MM" -ge 40 ]; } || { [ "$HH" = "09" ] && [ "$M40_FORWARD_MM" -le 10 ]; }; then M40_FORWARD_WINDOW=yes; fi
+  if [ "$M40_FORWARD_WINDOW" = yes ] && [ "$M40_FORWARD_ATTEMPTS" -lt 2 ] &&
+    { [ "$M40_FORWARD_ATTEMPTS" -eq 0 ] || { [ "$M40_FORWARD_NOW_TS" -gt 0 ] && [ "$((M40_FORWARD_NOW_TS-M40_FORWARD_LAST_TS))" -ge 900 ]; }; }; then
+    call "/api/cron/m40-forward" "m40-forward"
+    echo "$TODAY $((M40_FORWARD_ATTEMPTS+1)) $M40_FORWARD_NOW_TS" > "$M40_FORWARD_LAST_RUN_FILE"
+  fi
+  # <<< m40-forward-daily
   # 매일 16:00 KST: 국내 리서치 사이클 재계산 (T-032) — 15:30 마감 후 30분 데이터 반영 대기.
   # post-market-domestic(16:00)과 **독립된 블록**이다 — 같은 시각이지만 합치지 않는다.
   LAST_RESEARCH_DOM=$(cat "$RESEARCH_DOMESTIC_LAST_RUN_FILE" 2>/dev/null || echo "")

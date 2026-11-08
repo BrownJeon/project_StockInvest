@@ -6,6 +6,15 @@ tags:
 ---
 # 현재 상태
 
+
+## 2026-11-08 13:50 — T-156 DRY_RUN 독립 모의 시그널 연결
+
+- 사용자 3개 선택: **첫 적격 거래일 T0 1회 고정 / 현재 실계좌 복사 모의 장부 / 한정 후보군 시험판**. 미국 보유4개와 USD 순예수금을 전용 장부에 복사했고 실제 보유·주문·귀속·DRY_RUN 등 기존 설정은 불변이다.
+- 공개 원주/분할조정250판본114,900행, 127세션 적격123종목. HONA/SPCX 초기 제외는11/06 원본 SHA에 한정. S&P50011/05까지로11/06 리허설만 적격이며 다음 전진에는 최신 자료가 필요하다.
+- 운영DB 리허설1회·시그널4개, 체결0·전진0·T0아직없음. `m40-paper-v1`/`m40p_`는 주문 관문 양방향 영구차단. 정상 승인 signals와 독립된 `t156_paper_account/cycle/signal` 사용.
+- 독립감사 조건부 통과·최종지정1,594 tests PASS/15 SKIP·tsc/build0, 실제 격리SQL/runtime11검사통과. 코드배포 확인은 후속 기록. 미래84일/신규왕복100건/에이전트거래변경20일은 미달이며 실거래는 해제하지 않는다.
+- 상세·수집/시각 계약·흐름도·복구: `docs/implementation/2026-11-08-t156-forward-paper-pilot.md`, [[T-156-us-stock-entry-exit-forecast-design]] F14.
+
 ## 2026-11-08 10:20 — 🔴 기록 커밋 `ebbcdca` 배포 헬스 실패·자동 롤백 (12:15 해소)
 
 - `RELEASE_RESULT {"status":"health_failed","release":"20261108-101556-ebbcdca7","rolled_back_to":".../20261108-093050-8248226b"}`, `END exit=1`. 운영은 직전 릴리스로 되돌아가 정상이었고(health 200·`safetyStatus green`·web·cron 각 1행), 커밋 `ebbcdca` 만 원격에 있고 배포되지 않은 상태가 됐다.
