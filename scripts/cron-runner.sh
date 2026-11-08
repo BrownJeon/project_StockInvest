@@ -969,6 +969,19 @@ while true; do
     echo "$TODAY $((M40_FORWARD_ATTEMPTS+1)) $M40_FORWARD_NOW_TS" > "$M40_FORWARD_LAST_RUN_FILE"
   fi
   # <<< m40-forward-daily
+  # >>> m40-forecast-daily
+  # Forecast-only archived-data computation. Reserve before call: at most one attempt/day.
+  # call() provides the normal job_run_log hook; no new collection/model/order calls.
+  M40_FORECAST_FILE="${HOME}/.node-local/stockinvest/m40-forecast-last-date"
+  M40_FORECAST_LAST=$(cat "$M40_FORECAST_FILE" 2>/dev/null || true)
+  if [ "$HH" = "10" ] && [ "$M40_FORECAST_LAST" != "$TODAY" ]; then
+    echo "$TODAY" > "$M40_FORECAST_FILE"
+    CALL_MAX_TIME=150
+    call "/api/cron/m40-forecast" "m40-forecast"
+    CALL_MAX_TIME=""
+  fi
+  # <<< m40-forecast-daily
+
   # 매일 16:00 KST: 국내 리서치 사이클 재계산 (T-032) — 15:30 마감 후 30분 데이터 반영 대기.
   # post-market-domestic(16:00)과 **독립된 블록**이다 — 같은 시각이지만 합치지 않는다.
   LAST_RESEARCH_DOM=$(cat "$RESEARCH_DOMESTIC_LAST_RUN_FILE" 2>/dev/null || echo "")

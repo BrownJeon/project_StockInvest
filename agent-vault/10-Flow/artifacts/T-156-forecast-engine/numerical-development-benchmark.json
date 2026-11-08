@@ -1,0 +1,59 @@
+{
+  "taskId": "T-156",
+  "kind": "private_actual_source_development_benchmark",
+  "acceptanceStatus": "not_independent_reviewer_or_qa_acceptance",
+  "source": "QA read-only immutable private fixture; no source account values included",
+  "execution": {
+    "host": "home_ubuntu",
+    "node": "24.22.2",
+    "dependencyRoot": "~/.node-local/stockinvest-p3s1/node_modules",
+    "temporaryWorkspace": "~/.node-local/t156-forecast-engine-dev-20261108",
+    "isolation": "flock /tmp/stockinvest-heavy-tests.lock nice -n 10",
+    "engineBudgetMs": 120000
+  },
+  "qualification": {
+    "status": "qualified",
+    "candidateSymbols": 123,
+    "jointPriceVectorSymbols": 124,
+    "historicalJointReturns": 297,
+    "bridge": "latent_index_ols_centered_residual",
+    "horizonSessions": [
+      5,
+      19,
+      61,
+      250
+    ],
+    "inputSha256": "356636cfb7b5f8b58269e10d68bc5c211a0f43dfbd2b35732d1cf46dcf5387fb",
+    "preparationMs": 293.911699
+  },
+  "benchmark": {
+    "status": "completed",
+    "issues": [],
+    "pathCount": 2000,
+    "blockLength": 10,
+    "completedHorizons": 4,
+    "elapsedMs": 19083.812482,
+    "timerPeriodMs": 100,
+    "timerTicks": 183,
+    "maxTimerLagMs": 45.733129
+  },
+  "validation": {
+    "unitFullSuitePassed": 16,
+    "additionalBoundaryTestPassed": 1,
+    "final17Together": "pending independent QA",
+    "compactCanonicalDifferentialCases": 150,
+    "strictIsolatedTypecheck": "passed production engine/input/types and unit files",
+    "projectWideTypecheck": "not_run_by_numerical_developer",
+    "lint": "not_run_by_numerical_developer",
+    "realDataL5L20Sensitivity": "not_run",
+    "operatingWritesOrOrdersOrDeployment": false
+  },
+  "limitations": [
+    "research scenario not calibrated forecast probability",
+    "one missing actual index observation is an explicit latent assumption",
+    "development performance evidence does not establish independent acceptance or operating publication",
+    "no account amounts, quantities, individual ticker identities or PnL distributions recorded here"
+  ],
+  "benchmarkedEngineSha256": "a55c54217743677c8a33c853e67501376820714cabca12cb722298f073d2c3d8",
+  "codeRevisionNote": "Benchmark predates N1 aggregation arithmetic fix; current code performance must be reconfirmed in final independent QA."
+}

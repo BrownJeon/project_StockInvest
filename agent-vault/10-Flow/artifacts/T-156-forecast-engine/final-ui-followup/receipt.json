@@ -1,0 +1,25 @@
+{
+  "status": "PASS_FOCUSED_UI_BROWSER_SEPARATE",
+  "reviewedManifestSha256": "bbd381f4195717b2d1a884a9893334f2064211a705af36955ff9acd4fd98013b",
+  "reviewedFiles": 33,
+  "sourceBookendsMatch": true,
+  "sourceManifestSha256": "640a3962de3457052b287ab592dbff72514e17b93d61f0e3ecfb0eeea9d297a4",
+  "jest": {
+    "numTotalTestSuites": 4,
+    "numPassedTestSuites": 4,
+    "numFailedTestSuites": 0,
+    "numTotalTests": 79,
+    "numPassedTests": 79,
+    "numFailedTests": 0,
+    "numPendingTests": 0
+  },
+  "tscExit": 0,
+  "buildExit": 0,
+  "priorQA": "../qa/receipt.json; other 31 reviewed files unchanged",
+  "notRepeated": [
+    "engine B2000",
+    "MariaDB",
+    "467-test full suite"
+  ],
+  "limitations": "Prior QA receipt limitations retained; browser review by root separately."
+}

@@ -8,9 +8,10 @@ export function paperLocalPage<T>(rows:readonly T[],page:number){
  return {rows:rows.slice((current-1)*PAPER_PAGE_SIZE,current*PAPER_PAGE_SIZE),page:current,pageSize:10 as const,totalCount,totalPages,hasNext:current<totalPages,hasPrevious:current>1};
 }
 export function paperQueryUrl(q:PaperViewQuery){
- const p=new URLSearchParams({period:q.period,signalPage:String(q.signalPage),valuationPage:String(q.valuationPage),horizon:q.horizon});
+ const p=new URLSearchParams({period:q.period,signalPage:String(q.signalPage),valuationPage:String(q.valuationPage),horizon:q.horizon,forecastPage:String(q.forecastPage??1),comparisonPage:String(q.comparisonPage??1)});
  if(q.period!=='all'&&q.anchorSession)p.set('anchorSession',q.anchorSession);
  if(q.snapshot)p.set('snapshot',q.snapshot);
+ if(q.forecastId)p.set('forecastId',q.forecastId);
  return `/api/research/t156/paper?${p.toString()}`;
 }
 /** A period changes the observation snapshot; a page/horizon reads the same snapshot. */
@@ -18,6 +19,11 @@ export function paperNextQuery(q:PaperViewQuery,patch:Partial<PaperViewQuery>,to
  const changedPeriod=patch.period!==undefined&&patch.period!==q.period||patch.anchorSession!==undefined&&patch.anchorSession!==q.anchorSession;
  const next={...q,...patch};
  return changedPeriod?{...next,anchorSession:next.period==='all'?null:next.anchorSession,signalPage:1,valuationPage:1,snapshot:null}:{...next,snapshot:token};
+}
+/** Actual poll 401 is unauthorized; authentication loss forgets private selection and snapshot. */
+export function paperQueryAfterAuthError(q:PaperViewQuery,error:string|null):PaperViewQuery{
+ if(!['unauthorized','http_401','http_403'].includes(error??''))return q;
+ return q.forecastId||q.snapshot?{...q,forecastId:null,snapshot:null,signalPage:1,valuationPage:1,forecastPage:1,comparisonPage:1}:q;
 }
 export function paperTabIndex(index:number,key:string,total:number){
  return key==='Home'?0:key==='End'?total-1:key==='ArrowRight'?(index+1)%total:key==='ArrowLeft'?(index+total-1)%total:null;
@@ -43,6 +49,40 @@ function paperPage(value:unknown,row:(value:unknown)=>boolean):boolean{
   &&typeof value.page==='number'&&value.page>=1&&typeof value.totalCount==='number'&&value.totalCount>=0
   &&typeof value.totalPages==='number'&&value.totalPages>=1&&typeof value.hasNext==='boolean'&&typeof value.hasPrevious==='boolean';
 }
+const paperFinite=(v:unknown):v is number=>typeof v==='number'&&Number.isFinite(v);
+const paperCount=(v:unknown)=>paperFinite(v)&&Number.isSafeInteger(v)&&v>=0;
+function paperForecastHorizon(v:unknown):boolean{
+ if(!paperRecord(v)||!['week','month','quarter','year'].includes(String(v.horizon))||!['calendarTarget','targetSession'].every(k=>typeof v[k]==='string')||!paperCount(v.sessions)||v.sessions===0)return false;
+ if(!['netUsd','netPct'].every(k=>paperRecord(v[k])&&['mean','p10','p50','p90'].every(n=>paperFinite((v[k] as Record<string,unknown>)[n]))))return false;
+ if(!paperCount(v.lossCount)||!paperCount(v.pathCount)||!paperFinite(v.pathCount)||v.pathCount<=0||!paperFinite(v.lossCount)||v.lossCount>v.pathCount||!paperFinite(v.lossProbability)||v.lossProbability<0||v.lossProbability>1||Math.abs(v.lossProbability-v.lossCount/v.pathCount)>1e-12)return false;
+ return paperFinite(v.monteCarloSe)&&v.monteCarloSe>=0&&v.monteCarloSe<=1&&paperCount(v.historicalNonoverlappingWindows);
+}
+function paperForecastRecord(v:unknown):boolean{
+ if(!paperRecord(v)||!paperRecord(v.baseline)||!paperRecord(v.sampleCounts)||!paperRecord(v.bridge)||!paperStrings(v.assumptions)||!paperForecastHorizon(v.result))return false;
+ const b=v.baseline,s=v.sampleCounts,bridge=v.bridge;
+ return ['id','sha256','inputSha256','issuedAt','sourceAvailableAt','sourceDatasetId','sourceSha256','policySha256','modelVersion','seed'].every(k=>typeof v[k]==='string')
+  &&paperNullableText(v.modelCodeSha256)&&['session','accountId','bookSha256','sourceAccountStateSha256','epochSession'].every(k=>typeof b[k]==='string')&&b.kind==='forecast_only_marked_snapshot'&&paperFinite(b.equityUsd)&&b.equityUsd>0&&paperCount(b.accountRevision)&&typeof b.epochProvisional==='boolean'
+  &&['historicalStart','historicalEnd'].every(k=>typeof s[k]==='string')&&['historicalReturns','blockLength','possibleBlockStarts','nonoverlappingBlocks'].every(k=>paperCount(s[k]))
+  &&['none','latent_index_ols_centered_residual'].includes(String(bridge.kind))&&['intercept','slope','predictor','sampleCount'].every(k=>paperFinite(bridge[k]))&&typeof bridge.residualSha256==='string'&&['session','fitStart','fitEnd'].every(k=>paperNullableText(bridge[k]));
+}
+function paperComparison(v:unknown):boolean{
+ if(!paperRecord(v)||!['id','runId','horizon','createdAt'].every(k=>typeof v[k]==='string')||!['pending','unconfirmed','incomparable','completed'].includes(String(v.status))||!paperStrings(v.issues)||!paperForecastHorizon(v.forecast))return false;
+ return v.status==='completed'?['actualPnlUsd','actualReturnPct','errorPct','brier'].every(k=>paperFinite(v[k]))&&typeof v.intervalHit==='boolean':['actualPnlUsd','actualReturnPct','errorPct','brier','intervalHit'].every(k=>v[k]===null);
+}
+function paperComparisonSummary(v:unknown):boolean{
+ if(!paperRecord(v)||!['total','completed','pending','unconfirmed','incomparable'].every(k=>paperCount(v[k])))return false;
+ if(v.total!==Number(v.completed)+Number(v.pending)+Number(v.unconfirmed)+Number(v.incomparable))return false;
+ return v.completed===0?v.meanBrier===null&&v.intervalCoverage===null:[v.meanBrier,v.intervalCoverage].every(n=>paperFinite(n)&&n>=0&&n<=1);
+}
+function paperForecasts(v:Record<string,unknown>):boolean{
+ if(!['week','month','quarter','year'].includes(String(v.horizon))||!Array.isArray(v.records)||!Array.isArray(v.comparison))return false;
+ if(v.comparisonSummary!==undefined&&!paperComparisonSummary(v.comparisonSummary))return false;
+ if(v.selectedRecord!=null&&!paperForecastRecord(v.selectedRecord))return false;
+ if(v.capability==='not_implemented')return v.records.length===0&&v.comparison.length===0;
+ if(!['available','preparing','unavailable'].includes(String(v.capability))||!paperPage(v.recordPage,paperForecastRecord)||!paperPage(v.comparisonPage,paperComparison)||!v.records.every(paperForecastRecord)||!v.comparison.every(paperComparison))return false;
+ if(v.capability==='available')return paperRecord(v.selectedRecord)&&v.selectedId===v.selectedRecord.id&&v.selectionStatus==='selected'&&paperRecord(v.selectedRecord.result)&&v.selectedRecord.result.horizon===v.horizon&&paperComparisonSummary(v.comparisonSummary);
+ return v.selectedRecord===null&&['empty','missing'].includes(String(v.selectionStatus))&&paperNullableText(v.selectedId);
+}
 export function isPaperViewV6(value:unknown):value is import('@/lib/strategy/m40/paper-view-types').PaperView{
  if(!paperRecord(value)||value.executionScope!=='paper_only'||value.liveTrading!==false||!paperRecord(value.account)||!paperRecord(value.snapshot)||!paperRecord(value.history)||!paperRecord(value.observation)||!paperRecord(value.policyRecord)||!paperRecord(value.forecasts))return false;
  const {snapshot,history,observation:o,policyRecord:policy,forecasts}=value;
@@ -54,7 +94,7 @@ export function isPaperViewV6(value:unknown):value is import('@/lib/strategy/m40
   &&(o.firstObserved===null||paperPoint(o.firstObserved))&&(o.lastObserved===null||paperPoint(o.lastObserved))
   &&typeof o.totalPoints==='number'&&typeof o.observedSessions==='number'
   &&(policy.policyVersion===null||typeof policy.policyVersion==='string')&&paperStrings(policy.modelPolicyVersions)
-  &&forecasts.capability==='not_implemented'&&Array.isArray(forecasts.records)&&Array.isArray(forecasts.comparison)
+  &&paperForecasts(forecasts)
   &&paperCycle(value.currentCycle)&&paperCycle(value.lastUsableCycle)
   &&paperPage(value.signalPage,s=>paperRecord(s)&&typeof s.id==='string'&&typeof s.symbol==='string'&&typeof s.session==='string'&&(s.outcome===null||paperRecord(s.outcome)))
   &&paperPage(value.valuationPage,p=>paperPoint(p)&&paperRecord(p)&&typeof p.id==='string');

@@ -1,0 +1,17 @@
+{
+  "kind": "codex_gate",
+  "checkpoint": "C1",
+  "task_id": "T-156",
+  "project": "StockInvest",
+  "risk": "R2",
+  "summary": "사용자명시승인실자료M40예측엔진/불변원장/4horizon분포·손실확률/actual비교. 조정실가격+현재paperbook독립mark/297joint데이터/L10B2000·미보정/지수1일latent표시. 기존UIv6binding,비교계속증거메타만추가. 실거래OFF/주문미변경.",
+  "changed_paths": [
+    "src/lib/strategy/m40/forecast-engine.ts",
+    "src/lib/strategy/m40/forecast-store.ts",
+    "src/lib/strategy/m40/forward-store.ts",
+    "scripts/migrations/T-156-forecast-ledger.sql",
+    "src/app/analytics/M40PaperPanel.tsx"
+  ],
+  "codex_calls_used": 0,
+  "remaining_limit_pct": null
+}

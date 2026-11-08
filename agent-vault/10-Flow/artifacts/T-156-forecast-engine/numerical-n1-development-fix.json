@@ -1,0 +1,24 @@
+{
+  "taskId": "T-156",
+  "findingId": "N1",
+  "status": "developer_fix_verified_pending_independent_recheck",
+  "changes": [
+    "max-absolute-scaled compensated mean avoids intermediate sum overflow",
+    "scaled convex-weighted type7 quantiles avoid endpoint subtraction overflow",
+    "distribution input/output and final horizon statistics must all be finite",
+    "nonfinite percentage statistics fail whole run with horizons empty; no path omission"
+  ],
+  "verification": {
+    "unitTestsPassed": 18,
+    "suitesPassed": 1,
+    "durationSeconds": 25.559,
+    "canonicalDifferentialCasesWithinSuite": 150,
+    "strictIsolatedTypecheck": "passed production engine/input/types plus unit",
+    "extremeSyntheticOnly": true,
+    "privateAccountValuesUsed": false,
+    "realDataBenchmarkRerun": false,
+    "operatingWritesOrOrdersOrDeployment": false
+  },
+  "manifest": "numerical-development-manifest.json",
+  "manifestSha256": "ebed97a4177f39a52b622ddeeefbb11ce85a0486f8c794b74b7ff9e69e16a31c"
+}

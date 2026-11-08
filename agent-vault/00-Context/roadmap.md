@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: StockInvest
-updated: 2026-11-06
+updated: 2026-11-08
 phases:
   - { id: 0, name: "안전 기반",              status: done }
   - { id: 1, name: "관측·소생 핫픽스",       status: done }
@@ -65,6 +65,8 @@ tags: [type/roadmap]
 - [x] (6) 종목 컨텍스트 주입
 
 ### /analytics | 분석
+- [x] (8) 모의분석 v6 조회 화면(운영 반영) [[T-156-us-stock-entry-exit-forecast-design]]
+- [ ] (8) 실자료 예측 엔진·불변 원장(구현/검증 완료, 운영 DBA 트리거 권한 대기) [[T-156-us-stock-entry-exit-forecast-design]]
 - [x] (9) 리서치분석 탭 [[T-032-research-rally-cycle]]
   - [x] (9) 매수·매도 판단 + 신뢰도·기간·가격 [[T-033-research-recommendation-trade-report]]
   - [x] (9) 차트 기반 목표가·도달가능성 게이트 [[T-034-chart-based-price-targets]]

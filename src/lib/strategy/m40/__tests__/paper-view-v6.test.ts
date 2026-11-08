@@ -4,11 +4,12 @@ import {PAPER_ACCOUNT_ID} from '../paper-ledger';
 import type {ArchiveQueryable} from '@/lib/analysis-data/types';
 const cycle=(n:number)=>({id:String(n).padStart(64,'0'),session:'2026-11-06',decisionAt:'2026-11-07T01:00:00.000000Z',recordedAt:'2026-11-07T01:02:00.000000Z',mode:'forward',payload_json:{equityUsd:100+n}});
 function fixture(n=23,options:{pointCount?:number;futureCount?:number;rehearsalOnly?:boolean;earlyGap?:boolean;blockedWithRun?:boolean}={}){
- let revision=2,denied=false;const cutoff='2026-11-07T02:00:00.000000Z';
+ let revision=2,denied=false,forecastClockId='';const cutoff='2026-11-07T02:00:00.000000Z';
  const signals=Array.from({length:n},(_,i)=>({id:'m40p_'+String(i).padStart(64,'0'),session:'2026-11-06',createdAt:'2026-11-07T01:01:00Z',symbol:'NAS:AAPL',side:'buy',status:'filled',mode:'forward',outcome_json:{observedAt:'2026-11-08T00:00:00Z',priceUsd:123}}));
  const rows=options.rehearsalOnly?[]:options.earlyGap?[{...cycle(1),session:'2026-11-02'},{...cycle(2),session:'2026-11-03'}]:[cycle(1),cycle(2)];
  const latest=options.blockedWithRun?{...cycle(9),mode:'blocked',payload_json:{sourceRunId:'blocked-run'}}:options.rehearsalOnly?{...cycle(9),mode:'rehearsal'}:rows.at(-1);
  const query=jest.fn(async(sql:string,params:unknown[]=[])=>{
+  if(sql.includes('FROM t156_forecast_run WHERE account_id=? ORDER BY created_at'))return [forecastClockId?[{id:forecastClockId,at:'2026-11-08T12:00:00.000000Z'}]:[],[]];
   if(sql.includes('FROM t156_paper_viewer'))return [denied?[]:[{account_id:PAPER_ACCOUNT_ID}],[]];
   if(sql.includes('FROM t156_paper_account'))return [[{status:'active',revision,updatedAt:cutoff,policy_json:{registeredAt:'2026-11-01T00:00:00Z'},initialEquityUsd:99999}],[]];
   if(sql.includes('MIN(session_date)'))return [[{firstSession:options.rehearsalOnly?null:options.earlyGap?'2026-11-02':'2026-11-06',lastSession:options.rehearsalOnly?null:options.earlyGap?'2026-11-03':'2026-11-06',savedFirstSession:'2026-11-02',savedLastSession:'2026-11-06'}],[]];
@@ -26,13 +27,13 @@ function fixture(n=23,options:{pointCount?:number;futureCount?:number;rehearsalO
   return [[],[]];
  });
  const c={query,commit:jest.fn(),rollback:jest.fn(),release:jest.fn(),destroy:jest.fn(),beginTransaction:jest.fn()};
- return {db:{getConnection:async()=>c} as unknown as ArchiveQueryable,c,query,revise:()=>revision++,deny:()=>denied=true};
+ return {db:{getConnection:async()=>c} as unknown as ArchiveQueryable,c,query,revise:()=>revision++,deny:()=>denied=true,issueForecast:()=>forecastClockId='a'.repeat(64)};
 }
 describe('v6 read-only private paginated view',()=>{
  test.each([0,1,10,11,23])('ten-row SQL pages and exact count %i',async n=>{
   const f=fixture(n),v=await readPaperView(1,{...defaultPaperViewQuery(),signalPage:999},f.db);
   expect(v.signalPage.totalCount).toBe(n);expect(v.signalPage.page).toBe(Math.max(1,Math.ceil(n/10)));expect(v.signalPage.rows).toHaveLength(n===0?0:n%10||10);
-  expect(v.signalPage.hasNext).toBe(false);expect(v.signals).toEqual(v.signalPage.rows);expect(v.forecasts).toMatchObject({capability:'not_implemented',records:[],comparison:[],baseline:null,targetEnd:null,expectedReturnPct:null});
+  expect(v.signalPage.hasNext).toBe(false);expect(v.signals).toEqual(v.signalPage.rows);expect(v.forecasts).toMatchObject({capability:'preparing',records:[],comparison:[],baseline:null,targetEnd:null,expectedReturnPct:null});
   expect(v.account.cloneInvestmentUsd).toBe(99999);expect(v.observation.baseline?.point.equityUsd).toBe(101);
   expect(v.snapshot.asOf).toBe('2026-11-07T02:00:00.000000Z');expect(f.query.mock.calls[2][0]).toContain('t156_paper_viewer');
   expect(f.query.mock.calls.some(([sql])=>/INSERT|UPDATE|DELETE|FOR UPDATE/.test(sql))).toBe(false);expect(f.c.commit).toHaveBeenCalled();
@@ -86,4 +87,10 @@ describe('v6 read-only private paginated view',()=>{
   const f=fixture();await expect(readPaperView(1,{...defaultPaperViewQuery(),snapshot:'fabricated'},f.db)).rejects.toMatchObject({status:409});
   f.query.mockClear();await expect(readPaperView(1,{...defaultPaperViewQuery(),signalPage:1.1},f.db)).rejects.toMatchObject({status:400});expect(f.query).not.toHaveBeenCalled();
  });
+});
+
+test('a new persisted forecast updates snapshot clock and invalidates the old page token',async()=>{
+ const f=fixture(),first=await readPaperView(1,defaultPaperViewQuery(),f.db);f.issueForecast();
+ await expect(readPaperView(1,{...defaultPaperViewQuery(),snapshot:first.snapshot.token},f.db)).rejects.toMatchObject({status:409});
+ const updated=await readPaperView(1,defaultPaperViewQuery(),f.db);expect(updated.snapshot.asOf).toBe('2026-11-08T12:00:00.000000Z');expect(updated.snapshot.token).not.toBe(first.snapshot.token);
 });

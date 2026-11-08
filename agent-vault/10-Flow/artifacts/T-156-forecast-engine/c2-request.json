@@ -1,0 +1,22 @@
+{
+  "kind": "codex_gate",
+  "checkpoint": "C2",
+  "task_id": "T-156",
+  "project": "StockInvest",
+  "risk": "R2",
+  "summary": "실수집자료 M40 연구예측 4기간 원본·확률·순손익, INSERT 전용 원장, 소유자 조회와 이후 연속모의성과 비교. 수치 Analyst 독립검토와 제품 Reviewer 지적수정 후 범위 고정. 실거래OFF/주문정책불변.",
+  "changed_paths": [
+    "src/lib/strategy/m40/forecast-engine.ts",
+    "src/lib/strategy/m40/forecast-store.ts",
+    "src/lib/strategy/m40/forecast-continuation.ts",
+    "src/lib/strategy/m40/forecast-evaluation.ts",
+    "src/lib/strategy/m40/forward-store.ts",
+    "src/lib/strategy/m40/forward-runtime.ts",
+    "src/app/api/cron/m40-forecast/route.ts",
+    "scripts/migrations/T-156-forecast-ledger.sql",
+    "scripts/cron-runner.sh",
+    "src/app/analytics/M40PaperPanel.tsx"
+  ],
+  "codex_calls_used": 0,
+  "remaining_limit_pct": null
+}

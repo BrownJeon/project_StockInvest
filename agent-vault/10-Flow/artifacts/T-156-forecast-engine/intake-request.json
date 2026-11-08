@@ -1,0 +1,22 @@
+{
+  "kind": "intake",
+  "task_id": "T-156",
+  "project": "StockInvest",
+  "request_summary": "사용자명시승인: 실제수집자료기반 예측엔진·불변예측원장과비용후1주/1개월/3개월/1년손익범위·손실확률·이후모의성과비교구현. 기존승인v6구성을유지해실데이터연결. 별도forecast-only확인가격snapshot,당시가용입력·정책/자료hash·손실분모보존,실거래OFF유지.",
+  "changed_paths": [
+    "src/lib/strategy/m40/forecast-engine.ts",
+    "src/lib/strategy/m40/forecast-input.ts",
+    "src/lib/strategy/m40/forecast-store.ts",
+    "src/lib/strategy/m40/forecast-runtime.ts",
+    "src/lib/strategy/m40/paper-view.ts",
+    "src/lib/strategy/m40/paper-view-types.ts",
+    "src/app/analytics/M40PaperPanel.tsx",
+    "src/app/analytics/m40-paper-ui.ts",
+    "src/app/api/cron/t156-forecast/route.ts",
+    "scripts/migrations/T-156-forecast-ledger.sql"
+  ],
+  "new_paths": [
+    "src/lib/strategy/m40/forecast-engine.ts",
+    "scripts/migrations/T-156-forecast-ledger.sql"
+  ]
+}

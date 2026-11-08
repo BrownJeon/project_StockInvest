@@ -1,0 +1,45 @@
+{
+  "task": "T-156",
+  "scope": "approved_v6_real_forecast_binding",
+  "status": "accepted",
+  "review_mode": "read_only_source_and_synthetic_component_screenshots",
+  "reference": {
+    "mockup": "mockups/T-156-paper-analysis-v6.html",
+    "sha256": "cce67b2f0350406f2296f1495fbf446e0597a3e1cc1259f9d4f98554531758ed",
+    "guide": "docs/design/2026-11-08-t156-forecast-engine-ui-binding.md"
+  },
+  "evidence": [
+    "t156-forecast-synthetic-mobile-412.png",
+    "t156-forecast-synthetic-desktop-1280.png",
+    "t156-forecast-synthetic-mobile-detail.png"
+  ],
+  "accepted": [
+    "existing_three_segments_and_five_bottom_navigation",
+    "single_row_four_sticky_tabs_and_active_performance_view",
+    "separate_observed_period_and_four_forecast_horizons",
+    "immutable_record_selection_and_ten_row_pager",
+    "mean_p50_p10_p90_usd_pct_and_loss_count_denominator",
+    "model_based_uncalibrated_probability_and_mcse_distinction",
+    "historical_sample_and_nonoverlapping_window_limit",
+    "provisional_forecast_epoch_actual_comparison_caution",
+    "visible_per_side_025_percent_fees",
+    "central_80_percent_model_range_and_non_bound_warning",
+    "unsigned_probability_and_coverage_percentages"
+  ],
+  "findings": [],
+  "limitations": [
+    "Screenshots use synthetic QA values and are not real forecasts or operating authenticated DB UI.",
+    "Root independently reports360/412/1280 overflow0,sticky y134,four horizons,selection retention,pagination,permission clearing and409 retry; reviewer did not operate browser.",
+    "No source/harness/mockup edits by designer."
+  ],
+  "production_or_model_validation_claimed": false,
+  "resolved_findings": [
+    {
+      "severity": "P1",
+      "issue": "P10–P90 interpretation missing",
+      "resolution": "Forecast and Comparison now explicitly label 중앙 80% 모형범위(P10–P90) and state 범위 밖 손익도 가능하며 최저·최고 손익을 보장하지 않습니다. Read-only source recheck confirmed.",
+      "additional_copy_check": "Loss probability and interval coverage use unsigned percentages; expected/actual return signs remain."
+    }
+  ],
+  "final_recheck_scope": "Source-only verification of minimal copy/percentage-format fix; prior synthetic screenshots support unchanged structure. Root will refresh final screenshots independently."
+}

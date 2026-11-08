@@ -1,0 +1,32 @@
+{
+  "clock": "2026-11-08T13:21:44.040Z",
+  "timeZone": {
+    "sessionZone": "SYSTEM",
+    "globalZone": "SYSTEM",
+    "systemZone": "KST"
+  },
+  "forecastTables": [],
+  "requiredPrivileges": {
+    "create": true,
+    "trigger": true
+  },
+  "originalTableFingerprints": {
+    "paperAccount": {
+      "rows": 1,
+      "sha256": "2ee477d454b956a1521334534335ea96a92b3d4a7d10ec029c6d7c4bc4ee2082"
+    },
+    "paperCycles": {
+      "rows": 1,
+      "sha256": "c37ccb1a1ec6515d5ec664a158d3e54e8ffc823effe9b0b8ee0610afb620790b"
+    },
+    "paperSignals": {
+      "rows": 4,
+      "sha256": "9bb27da22e25ac169db7f181c047e487de8b41aaaf9a1f006fd05018950976a2"
+    },
+    "safety": {
+      "rows": 2,
+      "sha256": "fe2b78ff56cd7cbebf41d1e756c97cfd9adf95751d72107d3dcd3e43321aad79"
+    }
+  },
+  "scope": "Read-only aggregate and fingerprints, no account amounts or credential values emitted"
+}

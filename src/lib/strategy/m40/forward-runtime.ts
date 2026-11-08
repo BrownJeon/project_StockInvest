@@ -170,7 +170,7 @@ async function runCycle():Promise<Record<string,unknown>> {
   const committed=await commitPaperCycle({lease,policy,book,cycle:{id:cycleId,session:asOf,decisionAt:cutoff,mode,
    payload:{eligibility,executionKind:confirmedExitOnly?'confirmed_membership_exit_only':'full_core',provenanceBlobSha256:provenanceSha,sourceBundleSha256:sha(JSON.stringify(bundle)),
     inputSha256:result?.inputSha256??null,sourceRunId:result?.runId??null,
-    equityUsd:marked.equityUsd,returnSinceClone:marked.returnSinceClone,drawdown:marked.drawdown,
+    shareBasisVerified:true,shareBasisObservations:Object.fromEntries(lease.account.book.holdings.map(h=>[h.symbol,(data.members.find(m=>m.symbol===h.symbol)?.splitBars??[]).map(b=>({session:b.session,close:b.close}))])),equityUsd:marked.equityUsd,returnSinceClone:marked.returnSinceClone,drawdown:marked.drawdown,
     outcomes:settled.outcomes,model:'next_open_fixed_quantity_or_expire; retrospectively evaluated from received EOD, not actual auction fills',feePerSide:0.0025,
     minimumValidation:{weeks:12,completedTrades:100,changedDaysForAgentTrading:20},profitabilityValidated:false}},signals,outcomes:settled.outcomes},db);
   return {status:committed?mode:'already_observed',session:asOf,executionScope:'paper_only',cohortSize:policy.frozenCohort?.symbols.length??0,

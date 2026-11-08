@@ -2,7 +2,7 @@
 task_id: T-156
 title: 미국 종목분석의 매수·매도 시점 개선안 조사
 status: doing
-waiting: ["사용자 승인된 부팅·DB 초기화 진단 구현/독립검토/격리 QA 뒤 운영 확인", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
+waiting: ["선택한 DBA 관리자 접속 프로필의 실제 경로 대기(오류1419), 이후 트리거/실자료 발행·웹 배포",  "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
 priority: medium
 base_ref: 8984f69ddd5581c45c919193a535f5b1b359765d
 roles_involved: [leader, developer, reviewer, qa]
@@ -14,8 +14,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "승인v6 조회UI 구현·독립검토/디자인수용·388검사/타입/build·합성SQL/CUA완료. v6구현검증388완료/main319게시후health_failed자동963복구. 사용자후속명시승인으로공통부팅/DB진단구현진행. 원인단정/무변경재배포/안전설정변경금지"
-  last_event_id: exec-067
+  current_scope: "실자료 예측엔진·불변원장/4기간분포·미보정확률/사후비교 구현·독립33파일검토/467검사+표시후속79·타입/build/CUA완료. 운영DDL4개빈표뒤1419권한중단;trigger0/continuation없음. DBA프로필/관리자SQL대기·실발행/새게시/배포0. 운영39/DRYtrue·기존모의/안전지문불변"
+  last_event_id: exec-071
 created: 2026-11-06
 updated: 2026-11-08
 demo_gate:
@@ -34,7 +34,7 @@ demo_gate:
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
-  active: true
+  active: false
   approval_source: "codex_native_transcript"
 ---
 
@@ -111,6 +111,10 @@ demo_gate:
 | exec-065 | 2026-11-08 21:02 KST 이후 | deployment_failed_auto_rollback | codex → codex / codex_scoped | main319caf6게시·hook484/제품19SHA일치,build성공후health120s실패로963bfeba자동복구. 복귀health200/green/DRYtrue·앱각1/restart0·안전env불변. 실패원인미확정, 공통부팅/DB진단범위검토안작성·재시도/기록push중단 | F25·deployer기록·rollback-verification.json·failure-investigation.json |
 | exec-066 | 2026-11-08 사용자 후속 승인 | diagnostic_scope_authorized | codex → codex / codex_scoped | 원본call_0a3113cce3cf42359ded296a2ad9f7e7 답변 ‘부팅 진단 보완까지 진행 (추천)’로공통부팅/DB진단범위확대. 고정단계/작업순번/경과/큐관측만, SQL·DDL/health기준/시간·매매·설정불변. R2/noUI·Sol fallback·C1false, 독립리뷰/격리QA뒤운영확인 | F26·boot-diagnostics intake/model-route/c1 및사용자원본응답 |
 | exec-067 | 2026-11-08 | diagnostic_verified | codex → codex / codex_scoped | 진단4파일/기존19독립리뷰PASS·7suites208tests/타입/build·실mysql2/MariaDB Proxy호환PASS. SQL78호출AST동일/기존388UI제품SHA불변. C2 Codex내자기호출override기록, 진단포함새게시/동시읽기전용관측준비 | F26후속·boot-diagnostics-review/boot-qa/23SHA |
+| exec-068 | 2026-11-08 21:27 KST 이후 | diagnostic_release_verified | codex → codex / codex_scoped | 진단포함39b2f749/릴리스212559-39b2f749 자동배포ok/migratedfalse·정본status/Root운영23SHA·health200/dbtrue/green/DRYtrue·앱각1/restart0·API401·안전env불변확인. setup79.3초관측,최초실패원인해결로과장X | F27·deployer기록·final-deployment-verification/boot-monitor-summary |
+| exec-069 | 2026-11-08 사용자 후속 | real_forecast_implementation | codex → codex / codex_scoped | 실제수집기반 예측엔진/불변원장·4horizon/손익분포·손실확률/사후비교명시승인. analyst실사→v6binding가이드/숫자·원장개발/독립검증. 현재frozen123/가격vector124/297joint/B2000L10·지수1일latent가정·미보정,실거래OFF | F28·forecast-engine intake/C1/model-route·사용자원문·Analyst/UI-binding spec |
+| exec-070 | 2026-11-08 23:20 KST | forecast_validated_dba_pending | codex → codex / codex_scoped | 실제엔진/원장33파일독립검토·467+표시79(중복)·타입/build·실DB부분/CUA완료. 운영4빈표후1419·trigger0/continuation없음. DBA정보요청·보안완화/배포/실발행0·운영39/DRYtrue/원자료불변 | F29·forecast-engine/qa/final-ui-followup/visual/migration-blocker·DBA인계 |
+| exec-071 | 2026-11-08 사용자 응답 | dba_profile_selected_path_pending | codex → codex / codex_scoped | 기존 관리자 프로필 사용 선택 수신. Mac/Ubuntu 기본 인증프로필 파일 부재 확인, 비밀 내용 없이 실제 경로만 후속 질문. 전역 보안/앱권한/운영배포 불변 | F29 후속·사용자원문 |
 
 ## 목표
 
@@ -136,6 +140,8 @@ S&P 500의 시장 상태, Nasdaq-100 및 StockInvest NYSE 시총 상위 50의 �
 - Judge 역할은 모델과 추론 설정의 호환성 오류로 기동하지 못했다. 메인 Codex가 Jev 로컬 규칙을 실행했다. `judge-result@2`의 `engine=rules`, `risk=R0`, `demo.level=none`, `needs_info=false`, `next=assign`, 토큰·비용 0을 확인했다. 접수 범위가 조사·제안이므로 구현 역할 배정과 구현 검토 체크포인트는 적용하지 않았다.
 
 - 2026-11-08 v6 구현: rules C1 codex_required=false, C2 codex_required=true(CX-r2-post-review). Codex내Codex자기호출을하지않는AGENTS정본에따라 C2 override: codex_unavailable_in_codex. 별도외부Codex검토성공으로표기하지않고 실제독립Reviewer19파일정적검토와격리QA를구분한다. demo=full/designer, 사용자v6원본native승인/check/activate통과.
+
+- 2026-11-08 F28 실제 예측엔진: rules 접수 R2/demo.none/assign, C1 codex_required=false. 수정된 33파일 독립 Reviewer 검토 후 C2는 codex_required=true(CX-r2-post-review, remaining_limit_pct=null)다. AGENTS 정본에 따라 override: codex_unavailable_in_codex. 재귀적인 별도 Codex 호출·외부검토 성공 주장은 하지 않는다. numerical Analyst 5파일 검토와 제품 33파일 정적 검토, 이후 최종 격리 QA·운영 검증을 구분한다. 기존 승인 v6 데모는 그대로 보존하며 추가 수치 binding은 같은 범위다. 원본은 artifacts/T-156-forecast-engine/c1.json/c2.json/independent-review.json을 따른다.
 
 ## 조사와 권고
 
@@ -1638,6 +1644,10 @@ Codex 독립 Reviewer t156_reviewer 추가 정적 감사: owner 로그인·명�
 - [20:44] **최종 판정: PASS (scope: src/app/analytics/AnalyticsPage.tsx, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/M40PaperPanel.module.css, src/app/analytics/m40-paper-ui.ts, src/app/analytics/m40-paper-copy.ts, src/app/analytics/TodayPanel.tsx, src/app/analytics/route-resolve.ts, src/__tests__/t156-paper-view-render.test.ts, src/__tests__/fixtures/t156-paper-view.ts, docs/screens.md, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/paper-view-query.ts, src/lib/strategy/m40/paper-view-period.ts, src/lib/strategy/m40/forward-calendar.ts, src/app/api/research/t156/paper/route.ts, src/lib/strategy/m40/__tests__/paper-view-query.test.ts, src/lib/strategy/m40/__tests__/paper-view-v6.test.ts, src/lib/strategy/m40/__tests__/paper-view-route.test.ts)**
 - [21:19] 부팅 진단 4파일을 독립 정적 검토했고 watchdog 예외 격리 수정 후 재확인했다. 기존 제품 19파일 해시 불변. 실행 검증·운영 원인 규명·재배포는 별도다. 근거 `agent-vault/10-Flow/artifacts/T-156-paper-analysis-v6-implementation/boot-diagnostics-review.json`.
 - [21:19] **최종 판정: PASS (scope: src/app/analytics/AnalyticsPage.tsx, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/M40PaperPanel.module.css, src/app/analytics/m40-paper-ui.ts, src/app/analytics/m40-paper-copy.ts, src/app/analytics/TodayPanel.tsx, src/app/analytics/route-resolve.ts, src/__tests__/t156-paper-view-render.test.ts, src/__tests__/fixtures/t156-paper-view.ts, docs/screens.md, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/paper-view-query.ts, src/lib/strategy/m40/paper-view-period.ts, src/lib/strategy/m40/forward-calendar.ts, src/app/api/research/t156/paper/route.ts, src/lib/strategy/m40/__tests__/paper-view-query.test.ts, src/lib/strategy/m40/__tests__/paper-view-v6.test.ts, src/lib/strategy/m40/__tests__/paper-view-route.test.ts, src/lib/db.ts, src/app/api/health/route.ts, src/lib/diagnostics/boot-diagnostics.ts, src/lib/diagnostics/__tests__/boot-diagnostics.test.ts)**
+- [22:51] 실제예측 엔진·원장·조회·화면 33파일을 독립 정적 검토했고 부팅 외 별도 변경·시점·불변·인증·경제 검산 지적 수정 후 재확인했다. 숫자 독립 Analyst 5파일 최종 SHA·별도 검토도 확인했다. Reviewer는 실행시험·DB·운영발행을 수행하지 않았다. 근거 `agent-vault/10-Flow/artifacts/T-156-forecast-engine/independent-review.json`; 최종 격리 QA·DDL 검증은 별도다.
+- [22:51] **최종 판정: PASS (scope: scripts/cron-runner.sh, scripts/migrations/T-156-forecast-ledger.sql, scripts/t156/forecast-schema-verify.mjs, scripts/t156/forecast-schema-verify.test.mjs, scripts/test-cron-runner-m40-forecast.sh, src/__tests__/t156-paper-view-render.test.ts, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/m40-paper-ui.ts, src/app/api/cron/m40-forecast/route.ts, src/lib/strategy/m40/__tests__/forecast-continuation.test.ts, src/lib/strategy/m40/__tests__/forecast-engine.test.ts, src/lib/strategy/m40/__tests__/forecast-fixture.ts, src/lib/strategy/m40/__tests__/forecast-ledger.test.ts, src/lib/strategy/m40/__tests__/forecast-publication.test.ts, src/lib/strategy/m40/__tests__/forecast-route.test.ts, src/lib/strategy/m40/__tests__/forecast-view.test.ts, src/lib/strategy/m40/__tests__/forward-store.test.ts, src/lib/strategy/m40/__tests__/paper-view-query.test.ts, src/lib/strategy/m40/__tests__/paper-view-v6.test.ts, src/lib/strategy/m40/forecast-continuation.ts, src/lib/strategy/m40/forecast-engine.ts, src/lib/strategy/m40/forecast-evaluation.ts, src/lib/strategy/m40/forecast-input.ts, src/lib/strategy/m40/forecast-manifest.ts, src/lib/strategy/m40/forecast-runtime.ts, src/lib/strategy/m40/forecast-store.ts, src/lib/strategy/m40/forecast-types.ts, src/lib/strategy/m40/forecast-view.ts, src/lib/strategy/m40/forward-runtime.ts, src/lib/strategy/m40/forward-store.ts, src/lib/strategy/m40/paper-view-query.ts, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts)**
+- [23:06] 승인 화면의 중앙 80% 모형범위·범위 밖 손익 가능성 및 확률/포함률 무부호 표시 2파일을 재검토했고 나머지 31파일 SHA 불변을 확인했다. 최신 manifest bbd381f4 기준이며 수정 후 QA·build는 Reviewer가 실행하지 않았다.
+- [23:06] **최종 판정: PASS (scope: scripts/cron-runner.sh, scripts/migrations/T-156-forecast-ledger.sql, scripts/t156/forecast-schema-verify.mjs, scripts/t156/forecast-schema-verify.test.mjs, scripts/test-cron-runner-m40-forecast.sh, src/__tests__/t156-paper-view-render.test.ts, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/m40-paper-ui.ts, src/app/api/cron/m40-forecast/route.ts, src/lib/strategy/m40/__tests__/forecast-continuation.test.ts, src/lib/strategy/m40/__tests__/forecast-engine.test.ts, src/lib/strategy/m40/__tests__/forecast-fixture.ts, src/lib/strategy/m40/__tests__/forecast-ledger.test.ts, src/lib/strategy/m40/__tests__/forecast-publication.test.ts, src/lib/strategy/m40/__tests__/forecast-route.test.ts, src/lib/strategy/m40/__tests__/forecast-view.test.ts, src/lib/strategy/m40/__tests__/forward-store.test.ts, src/lib/strategy/m40/__tests__/paper-view-query.test.ts, src/lib/strategy/m40/__tests__/paper-view-v6.test.ts, src/lib/strategy/m40/forecast-continuation.ts, src/lib/strategy/m40/forecast-engine.ts, src/lib/strategy/m40/forecast-evaluation.ts, src/lib/strategy/m40/forecast-input.ts, src/lib/strategy/m40/forecast-manifest.ts, src/lib/strategy/m40/forecast-runtime.ts, src/lib/strategy/m40/forecast-store.ts, src/lib/strategy/m40/forecast-types.ts, src/lib/strategy/m40/forecast-view.ts, src/lib/strategy/m40/forward-runtime.ts, src/lib/strategy/m40/forward-store.ts, src/lib/strategy/m40/paper-view-query.ts, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts)**
 ## QA
 
 Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했다. Jest 55 suites / 1,343 tests 통과, 기존 별도 MariaDB 경합 suite 1개·15 tests는 미실행으로 분리한다. 새 T-156 MariaDB 저장소 14 tests 통과(실제 InnoDB 대기 확인 경합2 포함), tsc 및 archive 4 tests 통과. DRY_RUN·킬스위치·한도·블랙리스트·감사로그·검증 관문의 모의 회귀를 포함하며 whitelist는 현재 항상허용 규칙이다.
@@ -1664,6 +1674,7 @@ DRY_RUN 연결 최종 QA: 지정65 suites/1,594 PASS,기존별도DB경합1 suite
 |---|---|---|---|---|---|
 | 2026-11-08 11:44 | 20261108-114326-9237fffb | 9237fff | T-156 M40 shadow·자료 이관/조회·판단 이력 | RELEASE_RESULT ok, END0 | 별도 승인 DDL/적재는 이미 완료, release.migrated=false. health200·DRY_RUN유지, web/cron각1. 적격 입력 미확정 M40 POST503, 비로그인 목록401 |
 | 2026-11-08 21:02 | 20261108-205843-319caf64 | 319caf645e2bdd2b0babd18a4702682e2db135fe | T-156 모의분석 v6 조회 UI | RELEASE_RESULT health_failed, END1; 자동 롤백 | 이전 릴리스 `20261108-174944-963bfeba`로 복귀. 배포 후 `--status`에서 health 실패를 관측했고, Root 사후 확인은 health200·DB정상·green·DRY_RUN=true·KILL_SWITCH=false·web/cron각1 online·재시작0. 원인은 미확정이며 v6 운영 UI 반영 성공으로 확인되지 않음. 근거: `../artifacts/T-156-paper-analysis-v6-implementation/deployment/rollback-verification.json` |
+| 2026-11-08 21:25 | 20261108-212559-39b2f749 | 39b2f749c3547cb0bbdbc954a406a204afff9f56 | T-156 모의분석 v6 조회 UI + 부팅 진단 보완 | RELEASE_RESULT ok, END0, migrated=false | 이전 `20261108-174944-963bfeba`에서 새 릴리스로 전환. 배포 영수증상 Reviewer 검토 23개 소스 SHA 일치, health200·DB정상·green·DRY_RUN=true·KILL_SWITCH=false·익명 private API 401·web/cron각1 online·재시작0·안전환경 SHA 불변; deployer `--status`도 health200 확인. 앱 인증 UI·Android 실기기 미확인. 앞선 319caf64 health_failed의 원인이 해결됐다고 단정하지 않음. APK·운영 DB 마이그레이션 없음. 근거: `../artifacts/T-156-paper-analysis-v6-implementation/deployment/final-deployment-verification.json` |
 
 이번 사용자 승인 범위의 기반 구현·DB 이관·테스트 보존과 코드 배포 확인은 완료했다. 원본28개+구현 검증 JSON+배포 검증 JSON을 별도 시험 자료로 보존한다. parent task의 doing/대기는 F09·당시 구성·가격/뉴스 자격과 전진/실매매 연결의 미완료를 뜻하며 이번 자료 이관이 진행 중이라는 뜻은 아니다.
 
@@ -1844,3 +1855,73 @@ F24 후속: 사용자가 배포시점 질문에 ‘지금 웹 배포 (추천)’
 새로그에는SQL본문/바인딩/원문에러message/비밀/계좌·종목·금액을기록하지않는다. 30초pending1회·budget·unref/정리와관측오류격리를검토한다. 기존SQL/DDL/연결한도/재시도·health조건/제한시간/응답·주문안전·실거래설정은변경하지않는다. 실제운영DB수정/새진단API/강제실행·검사우회를추가하지않으며독립리뷰·격리비간섭QA뒤정본배포만수행한다. 아직진단코드검증/운영배포성공으로표시하지않는다.
 
 F26 검증 후속: 독립23파일(신규진단4/불변제품19)리뷰통과,watchdog clock예외지적을수정/재검토했다. QA7스위트208검사·타입/Nextbuild통과/skip0·전후sourceSHA동일,기존388제품시험의19파일불변을확인했다. 원본319와query/execute호출78개의SQL·인자표현식/순서AST가같으나실행전체SQL동등/실제coldstart로과장하지않는다. 실제mysql2/MariaDB합성smoke에서query/execute·receiver/Promiseidentity·오류후재사용·queue이벤트·close리스너복원통과,전체coldstart/운영원인미검증한계는유지한다. network-noneDB/컨테이너정리완료. C2rules는codexrequiredtrue이나AGENTS정본의Codex내자기호출금지로override codex_unavailable_in_codex,별도외부검토미실시다. 실제운영확인때부팅고정단계로그와읽기전용DB상태만동시수집하며새프로세스/기존설정/안전경계·SQL의미는변경하지않는다.
+
+
+### F27 v6 조회 화면·진단 포함 릴리스 운영 반영 완료
+
+사용자가승인한진단4파일을23파일독립리뷰·208검사/타입/build·실mysql2호환검증뒤정상hook으로39b2f749c3547cb0bbdbc954a406a204afff9f56에커밋/게시했다. 자동릴리스20261108-212559-39b2f749는RELEASE_RESULT ok/migratedfalse이며정본status도health200/webcrononline을확인했다. Root는archive형식릴리스의전체SHA를원본RELEASE_RESULT에서대조하고운영소스23파일을실제파일별hashreadback했다. 최초검증명령의gitrevparse는archive에.git가없어실패했으며,archive정본SHA/실제sourcehash대조로보완한것이다.
+
+최종읽기전용확인:health200/dbtrue/schemaFatalfalse/safetygreen/DRY_RUNtrue/KILL_SWITCHfalse,webcron각1online/restart0,익명paperAPI401·신규APIbuild존재,선택안전envSHA불변. source/current/main/원본worktree모두39로일치하며기존편집복구stash와첫319healthfailed/963자동복구이력은보존했다. DBmigrate/APK/수동중복배포·실거래활성화없음. 이번배포의코드범위는T156 v6조회UI+진단이며타task코드를추가하지않았다.
+
+동시읽기전용관측은ensure_setup완료79,277ms/수집된단일setup작업최대19,071ms와pool전체enqueue2건을기록했다. query실행/풀획득을개별분리하지않고,기존try/catch로처리된ALTER/CREATE실패를치명실패로계산하지않는다. 초기화단계지연은확인했으나첫배포실패의특정SQL/잠금/인프라원인은미확정이다. 이번성공을그근본원인해결로표시하지않는다. 모니터종료/DB연결해제·합성자원정리완료.
+
+앱경로 분석→오늘분석→종목별→모의분석,URL analytics?tab=m40. 한줄고정4탭/목록10개/관측주월·기간길이·경과와미래1주/1개월/3개월/1년을구분한다. 예측엔진/원장없음은미지원/빈값이고실제수익·손실확률을만들지않는다. 현재정책은M40기본매매/에이전트참고전용이다. 실제로그인운영UI/안드로이드기기는미확인,전진84일·신규왕복100건/변경20일·원천공백때문에T156전체는doing을유지한다. 최종배포후문서만로컬수정상태로보존하며기록만을위한push/재배포를하지않는다. 보고서 docs/implementation/2026-11-08-t156-paper-v6.md와boot-diagnostics.md,원본증거deployment/를따른다.
+
+
+### F28 실제 수집 자료 기반 예측 엔진·예측 원장 구현
+
+사용자가 기존미지원표시에후속으로실제수집자료기반예측엔진/예측원장과1주·1개월·3개월·1년손익범위/손실확률·이후모의성과비교구현을명시지시했다. 이는과거‘엔진제외’범위를대체하는새승인이고실거래OFF조건은유지한다. 기존v6승인구성/메뉴에실데이터를binding하고새목업·동일승인을재질문하지않는다. intake rules R2/demo.none/assign,모델router Sol fallback,C1 codexrequiredfalse를 artifacts/T-156-forecast-engine/에기록했다.
+
+Analyst Astra의실운영읽기전용실사와QA비공개fixture를대조했다. 현재동결후보는123개이고보유중추가1개까지가격벡터124개,지수와공통298일/297수익관측이다. 초기Analyst의124후보가정은확정된실frozen123으로정정한다. 장기1990원주데이터는미조정/동일성·과거가용시각공백으로조정수익률대체에쓰지않는다. 현재paperbook/실11/6rawmark로독립forecast_only_marked_snapshot을만들고clone투자금/리허설성과를기준평가로대체하지않는다. 사용자보유/금액/키는공개로그/Git/데모로내보내지않는다.
+
+엔진은고정10세션jointmovingblocks×2000경로,현재M40정책126모멘텀/200SMA/20교체/top5/15%·기존next-open정수주·T+1·수수료편도.0025를재생한다. 조정open=rawOpen×splitClose/rawClose로overnight/intraday를동일날짜벡터로추출해자산상관을보존한다. 가격벡터와후보집합을구별하고기존보유·awaiting_open의도를포함한다. 단기수익배수·유리한전략선택·실현미래입력은금지한다. 11/6S&P가격은freshFRED부재/Yahoo1회429로관측확보하지못해,같은297실관측의OLS+중심잔차draw로각경로의1일latent지수를추정하는모형가정을별도명시한다. 관측가격표에는쓰지않고실자료인것처럼표시하지않는다.
+
+기간별실제거래일수/달력목표·평가세션,mean/P10/P50/P90 순손익USD·pct,손실경로수/B·모형기반미보정추정확률·MonteCarlo표준오차를저장한다. 2000경로는2000독립실예측이아니며약297관측/29개10일비중첩블록/연간창약1개라는표본한계를분리한다. 원문뉴스/에이전트해석은현재참고전용이고검증없는정량가중을확률에넣지않는다. 실제future기간도래전actual/적중률을만들지않는다.
+
+숫자developer forecast_engine_developer가types/input/engine/unit, ledger developer forecast_ledger_developer가별도forecast job/run/horizon/evaluation/continuation표·runtime/일10시cron·ownerreader/v6UIbinding을소유한다. 기존확인흐름은바꾸지않고사후실completed연결에필요한forward-runtime/store의before/afterbookhash/revision·policy·fees/outcomes/sharebasis검증메타만추가허용했다. 원래paper TX 성공뒤짧은sidecar로기록하고실패는기존paper성공과격리하며증거gap은미확인으로표시한다. 원예측/입력/평가/anchor는UPDATE/DELETE차단·새IDappend,job상태만별도가변이다. 전체canonicalforward완결·연속경제상태/현금흐름·수수료·epoch일치때에만실actual비교한다. provisional예측epoch는realT0를고정/변경하지않고실제phase불일치시비교불가다.
+
+현단계제품/DDL작성중이며운영신규DDL/예측적재/새코드게시·배포는아직없다. 신규표만사용/기존실계좌·실주문표변경없음·DRY_RUN유지사전점검과복구범위확인뒤필요한마이그레이션/실발행/운영연결까지진행한다. QA는운영readonly privatefixture를Ubuntu700/600임시경로에보관했고초안실B2000성능probe약19초완료지만최종독립검토/인수QA와구분한다. 원문표본/작업범위정본은 docs/design/2026-11-08-t156-forecast-engine-analyst-spec.md 및ui-binding.md를따른다.
+
+## Developer — forecast ledger/runtime binding
+
+- [22:11] F28 구현: 별도 forecast job lease + INSERT-only run/horizon/evaluation/continuation DDL·불변 trigger, 발행 2000경로/4horizon·DRY_RUN·lease·accountrevision/policy 재대조 및 atomic publication을 추가했다. 운영 DDL/DB쓰기·서비스·주문·commit/push/배포는 수행하지 않았다.
+- [22:11] archived published/live_eligible=0 bundle 원문hash를 검증하고 DB UTC 발행시각·실paperbook·pending intents·원sourcebookhash·파일별code manifest를 동결한다. 새 collection/LLM/실거래 경로는 추가하지 않았다.
+- [22:11] forward commit 후 같은 committed connection의 짧은 autocommit sidecar로 before/after revision/book/policy/fills/fee/sharebasis anchor를 기록한다. 실패는 기존 paper commit 성공과 격리하며, 평가에서 빠진 chain을 미확인으로 표시한다. 기존 book·시그널 결정·거래정책은 변경하지 않았다.
+- [22:11] 만기 평가는 원본 sourcebook부터 revision/원장hash chain, 종목·전략 수량, cash+receivables delta, 편도0.25% fee, 고정policy/cohort·epoch phase, 모든 canonical 미래 세션과 target equity를 확인한 경우에만 completed 손익/오차/구간적중/Brier를 append한다. 불충분·조건불일치는 actual 없이 명시 상태를 보존한다.
+- [22:11] 기존 v6 gate 절대경로 검사 `DEMO_GATE_PASSED / task: T-156` 및 approved_version v6/hash verified를 확인했다. 기존 화면의 Forecast/Comparison에 실원본 allowlist projection과 독립 서버10행 paging을 연결했다. owner 선검사/private no-store/403 지움/409 snapshot 재시도와 관측성과 구조는 유지한다. 최신 forecast/eval identity와 생성시각을 snapshot에 포함했다.
+- [22:11] 별도 authenticated forecast cron을 10시 하루1회 normal call/joblog와 150초curl상한으로 연결했다. shell 예약·일별중복·상한 synthetic test는 통과했다. 로컬 node_modules가 없어 npx tsc는 compiler 미설치 메시지만 나와 typecheck 증거가 아니다. Ubuntu isolated smoke/Reviewer/QA 검증은 별도 인계하며 실제 운영검증으로 확대하지 않는다.
+
+- [22:40] 독립 Reviewer 지적을 수정했다: 모든 continuation 검증 issue fail-closed, canonical 모든 mode cycle↔receipt 양방향·종료 revision·원 baseline split checkpoint 검산, sidecar 1.5초 만료 시 사용 중 연결 destroy/반환 금지, UTC 명시 INSERT와 멱등 trigger·전후 정의검사 도구, immutable forecast ID 선택·horizon/409 유지·403 지움, 전체 비교 status/Brier/구간 포함 집계를 추가했다.
+- [22:40] publication에서 같은 revision의 원bookhash 오염, 철회/변경 source metadata·pointer/blob, 동일 원book/pending/source의 재prepare inputhash, result baseline/model/source/targets/표본·quantile·USD/pct·MCSE 일치를 검증한다. 평가 append 직전에는 짧은 RR account/range 공유 잠금으로 witness hash를 다시 확인하여 동시 cycle/sidecar 변화는 발행하지 않는다. nested owner DTO는 명시 allowlist라 book/residual/input 추가 필드가 전달되지 않는다.
+- [22:40] 개발 검증: Ubuntu 격리 스냅샷에서 8 suites/124 tests 통과·skip/fail 0·tsc exit0를 수신했다. 마지막 privacy projection 2파일 변경은 별도 forecast-view 4 tests 및 tsc exit0로 확인했다. 순수 Node trigger 정의검사 3 tests와 기존/신규 cron shell·bash 문법·diff 공백 검사도 통과했다. 이는 작성 단계 검증이며 최종 독립 Reviewer/QA 인수·실MariaDB timezone/DDL 시험·운영 발행 증거가 아니다.
+
+- [22:46] Reviewer 2차 지적 2건을 수정했다. 실제 engine가 추가하는 고정 PRNG 선언을 prepared assumptions 뒤에 정확히 허용하며 임의 선언 추가는 거부한다. 기존 합성 publication contract 시험만으로 실제 엔진 출력 연계를 놓친 점을 보완하여 B2000 실제 engine→assert→mockDB 4horizon 원자발행 통합 회귀를 추가했다. polling 401의 실제 코드 unauthorized와 http_401/http_403 모두 선택 원본·snapshot을 지우고, readEnvelope/applyOutcome→SSR private 비노출 회귀를 추가했다.
+- [22:46] 최신 변경의 개발 smoke는 3 suites/63 tests 전부 통과·skip/fail 0·tsc exit0다. 이전 freeze는 ledger-review-round1-manifest.json으로 보존했고 canonical ledger-final-manifest.json을 전체33 source/DDL/test/scripts SHA로 재동결했다. 최종 Reviewer/QA 인수·실MariaDB·운영 반영은 이 결과에 포함하지 않는다.
+
+- [22:51] Reviewer 3차 지적에 따라 경제검산의 1e-6 상대오차를 폐기하고 notional/fee/현금+미수금 delta 모두 절대 0.000001 USD로 고정했다. 금액 규모나 거래 변화량에 따라 허용 USD가 커지지 않으며, IEEE754 표현오차가 이 고정 한도를 넘으면 비교를 거부한다. 수량은 정확 safe integer·허용0, share-basis 가격은 기존 assertPaperShareBasis와 같은 절대0.0001로 분리했다.
+- [22:51] 변경2파일 개발 smoke는 forecast-continuation 16/16 tests·skip/fail0·tsc exit0다. 100/100k/1b USD 실제 모델매수+$0.05 외부입금, 수수료+.05/현금 동시변조 차단, 미세 float 허용/소수수량 차단, 기존 settlePaperSignals를 사용한 decimal price·T+1 미수금 200회 반복 통과를 포함한다. 이전 round2 manifest를 보존하고 전체33파일 canonical manifest를 재동결했다. 최종 Reviewer/QA 인수·실MariaDB·운영 반영은 여전히 별도다.
+
+- [23:06] Designer 최종 수용대조에 따른 표시2파일만 보완했다. Forecast·Comparison 숫자근처 P10–P90를 중앙80% 모형범위로 명시하고 범위밖손익 가능·최저최고손익 비보장 문구를 추가했다. 손실확률/전체구간포함률은 무부호 20.00%/100.00%로, 평균·수익률의 부호는 유지한다. 레이아웃·계산·정책·숫자5파일 변경은 없다.
+- [23:06] 표시 변경 개발 smoke는 SSR44/44 tests 및 tsc exit0이며 나머지 기존31파일 SHA 일치를 QA가 확인했다. 이전33파일 manifest를 ledger-review-round3-manifest.json으로 보존하고 같은33파일의 canonical ledger-final-manifest.json을 갱신했다. Reviewer/Designer 좁은 재검토 및 이후 필요한 최종QA/UI/build 판정은 별도이며 운영DDL/첫발행은 수행하지 않았다.
+
+## Developer — forecast numerical engine
+
+- [22:12] `forecast-types.ts`·`forecast-input.ts`·`forecast-engine.ts`와 synthetic fixture/unit를 작성했다. DB/네트워크/환경/주문 의존 없이 현재 raw mark로 forecast-only baseline을 계산하고, 원래 book hash·revision·pending awaiting_open intents·정책·출처·가용시각·달력을 동결한다. 운영 book/T0/forward/실주문은 변경하지 않았다.
+- [22:12] 실제 private source 준비는 frozen 후보123개와 후보 밖 기존 보유1개의 가격을 분리하여 총124개의 공동 벡터·297개의 연속 canonical 수익률로 qualified였다. 최초 초안의 모든 보유종목을 후보집합에 강제하던 제한은 기존 forward-input의 ineligible 보유 처리와 동등하도록 수정했다. OLS predictor는 후보123개만 사용한다. 11/6 미관측 index는 1일 latent OLS+중심화 residual로 모델링하며 관측값으로 저장하지 않는다.
+- [22:12] L10/B2000 동시 벡터 moving-block·최장경로의 4개 prefix·복제별 SHA256/Mulberry32 seed를 구현했다. compact numerical policy는 기존 planM40의 126/200/20/top5/15%/편도0.25%와 150개 차등사례에서 같은 결정을 냈다. 기존 generatePaperSignals/settlePaperSignals/markPaperBook을 그대로 호출하므로 정수주·다음시가·고정수량/예산 초과 만료·매도 뒤 매수·T+1 미수금·기존 attribution을 재생한다. mark-only 종료 수수료/기존 매입비용 재차감은 없다.
+- [22:12] Ubuntu 격리 정확 lock 의존성에서 기존16개 unit 전체 통과 후 fee-inclusive 100/100.25 경계1개를 추가하여 단독 통과했다. 제품3파일과 unit를 포함한 strict isolated tsc도 통과했다. flat/seed/future-row·source-order 불변/splitjump/결측·cutoff·latent gap/실패경로 전체실패/수수료 양면/기존 보유/공동상관/4prefix/타이머 양보를 검증했다. 프로젝트 전체 typecheck·lint·독립 Reviewer/QA 인수는 이 개발 검증에 포함하지 않는다.
+- [22:12] 실제 private fixture 개발 성능 probe는 준비293.9ms, B2000/L10·4horizon(5/19/61/250세션) 완료19,083.8ms였다. 100ms timer183회·최대지연45.73ms로 초기 settlement lookup 2초 동기차단을 8일마다 yield하여 해소했다. 계좌금액·수량·종목·수익분포는 로그/공개파일에 출력하지 않았다. L5/L20 실자료 민감도 진단은 미실행이며 옵션은 지원한다. 실벤치는 QA PASS·운영 발행·배포 증거가 아니다.
+
+- [22:28] 독립 numerical Analyst N1/P2의 finite 개별 PnL 합계 overflow 재현을 수정했다. maxabs 정규화·보상합 평균과 convex weighted quantile, netPct/최종 통계 finite guard로 invalid 전체 run은 horizons=[] failed를 유지한다. 기존17+극단 synthetic1을 Ubuntu에서 함께18건 통과했고 제품/unit strict isolated tsc도 통과했다. 개발 manifest/수정 영수증을 갱신했다. 이전 실자료19.08초 probe는 수정 전 SHA임을 명시했고 재실행하지 않았으며 최종 QA 성능 확인은 별도다.
+
+### F29 예측 엔진·원장 검증 완료, 운영 트리거 관리자 권한 대기
+
+최종33파일은독립Reviewer/Designer수용및소스해시대조를통과했다. 최초27suite467검사/표시후속4suite79검사·tsc/Nextbuild통과이며중복합산하지않는다. 수치Analyst18unit/150차등도별도근거다. 실network-noneDB는원자실엔진발행/동시lease/소유자읽기/불변trigger·UTC/KST와실commit생성sidecar1건을검증했다. 수기합성5일증거의실검사/평가/완료append/조회는통과했지만5일전체실commit/settle·23행실DB페이징·실DBsidecar실패/증거경합은미검증으로남긴다. Root실컴포넌트CUA360/412/1280·기간/고정탭/10페이지·권한clear/409와최종중앙80%/무부호확률문구를확인했고기기/실로그인운영UI는미확인이다. 임시서버/뷰포트복원·합성DB정리완료.
+
+운영에는검토SQL을승인범위로명시적용했으나신규job/run/horizon/evaluation4표(모두0행)뒤첫CREATE TRIGGER가ER_BINLOG_CREATE_ROUTINE_NEED_SUPER(1419)로거부됐다. log_bin1/trustcreators0/ROW가실측됐고앱환경/프로젝트문서에서사용가능한관리자프로필을확인하지못했다. continuation표/trigger8개는없다. 새예측발행/새코드게시·배포0,기존39릴리스/health200/DBtrue/safetygreen/DRYtrue/killfalse·webcron각1online0restart유지,기존모의계좌1/회차1/시그널4·안전지문전후불변이다. 단순CREATE/TRIGGER사전권한검사와격리DB통과는운영추가SUPER요건을보증하지않았음을기록한다.
+
+앱SUPER승격/전역신뢰완화/트리거없는발행으로우회하지않고사용자에게기존DBA프로필경로또는관리자직접SQL적용정보를async질문했다. 비밀번호·키요청없음. 검토SQL전체멱등재실행→정확8trigger/5표·기존자료불변후검증뒤정상hook게시·단일자동배포·실자료1run4기간발행/중복방지/owner조회로이어간다. 승인된UI/구현/이관/웹배포를다시묻는대기가아니라실권한·접속경로부족이다. 정본docs/implementation/2026-11-08-t156-forecast-engine.md/forecast-dba-handoff.md및canonical아티팩트를따른다. 전체T156은doing/전진84일·100왕복·20개입일·원천공백도유지한다.
+
+F29 테스트이력 후속: 기존t156_test_artifact/blob에55파일검증소스/합성fixture/가린증거아카이브222338byte·SHA37d4937a…48ffae5를저장하고재읽기일치확인했다. artifact-37d4937ac3fb6fcd4cf05255faef58d4. 실제계좌금액/수량/분포/privatefixture는제외했다. 이는테스트이력DB쓰기이며신규운영forecast발행이아니다.
+
+F29 사용자응답 후속(exec071): 사용자가 ‘기존 관리자 접속 프로필 지정(추천)’을선택했다. 방식은확정됐고재승인대기가아니다. 다만경로가없어Mac/Ubuntu기본.my.cnf/.mylogin.cnf와mysql/mariadb/stockinvest설정폴더의cnf파일존재만읽기확인했으며후보0이었다. 파일내용/비밀번호를요청하지않고사용할기존프로필의실제경로만async후속질문했다. 제공되면대상stockinvest/서버확인·검토SQL만적용후계속한다.

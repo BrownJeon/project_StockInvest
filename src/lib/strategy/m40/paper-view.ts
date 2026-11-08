@@ -1,3 +1,4 @@
+import { forecastViewClock, readForecastView } from './forecast-view';
 import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { readBlob } from '@/lib/analysis-data/store';
@@ -131,8 +132,9 @@ export async function readPaperView(userId:number,query:PaperViewQuery|number=de
  if(typeof query==='number')return readLegacyPaperView(userId,query,db);
  if(!Number.isSafeInteger(userId)||userId<=0)throw new PaperViewError(403,'paper_viewer_forbidden');
  // Validate programmatic callers too, before connecting; all variable SQL values are bound.
+ if(query.forecastId!=null&&!/^[a-f0-9]{64}$/.test(query.forecastId))throw new PaperViewError(400,'paper_forecast_id_invalid');
  if(!['all','week','month'].includes(query.period)||!['week','month','quarter','year'].includes(query.horizon)
-  ||![query.signalPage,query.valuationPage].every(n=>Number.isSafeInteger(n)&&n>0&&n<=999999)
+  ||![query.signalPage,query.valuationPage,query.forecastPage??1,query.comparisonPage??1].every(n=>Number.isSafeInteger(n)&&n>0&&n<=999999)
   ||(query.period==='all'?query.anchorSession!==null:(!validForwardSessionDate(query.anchorSession)||query.anchorSession<'1900-01-01'||query.anchorSession>'2100-12-31'))
   ||(query.snapshot!==null&&(typeof query.snapshot!=='string'||!/^[A-Za-z0-9_-]{1,1200}$/.test(query.snapshot))))throw new PaperViewError(400,'paper_query_invalid');
  if(!db.getConnection)throw new PaperViewError(503,'paper_snapshot_unavailable');
@@ -147,14 +149,15 @@ export async function readPaperView(userId:number,query:PaperViewQuery|number=de
  const account=accounts[0];if(accounts.length!==1||!time(account.updatedAt)||!Number.isSafeInteger(Number(account.revision))||Number(account.revision)<0)throw new PaperViewError(503,'paper_account_unavailable');
  // Account.updated_at is the persisted final write in the atomic cycle/signal/outcome commit.
  // It is a UTC snapshot cutoff, NOT the price session or the earlier analysis decision cutoff.
- const asOf=time(account.updatedAt)!,revision=Number(account.revision),cutoff=sqlTime(asOf),policy=object(account.policy_json);
+ const forecastClock=await forecastViewClock(c);
+ const asOf=[time(account.updatedAt)!,forecastClock.at].filter((v):v is string=>v!==null).sort().at(-1)!,revision=Number(account.revision),cutoff=sqlTime(asOf),policy=object(account.policy_json);
  const completedSession=paperCompletedSession(asOf),sessionCutoff=completedSession??'0001-01-01';
  const [latestRows]=await c.query<Row[]>(`SELECT ${cycleColumns} FROM t156_paper_cycle WHERE account_id=? AND decision_at<=? AND created_at<=? ORDER BY decision_at DESC,id DESC LIMIT 1`,[PAPER_ACCOUNT_ID,cutoff,cutoff]);
  const latest=latestRows[0],cycleId=latest?String(latest.id):null;
  const range=paperPeriodRange(query.period,query.anchorSession);
  // This deterministic token is a query binding, not a signature. Every component is re-read and matched.
  // Pages and forecast horizon intentionally share a snapshot; period/anchor/sort/account do not.
- const binding=JSON.stringify([1,PAPER_ACCOUNT_ID,revision,cycleId,asOf,query.period,query.anchorSession,range.start,range.end,'signals:created_at_desc,id_desc;valuations:session_desc,id_desc']);
+ const binding=JSON.stringify([2,PAPER_ACCOUNT_ID,revision,cycleId,asOf,forecastClock.identity,query.period,query.anchorSession,range.start,range.end,'signals:created_at_desc,id_desc;valuations:session_desc,id_desc']);
  const token=Buffer.from(JSON.stringify({binding:JSON.parse(binding),digest:createHash('sha256').update(binding).digest('hex')})).toString('base64url');
  if(query.snapshot!==null&&query.snapshot!==token)throw new PaperViewError(409,'paper_snapshot_changed_restart_page_1');
  const referenceCount=Array.isArray(policy.referenceSymbols)?Math.min(policy.referenceSymbols.length,150):null;
@@ -206,7 +209,7 @@ export async function readPaperView(userId:number,query:PaperViewQuery|number=de
  performance:{status:observation.status==='not_started'?'not_started':observation.status==='observed'?'observed':'insufficient_points',points:valuationPage.rows.flatMap(p=>p.equityUsd!==null?[{session:p.session,equityUsd:p.equityUsd}]:[]).reverse(),returnPct:observation.returnPct,maxDrawdownPct:observation.maxDrawdownPct,cagrPct:observation.cagrPct,realizedPnlUsd:null,unrealizedPnlUsd:null,truncated:observation.truncated,gapLabel:'metrics_full_range; points_current_page_only; session_date_not_snapshot_utc'},
  query:{...query,signalPage:signalMeta.page,valuationPage:valuationMeta.page,snapshot:token},snapshot:{token,asOf,accountRevision:revision,cycleId},history:{firstSession,lastSession,availablePeriods:{weeks:periods.weeks,months:periods.months},periodsTruncated:periods.truncated},
  signalPage:{...signalMeta,rows:signals},valuationPage,observation,
- forecasts:{capability:'not_implemented',horizon:query.horizon,records:[],comparison:[],baseline:null,targetEnd:null,expectedReturnPct:null,feePerSide:PAPER_FEE},
+ forecasts:await readForecastView(c,query.horizon,cutoff,query.forecastPage??1,query.comparisonPage??1,forecastClock.missing,query.forecastId??null),
  policyRecord:{status:policyVersion?'available':'unknown',runId:selectedRun,policyVersion,modelPolicyVersions,promptVersion:null,agentTrading:'not_implemented'}};
  await c.commit();active=false;return result;
  }catch(error){if(active){try{await c.rollback();}catch{c.destroy?.();destroyed=true;}}else if(startAttempted){c.destroy?.();destroyed=true;}if(error instanceof PaperViewError)throw error;throw new PaperViewError(503,'paper_view_unavailable');}

@@ -1,0 +1,59 @@
+{
+  "status": "passed",
+  "surface": "actual React AnalyticsPage/M40PaperPanel/BottomTabs with synthetic API only",
+  "sourceManifestSha256": "3a2fe6ab8b3b28d30f3fcfc65f5c7278e7bb6c15f5abea9b27f76e74ec1caf5e",
+  "viewports": [
+    {
+      "width": 360,
+      "height": 800,
+      "horizontalOverflow": 0
+    },
+    {
+      "width": 412,
+      "height": 915,
+      "horizontalOverflow": 0
+    },
+    {
+      "width": 1280,
+      "height": 900,
+      "horizontalOverflow": 0
+    }
+  ],
+  "checks": [
+    "one-row four tabs remain sticky at y=134 on mobile after scroll",
+    "week/month/quarter/year render corresponding target dates and historical windows",
+    "original selection retained across horizon and pages 1/2/3; 10/10/3 server page counts",
+    "comparison 23 records with completed/pending/incomparable/unconfirmed, page 3 displays 3 articles",
+    "comparison full-sample summary stable across pages: total23/completed6/pending6/unconfirmed5/incomparable6",
+    "401 and403 remove private amounts/results;401 retry resets selected original to latest rather than prior selection",
+    "malformed DTO clears private view",
+    "one409 triggers retry and selected quarter renders successfully",
+    "Home/End keyboard navigation on four tabs",
+    "browser viewport restored; completion summary emitted"
+  ],
+  "consoleWarningsOrErrors": 0,
+  "harnessCorrection": "Initial synthetic fixture reused week targets and inconsistent USD/percent/MCSE across horizons. QA corrected synthetic fixtures and Root reloaded before final checks. Product source unchanged.",
+  "notVerified": [
+    "authenticated production UI",
+    "Android physical device",
+    "full browser-based new-publication event with a new real forecast ID",
+    "real future performance or probability calibration"
+  ],
+  "screenshots": [
+    {
+      "file": "t156-forecast-synthetic-mobile-412.png",
+      "sha256": "de3ab29878c0a3ade194db6161542a66020553d782849106fec5f8b408de7892",
+      "syntheticOnly": true
+    },
+    {
+      "file": "t156-forecast-synthetic-desktop-1280.png",
+      "sha256": "788f0dce1372e6399d2b66773de468e947acb1fe7acdba6b0fa0a0a6c1af1e6f",
+      "syntheticOnly": true
+    },
+    {
+      "file": "t156-forecast-synthetic-mobile-detail.png",
+      "sha256": "b334565bfff4782a9ec0e56f0ce12e5093c5d60f191c4e3c010410193f3b42a7",
+      "syntheticOnly": true
+    }
+  ]
+}

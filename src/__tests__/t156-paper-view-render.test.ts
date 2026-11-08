@@ -6,7 +6,7 @@ import { applyOutcome,readEnvelope,type PollState } from '@/components/ops/useOp
 import type { PaperView } from '@/lib/strategy/m40/paper-view-types';
 import { syntheticPaperView } from './fixtures/t156-paper-view';
 import { paperJudgmentRows,paperReason } from '@/app/analytics/m40-paper-copy';
-import { PAPER_INITIAL_QUERY,paperLocalPage,paperNextQuery,paperQueryUrl,paperTabIndex,isPaperViewV6,paperSafePoll,paperCalendarSpan } from '@/app/analytics/m40-paper-ui';
+import { PAPER_INITIAL_QUERY,paperLocalPage,paperNextQuery,paperQueryUrl,paperTabIndex,isPaperViewV6,paperSafePoll,paperCalendarSpan,paperQueryAfterAuthError } from '@/app/analytics/m40-paper-ui';
 import { resolveAnalyticsRoute,analyticsQuery,ANALYTICS_SEGMENTS,ANALYTICS_DETAILS } from '@/app/analytics/route-resolve';
 (globalThis as unknown as { React:typeof ReactNS }).React=ReactNS;
 const state=(data:PaperView):PollState<PaperView>=>({status:'ok',data,lastOkAt:1,error:null});
@@ -51,9 +51,9 @@ describe('T-156 approved v6 saved-data screen',()=>{
  const html=render(state(d),'judgments');expect(html).toContain('선정됐지만 저장된 매매 의도 없음');expect(html).toContain('결제된 모의현금·수수료 포함 예산으로 1주 매수 불가');expect(html).not.toContain('상세 제약 사유는 제공 자료에서 미확인');
  });
  test('forecast permits four horizons but has no fabricated dates, numbers, baseline or paths',()=>{
- const html=render(state(syntheticPaperView()),'performance','forecast');for(const label of ['향후 1주','향후 1개월','향후 3개월','향후 1년','저장된 예측 없음','미지원 · 미검증','예측 기준일·기준 평가액·목표일·평가 예정일 미확인'])expect(html).toContain(label);
+ const html=render(state(syntheticPaperView()),'performance','forecast');for(const label of ['향후 1주','향후 1개월','향후 3개월','향후 1년','저장된 예측 없음','미보정 연구 시나리오','확률과 예상손익 미확인'])expect(html).toContain(label);
  for(const fabricated of ['12,343','40%','P10','DEMO-F','USD 12,000','목표일 2026'])expect(html).not.toContain(fabricated);
- expect(render(state(syntheticPaperView()),'performance','comparison')).toContain('0–0 / 0개');
+ const comparison=render(state(syntheticPaperView()),'performance','comparison');expect(comparison).toContain('저장된 예측 사후비교 없음');expect(comparison).toContain('정확도 미확인');expect(comparison).not.toContain('0.00%');
  });
  test('a completed month with a mid-period account start is partial without claiming the month is ongoing',()=>{
  const d=syntheticPaperView();d.history={...d.history,firstSession:'2026-10-15',lastSession:'2026-11-06'};
@@ -112,4 +112,58 @@ describe('T-156 query and page transitions',()=>{
  test('roving tab keys wrap and Home/End target the edges without hijacking Tab',()=>{
  expect(paperTabIndex(0,'ArrowLeft',4)).toBe(3);expect(paperTabIndex(3,'ArrowRight',4)).toBe(0);expect(paperTabIndex(2,'Home',4)).toBe(0);expect(paperTabIndex(1,'End',4)).toBe(3);expect(paperTabIndex(1,'Tab',4)).toBeNull();
  });
+});
+
+function syntheticForecastView(){
+ const d=syntheticPaperView();const distribution={mean:1,p10:-2,p50:.5,p90:4};
+ const record={id:'synthetic-forecast',sha256:'hash',modelCodeSha256:'code',inputSha256:'input',issuedAt:'2026-11-08T12:00:00Z',sourceAvailableAt:'2026-11-08T10:00:00Z',sourceDatasetId:'synthetic-source',sourceSha256:'source',policySha256:'policy',modelVersion:'synthetic-model',seed:'synthetic-seed',baseline:{kind:'forecast_only_marked_snapshot' as const,accountId:'synthetic',accountRevision:1,session:'2026-11-06',equityUsd:1000,bookSha256:'book',sourceAccountStateSha256:'original',epochSession:'2026-11-09',epochProvisional:true},sampleCounts:{historicalReturns:297,historicalStart:'2025-09-02',historicalEnd:'2026-11-05',blockLength:10,possibleBlockStarts:288,nonoverlappingBlocks:29},bridge:{kind:'none' as const,session:null,intercept:0,slope:0,predictor:0,residualSha256:'residual',fitStart:null,fitEnd:null,sampleCount:0},assumptions:['synthetic assumption'],result:{horizon:'week' as const,calendarTarget:'2026-11-13',targetSession:'2026-11-13',sessions:5,netUsd:distribution,netPct:distribution,lossCount:400,pathCount:2000,lossProbability:.2,monteCarloSe:.008,historicalNonoverlappingWindows:59}};
+ const page={rows:[record],page:1,pageSize:10 as const,totalCount:1,totalPages:1,hasNext:false,hasPrevious:false};
+ d.forecasts={capability:'available',horizon:'week',selectedId:record.id,selectedRecord:record,selectionStatus:'selected',comparisonSummary:{total:0,completed:0,pending:0,unconfirmed:0,incomparable:0,meanBrier:null,intervalCoverage:null},records:[record],comparison:[],recordPage:page,comparisonPage:{...page,rows:[],totalCount:0},baseline:1000,targetEnd:'2026-11-13',expectedReturnPct:1,feePerSide:.0025};
+ return d;
+}
+test('immutable forecast renders stored percent units and sample honesty without public input',()=>{
+ const d=syntheticForecastView();const html=render(state(d),'performance','forecast');
+ expect(html).toContain('synthetic-forecast');expect(html).toContain('400/2000');expect(html).toContain('297');expect(html).toContain('0.80');expect(html).toContain('예측 전용 임시 주기');expect(html).not.toContain('100.00%');
+});
+
+test('chosen immutable forecast id persists across horizon, period and page changes',()=>{
+ const id='a'.repeat(64),q={...PAPER_INITIAL_QUERY,forecastId:id};
+ for(const patch of [{horizon:'year' as const},{forecastPage:2},{period:'week' as const,anchorSession:'2026-11-09'}])expect(paperNextQuery(q,patch,'token').forecastId).toBe(id);
+ expect(paperQueryUrl(q)).toContain('forecastId='+id);
+});
+test('missing selected forecast never silently renders another available original',()=>{
+ const d=syntheticPaperView();d.forecasts={...d.forecasts,capability:'preparing',selectedId:'a'.repeat(64),selectedRecord:null,selectionStatus:'missing',recordPage:paperLocalPage([],1),comparisonPage:paperLocalPage([],1)};
+ const html=render(state(d),'performance','forecast');expect(html).toContain('선택한 예측 원본 없음');expect(html).not.toContain('기대 순손익 $');
+});
+
+test.each(['baseline','samples','bridge','horizon','comparison','summary'] as const)('malformed forecast %s fails closed before any private SSR',kind=>{
+ const d=syntheticForecastView(),raw=d as unknown as {forecasts:Record<string,any>};
+ if(kind==='baseline')delete raw.forecasts.selectedRecord.baseline;
+ if(kind==='samples')delete raw.forecasts.selectedRecord.sampleCounts.historicalStart;
+ if(kind==='bridge')delete raw.forecasts.selectedRecord.bridge;
+ if(kind==='horizon')delete raw.forecasts.selectedRecord.result.netUsd;
+ if(kind==='comparison'){raw.forecasts.comparison=[{id:'x',runId:'private-run',status:'completed',issues:[],forecast:{}}];raw.forecasts.comparisonPage.rows=raw.forecasts.comparison;}
+ if(kind==='summary')raw.forecasts.comparisonSummary.completed={bad:true};
+ expect(isPaperViewV6(d)).toBe(false);for(const view of ['forecast','comparison'] as const){let html='';expect(()=>{html=render(state(d),'performance',view);}).not.toThrow();expect(html).toContain('조회하지 못했습니다');expect(html).not.toContain('synthetic-forecast');expect(html).not.toContain('private-run');}
+});
+
+test.each([401,403])('actual polling HTTP %i clears immutable selection and private snapshot',status=>{
+ const previous=state(syntheticForecastView()),outcome=readEnvelope<PaperView>(status,{ok:false});
+ const poll=paperSafePoll(applyOutcome(previous,outcome,2,false));expect(poll.status).toBe('error');expect(poll.data).toBeNull();
+ const q=paperQueryAfterAuthError({...PAPER_INITIAL_QUERY,forecastId:'a'.repeat(64),snapshot:'private-snapshot'},poll.error);
+ expect(q.forecastId).toBeNull();expect(q.snapshot).toBeNull();expect(paperQueryUrl(q)).not.toContain('forecastId');expect(paperQueryUrl(q)).not.toContain('private-snapshot');
+ const html=render(poll,'performance','forecast');expect(html).not.toContain('synthetic-forecast');expect(html).not.toContain('synthetic-source');
+});
+test('explicit http_401 also clears selection while a network error retains the chosen original',()=>{
+ const q={...PAPER_INITIAL_QUERY,forecastId:'a'.repeat(64)};expect(paperQueryAfterAuthError(q,'http_401').forecastId).toBeNull();expect(paperQueryAfterAuthError(q,'network')).toBe(q);
+});
+
+test('forecast range is explicitly central 80 percent, with unbounded outcomes and unsigned probability',()=>{
+ const html=render(state(syntheticForecastView()),'performance','forecast');expect(html).toContain('중앙 80% 모형범위(P10–P90)');expect(html).toContain('범위 밖 손익도 가능하며 최저·최고 손익을 보장하지 않습니다.');expect(html).toContain('20.00%');expect(html).not.toContain('+20.00%');expect(html).toContain('+1.00%');
+});
+test('comparison preserves signed return and labels central range while coverage has no plus sign',()=>{
+ const d=syntheticForecastView(),forecast=d.forecasts.selectedRecord!.result;
+ const compared={id:'synthetic-eval',runId:'synthetic-forecast',horizon:'week',status:'completed',createdAt:'2026-11-16T12:00:00Z',forecast,issues:[],actualPnlUsd:20,actualReturnPct:2,errorPct:1,intervalHit:true,brier:.04};
+ d.forecasts.comparison=[compared];d.forecasts.comparisonPage=paperLocalPage([compared],1);d.forecasts.comparisonSummary={total:1,completed:1,pending:0,unconfirmed:0,incomparable:0,meanBrier:.04,intervalCoverage:1};
+ const html=render(state(d),'performance','comparison');expect(html).toContain('중앙 80% 모형범위(P10–P90)');expect(html).toContain('범위 밖 손익도 가능하며 최저·최고 손익을 보장하지 않습니다.');expect(html).toContain('100.00%');expect(html).not.toContain('+100.00%');expect(html).toContain('+2.00%');
 });

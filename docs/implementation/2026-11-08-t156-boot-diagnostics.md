@@ -20,3 +20,10 @@
 원본319 대비 query/execute 호출 78개 SQL·인자 표현식의 정적 AST와 순서가 같았다. 실제 mysql2 3.15.0/MariaDB10.11.11 별도 합성 DB에서 query/execute 결과·인자/receiver/Promise 동일성, SQL 오류 후 재사용, connectionLimit1 대기 이벤트, close 후 리스너 복원을 추가 확인했다. 전용 합성 DB와 컨테이너는 정리했다. 전체 setupDB cold-start·실제 health 응답/운영 장애 원인은 이 격리 시험으로 검증한 것이 아니다.
 
 증거는 artifacts/T-156-paper-analysis-v6-implementation/boot-diagnostics-review.json, boot-diagnostics/와 boot-qa/에 있다. 새 운영 확인은 검증된 SHA에 대해 정본 배포 경로를 쓰고, 제한된 읽기 전용 DB 상태와 고정 boot 로그만 동시 관측한다. 기존 health 관문을 통과해야 v6 운영 반영으로 판정한다. 현재 이 문서 시점에는 새 진단 포함 릴리스 게시/운영 확인 전이다.
+
+
+## 운영 확인 결과
+
+진단 포함39b2f749c3547cb0bbdbc954a406a204afff9f56을 게시했고 릴리스20261108-212559-39b2f749가health를통과해정상운영반영됐다. 최종소스23SHA일치·health200/dbtrue/safetygreen/DRYtrue/killfalse·web/cron각1online/restart0·익명paperAPI401·선택안전env해시불변을확인했다. DBmigrate/APK/수동중복배포없음.
+
+읽기전용관측의ensure_setup완료span은79,277ms였고수집된setup단일작업최대19,071ms,enqueue기록2건이었다. enqueue는풀전체관측이고개별쿼리에귀속하지않는다. ALTER/CREATE실패기록에는기존setup에서처리하는존재확인오류가포함될수있으므로27개를치명실패라고해석하지않는다. 첫319배포실패의근본원인은아직확정할수없으며이번정상기동이그원인해결의증명은아니다. 진단모니터는종료·DB연결해제됐고원본JSONL/요약은deployment/에보존한다.

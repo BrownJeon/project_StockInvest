@@ -1,0 +1,47 @@
+{
+  "at": "2026-11-08T14:19:51.306Z",
+  "current": "/home/brownjeon/apps/stockinvest/releases/20261108-212559-39b2f749",
+  "apps": [
+    {
+      "name": "stockinvest",
+      "status": "online",
+      "restarts": 0,
+      "cwd": "/home/brownjeon/apps/stockinvest/releases/20261108-212559-39b2f749"
+    },
+    {
+      "name": "stockinvest-cron",
+      "status": "online",
+      "restarts": 0,
+      "cwd": "/home/brownjeon/apps/stockinvest/releases/20261108-212559-39b2f749"
+    }
+  ],
+  "health": {
+    "status": 200,
+    "ok": true,
+    "db": true,
+    "schemaFatal": false,
+    "safetyStatus": "green",
+    "dryRun": true,
+    "killSwitch": false
+  },
+  "safetyEnvSha256": "51725d4546e7572e04d4fb0540a72f2c159de6069b1e18183faafe070922cfca",
+  "baseFiles": [
+    {
+      "path": "src/lib/strategy/m40/forward-store.ts",
+      "sha256": "2529781653454a9c7cb731352bb81ba257a2bed38d2eda26ed84dbd4fad51b3a"
+    },
+    {
+      "path": "src/app/analytics/M40PaperPanel.tsx",
+      "sha256": "5a22e893d88fa357843cc86ddaad20aed12b7f8a17bb7efef8c5ae987a176aea"
+    },
+    {
+      "path": "scripts/cron-runner.sh",
+      "sha256": "f0decbfb6da706090a115306aa75faf312d25cc424772c6d4c17c1642bb4cf2c"
+    }
+  ],
+  "sharedDependencies": "/home/brownjeon/NFS/homes/brownjeon/project/shared",
+  "envMode": 384,
+  "privateAnonymousStatus": 401,
+  "base39FilesMatched": true,
+  "mismatches": []
+}

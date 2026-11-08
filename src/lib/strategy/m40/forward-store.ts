@@ -112,7 +112,15 @@ export async function commitPaperCycle(input:PaperCommit,db:ArchiveQueryable=get
   }
   await c.query(`UPDATE t156_paper_account SET policy_json=?,state_json=?,revision=revision+1,
     lease_token=NULL,lease_until=NULL,updated_at=UTC_TIMESTAMP(6) WHERE id=?`,[json(input.policy),json(input.book),PAPER_ACCOUNT_ID]);
-  await c.commit();active=false;return true;
+  await c.commit();active=false;
+  // Forecast evidence is a failure-isolated sidecar; a missing receipt is an explicit comparison gap.
+  let sidecarTimer:ReturnType<typeof setTimeout>|undefined;
+  try{await Promise.race([
+   import('./forecast-continuation').then(({saveContinuation})=>saveContinuation(input,c)),
+   new Promise<never>((_,reject)=>{sidecarTimer=setTimeout(()=>{destroyed=true;try{c.destroy();}finally{reject(Error('forecast_sidecar_timeout'));}},1500);})
+  ]);}catch{/* A destroyed timed-out connection is never returned to the pool. Paper commit already succeeded. */}
+  finally{if(sidecarTimer)clearTimeout(sidecarTimer);}
+  return true;
  }catch(e){if(active)try{await c.rollback();}catch{c.destroy();destroyed=true;}throw e;}finally{if(!destroyed)c.release();}
 }
 /** No account amounts, copied holdings, input snapshots or source bodies leave this inventory. */

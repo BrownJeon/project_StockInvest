@@ -10,6 +10,26 @@ aliases:
 
 # ▶ 이어서 작업 — 재개 진입점
 
+## T-156 예측엔진·원장 검증 완료 / 운영 DBA 프로필 실제 경로 대기 — F29/exec-071
+
+- 최신33파일 Reviewer/Designer 수용·467검사+표시후속79(중복)/타입/build·부분 실DB/CUA 완료. 예측4기간·원본보존·미보정확률·사후비교 구현됨. 실자료124벡터/297수익·B2000L10 약19초. 실제 미래성과·확률보정은 미검증.
+- 운영DDL은빈4표뒤오류1419(SUPER추가요건)로중단. continuation표/불변trigger8개없음. 새예측/게시/배포0. 운영39/health200·DRYtrue/killfalse·webcron1개씩online0restart·원모의/안전지문불변. 전역신뢰완화·앱SUPER승격·무보호발행금지.
+- 사용자는기존관리자프로필사용을선택했다. 기본프로필파일은Mac/Ubuntu모두0이며사용할실제경로만추가질문중(비밀번호X). 방식/동일승인재질문아님. docs/implementation/2026-11-08-t156-forecast-dba-handoff.md의검토SQL해시/대상stockinvest확인→전체멱등적용→8trigger정의/5표후검증→정상게시/단일웹배포/첫실발행순서. 데이터/실거래삭제·초기화없음. 현재상세/한계정본은forecast-engine.md와taskF29.
+
+
+
+## T-156 실자료 예측엔진·불변원장 구현 중 — F28/exec-069
+
+- 사용자명시승인으로실수집자료기반4기간손익범위/미보정손실확률·원본원장·이후모의성과비교를구현한다. 과거엔진제외/미지원상태는새요청으로확장. 기존v6승인구성에binding·실거래OFF유지·동일승인재질문금지.
+- 실제frozen123+held추가1=가격vector124/297joint수익관측/B2000L10. 별도실markedpaperbaseline·source/issued시각·1일latentindex가정/표본한계명시. clone기준대체/실T0변경/미래actual조작금지. 엔진/원장개발팀과QA·독립review순환,신규forecast표만계획. 운영39b2f749이며신규DDL/예측발행/새게시미실행.
+- 사후비교를영원미지원으로남기지않도록forward-runtime/store의before/aftercontinuation증거메타만추가허용(실매매정책/기존papercommit불변). 단계계약/실사/모형안은taskF28·docs/design/2026-11-08-t156-forecast-engine-analyst-spec.md/ui-binding.md와artifacts/T-156-forecast-engine/에있다.
+
+## ✅ T-156 v6 조회 UI·부팅 진단 운영 반영 완료 — F27/exec-068
+
+- 현재main/작업트리/운영은39b2f749,릴리스20261108-212559-39b2f749다. 아래319실패/963자동복구는이력이며불일치·배포보류대기는진단포함새버전통과로해소됐다. 같은UI/배포/진단승인재질문금지.
+- 독립23파일검토/소스SHA일치,기존UI388검사·신규진단/안전208검사(합산고유수주장X)/타입/build·실mysql2호환·CUA360/412/1280. health200/DBtrue/safetygreen·DRYtrue/killfalse·web/cron각1online/restart0·익명API401·안전선택env해시불변. DBmigrate/APK/실거래활성화없음.
+- 앱경로 분석 → 오늘 분석 → 종목별 → 모의분석 (analytics?tab=m40). 4탭고정/10페이지/관측주월·달력길이/경과/향후4기간선택. 예측원장/엔진없음은미지원빈값,현재agent참고전용. 진단은이번setup79.3초지연을식별했지만최초실패근본원인은미확정. 인증운영UI/안드로이드실기기와미래84일/100왕복/20변경일은별도남음.
+- 정본보고 docs/implementation/2026-11-08-t156-paper-v6.md·boot-diagnostics.md 및 artifacts/.../deployment/final-deployment-verification.json. 실제배포후결과문서만로컬수정상태로보존하며기록만push해추가배포하지않는다. 복구stash/검증증거보존,모니터/합성컨테이너정리완료.
 
 ## T-156 부팅 진단 보완 사용자 승인 — F26/exec-066
 

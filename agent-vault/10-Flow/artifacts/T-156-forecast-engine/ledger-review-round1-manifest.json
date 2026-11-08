@@ -1,0 +1,223 @@
+{
+  "taskId": "T-156",
+  "scope": "forecast-ledger-runtime-approved-v6-binding-reviewer-corrections",
+  "status": "frozen_pending_independent_reviewer_and_final_qa",
+  "frozenAt": "2026-11-08T13:41:51.320648+00:00",
+  "files": [
+    {
+      "path": "scripts/cron-runner.sh",
+      "owner": "forecast_ledger_developer",
+      "sha256": "9f697e4831995e943e29ca53879f1d23c018e121b5bd09f2953d9ad05cc1921b"
+    },
+    {
+      "path": "scripts/migrations/T-156-forecast-ledger.sql",
+      "owner": "forecast_ledger_developer",
+      "sha256": "163ce1df773754b5a331944be14eedcd357310ba19ae03d5f3bf5078aa67753b"
+    },
+    {
+      "path": "scripts/t156/forecast-schema-verify.mjs",
+      "owner": "forecast_ledger_developer",
+      "sha256": "53a6e686aacb14519a0e11d170e6633e961c81b855c253a81e6888450f2dffb3"
+    },
+    {
+      "path": "scripts/t156/forecast-schema-verify.test.mjs",
+      "owner": "forecast_ledger_developer",
+      "sha256": "d29bd75423492953b9d383d5de20dda8cfddd3759aeb23580d15e6889ccb67a3"
+    },
+    {
+      "path": "scripts/test-cron-runner-m40-forecast.sh",
+      "owner": "forecast_ledger_developer",
+      "sha256": "675ae1cca7054e5c7dc772c2d123338c7faa4d06a64edc1d86632a92b89c714f"
+    },
+    {
+      "path": "src/__tests__/t156-paper-view-render.test.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "6f0f9351df4f7d2939eabfa5ea7e2d63cbd6ae5d4c327fbedcc4b78cc131f178"
+    },
+    {
+      "path": "src/app/analytics/M40PaperPanel.tsx",
+      "owner": "forecast_ledger_developer",
+      "sha256": "e06cf4034c5716803431e4e2ec3d128cee665c86e947cceaf7fef571ea1c4bde"
+    },
+    {
+      "path": "src/app/analytics/m40-paper-ui.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "76b5551adfd81987f2236570854954d1d71b0f71294e4dfcec2d0580a0efcbea"
+    },
+    {
+      "path": "src/app/api/cron/m40-forecast/route.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "dc9d7fd7c25121644e1d2cc88102fb614bc2da0d153d1771e1b74243fb3c0566"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forecast-continuation.test.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "638c12b97003998ef922559cef77190cc34672eda9ee75de8e118334ebc916c8"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forecast-engine.test.ts",
+      "owner": "numerical_dependency",
+      "sha256": "2326472c68c7ff3b8b5f0ca806a27874ea2909b10ba5e6c0ada90b8148d327bd"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forecast-fixture.ts",
+      "owner": "numerical_dependency",
+      "sha256": "0ca21e6bebab1c5dbb66e721aeb3678ece2b635070187da8fbb45df3ef5cb4ee"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forecast-ledger.test.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "bdb686a63c8dd1a3b42f5c37c2dd103fadcc6e19b78c71356cd96f2269c43058"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forecast-route.test.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "a6fc3ae88e14c8ad0d45049a50461e7835d1bb7a257ee472377ab4e7b4aa4c1c"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forecast-view.test.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "499cdb14ebc5a70cecd0010279560e921d53a574f444745248744bb0652a2999"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forward-store.test.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "225d229011dd2f4769b928899d3fbc6b24c6331f0e0a199243fe7152bbb0b820"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/paper-view-query.test.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "2e2e14d4a1c5447e6b6e7cde243d7297775ef328b1e66f71a4f6ed4f6b399980"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/paper-view-v6.test.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "1eb504843d0f20537ef38f752e0e9bf1512cdf8f726738cfa5bc25aa4b51a46a"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-continuation.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "570dcf5dd437ac46052ed2495593c0457042488551e71f72a8489382075c07e1"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-engine.ts",
+      "owner": "numerical_dependency",
+      "sha256": "87ed413588e0bdce52afd96d6aa3cddd54d5057bf7d86911b388e8cfabd99e3f"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-evaluation.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "9f993308b27feb32e4c5546fe34ef5fcd3b291bfc585f383e83330744de7d79c"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-input.ts",
+      "owner": "numerical_dependency",
+      "sha256": "7156501a255f7ed3c1e796d927bed9827645f09ed659f780a2b3fa11f3795df5"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-manifest.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "a867d65f8dc7e4a92d335c9d4a327aa59102492fd537f685ab8cbc2b814784b0"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-runtime.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "753a929234329c8e8833cc5ddde98a2a06a1003e63ab84ee97b9f3eecc8bc99a"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-store.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "8bb5e7f72b6793d9483d42767538d889c86a61fbe73cb2f7c92b1d61023d1a22"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-types.ts",
+      "owner": "numerical_dependency",
+      "sha256": "85e5f6cfc1132507b3be7da1a81a576cf9f2e5acba2ef68a0f6eaf5065fba9d8"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-view.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "554192c4fafa45addbfffdfbd11deb9d6839135c845b4789feda6ef6223eda1a"
+    },
+    {
+      "path": "src/lib/strategy/m40/forward-runtime.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "0d0386c4617dfc527297ba153131774e12b7196b6202f5e3377bed3f3d752125"
+    },
+    {
+      "path": "src/lib/strategy/m40/forward-store.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "f15680d0883d58faffda34897e52e54b9ca19587e59393e4d4b717dcb4128996"
+    },
+    {
+      "path": "src/lib/strategy/m40/paper-view-query.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "18bb657b3296bba4b1c7aed5c42512b16b286e038713a6fce78c5d3c4e000ccf"
+    },
+    {
+      "path": "src/lib/strategy/m40/paper-view-types.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "436bd946b235cd41b883ed4d772cd5455d609c1af9b75a05960afd8924382da8"
+    },
+    {
+      "path": "src/lib/strategy/m40/paper-view.ts",
+      "owner": "forecast_ledger_developer",
+      "sha256": "802346e10770dcf21fbe9e61b7584ab2633db1270d5eca2ab88204e3e2839525"
+    }
+  ],
+  "developmentValidation": {
+    "ubuntuPreviousSnapshot": {
+      "suites": 8,
+      "testsPassed": 124,
+      "failed": 0,
+      "skipped": 0,
+      "typecheckExit": 0,
+      "note": "Before final nested privacy projection two-file change; not final QA"
+    },
+    "ubuntuFinalTwoFileDelta": {
+      "suite": "forecast-view",
+      "testsPassed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "typecheckExit": 0,
+      "note": "Latest forecast-view.ts and forecast-view.test.ts only; remaining snapshot unchanged"
+    },
+    "local": {
+      "nodeTriggerDefinitionTestsPassed": 3,
+      "cronScheduleTests": [
+        "m40-forward",
+        "m40-forecast"
+      ],
+      "bashSyntax": "passed",
+      "diffWhitespace": "passed"
+    }
+  },
+  "independentVerificationPending": [
+    "Reviewer final hash review",
+    "Final QA full frozen snapshot",
+    "Disposable MariaDB migration partial rerun and UTC/KST trigger/clock integration",
+    "Production publication and deployment"
+  ],
+  "productionActions": {
+    "ddl": false,
+    "databaseWrites": false,
+    "serviceChanges": false,
+    "orders": false,
+    "commitPushDeploy": false
+  },
+  "reviewerCorrections": [
+    "All continuation issues fail closed",
+    "Bidirectional all-mode canonical cycle receipt coverage and terminal revision",
+    "Immutable baseline split checkpoint versus first future receipt",
+    "1500ms postcommit sidecar timeout destroys in-use connection",
+    "UTC explicit inserts and UTC DDL defaults",
+    "Idempotent trigger creation with read-only exact-definition preflight/postflight",
+    "Immutable original ID selection retained across horizons/new snapshots; cleared on auth loss",
+    "Page-independent latest-evaluation status and completed score summaries",
+    "Same-revision source-book hash and published source/pointer/blob revalidation",
+    "Result/input metadata targets quantiles percent/USD MCSE validation",
+    "Reprepare input hash before publication",
+    "RR short evidence witness recheck before evaluation append",
+    "Nested owner DTO allowlist and malformed SSR guard"
+  ]
+}

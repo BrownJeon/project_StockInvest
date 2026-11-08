@@ -1,0 +1,12 @@
+import { NextRequest,NextResponse } from 'next/server';
+import { POST } from '@/app/api/cron/m40-forecast/route';
+import { checkCronAuth } from '@/lib/cron-auth';
+import { evaluateM40Forecasts,runM40Forecast } from '../forecast-runtime';
+jest.mock('@/lib/cron-auth',()=>({checkCronAuth:jest.fn()}));
+jest.mock('../forecast-runtime',()=>({evaluateM40Forecasts:jest.fn(),runM40Forecast:jest.fn()}));
+const req=()=>new NextRequest('http://localhost/api/cron/m40-forecast',{method:'POST'});
+beforeEach(()=>jest.resetAllMocks());
+test('unauthenticated cron cannot read or compute private forecasts',async()=>{jest.mocked(checkCronAuth).mockReturnValue(NextResponse.json({ok:false},{status:401}));expect((await POST(req())).status).toBe(401);expect(evaluateM40Forecasts).not.toHaveBeenCalled();expect(runM40Forecast).not.toHaveBeenCalled();});
+test('HTTP success waits for actual completed result',async()=>{jest.mocked(runM40Forecast).mockResolvedValue({status:'completed',runId:'synthetic',paths:2000,elapsedMs:10,executionScope:'forecast_only'});const r=await POST(req());expect(r.status).toBe(200);expect(await r.json()).toMatchObject({ok:true,status:'completed'});expect(r.headers.get('Cache-Control')).toBe('private, no-store');});
+test('blocked output is a failed job outcome, never queued success',async()=>{jest.mocked(runM40Forecast).mockResolvedValue({status:'blocked',issueCode:'forecast_source_unavailable'});expect((await POST(req())).status).toBe(503);});
+test('worker exception never echoes private account/error text',async()=>{jest.mocked(runM40Forecast).mockRejectedValue(Error('private synthetic amount'));const r=await POST(req());expect(r.status).toBe(503);expect(JSON.stringify(await r.json())).not.toContain('private synthetic');});

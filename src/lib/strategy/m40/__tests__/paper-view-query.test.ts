@@ -75,3 +75,8 @@ describe('v6 strict query and full-range observation',()=>{
   expect(observation(points,{truncated:true}).cagrPct).toBeNull();
  });
 });
+
+test('forecast id is a bounded immutable selector and independent from observation period',()=>{
+ const id='a'.repeat(64);expect(parsePaperViewQuery(new URLSearchParams('forecastId='+id+'&horizon=year'))).toMatchObject({forecastId:id,horizon:'year',period:'all'});
+ for(const bad of ['','x','a'.repeat(65),"' OR 1=1"])expect(()=>parsePaperViewQuery(new URLSearchParams({forecastId:bad}))).toThrow('paper_forecast_id_invalid');
+});

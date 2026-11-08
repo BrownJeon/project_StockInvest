@@ -1,0 +1,12 @@
+{
+  "status": "stored",
+  "at": "2026-11-08T14:23:07.823Z",
+  "artifactId": "artifact-37d4937ac3fb6fcd4cf05255faef58d4",
+  "filename": "t156-forecast-engine-validation-20261108.tar.gz",
+  "sha256": "37d4937ac3fb6fcd4cf05255faef58d40c7783bdc8d5f9cff8e434d5348ffae5",
+  "bytes": 222338,
+  "files": 55,
+  "parts": 1,
+  "readback": true,
+  "realPrivateFixtureIncluded": false
+}

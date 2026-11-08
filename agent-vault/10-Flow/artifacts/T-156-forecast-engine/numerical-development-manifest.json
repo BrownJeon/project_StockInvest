@@ -1,0 +1,29 @@
+{
+  "taskId": "T-156",
+  "role": "forecast_engine_developer",
+  "scope": "numerical_engine_development_not_independent_acceptance",
+  "capturedAt": "2026-11-08T13:28:18.725290+00:00",
+  "files": [
+    {
+      "path": "src/lib/strategy/m40/forecast-types.ts",
+      "sha256": "85e5f6cfc1132507b3be7da1a81a576cf9f2e5acba2ef68a0f6eaf5065fba9d8"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-input.ts",
+      "sha256": "7156501a255f7ed3c1e796d927bed9827645f09ed659f780a2b3fa11f3795df5"
+    },
+    {
+      "path": "src/lib/strategy/m40/forecast-engine.ts",
+      "sha256": "87ed413588e0bdce52afd96d6aa3cddd54d5057bf7d86911b388e8cfabd99e3f"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forecast-fixture.ts",
+      "sha256": "0ca21e6bebab1c5dbb66e721aeb3678ece2b635070187da8fbb45df3ef5cb4ee"
+    },
+    {
+      "path": "src/lib/strategy/m40/__tests__/forecast-engine.test.ts",
+      "sha256": "2326472c68c7ff3b8b5f0ca806a27874ea2909b10ba5e6c0ada90b8148d327bd"
+    }
+  ],
+  "revision": "N1-aggregate-overflow-fix"
+}

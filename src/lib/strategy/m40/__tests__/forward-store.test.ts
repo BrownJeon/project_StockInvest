@@ -189,3 +189,25 @@ test('stale outcome or non-paper signal cannot partially commit a cycle', async 
   await expect(commitPaperCycle(c, f.db)).rejects.toThrow('paper_signal_scope_invalid');
   expect(f.cycles).toHaveLength(0); expect(f.signals).toHaveLength(0);
 });
+
+test('forecast sidecar storage failure cannot undo a committed paper cycle or request a second pool connection', async()=>{
+ const f=new Fixture();await initializePaperAccount(policy(),f.db);
+ const lease=await acquirePaperLease(f.db);expect(lease).not.toBeNull();
+ const getConnection=jest.spyOn(f,'getConnection');
+ const revision=f.account!.revision;
+ await expect(commitPaperCycle(request(lease!),f.db)).resolves.toBe(true);
+ expect(f.account!.revision).toBe(revision+1);expect(f.cycles).toHaveLength(1);
+ expect(f.calls.some(sql=>sql.startsWith('INSERT INTO t156_forecast_continuation'))).toBe(true);
+ // Fixture rejects the new INSERT. It must run on the committed dedicated connection.
+ expect(getConnection).toHaveBeenCalledTimes(1);expect(f.backup).toBeNull();
+});
+
+test('permanently waiting sidecar is bounded and destroys rather than releases its in-use connection',async()=>{
+ jest.useFakeTimers();try{
+ const f=new Fixture();await initializePaperAccount(policy(),f.db);const lease=await acquirePaperLease(f.db);
+ const original=f.query.bind(f);jest.spyOn(f,'query').mockImplementation((sql:string,p:any[]=[])=>sql.startsWith('INSERT INTO t156_forecast_continuation')?new Promise(()=>{}):original(sql,p));
+ const destroy=jest.spyOn(f,'destroy'),release=jest.spyOn(f,'release');
+ const pending=commitPaperCycle(request(lease!),f.db);await jest.advanceTimersByTimeAsync(1501);
+ await expect(pending).resolves.toBe(true);expect(f.cycles).toHaveLength(1);expect(destroy).toHaveBeenCalledTimes(1);expect(release).not.toHaveBeenCalled();
+ }finally{jest.useRealTimers();}
+});

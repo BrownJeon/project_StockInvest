@@ -1,0 +1,42 @@
+import { publishForecast,appendForecastEvaluation,acquireForecastJob,assertForecastResult,forecastHash,FORECAST_PRNG_ASSUMPTION } from '../forecast-store';
+import { prepareForecastInput } from '../forecast-input';
+import { forecastFixture } from './forecast-fixture';
+import { evaluateForecast } from '../forecast-evaluation';
+import type { ArchiveQueryable } from '@/lib/analysis-data/types';
+import type { PreparedForecastInput,ForecastEngineResult,ForecastHorizonResult } from '../forecast-types';
+jest.mock('@/lib/db',()=>({getPool:jest.fn()}));
+const h={horizon:'week',targetSession:'2026-11-16',netPct:{mean:1,p10:-2,p50:1,p90:4},lossProbability:.2} as ForecastHorizonResult;
+const result={baseline:{accountId:'synthetic',equityUsd:1000,epochSession:'2026-11-09',bookSha256:'book'},policySha256:'policy'} as ForecastEngineResult;
+const evidence={asOfSession:'2026-11-16',accountId:'synthetic',policySha256:'policy',epochSession:'2026-11-09',baselineSha256:'book',cashflowReconciled:true,shareBasisReconciled:true,feesReconciled:true,canonicalCoverage:true,endpointSession:'2026-11-16',equityUsd:1010};
+test('future endpoint never exposes supplied future actual',()=>expect(evaluateForecast(result,h,{...evidence,asOfSession:'2026-11-15'})).toEqual({status:'pending',issues:['target_not_matured'],actualPnlUsd:null,actualReturnPct:null}));
+test('same account normal changes are accepted only with reconciled canonical evidence',()=>expect(evaluateForecast(result,h,evidence)).toMatchObject({status:'completed',actualPnlUsd:10,actualReturnPct:1,errorPct:0,intervalHit:true}));
+test.each(['cashflowReconciled','shareBasisReconciled','feesReconciled'] as const)('unreconciled %s blocks actual',key=>expect(evaluateForecast(result,h,{...evidence,[key]:false})).toMatchObject({status:'incomparable',actualPnlUsd:null}));
+test('missing endpoint never means zero',()=>expect(evaluateForecast(result,h,{...evidence,endpointSession:null})).toMatchObject({status:'unconfirmed',actualReturnPct:null}));
+test('incomplete denominator cannot publish any row',async()=>{const query=jest.fn();await expect(publishForecast({id:'id',token:'t',issuedAt:'now'},{} as PreparedForecastInput,{status:'completed',pathCount:1999} as ForecastEngineResult,{query})).rejects.toThrow('forecast_result_incomplete');expect(query).not.toHaveBeenCalled();});
+test('unconfirmed actual append is rejected before DB',async()=>{const query=jest.fn();await expect(appendForecastEvaluation('run','week','hash',{status:'pending',issues:[],actualPnlUsd:2,actualReturnPct:1},{query})).rejects.toThrow('forecast_unconfirmed_actual_forbidden');expect(query).not.toHaveBeenCalled();});
+test('completed idempotency key does not reacquire or overwrite',async()=>{const query=jest.fn(async(sql:string)=>[sql.includes('system_config')?[{value:'true'}]:sql.startsWith('SELECT status')?[{status:'completed',busy:0}]:[],undefined]);const c={query,beginTransaction:jest.fn(),commit:jest.fn(),rollback:jest.fn(),release:jest.fn()};const db={query,getConnection:async()=>c} as ArchiveQueryable;expect(await acquireForecastJob('id','synthetic',db)).toBeNull();expect(query.mock.calls.some(([s])=>s.startsWith('UPDATE'))).toBe(false);expect(c.rollback).toHaveBeenCalled();});
+function publication(){
+ const args=forecastFixture(1,true),prepared=prepareForecastInput(args);if(prepared.status!=='qualified')throw Error(prepared.issues.join(','));const input=prepared.input;
+ const {residuals:_,...bridge}=input.bridge;const n=input.returnSessions.length;
+ const output:ForecastEngineResult={status:'completed',issues:[],modelVersion:input.modelVersion,calibration:'uncalibrated_research_scenario',quantileConvention:'linear_type7',seed:'synthetic',pathCount:2000,blockLength:10,inputSha256:input.inputSha256,policySha256:input.policySha256,sourceSha256:input.sourceSha256,sourceDatasetId:input.sourceDatasetId,issuedAt:input.issuedAt,sourceAvailableAt:input.sourceAvailableAt,baseline:input.baseline,sampleCounts:{historicalReturns:n,historicalStart:input.returnSessions[0],historicalEnd:input.returnSessions.at(-1)!,blockLength:10,possibleBlockStarts:n-9,nonoverlappingBlocks:Math.floor(n/10)},bridge,assumptions:[...input.assumptions,FORECAST_PRNG_ASSUMPTION],horizons:input.targets.map(t=>({...t,pathCount:2000,lossCount:0,lossProbability:0,monteCarloSe:0,historicalNonoverlappingWindows:Math.floor(n/t.sessions),netUsd:{mean:0,p10:0,p50:0,p90:0},netPct:{mean:0,p10:0,p50:0,p90:0}}))};
+ return {args,input,output,lease:{id:'synthetic-job',token:'ours',issuedAt:input.issuedAt}};
+}
+test('publication loses lease atomically without inserting a run',async()=>{
+ const query=jest.fn(async(sql:string)=>[sql.includes('system_config')?[{value:'true'}]:[{status:'running',lease_token:'other',valid:1}],undefined]);const c={query,beginTransaction:jest.fn(),commit:jest.fn(),rollback:jest.fn(),release:jest.fn()};const db={query,getConnection:async()=>c} as ArchiveQueryable;const {input,output,lease}=publication();
+ await expect(publishForecast(lease,input,output,db)).rejects.toThrow('forecast_lease_expired');expect(c.rollback).toHaveBeenCalled();expect(c.commit).not.toHaveBeenCalled();expect(query.mock.calls.some(([s])=>s.startsWith('INSERT'))).toBe(false);
+});
+test.each(['baseline','model','source','targets','quantiles','pctUnit','mcse'] as const)('publication rejects mismatched %s before SQL',kind=>{
+ const {input,output,lease}=publication(),bad=structuredClone(output);
+ if(kind==='baseline')bad.baseline.equityUsd+=1;if(kind==='model')bad.modelVersion='other';if(kind==='source')bad.sourceDatasetId='withdrawn';if(kind==='targets')bad.horizons[0].sessions+=1;if(kind==='quantiles')bad.horizons[0].netUsd.p10=1;if(kind==='pctUnit')bad.horizons[0].netPct.mean=100;if(kind==='mcse')bad.horizons[0].monteCarloSe=.1;
+ expect(()=>assertForecastResult(lease,input,bad)).toThrow('forecast_result_incomplete');
+});
+test('same revision with mutated state is rejected before source or INSERT',async()=>{
+ const {args,input,output,lease}=publication();const query=jest.fn(async(sql:string)=>[sql.includes('system_config')?[{value:'true'}]:sql.includes('FROM t156_paper_account')?[{revision:args.accountRevision,status:'active',policy_json:args.policy,state_json:{...args.book,cashUsd:args.book.cashUsd+1}}]:[{status:'running',lease_token:lease.token,valid:1}],undefined]);const c={query,beginTransaction:jest.fn(),commit:jest.fn(),rollback:jest.fn(),release:jest.fn()};await expect(publishForecast(lease,input,output,{query,getConnection:async()=>c} as ArchiveQueryable)).rejects.toThrow('forecast_account_changed_during_run');expect(c.rollback).toHaveBeenCalled();expect(query.mock.calls.some(([s])=>s.startsWith('INSERT'))).toBe(false);
+});
+test('withdrawn source cannot publish a successfully computed result',async()=>{
+ const {args,input,output,lease}=publication();const query=jest.fn(async(sql:string)=>[sql.includes('system_config')?[{value:'true'}]:sql.includes('FROM t156_paper_account')?[{revision:args.accountRevision,status:'active',policy_json:args.policy,state_json:args.book}]:sql.includes('FROM t156_record')?[]:[{status:'running',lease_token:lease.token,valid:1}],undefined]);const c={query,beginTransaction:jest.fn(),commit:jest.fn(),rollback:jest.fn(),release:jest.fn()};await expect(publishForecast({...lease,sourceProof:{pointerSha256:'p',blobSha256:'b',uncompressedSha256:'u',baselineSplitBasis:{}}},input,output,{query,getConnection:async()=>c} as ArchiveQueryable)).rejects.toThrow('forecast_source_changed_during_run');expect(c.rollback).toHaveBeenCalled();expect(query.mock.calls.some(([s])=>s.startsWith('INSERT'))).toBe(false);
+});
+test('a concurrent new receipt before append invalidates the captured evaluation witness',async()=>{
+ const query=jest.fn(async(sql:string)=>[sql.includes('system_config')?[{value:'true'}]:sql.includes('FROM t156_paper_account')?[{revision:2}]:[],undefined]);const c={query,beginTransaction:jest.fn(),commit:jest.fn(),rollback:jest.fn(),release:jest.fn()};
+ await expect(appendForecastEvaluation('run','week','hash',{status:'unconfirmed',issues:['gap'],actualPnlUsd:null,actualReturnPct:null,evidenceSha256:'old'}, {query,getConnection:async()=>c} as ArchiveQueryable,{accountId:'synthetic',accountRevision:2,baselineRevision:1,issuedAt:'2026-11-08T00:00:00Z',targetSession:'2026-11-09',evidenceSha256:'old'})).rejects.toThrow('forecast_evaluation_evidence_changed');expect(c.rollback).toHaveBeenCalled();expect(c.commit).not.toHaveBeenCalled();expect(query.mock.calls.some(([s])=>s.startsWith('INSERT'))).toBe(false);
+});

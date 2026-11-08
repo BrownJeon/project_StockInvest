@@ -1,0 +1,28 @@
+{
+  "status": "passed",
+  "reviewedManifestSha256": "bbd381f4195717b2d1a884a9893334f2064211a705af36955ff9acd4fd98013b",
+  "surface": "actual React with synthetic API only",
+  "checks": {
+    "central80Label": true,
+    "rangeOutsidePossibleAndNotMinMaxGuarantee": true,
+    "lossProbabilityUnsigned": true,
+    "positiveReturnSigned": true,
+    "comparisonCentral80": true,
+    "coverageUnsigned": true,
+    "width360HorizontalOverflow": 0,
+    "width1280HorizontalOverflow": 0,
+    "viewportRestored": true
+  },
+  "screenshot": {
+    "file": "t156-forecast-final-synthetic-mobile.png",
+    "sha256": "e3e09be16d1e132eac4ad24723cd36a2afc5b8ab8e2d41806e9706d958296706",
+    "syntheticOnly": true
+  },
+  "setupIssue": "Initial local preview was not listening; existing tab retained a blocked data error page after connection refusal. Verified local server HTTP200, opened a fresh tab in same IAB and completed checks. No browser security protection was weakened.",
+  "priorBehaviorChecks": "cua-verification.json; only final UI copy and its SSR assertions changed; other31source hashes unchanged",
+  "notVerified": [
+    "authenticated production UI",
+    "Android device",
+    "real forecast accuracy"
+  ]
+}

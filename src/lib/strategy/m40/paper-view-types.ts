@@ -20,7 +20,7 @@ export interface PaperViewSignal {id:string;session:string;symbol:string;side:st
 
 export type PaperViewPeriod = 'all'|'week'|'month';
 export type PaperForecastHorizon = 'week'|'month'|'quarter'|'year';
-export interface PaperViewQuery {period:PaperViewPeriod;anchorSession:string|null;signalPage:number;valuationPage:number;horizon:PaperForecastHorizon;snapshot:string|null}
+export interface PaperViewQuery {period:PaperViewPeriod;anchorSession:string|null;signalPage:number;valuationPage:number;horizon:PaperForecastHorizon;snapshot:string|null;forecastPage?:number;comparisonPage?:number;forecastId?:string|null}
 export interface PaperViewPage<T> {rows:T[];page:number;pageSize:10;totalCount:number;totalPages:number;hasNext:boolean;hasPrevious:boolean}
 export interface PaperValuationPoint {id:string;session:string;observedAt:string|null;equityUsd:number|null}
 export interface PaperObservation {
@@ -39,7 +39,7 @@ export interface PaperViewV6 {
  /** Bounds are forward-only; availablePeriods covers all saved cycle modes, including rehearsal. */
  history:{firstSession:string|null;lastSession:string|null;availablePeriods:{weeks:string[];months:string[]};periodsTruncated:boolean};
  signalPage:PaperViewPage<PaperViewSignal>;valuationPage:PaperViewPage<PaperValuationPoint>;observation:PaperObservation;
- forecasts:{capability:'not_implemented';horizon:PaperForecastHorizon;records:never[];comparison:never[];baseline:null;targetEnd:null;expectedReturnPct:null;feePerSide:number};
+ forecasts:import('./forecast-view').ForecastView;
  policyRecord:{status:'available'|'unknown';runId:string|null;policyVersion:string|null;modelPolicyVersions:string[];promptVersion:null;agentTrading:'not_implemented'};
 }
 
