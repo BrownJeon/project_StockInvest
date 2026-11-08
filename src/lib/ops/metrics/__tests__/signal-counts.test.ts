@@ -27,7 +27,7 @@ describe('승인 대기 SQL', () => {
     expect(DETECTED_COUNT_SQL).toMatch(/expires_at IS NULL OR expires_at >= \?/);
   });
   it('진입 감시 — executing 은 만료와 무관하게 센다', () => {
-    expect(WATCH_COUNT_SQL).toMatch(/status = 'executing' OR expires_at IS NULL OR expires_at >= \?/);
+    expect(WATCH_COUNT_SQL).toMatch(/s\.status = 'executing' OR s\.expires_at IS NULL OR s\.expires_at >= \?/);
   });
 });
 

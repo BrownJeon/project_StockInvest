@@ -3,7 +3,7 @@
  *
  * - counts: 승인 대기(시장별, 홈과 **같은 함수** `countApproval`) · 관측 기록(`detected`) · 진입 감시(감시 중/다음 세션 예정/선점) ·
  *   오늘 주문 전 단계에서 막힌 매수 시그널 수(`status='skipped'` ∧ `indicators.gate='validation_gate'`, 청산 엔진 제외).
- * - executing: 「주문 선점 중」 줄(취소 불가 — 버튼 없음).
+ * - executing: 종료 주문(filled/cancelled)을 제외한 executing 줄과 연결 주문 결과(취소 불가 — 버튼 없음).
  * - blockedPostMarket: 시장별 마지막 장마감 분석 슬롯 이후 차단된 장마감 시그널 최대 2(관찰 단계 0건 화면).
  * - holdings: 계좌 전체 보유 + 청산 임계 구간(`holdings.ts`).
  * - openOrders: 오늘(시장별 세션일) `accepted`·`partially_filled` 주문 + 체결 수량 합.
@@ -15,7 +15,7 @@ import { specFor } from '@/lib/strategy/records/job-slots';
 import { POST_MARKET_JOB } from './analysis-runs';
 import { readHoldings } from './holdings';
 import { count, createReader, num, parseJsonObject, section, type OpsReader } from './read-only';
-import { countApproval, countDetected, countWatch } from './signal-counts';
+import { ACTIVE_EXECUTING_ORDER_SQL, countApproval, countDetected, countWatch } from './signal-counts';
 import {
   currentSessionDay, isoOrNull, kstDateOf, kstIso, kstSql, lastDailySlotMs, loadClosedDays, localDateOf, sessionRef, toMs,
 } from './sessions';
@@ -26,7 +26,11 @@ export const PRE_ORDER_BLOCKED_SQL =
     WHERE market = ? AND created_at >= ? AND created_at < ? AND side = 'buy' AND status = 'skipped'
       AND JSON_VALUE(indicators, '$.gate') = ? AND (strategy_id IS NULL OR strategy_id <> ?)`;
 export const EXECUTING_SQL =
-  `SELECT id, symbol, market, side, updated_at FROM signals WHERE status = 'executing' ORDER BY updated_at DESC LIMIT 20`;
+  `SELECT s.id, s.symbol, s.market, s.side, s.updated_at, s.consumed_order_id, o.status AS order_status,
+          o.blocked_by AS order_blocked_by
+     FROM signals s LEFT JOIN orders o ON o.id = s.consumed_order_id
+    WHERE s.status = 'executing' AND ${ACTIVE_EXECUTING_ORDER_SQL}
+    ORDER BY s.updated_at DESC LIMIT 20`;
 export const BLOCKED_POST_MARKET_SQL =
   `SELECT id, symbol, market, indicators, created_at FROM signals
     WHERE market = ? AND scenario_source = 'post-market' AND status = 'skipped' AND created_at >= ?
@@ -75,6 +79,9 @@ async function readExecuting(r: OpsReader): Promise<Extract<TradeDTO['executing'
   return rows.map((x) => ({
     id: Number(x.id), symbol: String(x.symbol), market: String(x.market) === 'overseas' ? 'overseas' as const : 'domestic' as const,
     side: String(x.side) === 'sell' ? 'sell' as const : 'buy' as const, since: isoOrNull(x.updated_at),
+    consumedOrderId: num(x.consumed_order_id),
+    orderStatus: typeof x.order_status === 'string' ? x.order_status : null,
+    orderBlockedBy: typeof x.order_blocked_by === 'string' ? x.order_blocked_by : null,
   }));
 }
 

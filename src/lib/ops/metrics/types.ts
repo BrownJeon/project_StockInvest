@@ -217,8 +217,10 @@ export interface TradeHoldingRow {
 export interface TradeDTO {
   generatedAt: string;
   counts: Section<{ approval: ByMarket<number>; detected: number; watching: ByMarket<number>; executing: number; nextSession: number; preOrderBlockedToday: number }>;
-  /** 진입 감시 목록의 「주문 선점 중」 줄 — signals.status='executing' (취소 불가, 버튼 없음) */
-  executing: Section<{ id: number; symbol: string; market: Market; side: 'buy' | 'sell'; since: string | null }[]>;
+  /** executing 잠금 유지. 연결 주문 filled/cancelled만 표시 제외(취소 불가, 버튼 없음). */
+  executing: Section<{ id: number; symbol: string; market: Market; side: 'buy' | 'sell'; since: string | null;
+    /** Optional for older cached responses; null means no linked order/result. */
+    consumedOrderId?: number | null; orderStatus?: string | null; orderBlockedBy?: string | null }[]>;
   /** 관찰 단계 0건일 때 보이는 「오늘 차단된 장마감 시그널」(최대 2) — signals.status='skipped' ∧ scenario_source='post-market' */
   blockedPostMarket: Section<{ id: number; symbol: string; market: Market; confidence: number | null; createdAt: string; session: SessionRef;
     /** `signals.indicators.gate` — `validation_gate` 면 검증 관문 차단, 그 밖·없음이면 단순 건너뜀(T-130 D7-A) */

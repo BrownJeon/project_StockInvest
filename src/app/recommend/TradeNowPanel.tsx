@@ -27,6 +27,7 @@ import type { PollStatus } from '@/components/ops/useOpsPoll';
 import { CHIP, fmtEtSession, fmtKstDateTime, fmtKstHm, fmtSessionDate } from '@/components/ops/format';
 import { skippedFate } from '@/components/ops/reason-copy';
 import { CheckRow, EmptyNote, Rows, RetryButton, Section, SectionBody, SectionLink, StatusChip, cx, ops } from '@/components/ops/ui';
+import { decisionOutcome, HINT_TEXT } from '@/components/dashboard/decision-outcome';
 import { WatchCancelSheet, type WatchCancelTarget } from './WatchCancelSheet';
 
 interface PendingEntrySignal {
@@ -210,8 +211,8 @@ export function TradeNowPanel(props: TradeNowProps = {}) {
   const observing = stage === 'observe' || stage === 'halt';
   const executing = trade?.executing.state === 'ok' ? trade.executing.data : [];
   /** 주문 선점 목록 상태 — ok(읽음) / error(실패) / pending(아직 못 읽음) */
-  const executingState: 'ok' | 'error' | 'pending' = trade?.executing.state === 'ok' ? 'ok'
-    : (trade?.executing.state === 'error' || tradeStatus === 'error') ? 'error' : 'pending';
+  const executingState: 'ok' | 'error' | 'pending' = tradeStatus === 'error' || tradeStatus === 'stale' ? 'error' : trade?.executing.state === 'ok' ? 'ok'
+    : trade?.executing.state === 'error' ? 'error' : 'pending';
   const executingError = trade?.executing.state === 'error' ? trade.executing.error : (tradeError ?? 'api_error');
   const blockedCards = trade?.blockedPostMarket.state === 'ok' ? trade.blockedPostMarket.data.slice(0, 2) : [];
   const nowMs = Date.now();
@@ -335,6 +336,14 @@ export function TradeNowPanel(props: TradeNowProps = {}) {
       );
     } else if (executingState === 'pending') {
       watchEmpty = <EmptyNote>확인 중…</EmptyNote>;
+    } else if (!counts) {
+      watchEmpty = (
+        <SectionBody>
+          <StatusChip kind="error">집계를 확인하지 못했습니다</StatusChip>{' '}
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>비어 있는 것이 아닙니다</span>
+          {onRetryTrade ? <div style={{ marginTop: 8 }}><RetryButton onClick={onRetryTrade} /></div> : null}
+        </SectionBody>
+      );
     } else if ((watchingN ?? 0) + (executingN ?? 0) + (counts?.nextSession ?? 0) > 0) {
       // 목록(만료 포함 조회)과 서버 COUNT(미만료)가 어긋남 — 0 이라고 말하지 않는다
       watchEmpty = (
@@ -383,7 +392,7 @@ export function TradeNowPanel(props: TradeNowProps = {}) {
           </Section>
         </div>
         <div className={ops.col}>
-          <Section id="t-watch" title="진입 감시" small={watchingN != null && executingN != null ? `감시 중 ${watchingN} · 선점 ${executingN}` : undefined}>
+          <Section id="t-watch" title="진입 감시" small={`감시 중 ${watchingN ?? '—'} · 주문 선점 ${executingN ?? '—'} · 다음 세션 ${counts?.nextSession ?? '—'}`}>
             {watchEmpty}
 
             {/* 진입 감시 중 시그널 (옛 화면 목록 그대로) */}
@@ -472,20 +481,43 @@ export function TradeNowPanel(props: TradeNowProps = {}) {
               <SectionBody><StatusChip kind="stale">새로 고치지 못했습니다 · {pendingError}</StatusChip></SectionBody>
             ) : null}
 
-            {/* 주문 선점 중(executing) — 진입 구간 도달 후 주문 처리 중, 취소 불가(버튼 없음) */}
+            {/* 원본 executing 잠금은 유지하고 주문 기록 결과만 표시한다. */}
+            {(pendingEntry.length > 0 || executing.length > 0) && !counts ? (
+              <SectionBody>
+                <StatusChip kind="error">집계를 확인하지 못했습니다</StatusChip>{' '}
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>비어 있는 것이 아닙니다</span>
+                {onRetryTrade ? <div style={{ marginTop: 8 }}><RetryButton onClick={onRetryTrade} /></div> : null}
+              </SectionBody>
+            ) : null}
+            {pendingEntry.length > 0 && executingState === 'error' ? (
+              <SectionBody><StatusChip kind="error">{CHIP.error(executingError)}</StatusChip>
+                {onRetryTrade ? <RetryButton onClick={onRetryTrade} /> : null}
+              </SectionBody>
+            ) : null}
             {executing.length > 0 && (
               <Rows>
-                {executing.map(x => (
-                  <CheckRow
-                    key={x.id}
-                    severity="w"
-                    glyph="…"
-                    title={`${displaySymbol(x.symbol)} ${marketText(x.market)} · 주문 선점 중`}
-                    sub="진입 구간 도달 — 주문 처리 중, 결과 확인 전 (취소 불가)"
-                  />
-                ))}
+                {executing.map(x => {
+                  const outcome = decisionOutcome({
+                    status: 'executing', consumed_order_id: x.consumedOrderId ?? null,
+                    order_status: x.orderStatus ?? null, updated_at: x.since,
+                  }, nowMs);
+                  return (
+                    <CheckRow
+                      key={x.id}
+                      severity="w"
+                      glyph={outcome.kind === 'check' ? '!' : '…'}
+                      title={`${displaySymbol(x.symbol)} ${marketText(x.market)} · ${outcome.text}`}
+                      sub={outcome.hint ? HINT_TEXT : outcome.kind === 'test' ? '실주문 아님' : '주문 처리 중 (취소 불가)'}
+                    />
+                  );
+                })}
               </Rows>
             )}
+            {executing.length > 0 && (tradeStatus === 'stale' || tradeStatus === 'error') ? (
+              <SectionBody><StatusChip kind="stale">새로 고치지 못했습니다 · {CHIP.error(tradeError ?? 'api_error')}</StatusChip>
+                {onRetryTrade ? <RetryButton onClick={onRetryTrade} /> : null}
+              </SectionBody>
+            ) : null}
           </Section>
           <Section id="t-strat" title="전략 상태" link={<SectionLink href="/strategy" ariaLabel="전략 관리 화면 열기">관리</SectionLink>}>
             <Rows>{strategyRow}</Rows>

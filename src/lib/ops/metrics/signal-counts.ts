@@ -40,17 +40,20 @@ export const DETECTED_COUNT_SQL =
 
 /**
  * 진입 감시: 감시 중(valid_from 도래) / 다음 세션 예정(valid_from 미래) / 주문 선점 중(executing).
- * `executing` 은 만료 시각과 무관하게 센다 — 주문 처리 중인 것은 만료가 지나도 결과 확인 전이다.
+ * `executing` 은 만료 시각과 무관하게 센다. 연결 주문 filled/cancelled만 제외하고 NULL/미확인 결과는 남긴다.
  */
+/** Shared list/count predicate. NULL includes absent orders and unknown results. */
+export const ACTIVE_EXECUTING_ORDER_SQL = `(o.status IS NULL OR o.status NOT IN ('filled', 'cancelled'))`;
 export const WATCH_COUNT_SQL =
-  `SELECT market,
-          SUM(status = 'approved_pending_entry' AND (valid_from IS NULL OR valid_from <= ?)) AS watching,
-          SUM(status = 'approved_pending_entry' AND valid_from > ?) AS next_session,
-          SUM(status = 'executing') AS executing
-     FROM signals
-    WHERE status IN ('approved_pending_entry', 'executing')
-      AND (status = 'executing' OR expires_at IS NULL OR expires_at >= ?)
-    GROUP BY market`;
+  `SELECT s.market,
+          SUM(s.status = 'approved_pending_entry' AND (s.valid_from IS NULL OR s.valid_from <= ?)) AS watching,
+          SUM(s.status = 'approved_pending_entry' AND s.valid_from > ?) AS next_session,
+          SUM(s.status = 'executing') AS executing
+     FROM signals s LEFT JOIN orders o ON o.id = s.consumed_order_id
+    WHERE s.status IN ('approved_pending_entry', 'executing')
+      AND (s.status = 'executing' OR s.expires_at IS NULL OR s.expires_at >= ?)
+      AND (s.status <> 'executing' OR ${ACTIVE_EXECUTING_ORDER_SQL})
+    GROUP BY s.market`;
 
 export interface ApprovalCounts {
   approval: ByMarket<number>;
