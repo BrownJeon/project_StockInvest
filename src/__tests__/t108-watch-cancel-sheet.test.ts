@@ -90,8 +90,8 @@ describe('운용 현황 배선', () => {
       holdings: { state: 'error', error: 'x' }, openOrders: { state: 'ok', data: [] },
     };
     const html = renderToStaticMarkup(h(TradeNowPanel, { stage: 'live', trade: trade as never, tradeStatus: 'ok' }));
-    expect(text(html)).toContain('NAS:MU 해외 · 주문 선점 중');
-    expect(text(html)).toContain('진입 구간 도달 — 주문 처리 중, 결과 확인 전 (취소 불가)');
+    expect(text(html)).toContain('NAS:MU 해외 · 주문 여부 확인 필요');
+    expect(text(html)).toContain('KIS 체결 내역 먼저 확인 · 확인 전 재주문 금지');
     expect(html).not.toContain('감시 취소');
   });
 });

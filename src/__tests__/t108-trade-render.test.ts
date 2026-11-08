@@ -139,7 +139,7 @@ describe('운용 현황 (§2.4.1)', () => {
   });
   test('진입 감시 없음 ✓ 확인된 0 · 감시 중/선점 숫자는 서버 COUNT', () => {
     const t = text(renderNow({ stage: 'observe', safety: safety(), trade: trade(), tradeStatus: 'ok' }));
-    expect(t).toContain('진입 감시 감시 중 0 · 선점 0 진입 감시 없음 ✓ 확인된 0');
+    expect(t).toContain('진입 감시 감시 중 0 · 주문 선점 0 · 다음 세션 0 진입 감시 없음 ✓ 확인된 0');
   });
   // R-UI-M1 — 「진입 감시 없음 ✓ 확인된 0」은 감시 목록·선점 목록 둘 다 조회 성공 + 0 이고 서버 COUNT 와 맞을 때만
   function watchPart(html: string): string { const t = text(html); return t.slice(t.indexOf('진입 감시'), t.indexOf('전략 상태')); }
