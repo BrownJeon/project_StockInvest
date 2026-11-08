@@ -2,7 +2,7 @@
 task_id: T-156
 title: 미국 종목분석의 매수·매도 시점 개선안 조사
 status: doing
-waiting: ["당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
+waiting: ["F09 운영 기준과 적격 입력 생성·게시 및 전진 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
 priority: medium
 base_ref: 8984f69ddd5581c45c919193a535f5b1b359765d
 roles_involved: [leader, developer, reviewer, qa]
@@ -14,8 +14,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "M40 shadow·4단계 판단·증분 보존 구현/검증 완료, 연구 27표 게시·테스트 원본28개 DB 복원 검산 완료, 운영 연동 최종 확인"
-  last_event_id: exec-037
+  current_scope: "M40 shadow 기반 구현·연구27표 운영 이관·원본28개/신규 검증이력 보존·배포 검증 완료. F09·적격 입력·실매매 연결과 전진 검증 대기"
+  last_event_id: exec-038
 created: 2026-11-06
 updated: 2026-11-08
 ---
@@ -63,6 +63,7 @@ updated: 2026-11-08
 | exec-035 | 2026-11-08 사용자 답변 반영 | scope approval | codex → codex / codex_scoped | Codex가 T-156 구현·DB 이관까지 직접 수행. 이번 작업의 큰 구현 담당 제한은 명시 예외 승인됨. 원본 보존·실거래 보호·검증 관문 유지 | 사용자: “이번 T-156은 Codex가 구현·DB 이관까지 직접 진행” |
 | exec-036 | 2026-11-08 09:45 중간 기록 | implement / verify / import | codex → codex / codex_scoped | 새 worktree에서 M40·보관·shadow·인증 API 구현, Reviewer 지적 수정, Ubuntu 1,343 tests 및 실 MariaDB 경합 2건 검증. 운영 신규 DDL 후 연구 27표 적재 중(staged), 게시·배포 미완료 | 사용자 직접 구현·DB 이관 승인 exec-035. 실제 결과는 F13/구현 보고서의 영수증으로 구분 |
 | exec-037 | 2026-11-08 11:32 중간 기록 | publish / final QA | codex → codex / codex_scoped | 연구 27표 4,383,186행 게시·전체 COUNT/CHECKSUM, 압축원문1,455건 해시, 테스트 원본28개 DB 복원 검산 완료. 최종1,417 tests·타입·build PASS, 공개시각/문자 비교 보완. 운영 증분 연동 재확인 중 | exec-035 승인 범위의 실제 DB/QA 영수증. 실주문 활성화 없음 |
+| exec-038 | 2026-11-08 11:44 확인 | deployment / archive complete | codex → codex / codex_scoped | 연구27표 게시·원본28개 및 신규 검증이력 DB보존, 구현소스39개 시험해시와 배포판 일치. 릴리스9237fff RELEASE_RESULT ok/END0·health200·web/cron각1·인증API 차단동작 확인. F09·적격입력·전진검증은 대기 | exec-035 직접수행 승인, 운영 DB readback/독립QA 1,426 PASS·15 SKIP와 실제 배포 검증 JSON |
 
 ## 목표
 
@@ -1584,3 +1585,11 @@ Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했�
 최종 소스 재검증: Jest58 suites / 1,417 PASS, 기존 별도 DB 경합1 suite / 15 SKIP, 0 FAIL. opt-in T-156 실제 격리 MariaDB14건 포함. 최종 tsc/build exit0, 정본과 검증본 파일 SHA 일치. 실제 MariaDB reader 마이크로초/NULL 시험과 capture 세 소스·한글/이모지 해시·중복 배제는 root가 별도 실행해 PASS다. 과거1,343/1,403건과 중복 합산하지 않는다.
 
 최종 SEC 시각 보완 재검증: 두 알려진 SEC 원천의 raw 발행시각 NULL을 유지하고 접수시각 대용을 표시했다. 실제 가용시각의 마이크로초 절삭 지적도 수정 후 Reviewer 재검토 PASS. 최종 지정58 suites/1,426 PASS, 15 SKIP, 0 FAIL·tsc/build exit0. 실제 운영 최근 문서194개 중 SEC 대용193개/근거6개, 10/22 cutoff자료0개·쓰기0을 확인했다. 이 결과가 최종 소스 기준이며 앞선 시험과 합산하지 않는다.
+
+## 배포 기록
+
+| 시각(KST) | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
+|---|---|---|---|---|---|
+| 2026-11-08 11:44 | 20261108-114326-9237fffb | 9237fff | T-156 M40 shadow·자료 이관/조회·판단 이력 | RELEASE_RESULT ok, END0 | 별도 승인 DDL/적재는 이미 완료, release.migrated=false. health200·DRY_RUN유지, web/cron각1. 적격 입력 미확정 M40 POST503, 비로그인 목록401 |
+
+이번 사용자 승인 범위의 기반 구현·DB 이관·테스트 보존과 코드 배포 확인은 완료했다. 원본28개+구현 검증 JSON+배포 검증 JSON을 별도 시험 자료로 보존한다. parent task의 doing/대기는 F09·당시 구성·가격/뉴스 자격과 전진/실매매 연결의 미완료를 뜻하며 이번 자료 이관이 진행 중이라는 뜻은 아니다.

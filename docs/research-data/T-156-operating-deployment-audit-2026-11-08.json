@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "kind": "operating_deployment_audit",
+  "createdAt": "2026-11-08T02:46:22.288122+00:00",
+  "protocol": {
+    "task": "T-156",
+    "scope": "M40 shadow and archive implementation; no strategy promotion or active orders",
+    "dryRunPlanReviewed": true
+  },
+  "releaseResult": {
+    "status": "ok",
+    "release": "20261108-114326-9237fffb",
+    "sha": "9237fffb81a5035632eac9ad6459decbb45ca1c6",
+    "previous": "/home/brownjeon/apps/stockinvest/releases/20261108-093050-8248226b",
+    "migrated": false
+  },
+  "webhook": {
+    "startUtc": "2026-11-08T02:43:22Z",
+    "endUtc": "2026-11-08T02:44:30Z",
+    "exitCode": 0
+  },
+  "api": {
+    "kind": "actual_deployed_t156_api_check",
+    "checkedAt": "2026-11-08T02:44:35.008Z",
+    "release": "20261108-114326-9237fffb",
+    "sameReleaseDuringCheck": true,
+    "health": {
+      "http": 200,
+      "ok": true,
+      "db": true,
+      "schemaFatal": false,
+      "safetyStatus": "green",
+      "dryRun": true,
+      "killSwitch": false,
+      "limitsConfigured": true
+    },
+    "cron": {
+      "http": 503,
+      "error": "m40_policy_not_configured",
+      "executionMode": "shadow"
+    },
+    "unauthenticatedInventoryHttp": 401,
+    "brokerCalled": false,
+    "liveTradeActivated": false,
+    "loggedInUiChecked": false,
+    "passed": true
+  },
+  "processes": [
+    {
+      "name": "stockinvest",
+      "status": "online",
+      "cwd": "/home/brownjeon/apps/stockinvest/releases/20261108-114326-9237fffb"
+    },
+    {
+      "name": "stockinvest-cron",
+      "status": "online",
+      "cwd": "/home/brownjeon/apps/stockinvest/releases/20261108-114326-9237fffb"
+    }
+  ],
+  "sourceHashes": {
+    "files": 39,
+    "testedCodeManifestMatches": true,
+    "mismatches": []
+  },
+  "researchData": {
+    "datasetId": "t156-research-db-20261108",
+    "status": "published",
+    "liveEligible": false,
+    "tables": 27,
+    "rows": 4383186,
+    "originalTestFiles": 28,
+    "originalTestBytes": 57339111,
+    "validationAuditSha256": "040db335806e1087cb49fabcf6f36a1ded66700a92cf4a9e29f8ba26851212a1"
+  },
+  "temporaryDatabases": {
+    "originalResearchContainer": "stopped_network_none_volume_retained",
+    "isolatedTestContainer": "stopped_volume_retained"
+  },
+  "remaining": [
+    "F09 epoch and qualified input generation/publishing",
+    "next-open execution expiry/settlement and strategy attribution validation",
+    "historical identity/corporate actions/universe/news gaps",
+    "new forward validation",
+    "logged-in production UI not checked"
+  ]
+}
