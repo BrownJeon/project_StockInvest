@@ -1,7 +1,7 @@
 ---
 task_id: T-162
 title: 진입 감시 주문 결과 반영 및 완료 주문 목록 제외
-status: doing
+status: done
 waiting: []
 created: 2026-11-08
 updated: 2026-11-08
@@ -15,8 +15,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "사용자가 추가 승인한 T-162 전용 커밋·운영 배포·배포 후 목록 제외 및 이력 보존 검증. 운영 DB 쓰기 없음"
-  last_event_id: exec-004
+  current_scope: "사용자 요청에 따른 T-162 배포 결과·앱 확인 완료 기록만 분리 커밋. push·추가 배포 없음"
+  last_event_id: exec-007
 demo_gate:
   required: true
   level: "full"
@@ -78,8 +78,13 @@ demo_gate:
 | exec-002 | 2026-11-08 15:38 | resume | codex → codex / codex_scoped | 승인 v1 지정 화면 구현 및 독립 검증. 배포 미포함 | 사용자 “이 시안으로 승인해. 화면 구현과 독립 검증까지 진행해줘.” |
 | exec-003 | 2026-11-08 15:53 | scope_completed | codex → codex / codex_scoped | 승인 v1 지정 구현·독립 Reviewer/QA 검증 완료. 미커밋·미배포. 운영 반영은 별도 범위 | 사용자 요청 범위와 실제 검증 결과 |
 | exec-004 | 2026-11-08 15:55 | resume | codex → codex / codex_scoped | T-162만 커밋·배포 및 운영 목록/이력 검증. 새로운 승인 범위로 재개 | 사용자 “T-162 변경분만 커밋하고 운영에 배포해줘. 배포 후 3건이 진입 감시 목록에서 빠지고 이력은 남아 있는지도 확인해줘.” |
+| exec-005 | 2026-11-08 16:04 | scope_completed | codex → codex / codex_scoped | T-162 전용 커밋·운영 배포 및 배포 전후 이력 해시/목록 제외 검증 완료 | RELEASE_RESULT ok·후속 health200·독립 QA 운영 READ ONLY 검증 |
+| exec-006 | 2026-11-08 17:25 | scope_completed | codex → codex / codex_scoped | 사용자 앱에서 기존3건 미노출 확인을 기록하고 최종 종결. 코드·운영 변경 없음 | 사용자 “앱에서 기존 3건이 진입 감시에서 사라진 것 확인했어. T-162 작업 마무리해줘.” |
+| exec-007 | 2026-11-08 17:33 | resume | codex → codex / codex_scoped | T-162 작업문서·보드·현재 현황·일일 로그의 T-162 기록만 분리 커밋. 기능 done/대기없음 유지 | 사용자 “T-162 배포 결과와 앱 확인 완료 기록도 다른 작업 변경은 제외하고 커밋해줘.” |
 
 ## Leader
+
+- [15:59] 사용자 추가 승인에 따라 T-162 전용 커밋 `57600fff104d3a6fa53af1d104038c5d14cfc9b5`를 서버 ext4 별도 checkout(codex/t162-release)에서 생성. parent는 현 운영/원격 main `c61545746cb7a8f740aec448c13d71a7f5f589f2`. 검증10파일+승인데모+T162task 총12파일만 포함, 기존모드보존. shared main은 reset/checkout하지 않았고 unrelated dirty/untracked는 보존했다. clone hook설치·전체시험 통과. 외부 Claude의 이전 미실행 한계는 유지하며 현재 사용자 배포 지시를 수행한다.
 
 - [15:49] 실제 구현 CUA 시각 확인(Codex IAB): 최종 실 TradeNowPanel + decisionOutcome + global/ops CSS를 합성 SSR로 생성한 fixture 8상태(closed/active/unknown/boundary/countsError/error/unauthorized/loading) 확인. CSS 뷰포트 360×800·412×915·1280×900에서 document.scrollWidth=innerWidth, DPR1. 승인 v1 헤더·접수/부분체결/테스트·10분 경계·불명/집계실패·로그인 필요·정상0 구분 관측. 412 active/closed PNG는 채팅 전용 visualization 디렉터리에 저장하고 Designer가 직접 대조 PASS. HTMLlang ko, Date.now KST 고정, 웹폰트 다운로드 없음, 애니메이션 비활성화 별도 조작 없음. IAB 버전·OS locale/timezone 조회는 도구에서 노출되지 않아 미확인. 실제 useEffect/poll/fetch/API/로그인/실기기·상단안전띠/하단내비 셸은 이 SSR 검증 범위 밖. 브라우저 viewport override는 원복.
 
@@ -124,6 +129,13 @@ demo_gate:
 
 ## QA
 
+- [16:03] 배포 후 독립 QA(Codex): Deployer의 `RELEASE_RESULT ok`·릴리스 `20261108-160042-57600fff`·exit 0 통지 뒤 16:02:35 KST 새 REPEATABLE-READ / READ ONLY 트랜잭션에서 기준선(15:58:24 KST, 릴리스 `20261108-154918-c6154574`)과 4개 전체 행셋을 대조했다. signals 3행 SHA `ac10a25bc6e2…`, orders 3행 `39f9b795ffde…`, executions 0행 `4f53cda18c2b…`, 관련 trade_logs 6행 `10cf948456de…` 모두 기준선의 건수·전체 행셋 SHA-256 일치. 서로 다른 시점의 별도 트랜잭션이며 원문·계좌·자격정보는 파일이나 로그에 쓰지 않았다. 로그 범위는 주문 id와 payload signalId/signal_id의 대상만 포함한다.
+- [16:03] 실운영 current 릴리스의 `EXECUTING_SQL`·`WATCH_COUNT_SQL`·공통 predicate를 소스에서 직접 추출해 읽기 전용으로 실행: 목록 0행, 시장별 집계 0행(앱 카운터 기본값 국내·해외 각0). 목표 시그널 3건에 대한 별도 조건 판정도 LIMIT 없이 0행이어서 목록 상한으로 가려졌을 가능성을 배제했다. 조회 전후 current 릴리스 동일. SQL 소스 SHA-256: trade.ts `1bd23e3e25b5…`, signal-counts.ts `544082d7dff9…`; Reviewer 승인 대상과 일치한다. 운영 DB 쓰기·DDL·주문·cron 호출 없음.
+- [16:03] 운영 SQL/원장 보존 검증 PASS. 로그인 인증된 HTTP 응답·실제 앱 화면·실기기 및 증권사 원장 직접 대조는 확인하지 못했다. 현재 앱에서 3건이 실제로 사라진 모습은 SQL과 배포 소스만으로 간접 확인한 것이므로 사용자 화면 확인과 구분한다.
+
+- [15:58] 운영 반영 전 QA 기준선(Codex): 사용자 T-162 커밋·배포·후검증 명시 승인(exec-004)에 따라 운영 DB REPEATABLE READ / READ ONLY로 신호 3행·연결 주문 3행·체결 0행·관련 로그 6행의 전체 행셋 해시·건수·id/상태만 서버 `/tmp/t162-qa-baseline-1254439.json`(0600)에 보관했다. 로그는 해당 주문 id와 payload의 signalId/signal_id 대상도 포함. 원문·계좌정보·자격은 저장하지 않았다. 기준 릴리스 `20261108-154918-c6154574`, 기준 시각 2026-11-08 15:58:24 KST. 배포 완료 통지 후 별도 트랜잭션에서 전후 대조 예정.
+
+
 - [15:51] 독립 QA(Codex): Reviewer 최종 PASS 후 승인 데모 v1 게이트 PASS·해시 verified. Reviewer 범위 10파일의 공유본·우분투 격리본 SHA-256 일치. 앱·테스트 9파일은 시험 전후 일치했고, 시험 중 격리본 docs/screens.md 1개만 공유본으로 동기화해 이후 전수 일치 확인; 공유 원본 무변경. `/tmp/stockinvest-t162.84a9`에는 .env 없고 운영 API·cron·주문 호출 없음.
 - [15:51] 지정 명령 독립 재실행: `node node_modules/jest/bin/jest.js --runInBand --runTestsByPath` 대상으로 `t162-entry-watch-render`, `t108-trade-render`, `t108-watch-cancel-sheet`, `t108-trade-cancel-refresh`, `entry-watch-outcomes`, `signal-counts`, `ops-read-only-fence` 시험 → **7 suites/143 tests PASS**. `node node_modules/typescript/bin/tsc --noEmit --incremental false` → exit 0. SQLite :memory:가 실제 SQL을 실행해 완료25건 선제외·진행/미상 11건 보존·집계 일치 확인. 오류전파 경고는 실패 주입 시험에서 발생. 격리 build PASS는 Developer 결과이며 QA가 build를 반복한 것은 아님.
 - [15:51] 최종 소스 2파일에서 SELECT 추출·SHA 대조 후 운영 MariaDB `START TRANSACTION READ ONLY`: 2026-11-08 15:49 KST 목록 0행·집계 0행(시장이 모두 0이면 집계 함수가 0 반환), 대상3건 제외. 원본 3행의 시그널 id/status/consumed_order_id와 연결 주문 status는 동일 읽기 전용 스냅샷 내 전후 SHA-256 `5881cfea2fd4…` 동일. 열거한 필드 확인이며 전체 원장·동시 외부 변경 검증은 아님. EXPLAIN: signals idx_signals_status, orders PRIMARY eq_ref. 목록/집계 각 1ms(해당 표본 한정). 운영 쓰기·DDL 없음.
@@ -137,6 +149,10 @@ demo_gate:
 - [15:51] 기존 UI의 44px 터치 대상 실측·키보드 포커스·실브라우저 XSS DOM·버전·인증 후 화면·실기기·실시간 poll은 NOT_VERIFIED. 새 CTA/포커스/입력은 없는 작업이다. QA 생성 스크린샷 0개(Leader 제공 사용자 검토용 이미지 열람만); `/tmp/qa-artifacts` 생성·삭제 0개.
 
 ## 배포 기록
+
+| 시각 | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
+|------|--------|------|-----------|------|------|
+| 2026-11-08 16:01 KST | 20261108-160042-57600fff | 57600fff | T-162 진입 감시 주문 결과 반영 | ✅ ok | `RELEASE_RESULT status=ok`, `migrated=false`; 정식 `--status` 재확인: health 200, `stockinvest`·`stockinvest-cron` 각 1개 online. 초기 status health 실패는 기동 직후 지연이었고 후속 확인에서 정상. 3건 목록 제외·이력 보존은 QA 운영 기능 검증 대기. |
 
 ## 데모 검토 (demo gate)
 
@@ -230,3 +246,27 @@ title = 기존 displaySymbol(x.symbol) + ' ' + marketText(x.market) + ' · ' + �
 - **사용자가 결정할 것**: 이번 범위에서 없음.
 - **남은 일**: 운영 반영은 별도 요청 범위. 배포 절차에서 필요하면 Claude 최종 인계·커밋된 선택 파일의 외부검토를 별도로 수행한다.
 - **이슈·위험**: 기존 LOW 1건 — 목록과 집계가 별도 SELECT여서 주문 상태 전이 순간 숫자와 행이 잠시 다를 수 있다. 이번 범위에서 원본 잠금을 풀거나 기존 구조를 확대하지 않았다. 초기 격리 build 실패는 공용 모듈 연결/캐시 환경을 보완해 최종 성공했다.
+
+## 운영 배포 추가 완료 요약
+
+**[T-162] 진입 감시 주문 결과 표시 — 운영 반영 및 원본 보존 확인**
+
+- **상태**: 사용자 추가 요청(커밋·운영 배포·3건 제외/이력 보존 확인) 완료.
+- **무엇이 바뀌었나**: 완료 주문 3건은 운영 진입 감시 조회에서 제외되고 원본 시그널·주문·체결·관련 거래 로그는 보존된다. 앞으로도 동일한 주문 결과 판정으로 현재 목록/집계를 만든다.
+- **배포**: 커밋 `57600fff104d3a6fa53af1d104038c5d14cfc9b5` · 릴리스 `20261108-160042-57600fff` · 2026-11-08 16:01:55 KST · push→정식 release.sh blue/green · RELEASE_RESULT ok / END exit0 / migrated:false. parent는 직전 운영 c615457. 추가된 커밋은 T-162 하나이고 대상 12파일(검증된10+승인데모+T162task)만 포함, 다른 작업 동승 없음.
+- **AI가 검증한 것**: 최종 배포 12파일 전체 SHA가 허용 manifest와 일치하고 운영 recommend page 빌드 청크에 변경 문구 존재. 후속 health200·DB정상·safetyStatus green·DRY_RUN=true/killSwitch=false(배포 전과 같음), 웹·cron 각1 online·재시작0. 독립 QA는 15:58:24 배포 전과 16:02:35 배포 후의 별도 READ ONLY 트랜잭션에서 signals3/orders3/executions0/관련 trade_logs6 전체 행셋 SHA/건수 일치를 확인. 새 current 소스 SQL의 목록·집계 0행, 목표3건만 LIMIT 없이 재판정해도0행. 운영 DB 쓰기·주문·cron 수동 실행 없음.
+  - **검증 못 한 것**: 인증된 운영 HTTP 응답·실제 Android/웹 화면·증권사 원장은 직접 대조하지 않았다. 목록에서 사라지는 동작은 운영 소스/빌드/실제 SQL 결과에 의한 간접 확인이다. 기존 외부 Claude 미커밋 경계 미실행 한계는 이전 기록 그대로 유지한다.
+- **사용자가 확인할 것**: 선택적으로 앱을 다시 열거나 새로고침 후 거래 → 운용 현황 → 진입 감시에서 기존3건이 없는지 확인할 수 있다. 웹 변경이라 APK 재설치 불필요. 이것을 추가 완료 조건으로 올리지 않는다.
+- **사용자가 결정할 것**: 없음.
+- **남은 일**: 이번 요청 범위에서 없음. 실제 기기 화면 직접 확인은 미실행 사실로 남긴다.
+- **이슈·위험**: 기동 직후 status/curl의 일시 응답 지연은 정식 120초 헬스 창 안에 회복됐고 최종 health_failed/롤백은 없었다. 기존 LOW(병렬 집계/목록 조회 순간 차이) 유지. 공유 NFS checkout은 타 세션 변경 보존을 위해 reset/checkout하지 않았으며 커밋은 서버 별도 checkout에서 수행했다. 배포 후 추가된 감사 기록은 공유 Vault에 보존한다.
+
+## 사용자 앱 확인 및 최종 종결 — 2026-11-08 17:25 KST
+
+- **상태**: T-162 최종 종료. `status: done`, `waiting: []`.
+- **사용자 확인**: “앱에서 기존 3건이 진입 감시에서 사라진 것 확인했어. T-162 작업 마무리해줘.” 사용자가 실제 앱의 기존3건 미노출을 직접 확인했다. 앞선 운영 소스·SQL 간접 확인에 사용자 앱 확인 증거가 추가됐다.
+- **배포**: 기존 커밋 `57600fff104d3a6fa53af1d104038c5d14cfc9b5` · 릴리스 `20261108-160042-57600fff` · 2026-11-08 16:01:55 KST · RELEASE_RESULT ok. 이번 마무리는 기록만 갱신하며 추가 코드 변경·배포 없음. 함께 배포된 다른 작업 없음.
+- **검증**: 기존 독립 Reviewer/QA, 143 tests·타입·build 및 운영 READ ONLY 검증 기록 유지. 배포 전후 시그널3/주문3/체결0/관련로그6 전체 행셋 해시·건수 보존 확인에 이번 사용자 앱 확인을 합쳐 요청 목표를 충족했다.
+- **확인 범위**: 사용자 확인은 기존3건의 진입 감시 미노출에 한정한다. 새 주문의 모든 결과 상태·실시간 갱신·증권사 원장·안전회로의 실동작까지 확인된 것으로 확대하지 않는다. 이전 시점의 미관측 기록은 당시 이력으로 보존한다.
+- **사용자 확인·결정 대기 / 남은 일**: 없음.
+- **잔여 이슈·위험**: 기존 LOW(상태 전환 순간 별도 목록·집계 조회의 차이) 및 외부 Claude 미실행 기록은 보존하며 새로운 필수 작업으로 올리지 않는다.
