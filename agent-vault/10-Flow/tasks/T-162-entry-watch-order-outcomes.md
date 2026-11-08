@@ -15,8 +15,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "사용자 요청에 따른 T-162 배포 결과·앱 확인 완료 기록만 분리 커밋. push·추가 배포 없음"
-  last_event_id: exec-007
+  current_scope: "사용자가 추가 승인한 T-162 기록 커밋 f01e5b8만 원격 main push 및 자동 배포 결과 확인. 코드·운영 DB 변경 없음"
+  last_event_id: exec-009
 demo_gate:
   required: true
   level: "full"
@@ -81,6 +81,8 @@ demo_gate:
 | exec-005 | 2026-11-08 16:04 | scope_completed | codex → codex / codex_scoped | T-162 전용 커밋·운영 배포 및 배포 전후 이력 해시/목록 제외 검증 완료 | RELEASE_RESULT ok·후속 health200·독립 QA 운영 READ ONLY 검증 |
 | exec-006 | 2026-11-08 17:25 | scope_completed | codex → codex / codex_scoped | 사용자 앱에서 기존3건 미노출 확인을 기록하고 최종 종결. 코드·운영 변경 없음 | 사용자 “앱에서 기존 3건이 진입 감시에서 사라진 것 확인했어. T-162 작업 마무리해줘.” |
 | exec-007 | 2026-11-08 17:33 | resume | codex → codex / codex_scoped | T-162 작업문서·보드·현재 현황·일일 로그의 T-162 기록만 분리 커밋. 기능 done/대기없음 유지 | 사용자 “T-162 배포 결과와 앱 확인 완료 기록도 다른 작업 변경은 제외하고 커밋해줘.” |
+| exec-008 | 2026-11-08 17:37 | resume | codex → codex / codex_scoped | 기존 완료 상태 유지, 기록 커밋 f01e5b8의 main push·자동 배포 확인 수행 | 사용자 “기록 커밋 f01e5b8도 다른 작업은 제외하고 원격 main에 push해줘. 자동 배포 결과도 확인해줘.” |
+| exec-009 | 2026-11-08 17:41 | scope_completed | codex → codex / codex_scoped | 기록 커밋 f01e5b8만 원격 main push 및 자동 배포 후검증 완료 | 원격 SHA 일치·RELEASE_RESULT ok·health200·문서4파일 배포 해시 일치 |
 
 ## Leader
 
@@ -153,6 +155,7 @@ demo_gate:
 | 시각 | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
 |------|--------|------|-----------|------|------|
 | 2026-11-08 16:01 KST | 20261108-160042-57600fff | 57600fff | T-162 진입 감시 주문 결과 반영 | ✅ ok | `RELEASE_RESULT status=ok`, `migrated=false`; 정식 `--status` 재확인: health 200, `stockinvest`·`stockinvest-cron` 각 1개 online. 초기 status health 실패는 기동 직후 지연이었고 후속 확인에서 정상. 3건 목록 제외·이력 보존은 QA 운영 기능 검증 대기. |
+| 2026-11-08 17:39 KST | 20261108-173820-f01e5b8e | f01e5b8 | T-162 기록 커밋 배포 | ✅ ok | 기록 전용 4파일 커밋, 코드 변경 없음. `RELEASE_RESULT status=ok`, `migrated=false`; 정식 `--status` health 200, web·cron 각 1개 online. 후속 운영 확인: DB 연결 정상·safety green·DRY_RUN=true·KILL_SWITCH=false·재시작 0. |
 
 ## 데모 검토 (demo gate)
 
@@ -270,3 +273,11 @@ title = 기존 displaySymbol(x.symbol) + ' ' + marketText(x.market) + ' · ' + �
 - **확인 범위**: 사용자 확인은 기존3건의 진입 감시 미노출에 한정한다. 새 주문의 모든 결과 상태·실시간 갱신·증권사 원장·안전회로의 실동작까지 확인된 것으로 확대하지 않는다. 이전 시점의 미관측 기록은 당시 이력으로 보존한다.
 - **사용자 확인·결정 대기 / 남은 일**: 없음.
 - **잔여 이슈·위험**: 기존 LOW(상태 전환 순간 별도 목록·집계 조회의 차이) 및 외부 Claude 미실행 기록은 보존하며 새로운 필수 작업으로 올리지 않는다.
+
+## 기록 커밋 원격 반영·자동 배포 완료 — 2026-11-08 17:41 KST
+
+- **상태**: 기록 커밋 `f01e5b8e94cdcda6efbdc33f291f982fd9b1a723`만 원격 main에 push 완료. T-162 기능 최종 종료/대기없음 유지.
+- **범위**: 직전 원격·운영 `e9dccee51e1ee302a0ccf37a40897aa7c7fccebd`의 직계후속 1커밋이며 T-162 기록4파일(작업문서·보드·현재 현황·11-08 로그)만 포함. 다른 작업의 추가 변경·제품 코드 변경 없음. 공유 작업 트리의 다른 변경은 보존했다.
+- **배포**: 자동 webhook→정식 release.sh, 릴리스 `20261108-173820-f01e5b8e`, 완료 2026-11-08 17:39:40 KST. RELEASE_RESULT ok / END exit0 / migrated:false. 같은 배포에 추가된 다른 작업 없음. 수동 중복 배포 없음.
+- **확인**: 배포된 기록4파일 전체 SHA가 f01e5b8 Git blob과 모두 일치. 후속 health200·DB정상·safetyStatus green, DRY_RUN=true·killSwitch=false(배포 전과 같음), 웹·cron 각1 online·restart0. 문서 전용이므로 제품 테스트·주문·운영 DB 쓰기·앱 재설치는 수행/요구하지 않았다. 기존 사용자 앱 확인 및 원본 이력 보존 검증 기록 유지.
+- **사용자 확인·결정 / 남은 일**: 이번 요청 범위에서 없음.
