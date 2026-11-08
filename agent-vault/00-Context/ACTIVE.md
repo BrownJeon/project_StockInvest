@@ -6,6 +6,13 @@ tags:
 ---
 # 현재 상태
 
+## 2026-11-08 15:14 — T-156 M40 조회 화면 준비·자동 승인 기록 처리 대기
+
+- 사용자 v2 데모 승인(‘v2 구성으로 구현 진행’)과 조회 이메일 확인은 완료. 전용 viewer 한 계정만 연결·원장/설정 불변, 실제 SELECT reader125참조/123적격/리허설4신호·비viewer거부 검산.
+- 기존 메뉴를 유지한 v2 데모를360/412/1280 CUA로확인. 신규readonly API6파일·시험준비, 최종15 tests/tsc통과(이전533/2skip·합성DB2와범위분리).
+- 자동 approve-codex-context는원문영수증미연결로거부. demo_gate는review_requested/v2그대로,수동승인/훅재생없음. Reviewer가check未통과화면수정을보류하여,이번T156만기록예외또는도구지원보완처리방식응답대기. 같은v2승인/이메일은다시묻지않음.
+- 화면 소스·배포는 아직 미착수이며 기존실거래OFF. 상세 [[T-156-us-stock-entry-exit-forecast-design]] F15 및 docs/design/2026-11-08-t156-m40-paper-view-review.md.
+
 
 ## 2026-11-08 13:50 — T-156 DRY_RUN 독립 모의 시그널 연결
 

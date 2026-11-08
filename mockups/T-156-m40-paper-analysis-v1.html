@@ -1,0 +1,268 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><meta name="demo-version" content="T-156-v1"><meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394"><title>StockInvest · M40 모의분석 데모 v1</title><style>:root {
+  --bg: #0f1115;
+  --bg2: #171a21;
+  --bg3: #1f2430;
+  --bg4: #262b36;
+  --border: #262b36;
+  --border2: #323848;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --up: #ef4444;    /* 한국 관습: 상승 빨강 */
+  --down: #3b82f6;  /* 한국 관습: 하락 파랑 */
+  --accent: #f59e0b;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-h: 60px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  max-width: 100vw;     /* 자식의 intrinsic 폭 초과 시에도 layout viewport 제한 — 모바일 fit-to-page 줌아웃 차단 */
+  overflow-x: clip;     /* 수평 페이지 오버플로우 차단 — sticky 포지셔닝 유지됨 */
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif;
+  font-size: 14px;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: contain;
+}
+/* 가로 폭만 viewport에 제한, 세로 스크롤은 막지 않음 */
+body { width: 100%; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+.num { font-variant-numeric: tabular-nums; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+@keyframes ti-spin { to { transform: rotate(360deg); } }
+
+/*
+ * T-108 운용 화면 공용 스타일 — 승인 데모 v3(mockups/T-108-menu-home-v3.html) 112~235행 「앱 화면」 클래스를 이름 그대로 옮겼다.
+ * (데모 문서 틀 .page·.controls·.decide·.phone·.frm·.scrl·.cur 와 비서 화면 .bubble·.qchips·.compose 는 옮기지 않음)
+ *
+ * - CSS Module 이라 클래스가 이 파일 안에서만 유효하다(전역 .card·.btn·.sec-h 등과 섞이지 않음).
+ *   단 .num·.up·.down 은 globals.css 전역 클래스를 그대로 쓴다(컴포넌트가 className 에 같이 붙인다).
+ * - 색은 globals.css 토큰 이름만. 리터럴 #fca5a5·#86efac·#2a1416·rgba(…) 는 데모 값 그대로(새 토큰 아님 — 가이드 §2.0).
+ * - 데모의 @container app (min-width: 900px) → @media (min-width: 900px) (T-084 선례, 가이드 §0.4).
+ * - 데모에 없던 것(가이드 §8.4 재량 — 시각 결과 같음): 포커스 링을 클래스마다 붙임(데모는 전역 :focus-visible),
+ *   스피너 keyframes 를 이 모듈 안에 둠(모듈 안 animation 이름은 지역화되므로), .scr 아래 여백 16px(데모 .scrl 몫),
+ *   .gate·.res·.btrow 를 시트 밖에서도 쓰게 단독 선택자로(데모는 .sheet 아래), 띠 칩 줄 오른쪽 끝 페이드(.sws.fade — 가이드 §8.2 P2),
+ *   foot 안 링크 밑줄·44px(.sec-foot a), 미니 띠 제목(.strip-title — 데모는 인라인 style), a.stage 44px(미니 띠 배지가 링크).
+ */
+
+/* ── 안전 상태 띠 (홈·거래 공통, 스크롤해도 보임) ── */
+.strip { position: sticky; top: 0; z-index: 6; background: var(--bg2); border-bottom: 1px solid var(--border); padding: 8px 12px 10px; }
+.strip-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.stage { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border2); white-space: nowrap; }
+.stage .dot { width: 8px; height: 8px; flex: none; }
+a.stage, button.stage { min-height: 44px; flex: none; }
+.stage.obs { color: var(--accent); border-color: rgba(245,158,11,.5); }
+.stage.obs .dot { background: var(--accent); border-radius: 50%; }
+.stage.live { color: #fca5a5; border-color: rgba(239,68,68,.6); background: #2a1416; }
+.stage.live .dot { background: var(--danger); border-radius: 1px; transform: rotate(45deg); }
+.stage.mixed { color: #fca5a5; border-color: rgba(239,68,68,.6); }
+.stage.mixed .dot { background: var(--danger); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.stage.halt { color: var(--text); border-color: var(--border2); background: var(--bg3); }
+.stage.halt .dot { background: var(--muted); border-radius: 1px; }
+.stage.err { color: #fca5a5; border-color: var(--danger); }
+.stage.err .dot { background: transparent; border: 2px solid var(--danger); border-radius: 50%; }
+.strip-sum { font-size: 12px; color: var(--muted); line-height: 1.45; min-width: 0; flex: 1; overflow-wrap: anywhere; word-break: keep-all; }
+.strip-sum b { color: var(--text); }
+.strip-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.strip-go { flex: none; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.sws { display: flex; gap: 6px; overflow-x: auto; margin-top: 8px; scrollbar-width: none; }
+.sws::-webkit-scrollbar { display: none; }
+.sws.fade { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+.sw { flex: none; font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border2); background: var(--bg3); color: var(--text); white-space: nowrap; line-height: 1.4; }
+.sw i { font-style: normal; color: var(--muted); font-weight: 500; margin-right: 4px; }
+.sw.bad { border-color: rgba(239,68,68,.6); background: #2a1416; color: #fca5a5; }
+.sw.warn { border-color: rgba(245,158,11,.5); color: var(--accent); }
+.sw.sep { background: transparent; border-style: dashed; }
+.strip-alert { margin-top: 8px; font-size: 12px; line-height: 1.5; color: #fca5a5; background: #2a1416; border: 1px solid rgba(239,68,68,.5); border-left: 3px solid var(--danger); border-radius: 6px; padding: 6px 8px; word-break: keep-all; overflow-wrap: anywhere; }
+
+/* ── 화면 공통 ── */
+.scr { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 0 16px; }
+.col { display: grid; gap: 8px; min-width: 0; align-content: start; }
+.sec { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); min-width: 0; }
+.sec-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px 4px 16px; min-height: 44px; }
+.sec-h h2 { margin: 0; font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .3px; line-height: 1.4; }
+.sec-h h2 small { font-weight: 500; font-size: 11px; margin-left: 4px; }
+.lnk { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px; font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; padding: 0 4px; }
+.sec-b { padding: 0 16px 12px; }
+.sec-foot { font-size: 11px; color: var(--muted); padding: 0 16px 10px; line-height: 1.5; }
+/* foot 안 링크(계좌 전체 손익 → 자산 기록, 401 → 로그인): 밑줄로 링크임을 보이고(색만 쓰지 않음) 터치 44px */
+.sec-foot a { text-decoration: underline; display: inline-flex; align-items: center; min-height: 44px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--border); border-top: 1px solid var(--border); }
+.tile { background: var(--bg2); padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tile.wide { grid-column: 1 / -1; }
+.tile .lb { font-size: 12px; color: var(--muted); line-height: 1.4; word-break: keep-all; }
+.tile .v { font-size: 18px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tile .v small { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+.tile .mk { font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; word-break: keep-all; }
+.tile .mk i { font-style: normal; color: var(--muted); display: inline-block; min-width: 28px; }
+.tile .meta { font-size: 11px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; word-break: keep-all; }
+.tile.dim .v, .tile.dim .mk { color: var(--muted); }
+.st { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border2); color: var(--text); background: var(--bg); line-height: 1.4; white-space: normal; overflow-wrap: anywhere; word-break: keep-all; }
+/* T-130 D4-A — 분석 › 데이터 상태에서만 한국어 칩 뒤에 붙는 영문 원인 코드 */
+.stCode { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-weight: 600; margin-left: 4px; }
+.st.zero { border-color: rgba(34,197,94,.5); color: #86efac; }
+.st.unknown { border-style: dashed; color: var(--muted); }
+.st.error { border-color: var(--danger); color: #fca5a5; }
+.st.stale { border-style: dotted; border-color: var(--muted); color: var(--muted); }
+.st.partial { border-color: rgba(245,158,11,.5); color: var(--accent); }
+.st.blocked { border-color: rgba(239,68,68,.6); color: #fca5a5; background: #2a1416; }
+.st.off { color: var(--muted); }
+.st.prep { border-style: dashed; border-color: var(--muted); color: var(--muted); }
+.retry { min-height: 44px; align-self: flex-start; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border2); background: var(--bg3); font-size: 12px; font-weight: 600; }
+.skel { display: block; height: 14px; border-radius: 4px; background: var(--bg3); }
+.skel.big { height: 22px; width: 60%; }
+.skel.w80 { width: 80%; }
+.skel.w50 { width: 50%; }
+.rows { border-top: 1px solid var(--border); }
+.rowl { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 56px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--border); width: 100%; text-align: left; }
+.rowl:last-child { border-bottom: 0; }
+.rowl .ic { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; border-radius: 6px; border: 1px solid var(--border2); color: var(--muted); }
+.rowl .ic.e { border-color: var(--danger); color: #fca5a5; }
+.rowl .ic.w { border-color: rgba(245,158,11,.6); color: var(--accent); }
+.rowl .ic.i { color: var(--text); }
+.rowl .t, .rowl .s { display: block; }
+.rowl .t { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; word-break: keep-all; }
+.rowl .s { font-size: 12px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; word-break: keep-all; margin-top: 2px; }
+.rowl .r { font-size: 12px; color: var(--muted); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.empty { padding: 14px 16px; font-size: 13px; color: var(--muted); line-height: 1.55; border-top: 1px solid var(--border); word-break: keep-all; }
+.empty b { color: var(--text); }
+.lines { border-top: 1px solid var(--border); }
+.ln { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 9px 16px; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 1.5; align-items: start; }
+.ln:last-child { border-bottom: 0; }
+.ln .k { font-size: 12px; color: var(--muted); font-weight: 600; padding-top: 1px; }
+.ln .d { overflow-wrap: anywhere; word-break: keep-all; min-width: 0; }
+.ln .d .m { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.mt { width: 100%; border-collapse: collapse; font-size: 13px; border-top: 1px solid var(--border); }
+.mt caption { caption-side: bottom; text-align: left; font-size: 11px; color: var(--muted); padding: 6px 16px 10px; line-height: 1.5; }
+.mt th, .mt td { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: right; font-variant-numeric: tabular-nums; vertical-align: top; }
+.mt th:first-child, .mt td:first-child { text-align: left; padding-left: 16px; color: var(--muted); font-weight: 600; font-size: 12px; }
+.mt thead th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--bg2); }
+.mt thead th small { display: block; font-weight: 500; font-size: 11px; }
+.mt td.dim { color: var(--muted); }
+.act { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 1.5; }
+.act:last-child { border-bottom: 0; }
+.act .tm { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 1px; }
+.act .s { display: block; font-size: 12px; color: var(--muted); }
+.seg2 { display: flex; gap: 4px; background: var(--bg3); padding: 3px; border-radius: 8px; }
+.seg2 button { flex: 1 1 0; min-height: 44px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.seg2 button[aria-pressed="true"] { background: var(--bg4); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.subnav { position: sticky; top: var(--strip-h, 0px); z-index: 5; background: var(--bg); padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.btn { min-height: 44px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 700; border: 1px solid var(--border2); background: var(--bg3); display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn.pri { background: var(--accent); color: #221a05; border-color: var(--accent); }
+.btn.dz { background: #2a1416; color: #fca5a5; border-color: rgba(239,68,68,.6); }
+.btn[disabled] { opacity: .55; cursor: not-allowed; }
+.btn .d { font-size: 11px; font-weight: 600; opacity: .85; }
+.card { margin: 0 12px 8px; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.5; }
+.card .h { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 700; }
+.card .s { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; word-break: keep-all; }
+.card .bt { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.pill { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border2); color: var(--muted); }
+.pill.buy { color: #fca5a5; border-color: rgba(239,68,68,.5); }
+.pill.sell { color: #93c5fd; border-color: rgba(59,130,246,.5); }
+.kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px; align-items: center; min-height: 52px; }
+.kv:last-child { border-bottom: 0; }
+.kv .s { grid-column: 1 / -1; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.bar { height: 6px; border-radius: 3px; background: var(--bg4); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--muted); }
+
+/* 승인 안내·결과(데모 .sheet .gate / .sheet .res — 시트 밖 ScenarioDetail 에서도 쓰게 단독 선택자) */
+.gate { margin: 10px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(245,158,11,.5); background: rgba(245,158,11,.06); font-size: 12px; line-height: 1.55; word-break: keep-all; }
+.gate.bad { border-color: rgba(239,68,68,.6); background: #2a1416; color: #fca5a5; }
+.res { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border2); font-size: 12px; line-height: 1.55; word-break: keep-all; }
+.res.ok { border-color: rgba(34,197,94,.5); color: #86efac; }
+.res.e { border-color: var(--danger); color: #fca5a5; }
+.btrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.btrow .full { grid-column: 1 / -1; }
+
+/* 스피너 — globals.css 의 ti-spin 과 같은 모양을 이 모듈 안에 둔다(모듈 안 animation 이름은 지역화된다) */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+/* 화면 읽기 전용 글자(보이지 않음) */
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* 포커스 링(데모 전역 :focus-visible 을 클래스마다) */
+.lnk:focus-visible, .rowl:focus-visible, .retry:focus-visible, .strip-go:focus-visible, .stage:focus-visible,
+.seg2 button:focus-visible, .btn:focus-visible, .sec-foot a:focus-visible, .res:focus-visible {
+  outline: 2px solid var(--text); outline-offset: 2px; border-radius: 4px;
+}
+
+/* ── 데스크톱 복원 (≥900px) ── */
+@media (min-width: 900px) {
+  .scr { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px 16px; }
+  .scr.one { grid-template-columns: minmax(0, 760px); justify-content: center; }
+  .sec { border: 1px solid var(--border); border-radius: 10px; }
+  .strip { padding: 10px 24px; }
+  .subnav { padding: 8px 16px; }
+  .subnav .seg2 { max-width: 520px; }
+}
+
+
+.bn { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--nav-h) + var(--safe-bottom)); padding-bottom: var(--safe-bottom); background: var(--bg2); border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(5, 1fr); z-index: 20; }
+.bn a { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 56px; color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.2; }
+.bn a svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.bn a[aria-current="page"] { color: var(--accent); }
+.bn .bar { position: absolute; top: 0; left: 30%; right: 30%; height: 2px; background: var(--accent); border-radius: 0 0 2px 2px; }
+.bn a:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; border-radius: 4px; }
+@media (min-width: 900px) {
+  .bn { left: 50%; right: auto; width: 720px; transform: translateX(-50%); border: 1px solid var(--border); border-bottom: 0; border-radius: 14px 14px 0 0; }
+}
+
+/* 데모 도구는 앱 화면 밖. 앱의 globals/ops/BottomTabs CSS 스냅샷은 위 그대로. */
+.demo-tools{padding:12px 16px;border-bottom:1px dashed var(--border2);background:var(--bg3);font-size:12px;line-height:1.6}.demo-tools p{margin:0 0 8px}.demo-tools .seg2{max-width:480px}.app{padding-bottom:calc(76px + var(--safe-bottom));min-height:75vh}.detail-head{display:flex;align-items:center;gap:4px;padding:4px 12px 4px 4px;border-bottom:1px solid var(--border)}.detail-head button{min-height:44px;padding:0 10px;font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap}.detail-head h1{margin:0;font-size:15px;overflow-wrap:anywhere}.m40-body{padding:12px 16px}.m40-summary{font-size:13px;line-height:1.6;margin:0 0 12px}.m40-nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;padding:4px;background:var(--bg3);border-radius:8px;margin-bottom:12px}.m40-nav button{min-height:44px;font-size:12px;border-radius:6px;color:var(--muted)}.m40-nav button[aria-pressed=true]{background:var(--bg4);color:var(--text);box-shadow:inset 0 -2px var(--accent)}.fixture-controls{padding:8px 16px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);border-top:1px dashed var(--border2);flex-wrap:wrap}select,input{min-height:44px;background:var(--bg3);color:var(--text);border:1px solid var(--border2);border-radius:6px;padding:0 8px;font:inherit;max-width:100%}.filters{display:flex;gap:8px;flex-wrap:wrap;padding:8px 16px}.filters label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}.filters input{width:130px}.m40-grid{display:grid;gap:12px}.m40-section{scroll-margin-top:calc(var(--m40-sticky-h, 126px) + 12px);min-width:0}#detail-title,.detail-head{scroll-margin-top:calc(var(--m40-sticky-h, 126px) + 12px)}.judgment{padding:12px 16px;border-top:1px solid var(--border);font-size:13px;line-height:1.6}.judgment-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.judgment p{margin:4px 0;color:var(--muted)}.judgment b{color:var(--text)}details{font-size:12px}summary{cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--muted)}.metric-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--border)}.metric-list .tile .v{font-size:18px}.hint{font-size:12px;color:var(--muted);line-height:1.6;padding:8px 16px}.hidden,[hidden]{display:none!important}button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--text);outline-offset:-2px}button:hover,a:hover{background-color:var(--bg3)}.app-notice{padding:8px 16px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border)}.announce{min-height:20px;font-size:12px;color:var(--muted);padding:0 16px}.readonly-note{margin:0;padding:8px 16px;font-size:12px;color:var(--accent);line-height:1.6}@media(min-width:900px){.app{max-width:1200px;margin:auto;border-left:1px solid var(--border);border-right:1px solid var(--border)}.m40-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.m40-nav{grid-template-columns:repeat(4,minmax(0,1fr))}.demo-tools{padding-left:max(16px,calc((100vw - 1168px)/2))}.m40-section{scroll-margin-top:calc(var(--m40-sticky-h, 126px) + 12px)}}
+</style></head><body><aside class="demo-tools" aria-label="데모 검토 도구"><p><b>T-156 · M40 모의분석 v1</b> — 검토용 합성 예시입니다. 운영 조회·주문·설정 변경은 없습니다.<br>기존 화면 구성 유지: 오늘 분석에 입구 1줄 추가 → 같은 분류 안 상세. 별도의 새 설계 선택은 없습니다.</p><div class="seg2" aria-label="현재와 제안 비교"><button id="current" aria-pressed="false">현재 구성</button><button id="proposed" aria-pressed="true">제안 구성</button></div><p style="margin-top:8px">수치·종목명·시각은 모두 가상입니다. 실제 125/123 표본과 대응하지 않는 8종목 예시입니다.</p></aside><main class="app"><header class="strip"><div class="strip-h"><span class="strip-sum strip-title">분석</span><span class="stage obs"><span class="dot"></span>관찰 · 예시</span></div></header><nav class="subnav" style="--strip-h:62px" aria-label="분석 하위 화면"><div class="seg2"><button data-seg="today" aria-pressed="true">오늘 분석</button><button data-seg="verify" aria-pressed="false">검증·성과</button><button data-seg="data" aria-pressed="false">데이터 상태</button></div></nav><div id="page"></div><div id="announcement" class="announce" aria-live="polite"></div></main><nav class="bn" aria-label="주 메뉴"><a href="#" data-nav="홈" ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11.264 2.205A4 4 0 0 0 6.42 4.211l-4 8a4 4 0 0 0 1.359 5.117l6 4a4 4 0 0 0 4.438 0l6-4a4 4 0 0 0 1.576-4.592l-2-6a4 4 0 0 0-2.53-2.53z" />
+      <path d="M11.99 22 14 12l7.822 3.184" />
+      <path d="M14 12 8.47 2.302" /></svg><span>홈</span></a><a href="#" data-nav="거래" ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m11 17 2 2a1 1 0 1 0 3-3" />
+      <path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.88-3.88a3 3 0 0 0-4.24 0l-.88.88a1 1 0 1 1-3-3l2.81-2.81a5.79 5.79 0 0 1 7.06-.87l.47.28a2 2 0 0 0 1.42.25L21 4" />
+      <path d="m21 3 1 11h-2" />
+      <path d="M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3" />
+      <path d="M3 4h8" /></svg><span>거래</span></a><a href="#" data-nav="분석" aria-current="page"><span class="bar"></span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2" />
+      <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+      <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+      <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="m16 16-1.9-1.9" /></svg><span>분석</span></a><a href="#" data-nav="비서" ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18V5" />
+      <path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4" />
+      <path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5" />
+      <path d="M17.997 5.125a4 4 0 0 1 2.526 5.77" />
+      <path d="M18 18a4 4 0 0 0 2-7.464" />
+      <path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517" />
+      <path d="M6 18a4 4 0 0 1-2-7.464" />
+      <path d="M6.003 5.125a4 4 0 0 0-2.526 5.77" /></svg><span>비서</span></a><a href="#" data-nav="설정" ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+      <circle cx="12" cy="12" r="3" /></svg><span>설정</span></a></nav><script>
+let proposed=true,detail=false,segment='today';const states={collection:'current',judgments:'current',signals:'current',performance:'current'};
+const labels={collection:'수집 상태',judgments:'종목 판단',signals:'모의시그널',performance:'모의성과'};
+const sample=[{name:'가상 알파 ETF',symbol:'DEMO-A',momentum:'+12.4%',rank:'1 / 6',selected:true,action:'모의 매수',reason:'모멘텀 양수 · 상위 후보 · 모의 매수 조건 충족'}, {name:'가상 베타 ETF',symbol:'DEMO-B',momentum:'+8.1%',rank:'2 / 6',selected:true,action:'모의 유지',reason:'선정됨 · 모의 보유분 유지 조건 충족'}, {name:'가상 감마 ETF',symbol:'DEMO-C',momentum:'−3.2%',rank:'6 / 6',selected:false,action:'모의 매도',reason:'모멘텀 음수 · 초기 리허설 모의 보유분 청산 조건'}, {name:'가상 델타 ETF',symbol:'DEMO-D',momentum:'+2.1%',rank:'5 / 6',selected:false,action:'매매 없음',reason:'모멘텀 양수지만 이번 상위 선정 범위 밖'}, {name:'가상 엡실론 ETF',symbol:'DEMO-E',momentum:'산출 불가',rank:'대상 아님',selected:false,action:'판단 제외',reason:'필요한 기간의 일봉 부족'}];
+const sec=(id,title,body,small='')=>'<section class="sec" aria-labelledby="'+id+'"><div class="sec-h"><h2 id="'+id+'">'+title+(small?'<small>'+small+'</small>':'')+'</h2></div>'+body+'</section>';
+const row=(title,sub,glyph='·',extra='')=>'<div class="rowl"><span class="ic" aria-hidden="true">'+glyph+'</span><span><span class="t">'+title+'</span><span class="s">'+sub+'</span></span><span class="r">'+extra+'</span></div>';
+const entrance=(title,sub,target)=>'<a class="rowl" href="?tab='+target+'" data-detail="'+target+'"><span class="ic" aria-hidden="true">▤</span><span><span class="t">'+title+'</span><span class="s">'+sub+'</span></span><span class="r">›</span></a>';
+function today(){const table='<table class="mt"><caption>합성 예시 · 장마감 AI 분석과 M40 모의분석은 별개입니다. 기존 표·목록·입구를 보존합니다.</caption><thead><tr><th scope="col">단계</th><th scope="col">국내<small>가상 세션</small></th><th scope="col">해외<small>가상 세션</small></th></tr></thead><tbody>'+['평가 종목','규칙 후보','AI 매수 판단','시그널 생성','검증 관문 차단','제외 사유'].map(t=>'<tr><th scope="row">'+t+'</th><td>예시 생략</td><td>예시 생략</td></tr>').join('')+'</tbody></table>';return '<div class="scr"><div class="col">'+sec('a-run','장마감 AI 분석',table,'시장별 세션일')+sec('a-cand','후보',row('시그널로 이어진 종목 없음','합성 예시 · 실제 후보 조회 안 함','◌')+row('AI 매수 안 함 · 제외 사유 목록','기존 목록 유지 · 예시 생략'),'오늘')+'</div><div class="col">'+sec('a-sym','종목별','<div class="rows">'+entrance('리서치 추적','기존 리서치분석 — 과거 통계 관찰용, 자동매매와 별개','research')+entrance('주도주','기존 화면 그대로','leaderboard')+row('관심 종목 관리 (현재 즐겨찾기)','추가·삭제·메모·리서치 추적 설정 그대로','☆')+(proposed?entrance('M40 모의분석','수집 · 종목 판단 · 모의 매수·매도 · 모의성과 / 실주문 없음','m40'):'')+'</div>')+'</div></div>'}
+function choices(key){return '<div class="fixture-controls"><label for="state-'+key+'">데모 상태</label><select id="state-'+key+'" data-state="'+key+'">'+Object.entries({current:'현재 예시',empty:'빈 상태',loading:'로딩',error:'조회 오류',restricted:'접근 제한'}).map(([v,t])=>'<option value="'+v+'" '+(states[key]===v?'selected':'')+'>'+t+'</option>').join('')+'</select></div>'}
+function bodyFor(key){if(states[key]!=='current'){const text={empty:['아직 기록이 없습니다','분석 대상이나 기록이 없는 상태입니다. 결과·수익률을 0으로 간주하지 않습니다.'],loading:['불러오는 중…','응답을 기다리고 있습니다. 수집 또는 분석을 새로 실행하지 않습니다.'],error:['조회하지 못했습니다','마지막 성공 값도 확인되지 않았습니다. 결과는 미확인입니다.'],restricted:['조회 권한이 없습니다','접근이 허용된 계정에서 다시 확인해 주세요. 데이터는 표시하지 않습니다.']}[states[key]];return '<div class="empty" '+(states[key]==='loading'?'role="status" aria-busy="true"':states[key]==='error'?'role="alert"':'')+'><b>'+text[0]+'</b><br>'+text[1]+(states[key]==='error'?'<br><button class="retry" data-retry="'+key+'">다시 조회</button>':'')+'</div>'}
+if(key==='collection')return '<div class="rows">'+row('수집 일부 확인 · 합성 8종목','참조 8 · 평가 적격 6 · 제외 2','◐')+row('일봉 수집','6종목 완료 · 2종목 필요한 이력 부족','▤')+row('원문 공개·수신 시각','공개 시각 미확인 · 수신 시각 미확인','◌')+row('가격 세션 (ET)','가상 11-04 세션','·')+row('마지막 저장 분석 기준 시각','가상 11-05 08:00 KST · 수집 완료 시각과 별개','·')+'</div><p class="hint">M40은 제한된 후보군의 모의분석입니다. 전체 시장 분석·실매매 적격 판정이 아닙니다.</p><button class="retry" style="margin:0 16px 12px" data-refresh>새로고침</button>';
+if(key==='judgments')return '<div class="filters"><label>종목 <input id="symbol-filter" placeholder="가상 알파 / DEMO-A" aria-label="모의 종목 이름 또는 코드"></label><label>판단 <select id="action-filter"><option value="all">전체</option><option value="selected">선정</option><option value="excluded">미선정·제외</option></select></label></div><p class="hint">M40 기본 규칙 · 판단 에이전트 모델 미호출 (예시)<br>8종목 중 대표 5종목을 보여주는 합성 예시입니다. 모멘텀·순위·선정 여부와 매매 판단은 별개입니다.</p><div id="judgment-list">'+judgmentRows(sample)+'</div>';
+if(key==='signals')return '<p class="readonly-note">아래는 초기 리허설의 가상 기록입니다. 실제 매수·매도 주문은 없습니다.</p><table class="mt"><caption>편도 비용 0.25% 가정 · 실제 체결·수익을 보장하지 않습니다.</caption><thead><tr><th scope="col">종목</th><th scope="col">모의 판단</th><th scope="col">상태</th></tr></thead><tbody><tr><th scope="row">DEMO-A</th><td>모의 매수</td><td>리허설 기록 · 미체결</td></tr><tr><th scope="row">DEMO-C</th><td>모의 매도</td><td>리허설 기록 · 미체결</td></tr></tbody></table><div class="lines"><div class="ln"><span class="k">매수 이유</span><span class="d">모멘텀 양수 · 상위 후보 선정</span></div><div class="ln"><span class="k">매도 이유</span><span class="d">리허설 모의 보유분 · 모멘텀 음수<span class="m">실제 보유 종목·실제 매도와 무관</span></span></div></div>';
+return '<div class="rows">'+row('전진 모의투자 · 아직 시작 기록 없음','전진 세션 0 · 성과 관측점이 0~1개이면 수익률·CAGR·MDD는 아직 없습니다. 초기 리허설을 전진성과에 합치지 않습니다.','◌')+'</div><div class="metric-list">'+['수익률','연환산 수익률 (CAGR)','최대 낙폭 (MDD)','전진 실현손익'].map(t=>'<div class="tile dim"><span class="lb">'+t+'</span><span class="v">'+(t==='전진 실현손익'?'분리 계산 미지원':'아직 없음')+'</span></div>').join('')+'</div><details style="padding:0 16px"><summary>초기 리허설 결과 보기 · 성과 검증 아님</summary><p class="hint" style="padding:0">합성 시작 모의자산 <b class="num">USD 12,000</b><br>마지막 리허설 평가액 <b class="num">USD 12,096</b><br>합성 리허설 수익률 <span class="up num">+0.8%</span> · 가상 비용 차감 후 예시. 초기 데이터로 흐름을 점검한 값이며 전진성과·실제 수익이 아닙니다.</p></details><p class="hint">비용 가정: 매수 0.25% + 매도 0.25% (편도). 실계좌를 변경하지 않습니다. 합성 예시는 실제 복사계좌 값과 무관합니다.</p>';
+}
+function judgmentRows(rows){return rows.length?rows.map(s=>'<article class="judgment"><div class="judgment-head"><b>'+s.name+'</b><span class="st '+(s.selected?'partial':'unknown')+'">'+(s.selected?'선정':'미선정·제외')+'</span></div><p>'+s.symbol+' · 모멘텀 '+s.momentum+' · 순위 '+s.rank+'</p><p><b>매매 판단: '+s.action+'</b></p><p>'+s.reason+'</p><details><summary>판단 상세 보기</summary><p>초기 리허설 · 합성 예시 · 선정 여부는 모의 매수 명령이 아닙니다.<br>최종 공개/수신 시각: 미확인</p></details></article>').join(''):'<p class="empty">조건에 맞는 합성 예시 종목이 없습니다.</p>'}
+function m40(){return '<div class="detail-head"><button data-back aria-label="오늘 분석 목록으로">‹ 오늘 분석</button><h1 tabindex="-1" id="detail-title">M40 모의분석</h1></div><div class="m40-body"><p class="m40-summary"><span class="st partial">모의 전용</span> <span class="st unknown">초기 리허설</span><br>실주문 없음 · 제한 후보군 · 전진성과와 분리<br><span style="color:var(--muted)">이 화면의 종목·수치·시각은 모두 합성 예시입니다.</span></p><nav class="m40-nav" aria-label="M40 상세 영역">'+Object.entries(labels).map(([key,t],i)=>'<button data-jump="'+key+'" aria-pressed="'+(i===0)+'">'+t+'</button>').join('')+'</nav><div class="m40-grid">'+Object.entries(labels).map(([key,t])=>'<div class="m40-section" id="m40-'+key+'">'+sec('h-'+key,t,choices(key)+'<div id="body-'+key+'">'+bodyFor(key)+'</div>')+'</div>').join('')+'</div></div>'}
+function render(){document.querySelector('#current').setAttribute('aria-pressed',!proposed);document.querySelector('#proposed').setAttribute('aria-pressed',proposed);document.querySelectorAll('[data-seg]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.seg===segment));document.querySelector('#page').innerHTML=detail?m40():segment==='today'?today():'<p class="app-notice">기존 화면 구성 유지 확인용 위치입니다. M40 추가 대상은 오늘 분석 안의 상세뿐입니다.</p>'+sec('existing',segment==='verify'?'검증·성과 (기존)':'데이터 상태 (기존)','<div class="empty">이 데모에서는 기존 값은 생략했습니다. 오늘 분석으로 돌아가 M40 입구를 확인할 수 있습니다.</div>');}
+function announce(t){document.querySelector('#announcement').textContent=t}
+document.addEventListener('click',e=>{const b=e.target.closest('button,a');if(!b)return;if(b.id==='current'||b.id==='proposed'){proposed=b.id==='proposed';detail=false;segment='today';render();return}if(b.dataset.seg){segment=b.dataset.seg;detail=false;render();return}if(b.dataset.detail){e.preventDefault();if(b.dataset.detail==='m40'){detail=true;segment='today';render();document.querySelector('#detail-title').focus({preventScroll:true});window.scrollTo({top:Math.max(0,document.querySelector('.app').getBoundingClientRect().top+window.scrollY),behavior:'instant'});}else announce('기존 상세 입구입니다. M40 추가로 바뀌지 않습니다.');return}if(b.hasAttribute('data-back')){detail=false;render();document.querySelector('[data-detail=m40]')?.focus();return}if(b.dataset.jump){document.querySelectorAll('[data-jump]').forEach(t=>t.setAttribute('aria-pressed',t===b));document.querySelector('#m40-'+b.dataset.jump).scrollIntoView({behavior:'instant',block:'start'});return}if(b.dataset.retry){states[b.dataset.retry]='current';render();announce('합성 예시를 다시 표시했습니다. 운영 조회는 없습니다.');return}if(b.hasAttribute('data-refresh')){announce('합성 예시 조회 완료 · 수집이나 분석은 실행하지 않았습니다.');return}if(b.dataset.nav){e.preventDefault();if(b.dataset.nav==='분석'){segment='today';detail=false;render()}else announce('이 데모는 분석 탭의 M40 흐름만 연결합니다. 기존 '+b.dataset.nav+' 탭은 변경하지 않습니다.')}});
+document.addEventListener('change',e=>{if(e.target.dataset.state){const key=e.target.dataset.state;states[key]=e.target.value;document.querySelector('#body-'+key).innerHTML=bodyFor(key);announce(labels[key]+' · '+e.target.selectedOptions[0].text+' 표시')}});
+function filter(){const q=(document.querySelector('#symbol-filter')?.value||'').toLowerCase(),f=document.querySelector('#action-filter')?.value;document.querySelector('#judgment-list').innerHTML=judgmentRows(sample.filter(s=>(s.name.toLowerCase().includes(q)||s.symbol.toLowerCase().includes(q))&&(f==='all'||(f==='selected'?s.selected:!s.selected))))}
+function measureSticky(){const strip=document.querySelector('.strip'),subnav=document.querySelector('.subnav');const a=strip.getBoundingClientRect().height,b=subnav.getBoundingClientRect().height;subnav.style.setProperty('--strip-h',a+'px');document.documentElement.style.setProperty('--m40-sticky-h',(a+b)+'px')}window.addEventListener('resize',measureSticky);measureSticky();
+document.addEventListener('input',e=>{if(e.target.id==='symbol-filter')filter()});document.addEventListener('change',e=>{if(e.target.id==='action-filter')filter()});render();
+</script></body></html>
