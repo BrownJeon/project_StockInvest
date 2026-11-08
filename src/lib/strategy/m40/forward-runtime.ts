@@ -147,7 +147,7 @@ async function runCycle():Promise<Record<string,unknown>> {
   const confirmedExitOnly=!!checked.confirmedOnlyInput&&policy.epochSession!==null&&policy.frozenCohort!==null
    &&checked.report.asOfLatestCompleted&&!deadlineElapsed;
   const analysisInput=checked.input??checked.confirmedOnlyInput;
-  const mode=confirmedExitOnly?'forward':checked.input&&checked.report.coreEligible&&!deadlineElapsed?(checked.report.forwardEligible?'forward':'rehearsal'):'blocked';
+  const mode=confirmedExitOnly?'forward':checked.input&&checked.report.coreEligible&&policy.frozenCohort&&!deadlineElapsed?(checked.report.forwardEligible?'forward':'rehearsal'):'blocked';
   const cycleId=sha(JSON.stringify([PAPER_ACCOUNT_ID,asOf,mode]));
   let result:Awaited<ReturnType<typeof runM40Analysis>>|null=null;
   if(analysisInput){

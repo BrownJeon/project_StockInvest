@@ -15,7 +15,7 @@ execution_context:
   current_tool: codex
   current_procedure: codex_scoped
   current_scope: "DRY_RUN 전용 입력 적격성·실계좌 복제 모의 장부·전용 시그널 연결 구현. 첫 적격 거래일 T0 고정과 한정 후보군 시험판 승인 반영. 실제 전진 성과는 관측 시작 후 평가"
-  last_event_id: exec-041
+  last_event_id: exec-042
 created: 2026-11-06
 updated: 2026-11-08
 ---
@@ -67,6 +67,7 @@ updated: 2026-11-08
 | exec-039 | 2026-11-08 사용자 후속 | scope approval | codex → codex / codex_scoped | 남은 T0·자료 적격성·전진 검증을 진행해 DRY_RUN 종목분석→시그널 연결. 실거래 해제 금지 | 사용자 후속 명시 지시 |
 | exec-040 | 2026-11-08 사용자 선택 | policy decisions | codex → codex / codex_scoped | 첫 적격 거래일 T0 1회 고정, 현재 실계좌를 복제한 독립 모의 장부, 한정 후보군 모의 시험판 승인 | 비동기 질문 3개 사용자 답변. 실제 보유·잔고·전략 검증 상태 변경 승인 아님 |
 | exec-041 | 2026-11-08 13:50 | implement / verify | codex → codex / codex_scoped | 독립모의장부·source자격·T0영구고정·paper시그널 구현/최종QA,운영복사+11/06리허설4개. 코드배포 후검증과미래전진표본은분리 | 사용자3개선택,독립감사,1,594tests/SQL11검사/운영영수증 |
+| exec-042 | 2026-11-08 14:03 | release / verify / fix | codex → codex / codex_scoped | c296116운영배포/인증202후실제after/23파일검산,초기부분응답재시도정체실제재현후1조건보완·SQL12검사 | 운영리허설4매도유지/T0null/DRYtrue,최종QA와배포영수증분리 |
 
 ## 목표
 
@@ -1583,6 +1584,8 @@ Codex 하위 역할 `t156_reviewer`가 구현과 시험 본문을 읽고 정적 
 Codex 독립 Reviewer t156_reviewer — 전진 모의운용 추가 범위를 정적 재검토했다. 달력 종료 범위·T0 증거·매도 선행 조건·분할 기준 보존·부분 응답의 후보군 동결·원천 재시도 지적의 수정과 paper-only 주문 차단을 확인했다. 기존 연구자료 판정 범위는 위 이력을 그대로 이어받는다. 실제 QA 및 격리 MariaDB/런타임 통합 검증은 Reviewer가 실행하지 않았고 진행 중이므로 이 결과를 선행조건으로 한다. 초기 두 종목 제외 증거는 2026-11-06 원본과 정확히 일치할 때만 유효해 해당 스냅샷을 놓치면 후보군 확정이 보류될 수 있다. 실제 체결·실거래 승인·수익성이나 전체 시스템 통과 판정은 아니다.
 
 Reviewer 추가 기록: 두 QA 수정 시험의 본문과 변경을 정적 검토했다. 루트가 synthetic 계좌·공개 원본 자료의 격리 MariaDB/런타임 통합 11개 검사를 통과했다고 전달했으며 Reviewer가 직접 실행하거나 영수증을 독립 확인한 결과는 아니다. 광범위 QA는 65 suites / 1,594 tests 통과·15 skipped로 전달됐고 tsc/build는 진행 중이다. 격리 통합 실행 조건의 루트 보고는 충족됐으나 QA 잔여 결과와 실제 배포·운영 관측은 별도로 확인한다.
+Reviewer 후속 정적 재검토: 초기 후보군 미확정이면 부분 입력의 core 준비 여부와 무관하게 blocked로 기록하므로 과거 세션의 rehearsal 완료 검사로 같은 날 재시도를 막지 않는다. 다음 시도에서 전체 입력과 후보군 확정이 가능하다. 이전 11개 격리 통합 결과는 해당 수정 전 루트 보고다. 이번 수정의 partial 초기 응답→전체 재시도를 포함한 새 격리 12개 통합 검사와 최종 QA 재실행 통과는 아직 별도 조건이며 Reviewer가 실행하지 않았다. 기존 scope와 CONDITIONAL_PASS를 유지한다.
+Reviewer 조건 갱신: 루트가 수정 후 격리 MariaDB/실제 런타임 12개 검사 전체 통과를 보고했다. 부분 초기 응답의 blocked·종이 시그널 0·후보군 미확정에서 같은 날 전체 응답의 rehearsal·123종목 동결로 복구되는 사례가 포함된다. QA는 수정본 23개 SHA 9157803c5cd774db8c09fe22c9010cf334c0610cc47526eb6c327e962af86aae 기준 65 suites / 1,594 tests 통과, 15 skipped, tsc/build 성공을 보고했다. 위 통합·QA 조건은 전달된 실행 결과 기준 충족이며 Reviewer가 직접 실행하거나 원격 영수증을 독립 확인한 것은 아니다. 기존 CONDITIONAL_PASS scope와 운영 배포·실거래·수익성은 별개라는 제한을 유지한다.
 최종 판정: CONDITIONAL_PASS (scope: src/lib/strategy/m40/types.ts, src/lib/strategy/m40/core.ts, src/lib/strategy/m40/load-input.ts, src/lib/strategy/m40/archive-reader.ts, src/lib/strategy/m40/runner.ts, src/lib/strategy/m40/advisory.ts, src/lib/strategy/m40/observer.ts, src/lib/analysis-data/types.ts, src/lib/analysis-data/store.ts, src/lib/analysis-data/capture-operating-data.ts, src/app/api/cron/m40-analysis/route.ts, src/app/api/cron/post-market-analysis/route.ts, src/app/api/research/t156/route.ts, src/lib/profit-engine/daily-bars-store.ts, scripts/t156/archive-lib.mjs, scripts/t156/archive-operator.mjs, scripts/t156/transform-dump.mjs, scripts/t156/source-manifest.py, scripts/migrations/T-156-analysis-archive.sql, src/lib/strategy/m40/__tests__/advisory.test.ts, src/lib/strategy/m40/__tests__/core.test.ts, src/lib/strategy/m40/__tests__/load-input.test.ts, src/lib/strategy/m40/__tests__/observer.test.ts, src/lib/strategy/m40/__tests__/routes.test.ts, src/lib/strategy/m40/__tests__/runner.test.ts, src/lib/analysis-data/__tests__/capture-operating-data.test.ts, src/lib/analysis-data/__tests__/store.test.ts, src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts, src/lib/profit-engine/__tests__/daily-bars-collector.test.ts, scripts/t156/archive-lib.test.mjs, scripts/t156/verify-restore.py, scripts/t156/archive-import.mjs, scripts/t156/archive-import.test.mjs, src/lib/strategy/m40/__tests__/archive-reader.test.ts, src/lib/strategy/m40/load-evidence.ts, src/lib/strategy/m40/operating-evidence.ts, src/lib/strategy/m40/__tests__/load-evidence.test.ts, src/lib/strategy/m40/__tests__/operating-evidence.test.ts, src/lib/strategy/m40/forward-types.ts, src/lib/strategy/m40/forward-input.ts, src/lib/strategy/m40/forward-calendar.ts, src/lib/strategy/m40/forward-sources.ts, src/lib/strategy/m40/forward-store.ts, src/lib/strategy/m40/forward-runtime.ts, src/lib/strategy/m40/paper-ledger.ts, src/lib/strategy/m40/__tests__/forward-input.test.ts, src/lib/strategy/m40/__tests__/forward-calendar.test.ts, src/lib/strategy/m40/__tests__/forward-sources.test.ts, src/lib/strategy/m40/__tests__/forward-store.test.ts, src/lib/strategy/m40/__tests__/forward-route.test.ts, src/lib/strategy/m40/__tests__/paper-ledger.test.ts, src/app/api/cron/m40-forward/route.ts, src/lib/safety/dry-run.ts, src/lib/safety/__tests__/m40-paper-order-fence.test.ts, src/lib/exchanges/types.ts, scripts/cron-runner.sh, scripts/test-cron-runner-m40-forward.sh, scripts/migrations/T-156-forward-paper.sql, src/lib/safety/__tests__/order-limits.test.ts)
 ## QA
 
@@ -1597,6 +1600,8 @@ Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했�
 DRY_RUN 연결 최종 QA: 지정65 suites/1,594 PASS,기존별도DB경합1 suite/15 SKIP,exit0. 신규집중168건과opt-in 실제MariaDB저장소14건은이총계에포함한다. tsc/build각exit0,변경src/scripts집합SHA22d319a0b5535b1528d46f1ec92d3ec2f9b58bfe279b0bb717abf48edf4db0c9일치. cron블록시간창/2회/15분/날짜리셋PASS. 첫전체시도는기존2시험mock누락으로빈계정localhost인증거부+late로그exit1이었고통과로세지않았다. 모킹보완독립검토후닫힌genericDB포트로전체재실행했다.
 
 루트의 실제격리MariaDB검증11건: 실제공개250판본→정본builder/core/runtime/store로123종목리허설6시그널,초기화1회복사·경합임대1개·중복차단·리허설비체결·불관련이력결측시확정편출1개만·실제DB기록시각·보유분할기준누락보류/원장불변·계좌정지·DRY_RUN필수·네트워크0. 합성계좌만사용했고운영자료/계좌성공으로확대하지않는다. 별도운영실행은F14영수증을본다.
+
+초기 재시도 후속의 최종 QA: 같은 지정65 suites/1,594 PASS/15 SKIP/exit0·tsc/build0. 소스23집합SHA9157803c5cd774db8c09fe22c9010cf334c0610cc47526eb6c327e962af86aae,직전검증본과forward-runtime.ts1조건만다르다. 실제SQL통합은partial초기보류→같은날full자료재시도회복을추가해12검사PASS. 최종증거묶음23,494bytes/SHA b367bc6fe0a33987729dde25d9f80498cd8fc24ada1433838e353658eae269e0,기존두원본묶음은덮어쓰지않았다. 별도cron블록은코드불변인직전실행증거이며이번에재실행했다고기록하지않는다.
 
 ## 배포 기록
 
@@ -1616,3 +1621,6 @@ DRY_RUN 연결 최종 QA: 지정65 suites/1,594 PASS,기존별도DB경합1 suite
 
 
 F14 실행 결과: 운영전용3표 생성, 공개입력18,097,630bytes(SHA65d66b...902903) 압축저장/복원동일, 실계좌snapshot5667의미국보유4개+USD순예수금1회복사(원본·기존설정불변). 2026-11-08 13:46:17KST등록후11/06자료는리허설1회/시그널4개로만저장,체결0/전진0/T0null. 초기운영복사검산의JSON키정렬오탐은canonical비교로수정/재검산했으며 재복사나원본수정없음. 새판본수집/장부보호/주문영구차단/복구및전진최소기준은 `docs/implementation/2026-11-08-t156-forward-paper-pilot.md` 참조. 배포후실제API/after확인은다음영수증으로구분한다.
+
+
+F14 최종 보완: c296116배포(RELEASE_RESULTok/END0,20261108-135514-c2961167)에서 실제인증cron202와응답후already_observed기록을확인했다.23파일SHA일치·web/cron각1·health200green/DRYtrue/killfalse,운영리허설은모의매도4개·실제체결0·전진0을유지했다. 이어 초기cohort미확정인partial응답이rehearsal로기록되어재시도를막는경로를 실제격리SQL로재현했다(기존운영cohort123에는영향없음). mode조건에frozenCohort필수를추가하고partial blocked/0signals→full동일일재시도회복을검사했다. 수정후SQL12개검사PASS이며지정QA최종재실행은기존수치와합산하지않는다. 최종소스23집합SHA9157803c5cd774db8c09fe22c9010cf334c0610cc47526eb6c327e962af86aae. 추가증거묶음/최종배포영수증은DB테스트이력의forward-final-validation-evidence-20261108.tar.gz/forward-final-release-audit.json으로보존한다. 미래성과·전체대상·LLM실호출/거래변경검증은미완료로유지한다.
