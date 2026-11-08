@@ -6,6 +6,15 @@ tags:
 ---
 # 현재 상태
 
+## 2026-11-08 10:00 — 공유 NFS 트리를 원격 `main` 과 맞춤
+
+- 사용자 지시로 공유 트리(`/Volumes/homes/brownjeon/project/StockInvest` = 서버 `/home/brownjeon/NFS/homes/brownjeon/project/StockInvest`)를 **`8248226`(origin/main)** 로 맞췄다. 12커밋 뒤처져 있었고, 코드 **6,532줄**이 이 트리에만 없었다(예: `src/lib/strategy/adaptive-buy-sizing.ts` 146줄·`src/lib/chat/ownership.ts` 37줄). 이제 0커밋 차이.
+- **Mac(SMB)에서는 reset 이 실패한다**: `public/mockups` 심볼릭 링크를 만들 수 없어(`Permission denied`) 107파일을 갱신한 뒤 `fatal: 인덱스 파일을 리셋할 수 없습니다` 로 멈췄다. 같은 저장소를 **서버에서** reset 해 완료했다(서버는 NFS 에 심볼릭 링크를 만들 수 있다). 앞으로 이 트리의 reset·checkout 은 서버에서 한다.
+- 백업(되돌리기 자료): `/Volumes/homes/brownjeon/backup/stockinvest-shared-tree/2026-11-08-0940/` — `dirty-and-untracked.tar.gz`(177파일) · `agents-skills.tar.gz`(이름이 한글이라 첫 tar 가 빠뜨린 3경로) · `paths-utf8.txt`(대상 112경로).
+- **보존한 것**: 원격에 없는 로컬 편집 8파일은 reset 뒤 되돌려 **미커밋 그대로** 뒀다 — `CLAUDE.md`(+30)·`AGENTS.md`(+43/−1)·`.claude/agents/leader.md`(+14/−2)·`.codex/agents/leader.toml`(+32/−3)·`.codex/hooks.json`(+67/−56)·`.agents/skills/신규도입/SKILL.md`(+1/−1)·`docs/design/2026-10-24-integrated-execution-procedure.md`(+2)·`src/lib/profit-engine/daily-bars-store.ts`(+7/−2, T-156 진행 중). 원격이 `f47cf28` 이후 이 8파일을 건드린 적이 없어 병합 충돌은 없었다.
+- 원격에 없는 **미추적 파일 91개**(T-156 `docs/research-data/`·`src/lib/strategy/m40/`·`packages/chat-ui/`·`scripts/t156/`·`.codex-attachments/` 등)는 `reset --hard` 가 건드리지 않아 그대로다. `git clean` 은 쓰지 않았다.
+- ⚠ **Mac 에서는 `git status` 가 `public/mockups` 를 늘 `D`(삭제)로 보여 준다** — SMB 가 심볼릭 링크를 그대로 못 보여 주기 때문이다. 서버에서는 `-> ../mockups` 로 정상이다. **Mac 에서 이 경로를 커밋하면 운영 저장소의 심볼릭 링크가 지워진다 — 커밋하지 않는다.**
+
 ## 2026-11-08 09:20 — 비서 챗봇 실기기 확인 + 기록 일괄 커밋
 
 - 사용자가 **실기기에서 비서 메뉴의 챗봇 화면을 확인**했다(이상 보고 없음). [[T-161-draft-review-thread-ownership]]·[[T-157-assistant-tab-and-chat-errors]] 의 화면 확인 대기를 해소했다 — 항목별 결과 보고는 아니다. [[T-113-chat-ownership-authorization]] 의 「대화 13건」 건수 확인만 남는다.
