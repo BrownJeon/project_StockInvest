@@ -1,0 +1,29 @@
+{
+  "files": [
+    {
+      "name": "acceptance-after.sha256",
+      "bytes": 3640,
+      "sha256": "0a6066bd69c56887f5b0b2dfb4725c5e6f19e2ef5ad6f24d8bf9fd8ad96e4074"
+    },
+    {
+      "name": "acceptance-before.sha256",
+      "bytes": 3640,
+      "sha256": "0a6066bd69c56887f5b0b2dfb4725c5e6f19e2ef5ad6f24d8bf9fd8ad96e4074"
+    },
+    {
+      "name": "acceptance-e2e.log",
+      "bytes": 250,
+      "sha256": "e189ce4609cc0ebfaf9955e1d3a251e55d23321afcaeb865cb8ae9843ab4e95d"
+    },
+    {
+      "name": "complete-e2e-plus.ts",
+      "bytes": 11304,
+      "sha256": "273e50474d1f551e66990509bc6001190472144438bb9d72041fe0a41ce471a8"
+    },
+    {
+      "name": "receipt.json",
+      "bytes": 2085,
+      "sha256": "33c5f8de5ef180ab484f632d6f2986120f24f83ed97f761143ba189e70a19842"
+    }
+  ]
+}

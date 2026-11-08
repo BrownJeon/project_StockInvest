@@ -86,3 +86,9 @@
 기존 관리자 프로필을 NAS·서버 설정에서 확인할 수 없어 사용자가 직접 로그인한 기존 HTTPS phpMyAdmin 관리자 세션을 사용했다. 기존 4표에 continuation CREATE TABLE만 더한 뒤, 검토 SQL의 보호 트리거 8개를 원문 그대로 적용했다. 앱 계정의 읽기 전용 정의 검증은 8/8 통과했고 신규 5표는 아직 0행이다. 기존 모의계좌/회차/시그널/안전 해시가 적용 전과 모두 동일하며 log_bin=1, log_bin_trust_function_creators=0, binlog_format=ROW 및 앱 계정 권한 해시도 유지됐다. 원본/전역 설정/권한 변경과 인증서 경고 우회는 없었다.
 
 최신33파일은 독립 검토·QA 기준 해시 그대로다. 실제 증거는 `admin-discovery.json`, `admin-postflight.json`이다. 최초 후검증에서 원래 bigNumberStrings 및 정렬 grant 문자열 인코딩을 생략해 해시 불일치가 발생했고, 원래 인코딩을 재현한 비교에서 전부 일치했다. 개인 계좌 값이나 grant 원문/인증 정보를 로그로 출력하지 않았다. 이전 중단·로컬보존 절의 대기는 이 F30으로 대체되며 다음은 단일 정상 웹 배포와 실자료 첫 발행이다.
+
+## 최종 QA 보완 완료 — F31 / 2026-11-09 00:25 KST
+
+최초 조건부 QA의 미검증 4경로를 추가 격리 MariaDB에서 확인해 QA가 연구예측 생성·원장·평가·소유자 조회에 `PASS`, 확인 결함0을 기록했다. 실제 lease→빈 intent settle/mark→commit/sidecar를5일 연속 실행한 뒤 만기 evaluator→completed append→소유자 비교까지 통과했다. 실SQL23원본의3페이지3건·year 원본선택 유지, sidecar INSERT 오류에도 기존commit 보존, witness 뒤 경쟁증거 삽입 시 평가거부를 확인했다. 최신33파일 SHA 전후 동일, 합성DB/전용컨테이너 정리완료. 영수증 `qa-realdb-completion/receipt.json` SHA33c5f8de…19842, 기존 conditional 기록은 이력으로 보존한다.
+
+5일은 거래 없는 합성계좌이고23건은 실제 엔진1건+합성복사22건이며 오류·경합은 제어해 주입했다. 실제 운영 만기성과·실매매·확률보정·수익성 통과를 뜻하지 않는다. 이전 검증 한계 중 이4경로 미실행은 해소됐지만 이 방법상의 한계는 유지한다. 운영 배포 전 00:24 KST 읽기 확인은 기존39릴리스·health200/DBtrue·DRYtrue/killfalse·단일web/cron online/restarts0·정확8trigger·기존모의/안전/전역/앱권한불변이며 실제비공개API `/api/research/t156/paper` 익명401이다. 배포 전후 안전환경은 같은선택/인코딩의 새 predeployment 지문으로 비교한다.

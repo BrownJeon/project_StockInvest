@@ -4,11 +4,12 @@ tags:
 ---
 # 칸반 보드
 
-## T-156 보호 트리거 적용·운영 후검증 완료 — F30/exec-073
+## T-156 보호 트리거·최종 QA 완료 / 단일 웹 배포 준비 — F31/exec-074
 
 - 2026-11-09 00:17 KST: 사용자 직접 인증한 HTTPS phpMyAdmin root@localhost 세션에서 검토 SQL의 불변 트리거 8개를 적용했다. 앱 계정 read-only 후검증에서 정확한 8개 정의·신규 5표(아직 전부 0행)·기존 모의계좌/회차/시그널/안전 지문 불변을 확인했다. 전역 log_bin=1/trust_creators=0/ROW와 앱 권한 해시도 동일하다. 비밀번호 복사·전역 보안 완화·앱 권한 확대는 없었다.
 - Mac/Ubuntu/NAS 기존 설정에서 사용할 관리자 프로필을 찾지 못해 기존 NAS 관리 UI의 사용자 인증을 이용했다. HTTP/HTTPS 쿠키 차이로 앞선 인증이 유지되지 않았고, 최종 HTTPS 세션의 관리자/DB를 직접 확인한 뒤 적용했다. 별도 접속 정보 질문은 더 이상 대기가 아니다.
 - 현재 소스 HEAD2411627, origin/main/운영39b2f749이며 새 예측/새 배포는 아직 0이다. 최신 33파일 SHA가 독립 검토·최종 QA 기준과 동일하다. 이어서 소유 문서/증거만 정상 통합 → main 단일 push/webhook 배포 → 실자료 1run/4기간 발행·중복 방지·읽기/안전 후검증을 진행한다. 같은 승인을 다시 묻지 않는다.
+- 추가 격리 실DB5일 actual commit→만기평가·23행페이지·sidecar오류격리·증거경합거부 통과로 QA최종 PASS/확인결함0. 최신33SHA불변. no-trade/합성복사/제어오류·경합이라는 방법한계는보존. qa-realdb-completion/receipt.json 참조.
 - 증거 admin-discovery.json/admin-postflight.json, 상세 forecast-engine.md·task F30. 실거래 OFF를 유지한다. 실제 미래성과/확률 보정·전진84일/100왕복/20개입일·전체 역사자료 공백은 남아 있다. recovery stash와 테스트 이력 DB 아카이브를 보존한다.
 
 

@@ -1,0 +1,41 @@
+{
+  "verdict": "PASS",
+  "confirmedDefects": 0,
+  "scope": "paper-only research forecast generation, immutable ledger, evaluation and owner read; no real trading",
+  "reviewedManifestSha256": "bbd381f4195717b2d1a884a9893334f2064211a705af36955ff9acd4fd98013b",
+  "reviewedFiles": 33,
+  "releaseHead": "7c54a2f1b601baf1d19a29d1dc1b5d1702663847",
+  "sourceBeforeAfterMatch": true,
+  "source33Sha256": "0a6066bd69c56887f5b0b2dfb4725c5e6f19e2ef5ad6f24d8bf9fd8ad96e4074",
+  "newRealMariaDbChecks": {
+    "status": "PASS",
+    "realLeaseSettleMarkCommitSidecar5": true,
+    "maturedEvaluatorCompleted": true,
+    "ownerComparisonCompleted": true,
+    "witnessRaceRejected": true,
+    "sidecarFailureCommitPreserved": true,
+    "actualDb23Page3": 3,
+    "selectedOriginalYear": true,
+    "evaluated": 1
+  },
+  "methodDetails": {
+    "fiveDay": "Synthetic no-trade data; five actual acquire, empty-intent settle, mark, commit and sidecar; session clock fixed for maturity; actual evaluator and owner comparison",
+    "paging": "22 synthetic copied records plus one engine-generated record; actual SQL page 3 and year selection",
+    "sidecarFailure": "synthetic SQL error injected at sidecar INSERT after actual commit; paper revision and cycle persist",
+    "witnessRace": "actual SQL witness captured, synthetic competing evidence inserted before append; append rejected"
+  },
+  "earlierEvidence": [
+    "../qa/receipt.json",
+    "../final-ui-followup/receipt.json",
+    "../visual/cua-verification.json"
+  ],
+  "limitations": [
+    "No production completed evaluation or real orders verified",
+    "Five-day E2E uses empty intents, not five days of actual buy and sell executions",
+    "Concurrent evidence test uses controlled interleaving, not a production race",
+    "Forecast calibration and profitability are not established",
+    "User GET is read-only; forecast jobs write the research ledger"
+  ],
+  "cleanup": "Synthetic databases dropped; dedicated network-none container stopped and removed; private fixture retained separately",
+  "timeKST": "2026-11-09T00:25:01.625750+09:00"
+}

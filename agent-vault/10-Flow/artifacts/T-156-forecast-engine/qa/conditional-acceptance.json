@@ -1,0 +1,24 @@
+{
+  "verdict": "CONDITIONAL_PASS",
+  "scope": "paper-account research forecast generation, immutable forecast ledger and owner-only retrieval",
+  "limitations": [
+    "Five-day actual forward commit and settle to completed evaluation not tested end to end on real MariaDB",
+    "23-record real MariaDB pagination not tested after QA fixture SQL error",
+    "Sidecar failure and evidence contention not tested against real MariaDB",
+    "No production actual completed evaluation or real order verified",
+    "Forecast calibration, profitability and live trading suitability not established"
+  ],
+  "evidence": [
+    "qa/receipt.json: 467 tests, synthetic MariaDB publication and one real commit-generated sidecar",
+    "final-ui-followup/receipt.json: 79 focused tests, tsc and build after two display changes; 31 files unchanged",
+    "visual/cua-verification.json: root browser assessment separately"
+  ],
+  "notes": [
+    "Forecast generation and evaluation write the research ledger and may run on a schedule; GET is read-only",
+    "No confirmed defect blocking this scoped deployment found",
+    "This is a conditional scoped acceptance, not an assertion that every path passed"
+  ],
+  "reviewedManifestSha256": "bbd381f4195717b2d1a884a9893334f2064211a705af36955ff9acd4fd98013b",
+  "reviewedFiles": 33,
+  "checkedAtKST": "2026-11-09T00:20:10.308482+09:00"
+}

@@ -1937,3 +1937,10 @@ F29 로컬보존 후속(exec072): 격리Ubuntu재사용clone에서정상Reviewer
 신규 continuation 표만 앱 기존 권한으로 먼저 생성한 뒤, 검토 SQL SHA163ce1df…753b에서 원문 그대로 추출한 CREATE TRIGGER IF NOT EXISTS 8개를 관리자 화면으로 적용했다. 2026-11-09 00:17 KST 앱 read-only postflight에서 정확한 단일 SIGNAL 정의 8/8·5표0행, 기존 모의계좌1/회차1/시그널4 및 안전 지문 불변을 확인했다. log_bin1/trust_creators0/ROW와 앱 권한 해시50e0b333…9952도 동일하다. 최초 후검증의 해시 불일치는 원래 mysql bigNumberStrings 옵션과 정렬된 grant 문자열 인코딩을 복원하자 전부 일치했으며, 실제 revision/book/policy도 비공개 QA fixture와 동일했다. 권한·원본 변경으로 간주하지 않는다. canonical 근거 admin-discovery.json/admin-postflight.json, 보호 적용 화면은 별도 저장했다.
 
 기존 F29의 4표/트리거 없음/관리자 경로 대기는 당시 이력이며 현재는 해소됐다. 최신 검토 33파일 해시 불변, 소스2411627은 미게시이고 origin/main/운영은39b2f749다. 이어서 정상 감사 hook 문서통합·단일 push/webhook·실자료 첫 4기간 발행/중복 방지·보안/원본 불변을 확인한다. 새 운영 발행/배포 성공은 그 실제 영수증 후 별도 기록한다. 전체 T156 doing과 미래성과/확률 보정/전진 최소표본·자료 공백 한계는 유지한다.
+
+
+### F31 남은 격리 실DB 시험 완료·QA 배포 게이트 충족
+
+2026-11-09 00:25 KST 독립 QA가 초기 CONDITIONAL 판정 뒤 미검증4경로를 실제 network-none 합성 MariaDB에서 보완했고 연구예측 생성·불변원장·평가·소유자 조회에 최종 `PASS`, 확인결함0을 기록했다. 실제lease/빈intent settle/mark/commit/sidecar5일→만기 evaluator→completed append→owner 비교, SQL23건 3페이지3건/year 원본 유지, sidecar INSERT 오류 뒤 기존papercommit 보존, 실제DB 제어된 증거interleaving의 append거부를 통과했다. 최신33파일 전후SHA동일, 영수증 qa-realdb-completion/receipt.json SHA33c5f8de5ef180ab484f632d6f2986120f24f83ed97f761143ba189e70a19842. 이전조건부기록은대체된이력으로보존한다. 5일no-trade·23건실엔진1+합성복제22·오류/경합주입이라는방법한계와 실제운영만기성과·수익성미검증을 명시한다.
+
+Deployer가 정본 dry-run exit0 및 리터럴 QA PASS gate 충족을 확인했다. Root는기존origin/main39에소유T156구현241/문서7c만추가하고최종통합문서·QA증거를명시커밋한뒤단일push/webhook으로배포한다. 별도 --yes로중복배포하지않는다. 현재다른maincheckout54dirty는대상밖으로보존한다. 운영preflight는정확8trigger/5표0행·원모의/안전/전역/앱권한불변·health200/DRYtrue/killfalse/webcron각1온라인·실제privateAPI익명401이다. 결과SHA/릴리스/실예측4기간은실발행후별도영수증을기록한다.
