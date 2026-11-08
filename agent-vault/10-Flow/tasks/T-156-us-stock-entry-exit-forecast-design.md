@@ -2,7 +2,7 @@
 task_id: T-156
 title: 미국 종목분석의 매수·매도 시점 개선안 조사
 status: doing
-waiting: ["승인v6 조회 화면 웹 배포·운영 확인", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
+waiting: ["사용자 승인된 부팅·DB 초기화 진단 구현/독립검토/격리 QA 뒤 운영 확인", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
 priority: medium
 base_ref: 8984f69ddd5581c45c919193a535f5b1b359765d
 roles_involved: [leader, developer, reviewer, qa]
@@ -14,8 +14,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "승인v6 조회UI 구현·독립검토/디자인수용·388검사/타입/build·합성SQL/CUA완료. 사용자지금웹배포승인에따른운영반영준비, 실예측엔진/DBDDL·실거래변경없음"
-  last_event_id: exec-064
+  current_scope: "승인v6 조회UI 구현·독립검토/디자인수용·388검사/타입/build·합성SQL/CUA완료. v6구현검증388완료/main319게시후health_failed자동963복구. 사용자후속명시승인으로공통부팅/DB진단구현진행. 원인단정/무변경재배포/안전설정변경금지"
+  last_event_id: exec-067
 created: 2026-11-06
 updated: 2026-11-08
 demo_gate:
@@ -108,6 +108,9 @@ demo_gate:
 | exec-062 | 2026-11-08 | static_review_pass | codex → codex / codex_scoped | 승인v6 frontend10/backend9파일구현·독립정적리뷰PASS/미해결0·19SHA일치. 조회loop/구형DTO/privateclear/범위·정책일치/계좌시작전coverage/부분기간문구보완. Ubuntu격리Jest/tsc/build·Cua준비시작,아직실행성공아님 | product-review.json·19파일manifest·C2rules+Codex내override |
 | exec-063 | 2026-11-08 | implementation_verified | codex → codex / codex_scoped | 기간길이 보완까지 독립19파일검토·디자인수용·21 suites/388 tests/타입/build통과, 별도합성MariaDB실reader와실React CUA360/412/1280검증. UI구현완료, 운영웹배포시점확인대기. 실예측엔진/DBDDL/실거래미변경 | F24·구현보고서·period-qa/sql-smoke/visual/design receipts |
 | exec-064 | 2026-11-08 20:50 KST 이후 | deployment_authorized | codex → codex / codex_scoped | 사용자 원래native질문응답 ‘지금 웹 배포 (추천)’로 시점합의 완료. 기존388검사/리뷰된조회UI만최신main통합·정상훅커밋·게시/배포·운영읽기확인. DB/APK/실거래변경제외 | call_fe6335165d4b456594dc25fd1900490b 원래질문과사용자응답 |
+| exec-065 | 2026-11-08 21:02 KST 이후 | deployment_failed_auto_rollback | codex → codex / codex_scoped | main319caf6게시·hook484/제품19SHA일치,build성공후health120s실패로963bfeba자동복구. 복귀health200/green/DRYtrue·앱각1/restart0·안전env불변. 실패원인미확정, 공통부팅/DB진단범위검토안작성·재시도/기록push중단 | F25·deployer기록·rollback-verification.json·failure-investigation.json |
+| exec-066 | 2026-11-08 사용자 후속 승인 | diagnostic_scope_authorized | codex → codex / codex_scoped | 원본call_0a3113cce3cf42359ded296a2ad9f7e7 답변 ‘부팅 진단 보완까지 진행 (추천)’로공통부팅/DB진단범위확대. 고정단계/작업순번/경과/큐관측만, SQL·DDL/health기준/시간·매매·설정불변. R2/noUI·Sol fallback·C1false, 독립리뷰/격리QA뒤운영확인 | F26·boot-diagnostics intake/model-route/c1 및사용자원본응답 |
+| exec-067 | 2026-11-08 | diagnostic_verified | codex → codex / codex_scoped | 진단4파일/기존19독립리뷰PASS·7suites208tests/타입/build·실mysql2/MariaDB Proxy호환PASS. SQL78호출AST동일/기존388UI제품SHA불변. C2 Codex내자기호출override기록, 진단포함새게시/동시읽기전용관측준비 | F26후속·boot-diagnostics-review/boot-qa/23SHA |
 
 ## 목표
 
@@ -1633,6 +1636,8 @@ Codex 독립 Reviewer t156_reviewer 추가 정적 감사: owner 로그인·명�
 - [16:10] Codex 독립 Reviewer `approval_support_review`가 승인 v2와 M40 조회 화면·새 warning 투영 11파일을 정적 감사했다. 실제 공통 게이트 재검사에서 approved/v2·원본 SHA 일치를 직접 확인했다. M40 진입 시 제목 노출·복귀 focus와 선정됐지만 매매 의도가 없는 종목의 저장된 제약 사유 누락을 지적했고, 수정된 코드·회귀시험 본문을 재검토했다. warning은 같은 회차 종목·허용 코드만 최대150개 반환하며 원문 message·금액·임의 JSON은 제외한다. 서명 로그인·명시 viewer/users 확인 후 읽기 전용 일관 스냅샷, GET 재조회, 오류 때 비공개 DTO 제거, blocked/이전 저장분·리허설/전진·결측/0 구분을 확인했다. `git diff --check` 외 기능시험은 Reviewer가 실행하지 않았으며 Ubuntu QA·type/build·CUA·실제 로그인 화면·배포는 별도 증거다. 판정 근거: `agent-vault/10-Flow/artifacts/T-156-m40-ui-implementation-review/review-result.json`, 11파일 manifest SHA `308781e186454b1146beedadff4c9445caf549ed96ae0257094ba67d28b16ae3`. 이후 소스 변경 시 이 판정은 재검토한다.
 - [16:10] **최종 판정: PASS (scope: src/app/analytics/AnalyticsPage.tsx, src/app/analytics/TodayPanel.tsx, src/app/analytics/route-resolve.ts, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/M40PaperPanel.module.css, src/app/analytics/m40-paper-copy.ts, src/__tests__/fixtures/t156-paper-view.ts, src/__tests__/t156-paper-view-render.test.ts, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/__tests__/paper-view.test.ts)**
 - [20:44] **최종 판정: PASS (scope: src/app/analytics/AnalyticsPage.tsx, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/M40PaperPanel.module.css, src/app/analytics/m40-paper-ui.ts, src/app/analytics/m40-paper-copy.ts, src/app/analytics/TodayPanel.tsx, src/app/analytics/route-resolve.ts, src/__tests__/t156-paper-view-render.test.ts, src/__tests__/fixtures/t156-paper-view.ts, docs/screens.md, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/paper-view-query.ts, src/lib/strategy/m40/paper-view-period.ts, src/lib/strategy/m40/forward-calendar.ts, src/app/api/research/t156/paper/route.ts, src/lib/strategy/m40/__tests__/paper-view-query.test.ts, src/lib/strategy/m40/__tests__/paper-view-v6.test.ts, src/lib/strategy/m40/__tests__/paper-view-route.test.ts)**
+- [21:19] 부팅 진단 4파일을 독립 정적 검토했고 watchdog 예외 격리 수정 후 재확인했다. 기존 제품 19파일 해시 불변. 실행 검증·운영 원인 규명·재배포는 별도다. 근거 `agent-vault/10-Flow/artifacts/T-156-paper-analysis-v6-implementation/boot-diagnostics-review.json`.
+- [21:19] **최종 판정: PASS (scope: src/app/analytics/AnalyticsPage.tsx, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/M40PaperPanel.module.css, src/app/analytics/m40-paper-ui.ts, src/app/analytics/m40-paper-copy.ts, src/app/analytics/TodayPanel.tsx, src/app/analytics/route-resolve.ts, src/__tests__/t156-paper-view-render.test.ts, src/__tests__/fixtures/t156-paper-view.ts, docs/screens.md, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/paper-view-query.ts, src/lib/strategy/m40/paper-view-period.ts, src/lib/strategy/m40/forward-calendar.ts, src/app/api/research/t156/paper/route.ts, src/lib/strategy/m40/__tests__/paper-view-query.test.ts, src/lib/strategy/m40/__tests__/paper-view-v6.test.ts, src/lib/strategy/m40/__tests__/paper-view-route.test.ts, src/lib/db.ts, src/app/api/health/route.ts, src/lib/diagnostics/boot-diagnostics.ts, src/lib/diagnostics/__tests__/boot-diagnostics.test.ts)**
 ## QA
 
 Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했다. Jest 55 suites / 1,343 tests 통과, 기존 별도 MariaDB 경합 suite 1개·15 tests는 미실행으로 분리한다. 새 T-156 MariaDB 저장소 14 tests 통과(실제 InnoDB 대기 확인 경합2 포함), tsc 및 archive 4 tests 통과. DRY_RUN·킬스위치·한도·블랙리스트·감사로그·검증 관문의 모의 회귀를 포함하며 whitelist는 현재 항상허용 규칙이다.
@@ -1658,6 +1663,7 @@ DRY_RUN 연결 최종 QA: 지정65 suites/1,594 PASS,기존별도DB경합1 suite
 | 시각(KST) | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
 |---|---|---|---|---|---|
 | 2026-11-08 11:44 | 20261108-114326-9237fffb | 9237fff | T-156 M40 shadow·자료 이관/조회·판단 이력 | RELEASE_RESULT ok, END0 | 별도 승인 DDL/적재는 이미 완료, release.migrated=false. health200·DRY_RUN유지, web/cron각1. 적격 입력 미확정 M40 POST503, 비로그인 목록401 |
+| 2026-11-08 21:02 | 20261108-205843-319caf64 | 319caf645e2bdd2b0babd18a4702682e2db135fe | T-156 모의분석 v6 조회 UI | RELEASE_RESULT health_failed, END1; 자동 롤백 | 이전 릴리스 `20261108-174944-963bfeba`로 복귀. 배포 후 `--status`에서 health 실패를 관측했고, Root 사후 확인은 health200·DB정상·green·DRY_RUN=true·KILL_SWITCH=false·web/cron각1 online·재시작0. 원인은 미확정이며 v6 운영 UI 반영 성공으로 확인되지 않음. 근거: `../artifacts/T-156-paper-analysis-v6-implementation/deployment/rollback-verification.json` |
 
 이번 사용자 승인 범위의 기반 구현·DB 이관·테스트 보존과 코드 배포 확인은 완료했다. 원본28개+구현 검증 JSON+배포 검증 JSON을 별도 시험 자료로 보존한다. parent task의 doing/대기는 F09·당시 구성·가격/뉴스 자격과 전진/실매매 연결의 미완료를 뜻하며 이번 자료 이관이 진행 중이라는 뜻은 아니다.
 
@@ -1816,3 +1822,25 @@ QA는 product-review.json evidence.frontendSha256/backendSha256 합계19파일�
 구현정본 docs/implementation/2026-11-08-t156-paper-v6.md, 증거 agent-vault/10-Flow/artifacts/T-156-paper-analysis-v6-implementation/qa 및 visual. 실제예측/사후비교원장없음은4기간선택+미지원/빈값으로표시하며합성수익/손실확률을운영값으로넣지않았다. 현재정책은M40기본매매·에이전트참고전용이며거래반영미구현을표시한다. 신규DB쓰기/수집·모델·실주문·운영설정변경,commit/push/배포는하지않았다. UI승인을다시묻지않으며 .codex/agents/deployer.toml의중단시간·시점합의규정에따라운영웹배포시점만확인한다. T156전체는미래전진84일/신규왕복100건/변경20일·원천공백때문에doing이다.
 
 F24 후속: 사용자가 배포시점 질문에 ‘지금 웹 배포 (추천)’로 답해 즉시 웹반영을 승인했다. 같은승인재질문없이최신main의타작업문서보존통합·실제정상훅커밋·배포/운영검증을진행한다. DBDDL/APK/실거래변경은승인대상이아니다.
+
+
+### F25 v6 웹 배포 실패·자동 복구와 후속 범위 검토
+
+사용자 즉시 배포승인에 따라 최신main963의T162기록을보존한35파일을독립Ubuntuclone에서통합했다. 실제hook설치·484회귀/실커밋scope검사통과,commit319caf645e2bdd2b0babd18a4702682e2db135fe의제품19Gitblob SHA가QA388검사본과동일했다. push자동webhook은11:58:39UTC START,새build/webcron online뒤health검사를통과하지못해12:02:32UTC ENDexit1/RELEASE_RESULT health_failed로자동963bfeba복귀했다. 수동중복배포·재시도·health관문우회없음.
+
+실제복구검증은health200/DBtrue/safetygreen/DRY_RUNtrue/KILL_SWITCHfalse,web/cron각1 online/restart0·선택안전envhash불변이다. 실패창오류로그는공시캡처DB상한·joblog503timeout이고,API익명401은정상차단됐다. 롤백뒤직접DBping12ms·14app연결유휴는실패당시상태를입증하지않는다. performance_schema/slowlog가off여서쿼리대기이력이없고,Nginx의해당창40요청에는paper/health/analytics일치가없으나직접backend나타proxy요청은제외된다. 이정보로환경원인·새reader원인중어느쪽도확정하지않는다.
+
+독립Reviewer는pool/ensureSetup/reader의연결반환·동기해제·MDL가능성을읽기추적했고,QA는별도network-noneDB에서실제reader가users조회중ALTERusers를300ms이상대기시키나재개뒤5초내둘다완료함을재현했다. 자기참조교착/운영120초원인은확정하지못했다. 합성DB/컨테이너는정리했다. 현재운영에는v6화면이없고기존버전이다. 새예측엔진/수치·실거래변경을추가하지않았다.
+
+원본worktree를published319로ff정렬했고이전작업사본은T156이름recovery stash에보존했다. 현재main319와운영963불일치·다음push자동배포위험을ACTIVE/RESUME/board에명시하고기록만을위한push도하지않는다. 구체적인진단보완범위는 docs/implementation/2026-11-08-t156-paper-v6-deployment-followup.md. 기존v6UI/배포승인은유효하므로재질문하지않고,공통부팅/DB초기화코드까지진단보완범위를넓힐지새결정만확인한다. 검증388PASS와운영배포실패는구분한다.
+
+
+### F26 사용자 승인된 부팅·DB 초기화 진단 보완
+
+사용자가 원래질문 call_0a3113cce3cf42359ded296a2ad9f7e7에 ‘부팅 진단 보완까지 진행 (추천)’로답했다. F25의범위확인대기는해소됐고같은승인을재질문하지않는다. 새intake는R2/demo.none/assign이며Codex모델router는Sol fallback, C1rules는codex_requiredfalse/한도미확인R2정책을기록했다. source는기존main319,실제운영은963안전복구상태다.
+
+진단developer는t156_boot_diagnostics_developer(Sol),독립reviewer/QA는기존역할을재사용한다. 변경예정은db.ts/health route와새diagnostics helper·unit4파일이며UI19파일은그대로다. ensureSetup/setupDB·health대기/설정fanout에정적span,setup지역Pool query/execute에원래receiver/args/Promiseidentity를유지한별도관측을넣고ordinal/allowlistSQLclass/총경과/publicenqueue관측만기록한다. acquisition과서버SQL실행을정확히분리측정하지못하는경우그대로한계를표시한다.
+
+새로그에는SQL본문/바인딩/원문에러message/비밀/계좌·종목·금액을기록하지않는다. 30초pending1회·budget·unref/정리와관측오류격리를검토한다. 기존SQL/DDL/연결한도/재시도·health조건/제한시간/응답·주문안전·실거래설정은변경하지않는다. 실제운영DB수정/새진단API/강제실행·검사우회를추가하지않으며독립리뷰·격리비간섭QA뒤정본배포만수행한다. 아직진단코드검증/운영배포성공으로표시하지않는다.
+
+F26 검증 후속: 독립23파일(신규진단4/불변제품19)리뷰통과,watchdog clock예외지적을수정/재검토했다. QA7스위트208검사·타입/Nextbuild통과/skip0·전후sourceSHA동일,기존388제품시험의19파일불변을확인했다. 원본319와query/execute호출78개의SQL·인자표현식/순서AST가같으나실행전체SQL동등/실제coldstart로과장하지않는다. 실제mysql2/MariaDB합성smoke에서query/execute·receiver/Promiseidentity·오류후재사용·queue이벤트·close리스너복원통과,전체coldstart/운영원인미검증한계는유지한다. network-noneDB/컨테이너정리완료. C2rules는codexrequiredtrue이나AGENTS정본의Codex내자기호출금지로override codex_unavailable_in_codex,별도외부검토미실시다. 실제운영확인때부팅고정단계로그와읽기전용DB상태만동시수집하며새프로세스/기존설정/안전경계·SQL의미는변경하지않는다.

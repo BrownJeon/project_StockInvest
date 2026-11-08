@@ -1,3 +1,4 @@
+import { observeBootPromise } from '@/lib/diagnostics/boot-diagnostics';
 import { ensureSetup, getSetupFatalError, ping } from '@/lib/db';
 import { isAuthConfigured } from '@/lib/auth/session';
 import { isDryRun } from '@/lib/safety/dry-run';
@@ -23,11 +24,11 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   // 부팅 검증(signals.status ENUM 대조)이 끝난 뒤 판정해야 schemaFatal 이 첫 호출부터 보인다.
-  await ensureSetup().catch(() => { /* 실패 사유는 getSetupFatalError 로 읽는다 */ });
+  await observeBootPromise('health_setup_wait', ensureSetup()).catch(() => { /* 실패 사유는 getSetupFatalError 로 읽는다 */ });
 
   const [dbOk, signalCfg, switches, dryRun, killSwitch,
     orderMaxPct, dailyMaxPct,
-    orderMaxDom, orderMaxOvs, dailyMaxDom, dailyMaxOvs] = await Promise.all([
+    orderMaxDom, orderMaxOvs, dailyMaxDom, dailyMaxOvs] = await observeBootPromise('health_config_fanout', Promise.all([
     ping(),
     getRouterConfig(),
     getEngineSwitches(),
@@ -39,7 +40,7 @@ export async function GET() {
     getEffectiveOrderMax(undefined, 'overseas').catch(() => 0),
     getEffectiveDailyMax(undefined, 'domestic').catch(() => 0),
     getEffectiveDailyMax(undefined, 'overseas').catch(() => 0),
-  ]);
+  ]));
 
   // 한도 pct가 DB에 설정돼 있는가 (값 자체는 노출하지 않는다)
   const limitsConfigured     = isBuyLimitConfigured(orderMaxPct) && isBuyLimitConfigured(dailyMaxPct);

@@ -692,3 +692,5 @@ tags:
 - [[T-002-phase1-eval-funnel]] — **전항 완료·배포 완료(2026-08-03)**. H1~H4 핫픽스 반영·검증, final.stage 버그 수정, stage 8/9/10 계측 공백 및 createSignal 무보호 호출(안전 이슈) 발견·수정, 대시보드 깔때기 카드, trade-report 요약, 독립 reviewer 감사 통과. 커밋 b0ad876, webhook-deploy 자동배포(10:00 KST) + cron 수동 재기동 완료. `strategy_unregistered` 수정 라이브 확인됨
 
 - done — [[T-162-entry-watch-order-outcomes]]: 승인 v1 구현·독립 검증 후 사용자 추가 승인으로 T-162 전용 57600fff 운영 배포 완료(20261108-160042-57600fff, ok). 운영 조회에서 대상3건 제외·원본3/주문3/관련로그6 전체 해시 보존 확인. 2026-11-08 사용자 앱에서 기존3건 미노출 직접 확인 완료, 최종 종결. 완료 기록 f01e5b8 원격 main 반영·자동 배포 ok(17:39 KST).
+
+- **T-156 최신 운영 주의**: v6 구현검증388검사완료/main319caf6게시후health_failed 자동963bfeba복구. 현재v6미반영·DRY_RUNtrue유지. 원인미확정/부팅진단범위검토, 동일코드재배포·기록만push중단. F25와구현후속보고서확인.

@@ -1,3 +1,4 @@
+import { observeBootPromise, observeSetupPool } from '@/lib/diagnostics/boot-diagnostics';
 import mysql from 'mysql2/promise';
 import { inferAutopilotModeFromLegacy } from '@/lib/signals/autopilot';
 import { DEFAULT_ACTIVE_RULES, DEFAULT_INACTIVE_RULES } from '@/lib/strategy/rules/defaults';
@@ -96,7 +97,7 @@ function notifyCritical(title: string, body: string): void {
 
 export function ensureSetup(): Promise<void> {
   if (!setupPromise) {
-    setupPromise = setupDB().catch((e) => {
+    setupPromise = observeBootPromise('ensure_setup', setupDB()).catch((e) => {
       if (isSchemaFatalError(e)) {
         setupFatalError = e as Error;
         const msg = e instanceof Error ? e.message : String(e);
@@ -182,7 +183,9 @@ export async function runOnceMigration(
 }
 
 async function setupDB(): Promise<void> {
-  const p = pool ?? (pool = createPool());
+  const observation = observeSetupPool(pool ?? (pool = createPool()));
+  const p = observation.pool;
+  try {
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS accounts (
@@ -1554,6 +1557,7 @@ async function setupDB(): Promise<void> {
   } catch (e) {
     console.warn(`[db] T-011 소유자 계정 이관 모듈 로드 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
+  } finally { observation.close(); }
 }
 
 // ── T-009 OAuth 스키마 ───────────────────────────────────────────────────────

@@ -6,6 +6,15 @@ tags:
 ---
 # 현재 상태
 
+## T-156 부팅 진단 보완 사용자 승인 — F26/exec-066
+
+- 사용자가공통부팅/DB초기화진단보완까지명시승인했다. 아래범위결정대기는해소. developer(Sol)가로그관측만구현하고기존Reviewer/QA가비간섭/비밀보호/실SQL일치·coldstart를검증한다. SQL/DDL/health조건·시간/실거래불변. 기존main319/운영963복구상태이며새검증완료뒤진단포함정본배포를진행한다. 같은UI/배포/진단승인재질문금지. 상세F26·boot-diagnostics아티팩트.
+
+## 🔴 T-156 v6 웹 배포 실패·자동 복구 — 최신 운영 기준
+
+- 구현·검증 소스/main은319caf6, 실제운영은963bfeba(릴리스20261108-174944-963bfeba)다. 새v6 릴리스205843-319caf64는health_failed로자동복구(12:02:32UTC). web/cron각1 online/restart0·health200/dbtrue/safetygreen·DRYtrue/killfalse·안전env불변 확인. v6운영반영성공으로표시하지않는다.
+- 원인미확정:실패중DB시간상한경고있으나SQL/잠금이력없음. 원인확정전같은코드재배포/단순기록push금지(main push가자동배포). docs/implementation/2026-11-08-t156-paper-v6-deployment-followup.md 진단범위검토. 원래v6 UI/즉시배포승인은유효하며동일승인재질문금지. 현재남은선택은부팅/DB초기화진단까지후속범위를확장할지다.
+
 ## 2026-11-08 19:52 — T-156 v6 승인기록 통과·조회 UI 구현 착수
 
 - **최신F24/exec-063: 승인v6 조회 UI 구현·최종검증완료, 사용자즉시웹배포승인·반영준비.** 독립19파일검토/디자인수용, 21스위트388검사·타입/build·별도합성MariaDB/실React CUA360/412/1280통과. 기간1주/1개월·달력전체/경과일과실관측구분까지반영. sourcehash일치·증거qa/visual보존. 운영DB/실거래설정·commit/push/배포미실행. 실제예측/에이전트거래반영은미구현. 구현보고서 docs/implementation/2026-11-08-t156-paper-v6.md. C2자기Codex호출은정본override기록.
