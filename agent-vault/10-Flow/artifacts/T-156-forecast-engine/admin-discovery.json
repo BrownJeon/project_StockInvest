@@ -1,0 +1,66 @@
+{
+  "at": "2026-11-08T14:55:30.187Z",
+  "status": "tables_prepared_admin_authentication_required",
+  "reviewedDdlSha256": "163ce1df773754b5a331944be14eedcd357310ba19ae03d5f3bf5078aa67753b",
+  "createdOnlyRemainingReviewedTable": true,
+  "forecastTables": {
+    "job": 0,
+    "run": 0,
+    "horizon": 0,
+    "evaluation": 0,
+    "continuation": 0
+  },
+  "immutableTriggers": 0,
+  "originalPaperAndSafetyUnchanged": true,
+  "globalSecurityAndAppPrivilegesUnchanged": true,
+  "protections": {
+    "variables": {
+      "logBin": "1",
+      "trustCreators": "0",
+      "binlogFormat": "ROW"
+    },
+    "appGrantsSha256": "50e0b333ebafdd7f105aede82f839ccb8704c618642c99e9e065076eceed9952"
+  },
+  "before": {
+    "paperAccount": {
+      "rows": 1,
+      "sha256": "87b670007a4ca7555184c39897d8b8c4f82b820690a14133441c4d578f026ab6"
+    },
+    "paperCycles": {
+      "rows": 1,
+      "sha256": "72bcd4b02df51bfad8c3e1553fadae049cca90424c56154b4e88afc4c8188b58"
+    },
+    "paperSignals": {
+      "rows": 4,
+      "sha256": "7e3be23360e8f4f0fc96c893f0611e643ebf7c46aa59a6f491693c420cd733c4"
+    },
+    "safety": {
+      "rows": 2,
+      "sha256": "fe2b78ff56cd7cbebf41d1e756c97cfd9adf95751d72107d3dcd3e43321aad79"
+    }
+  },
+  "after": {
+    "paperAccount": {
+      "rows": 1,
+      "sha256": "87b670007a4ca7555184c39897d8b8c4f82b820690a14133441c4d578f026ab6"
+    },
+    "paperCycles": {
+      "rows": 1,
+      "sha256": "72bcd4b02df51bfad8c3e1553fadae049cca90424c56154b4e88afc4c8188b58"
+    },
+    "paperSignals": {
+      "rows": 4,
+      "sha256": "7e3be23360e8f4f0fc96c893f0611e643ebf7c46aa59a6f491693c420cd733c4"
+    },
+    "safety": {
+      "rows": 2,
+      "sha256": "fe2b78ff56cd7cbebf41d1e756c97cfd9adf95751d72107d3dcd3e43321aad79"
+    }
+  },
+  "existingDbProfilesChecked": 9,
+  "existingAdministratorProfileFound": false,
+  "nasSsh": "trusted_host_key_matched_existing_configured_authentication_denied",
+  "nasManagement": "default_synology_certificate_untrusted_in_browser; no bypass",
+  "forecastPublished": false,
+  "deployment": false
+}

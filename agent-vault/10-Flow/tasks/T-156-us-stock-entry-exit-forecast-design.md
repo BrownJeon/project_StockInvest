@@ -14,8 +14,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "실자료 예측엔진·불변원장/4기간분포·미보정확률/사후비교 구현·독립33파일검토/467검사+표시후속79·타입/build/CUA완료. 운영DDL4개빈표뒤1419권한중단;trigger0/continuation없음. DBA프로필/관리자SQL대기·실발행/새게시/배포0. 운영39/DRYtrue·기존모의/안전지문불변"
-  last_event_id: exec-071
+  current_scope: "실자료 예측엔진·불변원장/4기간분포·미보정확률/사후비교 구현·독립33파일검토/467검사+표시후속79·타입/build/CUA완료. 운영DDL4개빈표뒤1419권한중단;trigger0/continuation없음. DBA프로필/관리자SQL대기·실발행/새게시/배포0. 코드2411627로컬미게시/운영39/DRYtrue·기존모의/안전지문불변,사용자선택DBA프로필실제경로대기"
+  last_event_id: exec-072
 created: 2026-11-06
 updated: 2026-11-08
 demo_gate:
@@ -115,6 +115,7 @@ demo_gate:
 | exec-069 | 2026-11-08 사용자 후속 | real_forecast_implementation | codex → codex / codex_scoped | 실제수집기반 예측엔진/불변원장·4horizon/손익분포·손실확률/사후비교명시승인. analyst실사→v6binding가이드/숫자·원장개발/독립검증. 현재frozen123/가격vector124/297joint/B2000L10·지수1일latent가정·미보정,실거래OFF | F28·forecast-engine intake/C1/model-route·사용자원문·Analyst/UI-binding spec |
 | exec-070 | 2026-11-08 23:20 KST | forecast_validated_dba_pending | codex → codex / codex_scoped | 실제엔진/원장33파일독립검토·467+표시79(중복)·타입/build·실DB부분/CUA완료. 운영4빈표후1419·trigger0/continuation없음. DBA정보요청·보안완화/배포/실발행0·운영39/DRYtrue/원자료불변 | F29·forecast-engine/qa/final-ui-followup/visual/migration-blocker·DBA인계 |
 | exec-071 | 2026-11-08 사용자 응답 | dba_profile_selected_path_pending | codex → codex / codex_scoped | 기존 관리자 프로필 사용 선택 수신. Mac/Ubuntu 기본 인증프로필 파일 부재 확인, 비밀 내용 없이 실제 경로만 후속 질문. 전역 보안/앱권한/운영배포 불변 | F29 후속·사용자원문 |
+| exec-072 | 2026-11-08 23:35 KST | forecast_local_checkpoint | codex → codex / codex_scoped | 정상감사hook로2411627 로컬커밋,99파일일치·원본작업트리ff·회복stash보존. push0/origin-main·운영39유지. 관리자프로필실제경로대기·보호trigger0/새실예측0 | F29후속·local-checkpoint.json |
 
 ## 목표
 
@@ -1925,3 +1926,14 @@ Analyst Astra의실운영읽기전용실사와QA비공개fixture를대조했다.
 F29 테스트이력 후속: 기존t156_test_artifact/blob에55파일검증소스/합성fixture/가린증거아카이브222338byte·SHA37d4937a…48ffae5를저장하고재읽기일치확인했다. artifact-37d4937ac3fb6fcd4cf05255faef58d4. 실제계좌금액/수량/분포/privatefixture는제외했다. 이는테스트이력DB쓰기이며신규운영forecast발행이아니다.
 
 F29 사용자응답 후속(exec071): 사용자가 ‘기존 관리자 접속 프로필 지정(추천)’을선택했다. 방식은확정됐고재승인대기가아니다. 다만경로가없어Mac/Ubuntu기본.my.cnf/.mylogin.cnf와mysql/mariadb/stockinvest설정폴더의cnf파일존재만읽기확인했으며후보0이었다. 파일내용/비밀번호를요청하지않고사용할기존프로필의실제경로만async후속질문했다. 제공되면대상stockinvest/서버확인·검토SQL만적용후계속한다.
+
+F29 로컬보존 후속(exec072): 격리Ubuntu재사용clone에서정상Reviewer감사hook로99파일을2411627fd0a012e7866c2180cbc83aae8e8492cc에기록했다. 생성build로그8개는원본해시를보존하고index밖에유지,의도치않은기존task파일mode변경은미게시커밋에서바로정정했다. 로컬bundlefetch완료뒤99파일Gitblob/작업사본일치를확인하고원본worktree를소유작업한정recovery stash후ff했다. main push/웹배포/새cron/실예측0이며origin/main39와구분한다. 코드HEAD241은DBA프로필경로및8trigger/5표후검증전까지게시하지않는다. 23:34:55KST 최종읽기확인은health200/DBtrue/DRYtrue/killfalse·trigger0이다. 기존모의지문불변증거와테스트아카이브DB보관영수증은유효하다.
+
+
+### F30 기존 NAS 관리자 인증을 통한 보호 트리거 적용·후검증
+
+사용자는 관리자 프로필 경로를 모른다고 알리고 NAS·서버 기존 설정 확인, 보호 트리거 적용, 실자료 예측 발행과 웹 배포까지 직접 승인했다. 실거래 OFF·전역 보안·앱 권한 유지 조건은 계속 유효하다. HOME-SERVER_CONFIG는 읽기 전용 단독 조사만 했다. 9개 기존 앱 DB 프로필에는 관리자 권한이 없었고, NAS SSH 기존 키도 인증되지 않아 사용자 직접 인증한 기존 HTTPS phpMyAdmin(root@localhost/UNIX socket) 세션을 이용했다. 인증서 경고를 에이전트가 우회하거나 비밀번호를 복사·출력하지 않았다. HTTP/HTTPS 세션 혼동은 최종 HTTPS 세션의 root/stockinvest 확인으로 해소했다.
+
+신규 continuation 표만 앱 기존 권한으로 먼저 생성한 뒤, 검토 SQL SHA163ce1df…753b에서 원문 그대로 추출한 CREATE TRIGGER IF NOT EXISTS 8개를 관리자 화면으로 적용했다. 2026-11-09 00:17 KST 앱 read-only postflight에서 정확한 단일 SIGNAL 정의 8/8·5표0행, 기존 모의계좌1/회차1/시그널4 및 안전 지문 불변을 확인했다. log_bin1/trust_creators0/ROW와 앱 권한 해시50e0b333…9952도 동일하다. 최초 후검증의 해시 불일치는 원래 mysql bigNumberStrings 옵션과 정렬된 grant 문자열 인코딩을 복원하자 전부 일치했으며, 실제 revision/book/policy도 비공개 QA fixture와 동일했다. 권한·원본 변경으로 간주하지 않는다. canonical 근거 admin-discovery.json/admin-postflight.json, 보호 적용 화면은 별도 저장했다.
+
+기존 F29의 4표/트리거 없음/관리자 경로 대기는 당시 이력이며 현재는 해소됐다. 최신 검토 33파일 해시 불변, 소스2411627은 미게시이고 origin/main/운영은39b2f749다. 이어서 정상 감사 hook 문서통합·단일 push/webhook·실자료 첫 4기간 발행/중복 방지·보안/원본 불변을 확인한다. 새 운영 발행/배포 성공은 그 실제 영수증 후 별도 기록한다. 전체 T156 doing과 미래성과/확률 보정/전진 최소표본·자료 공백 한계는 유지한다.

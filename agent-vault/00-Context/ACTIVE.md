@@ -1,16 +1,17 @@
 ---
 project: StockInvest
-updated: 2026-11-08
+updated: 2026-11-09
 tags:
   - type/context
 ---
 # 현재 상태
 
-## T-156 예측엔진·원장 검증 완료 / 운영 DBA 프로필 실제 경로 대기 — F29/exec-071
+## T-156 보호 트리거 적용·운영 후검증 완료 — F30/exec-073
 
-- 최신33파일 Reviewer/Designer 수용·467검사+표시후속79(중복)/타입/build·부분 실DB/CUA 완료. 예측4기간·원본보존·미보정확률·사후비교 구현됨. 실자료124벡터/297수익·B2000L10 약19초. 실제 미래성과·확률보정은 미검증.
-- 운영DDL은빈4표뒤오류1419(SUPER추가요건)로중단. continuation표/불변trigger8개없음. 새예측/게시/배포0. 운영39/health200·DRYtrue/killfalse·webcron1개씩online0restart·원모의/안전지문불변. 전역신뢰완화·앱SUPER승격·무보호발행금지.
-- 사용자는기존관리자프로필사용을선택했다. 기본프로필파일은Mac/Ubuntu모두0이며사용할실제경로만추가질문중(비밀번호X). 방식/동일승인재질문아님. docs/implementation/2026-11-08-t156-forecast-dba-handoff.md의검토SQL해시/대상stockinvest확인→전체멱등적용→8trigger정의/5표후검증→정상게시/단일웹배포/첫실발행순서. 데이터/실거래삭제·초기화없음. 현재상세/한계정본은forecast-engine.md와taskF29.
+- 2026-11-09 00:17 KST: 사용자 직접 인증한 HTTPS phpMyAdmin root@localhost 세션에서 검토 SQL의 불변 트리거 8개를 적용했다. 앱 계정 read-only 후검증에서 정확한 8개 정의·신규 5표(아직 전부 0행)·기존 모의계좌/회차/시그널/안전 지문 불변을 확인했다. 전역 log_bin=1/trust_creators=0/ROW와 앱 권한 해시도 동일하다. 비밀번호 복사·전역 보안 완화·앱 권한 확대는 없었다.
+- Mac/Ubuntu/NAS 기존 설정에서 사용할 관리자 프로필을 찾지 못해 기존 NAS 관리 UI의 사용자 인증을 이용했다. HTTP/HTTPS 쿠키 차이로 앞선 인증이 유지되지 않았고, 최종 HTTPS 세션의 관리자/DB를 직접 확인한 뒤 적용했다. 별도 접속 정보 질문은 더 이상 대기가 아니다.
+- 현재 소스 HEAD2411627, origin/main/운영39b2f749이며 새 예측/새 배포는 아직 0이다. 최신 33파일 SHA가 독립 검토·최종 QA 기준과 동일하다. 이어서 소유 문서/증거만 정상 통합 → main 단일 push/webhook 배포 → 실자료 1run/4기간 발행·중복 방지·읽기/안전 후검증을 진행한다. 같은 승인을 다시 묻지 않는다.
+- 증거 admin-discovery.json/admin-postflight.json, 상세 forecast-engine.md·task F30. 실거래 OFF를 유지한다. 실제 미래성과/확률 보정·전진84일/100왕복/20개입일·전체 역사자료 공백은 남아 있다. recovery stash와 테스트 이력 DB 아카이브를 보존한다.
 
 
 ## T-156 실자료 예측엔진·불변원장 구현 중 — F28/exec-069
