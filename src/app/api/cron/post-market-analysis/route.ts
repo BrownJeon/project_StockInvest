@@ -16,7 +16,7 @@
  *
  * ?market=domestic|overseas (기본: domestic)
  */
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { checkCronAuth } from '@/lib/cron-auth';
 import { runPostMarketAnalysis } from '@/lib/strategy/post-market-engine';
 
@@ -41,6 +41,20 @@ export async function POST(req: NextRequest) {
         : result.status === 'data_unknown' || result.status === 'in_progress' ? 503
         : 502;
       return NextResponse.json({ ...result, ok: false }, { status: code });
+    }
+    // T-156 shadow/archive companion is scheduled after the response for an actual overseas analysis.
+    // Its failure never changes legacy protection, results, retry status or order settings.
+    if (market === 'overseas' && !result.skipped) {
+      let m40 = { status: 'scheduled', executionMode: 'shadow' };
+      try {
+        after(async () => {
+          try {
+            const { observeM40Daily } = await import('@/lib/strategy/m40/observer');
+            await observeM40Daily();
+          } catch { /* Companion failure cannot change the already-sent legacy response. */ }
+        });
+      } catch { m40 = { status: 'archive_unavailable', executionMode: 'shadow' }; }
+      return NextResponse.json({ ok: true, ...result, m40 });
     }
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {

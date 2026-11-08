@@ -10,8 +10,10 @@ jest.mock('@/lib/exchanges/kis-auth', () => ({
   getKisToken: () => { throw new Error('시험에서 토큰 조회 금지'); },
   kisBaseUrl: () => 'https://kis.example',
 }));
+jest.mock('@/lib/strategy/universe-overseas-static', () => ({ readOverseasUniverse: jest.fn(async () => ({ symbols: [], degraded: false })) }));
 jest.mock('@/lib/credentials', () => ({ getCredential: async () => 'x' }));
 
+import { readOverseasUniverse } from '@/lib/strategy/universe-overseas-static';
 import { __resetDailyBarsLockForTest, DEFAULT_GAP_MS, runDailyBarsCollect, type CollectDeps } from '../daily-bars-collector';
 import { KisDailyError, type FetchDailyPage } from '../daily-bars-kis';
 import { DAILY_BARS_UPSERT_SQL, upsertBars, type Queryable } from '../daily-bars-store';
@@ -31,7 +33,7 @@ function deps(db: FakeBarsDb, fetchPage: FetchDailyPage, extra: Partial<CollectD
 const strip = (rows: Row[]) => rows.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => k !== 'fetched_at')));
 const closesOf = (rows: Row[]) => Object.fromEntries(rows.map((r) => [r.trade_date, r.close]));
 
-beforeEach(() => __resetDailyBarsLockForTest());
+beforeEach(() => { __resetDailyBarsLockForTest(); (readOverseasUniverse as jest.Mock).mockResolvedValue({symbols:[],degraded:false}); });
 
 describe('테이블 미적용', () => {
   test('daily_bars 가 없으면 KIS 호출 0 으로 건너뛴다', async () => {
@@ -642,6 +644,14 @@ describe('중단 조건 — 남은 종목도 같을 실패는 그 자리에서 �
 });
 
 describe('대상·잠금·쓰기 범위', () => {
+  test('분석 후보를 시그널 생성 전부터 수집하며 보유 우선·중복을 보존', async () => {
+    const db = new FakeBarsDb(); db.positions = ['NAS:MU'];
+    db.signalCounts = [{symbol:'NAS:MU',n:2},{symbol:'NAS:INTC',n:1}];
+    (readOverseasUniverse as jest.Mock).mockResolvedValue({symbols:['NAS:MU','NAS:NVDA'],degraded:true});
+    const r = await runDailyBarsCollect(deps(db,fakeMarket({}).fetchPage),{years:1});
+    expect(r.symbols!.map(x=>x.symbol)).toEqual(['NAS:MU','NAS:NVDA','NAS:INTC']);
+    expect(r.targetErrors).toContain('universe_list');
+  });
   test('기본 대상 = 보유 먼저 → 90일 시그널(발화 수 순), 형식 밖 심볼 제외, 중복 제거', async () => {
     const db = new FakeBarsDb();
     db.positions = ['NAS:MU', '005930'];

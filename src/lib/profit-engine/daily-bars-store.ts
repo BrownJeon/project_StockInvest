@@ -11,6 +11,7 @@
 import type { RowDataPacket } from 'mysql2';
 import { isDomesticSymbol, isOverseasSymbol } from '@/lib/exchanges/kis-symbols';
 import { toKstDatetime } from '@/lib/time';
+import { readOverseasUniverse } from '@/lib/strategy/universe-overseas-static';
 import {
   CURRENCY_BY_MARKET, FLAG_ADJ_ORPHAN, FLAG_ADJ_STALE, flagsFromColumn, flagsToColumn,
   type AdjMode, type AnnotatedBar, type StoredBar,
@@ -140,7 +141,7 @@ export async function relabelOrphans(db: Queryable, market: BarMarket, symbol: s
 export interface Target {
   symbol: string;
   market: BarMarket;
-  origin: 'holding' | 'signal' | 'request';
+  origin: 'holding' | 'analysis' | 'signal' | 'request';
 }
 
 export function marketOfSymbol(symbol: string): BarMarket | null {
@@ -153,7 +154,7 @@ export const DEFAULT_SIGNAL_LOOKBACK_DAYS = 90;
 export const MAX_SIGNAL_TARGETS = 300;
 
 /**
- * 기본 대상 = 보유(position_state, 최우선) → 최근 90일 시그널 종목(발화 수 많은 순, ≤300).
+ * 기본 대상 = 보유(position_state, 최우선) → 해외 분석 목록 → 최근 90일 시그널 종목(발화 수 많은 순, ≤300).
  * 각 SELECT 가 실패해도 나머지로 계속한다(출처 이름을 errors 에 남김). 심볼 이름 외의 값은 읽지 않는다.
  */
 export async function loadDefaultTargets(db: Queryable): Promise<{ targets: Target[]; errors: string[] }> {
@@ -173,6 +174,10 @@ export async function loadDefaultTargets(db: Queryable): Promise<{ targets: Targ
   } catch {
     errors.push('position_state');
   }
+  // T-156: configured analysis candidates need history before a signal exists.
+  const universe = await readOverseasUniverse(db);
+  for (const symbol of universe.symbols) add(symbol, 'analysis');
+  if (universe.degraded) errors.push('universe_list');
   try {
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT symbol, COUNT(*) AS n FROM signals

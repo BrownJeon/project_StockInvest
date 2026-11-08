@@ -1,0 +1,1996 @@
+{
+  "task": "T-156",
+  "recorded_at_utc": "2026-11-07T23:40:18.263134+00:00",
+  "user_authorization": "implementation, transfer collected simulation data to operational database, persist test data/history; current trading safety settings not changed",
+  "stage": "Codex implementation and production data migration explicitly authorized; work in progress",
+  "executed": {
+    "production_read_only": true,
+    "application_code_changed": false,
+    "production_DDL_applied": false,
+    "production_DML_applied": false,
+    "deployed": false,
+    "test_history_imported": false,
+    "source_research_exported_this_turn": false
+  },
+  "database_clock": [
+    {
+      "db_now": "2026-11-08 08:29:27",
+      "version": "10.11.11-MariaDB-log",
+      "session_tz": "SYSTEM",
+      "max_packet": 16777216
+    }
+  ],
+  "existing_tables": [
+    {
+      "TABLE_NAME": "accounts",
+      "TABLE_ROWS": 1,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "app_auth_code",
+      "TABLE_ROWS": 2,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "app_release",
+      "TABLE_ROWS": 2,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "broker_fills",
+      "TABLE_ROWS": 4,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 114688,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "broker_fill_revisions",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "broker_fill_runs",
+      "TABLE_ROWS": 91,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "broker_position_snapshots",
+      "TABLE_ROWS": 102,
+      "DATA_LENGTH": 131072,
+      "INDEX_LENGTH": 49152,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "broker_realized_pnl",
+      "TABLE_ROWS": 2,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 65536,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "cash_flow_ledger",
+      "TABLE_ROWS": 2,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 81920,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "chat_messages",
+      "TABLE_ROWS": 29,
+      "DATA_LENGTH": 65536,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "chat_threads",
+      "TABLE_ROWS": 13,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "TABLE_ROWS": 5510,
+      "DATA_LENGTH": 2637824,
+      "INDEX_LENGTH": 1949696,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "cooldowns",
+      "TABLE_ROWS": 89,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 49152,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "TABLE_ROWS": 97139,
+      "DATA_LENGTH": 17039360,
+      "INDEX_LENGTH": 3686400,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "eval_funnel",
+      "TABLE_ROWS": 257686,
+      "DATA_LENGTH": 120766464,
+      "INDEX_LENGTH": 47333376,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "executions",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "exit_judgment",
+      "TABLE_ROWS": 1671,
+      "DATA_LENGTH": 360448,
+      "INDEX_LENGTH": 131072,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "fx_rates",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 0,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "holdings",
+      "TABLE_ROWS": 204,
+      "DATA_LENGTH": 49152,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "TABLE_ROWS": 1985,
+      "DATA_LENGTH": 278528,
+      "INDEX_LENGTH": 393216,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "judgment_candidate",
+      "TABLE_ROWS": 64,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 49152,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "judgment_run",
+      "TABLE_ROWS": 9,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "market_holidays",
+      "TABLE_ROWS": 164,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 0,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "orders",
+      "TABLE_ROWS": 3041,
+      "DATA_LENGTH": 507904,
+      "INDEX_LENGTH": 606208,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "order_sync_stale_tracking",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 0,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "overseas_universe_auto",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "overseas_universe_proposal",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 49152,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "overseas_universe_revision",
+      "TABLE_ROWS": 1,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "overseas_universe_watch",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "paper_fills",
+      "TABLE_ROWS": 874,
+      "DATA_LENGTH": 212992,
+      "INDEX_LENGTH": 163840,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "portfolio_snapshots",
+      "TABLE_ROWS": 4249,
+      "DATA_LENGTH": 3686400,
+      "INDEX_LENGTH": 114688,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "position_state",
+      "TABLE_ROWS": 5,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "TABLE_ROWS": 240,
+      "DATA_LENGTH": 1589248,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "signals",
+      "TABLE_ROWS": 18121,
+      "DATA_LENGTH": 15220736,
+      "INDEX_LENGTH": 3719168,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "stock_chart_analysis",
+      "TABLE_ROWS": 5,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 0,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "stock_favorites",
+      "TABLE_ROWS": 7,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "stock_fundamentals",
+      "TABLE_ROWS": 9,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 0,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "stock_meta",
+      "TABLE_ROWS": 14993,
+      "DATA_LENGTH": 1589248,
+      "INDEX_LENGTH": 294912,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "TABLE_ROWS": 16,
+      "DATA_LENGTH": 32768,
+      "INDEX_LENGTH": 0,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "symbol_cik_map",
+      "TABLE_ROWS": 126,
+      "DATA_LENGTH": 65536,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "symbol_universe",
+      "TABLE_ROWS": 8233,
+      "DATA_LENGTH": 3162112,
+      "INDEX_LENGTH": 638976,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "symbol_volatility",
+      "TABLE_ROWS": 166,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 0,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "system_config",
+      "TABLE_ROWS": 103,
+      "DATA_LENGTH": 32768,
+      "INDEX_LENGTH": 0,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "trade_journals",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "trade_journal_entries",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "trade_logs",
+      "TABLE_ROWS": 7139,
+      "DATA_LENGTH": 1589248,
+      "INDEX_LENGTH": 540672,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "trade_notes",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "users",
+      "TABLE_ROWS": 0,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "user_settings",
+      "TABLE_ROWS": 4,
+      "DATA_LENGTH": 16384,
+      "INDEX_LENGTH": 16384,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "TABLE_ROWS": 142,
+      "DATA_LENGTH": 65536,
+      "INDEX_LENGTH": 32768,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "TABLE_ROWS": 15675,
+      "DATA_LENGTH": 5783552,
+      "INDEX_LENGTH": 3178496,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "TABLE_ROWS": 86351,
+      "DATA_LENGTH": 15253504,
+      "INDEX_LENGTH": 20037632,
+      "ENGINE": "InnoDB"
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "TABLE_ROWS": 1208,
+      "DATA_LENGTH": 1589248,
+      "INDEX_LENGTH": 131072,
+      "ENGINE": "InnoDB"
+    }
+  ],
+  "relevant_schema": [
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "bigint(20)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "strategy_id",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "symbol",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "interval_str",
+      "COLUMN_TYPE": "varchar(8)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "period_days",
+      "COLUMN_TYPE": "int(11)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "fee_pct",
+      "COLUMN_TYPE": "decimal(5,4)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "slip_pct",
+      "COLUMN_TYPE": "decimal(5,4)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "initial_krw",
+      "COLUMN_TYPE": "bigint(20)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "status",
+      "COLUMN_TYPE": "enum('running','done','failed')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "result",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "error",
+      "COLUMN_TYPE": "text",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "started_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "backtests",
+      "COLUMN_NAME": "finished_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "raw_id",
+      "COLUMN_TYPE": "bigint(20) unsigned",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "source_kind",
+      "COLUMN_TYPE": "enum('rss','sec_filing','sec_exhibit','kis_snapshot','earnings_calendar')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "source_key",
+      "COLUMN_TYPE": "varchar(190)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "version",
+      "COLUMN_TYPE": "int(11)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "content_sha256",
+      "COLUMN_TYPE": "char(64)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "availability",
+      "COLUMN_TYPE": "enum('captured','historical_import','reconstructed')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "published_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "first_seen_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "last_seen_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "url",
+      "COLUMN_TYPE": "varchar(512)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "guid",
+      "COLUMN_TYPE": "varchar(300)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "feed_host",
+      "COLUMN_TYPE": "varchar(120)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "publisher",
+      "COLUMN_TYPE": "varchar(80)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "title",
+      "COLUMN_TYPE": "varchar(400)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "snippet",
+      "COLUMN_TYPE": "text",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "payload_ref",
+      "COLUMN_TYPE": "varchar(190)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "parser_version",
+      "COLUMN_TYPE": "varchar(24)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "COLUMN_NAME": "run_id",
+      "COLUMN_TYPE": "bigint(20) unsigned",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "market",
+      "COLUMN_TYPE": "varchar(8)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "symbol",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "trade_date",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "open",
+      "COLUMN_TYPE": "decimal(18,4)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "high",
+      "COLUMN_TYPE": "decimal(18,4)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "low",
+      "COLUMN_TYPE": "decimal(18,4)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "close",
+      "COLUMN_TYPE": "decimal(18,4)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "volume",
+      "COLUMN_TYPE": "bigint(20)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "turnover",
+      "COLUMN_TYPE": "decimal(24,2)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "currency",
+      "COLUMN_TYPE": "char(3)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "adj_mode",
+      "COLUMN_TYPE": "varchar(12)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "is_final",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "flags",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "source",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "COLUMN_NAME": "fetched_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "run_id",
+      "COLUMN_TYPE": "bigint(20) unsigned",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "job_id",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "run_kind",
+      "COLUMN_TYPE": "varchar(24)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "market",
+      "COLUMN_TYPE": "enum('domestic','overseas','common')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "target",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "scheduled_slot_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "started_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "ended_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "status",
+      "COLUMN_TYPE": "enum('ok','partial','failed','skipped','missing','degraded')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "attempt",
+      "COLUMN_TYPE": "tinyint(3) unsigned",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "http_code",
+      "COLUMN_TYPE": "smallint(5) unsigned",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "counts_json",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "error_code",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "degraded_reason",
+      "COLUMN_TYPE": "varchar(128)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "session_date_kst",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "session_date_et",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "job_run_log",
+      "COLUMN_NAME": "recorder",
+      "COLUMN_TYPE": "enum('runner_hook','route','runner_rollup','reconciler')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "bigint(20) unsigned",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "symbol",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "market",
+      "COLUMN_TYPE": "enum('domestic','overseas')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "run_date",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "data_range_from",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "data_range_to",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "event_count",
+      "COLUMN_TYPE": "int(11)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "events",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "avg_rally_pct",
+      "COLUMN_TYPE": "decimal(6,2)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "avg_days_to_rally",
+      "COLUMN_TYPE": "decimal(6,2)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "precursor_analysis",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "data_warnings",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "error",
+      "COLUMN_TYPE": "text",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "today_active_rule_ids",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "research_rally_results",
+      "COLUMN_NAME": "price_targets",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "name",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "description",
+      "COLUMN_TYPE": "varchar(255)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "tags",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "applicable_styles",
+      "COLUMN_TYPE": "set('aggressive','neutral','stable')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "enabled",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "validation_status",
+      "COLUMN_TYPE": "enum('unvalidated','backtested','paper_validated')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "validation_changed_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "validation_evidence",
+      "COLUMN_TYPE": "varchar(255)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "backtest_interval_h",
+      "COLUMN_TYPE": "float",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "last_backtest_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "next_backtest_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "backtest_running",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "last_backtest_result",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "stats_cache",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "strategies",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "bigint(20)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "symbol",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "cik",
+      "COLUMN_TYPE": "bigint(20) unsigned",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "fiscal_period",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "event_date_et",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "window_start_et",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "window_end_et",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "event_time_class",
+      "COLUMN_TYPE": "enum('BMO','AMC','unknown')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "status",
+      "COLUMN_TYPE": "enum('confirmed','estimated','manual')",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "source_kind",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "source_url",
+      "COLUMN_TYPE": "varchar(512)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "basis",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "observed_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_earnings_events",
+      "COLUMN_NAME": "superseded_by",
+      "COLUMN_TYPE": "bigint(20)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "accession",
+      "COLUMN_TYPE": "varchar(20)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "cik",
+      "COLUMN_TYPE": "bigint(20) unsigned",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "form",
+      "COLUMN_TYPE": "varchar(16)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "items",
+      "COLUMN_TYPE": "varchar(128)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "report_date",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "filed",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "accepted_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "primary_doc_url",
+      "COLUMN_TYPE": "varchar(512)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "is_earnings_release",
+      "COLUMN_TYPE": "tinyint(1)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "created_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "bigint(20)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "cik",
+      "COLUMN_TYPE": "bigint(20) unsigned",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "taxonomy",
+      "COLUMN_TYPE": "varchar(16)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "tag",
+      "COLUMN_TYPE": "varchar(160)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "unit",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "frame",
+      "COLUMN_TYPE": "varchar(12)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "period_start",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "period_end",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "val",
+      "COLUMN_TYPE": "decimal(30,6)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "fy",
+      "COLUMN_TYPE": "smallint(6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "fp",
+      "COLUMN_TYPE": "varchar(4)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "form",
+      "COLUMN_TYPE": "varchar(16)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "filed",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "accn",
+      "COLUMN_TYPE": "varchar(20)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "COLUMN_NAME": "updated_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "id",
+      "COLUMN_TYPE": "bigint(20)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "PRI"
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "symbol",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": "MUL"
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "snapshot_date",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "per",
+      "COLUMN_TYPE": "decimal(20,6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "pbr",
+      "COLUMN_TYPE": "decimal(20,6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "eps",
+      "COLUMN_TYPE": "decimal(20,6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "bps",
+      "COLUMN_TYPE": "decimal(20,6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "market_cap",
+      "COLUMN_TYPE": "decimal(28,4)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "shares",
+      "COLUMN_TYPE": "decimal(24,2)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "h52",
+      "COLUMN_TYPE": "decimal(20,6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "l52",
+      "COLUMN_TYPE": "decimal(20,6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "h52_date",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "l52_date",
+      "COLUMN_TYPE": "date",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "last_price",
+      "COLUMN_TYPE": "decimal(20,6)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "currency",
+      "COLUMN_TYPE": "varchar(8)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "sector",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "etp_type",
+      "COLUMN_TYPE": "varchar(64)",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "raw_output",
+      "COLUMN_TYPE": "longtext",
+      "IS_NULLABLE": "YES",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "source",
+      "COLUMN_TYPE": "varchar(32)",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    },
+    {
+      "TABLE_NAME": "us_fundamentals_snapshot",
+      "COLUMN_NAME": "observed_at",
+      "COLUMN_TYPE": "datetime",
+      "IS_NULLABLE": "NO",
+      "COLUMN_KEY": ""
+    }
+  ],
+  "indexes": [
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "INDEX_NAME": "idx_first_seen",
+      "COLUMN_NAME": "first_seen_at",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "INDEX_NAME": "idx_published",
+      "COLUMN_NAME": "published_at",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "INDEX_NAME": "PRIMARY",
+      "COLUMN_NAME": "raw_id",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "INDEX_NAME": "uq_item_version",
+      "COLUMN_NAME": "source_kind",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "INDEX_NAME": "uq_item_version",
+      "COLUMN_NAME": "source_key",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "ci_raw_item",
+      "INDEX_NAME": "uq_item_version",
+      "COLUMN_NAME": "version",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "INDEX_NAME": "idx_date",
+      "COLUMN_NAME": "trade_date",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "INDEX_NAME": "PRIMARY",
+      "COLUMN_NAME": "market",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "INDEX_NAME": "PRIMARY",
+      "COLUMN_NAME": "symbol",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "daily_bars",
+      "INDEX_NAME": "PRIMARY",
+      "COLUMN_NAME": "trade_date",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "INDEX_NAME": "idx_cik_filed",
+      "COLUMN_NAME": "cik",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "INDEX_NAME": "idx_cik_filed",
+      "COLUMN_NAME": "filed",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "INDEX_NAME": "idx_earnings",
+      "COLUMN_NAME": "cik",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "INDEX_NAME": "idx_earnings",
+      "COLUMN_NAME": "is_earnings_release",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "INDEX_NAME": "idx_earnings",
+      "COLUMN_NAME": "filed",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "us_filings",
+      "INDEX_NAME": "PRIMARY",
+      "COLUMN_NAME": "accession",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "INDEX_NAME": "idx_cik_end",
+      "COLUMN_NAME": "cik",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "INDEX_NAME": "idx_cik_end",
+      "COLUMN_NAME": "period_end",
+      "NON_UNIQUE": 1
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "INDEX_NAME": "PRIMARY",
+      "COLUMN_NAME": "id",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "INDEX_NAME": "uq_fact",
+      "COLUMN_NAME": "cik",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "INDEX_NAME": "uq_fact",
+      "COLUMN_NAME": "taxonomy",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "INDEX_NAME": "uq_fact",
+      "COLUMN_NAME": "tag",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "INDEX_NAME": "uq_fact",
+      "COLUMN_NAME": "unit",
+      "NON_UNIQUE": 0
+    },
+    {
+      "TABLE_NAME": "us_financial_facts",
+      "INDEX_NAME": "uq_fact",
+      "COLUMN_NAME": "frame",
+      "NON_UNIQUE": 0
+    }
+  ],
+  "current_US_bars": [
+    {
+      "market": "KR",
+      "rows_n": 32506,
+      "symbols": 44,
+      "first_date": "2023-10-25",
+      "last_date": "2026-11-06"
+    },
+    {
+      "market": "US",
+      "rows_n": 60537,
+      "symbols": 77,
+      "first_date": "2023-03-28",
+      "last_date": "2026-11-06"
+    }
+  ],
+  "strategy_and_safety": {
+    "strategy_states": [
+      {
+        "id": "bb-breakout-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "bb-squeeze-expansion-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "dividend-quality-buyback-v1",
+        "enabled": 0,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "eod-high-close-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "inside-bar-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "ma-cross-v1",
+        "enabled": 0,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "oversold-bounce-daily-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "price-breakout-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "pullback-trend-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "rsi-divergence-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "rsi-macd-reversal-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "rsi-overbought-exit-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "rsi-oversold-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "triple-confirmation-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "volume-spike-breakout-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      },
+      {
+        "id": "weekly-trend-follow-v1",
+        "enabled": 1,
+        "validation_status": "unvalidated"
+      }
+    ],
+    "safety_flags": [
+      {
+        "key": "autopilot_mode",
+        "value": "\"auto\""
+      },
+      {
+        "key": "safety_dry_run",
+        "value": "true"
+      },
+      {
+        "key": "safety_kill_switch",
+        "value": "false"
+      }
+    ],
+    "existing_target_triggers": []
+  },
+  "test_artifact_inventory": {
+    "scope": "prior simulation/research artifacts; not proof of strategy validation",
+    "files": [
+      {
+        "file": "docs/research-data/T-156-annual15-strategy-search-2026-11-07.json",
+        "bytes": 1019189,
+        "sha256": "fdb3e6ca1025686c297fa38fd66afd0e6d589611a05f8b8008978ab4729d3053",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-blind-agent-replay-2026-11-06.json",
+        "bytes": 72668,
+        "sha256": "f61ae353a5b4377276105b8e52c68e66753c00fa111e11667233cc09de834306",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-collection-audit-2026-11-07.json",
+        "bytes": 740296,
+        "sha256": "4455a07573ae414b2e178bc1ae2368643e0f144ec6980db6a7f88d51445bdc21",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-daily-db-replay-2020-2026-2026-11-06.json",
+        "bytes": 54382,
+        "sha256": "1d131b967ddafe5303c4f08ec9c2c78de991b7e859645e5430d49a797a22f64a",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-event-agent-replay-2026-11-06.json",
+        "bytes": 316447,
+        "sha256": "e3c5460ab6eaaa1f837451020d638d957cb91af2954db66286e73bb3e8a25ff4",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-forecast-ledger-2026-11-06.json",
+        "bytes": 1015867,
+        "sha256": "1af057b763986de95e6965805a7d7376d68a62d5acabce6c56a5a1e3beb221f4",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-free-data-additions-2026-11-07.json",
+        "bytes": 343842,
+        "sha256": "2ed72124a87bc2a1f2a644f4f53d76c8b39f1930453ea34c46ca54f6ab6c30cc",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-historical-research-db-backfill-2026-11-07.json",
+        "bytes": 429000,
+        "sha256": "90005cfe0ed211f79136ef2be8997813ad8f68e45ffbb4dfd4d490b336942c25",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-kis-fee25-regime-replay-2026-11-06.json",
+        "bytes": 82797,
+        "sha256": "99e260f2e0bc3689c723190c8fcfa7e0c73da4829a77bfc63bdd39f9928bc5b4",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-limited-agent-holdout-2006-2011-2026-11-07.json",
+        "bytes": 3192121,
+        "sha256": "6efef07017587bc27414ce20800994938b54ff8cd42cf0bab1421f35d29a69e6",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-limited-agent-holdout-2015-2016-2026-11-07.json",
+        "bytes": 1079718,
+        "sha256": "300fe13eb094e6714aaebbf29674ddb8531300245e95995c58debb23a8fccd28",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-long-price-source-evaluation-2026-11-06.json",
+        "bytes": 19132,
+        "sha256": "044fda418b468b4529d114a02b432f2397817cb1df6257478b2a59506a82e385",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-m40-5y-10y-100-final-2026-11-07.json",
+        "bytes": 9002794,
+        "sha256": "dc25f540664a63b4715db231477b6cd97733af93be711828e46812034b4011c7",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-m40-e3-r02-agent-replay-2026-11-07.json",
+        "bytes": 8661125,
+        "sha256": "77bf5eddc40846938cfb24c6a7e37bf95e2ea4325d9026bcf39d0237dc1c6791",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-m40-final-input-2026-11-07.npz",
+        "bytes": 8117976,
+        "sha256": "6dbfd20605dab42d547732e8f847ee009386280e46e20b10c990e5a3a39ddb23",
+        "type": ".npz"
+      },
+      {
+        "file": "docs/research-data/T-156-market-regime-switch-2026-11-06.json",
+        "bytes": 188688,
+        "sha256": "a60c7dc14529b631cde1d1e7078edb6c809a77dec16e39b64d6f6eb5ccdb7f77",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-pattern-input-125-2026-11-07.npz",
+        "bytes": 4055055,
+        "sha256": "9dd806217ae60fd7a6abcb19db1c6093389b343bc3db81ee317b79da4d55b1ea",
+        "type": ".npz"
+      },
+      {
+        "file": "docs/research-data/T-156-pattern-observations-2026-11-07.jsonl.gz",
+        "bytes": 3948165,
+        "sha256": "d0a005a7551821667a4cd723e21b3a4526589d0f725bfa1e46c78d7ee245c60b",
+        "type": ".gz"
+      },
+      {
+        "file": "docs/research-data/T-156-pattern-reference-library-2026-11-07.jsonl.gz",
+        "bytes": 1905285,
+        "sha256": "a7687fd36dd1df04e8e307542a90d50ab32d51a7b7106d9720f6f55550c020de",
+        "type": ".gz"
+      },
+      {
+        "file": "docs/research-data/T-156-pattern-vs-rules-portfolio-2026-11-07.json",
+        "bytes": 4492856,
+        "sha256": "7a9511785b9f8b24da41890e78eb0b1ed675e31c3c6cc9de992cb344b1d4f80c",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-point-in-time-daily-replay-2026-11-07.json",
+        "bytes": 3807320,
+        "sha256": "eb0e8da7bbe5270eac7062a4ea706a954b5ec9f18e581a2785032dd4437cd878",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-price-only-forward-sample-2026-11-06.json",
+        "bytes": 19870,
+        "sha256": "53655ed200b3c80150fe4de0147a5b4a4dfb28aa5027dafb993e623cd8c0d51d",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-price-pattern-repeat-review-2026-11-07.json",
+        "bytes": 974199,
+        "sha256": "fe9ebf2e63a2cafc491b38dc049fa31f4321d6f93367e5b4a4030b091e1f2376",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-profit-iterations-2026-11-06.json",
+        "bytes": 757107,
+        "sha256": "cc336e77c085773311dec5a860c88603783cf686b90cb47e86bf3423fe5b1814",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-rebound-risk-replay-2026-11-07.json",
+        "bytes": 72529,
+        "sha256": "443bac086e754b85ac94441d6178022054985e4be5c1665f2995b024a882be52",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-v01-historical-replay-2026-11-06.json",
+        "bytes": 844362,
+        "sha256": "e8de347d68acc2a379b9cfea4f038ebe9d2b3115559b4603d7b71f62fef44b38",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-weekly-market-regimes.json",
+        "bytes": 1467387,
+        "sha256": "ffd7e52ee228ebc729767b6f29762fc0f11792b9d1a15c95ce481daf11fd0d91",
+        "type": ".json"
+      },
+      {
+        "file": "docs/research-data/T-156-weekly-vix-breadth.json",
+        "bytes": 658934,
+        "sha256": "de9045da9bd455641c0f4dbe281dd6f685e4377e6642dbeaac23c1394f44e3d5",
+        "type": ".json"
+      }
+    ],
+    "total_bytes": 57339111
+  },
+  "integration_source_fingerprints": [
+    {
+      "path": "package.json",
+      "sha256": "5dcc4b21014c6917a1c5e63443e5e0b418f9f7b7964111fc20533b09539aed33"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "9bad06e1b134af13ddf120569ded1bc2ad171bd7fbf816f72a715a92b8f14179"
+    },
+    {
+      "path": "src/lib/strategy/post-market-overseas.ts",
+      "sha256": "d8d25b92035ab851f50d9c8bcb24d2c8dd7452bc3ac9f1e5f4949261357ab1f3"
+    },
+    {
+      "path": "src/lib/strategy/post-market-engine.ts",
+      "sha256": "50046de7edc3cd99d02255263381f94332a7876e7e504e74fc516e2879030c4f"
+    },
+    {
+      "path": "src/lib/strategy/engine.ts",
+      "sha256": "7a5d69869b1dd3ea3ce5cf337715b90df941eff39284d4038596a2d2d6001e35"
+    },
+    {
+      "path": "src/lib/profit-engine/daily-bars-collector.ts",
+      "sha256": "4144a8832d854b46d81f67d99b9103abeceb316cd80c07c687f7d3275db11f41"
+    },
+    {
+      "path": "src/lib/profit-engine/daily-bars-store.ts",
+      "sha256": "39c85c4d9050eee1f2fe620eb0f521248344679b7ec9e6d364938faeb0908ba8"
+    },
+    {
+      "path": "src/lib/data/us-data-db.ts",
+      "sha256": "70e61aa3806a1824c08087601ad778b0b837c611335d4d96a65a49d61c0d66d0"
+    },
+    {
+      "path": "src/lib/signals/service.ts",
+      "sha256": "eafbaf76351090ba7a57114b2ec8d71f7e8d0f3b1c4255a669583b68feba268d"
+    },
+    {
+      "path": "src/lib/safety/validation-gate.ts",
+      "sha256": "8c2808e917da90be8f819338be65dcfdfa6eb1fb72bb82028459c54055c67879"
+    },
+    {
+      "path": "src/lib/strategy/records/judgment-trace.ts",
+      "sha256": "1122d371e8bb4fa4428ce75b4f88e8addcab48c980715b9775d751e07bf8cba9"
+    },
+    {
+      "path": "scripts/cron-runner.sh",
+      "sha256": "de6b91c65fc3d40a7c8116cb596bc0a1e910738589f6bb196ddd1d93bb7b1233"
+    }
+  ],
+  "preflight_findings": [
+    "Production account can create and write within stockinvest; no separate test database privilege was observed.",
+    "Proposed default: test-only tables and access paths in same schema, separated from actual trades.",
+    "Existing daily_bars primary key cannot distinguish multiple sources/adjustment versions. Do not overwrite adjusted prices with raw study bars.",
+    "DB transport TLS not active. Transfer/backup plan must minimize sensitive material and preserve credential confidentiality.",
+    "Research container last successful inspection: stopped, no external network, no published port, 512MiB/0.75CPU. Two later SSH handshakes were reset before remote execution; current full export not performed.",
+    "Actual release pointer observed as20261107-235004-24027b7f; current checkout has parallel changes. No whole-tree staging/reset/push."
+  ],
+  "next_required": "Controlled implementation, isolated checks, source backup/restore evidence, additive production data transfer and verification; preserve live trading safety.",
+  "actor_approval": {
+    "tool": "codex",
+    "scope": "T-156 implementation and DB migration",
+    "user_statement": "이번 T-156은 Codex가 구현·DB 이관까지 직접 진행"
+  }
+}

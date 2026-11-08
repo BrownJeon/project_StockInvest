@@ -5,7 +5,7 @@ status: doing
 waiting: ["당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
 priority: medium
 base_ref: 8984f69ddd5581c45c919193a535f5b1b359765d
-roles_involved: [leader]
+roles_involved: [leader, developer, reviewer, qa]
 related_tasks: [T-078, T-107, T-109, T-114, T-116, T-124, T-143, T-146]
 tags: [type/task, domain/strategy, domain/analytics, domain/us-market]
 aliases: [미국종목예측, 매수매도시점]
@@ -14,8 +14,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "사용자 명시 예외 승인으로 Codex가 T-156 구현·검증·운영 DB 자료 이관·테스트 이력 저장 직접 수행"
-  last_event_id: exec-035
+  current_scope: "M40 shadow 분석·4단계 판단·증분 보존 구현과 격리 검증 완료, 승인된 연구 DB 운영 이관 및 테스트 원본 복원 검산 진행"
+  last_event_id: exec-036
 created: 2026-11-06
 updated: 2026-11-08
 ---
@@ -61,6 +61,7 @@ updated: 2026-11-08
 | exec-033 | 2026-11-07 23:08 착수 | resume | codex → codex / codex_scoped | 운영 DB SELECT·수집 로그 및 기존 격리 연구 DB 감사, 무료 공개 자료 추가·읽기 검산·기간/누락률/본문 구분 | 사용자가 실제 수집 상태 점검과 무료 자료 보완을 승인. 운영 데이터/설정·수집 코드·스키마·크론·주문 경로 구현은 제외 |
 | exec-034 | 2026-11-08 08:29 사전 점검 | resume | codex → codex / codex_scoped | 사용자가 승인한 구현·운영 DB 자료 이관·테스트 이력 저장의 실제 스키마/권한/모드 점검, 28개 자료 해시 목록 및 실행·복구 계획 준비. 담당 방식 확인 중이며 구현/운영 쓰기는 아직 미실행 | 최신 사용자 지시로 분석 전용 제약 해제. AGENTS의 큰 구현 Claude 인계 규칙 때문에 담당 방식만 비동기로 확인 요청 |
 | exec-035 | 2026-11-08 사용자 답변 반영 | scope approval | codex → codex / codex_scoped | Codex가 T-156 구현·DB 이관까지 직접 수행. 이번 작업의 큰 구현 담당 제한은 명시 예외 승인됨. 원본 보존·실거래 보호·검증 관문 유지 | 사용자: “이번 T-156은 Codex가 구현·DB 이관까지 직접 진행” |
+| exec-036 | 2026-11-08 09:45 중간 기록 | implement / verify / import | codex → codex / codex_scoped | 새 worktree에서 M40·보관·shadow·인증 API 구현, Reviewer 지적 수정, Ubuntu 1,343 tests 및 실 MariaDB 경합 2건 검증. 운영 신규 DDL 후 연구 27표 적재 중(staged), 게시·배포 미완료 | 사용자 직접 구현·DB 이관 승인 exec-035. 실제 결과는 F13/구현 보고서의 영수증으로 구분 |
 
 ## 목표
 
@@ -1504,6 +1505,8 @@ SEC 호출은 기존 클라이언트의 간격·차단 쿨다운을 재사용하
 
 ### F12 구현·운영 자료 이관·테스트 이력 저장 착수
 
+이 절은 11/8 08:29 사전 점검 기록이다. 이후 사용자가 Codex 직접 수행을 승인했고 실제 구현·검증·DDL·적재가 진행됐으므로 현재 상태는 F13을 따른다.
+
 사용자의 2026-11-08 지시로 구현 착수·수집 자료의 운영 DB 이관·테스트 데이터 이력 저장이 승인됐다. **같은 승인을 다시 요구하지 않는다.** 현재 프로젝트 AGENTS.md의 큰 구현·최종 검증·배포 Claude 인계 규칙 때문에 담당 방식만 비동기로 확인했다. 현재 담당은 Codex이며 Claude 인수·직접 구현·운영 DDL/적재·배포가 실행됐다고 표시하지 않는다.
 
 [구현·이관·검증·복구 실행안](../../../docs/design/2026-11-08-t156-implementation-and-data-transfer-plan.md)에 실제 DB 사전 점검과 필수 계약을 정리했다. 운영 일봉은 11/8 08:29 KST에 미국77종목·60,537행으로 갱신돼 있었으며, 운영 DB는54개 표·약276MB였다. `backtests`의 원화·단일 종목 계약은 M40 USD 계좌 이력과 다르다. 현재 연결 계정은 운영 스키마 안의 표 생성·DML 권한은 있지만 별도 테스트 DB/전역 생성 권한은 없어, 기본 제안은 같은 DB 내 운영 자료·테스트 전용 표의 논리적 분리다. 별도 DB 생성이나 권한 확대를 임의 실행하지 않는다.
@@ -1539,3 +1542,26 @@ PNG를 제외한 실제 연구/시뮬레이션 파일 **28개·57,339,111바이�
 - **125종목 패턴 검토** — 최근 모양은 124종목에서 분류 가능했고 BRK.B 최신 이력에 공백이 있었다. 20일·60일 반복 유사성은 발견됐으나 무작위 대조와 예측력 기준을 넘는 종목별 조합은 0/113이었다. 패턴 점수의 단독 거래 조건 적용은 보류다.
 - **패턴 대 규칙 계좌 비교** — 같은 125종목·25bp의 2016~2025 CAGR은 M40 16.34%, 패턴 순위 3.82%, M40+패턴 보류 14.79%였다. 패턴 보류의 최대낙폭도 34.00%에서 36.37%로 커져 추가 채택 근거는 부족하다.
 - **남은 검토** — 당시 구성과 거래소 전체 상승 비중 및 기사 판본을 확정한 다음, 같은 판단일에서 가격 기준, 시장 입력, 공시, 뉴스·판단을 하나씩 비교한다.
+
+
+### F13 Codex 직접 구현·자료 이관 (2026-11-08)
+
+[구현·이관 보고서](../../../docs/implementation/2026-11-08-t156-m40-data-archive.md)를 정본으로 추가한다. 08:29의 담당 확인 대기는 사용자 답변으로 해소됐다. 원본 연구 27개 표 4,383,186행과 파일 28개 57,339,111바이트를 별도 자료·테스트 영역에 보존하며, 원주/조정·원문/메타·현재 관측/당시 재구성의 구분을 유지한다.
+
+- 순수 M40 기본안, 20/60 패턴 참고, 조건부 4단계 판단, shadow 초안·입력/판단 이력, 인증 API를 구현했다. 글로벌 T0 미설정 또는 입력 자격 미확인이면 차단 사유를 저장한다.
+- 기존 수집기 대상에 해외 분석 목록을 추가하고, 기존 수집 행의 신규 관측·갱신을 불변 자료판으로 보관한다. 과거 발표일과 지금 최초 관측을 바꾸지 않는다.
+- 기존 해외 분석 응답 후 Next after 콜백에서 관측한다. 기존 응답/재시도와 보호 청산은 대기하지 않으며 에이전트 제안은 기본 순위를 바꾸지 않는다.
+- 현재 버전의 신호 산출물은 shadow 초안이다. M40 일반 실매매 발행/기존 보유 자동 이관/검증 상태 승급은 실행하지 않았다. F09와 전진 검증은 별도 남은 관문이다.
+- 격리 복원 COUNT/CHECKSUM은 27표 전체 일치. 현재 운영은 신규 표에 적재 중이며 게시·배포 완료는 아직 주장하지 않는다.
+
+## Reviewer
+
+Codex 하위 역할 `t156_reviewer`가 구현과 시험 본문을 읽고 정적 감사를 수행했다. 최초 공개/추가 적재 경쟁, 철회 후 재공개, T0 불일치, 패턴 시점/20·60 구분, 기존 응답 지연, 구 발표분의 신규 관측 누락을 지적했고 수정 후 재검토했다. 운영/시험 실행은 Reviewer가 수행하지 않았다. 다음 판정은 전달된 실제 두 범위의 합집합이며 실거래 승인이나 전체 프로젝트 PASS가 아니다.
+
+최종 판정: PASS (scope: src/lib/strategy/m40/types.ts, src/lib/strategy/m40/core.ts, src/lib/strategy/m40/load-input.ts, src/lib/strategy/m40/archive-reader.ts, src/lib/strategy/m40/runner.ts, src/lib/strategy/m40/advisory.ts, src/lib/strategy/m40/observer.ts, src/lib/analysis-data/types.ts, src/lib/analysis-data/store.ts, src/lib/analysis-data/capture-operating-data.ts, src/app/api/cron/m40-analysis/route.ts, src/app/api/cron/post-market-analysis/route.ts, src/app/api/research/t156/route.ts, src/lib/profit-engine/daily-bars-store.ts, scripts/t156/archive-lib.mjs, scripts/t156/archive-operator.mjs, scripts/t156/transform-dump.mjs, scripts/t156/source-manifest.py, scripts/migrations/T-156-analysis-archive.sql, src/lib/strategy/m40/__tests__/advisory.test.ts, src/lib/strategy/m40/__tests__/core.test.ts, src/lib/strategy/m40/__tests__/load-input.test.ts, src/lib/strategy/m40/__tests__/observer.test.ts, src/lib/strategy/m40/__tests__/routes.test.ts, src/lib/strategy/m40/__tests__/runner.test.ts, src/lib/analysis-data/__tests__/capture-operating-data.test.ts, src/lib/analysis-data/__tests__/store.test.ts, src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts, src/lib/profit-engine/__tests__/daily-bars-collector.test.ts, scripts/t156/archive-lib.test.mjs, scripts/t156/verify-restore.py)
+
+## QA
+
+Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했다. Jest 55 suites / 1,343 tests 통과, 기존 별도 MariaDB 경합 suite 1개·15 tests는 미실행으로 분리한다. 새 T-156 MariaDB 저장소 14 tests 통과(실제 InnoDB 대기 확인 경합2 포함), tsc 및 archive 4 tests 통과. DRY_RUN·킬스위치·한도·블랙리스트·감사로그·검증 관문의 모의 회귀를 포함하며 whitelist는 현재 항상허용 규칙이다.
+
+로컬 Next dev에서 실제 after/정본 observer/store의 응답 후 기록 생성을 확인했다. DB와 누락 API-usage 모듈을 격리 대체했고 실제 LLM/증권사/운영 DB 호출은 없었다. 최초 AppleDouble 5개 구문 오류 뒤 메타파일만 제외한 재실행 결과를 기록한다. 광역 프로젝트 전체·수익성·운영 서버 lifetime PASS로 확대하지 않는다.
