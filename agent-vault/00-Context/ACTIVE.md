@@ -6,6 +6,16 @@ tags:
 ---
 # 현재 상태
 
+## 2026-11-08 10:20 — 🔴 기록 커밋 `ebbcdca` 배포 헬스 실패·자동 롤백 (12:15 해소)
+
+- `RELEASE_RESULT {"status":"health_failed","release":"20261108-101556-ebbcdca7","rolled_back_to":".../20261108-093050-8248226b"}`, `END exit=1`. 운영은 직전 릴리스로 되돌아가 정상이었고(health 200·`safetyStatus green`·web·cron 각 1행), 커밋 `ebbcdca` 만 원격에 있고 배포되지 않은 상태가 됐다.
+- 내용은 `agent-vault` 문서 2개뿐이라 **앱 동작·빌드와 무관**하다. 실패 원인은 변경 내용이 아니다.
+- [가능성 높음] 원인은 **헬스 창(120초) 동안의 NAS·DB 지연**이다 — 게이트는 `--health /api/health --health-timeout 120`(`~/.local/webhook-deploy/deploy-stockinvest.sh`)이고 `/api/health` 는 DB 를 확인한다. 10:15~10:19 앱 로그에 `[strategy/records/job-run-log] 503 reason=timeout (deadline=2500ms)` 가 매분 찍혔고, 같은 시각 내가 공유 트리 `reset --hard`(107파일)·NAS 백업 23MB 쓰기·NFS 커밋을 돌려 NAS 를 함께 쓰는 MariaDB 가 느려졌다. **교훈: 배포와 NAS 대량 작업을 같은 시간대에 돌리지 않는다.**
+- ⚠ 그 `job-run-log` 503 은 **롤백 뒤 정상 릴리스에서도 찍혔다**(10:22:42). 2500ms 데드라인의 기록 전용 경로라 잡 동작·주문과는 무관하지만, 상시 조건인지는 별건으로 봐야 한다.
+- **해소(12:10~12:15)**: 사용자 「지금 재시도」 시점에 원격은 이미 T-156 커밋 5개로 `dd8c5c3` 까지 나아가 있었고 그 배포가 11:43·11:47 두 번 `RELEASE_RESULT ok` 였다(현재 운영 `20261108-114747-dd8c5c3a`). `ebbcdca` 는 `dd8c5c3` 의 조상이므로 **그 기록은 이미 운영에 반영됐다** — 같은 커밋을 다시 밀 필요가 없어, 이 실패 기록 자체를 커밋해 남긴다.
+- 공유 트리에서 `git fetch` 가 `fatal: bad object … @eaDir/…@SynoEAStream` 로 막혀 `scripts/git-refs-clean.sh` 로 사이드카 5개를 격리한 뒤 통과했다(ISS-0013 재발 — 11-01 정리 뒤 또). 격리본 `~/.local/share/git-eadir-quarantine/20261108-121030/StockInvest`.
+- ⚠ 공유 NFS 트리는 다시 **5커밋 뒤처졌다**(`ebbcdca` vs `dd8c5c3`). 그 5커밋이 추가한 파일 다수가 이 트리에는 **미추적 사본**으로 있어 다음 `reset`·`checkout` 은 덮어쓰기로 막힌다 — 사본의 주인은 T-156 세션이라 함께 정리해야 한다. 보존해 둔 미커밋 `src/lib/profit-engine/daily-bars-store.ts`(+7/−2)도 원격이 같은 파일을 바꿔 이제 중복·낡음일 수 있다(손대지 않았다).
+
 ## 2026-11-08 10:00 — 공유 NFS 트리를 원격 `main` 과 맞춤
 
 - 사용자 지시로 공유 트리(`/Volumes/homes/brownjeon/project/StockInvest` = 서버 `/home/brownjeon/NFS/homes/brownjeon/project/StockInvest`)를 **`8248226`(origin/main)** 로 맞췄다. 12커밋 뒤처져 있었고, 코드 **6,532줄**이 이 트리에만 없었다(예: `src/lib/strategy/adaptive-buy-sizing.ts` 146줄·`src/lib/chat/ownership.ts` 37줄). 이제 0커밋 차이.
