@@ -87,3 +87,13 @@ export function nextPaperSettlementSession(calendar:readonly ForwardCalendarSess
   }
   throw new Error('paper_settlement_calendar_exhausted');
 }
+
+/** Read-only schedule lookup; never an observation or settlement authorization. */
+export function readForwardCalendarRange(from:string,to:string):ForwardCalendarSession[]|null {
+  if(!validForwardSessionDate(from)||!validForwardSessionDate(to)||from>to
+    ||!inOfficialRange(from)||!inOfficialRange(to)
+    ||(Date.parse(to)-Date.parse(from))/86_400_000>731)return null;
+  const out:ForwardCalendarSession[]=[];
+  for(let day=from;day<=to;day=nextDay(day))if(officialTradingDay(day))out.push(officialSession(day));
+  return out;
+}

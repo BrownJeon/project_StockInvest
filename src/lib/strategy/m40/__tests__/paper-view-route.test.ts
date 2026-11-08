@@ -17,4 +17,12 @@ describe('private paper route',()=>{
  jest.mocked(readPaperView).mockRejectedValue(new PaperViewError(403,'paper_viewer_forbidden'));
  const forbidden=await GET(new NextRequest('http://localhost/api/research/t156/paper'));expect(forbidden.status).toBe(403);expect(await forbidden.json()).toEqual({ok:false,error:'paper_viewer_forbidden'});expect(forbidden.headers.get('Cache-Control')).toBe('private, no-store');
  });
+ test('v6 period parsing and snapshot conflict return no-store without stale data',async()=>{
+ jest.mocked(requireUserId).mockResolvedValue({ok:true,userId:42});
+ jest.mocked(readPaperView).mockRejectedValue(new PaperViewError(409,'paper_snapshot_changed_restart_page_1'));
+ const response=await GET(new NextRequest('http://localhost/api/research/t156/paper?period=week&anchorSession=2026-11-02&signalPage=2&snapshot=old'));
+ expect(response.status).toBe(409);expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+ expect(await response.json()).toEqual({ok:false,error:'paper_snapshot_changed_restart_page_1'});
+ expect(readPaperView).toHaveBeenCalledWith(42,expect.objectContaining({period:'week',anchorSession:'2026-11-02',signalPage:2,snapshot:'old'}));
+ });
 });

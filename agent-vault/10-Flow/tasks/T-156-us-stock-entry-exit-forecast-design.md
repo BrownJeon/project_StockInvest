@@ -2,7 +2,7 @@
 task_id: T-156
 title: 미국 종목분석의 매수·매도 시점 개선안 조사
 status: doing
-waiting: ["검증된 M40 조회 화면 운영 반영", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
+waiting: ["승인v6 조회 화면 웹 배포·운영 확인", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
 priority: medium
 base_ref: 8984f69ddd5581c45c919193a535f5b1b359765d
 roles_involved: [leader, developer, reviewer, qa]
@@ -14,27 +14,27 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "분석 탭 M40 조회 화면 추가. 실제 사용자 v2 승인·계정 확인 완료, 전용 viewer 연결/실DB읽기 검증 완료. 공통 승인 도구 지원 보완193검사·실제v2승인연결/check통과. 승인된 화면 구현 진행, 실거래 OFF 유지"
-  last_event_id: exec-050
+  current_scope: "승인v6 조회UI 구현·독립검토/디자인수용·388검사/타입/build·합성SQL/CUA완료. 사용자지금웹배포승인에따른운영반영준비, 실예측엔진/DBDDL·실거래변경없음"
+  last_event_id: exec-064
 created: 2026-11-06
 updated: 2026-11-08
 demo_gate:
   required: true
   level: "full"
   status: "approved"
-  version: 2
-  repo_path: "mockups/T-156-m40-paper-analysis-v2.html"
-  artifact_url: "http://127.0.0.1:8786/T-156-m40-paper-analysis-v2.html"
-  content_sha256: "9d1197c42d99fc3d64bd20d3b6d267702174ea1f637ea0fdf9bc4b569db6cb07"
+  version: 6
+  repo_path: "mockups/T-156-paper-analysis-v6.html"
+  artifact_url: "http://127.0.0.1:8786/T-156-paper-analysis-v6.html?v=cce67b2f"
+  content_sha256: "cce67b2f0350406f2296f1495fbf446e0597a3e1cc1259f9d4f98554531758ed"
   decided_by: "judge"
   rule_id: "JV-ui_change"
   approved_by: "user"
-  approved_at: "2026-11-08T15:57:06+09:00"
-  approval_quote: "v2 구성으로 구현 진행"
+  approved_at: "2026-11-08T19:52:09+09:00"
+  approval_quote: "v6 승인"
   waived_by: ""
   waived_at: ""
   waiver_quote: ""
-  active: false
+  active: true
   approval_source: "codex_native_transcript"
 ---
 
@@ -94,6 +94,20 @@ demo_gate:
 | exec-048 | 2026-11-08 15:31 사용자 답변 | tool_support_approved | codex → codex / codex_scoped | 사용자 ‘승인 도구 지원부터 보완’ 선택. 공통 도구의 질문응답·등록 worktree 지원을 격리 사본에서 수정·독립감사한 뒤 기존 실제 v2 승인을 연결한다. 같은 승인 재질문·수동 상태변경·훅 재생 금지 | 실제 native 사용자 응답. 기존 승인·실거래 OFF 유지 |
 | exec-049 | 2026-11-08 15:57 | tool_support / native_approval_verified | codex → codex / codex_scoped | 공유승인도구14파일보완·독립review/QA/적용후193개통과. 실제원래v2답변native복구성공·check/activate통과. 화면구현재개,실거래OFF | finalmanifest985d1bd6/독립보고서/실제source codex_native_transcript 영수증 |
 | exec-050 | 2026-11-08 16:20 | ui_implementation / QA / CUA | codex → codex / codex_scoped | 기존메뉴보존M40조회4영역구현,선정미매수제약whitelist보완,독립정적감사/360tests/타입/build/360·412·1280CUA통과. 최종실DBreadonly123적격/4모의신호/비viewer거부. 운영반영준비 | UI보고서/manifest8c9301db/독립리뷰0393dd16/QAfd65d085/운영읽기영수증 |
+| exec-051 | 2026-11-08 16:34 | publish / verify | codex → codex / codex_scoped | T162보존병합 e9dccee 최종487tests/타입/build통과후main게시. 릴리스163137-e9dccee5 START/RESULTok/END0,핵심14파일SHA/healthgreen/web·cron각1/DRYtrue/API401확인. 도구/UI/최종검증자료DB보존,실제로그인앱화면/미래전진은별도 | ui-deployment-verification.json/combinedQA e442adace/UI보고서 |
+| exec-052 | 2026-11-08 사용자 후속 | demo_revision_request | codex → codex / codex_scoped | 메뉴명 모의분석·운영정책판본/판단반영상태표시·한줄고정4탭·각목록10개페이징 v3데모. 사용자검토전앱구현/설정변경금지. 현재M40기본/agent참고전용과요청한규칙선택연결을구분 | 사용자명시요청·로컬intake rules delta/demo_first·router Sol fallback |
+| exec-053 | 2026-11-08 | demo_review_requested | codex → codex / codex_scoped | v3원본91cc9d49, 독립정적검토/lint·JS·CUA360/412/1280통과. 한줄sticky·각목록10개·경계/검색/권한상태확인. 운영은M40기본/agent미호출·참고전용 확인, 모의정책연결 범위는사용자선택대기. 앱/설정/DB쓰기없음 | v3제안서·static-review.json·visual-review.json·운영readonly영수증 |
+| exec-054 | 2026-11-08 사용자 후속 | demo_period_revision | codex → codex / codex_scoped | v3수익은날짜없는합성23점임을설명후 사용자기간표시요청. 전체모의기간/시그널발생범위/실제관측범위·주/월·진행/완료·자료누락을구분하는 v4데모 작성. v3불변보존,실제앱변경없음 | 사용자명시요청·intake rules delta/demo_first·기존Sol designer재사용(router동일Sol fallback) |
+| exec-055 | 2026-11-08 | demo_review_requested | codex → codex / codex_scoped | v4 ad504e9b 완성·독립 기간/수치 검산·lint·CUA360/412/1280. 전체/주간/월간·실제 관측일·기준평가·부분기간/누락·10개 페이지 집계 불변 확인. 운영은 리허설만/전진 성과기간 없음. 앱·설정·DB 쓰기·모델/주문 호출 없음. 사용자 v4 검토 대기 | F19·v4 제안서·period-static-review.json·visual-review.json·readonly 기간 영수증 |
+| exec-056 | 2026-11-08 | demo_forecast_revision | codex → codex / codex_scoped | 사용자 요청으로 관측성과/향후1주·1개월 예상성과/사후비교 v5 새 데모. P10–P90 손익범위와 손실확률·비교상태를 합성자료로 제시. 편도0.25%유지, v4불변·사용자검토전앱/DB/모델/주문변경금지 | 사용자명시요청·rules R1/delta/demo_first·Sol router fallback·designer 위임 |
+| exec-057 | 2026-11-08 | demo_review_requested | codex → codex / codex_scoped | v5 2b86a975 완성·독립 수치/기간/비교 검산·lint·CUA360/412/1280. 관측/1주·1개월예측/사후비교·편도0.25%·0경로/비교조건/10개페이지·active표시 확인. 전부 합성이며 앱/DB/모델/주문 변경 없음 | F20·v5제안서·forecast-static-review.json·visual-review.json·불변SHA확인 |
+| exec-058 | 2026-11-08 | demo_horizon_revision | codex → codex / codex_scoped | 향후3개월/1년을 추가한 v6 새 데모. 달력3/12개월·월말보정/예정세션·기간별합성경로/편도0.25%·장기사후비교대기. v5불변, 검토전앱/DB/모델/주문변경금지 | 사용자추가요청·rules delta/demo_first·Sol fallback·designer위임 |
+| exec-059 | 2026-11-08 | demo_review_requested | codex → codex / codex_scoped | v6 cce67b2f 기간4개·3개월/1년 독립합성경로·편도0.25%·월말/윤년 검산·lint/CUA360/412/1280. 장기사후비교대기·N0미확인·23행10/10/3·원본/제품불변 확인. 사용자검토대기·앱/DB/모델/주문변경없음 | F21·v6제안서·horizon-static-review.json·visual-review.json |
+| exec-060 | 2026-11-08 사용자 v6 승인 | implementation_preflight | codex → codex / codex_scoped | 실제native v6승인확인. 도구질문닫는따옴표검사와옛v3~v5미결계산문제진단·격리보완중. 정식check전제품편집0. 실제readonly계약/UI가이드준비,예측엔진·DBDDL·실거래활성화제외 | 원본msg/question·F22·222검사/독립검토·C1false |
+| exec-061 | 2026-11-08 19:52:09 KST | approved_implementation | codex → codex / codex_scoped | v6원본native승인공식연결·check/activatePASS(hashverified). quote/버전계보지원수정240회귀·독립검토·실원본readonlyproof후적용. 동일승인재요청/원장수동편집없음. Backend/frontend승인범위구현착수 | source codex_native_transcript·F22후속·실제CLI출력·240검사 |
+| exec-062 | 2026-11-08 | static_review_pass | codex → codex / codex_scoped | 승인v6 frontend10/backend9파일구현·독립정적리뷰PASS/미해결0·19SHA일치. 조회loop/구형DTO/privateclear/범위·정책일치/계좌시작전coverage/부분기간문구보완. Ubuntu격리Jest/tsc/build·Cua준비시작,아직실행성공아님 | product-review.json·19파일manifest·C2rules+Codex내override |
+| exec-063 | 2026-11-08 | implementation_verified | codex → codex / codex_scoped | 기간길이 보완까지 독립19파일검토·디자인수용·21 suites/388 tests/타입/build통과, 별도합성MariaDB실reader와실React CUA360/412/1280검증. UI구현완료, 운영웹배포시점확인대기. 실예측엔진/DBDDL/실거래미변경 | F24·구현보고서·period-qa/sql-smoke/visual/design receipts |
+| exec-064 | 2026-11-08 20:50 KST 이후 | deployment_authorized | codex → codex / codex_scoped | 사용자 원래native질문응답 ‘지금 웹 배포 (추천)’로 시점합의 완료. 기존388검사/리뷰된조회UI만최신main통합·정상훅커밋·게시/배포·운영읽기확인. DB/APK/실거래변경제외 | call_fe6335165d4b456594dc25fd1900490b 원래질문과사용자응답 |
 
 ## 목표
 
@@ -117,6 +131,8 @@ S&P 500의 시장 상태, Nasdaq-100 및 StockInvest NYSE 시총 상위 50의 �
 ## 판단 기록 (judge)
 
 - Judge 역할은 모델과 추론 설정의 호환성 오류로 기동하지 못했다. 메인 Codex가 Jev 로컬 규칙을 실행했다. `judge-result@2`의 `engine=rules`, `risk=R0`, `demo.level=none`, `needs_info=false`, `next=assign`, 토큰·비용 0을 확인했다. 접수 범위가 조사·제안이므로 구현 역할 배정과 구현 검토 체크포인트는 적용하지 않았다.
+
+- 2026-11-08 v6 구현: rules C1 codex_required=false, C2 codex_required=true(CX-r2-post-review). Codex내Codex자기호출을하지않는AGENTS정본에따라 C2 override: codex_unavailable_in_codex. 별도외부Codex검토성공으로표기하지않고 실제독립Reviewer19파일정적검토와격리QA를구분한다. demo=full/designer, 사용자v6원본native승인/check/activate통과.
 
 ## 조사와 권고
 
@@ -1616,6 +1632,7 @@ Codex 독립 Reviewer t156_reviewer 추가 정적 감사: owner 로그인·명�
 최종 판정: CONDITIONAL_PASS (scope: src/lib/strategy/m40/types.ts, src/lib/strategy/m40/core.ts, src/lib/strategy/m40/load-input.ts, src/lib/strategy/m40/archive-reader.ts, src/lib/strategy/m40/runner.ts, src/lib/strategy/m40/advisory.ts, src/lib/strategy/m40/observer.ts, src/lib/analysis-data/types.ts, src/lib/analysis-data/store.ts, src/lib/analysis-data/capture-operating-data.ts, src/app/api/cron/m40-analysis/route.ts, src/app/api/cron/post-market-analysis/route.ts, src/app/api/research/t156/route.ts, src/lib/profit-engine/daily-bars-store.ts, scripts/t156/archive-lib.mjs, scripts/t156/archive-operator.mjs, scripts/t156/transform-dump.mjs, scripts/t156/source-manifest.py, scripts/migrations/T-156-analysis-archive.sql, src/lib/strategy/m40/__tests__/advisory.test.ts, src/lib/strategy/m40/__tests__/core.test.ts, src/lib/strategy/m40/__tests__/load-input.test.ts, src/lib/strategy/m40/__tests__/observer.test.ts, src/lib/strategy/m40/__tests__/routes.test.ts, src/lib/strategy/m40/__tests__/runner.test.ts, src/lib/analysis-data/__tests__/capture-operating-data.test.ts, src/lib/analysis-data/__tests__/store.test.ts, src/app/api/cron/post-market-analysis/__tests__/t156-companion.test.ts, src/lib/profit-engine/__tests__/daily-bars-collector.test.ts, scripts/t156/archive-lib.test.mjs, scripts/t156/verify-restore.py, scripts/t156/archive-import.mjs, scripts/t156/archive-import.test.mjs, src/lib/strategy/m40/__tests__/archive-reader.test.ts, src/lib/strategy/m40/load-evidence.ts, src/lib/strategy/m40/operating-evidence.ts, src/lib/strategy/m40/__tests__/load-evidence.test.ts, src/lib/strategy/m40/__tests__/operating-evidence.test.ts, src/lib/strategy/m40/forward-types.ts, src/lib/strategy/m40/forward-input.ts, src/lib/strategy/m40/forward-calendar.ts, src/lib/strategy/m40/forward-sources.ts, src/lib/strategy/m40/forward-store.ts, src/lib/strategy/m40/forward-runtime.ts, src/lib/strategy/m40/paper-ledger.ts, src/lib/strategy/m40/__tests__/forward-input.test.ts, src/lib/strategy/m40/__tests__/forward-calendar.test.ts, src/lib/strategy/m40/__tests__/forward-sources.test.ts, src/lib/strategy/m40/__tests__/forward-store.test.ts, src/lib/strategy/m40/__tests__/forward-route.test.ts, src/lib/strategy/m40/__tests__/paper-ledger.test.ts, src/app/api/cron/m40-forward/route.ts, src/lib/safety/dry-run.ts, src/lib/safety/__tests__/m40-paper-order-fence.test.ts, src/lib/exchanges/types.ts, scripts/cron-runner.sh, scripts/test-cron-runner-m40-forward.sh, scripts/migrations/T-156-forward-paper.sql, src/lib/safety/__tests__/order-limits.test.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/__tests__/paper-view.test.ts, src/lib/strategy/m40/__tests__/paper-view-route.test.ts, src/app/api/research/t156/paper/route.ts, scripts/migrations/T-156-paper-viewer.sql)
 - [16:10] Codex 독립 Reviewer `approval_support_review`가 승인 v2와 M40 조회 화면·새 warning 투영 11파일을 정적 감사했다. 실제 공통 게이트 재검사에서 approved/v2·원본 SHA 일치를 직접 확인했다. M40 진입 시 제목 노출·복귀 focus와 선정됐지만 매매 의도가 없는 종목의 저장된 제약 사유 누락을 지적했고, 수정된 코드·회귀시험 본문을 재검토했다. warning은 같은 회차 종목·허용 코드만 최대150개 반환하며 원문 message·금액·임의 JSON은 제외한다. 서명 로그인·명시 viewer/users 확인 후 읽기 전용 일관 스냅샷, GET 재조회, 오류 때 비공개 DTO 제거, blocked/이전 저장분·리허설/전진·결측/0 구분을 확인했다. `git diff --check` 외 기능시험은 Reviewer가 실행하지 않았으며 Ubuntu QA·type/build·CUA·실제 로그인 화면·배포는 별도 증거다. 판정 근거: `agent-vault/10-Flow/artifacts/T-156-m40-ui-implementation-review/review-result.json`, 11파일 manifest SHA `308781e186454b1146beedadff4c9445caf549ed96ae0257094ba67d28b16ae3`. 이후 소스 변경 시 이 판정은 재검토한다.
 - [16:10] **최종 판정: PASS (scope: src/app/analytics/AnalyticsPage.tsx, src/app/analytics/TodayPanel.tsx, src/app/analytics/route-resolve.ts, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/M40PaperPanel.module.css, src/app/analytics/m40-paper-copy.ts, src/__tests__/fixtures/t156-paper-view.ts, src/__tests__/t156-paper-view-render.test.ts, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/__tests__/paper-view.test.ts)**
+- [20:44] **최종 판정: PASS (scope: src/app/analytics/AnalyticsPage.tsx, src/app/analytics/M40PaperPanel.tsx, src/app/analytics/M40PaperPanel.module.css, src/app/analytics/m40-paper-ui.ts, src/app/analytics/m40-paper-copy.ts, src/app/analytics/TodayPanel.tsx, src/app/analytics/route-resolve.ts, src/__tests__/t156-paper-view-render.test.ts, src/__tests__/fixtures/t156-paper-view.ts, docs/screens.md, src/lib/strategy/m40/paper-view-types.ts, src/lib/strategy/m40/paper-view.ts, src/lib/strategy/m40/paper-view-query.ts, src/lib/strategy/m40/paper-view-period.ts, src/lib/strategy/m40/forward-calendar.ts, src/app/api/research/t156/paper/route.ts, src/lib/strategy/m40/__tests__/paper-view-query.test.ts, src/lib/strategy/m40/__tests__/paper-view-v6.test.ts, src/lib/strategy/m40/__tests__/paper-view-route.test.ts)**
 ## QA
 
 Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했다. Jest 55 suites / 1,343 tests 통과, 기존 별도 MariaDB 경합 suite 1개·15 tests는 미실행으로 분리한다. 새 T-156 MariaDB 저장소 14 tests 통과(실제 InnoDB 대기 확인 경합2 포함), tsc 및 archive 4 tests 통과. DRY_RUN·킬스위치·한도·블랙리스트·감사로그·검증 관문의 모의 회귀를 포함하며 whitelist는 현재 항상허용 규칙이다.
@@ -1631,6 +1648,10 @@ DRY_RUN 연결 최종 QA: 지정65 suites/1,594 PASS,기존별도DB경합1 suite
 루트의 실제격리MariaDB검증11건: 실제공개250판본→정본builder/core/runtime/store로123종목리허설6시그널,초기화1회복사·경합임대1개·중복차단·리허설비체결·불관련이력결측시확정편출1개만·실제DB기록시각·보유분할기준누락보류/원장불변·계좌정지·DRY_RUN필수·네트워크0. 합성계좌만사용했고운영자료/계좌성공으로확대하지않는다. 별도운영실행은F14영수증을본다.
 
 초기 재시도 후속의 최종 QA: 같은 지정65 suites/1,594 PASS/15 SKIP/exit0·tsc/build0. 소스23집합SHA9157803c5cd774db8c09fe22c9010cf334c0610cc47526eb6c327e962af86aae,직전검증본과forward-runtime.ts1조건만다르다. 실제SQL통합은partial초기보류→같은날full자료재시도회복을추가해12검사PASS. 최종증거묶음23,494bytes/SHA b367bc6fe0a33987729dde25d9f80498cd8fc24ada1433838e353658eae269e0,기존두원본묶음은덮어쓰지않았다. 별도cron블록은코드불변인직전실행증거이며이번에재실행했다고기록하지않는다.
+
+- [20:39] v6 격리 실행 QA: 재검토된 19개 파일 SHA 일치 스냅샷에서 M40 전체·v6 SSR·paper 주문 차단 지정 21 suites / 386 tests 통과, 실패·skip 0. 실행 전후 소스 manifest SHA `314aed4020b98226511bee2ceb2cfc5a296f07a059cccfe73a258f4f9c527b40` 일치. tsc·Next build는 직전 스냅샷 exit 0이며 두 스냅샷의 기존 소스 차이는 SSR 테스트 assertion 한 파일뿐이다(생성된 next-env.d.ts·tsconfig.tsbuildinfo 별도). 최초 실행은 assertion 1건과 전송 AppleDouble 3 suites로 실패했고, 수정·독립 재검토 후 위 결과로 재실행했다. 실제 브라우저 시각 검증·실제 격리 DB·운영 API/주문은 이 QA에서 미실행. 영수증 `/Users/brownjeon/.codex/tmp/t156-v6-ui-harness/final-qa-receipt.json`.
+
+- [21:00] v6 기간 표시 보완 재검토 후 격리 QA: Reviewer 19파일 SHA 일치, 21 suites / 388 tests 통과·실패 및 skip 0, tsc와 Next build 각 exit 0. 실행 전후 source manifest SHA `3604e86b8e6ef6164756e4fae60e386f7098b80d07ed042b930dfb3b55011297` 일치(빌드 생성물 제외). 별도 네트워크 없는 MariaDB 10.11.11 합성 DB에서 실제 reader의 비소유자 403 및 private 선조회 차단, 읽기 전용 트랜잭션 쓰기 거부, 23건 10/3 페이지, 기간 변경 snapshot 409, 월 직전 기준평가를 확인했다. 합성 DB와 전용 컨테이너는 삭제했고 보존 볼륨은 사용하지 않았다. QA 영수증 `/Users/brownjeon/.codex/tmp/t156-v6-ui-harness/period-qa-receipt.json`, SQL 영수증 같은 폴더 `sql-smoke-receipt.json`; 실제 운영·주문과 전체 브라우저 QA는 포함하지 않는다.
 
 ## 배포 기록
 
@@ -1654,6 +1675,8 @@ F14 실행 결과: 운영전용3표 생성, 공개입력18,097,630bytes(SHA65d66
 
 F14 최종 보완: c296116배포(RELEASE_RESULTok/END0,20261108-135514-c2961167)에서 실제인증cron202와응답후already_observed기록을확인했다.23파일SHA일치·web/cron각1·health200green/DRYtrue/killfalse,운영리허설은모의매도4개·실제체결0·전진0을유지했다. 이어 초기cohort미확정인partial응답이rehearsal로기록되어재시도를막는경로를 실제격리SQL로재현했다(기존운영cohort123에는영향없음). mode조건에frozenCohort필수를추가하고partial blocked/0signals→full동일일재시도회복을검사했다. 수정후SQL12개검사PASS이며지정QA최종재실행은기존수치와합산하지않는다. 최종소스23집합SHA9157803c5cd774db8c09fe22c9010cf334c0610cc47526eb6c327e962af86aae. 추가증거묶음/최종배포영수증은DB테스트이력의forward-final-validation-evidence-20261108.tar.gz/forward-final-release-audit.json으로보존한다. 미래성과·전체대상·LLM실호출/거래변경검증은미완료로유지한다.
 
+- [2026-11-08 16:34 KST, Codex 직접수행] M40 조회 화면 운영반영 완료: main e9dccee51e1ee302a0ccf37a40897aa7c7fccebd, 릴리스20261108-163137-e9dccee5. 최종통합487검사/타입/build, 운영14파일SHA/동일SHA START·RELEASE_RESULTok·END0/healthgreen·web와cron각1·DRY_RUNtrue·killfalse·상세API익명401 확인. migratedfalse, 수동중복배포/실주문없음. 실제소유자reader는 별도readonly실DB검산, 인증운영UI/실기기는 미확인. source·QA·배포영수증은 테스트DB 분리보존.
+
 ## 데모 검토 (demo gate)
 
 > 실행 판정 정본은 frontmatter `demo_gate` 이다. 이 표는 check.mjs 가 함께 기록하는 사람용 이력이다(docs/demo-review-gate.md).
@@ -1663,6 +1686,18 @@ F14 최종 보완: c296116배포(RELEASE_RESULTok/END0,20261108-135514-c2961167)
 | - | 작성중 | - | - | judge: full (JV-ui_change) | 11-08 14:48 |
 | v2 | 검토요청 | mockups/T-156-m40-paper-analysis-v2.html | http://127.0.0.1:8786/T-156-m40-paper-analysis-v2.html | 사용자 검토 요청 | 11-08 14:58 |
 | v2 | 승인 | mockups/T-156-m40-paper-analysis-v2.html | http://127.0.0.1:8786/T-156-m40-paper-analysis-v2.html | "v2 구성으로 구현 진행" | 11-08 15:57 |
+| v3 | 작성중 | mockups/T-156-m40-paper-analysis-v2.html | - | v2 승인 무효화 → v3 작성 | 11-08 17:11 |
+| v3 | 검토요청 | mockups/T-156-paper-analysis-v3.html | http://127.0.0.1:8786/T-156-paper-analysis-v3.html?v=91cc9d49 | 사용자 검토 요청 | 11-08 17:27 |
+| v3 | 수정요청 | mockups/T-156-paper-analysis-v3.html | http://127.0.0.1:8786/T-156-paper-analysis-v3.html?v=91cc9d49 | "모의시그널의 기간과 그에 대한 모의성과 관측 기간을 주·월 단위로 표기" | 11-08 17:56 |
+| v4 | 작성중 | mockups/T-156-paper-analysis-v3.html | - | 기간·주간·월간·관측 범위를 명시하는 v4 데모 작성 | 11-08 17:56 |
+| v4 | 검토요청 | mockups/T-156-paper-analysis-v4.html | http://127.0.0.1:8786/T-156-paper-analysis-v4.html?v=ad504e9b | 사용자 검토 요청 | 11-08 18:08 |
+| v4 | 수정요청 | mockups/T-156-paper-analysis-v4.html | http://127.0.0.1:8786/T-156-paper-analysis-v4.html?v=ad504e9b | "모의성과에 관측된 성과와 향후 1주·1개월 예상성과를 구분해서 보여주고, 예상 손익 범위와 손실 확률, 예측과 이후 모의성과를 비교하는 내용까지 데모에 반영" | 11-08 18:26 |
+| v5 | 작성중 | mockups/T-156-paper-analysis-v4.html | - | 관측성과·1주/1개월 예측성과·사후비교 v5 데모 작성 | 11-08 18:26 |
+| v5 | 검토요청 | mockups/T-156-paper-analysis-v5.html | http://127.0.0.1:8786/T-156-paper-analysis-v5.html?v=2b86a975 | 사용자 검토 요청 | 11-08 18:38 |
+| v5 | 수정요청 | mockups/T-156-paper-analysis-v5.html | http://127.0.0.1:8786/T-156-paper-analysis-v5.html?v=2b86a975 | "향후 예상성과의 경우 예상기간에 대하여 3개월,1년 도 추가해서 모의투자를 예측해볼수있도록 해줘" | 11-08 19:09 |
+| v6 | 작성중 | mockups/T-156-paper-analysis-v5.html | - | 향후3개월·1년을 추가한 v6 데모 작성 | 11-08 19:09 |
+| v6 | 검토요청 | mockups/T-156-paper-analysis-v6.html | http://127.0.0.1:8786/T-156-paper-analysis-v6.html?v=cce67b2f | 사용자 검토 요청 | 11-08 19:15 |
+| v6 | 승인 | mockups/T-156-paper-analysis-v6.html | http://127.0.0.1:8786/T-156-paper-analysis-v6.html?v=cce67b2f | "v6 승인" | 11-08 19:52 |
 
 
 ### F15 M40 모의분석 앱 조회 — 사용자 승인·자동 기록 실패 분리
@@ -1692,3 +1727,92 @@ F16 완료: 독립 감사·QA 및 공유 원본 적용 후193/193 통과, 실제
 ### F17 M40 조회 화면 최종 구현·검증
 
 기존3분류/5메뉴를 유지하고 M40 입구·4영역·권한오류시비공개자료숨김·최신차단/이전자료구분을 구현했다. source11파일 독립정적감사통과, Ubuntu20스위트360검사/tsc/build통과 및 실제컴포넌트CUA360/412/1280검증완료. 운영DB 최종읽기는125참조/123적격/126판단대상/제약5/리허설신호4이며 전진은미시작·쓰기/실주문없음. 상세 `docs/implementation/2026-11-08-t156-m40-ui-implementation.md`. 운영 반영 후 실제인증화면/안드로이드는 사용자확인 범위로 구분한다.
+
+F15/F16/F17 조회화면 범위는 구현·검증·운영 반영 완료다. T-156 전체는 미래전진84일/신규왕복100건/에이전트변경20일 및 원천공백이 남아doing을 유지한다. 현재전진미시작·성과null을 0수익으로 표시하지 않는다. 후속 구현을 위해 같은v2승인/이메일을 다시 묻지 않는다.
+
+### F18 모의분석 v3 데모 요청 (승인 전 구현 금지)
+
+사용자는 메뉴를 ‘모의분석’으로 바꾸고 정책(M40 기본+판단 에이전트 규칙판단)을 표시하며, 수집상태/종목판단/모의시그널/모의성과를 한줄 고정탭으로 두고 각 목록을10개씩 페이지 처리하는 데모를 요청했다. 현재 단계는 데모·설계다. 기존 v2파일은 그대로 보존하고 새 v3를 검토받는다.
+
+직접 확인한 현재코드: 저장결과 조회는 전용모의원장·owner API이며 실주문과 분리됐지만, 모의실행기는 safety_dry_run=true를 요구한다. runner는 기본계획을 deepFreeze 후 저장하고 에이전트 결과를 shadow기록으로만 남긴다. 따라서 ‘에이전트가 규칙을 결정해 매매를 바꾸는 정책이 이미 운영중’이라고 표시할 수 없다. 요청한 목표구성과 현재연결상태를 데모에서 구분한다. 실제에이전트 호출/거래반영·수집실행·실거래스위치는 이번데모로 변경하지 않는다.
+
+목록은 각탭별 독립 page/필터상태를 가지며10개 이내로 표시한다. 성과카드는 전체자료 기준이고 일별평가목록만 페이지를 나눈다. 현재API 시그널기본20/최대100·성과1000제한은 전체이력페이지와 구분해야하므로 서버페이지·전체수/다음페이지 지원 필요를 설계에 명시한다.
+
+F18 v3 검토본 완성: `mockups/T-156-paper-analysis-v3.html`, SHA91cc9d49b1bc5c71d82fc99e8885085c0d1b13f112296e91f3ea523a6a8efa55. 제안서 `docs/design/2026-11-08-t156-paper-analysis-v3-review.md`. 독립 정적검토·보안lint/JS구문/4탭10개씩·0/1/10/11/23경계·검색/선정/권한상태·360/412/1280 CUA 통과, v2불변SHA확인. 실제앱/정책/실행스위치는 그대로다. 사용자는 UI v3승인 및 구현범위(조회화면 우선 또는 모의전용정책연결도 별도설계/검증후 포함)를 검토한다. 질문은 정식review등록후에만발행하여 같은원본질문/응답으로연결한다.
+
+### F19 모의기간·시그널/성과 관측기간 표시 v4 (검토 전 구현 금지)
+
+사용자는 모의시그널 발생 구간 및 성과 관측 구간을 주·월 단위와 날짜로 확인하고 얼마나의 기간 성과인지 알기를 요청했다. 현재운영 UI도 시작/종료일을 별도 표시하지 않으며, v3는 날짜없는합성관측점으로 기간을 해석할 수 없다. v3파일을 수정하지 않고 새 v4데모를 만든다.
+
+표시안은 모의투자 전체 시작~기준일, 선택 집계 단위(전체/주간/월간), 시그널 발생기간, 실제 평가관측 시작~마지막일과 기간기준평가액·평가액증감·누적수익/MDD를 구분한다. 주간/월간은 달력구간이며 보유기간/거래규칙을 바꾸지 않는다. 월중 진행중과 과거자료 누락은 다르며, 예상/확보 거래일·첫 기준평가 누락/이력잘림·미체결·보유중을 구분한다. 전체계좌수익에는 이전기간 보유분이 포함되어 같은기간 신규시그널의 귀속손익으로 단정하지 않는다. 시그널별 관측일수/종료여부를 별도 표시하고 현재미지원 귀속손익은 연결전으로 남긴다.
+
+시그널/성과는 같은 모의계좌·정책판본·자료스냅샷·선택기간을 공유해야 하며, 요약은 10개페이지와 무관한 기간 전체 집계다. 현재 DTO의 날짜있는 forward점은 사용할 수 있으나 기간 baseline/달력완결·cohort손익/1000점cap과신호20/100cap을 해결할 서버계약이 아직 없다. 데모는 실제백테스트가 아닌 날짜있는합성자료임을 표시한다. 실제원문/금액/계좌/설정은 변경하지 않는다.
+
+F19 v4 검토본 완성: `mockups/T-156-paper-analysis-v4.html` SHA256 `ad504e9bc39a22a8bb0fae94703bb8dcd6fca12b9dad60394fb7ae4d6ccacded`; 제안서 `docs/design/2026-11-08-t156-paper-analysis-v4-review.md` SHA256 `a04c220d09ffc6420960aebfa8ede71e5072014ff0c9a9437c90500549b676c9`. 독립 정적 검토에서 기간 의미와 5개 합성 수치 검산, lint/구문 확인을 완료했다. 루트 CUA는 360/412/1280폭 가로넘침 없음·고정4탭, 같은 주월 선택의 탭간 유지, 10월22점의 10/10/2 및 전체49점의 10/10/10/10/9 페이지와 요약 불변, 월교차 주간·진행중 월간, 기준평가 없음/과거 누락/잘림/0~1점의 미확인 성과, 계좌 시작 전 빈 기간·403 비공개 제거·마지막 신호 집행대기를 확인했다. 화면 날짜/금액은 실제 결과가 아닌 합성 예시이며 거래일 달력도 합성 평일로 표시했다.
+
+운영 읽기 전용 검산(2026-11-08 08:58:03 UTC)은 11-06 리허설1회·시그널4개뿐이고 전진관측/T0가 없었다. 현재 실제 운영에는 `전진 미시작 · 성과 관측기간 없음`이 맞으며 합성 9~11월을 운영 실적으로 표시하지 않는다. 영수증·정적 검토·CUA 기록은 `agent-vault/10-Flow/artifacts/T-156-paper-analysis-v4/`에 둔다. 원본 v2/v3 SHA는 불변이며 신규 앱/API·수집/정책·실거래 변경, commit/push/배포 및 테스트 DB 추가 적재는 하지 않았다. 정식 review_requested/v4 등록 후 새 원본 질문으로 검토 요청하며 이전 v3 질문을 승인 증거로 쓰지 않는다.
+
+
+### F20 관측성과·향후 예상성과·예측 사후비교 v5 (검토 전 구현 금지)
+
+사용자는 모의성과에서 이미 관측한 결과와 향후 1주·1개월 예상성과를 구분하고, 예상 손익 범위와 손실 확률 및 예측 원본과 이후 모의성과 비교를 데모에 추가하도록 요청했다. 편도 수수료 0.25%를 유지하며 구현은 데모 검토 후다. v4는 수정 요청으로 보존하고 새 v5를 작성한다. 현재 앱 DTO/성과 함수에는 미래 예측/판본/사후비교 계약이 없고 관측된 forward 평가값만 계산한다. 이번 작업은 예측 엔진·에이전트 거래반영·실제 예측/백테스트 실행을 승인한 것이 아니다.
+
+설계 기준: 관측성과/향후예상성과/예측사후비교를 모의성과 내부에 두며 기존 상위3분류·하단5메뉴·고정4탭·각목록10개를 보존한다. 관측 주월 집계와 미래1주/1개월 horizon을 혼동하지 않는다. 예측 기준일·대상 끝·평가 예정세션, 동일 계좌 초기평가액·정책/모형/입력 판본을 표시한다. 평균 기대손익·중앙80% 합성경로범위(P10~P90)·비용 후 손실확률은 합성경로 배열에서 계산하며 검증된 예측확률/실제성과로 주장하지 않는다. 수수료는 각 경로 매수·매도 거래대금×0.25% 합산이고 체결차/세금/환율 등 예시 가정을 명시한다.
+
+사후비교는 저장된 원본 예측 ID/기준시각·모형·입력·정책·비용·대상기간·기준평가를 고정하고, 같은 조건의 관측이 종료/완결된 경우에만 손익오차·예측범위 내/밖을 계산한다. 아직 미도래는 대기, 관측 부족은 미확인, 계좌/정책/비용/기준 변경은 비교불가로 구분한다. 단일 결과로 손실확률을 맞음/틀림 판정하지 않으며 미래의 관측 가격·실현성과를 만들어 넣지 않는다. 실제 예측원장/달력/데이터 계약은 구현 전 검토 대상이다.
+
+F20 v5 검토본 완성: `mockups/T-156-paper-analysis-v5.html` SHA256 `2b86a9753504155b59f919df1b8dac291fb1e5bfe527b39408b2311a8dc7394c`; 제안서 `docs/design/2026-11-08-t156-paper-analysis-v5-review.md` SHA256 `058874e4fe1992622df66aafe952ecc6a7d868aece923e6037884dc3372ab0f0`. 독립 정적검토에서 비용 후 평균/P10/P90/손실분모·월말/윤년·사후비교 상태와 오차를 검산했다. 역사적0경로 렌더 누락과 정책별예측ID·내부보기 활성표시를 등록 전에 보완했다. 최종 lint/JS구문 정상, v4 및 기존 제품파일 SHA 불변을 확인했다.
+
+루트 CUA는 관측 주월과 미래horizon 독립, 1주/1개월 전환 및 가시 수수료, 0경로 미확인, 23개 비교의10/10/3페이지/전체집계 불변, 범위 밖 완료·미도래·자료누락·조건변경, 빈/로딩/오류/403 비공개 제거를 확인했다. 기능검사는 e6cb4c5f 후보에서 수행했고 최종2b86a975는 내부 active CSS/문서만 보완 후 수치·비교와360/412/1280 가로넘침0·고정4탭/활성표시를 재확인했다. 화면 이미지/영수증은 `agent-vault/10-Flow/artifacts/T-156-paper-analysis-v5/`에 보존한다. 합성 10경로의40% 등 수치는 실제 예측확률/검증된 성능이 아니며 미래 실제관측은 만들지 않았다. 이번 턴에는 운영 DB 읽기/쓰기, 모델/수집기/백테스트/주문 실행, 앱소스 수정, commit/push/배포 및 테스트DB 적재를 하지 않았다. 정식 review_requested/v5 등록 후 새 검토 질문을 사용하며 이전 v4 질문은 승인 증거로 재사용하지 않는다.
+
+
+### F21 향후3개월·1년 예측기간 추가 v6 (검토 전 구현 금지)
+
+사용자는 향후 예상성과 기간에3개월·1년을 추가하도록 요청했다. 기존 1주/1개월·관측성과/사후비교·편도0.25%·UI/목록/안전 제약을 유지하고 새 v6 데모만 만든다. 3개월은 달력3개월,1년은 달력12개월 뒤 같은날(없는날월말)이며 평가 예정세션과 대상 끝 날짜를 구분한다. 장기 합성경로는 각 기간별로 구성하고 단기 수익을 단순배수/연율화한 실제 예측으로 주장하지 않는다. 비용은 예측구간 신규 매수·매도 거래대금의 각0.25% 합산이다.
+
+현재 합성관측은67일이므로 새3개월/1년 사후비교는 대기로 보여준다. 미래 관측·실제체결이나 장기 검증성과를 꾸미지 않는다. 장기 누적손익/기준금액·범위/손실비율·원본ID/정책판본·예측가정을 표시하고 기존v5/v4와제품파일은 보존한다. 구현·예측엔진실행·DB/운영설정/실거래변경은검토후별도범위다.
+
+F21 v6 검토본 완성: `mockups/T-156-paper-analysis-v6.html` SHA256 `cce67b2f0350406f2296f1495fbf446e0597a3e1cc1259f9d4f98554531758ed`; 제안서 `docs/design/2026-11-08-t156-paper-analysis-v6-review.md` SHA256 `52aef002b665351edd2f5c8e08cd1a6c090c3cea719e375f86502f4da6d11f12`. 원래 기준일에서 목표월을 한 번에 계산해 월말보정하며 반복1개월계산의 날짜밀림을 방지한다. 독립검토에서 장기10경로 비용/평균/P10/P90/손실분모 및3/12개월·월말/윤년·연교차를 검산했다. 기존 단기 입력과관측/비교계산 본문·v5파일은 불변이다.
+
+루트 CUA로 네 기간 label/범위/평가예정/원본ID·초기평가액12,343/편도0.25%를 확인했다. 3개월/1년0경로는미확인이고 장기두원본은대기·미래관측없음이다. 비교23개10/10/3페이지와요약9완료/3비교불가/6미확인/5대기는동일하다. 360/412/1280 가로넘침0·한줄고정4탭, 합성/미구현표시를 확인하고 임시viewport를복원했다. 정적/브라우저증거는 `agent-vault/10-Flow/artifacts/T-156-paper-analysis-v6/`이다. 실제투자예측성능·장기복리경로 재현/전진검증으로주장하지 않는다. 앱/API·DB·모델/수집기/백테스트/주문·운영설정/실거래를 변경/실행하지 않았으며 commit/push/배포/테스트DB적재도 없다. review_requested/v6 등록 후 새검토질문으로만 승인 연결하고 v5질문을 재사용하지 않는다.
+
+
+### F22 사용자 v6 승인·조회 UI 구현 준비
+
+사용자가 원래 native 질문 `call_7484aad74e184ba1a47a3ab3aaa29505`에 `v6 승인`으로 응답했다. 실제 response message ID `msg_01a1baaf-0576-7001-a1fa-aad5479c2f9b`/turn `01a1baaf-054d-77f2-92b8-b9df40ec2c36`, 2026-11-08 10:23:14.806 UTC. 승인대상 v6 SHA cce67b2f0350406f2296f1495fbf446e0597a3e1cc1259f9d4f98554531758ed. 사용자승인은유효하고재질문하지않는다. 단정식approve-codex-native/check는 아직차단되어제품편집0이다.
+
+첫거부는공유 `demo-gate/codex-evidence.mjs` 질문의버전경계정규식이 `v6’의` 닫는따옴표를공백경계로인정하지않는문제였다. 실제native원문/고유완료항목(+1ms)/root/cwd/등록/answer검증은일치했다. 격리 `~/.codex/tmp/t156-v6-approval-quote-fix`에서수정전새회귀12/12실패,수정후222/222통과·독립정적보안검토33사례후 원본SHA대조하여공유코드/시험2파일만반영했다. 실제공유재실행도222/222통과했다. 첫공유실행은Node25의directory형 test 인수사용오류(MODULE_NOT_FOUND)였고 `node --test test/*.test.mjs` 재실행으로검증한것이다. 코드SHA6b74e5df76097e2ad3a7b37176ee33668694ad5f3febad5cfc5b69c1469b4cfe, 시험7535a1753b4de2139300a9c0c7d702ecc2deb37c5fa81c050f01f74c24715021.
+
+재시도후남은거부는native경로가승인으로만옛요청을닫아v3/v4/v5수정요청·후속등록도pending으로계산하는문제였다. 실제pending은[3,4,5,6]이고대상6의등록은정확히하나다. 원본증거/새버전패턴/시간등다른모든predicate는통과했고 pending검사이후는성공반환뿐이다. 현재 `~/.codex/tmp/t156-v6-approval-lineage-fix`에서같은정확task/session/actual+canonicalroot의낮은version을정식후속등록으로대체하는범위만보완·음성회귀검증중이다. 다른task/root/동일version중복/원래응답이전높은버전은계속차단하고,원래응답후미래등록은기존영수증검증에영향주지않아야한다. 공유state/receipt/원본transcript수동변경·훅재생·새승인요청은금지한다. activate시도역시check차단이었고즉시deactivate했으므로현재activefalse다.
+
+디자이너준비가이드 `docs/design/2026-11-08-t156-paper-analysis-v6-implementation-guide.md`가있다. 기계check/activate통과후확정하고developer에인계한다. Backend/Frontend는역할별읽기준비만완료: backend는 paper-view reader/types/query/period/route·시험,frontend는 M40Panel/css/copy/TodayPanel/route-resolve/AnalyticsPage·SSR시험·screens.md를소유한다. 아직제품코드를쓰지않는다. Backendquery명칭은period,anchorSession,signalPage,valuationPage,horizon,snapshot; additive snapshot/signalPage/valuationPage/observation/forecasts/policyRecord·availablePeriods를구현한다. 실제예측원장이없으므로4기간선택과미지원·미검증·빈상태를반영하며합성예측숫자를앱에넣지않는다. 실제예측엔진/agent거래반영·DBDDL/운영스위치·실거래활성화/배포는현재승인범위에추가하지않는다.
+
+관측집계는확인baseline/마지막평가·expected/observed canonical세션·누락/부분기간을구분하고현재페이지와분리한다. epoch/clone투자금으로baseline을꾸미지않는다. 같은owner범위·READ ONLY snapshot과회차revision/asOf/latestid 검증·10행서버페이지를사용한다. forward-calendar에기존함수/달력동작을바꾸지않는지원범위내순수조회export만추가허용했다. C1 rules결과 codex_required=false, 스위치on이다. 모델router는Sol fallback. 로컬node_modules없으며설치/symlink하지않고QA는Ubuntu독립snapshot·기존node_modules·flock/nice로수행한다.
+
+F22 최신 — 2026-11-08 19:52:09 KST: 두 번째 계보검사 후보는 독립 보안정적검토23사례(허용4/차단19) 및240/240 회귀를 통과했고, 공유원본3파일을 사전SHA대조/백업후 반영했다. 공유 실제재실행도240/240통과(59.1초)다. 코드 SHA ea6844c18442f7161f7c1a6d1ba84cbe72a7ddd594ae11431a523080f7730af7. 같은정확등록계보·원래응답시점이하만검사하며 다른task/root/중복/응답이전higher는계속차단한다. Root는원래CODEX_THREAD_ID무변경에서 candidate findNativeEvidence 읽기전용 true/version6도 확인했다.
+
+그뒤 같은원본msg/questionID로 `approve-codex-native`가성공했고 source=codex_native_transcript/version6/hashverified, `check` 및 `activate` 모두 DEMO_GATE_PASSED다. 사용자승인재질문·수동state/receipt/transcript변경·훅재생/검사우회는없다. 현재active는true이며 위 준비중 activefalse/blocked 기록은 해소됐다. Backend와Frontend는절대checker경로로본인check확인후승인된담당범위를구현한다. designer는준비가이드를확정한다. 실제장기예측엔진·agent거래반영·DBDDL/수집/모델/실거래/배포는시작하지않는다.
+
+승인도구검증묶음은 `agent-vault/10-Flow/artifacts/T-156-paper-analysis-v6-implementation/approval-tool/`로보존한다. 원본승인정본은공유도구의실제증거원장/claim이며복사검증자료는별도실행보고서이다.
+
+
+### F23 v6 조회 UI 구현·정적 검토 완료, 격리 실행 검증 진행
+
+구현 보고 정본 `docs/implementation/2026-11-08-t156-paper-v6.md`. ProductReviewer는 frontend10/backend9개의 동결해시를 확인하고 미해결0건 정적검토를 통과시켰다. Root도19파일해시를독립readback하여 reviewed-source-manifest.json에 기록했다. 아직 Jest/tsc/build·브라우저·실DB/API/운영 반영 통과가 아니다.
+
+정적검토에서 지적한 재조회 effect반복, 구형/불완전DTO의렌더예외·private잔류, 모의DTO를전역실거래OFF로표현하는문구, 마지막회차로완료세션을잘라뒤갭이숨는문제, blocked회차의정책run불일치, 리허설/allstoredbounds를전진범위라표현하는문제, 계좌시작전날들을누락으로세는문제와부분기간/선택기간0건문구를수정했다. 반례SSR/mock/pure시험을작성했고정적재검토했으나실제Jest는QA가수행해야한다.
+
+QA는 product-review.json evidence.frontendSha256/backendSha256 합계19파일과HEAD archive를Ubuntu독립snapshot에반영한다. Node24.22.2·Next15.5.27/Jest29.7/React18.3.1 정확의존성후 flock/nice 직렬테스트/타입/build. CUA하네스는실제AnalyticsPage/M40Panel/BottomTabs/CSS와합성API만쓴다. 모델·실DB/cron·운영API·실매매없음. API의저장예측은미지원·빈목록/null이며 1주/1개월/3개월/1년선택을실예측발행으로오인시키지않는다.
+
+현재origin/main은963bfeba97064c7d77ba873b8bcd356a5bb1bdaf로갱신됐으나 e9dccee와차이는T162의ACTIVE/board/task/daily문서4개뿐이고 package/제품코드는동일함을확인했다. 원격자료를덮지않고운영반영시문서통합을보존한다. 커밋/푸시/배포·운영스위치/DBDDL는아직실행하지않았다.
+
+
+### F24 v6 조회 UI 구현·최종 검증 완료
+
+독립 Reviewer 19파일 최종통과, Designer 승인v6대조수용(P0/P1/P2 0), Ubuntu격리21스위트/388검사(실패·skip0)·tsc/Next15.5.27빌드exit0을 확인했다. 최초385/386 실패1건은 일반설명문과 겹치던 SSR assertion이고 별도AppleDouble가짜3스위트와구분해수정/재검토했다. 중간386통과후기간1주/1개월·달력전체/기준일까지경과일표시를추가해388검사로최종재실행했다. 최종전후source manifest일치이며19개reviewedSHA를Root도재대조했다.
+
+격리network-none MariaDB10.11.11에서 실제readPaperView·마이그레이션스키마로 비owner403/private조회전차단,readonlyUPDATE거부,23건COUNT/10·3페이지,기간변경구snapshot409,월간직전baseline을검증했다. 합성DB/전용컨테이너는삭제했고기존보존볼륨·운영DB는손대지않았다. Root실ReactCUA는360/412/1280한줄sticky·가로넘침0/4horizon독립/10개페이지와필터·권한오류privateclear/409재시도·keyboard/기간달력30·경과6/consoleerror0을확인했다. viewport복원·CUAcompletion완료, 실제로그인운영/안드로이드/보조기술은미검증이다.
+
+구현정본 docs/implementation/2026-11-08-t156-paper-v6.md, 증거 agent-vault/10-Flow/artifacts/T-156-paper-analysis-v6-implementation/qa 및 visual. 실제예측/사후비교원장없음은4기간선택+미지원/빈값으로표시하며합성수익/손실확률을운영값으로넣지않았다. 현재정책은M40기본매매·에이전트참고전용이며거래반영미구현을표시한다. 신규DB쓰기/수집·모델·실주문·운영설정변경,commit/push/배포는하지않았다. UI승인을다시묻지않으며 .codex/agents/deployer.toml의중단시간·시점합의규정에따라운영웹배포시점만확인한다. T156전체는미래전진84일/신규왕복100건/변경20일·원천공백때문에doing이다.
+
+F24 후속: 사용자가 배포시점 질문에 ‘지금 웹 배포 (추천)’로 답해 즉시 웹반영을 승인했다. 같은승인재질문없이최신main의타작업문서보존통합·실제정상훅커밋·배포/운영검증을진행한다. DBDDL/APK/실거래변경은승인대상이아니다.

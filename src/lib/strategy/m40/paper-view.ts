@@ -1,10 +1,14 @@
+import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { readBlob } from '@/lib/analysis-data/store';
 import { getPool } from '@/lib/db';
 import type { ArchiveQueryable } from '@/lib/analysis-data/types';
 import { normalizeForwardUtc, validForwardSessionDate } from './forward-calendar';
 import { PAPER_ACCOUNT_ID } from './paper-ledger';
-import type { PaperView, PaperViewCycle, PaperViewSignal } from './paper-view-types';
+import { defaultPaperViewQuery, paperPage } from './paper-view-query';
+import { paperAvailablePeriods,paperObservation,paperPeriodRange,paperCompletedSession } from './paper-view-period';
+import { PAPER_FEE } from './paper-ledger';
+import type { PaperView, PaperViewBase,PaperViewQuery,PaperValuationPoint, PaperViewCycle, PaperViewSignal } from './paper-view-types';
 type Row=Record<string,unknown>;
 const object=(v:unknown):Row=>{const p=typeof v==='string'?JSON.parse(v):v;return p&&typeof p==='object'&&!Array.isArray(p)?p as Row:{};};
 const array=(v:unknown):Row[]=>Array.isArray(v)?v.filter(x=>x&&typeof x==='object'&&!Array.isArray(x)) as Row[]:[];
@@ -17,7 +21,7 @@ const scalarAmount=(v:unknown)=>typeof v==='number'?amount(v):typeof v==='string
 const safeReason=(v:unknown)=>code(v)==='unknown'?null:code(v);
 const day=(v:unknown)=>validForwardSessionDate(v)?v:null;
 const time=normalizeForwardUtc;
-export class PaperViewError extends Error {constructor(public status:403|503, message:string){super(message);}}
+export class PaperViewError extends Error {constructor(public status:400|403|409|503, message:string){super(message);}}
 export function paperViewLimits(raw:string|null):number {const n=raw===null?20:Number(raw);if(!Number.isInteger(n)||n<1||n>100)throw Error('signal_limit_must_be_1_to_100');return n;}
 /** Metrics use only forward observations, never clone/rehearsal peaks or stored cumulative returns. */
 export function paperPerformance(rows:Row[], truncated:boolean):PaperView['performance'] {
@@ -84,7 +88,7 @@ export function projectPaperSignal(s:Row):PaperViewSignal|null {
  return {id:code(s.id),session:day(s.session)??'unknown',symbol:sym,side:code(s.side),status:code(s.status),quantity:scalarAmount(s.quantity),reason:safeReason(s.reason),executeSession:day(s.executeSession),createdAt:time(s.createdAt),mode:['rehearsal','forward','blocked'].includes(String(s.mode))?s.mode as PaperViewSignal['mode']:'unknown',outcome};
 }
 /** Authenticated caller identity must be supplied. Authorization precedes every paper-data read. */
-export async function readPaperView(userId:number,limit=20,db:ArchiveQueryable=getPool()):Promise<PaperView>{
+async function readLegacyPaperView(userId:number,limit=20,db:ArchiveQueryable=getPool()):Promise<PaperViewBase>{
  if(!Number.isSafeInteger(userId)||userId<=0)throw new PaperViewError(403,'paper_viewer_forbidden');
  if(!Number.isInteger(limit)||limit<1||limit>100)throw Error('signal_limit_must_be_1_to_100');
  if(!db.getConnection)throw new PaperViewError(503,'paper_snapshot_unavailable');
@@ -109,8 +113,102 @@ export async function readPaperView(userId:number,limit=20,db:ArchiveQueryable=g
  WHERE s.account_id=? AND s.execution_scope='paper_only' ORDER BY s.created_at DESC,s.id DESC LIMIT ?`,[PAPER_ACCOUNT_ID,limit]);
  const truncated=cycles.length>1000;
  const performance=paperPerformance(cycles.slice(0,1000).reverse(),truncated);
- const result:PaperView={executionScope:'paper_only',liveTrading:false,account:{status:code(account.status),revision:Number.isSafeInteger(Number(account.revision))&&Number(account.revision)>=0?Number(account.revision):0,registeredAt:time(policy.registeredAt),cloneInvestmentUsd:account.initialEquityUsd==null?null:amount(Number(account.initialEquityUsd)),currentEquityUsd:latest?amount(object(latest.payload_json).equityUsd):null},currentCycle,lastUsableCycle,
+ const result:PaperViewBase={executionScope:'paper_only',liveTrading:false,account:{status:code(account.status),revision:Number.isSafeInteger(Number(account.revision))&&Number(account.revision)>=0?Number(account.revision):0,registeredAt:time(policy.registeredAt),cloneInvestmentUsd:account.initialEquityUsd==null?null:amount(Number(account.initialEquityUsd)),currentEquityUsd:latest?amount(object(latest.payload_json).equityUsd):null},currentCycle,lastUsableCycle,
  signals:signals.flatMap(s=>{const projected=projectPaperSignal(s);return projected?[projected]:[];}),performance};
  await c.commit();active=false;return result;
  }catch(e){if(active){try{await c.rollback();}catch{c.destroy?.();destroyed=true;}}else if(startAttempted){c.destroy?.();destroyed=true;}if(e instanceof PaperViewError)throw e;throw new PaperViewError(503,'paper_view_unavailable');}finally{if(!destroyed)c.release?.();}
+}
+
+const count=(rows:Row[])=>{const n=Number(rows[0]?.n);if(!Number.isSafeInteger(n)||n<0)throw new PaperViewError(503,'paper_count_unknown');return n;};
+const sqlTime=(at:string)=>at.replace('T',' ').replace(/Z$/,'');
+const valuation=(r:Row):PaperValuationPoint=>({id:code(r.id),session:day(r.session)??'unknown',observedAt:time(r.recordedAt),equityUsd:amount(object(r.payload_json).equityUsd)});
+const cycleColumns="id,DATE_FORMAT(session_date,'%Y-%m-%d') session,DATE_FORMAT(decision_at,'%Y-%m-%dT%H:%i:%s.%fZ') decisionAt,DATE_FORMAT(created_at,'%Y-%m-%dT%H:%i:%s.%fZ') recordedAt,mode,payload_json";
+const aggregateLimit=10000;
+/** Legacy numerical call remains bounded and explicitly carries its original truncated flag. */
+export function readPaperView(userId:number,query:PaperViewQuery,db?:ArchiveQueryable):Promise<PaperView>;
+export function readPaperView(userId:number,limit?:number,db?:ArchiveQueryable):Promise<PaperViewBase>;
+export async function readPaperView(userId:number,query:PaperViewQuery|number=defaultPaperViewQuery(),db:ArchiveQueryable=getPool()):Promise<PaperView|PaperViewBase> {
+ if(typeof query==='number')return readLegacyPaperView(userId,query,db);
+ if(!Number.isSafeInteger(userId)||userId<=0)throw new PaperViewError(403,'paper_viewer_forbidden');
+ // Validate programmatic callers too, before connecting; all variable SQL values are bound.
+ if(!['all','week','month'].includes(query.period)||!['week','month','quarter','year'].includes(query.horizon)
+  ||![query.signalPage,query.valuationPage].every(n=>Number.isSafeInteger(n)&&n>0&&n<=999999)
+  ||(query.period==='all'?query.anchorSession!==null:(!validForwardSessionDate(query.anchorSession)||query.anchorSession<'1900-01-01'||query.anchorSession>'2100-12-31'))
+  ||(query.snapshot!==null&&(typeof query.snapshot!=='string'||!/^[A-Za-z0-9_-]{1,1200}$/.test(query.snapshot))))throw new PaperViewError(400,'paper_query_invalid');
+ if(!db.getConnection)throw new PaperViewError(503,'paper_snapshot_unavailable');
+ const c=await db.getConnection();if(!c.release||!c.destroy){c.release?.();throw new PaperViewError(503,'paper_snapshot_unavailable');}
+ let active=false,destroyed=false,startAttempted=false;
+ try {
+ await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');startAttempted=true;await c.query('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY');active=true;
+ // The explicit viewer authorization precedes ALL account, count, history and aggregate SELECTs.
+ const [viewers]=await c.query<Row[]>('SELECT v.account_id FROM t156_paper_viewer v INNER JOIN users u ON u.id=v.user_id WHERE v.account_id=? AND v.user_id=?',[PAPER_ACCOUNT_ID,userId]);
+ if(viewers.length!==1||viewers[0].account_id!==PAPER_ACCOUNT_ID)throw new PaperViewError(403,'paper_viewer_forbidden');
+ const [accounts]=await c.query<Row[]>("SELECT status,revision,policy_json,JSON_EXTRACT(state_json,'$.initialEquityUsd') initialEquityUsd,DATE_FORMAT(updated_at,'%Y-%m-%dT%H:%i:%s.%fZ') updatedAt FROM t156_paper_account WHERE id=?",[PAPER_ACCOUNT_ID]);
+ const account=accounts[0];if(accounts.length!==1||!time(account.updatedAt)||!Number.isSafeInteger(Number(account.revision))||Number(account.revision)<0)throw new PaperViewError(503,'paper_account_unavailable');
+ // Account.updated_at is the persisted final write in the atomic cycle/signal/outcome commit.
+ // It is a UTC snapshot cutoff, NOT the price session or the earlier analysis decision cutoff.
+ const asOf=time(account.updatedAt)!,revision=Number(account.revision),cutoff=sqlTime(asOf),policy=object(account.policy_json);
+ const completedSession=paperCompletedSession(asOf),sessionCutoff=completedSession??'0001-01-01';
+ const [latestRows]=await c.query<Row[]>(`SELECT ${cycleColumns} FROM t156_paper_cycle WHERE account_id=? AND decision_at<=? AND created_at<=? ORDER BY decision_at DESC,id DESC LIMIT 1`,[PAPER_ACCOUNT_ID,cutoff,cutoff]);
+ const latest=latestRows[0],cycleId=latest?String(latest.id):null;
+ const range=paperPeriodRange(query.period,query.anchorSession);
+ // This deterministic token is a query binding, not a signature. Every component is re-read and matched.
+ // Pages and forecast horizon intentionally share a snapshot; period/anchor/sort/account do not.
+ const binding=JSON.stringify([1,PAPER_ACCOUNT_ID,revision,cycleId,asOf,query.period,query.anchorSession,range.start,range.end,'signals:created_at_desc,id_desc;valuations:session_desc,id_desc']);
+ const token=Buffer.from(JSON.stringify({binding:JSON.parse(binding),digest:createHash('sha256').update(binding).digest('hex')})).toString('base64url');
+ if(query.snapshot!==null&&query.snapshot!==token)throw new PaperViewError(409,'paper_snapshot_changed_restart_page_1');
+ const referenceCount=Array.isArray(policy.referenceSymbols)?Math.min(policy.referenceSymbols.length,150):null;
+ const currentCycle=latest?await projectCycle(latest,referenceCount,c):null;
+ let lastUsableCycle:PaperView['lastUsableCycle']=null;
+ if(latest?.mode==='blocked'){
+  const [usableRows]=await c.query<Row[]>(`SELECT ${cycleColumns} FROM t156_paper_cycle WHERE account_id=? AND decision_at<=? AND created_at<=? AND mode<>'blocked' ORDER BY decision_at DESC,id DESC LIMIT 1`,[PAPER_ACCOUNT_ID,cutoff,cutoff]);
+  if(usableRows[0])lastUsableCycle={...await projectCycle(usableRows[0],referenceCount,c),stale:true};
+ }
+ const [historyRows]=await c.query<Row[]>("SELECT DATE_FORMAT(MIN(CASE WHEN mode='forward' THEN session_date END),'%Y-%m-%d') firstSession,DATE_FORMAT(MAX(CASE WHEN mode='forward' THEN session_date END),'%Y-%m-%d') lastSession,DATE_FORMAT(MIN(session_date),'%Y-%m-%d') savedFirstSession,DATE_FORMAT(MAX(session_date),'%Y-%m-%d') savedLastSession FROM t156_paper_cycle WHERE account_id=? AND decision_at<=? AND created_at<=? AND session_date<=?",[PAPER_ACCOUNT_ID,cutoff,cutoff,sessionCutoff]);
+ const firstSession=day(historyRows[0]?.firstSession),lastSession=day(historyRows[0]?.lastSession),periods=paperAvailablePeriods(day(historyRows[0]?.savedFirstSession),day(historyRows[0]?.savedLastSession));
+ const cycleWhere='account_id=? AND decision_at<=? AND created_at<=? AND mode=\'forward\' AND session_date<=?'+(range.start?' AND session_date>=? AND session_date<=?':'');
+ const cycleParams:unknown[]=[PAPER_ACCOUNT_ID,cutoff,cutoff,sessionCutoff,...(range.start?[range.start,range.end]:[])];
+ const [cycleCounts]=await c.query<Row[]>(`SELECT COUNT(*) n,COUNT(DISTINCT CASE WHEN JSON_TYPE(JSON_EXTRACT(payload_json,'$.equityUsd')) IN ('INTEGER','DOUBLE','DECIMAL') AND CAST(JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.equityUsd')) AS DECIMAL(38,10))>0 THEN session_date END) observedSessions FROM t156_paper_cycle WHERE ${cycleWhere}`,cycleParams);
+ const pointCount=count(cycleCounts),observedCount=Number(cycleCounts[0]?.observedSessions);if(!Number.isSafeInteger(observedCount)||observedCount<0||observedCount>pointCount)throw new PaperViewError(503,'paper_count_unknown');
+ const valuationMeta=paperPage<PaperValuationPoint>([],query.valuationPage,pointCount);
+ const [pageRows]=await c.query<Row[]>(`SELECT ${cycleColumns} FROM t156_paper_cycle WHERE ${cycleWhere} ORDER BY session_date DESC,id DESC LIMIT ? OFFSET ?`,[...cycleParams,10,(valuationMeta.page-1)*10]);
+ const [aggregateRows]=await c.query<Row[]>(`SELECT ${cycleColumns} FROM t156_paper_cycle WHERE ${cycleWhere} ORDER BY session_date ASC,id ASC LIMIT ?`,[...cycleParams,aggregateLimit+1]);
+ const [firstRows]=await c.query<Row[]>(`SELECT ${cycleColumns} FROM t156_paper_cycle WHERE ${cycleWhere} ORDER BY session_date ASC,id ASC LIMIT 1`,cycleParams);
+ const [lastRows]=await c.query<Row[]>(`SELECT ${cycleColumns} FROM t156_paper_cycle WHERE ${cycleWhere} ORDER BY session_date DESC,id DESC LIMIT 1`,cycleParams);
+ let prior:PaperValuationPoint|null=null;
+ if(range.start){const [before]=await c.query<Row[]>(`SELECT ${cycleColumns} FROM t156_paper_cycle WHERE account_id=? AND decision_at<=? AND created_at<=? AND mode='forward' AND session_date<=? AND session_date<? ORDER BY session_date DESC,id DESC LIMIT 1`,[PAPER_ACCOUNT_ID,cutoff,cutoff,sessionCutoff,range.start]);prior=before[0]?valuation(before[0]):null;}
+ const [futureCounts]=await c.query<Row[]>("SELECT COUNT(*) n FROM t156_paper_cycle WHERE account_id=? AND decision_at<=? AND created_at<=? AND mode='forward' AND session_date>?",[PAPER_ACCOUNT_ID,cutoff,cutoff,sessionCutoff]);
+ const excludedFuture=count(futureCounts);
+ const observation=paperObservation({period:query.period,anchor:query.anchorSession,asOfSession:completedSession,globalFirstForwardSession:firstSession,snapshotAsOf:asOf,extraIssues:[...(!completedSession?['snapshot_calendar_unknown']:[]),...(excludedFuture?['future_records_excluded']:[])],points:aggregateRows.slice(0,aggregateLimit).map(valuation),prior,firstActual:firstRows[0]?valuation(firstRows[0]):null,lastActual:lastRows[0]?valuation(lastRows[0]):null,observedCount,totalPoints:pointCount,truncated:pointCount>aggregateLimit||aggregateRows.length>aggregateLimit});
+ const signalWhere="s.account_id=? AND s.execution_scope='paper_only' AND s.created_at<=? AND c.decision_at<=? AND c.created_at<=? AND s.session_date<=?"+(range.start?' AND s.session_date>=? AND s.session_date<=?':'');
+ const signalParams:unknown[]=[PAPER_ACCOUNT_ID,cutoff,cutoff,cutoff,sessionCutoff,...(range.start?[range.start,range.end]:[])];
+ const signalJoin='FROM t156_paper_signal s INNER JOIN t156_paper_cycle c ON c.id=s.cycle_id AND c.account_id=s.account_id';
+ const [signalCounts]=await c.query<Row[]>(`SELECT COUNT(*) n ${signalJoin} WHERE ${signalWhere}`,signalParams);
+ const signalCount=count(signalCounts),signalMeta=paperPage<PaperViewSignal>([],query.signalPage,signalCount);
+ const [signalRows]=await c.query<Row[]>(`SELECT s.id,DATE_FORMAT(s.session_date,'%Y-%m-%d') session,s.symbol,s.side,s.status,
+ JSON_EXTRACT(s.intent_json,'$.quantity') quantity,JSON_UNQUOTE(JSON_EXTRACT(s.intent_json,'$.reason')) reason,
+ JSON_UNQUOTE(JSON_EXTRACT(s.intent_json,'$.executeSession')) executeSession,DATE_FORMAT(s.created_at,'%Y-%m-%dT%H:%i:%s.%fZ') createdAt,c.mode,s.outcome_json
+ ${signalJoin} WHERE ${signalWhere} ORDER BY s.created_at DESC,s.id DESC LIMIT ? OFFSET ?`,[...signalParams,10,(signalMeta.page-1)*10]);
+ const signals=signalRows.flatMap(row=>{const projected=projectPaperSignal(row);if(!projected)return [];
+  if(!projected.outcome?.observedAt||projected.outcome.observedAt>asOf){projected.outcome=null;if(['filled','expired'].includes(projected.status))projected.status='unknown';}
+  return [projected];});
+ // Exactly the same cycle selection as the UI; never borrow a blocked/newer run's policy.
+ const selectedCycle=(currentCycle?.mode==='blocked'?lastUsableCycle:null)??currentCycle;
+ const selectedRun=selectedCycle?.sourceRunId??null;
+ let policyVersion:string|null=null,modelPolicyVersions:string[]=[];
+ if(selectedRun){
+  const [run]=await c.query<Row[]>('SELECT policy_version FROM t156_analysis_run WHERE run_id=? AND created_at<=?',[selectedRun,cutoff]);policyVersion=safeReason(run[0]?.policy_version);
+  const [versions]=await c.query<Row[]>("SELECT JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.modelPolicyVersion')) modelPolicyVersion FROM t156_judgment WHERE run_id=? ORDER BY stage,event_hash LIMIT 16",[selectedRun]);
+  modelPolicyVersions=[...new Set(versions.flatMap(r=>{const v=safeReason(r.modelPolicyVersion);return v?[v]:[];}))];
+ }
+ const valuationPage={...valuationMeta,rows:pageRows.map(valuation)};
+ const result:PaperView={executionScope:'paper_only',liveTrading:false,account:{status:code(account.status),revision,registeredAt:time(policy.registeredAt),cloneInvestmentUsd:account.initialEquityUsd==null?null:amount(Number(account.initialEquityUsd)),currentEquityUsd:latest&&day(latest.session)!==null&&String(latest.session)<=sessionCutoff?amount(object(latest.payload_json).equityUsd):null},currentCycle,lastUsableCycle,signals,
+ performance:{status:observation.status==='not_started'?'not_started':observation.status==='observed'?'observed':'insufficient_points',points:valuationPage.rows.flatMap(p=>p.equityUsd!==null?[{session:p.session,equityUsd:p.equityUsd}]:[]).reverse(),returnPct:observation.returnPct,maxDrawdownPct:observation.maxDrawdownPct,cagrPct:observation.cagrPct,realizedPnlUsd:null,unrealizedPnlUsd:null,truncated:observation.truncated,gapLabel:'metrics_full_range; points_current_page_only; session_date_not_snapshot_utc'},
+ query:{...query,signalPage:signalMeta.page,valuationPage:valuationMeta.page,snapshot:token},snapshot:{token,asOf,accountRevision:revision,cycleId},history:{firstSession,lastSession,availablePeriods:{weeks:periods.weeks,months:periods.months},periodsTruncated:periods.truncated},
+ signalPage:{...signalMeta,rows:signals},valuationPage,observation,
+ forecasts:{capability:'not_implemented',horizon:query.horizon,records:[],comparison:[],baseline:null,targetEnd:null,expectedReturnPct:null,feePerSide:PAPER_FEE},
+ policyRecord:{status:policyVersion?'available':'unknown',runId:selectedRun,policyVersion,modelPolicyVersions,promptVersion:null,agentTrading:'not_implemented'}};
+ await c.commit();active=false;return result;
+ }catch(error){if(active){try{await c.rollback();}catch{c.destroy?.();destroyed=true;}}else if(startAttempted){c.destroy?.();destroyed=true;}if(error instanceof PaperViewError)throw error;throw new PaperViewError(503,'paper_view_unavailable');}
+ finally{if(!destroyed)c.release?.();}
 }

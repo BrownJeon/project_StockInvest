@@ -10,5 +10,13 @@ export function syntheticPaperCycle():PaperViewCycle {return {
 };}
 export function syntheticPaperView():PaperView{return {executionScope:'paper_only',liveTrading:false,account:{status:'active',revision:2,registeredAt:'2026-11-07T00:00:00.000000Z',cloneInvestmentUsd:12000,currentEquityUsd:12096},currentCycle:syntheticPaperCycle(),lastUsableCycle:null,
  signals:[{id:'synthetic-signal',session:'2026-11-06',symbol:'NAS:DEMOA',side:'sell',status:'rehearsal',quantity:2,reason:'outside_top5',executeSession:'2026-11-09',createdAt:'2026-11-07T01:00:00.000000Z',mode:'rehearsal',outcome:null}],
+ query:{period:'all',anchorSession:null,signalPage:1,valuationPage:1,horizon:'week',snapshot:null},
+ snapshot:{token:'synthetic-snapshot',asOf:'2026-11-07T01:00:00Z',accountRevision:2,cycleId:'synthetic-cycle'},
+ history:{firstSession:null,lastSession:null,availablePeriods:{weeks:['2026-11-02'],months:['2026-11-01']},periodsTruncated:false},
+ signalPage:{rows:[{id:'synthetic-signal',session:'2026-11-06',symbol:'NAS:DEMOA',side:'sell',status:'rehearsal',quantity:2,reason:'outside_top5',executeSession:'2026-11-09',createdAt:'2026-11-07T01:00:00.000000Z',mode:'rehearsal',outcome:null}],page:1,pageSize:10,totalCount:1,totalPages:1,hasNext:false,hasPrevious:false},
+ valuationPage:{rows:[],page:1,pageSize:10,totalCount:0,totalPages:1,hasNext:false,hasPrevious:false},
+ observation:{period:'all',startSession:null,endSession:null,asOfSession:'2026-11-06',baseline:null,firstObserved:null,lastObserved:null,totalPoints:0,expectedSessions:null,observedSessions:0,missingSessions:null,partialPeriod:false,truncated:false,calendarStatus:'unknown',status:'not_started',returnPct:null,pnlUsd:null,maxDrawdownPct:null,cagrPct:null,issues:[],scope:'account_including_existing_holdings',signalAttribution:'not_supported'},
+ forecasts:{capability:'not_implemented',horizon:'week',records:[],comparison:[],baseline:null,targetEnd:null,expectedReturnPct:null,feePerSide:.0025},
+ policyRecord:{status:'unknown',runId:'synthetic-run',policyVersion:null,modelPolicyVersions:[],promptVersion:null,agentTrading:'not_implemented'},
  performance:{status:'not_started',points:[],returnPct:null,maxDrawdownPct:null,cagrPct:null,realizedPnlUsd:null,unrealizedPnlUsd:null,truncated:false,gapLabel:'observed_forward_points_only'}
 };}

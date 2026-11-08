@@ -26,7 +26,7 @@ export const ANALYTICS_SEGMENTS: { id: AnalyticsSegment; text: string }[] = [
 
 /** 상세 보기 → 속한 세그먼트(강조할 세그먼트)와 머리 제목. */
 export const ANALYTICS_DETAILS: Record<AnalyticsDetail, { seg: AnalyticsSegment; title: string }> = {
-  m40:         { seg: 'today', title: 'M40 모의분석' },
+  m40:         { seg: 'today', title: '모의분석' },
   research:    { seg: 'today',  title: '리서치분석' },
   leaderboard: { seg: 'today',  title: '주도주' },
   missed:      { seg: 'verify', title: '놓친 기회' },

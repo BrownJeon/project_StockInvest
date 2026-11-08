@@ -1,41 +1,115 @@
 import * as ReactNS from 'react';
 import { createElement as h } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { M40PaperView,M40_POLL_OPTIONS,M40_PAPER_URL } from '@/app/analytics/M40PaperPanel';
+import { M40PaperView,M40_POLL_OPTIONS,M40_PAPER_URL,type PaperArea,type PaperPerformanceView } from '@/app/analytics/M40PaperPanel';
 import { applyOutcome,readEnvelope,type PollState } from '@/components/ops/useOpsPoll';
 import type { PaperView } from '@/lib/strategy/m40/paper-view-types';
 import { syntheticPaperView } from './fixtures/t156-paper-view';
 import { paperJudgmentRows,paperReason } from '@/app/analytics/m40-paper-copy';
-import { resolveAnalyticsRoute,analyticsQuery,ANALYTICS_SEGMENTS } from '@/app/analytics/route-resolve';
+import { PAPER_INITIAL_QUERY,paperLocalPage,paperNextQuery,paperQueryUrl,paperTabIndex,isPaperViewV6,paperSafePoll,paperCalendarSpan } from '@/app/analytics/m40-paper-ui';
+import { resolveAnalyticsRoute,analyticsQuery,ANALYTICS_SEGMENTS,ANALYTICS_DETAILS } from '@/app/analytics/route-resolve';
 (globalThis as unknown as { React:typeof ReactNS }).React=ReactNS;
 const state=(data:PaperView):PollState<PaperView>=>({status:'ok',data,lastOkAt:1,error:null});
-const render=(poll:PollState<PaperView>)=>renderToStaticMarkup(h(M40PaperView,{poll,onRefresh:()=>{}}));
-describe('T-156 approved M40 saved-data screen',()=>{
- test('new detail stays in today and existing three segments remain',()=>{
- expect(resolveAnalyticsRoute('m40')).toEqual({kind:'detail',seg:'today',detail:'m40'});expect(analyticsQuery({seg:'today',detail:'m40'})).toBe('?tab=m40');expect(ANALYTICS_SEGMENTS.map(s=>s.id)).toEqual(['today','verify','data']);expect(resolveAnalyticsRoute('orders')).toEqual({kind:'redirect',href:'/recommend?tab=log&detail=orders'});
+const render=(poll:PollState<PaperView>,initialArea:PaperArea='collection',initialPerformanceView:PaperPerformanceView='observed')=>renderToStaticMarkup(h(M40PaperView,{poll,onRefresh:()=>{},initialArea,initialPerformanceView}));
+describe('T-156 approved v6 saved-data screen',()=>{
+ test('detail name changes while route and existing three segments remain',()=>{
+ expect(ANALYTICS_DETAILS.m40.title).toBe('모의분석');expect(resolveAnalyticsRoute('m40')).toEqual({kind:'detail',seg:'today',detail:'m40'});expect(analyticsQuery({seg:'today',detail:'m40'})).toBe('?tab=m40');expect(ANALYTICS_SEGMENTS.map(s=>s.id)).toEqual(['today','verify','data']);expect(resolveAnalyticsRoute('orders')).toEqual({kind:'redirect',href:'/recommend?tab=log&detail=orders'});
  });
- test('all four areas distinguish selection from trading and rehearsal from forward performance',()=>{
- const html=render(state(syntheticPaperView()));
- for(const label of ['수집 상태','종목 판단','모의시그널','모의성과','선정'])expect(html).toContain(label);
- expect(html).toContain('모의 유지');expect(html).toContain('리허설 기록 · 미체결');expect(html).toContain('아직 시작 기록 없음');expect(html).toContain('판단 모델 꺼짐 또는 정책 버전 미등록 · 모델 미호출');expect(html).toContain('공시 수집 미확인 · 뉴스 수집 미확인');expect(html).not.toContain('0.00%');expect(html).not.toContain('승인하기');
+ test.each(['collection','judgments','signals','performance'] as const)('only active %s panel renders; four accessible tabs remain',area=>{
+ const html=render(state(syntheticPaperView()),area);
+ expect((html.match(/role="tab"/g)||[]).length).toBe(4);expect((html.match(/role="tabpanel"/g)||[]).length).toBe(1);expect((html.match(/aria-selected="true"/g)||[]).length).toBe(1);expect(html).toContain(`aria-labelledby="m40-tab-${area}"`);
+ for(const label of ['수집상태','종목판단','모의시그널','모의성과'])expect(html).toContain(label);
+ expect(html).toContain('에이전트 참고 전용');expect(html).toContain('거래 반영 미구현');expect(html).not.toContain('승인하기');
  });
- test.each([401,403,503])('HTTP %s clears owner DTO and stale data cannot render',status=>{
+ test('judgments distinguish selection from trading and explicit recorded skip from unknown calls',()=>{
+ const html=render(state(syntheticPaperView()),'judgments');expect(html).toContain('모의 유지');expect(html).toContain('판단 모델 꺼짐 또는 정책 버전 미등록 · 모델 미호출');expect(html).toContain('모델 호출 누락은 미확인');
+ });
+ test('signals retain rehearsal and outcome limitations with visible per-side cost',()=>{
+ const html=render(state(syntheticPaperView()),'signals');expect(html).toContain('리허설 기록 · 미체결');expect(html).toContain('개별 시그널 손익 집계 연결 전');expect(html).toContain('매수 0.25% · 매도 0.25%');
+ });
+ test.each([401,403,503])('HTTP %s discards private policy, source, signal and account values in every panel',status=>{
  const prev=state(syntheticPaperView());const next=applyOutcome(prev,readEnvelope<PaperView>(status,{ok:false}),2,M40_POLL_OPTIONS.keepLastOnError);
- expect(next.data).toBeNull();const html=render({...next,data:prev.data});expect(html).not.toContain('NAS:DEMOA');expect(html).not.toContain('12,096');expect(html).toContain(status===403?'조회 권한이 없습니다':status===401?'로그인이 필요합니다':'조회하지 못했습니다');
+ expect(next.data).toBeNull();
+ for(const area of ['collection','judgments','signals','performance'] as const)for(const view of ['observed','forecast','comparison'] as const){
+  const html=render({...next,data:prev.data},area,view);for(const privateValue of ['NAS:DEMOA','12,096','synthetic_public_prices','synthetic-run','저장된 예측 없음'])expect(html).not.toContain(privateValue);
+  expect(html).toContain(status===403?'조회 권한이 없습니다':status===401?'로그인이 필요합니다':'조회하지 못했습니다');
+ }
  });
- test('blocked current remains explicit while previous saved source and judgments are dated',()=>{
+ test('blocked current dates previous saved collection explicitly',()=>{
  const d=syntheticPaperView();d.lastUsableCycle={...d.currentCycle!,stale:true};d.currentCycle={...d.currentCycle!,id:'blocked',session:'2026-11-09',mode:'blocked',errorCode:'forward_cycle_failed',collection:{...d.currentCycle!.collection,sources:[]},candidates:[],decisions:[],judgments:[],eligibility:[]};
  const html=render(state(d));expect(html).toContain('최신 회차 처리 차단');expect(html).toContain('2026-11-09');expect(html).toContain('이전 저장분');expect(html).toContain('2026-11-06');expect(html).toContain('synthetic_public_prices');
  });
- test('filters search only local saved rows and do not equate selected with buys',()=>{
+ test('saved local rows are filtered before paging; selection is not a buy',()=>{
  const c=syntheticPaperView().currentCycle;expect(paperJudgmentRows(c,'demoa','selected')[0].decision?.action).toBe('hold');expect(paperJudgmentRows(c,'','excluded').map(r=>r.symbol)).toEqual(['NAS:DEMOB']);expect(paperJudgmentRows(c,'absent')).toEqual([]);expect(paperReason('unregistered_new_reason')).toContain('설명 미등록');
  });
- test('loading and empty records never manufacture balances or successful results',()=>{
- expect(render({status:'loading',data:null,error:null,lastOkAt:null})).toContain('불러오는 중');const d=syntheticPaperView();d.currentCycle=null;d.signals=[];d.account.cloneInvestmentUsd=null;d.account.currentEquityUsd=null;const html=render(state(d));expect(html).toContain('아직 저장된 분석 회차가 없습니다');expect(html).toContain('아직 모의시그널 기록이 없습니다');expect(html).not.toContain('USD 0');expect(M40_PAPER_URL).toBe('/api/research/t156/paper');
+ test('loading and missing records do not invent balances or zero profits',()=>{
+ expect(render({status:'loading',data:null,error:null,lastOkAt:null})).toContain('불러오는 중');const d=syntheticPaperView();d.currentCycle=null;d.account.cloneInvestmentUsd=null;d.account.currentEquityUsd=null;
+ expect(render(state(d))).toContain('아직 저장된 분석 회차가 없습니다');const html=render(state(d),'performance');expect(html).toContain('선택기간 관측 없음 · 전진 시작 기록 미확인');expect(html).toContain('기준평가 없음');expect(html).not.toContain('USD 0');expect(html).not.toContain('0.00%');expect(M40_PAPER_URL).toBe('/api/research/t156/paper');
  });
- test('selected without a buy shows its saved cash constraint without inventing an order',()=>{
+ test('selected without buy shows recorded cash constraint',()=>{
  const d=syntheticPaperView();d.currentCycle!.decisions=[];d.currentCycle!.warnings=[{symbol:'NAS:DEMOA',code:'insufficient_settled_cash'}];
- const html=render(state(d));expect(html).toContain('선정됐지만 저장된 매매 의도 없음');expect(html).toContain('결제된 모의현금·수수료 포함 예산으로 1주 매수 불가');expect(html).not.toContain('상세 제약 사유는 제공 자료에서 미확인');
+ const html=render(state(d),'judgments');expect(html).toContain('선정됐지만 저장된 매매 의도 없음');expect(html).toContain('결제된 모의현금·수수료 포함 예산으로 1주 매수 불가');expect(html).not.toContain('상세 제약 사유는 제공 자료에서 미확인');
  });
-
+ test('forecast permits four horizons but has no fabricated dates, numbers, baseline or paths',()=>{
+ const html=render(state(syntheticPaperView()),'performance','forecast');for(const label of ['향후 1주','향후 1개월','향후 3개월','향후 1년','저장된 예측 없음','미지원 · 미검증','예측 기준일·기준 평가액·목표일·평가 예정일 미확인'])expect(html).toContain(label);
+ for(const fabricated of ['12,343','40%','P10','DEMO-F','USD 12,000','목표일 2026'])expect(html).not.toContain(fabricated);
+ expect(render(state(syntheticPaperView()),'performance','comparison')).toContain('0–0 / 0개');
+ });
+ test('a completed month with a mid-period account start is partial without claiming the month is ongoing',()=>{
+ const d=syntheticPaperView();d.history={...d.history,firstSession:'2026-10-15',lastSession:'2026-11-06'};
+ d.observation={...d.observation,period:'month',startSession:'2026-10-01',endSession:'2026-10-31',asOfSession:'2026-11-06',partialPeriod:true,status:'unconfirmed',issues:['account_started_during_period']};
+ const html=render(state(d),'performance');expect(html).toContain('모의투자 시작 이후만 관측한 부분기간');expect(html).toContain('시작 전 세션은 관측 대상에서 제외');expect(html).toContain('시작 이후 세션만 관측 대상');expect(html).not.toContain('진행 중');expect(html).not.toContain('0.00%');
+ });
+ test('a period before the account start has no selected observations without claiming the account never started',()=>{
+ const d=syntheticPaperView();d.history={...d.history,firstSession:'2026-10-15',lastSession:'2026-11-06'};
+ d.observation={...d.observation,period:'month',startSession:'2026-09-01',endSession:'2026-09-30',asOfSession:'2026-11-06',expectedSessions:0,observedSessions:0,missingSessions:0,status:'not_started',issues:['before_account_start']};
+ const html=render(state(d),'performance');expect(html).toContain('선택기간 관측 없음 · 모의투자 시작 전');expect(html).toContain('계좌 전진 관측 전체 2026-10-15–2026-11-06');expect(html).toContain('예상 0 / 관측 0 / 누락 0거래일');expect(html).not.toContain('전진 시작 기록 미확인');expect(html).not.toContain('진행 중');expect(html).not.toContain('0.00%');expect(paperReason('account_start_unknown')).toContain('예상·누락 거래일을 확정하지 않음');
+ });
+ test('a known forward history with no selected-range observations does not claim the global start is unknown',()=>{
+ const d=syntheticPaperView();d.history={...d.history,firstSession:'2026-10-15',lastSession:'2026-11-06'};
+ d.observation={...d.observation,period:'week',startSession:'2026-10-19',endSession:'2026-10-25',asOfSession:'2026-11-06',status:'not_started',issues:[]};
+ const html=render(state(d),'performance');expect(html).toContain('선택기간 관측 없음');expect(html).not.toContain('전진 시작 기록 미확인');expect(html).not.toContain('선택기간 관측 없음 · 모의투자 시작 전');
+ });
+ test('current month shows its full calendar duration but elapsed days only through the confirmed as-of session',()=>{
+ const d=syntheticPaperView();d.observation={...d.observation,period:'month',startSession:'2026-11-01',endSession:'2026-11-30',asOfSession:'2026-11-06',partialPeriod:true,issues:['account_started_during_period']};
+ const html=render(state(d),'performance');expect(html).toContain('1개월 (달력 30일) · 기준일까지 경과 6일');expect(html).toContain('진행 중 부분기간');expect(html).toContain('평가 관측일·거래일 수와 다릅니다');expect(html).toContain('모의투자 시작 전 제외·시작 이후 관측 범위와도 구별');
+ });
+ test('paper scope does not claim the global live-trading switch is OFF',()=>{
+ const html=render(state(syntheticPaperView()));expect(html).not.toContain('실거래 OFF');expect(html).toContain('이 화면은 전역 실거래 설정을 변경하지 않습니다');
+ });
+ test('successful envelopes with legacy, empty or malformed v6 DTOs fail closed without throwing',()=>{
+ const valid=syntheticPaperView();expect(isPaperViewV6(valid)).toBe(true);
+ const legacy={...valid} as Partial<PaperView>;delete legacy.snapshot;
+ const invalid:unknown[]=[{},null,legacy,{...valid,signalPage:{rows:[]}},{...valid,policyRecord:{...valid.policyRecord,modelPolicyVersions:null}},{...valid,currentCycle:{...valid.currentCycle,collection:{sources:null}}}];
+ for(const data of invalid){
+  const raw=applyOutcome<unknown>({status:'loading',data:null,error:null,lastOkAt:null},readEnvelope<unknown>(200,{ok:true,data}),1,false);
+  expect(raw.status).toBe('ok');const guarded=paperSafePoll(raw);expect(guarded).toEqual({status:'error',data:null,error:'bad_paper_view',lastOkAt:1});
+  for(const area of ['collection','judgments','signals','performance'] as const){const html=render(raw as PollState<PaperView>,area);expect(html).toContain('조회하지 못했습니다');expect(html).toContain('다시 조회');expect(html).not.toContain('NAS:DEMOA');expect(html).not.toContain('synthetic_public_prices');}
+ }
+ });
+ test('full-range observation metrics do not use the current evaluation page or clone investment',()=>{
+ const d=syntheticPaperView();d.history={...d.history,firstSession:'2026-10-01',lastSession:'2026-11-06'};d.observation={...d.observation,firstObserved:{id:'synthetic-baseline',session:'2026-10-01',equityUsd:10000,observedAt:null},lastObserved:{id:'synthetic-last',session:'2026-11-06',equityUsd:10250,observedAt:null},status:'observed',returnPct:2.5,pnlUsd:250,maxDrawdownPct:-1,totalPoints:23,baseline:{kind:'first_forward',point:{id:'synthetic-baseline',session:'2026-10-01',equityUsd:10000,observedAt:null}},calendarStatus:'known',expectedSessions:23,observedSessions:23,missingSessions:0};d.valuationPage={...d.valuationPage,totalCount:23,totalPages:3,hasNext:true,rows:[{id:'synthetic-point',session:'2026-11-06',equityUsd:10250,observedAt:null}]};
+ const html=render(state(d),'performance');expect(html).toContain('+2.50%');expect(html).toContain('USD 250');expect(html).toContain('전체 23점');expect(html).toContain('1–10 / 23개');expect(html).toContain('USD 10,000');expect(html).not.toContain('수익률 기준: 미확인 · 기준평가 없음');
+ });
+});
+describe('T-156 query and page transitions',()=>{
+ test.each([0,1,10,11,23])('local %s rows clamp independently at ten',count=>{
+  const rows=Array.from({length:count},(_,i)=>i),first=paperLocalPage(rows,1),last=paperLocalPage(rows,999);expect(first.rows.length).toBe(Math.min(count,10));expect(first.totalCount).toBe(count);expect(last.page).toBe(Math.max(1,Math.ceil(count/10)));expect(last.rows.length).toBeLessThanOrEqual(10);expect(paperLocalPage(rows,0).page).toBe(1);
+ });
+ test('period change resets snapshot and both server pages; horizon/page preserve the snapshot and other page',()=>{
+  const q={...PAPER_INITIAL_QUERY,signalPage:3,valuationPage:2};const period=paperNextQuery(q,{period:'week',anchorSession:'2026-11-02'},'saved-token');expect(period).toEqual({...q,period:'week',anchorSession:'2026-11-02',signalPage:1,valuationPage:1,snapshot:null});
+  expect(paperNextQuery(q,{horizon:'year'},'saved-token')).toEqual({...q,horizon:'year',snapshot:'saved-token'});expect(paperNextQuery(q,{signalPage:2},'saved-token').valuationPage).toBe(2);
+  expect(paperQueryUrl({...q,snapshot:'token with +/?'})).toContain('snapshot=token+with+%2B%2F%3F');expect(paperQueryUrl(q)).not.toContain('anchorSession');
+ });
+ test('calendar duration handles weeks, month lengths, leap days, completed/all ranges and future elapsed zero',()=>{
+ expect(paperCalendarSpan('week','2026-11-02','2026-11-08','2026-11-06')).toEqual({label:'1주',totalDays:7,elapsedDays:5});
+ expect(paperCalendarSpan('month','2024-02-01','2024-02-29','2024-02-29')).toEqual({label:'1개월',totalDays:29,elapsedDays:29});
+ expect(paperCalendarSpan('month','2026-10-01','2026-10-31','2026-11-06')?.elapsedDays).toBe(31);
+ expect(paperCalendarSpan('all','2026-10-15','2026-11-06','2026-11-06')).toEqual({label:'전체 관측범위',totalDays:23,elapsedDays:23});
+ expect(paperCalendarSpan('week','2026-11-09','2026-11-15','2026-11-06')?.elapsedDays).toBe(0);
+ for(const args of [[null,'2026-11-08','2026-11-06'],['2026-02-30','2026-03-08','2026-03-06'],['2026-11-08','2026-11-02','2026-11-06'],['2026-11-02','2026-11-08','bad-date']] as const)expect(paperCalendarSpan('week',args[0],args[1],args[2])).toBeNull();
+ });
+ test('roving tab keys wrap and Home/End target the edges without hijacking Tab',()=>{
+ expect(paperTabIndex(0,'ArrowLeft',4)).toBe(3);expect(paperTabIndex(3,'ArrowRight',4)).toBe(0);expect(paperTabIndex(2,'Home',4)).toBe(0);expect(paperTabIndex(1,'End',4)).toBe(3);expect(paperTabIndex(1,'Tab',4)).toBeNull();
+ });
 });

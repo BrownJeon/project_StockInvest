@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation';
 import { useSymbolMeta } from '@/lib/hooks/useSymbolMeta';
 import { useSafetyState } from '@/components/ops/useSafetyState';
 import { MiniStrip, SegmentControl } from '@/components/ops/ui';
+import { ops } from '@/components/ops/ui/styles';
 import { PortfolioTab }          from './components/PortfolioTab';
 import { MissedOpportunityTab }  from './components/MissedOpportunityTab';
 import { SignalDiagnosticsTab }  from './components/SignalDiagnosticsTab';
@@ -40,6 +41,19 @@ export function AnalyticsPage() {
   const router = useRouter();
   const [view, setView] = useState<View>({ seg: 'today', detail: null });
   const [stripH, setStripH] = useState(0);
+  const [m40SegmentH, setM40SegmentH] = useState(0);
+  const m40Segments = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (view.detail !== 'm40') return;
+    const node = m40Segments.current;
+    if (!node) return;
+    const measure = () => setM40SegmentH(node.getBoundingClientRect().height);
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    window.addEventListener('resize', measure);
+    return () => { observer?.disconnect(); window.removeEventListener('resize', measure); };
+  }, [view.detail]);
   const previousDetail = useRef<AnalyticsDetail | null>(null);
   useEffect(() => {
     const previous = previousDetail.current;
@@ -83,8 +97,8 @@ export function AnalyticsPage() {
     body = (
       <>
         <DetailHead id={view.detail === 'm40' ? 'm40-detail-title' : undefined} segText={segText(d.seg)} title={d.title} onBack={() => go({ seg: d.seg, detail: null })} />
-        <div style={{ padding: '12px 16px' }}>
-          {view.detail === 'm40' && <M40PaperPanel />}
+        <div style={{ padding: view.detail === 'm40' ? 0 : '12px 16px' }}>
+          {view.detail === 'm40' && <M40PaperPanel stickyTop={stripH + m40SegmentH} />}
           {view.detail === 'portfolio'   && <PortfolioTab />}
           {view.detail === 'leaderboard' && <LeaderboardTab />}
           {view.detail === 'research'    && <ResearchTab />}
@@ -107,11 +121,18 @@ export function AnalyticsPage() {
     <div style={{ display: 'flex', flexDirection: 'column', ['--strip-h' as string]: `${stripH}px` }}>
       <Suspense fallback={null}><UrlQuerySync onChange={onQuery} /></Suspense>
       <MiniStrip title="분석" state={safety.view} onHeightChange={setStripH} />
+      {view.detail === 'm40' ? (
+        <div ref={m40Segments} className={ops.subnav} style={{ position: 'sticky', top: stripH, zIndex: 5, background: 'var(--bg)' }}>
+          <SegmentControl label="분석 하위 화면" idPrefix={ANALYTICS_SEG_ID_PREFIX}
+            items={ANALYTICS_SEGMENTS} value={view.seg} onChange={(seg) => go({ seg, detail: null })} />
+        </div>
+      ) : (
       <SegmentControl
         label="분석 하위 화면" sticky idPrefix={ANALYTICS_SEG_ID_PREFIX}
         items={ANALYTICS_SEGMENTS} value={view.seg}
         onChange={(seg) => go({ seg, detail: null })}
       />
+      )}
       {body}
     </div>
   );
