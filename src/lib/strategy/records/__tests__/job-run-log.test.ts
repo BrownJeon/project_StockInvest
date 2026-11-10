@@ -118,6 +118,60 @@ describe('classifyRun (§2.3)', () => {
   const C = (label: string, http: number, body?: unknown) =>
     classifyRun(label, http, body === undefined ? null : typeof body === 'string' ? body : JSON.stringify(body));
 
+  describe('T-156 m40-forward asynchronous acceptance', () => {
+    const accepted = { ok: true, scheduled: true, completed: false, executionScope: 'paper_only' };
+    it('records an exact 202 paper acceptance as pending, never completed ok', () => {
+      expect(C('m40-forward', 202, accepted)).toEqual({
+        status: 'partial', errorCode: null, degradedReason: 'accepted_pending', counts: null,
+      });
+    });
+    it.each(['ok', 'scheduled', 'completed', 'executionScope'])('requires %s', (key) => {
+      const incomplete: Record<string, unknown> = { ...accepted };
+      delete incomplete[key];
+      expect(C('m40-forward', 202, incomplete)).toMatchObject({ status: 'failed', errorCode: 'HTTP=202' });
+    });
+    it.each([
+      { ok: false }, { ok: 'true' }, { scheduled: false }, { scheduled: 'true' },
+      { completed: true }, { completed: 'false' }, { executionScope: 'live' },
+      { status: 'blocked' }, { status: 'failed' }, { error: 'paper_blocked' },
+      { errors: ['paper_failed'] }, { errors: 'paper_failed' }, { skipped: true }, { aborted: 'blocked' },
+    ])('does not hide contradictory/error payload %j', (override) => {
+      expect(C('m40-forward', 202, { ...accepted, ...override }).status).toBe('failed');
+    });
+    it('rejects absent/truncated/invalid bodies and other labels', () => {
+      for (const body of [undefined, '', 'null', '[]', JSON.stringify(accepted).slice(0, -1)]) {
+        expect(C('m40-forward', 202, body)).toMatchObject({ status: 'failed', errorCode: 'HTTP=202' });
+      }
+      expect(C('other-forward', 202, accepted)).toMatchObject({ status: 'failed', errorCode: 'HTTP=202' });
+      expect(C('m40-forward-extra', 202, accepted)).toMatchObject({ status: 'failed', errorCode: 'HTTP=202' });
+    });
+    it('records only the exact forecast lease-running contract as pending', () => {
+      const running = { ok: true, status: 'running', completed: false, executionScope: 'forecast_only' };
+      expect(C('m40-forecast', 202, running)).toMatchObject({ status: 'partial', errorCode: null, degradedReason: 'accepted_pending' });
+      for (const override of [{ ok: false }, { status: 'failed' }, { status: 'blocked' }, { completed: true },
+        { executionScope: 'paper_only' }, { scheduled: true }, { error: 'failed' }, { issueCode: 'blocked' }, { errors: ['failed'] }]) {
+        expect(C('m40-forecast', 202, { ...running, ...override }).status).toBe('failed');
+      }
+      for (const key of Object.keys(running)) {
+        const incomplete: Record<string, unknown> = { ...running }; delete incomplete[key];
+        expect(C('m40-forecast', 202, incomplete).status).toBe('failed');
+      }
+      expect(C('other-forecast', 202, running).status).toBe('failed');
+      expect(C('m40-forecast', 202, accepted).status).toBe('failed');
+      expect(C('m40-forward', 202, running).status).toBe('failed');
+      expect(C('m40-forecast', 202, JSON.stringify(running).slice(0, -1)).status).toBe('failed');
+      expect(C('m40-forecast', 503, running).status).toBe('failed');
+    });
+    it('preserves 200, skipped, errors and 503 classifications', () => {
+      expect(C('m40-forward', 200, accepted)).toMatchObject({ status: 'ok', degradedReason: null });
+      expect(C('m40-forward', 200, { ok: true, skipped: 'market_closed' }))
+        .toMatchObject({ status: 'skipped', degradedReason: 'skip:market_closed' });
+      expect(C('m40-forward', 200, { ok: false, error: 'paper_failed' }))
+        .toMatchObject({ status: 'failed', errorCode: 'paper_failed' });
+      expect(C('m40-forward', 503, accepted)).toMatchObject({ status: 'failed', errorCode: 'HTTP=503' });
+    });
+  });
+
   it('000(연결 끊김·curl 상한) → failed HTTP=000', () => {
     expect(C('edgar-sync', 0)).toMatchObject({ status: 'failed', errorCode: 'HTTP=000', degradedReason: null });
     expect(C('stop-alert', 0, { curl_exit: 28 })).toMatchObject({ status: 'failed', errorCode: 'HTTP=000/curl=28' });

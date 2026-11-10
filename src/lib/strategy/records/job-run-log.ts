@@ -338,6 +338,20 @@ export function classifyRun(label: string, http: number, body: string | null): C
     const exit = num(b.curl_exit);
     return res('failed', exit !== null && exit > 0 && exit <= 255 ? `HTTP=000/curl=${exit}` : 'HTTP=000');
   }
+  // T-156: queued paper work / a forecast lease already running are not completed runs.
+  // Require a complete JSON object: a truncated prefix could hide a later error/status field.
+  if ((label === 'm40-forward' || label === 'm40-forecast') && http === 202 && body !== null) {
+    let complete: unknown;
+    try { complete = JSON.parse(body); } catch { /* Keep the existing HTTP failure classification. */ }
+    if (complete !== null && typeof complete === 'object' && !Array.isArray(complete)
+      && b.ok === true && b.completed === false
+      && ((label === 'm40-forward' && b.scheduled === true && b.executionScope === 'paper_only' && b.status == null)
+        || (label === 'm40-forecast' && b.status === 'running' && b.executionScope === 'forecast_only' && b.scheduled == null))
+      && b.error == null && b.issueCode == null && b.skipped == null && b.aborted == null
+      && (b.errors == null || (Array.isArray(b.errors) && b.errors.length === 0))) {
+      return res('partial', null, 'accepted_pending');
+    }
+  }
   if (http !== 200) {
     const w = firstWord(b.status, b.error, b.skipped, b.aborted);
     // 해외 분석 503 data_unknown 등: 판단이 그 회차에 안 나왔다 → failed(G-J1 #2). 건너뛴 이유는 degraded_reason 에 그대로(지표 계약 §6).

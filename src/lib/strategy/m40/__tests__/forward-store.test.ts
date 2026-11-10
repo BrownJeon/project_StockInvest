@@ -15,6 +15,7 @@ const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v));
 /** Small in-memory transactional double. Every unrecognized SQL fails closed. */
 class Fixture {
   dry: unknown = true;
+  publicationClocks=['2026-11-10T12:00:00Z'];
   source = positions();
   account: Record<string, any> | null = null;
   cycles: Record<string, any>[] = [];
@@ -30,6 +31,7 @@ class Fixture {
   release() {} destroy() {}
   async query(sql: string, p: any[] = []): Promise<any> {
     this.calls.push(sql);
+    if(sql.includes('publicationNow'))return [[{publicationNow:this.publicationClocks.length>1?this.publicationClocks.shift():this.publicationClocks[0]}],[]];
     if (sql.includes('FROM system_config')) return [this.dry === undefined ? [] : [{ value: JSON.stringify(this.dry) }], []];
     if (sql.includes('FROM portfolio_snapshots')) return [[{ id: 1, source_at: '2026-11-08T11:00:00+09:00', positions: JSON.stringify(this.source) }], []];
     if (sql.startsWith('SELECT id,policy_json')) return [this.account ? [copy(this.account)] : [], []];
@@ -66,7 +68,9 @@ class Fixture {
 const baseBook = (): PaperBook => ({ cashUsd: 100, receivables: [], holdings: [], initialEquityUsd: 100,
   peakEquityUsd: 100, lastForwardSession: null, splitBasis: {} });
 function request(lease: NonNullable<Awaited<ReturnType<typeof acquirePaperLease>>>, overrides: Partial<PaperCommit> = {}): PaperCommit {
-  return { lease, policy: policy(), book: baseBook(), cycle: { id: 'a'.repeat(64), session: '2026-11-09',
+  return { lease, policy: policy(), book: baseBook(), calendar:[
+    {session:'2026-11-09',openAt:'2026-11-09T14:30:00Z',closeAt:'2026-11-09T21:00:00Z',source:'historical_canonical'},
+    {session:'2026-11-10',openAt:'2026-11-10T14:30:00Z',closeAt:'2026-11-10T21:00:00Z',source:'historical_canonical'}],cycle: { id: 'a'.repeat(64), session: '2026-11-09',
     decisionAt: '2026-11-09T22:00:00Z', mode: 'forward', payload: {} }, signals: [], outcomes: [], ...overrides };
 }
 function intent(cycleId: string): PaperIntent { return { id: 'm40p_test', accountId: PAPER_ACCOUNT_ID, cycleId,
@@ -210,4 +214,16 @@ test('permanently waiting sidecar is bounded and destroys rather than releases i
  const pending=commitPaperCycle(request(lease!),f.db);await jest.advanceTimersByTimeAsync(1501);
  await expect(pending).resolves.toBe(true);expect(f.cycles).toHaveLength(1);expect(destroy).toHaveBeenCalledTimes(1);expect(release).not.toHaveBeenCalled();
  }finally{jest.useRealTimers();}
+});
+
+
+test.each([
+ ['2026-11-10T14:30:00Z'],
+ ['2026-11-10T14:29:59.999999Z','2026-11-10T14:30:00Z'],
+])('actual transaction clock reaching next open rolls back cycle, epoch and signals: %j',async(...times)=>{
+ const f=new Fixture();await initializePaperAccount(policy(),f.db);const lease=(await acquirePaperLease(f.db))!;
+ f.publicationClocks=times as string[];
+ const before=copy(f.account);
+ await expect(commitPaperCycle(request(lease),f.db)).rejects.toThrow('paper_publication_deadline_elapsed');
+ expect(f.cycles).toHaveLength(0);expect(f.signals).toHaveLength(0);expect(f.account).toEqual(before);
 });

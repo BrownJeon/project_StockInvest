@@ -6,6 +6,6 @@ export const maxDuration=150;
 /** Await completion so the cron caller records the actual outcome, never a queued success. */
 export async function POST(req:NextRequest){
  const denied=checkCronAuth(req);if(denied)return denied;
- try{await evaluateM40Forecasts();const result=await runM40Forecast();return NextResponse.json({ok:result.status==='completed'||result.status==='already_running_or_published',...result},{status:result.status==='failed'||result.status==='blocked'?503:200,headers:{'Cache-Control':'private, no-store'}});}
+ try{await evaluateM40Forecasts();const result=await runM40Forecast();return NextResponse.json({ok:result.status==='completed'||result.status==='already_published'||result.status==='running',...result},{status:result.status==='failed'||result.status==='blocked'?503:result.status==='running'?202:200,headers:{'Cache-Control':'private, no-store'}});}
  catch{return NextResponse.json({ok:false,status:'failed',issueCode:'forecast_run_failed'},{status:503,headers:{'Cache-Control':'private, no-store'}});}
 }

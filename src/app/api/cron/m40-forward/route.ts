@@ -1,6 +1,6 @@
 import { NextRequest,NextResponse,after } from 'next/server';
 import { checkCronAuth } from '@/lib/cron-auth';
-import { initializeApprovedForwardPilot,runM40ForwardCycle } from '@/lib/strategy/m40/forward-runtime';
+import { initializeApprovedForwardPilot,runM40ForwardCycle,readM40ForwardStatus } from '@/lib/strategy/m40/forward-runtime';
 import { requirePaperDryRun,loadPaperAccount } from '@/lib/strategy/m40/forward-store';
 
 export const dynamic='force-dynamic';
@@ -8,6 +8,7 @@ export const dynamic='force-dynamic';
 export async function POST(req:NextRequest) {
  const auth=checkCronAuth(req);if(auth)return auth;
  try {
+  if(req.nextUrl.searchParams.get('status')==='1')return NextResponse.json({ok:true,...await readM40ForwardStatus()},{headers:{'Cache-Control':'private, no-store'}});
   await requirePaperDryRun();
   if(req.nextUrl.searchParams.get('initialize')==='1')await initializeApprovedForwardPilot();
   const account=await loadPaperAccount();

@@ -8,13 +8,50 @@ tags:
 
 - **2026-11-09 22:55:02 — [[T-012-zero-price-snapshot]] 새 독립 최종 검증 완료**: 실제 Claude Reviewer PASS_WITH_NOTES·QA8군198/198/typecheck0, 동결 배포본18경로불변·기존정리16행보관/부재근거와결합해TASK done/roadmap[x]. 첫하네스 INCOMPLETE·과거원보고서/비차단한계 보존. 본감사T163 done와다른진행항목은유지. Codex 공통조율반영이며제품/운영/배포변경없음.
 
-## T-156 보호 트리거·최종 QA 완료 / 단일 웹 배포 준비 — F31/exec-074
+## T-156 최종 펜스 수용·웹 반영 준비 — F38/exec-081
 
-- 2026-11-09 00:17 KST: 사용자 직접 인증한 HTTPS phpMyAdmin root@localhost 세션에서 검토 SQL의 불변 트리거 8개를 적용했다. 앱 계정 read-only 후검증에서 정확한 8개 정의·신규 5표(아직 전부 0행)·기존 모의계좌/회차/시그널/안전 지문 불변을 확인했다. 전역 log_bin=1/trust_creators=0/ROW와 앱 권한 해시도 동일하다. 비밀번호 복사·전역 보안 완화·앱 권한 확대는 없었다.
-- Mac/Ubuntu/NAS 기존 설정에서 사용할 관리자 프로필을 찾지 못해 기존 NAS 관리 UI의 사용자 인증을 이용했다. HTTP/HTTPS 쿠키 차이로 앞선 인증이 유지되지 않았고, 최종 HTTPS 세션의 관리자/DB를 직접 확인한 뒤 적용했다. 별도 접속 정보 질문은 더 이상 대기가 아니다.
-- 현재 소스 HEAD2411627, origin/main/운영39b2f749이며 새 예측/새 배포는 아직 0이다. 최신 33파일 SHA가 독립 검토·최종 QA 기준과 동일하다. 이어서 소유 문서/증거만 정상 통합 → main 단일 push/webhook 배포 → 실자료 1run/4기간 발행·중복 방지·읽기/안전 후검증을 진행한다. 같은 승인을 다시 묻지 않는다.
-- 추가 격리 실DB5일 actual commit→만기평가·23행페이지·sidecar오류격리·증거경합거부 통과로 QA최종 PASS/확인결함0. 최신33SHA불변. no-trade/합성복사/제어오류·경합이라는 방법한계는보존. qa-realdb-completion/receipt.json 참조.
-- 증거 admin-discovery.json/admin-postflight.json, 상세 forecast-engine.md·task F30. 실거래 OFF를 유지한다. 실제 미래성과/확률 보정·전진84일/100왕복/20개입일·전체 역사자료 공백은 남아 있다. recovery stash와 테스트 이력 DB 아카이브를 보존한다.
+- 제품36/웹0.3.0·788검사/타입/build/실DB 검증 후 ops5파일·23case를 독립 수용했다. 09:34:44Z Root만운영pause를실행: 독립모의계좌paused/revision2/경제SHA7d7c5391…1443e·원forecast1/4/4 hashes보존/양activelease0/새연결readbacktrue. 09:35:07Z 별도읽기에서도일치·health200/DRYtrue/전역·앱권한·8trigger·환경/안전지문불변. 실계좌/실거래는변경없다.
+- Reviewer reviewer-fenced-cutover.json 현전환PASS·36scope,코드legacy경합영구제거가아니라paused유지로HIGH완화라는제한을유지한다. QA는배정변경영향범위실행PASS/실제펜스증거수용,전역clientOrderId동일주문실행미확인을별도표시했다. user범위에없는전면주문보증을주장하지않으며추가ignored한정검사명령을개발자가준비중이다. 모든실API/운영orders테스트금지.
+- 다음: 정상hook(484/실commitE2E차단통과)로동일36/정본문서만commit→정본deployer계획/단일mainpush webhook. 모의계좌paused유지. 새릴리스fullSHA·36SHA/oldrelease全프로세스0/newwebcron각1/양lease0/경제원장동일검사후검토operator로active복구/readback→실수집·forward/T0·4기간예측·재시도중복차단을운영에서검증한다. 아직새commit/push/새배포/수집/예측0이다.
+
+## T-156 일일 복구 최종 시험 통과·안전한 전환 준비 — F37/exec-080
+
+- 제품36파일/웹0.3.0 동결 SHA dd10309601469101571e6dc9a7ee803e0c2a2e27d1550b930d875a724676e522. 독립 QA44suites788tests/cron2/type/build 및 network-none실MariaDB 경합/만료·개장경계rollback/가상시계5일emptysettle·commit·sidecar 통과. source전후36SHA일치, 합성DB/소켓정리완료. lint설정부재/넓은cronJ1중단은통과로표기안함.
+- Reviewer CONDITIONAL_PASS: 새/구예측writer혼합위험은운영전환펜스필요. 실제09:08Z preflight는forecast/paperactivelease각0·구forecast10KST예약/개장321분여유·DRYtrue/8trigger·전역/권한불변이나oldweb는online이다. 단순전제추정으로최종수용/배포하지않는다. 마지막DBclock→COMMIT완료의비원자시간차는이번개장여유에서알려진수용한계,100%보장주장금지.
+- 별도ops안: 독립모의계좌만배포동안paused로잠깐전환하면구/신publish/forward경제commit이모두거부한다. 구web종료/new각1/lease0/원경제SHA검산후active복구한다. 사용자승인일일복구의일시안전강화이며실거래/global/grant/정책/잔고변경없음. Root초안operator미실행,developer가readback/잠금경합/실패복구와격리하네스보강중→Reviewer→QA→Root실제pause→최종운영조건수용순. 모든DB쓰기(기존만기평가/usage/sourcearchive)전면차단이라고주장하지않는다.
+- Ubuntu기존검증clone에서원격부모f98f55ac(T012문서/웹0.2.0)로제품36동일내용통합,회복stash75e2df2346f0634635a0129dce3ecb61fdc40e59보존. 현재branch codex/t156-daily-flow-repair-20261110/HEAD부모f98,제품워킹변경미커밋. root원작업트리는06b기반dirty유지. push/새배포/운영write는아직0. 최종commit은정상hook검사뒤한번push→webhook만,중복--yes금지.
+- C2공식Jev는codex_required=true/data_integrity였으며AGENTS규정 `override: codex_unavailable_in_codex`기록·외부CLI실행안함. 정본 daily-flow-repair아티팩트 qa-daily-flow-receipt.json/reviewer-final.json/operator계획 및구현보고서. 운영완료를뜻하지않고전체T156 doing유지.
+
+## T-156 일일 수집·재시도 복구 진행 — F36/exec-079 (2026-11-10)
+
+- 사용자 지시로 당일 분할조정 일봉 누락과 일일 수집→모의분석→예측 발행을 복구 중이다. 기본 구현과 강화 delta 개발 중이며 독립감사·최종 QA·배포·운영 재실행은 아직 완료 전이다. 실거래 OFF·안전 관문·기존 원본/원장을 유지한다.
+- 실제 원천 확인: 이전 세 번들 126종목×2기준 모두 11/06까지였고 FRED 운송 오류로 지수가 없었다. 현재 Kibot IBM raw/split 모두 11/09 도착을 확인했다. Node FRED TLS 운송은 실패하지만 TLS 검증 유지 curl은 수신 가능하며 최신 날짜는 11/05로 2세션 부족하다. 지수 지연 허용치를 늘리지 않는다.
+- 기존 KIS 읽기 전용 공식 SPX 지수의 70일 요청+실제 누락 짧은 요청 총11회 검산은 2025-09-05~2026-11-09 canonical297/누락0, FRED 공통295 전부 decimal 정확 일치다. 계좌번호/주문 전송·신규 토큰 발급 없이 기존 캐시로 조사했다. 프로덕션 어댑터는 기존 인증·시세 경유, 16회/90초 한도·원문/실수신시각/SHA·253이상/공통200일 검산 후에만 적격이다.
+- 구현: 최신 whole-source 퇴행 방지·기존 FRED 원문 복구·bounded curl·ET 수집/예측 유한 재시도·보호된 읽기 상태·202 접수와 완료 분리. 세션 고정 forecast job/기존 published 감지로 입력 해시가 바뀐 재시도도 중복 발행을 막는 delta를 추가한다. C1 본체/강화 delta 모두 공식 Jev 도구 결과 codex_required=false; recursive Codex 호출 없음. 웹 새 릴리스는 0.3.0으로 한 번만 준비, APK 변경 없다.
+- 정본 계획·검증 현황 docs/implementation/2026-11-10-t156-daily-flow-repair.md. private 실계좌 fixture·원문은 보호 디렉터리, 공유 아티팩트는 가린 근거만. 기존 F35 차단/기존 forecast1건4기간은 보존한다. 전체 T156의 전진84일·100왕복·20개입일/자료 공백은 별도다.
+
+## T-156 후속 우선순위 점검 — F35/exec-078 (2026-11-10)
+
+- 16:47 KST 운영읽기점검: 기존06b릴리스/health200·DBtrue·DRY_RUNtrue/killfalse. 신규코드/설정/수집/작업재호출/주문변경없이확인했다. 11/09가격세션의실제모의회차는blocked/errorCode=paper_current_basis_observation_missing,보유종목현재세션분할조정일봉근거부족이다. 계좌revision2/T0null·모의시그널은기존리허설4개뿐이다.
+- 오늘10시예측은HTTP503/forecast_input_blocked·완료경로0으로새발행없음. 기존가격기준11/06의원본1건/대기4건은보존됐다. 오늘09시경11/09세션자료번들게시가있어도전체핵심가격적격을뜻하지않는다. 구체누락종목/원천·forecast세부prepare사유는추가조사대상이다.
+- 우선후속권고: ①당일분할조정일봉/출처시각·기존보유기준정합·재시도점검으로일일수집→모의분석→예측흐름복구(관문완화금지) ②m40-forward202접수와실제완료상태를분리해실패오탐검토 ③첫적격T0및실제전진원장/만기사후평가 ④미보정확률·자료/장기국면보완 ⑤참고전용에이전트의거래변경설계·같은비용병행검증. 현재사용자질문은남은작업확인이며새수정·재배포를실행하지않았다.
+- 기존F34로그인UI표시검증완료와오늘일별자동운영차단은구별한다. 첫1주목표11/13은조건충족시평가예정이며자동completed보장은없다. 최소84일/신규왕복100건/에이전트변경20일,미래수익성/보정·Android실기기·당시전체구성/뉴스원천공백은남는다. 정본증거 followup-assessment-20261110.json.
+
+## T-156 로그인 운영 UI 4기간·사후비교 확인 완료 — F34/exec-077
+
+- 2026-11-09 08:34~08:38 KST: 사용자가직접로그인한IAB탭15에서실제운영웹을확인했다. 1주/1개월/3개월/1년 USD·% P10/P90·평균·중앙값·손실확률/경로수가운영DB원본d33ba129…와각각일치. sourceDataset/sourceSHA/inputSHA와297역사관측표시도대조했다. 기간전환중선택원본유지·편도0.25%·미보정/꼬리범위안내확인.
+- 사후비교도각기간목표일대기·actual미확인·완료0/Brier없음. 화면요약은선택기간1건/대기1이며4기간DB합계는pending4다. 최초검사기의전체4가정은실제SQL의기간필터를확인해정정했으며제품결함아니다. 첫목표11/13,12/04,2027/02/05,11/05.
+- 설정실거래여부aria-checked=false와홈OFF·서버dryRuntrue를직접확인. 버튼토글/저장/주문/예측재발행/배포없음. 사후health200/33SHA·원모의/안전/전역/앱권한/env불변,run1/horizon4/pending4. 실제운영로그인UI미확인이라는F32/F33제한은해소됐고Android물리기기·미래실성과/수익성/보정은별도남는다.
+- 영수증 authenticated-ui-verification.json/authenticated-ui-postflight.json 및 테스트DB별도2파일아카이브ui-history-receipt.json(readback일치). 원본금액/실제스크린샷은0700/0600로컬private에만보존하고공개artifact·Git·공유테스트아카이브에넣지않았다. 운영탭15를1주예상성과에두고deliverable보존,CUA완료요약전송. post-release기록은로컬유지하며추가push/배포없음.
+
+
+## T-156 실자료 예측 발행·웹 배포 완료 — F32/exec-075
+
+- 2026-11-09 00:29 KST: main/코드 HEAD06bce08a와 운영20261109-002723-06bce08a 일치. 정확SHA START→RELEASE_RESULTok→END0, 정본 status health200. 검토33파일·보호트리거8개 일치, web/cron각1online/restart0·DRY_RUN=true/killfalse, 원모의/안전·전역보안/앱권한·동일선택환경 지문 불변. 보호DDL은 별도승인실행이며 release.migrated=false와 구분한다.
+- 실제 archived자료/독립 모의계좌로 최초1run·4기간·2000경로 발행(37.571초), 두번째요청은중복차단. DB job1/run1/horizon4/evaluation4(pending)/continuation0. 원본ID d33ba129ee7a…f7cfe72, 입력/결과/기간/9파일코드해시 검산일치. 미래실적을 생성하지 않았다.
+- 소유자 실제서버reader에서 week/month/quarter/year·편도0.25%·값유효/선택원본유지·pending/actualnull·조회전후쓰기0을 확인했다. 익명API401·양수미등록principal403, 실제운영브라우저는로그인화면으로이동했다. HTTP로그인 ownerUI/Android는미확인이다. 앱 분석→오늘분석→종목별→모의분석→모의성과→향후예상성과/예측사후비교, /analytics?tab=m40.
+- 신규최종QA PASS/결함0과 운영증거15파일을 기존test_artifact/blob에 별도저장·readback일치(13037bytes/SHA c22eba25074b…7779f9a). 과거55파일아카이브도보존. post-release 기록은로컬변경으로유지하며기록push로추가배포하지않는다. recovery stash2개/별도검증자료 보존.
+- 전체T156 doing은 미래84일/100왕복/20개입일·원천당시구성/뉴스/가격공백과 실제미래보정·수익성미검증을뜻한다. 현재M40+agent참고전용/297최근수익·1일지수잠재추정·예측임시주기/정책·epoch변경시비교불가·2027달력상한을유지한다. 이번엔구현/보호DDL/발행/배포대기없음. 상세 forecast-engine.md F32와 final-verification.json.
 
 
 ## T-156 실자료 예측엔진·불변원장 구현 중 — F28/exec-069

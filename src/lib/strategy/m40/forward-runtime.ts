@@ -7,7 +7,9 @@ import { putBlob,readBlob,putDataset,putRecord,publishDataset,saveAnalysisRun,pu
 import { buildPaperInput,canFreezePaperCohort } from './forward-input';
 import { extendForwardCalendar,nextPaperSettlementSession } from './forward-calendar';
 import type { ForwardCalendarSession,ForwardPolicy } from './forward-types';
-import { collectForwardSources,mapForwardSources,missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText,parseForwardIndexCsv,type ForwardSourceBundle } from './forward-sources';
+import { collectForwardSources,mapForwardSources,hasRequiredForwardIndexHistory,requiredForwardSourceSessions,missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText,parseForwardIndexCsv,type ForwardSourceBundle } from './forward-sources';
+import { collectKisForwardIndex } from './forward-index-kis';
+import { KIS_SP500_SOURCE_ID } from './forward-index-contract';
 import { loadM40Evidence } from './load-evidence';
 import { runM40Analysis,askConfiguredM40Agent } from './runner';
 import { acquirePaperLease,commitPaperCycle,initializePaperAccount,loadPaperAccount,loadPendingPaperIntents,
@@ -51,7 +53,8 @@ export async function initializeApprovedForwardPilot(db:ArchiveQueryable=getPool
 }
 export async function archiveForwardSources(bundle:ForwardSourceBundle,db:ArchiveQueryable=getPool()) {
  for(const r of bundle.records)if(!r.rawCsv||sha(r.rawCsv)!==r.sha256)throw Error('paper_source_original_missing_or_mismatched');
- if(bundle.market&&(!bundle.market.rawCsv||sha(bundle.market.rawCsv)!==bundle.market.sha256))throw Error('paper_source_original_missing_or_mismatched');
+ if(bundle.market){const original=bundle.market.sourceId===KIS_SP500_SOURCE_ID?bundle.market.rawJson:bundle.market.rawCsv;
+  if(!original||sha(original)!==bundle.market.sha256)throw Error('paper_source_original_missing_or_mismatched');}
  const bytes=Buffer.from(JSON.stringify(bundle)),hash=sha(bytes),compressed=gzipSync(bytes);
  if(bytes.length>24*1024*1024)throw Error('paper_source_batch_too_large');
  const blobSha=await putBlob(compressed,'binary',db);
@@ -75,16 +78,72 @@ async function cachedForwardSources(asOf:string,cutoff:string,db:ArchiveQueryabl
  if(sha(bytes)!==pointer.uncompressedSha256)throw Error('paper_source_readback_failed');
  return JSON.parse(bytes.toString()) as ForwardSourceBundle;
 }
-async function refreshMissingIndex(bundle:ForwardSourceBundle,referenceSession:string) {
- if(bundle.market?.rows.some(r=>r.session===referenceSession))return bundle;
+export async function refreshMissingIndex(bundle:ForwardSourceBundle,referenceSession:string,fetchText=fetchForwardPublicText,calendar?:readonly ForwardCalendarSession[]) {
+ if(calendar?hasRequiredForwardIndexHistory(bundle,calendar):bundle.market?.rows.some(r=>r.session===referenceSession))return bundle;
  const sourceUrl='https://fred.stlouisfed.org/graph/fredgraph.csv?'+new URLSearchParams({id:'SP500',cosd:bundle.dateWindow.start,coed:bundle.dateWindow.end});
  try{
-  const response=await fetchForwardPublicText(sourceUrl,{timeoutMs:20000,maxBytes:512*1024});
+  const response=await fetchText(sourceUrl,{timeoutMs:20000,maxBytes:512*1024});
   if(response.status!==200)throw Error('forward_index_unavailable');
   const parsed=parseForwardIndexCsv(response.text,bundle.dateWindow.start,bundle.dateWindow.end);
-  return {...bundle,market:{sourceId:'fred_sp500_forward',sourceUrl,observedAt:new Date().toISOString(),sha256:sha(response.text),
+  const observedAt=new Date().toISOString();
+  const extra={...bundle,records:[],failures:[],observedAt,market:{sourceId:'fred_sp500_forward',sourceUrl,observedAt,sha256:sha(response.text),
     rows:parsed.rows,rawCsv:response.text,basis:'index' as const,series:'SP500' as const,missingSessions:parsed.missingSessions}};
+  return mergeForwardSources(bundle,extra,[...new Set(bundle.records.map(r=>r.symbol))]);
  }catch{return {...bundle,failures:[...bundle.failures,{basis:'index' as const,errorCode:'forward_index_refresh_unavailable'}]};}
+}
+/** Read-only, bounded source recovery. Keep original bytes/hash/clock, never rewrite a receipt. */
+export async function preserveArchivedIndex(bundle:ForwardSourceBundle,referenceSession:string,calendar:ForwardCalendarSession[],cutoff:string,db:ArchiveQueryable) {
+ if(hasRequiredForwardIndexHistory(bundle,calendar))return bundle;
+ const [rows]=await db.query<Row[]>(`SELECT r.payload_json FROM t156_record r JOIN t156_dataset d ON d.id=r.dataset_id
+ WHERE d.kind='m40_paper_sources' AND d.status='published' AND d.live_eligible=0
+ AND r.record_type='m40_paper_source_bundle' AND r.session_date<=? AND r.available_at<=?
+ ORDER BY r.available_at DESC,r.dataset_id DESC LIMIT 8`,[bundle.asOfSession,cutoff.slice(0,-1).replace('T',' ')]);
+ let fallback=bundle;
+ for(const row of rows){
+  try{
+   const pointer=parse<{blobSha256:string;uncompressedSha256:string}>(row.payload_json);
+   const bytes=gunzipSync(await readBlob(pointer.blobSha256,db),{maxOutputLength:24*1024*1024});
+   if(sha(bytes)!==pointer.uncompressedSha256)continue;
+   const donor=JSON.parse(bytes.toString()) as ForwardSourceBundle,market=donor.market;
+   const original=market?.sourceId===KIS_SP500_SOURCE_ID?market.rawJson:market?.rawCsv;
+   if(!market||!original||sha(original)!==market.sha256||Date.parse(market.observedAt)>Date.parse(cutoff))continue;
+   const candidate={...bundle,dateWindow:{...bundle.dateWindow,start:donor.dateWindow.start<bundle.dateWindow.start?donor.dateWindow.start:bundle.dateWindow.start},market};
+   mapForwardSources(candidate,calendar);
+   const selected=mergeForwardSources(fallback,{...candidate,records:[],failures:[]},[...new Set(bundle.records.map(r=>r.symbol))]);
+   if(selected.market!==market)continue;
+   if(hasRequiredForwardIndexHistory(candidate,calendar))return candidate;
+   fallback=candidate;
+  }catch{ /* A corrupt or ineligible archive cannot supply a market observation. */ }
+ }
+ return fallback;
+}
+/** Protected cron status: no collection, LLM, account writes or financial fields. */
+export async function readM40ForwardStatus(db:ArchiveQueryable=getPool(),now=new Date()) {
+ await requirePaperDryRun(db);
+ const calendar=await loadForwardCalendar(db),cutoff=now.toISOString();
+ const asOf=calendar.filter(s=>s.closeAt<=cutoff).at(-1)?.session;
+ if(!asOf)return {status:'pending',session:null,completed:false,sourceReady:false,beforeNextOpen:false,executionScope:'paper_only'};
+ const next=calendar.find(s=>s.session>asOf),beforeNextOpen=!!next&&cutoff<next.openAt;
+ const account=await loadPaperAccount(db);
+ if(!account||account.status!=='active')return {status:'blocked',session:asOf,completed:false,sourceReady:false,beforeNextOpen,executionScope:'paper_only'};
+ const [cycles]=await db.query<Row[]>('SELECT mode FROM t156_paper_cycle WHERE account_id=? AND session_date=?',[PAPER_ACCOUNT_ID,asOf]);
+ const [leases]=await db.query<Row[]>('SELECT lease_until>UTC_TIMESTAMP(6) busy FROM t156_paper_account WHERE id=?',[PAPER_ACCOUNT_ID]);
+ const completed=cycles.some(r=>r.mode==='forward');
+ let sourceReady=false;
+ const bundle=await cachedForwardSources(asOf,cutoff,db);
+ if(bundle){
+  try{
+   const symbols=[...new Set([...(account.policy.frozenCohort?.symbols??account.policy.referenceSymbols),...account.book.holdings.map(h=>h.symbol)])];
+   const mapped=mapForwardSources(bundle,calendar),prior=calendar[calendar.findIndex(s=>s.session===asOf)-1]?.session;
+   const indexEnd=mapped.data.sp500Bars.filter(bar=>bar.final&&bar.session<=asOf).at(-1)?.session;
+   const required=requiredForwardSourceSessions(calendar,asOf,Object.values(account.book.splitBasis??{}).map(basis=>basis.session),indexEnd);
+   const indexRequired=calendar.filter(day=>indexEnd&&day.session<=indexEnd).slice(-253).map(day=>day.session);
+   sourceReady=hasRequiredForwardIndexHistory(bundle,calendar)&&indexRequired.length===253&&!!indexEnd&&!!prior&&indexEnd>=prior&&missingForwardSourceSymbols(bundle,symbols,required).length===0
+    &&indexRequired.every(session=>mapped.data.sp500Bars.some(bar=>bar.session===session&&bar.final));
+  }catch{sourceReady=false;}
+ }
+ return {status:completed?'completed':Number(leases[0]?.busy)===1?'running':cycles.length?'blocked':'pending',
+  session:asOf,completed,sourceReady,beforeNextOpen,executionScope:'paper_only'};
 }
 let flight:Promise<Record<string,unknown>>|null=null;
 export function runM40ForwardCycle():Promise<Record<string,unknown>> {
@@ -102,11 +161,11 @@ async function runCycle():Promise<Record<string,unknown>> {
   if(!asOf)throw Error('forward_completed_session_unknown');
   let policy:ForwardPolicy=JSON.parse(JSON.stringify(lease.account.policy));
   const [done]=await db.query<Row[]>('SELECT mode FROM t156_paper_cycle WHERE account_id=? AND session_date=?',[PAPER_ACCOUNT_ID,asOf]);
-  if(done.some(r=>r.mode==='forward')||(done.some(r=>r.mode==='rehearsal')&&calendar.find(s=>s.session===asOf)!.closeAt<policy.registeredAt))
-   return {status:'already_observed',session:asOf,executionScope:'paper_only'};
+  const alreadyObserved=done.some(r=>r.mode==='forward')||(done.some(r=>r.mode==='rehearsal')&&calendar.find(s=>s.session===asOf)!.closeAt<policy.registeredAt);
   const symbols=[...new Set([...policy.referenceSymbols,...lease.account.book.holdings.map(h=>h.symbol)])].sort();
   let bundle=await cachedForwardSources(asOf,start,db);
-  const absent=bundle?missingForwardSourceSymbols(bundle,symbols):symbols;
+  const requiredSessions=requiredForwardSourceSessions(calendar,asOf,Object.values(lease.account.book.splitBasis).map(basis=>basis.session));
+  const absent=bundle?missingForwardSourceSymbols(bundle,symbols,requiredSessions):symbols;
   if(!bundle){bundle=await collectForwardSources(symbols,asOf);await archiveForwardSources(bundle,db);}
   else if(absent.length){
    const extra=await collectForwardSources(absent,asOf);
@@ -114,11 +173,25 @@ async function runCycle():Promise<Record<string,unknown>> {
    await archiveForwardSources(bundle,db);
   }
   const priorSession=calendar[calendar.findIndex(s=>s.session===asOf)-1]?.session;
-  if(priorSession&&!bundle.market?.rows.some(r=>r.session===priorSession)){
-   bundle=await refreshMissingIndex(bundle,priorSession);await archiveForwardSources(bundle,db);
+  if(priorSession&&!hasRequiredForwardIndexHistory(bundle,calendar)){
+   bundle=await refreshMissingIndex(bundle,priorSession,fetchForwardPublicText,calendar);
+   bundle=await preserveArchivedIndex(bundle,priorSession,calendar,new Date().toISOString(),db);
+   if(!hasRequiredForwardIndexHistory(bundle,calendar)){
+    const fred=bundle.market;
+    try{
+     if(!fred?.rawCsv)throw Error('forward_index_fred_proof_unavailable');
+     const market=await collectKisForwardIndex({start:[bundle.dateWindow.start,new Date(Date.parse(asOf+'T00:00:00Z')-430*86400_000).toISOString().slice(0,10)].sort().at(-1)!,end:asOf,calendar,
+      fred:{sourceUrl:fred.sourceUrl,observedAt:fred.observedAt,rawCsv:fred.rawCsv,sha256:fred.sha256}});
+     const candidate={...bundle,market,observedAt:market.observedAt>bundle.observedAt?market.observedAt:bundle.observedAt};
+     mapForwardSources(candidate,calendar);bundle=candidate;
+    }catch{bundle={...bundle,failures:[...bundle.failures,{basis:'index',errorCode:'forward_index_kis_unavailable'}]};}
+   }
+   await archiveForwardSources(bundle,db);
   }
   const cutoff=new Date().toISOString();await requirePaperDryRun(db);
   const {data,opens}=mapForwardSources(bundle,calendar);
+  // Source repair may append evidence after a successful cycle; never repeat its book or signals.
+  if(alreadyObserved)return {status:'already_observed',session:asOf,executionScope:'paper_only'};
   data.asOfSession=asOf;
   const prices=new Map(data.members.filter(m=>m.rawQuote?.session===asOf).map(m=>[m.symbol,m.rawQuote!.price]));
   let book=JSON.parse(JSON.stringify(lease.account.book)) as typeof lease.account.book;
@@ -167,7 +240,7 @@ async function runCycle():Promise<Record<string,unknown>> {
   book.splitBasis=nextBasis;
   const {provenance,...eligibility}=checked.report;
   const provenanceSha=await putBlob(gzipSync(Buffer.from(JSON.stringify(provenance))),'binary',db);
-  const committed=await commitPaperCycle({lease,policy,book,cycle:{id:cycleId,session:asOf,decisionAt:cutoff,mode,
+  const committed=await commitPaperCycle({lease,policy,book,calendar,cycle:{id:cycleId,session:asOf,decisionAt:cutoff,mode,
    payload:{eligibility,executionKind:confirmedExitOnly?'confirmed_membership_exit_only':'full_core',provenanceBlobSha256:provenanceSha,sourceBundleSha256:sha(JSON.stringify(bundle)),
     inputSha256:result?.inputSha256??null,sourceRunId:result?.runId??null,
     shareBasisVerified:true,shareBasisObservations:Object.fromEntries(lease.account.book.holdings.map(h=>[h.symbol,(data.members.find(m=>m.symbol===h.symbol)?.splitBars??[]).map(b=>({session:b.session,close:b.close}))])),equityUsd:marked.equityUsd,returnSinceClone:marked.returnSinceClone,drawdown:marked.drawdown,

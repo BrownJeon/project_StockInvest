@@ -10,3 +10,12 @@ test('unauthenticated cron cannot read or compute private forecasts',async()=>{j
 test('HTTP success waits for actual completed result',async()=>{jest.mocked(runM40Forecast).mockResolvedValue({status:'completed',runId:'synthetic',paths:2000,elapsedMs:10,executionScope:'forecast_only'});const r=await POST(req());expect(r.status).toBe(200);expect(await r.json()).toMatchObject({ok:true,status:'completed'});expect(r.headers.get('Cache-Control')).toBe('private, no-store');});
 test('blocked output is a failed job outcome, never queued success',async()=>{jest.mocked(runM40Forecast).mockResolvedValue({status:'blocked',issueCode:'forecast_source_unavailable'});expect((await POST(req())).status).toBe(503);});
 test('worker exception never echoes private account/error text',async()=>{jest.mocked(runM40Forecast).mockRejectedValue(Error('private synthetic amount'));const r=await POST(req());expect(r.status).toBe(503);expect(JSON.stringify(await r.json())).not.toContain('private synthetic');});
+
+test('busy forecast returns HTTP202 and completed:false, not published success',async()=>{
+ jest.mocked(runM40Forecast).mockResolvedValue({status:'running',completed:false,executionScope:'forecast_only'});
+ const response=await POST(req());expect(response.status).toBe(202);expect(await response.json()).toMatchObject({status:'running',completed:false});
+});
+test('existing immutable published forecast returns HTTP200 without regeneration',async()=>{
+ jest.mocked(runM40Forecast).mockResolvedValue({status:'already_published',runId:'synthetic-existing',executionScope:'forecast_only'});
+ const response=await POST(req());expect(response.status).toBe(200);expect(await response.json()).toMatchObject({ok:true,status:'already_published'});
+});

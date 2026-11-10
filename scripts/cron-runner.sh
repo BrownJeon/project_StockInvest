@@ -139,6 +139,8 @@ call() {
   local ts; ts=$(date '+%F %T')
   if [ "$code" = "200" ]; then
     echo "[$ts] $label OK"
+  elif [ "$label" = "m40-forward" ] && [ "$path" = "/api/cron/m40-forward" ] && [ "$code" = "202" ]; then
+    echo "[$ts] $label ACCEPTED completed=false"
   else
     echo "[$ts] $label HTTP=$code body=$(head -c 2048 "$CALL_BODY_FILE" 2>/dev/null | jrl_mask_money 2>/dev/null | head -c 200)"
   fi
@@ -451,6 +453,17 @@ POST_MARKET_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-
 POST_MARKET_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-last-date"
 POST_MARKET_OVERSEAS_ATTEMPT_FILE="${HOME}/.node-local/stockinvest/post-market-overseas-attempts"   # (T-062 S-2b) 그날 시도 횟수
 M40_FORWARD_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/m40-forward-last-date"  # T-156 isolated paper evaluation
+# >>> m40-state-write
+# Atomic reservation: failed disk writes cannot erase the last bounded attempt.
+m40_state_write() {
+  local destination="$1" value="$2" temporary=""
+  [ ! -e "$destination" ] || [ -w "$destination" ] || return 1
+  temporary=$(mktemp "${destination}.tmp.XXXXXX" 2>/dev/null) || return 1
+  if printf '%s\n' "$value" > "$temporary" && mv -f -- "$temporary" "$destination" 2>/dev/null; then return 0; fi
+  rm -f -- "$temporary" 2>/dev/null || true
+  return 1
+}
+# <<< m40-state-write
 RS_UPDATE_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/rs-update-last-date"
 RESEARCH_DOMESTIC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-domestic-last-date"
 RESEARCH_OVERSEAS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/research-cycle-overseas-last-date"
@@ -946,39 +959,79 @@ while true; do
   fi
   # <<< daily-bars-daily
   # >>> m40-forward-daily
-  # T-156: independent paper evaluation; 202 schedules work, not completion.
-  # The route requires DB DRY_RUN=true, an explicitly initialized paper account,
-  # a persistent lease and a once-per-session ledger. No KIS/order submission.
-  # At most two attempts, separated by 15 minutes (longer than the 12-minute
-  # persisted lease). A 202 is not a completed cycle. Repeated calls are cheap
-  # after completion because the DB once-per-session check returns immediately.
-  M40_FORWARD_DAY=""; M40_FORWARD_ATTEMPTS=0; M40_FORWARD_LAST_TS=0
-  read -r M40_FORWARD_DAY M40_FORWARD_ATTEMPTS M40_FORWARD_LAST_TS 2>/dev/null < "$M40_FORWARD_LAST_RUN_FILE" || true
-  [ "$M40_FORWARD_DAY" = "$TODAY" ] || { M40_FORWARD_ATTEMPTS=0; M40_FORWARD_LAST_TS=0; }
-  case "$M40_FORWARD_ATTEMPTS" in 0|1|2) ;; *) M40_FORWARD_ATTEMPTS=2 ;; esac
-  case "$M40_FORWARD_LAST_TS" in ''|*[!0-9]*) M40_FORWARD_LAST_TS=0 ;; esac
-  M40_FORWARD_NOW_TS=$(date '+%s')
-  case "$M40_FORWARD_NOW_TS" in ''|*[!0-9]*) M40_FORWARD_NOW_TS=0 ;; esac
-  M40_FORWARD_MM=$(date '+%M')
-  case "$M40_FORWARD_MM" in [0-5][0-9]) ;; *) M40_FORWARD_MM=00 ;; esac
-  M40_FORWARD_WINDOW=no
-  if { [ "$HH" = "08" ] && [ "$M40_FORWARD_MM" -ge 40 ]; } || { [ "$HH" = "09" ] && [ "$M40_FORWARD_MM" -le 10 ]; }; then M40_FORWARD_WINDOW=yes; fi
-  if [ "$M40_FORWARD_WINDOW" = yes ] && [ "$M40_FORWARD_ATTEMPTS" -lt 2 ] &&
-    { [ "$M40_FORWARD_ATTEMPTS" -eq 0 ] || { [ "$M40_FORWARD_NOW_TS" -gt 0 ] && [ "$((M40_FORWARD_NOW_TS-M40_FORWARD_LAST_TS))" -ge 900 ]; }; }; then
-    call "/api/cron/m40-forward" "m40-forward"
-    echo "$TODAY $((M40_FORWARD_ATTEMPTS+1)) $M40_FORWARD_NOW_TS" > "$M40_FORWARD_LAST_RUN_FILE"
+  # Provider recommends collection after 06:30 ET. Four bounded attempts after
+  # 06:45 ET, 30 minutes apart. The worker remains after()/202; never await its
+  # seven-minute collection on this cron loop. DB lease/session uniqueness persist.
+  read -r M40_ET_DAY M40_ET_HH M40_ET_MM M40_NOW_TS <<< "$(TZ=America/New_York date '+%F %H %M %s')"
+  M40_ET_MINUTE=-1
+  case "$M40_ET_HH:$M40_ET_MM" in [0-2][0-9]:[0-5][0-9]) M40_ET_MINUTE=$((10#$M40_ET_HH*60+10#$M40_ET_MM));; esac
+  case "$M40_NOW_TS" in ''|*[!0-9]*) M40_NOW_TS=0;; esac
+  M40_FORWARD_DAY=""; M40_FORWARD_ATTEMPTS=0; M40_FORWARD_LAST_TS=0; M40_FORWARD_STATE=pending
+  read -r M40_FORWARD_DAY M40_FORWARD_ATTEMPTS M40_FORWARD_LAST_TS M40_FORWARD_STATE 2>/dev/null < "$M40_FORWARD_LAST_RUN_FILE" || true
+  [ "$M40_FORWARD_DAY" = "$M40_ET_DAY" ] || { M40_FORWARD_ATTEMPTS=0; M40_FORWARD_LAST_TS=0; M40_FORWARD_STATE=pending; }
+  case "$M40_FORWARD_ATTEMPTS" in 0|1|2|3|4) ;; *) M40_FORWARD_ATTEMPTS=4;; esac
+  case "$M40_FORWARD_LAST_TS" in ''|*[!0-9]*) M40_FORWARD_LAST_TS=0;; esac
+  if [ "$M40_ET_MINUTE" -ge 405 ] && [ "$M40_ET_MINUTE" -le 525 ] && [ "$M40_FORWARD_ATTEMPTS" -lt 4 ] && [ "$M40_FORWARD_STATE" != completed ] && [ "$M40_FORWARD_STATE" != closed ] &&
+    { [ "$M40_FORWARD_ATTEMPTS" -eq 0 ] || { [ "$M40_NOW_TS" -gt 0 ] && [ "$((M40_NOW_TS-M40_FORWARD_LAST_TS))" -ge 1800 ]; }; }; then
+    M40_FORWARD_ATTEMPTS=$((M40_FORWARD_ATTEMPTS+1))
+    # Reserve before network: a restart cannot repeat an in-flight attempt.
+    if m40_state_write "$M40_FORWARD_LAST_RUN_FILE" "$M40_ET_DAY $M40_FORWARD_ATTEMPTS $M40_NOW_TS reserved"; then
+    M40_FORWARD_OBSERVED=$(curl -q -s --max-time 5 -X POST -H "x-cron-secret: $CRON_SECRET" \
+      "$BASE_URL/api/cron/m40-forward?status=1" 2>/dev/null | node -e '
+      try { const b=JSON.parse(require("node:fs").readFileSync(0,"utf8"));
+        if(b.ok===true) {
+          if(b.beforeNextOpen===false) process.stdout.write("closed");
+          else if(b.status==="completed"&&b.completed===true&&b.sourceReady===true) process.stdout.write("completed");
+          else if(b.status==="running") process.stdout.write("running");
+        }
+      } catch {}' 2>/dev/null) || M40_FORWARD_OBSERVED=""
+    case "$M40_FORWARD_OBSERVED" in
+      completed|running|closed) M40_FORWARD_STATE="$M40_FORWARD_OBSERVED" ;;
+      *) CALL_MAX_TIME=10
+         call "/api/cron/m40-forward" "m40-forward"
+         CALL_MAX_TIME=""
+         M40_FORWARD_STATE=failed
+         [ "${CALL_LAST_CODE:-}" != 202 ] || M40_FORWARD_STATE=accepted ;;
+    esac
+    m40_state_write "$M40_FORWARD_LAST_RUN_FILE" "$M40_ET_DAY $M40_FORWARD_ATTEMPTS $M40_NOW_TS $M40_FORWARD_STATE" || true
+    else
+      echo "[m40-forward] reservation_failed; no request sent"
+    fi
   fi
   # <<< m40-forward-daily
   # >>> m40-forecast-daily
-  # Forecast-only archived-data computation. Reserve before call: at most one attempt/day.
-  # call() provides the normal job_run_log hook; no new collection/model/order calls.
+  # Separate forecast retries after actual forward/source readiness. A failed or
+  # blocked attempt never consumes the entire day. DB lease/day uniqueness remain.
   M40_FORECAST_FILE="${HOME}/.node-local/stockinvest/m40-forecast-last-date"
-  M40_FORECAST_LAST=$(cat "$M40_FORECAST_FILE" 2>/dev/null || true)
-  if [ "$HH" = "10" ] && [ "$M40_FORECAST_LAST" != "$TODAY" ]; then
-    echo "$TODAY" > "$M40_FORECAST_FILE"
-    CALL_MAX_TIME=150
-    call "/api/cron/m40-forecast" "m40-forecast"
-    CALL_MAX_TIME=""
+  M40_FORECAST_DAY=""; M40_FORECAST_ATTEMPTS=0; M40_FORECAST_TS=0; M40_FORECAST_STATE=pending
+  read -r M40_FORECAST_DAY M40_FORECAST_ATTEMPTS M40_FORECAST_TS M40_FORECAST_STATE 2>/dev/null < "$M40_FORECAST_FILE" || true
+  [ "$M40_FORECAST_DAY" = "$M40_ET_DAY" ] || { M40_FORECAST_ATTEMPTS=0; M40_FORECAST_TS=0; M40_FORECAST_STATE=pending; }
+  case "$M40_FORECAST_ATTEMPTS" in 0|1|2|3|4) ;; *) M40_FORECAST_ATTEMPTS=4;; esac
+  case "$M40_FORECAST_TS" in ''|*[!0-9]*) M40_FORECAST_TS=0;; esac
+  if [ "$M40_ET_MINUTE" -ge 420 ] && [ "$M40_ET_MINUTE" -le 540 ] && [ "$M40_FORECAST_ATTEMPTS" -lt 4 ] && [ "$M40_FORECAST_STATE" != completed ] &&
+    { [ "$M40_FORECAST_ATTEMPTS" -eq 0 ] || { [ "$M40_NOW_TS" -gt 0 ] && [ "$((M40_NOW_TS-M40_FORECAST_TS))" -ge 1800 ]; }; }; then
+    M40_FORECAST_ATTEMPTS=$((M40_FORECAST_ATTEMPTS+1))
+    if m40_state_write "$M40_FORECAST_FILE" "$M40_ET_DAY $M40_FORECAST_ATTEMPTS $M40_NOW_TS reserved"; then
+    # Dedicated five-second read-only status probe, not a collection call. Do not
+    # change call()'s response-file lifecycle or other cron jobs' transport.
+    M40_READY=$(curl -q -s --max-time 5 -X POST -H "x-cron-secret: $CRON_SECRET" \
+      "$BASE_URL/api/cron/m40-forward?status=1" 2>/dev/null | node -e '
+      try { const b=JSON.parse(require("node:fs").readFileSync(0,"utf8"));
+        if(b.ok===true&&b.status==="completed"&&b.completed===true&&b.sourceReady===true&&b.beforeNextOpen===true) process.stdout.write("ready");
+      } catch {}' 2>/dev/null) || M40_READY=""
+    M40_FORECAST_STATE=source_not_ready
+    if [ "$M40_READY" = ready ]; then
+      CALL_MAX_TIME=150
+      call "/api/cron/m40-forecast" "m40-forecast"
+      CALL_MAX_TIME=""
+      M40_FORECAST_STATE=failed
+      [ "${CALL_LAST_CODE:-}" != 202 ] || M40_FORECAST_STATE=running
+      [ "${CALL_LAST_CODE:-}" != 200 ] || M40_FORECAST_STATE=completed
+    fi
+    m40_state_write "$M40_FORECAST_FILE" "$M40_ET_DAY $M40_FORECAST_ATTEMPTS $M40_NOW_TS $M40_FORECAST_STATE" || true
+    else
+      echo "[m40-forecast] reservation_failed; no request sent"
+    fi
   fi
   # <<< m40-forecast-daily
 

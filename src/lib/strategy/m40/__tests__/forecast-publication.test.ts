@@ -20,10 +20,13 @@ test('actual successful engine output passes the publication contract and atomic
  expect(()=>assertForecastResult(lease,input,output)).not.toThrow();
  expect(()=>assertForecastResult(lease,input,{...output,assumptions:[...output.assumptions,'unapproved_assumption']})).toThrow('forecast_result_incomplete');
  jest.mocked(readBlob).mockResolvedValue(compressed);
+ let publicationClocks=[args.issuedAt];
  const query=jest.fn(async(sql:string,p:unknown[]=[])=>{
+  if(sql.includes('publicationNow'))return [[{publicationNow:publicationClocks.length>1?publicationClocks.shift():publicationClocks[0]}],[]];
   if(sql.includes('FROM system_config'))return [[{value:'true'}],[]];
   if(sql.includes('FROM t156_forecast_job'))return [[{status:'running',lease_token:lease.token,valid:1}],[]];
   if(sql.includes('FROM t156_paper_account'))return [[{revision:args.accountRevision,status:'active',policy_json:args.policy,state_json:args.book}],[]];
+  if(sql.includes('FROM t156_forecast_run'))return [[],[]];
   if(sql.includes('FROM t156_record')){expect(p).toContain(pointer.uncompressedSha256);return [[{payload_json:pointer,availableAt:args.sourceAvailableAt}],[]];}
   if(sql.startsWith('SELECT intent_json'))return [[],[]];
   return [{affectedRows:1},[]];
@@ -34,4 +37,11 @@ test('actual successful engine output passes the publication contract and atomic
  expect(query.mock.calls.filter(([sql])=>sql.startsWith('INSERT INTO t156_forecast_horizon'))).toHaveLength(4);
  expect(query.mock.calls.filter(([sql])=>sql.startsWith('INSERT INTO t156_forecast_evaluation'))).toHaveLength(4);
  expect(query.mock.calls.find(([sql])=>sql.startsWith('INSERT INTO t156_forecast_run'))?.[0]).toContain('UTC_TIMESTAMP(6)');
+ const nextOpen=input.calendar.find(day=>day.session>input.baseline.session)!.openAt;
+ for(const clocks of [[nextOpen],[args.issuedAt,nextOpen]]){
+  publicationClocks=[...clocks];c.commit.mockClear();c.rollback.mockClear();query.mockClear();
+  await expect(publishForecast(lease,input,output,db)).rejects.toThrow('forecast_publication_deadline_elapsed');
+  expect(c.commit).not.toHaveBeenCalled();expect(c.rollback).toHaveBeenCalledTimes(1);
+ }
+
 },30000);

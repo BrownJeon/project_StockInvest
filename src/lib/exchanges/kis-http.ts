@@ -132,6 +132,9 @@ export interface KisFetchOptions {
    * 🔴 **멱등한 읽기 전용 조회에만 쓴다** — 주문 송신에 켜면 중복 주문이 될 수 있다.
    */
   transientRetries?: number;
+  /** T-156 opt-in, fixed production SPX GET only. Both limits and caller signal are required. */
+  maxResponseBytes?: number;
+  bodyDeadlineMs?: number;
   /** 로그 식별용 라벨 (예: `getTicker`). */
   label?: string;
 }
@@ -305,6 +308,78 @@ function replayResponse(res: Response, body: string): Response {
   }
 }
 
+/** Deliberately narrow opt-in: never changes existing GET/POST/order behavior. */
+function boundedIndexOptions(urlText:string,init:RequestInit,opts:KisFetchOptions):boolean {
+  if(opts.maxResponseBytes===undefined&&opts.bodyDeadlineMs===undefined)return false;
+  const invalid=():never=>{throw new Error('[kis-http] invalid bounded index GET options');};
+  let url:URL;try{url=new URL(urlText);}catch{return invalid();}
+  const keys=['FID_COND_MRKT_DIV_CODE','FID_INPUT_ISCD','FID_INPUT_DATE_1','FID_INPUT_DATE_2','FID_PERIOD_DIV_CODE'];
+  const headers=new Headers(init.headers);
+  const requestDay=(key:string):number=>{const value=url.searchParams.get(key)??'';
+    if(!/^\d{8}$/.test(value))return NaN;
+    const iso=`${value.slice(0,4)}-${value.slice(4,6)}-${value.slice(6,8)}`;
+    const time=Date.parse(`${iso}T00:00:00Z`);return Number.isFinite(time)&&new Date(time).toISOString().slice(0,10)===iso?time:NaN;};
+  const start=requestDay('FID_INPUT_DATE_1'),end=requestDay('FID_INPUT_DATE_2');
+  if(init.method!=='GET'||init.body!=null||!init.signal||(init.redirect!==undefined&&init.redirect!=='error')
+    ||url.origin!=='https://openapi.koreainvestment.com:9443'
+    ||url.pathname!=='/uapi/overseas-price/v1/quotations/inquire-daily-chartprice'||url.hash||url.username||url.password
+    ||[...url.searchParams.keys()].length!==keys.length||keys.some(k=>url.searchParams.getAll(k).length!==1)
+    ||url.searchParams.get('FID_COND_MRKT_DIV_CODE')!=='N'||url.searchParams.get('FID_INPUT_ISCD')!=='SPX'
+    ||url.searchParams.get('FID_PERIOD_DIV_CODE')!=='D'
+    ||!/^\d{8}$/.test(url.searchParams.get('FID_INPUT_DATE_1')??'')||!/^\d{8}$/.test(url.searchParams.get('FID_INPUT_DATE_2')??'')
+    ||!Number.isFinite(start)||!Number.isFinite(end)||start>end||end-start>=70*86400_000
+    ||headers.get('tr_id')!=='FHKST03030100'||headers.get('custtype')!=='P'
+    ||[...headers.keys()].some(k=>!['content-type','authorization','appkey','appsecret','tr_id','custtype'].includes(k))
+    ||opts.priority!=='bulk'||opts.rateLimitRetries!==0||opts.transientRetries!==0
+    ||!Number.isInteger(opts.timeoutMs)||opts.timeoutMs!<=0||opts.timeoutMs!>10_000
+    ||!Number.isInteger(opts.maxWaitMs)||opts.maxWaitMs!<=0||opts.maxWaitMs!>5000
+    ||!Number.isInteger(opts.maxResponseBytes)||opts.maxResponseBytes!<=0||opts.maxResponseBytes!>512*1024
+    ||!Number.isInteger(opts.bodyDeadlineMs)||opts.bodyDeadlineMs!<=0||opts.bodyDeadlineMs!>90_000)return invalid();
+  return true;
+}
+
+async function fetchBoundedIndex(url:string,init:RequestInit,opts:KisFetchOptions):Promise<{res:Response;body:string}> {
+  const ctrl=new AbortController(),parent=init.signal!;
+  let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,headerTimer:ReturnType<typeof setTimeout>|undefined;
+  let deadlineTimer:ReturnType<typeof setTimeout>|undefined,rejectAbort:((error:Error)=>void)|undefined;
+  let failure:Error|undefined;
+  const abort=(code:string):void=>{
+    if(failure)return;failure=new Error(`[kis-http] bounded index ${code}`);ctrl.abort();
+    // Do not await cancel: a broken provider must not hold the caller beyond its deadline.
+    if(reader)void reader.cancel(failure).catch(()=>{});
+    rejectAbort?.(failure);
+  };
+  const onParent=():void=>abort('aborted');
+  const aborted=new Promise<never>((_,reject)=>{rejectAbort=reject;});
+  void aborted.catch(()=>{}); // Parent may abort before the first fetch/read race is installed.
+  parent.addEventListener('abort',onParent,{once:true});
+  try{
+    if(parent.aborted)abort('aborted');
+    if(failure)throw failure;
+    headerTimer=setTimeout(()=>abort('header_timeout'),opts.timeoutMs!);
+    deadlineTimer=setTimeout(()=>abort('deadline'),opts.bodyDeadlineMs!);
+    const res=await Promise.race([fetch(url,{...init,redirect:'error',signal:ctrl.signal}),aborted]);
+    clearTimeout(headerTimer);headerTimer=undefined;
+    reader=res.body?.getReader();
+    const declared=res.headers.get('content-length');
+    if(declared!==null&&(!/^\d+$/.test(declared)||Number(declared)>opts.maxResponseBytes!))abort('response_budget');
+    if(failure)throw failure;
+    const chunks:Uint8Array[]=[];let bytes=0;
+    if(reader)for(;;){
+      const chunk=await Promise.race([reader.read(),aborted]);
+      if(failure)throw failure;if(chunk.done)break;
+      bytes+=chunk.value.byteLength;
+      if(bytes>opts.maxResponseBytes!){abort('response_budget');throw failure;}
+      chunks.push(chunk.value);
+    }
+    return {res,body:Buffer.concat(chunks,bytes).toString('utf8')};
+  } finally {
+    if(headerTimer)clearTimeout(headerTimer);if(deadlineTimer)clearTimeout(deadlineTimer);
+    parent.removeEventListener('abort',onParent);
+    try{reader?.releaseLock();}catch{ /* Cancellation has already aborted the underlying fetch. */ }
+  }
+}
+
 /**
  * KIS 로 가는 단 하나의 HTTP 진입점.
  *
@@ -318,6 +393,7 @@ export async function kisFetch(
   init: RequestInit = {},
   opts: KisFetchOptions = {},
 ): Promise<Response> {
+  const boundedIndex = boundedIndexOptions(url,init,opts);
   const priority = opts.priority ?? currentKisPriority();
   const retries  = opts.rateLimitRetries ?? DEFAULT_RATE_LIMIT_RETRIES;
   const transientRetries = Math.min(Math.max(0, opts.transientRetries ?? 0), MAX_TRANSIENT_RETRIES);
@@ -346,12 +422,14 @@ export async function kisFetch(
     // ① 유량 토큰. 두 가지로 실패할 수 있고 **둘 다 던진다**(빈 결과로 퇴화하지 않는다):
     //    - 대기열이 가득 참        → KisThrottleQueueFullError (즉시)
     //    - 제한 시간 내 차례 없음  → KisThrottleTimeoutError   (대기 후)
+    if(boundedIndex&&init.signal!.aborted)throw new Error('[kis-http] bounded index aborted');
     await acquireKisSlot(priority, { maxWaitMs: opts.maxWaitMs ?? DEFAULT_MAX_QUEUE_WAIT_MS });
+    if(boundedIndex&&init.signal!.aborted)throw new Error('[kis-http] bounded index aborted');
 
     // ② 타임아웃은 **토큰을 받은 뒤에** 건다 (§타임아웃).
     let ctrl: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    if (opts.timeoutMs != null && opts.timeoutMs > 0) {
+    if (!boundedIndex && opts.timeoutMs != null && opts.timeoutMs > 0) {
       ctrl = new AbortController();
       timer = setTimeout(() => ctrl!.abort(), opts.timeoutMs);
       timer.unref?.();
@@ -359,8 +437,10 @@ export async function kisFetch(
 
     const t0 = usageClock();   // §호출 기록 — 토큰을 받은 뒤부터 잰다
     let res: Response;
+    let boundedBody: string | undefined;
     try {
-      res = await fetch(url, ctrl ? { ...init, signal: ctrl.signal } : init);
+      if(boundedIndex){const result=await fetchBoundedIndex(url,init,opts);res=result.res;boundedBody=result.body;}
+      else res = await fetch(url, ctrl ? { ...init, signal: ctrl.signal } : init);
     } catch (e) {
       logKisThrown(label, t0, e, ctrl?.signal.aborted === true);
       throw e;
@@ -368,7 +448,7 @@ export async function kisFetch(
       if (timer) clearTimeout(timer);
     }
 
-    const body = await res.text().catch(() => '');
+    const body = boundedIndex ? boundedBody! : await res.text().catch(() => '');
     const rateLimited = isKisRateLimitBody(body);
     logKisAttempt(label, t0, res, body, rateLimited);
     const replay = replayResponse(res, body);

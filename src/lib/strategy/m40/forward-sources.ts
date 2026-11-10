@@ -2,6 +2,8 @@
 import { createHash } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
 import { performance } from 'node:perf_hooks';
+import { spawn } from 'node:child_process';
+import { KIS_SP500_SOURCE_ID, KIS_SP500_SOURCE_URL, validateKisIndexEnvelope, canonicalIndexDecimal } from './forward-index-contract';
 import { normalizeForwardUtc, validForwardSessionDate } from './forward-calendar';
 import type { ForwardCalendarSession, ForwardInputData, ForwardMemberData, ForwardPriceBar } from './forward-types';
 import type { RawOpen } from './paper-ledger';
@@ -14,7 +16,7 @@ export interface ForwardStockSource {
 }
 export interface ForwardIndexSource {
   sourceId:string; sourceUrl:string; observedAt:string; sha256:string;
-  rows:{session:string;close:string}[]; basis?:'index'; series?:'SP500'; rawCsv?:string; missingSessions?:string[];
+  rows:{session:string;close:string}[]; basis?:'index'; series?:'SP500'; rawCsv?:string; rawJson?:string; sourceUse?:'evaluation_only'; liveEligible?:false; missingSessions?:string[];
 }
 export interface ForwardSourceFailure {
   symbol?:string; basis?:'split_adjusted'|'raw'|'index'; errorCode:string; sourceId?:string;
@@ -58,7 +60,7 @@ function indexEndpoint(value:string):URL {
 }
 
 /** Direct IPv4 per request; never changes process-wide DNS or accepts a redirect. */
-export function fetchForwardPublicText(urlText:string,options:ForwardFetchOptions):Promise<ForwardFetchResponse> {
+function fetchForwardNodeText(urlText:string,options:ForwardFetchOptions):Promise<ForwardFetchResponse> {
   const url=urlText.startsWith('https://api.kibot.com/')?stockEndpoint(urlText):indexEndpoint(urlText);
   return new Promise((resolve,reject)=>{
     let ended=false;
@@ -82,6 +84,41 @@ export function fetchForwardPublicText(urlText:string,options:ForwardFetchOption
     req.on('error',()=>finish(new Error('forward_source_transport_failed')));
     req.end();
   });
+}
+/** FRED-only transport fallback. curl's default truthful UA; no redirects/config/TLS bypass. */
+export function fetchForwardIndexCurl(urlText:string,options:ForwardFetchOptions):Promise<ForwardFetchResponse> {
+  indexEndpoint(urlText);
+  return new Promise((resolve,reject)=>{
+    const child=spawn('curl',['-q','--ipv4','--silent','--show-error','--proto','=https','--max-redirs','0',
+      '--max-time',String(Math.max(0.001,options.timeoutMs/1000)),'--max-filesize',String(options.maxBytes),
+      '--write-out','\n%{http_code}',urlText],{stdio:['ignore','pipe','ignore']});
+    let bytes=0,ended=false;const chunks:Buffer[]=[];
+    const finish=(cause?:Error):void=>{if(ended)return;ended=true;clearTimeout(timer);
+      if(cause){child.kill('SIGKILL');reject(cause);return;}
+      const text=Buffer.concat(chunks).toString('utf8'),match=/\n(\d{3})$/.exec(text);
+      if(!match){reject(new Error('forward_source_transport_failed'));return;}
+      resolve({status:Number(match[1]),text:text.slice(0,-match[0].length)});
+    };
+    const timer=setTimeout(()=>finish(new Error('forward_source_timeout')),options.timeoutMs);
+    child.stdout.on('data',(chunk:Buffer)=>{bytes+=chunk.length;
+      if(bytes>options.maxBytes+4)finish(new Error('forward_source_response_budget'));else chunks.push(chunk);});
+    child.on('error',()=>finish(new Error('forward_source_transport_failed')));
+    child.on('close',code=>finish(code===0?undefined:new Error('forward_source_transport_failed')));
+  });
+}
+export function fetchForwardPublicText(urlText:string,options:ForwardFetchOptions):Promise<ForwardFetchResponse> {
+  // Validate synchronously before either transport opens a socket.
+  const isStock=urlText.startsWith('https://api.kibot.com/');
+  if(isStock)stockEndpoint(urlText);else indexEndpoint(urlText);
+  const began=performance.now();
+  if(isStock)return fetchForwardNodeText(urlText,options);
+  // Reserve half of the same per-request budget for curl; never double the deadline.
+  return fetchForwardNodeText(urlText,{...options,timeoutMs:Math.max(1,Math.floor(options.timeoutMs/2))})
+    .catch((cause:unknown)=>{
+      if(!(cause instanceof Error)||!['forward_source_timeout','forward_source_transport_failed'].includes(cause.message))throw cause;
+      const remaining=options.timeoutMs-(performance.now()-began);
+      if(remaining<=0)throw new Error('forward_source_timeout');
+      return fetchForwardIndexCurl(urlText,{...options,timeoutMs:remaining});});
 }
 function csvSession(value:string):string {
   const match=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
@@ -190,7 +227,7 @@ export async function collectForwardSources(
         observedAt:got.observedAt,sha256:sha(got.text),rawCsv:got.text,...parsed};consecutive=0;
     }catch(cause){invalid('SP500','index',cause);}
   }
-  bundle.observedAt=now().toISOString();bundle.complete=!halted&&bundle.records.length===symbols.length*2&&bundle.market!==undefined;
+  bundle.observedAt=now().toISOString();bundle.complete=!halted&&missingForwardSourceSymbols(bundle,symbols).length===0&&bundle.market!==undefined;
   return bundle;
 }
 
@@ -241,8 +278,18 @@ export function mapForwardSources(
   }
   let sp500Bars:ForwardPriceBar[]=[];
   if(bundle.market){
-    const market=bundle.market;indexEndpoint(market.sourceUrl);
+    const market=bundle.market;
     if((market.series!==undefined&&market.series!=='SP500')||(market.basis!==undefined&&market.basis!=='index'))return error('forward_source_index_contract_invalid');
+    if(market.sourceId===KIS_SP500_SOURCE_ID){
+      if(market.sourceUrl!==KIS_SP500_SOURCE_URL||!market.rawJson||market.rawCsv!==undefined
+        ||market.sourceUse!=='evaluation_only'||market.liveEligible!==false)return error('forward_source_index_contract_invalid');
+      const checked=validateKisIndexEnvelope(market.rawJson,{start:bundle.dateWindow.start,end:asOfSession,now:bundle.observedAt,calendar});
+      if(checked.sha256!==market.sha256||checked.observedAt!==market.observedAt)return error('forward_source_hash_mismatch');
+      if(JSON.stringify(checked.rows)!==JSON.stringify(market.rows))return error('forward_source_rows_mismatch');
+    }else{
+      indexEndpoint(market.sourceUrl);
+      if(market.rawJson!==undefined)return error('forward_source_index_contract_invalid');
+    }
     if(market.rawCsv!==undefined){
       if(sha(market.rawCsv)!==market.sha256)return error('forward_source_hash_mismatch');
       const parsed=parseForwardIndexCsv(market.rawCsv,bundle.dateWindow.start,bundle.dateWindow.end);
@@ -257,18 +304,48 @@ export function mapForwardSources(
     opens:opens.sort((a,b)=>order(a.session,b.session)||order(a.symbol,b.symbol))};
 }
 
+/** Readiness includes the entire canonical index history, not merely yesterday's row. */
+export function hasRequiredForwardIndexHistory(bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[]):boolean {
+ try{
+  const bars=mapForwardSources({...bundle,records:[]},calendar).data.sp500Bars;
+  if(bars.some(bar=>!bar.final))return false;
+  const days=calendar.filter(day=>day.session<=bundle.asOfSession),prior=days.at(-2)?.session;
+  const latest=bars.filter(bar=>bar.final&&bar.session<=bundle.asOfSession).at(-1)?.session;
+  if(!latest||!prior||latest<prior)return false;
+  const required=days.filter(day=>day.session<=latest).slice(-253);
+  return required.length===253&&required.every(day=>bars.some(bar=>bar.session===day.session&&bar.final));
+ }catch{return false;}
+}
+/** 253 joint price observations plus the current stock mark (254 if index lags). */
+export function requiredForwardSourceSessions(calendar:readonly ForwardCalendarSession[],asOf:string,basisSessions:readonly string[]=[],indexEnd?:string):string[] {
+ const completed=calendar.filter(day=>day.session<=asOf);
+ const end=indexEnd??completed.at(-2)?.session??asOf;
+ return [...new Set([...completed.filter(day=>day.session<=end).slice(-253).map(day=>day.session),asOf,...basisSessions])];
+}
 /** Retry either missing variant; a successful raw response cannot mask a lost split response. */
-export function missingForwardSourceSymbols(bundle:ForwardSourceBundle,symbols:readonly string[]):string[] {
+export function missingForwardSourceSymbols(bundle:ForwardSourceBundle,symbols:readonly string[],requiredSessions:readonly string[]=[bundle.asOfSession]):string[] {
  return symbols.filter(symbol=>(['raw','split_adjusted'] as const).some(basis=>
-  !bundle.records.some(r=>r.symbol===symbol&&r.basis===basis&&r.rows.at(-1)?.session===bundle.asOfSession)));
+  !bundle.records.some(r=>!r.probe&&r.symbol===symbol&&r.basis===basis&&r.rows.at(-1)?.session===bundle.asOfSession
+    &&requiredSessions.every(session=>r.rows.some(row=>row.session===session)))));
 }
 /** Replace retried variants by identity without making duplicate members. Failed attempts remain evidence. */
 export function mergeForwardSources(bundle:ForwardSourceBundle,extra:ForwardSourceBundle,symbols:readonly string[]):ForwardSourceBundle {
  if(bundle.asOfSession!==extra.asOfSession)throw Error('forward_source_merge_session_mismatch');
  const records=new Map(bundle.records.map(r=>[r.symbol+'|'+r.basis,r]));
- for(const row of extra.records)records.set(row.symbol+'|'+row.basis,row);
+ for(const row of extra.records){
+  if(row.probe)continue;
+  const key=row.symbol+'|'+row.basis,old=records.get(key);
+  // A retry may repair one basis while returning a stale/shorter other basis.
+  // Preserve whole originals: never splice rows from different adjustment vintages.
+  const oldLast=old?.rows.at(-1)?.session??'',newLast=row.rows.at(-1)?.session??'';
+  if(!old||((newLast>oldLast||(newLast===oldLast&&row.observedAt>=old.observedAt))
+    &&old.rows.every(previous=>row.rows.some(next=>next.session===previous.session))))records.set(key,row);
+ }
  const oldLast=bundle.market?.rows.at(-1)?.session??'',newLast=extra.market?.rows.at(-1)?.session??'';
- const market=extra.market&&newLast>=oldLast?extra.market:bundle.market;
+ const market=extra.market&&newLast>=oldLast&&(!bundle.market||
+  ((newLast>oldLast||extra.market.observedAt>=bundle.market.observedAt
+    ||bundle.market.rows.every(previous=>extra.market!.rows.some(next=>next.session===previous.session&&canonicalIndexDecimal(next.close)===canonicalIndexDecimal(previous.close))))
+   &&bundle.market.rows.every(previous=>extra.market!.rows.some(next=>next.session===previous.session))))?extra.market:bundle.market;
  const merged={...bundle,records:[...records.values()],market,failures:[...bundle.failures,...extra.failures],
   observedAt:extra.observedAt>bundle.observedAt?extra.observedAt:bundle.observedAt};
  return {...merged,complete:missingForwardSourceSymbols(merged,symbols).length===0&&!!market};

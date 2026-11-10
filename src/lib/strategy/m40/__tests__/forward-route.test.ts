@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse, after } from 'next/server';
 import { POST } from '@/app/api/cron/m40-forward/route';
 import { checkCronAuth } from '@/lib/cron-auth';
-import { initializeApprovedForwardPilot, runM40ForwardCycle } from '../forward-runtime';
+import { initializeApprovedForwardPilot, runM40ForwardCycle, readM40ForwardStatus } from '../forward-runtime';
 import { loadPaperAccount, requirePaperDryRun } from '../forward-store';
 
 jest.mock('next/server', () => ({ ...jest.requireActual('next/server'), after: jest.fn() }));
 jest.mock('@/lib/cron-auth', () => ({ checkCronAuth: jest.fn() }));
-jest.mock('../forward-runtime', () => ({ initializeApprovedForwardPilot: jest.fn(), runM40ForwardCycle: jest.fn() }));
+jest.mock('../forward-runtime', () => ({ initializeApprovedForwardPilot: jest.fn(), runM40ForwardCycle: jest.fn(), readM40ForwardStatus: jest.fn() }));
 jest.mock('../forward-store', () => ({ requirePaperDryRun: jest.fn(), loadPaperAccount: jest.fn() }));
 
 const req = (query = '') => new NextRequest(`http://localhost/api/cron/m40-forward${query}`, { method: 'POST' });
@@ -66,4 +66,15 @@ test('dry-run failure cannot initialize or schedule and does not disclose errors
   expect(await response.json()).toMatchObject({ error: 'm40_forward_requires_dry_run', executionScope: 'paper_only' });
   expect(initializeApprovedForwardPilot).not.toHaveBeenCalled();
   expect(after).not.toHaveBeenCalled();
+});
+
+
+test('status is protected, read-only, no-store, and never schedules or initializes',async()=>{
+ jest.mocked(readM40ForwardStatus).mockResolvedValue({status:'blocked',session:'2026-11-09',completed:false,sourceReady:false,beforeNextOpen:true,executionScope:'paper_only'});
+ const response=await POST(req('?status=1&initialize=1'));
+ expect(response.status).toBe(200);expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+ expect(await response.json()).toMatchObject({ok:true,status:'blocked',completed:false,sourceReady:false});
+ expect(initializeApprovedForwardPilot).not.toHaveBeenCalled();expect(loadPaperAccount).not.toHaveBeenCalled();expect(after).not.toHaveBeenCalled();
+ jest.mocked(checkCronAuth).mockReturnValue(NextResponse.json({ok:false},{status:401}));
+ await POST(req('?status=1'));expect(readM40ForwardStatus).toHaveBeenCalledTimes(1);
 });

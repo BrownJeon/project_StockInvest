@@ -5,6 +5,7 @@ import { canonicalJson, utcSql } from '@/lib/analysis-data/store';
 import type { ArchiveQueryable, JsonValue } from '@/lib/analysis-data/types';
 import type { PreparedForecastInput, ForecastEngineResult, ForecastHorizon } from './forecast-types';
 import { requirePaperDryRun, loadPendingPaperIntents } from './forward-store';
+import { assertPublicationWindow } from './publication-window';
 import { prepareForecastInput } from './forecast-input';
 import { readBlob } from '@/lib/analysis-data/store';
 import { gunzipSync } from 'node:zlib';
@@ -50,8 +51,13 @@ export async function publishForecast(lease:ForecastLease,input:PreparedForecast
  try{await c.beginTransaction();await requirePaperDryRun(c);
  const [jobs]=await c.query<Row[]>('SELECT status,lease_token,lease_until>UTC_TIMESTAMP(6) valid FROM t156_forecast_job WHERE id=? FOR UPDATE',[lease.id]);
  if(jobs[0]?.status!=='running'||jobs[0]?.lease_token!==lease.token||Number(jobs[0]?.valid)!==1)throw Error('forecast_lease_expired');
- const [accounts]=await c.query<Row[]>('SELECT revision,status,policy_json,state_json FROM t156_paper_account WHERE id=? LOCK IN SHARE MODE',[input.baseline.accountId]);
+ const [accounts]=await c.query<Row[]>('SELECT revision,status,policy_json,state_json FROM t156_paper_account WHERE id=? FOR UPDATE',[input.baseline.accountId]);
  const account=accounts[0];if(!account||account.status!=='active'||Number(account.revision)!==input.baseline.accountRevision||forecastJson(typeof account.policy_json==='string'?JSON.parse(account.policy_json):account.policy_json)!==forecastJson(input.policy)||forecastHash(typeof account.state_json==='string'?JSON.parse(account.state_json):account.state_json)!==input.baseline.sourceAccountStateSha256)throw Error('forecast_account_changed_during_run');
+ // Current locking read under the account lock serializes every new-code job ID,
+ // including retries whose original legacy input-hash ID differs.
+ const [published]=await c.query<Row[]>(`SELECT id FROM t156_forecast_run WHERE account_id=?
+  AND JSON_UNQUOTE(JSON_EXTRACT(input_json,'$.baseline.session'))=? LIMIT 1 FOR UPDATE`,[input.baseline.accountId,input.baseline.session]);
+ if(published.length)throw Error('forecast_session_already_published');
  const proof=lease.sourceProof;if(!proof)throw Error('forecast_source_proof_missing');
  const [sources]=await c.query<Row[]>(`SELECT r.payload_json,DATE_FORMAT(r.available_at,'%Y-%m-%dT%H:%i:%s.%fZ') availableAt FROM t156_record r JOIN t156_dataset d ON d.id=r.dataset_id WHERE r.dataset_id=? AND r.record_type='m40_paper_source_bundle' AND r.record_key='snapshot' AND d.status='published' AND d.live_eligible=0 AND d.content_sha256=? AND r.available_at<=? LOCK IN SHARE MODE`,[input.sourceDatasetId,proof.uncompressedSha256,utcSql(lease.issuedAt)]);
  if(sources.length!==1||forecastHash(typeof sources[0].payload_json==='string'?JSON.parse(sources[0].payload_json):sources[0].payload_json)!==proof.pointerSha256||new Date(String(sources[0].availableAt)).getTime()!==Date.parse(input.sourceAvailableAt))throw Error('forecast_source_changed_during_run');
@@ -62,11 +68,13 @@ export async function publishForecast(lease:ForecastLease,input:PreparedForecast
  if(forecastJson(baselineBasis)!==forecastJson(proof.baselineSplitBasis))throw Error('forecast_baseline_split_basis_changed');
  const rechecked=prepareForecastInput({accountId:input.baseline.accountId,accountRevision:input.baseline.accountRevision,book:typeof account.state_json==='string'?JSON.parse(account.state_json):account.state_json,pendingIntents:await loadPendingPaperIntents(c),policy:input.policy,bundle:sourceBundle,calendar:input.calendar,issuedAt:input.issuedAt,sourceDatasetId:input.sourceDatasetId,sourceAvailableAt:input.sourceAvailableAt});
  if(rechecked.status!=='qualified'||rechecked.input.inputSha256!==input.inputSha256)throw Error('forecast_input_changed_during_run');
+ await assertPublicationWindow(input.calendar,input.baseline.session,c,'forecast');
  const id=forecastHash([lease.id,input.inputSha256,result.seed]),hash=forecastHash(result);
  await c.query('INSERT INTO t156_forecast_run(id,job_id,account_id,issued_at,input_sha256,result_sha256,input_json,result_json,source_proof_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))',[id,lease.id,input.baseline.accountId,utcSql(lease.issuedAt),input.inputSha256,hash,forecastJson(input),forecastJson(result),forecastJson(proof)]);
  for(const h of result.horizons){await c.query('INSERT INTO t156_forecast_horizon(run_id,horizon,target_session,result_json) VALUES(?,?,?,?)',[id,h.horizon,h.targetSession,forecastJson(h)]);
  await c.query(`INSERT INTO t156_forecast_evaluation(id,run_id,horizon,forecast_sha256,status,result_json,created_at) VALUES(?,?,?,?,'pending',?,UTC_TIMESTAMP(6))`,[forecastHash([id,h.horizon,'pending']),id,h.horizon,hash,forecastJson({issues:['target_not_matured'],actualPnlUsd:null,actualReturnPct:null})]);}
  await c.query("UPDATE t156_forecast_job SET status='completed',completed_paths=2000,lease_token=NULL,lease_until=NULL,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND lease_token=?",[lease.id,lease.token]);
+ await assertPublicationWindow(input.calendar,input.baseline.session,c,'forecast');
  await c.commit();return id;
  }catch(e){await c.rollback();throw e;}finally{c.release?.();}
 }

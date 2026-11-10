@@ -1,4 +1,5 @@
 /** Explicit forecast-only worker: archived data only; no collection, LLM, signals or account writes. */
+import { paperPublicationDeadline } from './publication-window';
 import { forecastCodeManifest } from './forecast-manifest';
 import { gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
@@ -6,16 +7,30 @@ import { getPool } from '@/lib/db';
 import { readBlob } from '@/lib/analysis-data/store';
 import type { ArchiveQueryable } from '@/lib/analysis-data/types';
 import type { ForwardSourceBundle } from './forward-sources';
-import { loadForwardCalendar } from './forward-runtime';
+import { loadForwardCalendar, readM40ForwardStatus } from './forward-runtime';
 import { loadPaperAccount, loadPendingPaperIntents, requirePaperDryRun } from './forward-store';
 import { prepareForecastInput } from './forecast-input';
 import { runForecastEngine } from './forecast-engine';
 import { acquireForecastJob, failForecastJob, publishForecast, forecastHash, forecastEvaluationWitness } from './forecast-store';
 const parse=<T>(v:unknown):T=>typeof v==='string'?JSON.parse(v):v as T;
 type Row=Record<string,unknown>;
+export const forecastDailyJobId=(accountId:string,session:string,seed:string)=>forecastHash(['daily-session-v2',accountId,session,seed]);
+async function publishedForecastForSession(accountId:string,session:string,db:ArchiveQueryable){
+ const [runs]=await db.query<Row[]>(`SELECT id FROM t156_forecast_run WHERE account_id=?
+  AND JSON_UNQUOTE(JSON_EXTRACT(input_json,'$.baseline.session'))=? ORDER BY issued_at,id LIMIT 1`,[accountId,session]);
+ return runs.length?String(runs[0].id):null;
+}
 export async function runM40Forecast(db:ArchiveQueryable=getPool(),seed='t156-forecast-v1'){
  const started=Date.now();await requirePaperDryRun(db);
+ const readiness=await readM40ForwardStatus(db);
+ if(!readiness.completed||!readiness.sourceReady||!readiness.beforeNextOpen)return {status:'blocked',issueCode:'forecast_forward_not_ready'};
  const account=await loadPaperAccount(db);if(!account||account.status!=='active')return {status:'blocked',issueCode:'forecast_account_unavailable'};
+ const existing=await publishedForecastForSession(account.id,String(readiness.session),db);
+ if(existing)return {status:'already_published',runId:existing,executionScope:'forecast_only'};
+ const id=forecastDailyJobId(account.id,String(readiness.session),seed);
+ const [legacyBusy]=await db.query<Row[]>(`SELECT id FROM t156_forecast_job WHERE account_id=? AND id<>?
+  AND status='running' AND lease_until>UTC_TIMESTAMP(6) LIMIT 1`,[account.id,id]);
+ if(legacyBusy.length)return {status:'running',completed:false,executionScope:'forecast_only'};
  const [rows]=await db.query<Row[]>(`SELECT r.dataset_id,r.payload_json,DATE_FORMAT(r.available_at,'%Y-%m-%dT%H:%i:%s.%fZ') availableAt
  FROM t156_record r JOIN t156_dataset d ON d.id=r.dataset_id WHERE d.kind='m40_paper_sources' AND d.status='published' AND d.live_eligible=0 AND r.record_type='m40_paper_source_bundle' AND r.available_at<=UTC_TIMESTAMP(6) ORDER BY r.available_at DESC,r.dataset_id DESC LIMIT 1`);
  if(!rows.length)return {status:'blocked',issueCode:'forecast_source_unavailable'};
@@ -24,17 +39,30 @@ export async function runM40Forecast(db:ArchiveQueryable=getPool(),seed='t156-fo
  if(createHash('sha256').update(bytes).digest('hex')!==pointer.uncompressedSha256)throw Error('forecast_source_hash_mismatch');
  const bundle=JSON.parse(bytes.toString()) as ForwardSourceBundle;
  const codeManifest=forecastCodeManifest();
- const id=forecastHash([codeManifest.modelCodeSha256,account.id,account.revision,row.dataset_id,pointer.uncompressedSha256,seed,'forecast-v1']);
- const lease=await acquireForecastJob(id,account.id,db);if(!lease)return {status:'already_running_or_published'};
+ const lease=await acquireForecastJob(id,account.id,db);
+ if(!lease){
+  const published=await publishedForecastForSession(account.id,String(readiness.session),db);
+  if(published)return {status:'already_published',runId:published,executionScope:'forecast_only'};
+  const [jobs]=await db.query<Row[]>('SELECT status,lease_until>UTC_TIMESTAMP(6) busy FROM t156_forecast_job WHERE id=? AND account_id=?',[id,account.id]);
+  if(jobs[0]?.status==='running'&&Number(jobs[0]?.busy)===1)return {status:'running',completed:false,executionScope:'forecast_only'};
+  return {status:'blocked',issueCode:'forecast_job_state_unconfirmed'};
+ }
  try{
+ // Recheck after acquiring the stable session lease. This also preserves legacy
+ // immutable runs whose old input-hash job ID differs from daily-session-v2.
+ const published=await publishedForecastForSession(account.id,String(readiness.session),db);
+ if(published){await failForecastJob(lease,'forecast_session_already_published',db);return {status:'already_published',runId:published,executionScope:'forecast_only'};}
  const prepared=prepareForecastInput({accountId:account.id,accountRevision:account.revision,book:account.book,policy:account.policy,pendingIntents:await loadPendingPaperIntents(db),bundle,calendar:await loadForwardCalendar(db),issuedAt:lease.issuedAt,sourceDatasetId:String(row.dataset_id),sourceAvailableAt:String(row.availableAt)});
  if(prepared.status==='blocked'){await failForecastJob(lease,'forecast_input_blocked',db);return {status:'blocked',issues:prepared.issues};}
  lease.sourceProof={pointerSha256:forecastHash(pointer),blobSha256:pointer.blobSha256,uncompressedSha256:pointer.uncompressedSha256,baselineSplitBasis:Object.fromEntries(account.book.holdings.map(holding=>{const bar=bundle.records.find(r=>r.symbol===holding.symbol&&r.basis==='split_adjusted')?.rows.find(r=>r.session===prepared.input.baseline.session);if(!bar||!Number.isFinite(Number(bar.close))||Number(bar.close)<=0)throw Error('forecast_baseline_split_basis_missing');return [holding.symbol,{session:bar.session,close:Number(bar.close)}];}))};
  const result=await runForecastEngine(prepared.input,{seed,pathCount:2000,blockLength:10,budgetMs:120000});
  if(result.status!=='completed'){await failForecastJob(lease,'forecast_engine_failed',db);return {status:'failed',issues:result.issues,elapsedMs:Date.now()-started};}
+ if(new Date().toISOString()>=paperPublicationDeadline(prepared.input.calendar,prepared.input.baseline.session))throw Error('forecast_publication_deadline_elapsed');
  const runId=await publishForecast(lease,prepared.input,{...result,codeManifest} as typeof result,db);
  return {status:'completed',runId,paths:result.pathCount,elapsedMs:Date.now()-started,executionScope:'forecast_only'};
- }catch(e){await failForecastJob(lease,'forecast_run_failed',db);throw e;}
+ }catch(e){await failForecastJob(lease,'forecast_run_failed',db);
+  if(e instanceof Error&&e.message==='forecast_session_already_published'){const published=await publishedForecastForSession(account.id,String(readiness.session),db);if(published)return {status:'already_published',runId:published,executionScope:'forecast_only'};}
+  throw e;}
 }
 
 /** Matured evaluations append even when evidence remains insufficient. No forecast is updated. */

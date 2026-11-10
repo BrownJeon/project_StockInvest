@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  collectForwardSources, missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText, FORWARD_COLLECTION_LIMITS, mapForwardSources,
+  collectForwardSources, requiredForwardSourceSessions, missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText, FORWARD_COLLECTION_LIMITS, mapForwardSources,
   parseForwardIndexCsv, parseForwardStockCsv, type ForwardSourceBundle, type ForwardSourceDependencies,
 } from '../forward-sources';
 import type { ForwardCalendarSession } from '../forward-types';
@@ -170,4 +170,37 @@ test('a raw-only cached response retries split data and merges without duplicate
  expect(merged.records).toHaveLength(2);expect(missingForwardSourceSymbols(merged,['NAS:AAPL'])).toEqual([]);
  expect(mapForwardSources(merged,calendar).data.members).toHaveLength(1);
  expect(mergeForwardSources(merged,full,['NAS:AAPL']).records).toHaveLength(2);
+});
+
+test('HTTP success with stale paired prices is incomplete and retriable',async()=>{
+ const b=await collectForwardSources(['NAS:AAPL'],'2026-11-09',harness().deps);
+ expect(b.records).toHaveLength(2);expect(b.complete).toBe(false);
+ expect(missingForwardSourceSymbols(b,['NAS:AAPL'])).toEqual(['NAS:AAPL']);
+});
+test('a stale or shorter retry cannot erase a fresh paired original',async()=>{
+ const b=await sample(),stale=JSON.parse(JSON.stringify(b)) as ForwardSourceBundle;
+ stale.observedAt='2026-11-09T00:00:00Z';
+ stale.records=stale.records.map(r=>({...r,observedAt:stale.observedAt,rows:r.rows.slice(0,1)}));
+ const merged=mergeForwardSources(b,stale,['NAS:AAPL']);
+ expect(merged.records).toEqual(b.records);expect(merged.complete).toBe(true);
+ const short=JSON.parse(JSON.stringify(b)) as ForwardSourceBundle;
+ short.records=short.records.map(r=>({...r,observedAt:stale.observedAt,rows:r.rows.slice(1)}));
+ expect(mergeForwardSources(b,short,['NAS:AAPL']).records).toEqual(b.records);
+});
+test('canonical history gaps request another whole raw/split pair without inventing rows',async()=>{
+ const b=await sample();b.records[0].rows=b.records[0].rows.slice(1);
+ expect(missingForwardSourceSymbols(b,['NAS:AAPL'])).toEqual([]);
+ expect(missingForwardSourceSymbols(b,['NAS:AAPL'],['2026-11-05','2026-11-06'])).toEqual(['NAS:AAPL']);
+});
+
+
+test('one-session index lag retries the oldest of 254 required stock sessions',async()=>{
+ const days=Array.from({length:254},(_,i)=>new Date(Date.parse('2025-01-01T00:00:00Z')+i*86400_000).toISOString().slice(0,10));
+ const calendar=days.map(session=>({session,openAt:session+'T14:30:00Z',closeAt:session+'T21:00:00Z',source:'historical_canonical'}));
+ const b=await sample();b.asOfSession=days.at(-1)!;
+ b.records=b.records.map(record=>({...record,rows:days.slice(1).map(session=>({session,open:'1',high:'1',low:'1',close:'1',volume:'1'}))}));
+ expect(missingForwardSourceSymbols(b,['NAS:AAPL'])).toEqual([]);
+ const required=requiredForwardSourceSessions(calendar,b.asOfSession);
+ expect(required).toHaveLength(254);expect(missingForwardSourceSymbols(b,['NAS:AAPL'],required)).toEqual(['NAS:AAPL']);
+ expect(requiredForwardSourceSessions(calendar,b.asOfSession,[],b.asOfSession)).toHaveLength(253);
 });
