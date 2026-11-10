@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "task": "T-012",
+  "created_at_utc": "2026-11-09T13:15:11.259768+00:00",
+  "target_kind": "current_deployed_source_new_verification",
+  "release": "20261109-002723-06bce08a",
+  "source_root": "/home/brownjeon/apps/stockinvest/releases/20261109-002723-06bce08a",
+  "base_followup_commit": "0ba652e",
+  "snapshot": "/home/brownjeon/.node-local/stockinvest-t012-final-20261109/snapshot",
+  "execution_only_scope": "Full src and generated type dependencies copied locally for module resolution; model review restricted to selected normalized files. No .env, Agent Vault, operational data or .git copied.",
+  "selected_source": [
+    "src/lib/safety/snapshot-cleanup.ts",
+    "src/lib/safety/volatility-guard.ts",
+    "src/lib/safety/kill-switch.ts",
+    "src/lib/exchanges/kis.ts",
+    "src/app/api/portfolio/route.ts",
+    "src/app/api/cron/portfolio-snapshot/route.ts",
+    "src/lib/notify/throttle.ts",
+    "src/lib/safety/portfolio-total.ts",
+    "src/lib/strategy/engine.ts",
+    "src/lib/db.ts"
+  ],
+  "selected_tests": [
+    "src/lib/safety/__tests__/snapshot-cleanup.test.ts",
+    "src/lib/safety/__tests__/portfolio-snapshot-sanity.test.ts",
+    "src/lib/safety/__tests__/portfolio-snapshot-killswitch.test.ts",
+    "src/lib/safety/__tests__/snapshot-composition.test.ts",
+    "src/lib/safety/__tests__/kill-switch-drawdown.test.ts",
+    "src/lib/exchanges/__tests__/kis-balances-partial.test.ts",
+    "src/app/api/__tests__/portfolio-partial-balances.test.ts",
+    "src/lib/strategy/__tests__/engine-balances-unknown.test.ts"
+  ],
+  "normal_hooks": "Use existing ordinary Claude Code main/leader session with normal project/user settings; do not use read-only external-review broker as test executor or change shared hooks/switches",
+  "boundaries": [
+    "No product source edits",
+    "No live DB/KIS/order/token/pm2/cron/deploy/push",
+    "No old task/archive/raw account data read",
+    "QA only through fixed network-isolated task wrapper",
+    "Review current deployed version; do not rewrite historical QA receipts"
+  ],
+  "hashes": {
+    "src/lib/safety/snapshot-cleanup.ts": "399974ed3a155e8a5052ffacaaed847477fe7e2c70683771959454b9b158d3eb",
+    "src/lib/safety/volatility-guard.ts": "7aa16eb8a942843fab6575077d8a5719297024739347924cb4bb36b5115db41b",
+    "src/lib/safety/kill-switch.ts": "8a7d211651627d214324506977615ad7519911baff98ac0d7f65e061715500cf",
+    "src/lib/exchanges/kis.ts": "f27d6192ad25d9a81a21f4c3efa8f2afb1e5ceb0b88e15d2a108f34bfea13827",
+    "src/app/api/portfolio/route.ts": "cd7076098c76f74d9323261ba03ad5d1b22f3829f02891b01b5a561bf87bf146",
+    "src/app/api/cron/portfolio-snapshot/route.ts": "b4d777edc5707b60ea425904347aec70ea62eebef939f081f9b94d322b11f3c2",
+    "src/lib/notify/throttle.ts": "b928ef7f1d7bfa9b859d74020c3760a3112bc36a523bb7c68048855a6ebd9b52",
+    "src/lib/safety/portfolio-total.ts": "313fe6c02f87671695f198a6f7ae2019d0fe332dfff41f4a555d6378f14dcf5f",
+    "src/lib/strategy/engine.ts": "7a5d69869b1dd3ea3ce5cf337715b90df941eff39284d4038596a2d2d6001e35",
+    "src/lib/db.ts": "f4fb031ee94170eccf5ad0e7399ae6f84590f9e70078f18f189672323c27e16d",
+    "src/lib/safety/__tests__/snapshot-cleanup.test.ts": "e3d239535f89438f3508b6a465b228a3e5bd79c667c5a7506928a2f9ac59e1cf",
+    "src/lib/safety/__tests__/portfolio-snapshot-sanity.test.ts": "7bcc25fb4d8b69f593f8ddad68a24048edecb41891ee57400137240aac4f386f",
+    "src/lib/safety/__tests__/portfolio-snapshot-killswitch.test.ts": "fb8c85246db53840c75928f4279f938486721864ed654337ea17f0a1c07dd00e",
+    "src/lib/safety/__tests__/snapshot-composition.test.ts": "8759702cdea01c6b2162f17a4dfa344ab7b7393f0649bf79a61732058199ffeb",
+    "src/lib/safety/__tests__/kill-switch-drawdown.test.ts": "1e30aae7f08b9ee4b23336e1d0321bb2c3b931131f5afb759fabe7daba7d4a67",
+    "src/lib/exchanges/__tests__/kis-balances-partial.test.ts": "59805a4761d549abb7ac0100d0ef19ea744d9f53d0ba9bb7c8fe1c018b5f63fa",
+    "src/app/api/__tests__/portfolio-partial-balances.test.ts": "1c1fd6878f43ec2cbf3e8cce037cd325c9cf829332d91843ca35dfac3d091961",
+    "src/lib/strategy/__tests__/engine-balances-unknown.test.ts": "455a67dcceae78392d678aa1904fe5b31f3ced232d31de07d081065eae346355"
+  },
+  "package_identity": {
+    "name": "stockinvest",
+    "version": "0.1.0",
+    "lock_name": "stockinvest",
+    "dependencies_source": "/home/brownjeon/apps/stockinvest/releases/20261109-002723-06bce08a/node_modules"
+  },
+  "review_view": {
+    "comments_removed": true,
+    "method": "TypeScript AST printer removeComments; execution snapshot unchanged",
+    "redacted_test_fixture_views": [
+      "src/lib/safety/__tests__/snapshot-cleanup.test.ts",
+      "src/lib/safety/__tests__/portfolio-snapshot-sanity.test.ts"
+    ],
+    "index": "review-source-index.json"
+  },
+  "ready": true,
+  "receipt_root": "/home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109/out",
+  "provider_fallback": "Mac existing first-party Claude login; Ubuntu execution through trusted home_ubuntu SSH. Credentials are not transferred.",
+  "verification_round": 2,
+  "workspace_dependency_mount": {
+    "source": "/home/brownjeon/NFS/homes/brownjeon/project/shared/api-usage",
+    "destination": "/shared/api-usage",
+    "sha256": {
+      "index.js": "7f9d8f6f794810cdb2c4a42471c6537228174eb3f298142a5af44a70447f5909",
+      "index.d.ts": "865c1fb3091a9aa7f35b0558d8adbc2fb7d63f08074c14b9487bcea899266004",
+      "package.json": "7160869842e1add7774b65ec24f82f8061c8c3e652cf1c9052e5a5985394d7e1",
+      "record.js": "1bb489dbf1fbf79eed93ce7d6fcd5f9b2c228411756baea935a90e40c6f71cd3",
+      "writer.js": "3b31b8dd9040d28aec907f32d951028d36559651a371041861fb888b9af46ef9",
+      "interpret.js": "9b0a76846f65ca7aecbae88dfcfb050b90dc5f4d8f63e3551fba4856185eb836",
+      "validate.js": "6d13043cf973b0f3f587c2ef5cb28877d69d1ac56731d0213042f57195db7f10"
+    }
+  }
+}

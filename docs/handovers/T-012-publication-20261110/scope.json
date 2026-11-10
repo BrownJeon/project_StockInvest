@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "task": "T-012",
+  "requested_at_client_date": "2026-11-10",
+  "user_authorization": "직압에 대해서 커밋 및 푸시해서 운영에도 배포해줘",
+  "interpretation": "Publish and deploy the completed T-012 work from the immediately preceding turn, not unrelated concurrent work",
+  "base_remote_sha": "06bce08a7939ac17009194995fc6f0da6f99f239",
+  "base_release": "20261109-002723-06bce08a",
+  "observed_web_package_version": "0.1.0",
+  "planned_web_version": "0.2.0",
+  "version_rule": "User 2026-11-09 global APP-VERSION-POLICY; default minor once per release unit, same retry/rebuild no duplicate bump; no suffix; no new APK delivery requested",
+  "authority": "Already explicit commit+push+production deployment authorization; no repeated permission request",
+  "scope": {
+    "include": [
+      "T-012 task own new execution/history/evidence records",
+      "docs/handovers/T-012-final-verification-20261109 safe review/evidence bundle",
+      "T-012 lines only in roadmap (two entries) and own ACTIVE status entry",
+      "package.json/package-lock.json version metadata",
+      "task-local publication receipt under this directory"
+    ],
+    "exclude": [
+      "Other source edits/tasks/current roadmap overhaul/T-163 global audit or T-011 unless specifically needed as metadata reference",
+      "Agent instruction/role/hook/skills changes from other work",
+      "T-156/T-162 and other untracked application implementation",
+      "raw provider/session logs or raw DB/financial payload",
+      "node-local executable snapshot/private .evidence logs",
+      "Android APK publication and native versionCode/signing changes"
+    ]
+  },
+  "constraints": [
+    "No whole-tree add/stash/reset/clean",
+    "No force push/no-verify/disabled hooks",
+    "Use isolated clean Linux publication checkout to keep shared dirty NFS tree intact",
+    "Do not run raw pm2 jlist output; selected fields only server-side",
+    "No new migration/DB write/forced snapshot/KIS token/order/cron job or safety setting change",
+    "Use existing webhook/deploy.sh/release.sh path, do not also launch a duplicate deploy",
+    "Manual rollback only under existing user-specific authority; honor auto-rollback result",
+    "Current task done means prior verification complete, not this new publication complete"
+  ],
+  "existing_validation": {
+    "actual_Claude_main_session": "9447e8e7-0cc1-4687-978f-e226a32aa245",
+    "reviewer": "PASS_WITH_NOTES, no blocker; notes/partial scope retained",
+    "qa": "8 suites198/198, copied app-source tsc noEmit exit0",
+    "evidence": "docs/handovers/T-012-final-verification-20261109/out/final.json",
+    "app_source_release": "20261109-002723-06bce08a",
+    "reuse_rule": "If app source unchanged against verified version, preserve prior focused QA; check version/publication diff and actual deployed build/health. New code changes require relevant independent checks."
+  }
+}

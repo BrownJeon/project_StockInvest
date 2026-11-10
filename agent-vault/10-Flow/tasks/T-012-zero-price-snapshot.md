@@ -9,6 +9,14 @@ tags:
   - domain/observability
 related_tasks:
   - "[[T-011-owner-account-migration]]"
+execution_context:
+  schema_version: 1
+  origin_tool: unknown
+  current_tool: claude
+  current_procedure: claude_standard
+  current_scope: "기존 독립 검증 완료 보존. 사용자 추가 승인 T012 변경 선택 커밋·push·운영 웹 배포 준비/Claude main 재개 요청. 실제 새 배포 전"
+  last_event_id: exec-010
+updated: 2026-11-09
 ---
 
 # T-012 · `price=0` 스냅샷이 안전장치 기준값을 오염시키는 문제
@@ -213,3 +221,643 @@ developer 가 `snapshot-cleanup.ts` 를 만들고 `db.ts` 부팅 경로에 배�
 - [17:23] **참고(이번 diff 범위 밖, kill-switch.ts 미변경 확인)**: `checkAndTriggerDrawdownKillSwitch` 의 기준선 조회 SQL 에 `ts BETWEEN NOW-90MIN AND NOW-30MIN` 조건이 `OR` 로 붙어 있어(24h±60분 창과 별개), 24h-ago 창이 비어 있으면 최근 30~90분 전 스냅샷이 대신 기준선으로 채택될 수 있다. 이 파일은 이번 PR 이 건드리지 않았고 커밋 이력상 최초 도입 때부터 있던 코드라 이번 회귀는 아니지만, "24h±60분 창"을 전제로 한 위 starvation 분석의 정확도에 영향을 준다 — 별도 확인 과제로 남김.
 
 - [17:23] **종합**: Critical 0 · **High 2**(layer 1 무한 기아 가능성 / 리스크 크기 과소평가) · Medium 2(rt_cd 미검사의 일반화 오류 / — ) · Low 2(마이그레이션 아카이브 손실 엣지케이스 / deleted++ 카운트). 안전장치가 **약화되지는 않았다** — `kill-switch.ts`·`order-limits.ts` 무변경 확인, 기존 이상값 유입 경로(price=0·type-B)는 확실히 막힌다. 다만 layer 1 기아 가능성은 이번 배포로 새로 생기는 실패모드이므로 배포 자체를 막지는 않되 **빠른 후속 조치 권고**(최소 age-기반 밸브 또는 critical 알림 격상). QA 인계 시 위 HIGH 2건과 checkHoldingVanished 정상케이스 회귀(재확인됨)를 중점 확인 지점으로 전달.
+
+
+## Leader — T-163 완료 근거 대조(2026-11-09, Codex)
+
+- 사용자 요청에 따른 [[T-163-roadmap-completion-evidence-audit]]의 문서 감사 결과다. 이번 범위는 연결된 로드맵 세부 항목의 과거 근거 정리이며 이 TASK 제품 업무의 새 구현·QA·배포 인수가 아니다. 기존 실행 도구/승인/역할 기록은 보존한다.
+- 원래 로드맵 행 기준 확인 범위: 완료 근거 연결 178; 완료 근거 미확인 312. 행 번호는 T-163 manifest의 원본 기준이다.
+- 문서 상태: 기존 done을 review로 보완. 실제 정리 결과 및 마지막 보완 뒤 독립 검증 근거 부족; 실패 가드의 확인된 부분은 유지. 이는 실패/미구현 단정이나 새 실행 의무가 아니다.
+- 세부 구현·검증 출처·배포·미확인: agent-vault/10-Flow/artifacts/T-163-roadmap-completion-evidence-results.json 및 각 part 원본. 후속 역할의 자기정정/독립 문서 검토와 당시 수행 기록을 구분했다. 새 테스트·운영 조회·설정 변경·재배포는 수행하지 않았다.
+- 불완전 잔고 실패 가드는 확인된 부분이고 실제 오염 데이터 정리 결과/최종 보완 후 검증은 미확인이다. 해당 부분 [x]와 TASK 전체 review가 다른 범위이므로 기존 점검④를 없애기 위해 상태를 바꾸지 않는다.
+
+## 실행 도구·절차 이력
+
+| 이벤트 ID | 시각(KST) | 사건 | 이전 → 현재 담당 / 절차 | 범위·근거 |
+|---|---|---|---|---|
+| exec-001 | 2026-11-09 18:39:43 | handoff_accepted | 과거 담당 미확인 → codex / codex_scoped | 사용자 “이어서 T-012의 실제 정리 결과와 최종 검증 기록을 확인해서 로드맵과 TASK 상태를 맞춰줘. 근거가 부족한 부분은 미확인으로 남겨줘.”에 따라 기존 근거 조사·문서 정리만 인수. 최초 도구 명시 근거가 없어 origin_tool=unknown. 새 운영 정리/테스트 실행은 인수하지 않음 |
+| exec-002 | 2026-11-09 18:46:48 | evidence_review_completed | codex → codex / codex_scoped | 1차12+2차4 archive/대상잔존0/marker와 기존1074·1125 검증 기록 대조. 최종 독립 보고서 미확인으로 review/[~] 보존 |
+| exec-003 | 2026-11-09 22:19:17 | handoff_requested | codex → codex / codex_scoped | 사용자 새 최종 독립 Reviewer·QA 요청. 배포본 동결·허용 인계 준비. 실제 Claude 수신 전 |
+| exec-004 | 2026-11-09 22:23:18 | handoff_retry_prepared | codex → codex / codex_scoped | Ubuntu CLI session bf23a78c… exit1 authentication_failed・OAuth expired/refresh failed, acceptance/Reviewer/QA 없음. 기존 Mac 로그인 경로 확인 후 같은 범위 재시도 준비, 실제 주담당 전환 전 |
+| exec-005 | 2026-11-09 22:27:29 | handoff_authentication_failed | codex → codex / codex_scoped | Ubuntu/Mac 실제 CLI 모두 OAuth session expired/refresh failed·exit1. Claude 인수/Reviewer/QA/시험0, current_tool 미전환. Mac 로그인 갱신 후 기존 범위 재개 대기 |
+| exec-006 | 2026-11-09 22:30:50 | resume_requested | codex → codex / codex_scoped | 사용자 실제 응답 로그인 완료 수신. 기존 Mac 세션 재개와 실제 인수→Reviewer→QA 요청. 승인/동결/운영 경계 그대로, 현재 배포본18경로 SHA일치 확인 |
+| exec-007 | 2026-11-09 22:32:42 | handoff_accepted | codex → claude / claude_standard | 실제 Claude main이 T012 최종 독립 검증 단계 인수. session 9447e8e7-0cc1-4687-978f-e226a32aa245; acceptance.json accepted=true·18/18 view hash 직접확인. Reviewer→QA 예정, 실행완료로 선반영하지 않음 |
+| exec-008 | 2026-11-09 22:41:31 | verification_harness_repair_prepared | claude → claude / claude_standard | 실제 Reviewer PASS_WITH_NOTES·QA INCOMPLETE. Claude Leader 요청에 따라 Codex가 node_modules mount/공용module 실행의존성만 보완·원본18경로불변·첫영수증보존. Claude 추가Reviewer·QA 재실행 대기 |
+| exec-009 | 2026-11-09 22:55:02 | verification_completed | claude → claude / claude_standard | 실제 별도 Reviewer(보완 포함) PASS_WITH_NOTES/차단0·별도QA 8군198/198·typecheck0, Claude Leader done 권고. Codex 조율자가 원본영수증/불변wrapperJSON/현재배포본18SHA/자기기록게시 대조 후 상태반영 |
+| exec-010 | 2026-11-10 17:14:45 | publication_requested | claude → claude / claude_standard | 사용자 실제 커밋·푸시·운영 배포 요청. T012만 선택/동시작업보존, 웹버전 기본마이너0.2.0 계획(현재0.1.0재확인필요), 실제새배포전 |
+
+## Leader — T-012 후속 근거 조사 인수(2026-11-09, Codex)
+
+- 원래 TASK review와 로드맵 행178 [x]/행312 [~]의 근거 범위 차이를 보존한다. 실제 아카이브/marker/대상 잔존 metadata와 마지막 보완 뒤 당시 독립 검증 기록을 대조해 확인/미확인을 구분한다.
+- 허용: 이 task의 구현·Reviewer·최종 기록 중 비밀 없는 문장, T-163의 T-012 감사 항목, snapshot-cleanup.ts 및 해당 tests, db.ts의 runOnceMigration/T012 호출, volatility-guard의 관련 가드·freshness와 관련 시험/선택 git·배포 메타데이터. 추가 기존 이력은 필요성과 범위를 먼저 기록한다.
+- 운영 조회는 공식 dbq.py의 고정 SELECT로 cleanup marker 시각·archive의 구조/개수/승인대상 포함여부·대상행 잔존 개수만 출력한다. archive 원문·positions·금액·심볼·계좌/자격증명/토큰·사용자 식별자는 출력하지 않는다. 앱모듈 실행/import·정리 재실행·DB쓰기·KIS·서비스/배포는 하지 않는다.
+- 최초 task 문장 필터가 충분하지 않아 과거 snapshot 자산값을 포함한 문장(원본 94/120행 등)이 도구 출력/Codex 문맥에 들어갔다. 추가로 원문을 재출력하지 않고 노출 경로·줄만 기록한다. 이후 표/금액 문장은 전부 제외하고 source 구조와 집계만 사용한다. 별도 외부검토 제공자 전송은 수행하지 않았다.
+
+## Leader — T-012 실제 정리·최종 기록 대조 결과(2026-11-09, Codex)
+
+### 결론과 로드맵 정합성
+
+- 요청된 후속 근거 조사·문서 정리는 완료했다. 실제 정리 결과의 저장 근거를 새로 확인했고, 기존에 누락됐던 당시 일지의 검증·배포 기록도 연결했다.
+- TASK status는 review로 유지한다. 로드맵의 '부분 실패 잔고를 빈 결과로 둔갑시키지 않음'은 확인된 범위로 [x]를 보존하고, '가격 0 오염 방지 가드·오염행 정리'는 [~]를 유지하되 미확인 사유를 '16행 보관/대상 부재 확인, 최종 후속 독립 QA 보고서 미확인'으로 좁힌다.
+- 0ba652e commit 본문은 Developer→Reviewer(PASS WITH FINDINGS)→QA 완료를 주장하지만, 같은 날 일지 46행에는 Leader가 QA 보고서를 받지 못한 채 PASS를 전달받아 직접 다시 실행했다고 적혀 있다. 이 자기 실행 기록을 독립 QA 영수증으로 바꾸지 않았다.
+
+### 직접 확인한 실제 정리 상태
+
+운영 DB는 공식 dbq.py의 고정 SELECT만 사용했다. 아카이브 원문·금액·positions·심볼·계좌/자격증명은 출력하지 않고, 구조·대상 집합 포함 수·원래 테이블 잔존 수와 시각만 반환했다.
+
+| 항목 | 1차 | 후속 2차 |
+|---|---|---|
+| 승인된 고정 대상 수 | 12 | 4 |
+| 완료 marker | 1개 / 2026-08-09T09:08:58.314Z | 1개 / 2026-08-09T13:41:37.280Z |
+| archive | 유효 JSON, rows 배열 12개 | 유효 JSON, rows 배열 4개 |
+| 대상 집합 확인 | id 필드 12·기대 대상 포함 12/12 | id 필드 4·기대 대상 포함 4/4 |
+| 원본 필드 존재 집계 | total 필드 12·positions 필드 12 | total 필드 4·positions 필드 4 |
+| archive 기록 시각 | 2026-08-09T09:08:41.558Z | 2026-08-09T13:41:35.482Z |
+| portfolio_snapshots의 대상 잔존 수 | 0 | 0 |
+
+- [확실] 각 archive의 배열 길이·ID 필드 수·기대 대상 전체 포함이 같아, 조회된 각 archive의 대상 집합은 고정 목록과 정확히 일치한다(누락/추가/중복 없이 12·4). 총 16개 대상은 현재 원래 테이블에 없다.
+- [가능성 높음] marker·archive·대상 부재와 당시 배포/일지 기록은 의도된 정리가 수행됐음을 강하게 뒷받침한다. archive의 과거 원문 완전성·삭제 주체를 독립 인증하거나 원시 자산값을 복구·대조한 것은 아니다.
+- 당시 일지 45행의 '전체 오염행 0건'은 당시 보고다. 이번 조회는 고정 대상 16개만 다뤘으며 현재 전체 테이블의 오염이 0건이라고 확대하지 않는다.
+
+### 구현·배포 연결
+
+- snapshot-cleanup.ts의 운영 파일은 0ba652e 당시 파일 및 현재 공유 source와 SHA256이 같다. 운영 release는 20261109-002723-06bce08a이며, 이번 조사로 배포하지 않았다.
+- 기존 T-163에서 확인한 구형 webhook: 1ca95dc는 2026-08-09 09:06:25Z START~09:09:00Z END exit=0, 0ba652e는 13:40:29Z START~13:41:38Z END exit=0. 각 완료 marker는 해당 배포 구간 안에 있다. 구형 END exit=0과 현대 RELEASE_RESULT를 구분한다.
+- 코드상 archive 병합→삭제→marker는 단일 트랜잭션이 아니다. DELETE affectedRows=0도 경고 후 정상 반환할 수 있으므로 marker만으로 전부 삭제됐다고 판단하지 않았다. 대상 잔존0과 정확한 archive 집합을 함께 확인했다.
+
+### 실제로 찾은 검증 기록과 미확인
+
+| 출처 | 기록된 범위 | 판정 한계 |
+|---|---|---|
+| 원 TASK Developer 18:2x | 최종 보완 뒤 typecheck 통과·76 suites/1074 tests, archive 병합/affectedRows·freshness/allowlist 보완과 dry-run 보고 | Developer 자기 보고이며 이번 재실행 아님 |
+| 2026-08-09 일지 32·34행 | 3라운드 1074 기록과 Leader의 배포 후 archive/신규 오염 관찰, QA PASS(76 suites/1074) 요약 | 기존 TASK에 없던 후속 보고를 찾음. 원래 QA 보고서 자체와는 구분 |
+| 0ba652e commit 본문 | 78 suites/1125 tests·typecheck 0, Reviewer PASS WITH FINDINGS·QA 완료 주장 | commit 주장만으로 실제 독립 역할 실행을 확정하지 않음 |
+| 같은 일지 38·46행 | Developer 1125 및 Leader의 78 suites/1125 tests·typecheck 0 직접 재실행 기록 | 46행이 QA 보고서 미수신을 명시. Leader 재실행은 독립 QA 보고서를 대신하지 않음 |
+| 원 TASK Reviewer 17:23 | 초기 HIGH/LOW 지적·과거 리플레이 감사 | 이후 18:2x 및 0ba652e 최종 범위 전체를 마감한 재판정으로 재사용하지 않음 |
+
+- 남은 미확인: 가장 마지막 후속 변경에 대한 원래 독립 Reviewer 최종 범위·판정 보고서와 독립 QA 실행 보고서. commit/Leader 요약과 원래 역할 보고서를 구분한다.
+- archive 원문의 완전성/정리 원인에 대한 인증, 현재 전체 이력의 무오염 여부는 이번 좁은 metadata 조회로 확인하지 않았다. 이를 새로운 운영 쓰기·전수 조회·제품 테스트의 필수 목표로 승격하지 않는다.
+- 실제 정리 metadata와 역사적 실행 보고는 보완됐으므로, 기존의 포괄적인 '실제 정리 결과 미확인' 사유는 더 이상 현재 설명으로 사용하지 않는다.
+
+### 조회 경계·기록
+
+- 근거: agent-vault/10-Flow/artifacts/T-012-cleanup-metadata-evidence-20261109.json 및 T-012-cleanup-evidence-scope-20261109.json. 고정 SELECT와 비밀 없는 집계/시각, source hash, 기록별 출처·한계를 보존했다.
+- 공식 dbq.py는 접속을 위해 운영 shared .env를 내부에서 읽었다. .env 본문/접속 비밀은 반환하지 않았고 DBQ_ALLOW_WRITE를 제거한 고정 SELECT만 실행했다. DB 계정 권한 자체가 read-only라고 주장하지 않는다.
+- 원문 필터가 충분하지 않아 과거 자산금액·비율·종목 표현이 Codex 도구 출력/문맥에 포함됐다: 원 TASK 최초 94/95/98/120행 등, snapshot-cleanup.ts 주석 74~77행, 일지 40행과 무관 task 21~26행. 이 값은 새 증거/문서에 복사하지 않았고 이후 source 주석과 재무 문장을 출력에서 제거했다. 이 노출 사실을 '외부 전송 없음'으로 덮지 않으며 별도 외부검토 제공자 전송은 수행하지 않았다.
+- 운영 DB archive/positions/금액·거래·계좌 원문은 출력하지 않았다. 실제 정리 재실행, DB/설정 쓰기, KIS 호출, 앱 import, 새 제품 시험, 서비스 변경·재배포·push는 수행하지 않았다.
+
+## Reviewer — 후속 정리 근거 문서 대조(2026-11-09, Codex)
+
+- [18:50] 실제 도구 Codex. 이번 대조는 TASK frontmatter·`Leader — T-012 실제 정리·최종 기록 대조 결과` 절, `agent-vault/10-Flow/artifacts/T-012-cleanup-metadata-evidence-20261109.json`과 scope JSON, roadmap T-012 두 행 및 T-163 후속 절이다. TASK `review`, roadmap 행 178 `[x]`·312 `[~]`와 현재 보관/대상 부재·후속 독립 QA 보고서 미확인 표현을 확인했다.
+- [18:50] 앞선 코드 검토에서 cleanup은 archive 병합 후 ID와 읽은 값 조건으로 삭제하며, 영향 행이 0이어도 경고 후 반환해 마커가 남을 수 있음을 확인했다. 메인이 기록한 두 회차의 마커·보관 대상 집합·현재 대상 부재는 실제 정리를 강하게 뒷받침하지만 과거 삭제 주체·원본 완전성을 독립 인증하지 않는다. 전 테이블의 현재 무오염도 이 고정 대상 집계로 판단하지 않는다.
+- [18:50] 일지 `agent-vault/20-Log/2026-08-09.md` 34행은 허용된 QA PASS·76 suites/1074 요약 존재 여부만, 46행은 QA 보고서 미수신과 Leader의 1125 재실행 표지 여부만 로컬 필터로 확인했다. `3/3` 수치는 해당 요약에서 확인되지 않아 Leader에 정정을 요청했고, 수정된 후속 기록과 artifact에서 제거된 것을 확인했다. 보고서 미수신은 당시 독립 QA가 실행되지 않았다는 증거가 아니다.
+- [18:50] 본 Reviewer는 원 archive·자산 자료·운영 DB·운영 로그를 조회하지 않았고, 메인의 집계를 독립 재실행하지 않았다. 신규 제품 QA·정리 실행·배포도 수행하지 않았다. 당시 후속 독립 Reviewer/QA 원보고서가 미확인인 한계를 유지한다.
+- [18:50] **최종 판정: PASS (scope: agent-vault/10-Flow/tasks/T-012-zero-price-snapshot.md의 frontmatter와 이번 후속 기록, agent-vault/10-Flow/artifacts/T-012-cleanup-metadata-evidence-20261109.json, agent-vault/10-Flow/artifacts/T-012-cleanup-evidence-scope-20261109.json, agent-vault/00-Context/roadmap.md의 T-012 관련 두 행, agent-vault/20-Log/2026-08-09.md의 지정 부분, agent-vault/10-Flow/tasks/T-163-roadmap-completion-evidence-audit.md의 해당 후속 절)** — 이번 문서·증거 표현 대조에 한정한다.
+
+## Leader — T-012 후속 문서 검증 마감(2026-11-09, Codex)
+
+- 독립 Codex Reviewer의 문서·증거 표현 검토 PASS를 본인 절에서 확인했다. 과거 제품 QA를 새로 통과한 것이 아니며 DB 결과의 독립 재실측도 아니다.
+- 최종 roadmap-lint 오류0·경고0, 기존 연결 점검4·진척도59%를 확인했다. 기존 T012 [x]178/review 점검은 범위 차이를 설명한 채 보존한다.
+- 관리웹 수집 2026-11-09T09:50:27.905Z의 roadmap digest가 현재 source와 일치하고 수정된 T012 사유가 포함됨을 읽기 전용으로 확인했다. TASK review/본감사T163 done도 반영돼 있다. 운영 로그인 화면을 직접 관찰한 결과와는 구분한다.
+- 새 정리·제품 시험·운영 변경·commit/push는 없었다. 후속 근거 조사와 문서 정리는 완료했고 최종 독립 보고서는 미확인으로 남긴다.
+
+## Leader — 새 독립 최종 검증 인계 요청(2026-11-09, Codex)
+
+- 사용자 원문: T-012의 미확인으로 남은 최종 독립 Reviewer·QA 검증을 진행하고, 결과에 따라 로드맵과 TASK 상태를 맞춰줘. 과거 조회 전용 범위는 이번 새 검증 요청에 확대 적용하지 않는다.
+- StockInvest isolated-validation 스킬을 읽고 적용: NFS 밖 현재 배포본 20261109-002723-06bce08a 사본, 고정8시험군·flock/nice·network 없는 bwrap 환경 준비. 아직 제품 시험 미실행.
+- 모델 검토는 선택10 source/8tests 파생 검토본으로 제한. TypeScript AST printer로 주석 제거, 두 시험 검토본의 과거 운영금액 fixture 제거. 실제 실행 사본은 무변경·SHA 고정. 전체src 복사는 로컬 시험 의존성 해석 전용이고 원문 모델 검토 허용이 아니다.
+- 실제 Claude main 인수 뒤 독립 Reviewer→QA 실행. tools=0 외부검토 broker를 실행기로 변경하지 않으며 보안 스위치/훅/권한을 우회하지 않는다. 과거1074/1125 영수증 소급 생성·제품 수정·운영DB/KIS/주문/토큰/서비스/cron/배포/push는 범위 밖.
+- 인계: /home/brownjeon/.node-local/stockinvest-t012-final-20261109/handoff.md; /home/brownjeon/.node-local/stockinvest-t012-final-20261109/manifest.json. CLI 존재·준비는 실제 수신/실행과 구분한다. 새 app build/release가 없어 버전 증가 대상이 아니다.
+
+## Leader — Claude 인증 경로 확인 및 재시도 준비(2026-11-09, Codex)
+
+- Ubuntu CLI는 정상설정/auto 모드로 기동했으나 authentication_failed로 즉시 종료했다. actual model claude-opus-5[1m], session bf23a78c-825c-4b2e-b7b9-33073b8770ad, 도구 실행·인수 기록0. 이를 Claude 검토/QA 완료로 세지 않는다. 인증 파일/스위치/핀을 수동 변경하거나 broker로 우회하지 않았다.
+- 기존 Mac Claude auth status는 loggedIn=true·firstParty·claude.ai를 반환했다. email/org/자격증명은 출력하지 않았다. 로그인 상태와 실제 모델 성공은 별도로 확인한다.
+- 동일 검증을 기존 Mac Claude main 세션에 전달할 안전 자료를 /home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109에 준비했다. Mac은 허용된 파생 검토본만 읽고, QA는 trusted home_ubuntu SSH로 같은 network 격리 wrapper만 실행한다. 자격증명은 호스트 간 전송하지 않는다.
+
+## Leader — 독립 최종 검증 인증 대기(2026-11-09, Codex)
+
+- Mac 실제 일반 Claude main session 9447e8e7-0cc1-4687-978f-e226a32aa245도 OAuth 만료/갱신 실패(authentication_failed, exit1)로 종료했다. auth status의 loggedIn=true는 실제 API 인증 성공이 아니었다. 두 시도 모두 수신 영수증·Reviewer·QA·제품 시험이 실행되지 않았다. 인증 실패를 제품 실패나 검토 지적0/통과로 세지 않는다.
+- 사용자에게 기존 Mac Claude 로그인 갱신(claude auth login)을 요청했다. 인증코드를 채팅으로 받지 않는다. 원래 허가를 다시 묻지 않으며 갱신 뒤 같은 동결자료·명시 범위로 실제 Claude 인수→독립 Reviewer→QA를 재개한다. 보안/인증 우회나 Codex 최종 검증으로 절차를 바꾸지 않는다.
+- 독립적으로 준비 완료한 것: wrapper Python 구문 확인, 선택18경로 원본 SHA 불변, package/lock identity·생성 routes 타입 존재 확인. 이는 Codex 준비 점검이며 제품 시험·독립 최종 QA 결과가 아니다.
+- 실행 주체는 아직 codex/codex_scoped다. 실제 Claude 수신을 확인하지 못했으므로 claude_standard로 선반영하지 않는다. TASK review·로드맵[~]를 유지하고 인증대기 이유를 표시한다.
+- 근거: agent-vault/10-Flow/artifacts/T-012-final-verification-status-20261109.json. 새 코드/설정·DB/KIS/주문·정리·서비스·cron·build/배포·버전 증가·commit/push는 없었다.
+
+## Leader — 로그인 갱신 후 실제 검증 재개 요청(2026-11-09, Codex)
+
+- 사용자 실제 응답 “로그인 완료”에 따라 같은 승인 범위로 Mac의 기존 Claude main 세션을 재개한다. auth status=true는 확인했지만 실제 provider/인수 성공과 구분한다.
+- 재개 전 현재 배포 release 20261109-002723-06bce08a의 선택18 source/시험 경로가 동결 manifest와 모두 일치함을 확인했다. 새 범위·제품 변경·build/deploy·운영 권한은 추가하지 않는다. 실제 수신 기록이 생기기 전 current_tool은 codex로 보존한다.
+
+## 공통 조율 — Claude 실제 인수 확인(2026-11-09, Codex)
+
+- 실제 Claude 자기 수신 기록 /home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109/out/acceptance.json을 확인해 current_tool=claude/current_procedure=claude_standard로 갱신했다. origin_tool=unknown은 보존한다.
+- 세션 9447e8e7-0cc1-4687-978f-e226a32aa245, 인수 시각 2026-11-09 22:32:42 KST, 대상 release 20261109-002723-06bce08a. 검토본 해시18/18은 실제 CLI 출력에서 확인했으며 새 독립 Reviewer/QA 결과와 구분한다. 이 조율 기록은 다른 역할의 판정을 대리 작성하지 않는다.
+- 인수 범위는 현재 동결 배포본의 새 독립 Reviewer→QA 및 결과 기록이며 과거 missing receipt의 소급 생성·코드/운영 변경이 아니다. 아직 결과 전이므로 원TASK review/로드맵[~] 유지.
+
+## Reviewer — 독립 최종 검증 2026-11-09 (Claude Code)
+
+# T-012 최종 독립 Reviewer 보고
+
+- 도구/모델: Claude Code 서브에이전트(Reviewer), 모델 Sonnet 5.5 (claude-sonnet-5-5). Leader(Claude Code 2.1.288)가 수락·배정.
+- 대상: release 20261109-002723-06bce08a, base followup 0ba652e.
+- 읽은 파일: handoff.md, review-source-index.json, review-source/** 18개 view(소스 10, 테스트 8) 전부. manifest.json은 열람하지 않음(크기만 확인). 읽지 않음: snapshot/**, raw logs, 원 task/history/.env, 회사·비활성 프로젝트, 실 DB. view sha256 재대조는 하지 않고 Leader의 18/18 일치 보고를 참고만 함.
+- 실행한 것: 없음(정적 코드 검토만). QA 명령·제품 수정 없음.
+
+## verdict: PASS_WITH_NOTES (차단 결함 없음, Critical 0 / High 0 / Medium 1 / Low 4)
+
+## 기준별 판정
+1. 정확한 정리 목록·회차별 마커: PASS. snapshot-cleanup.ts:4-9 R1 12개, R2 4개(3708/3732/3733/3739) 고정 목록, 마커·아카이브 키·로그 태그가 회차별로 다름(t012 / t012b). 모듈 로드 시 중복 id가 있으면 throw(:82-85). 조회는 `id IN (목록)`만 사용(조건 검색 삭제 없음). 단 runOnceMigration에 두 회차를 실제 각 마커로 연결하는 호출부는 view에 없어 확인 불가(한계).
+2. 아카이브 병합/재시도/삭제 일치/affectedRows: PASS. 기존 아카이브 rows를 id 기준 Map으로 병합 후 upsert(:114-143), INSERT가 DELETE보다 먼저, 아카이브 실패 시 throw되어 삭제로 진행 안 함(runOnceMigration은 catch 후 마커 미기록 → 재시도 가능). DELETE는 `id=? AND total_krw=?`, affectedRows>0만 집계, 0행이면 경고. 재검증(hasZeroPricedHolding) 실패 행은 제외.
+3. 불완전 잔고 기본 throw: PASS. kis.getBalances는 !complete면 BalancesIncompleteError(kis.ts:99-104). 부분 결과는 getBalancesDetailed로만 명시적으로 받음. USD 행 혼입 제거, USD 예수금 unknown은 0으로 해석하지 않음.
+4. portfolio/cron 부분 실패 정책, 대시보드 스냅샷 무쓰기: PASS. cron은 불완전 시 저장 안 하고 skipped+경보+blindness 보고(cron route:82-84,177-191), KRW/USD 예수금 미확인이면 holdForCash. /api/portfolio는 부분 실패·예수금 불명·시세·평단 모두 없음이면 503, savePortfolioSnapshot import/호출 없음(테스트도 INSERT 부재를 단언). 
+5. zero-price/allowlist/holding-vanished 가드: PASS. validateSnapshotPositions는 qty>0 && price<=0이면 allowlist 밖 거부(volatility-guard.ts:186-196), 합계 불일치·음수·비유한 거부, 필수 현금 행 정확히 1개 검사, abs/median band, checkHoldingVanished(직전 3h 이내, evaluateVanish)가 INSERT 전 순서대로 적용. allowlist는 DB 오류 시 빈 집합(보수적).
+6. 신선도 warning/critical/recovery/session: PASS. 세션 open이면 min(age, 개장 후 경과)로 완화, closed는 6h/12h, open 90분/3h. critical은 재경보 간격 제한, 복구(reportSnapshotRecovered)는 성공 INSERT 직후 한 번. 
+7. kill-switch 신선도+기준선: PASS. 현재 스냅샷 원시 나이 3h 초과면 계산 생략+경보(kill-switch.ts:149-159), 기준선은 24h±60분 창만 보고 근처 값 대체 안 함(:160-177), 기준선<=0 생략. 파싱 불가 플래그는 활성 처리.
+8. engine unknown은 reconcile([]) 회피: PASS(부분 view 한도 내). runExitEngine은 `!held.known`이면 알림·rec.error 후 reconcile 이전에 return(engine view:32-40). getHeldAmounts는 시장 실패·미조회·예외를 모두 known:false로 반환. 진짜 보유 0건(known)만 빈 목록 reconcile.
+
+## 발견 사항 (원래 T-012 차단 사유 vs 이후 변경 구분)
+- M-1 (MEDIUM, 후속/무관): portfolio-total.ts:115-126, 127-133. 잔고 조회 실패 시 시장별 lastOk를 무기한(나이 제한 없이) 'ok'로 반환. 오래된 값이 한도·평가 입력으로 쓰일 수 있음. T-012 원래 차단 사유(0원 스냅샷 오염)와 직접 관련 없고 스냅샷 저장 경로가 아님. 권고: lastOk에 타임스탬프를 두고 TTL 초과 시 unknown.
+- L-1 (LOW): runOnceMigration(db.ts:6-11)은 fn이 void를 반환하면 일부 DELETE가 0행(affectedRows 0)이어도 마커를 기록해 이후 재시도하지 않음. 아카이브에는 원본이 남아 데이터 손실은 없음. 의도된 동작인지 확인 권고.
+- L-2 (LOW): 대상 행이 전부 재검증 탈락하면 skipped 반환 → 마커 미기록 → 부팅마다 SELECT+경고 반복(무해, 로그 소음).
+- L-3 (LOW, 기존 설계): cron이 시세·평단 둘 다 없는 종목을 positions에서 조용히 제외(route:140-143). 합계가 줄어 holding_vanished(직전 3h 이내만)에 의존. 직전 스냅샷이 3h보다 오래되면 방어 없음. 신선도 경보가 보조.
+- L-4 (LOW, 무관): checkVolatilityGuard는 DB 오류·스냅샷 없음 시 ok:true(fail-open), 현재값 신선도를 보지 않음(volatility-guard.ts:83-108). 킬스위치와 달리 stale 검사 없음. T-012 범위 밖.
+- 참고: savePortfolioSnapshot 시그니처의 source 타입에 'dashboard'가 남아 있으나 호출처 없음(view 범위).
+
+## 원래 T-012 차단 사유 해소 여부
+0원 시세 스냅샷 오염 → 저장 전 거부(zero-price) 및 대시보드 쓰기 제거, 오염 행 16개 고정 목록 정리 로직, 불완전 잔고 throw/skip, 관측 공백 경보가 모두 코드상 확인됨. 위 발견은 모두 비차단.
+
+## 테스트 view 관찰
+8개 테스트 view의 케이스명이 위 기준(정리 목록 정확성·중복 없음·병합·affectedRows·부분 실패·무스냅샷 쓰기·stale/기준선·balances_unknown 시 reconcile 미호출)을 각각 덮고 있음을 확인. 실제 통과 여부는 이 검토에서 실행하지 않음(QA 담당).
+
+## QA 집중 영역
+snapshot-cleanup.ts:86-160 / volatility-guard.ts:168-269,391-434 / kill-switch.ts:138-177 / kis.ts:99-104 / cron route:82-148 / portfolio-total.ts:115-136 / engine view:32-45.
+
+## 한계
+- engine.ts·db.ts는 부분 view(getHeldAmounts/runExitEngine, runOnceMigration)뿐. runOnceMigration의 호출부(두 회차 연결), reconcilePositionState 구현, 다른 engine 호출 경로는 미검토.
+- snapshot-composition, hidden-usd-carry, market-hours, kis-domestic/overseas, fx, confirmed-alert 구현은 view에 없어 미검토. 소스는 주석 제거 AST view이고 테스트 view는 일부 수치 fixture 가림 처리됨.
+- 배포 산출물(release 디렉토리 내용)과 view의 동일성은 Leader의 sha 대조에 의존. 정적 검토만이며 실행 검증 없음.
+
+- Receipt provenance: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109/out/reviewer.md / SHA256 479110f2b195764c209f00271e427516427392524ccfebe564fcf3dcf1d6d885
+
+## Qa — 독립 최종 검증 2026-11-09 (Claude Code)
+
+# T-012 QA Final Verification Report
+**Date:** 2026-11-09  
+**Task:** T-012-final-verification-20261109  
+**Release:** 20261109-002723-06bce08a  
+**QA Agent:** Claude Haiku 4.5  
+**Tool:** claude (Bash via ssh home_ubuntu)  
+
+## Execution Summary
+
+Three fixed verification commands were executed via remote task wrapper.
+
+### 1. Integrity Check
+**Command:** `ssh home_ubuntu python3 /home/brownjeon/.node-local/stockinvest-t012-final-20261109/run-t012.py integrity`  
+**Exit Code:** 0 (success)  
+**Result:** 
+```json
+{
+  "source_hashes_match": true,
+  "changed_paths": []
+}
+```
+**Verdict:** PASS — All selected source files match manifest hashes. No modifications detected.
+
+---
+
+### 2. Jest Test Execution
+**Command:** `ssh home_ubuntu python3 /home/brownjeon/.node-local/stockinvest-t012-final-20261109/run-t012.py jest`  
+**Exit Code:** 1 (failure)  
+**Result:**
+```json
+{
+  "operation": "jest",
+  "started_at_utc": "2026-11-09T13:35:43.343651+00:00",
+  "finished_at_utc": "2026-11-09T13:35:43.368439+00:00",
+  "elapsed_s": 0.02,
+  "exit_code": 1,
+  "status": "failed",
+  "network_isolated": true,
+  "credentials_injected": false,
+  "filesystem": "minimal bwrap; no host home or production env/data mounted",
+  "heavy_test_lock": "/tmp/stockinvest-heavy-tests.lock",
+  "snapshot_integrity_after": {
+    "source_hashes_match": true,
+    "changed_paths": []
+  },
+  "command_kind": "focused Jest8"
+}
+```
+**Verdict:** INCOMPLETE — Harness/infrastructure failure, not product error. 
+
+**Analysis:**
+- Extremely fast failure (0.02-0.03 seconds) with no test output
+- Indicates Jest process did not initialize or module resolution failed within bwrap environment
+- No test suite count, pass/fail metrics, or error messages returned
+- Minimal bwrap filesystem and missing host mounts may prevent module resolution
+- Retried once with identical result; consistent infrastructure issue
+
+**Limitation:** Cannot verify test suites (8 selected) without successful Jest execution.
+
+---
+
+### 3. TypeScript Typecheck
+**Command:** `ssh home_ubuntu python3 /home/brownjeon/.node-local/stockinvest-t012-final-20261109/run-t012.py typecheck`  
+**Exit Code:** 2 (type errors)  
+**Elapsed:** 5.99 seconds  
+**Result:**
+```json
+{
+  "operation": "typecheck",
+  "started_at_utc": "2026-11-09T13:35:52.926874+00:00",
+  "finished_at_utc": "2026-11-09T13:35:58.916614+00:00",
+  "elapsed_s": 5.99,
+  "exit_code": 2,
+  "status": "failed",
+  "network_isolated": true,
+  "credentials_injected": false,
+  "filesystem": "minimal bwrap; no host home or production env/data mounted",
+  "command_kind": "copied app-source tsc noEmit; not production build",
+  "diagnostics": [
+    {
+      "path": "src/components/dashboard/Dashboard.tsx",
+      "line": 746,
+      "column": 22,
+      "code": "TS7006"
+    },
+    {
+      "path": "src/lib/api-usage.ts",
+      "line": 25,
+      "column": 24,
+      "code": "TS2307"
+    },
+    {
+      "path": "src/lib/api-usage.ts",
+      "line": 26,
+      "column": 53,
+      "code": "TS2307"
+    },
+    {
+      "path": "src/lib/llm/claude-cli.ts",
+      "line": 82,
+      "column": 58,
+      "code": "TS7006"
+    },
+    {
+      "path": "src/lib/strategy/ai-filter.ts",
+      "line": 435,
+      "column": 64,
+      "code": "TS7006"
+    }
+  ]
+}
+```
+
+**Verdict:** FAIL (out of scope)
+
+**Analysis:**
+- 5 TypeScript diagnostics found (exit code 2)
+- **All files with errors are outside manifest selected_source list:**
+  - Dashboard.tsx (not in scope)
+  - api-usage.ts (not in scope)
+  - claude-cli.ts (not in scope)
+  - ai-filter.ts (not in scope)
+- Selected scope files (10 files):
+  - src/lib/safety/snapshot-cleanup.ts ✓
+  - src/lib/safety/volatility-guard.ts ✓
+  - src/lib/safety/kill-switch.ts ✓
+  - src/lib/exchanges/kis.ts ✓
+  - src/app/api/portfolio/route.ts ✓
+  - src/app/api/cron/portfolio-snapshot/route.ts ✓
+  - src/lib/notify/throttle.ts ✓
+  - src/lib/safety/portfolio-total.ts ✓
+  - src/lib/strategy/engine.ts ✓
+  - src/lib/db.ts ✓
+- Typecheck executes on full project; errors in unverified areas are noted but do not block T-012 scope.
+
+---
+
+## Safety Verification
+
+**Read-only scope:** All verification operations were read-only (no product edits, no .env reads, no live DB/KIS/order/token/pm2/cron/deploy).
+
+**Isolation:** All commands executed via network-isolated bwrap; no credentials injected.
+
+**Integrity maintained:** Snapshot integrity checked before and after each operation; all hashes remain matched.
+
+---
+
+## Overall Verdict
+
+| Check | Result | Status |
+|-------|--------|--------|
+| Integrity (selected source) | PASS | ✓ Scope pass |
+| Jest (8 test suites) | INCOMPLETE | ⚠ Harness failure; no product error reproduced |
+| TypeScript (selected scope) | Out-of-scope errors only | ✓ Selected files clear |
+
+**Determination:**
+- **Selected scope (T-012)**: integrity PASS + typecheck selected files OK
+- **Jest harness failure**: infrastructure issue, not product defect (per handoff criteria)
+- **Out-of-scope typecheck errors**: Dashboard.tsx, api-usage.ts, claude-cli.ts, ai-filter.ts require separate assessment
+
+---
+
+## Harness Issue Details
+
+Jest execution consistently fails at ~0.03s with:
+- No test output, no suite count, no pass/fail metrics
+- Minimal bwrap filesystem configuration
+- No host home or production env/data mounted
+- This suggests Jest module initialization or resolution failure in isolated environment
+
+**Recommended repair:** 
+Inspect bwrap mounts for Jest8 execution; add necessary node_modules access or configure fallback module resolution for the isolated wrapper environment. Do not alter product code; harness reconfiguration needed.
+
+---
+
+## Limitations
+
+1. **Jest metrics unavailable** — Harness prevented test suite execution; cannot report suite count, passed/failed/skipped tests
+2. **Typecheck scope limited** — Errors outside selected 10 files noted for awareness but not part of T-012 verdict
+3. **No integration test results** — Jest harness failure prevents verification of selected 8 test files
+
+---
+
+## Session Info
+- **Executed by:** QA (Claude Haiku 4.5)
+- **Session ID:** (issued via publish receipt)
+- **Command wrapper:** run-t012.py (stockinvest-t012-final-20261109)
+- **Network isolation:** Yes (bwrap, no external calls)
+- **Credentials exposure:** None (--credentials_injected=false)
+
+- Receipt provenance: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109/out/qa.md / SHA256 c2573f379efc6c364a2e37706772ae329df765bc7d9991d258b784fe4bb9e36e
+
+## Leader — 독립 최종 검증 2026-11-09 (Claude Code)
+
+# T-012 Leader record (final verification stage)
+
+- Actual tool: Claude Code 2.1.288 on Mac, ordinary main session `9447e8e7-0cc1-4687-978f-e226a32aa245`, `--agent leader`, permission-mode auto, existing project/user hooks. Not the external-review broker. No broker/guard/switch/pin/hook/permission changes.
+- Takeover: an earlier launch of this session failed on Claude authentication before any acceptance; `out/` was empty when I took over after the user's login refresh. Acceptance written to `out/acceptance.json` at 2026-11-09 22:32 KST.
+- Leader own checks: review-source view sha256 18/18 match `review-source-index.json`. Leader did NOT run integrity/jest/typecheck (QA did).
+- Reads by leader: handoff.md, manifest.json, review-source-index.json, review-source/** (hashing only), claude-roles.json (key/size metadata), out/*-result.json, out/reviewer.json, out/qa.json/qa.md (grep). No snapshot/**, raw logs, original task/.env, DB or financial data.
+
+## Order and results
+1. Reviewer (separate subagent, static): **PASS_WITH_NOTES**, blocking 0 (C0/H0/M1/L4), 8/8 criteria pass within view limits; original zero-price contamination blocker resolved per static review. Receipt published (reviewer self-reported exit 0).
+2. QA (separate subagent, after reviewer): integrity exit 0 (hashes match, 0 changed); jest exit 1 in 0.03s with no output → harness failure, **INCOMPLETE**; typecheck exit 2, 5 diagnostics all outside the 18 selected paths (incl. TS2307 in copied-source harness). QA receipt published (self-reported). QA's claimed jest retry is not confirmable from the single visible result timestamp.
+
+## Decision
+- Recommendation: **review** (not done). Blocker: Jest8 selected suites never executed.
+- Harness repair request (owner: kit/wrapper author, not product code): fix `run-t012.py jest` start failure and record its stderr; then QA reruns the same fixed command.
+- No product edits, DB/KIS/order/token, pm2/cron, install/build/deploy, commit/push. No historical receipts created. No app release → no version bump.
+- Not done by leader: roadmap/TASK state, common execution_context (coordinator).
+
+- Receipt provenance: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109/out/leader.md / SHA256 91954b2173b9d99fa789fe6c3b0ebffdb6f2d7f7cb3147a2c41a4ed4925a7b42
+
+## 공통 조율 — 첫 실제 검증 결과·하네스 보완(2026-11-09, Codex)
+
+- 실제 별도 Claude Reviewer는 PASS_WITH_NOTES(차단0), 실제 별도 QA는 INCOMPLETE였다. Jest는 import-local 해석 실패로 시험을 시작하지 못했고, TypeScript에는 공용 @workspace/api-usage 누락 등5진단이 있었다. 이를 제품 시험 실패/통과로 바꾸지 않는다.
+- 실제 Claude Leader가 final.json에서 하네스 작성자에게 제한된 수정을 요청했다. node_modules를 /deps 대신 /deps/node_modules로 제공하고 공용 모듈의 상대 symlink가 가리키는 위치에 해당 실행 코드만 read-only로 연결했다. 네트워크/운영.env·데이터는 열지 않았고 source18경로 SHA는 모두 동일하다.
+- 첫 결과와 역할별 원본은 out/attempt-1 및 private .evidence/attempt-1에 보존했다. 재검증은 시간별 JSON과 별도 역할 heading으로 구분한다. Codex가 제품 시험을 대신 실행하지 않았다.
+- Reviewer가 명시한 db 부팅 연결 검토 한계를 보완할 별도 주석 제거 view(두 runOnceMigration 호출)를 supplemental-review에 준비했다. 실제 추가 Reviewer 확인 후 결과에 합칠 예정이며 기존 검토가 이 내용을 이미 다룬 것처럼 표시하지 않는다.
+
+## Reviewer — 독립 최종 검증 2026-11-09 (Claude Code, 재검증 2)
+
+# T-012 Reviewer round2 (보충 정적 검토)
+- round: 2 / 도구: Claude Code subagent (Reviewer) / 모델: claude-sonnet-5-5
+- 제품 수정·QA 명령 실행 없음. 정적 검토만.
+
+## 실제 읽은 파일
+round2-handoff.md, harness-repair-round2.json, supplemental-review/scope-extension.json, supplemental-review/db-t012-wiring.ts, source-locations.json, out/attempt-1/reviewer.json, review-source/src/lib/db.ts(runOnceMigration 부분), review-source/src/lib/safety/snapshot-cleanup.ts(교차 참조).
+읽지 않음: snapshot/**, 원시 로그, shared 라이브러리, 원 task/.env, DB. attempt-1 reviewer.md 본문, qa/final/leader 산출물은 이번에 읽지 않음.
+확인: db-t012-wiring.ts sha256 = 344b92f2…7b5285 (scope-extension view_sha256과 일치, 로컬 shasum 대조).
+
+## 보충 판정 (wiring, db.ts 원본 1518-1523 / 1526-1531) : PASS
+1. 마커 분리: R1 = ZERO_PRICE_SNAPSHOT_MARKER ('migration_t012_zero_price_snapshots'), R2 = ZERO_PRICE_SNAPSHOT_MARKER_R2 ('migration_t012b_remaining_zero_price_snapshots'). 서로 다른 키 (snapshot-cleanup.ts:2,7).
+2. 함수 매핑: R1 -> purgeZeroPriceSnapshots -> SPEC_R1 (ids 12행, archive t012). R2 -> purgeZeroPriceSnapshotsRound2 -> SPEC_R2 (ids 4행, archive t012b). 교차 매핑 없음. 두 ID 목록 중복은 모듈 로드 시 throw로 차단(OVERLAP 검사).
+3. 실패/재시도 의미: runOnceMigration은 마커가 있으면 return, fn이 {skipped}를 반환하면 마커 미기록, 예외 시 catch에서 warn만 하고 마커 미기록 -> 다음 부팅에 재시도. 정상 완료 시에만 INSERT IGNORE 마커. attempt-1 판정(archive merge·재시도·affectedRows, L-1/L-2)과 일치.
+4. 부팅 실패 전파: runOnceMigration 내부에서 모든 예외를 삼키므로 마이그레이션 실패가 부팅을 막지 않음(의도적 fail-soft). 단 `cleanup` 동적 import 자체가 실패하면 그 호출 위치(runOnceMigration 밖)에 따라 전파될 수 있으나, 제공 view에는 import 문과 두 호출을 감싼 try/catch 여부가 포함되지 않아 판정 불가(미확인).
+5. 순서: R1 호출 후 R2 호출. 두 spec의 ID가 분리되어 있어 순서 의존성 없음. 두 호출 사이 원본 3줄(1524-1525)은 view에 없음(주석 제거로 추정, 미확인).
+
+## 신규 이슈
+- L-5 (LOW, 미확인 범위): src/lib/db.ts 동적 import(`cleanup`)의 에러 처리 위치가 view에 없음. 실패 시 부팅 전파 여부 미확인. 차단 아님. QA/배포 로그로 부팅 정상 확인 권고.
+- 기존 L-1/L-2(마커 쓰기·재시도 로그 노이즈)는 wiring 관점에서도 동일, 상향 없음.
+
+## 18 view 판정 (변경 없음, 이번에 재독 안 함)
+출처: out/attempt-1/reviewer.json (attempt-1 Reviewer receipt, PASS_WITH_NOTES, C0/H0/M1/L4: M-1 portfolio-total.ts:115-133 lastOk fallback 무기한, L-1..L-4). 인용 유지. 이번 라운드에서 해당 18 view를 다시 읽지 않았고, 인용만 함.
+
+## 종합 verdict: PASS_WITH_NOTES (blocking 아님)
+합산: Critical 0 / High 0 / Medium 1 (M-1, attempt-1) / Low 5 (L-1~L-4 attempt-1 + L-5 신규).
+
+## 한계
+- view는 주석 제거본, 호출 2건만 포함; import 문·주변 try/catch·1524-1525행 미확인.
+- 실행·테스트 결과는 QA 책임. 소스-릴리스 동일성은 Leader의 sha 대조에 의존.
+
+- Receipt provenance: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109/out/reviewer.md / SHA256 3379dc0bddd561e507735d066a215dab6c5ffd60fa631fda71a45db21bbce4c2
+
+## QA — 독립 최종 검증 2026-11-09 (Claude Code, 재검증 2)
+
+# T-012 QA Final Verification Report — Round 2
+
+**Date:** 2026-11-09 (round 2, after harness repair)  
+**Task:** T-012-final-verification-20261109  
+**Release:** 20261109-002723-06bce08a  
+**QA Agent:** Claude Haiku 4.5  
+**Tool:** claude (Bash via ssh home_ubuntu)  
+
+## Round 2 Harness Repair Applied
+
+Between attempt-1 and round2, dependency mount resolution was fixed:
+- **Root cause:** Node.js module parent resolution lost when `/deps` contained `node_modules` but was mounted as `/deps` instead of `/deps/node_modules`
+- **Fix:** Mounted node_modules correctly at `/deps/node_modules`; @workspace/api-usage symlink now resolves to read-only `/shared/api-usage`
+- **Scope:** Mount repair only; selected18 source/tests unchanged; wrapper SHA256 updated as documented
+
+---
+
+## Execution Summary (Round 2)
+
+Three verification commands executed via remote task wrapper under fixed harness configuration.
+
+### 1. Integrity Check
+**Command:** `ssh home_ubuntu python3 /home/brownjeon/.node-local/stockinvest-t012-final-20261109/run-t012.py integrity`  
+**Exit Code:** 0 (success)  
+**Elapsed:** <1s  
+**Result:** 
+```json
+{
+  "source_hashes_match": true,
+  "changed_paths": [],
+  "dependency_hashes_match": true,
+  "changed_dependency_paths": []
+}
+```
+**Verdict:** PASS — All selected source files and dependencies match manifest hashes. No modifications detected.
+
+---
+
+### 2. Jest Test Execution
+**Command:** `ssh home_ubuntu python3 /home/brownjeon/.node-local/stockinvest-t012-final-20261109/run-t012.py jest`  
+**Exit Code:** 0 (success)  
+**Elapsed:** 0.86 seconds  
+**Result:**
+```json
+{
+  "numTotalTestSuites": 8,
+  "numPassedTestSuites": 8,
+  "numFailedTestSuites": 0,
+  "numTotalTests": 198,
+  "numPassedTests": 198,
+  "numFailedTests": 0,
+  "numPendingTests": 0,
+  "numRuntimeErrorTestSuites": 0
+}
+```
+
+**Test Suites Breakdown:**
+1. `src/lib/safety/__tests__/snapshot-composition.test.ts` — 62 passed
+2. `src/lib/safety/__tests__/portfolio-snapshot-sanity.test.ts` — 50 passed
+3. `src/lib/safety/__tests__/snapshot-cleanup.test.ts` — 31 passed
+4. `src/app/api/__tests__/portfolio-partial-balances.test.ts` — 14 passed
+5. `src/lib/safety/__tests__/kill-switch-drawdown.test.ts` — 16 passed
+6. `src/lib/strategy/__tests__/engine-balances-unknown.test.ts` — 11 passed
+7. `src/lib/exchanges/__tests__/kis-balances-partial.test.ts` — 10 passed
+8. `src/lib/safety/__tests__/portfolio-snapshot-killswitch.test.ts` — 4 passed
+
+**Verdict:** PASS — All 8 test suites executed successfully; 198/198 tests passed with 0 failures or pending tests.
+
+**Analysis:**
+- Successful harness initialization (no missing modules, no runtime initialization errors)
+- 0.86s execution time (vs. 0.02s harness failure in attempt-1)
+- Mount repair resolved Jest module initialization issue
+- All safety-critical and portfolio-related test suites pass
+
+---
+
+### 3. TypeScript Typecheck
+**Command:** `ssh home_ubuntu python3 /home/brownjeon/.node-local/stockinvest-t012-final-20261109/run-t012.py typecheck`  
+**Exit Code:** 0 (success)  
+**Elapsed:** 6.58 seconds  
+**Result:** No diagnostics returned; tsc compilation successful.
+
+**Verdict:** PASS — TypeScript compilation passed with no errors in copied app-source scope.
+
+---
+
+## Round 2 vs. Attempt-1 Comparison
+
+| Aspect | Attempt-1 | Round-2 | Change |
+|--------|-----------|---------|--------|
+| **Integrity** | PASS (exit 0) | PASS (exit 0) | — Consistent |
+| **Jest Status** | INCOMPLETE (exit 1) | PASS (exit 0) | ✓ Fixed by harness repair |
+| **Jest Duration** | 0.02s (init failure) | 0.86s (full execution) | ✓ Initialization now succeeds |
+| **Jest Metrics** | Unavailable | 8 suites, 198 tests, 100% pass | ✓ Recovered |
+| **Typecheck Status** | FAIL (exit 2) | PASS (exit 0) | ✓ Fixed by harness repair |
+| **Out-of-scope Errors** | 5 TypeScript errors | 0 errors | ✓ Resolved (mount configuration) |
+
+---
+
+## Safety Verification
+
+**Read-only scope:** All verification operations were read-only
+- No product source edits
+- No .env file access
+- No live database, KIS API, order logs, or token access
+- No pm2/cron/deploy/git operations
+
+**Network isolation:** All commands executed in minimal bwrap environment
+- No external network calls
+- No credentials injected
+- No host home or production environment mounted
+
+**Integrity maintained:** 
+- Before: source_hashes_match=true
+- After: source_hashes_match=true, dependency_hashes_match=true
+- No changes to snapshot or selected source
+
+---
+
+## Overall Verdict
+
+| Check | Result | Verdict |
+|-------|--------|---------|
+| Integrity (selected source & dependencies) | All hashes matched | ✓ PASS |
+| Jest (8 test suites, 198 tests) | 198/198 passed, 0 failed | ✓ PASS |
+| TypeScript (selected scope) | 0 errors | ✓ PASS |
+
+**Final Determination:** 
+- **Selected scope (T-012)**: All required checks PASS
+- **Harness repair verified**: Mount reconfiguration resolved jest initialization and typecheck module resolution
+- **Selected source unchanged**: Hashes match manifest; selected18 test/source files verified by execution
+- **Production safety confirmed**: Read-only, network-isolated, snapshot integrity maintained
+
+---
+
+## Limitations
+
+1. **Focused test suite only** — Jest8 runs 8 selected test files; full project test matrix not executed
+2. **TypeScript scope limited** — tsc runs on copied app-source; pre-existing out-of-project errors (if any) not re-verified
+3. **No live integration** — Verification does not include live database, KIS trading API, or production environment tests
+
+---
+
+## Session Info
+- **Executed by:** QA (Claude Haiku 4.5)
+- **Tool:** claude (Mac main session)
+- **Commands via:** Bash SSH home_ubuntu (fixed task wrapper, network-isolated bwrap)
+- **Wrapper:** run-t012.py (stockinvest-t012-final-20261109)
+- **Result file paths:** out/qa.json (structured), out/qa.md (this report)
+- **Prior attempt:** Preserved in out/attempt-1/ (qa.json, qa.md, reviewer.json, final.json)
+
+- Receipt provenance: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109/out/qa.md / SHA256 64e851bddea15b5ece061fca4979acd8cc692c974d1b74ab336ed4ffff9e43e6
+
+## Leader — 독립 최종 검증 2026-11-09 (Claude Code, 재검증 2)
+
+# T-012 Leader record — round2
+
+- Actual tool: Claude Code 2.1.288 on Mac, ordinary main session `9447e8e7-0cc1-4687-978f-e226a32aa245` (resumed), `--agent leader`, permission-mode auto, existing hooks. Not the external-review broker. No broker/guard/switch/pin/hook/permission changes. Acceptance (`acceptance.json`, 13:32Z) unchanged.
+- Attempt-1 (Reviewer PASS_WITH_NOTES / QA INCOMPLETE / Leader `review`) is preserved untouched in `out/attempt-1/` (top-level copies were byte-identical before round2 overwrite).
+- Leader round2 prechecks: manifest 18 hashes unchanged; 18/18 review views match index; supplemental db wiring view matches pinned sha. Leader did NOT run integrity/jest/typecheck.
+- Leader reads: round2-handoff.md, harness-repair-round2.json, supplemental-review/scope-extension.json, manifest.json (fields/hashes), review views + supplemental view (hashing only), out/*-result.json, out/round2-*.json, reviewer.json/qa.json (verdict fields). No snapshot/**, .evidence raw logs, shared library contents, original task/.env, DB or financial data.
+
+## Round2 order and results
+1. New Reviewer (separate subagent, static, first): supplement db boot wiring **PASS**; overall **PASS_WITH_NOTES**, C0/H0/M1/L5, blocking none; unchanged 18 views carried from attempt-1 receipt (not re-read). Published (exit 0, self-reported).
+2. New QA (separate subagent, after Reviewer), each command once: integrity exit 0 (source+dependency hashes match); jest exit 0 — 8/8 suites, 198/198 tests, 0 pending, 0 runtime-error suites; typecheck exit 0, 0 diagnostics. Verified by leader against `round2-jest-20261109T134706935570.json` and `round2-typecheck-20261109T134717477605.json`. Published (self-reported).
+
+## Decision
+- Recommendation: **done**. No blockers. M-1 (portfolio-total lastOk without age limit) is a later/unrelated non-blocking note, candidate for a separate task.
+- No product edits, DB/KIS/order/token, pm2/cron, install/build/deploy, commit/push. No historical receipts created or altered. No app release → no version bump.
+- Left to coordinator: roadmap/TASK state and common execution_context.
+
+- Receipt provenance: /home/brownjeon/NFS/homes/brownjeon/project/StockInvest/docs/handovers/T-012-final-verification-20261109/out/leader.md / SHA256 a77588cc7cac4faf8099e5ffe1cc8862aeaabed4cc5b2a2d83029ddd6d19059d
+
+## 공통 조율 — 실제 독립 최종 검증 수신·상태 반영(2026-11-09, Codex)
+
+- 사용자 요청에 따른 새 독립 검증을 실제 Claude main/별도 Reviewer/별도 QA가 수행했다. Claude Leader의 round2 최종 권고 done과 원본 역할 기록·고정 실행 결과를 대조해 원TASK status=done으로 반영했다. origin_tool=unknown/current_tool=claude/current_procedure=claude_standard는 보존한다. 이 절은 Codex 조율 기록이며 Codex가 제품 QA를 실행했다고 표시하지 않는다.
+- 실제 native CLI model 이벤트: claude-opus-5-5(main), claude-sonnet-5-5(Reviewer), claude-haiku-4-5-20251001(QA). 별도 Reviewer/QA Agent 호출ID와 성공 종료를 metadata artifact에 보존했다. 전체 대화·원시 provider 로그를 Vault로 복사하지 않았다.
+
+| 확인 대상 | 실제 결과 | 범위/한계 |
+|---|---|---|
+| 대상 버전 | release 20261109-002723-06bce08a·원후속0ba652e | 완료 반영 직전 현재 배포본 선택18경로 SHA도 동결본과 일치 |
+| 독립 Reviewer | PASS_WITH_NOTES·차단0, 기존18view 검토 + 두 부팅 연결 호출 추가검토 | source 주석 제거 view·engine/db 부분범위. 기존 중간1/낮음4와 새 낮음1 확인한계 보존 |
+| 독립 QA Jest | 8/8 시험군, 198/198 통과·실패0·보류0 | 고정 T012 회귀군이며 전체 프로젝트 시험 전수 아님 |
+| 독립 QA TypeScript | copied app-source tsc noEmit exit0 | production build/배포 검증 아님 |
+| 무결성/격리 | source18·공용 실행의존성 SHA 일치, network 차단·운영 자격증명 주입0 | 새 DB/KIS/주문·정리·서비스/cron 동작 없음 |
+| 실제 정리 결과 | 앞선 읽기전용 조사에서 archive12+4·고정대상잔존0+0·두marker 확인 | 이 QA에서 운영DB를 다시 조회한 것으로 확대하지 않음 |
+
+- 첫 실제 QA의 INCOMPLETE와 원본은 out/attempt-1 및 당시 자기 기록으로 보존했다. 의존성 mount 보완 뒤 별도 QA가 같은 명령을 실제 한 번씩 재실행했고 시간별 round2 결과JSON에 성공값이 있다. 앱 소스는 바꾸지 않았다.
+- authoritative evidence: agent-vault/10-Flow/artifacts/T-012-final-independent-verification-20261109.json; docs/handovers/T-012-final-verification-20261109/out/final.json, reviewer.json, qa.json 및 시간별 round2 wrapper JSON. Claude가 게시한 각 자기 절도 본문에 보존돼 있다.
+- 로드맵의 부분잔고 실패 가드 [x]를 유지하고, 가드·정리 항목 [~]를 [x]로 갱신한다. 이전의 완료 근거 부족은 새 실제 독립 검증으로 보완된 것이며 과거08월 원QA보고서를 찾았다고 주장하지 않는다.
+- 미확인/비차단 한계는 계속 남긴다: 과거 독립 원보고서, 제공 view 밖 dynamic import 외곽 오류처리(L5), 일부 engine/db 정적범위, 실DB/KIS/운영·로그인화면·전체시험전수. 이를 새 필수 구현/운영 목표로 승격하지 않는다. M1(lastOk 무연령 fallback) 등 비차단 주의는 원Reviewer 기록을 보존하고 이번에 제품 수정하지 않는다.
+- 앱 소스·운영 설정/데이터·서비스·cron·버전·배포 변경, commit/push는 없다. 상태/근거 문서와 task-local 검증 하네스만 보완했다.
+
+## 공통 조율 — 관리웹 수집 반영 확인(2026-11-09, Codex)
+
+- 관리웹 수집 2026-11-09T13:55:28.467Z에서 현재 roadmap 전체 digest 일치·T012 완료 문구·TASK done을 확인했다. 진척도 60%, 형식 오류0·연결 점검 3건으로 T012 점검1건이 해소돼 있다(남은 것은 T032).
+- 이는 실제 수집 DB metadata 확인이며 운영 로그인 화면·실기기 UI를 직접 본 결과와 구분한다. 비차단 주의·미확인과 다른 Task는 그대로 보존한다.
+
+## 공통 조율 — 커밋·푸시·운영 배포 추가 승인 수신(2026-11-10, Codex)
+
+- 실제 사용자 요청에 따라 T012 완료 검증 결과를 선택 게시하고 운영웹 배포까지 Claude main에 요청한다. 기존198/198 검증 완료와 이번 새 publication/deploy 실행은 구분한다.
+- 원격main과 현재release는 사전확인06bce08a, 웹package0.1.0. 사용자 공통정책의 기본마이너로0.2.0 릴리스 한 단위를 준비한다(최종actor재확인). APK공개/네이티브변경은 요청없음.
+- NFS공유체크아웃에는다른역할/기존감사/제품변경이많으므로격리게시체크아웃과정확한파일/hunk만사용한다. source의전체roadmap/ACTIVE를그대로묶지않는다. 원task금융문장·env·원provider대화는모델입력/신규산출물에서제외한다.
+- 허용범위와배포후확인은 docs/handovers/T-012-publication-20261110/scope.json 및handoff.md. 이미받은배포승인을재요구하지않고현시점새판단이필요한실제충돌만보고한다.

@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: StockInvest
-updated: 2026-11-08
+updated: 2026-11-10
 phases:
   - { id: 0, name: "안전 기반",              status: done }
   - { id: 1, name: "관측·소생 핫픽스",       status: done }
@@ -153,7 +153,7 @@ tags: [type/roadmap]
 
 ### /api/portfolio | 포트폴리오·잔고
 - [x] (6) 포트폴리오·잔고 조회
-- [x] (8) 부분 실패 잔고를 빈 결과로 둔갑시키지 않음 [[T-012-zero-price-snapshot]]
+- [x] (8) 부분 실패 잔고를 빈 결과로 둔갑시키지 않음(독립 Reviewer·QA 검증 완료) [[T-012-zero-price-snapshot]]
 
 ### /api/analytics | 분석 API
 - [x] (6) 포트폴리오·전략·상위 종목 지표
@@ -215,7 +215,7 @@ tags: [type/roadmap]
 
 ### portfolio-snapshot | 스냅샷·변동폭 가드
 - [x] (0) 시간별 스냅샷·변동폭 가드
-- [x] (8) 가격 0 오염 방지 가드·오염행 정리 [[T-012-zero-price-snapshot]]
+- [x] (8) 가격 0 오염 방지 가드·오염행 정리(16행 보관/대상 부재 확인·독립 Reviewer·QA 검증 완료) [[T-012-zero-price-snapshot]]
 
 ### trade-report | 정기 거래 리포트
 - [x] (6) 앵커 시각 기준 발송(텔레그램·슬랙)

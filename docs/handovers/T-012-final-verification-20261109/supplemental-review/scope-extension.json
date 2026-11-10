@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task": "T-012",
+  "target_release": "20261109-002723-06bce08a",
+  "prepared_at_utc": "2026-11-09T13:36:26.757369+00:00",
+  "reason": "Reviewer receipt noted original normalized db view omitted R1/R2 boot wiring; provide the declared T012 wiring scope without changing executable snapshot",
+  "source": "src/lib/db.ts",
+  "source_sha256": "f4fb031ee94170eccf5ad0e7399ae6f84590f9e70078f18f189672323c27e16d",
+  "expected_source_sha256": "f4fb031ee94170eccf5ad0e7399ae6f84590f9e70078f18f189672323c27e16d",
+  "view": "supplemental-review/db-t012-wiring.ts",
+  "view_sha256": "344b92f2ed1ea3f2c492178ef1e70dbdd3f4cfac54fcd3c265ffd1bede7b5285",
+  "source_locations": [
+    {
+      "start_line": 1518,
+      "end_line": 1523
+    },
+    {
+      "start_line": 1526,
+      "end_line": 1531
+    }
+  ],
+  "model_scope": "Additional static review of two runOnceMigration calls and dynamic import only; comments removed, no private runtime data",
+  "execution_change": false,
+  "existing_qa_snapshot_unchanged": true
+}

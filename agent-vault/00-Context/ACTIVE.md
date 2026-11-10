@@ -1,10 +1,12 @@
 ---
 project: StockInvest
-updated: 2026-11-09
+updated: 2026-11-10
 tags:
   - type/context
 ---
 # 현재 상태
+
+- **2026-11-09 22:55:02 — [[T-012-zero-price-snapshot]] 새 독립 최종 검증 완료**: 실제 Claude Reviewer PASS_WITH_NOTES·QA8군198/198/typecheck0, 동결 배포본18경로불변·기존정리16행보관/부재근거와결합해TASK done/roadmap[x]. 첫하네스 INCOMPLETE·과거원보고서/비차단한계 보존. 본감사T163 done와다른진행항목은유지. Codex 공통조율반영이며제품/운영/배포변경없음.
 
 ## T-156 보호 트리거·최종 QA 완료 / 단일 웹 배포 준비 — F31/exec-074
 

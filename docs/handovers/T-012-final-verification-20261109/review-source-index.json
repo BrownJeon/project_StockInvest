@@ -1,0 +1,162 @@
+[
+  {
+    "file": "src/lib/safety/snapshot-cleanup.ts",
+    "mode": "whole_selected_file",
+    "bytes": 6111,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "89587da8e43ec3acfb9e4f69ed4b5f2cee057ddfe44cfe601562a8d8437fca0d"
+  },
+  {
+    "file": "src/lib/safety/volatility-guard.ts",
+    "mode": "whole_selected_file",
+    "bytes": 19187,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "6d754b4c563edc40ebe983aba0670b3e6d1538ebff05708ace6740e1cdb3c479"
+  },
+  {
+    "file": "src/lib/safety/kill-switch.ts",
+    "mode": "whole_selected_file",
+    "bytes": 22800,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "cf19a69c1b536d9fe432fe39673d88e353158ce8b55382fed37b788bc7af71bc"
+  },
+  {
+    "file": "src/lib/exchanges/kis.ts",
+    "mode": "whole_selected_file",
+    "bytes": 7612,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "1252b1417f2f048ee4e2c56f3c274eb143061891509d0d0a8138f35392ba96fc"
+  },
+  {
+    "file": "src/app/api/portfolio/route.ts",
+    "mode": "whole_selected_file",
+    "bytes": 8120,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "481f55bd027d0f8d92e788199411898fd2a97805ab3158cfeee4480d9851d1a8"
+  },
+  {
+    "file": "src/app/api/cron/portfolio-snapshot/route.ts",
+    "mode": "whole_selected_file",
+    "bytes": 10425,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "f4c25224861b30e7981d1853e7f35dd00ba8bc958bd97ce28703cc175862fd76"
+  },
+  {
+    "file": "src/lib/notify/throttle.ts",
+    "mode": "whole_selected_file",
+    "bytes": 643,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "c29d0e41dcc1e260d12ef90bd5f1d26ac4e05df8671492d56f7367b732de7e12"
+  },
+  {
+    "file": "src/lib/safety/portfolio-total.ts",
+    "mode": "whole_selected_file",
+    "bytes": 5957,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "59d3a09258008710a876952e39df929507a59204196f47058c223267d25895da"
+  },
+  {
+    "file": "src/lib/strategy/engine.ts",
+    "mode": "getHeldAmounts_and_runExitEngine_only",
+    "bytes": 11358,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "818d4fb92eafd29273d54abf1cf3318be021eb22d3166c79d68bde82e28b17a9"
+  },
+  {
+    "file": "src/lib/db.ts",
+    "mode": "runOnceMigration_only",
+    "bytes": 922,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "view_sha256": "fbe75ae118fc870c4f988547d9e6c17defab4b11c85f64ddcabc3ce177fe2227"
+  },
+  {
+    "file": "src/lib/safety/__tests__/snapshot-cleanup.test.ts",
+    "mode": "whole_selected_file",
+    "bytes": 16396,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "redacted_operational_fixture_occurrences": 17,
+    "view_only": "Non-executable comments-removed test view; any redacted historical numeric fixtures remain unchanged in executable snapshot",
+    "view_sha256": "aa6ab6c5dd5a334d04f84eec5164f6b318cd6f818a8784a92477bf9ca2b998b3"
+  },
+  {
+    "file": "src/lib/safety/__tests__/portfolio-snapshot-sanity.test.ts",
+    "mode": "whole_selected_file",
+    "bytes": 22804,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "redacted_operational_fixture_occurrences": 1,
+    "view_only": "Non-executable comments-removed test view; any redacted historical numeric fixtures remain unchanged in executable snapshot",
+    "view_sha256": "cfb26ebd5262c7ae0ae6a521c425f59b14dd7a1c217f10dea24c50567e4d6510"
+  },
+  {
+    "file": "src/lib/safety/__tests__/portfolio-snapshot-killswitch.test.ts",
+    "mode": "whole_selected_file",
+    "bytes": 3428,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "redacted_operational_fixture_occurrences": 0,
+    "view_only": "Non-executable comments-removed test view; any redacted historical numeric fixtures remain unchanged in executable snapshot",
+    "view_sha256": "a519d25f80e0abeda45f5f5dc4b6e7a8505a66f6121e057baf52b72d9c5667de"
+  },
+  {
+    "file": "src/lib/safety/__tests__/snapshot-composition.test.ts",
+    "mode": "whole_selected_file",
+    "bytes": 28277,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "redacted_operational_fixture_occurrences": 0,
+    "view_only": "Non-executable comments-removed test view; any redacted historical numeric fixtures remain unchanged in executable snapshot",
+    "view_sha256": "1129bd4320d3f35275ea5e285d23cb1476ea9022e04d4db18385371b6a268c1f"
+  },
+  {
+    "file": "src/lib/safety/__tests__/kill-switch-drawdown.test.ts",
+    "mode": "whole_selected_file",
+    "bytes": 9336,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "redacted_operational_fixture_occurrences": 0,
+    "view_only": "Non-executable comments-removed test view; any redacted historical numeric fixtures remain unchanged in executable snapshot",
+    "view_sha256": "37d49e914c3f4c56ea4cae8e2b0996526691129c4964850c9252798996412a9e"
+  },
+  {
+    "file": "src/lib/exchanges/__tests__/kis-balances-partial.test.ts",
+    "mode": "whole_selected_file",
+    "bytes": 5949,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "redacted_operational_fixture_occurrences": 0,
+    "view_only": "Non-executable comments-removed test view; any redacted historical numeric fixtures remain unchanged in executable snapshot",
+    "view_sha256": "b5ccfc2d0d58d9edb1336e518e61524d2f7958d08300926f6b6a4ef13de87c8f"
+  },
+  {
+    "file": "src/app/api/__tests__/portfolio-partial-balances.test.ts",
+    "mode": "whole_selected_file",
+    "bytes": 11201,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "redacted_operational_fixture_occurrences": 0,
+    "view_only": "Non-executable comments-removed test view; any redacted historical numeric fixtures remain unchanged in executable snapshot",
+    "view_sha256": "5cd2370d14c5ea191c2c887294d2263eb70f6715cfb90102a509bda7746b9ab9"
+  },
+  {
+    "file": "src/lib/strategy/__tests__/engine-balances-unknown.test.ts",
+    "mode": "whole_selected_file",
+    "bytes": 8794,
+    "normalized": true,
+    "astParseDiagnostics": 0,
+    "redacted_operational_fixture_occurrences": 0,
+    "view_only": "Non-executable comments-removed test view; any redacted historical numeric fixtures remain unchanged in executable snapshot",
+    "view_sha256": "cf603440691499c4c93e31bd938abb949dee063f85fbfe0f67b935cad416faa3"
+  }
+]

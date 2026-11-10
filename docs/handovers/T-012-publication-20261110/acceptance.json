@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "task": "T-012",
+  "stage": "scoped_commit_push_production_deploy",
+  "accepted": true,
+  "accepted_at_utc": "2026-11-10T08:22:25.764132+00:00",
+  "accepted_by": {
+    "role": "leader",
+    "tool": "claude",
+    "product": "Claude Code 2.1.288 Mac ordinary main (same session 9447e8e7-0cc1-4687-978f-e226a32aa245, resumed), --agent leader, permission-mode auto, existing hooks"
+  },
+  "procedure": "claude_standard",
+  "user_authorization_quoted": "직압에 대해서 커밋 및 푸시해서 운영에도 배포해줘",
+  "interpretation": "completed T-012 records + safe verification bundle + roadmap 2 T-012 entries + own ACTIVE entry + web version 0.1.0->0.2.0, one push to origin main = one webhook blue/green deploy",
+  "base": {
+    "remote_main": "06bce08a7939ac17009194995fc6f0da6f99f239",
+    "release": "20261109-002723-06bce08a",
+    "package_version": "0.1.0"
+  },
+  "excluded": [
+    "other dirty/untracked work in shared NFS tree (121 status entries)",
+    "shared checkout HEAD ebbcdca (behind origin) is not used",
+    "@eaDir Synology metadata",
+    "APK/native versionCode",
+    "force/no-verify/hook changes/migrations/forced snapshot/KIS/settings changes",
+    "manual deploy.sh in addition to webhook"
+  ]
+}

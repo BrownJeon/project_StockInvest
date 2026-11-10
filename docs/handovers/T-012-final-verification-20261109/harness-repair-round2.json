@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "task": "T-012",
+  "round": 2,
+  "prepared_at_utc": "2026-11-09T13:41:31.371317+00:00",
+  "requested_by": "Actual Claude Leader final.json attempt-1 harness_repair_request",
+  "scope": "Only isolated dependency mount resolution and safe diagnostics/publisher history. No product source changes. Typecheck uses same repaired mounts.",
+  "root_cause": "Mounting node_modules as /deps lost Node parent directory resolution; @workspace/api-usage relative symlink points outside mount",
+  "dependency_execution_scope": {
+    "source": "/home/brownjeon/NFS/homes/brownjeon/project/shared/api-usage",
+    "destination": "/shared/api-usage",
+    "allowed_files": [
+      "index.js",
+      "index.d.ts",
+      "package.json",
+      "record.js",
+      "writer.js",
+      "interpret.js",
+      "validate.js"
+    ],
+    "mode": "read-only local execution/typechecking only; no model content review",
+    "sha256": {
+      "index.js": "7f9d8f6f794810cdb2c4a42471c6537228174eb3f298142a5af44a70447f5909",
+      "index.d.ts": "865c1fb3091a9aa7f35b0558d8adbc2fb7d63f08074c14b9487bcea899266004",
+      "package.json": "7160869842e1add7774b65ec24f82f8061c8c3e652cf1c9052e5a5985394d7e1",
+      "record.js": "1bb489dbf1fbf79eed93ce7d6fcd5f9b2c228411756baea935a90e40c6f71cd3",
+      "writer.js": "3b31b8dd9040d28aec907f32d951028d36559651a371041861fb888b9af46ef9",
+      "interpret.js": "9b0a76846f65ca7aecbae88dfcfb050b90dc5f4d8f63e3551fba4856185eb836",
+      "validate.js": "6d13043cf973b0f3f587c2ef5cb28877d69d1ac56731d0213042f57195db7f10"
+    }
+  },
+  "selected_source_changed": false,
+  "prior_receipts": "out/attempt-1",
+  "supplemental_static_scope": "supplemental-review/scope-extension.json",
+  "wrapper_sha256_before": "45a5f6336bad1fc0189a19d3c555ec6863dfd9304d3c6aff7c2886bde54e7a19",
+  "wrapper_sha256_after": "55428a8a52093b3acd617e2dc3f73c42487a0422e69a6459f86d66c8e437f128",
+  "dependency_integrity_guard": true
+}
