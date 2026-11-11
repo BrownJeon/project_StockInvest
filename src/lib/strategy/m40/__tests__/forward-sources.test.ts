@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  collectForwardSources, requiredForwardSourceSessions, missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText, FORWARD_COLLECTION_LIMITS, mapForwardSources,
+  collectForwardSources, requiredForwardSourceSessions, missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText, FORWARD_COLLECTION_LIMITS, mapForwardSources,validateForwardSources,
   parseForwardIndexCsv, parseForwardStockCsv, type ForwardSourceBundle, type ForwardSourceDependencies,
 } from '../forward-sources';
 import type { ForwardCalendarSession } from '../forward-types';
@@ -203,4 +203,49 @@ test('one-session index lag retries the oldest of 254 required stock sessions',a
  const required=requiredForwardSourceSessions(calendar,b.asOfSession);
  expect(required).toHaveLength(254);expect(missingForwardSourceSymbols(b,['NAS:AAPL'],required)).toEqual(['NAS:AAPL']);
  expect(requiredForwardSourceSessions(calendar,b.asOfSession,[],b.asOfSession)).toHaveLength(253);
+});
+
+describe('full validation without stock output allocation',()=>{
+ const outcome=(read:()=>unknown)=>{try{return {value:read()};}catch(e){return {error:e instanceof Error?e.message:String(e)};}};
+ test('retains the exact index final/clock fields and does not mutate originals',async()=>{
+  const b=await sample(),before=JSON.stringify(b),originalClock=b.market!.observedAt;
+  expect(validateForwardSources(b,calendar)).toEqual(mapForwardSources(b,calendar).data.sp500Bars);
+  b.market!.observedAt='2026-11-05T20:59:59.999999Z';
+  expect(validateForwardSources(b,calendar)[0].final).toBe(false);
+  expect(validateForwardSources(b,calendar)).toEqual(mapForwardSources(b,calendar).data.sp500Bars);
+  b.market!.observedAt=originalClock;expect(JSON.stringify(b)).toBe(before);
+ });
+ const invalid:[string,(b:ForwardSourceBundle,c:ForwardCalendarSession[])=>void][]=[
+  ['bundle date',b=>{b.dateWindow.end='2026-11-05';}],
+  ['quarantine',b=>{b.nonPriceEvidence={quarantine:{reason:'pending',observedAt:at,rawJson:'{}',sha256:hash('{}')}};}],
+  ['request contract',b=>{b.records[0].request.unadjusted='1';}],
+  ['stock symbol',b=>{b.records[0].symbol='invalid/symbol';}],
+  ['stock source identity',b=>{b.records[0].sourceId='generic_unqualified';}],
+  ['stock vendor ticker',b=>{b.records[0].vendorTicker='OTHER';}],
+  ['source URL',b=>{b.records[0].sourceUrl='https://api.kibot.com/?secret=forbidden';}],
+  ['duplicate variants',b=>{b.records.push({...b.records[0]});}],
+  ['stock original SHA',b=>{b.records[0].sha256='0'.repeat(64);}],
+  ['stock parsed rows',b=>{b.records[0].rows[0].close='100';}],
+  ['stock row ordering',b=>{delete b.records[0].rawCsv;b.records[0].rows.reverse();}],
+  ['stock low/high',b=>{delete b.records[0].rawCsv;b.records[0].rows[0].high='1';}],
+  ['stock volume',b=>{delete b.records[0].rawCsv;b.records[0].rows[0].volume='1.5';}],
+  ['stock observed clock',b=>{b.records[0].observedAt='not-a-clock';}],
+  ['stock calendar close clock',(_b,c)=>{c[0].closeAt='not-a-clock';}],
+  ['index contract',b=>{(b.market as {series:string}).series='SPY';}],
+  ['index original SHA',b=>{b.market!.sha256='0'.repeat(64);}],
+  ['index parsed rows',b=>{b.market!.rows[0].close='1';}],
+  ['index observed clock',b=>{b.market!.observedAt='not-a-clock';}],
+  ['ordered multiple failures',b=>{b.records[0].sha256='0'.repeat(64);b.market!.observedAt='not-a-clock';}],
+ ];
+ test.each(invalid)('preserves full mapper failure for %s',async(_name,change)=>{
+  const b=await sample(),c=calendar.map(s=>({...s}));change(b,c);
+  const full=outcome(()=>mapForwardSources(b,c).data.sp500Bars),checked=outcome(()=>validateForwardSources(b,c));
+  expect(full).toHaveProperty('error');expect(checked).toEqual(full);
+ });
+ test('does not sort stock members or raw opens while still validating every record',async()=>{
+  const b=await sample();for(const r of b.records)delete r.rawCsv;delete b.market!.rawCsv;
+  const sort=jest.spyOn(Array.prototype,'sort');let full=0,checked=0;
+  try{mapForwardSources(b,calendar);full=sort.mock.calls.length;sort.mockClear();validateForwardSources(b,calendar);checked=sort.mock.calls.length;}finally{sort.mockRestore();}
+  expect(full).toBe(2);expect(checked).toBe(0);
+ });
 });

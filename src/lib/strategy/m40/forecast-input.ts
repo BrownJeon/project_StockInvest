@@ -1,6 +1,6 @@
 /** Pure preparation of an explicitly uncalibrated, evaluation-only scenario. No DB/clock/feed access. */
 import { BRK_PAIR_SYMBOL } from './forward-stock-contract';
-import { mapForwardSources,validateForwardBrkPair } from './forward-sources';
+import { validateForwardSources,validateForwardBrkPair } from './forward-sources';
 import { forwardSourceRegime } from './forward-source-regime';
 import { createHash } from 'node:crypto';
 import { stableJson } from './advisory';
@@ -60,7 +60,7 @@ export function prepareForecastInput(args:ForecastPrepareArgs):ForecastPreparati
   if(!args.accountId||!Number.isSafeInteger(args.accountRevision)||args.accountRevision<1||!args.sourceDatasetId)
     fail('forecast_identity_invalid');
   assertForwardCalendar(args.calendar);
-  mapForwardSources(args.bundle,args.calendar,issued);
+  validateForwardSources(args.bundle,args.calendar,issued);
   const asOf=args.bundle.asOfSession;
   const closes=new Map(args.calendar.map(c=>[c.session,normalizeForwardUtc(c.closeAt)!]));
   const latest=args.calendar.filter(c=>normalizeForwardUtc(c.closeAt)!<=issued).at(-1)?.session;

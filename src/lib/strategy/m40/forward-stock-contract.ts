@@ -32,9 +32,20 @@ export function validateBrkPairEnvelope(rawJson:string,options:{start:string;end
  let e:BrkPairEnvelope;try{e=JSON.parse(rawJson);}catch{return fail();}
  if(e.clockMeaning!=='whole_evidence_ready_not_first_provider_receipt'||!same(e.fieldQualification,BRK_FIELD_QUALIFICATION)||e.schemaVersion!==1||e.sourceId!==BRK_PAIR_SOURCE_ID||e.symbol!==BRK_PAIR_SYMBOL||e.currency!=='USD'||e.sourceUse!=='evaluation_only'||e.liveEligible!==false||!e.dateWindow||!validForwardSessionDate(e.dateWindow.start)||e.dateWindow.end!==options.end||e.dateWindow.start<options.start||e.dateWindow.start>e.dateWindow.end||Date.parse(e.dateWindow.end+'T00:00:00Z')-Date.parse(e.dateWindow.start+'T00:00:00Z')>430*86400000)return fail();
  const now=normalizeForwardUtc(options.now),observed=normalizeForwardUtc(e.observedAt);if(!now||!observed||observed>now)return fail();
- if(e.master?.sha256!==BRK_MASTER_SHA||stockEvidenceSha(Buffer.from(e.master.rawBase64,'base64'))!==BRK_MASTER_SHA)return fail();
- const master=new TextDecoder('euc-kr',{fatal:true}).decode(Buffer.from(e.master.rawBase64,'base64'));
- const matches=master.split(/\r?\n/).filter(Boolean).map(l=>l.split('\t').map(v=>v.trim())).filter(c=>c[4]==='BRK/B');
+ if(e.master?.sha256!==BRK_MASTER_SHA)return fail();
+ const masterBytes=Buffer.from(e.master.rawBase64,'base64');
+ if(stockEvidenceSha(masterBytes)!==BRK_MASTER_SHA)return fail();
+ const master=new TextDecoder('euc-kr',{fatal:true}).decode(masterBytes),matches:string[][]=[];
+ // Scan every row for duplicates, but only materialize the 24 columns of BRK rows.
+ // Trimming the fifth field first preserves the original split/trim/filter semantics.
+ for(const line of master.split(/\r?\n/)){
+  if(!line)continue;
+  let start=0;
+  for(let column=0;column<4;column++){const tab=line.indexOf('\t',start);if(tab<0){start=-1;break;}start=tab+1;}
+  if(start<0)continue;
+  const end=line.indexOf('\t',start);
+  if(line.slice(start,end<0?undefined:end).trim()==='BRK/B')matches.push(line.split('\t').map(v=>v.trim()));
+ }
  if(matches.length!==1||matches[0].length!==24||matches[0][2]!=='NYS'||matches[0][5]!=='NYSBRK/B'||matches[0][7]!=='BERKSHIRE HATHAWAY INC'||matches[0][8]!=='2'||matches[0][17]!=='N'||matches[0][22]!=='')return fail();
  const canonical=options.calendar.filter(s=>s.session>=e.dateWindow.start&&s.session<=options.end),closes=new Map(options.calendar.map(s=>[s.session,s.closeAt]));
  if(canonical.length<253||canonical.at(-1)?.session!==options.end)return fail();

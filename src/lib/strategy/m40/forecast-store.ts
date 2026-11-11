@@ -11,7 +11,7 @@ import { readBlob } from '@/lib/analysis-data/store';
 import { gunzipSync } from 'node:zlib';
 import { BRK_PAIR_SYMBOL } from './forward-stock-contract';
 import { brkPairProfileReady } from './forward-stock-alpaca';
-import { mapForwardSources,assertForwardSourceReadiness,type ForwardSourceBundle } from './forward-sources';
+import { validateForwardSources,assertForwardSourceReadiness,type ForwardSourceBundle } from './forward-sources';
 export const forecastJson=(v:unknown)=>canonicalJson(JSON.parse(JSON.stringify(v)) as JsonValue);
 export const forecastHash=(v:unknown)=>createHash('sha256').update(forecastJson(v)).digest('hex');
 type Row=Record<string,unknown>;
@@ -79,14 +79,14 @@ export async function publishForecast(lease:ForecastLease,input:PreparedForecast
  const rechecked=prepareForecastInput({analysisSourceBundleSha256:proof.analysisSourceBundleSha256,accountId:input.baseline.accountId,accountRevision:input.baseline.accountRevision,book:typeof account.state_json==='string'?JSON.parse(account.state_json):account.state_json,pendingIntents:await loadPendingPaperIntents(c),policy:input.policy,bundle:sourceBundle,calendar:input.calendar,issuedAt:input.issuedAt,sourceDatasetId:input.sourceDatasetId,sourceAvailableAt:input.sourceAvailableAt});
  if(rechecked.status!=='qualified'||rechecked.input.inputSha256!==input.inputSha256)throw Error('forecast_input_changed_during_run');
  const publicationAt=await assertPublicationWindow(input.calendar,input.baseline.session,c,'forecast');
- mapForwardSources(sourceBundle,input.calendar,publicationAt);
+ validateForwardSources(sourceBundle,input.calendar,publicationAt);
  const id=forecastHash([lease.id,input.inputSha256,result.seed]),hash=forecastHash(result);
  await c.query('INSERT INTO t156_forecast_run(id,job_id,account_id,issued_at,input_sha256,result_sha256,input_json,result_json,source_proof_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))',[id,lease.id,input.baseline.accountId,utcSql(lease.issuedAt),input.inputSha256,hash,forecastJson(input),forecastJson(result),forecastJson(proof)]);
  for(const h of result.horizons){await c.query('INSERT INTO t156_forecast_horizon(run_id,horizon,target_session,result_json) VALUES(?,?,?,?)',[id,h.horizon,h.targetSession,forecastJson(h)]);
  await c.query(`INSERT INTO t156_forecast_evaluation(id,run_id,horizon,forecast_sha256,status,result_json,created_at) VALUES(?,?,?,?,'pending',?,UTC_TIMESTAMP(6))`,[forecastHash([id,h.horizon,'pending']),id,h.horizon,hash,forecastJson({issues:['target_not_matured'],actualPnlUsd:null,actualReturnPct:null})]);}
  await c.query("UPDATE t156_forecast_job SET status='completed',completed_paths=2000,lease_token=NULL,lease_until=NULL,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND lease_token=?",[lease.id,lease.token]);
  const commitAt=await assertPublicationWindow(input.calendar,input.baseline.session,c,'forecast');
- mapForwardSources(sourceBundle,input.calendar,commitAt);
+ validateForwardSources(sourceBundle,input.calendar,commitAt);
  await c.commit();return id;
  }catch(e){await c.rollback();throw e;}finally{c.release?.();}
 }

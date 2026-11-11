@@ -4,15 +4,17 @@ import { readBlob } from '@/lib/analysis-data/store';
 import { runM40Forecast,forecastDailyJobId } from '../forecast-runtime';
 import { readM40ForwardStatus } from '../forward-runtime';
 import { loadPaperAccount,loadPendingPaperIntents } from '../forward-store';
-import { acquireForecastJob,failForecastJob } from '../forecast-store';
+import { acquireForecastJob,failForecastJob,publishForecast } from '../forecast-store';
 import { prepareForecastInput } from '../forecast-input';
+import { runForecastEngine } from '../forecast-engine';
 jest.mock('@/lib/db',()=>({getPool:jest.fn()}));
 jest.mock('@/lib/analysis-data/store',()=>({...jest.requireActual('@/lib/analysis-data/store'),readBlob:jest.fn()}));
 jest.mock('../forward-runtime',()=>({readM40ForwardStatus:jest.fn(),loadForwardCalendar:jest.fn(async()=>[])}));
 jest.mock('../forward-store',()=>({loadPaperAccount:jest.fn(),requirePaperDryRun:jest.fn(),loadPendingPaperIntents:jest.fn()}));
-jest.mock('../forecast-store',()=>({...jest.requireActual('../forecast-store'),acquireForecastJob:jest.fn(),failForecastJob:jest.fn()}));
+jest.mock('../forecast-store',()=>({...jest.requireActual('../forecast-store'),acquireForecastJob:jest.fn(),failForecastJob:jest.fn(),publishForecast:jest.fn()}));
 jest.mock('../forward-sources',()=>({...jest.requireActual('../forward-sources'),assertForwardSourceReadiness:jest.fn()}));
 jest.mock('../forecast-input',()=>({prepareForecastInput:jest.fn()}));
+jest.mock('../forecast-engine',()=>({runForecastEngine:jest.fn()}));
 jest.mock('../forecast-manifest',()=>({forecastCodeManifest:jest.fn(()=>({modelCodeSha256:'synthetic'}))}));
 const session='2026-11-09',accountId='synthetic-account';
 function fixture({published=false,running=false,legacyBusy=false,revision=2,dataset='source-a'}={}){
@@ -59,3 +61,28 @@ test('an unexpired legacy input-hash worker blocks a new stable-session lease',a
 test('actual forward source hash pins the archive query instead of selecting a later different bundle',async()=>{const db=fixture({dataset:'pinned-analysis-A'});await runM40Forecast(db as never);const query=db.query.mock.calls.find(([s])=>s.includes('FROM t156_record'));expect(query?.[0]).toContain('d.content_sha256=?');expect((query as unknown as [string,string[]])[1][0]).toMatch(/^[a-f0-9]{64}$/);});
 import {evaluateM40Forecasts} from '../forecast-runtime';
 test('paused paper account skips the evaluation scan before any evidence/append query',async()=>{jest.mocked(loadPaperAccount).mockResolvedValue({status:'paused'} as never);const db={query:jest.fn()};await expect(evaluateM40Forecasts(db as never)).resolves.toEqual({evaluated:0});expect(db.query).not.toHaveBeenCalled();});
+
+test('a pre-lease source error never acquires or fails a lease',async()=>{
+ const db=fixture();jest.mocked(readBlob).mockRejectedValue(Error('source_read_failed'));
+ await expect(runM40Forecast(db as never)).rejects.toThrow('source_read_failed');
+ expect(acquireForecastJob).not.toHaveBeenCalled();expect(failForecastJob).not.toHaveBeenCalled();expect(runForecastEngine).not.toHaveBeenCalled();
+});
+test('a post-lease preparation exception records the failed lease exactly once',async()=>{
+ const db=fixture();jest.mocked(prepareForecastInput).mockImplementation(()=>{throw Error('synthetic_prepare_throw');});
+ await expect(runM40Forecast(db as never)).rejects.toThrow('synthetic_prepare_throw');
+ expect(failForecastJob).toHaveBeenCalledTimes(1);expect(jest.mocked(failForecastJob).mock.calls[0][1]).toBe('forecast_run_failed');expect(runForecastEngine).not.toHaveBeenCalled();
+});
+test('a newly published session after lease acquisition stops before preparation or engine',async()=>{
+ const db=fixture(),query=db.query.getMockImplementation()!;let publishedChecks=0;
+ db.query.mockImplementation(async(sql:string)=>sql.includes('SELECT id FROM t156_forecast_run')?[++publishedChecks===1?[]:[{id:'concurrent-original'}]]:query(sql));
+ await expect(runM40Forecast(db as never)).resolves.toEqual({status:'already_published',runId:'concurrent-original',executionScope:'forecast_only'});
+ expect(failForecastJob).toHaveBeenCalledTimes(1);expect(jest.mocked(failForecastJob).mock.calls[0][1]).toBe('forecast_session_already_published');expect(prepareForecastInput).not.toHaveBeenCalled();expect(runForecastEngine).not.toHaveBeenCalled();
+});
+test('prepared-only engine handoff preserves failed-engine lease handling',async()=>{
+ const db=fixture(),input={baseline:{accountId,session},calendar:[]} as never;
+ jest.mocked(prepareForecastInput).mockReturnValue({status:'qualified',input});
+ jest.mocked(runForecastEngine).mockResolvedValue({status:'failed',issues:['synthetic_engine_failed']} as never);
+ await expect(runM40Forecast(db as never)).resolves.toMatchObject({status:'failed',issues:['synthetic_engine_failed']});
+ expect(jest.mocked(runForecastEngine).mock.calls[0]).toEqual([input,{seed:'t156-forecast-v1',pathCount:2000,blockLength:10,budgetMs:120000}]);
+ expect(jest.mocked(failForecastJob).mock.calls[0][1]).toBe('forecast_engine_failed');expect(failForecastJob).toHaveBeenCalledTimes(1);expect(publishForecast).not.toHaveBeenCalled();
+});

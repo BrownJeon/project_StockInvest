@@ -11,7 +11,7 @@ import { putBlob,readBlob,putDataset,putRecord,saveAnalysisRun,putJudgment,findJ
 import { buildPaperInput,canFreezePaperCohort } from './forward-input';
 import { extendForwardCalendar,nextPaperSettlementSession } from './forward-calendar';
 import type { ForwardCalendarSession,ForwardPolicy } from './forward-types';
-import { brkQuarantineRequiresReview,quarantineForwardBrkEvidence,collectForwardSources,mapForwardSources,hasRequiredForwardIndexHistory,requiredForwardSourceSessions,missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText,parseForwardIndexCsv,type ForwardSourceBundle } from './forward-sources';
+import { brkQuarantineRequiresReview,quarantineForwardBrkEvidence,collectForwardSources,mapForwardSources,validateForwardSources,hasRequiredForwardIndexHistory,requiredForwardSourceSessions,missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText,parseForwardIndexCsv,type ForwardSourceBundle } from './forward-sources';
 import { collectKisForwardIndex } from './forward-index-kis';
 import { KIS_SP500_SOURCE_ID } from './forward-index-contract';
 import { loadM40Evidence } from './load-evidence';
@@ -154,12 +154,12 @@ export async function readM40ForwardStatus(db:ArchiveQueryable=getPool(),now=new
  if(bundle){
   try{
    const symbols=[...new Set([...(account.policy.frozenCohort?.symbols??account.policy.referenceSymbols),...account.book.holdings.map(h=>h.symbol)])];
-   const mapped=mapForwardSources(bundle,calendar,cutoff),prior=calendar[calendar.findIndex(s=>s.session===asOf)-1]?.session;
-   const indexEnd=mapped.data.sp500Bars.filter(bar=>bar.final&&bar.session<=asOf).at(-1)?.session;
+   const indexBars=validateForwardSources(bundle,calendar,cutoff),prior=calendar[calendar.findIndex(s=>s.session===asOf)-1]?.session;
+   const indexEnd=indexBars.filter(bar=>bar.final&&bar.session<=asOf).at(-1)?.session;
    const required=requiredForwardSourceSessions(calendar,asOf,Object.values(account.book.splitBasis??{}).map(basis=>basis.session),indexEnd);
    const indexRequired=calendar.filter(day=>indexEnd&&day.session<=indexEnd).slice(-253).map(day=>day.session);
    sourceReady=(!symbols.includes(BRK_PAIR_SYMBOL)||((await brkPairProfileReady())&&bundle.records.filter(r=>r.symbol===BRK_PAIR_SYMBOL&&r.sourceId.startsWith(BRK_PAIR_SOURCE_ID)).length===2))&&hasRequiredForwardIndexHistory(bundle,calendar)&&indexRequired.length===253&&!!indexEnd&&!!prior&&indexEnd>=prior&&missingForwardSourceSymbols(bundle,symbols,required).length===0
-    &&indexRequired.every(session=>mapped.data.sp500Bars.some(bar=>bar.session===session&&bar.final));
+    &&indexRequired.every(session=>indexBars.some(bar=>bar.session===session&&bar.final));
   }catch{sourceReady=false;}
  }
  return {status:completed?'completed':Number(leases[0]?.busy)===1?'running':cycles.length?'blocked':'pending',

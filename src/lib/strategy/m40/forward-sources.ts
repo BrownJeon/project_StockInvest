@@ -260,16 +260,29 @@ export function validateForwardBrkPair(bundle:ForwardSourceBundle,calendar:reado
 export function mapForwardSources(
   bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[],knownAt=bundle.observedAt,
 ):{data:ForwardInputData;opens:RawOpen[]} {
+ return inspectForwardSources(bundle,calendar,knownAt,true);
+}
+/** Run the same full validation, retaining only the index bars used by readiness. */
+export function validateForwardSources(
+ bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[],knownAt=bundle.observedAt,
+):readonly ForwardPriceBar[] {
+ return inspectForwardSources(bundle,calendar,knownAt,false).data.sp500Bars;
+}
+function inspectForwardSources(
+ bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[],knownAt:string,materializeStockData:boolean,
+):{data:ForwardInputData;opens:RawOpen[]} {
   const asOfSession=bundle.asOfSession??bundle.dateWindow?.end;
   if(bundle.schemaVersion!==1||!validForwardSessionDate(asOfSession)||!Array.isArray(bundle.records)
     ||!validForwardSessionDate(bundle.dateWindow?.start)||!validForwardSessionDate(bundle.dateWindow?.end)
     ||bundle.dateWindow.start>bundle.dateWindow.end||bundle.dateWindow.end!==asOfSession)return error('forward_source_bundle_invalid');
   validateForwardBrkPair(bundle,calendar,false,knownAt);
-  const sessions=new Map(calendar.map(s=>[s.session,s])),members=new Map<string,Omit<ForwardMemberData,'splitBars'> & {splitBars:ForwardPriceBar[]}>(),seen=new Set<string>(),opens:RawOpen[]=[];
-  function checkedPrice(session:string,value:string,observedAt:string,sourceId:string,digest:string,variant:'split_only'|'raw'|'index'):ForwardPriceBar {
+  const sessions=new Map(calendar.map(s=>[s.session,s])),members=materializeStockData?new Map<string,Omit<ForwardMemberData,'splitBars'> & {splitBars:ForwardPriceBar[]}>():null,seen=new Set<string>(),opens:RawOpen[]|null=materializeStockData?[]:null;
+  function checkedPrice(session:string,value:string,observedAt:string,sourceId:string,digest:string,variant:'split_only'|'raw'|'index',materialize=true):ForwardPriceBar|undefined {
     if(!validForwardSessionDate(session)||session>asOfSession||!positive(value)||!SHA.test(digest)||!sourceId.trim())return error('forward_source_observation_invalid');
     const observed=utc(observedAt),close=sessions.get(session)?.closeAt;
-    return {session,close:Number(value),final:close!==undefined&&utc(close)<=observed,
+    const parsedClose=Number(value),final=close!==undefined&&utc(close)<=observed;
+    if(!materialize)return;
+    return {session,close:parsedClose,final,
       observedAt,sourceId,sourceVariant:variant,sha256:digest,currency:variant==='index'?'INDEX':'USD',qualification:'evaluation_only'};
   }
   for(const record of bundle.records){
@@ -294,12 +307,13 @@ export function mapForwardSources(
       // Validate full shape even when a trusted archive supplies parsed rows without inline CSV.
       if([row.open,row.high,row.low,row.close].some(v=>typeof v!=='string'||!positive(v))||typeof row.volume!=='string'||!/^\d+$/.test(row.volume)
         ||Number(row.low)>Math.min(Number(row.open),Number(row.close))||Number(row.high)<Math.max(Number(row.open),Number(row.close)))return error('forward_source_observation_invalid');
-      const price=checkedPrice(row.session,row.close,record.observedAt,record.sourceId,record.sha256,record.basis==='raw'?'raw':'split_only');
-      let member=members.get(record.symbol);if(!member){member={symbol:record.symbol,splitBars:[]};members.set(record.symbol,member);}
+      const price=checkedPrice(row.session,row.close,record.observedAt,record.sourceId,record.sha256,record.basis==='raw'?'raw':'split_only',materializeStockData);
+      if(!price)continue;
+      let member=members!.get(record.symbol);if(!member){member={symbol:record.symbol,splitBars:[]};members!.set(record.symbol,member);}
       if(record.basis==='split_adjusted')member.splitBars.push(price);
       else {
         if(row.session===asOfSession){const {close,...quote}=price;member.rawQuote={...quote,price:close};}
-        opens.push({symbol:record.symbol,session:row.session,open:Number(row.open),observedAt:record.observedAt,sha256:record.sha256});
+        opens!.push({symbol:record.symbol,session:row.session,open:Number(row.open),observedAt:record.observedAt,sha256:record.sha256});
       }
     }
   }
@@ -324,11 +338,11 @@ export function mapForwardSources(
     }
     let last='';sp500Bars=market.rows.map(row=>{
       if(row.session<=last)return error('forward_source_duplicate_or_unordered_rows');last=row.session;
-      return checkedPrice(row.session,row.close,market.observedAt,market.sourceId,market.sha256,'index');
+      return checkedPrice(row.session,row.close,market.observedAt,market.sourceId,market.sha256,'index')!;
     });
   }
-  return {data:{asOfSession,calendar,members:[...members.values()].sort((a,b)=>order(a.symbol,b.symbol)),sp500Bars},
-    opens:opens.sort((a,b)=>order(a.session,b.session)||order(a.symbol,b.symbol))};
+  return {data:{asOfSession,calendar,members:members?[...members.values()].sort((a,b)=>order(a.symbol,b.symbol)):[],sp500Bars},
+    opens:opens?opens.sort((a,b)=>order(a.session,b.session)||order(a.symbol,b.symbol)):[]};
 }
 
 /** Readiness includes the entire canonical index history, not merely yesterday's row. */
@@ -346,9 +360,9 @@ export function hasRequiredForwardIndexHistory(bundle:ForwardSourceBundle,calend
 /** Validate the exact bundle consumed, not a prior readiness query's latest record. */
 export function assertForwardSourceReadiness(bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[],symbols:readonly string[],basisSessions:readonly string[]=[],knownAt=bundle.observedAt):void {
  validateForwardBrkPair(bundle,calendar,symbols.includes(BRK_PAIR_SYMBOL),knownAt);
- const mapped=mapForwardSources(bundle,calendar,knownAt);
+ const indexBars=validateForwardSources(bundle,calendar,knownAt);
  if(!hasRequiredForwardIndexHistory(bundle,calendar))throw Error('forward_source_index_history_incomplete');
- const indexEnd=mapped.data.sp500Bars.at(-1)?.session;
+ const indexEnd=indexBars.at(-1)?.session;
  const required=requiredForwardSourceSessions(calendar,bundle.asOfSession,basisSessions,indexEnd);
  if(missingForwardSourceSymbols(bundle,symbols,required).length)throw Error('forward_source_stock_history_incomplete');
 }

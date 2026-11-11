@@ -2,6 +2,19 @@
 
 기준: 2026-11-11, 미국 11/10 마감분. 사용자 요청은 부족한 고정 후보 105종목을 무료 원천으로 보완하고 모의분석→4기간 예측 발행을 실제 확인하는 것이다. 신규 무료 원천 조사는 승인됐다. 실거래 OFF, 편도 수수료 0.25%, 고정 후보 123개와 실계좌 복제 모의 장부, 첫 적격일 T0 규칙은 유지한다.
 
+## T-156 실자료 4기간 발행·앱 검증 완료 / 메모리 여유 미확보 — F56/exec-099
+
+- 운영0.5.0/3f66b35ddfa913376eb574e7498250ff9d602b41, release20261111-201907-3f66b35d는20:20:00KST RELEASE_RESULT ok/END0/migratedfalse다. 이전64a5의health_failed→0.4자동복구와구분한다. 부팅120초·메모리512MiB·실거래OFF 조건을완화하지않았다. 기존rev4guard/43검사와보완48해시·구프로세스종료/환경·경제/원예측불변을확인후active로재개했다.
+- 11/10마감분 고정123후보 필수일봉 누락0. 수집126종목의raw126/split126최신11/10이고기존원천재수집104개+BRK.B한정Alpaca동일raw/split쌍/KIS교차검산으로105부족을해소했다. 전체당시나스닥100/NYSE50·1990이후자료가완전하다는뜻은아니다. sourceA beb83f5d…07a03a와분석m40-93343a…/firstforward1·T0Nov10·rev4·모의시그널4/체결0을보존했다.
+- 20:22:16KST 실제forecast API HTTP200 completed/2000paths/12.615초. 새run876a7c8c19dc52facba333f700852a929069d119d22dfb7564880ac5491b5461가같은분석A를사용했고4기간DB저장을READONLY로검산했다: 1주2026-11-17,1개월2026-12-10,3개월2027-02-10,1년2027-11-10. 모두편도0.25%·actual=null/pending이다. 기존1run4기간4pending원문SHA는보존,전체2run8기간8pending. 같은API재호출은already_published/동일runID로추가발행0이며actualforward중복0이다.
+- 로그인앱의모의분석→모의성과에서4기간 예상손익범위/손실확률/평균·목표일을직접관찰하고DB반올림값과전부일치확인했다. 사후비교target_not_matured/실제손익미확인도정상이며첫관측1점의과거성과는insufficient_points로표시한다. UI는공시·뉴스수집미확인/에이전트거래참고전용·미구현을그대로밝히며,예측은최근공통가격296수익률의미보정연구시나리오다. 장기폭락전체·확률보정·수익성을검증한값이아니다.
+- **기능성공과자원여유는분리한다.** 실제웹60초/250ms240점중31점에서PM2재시작기준536870912bytes를초과했다. 최고541564928bytes(약516.5MiB),시작+23.355~31.386초구간에초과관측,마지막265736192bytes다. web/cron PID·restart0는같고이번발행은완료됐지만PM2표본시각에따라재시작할위험이남는다. 단일순간한점/메모리여유통과/장기안정완료로표기하지않는다. QA독립읽기감사도기능PASS·자원여유NOT_VERIFIED로구분했다.
+- 마지막운영읽기에서health200/DBtrue/DRYtrue/killfalse,active4/T0Nov10,web/cron각1online·양lease0를확인했다. 보호8trigger/전역/앱권한/기존안전·핵심환경지문과원예측은동일하다. readOnly점검helper의T0요약은state_json대신policy_json을읽도록수정했으며실제정책·기준일을다시쓰지않았다.
+- T-156은doing이다. 남은우선과제는기존512MiB를올리지않고원천버퍼·반복검증의수명/할당을줄여실제웹에서여유를확인하는것,다음정기회차연속성·84일/신규왕복100·에이전트변경20일/예측보정및과거구성·뉴스공백검증이다. 현재기능발행완료를전체시장예측/수익성/무재시작보장으로확대하지않는다. 이번테스트·운영가린근거는별도testDB에보존한다.
+
+- 이번가린검증근거52파일/아카이브73436bytes를testartifact/blob DB에저장하고재읽기SHA를확인했다: artifact-45789f683946b610830692daad92bac8 / SHA45789f683946b610830692daad92bac89f6ebc7b2bea7ac1981c6d84be0040d8. 실제가격·계좌fixture/예측금액·키는테스트아카이브에서제외하고실원문은sourceDB/예측private원장에보존했다. 상태는FUNCTIONAL_VERIFIED_RESOURCE_HEADROOM_NOT_VERIFIED이며실패시도와메모리31초과샘플도포함한다. 이줄은아카이브저장후붙인영수증이며아카이브문서는저장직전스냅샷이다.
+
+
 ## T-156 0.5 자동 복구 후 중복 부팅 작업 보완 검증 중 — F55/exec-098
 
 - 메모리 수정 0.5/64a5b3b3e60e722975119bd0c1762fda5a8a2ec0는 빌드는 통과했으나 19:47:23KST RELEASE_RESULT health_failed/END1로 0.4/949856에 자동 복구됐다. 별도deployer 정본 --status에서 웹·cron 각1/health200을 확인했다. 모의계좌는 rev4 paused를 유지하며 sourceA·T0Nov10·기존 모의시그널·원forecast1/4pending을 보존했다. 실패 뒤 새수집/예측 강제호출·수동lease초기화는 없다.
