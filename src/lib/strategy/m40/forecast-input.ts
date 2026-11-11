@@ -1,4 +1,7 @@
 /** Pure preparation of an explicitly uncalibrated, evaluation-only scenario. No DB/clock/feed access. */
+import { BRK_PAIR_SYMBOL } from './forward-stock-contract';
+import { mapForwardSources,validateForwardBrkPair } from './forward-sources';
+import { forwardSourceRegime } from './forward-source-regime';
 import { createHash } from 'node:crypto';
 import { stableJson } from './advisory';
 import { M40_POLICY } from './core';
@@ -57,6 +60,7 @@ export function prepareForecastInput(args:ForecastPrepareArgs):ForecastPreparati
   if(!args.accountId||!Number.isSafeInteger(args.accountRevision)||args.accountRevision<1||!args.sourceDatasetId)
     fail('forecast_identity_invalid');
   assertForwardCalendar(args.calendar);
+  mapForwardSources(args.bundle,args.calendar,issued);
   const asOf=args.bundle.asOfSession;
   const closes=new Map(args.calendar.map(c=>[c.session,normalizeForwardUtc(c.closeAt)!]));
   const latest=args.calendar.filter(c=>normalizeForwardUtc(c.closeAt)!<=issued).at(-1)?.session;
@@ -72,6 +76,7 @@ export function prepareForecastInput(args:ForecastPrepareArgs):ForecastPreparati
     ||cohort.asOfSession>asOf)fail('forecast_frozen_policy_required');
   const candidateSymbols=[...cohort.symbols].sort(order);
   const symbols=[...new Set([...candidateSymbols,...args.book.holdings.filter(h=>h.quantity>0).map(h=>h.symbol)])].sort(order);
+  validateForwardBrkPair(args.bundle,args.calendar,symbols.includes(BRK_PAIR_SYMBOL),issued);
   if(new Set(candidateSymbols).size!==candidateSymbols.length)fail('forecast_cohort_duplicate');
   const epoch=args.policy.epochSession??args.calendar[baselineIndex+1].session;
   if(!args.calendar.some(c=>c.session===epoch))fail('forecast_epoch_calendar_missing');
@@ -175,7 +180,7 @@ export function prepareForecastInput(args:ForecastPrepareArgs):ForecastPreparati
     ...(bridge.kind==='none'?[]:['missing_one_index_session_is_latent_ols_plus_centered_residual_not_observed'])];
   const sourceSha256=forecastDigest({sourceClocks,fullSessions,stockHistory,marketHistory,overnight,intraday,marketReturns,rawMarks});
   const baseline={kind:'forecast_only_marked_snapshot' as const,accountId:args.accountId,accountRevision:args.accountRevision,
-    session:asOf,equityUsd:marked.equityUsd,bookSha256:forecastDigest(marked.book),sourceAccountStateSha256:forecastDigest(args.book),epochSession:epoch,epochProvisional:args.policy.epochSession===null};
+    sourceRegimeSha256:forwardSourceRegime(args.bundle),...(args.analysisSourceBundleSha256?{analysisSourceBundleSha256:args.analysisSourceBundleSha256}:{}),session:asOf,equityUsd:marked.equityUsd,bookSha256:forecastDigest(marked.book),sourceAccountStateSha256:forecastDigest(args.book),epochSession:epoch,epochProvisional:args.policy.epochSession===null};
   const input:PreparedForecastInput={modelVersion:FORECAST_MODEL_VERSION,issuedAt:args.issuedAt,sourceDatasetId:args.sourceDatasetId,
     sourceAvailableAt:args.sourceAvailableAt,sourceSha256,policySha256:forecastPolicyHash(args.policy),inputSha256:'',baseline,
     book:marked.book,pendingIntents:[...pendingIntents],policy:JSON.parse(stableJson(args.policy)) as ForwardPolicy,symbols,candidateSymbols,calendar:args.calendar.map(c=>({...c})),baselineIndex,

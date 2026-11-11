@@ -18,11 +18,11 @@ describe('forecast actual-source preparation',()=>{
   expect(p.input.baseline).toMatchObject({epochProvisional:true,epochSession:'2026-11-09',session:'2026-11-06'});
   expect(f.policy.epochSession).toBeNull();expect(JSON.stringify(forecastFixture())).toBe(before);
  });
- test('future row addition and record permutations do not change private input',()=>{
-  const f=forecastFixture(),a=prepareForecastInput(f);f.bundle.records.reverse();
+ test('record permutations preserve input; future observations now fail the full source contract',()=>{
+  const f=forecastFixture(),a=prepareForecastInput(f);f.bundle.records.reverse();expect(prepareForecastInput(f)).toEqual(a);
   for(const r of f.bundle.records)r.rows.push({...r.rows.at(-1)!,session:'2026-11-09',close:'99999'});
   f.bundle.market!.rows.push({session:'2026-11-09',close:'99999'});
-  expect(prepareForecastInput(f)).toEqual(a);
+  expect(prepareForecastInput(f)).toMatchObject({status:'blocked',issues:['forward_source_observation_invalid']});
  });
  test('missing held mark, missing joint day, invalid price, and unknown-by-issue block explicitly',()=>{
   const f=forecastFixture();f.book.holdings=[{symbol:'NAS:S000',quantity:1,strategyId:'m40-paper-v1'}];
@@ -40,7 +40,7 @@ describe('forecast actual-source preparation',()=>{
  });
  test('split jumps use adjusted paired open, not raw close returns',()=>{
   const f=forecastFixture(6,true);
-  for(const r of f.bundle.records.filter(r=>r.basis==='raw'))for(const row of r.rows.slice(-30))row.open=row.close='50';
+  for(const r of f.bundle.records.filter(r=>r.basis==='raw'))for(const row of r.rows.slice(-30))row.open=row.close=row.high=row.low='50';
   const p=prepareForecastInput(f);expect(p.status).toBe('qualified');if(p.status!=='qualified')return;
   expect(p.input.overnight.every(row=>row.every(v=>v===1))).toBe(true);
   expect(p.input.intraday.every(row=>row.every(v=>v===1))).toBe(true);
@@ -90,7 +90,7 @@ describe('seeded coherent scenario engine',()=>{
   for(const h of r.horizons){expect(h.netUsd).toEqual({mean:0,p10:0,p50:0,p90:0});expect(h.lossProbability).toBe(0);}
  });
  test('pre-existing pending buy then canonical next-open sale charges each side once',async()=>{
-  const f=forecastFixture(1,true);for(const r of f.bundle.records)for(const row of r.rows)row.open=row.close='10';
+  const f=forecastFixture(1,true);for(const r of f.bundle.records)for(const row of r.rows)row.open=row.close=row.high=row.low='10';
   f.book.cashUsd=f.book.initialEquityUsd=f.book.peakEquityUsd=1000;
   f.pendingIntents=[{id:'existing-pending',accountId:f.accountId,cycleId:'existing-cycle',session:'2026-11-06',createdAt:f.sourceAvailableAt,
    symbol:'NAS:S000',side:'buy',quantity:10,executeSession:'2026-11-09',executionScope:'paper_only',status:'awaiting_open',maxDebitUsd:150,
@@ -156,3 +156,5 @@ describe('seeded coherent scenario engine',()=>{
   expect(tick).toBe(true);expect(JSON.stringify(p)).toBe(before);
  });
 });
+test('current forecast price math does not consume cross-provider-unqualified high/low/volume',()=>{const f=forecastFixture(1,true),before=prepareForecastInput(f);for(const record of f.bundle.records)for(const row of record.rows){row.high='1000';row.low='0.1';row.volume='9007199254740993';}const after=prepareForecastInput(f);expect(before.status).toBe('qualified');expect(after.status).toBe('qualified');if(before.status==='qualified'&&after.status==='qualified'){for(const key of ['stockHistory','overnight','intraday','rawMarks']as const)expect(after.input[key]).toEqual(before.input[key]);}});
+test.each([undefined,''])('required BRK cannot use newest Kibot pair when profile is absent/restart-dropped (%s)',profile=>{const old=process.env.M40_BRK_ALPACA_KEY_FILE;if(profile===undefined)delete process.env.M40_BRK_ALPACA_KEY_FILE;else process.env.M40_BRK_ALPACA_KEY_FILE=profile;const f=forecastFixture(1,true),previous=f.policy.frozenCohort!.symbols[0];f.policy.referenceSymbols=['NYS:BRK.B'];f.policy.frozenCohort!.symbols=['NYS:BRK.B'];for(const record of f.bundle.records)if(record.symbol===previous){record.symbol='NYS:BRK.B';record.vendorTicker='BRK.B';record.request.symbol='BRK.B';}expect(prepareForecastInput(f)).toMatchObject({status:'blocked',issues:['forward_pair_required']});if(old===undefined)delete process.env.M40_BRK_ALPACA_KEY_FILE;else process.env.M40_BRK_ALPACA_KEY_FILE=old;});

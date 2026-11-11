@@ -227,3 +227,7 @@ test.each([
  await expect(commitPaperCycle(request(lease),f.db)).rejects.toThrow('paper_publication_deadline_elapsed');
  expect(f.cycles).toHaveLength(0);expect(f.signals).toHaveLength(0);expect(f.account).toEqual(before);
 });
+test.each([
+ ['2026-11-10T12:00:00Z'],
+ ['2026-11-10T04:59:59Z','2026-11-10T05:00:00Z'],
+])('required BRK evidence cannot cross a NY-day boundary inside the paper transaction: %j',async(...times)=>{const f=new Fixture(),p=policy();p.referenceSymbols.push('NYS:BRK.B');await initializePaperAccount(p,f.db);const lease=(await acquirePaperLease(f.db))!;f.publicationClocks=times as string[];const input=request(lease,{policy:p});input.cycle.payload={eventEvidenceNyDate:'2026-11-09'};const before=copy(f.account);await expect(commitPaperCycle(input,f.db)).rejects.toThrow('paper_source_event_evidence_stale');expect(f.cycles).toHaveLength(0);expect(f.signals).toHaveLength(0);expect(f.account).toEqual(before);});

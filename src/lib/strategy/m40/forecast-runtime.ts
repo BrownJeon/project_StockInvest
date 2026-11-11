@@ -6,7 +6,9 @@ import { createHash } from 'node:crypto';
 import { getPool } from '@/lib/db';
 import { readBlob } from '@/lib/analysis-data/store';
 import type { ArchiveQueryable } from '@/lib/analysis-data/types';
-import type { ForwardSourceBundle } from './forward-sources';
+import { assertForwardSourceReadiness,validateForwardBrkPair,type ForwardSourceBundle } from './forward-sources';
+import { BRK_PAIR_SYMBOL } from './forward-stock-contract';
+import { brkPairProfileReady } from './forward-stock-alpaca';
 import { loadForwardCalendar, readM40ForwardStatus } from './forward-runtime';
 import { loadPaperAccount, loadPendingPaperIntents, requirePaperDryRun } from './forward-store';
 import { prepareForecastInput } from './forecast-input';
@@ -31,13 +33,22 @@ export async function runM40Forecast(db:ArchiveQueryable=getPool(),seed='t156-fo
  const [legacyBusy]=await db.query<Row[]>(`SELECT id FROM t156_forecast_job WHERE account_id=? AND id<>?
   AND status='running' AND lease_until>UTC_TIMESTAMP(6) LIMIT 1`,[account.id,id]);
  if(legacyBusy.length)return {status:'running',completed:false,executionScope:'forecast_only'};
+ const [cycles]=await db.query<Row[]>(`SELECT id,JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.sourceBundleSha256')) sourceBundleSha256 FROM t156_paper_cycle WHERE account_id=? AND session_date=? AND mode='forward' LIMIT 1`,[account.id,readiness.session]);
+ const anchor=cycles[0];if(!anchor||typeof anchor.sourceBundleSha256!=='string'||!/^[a-f0-9]{64}$/.test(anchor.sourceBundleSha256))return {status:'blocked',issueCode:'forecast_analysis_source_anchor_missing'};
  const [rows]=await db.query<Row[]>(`SELECT r.dataset_id,r.payload_json,DATE_FORMAT(r.available_at,'%Y-%m-%dT%H:%i:%s.%fZ') availableAt
- FROM t156_record r JOIN t156_dataset d ON d.id=r.dataset_id WHERE d.kind='m40_paper_sources' AND d.status='published' AND d.live_eligible=0 AND r.record_type='m40_paper_source_bundle' AND r.available_at<=UTC_TIMESTAMP(6) ORDER BY r.available_at DESC,r.dataset_id DESC LIMIT 1`);
+ FROM t156_record r JOIN t156_dataset d ON d.id=r.dataset_id WHERE d.kind='m40_paper_sources' AND d.status='published' AND d.live_eligible=0 AND r.record_type='m40_paper_source_bundle' AND r.available_at<=UTC_TIMESTAMP(6) AND d.content_sha256=? ORDER BY r.available_at DESC,r.dataset_id DESC LIMIT 1`,[anchor.sourceBundleSha256]);
  if(!rows.length)return {status:'blocked',issueCode:'forecast_source_unavailable'};
  const row=rows[0],pointer=parse<{blobSha256:string;uncompressedSha256:string}>(row.payload_json);
  const bytes=gunzipSync(await readBlob(pointer.blobSha256,db),{maxOutputLength:24*1024*1024});
- if(createHash('sha256').update(bytes).digest('hex')!==pointer.uncompressedSha256)throw Error('forecast_source_hash_mismatch');
+ if(pointer.uncompressedSha256!==anchor.sourceBundleSha256||createHash('sha256').update(bytes).digest('hex')!==pointer.uncompressedSha256)throw Error('forecast_source_hash_mismatch');
  const bundle=JSON.parse(bytes.toString()) as ForwardSourceBundle;
+ const calendar=await loadForwardCalendar(db);
+ const requiredSymbols=[...new Set([...(account.policy.frozenCohort?.symbols??account.policy.referenceSymbols),...account.book.holdings.map(h=>h.symbol)])];
+ if(requiredSymbols.includes(BRK_PAIR_SYMBOL)&&!(await brkPairProfileReady()))throw Error('forecast_pair_profile_required');
+ validateForwardBrkPair(bundle,calendar,requiredSymbols.includes(BRK_PAIR_SYMBOL),new Date().toISOString());
+ assertForwardSourceReadiness(bundle,calendar,requiredSymbols,Object.values(account.book.splitBasis??{}).map(b=>b.session));
+ const [latest]=await db.query<Row[]>(`SELECT d.content_sha256 latestSourceSha FROM t156_record r JOIN t156_dataset d ON d.id=r.dataset_id WHERE d.kind='m40_paper_sources' AND d.status='published' AND d.live_eligible=0 AND r.record_type='m40_paper_source_bundle' AND r.session_date=? AND r.available_at<=UTC_TIMESTAMP(6) ORDER BY r.available_at DESC,r.dataset_id DESC LIMIT 1`,[readiness.session]);
+ if(latest[0]?.latestSourceSha!==anchor.sourceBundleSha256)return {status:'blocked',issueCode:'forecast_analysis_source_not_latest'};
  const codeManifest=forecastCodeManifest();
  const lease=await acquireForecastJob(id,account.id,db);
  if(!lease){
@@ -52,9 +63,9 @@ export async function runM40Forecast(db:ArchiveQueryable=getPool(),seed='t156-fo
  // immutable runs whose old input-hash job ID differs from daily-session-v2.
  const published=await publishedForecastForSession(account.id,String(readiness.session),db);
  if(published){await failForecastJob(lease,'forecast_session_already_published',db);return {status:'already_published',runId:published,executionScope:'forecast_only'};}
- const prepared=prepareForecastInput({accountId:account.id,accountRevision:account.revision,book:account.book,policy:account.policy,pendingIntents:await loadPendingPaperIntents(db),bundle,calendar:await loadForwardCalendar(db),issuedAt:lease.issuedAt,sourceDatasetId:String(row.dataset_id),sourceAvailableAt:String(row.availableAt)});
+ const prepared=prepareForecastInput({analysisSourceBundleSha256:String(anchor.sourceBundleSha256),accountId:account.id,accountRevision:account.revision,book:account.book,policy:account.policy,pendingIntents:await loadPendingPaperIntents(db),bundle,calendar,issuedAt:lease.issuedAt,sourceDatasetId:String(row.dataset_id),sourceAvailableAt:String(row.availableAt)});
  if(prepared.status==='blocked'){await failForecastJob(lease,'forecast_input_blocked',db);return {status:'blocked',issues:prepared.issues};}
- lease.sourceProof={pointerSha256:forecastHash(pointer),blobSha256:pointer.blobSha256,uncompressedSha256:pointer.uncompressedSha256,baselineSplitBasis:Object.fromEntries(account.book.holdings.map(holding=>{const bar=bundle.records.find(r=>r.symbol===holding.symbol&&r.basis==='split_adjusted')?.rows.find(r=>r.session===prepared.input.baseline.session);if(!bar||!Number.isFinite(Number(bar.close))||Number(bar.close)<=0)throw Error('forecast_baseline_split_basis_missing');return [holding.symbol,{session:bar.session,close:Number(bar.close)}];}))};
+ lease.sourceProof={analysisCycleId:String(anchor.id),analysisSourceBundleSha256:String(anchor.sourceBundleSha256),pointerSha256:forecastHash(pointer),blobSha256:pointer.blobSha256,uncompressedSha256:pointer.uncompressedSha256,baselineSplitBasis:Object.fromEntries(account.book.holdings.map(holding=>{const bar=bundle.records.find(r=>r.symbol===holding.symbol&&r.basis==='split_adjusted')?.rows.find(r=>r.session===prepared.input.baseline.session);if(!bar||!Number.isFinite(Number(bar.close))||Number(bar.close)<=0)throw Error('forecast_baseline_split_basis_missing');return [holding.symbol,{session:bar.session,close:Number(bar.close)}];}))};
  const result=await runForecastEngine(prepared.input,{seed,pathCount:2000,blockLength:10,budgetMs:120000});
  if(result.status!=='completed'){await failForecastJob(lease,'forecast_engine_failed',db);return {status:'failed',issues:result.issues,elapsedMs:Date.now()-started};}
  if(new Date().toISOString()>=paperPublicationDeadline(prepared.input.calendar,prepared.input.baseline.session))throw Error('forecast_publication_deadline_elapsed');
@@ -65,12 +76,12 @@ export async function runM40Forecast(db:ArchiveQueryable=getPool(),seed='t156-fo
   throw e;}
 }
 
-/** Matured evaluations append even when evidence remains insufficient. No forecast is updated. */
+/** Active-account matured evaluations append even when evidence is insufficient. Paused accounts never append. */
 export async function evaluateM40Forecasts(db:ArchiveQueryable=getPool()){
  await requirePaperDryRun(db);
  const { appendForecastEvaluation }=await import('./forecast-store');
  const { evaluateForecast }=await import('./forecast-evaluation');
- const account=await loadPaperAccount(db);if(!account)return {evaluated:0};
+ const account=await loadPaperAccount(db);if(!account||account.status!=='active')return {evaluated:0};
  const [clock]=await db.query<Row[]>("SELECT DATE_FORMAT(UTC_TIMESTAMP(6),'%Y-%m-%dT%H:%i:%s.%fZ') nowAt");
  const calendar=await loadForwardCalendar(db),now=String(clock[0].nowAt),asOf=calendar.filter(s=>s.closeAt<=now).at(-1)?.session;
  if(!asOf)return {evaluated:0};
@@ -83,10 +94,10 @@ export async function evaluateM40Forecasts(db:ArchiveQueryable=getPool()){
  const proof=parse<import('./forecast-store').ForecastSourceProof>(stored[0]?.source_proof_json);
  const guard={accountId:account.id,accountRevision:account.revision,baselineRevision:result.baseline.accountRevision,issuedAt:result.issuedAt,targetSession:h.targetSession};
  const witness=await forecastEvaluationWitness(db,guard),anchorRows=witness.anchors;
- const chain=inspectContinuationChain({accountId:account.id,revision:result.baseline.accountRevision,sourceBookSha256:result.baseline.sourceAccountStateSha256,policy:original.policy,baselineSession:result.baseline.session,baselineSplitBasis:proof.baselineSplitBasis,expectedSessions:calendar.filter(s=>s.session>result.baseline.session&&s.session<=h.targetSession).map(s=>s.session),targetSession:h.targetSession,anchors:anchorRows.map(r=>({receipt:parse<import('./forecast-continuation').ContinuationReceipt>(r.receipt_json),sha256:String(r.receipt_sha256)})),canonical:witness.canonical});
+ const chain=inspectContinuationChain({accountId:account.id,revision:result.baseline.accountRevision,sourceBookSha256:result.baseline.sourceAccountStateSha256,policy:original.policy,baselineSession:result.baseline.session,baselineSourceRegimeSha256:result.baseline.sourceRegimeSha256,baselineSplitBasis:proof.baselineSplitBasis,expectedSessions:calendar.filter(s=>s.session>result.baseline.session&&s.session<=h.targetSession).map(s=>s.session),targetSession:h.targetSession,anchors:anchorRows.map(r=>({receipt:parse<import('./forecast-continuation').ContinuationReceipt>(r.receipt_json),sha256:String(r.receipt_sha256)})),canonical:witness.canonical});
  const endpoint=chain.endpoint,comparisonPolicy=endpoint?.policyAfter??account.policy;
  const policyMatches=forecastHash(fixedForecastPolicy(comparisonPolicy))===forecastHash(fixedForecastPolicy(original.policy));
- const actual={asOfSession:asOf,accountId:account.id,policySha256:policyMatches?result.policySha256:'changed',epochSession:comparisonPolicy.epochSession,baselineSha256:result.baseline.bookSha256,cashflowReconciled:true,shareBasisReconciled:true,feesReconciled:true,canonicalCoverage:true,endpointSession:endpoint?.session??null,equityUsd:endpoint?.equityUsd??null};
+ const actual={sourceRegimeSha256:endpoint?.sourceRegimeSha256,asOfSession:asOf,accountId:account.id,policySha256:policyMatches?result.policySha256:'changed',epochSession:comparisonPolicy.epochSession,baselineSha256:result.baseline.bookSha256,cashflowReconciled:true,shareBasisReconciled:true,feesReconciled:true,canonicalCoverage:true,endpointSession:endpoint?.session??null,equityUsd:endpoint?.equityUsd??null};
  const evaluation=chain.status!=='valid'?{status:chain.status,issues:chain.issues,actualPnlUsd:null,actualReturnPct:null}:evaluateForecast(result,h,actual);
  await appendForecastEvaluation(String(row.id),h.horizon,String(row.result_sha256),{...evaluation,evidenceSha256:witness.evidenceSha256},db,{...guard,evidenceSha256:witness.evidenceSha256});evaluated++;
  }

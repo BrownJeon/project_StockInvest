@@ -1,0 +1,5 @@
+import {forwardSourceRegime,sameSourceRegime} from '../forward-source-regime';
+import type {ForwardSourceBundle} from '../forward-sources';
+const bundle={records:[{symbol:'NYS:BRK.B',basis:'raw',sourceId:'kibot_raw',sha256:'a'},{symbol:'NYS:BRK.B',basis:'split_adjusted',sourceId:'kibot_split',sha256:'b'}]} as unknown as ForwardSourceBundle;
+test('regime tracks conventions, not daily evidence or ordering',()=>{const first=forwardSourceRegime(bundle);expect(forwardSourceRegime({...bundle,records:[...bundle.records].reverse().map(r=>({...r,sha256:'changed'}))})).toBe(first);expect(sameSourceRegime(first,first)).toBe(true);expect(sameSourceRegime(undefined,first)).toBe(false);expect(sameSourceRegime(first,undefined)).toBe(false);});
+test('coherent provider replacement is a distinct regime',()=>{const a=forwardSourceRegime(bundle),b=forwardSourceRegime({...bundle,records:bundle.records.map(r=>({...r,sourceId:'alpaca_sip_brk_pair_v1_'+r.basis}))});expect(a).not.toBe(b);expect(sameSourceRegime(a,b)).toBe(false);});

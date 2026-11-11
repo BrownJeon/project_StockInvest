@@ -11,6 +11,7 @@ export interface ForecastBaseline {
   kind: 'forecast_only_marked_snapshot'; accountId: string; accountRevision: number;
   session: string; equityUsd: number; bookSha256: string; sourceAccountStateSha256: string;
   epochSession: string; epochProvisional: boolean;
+  sourceRegimeSha256?: string; analysisSourceBundleSha256?: string;
 }
 export interface ForecastBridge {
   kind: 'latent_index_ols_centered_residual' | 'none'; session: string | null;
@@ -33,7 +34,7 @@ export interface PreparedForecastInput {
   bridge: ForecastBridge; assumptions: string[];
 }
 export interface ForecastPrepareArgs {
-  accountId: string; accountRevision: number; book: PaperBook; pendingIntents?: readonly PaperIntent[]; policy: ForwardPolicy;
+  analysisSourceBundleSha256?:string;accountId: string; accountRevision: number; book: PaperBook; pendingIntents?: readonly PaperIntent[]; policy: ForwardPolicy;
   bundle: ForwardSourceBundle; calendar: readonly ForwardCalendarSession[];
   issuedAt: string; sourceDatasetId: string; sourceAvailableAt: string;
 }

@@ -89,3 +89,13 @@ describe('opt-in SPX GET bounds without changing legacy behavior',()=>{
     expect(await response.text()).toBe('legacy');expect(jest.mocked(fetch).mock.calls[0][1]?.signal).toBe(parent.signal);
   });
 });
+import {logUsage} from '@/lib/api-usage';
+describe('reviewed BRK native USD proof shares the existing bounded bulk transport',()=>{
+ const brk='https://openapi.koreainvestment.com:9443/uapi/overseas-price/v1/quotations/dailyprice?AUTH=&EXCD=NYS&SYMB=BRK%2FB&GUBN=0&BYMD=20261110&MODP=0';
+ beforeEach(()=>{jest.clearAllMocks();global.fetch=jest.fn();});afterEach(()=>{global.fetch=originalFetch;});
+ function brkSetup(){const f=setup();return {...f,init:{...f.init,redirect:'error' as const,headers:{tr_id:'HHDFS76240000',custtype:'P'}},options:{...f.options,maxResponseBytes:128,label:'m40ForwardBrkPairRawProof'}};}
+ it('permits only the fixed BRK GET, preserves raw bytes, uses bulk queue and logs usage',async()=>{const f=brkSetup();jest.mocked(fetch).mockResolvedValue(new Response('{"rt_cd":"0"}'));const r=await kisFetch(brk,f.init,f.options);expect(kisBodyText(r)).toBe('{"rt_cd":"0"}');expect(acquireKisSlot).toHaveBeenCalledWith('bulk',{maxWaitMs:5000});expect(fetch).toHaveBeenCalledTimes(1);expect(logUsage).toHaveBeenCalledWith(expect.objectContaining({api:'kis',op:'m40ForwardBrkPairRawProof',ok:true}));});
+ it.each([brk.replace('NYS','NAS'),brk.replace('BRK%2FB','AAPL'),brk.replace('MODP=0','MODP=1'),brk+'&SYMB=BRK%2FB',brk+'&CANO=synthetic',brk.replace('20261110','20260230'),brk.replace('openapi.koreainvestment.com:9443','evil.test'),brk.replace('/quotations/dailyprice','/trading/order')])('rejects an unreviewed symbol/host/path/query contract',async value=>{const f=brkSetup();await expect(kisFetch(value,f.init,f.options)).rejects.toThrow('invalid bounded');expect(fetch).not.toHaveBeenCalled();});
+ it.each([{method:'POST'},{headers:{tr_id:'wrong',custtype:'P'}},{headers:{tr_id:'HHDFS76240000',custtype:'P',hashkey:'synthetic'}},{redirect:'follow'},{body:'synthetic'}])('rejects nonGET/TR/header/redirect/body bypass',async change=>{const f=brkSetup();await expect(kisFetch(brk,{...f.init,...change} as RequestInit,f.options)).rejects.toThrow('invalid bounded');expect(fetch).not.toHaveBeenCalled();});
+ it.each([429,200])('does not retry rate-limit/business failure %s and retains global usage',async status=>{const f=brkSetup();jest.mocked(fetch).mockResolvedValue(new Response('{"rt_cd":"1","msg_cd":"EGW00201"}',{status}));await kisFetch(brk,f.init,f.options);expect(fetch).toHaveBeenCalledTimes(1);expect(acquireKisSlot).toHaveBeenCalledWith('bulk',{maxWaitMs:5000});expect(logUsage).toHaveBeenCalledWith(expect.objectContaining({api:'kis',ok:false}));});
+});

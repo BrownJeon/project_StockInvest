@@ -239,6 +239,7 @@ export const KIS_LABELS = [
   'domestic marketCapRanking', 'overseas cancelOrder', 'overseas createOrder', 'overseas getActiveOrders',
   'overseas getBalances', 'overseas getCompletedOrders', 'overseas getDailyCandles', 'overseas getTicker',
   'overseas priceDetail', 'overseas usdCash', 'search-info(lookup)', 'search-info(search)', 'search-info(ticker/all)', 'tokenP',
+  'm40ForwardBrkPairRawProof', // T-156 fixed BRK native-USD evaluation proof; no keys/params.
   'm40ForwardSp500Index', // T-156 fixed evaluation-only index GET; no request data in label.
   // T-087 — 브로커 원장 수집(조회 TR 만, priority 'bulk')
   'domestic ledgerDailyFills', 'domestic ledgerPeriodProfit', 'domestic ledgerPositions',

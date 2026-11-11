@@ -21,13 +21,13 @@ export function forecastFixture(symbolCount=6,flat=false):ForecastPrepareArgs {
   book:{cashUsd:10000,receivables:[],holdings:[],initialEquityUsd:10000,peakEquityUsd:10000,lastForwardSession:null,splitBasis:{}},
   bundle:{schemaVersion:1,asOfSession:asOf,observedAt,dateWindow:{start:sessions[0].session,end:asOf},failures:[],complete:true,sourceUse:'evaluation_only',
    records:symbols.flatMap((symbol,s)=>['raw','split_adjusted'].map(basis=>({symbol,vendorTicker:symbol.slice(4),basis:basis as 'raw'|'split_adjusted',
-    sourceId:`synthetic-${basis}`,request:{},observedAt,sha256:'a'.repeat(64),
+    sourceId:`kibot_guest_evaluation_${basis}_v1`,request:{action:'history',symbol:symbol.slice(4),interval:'daily',startdate:'01/02/2025',enddate:'11/06/2026',splitadjusted:basis==='split_adjusted'?'1':'0',unadjusted:basis==='raw'?'1':'0'},observedAt,sha256:'a'.repeat(64),
     rows:sessions.map((c,d)=>{
      const close=flat?100:100*Math.exp(.0005*d+.025*Math.sin(d*.13+s*.2));
      const open=flat?100:close*Math.exp(.003*Math.cos(d*.41+s*.1));
      return {session:c.session,open:String(open),close:String(close),high:String(Math.max(open,close)),low:String(Math.min(open,close)),volume:'1000'};
     })}))),
-   market:{sourceId:'synthetic-sp500',sourceUrl:'https://example.invalid/synthetic',observedAt,sha256:'b'.repeat(64),
+   market:{sourceId:'fred_sp500_forward_evaluation_v1',sourceUrl:'https://fred.stlouisfed.org/graph/fredgraph.csv?id=SP500',observedAt,sha256:'b'.repeat(64),
     rows:sessions.map((c,d)=>({session:c.session,close:String(flat?100:100*Math.exp(.0004*d+.01*Math.sin(d*.13)))}))}}
  };
 }

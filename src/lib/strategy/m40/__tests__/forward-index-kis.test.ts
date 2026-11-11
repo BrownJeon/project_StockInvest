@@ -6,6 +6,7 @@ import { getCredential } from '@/lib/credentials';
 import { kisFetch } from '@/lib/exchanges/kis-http';
 import { collectKisForwardIndex } from '../forward-index-kis';
 import { indexEvidenceSha, KIS_SP500_SOURCE_URL } from '../forward-index-contract';
+import {ForwardCollectionBudget,FORWARD_SHARED_LIMITS} from '../forward-collection-budget';
 import { indexFixture } from './forward-index-fixtures';
 const day=(s:string)=>`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
 describe('licensed KIS read-only collection',()=>{
@@ -74,4 +75,11 @@ describe('licensed KIS read-only collection',()=>{
     const f=setup(),clock=jest.fn().mockReturnValueOnce(10).mockReturnValue(9),fetchPage=jest.fn();
     await expect(collectKisForwardIndex({...f.collectOptions,monotonicMs:clock},{fetchPage})).rejects.toThrow('clock_reversed');expect(fetchPage).not.toHaveBeenCalled();
   });
+  it('remaining shared bytes cap the KIS transport before receiving a full response',async()=>{
+    const f=setup(),budget=new ForwardCollectionBudget(()=>0);budget.consume(FORWARD_SHARED_LIMITS.totalBytes-1024);
+    jest.mocked(kisFetch).mockResolvedValue({status:403,text:async()=>'{}'} as Response);
+    await expect(collectKisForwardIndex({...f.collectOptions,budget})).rejects.toThrow();
+    expect(jest.mocked(kisFetch).mock.calls[0][2]).toMatchObject({maxResponseBytes:1024});
+  });
+
 });

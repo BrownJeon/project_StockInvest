@@ -1,4 +1,5 @@
 /** Private sidecar receipts. Missing receipts prevent comparison, never paper trading. */
+import { sameSourceRegime } from './forward-source-regime';
 import type { ArchiveQueryable } from '@/lib/analysis-data/types';
 import type { PaperCommit } from './forward-store';
 import type { PaperBook,PaperIntent,PaperOutcome } from './paper-ledger';
@@ -6,7 +7,7 @@ import type { ForwardPolicy } from './forward-types';
 import { forecastHash,forecastJson } from './forecast-store';
 export const fixedForecastPolicy=(p:ForwardPolicy)=>({...p,epochSession:null,epochLockedAt:null});
 export interface ContinuationReceipt {
- accountId:string;revisionBefore:number;revisionAfter:number;cycleId:string;session:string;mode:string;
+ eventEvidenceNyDate?:string;sourceRegimeSha256?:string;accountId:string;revisionBefore:number;revisionAfter:number;cycleId:string;session:string;mode:string;
  before:PaperBook;after:PaperBook;policyBefore:ForwardPolicy;policyAfter:ForwardPolicy;
  beforeSha256:string;afterSha256:string;outcomesSha256:string;shareBasisVerified:boolean;
  fills:{intent:PaperIntent;outcome:PaperOutcome}[];equityUsd:number|null;shareBasisObservations?:Record<string,{session:string;close:number}[]>;
@@ -46,14 +47,14 @@ export async function saveContinuation(input:PaperCommit,db:ArchiveQueryable){
  const fills:ContinuationReceipt['fills']=[];
  for(const outcome of input.outcomes){const [rows]=await db.query<Record<string,unknown>[]>('SELECT intent_json FROM t156_paper_signal WHERE id=? AND account_id=?',[outcome.id,input.lease.account.id]);if(!rows.length)throw Error('forecast_continuation_intent_missing');fills.push({intent:typeof rows[0].intent_json==='string'?JSON.parse(rows[0].intent_json):rows[0].intent_json as PaperIntent,outcome});}
  const payload=input.cycle.payload as Record<string,unknown>;
- const r:ContinuationReceipt={accountId:input.lease.account.id,revisionBefore:input.lease.account.revision,revisionAfter:input.lease.account.revision+1,cycleId:input.cycle.id,session:input.cycle.session,mode:input.cycle.mode,before:input.lease.account.book,after:input.book,policyBefore:input.lease.account.policy,policyAfter:input.policy,beforeSha256:forecastHash(input.lease.account.book),afterSha256:forecastHash(input.book),outcomesSha256:forecastHash(input.outcomes),shareBasisVerified:payload.shareBasisVerified===true,fills,shareBasisObservations:payload.shareBasisObservations as ContinuationReceipt['shareBasisObservations'],equityUsd:typeof payload.equityUsd==='number'?payload.equityUsd:null};
+ const r:ContinuationReceipt={...(typeof payload.eventEvidenceNyDate==='string'?{eventEvidenceNyDate:payload.eventEvidenceNyDate}:{}),...(typeof payload.sourceRegimeSha256==='string'?{sourceRegimeSha256:payload.sourceRegimeSha256}:{}),accountId:input.lease.account.id,revisionBefore:input.lease.account.revision,revisionAfter:input.lease.account.revision+1,cycleId:input.cycle.id,session:input.cycle.session,mode:input.cycle.mode,before:input.lease.account.book,after:input.book,policyBefore:input.lease.account.policy,policyAfter:input.policy,beforeSha256:forecastHash(input.lease.account.book),afterSha256:forecastHash(input.book),outcomesSha256:forecastHash(input.outcomes),shareBasisVerified:payload.shareBasisVerified===true,fills,shareBasisObservations:payload.shareBasisObservations as ContinuationReceipt['shareBasisObservations'],equityUsd:typeof payload.equityUsd==='number'?payload.equityUsd:null};
  await db.query('INSERT INTO t156_forecast_continuation(account_id,revision_after,cycle_id,before_sha256,after_sha256,receipt_sha256,receipt_json,created_at) VALUES(?,?,?,?,?,?,?,UTC_TIMESTAMP(6))',[r.accountId,r.revisionAfter,r.cycleId,r.beforeSha256,r.afterSha256,forecastHash(r),forecastJson(r)]);
 }
 
-export interface CanonicalContinuationCycle {id:string;session:string;mode:string;equityUsd:number|null}
+export interface CanonicalContinuationCycle {sourceRegimeSha256?:string;id:string;session:string;mode:string;equityUsd:number|null}
 export interface ContinuationChain {
  accountId:string;revision:number;sourceBookSha256:string;policy:ForwardPolicy;baselineSession:string;
- baselineSplitBasis:Record<string,{session:string;close:number}>;
+ baselineSourceRegimeSha256?:string;baselineSplitBasis:Record<string,{session:string;close:number}>;
  expectedSessions:string[];targetSession:string;
  anchors:{receipt:ContinuationReceipt;sha256:string}[];canonical:CanonicalContinuationCycle[];
 }
@@ -65,8 +66,10 @@ export function inspectContinuationChain(args:ContinuationChain):{status:'valid'
   if(r.accountId!==args.accountId||forecastHash(r)!==sha256)invalid.push('continuation_identity_or_hash_mismatch');
   if(r.revisionBefore!==revision||r.beforeSha256!==hash)missing.push('continuation_anchor_gap');
   invalid.push(...verifyContinuation(r));
+  if((args.baselineSourceRegimeSha256!==undefined||r.sourceRegimeSha256!==undefined)&&!sameSourceRegime(args.baselineSourceRegimeSha256,r.sourceRegimeSha256))invalid.push('continuation_source_regime_unreconciled');
   if(forecastHash(fixedForecastPolicy(r.policyBefore))!==forecastHash(fixedForecastPolicy(args.policy))||forecastHash(fixedForecastPolicy(r.policyAfter))!==forecastHash(fixedForecastPolicy(args.policy)))invalid.push('continuation_policy_changed');
   const c=cycles.get(r.cycleId);if(!c||c.session!==r.session||c.mode!==r.mode||c.equityUsd!==r.equityUsd)missing.push('continuation_canonical_receipt_mismatch');
+  if((c?.sourceRegimeSha256!==undefined||r.sourceRegimeSha256!==undefined)&&!sameSourceRegime(c?.sourceRegimeSha256,r.sourceRegimeSha256))invalid.push('continuation_canonical_source_regime_mismatch');
   if(receipts.has(r.cycleId))invalid.push('continuation_duplicate_cycle');receipts.set(r.cycleId,r);
   revision=r.revisionAfter;hash=r.afterSha256;
  }

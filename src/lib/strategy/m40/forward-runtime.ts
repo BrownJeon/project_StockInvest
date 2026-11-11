@@ -1,19 +1,23 @@
 /** Daily evaluation orchestration. Every generated signal belongs to the isolated paper ledger. */
+import { BrkPairEvidenceError,collectBrkCoherentPair,brkPairProfileReady } from './forward-stock-alpaca';
+import { BRK_PAIR_SYMBOL,BRK_PAIR_SOURCE_ID } from './forward-stock-contract';
+import { ForwardCollectionBudget } from './forward-collection-budget';
+import { forwardSourceRegime } from './forward-source-regime';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { getPool } from '@/lib/db';
 import type { ArchiveQueryable, JsonValue } from '@/lib/analysis-data/types';
-import { putBlob,readBlob,putDataset,putRecord,publishDataset,saveAnalysisRun,putJudgment,findJudgment,putSignalDraft } from '@/lib/analysis-data/store';
+import { putBlob,readBlob,putDataset,putRecord,saveAnalysisRun,putJudgment,findJudgment,putSignalDraft } from '@/lib/analysis-data/store';
 import { buildPaperInput,canFreezePaperCohort } from './forward-input';
 import { extendForwardCalendar,nextPaperSettlementSession } from './forward-calendar';
 import type { ForwardCalendarSession,ForwardPolicy } from './forward-types';
-import { collectForwardSources,mapForwardSources,hasRequiredForwardIndexHistory,requiredForwardSourceSessions,missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText,parseForwardIndexCsv,type ForwardSourceBundle } from './forward-sources';
+import { brkQuarantineRequiresReview,quarantineForwardBrkEvidence,collectForwardSources,mapForwardSources,hasRequiredForwardIndexHistory,requiredForwardSourceSessions,missingForwardSourceSymbols,mergeForwardSources,fetchForwardPublicText,parseForwardIndexCsv,type ForwardSourceBundle } from './forward-sources';
 import { collectKisForwardIndex } from './forward-index-kis';
 import { KIS_SP500_SOURCE_ID } from './forward-index-contract';
 import { loadM40Evidence } from './load-evidence';
 import { runM40Analysis,askConfiguredM40Agent } from './runner';
 import { acquirePaperLease,commitPaperCycle,initializePaperAccount,loadPaperAccount,loadPendingPaperIntents,
-  releasePaperLease,requirePaperDryRun,FORWARD_POLICY_ID } from './forward-store';
+  releasePaperLease,requirePaperDryRun,type PaperLease,FORWARD_POLICY_ID } from './forward-store';
 import { PAPER_ACCOUNT_ID,PAPER_STRATEGY_ID,markPaperBook,generatePaperSignals,settlePaperSignals,assertPaperShareBasis } from './paper-ledger';
 
 type Row=Record<string,unknown>;
@@ -51,32 +55,48 @@ export async function initializeApprovedForwardPilot(db:ArchiveQueryable=getPool
   ].filter(proof=>symbols.includes(proof.symbol)) as NonNullable<ForwardPolicy['historyExclusionProofs']>};
  return initializePaperAccount(policy,db);
 }
-export async function archiveForwardSources(bundle:ForwardSourceBundle,db:ArchiveQueryable=getPool()) {
- for(const r of bundle.records)if(!r.rawCsv||sha(r.rawCsv)!==r.sha256)throw Error('paper_source_original_missing_or_mismatched');
+export async function archiveForwardSources(bundle:ForwardSourceBundle,db:ArchiveQueryable=getPool(),lease?:PaperLease) {
+ for(const r of bundle.records)if(!(r.rawJson??r.rawCsv)||sha((r.rawJson??r.rawCsv)!)!==r.sha256)throw Error('paper_source_original_missing_or_mismatched');
  if(bundle.market){const original=bundle.market.sourceId===KIS_SP500_SOURCE_ID?bundle.market.rawJson:bundle.market.rawCsv;
   if(!original||sha(original)!==bundle.market.sha256)throw Error('paper_source_original_missing_or_mismatched');}
  const bytes=Buffer.from(JSON.stringify(bundle)),hash=sha(bytes),compressed=gzipSync(bytes);
  if(bytes.length>24*1024*1024)throw Error('paper_source_batch_too_large');
  const blobSha=await putBlob(compressed,'binary',db);
- const observedAt=new Date().toISOString(),id='paper-src-'+hash.slice(0,48);
+ const [archiveClock]=await db.query<Row[]>("SELECT DATE_FORMAT(UTC_TIMESTAMP(6),'%Y-%m-%dT%H:%i:%s.%fZ') archiveKnownAt");
+ const observedAt=String(archiveClock[0]?.archiveKnownAt??'');if(!/^\d{4}-\d{2}-\d{2}T/.test(observedAt)||!Number.isFinite(Date.parse(observedAt)))throw Error('forward_source_archive_clock_unknown');
+ const id='paper-src-'+hash.slice(0,48);
  await putDataset({id,kind:'m40_paper_sources',sourceKey:'evaluation_only',contentSha256:hash,
   metadata:{asOfSession:bundle.asOfSession??null,sourceUse:'evaluation_only',blobSha256:blobSha},createdAt:observedAt},db);
  await putRecord({datasetId:id,recordType:'m40_paper_source_bundle',recordKey:'snapshot',sessionDate:bundle.asOfSession??null,
   availableAt:observedAt,payload:{blobSha256:blobSha,compression:'gzip',uncompressedSha256:hash,bytes:bytes.length}},db);
- await publishDataset(id,{rowCount:1,liveEligible:false},db);
+ // Stage immutable evidence first. Its public transition shares the publication account lock.
+ if(!db.getConnection)throw Error('forward_source_transaction_required');const c=await db.getConnection();let destroyed=false;
+ try{await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');await c.beginTransaction();
+  const verify=async()=>{const [accounts]=await c.query<Row[]>('SELECT status,lease_token,lease_until>UTC_TIMESTAMP(6) lease_valid,revision FROM t156_paper_account WHERE id=? FOR UPDATE',[PAPER_ACCOUNT_ID]);const account=accounts[0];
+   if(!account||(lease?(account.status!=='active'||account.lease_token!==lease.token||Number(account.lease_valid)!==1||Number(account.revision)!==lease.account.revision):(account.status!=='paused'||Number(account.lease_valid)===1)))throw Error('forward_source_lease_conflict');};
+  await verify();const [datasets]=await c.query<Row[]>('SELECT status,content_sha256,live_eligible FROM t156_dataset WHERE id=? FOR UPDATE',[id]);
+  if(datasets.length!==1||datasets[0].content_sha256!==hash||!['staged','published'].includes(String(datasets[0].status))||Number(datasets[0].live_eligible)!==0)throw Error('forward_source_dataset_conflict');
+  const [counts]=await c.query<Row[]>('SELECT COUNT(*) n,SUM(available_at IS NULL) unknown_n FROM t156_record WHERE dataset_id=?',[id]);if(Number(counts[0]?.n)!==1||Number(counts[0]?.unknown_n)!==0)throw Error('forward_source_dataset_conflict');
+  await c.query("UPDATE t156_dataset SET status='published',row_count=1,live_eligible=0 WHERE id=? AND status IN ('staged','published')",[id]);
+  await verify();await c.commit();
+ }catch(error){try{await c.rollback();}catch{c.destroy?.();destroyed=true;throw error;}throw error;}finally{if(!destroyed)c.release?.();}
  return id;
 }
-async function cachedForwardSources(asOf:string,cutoff:string,db:ArchiveQueryable):Promise<ForwardSourceBundle|null>{
+export async function cachedForwardSources(asOf:string,cutoff:string,db:ArchiveQueryable):Promise<ForwardSourceBundle|null>{
  const [rows]=await db.query<Row[]>(`SELECT r.payload_json,DATE_FORMAT(r.available_at,'%Y-%m-%dT%H:%i:%s.%fZ') availableAt
   FROM t156_record r JOIN t156_dataset d ON d.id=r.dataset_id
   WHERE d.kind='m40_paper_sources' AND d.status='published' AND d.live_eligible=0
-   AND r.record_type='m40_paper_source_bundle' AND r.session_date=? AND r.available_at<=?
-  ORDER BY r.available_at DESC LIMIT 1`,[asOf,cutoff.slice(0,-1).replace('T',' ')]);
- if(!rows.length||Date.parse(cutoff)-Date.parse(String(rows[0].availableAt))>24*3600_000)return null;
+   AND r.record_type='m40_paper_source_bundle' AND r.session_date=?
+  ORDER BY r.available_at DESC,r.dataset_id DESC LIMIT 1`,[asOf]);
+ if(!rows.length)return null;
  const pointer=parse<{blobSha256:string;uncompressedSha256:string}>(rows[0].payload_json);
  const bytes=gunzipSync(await readBlob(pointer.blobSha256,db),{maxOutputLength:24*1024*1024});
  if(sha(bytes)!==pointer.uncompressedSha256)throw Error('paper_source_readback_failed');
- return JSON.parse(bytes.toString()) as ForwardSourceBundle;
+ const bundle=JSON.parse(bytes.toString()) as ForwardSourceBundle;
+ // Critical/pending safety evidence is not a price cache and never expires with its TTL.
+ if(brkQuarantineRequiresReview(bundle))return bundle;
+ const age=Date.parse(cutoff)-Date.parse(String(rows[0].availableAt));if(!Number.isFinite(age)||age<0||age>24*3600_000)return null;
+ return bundle;
 }
 export async function refreshMissingIndex(bundle:ForwardSourceBundle,referenceSession:string,fetchText=fetchForwardPublicText,calendar?:readonly ForwardCalendarSession[]) {
  if(calendar?hasRequiredForwardIndexHistory(bundle,calendar):bundle.market?.rows.some(r=>r.session===referenceSession))return bundle;
@@ -134,11 +154,11 @@ export async function readM40ForwardStatus(db:ArchiveQueryable=getPool(),now=new
  if(bundle){
   try{
    const symbols=[...new Set([...(account.policy.frozenCohort?.symbols??account.policy.referenceSymbols),...account.book.holdings.map(h=>h.symbol)])];
-   const mapped=mapForwardSources(bundle,calendar),prior=calendar[calendar.findIndex(s=>s.session===asOf)-1]?.session;
+   const mapped=mapForwardSources(bundle,calendar,cutoff),prior=calendar[calendar.findIndex(s=>s.session===asOf)-1]?.session;
    const indexEnd=mapped.data.sp500Bars.filter(bar=>bar.final&&bar.session<=asOf).at(-1)?.session;
    const required=requiredForwardSourceSessions(calendar,asOf,Object.values(account.book.splitBasis??{}).map(basis=>basis.session),indexEnd);
    const indexRequired=calendar.filter(day=>indexEnd&&day.session<=indexEnd).slice(-253).map(day=>day.session);
-   sourceReady=hasRequiredForwardIndexHistory(bundle,calendar)&&indexRequired.length===253&&!!indexEnd&&!!prior&&indexEnd>=prior&&missingForwardSourceSymbols(bundle,symbols,required).length===0
+   sourceReady=(!symbols.includes(BRK_PAIR_SYMBOL)||((await brkPairProfileReady())&&bundle.records.filter(r=>r.symbol===BRK_PAIR_SYMBOL&&r.sourceId.startsWith(BRK_PAIR_SOURCE_ID)).length===2))&&hasRequiredForwardIndexHistory(bundle,calendar)&&indexRequired.length===253&&!!indexEnd&&!!prior&&indexEnd>=prior&&missingForwardSourceSymbols(bundle,symbols,required).length===0
     &&indexRequired.every(session=>mapped.data.sp500Bars.some(bar=>bar.session===session&&bar.final));
   }catch{sourceReady=false;}
  }
@@ -162,34 +182,62 @@ async function runCycle():Promise<Record<string,unknown>> {
   let policy:ForwardPolicy=JSON.parse(JSON.stringify(lease.account.policy));
   const [done]=await db.query<Row[]>('SELECT mode FROM t156_paper_cycle WHERE account_id=? AND session_date=?',[PAPER_ACCOUNT_ID,asOf]);
   const alreadyObserved=done.some(r=>r.mode==='forward')||(done.some(r=>r.mode==='rehearsal')&&calendar.find(s=>s.session===asOf)!.closeAt<policy.registeredAt);
+  const budget=new ForwardCollectionBudget();
   const symbols=[...new Set([...policy.referenceSymbols,...lease.account.book.holdings.map(h=>h.symbol)])].sort();
   let bundle=await cachedForwardSources(asOf,start,db);
+  if(bundle&&brkQuarantineRequiresReview(bundle))throw Error('forward_pair_prior_conflict_requires_review');
   const requiredSessions=requiredForwardSourceSessions(calendar,asOf,Object.values(lease.account.book.splitBasis).map(basis=>basis.session));
   const absent=bundle?missingForwardSourceSymbols(bundle,symbols,requiredSessions):symbols;
-  if(!bundle){bundle=await collectForwardSources(symbols,asOf);await archiveForwardSources(bundle,db);}
+  if(!bundle){bundle=await collectForwardSources(symbols,asOf,{budget});await archiveForwardSources(bundle,db,lease);}
   else if(absent.length){
-   const extra=await collectForwardSources(absent,asOf);
+   const extra=await collectForwardSources(absent,asOf,{budget});
    bundle=mergeForwardSources(bundle,extra,symbols);
-   await archiveForwardSources(bundle,db);
+   await archiveForwardSources(bundle,db,lease);
   }
+  if(symbols.includes(BRK_PAIR_SYMBOL)){
+   if(!(await brkPairProfileReady()))throw Error('forward_pair_profile_required');
+   if(brkQuarantineRequiresReview(bundle))throw Error('forward_pair_prior_conflict_requires_review');
+   const priorSplit=bundle.records.find(r=>r.symbol===BRK_PAIR_SYMBOL&&r.basis==='split_adjusted');
+   const reference=priorSplit?.rawJson?JSON.parse(priorSplit.rawJson).kibotSplit:priorSplit??bundle.nonPriceEvidence?.brkContinuityReference;
+   if(!reference)throw Error('forward_pair_reference_missing');
+   // Durable fail-closed marker MUST commit before any new-provider request.
+   // If later quarantine storage fails or this worker expires, old A cannot revive.
+   const attemptAt=new Date().toISOString();
+   bundle=quarantineForwardBrkEvidence(bundle,reference,'forward_pair_source_verification_pending',JSON.stringify({schemaVersion:1,phase:'before_new_provider_requests',attemptSha256:sha(lease.token),proofsIncomplete:true}),attemptAt);
+   await archiveForwardSources(bundle,db,lease);
+   try{
+    // Refresh event evidence on every requested cycle, including a previously complete price pair.
+    const pair=await collectBrkCoherentPair({start:new Date(Date.parse(asOf+'T00:00:00Z')-430*86400_000).toISOString().slice(0,10),end:asOf,calendar,kibotSplit:reference,budget,db});
+    bundle={...bundle,nonPriceEvidence:{brkContinuityReference:reference},records:[...bundle.records.filter(r=>r.symbol!==BRK_PAIR_SYMBOL),...pair],observedAt:[bundle.observedAt,...pair.map(r=>r.observedAt)].sort().at(-1)!};
+    mapForwardSources(bundle,calendar,new Date().toISOString());await archiveForwardSources(bundle,db,lease);
+   }catch(error){
+    const reason=error instanceof Error&&/^forward_(?:pair|source)_[a-z_]+$/.test(error.message)?error.message:'forward_pair_source_evidence_unavailable';
+    const rawJson=error instanceof BrkPairEvidenceError?error.rawEvidence:JSON.stringify({reason,evidenceIncomplete:true});
+    const observedAt=new Date().toISOString();
+    bundle=quarantineForwardBrkEvidence(bundle,reference,reason,rawJson,observedAt);
+    await archiveForwardSources(bundle,db,lease);throw Error(reason);
+   }
+  }
+
   const priorSession=calendar[calendar.findIndex(s=>s.session===asOf)-1]?.session;
   if(priorSession&&!hasRequiredForwardIndexHistory(bundle,calendar)){
-   bundle=await refreshMissingIndex(bundle,priorSession,fetchForwardPublicText,calendar);
+   bundle=await refreshMissingIndex(bundle,priorSession,(url,options)=>fetchForwardPublicText(url,{...options,budget}),calendar);
    bundle=await preserveArchivedIndex(bundle,priorSession,calendar,new Date().toISOString(),db);
    if(!hasRequiredForwardIndexHistory(bundle,calendar)){
     const fred=bundle.market;
     try{
      if(!fred?.rawCsv)throw Error('forward_index_fred_proof_unavailable');
-     const market=await collectKisForwardIndex({start:[bundle.dateWindow.start,new Date(Date.parse(asOf+'T00:00:00Z')-430*86400_000).toISOString().slice(0,10)].sort().at(-1)!,end:asOf,calendar,
+     const market=await collectKisForwardIndex({start:[bundle.dateWindow.start,new Date(Date.parse(asOf+'T00:00:00Z')-430*86400_000).toISOString().slice(0,10)].sort().at(-1)!,end:asOf,calendar,budget,
       fred:{sourceUrl:fred.sourceUrl,observedAt:fred.observedAt,rawCsv:fred.rawCsv,sha256:fred.sha256}});
      const candidate={...bundle,market,observedAt:market.observedAt>bundle.observedAt?market.observedAt:bundle.observedAt};
      mapForwardSources(candidate,calendar);bundle=candidate;
     }catch{bundle={...bundle,failures:[...bundle.failures,{basis:'index',errorCode:'forward_index_kis_unavailable'}]};}
    }
-   await archiveForwardSources(bundle,db);
+   await archiveForwardSources(bundle,db,lease);
   }
+  budget.remaining();
   const cutoff=new Date().toISOString();await requirePaperDryRun(db);
-  const {data,opens}=mapForwardSources(bundle,calendar);
+  const {data,opens}=mapForwardSources(bundle,calendar,cutoff);
   // Source repair may append evidence after a successful cycle; never repeat its book or signals.
   if(alreadyObserved)return {status:'already_observed',session:asOf,executionScope:'paper_only'};
   data.asOfSession=asOf;
@@ -241,7 +289,7 @@ async function runCycle():Promise<Record<string,unknown>> {
   const {provenance,...eligibility}=checked.report;
   const provenanceSha=await putBlob(gzipSync(Buffer.from(JSON.stringify(provenance))),'binary',db);
   const committed=await commitPaperCycle({lease,policy,book,calendar,cycle:{id:cycleId,session:asOf,decisionAt:cutoff,mode,
-   payload:{eligibility,executionKind:confirmedExitOnly?'confirmed_membership_exit_only':'full_core',provenanceBlobSha256:provenanceSha,sourceBundleSha256:sha(JSON.stringify(bundle)),
+   payload:{...(symbols.includes(BRK_PAIR_SYMBOL)?{eventEvidenceNyDate:JSON.parse(bundle.records.find(r=>r.symbol===BRK_PAIR_SYMBOL&&r.basis==='raw')!.rawJson!).events.queryDate}:{}),sourceRegimeSha256:forwardSourceRegime(bundle),eligibility,executionKind:confirmedExitOnly?'confirmed_membership_exit_only':'full_core',provenanceBlobSha256:provenanceSha,sourceBundleSha256:sha(JSON.stringify(bundle)),
     inputSha256:result?.inputSha256??null,sourceRunId:result?.runId??null,
     shareBasisVerified:true,shareBasisObservations:Object.fromEntries(lease.account.book.holdings.map(h=>[h.symbol,(data.members.find(m=>m.symbol===h.symbol)?.splitBars??[]).map(b=>({session:b.session,close:b.close}))])),equityUsd:marked.equityUsd,returnSinceClone:marked.returnSinceClone,drawdown:marked.drawdown,
     outcomes:settled.outcomes,model:'next_open_fixed_quantity_or_expire; retrospectively evaluated from received EOD, not actual auction fills',feePerSide:0.0025,

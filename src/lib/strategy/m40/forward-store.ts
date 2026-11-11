@@ -3,6 +3,8 @@ import { randomUUID, createHash } from 'node:crypto';
 import { getPool } from '@/lib/db';
 import { canonicalJson, utcSql } from '@/lib/analysis-data/store';
 import type { ArchiveQueryable, ArchiveTransactionConnection, JsonValue } from '@/lib/analysis-data/types';
+import {brkNyDate} from './forward-stock-events';
+import {BRK_PAIR_SYMBOL} from './forward-stock-contract';
 import { assertPublicationWindow } from './publication-window';
 import type { ForwardCalendarSession, ForwardPolicy } from './forward-types';
 import { cloneSnapshot, PAPER_ACCOUNT_ID, type PaperBook, type PaperIntent, type PaperOutcome } from './paper-ledger';
@@ -98,7 +100,7 @@ export async function commitPaperCycle(input:PaperCommit,db:ArchiveQueryable=get
       ||input.policy.epochLockedAt!==input.cycle.decisionAt))throw Error('paper_epoch_not_first_eligible');
   const [duplicate]=await c.query<Row[]>('SELECT id FROM t156_paper_cycle WHERE account_id=? AND session_date=? AND mode=?',[PAPER_ACCOUNT_ID,input.cycle.session,input.cycle.mode]);
   if(duplicate.length){await c.rollback();active=false;return false;}
-  if(input.cycle.mode!=='blocked')await assertPublicationWindow(input.calendar??[],input.cycle.session,c,'paper');
+  if(input.cycle.mode!=='blocked'){const actual=await assertPublicationWindow(input.calendar??[],input.cycle.session,c,'paper');const needsBrk=(input.policy.frozenCohort?.symbols??input.policy.referenceSymbols).includes(BRK_PAIR_SYMBOL)||input.book.holdings.some(h=>h.symbol===BRK_PAIR_SYMBOL);if(needsBrk&&(input.cycle.payload as Record<string,unknown>).eventEvidenceNyDate!==brkNyDate(actual))throw Error('paper_source_event_evidence_stale');}
   await c.query('INSERT INTO t156_paper_cycle(id,account_id,session_date,decision_at,mode,payload_json,created_at) VALUES(?,?,?,?,?,?,UTC_TIMESTAMP(6))',
     [input.cycle.id,PAPER_ACCOUNT_ID,input.cycle.session,utcSql(input.cycle.decisionAt),input.cycle.mode,json(input.cycle.payload)]);
   for(const signal of input.signals){
@@ -114,7 +116,7 @@ export async function commitPaperCycle(input:PaperCommit,db:ArchiveQueryable=get
   }
   await c.query(`UPDATE t156_paper_account SET policy_json=?,state_json=?,revision=revision+1,
     lease_token=NULL,lease_until=NULL,updated_at=UTC_TIMESTAMP(6) WHERE id=?`,[json(input.policy),json(input.book),PAPER_ACCOUNT_ID]);
-  if(input.cycle.mode!=='blocked')await assertPublicationWindow(input.calendar??[],input.cycle.session,c,'paper');
+  if(input.cycle.mode!=='blocked'){const actual=await assertPublicationWindow(input.calendar??[],input.cycle.session,c,'paper');const needsBrk=(input.policy.frozenCohort?.symbols??input.policy.referenceSymbols).includes(BRK_PAIR_SYMBOL)||input.book.holdings.some(h=>h.symbol===BRK_PAIR_SYMBOL);if(needsBrk&&(input.cycle.payload as Record<string,unknown>).eventEvidenceNyDate!==brkNyDate(actual))throw Error('paper_source_event_evidence_stale');}
   await c.commit();active=false;
   // Forecast evidence is a failure-isolated sidecar; a missing receipt is an explicit comparison gap.
   let sidecarTimer:ReturnType<typeof setTimeout>|undefined;

@@ -21,3 +21,13 @@ test('deadline kills the child, and a late close cannot turn timeout into succes
  jest.useFakeTimers();const child=processFixture(),promise=fetchForwardIndexCurl(url,{timeoutMs:50,maxBytes:100});
  jest.advanceTimersByTime(50);child.emit('close',0);await expect(promise).rejects.toThrow('forward_source_timeout');expect(child.kill).toHaveBeenCalledWith('SIGKILL');
 });
+import {request as httpsRequest} from 'node:https';
+import {fetchForwardPublicText} from '../forward-sources';
+import {ForwardCollectionBudget} from '../forward-collection-budget';
+jest.mock('node:https',()=>({request:jest.fn()}));
+test('Node failure then curl consumes two DATA reservations from the same cycle budget',async()=>{
+ const child=processFixture();jest.mocked(httpsRequest).mockImplementation((()=>{const req=Object.assign(new EventEmitter(),{destroy:jest.fn(),end:()=>queueMicrotask(()=>req.emit('error',Error('private transport detail')))});return req;}) as never);
+ let tick=0;const budget=new ForwardCollectionBudget(()=>tick,async ms=>{tick+=ms;});const promise=fetchForwardPublicText(url,{timeoutMs:1000,maxBytes:100,budget});
+ for(let n=0;n<20&&!jest.mocked(spawn).mock.calls.length;n++)await Promise.resolve();
+ expect(spawn).toHaveBeenCalledTimes(1);child.stdout.write('DATE,SP500\n2026-11-06,6000\n200');child.emit('close',0);await expect(promise).resolves.toMatchObject({status:200});expect(budget.snapshot().dataRequests).toBe(2);
+});

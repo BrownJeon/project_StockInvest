@@ -313,22 +313,21 @@ function boundedIndexOptions(urlText:string,init:RequestInit,opts:KisFetchOption
   if(opts.maxResponseBytes===undefined&&opts.bodyDeadlineMs===undefined)return false;
   const invalid=():never=>{throw new Error('[kis-http] invalid bounded index GET options');};
   let url:URL;try{url=new URL(urlText);}catch{return invalid();}
-  const keys=['FID_COND_MRKT_DIV_CODE','FID_INPUT_ISCD','FID_INPUT_DATE_1','FID_INPUT_DATE_2','FID_PERIOD_DIV_CODE'];
+  const stock=url.pathname==='/uapi/overseas-price/v1/quotations/dailyprice';
+  const keys=stock?['AUTH','EXCD','SYMB','GUBN','BYMD','MODP']:['FID_COND_MRKT_DIV_CODE','FID_INPUT_ISCD','FID_INPUT_DATE_1','FID_INPUT_DATE_2','FID_PERIOD_DIV_CODE'];
   const headers=new Headers(init.headers);
   const requestDay=(key:string):number=>{const value=url.searchParams.get(key)??'';
     if(!/^\d{8}$/.test(value))return NaN;
     const iso=`${value.slice(0,4)}-${value.slice(4,6)}-${value.slice(6,8)}`;
     const time=Date.parse(`${iso}T00:00:00Z`);return Number.isFinite(time)&&new Date(time).toISOString().slice(0,10)===iso?time:NaN;};
   const start=requestDay('FID_INPUT_DATE_1'),end=requestDay('FID_INPUT_DATE_2');
+  const contract=stock
+    ?url.searchParams.get('AUTH')===''&&url.searchParams.get('EXCD')==='NYS'&&url.searchParams.get('SYMB')==='BRK/B'&&url.searchParams.get('GUBN')==='0'&&url.searchParams.get('MODP')==='0'&&Number.isFinite(requestDay('BYMD'))&&headers.get('tr_id')==='HHDFS76240000'
+    :url.pathname==='/uapi/overseas-price/v1/quotations/inquire-daily-chartprice'&&url.searchParams.get('FID_COND_MRKT_DIV_CODE')==='N'&&url.searchParams.get('FID_INPUT_ISCD')==='SPX'&&url.searchParams.get('FID_PERIOD_DIV_CODE')==='D'&&Number.isFinite(start)&&Number.isFinite(end)&&start<=end&&end-start<70*86400_000&&headers.get('tr_id')==='FHKST03030100';
   if(init.method!=='GET'||init.body!=null||!init.signal||(init.redirect!==undefined&&init.redirect!=='error')
-    ||url.origin!=='https://openapi.koreainvestment.com:9443'
-    ||url.pathname!=='/uapi/overseas-price/v1/quotations/inquire-daily-chartprice'||url.hash||url.username||url.password
-    ||[...url.searchParams.keys()].length!==keys.length||keys.some(k=>url.searchParams.getAll(k).length!==1)
-    ||url.searchParams.get('FID_COND_MRKT_DIV_CODE')!=='N'||url.searchParams.get('FID_INPUT_ISCD')!=='SPX'
-    ||url.searchParams.get('FID_PERIOD_DIV_CODE')!=='D'
-    ||!/^\d{8}$/.test(url.searchParams.get('FID_INPUT_DATE_1')??'')||!/^\d{8}$/.test(url.searchParams.get('FID_INPUT_DATE_2')??'')
-    ||!Number.isFinite(start)||!Number.isFinite(end)||start>end||end-start>=70*86400_000
-    ||headers.get('tr_id')!=='FHKST03030100'||headers.get('custtype')!=='P'
+    ||url.origin!=='https://openapi.koreainvestment.com:9443'||url.hash||url.username||url.password
+    ||[...url.searchParams.keys()].length!==keys.length||keys.some(k=>url.searchParams.getAll(k).length!==1)||!contract
+    ||headers.get('custtype')!=='P'
     ||[...headers.keys()].some(k=>!['content-type','authorization','appkey','appsecret','tr_id','custtype'].includes(k))
     ||opts.priority!=='bulk'||opts.rateLimitRetries!==0||opts.transientRetries!==0
     ||!Number.isInteger(opts.timeoutMs)||opts.timeoutMs!<=0||opts.timeoutMs!>10_000

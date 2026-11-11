@@ -1,4 +1,6 @@
 /** Evaluation-only public observations. No DB, account, order or credential-store access. */
+import { BRK_PAIR_SOURCE_ID,BRK_PAIR_SYMBOL,BRK_ALPACA_URL,validateBrkPairEnvelope } from './forward-stock-contract';
+import { ForwardCollectionBudget } from './forward-collection-budget';
 import { createHash } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
 import { performance } from 'node:perf_hooks';
@@ -12,7 +14,7 @@ export interface ForwardCsvBar { session:string; open:string; high:string; low:s
 export interface ForwardStockSource {
   symbol:string; vendorTicker:string; basis:'split_adjusted'|'raw'; sourceId:string;
   request:Record<string,string>; observedAt:string; sha256:string; rows:ForwardCsvBar[];
-  rawCsv?:string; sourceUrl?:string; file?:string; bytes?:number; http?:number; probe?:boolean;
+  rawJson?:string;sourceUse?:'evaluation_only';liveEligible?:false;rawCsv?:string; sourceUrl?:string; file?:string; bytes?:number; http?:number; probe?:boolean;
 }
 export interface ForwardIndexSource {
   sourceId:string; sourceUrl:string; observedAt:string; sha256:string;
@@ -24,13 +26,13 @@ export interface ForwardSourceFailure {
 export interface ForwardSourceBundle {
   schemaVersion:1; asOfSession:string; observedAt:string; dateWindow:{start:string;end:string};
   records:ForwardStockSource[]; market?:ForwardIndexSource; failures:ForwardSourceFailure[];
-  complete:boolean; sourceUse:string; kind?:string;
+  complete:boolean; sourceUse:string; kind?:string;nonPriceEvidence?:{brkContinuityReference?:ForwardStockSource;quarantine?:{reason:string;observedAt:string;rawJson:string;sha256:string}};
 }
-export interface ForwardFetchOptions { timeoutMs:number; maxBytes:number }
+export interface ForwardFetchOptions { timeoutMs:number; maxBytes:number; budget?:ForwardCollectionBudget }
 export interface ForwardFetchResponse { status:number; text:string }
 export interface ForwardSourceDependencies {
   fetchText?:(url:string,options:ForwardFetchOptions)=>Promise<ForwardFetchResponse>;
-  now?:()=>Date; sleep?:(milliseconds:number)=>Promise<void>; monotonicMs?:()=>number;
+  budget?:ForwardCollectionBudget; now?:()=>Date; sleep?:(milliseconds:number)=>Promise<void>; monotonicMs?:()=>number;
 }
 export const FORWARD_COLLECTION_LIMITS=Object.freeze({
   symbols:150, requests:301, responseBytes:512*1024, totalBytes:20*1024*1024,
@@ -60,7 +62,8 @@ function indexEndpoint(value:string):URL {
 }
 
 /** Direct IPv4 per request; never changes process-wide DNS or accepts a redirect. */
-function fetchForwardNodeText(urlText:string,options:ForwardFetchOptions):Promise<ForwardFetchResponse> {
+async function fetchForwardNodeText(urlText:string,options:ForwardFetchOptions):Promise<ForwardFetchResponse> {
+  if(options.budget)options={...options,timeoutMs:await options.budget.reserve(options.timeoutMs),maxBytes:options.budget.responseLimit(options.maxBytes)};
   const url=urlText.startsWith('https://api.kibot.com/')?stockEndpoint(urlText):indexEndpoint(urlText);
   return new Promise((resolve,reject)=>{
     let ended=false;
@@ -74,6 +77,7 @@ function fetchForwardNodeText(urlText:string,options:ForwardFetchOptions):Promis
       }
       res.on('data',(chunk:Buffer)=>{
         bytes+=chunk.length;
+        try{options.budget?.consume(chunk.length);}catch{res.destroy();req.destroy();finish(new Error('forward_source_response_budget'));return;}
         if(bytes>options.maxBytes){res.destroy();req.destroy();finish(new Error('forward_source_response_budget'));return;}
         chunks.push(chunk);
       });
@@ -87,6 +91,10 @@ function fetchForwardNodeText(urlText:string,options:ForwardFetchOptions):Promis
 }
 /** FRED-only transport fallback. curl's default truthful UA; no redirects/config/TLS bypass. */
 export function fetchForwardIndexCurl(urlText:string,options:ForwardFetchOptions):Promise<ForwardFetchResponse> {
+  indexEndpoint(urlText);return fetchForwardIndexCurlBounded(urlText,options);
+}
+async function fetchForwardIndexCurlBounded(urlText:string,options:ForwardFetchOptions):Promise<ForwardFetchResponse> {
+  if(options.budget)options={...options,timeoutMs:await options.budget.reserve(options.timeoutMs),maxBytes:options.budget.responseLimit(options.maxBytes)};
   indexEndpoint(urlText);
   return new Promise((resolve,reject)=>{
     const child=spawn('curl',['-q','--ipv4','--silent','--show-error','--proto','=https','--max-redirs','0',
@@ -101,6 +109,7 @@ export function fetchForwardIndexCurl(urlText:string,options:ForwardFetchOptions
     };
     const timer=setTimeout(()=>finish(new Error('forward_source_timeout')),options.timeoutMs);
     child.stdout.on('data',(chunk:Buffer)=>{bytes+=chunk.length;
+      try{options.budget?.consume(chunk.length);}catch{finish(new Error('forward_source_response_budget'));return;}
       if(bytes>options.maxBytes+4)finish(new Error('forward_source_response_budget'));else chunks.push(chunk);});
     child.on('error',()=>finish(new Error('forward_source_transport_failed')));
     child.on('close',code=>finish(code===0?undefined:new Error('forward_source_transport_failed')));
@@ -176,14 +185,15 @@ export async function collectForwardSources(
     dateWindow:{start,end:asOfSession},records:[],failures:[],complete:false,sourceUse:FORWARD_EVALUATION_SOURCE_USE};
   const began=clock();let lastStart:number|null=null,requests=0,totalBytes=0,consecutive=0,halted=false;
   async function fetch(url:string,symbol:string,basis:'split_adjusted'|'raw'|'index'):Promise<{text:string;observedAt:string}|null>{
-    const remaining=()=>FORWARD_COLLECTION_LIMITS.deadlineMs-(clock()-began);
+    const remaining=()=>Math.min(FORWARD_COLLECTION_LIMITS.deadlineMs-(clock()-began),deps.budget?.remaining()??Infinity);
     try{
       if(halted||requests>=FORWARD_COLLECTION_LIMITS.requests||remaining()<=0)return error('forward_source_deadline');
       if(lastStart!==null){const pause=Math.max(0,FORWARD_COLLECTION_LIMITS.requestSpacingMs-(clock()-lastStart));if(pause>=remaining())return error('forward_source_deadline');if(pause)await sleep(pause);}
       if(remaining()<=0)return error('forward_source_deadline');
       lastStart=clock();requests++;
-      const response=await fetchText(url,{timeoutMs:Math.min(FORWARD_COLLECTION_LIMITS.timeoutMs,remaining()),maxBytes:FORWARD_COLLECTION_LIMITS.responseBytes});
-      const bytes=Buffer.byteLength(response.text,'utf8');totalBytes+=bytes;
+      if(deps.fetchText&&deps.budget)await deps.budget.reserve();
+      const response=await fetchText(url,{budget:deps.fetchText?undefined:deps.budget,timeoutMs:Math.min(FORWARD_COLLECTION_LIMITS.timeoutMs,remaining()),maxBytes:FORWARD_COLLECTION_LIMITS.responseBytes});
+      const bytes=Buffer.byteLength(response.text,'utf8');if(deps.fetchText)deps.budget?.consume(bytes);totalBytes+=bytes;
       if(bytes>FORWARD_COLLECTION_LIMITS.responseBytes||totalBytes>FORWARD_COLLECTION_LIMITS.totalBytes)return error('forward_source_response_budget');
       const code=responseCode(response);if(code)return error(code);
       const observedAt=now().toISOString();utc(observedAt);
@@ -232,13 +242,29 @@ export async function collectForwardSources(
 }
 
 /** Pure mapping. Source labels never promote an observation to live eligibility. */
+export function brkQuarantineRequiresReview(bundle:ForwardSourceBundle):boolean {return /(?:known_or_unclassified_action_requires_reconciliation|unreviewed_material_filing|source_verification_pending|prior_conflict_requires_review)$/.test(bundle.nonPriceEvidence?.quarantine?.reason??'');}
+/** Negative evidence is an append-only snapshot; originals remain in prior archives and the explicit reference. */
+export function quarantineForwardBrkEvidence(bundle:ForwardSourceBundle,reference:ForwardStockSource,reason:string,rawJson:string,observedAt:string):ForwardSourceBundle {
+ return {...bundle,complete:false,observedAt,records:bundle.records.filter(r=>r.symbol!==BRK_PAIR_SYMBOL),nonPriceEvidence:{brkContinuityReference:reference,quarantine:{reason,observedAt,rawJson,sha256:sha(rawJson)}},failures:[...bundle.failures,{symbol:BRK_PAIR_SYMBOL,basis:'split_adjusted',errorCode:reason}]};
+}
+/** Pair records are atomic and regenerated from the same whole evidence envelope. */
+export function validateForwardBrkPair(bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[],required=false,knownAt=bundle.observedAt):void {
+ if(bundle.nonPriceEvidence?.quarantine)throw Error('forward_pair_quarantined_evidence');
+ const records=bundle.records.filter(r=>r.sourceId.startsWith(BRK_PAIR_SOURCE_ID));
+ if(!records.length){if(required)throw Error('forward_pair_required');return;}
+ if(records.length!==2||records.some(r=>r.probe===true||r.symbol!==BRK_PAIR_SYMBOL||r.sourceId!==BRK_PAIR_SOURCE_ID+'_'+r.basis||r.vendorTicker!=='BRK.B'||r.sourceUrl!==BRK_ALPACA_URL||r.rawCsv!==undefined||r.sourceUse!=='evaluation_only'||r.liveEligible!==false||JSON.stringify(r.request)!==JSON.stringify({provider:'alpaca_sip_brk_pair_v1'}))||new Set(records.map(r=>r.basis)).size!==2||records[0].rawJson!==records[1].rawJson||!records[0].rawJson)throw Error('forward_pair_contract_invalid');
+ const checked=validateBrkPairEnvelope(records[0].rawJson,{start:bundle.dateWindow.start,end:bundle.asOfSession,now:knownAt,calendar});
+ for(const record of records)if(record.sha256!==checked.sha256||record.observedAt!==checked.observedAt||JSON.stringify(record.rows)!==JSON.stringify(record.basis==='raw'?checked.raw:checked.split))throw Error('forward_pair_rows_mismatch');
+ if(bundle.records.filter(r=>r.symbol===BRK_PAIR_SYMBOL&&!r.probe).length!==2)throw Error('forward_pair_duplicate_variant');
+}
 export function mapForwardSources(
-  bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[],
+  bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[],knownAt=bundle.observedAt,
 ):{data:ForwardInputData;opens:RawOpen[]} {
   const asOfSession=bundle.asOfSession??bundle.dateWindow?.end;
   if(bundle.schemaVersion!==1||!validForwardSessionDate(asOfSession)||!Array.isArray(bundle.records)
     ||!validForwardSessionDate(bundle.dateWindow?.start)||!validForwardSessionDate(bundle.dateWindow?.end)
     ||bundle.dateWindow.start>bundle.dateWindow.end||bundle.dateWindow.end!==asOfSession)return error('forward_source_bundle_invalid');
+  validateForwardBrkPair(bundle,calendar,false,knownAt);
   const sessions=new Map(calendar.map(s=>[s.session,s])),members=new Map<string,ForwardMemberData>(),seen=new Set<string>(),opens:RawOpen[]=[];
   function checkedPrice(session:string,value:string,observedAt:string,sourceId:string,digest:string,variant:'split_only'|'raw'|'index'):ForwardPriceBar {
     if(!validForwardSessionDate(session)||session>asOfSession||!positive(value)||!SHA.test(digest)||!sourceId.trim())return error('forward_source_observation_invalid');
@@ -248,14 +274,15 @@ export function mapForwardSources(
   }
   for(const record of bundle.records){
     if(record.probe===true)continue;
+    const isPair=record?.sourceId.startsWith(BRK_PAIR_SOURCE_ID);
     if(!record||!SYMBOL.test(record.symbol)||!Array.isArray(record.rows)||typeof record.sourceId!=='string'||record.vendorTicker!==record.symbol.slice(4)||!['split_adjusted','raw'].includes(record.basis)
-      ||!record.sourceId.startsWith(`kibot_guest_evaluation_${record.basis}_`))return error('forward_source_stock_contract_invalid');
+      ||(!isPair&&!record.sourceId.startsWith(`kibot_guest_evaluation_${record.basis}_`)))return error('forward_source_stock_contract_invalid');
     const p=record.request;
-    if(!p||p.action!=='history'||typeof p.interval!=='string'||p.interval.toLowerCase()!=='daily'||p.symbol!==record.vendorTicker
+    if(!isPair&&(!p||p.action!=='history'||typeof p.interval!=='string'||p.interval.toLowerCase()!=='daily'||p.symbol!==record.vendorTicker
       ||p.splitadjusted!==(record.basis==='split_adjusted'?'1':'0')||p.unadjusted!==(record.basis==='raw'?'1':'0')
       ||Object.keys(p).some(key=>!['action','symbol','interval','startdate','enddate','splitadjusted','unadjusted','type'].includes(key))
-      ||(p.type!==undefined&&p.type!=='stocks'))return error('forward_source_stock_contract_invalid');
-    if(record.sourceUrl){const endpoint=stockEndpoint(record.sourceUrl);if(endpoint.search)return error('forward_source_url_invalid');}
+      ||(p.type!==undefined&&p.type!=='stocks')))return error('forward_source_stock_contract_invalid');
+    if(record.sourceUrl&&!isPair){const endpoint=stockEndpoint(record.sourceUrl);if(endpoint.search)return error('forward_source_url_invalid');}
     const key=`${record.symbol}:${record.basis}`;if(seen.has(key))return error('forward_source_duplicate_variant');seen.add(key);
     if(record.rawCsv!==undefined){
       if(sha(record.rawCsv)!==record.sha256)return error('forward_source_hash_mismatch');
@@ -315,6 +342,15 @@ export function hasRequiredForwardIndexHistory(bundle:ForwardSourceBundle,calend
   const required=days.filter(day=>day.session<=latest).slice(-253);
   return required.length===253&&required.every(day=>bars.some(bar=>bar.session===day.session&&bar.final));
  }catch{return false;}
+}
+/** Validate the exact bundle consumed, not a prior readiness query's latest record. */
+export function assertForwardSourceReadiness(bundle:ForwardSourceBundle,calendar:readonly ForwardCalendarSession[],symbols:readonly string[],basisSessions:readonly string[]=[],knownAt=bundle.observedAt):void {
+ validateForwardBrkPair(bundle,calendar,symbols.includes(BRK_PAIR_SYMBOL),knownAt);
+ const mapped=mapForwardSources(bundle,calendar,knownAt);
+ if(!hasRequiredForwardIndexHistory(bundle,calendar))throw Error('forward_source_index_history_incomplete');
+ const indexEnd=mapped.data.sp500Bars.at(-1)?.session;
+ const required=requiredForwardSourceSessions(calendar,bundle.asOfSession,basisSessions,indexEnd);
+ if(missingForwardSourceSymbols(bundle,symbols,required).length)throw Error('forward_source_stock_history_incomplete');
 }
 /** 253 joint price observations plus the current stock mark (254 if index lags). */
 export function requiredForwardSourceSessions(calendar:readonly ForwardCalendarSession[],asOf:string,basisSessions:readonly string[]=[],indexEnd?:string):string[] {

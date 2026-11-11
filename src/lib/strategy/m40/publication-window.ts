@@ -14,4 +14,5 @@ export async function assertPublicationWindow(calendar:readonly ForwardCalendarS
  const actual=normalizeForwardUtc(clock[0]?.publicationNow);
  if(!actual)throw Error(`${scope}_publication_clock_unavailable`);
  if(actual>=deadline)throw Error(`${scope}_publication_deadline_elapsed`);
+ return actual;
 }

@@ -1,8 +1,9 @@
 /** Actual evidence must come from canonical paper cycles, never source forecast simulations. */
+import { sameSourceRegime } from './forward-source-regime';
 import type { ForecastEngineResult, ForecastHorizonResult } from './forecast-types';
 import type { ForecastEvaluation } from './forecast-store';
 export interface ForecastActualEvidence {
- asOfSession:string;accountId:string;policySha256:string;epochSession:string|null;
+ sourceRegimeSha256?:string;asOfSession:string;accountId:string;policySha256:string;epochSession:string|null;
  baselineSha256:string|null;cashflowReconciled:boolean;shareBasisReconciled:boolean;
  feesReconciled:boolean;canonicalCoverage:boolean;endpointSession:string|null;equityUsd:number|null;
 }
@@ -10,6 +11,7 @@ export function evaluateForecast(result:ForecastEngineResult,h:ForecastHorizonRe
  const empty={actualPnlUsd:null,actualReturnPct:null};
  if(actual.asOfSession<h.targetSession)return {status:'pending',issues:['target_not_matured'],...empty};
  const mismatch:string[]=[];
+ if((result.baseline.sourceRegimeSha256!==undefined||actual.sourceRegimeSha256!==undefined)&&!sameSourceRegime(result.baseline.sourceRegimeSha256,actual.sourceRegimeSha256))mismatch.push('source_regime_unreconciled');
  if(actual.accountId!==result.baseline.accountId)mismatch.push('account_changed');
  if(actual.policySha256!==result.policySha256)mismatch.push('policy_changed');
  if(actual.epochSession!==result.baseline.epochSession)mismatch.push('epoch_or_phase_changed');

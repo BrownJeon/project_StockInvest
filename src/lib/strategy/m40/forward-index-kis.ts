@@ -1,4 +1,5 @@
 /** Server-side licensed read-only index adapter. Never use as a live/order feed. */
+import type { ForwardCollectionBudget } from './forward-collection-budget';
 import { performance } from 'node:perf_hooks';
 import { getCredential } from '@/lib/credentials';
 import { getKisToken, kisBaseUrl } from '@/lib/exchanges/kis-auth';
@@ -12,15 +13,15 @@ import type { ForwardCalendarSession } from './forward-types';
 
 export interface CollectKisForwardIndexOptions {
   start:string; end:string; calendar:readonly ForwardCalendarSession[]; fred:FredIndexEvidence;
-  now?:()=>Date; monotonicMs?:()=>number;
+  budget?:ForwardCollectionBudget;now?:()=>Date; monotonicMs?:()=>number;
 }
 export interface KisForwardIndexDependencies {
   /** Test seam; production always uses the fixed allowlisted GET below. */
-  fetchPage?:(request:Readonly<Record<string,string>>,remainingMs:number)=>Promise<{http:number;rawJson:string}>;
+  fetchPage?:(request:Readonly<Record<string,string>>,remainingMs:number,maxResponseBytes?:number)=>Promise<{http:number;rawJson:string}>;
 }
 const fail=(code:string):never=>{throw new Error(`forward_index_${code}`);};
 const dayAfter=(day:string,days:number):string=>new Date(Date.parse(`${day}T00:00:00Z`)+days*86400_000).toISOString().slice(0,10);
-async function fetchLicensedPage(request:Readonly<Record<string,string>>,remainingMs:number,signal:AbortSignal):Promise<{http:number;rawJson:string}> {
+async function fetchLicensedPage(request:Readonly<Record<string,string>>,remainingMs:number,signal:AbortSignal,maxResponseBytes=KIS_INDEX_LIMITS.responseBytes):Promise<{http:number;rawJson:string}> {
   if(kisBaseUrl()!=='https://openapi.koreainvestment.com:9443')return fail('mock_ineligible');
   const [token,appkey,appsecret]=await Promise.all([getKisToken(),getCredential('KIS_APP_KEY'),getCredential('KIS_APP_SECRET')]);
   if(signal.aborted)return fail('deadline');
@@ -30,7 +31,7 @@ async function fetchLicensedPage(request:Readonly<Record<string,string>>,remaini
     'Content-Type':'application/json; charset=utf-8',Authorization:`Bearer ${token}`,appkey,appsecret,
     tr_id:'FHKST03030100',custtype:'P',
   }},{priority:'bulk',timeoutMs:Math.max(1,Math.floor(Math.min(10_000,remainingMs))),maxWaitMs:Math.max(1,Math.floor(Math.min(5000,remainingMs))),
-    rateLimitRetries:0,transientRetries:0,maxResponseBytes:KIS_INDEX_LIMITS.responseBytes,bodyDeadlineMs:Math.max(1,Math.floor(Math.min(90_000,remainingMs))),label:'m40ForwardSp500Index'});
+    rateLimitRetries:0,transientRetries:0,maxResponseBytes,bodyDeadlineMs:Math.max(1,Math.floor(Math.min(90_000,remainingMs))),label:'m40ForwardSp500Index'});
   return {http:response.status,rawJson:kisBodyText(response)??await response.text()};
 }
 export async function collectKisForwardIndex(options:CollectKisForwardIndexOptions,dependencies:KisForwardIndexDependencies={}) {
@@ -47,17 +48,18 @@ export async function collectKisForwardIndex(options:CollectKisForwardIndexOptio
   function remaining():number {
     const clock=monotonic();
     if(!Number.isFinite(clock)||clock<lastClock)return fail('clock_reversed');lastClock=clock;
-    const left=KIS_INDEX_LIMITS.deadlineMs-(clock-startClock);
+    const left=Math.min(KIS_INDEX_LIMITS.deadlineMs-(clock-startClock),options.budget?.remaining()??Infinity);
     if(left<=0)return fail('deadline');return left;
   }
   async function collect(start:string,end:string):Promise<void> {
     if(pages.length>=KIS_INDEX_LIMITS.requests)return fail('request_budget');
-    const budget=remaining(),request=kisIndexRequest(start,end);
+    const budget=Math.min(remaining(),options.budget?await options.budget.reserve(90000):Infinity),request=kisIndexRequest(start,end);
+    const maxResponseBytes=options.budget?.responseLimit(KIS_INDEX_LIMITS.responseBytes)??KIS_INDEX_LIMITS.responseBytes;
     if(budget<15_000)return fail('deadline');
     let timer:ReturnType<typeof setTimeout>|undefined;
     const controller=new AbortController();
     try {
-      const response=await Promise.race([(dependencies.fetchPage?dependencies.fetchPage(request,budget):fetchLicensedPage(request,budget,controller.signal)),new Promise<never>((_,reject)=>{
+      const response=await Promise.race([(dependencies.fetchPage?dependencies.fetchPage(request,budget,maxResponseBytes):fetchLicensedPage(request,budget,controller.signal,maxResponseBytes)),new Promise<never>((_,reject)=>{
         timer=setTimeout(()=>{controller.abort();reject(new Error('forward_index_deadline'));},budget);
       })]);
       remaining();
@@ -67,6 +69,7 @@ export async function collectKisForwardIndex(options:CollectKisForwardIndexOptio
       if(Math.abs((Date.parse(normalized)-Date.parse(startedAt))-(lastClock-startClock))>1000)return fail('clock_invalid');
       lastObserved=normalized;
       if(typeof response.rawJson!=='string')return fail('page_invalid');
+      options.budget?.consume(Buffer.byteLength(response.rawJson));
       bytes+=Buffer.byteLength(response.rawJson);if(bytes>KIS_INDEX_LIMITS.totalBytes)return fail('byte_budget');
       const page:KisIndexPage={request,http:response.http,observedAt,rawJson:response.rawJson,sha256:indexEvidenceSha(response.rawJson)};
       // Validation happens before scheduling the next request, not merely at the end.
