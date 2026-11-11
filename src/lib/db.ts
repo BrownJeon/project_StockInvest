@@ -1,3 +1,4 @@
+import { readBootstrapPresence } from '@/lib/db/bootstrap-presence';
 import { observeBootPromise, observeSetupPool } from '@/lib/diagnostics/boot-diagnostics';
 import mysql from 'mysql2/promise';
 import { inferAutopilotModeFromLegacy } from '@/lib/signals/autopilot';
@@ -803,6 +804,8 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  const bootstrapPresence = await readBootstrapPresence(p);
+
   // AI 스킵 시점의 시세 기록 + 후속 변화율 추적 컬럼 (signal-followup cron 용)
   // Phase Q: 4h/24h 장기 추적 컬럼 추가 — fine-tune 학습 라벨 노이즈 감소 목적
   for (const col of [
@@ -815,23 +818,23 @@ async function setupDB(): Promise<void> {
     ['price_change_pct_24h',  'DECIMAL(10,4) NULL'],
   ] as const) {
     try {
-      await p.query(`ALTER TABLE signals ADD COLUMN ${col[0]} ${col[1]}`);
+      if (!bootstrapPresence.hasColumn('signals', col[0])) await p.query(`ALTER TABLE signals ADD COLUMN ${col[0]} ${col[1]}`);
     } catch { /* 이미 존재하는 경우 무시 */ }
   }
 
   // 듀얼 시장 (국내/해외) 컬럼 — signals/orders/symbol_universe
   for (const tbl of ['signals', 'orders', 'symbol_universe'] as const) {
     try {
-      await p.query(
+      if (!bootstrapPresence.hasColumn(tbl, 'market')) await p.query(
         `ALTER TABLE ${tbl} ADD COLUMN market ENUM('domestic','overseas') NOT NULL DEFAULT 'domestic'`,
       );
     } catch { /* 이미 존재하는 경우 무시 */ }
   }
   try {
-    await p.query(`CREATE INDEX idx_signals_market ON signals (market, created_at DESC)`);
+    if (!bootstrapPresence.hasIndex('signals', 'idx_signals_market')) await p.query(`CREATE INDEX idx_signals_market ON signals (market, created_at DESC)`);
   } catch { /* 이미 존재 */ }
   try {
-    await p.query(`CREATE INDEX idx_orders_market ON orders (market, created_at DESC)`);
+    if (!bootstrapPresence.hasIndex('orders', 'idx_orders_market')) await p.query(`CREATE INDEX idx_orders_market ON orders (market, created_at DESC)`);
   } catch { /* 이미 존재 */ }
 
   // ── signals.status ENUM — 코드 상수(SIGNAL_STATUSES)가 유일한 진실 ─────────

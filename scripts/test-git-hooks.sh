@@ -944,6 +944,35 @@ e2e_commit "(t090-g4) 실 커밋: 로그인 화면·authx/ 이웃(task ID 없음
   'feat: 로그인 화면 문구'
 
 echo ""
+echo "[T-156 — 부팅 DDL presence helper·시험 독립 변경 실제 커밋]"
+stage_and_run 0 "(t156-neighbor) bootstrap 이웃3경로·task ID 없음 → 통과" \
+  "$(msg 'fix: bootstrap neighbors')" src/lib/db/bootstrap-presence.ts.bak src/lib/db/__tests__/bootstrap-presence.test.ts.snap src/lib/db/other.ts
+# Disposable repository only: every path must independently require its exact reviewed scope.
+for T156_PATH in src/lib/db/bootstrap-presence.ts src/lib/db/__tests__/bootstrap-presence.test.ts; do
+  mkdir -p "$E2E_REPO/$(dirname "$T156_PATH")"
+  cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-980-hooktest-t090-scoped.md" <<EOF
+---
+task_id: T-980
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: $T156_PATH)**
+EOF
+  printf 'bootstrap presence test\n' > "$E2E_REPO/$T156_PATH"
+  e2e_git add "$T156_PATH"
+  e2e_commit "(t156) $T156_PATH 단독·미검토 → 차단" block "커밋 차단" 'fix: bootstrap presence'
+  e2e_commit "(t156) $T156_PATH 단독·이웃 scope → 차단" block "커밋 차단" 'fix(T-979): bootstrap presence'
+  e2e_commit "(t156) $T156_PATH 단독·정확 scope → 통과" commit "$T075_OK" 'fix(T-980): bootstrap presence'
+done
+# Later authentication E2E scenarios reuse this task fixture; restore its original scope.
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-980-hooktest-t090-scoped.md" <<'EOF'
+---
+task_id: T-980
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/app/api/auth/)**
+EOF
+
+echo ""
 echo "[T-092 — 인증 관련 구현·시험 파일(6곳 + 시험 4) 추가]"
 
 # T-090 이 잠근 인증 입구 라우트가 기대는 불변식의 구현 쪽. 디렉토리 항목은 profile/password/ 하나뿐이고 나머지는 정확 일치다.

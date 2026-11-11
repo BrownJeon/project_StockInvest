@@ -679,6 +679,9 @@ SAFETY_PATHS=(
   '^src/lib/credentials\.ts$'
   '^src/lib/cron-auth\.ts$'
   '^src/lib/db\.ts$'
+  # T-156: bootstrap DDL skip decisions moved out of db.ts; helper and its regression must remain independently reviewed.
+  '^src/lib/db/bootstrap-presence\.ts$'
+  '^src/lib/db/__tests__/bootstrap-presence\.test\.ts$'
   '^src/lib/notify/telegram-api\.ts$'
   '^src/instrumentation\.ts$'
   '^src/lib/notify/__tests__/telegram-api\.test\.ts$'
