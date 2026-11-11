@@ -14,6 +14,10 @@ export const BRK_MASTER_SHA='634f61d3f065bba49d6107f40ecd2dc4ffca240d3ad5e2ab08c
 export const stockEvidenceSha=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
 export interface BrkEvidencePage {request:Record<string,string>;http:number;observedAt:string;rawJson:string;sha256:string;requestTokenSha256?:string|null}
 export interface BrkPairEnvelope {clockMeaning:'whole_evidence_ready_not_first_provider_receipt';fieldQualification:typeof BRK_FIELD_QUALIFICATION;schemaVersion:1;sourceId:typeof BRK_PAIR_SOURCE_ID;symbol:typeof BRK_PAIR_SYMBOL;currency:'USD';sourceUse:'evaluation_only';liveEligible:false;dateWindow:{start:string;end:string};events:{queryDate:string;alpaca:BrkEvidencePage[];sec:BrkEvidencePage|null;reviewManifest:typeof BRK_MATERIAL_REVIEW;reviewManifestSha256:string;assessment:'no_conflicts_reported_asof';completeHistoryGuaranteed:false;limitation:typeof BRK_EVENT_LIMITATION};observedAt:string;master:{sha256:string;rawBase64:string};alpaca:{raw:BrkEvidencePage[];split:BrkEvidencePage[]};kis:BrkEvidencePage[];kibotSplit:ForwardStockSource}
+// Reuse ICU formatter instances, never a date/offset result. The per-observation checks remain unchanged.
+const NY_OFFSET_FORMAT=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',timeZoneName:'shortOffset'});
+const NY_CLOCK_FORMAT=new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hourCycle:'h23',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+const NY_DAY_FORMAT=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
 const fail=():never=>{throw Error('forward_pair_contract_invalid');};
 const object=(v:unknown):Record<string,unknown>=>{if(!v||typeof v!=='object'||Array.isArray(v))return fail();return v as Record<string,unknown>;};
 const decimal=(v:string):string=>{if(typeof v!=='string'||!/^\d+(?:\.\d+)?$/.test(v))return fail();const d=stockDecimal(v);if(d==='0')return fail();return d;};
@@ -21,7 +25,7 @@ const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);
 function date(value:string):string{if(!/^\d{8}$/.test(value))return fail();const d=value.slice(0,4)+'-'+value.slice(4,6)+'-'+value.slice(6);if(!validForwardSessionDate(d))return fail();return d;}
 function csv(text:string):ForwardCsvBar[]{return text.trim().split(/\r?\n/).map(line=>{const p=line.split(',');const m=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(p[0]);if(p.length!==6||!m)return fail();const session=`${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;if(!validForwardSessionDate(session))return fail();p.slice(1,5).forEach(decimal);if(!/^\d+$/.test(p[5]))return fail();return {session,open:p[1],high:p[2],low:p[3],close:p[4],volume:p[5]};});}
 export function brkAlpacaRequest(start:string,end:string,basis:'raw'|'split',token?:string):Record<string,string>{
- const offset=(day:string)=>new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',timeZoneName:'shortOffset'}).formatToParts(new Date(day+'T12:00:00Z')).find(p=>p.type==='timeZoneName')?.value==='GMT-4'?'-04:00':'-05:00';
+ const offset=(day:string)=>NY_OFFSET_FORMAT.formatToParts(new Date(day+'T12:00:00Z')).find(p=>p.type==='timeZoneName')?.value==='GMT-4'?'-04:00':'-05:00';
  return {symbols:'BRK.B',timeframe:'1Day',feed:'sip',currency:'USD',adjustment:basis,asof:end,start:start+'T00:00:00'+offset(start),end:end+'T23:59:59'+offset(end),sort:'asc',limit:'1000',...(token?{page_token:token}:{})};
 }
 export function validateBrkPairEnvelope(rawJson:string,options:{start:string;end:string;now:string;calendar:readonly ForwardCalendarSession[]}):{raw:ForwardCsvBar[];split:ForwardCsvBar[];observedAt:string;sha256:string} {
@@ -42,8 +46,8 @@ export function validateBrkPairEnvelope(rawJson:string,options:{start:string;end
   pages.forEach((p,i)=>{const at=checked(p);if(!same(p.request,{...brkAlpacaRequest(e.dateWindow.start,e.dateWindow.end,basis),symbols:p.request.symbols==='AAPL,BRK.B'?'AAPL,BRK.B':'BRK.B'})||p.requestTokenSha256!==(token?stockEvidenceSha(token):null))return fail();
    const body=object(parseStockJson(p.rawJson)),bars=object(body.bars);if(Object.keys(body).some(k=>!['bars','next_page_token'].includes(k)))return fail();if(Object.keys(bars).some(k=>!p.request.symbols.split(',').includes(k))||!Array.isArray(bars['BRK.B']))return fail();
    for(const value of bars['BRK.B']){const b=object(value),t=b.t;if(typeof t!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.0+)?(?:Z|[+-]\d{2}:\d{2})$/.test(t)||!Number.isFinite(Date.parse(t)))return fail();
-    const clock=new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hourCycle:'h23',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(t));if(clock!=='00:00:00')return fail();
-    const session=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(t));
+    const clock=NY_CLOCK_FORMAT.format(new Date(t));if(clock!=='00:00:00')return fail();
+    const session=NY_DAY_FORMAT.format(new Date(t));
     const volume=stockNumber(b.v);if(!/^\d+$/.test(volume))return fail();rows.push({session,open:decimal(stockNumber(b.o)),high:decimal(stockNumber(b.h)),low:decimal(stockNumber(b.l)),close:decimal(stockNumber(b.c)),volume});
    }
    checkRows(rows,at);const next=body.next_page_token;if(next!==null&&(typeof next!=='string'||!next||next.length>4096||seen.has(next)))return fail();

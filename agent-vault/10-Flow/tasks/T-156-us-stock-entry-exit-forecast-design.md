@@ -2,7 +2,7 @@
 task_id: T-156
 title: 미국 종목분석의 매수·매도 시점 개선안 조사
 status: doing
-waiting: ["미국11/10 고정후보122/123 적격·BRK.B split 11/09·11/10 부족: Alpaca 실제권한2GET성공 후 시가/종가·분할/PIT·신규계약 검증, 적격 원천 후 첫T0/정상전진·신규4기간·중복 검증", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
+waiting: ["0.5 정본배포·같은 분석A의 실예측 발행/웹RSS·4기간/중복·앱 사후대기 검증", "전진 최소84일·신규왕복100건·에이전트 변경20일 검증", "당시 전체 종목 구성·거래소 상승 종목 분모와 언론 판본 원천 확보"]
 priority: medium
 base_ref: 8984f69ddd5581c45c919193a535f5b1b359765d
 roles_involved: [leader, developer, reviewer, qa]
@@ -14,8 +14,8 @@ execution_context:
   origin_tool: codex
   current_tool: codex
   current_procedure: codex_scoped
-  current_scope: "F52 coherentBRK43파일동결/Reviewer·C2override·QA509/480·실DB경합3통과,0.4정본배포·fresh모의펜스·실원천/forward/4기간발행검증준비。운영현재0.3/원예측1·4pending/T0null·실거래OFF"
-  last_event_id: exec-095
+  current_scope: "F54 메모리0.5전체43/7delta동결·Reviewer/C2override·QA160/동일2000경로·RSS3회개선통과。운영0.4sourceA/forward1/T0Nov10/rev4보존,새rev4펜스/정본0.5배포후같은A실예측발행·RSS·4기간/중복/앱대기검증준비。안전·512M·수치불변/실거래OFF"
+  last_event_id: exec-097
 created: 2026-11-06
 updated: 2026-11-11
 demo_gate:
@@ -135,6 +135,8 @@ demo_gate:
 
 | exec-094 | 2026-11-11 16:52 기록 | coherent_source_implementation | codex → codex / codex_scoped | BRK원주KIS/Alpaca297·기존조정295검산, 기준수정·동일쌍/동일bundle·비교원천전환보호 설계후0.4구현진행 | F51·brk-kis-parity/qa-brkpaired-source-preflight·C1delta; 운영0.3·실거래OFF |
 | exec-095 | 2026-11-11 18:55 기록 | frozen_validation_and_release_preparation | codex → codex / codex_scoped | 43파일최종동결·Reviewer/C2override·독립QA509/480·격리InnoDB3·실원문297·fresh모의펜스준비, 실제배포/첫전진·4기간발행대기 | F52·qa-brkb-product-final·reviewer-brkb-product/operator·실거래OFF |
+| exec-096 | 2026-11-11 19:18 기록 | live_forward_completed_forecast_memory_failure | codex → codex / codex_scoped | 0.4정본배포/123적격·첫forward/T0·시그널4실확인, forecast메모리재시작후0.5효율보완·동일수치/메모리재검증중 | F53·sourcebeb83·PM2 19:08:46 memory log·원예측/안전보존·실거래OFF |
+| exec-097 | 2026-11-11 19:39 기록 | memory_fix_frozen_validation_complete | codex → codex / codex_scoped | 0.5메모리7delta/43동결·독립감사/C2override·QA160/2000결과동일·RSS3회개선, freshrev4펜스와같은A운영발행검증준비 | F54·memory-fix-developer-freeze-manifest·qa-memory-fix-final·실거래OFF |
 
 ## F49 — 무료 대체 원천으로 105종목 보완·전체 흐름 검증 진행 (2026-11-11)
 
@@ -170,6 +172,25 @@ demo_gate:
 - BRK기업행동/SECmetadata·8K/EX/424원문과양성대조 등10원문731562bytes를 별도연구dataset event-src-a1ddbac9f7869dc4c61a920dcc918fd328faac482d1491ee에 저장/재읽기10검산했다. finite no_conflicts_reported_asof이며 10Q는공식표지/자본주석targeted만검토·rawSHA없음,CA보고지연/심볼coverage·NYSE11/09·발행사403한계는그대로다. 새미검토material/기업행동/미완료durable pending은차단한다.
 - 새모의계좌펜스 wrapper e1831b…d22c7/policy053972…13f7b는 기존core/proof/process SHA를유지해별도Reviewer조건부정적수용했다. core해시검사후동적import·freshrevision3경제/원예측baseline·old0.3미성숙target0·실Next.env loader/cron위임·fullrelease/oldworkerdrain을검사한다. 실제메모리/실API사용은정상흐름으로후확증한다. 실패시모의계좌paused유지,실거래/전역/앱권한/보호trigger불변이다.
 - 18:50KST fresh읽기에서 운영0.3/04afa·active/rev3/T0null·원예측1run4horizon4pending·paper/forecastlease0·healthdrytrue/killfalse·source145cda55/후보122of123상태를확인했다. 정본0.4배포/새profile2경로설정·모의재개·정상수집→첫forward/T0→새4기간발행·중복·실앱확인은아직완료전이다. 이미받은구현/운영반영/키승인을반복요청하지않는다.
+
+## F53 — 실자료 첫 전진과 예측 발행 메모리 보완 (2026-11-11)
+
+- 검토·QA된 0.4.0/949856fe35e3c14ca3d3d8836cf0a71aa48699ee를 한 번 push해 19:02:56KST RELEASE_RESULT ok/END0·migratedfalse로 반영했다. 별도deployer --status가 새경로 web/cron각1online/health200을확인했다. Root모의펜스19:03:46재개전43SHA·oldPID/cwd/인자부재·Next.env생산loader·경제/원예측지문동일·lease0을확인했다. 안전/전역/앱권한/8보호trigger는보존됐다.
+- 19:04:02 정상수집202접수→19:07:38 실제forward완료. source paper-src-beb83f5dd686e013c31957a458e5fac6858f34479f13ea87/asof11/10에서 raw126·split126최신/고정123후보누락0/sourceReadytrue다. 기존5022와검증진행표식은이력이며최신적격자료부족으로집계하지않는다. forward1/rev4/T0=2026-11-10·분석m40-93343a9473a33650f0f5106f5ebc2df25d647fb56042c106d60094e2f0991945·모의시그널4/모의체결0을실제DB·완료로그로확인했다. T0는policy_json에서읽으며기존점검helper의state_json조회null을T0미정으로오해하지않는다.
+- 이후새4기간forecast호출은 job19:08:31/paths0 뒤 19:08:46 PM2가 webRSS620126208>536870912로메모리재시작해응답이끊겼다. 새forecastrun0/원1run4기간4pending보존이다. 배포health통과와전체흐름완료를구분하며실패를숨기지않는다. 중단job5분lease는자연만료를따르고수동clear·조기재취득·가짜완료·수집재호출로sourceA교체를하지않는다.
+- developer/QA가실제보호ForecastPrepareArgs(13,911,602bytes/SHAf7b78ae2…f0b40)로DB/API/외부egress0 재현중이다. issuedAt은중단요청원시각복원이아닌새DBexportclock임을명시했다. QA독립준비+동일seed2000경로는같은프로세스에서완료/최고RSS약382MiB·분리engine결과SHA동일이나웹상주메모리/발행DB단계를포함하지않아운영512미만보장은아니다. O(n²)반복array복사등할당을좁게개선해동일결과·RSS·Reviewer→C2→QA를다시검증한다.
+- 새웹수정릴리스는0.5.0을한번준비하며현재운영은0.4.0이다. 메모리한도/주문안전/2천경로/편도0.25%/고정후보·첫T0·원예측불변조건은완화하지않는다. actual발행·중복·실앱4기간·사후pending·최종testDB이력은아직미완료. 다음정기수집11:45UTC전현재분석sourceA를보존해재검토/필요한fresh모의펜스후예측정상경로를검증한다.
+
+- 0.4단계의검토/QA·실제배포·수집/전진성공·예측메모리실패근거30파일34,771bytes를testartifact/blob DB에보존후재읽기확인했다: artifact-17132893db0ccbcc02b49a8d7eb11ec4/SHA17132893db0ccbcc02b49a8d7eb11ec4a7f59ab15852e918de03eeae90996059. 키/원문가격/계좌fixture는제외했고, 원천실자료는별도sourceDB에보존한다. 전체흐름완료나0.5검증이력으로표기하지않는다.
+
+
+## F54 — 메모리 수정 0.5.0 검증과 운영 발행 재확인 준비 (2026-11-11)
+
+- 0.5.0 전체 43파일/수정 7파일을 동결했다. manifest d66377879019e07d8d58e0502059d08cfdba4799b15849aa73b8edfd16b6456d, productDigest 0f2dfad01eb9a46a95fb68fb86bb61272ab4dbcb58d1c4f1224e378894a270e7. 새로 만든 배열의 누적 복사를 줄이고 같은 옵션의 뉴욕 날짜 변환 도구 객체만 재사용한다. 개별 날짜·공개 시각·가격·seed·2000경로·편도0.25%·512MiB·모든 적격/주문 조건은 유지했다.
+- Reviewer는 실제 7파일 차이와 나머지36SHA를 확인해 범위 감사를 통과시켰다. 공식Jev C1은 false(Leader 직접 도구 실행), C2는 true/design_assumption이어서 AGENTS의 codex_unavailable_in_codex를 기록했다. 별도 외부Codex 재귀 검토는 하지 않았다. 개발자 집중9suites/160·type/build0, 독립QA 집중9/160·전체43양환경SHA·DST/자정/known-at 검산을 통과했다.
+- 동일 보호 실자료의 준비→2000경로→발행 전 원천 재검증 근사 재생을 각각3회 비교했다. 0.4 RSS 620347392/617459712/663384064bytes → 0.5 468717568/480043008/436428800bytes, 전체입력·매핑순서·예측결과SHA는같다. 후보최대값은512MiB보다약54MiB낮을뿐이며 실제Next상주/실DB/동시요청을 포함하지 않는다. 이번운영forecast 1회와RSS/프로세스안정·4기간DB저장으로 후확증한다. QA receipt2410c218…234144, 실제운영성공을아직주장하지않는다.
+- 새모의전환wrapper639b353c…88ebee/policy8fa9b9be…2a676a는 독립폴더와 새manifest/버전만 바꿔 별도조건부정적수용했다. 새로운rev4 before/경제bridge/guard를 생성하고 0.4구프로세스·lease/원예측 보존을 검사한다. 이전rev3guard를 재사용하지 않는다. 추가환경/DBschema/권한/전역/보호trigger/실거래설정 변경은 없다.
+- 현재운영은0.4/949856이며 정상 sourceA(beb83…)·forward1/T0Nov10/rev4/모의시그널4·원forecast1/4pending을 보존한다. 새수집으로A를 바꾸지 않고0.5배포후 같은A의정상forecast API부터검증한다. 중단job은5분lease의자연만료를따르고수동clear하지않는다. 실제발행·중복·앱표시/사후대기·최종testDB보존이 다음단계다. 실거래OFF다.
 
 ## 목표
 
@@ -213,6 +234,11 @@ S&P 500의 시장 상태, Nasdaq-100 및 StockInvest NYSE 시총 상위 50의 �
 - [2026-11-11 18:49] codex_gate/C2 1차 engine=rules → codex_required=true / mode=review / focus=none / budget_rule=CX-user-requested / codex_switch=on | overrides=CX-user-requested | fallback=blocked_input: changed_paths 40개 초과 | tokens=0
 
 - [2026-11-11 18:49] codex_gate/C2 engine=jev → codex_required=true / mode=adversarial-review / focus=data_integrity / budget_rule=CX-user-requested / codex_switch=on | overrides=CX-r2-post-review; AGENTS override=codex_unavailable_in_codex (외부 Codex 검토 미실행) | fallback=- | tokens=1258
+
+- [2026-11-11 19:24][Codex leader 도구 실행] 메모리 효율 수정 C1은 공식Jev engine=jev/codex_required=false·CX-limit-unknown-r2/fallback없음(806tokens). 동시 역할 슬롯이 모두 사용 중이라 Leader가 기능 요약만 공식도구에 전달했으며 독립 Judge 추론/외부Codex 검토로 표현하지 않는다. 가격·시각·정책·seed·경로수·메모리/주문한도 불변, 결과해시·실규모 연속RSS 비교의 좁은수정범위다. 근거 judge-memory-c1-result.json.
+
+- [2026-11-11 19:35] codex_gate/C2 T-156.0.5 memory delta engine=jev → codex_required=true / mode=adversarial-review / focus=design_assumption / budget_rule=CX-limit-unknown-r2 / codex_switch=on | overrides=CX-r2-post-review; AGENTS override=codex_unavailable_in_codex (외부 Codex 검토 미실행) | fallback=- | tokens=938
+
 
 ## 조사와 권고
 
@@ -1742,6 +1768,11 @@ Codex 독립 Reviewer t156_reviewer 추가 정적 감사: owner 로그인·명�
 
 - [18:48] F49 별도 모의계좌 cutover wrapper SHA e1831b2346e92fe365d96767f1e854b97d9c62b1b8456db7f1440dfed39d22c7 및 policy SHA 0539725b422a5d262ed852bae00a9dac0ecef96b00c8868f8d78f9fc35a13f7b 정적 검토: 사용자 기승인 모의계좌 정지·재개 실행 전제에 한해 조건부 수용한다. 모듈 해시 선확인·동적 import, Next production 환경 6개 항목의 누락 차단, cron 인증 대조를 확인했다. 같은 OS 사용자 교체·스캔 뒤 새 프로세스·실제 PM2 메모리 및 공급자/API 이용은 별도 한계다. 실제 정지·재개·키값·운영 DB/API 및 기능시험은 실행하지 않았다. 제품 43파일 감사와 별도 범위이며 reviewer-brkb-operator-20261111.json 참고.
 
+- [19:32] 0.5.0 메모리 보완 7개 변경파일과 나머지 36개 정본 해시를 독립 대조했다. 내부 소유 배열의 순차 push와 동일 옵션 Intl 도구객체 재사용만으로 가격·시각·관문·시드·2000경로를 바꾸지 않으며, 날짜와 offset은 매번 재계산한다. QA의 격리 Node 선행 측정은 기준/후보 입력·전체 결과 해시 동일이며 후보 최대 RSS 436~480MB이나 웹 상주·DB 제외로 운영 512MiB 이하를 보장하지 않는다. 최종 독립 QA, 서머타임 경계, 실제 운영 예측 발행 및 실거래 OFF 검증은 별도다. Reviewer는 실제 키/API/운영 DB/기능시험을 실행하지 않았다. 근거 reviewer-memory-fix-20261111.json.
+- [19:32] **최종 판정: PASS (scope: package-lock.json, package.json, src/lib/strategy/m40/__tests__/forward-stock-contract.test.ts, src/lib/strategy/m40/forward-runtime.ts, src/lib/strategy/m40/forward-sources.ts, src/lib/strategy/m40/forward-stock-contract.ts, src/lib/strategy/m40/forward-stock-events.ts)**
+
+- [19:35] 0.5.0 모의계좌 cutover wrapper SHA 639b353ccff7413a1315dd1cae4bd11bca0aefd9cfab12d3e5a7cf4ba588ebee 및 정책 SHA 8fa9b9be11261a65fa74044f9cbc41a6142c114ca9db75e888d9ae51e52a676a를 0.4.0 기검토본과 정적 대조하여 사용자 기승인 모의계좌 정지·재개의 전제에 한해 조건부 수용한다. wrapper는 독립 작업 폴더만 변경했고 정책은 새 manifest·버전만 변경했으며, 신규 revision 기반 영수증과 guard를 써야 한다. QA·구 프로세스 종료·실제 재개 및 사후검증은 별도다. Reviewer 실제 DB/API·정지/재개·키값·시험 실행 없음. 근거 reviewer-memory-cutover-20261111.json.
+
 ## QA
 
 Codex 하위 역할 `t156_qa`가 Ubuntu 로컬 디스크에서 실제 실행했다. Jest 55 suites / 1,343 tests 통과, 기존 별도 MariaDB 경합 suite 1개·15 tests는 미실행으로 분리한다. 새 T-156 MariaDB 저장소 14 tests 통과(실제 InnoDB 대기 확인 경합2 포함), tsc 및 archive 4 tests 통과. DRY_RUN·킬스위치·한도·블랙리스트·감사로그·검증 관문의 모의 회귀를 포함하며 whitelist는 현재 항상허용 규칙이다.
@@ -1781,6 +1812,8 @@ DRY_RUN 연결 최종 QA: 지정65 suites/1,594 PASS,기존별도DB경합1 suite
 - [16:47] F49 BRK.B 쌍원천·장부 사전 독립검산: 저장된 KIS master 24열/BRK.B→NYS BRK/B identity, 3page SHA·요청/응답·기간·실수신시각·중복2/기간밖1·envelope 전필드 재생성·canonical297을 직접 재파싱. Alpaca raw/split 각297 OHLCV 및 원문 bytes 일치, KIS raw 대 Alpaca raw 시가/종가297/297·고가/저가296/297·거래량112/297, 기존 Kibot split 대 Alpaca split 시가/종가295/295·고/저가293·거래량112/295. 고저·거래량을 타원천까지 전필드 동일하다고 주장하지않는다. Alpaca 페이지영수증은 전체요청URL을 별도로담지않아feed/adjustment 증거는동결probe소스와report에 의존한다. Root 읽기전용트랜잭션/SELECT/ROLLBACK helper 정적감사,저장fixture book/policy SHA와Root preflight 해시가일치하고 BRK 미보유·기존BRK basis 0·나머지4basis 기존0.0001 허용한도내·평가값변화없음/수정없음은저장영수증상 확인했다. QA 운영DB/API/키읽기·쓰기0, 미래corporate-action/PIT·운영원천적격·소스경합·실제신규발행은별도 검증대기. [[qa-brkpaired-source-preflight]] SHA `e43d9239e15db7e8c49f23299ac8e766bc0120e68b4f0d57534d5ca4f6a7be26`.
 
 - [18:55] F49 BRK pair 제품 동결본 범위 독립 QA **PASS**: Reviewer 43파일 manifest SHA `80ea3265312177cd9cdce557ecf827702de1889e313c87a18d88069b84f30953`/digest `c8e1eee84af5b112522a313eee154dcc66d86081010d02ec3ac604ec15b948f0`, 격리본/별도QA복사본 전후 43 SHA 불일치0. Ubuntu 공통flock Jest 광역31 suites/509건, DRY_RUN·킬스위치·주문한도·블랙리스트·KIS속도/우선순위 mock 안전22 suites/480건 전부통과/skip0, 독립typecheck0; build는동일동결해시의developer exit0 근거이며 QA 재실행아님. 보존 실제 BRK 증거는 network/socket 차단 검증기로 raw/split297/297을 재생하고필수사건증거삭제·다음NY일자차단 확인. 분할행동이 양 provider가격에도숨을수있는 합성반례에서 양성사건보고 시차단 1/1; 빈 사건응답은 절대부재증명이아님. 전용 network=none/skip-networking MariaDB10.11.11·Unix socket에서 실제제품 archive/publish 함수·실DB잠금의 source선행/forecast선행/pending뒤음성write실패·lease만료 3/3, 별도 고정 fence core/proof 실제격리DB 23/23 통과. 최초QA 합성fixture 필드순서 오류로3건 시작전실패 후 QA fixture만수정해재실행, 제품변경0; 첫Mac Docker없음준비오류도별도기록. 전용컨테이너/QA임시폴더·소켓삭제확인. 기존clientOrderId 중복 mock 3건은이전독립QA 근거이며이번실행아님. 실제운영펜스·배포·새모의전진/4기간예측·비교는 미검증, 운영전환별도Reviewer조건유지. [[qa-brkb-product-final-20261111]] SHA `db4a217b16ff1fa0e9b740f7d01e2c1425416026e479640d1153e4025fea1fb4`.
+
+- [19:38] F49 0.5 메모리수정 동결 범위 독립 QA **PASS**: 0.4 첫 정상 forward/sourceReady 뒤 forecast 운영요청에서 PM2 512MiB 한도 초과·웹재시작1/새예측 미확인한 문제는 기존 QA의실규모 RSS 미검출로 별도기록. 0.5 Reviewer 7delta 정적 PASS/43파일 manifest SHA `d66377879019e07d8d58e0502059d08cfdba4799b15849aa73b8edfd16b6456d` Mac최종·Ubuntu시험전후 43 SHA 불일치0, 집중9 suites/160 tests 전부통과/skip0. 보호 실자료의 **새 DB 추출 시각** 고정입력에 대해 준비→2,000경로→원천 메모리 재읽기/발행전순수검증 독립Node 3회씩: 0.4 최고 RSS 620347392/617459712/663384064 bytes, 0.5 후보 468717568/480043008/436428800 bytes. 입력·전체예측결과 해시 6회 동일, 동일원천/캘린더 전체mapping 결과·순서 일치. 겨울→여름→겨울/춘추DST 전후 offset 5쌍·뉴욕자정6경계·수신전자료차단이기준/후보동일. 2,000경로·편도0.25%·시각/가격안전기준·실거래설정 미완화. 0.5 type/build는같은동결파일의developer exit0이며QA가재실행한것아님; 0.4 31/509와안전22/480은전버전근거. 독립프로세스는기존Next웹상주·실DB·동시요청을포함하지않고,후보최고480043008 bytes는한도보다56827904 bytes 여유뿐이라실운영RSS·재시작/4기간저장검증필수. QA실자료임시복사·전용폴더는제거,Root보호원본유지. 운영forecast재시도/실발행은 QA가수행하지않았으며전체흐름 NOT_VERIFIED. [[qa-memory-fix-final-20261111]] SHA `2410c218a65530c704bc35fbb2ead63d2f2471a5bc09b20e3861a31f88234144`.
 
 ## 배포 기록
 
@@ -2148,11 +2181,14 @@ main·작업 HEAD `06bce08a7939ac17009194995fc6f0da6f99f239`, 릴리스 `2026110
 - [17:18] 새 무료원천 C1 delta 뒤 0.4.0 단일릴리스 구현 진행: NYS:BRK.B raw/split 원자쌍·원문lexeme 정확검증/KIS OPEN+CLOSE200·Kibot split CLOSE연속성/고정master/공통 DATA301·420초·20MiB예산, 전체 실제bundle·분석source hash핀·발행TX재검사·source-regime 평가불비교·paused평가차단을 보강했다. 격리 Node24에서 24 suites340건 및 후속focused5 suites62건/타입/빌드 통과는 중간 증거이며, sourceevent 독립증거 미확정으로 최종동결·QA·운영완료를 선언하지 않는다. API/실키값읽기/운영DB쓰기·APK·장부정책수정0, Root문서/기존ops/core보존.
 - [18:43] 0.4.0 좁은BRKcoherentpair 구현43파일을 동결했다(productDigest c8e1eee84af5b112522a313eee154dcc66d86081010d02ec3ac604ec15b948f0, manifest80ea3265…953). 최종 source-critical pending P 선행영속/격리write실패·만료worker·24h/휴장 TTL우회 방어를 포함하며 source publish account→datasetTX·lease전후검사, same-analysis-A핀/actualB전체검증/DBNYday·발행전후guard, SEC기존UA·cooldown·RetryAfter·signal 및 KIS공통bulk/usage boundedBRK를 유지했다. 광역31 suites506건은 마지막pendingTTL보완 전, 최종집중3 suites39건·타입·빌드0은동결본 증거이고 QA동결본광역예상31/509는미실행으로구분했다. 실제보존원문297/297pure검산(HTTP/DB쓰기0), local/Ubuntu43 SHA불일치0, corec648·ops49·DDL·APK·실거래경로변경0. finite CA/SEC/targeted10Q NULLrawSHA와보고지연/CA심볼coverage한계 명시, Reviewer→C2→QA 인수대기이며 실제모의/4기간발행완료 주장은 하지 않는다.
 
+- [19:32] 0.4 운영 RSS 초과 후 0.5.0 메모리 전용 수정 동결: 날짜별 ICU formatter 재생성을 모듈 객체 재사용으로 변경하고 splitBars 반복 복사를 push로 대체(날짜 결과 캐시·안전 관문 변경 없음). baseline949856 대비7파일, 전체43 productDigest 0f2dfad01eb9a46a95fb68fb86bb61272ab4dbcb58d1c4f1224e378894a270e7. 집중9suite/160건·전체type·build 통과. QA 동일 보호입력/2000경로 3회 최고RSS 468717568/480043008/436428800bytes(기준620347392/617459712/663384064), 입력·전체결과 SHA6회동일; 독립 Node 근사라 웹상주·실DB 제외. manifest memory-fix-developer-freeze-manifest.json, Reviewer/C2/최종QA 대기. 운영API/DB쓰기/키읽기0.
+
 ## 배포 기록
 
 | 시각 | 릴리스 | 커밋 | 포함 작업 | 결과 | 비고 |
 |------|--------|------|-----------|------|------|
 | 2026-11-10 18:58 | 20261110-185657-04afa341 | 04afa341c07 | T-156 (일일 수집·재시도 복구) | ✅ ok | `RELEASE_RESULT` full SHA `04afa341c07bb39675907898299d4aee9c5c21bb`, previous `20261110-173140-f98f55ac`, `migrated=false`; webhook END exit 0. 최종 `--status`: web/cron 각 1개 online, 둘 다 새 릴리스 cwd, health 200. 컷오버 중간 status에서는 이전 프로세스 및 health 실패가 보였으나 END 뒤 최종 readback에서 해소. 별도 `--yes`·마이그레이션·APK 없음. 실수집·forward·forecast 운영 검증은 별도 후속. |
+| 2026-11-11 19:02 | 20261111-190126-949856fe | 949856fe35e3c14ca3d3d8836cf0a71aa48699ee | T-156 (무료 BRK.B coherent raw/split 원천·M40 원천전환 보호, 웹 0.4.0) | ✅ RELEASE_RESULT ok, END exit 0, migrated=false | previous `20261110-185657-04afa341`. 정본 `--status` 재확인: current `20261111-190126-949856fe`, `stockinvest`·`stockinvest-cron` 각각 1개 online 및 새 릴리스 cwd, health 200. health receipt `db=true`, `DRY_RUN=true`, `KILL_SWITCH=false`. 운영 설정에는 무료 원천 프로필 파일 경로 2개만 추가(백업 0600, 나머지 설정 bytes 동일). 배포 확인 시점에는 모의계좌가 paused였음. 이후 Leader의 cutover-resume 영수증은 19:03:46 KST 재개를 기록하고, Leader가 확인한 정상수집은 19:04:02 접수·19:04:47 실행 중 상태다. 이는 deployer의 운영 DB 직접 조회가 아니며, 실제 모의분석·신규 4기간 예측 최종 발행 상태는 Leader 후속 검증 대기. DB migration·APK·실거래 활성화 없음. `scripts/deploy.sh --yes` 추가 실행 없음. |
 - [19:20] resume의 auth daemon nondumpable EACCES를 일반 무시하지 않고 Leader 승인 범위의 appworker 드레인 classifier를 ignore ops 파일에만 추가했다. Root 실제39개·정확5종 및 직접 읽은 부모chain에 한정해 comm/argv0/4 UID/PPid/kernel startTicks와 child·부모 전후 identity, root 비writable 참조 ELF/경로/SHA를 검사한다. 기록 구web/cron PID2개는 scan전후 소멸하고 readable old cwd는0이어야 하며 unknown/Node/Next/bash/sleep/curl EACCES는 거부한다.
 - [19:20] 실행중 exe 링크는 EACCES여서 inode 인증을 하지 못한다는 한계를 receipt의 executingImagesVerified=false/allOsCwdsVerified=false 및 non-adversarial trusted-operator 가정으로 명시하고, 실제 제외 PID/종류/수를 기록한다. privileged proof/권한추가/일반EACCES skip은 구현하지 않았다.
 - [19:20] 순수26+injected proc/fs 실제 scanner 호출경로14+network차단 temp복사본 module SHA mismatch4=44 tests 통과(193.7ms). 새 process/proof/core의 실제바이트SHA를 DB연결전에고정값과대조한다. opsmanifest 7a8ef4e93e51805937d3d1217cf1964e538c23e375afe46a2ee70370ad2310ba, process28681804cac788506d141e6a0ec18f5820c6ac85f47e1b577d2729d19143ab2f/operator981297e96917cc602ce88a80d910181cb26b6f331dd0973a289fa47cde2947b2로 Reviewer 인수했다. core c648/기존 DB23하네스/제품36은 불변이며 독립 Reviewer→QA 전에는 운영resume를 실행하지 않았다.

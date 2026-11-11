@@ -22,6 +22,7 @@ import { PAPER_ACCOUNT_ID,PAPER_STRATEGY_ID,markPaperBook,generatePaperSignals,s
 
 type Row=Record<string,unknown>;
 const sha=(s:string|Buffer)=>createHash('sha256').update(s).digest('hex');
+const NY_OFFSET_FORMAT=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',timeZoneName:'shortOffset'});
 const j=(v:unknown)=>JSON.parse(JSON.stringify(v)) as JsonValue;
 const parse=<T>(v:unknown):T=>typeof v==='string'?JSON.parse(v):v as T;
 export async function loadForwardCalendar(db:ArchiveQueryable=getPool()) {
@@ -31,8 +32,7 @@ export async function loadForwardCalendar(db:ArchiveQueryable=getPool()) {
    WHERE s.trade_date>='2025-01-01' AND s.closes_at_utc IS NOT NULL ORDER BY s.trade_date`);
  const history:ForwardCalendarSession[]=rows.map(r=>{
   const day=String(r.session);
-  const offset=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',timeZoneName:'shortOffset'})
-    .formatToParts(new Date(day+'T12:00:00Z')).find(p=>p.type==='timeZoneName')?.value;
+  const offset=NY_OFFSET_FORMAT.formatToParts(new Date(day+'T12:00:00Z')).find(p=>p.type==='timeZoneName')?.value;
   if(offset!=='GMT-4'&&offset!=='GMT-5')throw Error('forward_calendar_offset_unknown');
   return {session:day,openAt:day+(offset==='GMT-4'?'T13:30:00.000Z':'T14:30:00.000Z'),closeAt:String(r.closeAt),source:'historical_canonical'};
  });

@@ -265,7 +265,7 @@ export function mapForwardSources(
     ||!validForwardSessionDate(bundle.dateWindow?.start)||!validForwardSessionDate(bundle.dateWindow?.end)
     ||bundle.dateWindow.start>bundle.dateWindow.end||bundle.dateWindow.end!==asOfSession)return error('forward_source_bundle_invalid');
   validateForwardBrkPair(bundle,calendar,false,knownAt);
-  const sessions=new Map(calendar.map(s=>[s.session,s])),members=new Map<string,ForwardMemberData>(),seen=new Set<string>(),opens:RawOpen[]=[];
+  const sessions=new Map(calendar.map(s=>[s.session,s])),members=new Map<string,Omit<ForwardMemberData,'splitBars'> & {splitBars:ForwardPriceBar[]}>(),seen=new Set<string>(),opens:RawOpen[]=[];
   function checkedPrice(session:string,value:string,observedAt:string,sourceId:string,digest:string,variant:'split_only'|'raw'|'index'):ForwardPriceBar {
     if(!validForwardSessionDate(session)||session>asOfSession||!positive(value)||!SHA.test(digest)||!sourceId.trim())return error('forward_source_observation_invalid');
     const observed=utc(observedAt),close=sessions.get(session)?.closeAt;
@@ -296,7 +296,7 @@ export function mapForwardSources(
         ||Number(row.low)>Math.min(Number(row.open),Number(row.close))||Number(row.high)<Math.max(Number(row.open),Number(row.close)))return error('forward_source_observation_invalid');
       const price=checkedPrice(row.session,row.close,record.observedAt,record.sourceId,record.sha256,record.basis==='raw'?'raw':'split_only');
       let member=members.get(record.symbol);if(!member){member={symbol:record.symbol,splitBars:[]};members.set(record.symbol,member);}
-      if(record.basis==='split_adjusted')member.splitBars=[...member.splitBars,price];
+      if(record.basis==='split_adjusted')member.splitBars.push(price);
       else {
         if(row.session===asOfSession){const {close,...quote}=price;member.rawQuote={...quote,price:close};}
         opens.push({symbol:record.symbol,session:row.session,open:Number(row.open),observedAt:record.observedAt,sha256:record.sha256});

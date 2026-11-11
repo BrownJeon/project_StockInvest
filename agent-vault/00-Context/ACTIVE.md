@@ -8,6 +8,25 @@ tags:
 
 - **2026-11-09 22:55:02 — [[T-012-zero-price-snapshot]] 새 독립 최종 검증 완료**: 실제 Claude Reviewer PASS_WITH_NOTES·QA8군198/198/typecheck0, 동결 배포본18경로불변·기존정리16행보관/부재근거와결합해TASK done/roadmap[x]. 첫하네스 INCOMPLETE·과거원보고서/비차단한계 보존. 본감사T163 done와다른진행항목은유지. Codex 공통조율반영이며제품/운영/배포변경없음.
 
+## T-156 메모리 수정 0.5.0 검증 완료·운영 발행 재확인 준비 — F54/exec-097
+
+- 0.5.0 전체 43파일/수정 7파일을 동결했다. manifest d66377879019e07d8d58e0502059d08cfdba4799b15849aa73b8edfd16b6456d, productDigest 0f2dfad01eb9a46a95fb68fb86bb61272ab4dbcb58d1c4f1224e378894a270e7. 새로 만든 배열의 누적 복사를 줄이고 같은 옵션의 뉴욕 날짜 변환 도구 객체만 재사용한다. 개별 날짜·공개 시각·가격·seed·2000경로·편도0.25%·512MiB·모든 적격/주문 조건은 유지했다.
+- Reviewer는 실제 7파일 차이와 나머지36SHA를 확인해 범위 감사를 통과시켰다. 공식Jev C1은 false(Leader 직접 도구 실행), C2는 true/design_assumption이어서 AGENTS의 codex_unavailable_in_codex를 기록했다. 별도 외부Codex 재귀 검토는 하지 않았다. 개발자 집중9suites/160·type/build0, 독립QA 집중9/160·전체43양환경SHA·DST/자정/known-at 검산을 통과했다.
+- 동일 보호 실자료의 준비→2000경로→발행 전 원천 재검증 근사 재생을 각각3회 비교했다. 0.4 RSS 620347392/617459712/663384064bytes → 0.5 468717568/480043008/436428800bytes, 전체입력·매핑순서·예측결과SHA는같다. 후보최대값은512MiB보다약54MiB낮을뿐이며 실제Next상주/실DB/동시요청을 포함하지 않는다. 이번운영forecast 1회와RSS/프로세스안정·4기간DB저장으로 후확증한다. QA receipt2410c218…234144, 실제운영성공을아직주장하지않는다.
+- 새모의전환wrapper639b353c…88ebee/policy8fa9b9be…2a676a는 독립폴더와 새manifest/버전만 바꿔 별도조건부정적수용했다. 새로운rev4 before/경제bridge/guard를 생성하고 0.4구프로세스·lease/원예측 보존을 검사한다. 이전rev3guard를 재사용하지 않는다. 추가환경/DBschema/권한/전역/보호trigger/실거래설정 변경은 없다.
+- 현재운영은0.4/949856이며 정상 sourceA(beb83…)·forward1/T0Nov10/rev4/모의시그널4·원forecast1/4pending을 보존한다. 새수집으로A를 바꾸지 않고0.5배포후 같은A의정상forecast API부터검증한다. 중단job은5분lease의자연만료를따르고수동clear하지않는다. 실제발행·중복·앱표시/사후대기·최종testDB보존이 다음단계다. 실거래OFF다.
+
+## T-156 실자료 123후보·첫 전진 완료 / 예측 발행 메모리 보완 중 — F53/exec-096
+
+- 검토·QA된 0.4.0/949856fe35e3c14ca3d3d8836cf0a71aa48699ee를 한 번 push해 19:02:56KST RELEASE_RESULT ok/END0·migratedfalse로 반영했다. 별도deployer --status가 새경로 web/cron각1online/health200을확인했다. Root모의펜스19:03:46재개전43SHA·oldPID/cwd/인자부재·Next.env생산loader·경제/원예측지문동일·lease0을확인했다. 안전/전역/앱권한/8보호trigger는보존됐다.
+- 19:04:02 정상수집202접수→19:07:38 실제forward완료. source paper-src-beb83f5dd686e013c31957a458e5fac6858f34479f13ea87/asof11/10에서 raw126·split126최신/고정123후보누락0/sourceReadytrue다. 기존5022와검증진행표식은이력이며최신적격자료부족으로집계하지않는다. forward1/rev4/T0=2026-11-10·분석m40-93343a9473a33650f0f5106f5ebc2df25d647fb56042c106d60094e2f0991945·모의시그널4/모의체결0을실제DB·완료로그로확인했다. T0는policy_json에서읽으며기존점검helper의state_json조회null을T0미정으로오해하지않는다.
+- 이후새4기간forecast호출은 job19:08:31/paths0 뒤 19:08:46 PM2가 webRSS620126208>536870912로메모리재시작해응답이끊겼다. 새forecastrun0/원1run4기간4pending보존이다. 배포health통과와전체흐름완료를구분하며실패를숨기지않는다. 중단job5분lease는자연만료를따르고수동clear·조기재취득·가짜완료·수집재호출로sourceA교체를하지않는다.
+- developer/QA가실제보호ForecastPrepareArgs(13,911,602bytes/SHAf7b78ae2…f0b40)로DB/API/외부egress0 재현중이다. issuedAt은중단요청원시각복원이아닌새DBexportclock임을명시했다. QA독립준비+동일seed2000경로는같은프로세스에서완료/최고RSS약382MiB·분리engine결과SHA동일이나웹상주메모리/발행DB단계를포함하지않아운영512미만보장은아니다. O(n²)반복array복사등할당을좁게개선해동일결과·RSS·Reviewer→C2→QA를다시검증한다.
+- 새웹수정릴리스는0.5.0을한번준비하며현재운영은0.4.0이다. 메모리한도/주문안전/2천경로/편도0.25%/고정후보·첫T0·원예측불변조건은완화하지않는다. actual발행·중복·실앱4기간·사후pending·최종testDB이력은아직미완료. 다음정기수집11:45UTC전현재분석sourceA를보존해재검토/필요한fresh모의펜스후예측정상경로를검증한다.
+
+- 0.4단계의검토/QA·실제배포·수집/전진성공·예측메모리실패근거30파일34,771bytes를testartifact/blob DB에보존후재읽기확인했다: artifact-17132893db0ccbcc02b49a8d7eb11ec4/SHA17132893db0ccbcc02b49a8d7eb11ec4a7f59ab15852e918de03eeae90996059. 키/원문가격/계좌fixture는제외했고, 원천실자료는별도sourceDB에보존한다. 전체흐름완료나0.5검증이력으로표기하지않는다.
+
+
 ## T-156 무료 대체 원천 0.4.0 검증 완료·운영 연결 준비 — F52/exec-095
 
 - BRK.B 한정 coherent raw/split/KIS proof·일별 CA/SEC·원문/시간·same-analysis bundle·pending/음성격리·원천전환 사후비교 보호 구현43파일을 동결했다(manifest80ea3265…f30953/productDigestc8e1eee8…b948f0). 제품 Reviewer 범위감사·공식Jev C2와 codex_unavailable_in_codex override·독립 QA를 마쳤다. 외부Codex재귀검토는 실행하지 않았다.

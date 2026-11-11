@@ -9,7 +9,8 @@ export const BRK_EVENT_LIMITATION='Process-date provider query and contemporaneo
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex');
 const fail=(code:string):never=>{throw Error('forward_pair_events_'+code);};
 export const brkCaRequest=(queryDate:string,token?:string):Record<string,string>=>({symbols:'BRK.B',start:'2000-01-01',end:queryDate,data_quality:'all',region:'us',limit:'1000',sort:'asc',...(token?{page_token:token}:{})});
-export const brkNyDate=(at:string)=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));
+const NY_DAY_FORMAT=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
+export const brkNyDate=(at:string)=>NY_DAY_FORMAT.format(new Date(at));
 export function validateBrkCaPages(pages:readonly BrkEvidencePage[],queryDate:string,asOfClose:string,now:string):{observedAt:string;limitation:string}{
  if(!validForwardSessionDate(queryDate)||!Array.isArray(pages)||!pages.length||pages.length>3)return fail('query_invalid');
  const cutoff=normalizeForwardUtc(now),close=normalizeForwardUtc(asOfClose);if(!cutoff||!close||brkNyDate(cutoff)!==queryDate)return fail('clock_invalid');
