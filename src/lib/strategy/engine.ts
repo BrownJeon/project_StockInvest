@@ -49,6 +49,7 @@ import type { StyleConfig } from './style';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { EvalFunnelRecorder } from './eval-funnel';
+import { kickMacroRegimeRefresh, getMacroRegimeRecord } from './macro-regime';
 import type { FunnelGate, FunnelVerdict } from './eval-funnel-labels';
 import { openSellProposalPreview, type SellProposalPreviewRun } from './sell-proposal-preview';
 import {
@@ -1289,6 +1290,8 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
   // 장 마감은 정상 상태라 기록하지 않는다 — 장외 5분마다 빈 run 행이 쌓일 뿐이다.
   const rec = new EvalFunnelRecorder(market);
+  // T-165 — 거시 레짐 라벨(기록 전용) 캐시 갱신을 시작만 한다. 동기·무예외, 기다리지 않는다.
+  kickMacroRegimeRefresh();
   const outcome = createOutcomeTracker();
 
   const pool = getPool();
@@ -1743,6 +1746,8 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       buyBlocked,
       signalsCreated: totalApproved,
       errors: errors.length,
+      // T-165 — 거시 레짐 라벨 C0: **기록만** 한다. 이 값을 이 행 밖 어디에도 쓰지 않는다(판단 영향 0).
+      macroRegime: getMacroRegimeRecord(),
     },
   });
   await rec.flush();

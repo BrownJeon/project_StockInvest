@@ -272,3 +272,15 @@ pending → accepted → partially_filled → filled   (해외 market 도 지정
 > 기록 스위치 `system_config.exit_judgment_record_enabled` 는 **키 없음 = 꺼짐**(정확히 JSON `true` 만 켜짐, 30초 캐시) — 켜기는 DDL·배포 뒤 별도 승인이고, 끄는 것이 곧 롤백이다.
 > 남지 않는 것: 잔고 미확인 틱·보유 0종목 틱·매수 판단·틱 도중 예외로 끝나지 않은 틱. 보존 기간 삭제는 아직 없다(별도 승인 사안). 마이그레이션을 바꾸면 일회용 DB 시험
 > (`T126_DB_PORT` 를 준 `src/lib/strategy/records/__tests__/exit-judgment-disposable-mariadb.test.ts`)을 반드시 돌린다 — 기본 `npm test` 에서는 정적 검사만 돈다.
+
+---
+
+## 거시 레짐 라벨 기록 — `eval_funnel` 최종 run 행 `detail.macroRegime` (T-165, 2026-11-12)
+
+> **DDL 없음.** `strategy-eval` 런(`runMarket`)의 최종 pass run 행(`gate='run'`, `verdict='pass'`) `detail` JSON 끝에 `macroRegime` 객체 하나가 더해진다(약 1KB, 60,000자 한도 안). 조기 종료 run 행 3곳에는 넣지 않는다 — 한 런에 한 번.
+> 매매 판단·게이트·사이징·AI 프롬프트에 **쓰지 않는다**(C0 = 기록만, 판단 영향 0 — 의존 경계·불변식 시험이 고정). 규칙 버전 `ruleVersion = "macro-regime-c0@1"`.
+> 필드: `label`(`hot_tightening`=유형⑤ · `hot_hold` · `hot_easing` · `normal_tightening` · `normal_hold` · `normal_easing` · `unknown`)·`isType5`·`reasonCodes[]`(`cpi_not_loaded`·`cpi_cache_stale`·`cpi_stale`·`rate_table_before_start`·`rate_table_stale`·`rate_schedule_exhausted`·`internal_error`)·`asOfUtc`·`asOfEtDate`·
+> `cpi{seriesId, referenceMonth, releaseAtUtc, index, baseMonth, baseIndex, yoyPctRaw, yoyPct, hot, monthGap, expectedReferenceMonth, lagsSchedule, fetchedAtUtc, cacheAgeSec, fetchStatus}`·
+> `rate{upperPct, upperEffectiveFrom, compareDate, upper6mAgoPct, deltaPct, direction, tableVerifiedThrough, nextKnownDecisionDate}`. 기록은 **자기완결적**이다 — 라벨 판정에 쓴 입력(지수·기준지수·기준월·발표 시각·수집 시각·수집 상태·금리 상단 2개)이 행 안에 모두 있어 그 행만으로 당시 판정을 재현할 수 있다.
+> ⚠ **보관 한계 30일**: `eval_funnel` 은 30일 지난 행을 배치 삭제한다(`eval-funnel.ts` `RETENTION_DAYS = 30`). 그래서 T-164 의 C0→C1 승격 조건(라벨 60거래일·오류율·월 플립)을 이 행만으로는 셀 수 없다. 장기 보관 방식(새 테이블 DDL + 삭제 전 이관 · 저장소 밖 JSONL · 30일 롤링 수용)은 **첫 배포 후 30일(첫 삭제) 전에** 사용자가 정한다.
+> **사후 재계산값을 운영 관측의 대체 증거로 쓰지 않는다.** 라벨 규칙은 순수 함수라 과거 날짜의 라벨은 언제든 다시 계산할 수 있지만(과거 재계산은 `releaseBasis: 'confirmed_only'` 로만), 재계산은 당시의 캐시 상태·수집 실패·미로딩을 재현하지 못한다 — 운영 지표(수집 실패·미로딩 비율·실제 기록 라벨)는 이 행이 유일한 증거다.
