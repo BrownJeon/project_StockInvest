@@ -4,6 +4,28 @@ tags:
 ---
 # 칸반 보드
 
+## T-156 다음 미국장 마감분 신규 발행·메모리 관측 예약 — F59/exec-102
+
+- 사용자 후속요청에 따라 기존 Codex 일회성 heartbeat t-156을 갱신했다. 중복 예약은 만들지 않았으며 실제 저장 설정 ACTIVE/대상 현재채팅/일회/동일조건활성예약1개를 재읽기 확인했다. 예약 시작은 2026-11-12 20:40 KST, 미완료시 관측 종료 한도는 같은날23:15다. 이는 예약 등록이며 미래 점검·발행 성공을 의미하지 않는다.
+- 기존23:00 사후점검을 수집 전20:40으로 앞당겼다. 정본 cron의 M40 수집06:45ET(현재20:45KST), 예측07:00ET(21:00KST)와 자연 재시도 전체를 관찰하기 위해서다. 미국거래일2026-11-11마감분을 주대상으로 실제 운영캘린더의 기준일·마감/다음개장을 먼저 확인한다. 정상 신규발행 검산 뒤5분 추가관측하며 이후 결과를 보고한다.
+- 수집 전 원천/계좌revision·T0·예측ID/원장과 실제 PM2cap/PID/restart기준을 읽고, 약250ms RSS관측으로 웹512MiB(536870912bytes)·cron128MiB를 구분한다. 늦게 시작해 놓친 구간/표본사이 피크는 미확인으로 표시한다. 신규수집→실제forward/시그널/continuation→동일분석묶음 신규4기간/2000경로·수수료0.25%→중복/사후pending·평가를 DB SELECT·수집/앱/cron로그·읽기전용status로대조한다. HTTP202·기존876/격리성공을 신규거래일 완료로 차용하지 않는다.
+- 실거래OFF·512MiB·모든안전/권한/global/8trigger를 유지하는 조회 전용 점검이다. 제품수정·배포·설정/권한변경·운영DB쓰기·수동수집/예측/주문·누락추정·관문완화·재시도/lease초기화는 금지다. 자료부족/연결실패는 차단·미확인으로 보고한다. 정상 대기를 반복 알리지 않고 의미있는이상/최종결과를현재채팅에알린다. 새 하위예약 없이 한 번의 관측 안에서 추적한다.
+- 영수증 scheduled-followup-v06-20261112.json: promptSHA9a1ffe25b9536ae36cb79ca2a42fe4dda081a2c22f58987fe597a3468b7a032a, configSHA172c88aaf4395e61c7e42584c78803a40e9261641377758a2f487b1b4b9aee39, executionEstablished=false. 로컬 예약이므로 Mac/Codex앱·서버접속이 실행 시 가능해야 한다. 제품/DB/cron/메모리제한/실거래 설정을 이번에 변경한 것은 아니다.
+
+## T-156 512MiB 유지 메모리 보완·운영 재수집 통과 / 다음 신규 발행 대기 — F58/exec-101
+
+- 2026-11-11 22:43:29 KST 기록. 새웹0.6.0/306b700743e4f00f4a7b8024b9aae12fe0077c25를정상hook커밋·한번push해20261111-222531-306b7007에배포했다. RELEASE_RESULT ok/22:26:29KST END0/migratedfalse·deployer독립정본status한쌍/health200이다. Android/DDL없음,primary124dirty·untrackedartifacts보존. 새49파일/변경11 manifest53cd7021…와Reviewer11scope/C2false/QA152/type/build0를고정했다.
+- 적용은원전체SHA/fataldecode를유지한마스터단일버퍼·전체행5열선별,같은모든검사를같은순서로실행하되검증전용구간stock출력배열생성만생략,큰원천bytes/bundle준비helper수명분리다. 강제GC/검증캐시/시각·가격·2000경로·fee.25%·한도축소/실거래변경없음. 768MiB증설은적용하지않았다.
+- networknone의실자료격리Next+MariaDB에서기준3f66 1회peak563347456bytes(537.25MiB)/10of43초과→후보freshDB/Next3회510431232·511295488·512413696bytes(최악488.68MiB)/각42점초과0이다. 각2000경로·4pending/actualnull·중복0/401/동일PID/4기간전체수치SHA같음,손상pointer503/발행0. 23.32MiB최악여유와250ms표본·격리합성profile/운영PM2미포함한계를보존한다.
+- 운영은새before·경제bridge·freshguarda1701edc…에묶어status-only정지/재개했고revision4/T0Nov10/경제SHA99be17…·원forecast2run8h8pending·원signalandcycleSHA를보존했다. 재개전후와사후실PM2cap web536870912/cron134217728을확인,webPID3247532/cron3247601각1online·restart0·DRYtrue/killfalse/healthDB200·양lease0이다. global/grants/보호8trigger/기존안전·핵심환경지문도동일하다.
+- 정상API재수집2회는22:29:15/22:33:20KST로그already_observed로끝났다. 중간BRK검증pending을새수집이완료하기전안전하게보존했고최종원천C paper-src-b4a1a4a320e5a831ab860f7432f00d657d501d999546cadb는raw126/split126최신11/10/고정123누락0·sourceReadytrue다. 원본bundle.complete=false의보수표식은그대로이며원문·전기간·시각·사건등별도관문을통과한것이지이표식을true로덮어우회한것이아니다. 표식정합성은별도후속검토항목이다.
+- 첫운영관측60초240점최고505913344bytes(482.48MiB)/기준초과0은수집끝16초를놓쳤으므로성공보증으로삼지않고보존했다. 두번째수집·상태/forecast조회전체를포함한180초720점최고407523328bytes(388.64MiB)/초과0·PID/restart불변을추가확인했다. 샘플사이순간최대·다른동시부하·미래모든날을보장하지않는다.
+- 운영forecast호출2회는HTTP200/already_published/run876…동일이며오늘새forecastrun0/새forward0다. 기존분석sourceA·원예측을최신수집C로치환하거나같은날중복관문을지우지않았다. '기존결과존재'를'0.6신규운영발행성공'으로표현하지않는다. Root최종READONLYproof ok/issues0/경제·원장보존·8pending/null을확인했다. 실제다음미국마감분신규수집→분석→4기간발행·동시부하는남았고T-156 doing을유지한다.
+
+- 독립QA운영읽기감사(2f4f88b5…): 60초240/180초720원샘플최고/초과0/PID·restart0/실제API중복영수증2건·수집완료로그2건을재계산·대조했다. 원계좌/DB값은RootREADONLYproof간접근거로구분했고다음거래일실신규발행·장기동시부하NOT_VERIFIED를유지했다.
+
+- 최종가린검증근거50파일/45,740bytes를testartifact/blob원장에저장·재읽기검산했다: artifact-db48f5b6b0dcd14ffb4165f783a9cbcd / SHAdb48f5b6b0dcd14ffb4165f783a9cbcd74a39ef688466cc00f9951ce472afc1f. 상태ISOLATED_FRESH_FORECAST_AND_LIVE_SAME_SESSION_VERIFIED_NEXT_SESSION_PENDING,raw키/실계좌fixture/가격원문/예측금액은아카이브제외·실원천은별도sourceDB보존. 이줄은저장후영수증이고아카이브문서는그직전스냅샷이다. 추가문서push로새배포를일으키지않고로컬Vault/보고서에운영결과를보존했다.
+
 ## T-156 512MiB 유지 메모리 보완·동일결과 재검증 중 — F57/exec-100
 
 - 사용자 후속승인(2026-11-11 21:56:19 KST 기록): 기존512MiB·모든안전조건·실거래OFF를 유지하며 메모리절감 방안을검토/가능하면구현·일일흐름검증. 가능한방법이없다는근거가있을때만768MiB증설을허용했다. 현재코드상좁은할당개선여지가있어증설은아직적용하지않는다.
