@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: StockInvest
-updated: 2026-11-10
+updated: 2026-11-12
 phases:
   - { id: 0, name: "안전 기반",              status: done }
   - { id: 1, name: "관측·소생 핫픽스",       status: done }
@@ -202,6 +202,9 @@ tags: [type/roadmap]
 - [x] (8) 판단보류 알림 에스컬레이션 [[T-022-order-sync-alert-escalation]]
 - [ ] (2) weekly-trend-follow 룰 발화 불가 해소
 - [ ] (8) 판단보류 구조적 상태 전이 경보
+- [~] (4) 거시 레짐 라벨 기록(C0, 판단 영향 0) — 구현·검증 완료, 배포 대기 [[T-165-macro-regime-label-c0]]
+- [ ] (4) 거시 레짐 승격(C1 AI 참고자료 → B 사이징 계수) — C0 60거래일 관측 뒤 검토, 전면 차단(A)은 승격 금지(T-164 검토 결론)
+- [ ] (4) 백테스트 MA100 레짐 필터가 라이브 엔진에 없음 — T-164 검토 중 부수 발견, 미판정
 
 ### holding-checker | 보유 점검·청산 엔진
 - [x] (8) 자동 청산 마스터 스위치(꺼짐·fail-closed) [[T-015-disable-auto-exit-engine]]

@@ -4,6 +4,29 @@ tags:
 ---
 # 칸반 보드
 
+## 2026-11-12 01:46 — T-165 거시 레짐 라벨 기록(C0) 구현·검증 완료 (push 승인 대기)
+
+- [[T-164-macro-regime-fear-greed-review]] 사용자 결정에 따라 [[T-165-macro-regime-label-c0]] 구현: 미국 CPI YoY(BLS v1, 키 없음, 새 외부 원천 1건) + 연준 정책금리 상단 6개월 변화(코드 정적 표 33행)로 라벨 6종+`unknown` 을 순수 함수로 계산해 전략 평가 최종 run 행 `detail.macroRegime` 에 기록. **판단·게이트·사이징·프롬프트 영향 0**(불변식 시험 — 변경 전 기준군 대비 바이트 비교), DDL 없음, 웹 0.6.0 → 0.7.0.
+- 수집은 웹 프로세스 백그라운드(성공 TTL 24h·발표 인지 무효화·실패 2h·일 6회·5s·64KB). 발표일 정렬(미 동부 08:30 이후만), 2025-10 미공표 → 현재 2026-09 YoY 3.7 사용, 금리표 낡음 감지(다음 갱신 2026-12-09 FOMC 뒤).
+- 검증: 새 시험 221건, 전체 jest 신규 실패 0(기존 실패 27묶음·416건은 기준 커밋과 동일), tsc·build 통과, Reviewer pass(scope engine.ts·macro-regime/), QA 통과, Codex C1·C2 각 1회(지적 6건 중 5건 반영·1건 사용자 결정 상정). BLS 실호출 총 3회.
+- **미push** — 서버 worktree `~/.node-local/stockinvest-t165` 에 코드 `c9590e2` + 문서 커밋. 대기: push 승인 · **라벨 장기 보관 방식 결정(첫 배포 + 30일 전 — eval_funnel 30일 보관)**.
+
+## 2026-11-11 22:50 — T-164 공포탐욕지수·물가·금리 거시 레짐 도입 검토 (검토만 · 코드 변경 0건)
+
+- 사용자 지시로 종목 분석의 매수/매도 타이밍에 공포탐욕지수·물가·금리 조건을 넣을지 검토했다. **코드·설정·DB·배포·push 변경 0건**이고 산출물은 [[T-164-macro-regime-fear-greed-review]] 검토서다. judge intake=`review_only`/R1/sonnet, 데모 `not_required`(화면 변경 0건).
+- **결론: 지금 넣을 수 없다.** 영상 주장 12개 중 조건으로 살아남는 것은 1개(유형⑤ 고물가+금리인상중 매수 축소)뿐이고, 그 하나조차 ① 영상의 유형 라벨이 look-ahead(2021.7·8 을 「금리 인상중」으로 분류했으나 당시 FFR 0%·첫 인상 2022-03) ② 재정의에 필요한 과거 점도표 빈티지 조달 불가 ③ 현 사전등록 데이터 창에 유형⑤ 0일·KIS 수집기 `MAX_YEARS=5`·2011~26 에 독립 에피소드 1회 → **백테스트 검증 경로가 원리적으로 닫혀 있다.**
+- **훅 권고 = (C) 단계형**: C0 라벨만(판단 영향 0) → C1 프롬프트 컨텍스트 → B 사이징 계수(⑤만·하한 0.5·adaptive 와 고정 한도 **두 경로** 모두) → **A(전면 차단) 승격 금지**(T-003 질식 재발 + 승격 조건 충족 불가). 시간 축은 기존 당일 -1.5% AND 게이트와 **별 게이트**로 둔다.
+- **공포탐욕지수는 제외 권고.** CNN 공식 API 없음 + `cnn.com/robots.txt` 가 ClaudeBot 등에 `Disallow: /` + `/markets/fear-and-greed`·`/terms-of-use` **HTTP 451**(약관 본문도 열람 못 함). 7 구성요소 자체 계산도 3개 완전 불가·2개 창 부족. 영상 결론 자체가 "향방은 물가 숫자" 다.
+- 🔴 **진짜 장벽은 FRED 약관**이다 — 금지조항 (p)·(l)이 `"incorporate any FRED® Content in any database"` 를 예외 없이 금지한다. 기존 `src/lib/strategy/m40/forward-sources.ts` 가 `evaluation_only`·`liveEligible:false`·"No DB access" 로 못 박은 이유일 가능성이 높다 → 이번 건은 기술 추가가 아니라 **정책 변경**이다. **우회 권고**: 미국 CPI 는 **BLS 공식 API v1**(public domain·저장 제한 없음·키 불필요·일 25회), 정책금리는 **코드 내 정적 표**(2008-12 이후 변경 수십 건, 선례 `universe-overseas-static.ts`) → 외부 신규 원천 0건 + T-156 과 완전 분리.
+- ⚠ **메인 세션 브리핑 오류 1건 정정**: "FRED 는 코드에 없다" 가 틀렸다. T-156 이 이미 FRED 를 호출한다(`forward-sources.ts:232`·`forward-runtime.ts:103`, 엄격 allowlist + sha256 증거 + 512KiB/20MiB/20초 상한).
+- ⚠ **실매매 현재 상태 실측(읽기 전용 `/api/health`, 22:05 KST)**: `dryRun:true`·**`killSwitch:false`**·`autopilotMode:auto`·한도 구성 완료·엔진 가동. 11-06 자동 발동 + 사용자 「유지」 결정 뒤 **해제돼 있다** — 해제 주체·시각은 기록에 없어 추정하지 않는다. `DRY_RUN` 이 유일한 실주문 차단선이다. 설정은 사용자 전용이라 건드리지 않았다.
+- 🔴 **부수 발견(별건 후보)**: T-096 MA100 레짐 필터(`backtest/regime.ts` `regimeOk`·`regimeOkAt`)의 호출처가 `backtest/pipeline.ts` + 시험뿐이고 **`src/lib/strategy/` 에 0건**이다[확실·전수 grep]. 사전등록 전략이 「필터 on」 가정으로 검증받았는데 라이브 경로엔 없다. 이번 범위가 아니라 **미판정·보고만**.
+- ⚠ Codex 외부 반증 **미실행** — 스위치는 **on** 이지만 `codex-review.sh limit` 이 `null`/`stale`(2026-09-27 관측)이라 `CX-limit-unknown-hold` 로 보류됐다. "codex off" 가 아니다.
+- ⚠ roadmap lint(`TheAdmin/scripts/roadmap-lint.mjs`)는 Mac 에서 esbuild 바이너리 불일치(`The service was stopped`)로 **실행 불가 — 미검증**. 편집 2행은 눈으로 확인했다.
+- **사용자 결정 5건 대기**(D-1 FRED 라이브 사용 여부 · D-2 공포탐욕지수 제외 · D-3 검증 불가 조건 수용 범위 · D-4 한국 적용 범위 · D-5 T-143 과 묶어 결정) — 검토서 최종 요약에 선택지·권고가 있다.
+- **[2026-11-12 추가] 사용자 결정 완료** — D-1 BLS API + 정적 금리표 · D-2 물가·금리 2변수만 · D-3 라벨 기록(C0)만 · D-4 미국 지표 공통 · D-5 묶을 대상 없음. 착수 지시 「BLS로 착수」 → [[T-165-macro-regime-label-c0]].
+
+
 ## T-156 다음 미국장 마감분 신규 발행·메모리 관측 예약 — F59/exec-102
 
 - 사용자 후속요청에 따라 기존 Codex 일회성 heartbeat t-156을 갱신했다. 중복 예약은 만들지 않았으며 실제 저장 설정 ACTIVE/대상 현재채팅/일회/동일조건활성예약1개를 재읽기 확인했다. 예약 시작은 2026-11-12 20:40 KST, 미완료시 관측 종료 한도는 같은날23:15다. 이는 예약 등록이며 미래 점검·발행 성공을 의미하지 않는다.
