@@ -4,12 +4,12 @@ tags:
 ---
 # 칸반 보드
 
-## 2026-11-12 12:55 — T-167 거시 레짐 라벨 장기 보관 전용 표 준비 완료 (DDL·이관·push 승인 대기)
+## 2026-11-12 12:55 — T-167 거시 레짐 라벨 장기 보관 전용 표 준비 완료 → 13:40 DDL·이관·운영 배포 완료
 
 - [[T-165-macro-regime-label-c0]] 결정 항목 「라벨 기록 보관 기간」 사용자 선택 (a) → [[T-167-macro-regime-label-log]]: 새 표 `macro_regime_label_log`(평가 런 1회 = 1행, 라벨·수집 상태·CPI·금리 열 + 원본 JSON, 자동 삭제 없음, UNIQUE(run_id, as_of_utc)) DDL 파일 + 멱등 이관 SQL 파일(READ COMMITTED·원본 중복 최소 id·2분 상한·대조 쿼리) + 런 끝 기록기(flush 뒤 분리 실행·4초 상한·표 없음 무음, 스위치 `MACRO_REGIME_LABEL_LOG_ENABLED` 기본 켜짐). 판단 영향 0(불변식 시험 44건). 웹 0.7.0 → 0.8.0.
 - 검증: Reviewer 최종 pass(12:41, scope 안전 파일 9개) · QA 통과(12:49 — 전체 jest 신규 실패 0, tsc·build, 일회용 MariaDB 10.11.11 22건 실제 실행). Codex C1 `incomplete`(snapshot_modified)·C2 done(지적 2건 수용).
 - 번호 이관: 원격 `1bb312e` 가 T-166 을 먼저 써서 T-166 → T-167(메인 세션 결정). 서버 worktree `~/.node-local/stockinvest-t166` 커밋 `bd93fa3`(코드) + 기록 커밋, 기준 `1bb312e`.
-- **대기**: DDL + 이관 승인(마감 **2026-12-12 10:20 KST** — eval_funnel 30일 정리 시작 전, 권장 12-05 이전·장외) · push 승인. 권장 순서 DDL → 이관 1차 → push → 이관 2차 → 대조.
+- 적용(사용자 「지금 바로 진행」, 메인 세션): 13:34 DDL → 이관 1차 31행 → 13:35 push `1f116ec`(릴리스 `20261112-133535-1f116ecf`, ok·0.8.0) → 13:37 첫 `live` 행 → 13:39 이관 2차 0행 → 대조 5종 정상(원본 32 = 이관 31 + live 1, 해시 불일치 0, 충돌 0). 남은 일: 60거래일 관측 · 12-09 FOMC 뒤 금리표 갱신 · 12-12 전 마지막 대조.
 
 ## T-166 맥 Git 훅 복구·양호스트 검증 완료
 
