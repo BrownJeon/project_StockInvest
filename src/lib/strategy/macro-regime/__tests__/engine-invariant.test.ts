@@ -18,6 +18,16 @@
  * ⓓ 주의 — `getMacroRegimeRecord` **자체**를 throw 하는 모의로 바꾸면 엔진은 최종 run 행을 만드는 중에 던진다(G3 은
  * 엔진에 try/catch 를 두지 않기로 했다). 그래서 G4-5 지시대로 엔진을 감싸지 않고, 공개 함수가 절대 던지지 않음을
  * 이 시험(ⓓ: 내부 throw 흡수)과 `snapshot.test.ts`(무예외 묶음)로 고정한다.
+ *
+ * T-167 확장(Leader G5-2) — 장기 보관 표 기록기(`recordMacroRegimeLabel`)를 시험 훅으로 **켠** 변형:
+ *  ⓖ 표 없음(1146)  ⓗ 다른 DB 오류(1205)  ⓘ 끝나지 않는 INSERT(pending — 상한을 줄여 timeout 확인)
+ *  ⓙ `recordMacroRegimeLabel` 자체가 동기로 throw(모듈 모의 — 엔진의 try/catch 확인)  ⓚ 정상 기록(캐시 적재 → 실제 분류)
+ * 각 변형도 ⓔ 와 바이트 동일 — 제외는 위 둘 + ③ `macro_regime_label_log` INSERT 뿐이다. 추가 단정:
+ *  ① 기록기 입력 객체 = 그 런의 `detail.macroRegime`(deep-equal, asOfUtc 포함) 이고 `getMacroRegimeRecord()` 가 돌려준 **같은 참조**
+ *  ② 기록기 호출은 최종 pass run 1회당 정확히 1회, 그 런의 eval_funnel INSERT **뒤**
+ *  ③ 조기 종료 런(잔고 미확인·엔진 꺼짐·활성 전략 없음)·휴장에는 0회
+ *  ④ ⓚ 에서 `macro_regime_label_log` INSERT 가 정확히 1건이고 값이 그 런의 기록과 일치
+ * 기존 ⓐ~ⓕ 는 기록기가 시험 환경 기본 차단(disabled_in_test)이라 질의가 그대로다 — 그것도 여기서 확인한다.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,12 +35,24 @@ import type { Market } from '@/lib/exchanges/kis-symbols';
 
 // ─── 모의 DB — 모든 질의를 순서대로 남긴다 ─────────────────────────────────────
 const queries: Array<{ sql: string; params: unknown[] }> = [];
+/** T-167 — macro_regime_label_log INSERT 의 응답 */
+let labelDb: 'ok' | 'no_table' | 'db_error' | 'pending' = 'ok';
+/** T-167 ③ — 조기 종료 장면용 스위치 */
+let noStrategies = false;
+let marketOpen = true;
+let engineEnabled = true;
 async function poolQuery(sql: unknown, params?: unknown) {
   const s = String(sql).replace(/\s+/g, ' ').trim();
   const p = Array.isArray(params) ? params.slice() : [];
   queries.push({ sql: s, params: p });
   if (/INSERT INTO eval_funnel/i.test(s)) return [{ affectedRows: p.length / 10 }, []];
-  if (/FROM strategies/i.test(s)) return [[{ id: RULE_ID, enabled: 1, backtest_interval_h: 6, next_backtest_at: null }], []];
+  if (/^INSERT INTO macro_regime_label_log/i.test(s)) {
+    if (labelDb === 'no_table') throw Object.assign(new Error('Table macro_regime_label_log doesn\'t exist'), { errno: 1146 });
+    if (labelDb === 'db_error') throw Object.assign(new Error('Lock wait timeout exceeded SECRET_DB_TEXT'), { errno: 1205 });
+    if (labelDb === 'pending') return new Promise(() => {});
+    return [{ affectedRows: 1 }, []];
+  }
+  if (/FROM strategies/i.test(s)) return [noStrategies ? [] : [{ id: RULE_ID, enabled: 1, backtest_interval_h: 6, next_backtest_at: null }], []];
   return [[], []];
 }
 jest.mock('@/lib/db', () => ({
@@ -53,7 +75,7 @@ jest.mock('@/lib/exchanges/kis', () => ({
   },
   getBalancesDetailed: (...a: unknown[]) => getBalancesDetailed(...a),
 }));
-jest.mock('@/lib/strategy/market-hours', () => ({ isDomesticOpen: async () => true, isOverseasOpen: async () => true, getCurrentMarket: async () => 'domestic' }));
+jest.mock('@/lib/strategy/market-hours', () => ({ isDomesticOpen: async () => marketOpen, isOverseasOpen: async () => marketOpen, getCurrentMarket: async () => 'domestic' }));
 jest.mock('@/lib/strategy/position-state', () => ({
   upsertPositionState: jest.fn(async () => undefined),
   reconcilePositionState: jest.fn(async () => 0),
@@ -65,7 +87,7 @@ const sendAlert = jest.fn();
 jest.mock('@/lib/notify', () => ({ sendAlert: (...a: unknown[]) => sendAlert(...a) }));
 const sendAlertThrottled = jest.fn();
 jest.mock('@/lib/notify/throttle', () => ({ sendAlertThrottled: (...a: unknown[]) => sendAlertThrottled(...a), resetAlertThrottle: () => {} }));
-jest.mock('@/lib/signals/router', () => ({ getEngineSwitches: async () => ({ engineEnabled: true, autopilotMode: 'assist', source: 'config' }) }));
+jest.mock('@/lib/signals/router', () => ({ getEngineSwitches: async () => ({ engineEnabled, autopilotMode: 'assist', source: 'config' }) }));
 const setCooldown = jest.fn(async () => true);
 jest.mock('@/lib/strategy/cooldowns', () => ({
   loadActiveCooldowns: async () => ({ isActive: () => false, until: () => null, loadError: null }),
@@ -113,7 +135,12 @@ jest.mock('@/lib/strategy/sell-proposal-preview', () => ({ openSellProposalPrevi
 
 /** ⓔ 기준군 스위치 — 'baseline' 이면 macro-regime 이 없던 때처럼 동작한다 */
 let regimeMode: 'baseline' | 'real' = 'real';
-const regimeCalls = { kick: 0, get: 0 };
+const regimeCalls = { kick: 0, get: 0, label: 0 };
+/** T-167 — getMacroRegimeRecord 가 돌려준 값(같은 참조 확인용)과 기록기 호출(인자·그 시점까지의 질의 수) */
+const regimeReturned: unknown[] = [];
+const labelCalls: Array<{ args: unknown[]; queriesBefore: number }> = [];
+/** T-167 ⓙ — recordMacroRegimeLabel 자체가 동기로 던지게 한다 */
+let labelThrows = false;
 jest.mock('@/lib/strategy/macro-regime', () => {
   const actual = jest.requireActual('@/lib/strategy/macro-regime');
   return {
@@ -123,7 +150,15 @@ jest.mock('@/lib/strategy/macro-regime', () => {
     },
     getMacroRegimeRecord: (...a: unknown[]) => {
       regimeCalls.get++;
-      return regimeMode === 'baseline' ? undefined : actual.getMacroRegimeRecord(...a);
+      const v = regimeMode === 'baseline' ? undefined : actual.getMacroRegimeRecord(...a);
+      regimeReturned.push(v);
+      return v;
+    },
+    recordMacroRegimeLabel: (...a: unknown[]) => {
+      regimeCalls.label++;
+      labelCalls.push({ args: a, queriesBefore: queries.length });
+      if (labelThrows) throw new Error('forced recordMacroRegimeLabel throw');
+      return regimeMode === 'baseline' ? undefined : actual.recordMacroRegimeLabel(...a);
     },
   };
 });
@@ -139,6 +174,13 @@ import {
 import { classifyMacroRegime } from '../classify';
 import type { BlsFetchResult } from '../bls-cpi';
 import type { CpiIndexByMonth, MacroRegimeRecord } from '../types';
+import {
+  MACRO_REGIME_LABEL_LOG_COLUMNS,
+  __resetMacroRegimeLabelLogWarningsForTest,
+  __setMacroRegimeLabelLogForTest,
+  waitForMacroRegimeLabelLogForTest,
+  type MacroRegimeLabelLogResult,
+} from '../label-log';
 
 const CPI: CpiIndexByMonth = JSON.parse(readFileSync(join(__dirname, 'fixtures', 'cpi-cuur0000sa0-2017-2026.json'), 'utf8')).index;
 /** 2026-08-05(수) 10:00 KST — 국내 장중, 장마감 전 손절 창 밖 (T-148 과 같은 시각) */
@@ -152,9 +194,18 @@ const globalFetch = jest.fn(async () => { throw new Error('전역 fetch 가 호�
 function resetAll() {
   jest.clearAllMocks();
   queries.length = 0;
-  regimeCalls.kick = 0; regimeCalls.get = 0;
+  regimeCalls.kick = 0; regimeCalls.get = 0; regimeCalls.label = 0;
+  regimeReturned.length = 0;
+  labelCalls.length = 0;
+  labelThrows = false;
+  labelDb = 'ok';
+  noStrategies = false;
+  marketOpen = true;
+  engineEnabled = true;
   resetHeldUnknownState();
   __resetMacroRegimeForTest();
+  __setMacroRegimeLabelLogForTest(null);          // 시험 환경 기본 차단으로 되돌린다(T-167)
+  __resetMacroRegimeLabelLogWarningsForTest();
   createSignal.mockImplementation(async (input: { symbol: string }) => ({ ok: true, signalId: 1000 + SYMBOLS.indexOf(input.symbol), autoSubmitted: false }));
   prefilterCandidate.mockReturnValue({ verdict: 'pass' });
   getTicker.mockImplementation(async (s: string) => ({ price: PRICE, open24h: PRICE, timestamp: 0, symbol: s }));
@@ -236,8 +287,20 @@ const VARIANTS: Variant[] = [
   },
 ];
 
-interface Captured { observable: string; macroRegimeRows: unknown[]; runRowsWithKey: number }
-/** 한 번 돌리고 관측 가능한 모든 것을 직렬화한다 — 최종 run 행의 detail.macroRegime 만 따로 떼어 낸다 */
+interface Captured {
+  observable: string;
+  macroRegimeRows: unknown[];
+  runRowsWithKey: number;
+  /** T-167 — 기록기 결과(시작된 기록이 모두 끝난 뒤) · runAll 이 돌아온 직후 기록이 이미 끝나 있었나 */
+  labelResults: MacroRegimeLabelLogResult[];
+  labelSettledAtReturn: boolean;
+  /** T-167 — queries 안 macro_regime_label_log INSERT 와 eval_funnel INSERT 의 위치(순서 단정용) */
+  labelInserts: Array<{ index: number; params: unknown[] }>;
+  evalFunnelInsertIdx: number[];
+  /** T-167 — eval_funnel 최종 run 행의 run_id(파라미터 0번) */
+  runId: string | null;
+}
+/** 한 번 돌리고 관측 가능한 모든 것을 직렬화한다 — 최종 run 행의 detail.macroRegime 과 장기 보관 표 INSERT 만 따로 떼어 낸다 */
 async function runOnce(scene: Scene, mode: 'baseline' | 'real', setup: () => Promise<void>): Promise<Captured> {
   resetAll();
   regimeMode = mode;
@@ -245,11 +308,31 @@ async function runOnce(scene: Scene, mode: 'baseline' | 'real', setup: () => Pro
   orderMax = scene.orderMax;
   await setup();
   const result = await runAll({ market: 'domestic' });
+  // T-167 — 엔진은 기록을 기다리지 않는다: 돌아온 직후의 완료 여부를 먼저 보고, 그다음 끝날 때까지 기다린다(ⓘ 는 줄인 상한까지)
+  let labelSettled = false;
+  const labelWait = waitForMacroRegimeLabelLogForTest().then((r) => { labelSettled = true; return r; });
+  await Promise.resolve();
+  const labelSettledAtReturn = labelSettled;
+  const labelResults = await labelWait;
+
+  const labelInserts: Array<{ index: number; params: unknown[] }> = [];
+  const evalFunnelInsertIdx: number[] = [];
+  let runId: string | null = null;
+  queries.forEach((q, index) => {
+    if (/^INSERT INTO macro_regime_label_log/i.test(q.sql)) labelInserts.push({ index, params: q.params });
+    if (/^INSERT INTO eval_funnel/i.test(q.sql)) {
+      evalFunnelInsertIdx.push(index);
+      for (let i = 0; i + 9 < q.params.length; i += 10) {
+        if (q.params[i + 6] === 'run' && q.params[i + 7] === 'pass') runId = String(q.params[i]);
+      }
+    }
+  });
 
   const macroRegimeRows: unknown[] = [];
   let runRowsWithKey = 0;
   const dbQueries = queries
     .filter((q) => !/^DELETE FROM eval_funnel/i.test(q.sql))
+    .filter((q) => !/^INSERT INTO macro_regime_label_log/i.test(q.sql))   // T-167 — 장기 보관 표 INSERT 만 비교에서 뺀다
     .map((q) => {
       if (!/^INSERT INTO eval_funnel/i.test(q.sql)) return q;
       const params = q.params.slice();
@@ -277,8 +360,140 @@ async function runOnce(scene: Scene, mode: 'baseline' | 'real', setup: () => Pro
     sendAlertThrottled: sendAlertThrottled.mock.calls,
     dbQueries,
   });
-  return { observable, macroRegimeRows, runRowsWithKey };
+  return { observable, macroRegimeRows, runRowsWithKey, labelResults, labelSettledAtReturn, labelInserts, evalFunnelInsertIdx, runId };
 }
+
+// ─── T-167 — 장기 보관 표 기록기를 켠 변형 ────────────────────────────────────
+interface LabelVariant {
+  key: string;
+  desc: string;
+  setup: () => Promise<void>;
+  /** 기록기 결과(시작된 기록 전부) */
+  results: Array<Partial<MacroRegimeLabelLogResult>>;
+  /** macro_regime_label_log INSERT 건수 */
+  inserts: number;
+}
+const enableLabelLog = (timeoutMs?: number) => __setMacroRegimeLabelLogForTest({ enabled: true, timeoutMs });
+const loadCpi = async () => {
+  __setMacroRegimeFetcherForTest(async (): Promise<BlsFetchResult> => ({ fetchStatus: 'ok', observations: CPI }));
+  kickMacroRegimeRefresh(new Date());
+  await __macroRegimeInFlightForTest();
+};
+const LABEL_VARIANTS: LabelVariant[] = [
+  {
+    key: 'g', desc: 'ⓖ 기록기 켬 · 표 없음(1146)',
+    setup: async () => { enableLabelLog(); labelDb = 'no_table'; },
+    results: [{ status: 'no_table' }], inserts: 1,
+  },
+  {
+    key: 'h', desc: 'ⓗ 기록기 켬 · 다른 DB 오류(1205)',
+    setup: async () => { enableLabelLog(); labelDb = 'db_error'; },
+    results: [{ status: 'error', reason: 'db_error errno=1205' }], inserts: 1,
+  },
+  {
+    key: 'i', desc: 'ⓘ 기록기 켬 · 끝나지 않는 INSERT(pending, 상한 60ms 로 줄임)',
+    setup: async () => { enableLabelLog(60); labelDb = 'pending'; },
+    results: [{ status: 'timeout' }], inserts: 1,
+  },
+  {
+    key: 'j', desc: 'ⓙ recordMacroRegimeLabel 자체가 동기로 throw(엔진 try/catch)',
+    setup: async () => { enableLabelLog(); labelThrows = true; },
+    results: [], inserts: 0,
+  },
+  {
+    key: 'k', desc: 'ⓚ 기록기 켬 · 정상 기록(캐시 적재 → 실제 분류)',
+    setup: async () => { enableLabelLog(); await loadCpi(); },
+    results: [{ status: 'written' }], inserts: 1,
+  },
+];
+
+describe.each(SCENES.map((s) => [s.name, s] as const))('T-167 장면: %s', (_name, scene) => {
+  let baseline: Captured;
+  beforeAll(async () => {
+    jest.setSystemTime(SAFE_KST);
+    const quiet = (['log', 'warn', 'error'] as const).map((m) => jest.spyOn(console, m).mockImplementation(() => {}));
+    try {
+      baseline = await runOnce(scene, 'baseline', async () => {});
+    } finally {
+      quiet.forEach((q) => q.mockRestore());
+    }
+  });
+
+  it('ⓔ 기준군은 장기 보관 표에 아무것도 보내지 않는다', () => {
+    expect(baseline.labelInserts).toEqual([]);
+    expect(baseline.labelResults).toEqual([]);
+  });
+
+  it.each(LABEL_VARIANTS.map((v) => [v.desc, v] as const))('%s — 기준군과 바이트 단위로 같다', async (_d, variant) => {
+    const got = await runOnce(scene, 'real', variant.setup);
+    expect(got.observable).toBe(baseline.observable);
+    expect(got.runRowsWithKey).toBe(1);
+    expect(regimeCalls).toEqual({ kick: 1, get: 1, label: 1 });
+
+    // ① 기록기 입력 = getMacroRegimeRecord() 가 돌려준 같은 참조 = 그 런의 detail.macroRegime(asOfUtc 포함)
+    expect(labelCalls).toHaveLength(1);
+    const [runIdArg, marketArg, recordArg] = labelCalls[0].args;
+    expect(regimeReturned).toHaveLength(1);
+    expect(recordArg).toBe(regimeReturned[0]);
+    expect(recordArg).toEqual(got.macroRegimeRows[0]);
+    expect((recordArg as MacroRegimeRecord).asOfUtc).toBe((got.macroRegimeRows[0] as MacroRegimeRecord).asOfUtc);
+    expect(runIdArg).toBe(got.runId);
+    expect(marketArg).toBe('domestic');
+
+    // ② 그 런의 eval_funnel INSERT 가 모두 끝난 **뒤** 호출됐다(호출 시점까지의 질의에 eval_funnel INSERT 가 이미 다 있다)
+    expect(got.evalFunnelInsertIdx.length).toBeGreaterThan(0);
+    expect(Math.max(...got.evalFunnelInsertIdx)).toBeLessThan(labelCalls[0].queriesBefore);
+    for (const ins of got.labelInserts) expect(ins.index).toBeGreaterThanOrEqual(labelCalls[0].queriesBefore);
+
+    // 기록기 결과·INSERT 건수
+    expect(got.labelResults).toHaveLength(variant.results.length);
+    variant.results.forEach((r, i) => expect(got.labelResults[i]).toMatchObject(r));
+    expect(got.labelInserts).toHaveLength(variant.inserts);
+    if (variant.key === 'i') expect(got.labelSettledAtReturn).toBe(false);   // 엔진은 끝나지 않는 INSERT 를 기다리지 않았다
+
+    // ④ ⓚ — INSERT 1건의 값이 그 런의 기록과 일치
+    if (variant.key === 'k') {
+      const row = Object.fromEntries(MACRO_REGIME_LABEL_LOG_COLUMNS.map((c, i) => [c, got.labelInserts[0].params[i]]));
+      const rec = got.macroRegimeRows[0] as MacroRegimeRecord;
+      expect(rec.label).toBe('normal_hold');
+      expect(row).toMatchObject({
+        source: 'live', source_eval_funnel_id: null, source_ts_kst: null,
+        run_id: got.runId, market: 'domestic',
+        as_of_utc: rec.asOfUtc.replace('T', ' ').replace('Z', ''),
+        as_of_et_date: rec.asOfEtDate,
+        rule_version: rec.ruleVersion, label: rec.label, is_type5: 0,
+        reason_codes: '', reason_first: null, reason_count: 0,
+        cpi_fetch_status: 'ok', cpi_reference_month: '2026-06', cpi_yoy_pct: 3.5,
+        record_json: JSON.stringify(rec),
+      });
+      expect(got.labelInserts[0].params).toHaveLength(MACRO_REGIME_LABEL_LOG_COLUMNS.length);
+    }
+  });
+});
+
+describe('T-167 ③ — 조기 종료 런·휴장에는 기록기를 부르지 않는다(기록기를 켜 두어도)', () => {
+  const EARLY: Array<[string, () => void, string]> = [
+    ['휴장(장 닫힘)', () => { marketOpen = false; }, 'domestic_market_closed'],
+    ['잔고 미확인(balances_unknown)', () => {
+      getBalancesDetailed.mockResolvedValue({
+        balances: [], ok: ['overseas'] as Market[], failed: [{ market: 'domestic' as Market, error: 'synthetic balance failure' }], complete: false,
+      });
+    }, 'balances_unknown'],
+    ['엔진 꺼짐(engine_disabled)', () => { engineEnabled = false; }, 'engine_disabled'],
+    ['활성 전략 없음(no_active_strategies)', () => { noStrategies = true; }, ''],
+  ];
+  it.each(EARLY)('%s', async (_name, arrange, expectedError) => {
+    const got = await runOnce(SCENES[0], 'real', async () => { enableLabelLog(); arrange(); });
+    if (expectedError) expect(JSON.parse(got.observable).result.errors).toEqual([expectedError]);
+    else expect(JSON.parse(got.observable).result).toMatchObject({ ran: 0, errors: [] });
+    expect(got.runRowsWithKey).toBe(0);
+    expect(regimeCalls.get).toBe(0);
+    expect(regimeCalls.label).toBe(0);
+    expect(labelCalls).toEqual([]);
+    expect(got.labelInserts).toEqual([]);
+    expect(got.labelResults).toEqual([]);
+  });
+});
 
 describe.each(SCENES.map((s) => [s.name, s] as const))('장면: %s', (_name, scene) => {
   let baseline: Captured;
@@ -324,7 +539,10 @@ describe.each(SCENES.map((s) => [s.name, s] as const))('장면: %s', (_name, sce
     // 라벨은 최종 run 행 하나에만 기록됐다
     expect(got.runRowsWithKey).toBe(1);
     variant.check(got.macroRegimeRows[0] as MacroRegimeRecord);
-    expect(regimeCalls).toEqual({ kick: 1, get: 1 });
+    expect(regimeCalls).toEqual({ kick: 1, get: 1, label: 1 });
+    // T-167 — 기록기를 켜지 않은 기존 변형은 시험 환경 기본 차단: 장기 보관 표 질의 0, 결과 disabled_in_test
+    expect(got.labelInserts).toEqual([]);
+    expect(got.labelResults).toEqual([{ status: 'disabled_in_test' }]);
   });
 });
 

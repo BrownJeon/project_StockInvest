@@ -49,7 +49,7 @@ import type { StyleConfig } from './style';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
 import { EvalFunnelRecorder } from './eval-funnel';
-import { kickMacroRegimeRefresh, getMacroRegimeRecord } from './macro-regime';
+import { kickMacroRegimeRefresh, getMacroRegimeRecord, recordMacroRegimeLabel } from './macro-regime';
 import type { FunnelGate, FunnelVerdict } from './eval-funnel-labels';
 import { openSellProposalPreview, type SellProposalPreviewRun } from './sell-proposal-preview';
 import {
@@ -1735,6 +1735,8 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       detail: { rawCandidates: o.rawCandidates, signalIds: o.signalIds },
     });
   }
+  // T-165/T-167 — 거시 레짐 라벨(기록 전용). 객체를 한 번만 만들어 run 행 detail 과 장기 보관 표에 같은 것을 넘긴다(asOfUtc 일치 = 유일 키).
+  const macroRegime = getMacroRegimeRecord();
   rec.record({
     gate: 'run',
     verdict: 'pass',
@@ -1746,11 +1748,13 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       buyBlocked,
       signalsCreated: totalApproved,
       errors: errors.length,
-      // T-165 — 거시 레짐 라벨 C0: **기록만** 한다. 이 값을 이 행 밖 어디에도 쓰지 않는다(판단 영향 0).
-      macroRegime: getMacroRegimeRecord(),
+      // T-165 — 거시 레짐 라벨 C0: **기록만** 한다. 이 값을 이 행과 아래 장기 보관 기록 밖 어디에도 쓰지 않는다(판단 영향 0).
+      macroRegime,
     },
   });
   await rec.flush();
+  // T-167 — 장기 보관 표 기록을 시작만 한다(동기·무예외·기다리지 않음). flush 뒤에 두는 이유: 이관 SQL 과의 틈 방지.
+  try { recordMacroRegimeLabel(rec.runId, market, macroRegime); } catch { /* 기록 전용 — 엔진에 넘기지 않는다 */ }
 
   return { ran: symbols.length, skipped: skippedStrategyIds.length, skippedStrategyIds, results: resultsArray, errors, universeRefreshed };
 }

@@ -282,5 +282,58 @@ pending → accepted → partially_filled → filled   (해외 market 도 지정
 > 필드: `label`(`hot_tightening`=유형⑤ · `hot_hold` · `hot_easing` · `normal_tightening` · `normal_hold` · `normal_easing` · `unknown`)·`isType5`·`reasonCodes[]`(`cpi_not_loaded`·`cpi_cache_stale`·`cpi_stale`·`rate_table_before_start`·`rate_table_stale`·`rate_schedule_exhausted`·`internal_error`)·`asOfUtc`·`asOfEtDate`·
 > `cpi{seriesId, referenceMonth, releaseAtUtc, index, baseMonth, baseIndex, yoyPctRaw, yoyPct, hot, monthGap, expectedReferenceMonth, lagsSchedule, fetchedAtUtc, cacheAgeSec, fetchStatus}`·
 > `rate{upperPct, upperEffectiveFrom, compareDate, upper6mAgoPct, deltaPct, direction, tableVerifiedThrough, nextKnownDecisionDate}`. 기록은 **자기완결적**이다 — 라벨 판정에 쓴 입력(지수·기준지수·기준월·발표 시각·수집 시각·수집 상태·금리 상단 2개)이 행 안에 모두 있어 그 행만으로 당시 판정을 재현할 수 있다.
-> ⚠ **보관 한계 30일**: `eval_funnel` 은 30일 지난 행을 배치 삭제한다(`eval-funnel.ts` `RETENTION_DAYS = 30`). 그래서 T-164 의 C0→C1 승격 조건(라벨 60거래일·오류율·월 플립)을 이 행만으로는 셀 수 없다. 장기 보관 방식(새 테이블 DDL + 삭제 전 이관 · 저장소 밖 JSONL · 30일 롤링 수용)은 **첫 배포 후 30일(첫 삭제) 전에** 사용자가 정한다.
-> **사후 재계산값을 운영 관측의 대체 증거로 쓰지 않는다.** 라벨 규칙은 순수 함수라 과거 날짜의 라벨은 언제든 다시 계산할 수 있지만(과거 재계산은 `releaseBasis: 'confirmed_only'` 로만), 재계산은 당시의 캐시 상태·수집 실패·미로딩을 재현하지 못한다 — 운영 지표(수집 실패·미로딩 비율·실제 기록 라벨)는 이 행이 유일한 증거다.
+> ⚠ **보관 한계 30일**: `eval_funnel` 은 30일 지난 행을 배치 삭제한다(`eval-funnel.ts` `RETENTION_DAYS = 30`). 그래서 T-164 의 C0→C1 승격 조건(라벨 60거래일·오류율·월 플립)을 이 행만으로는 셀 수 없다. **장기 보관은 전용 표 `macro_regime_label_log`(T-167 — 아래 절, DDL 적용 후)가 맡는다**(사용자 선택 (a) 전용 테이블 + 삭제 전 이관, 2026-11-12. JSONL·30일 롤링은 기각). DDL 적용 전 구간의 라벨은 이 행이 30일 안에 그 표로 이관돼야만 남는다 — **마감 2026-12-12 10:20 KST**(첫 라벨 행 id 904956 + 30일).
+> **사후 재계산값을 운영 관측의 대체 증거로 쓰지 않는다.** 라벨 규칙은 순수 함수라 과거 날짜의 라벨은 언제든 다시 계산할 수 있지만(과거 재계산은 `releaseBasis: 'confirmed_only'` 로만), 재계산은 당시의 캐시 상태·수집 실패·미로딩을 재현하지 못한다 — 운영 지표(수집 실패·미로딩 비율·실제 기록 라벨)는 이 행(과 그것을 그대로 옮긴 `macro_regime_label_log` 행)이 유일한 증거다.
+
+---
+
+## 거시 레짐 라벨 장기 보관 — `macro_regime_label_log` (T-167, 2026-11-12)
+
+> **부팅 DDL 이 아니다.** 정본 DDL 은 [`scripts/migrations/T-167-macro-regime-label-log.sql`](../scripts/migrations/T-167-macro-regime-label-log.sql)(새 테이블 1개, 가산 전용·외래키 없음), 이관은 [`scripts/migrations/T-167-macro-regime-label-backfill.sql`](../scripts/migrations/T-167-macro-regime-label-backfill.sql)(멱등 `INSERT … SELECT` 1문장 — 다시 돌려도 같은 결과)이다. 둘 다 `setupDB()` 에 넣지 않았고 장외 창에서 사람이 직접 적용한다(사용자 승인 사항, 적용 전후 확인 쿼리는 각 파일 머리 주석).
+> **1행 = strategy-eval 런 1회**(국내·미국 모두) — 최종 pass run 행(`eval_funnel` `gate='run'`, `verdict='pass'`)의 `detail.macroRegime` 과 **같은 기록 객체**를 그대로 남긴다. 조기 종료 run 행·휴장에는 행이 없다(라벨을 만들지 않는다). 열은 기록 객체의 스칼라 전부(`cpi.seriesId` 상수 제외)를 조회용 열로 펼치고 원본 전체를 `record_json`(공백 없는 JSON — 앱 `JSON.stringify` 원문, 이관은 `JSON_COMPACT(JSON_EXTRACT(…))` 로 같은 바이트)에 둔다 — 행만으로 당시 판정을 재현할 수 있다. 출처 `source`(`live` 실시간 · `backfill` 이관), 이관 행만 `source_eval_funnel_id`(원본 id)·`source_ts_kst`(원본 flush 시각), 실시간 행만 `engine_release`(릴리스 디렉터리 이름 — T-112·T-126 과 같은 정의).
+> **시각**: 이름이 `_utc` 인 열은 UTC 벽시계, `_kst` 는 KST 벽시계(초). `as_of_utc` = 기록 객체 `asOfUtc`(판정 시각), `as_of_kst` = 그 + 9시간(실시간·이관 같은 의미), `as_of_et_date` = `asOfEtDate`(미 동부 달력일). `inserted_at` 은 행이 쓰인 DB 시각(감사용 — 지표에 쓰지 않는다).
+> **어휘**: ENUM 은 `source`·`market` 둘뿐이다. 라벨·사유·수집 상태·방향·규칙 버전은 VARCHAR — 규칙 버전이 바뀌면 값이 늘고, strict 에서 ENUM 밖 값은 INSERT 전체 실패인데 기록기는 예외를 삼키므로 행이 조용히 사라지기 때문이다. `reason_codes` 는 사유를 기록 순서대로 쉼표 결합(없으면 `''`)하고 `reason_first`·`reason_count` 를 함께 둔다 — `FIND_IN_SET('cpi_stale', reason_codes)`·`reason_codes = 'cpi_not_loaded'`(단독 판별)로 조회한다.
+> **유일 키 `(run_id, as_of_utc)`**: 실시간 행과 이관 행은 같은 기록 객체(같은 `asOfUtc`)라 같은 런이면 한 행이 된다 — 엔진은 기록 객체를 **한 번만** 만들어 run 행 detail 과 기록기에 같은 참조를 넘긴다(불변식 시험이 고정). `run_id` 는 분 단위라 단독 UNIQUE 를 걸 수 없다(T-126). ⚠ 알려진 한계(Codex C1 지적 1 — 부분 채택): 같은 시장의 두 런이 **같은 분에 시작해 같은 초에 끝나면**(수동 force 실행이 cron 과 겹칠 때 정도) 두 번째 실시간 행은 1062 로 건너뛰어진다 — 이관 파일의 대조 쿼리 ⓑ 가 그 충돌 수를 드러낸다. `asOfUtc` 가 비어 있는 기록(내부 오류 경로 — 실질 도달 불가)은 실시간이 호출 시각, 이관이 `eval_funnel.ts − 9h` 로 대신하므로 몇 초 달라 두 행이 될 수 있다.
+> **쓰는 곳**은 `src/lib/strategy/macro-regime/label-log.ts` 하나 — 엔진이 그 런의 `eval_funnel` flush **뒤** `recordMacroRegimeLabel()` 을 부르면(동기·무예외·기다리지 않음) 다음 마이크로태스크에서 1행 INSERT 1문장을 보낸다(풀에서 받은 연결로, 4초 상한 — 넘거나 오류면 그 연결을 `destroy`, `INSERT IGNORE`·`ON DUPLICATE KEY` 없음). 결과: `written` · `duplicate`(1062 — 이미 이관된 런, 경고 없음) · `no_table`(1146 — DDL 적용 전, 경고는 프로세스 첫 1회 + 이후 24시간에 1회) · `disabled` · `disabled_in_test` · `invalid` · `error` · `timeout`(셋은 분류어별 1시간에 1회 경고 — 분류어·errno·시장만, DB 원문 없음). 판단·게이트·사이징·AI 프롬프트 영향 0 (T-165 그대로 — 불변식 시험이 기록기 실패·예외·표 없음·끝나지 않는 INSERT 에도 엔진 출력이 바이트 단위로 같음을 고정). 관찰(일회용 DB): 표가 잠겨 4초에 포기한 INSERT 는 연결을 끊어도 서버 쪽에서 잠금이 풀린 뒤 늦게 써질 수 있다(같은 행 — 유일 키 때문에 중복은 없다).
+> **스위치** `MACRO_REGIME_LABEL_LOG_ENABLED`(환경변수, `.env.example`) — 키 없음·빈 값 = **켜짐**, 앞뒤 공백 제거·대소문자 무시 `false` 만 끈다. `EVAL_FUNNEL_ENABLED` 와 독립(그것이 꺼져도 이 표는 쓴다 — 그때는 이 표가 라벨의 유일한 기록이다). 끄고 켜기는 `pm2 restart stockinvest --update-env`(사용자 승인 사항)이고, **끈 사실과 기간은 운영자가 운영 기록에 남긴다** — 끈 기간은 증거 공백이며 `eval_funnel` 이 30일 남아 있는 동안 이관 파일을 다시 돌리면 메워진다. 시험 환경(`NODE_ENV=test` 또는 `JEST_WORKER_ID`)에서는 시험 훅으로 켜지 않는 한 DB 에 닿지 않는다.
+> **보관: 자동 삭제 없음.** 어떤 코드에도 이 표를 대상으로 한 DELETE 가 없다(`eval_funnel` 정리는 표 이름 고정). 추정: 하루 약 120행(국내 ≈ 60 런 + 미국 정규장 ≈ 60 런 — `isOverseasOpen` 은 09:30~16:00 ET 정규장만), 연 약 3만 행, 행당 ≈ 1.1~1.3 KB → **연 ≈ 35~40 MB**. 되돌리기는 DDL 파일 끝 주석의 DROP 줄(쌓인 기록 함께 삭제 — 사용자 승인 사항).
+> **이관·적용 순서**(T-167 Leader G6): ① DDL(장외 창) → ② 이관 1차 → ③ push(웹 0.8.0 배포) → ④ 배포 뒤 첫 장중 런 기록 확인 → ⑤ 이관 2차(멱등 — ①~③ 사이 런을 메운다) → ⑥ 이관 파일의 확인·대조 쿼리(①②ⓐⓑⓒ — 원본 삭제 전 마지막 대조 포함). **마감 2026-12-12 10:20 KST**(그 뒤 첫 prune 부터 첫 라벨 행이 지워진다, 권장 여유 12-05 이전). 이관 대상 = `gate='run'`·`verdict='pass'`·`ts >= '2026-11-12'`·**`ts < NOW() − 2분`**(막 끝난 런은 실시간 기록기가 쓰는 중일 수 있어 집지 않는다)·`detail.macroRegime` 이 JSON 객체 · 같은 `(run_id, as_of_utc)` 행이 아직 없는 것. 이관 세션은 `READ COMMITTED`·잠금 대기 5초 — 원본 `eval_funnel` 을 잠그지 않아 엔진의 flush 를 막지 않는다(일회용 DB 관찰: RC 는 열린 이관 트랜잭션 중에도 엔진 INSERT 가 즉시 통과, REPEATABLE READ 는 1205 로 막혔다). 실시간 기록과 경합하면 1062 로 **문장 전체가 0행으로 롤백**되고, 그대로 다시 실행하면 된다(일회용 DB 재현). **원본 중복은 가장 작은 id 하나만 옮긴다**(대조 쿼리 ⓑ 로 수 확인 — G10 R-1: 같은 분 시작·같은 초 종료 두 런이 `eval_funnel` 에 같은 `(run_id, as_of_utc)` 로 남으면 둘 다 옮기려다 매번 1062 로 이관 전체가 막히므로 키마다 `eval_funnel.id` 가 가장 작은 행만 옮기고 나머지 관측은 남기지 않는다). 그래도 1062 가 반복되면 장중 실시간 경합이다 — 장외에 다시 실행한다.
+> **반올림 경로**(G10 R-2 — 수정하지 않음): 조회용 DECIMAL 열은 실시간이 JS(`toFixed`), 이관이 SQL(`CAST … AS DECIMAL`)로 반올림해 정확한 반올림 경계에서는 두 출처가 1단위 갈릴 수 있다. 그러나 기록 객체의 숫자는 분류 단계에서 이미 열 소수 자리 이하로 만들어지므로(지수는 BLS 3자리 ≤ 열 4자리 · `yoyPctRaw` 4자리 · `yoyPct` 1자리 · `deltaPct`·금리 2자리 — T-165 `classify.ts`) 이 표에 들어오는 값으로는 그 경계에 도달하지 않는다[가능성 높음]. `record_json` 은 두 경로가 바이트 동일이라 원본 정보 손실은 없다.
+> ⚠ **무손실은 조건부다**(Codex C1 지적 2 — 채택): 표가 생기기 **전** 구간의 런은 `eval_funnel` 에 그 런의 run 행이 **실제로 써졌을 때만** 이관으로 되살린다 — `EVAL_FUNNEL_ENABLED=false`·flush 실패·런당 8000행 상한으로 run 행이 없으면 원본이 없고 되살릴 수 없다(`await flush()` 완료는 저장 영수증이 아니다). 표가 생긴 **뒤**의 실시간 기록은 `eval_funnel` 과 독립이라(같은 객체를 직접 받는다) 이 손실 경로는 DDL 적용 전 구간에만 있다 → DDL 을 먼저·빨리 적용한다.
+> 마이그레이션·기록기를 바꾸면 일회용 DB 시험(`T167_DB_PORT` 를 준 `src/lib/strategy/macro-regime/__tests__/label-log-disposable-mariadb.test.ts`)을 반드시 돌린다 — 기본 `npm test` 에서는 정적 검사만 돈다.
+
+### 승격 지표 계산 정의 (T-164 C0→C1 — Analyst A6 + Leader L2 + G9-4)
+
+모두 `rule_version` 하나로 좁혀 센다(버전이 바뀌면 라벨 어휘·순서가 바뀔 수 있어 창을 끊는다). 아래 SQL 은 정의이며 이 task 에서 실행하지 않았다. 이 표의 어떤 수치도 전략 성과·에지를 뜻하지 않는다(라벨은 기록용).
+
+- **관측 거래일 — 주 지표 = 미국 거래일**(L2): `market='overseas'` 행의 서로 다른 `as_of_et_date` 중 `label <> 'unknown'` 행이 1개 이상인 날의 수. 양 시장 합산 ET 날짜는 **보조로만** 보고한다 — 국내 런(09:00~15:30 KST)의 `asOfEtDate` 는 미 동부 기준 전날 저녁이라 월요일 국내 장이 일요일 ET 날짜로 찍혀, 합산하면 한 주에 6개 날짜가 생겨 「거래일」이 부풀려진다. 국내는 `DATE(as_of_kst)` 기준 국내 거래일로 따로 센다. 승격 판정 자체는 그때 사용자가 한다.
+  ```sql
+  SELECT COUNT(DISTINCT as_of_et_date) AS us_observed_days FROM macro_regime_label_log
+  WHERE rule_version = 'macro-regime-c0@1' AND market = 'overseas' AND label <> 'unknown' AND as_of_et_date BETWEEN :from AND :to;
+  -- 보조: 양 시장 합산 ET 날짜(market 조건 없이 같은 식) · 국내 거래일: COUNT(DISTINCT DATE(as_of_kst)) … WHERE market = 'domestic'
+  ```
+- **오류율** = (`label='unknown'` 이고 `reason_codes <> 'cpi_not_loaded'` 인 행 수) / 전체 행 수, 60거래일 창 전체로 **< 5%**. `cpi_not_loaded` **단독**은 「미로딩」으로 따로 세고 오류에 넣지 않는다(미로딩 때 `cpi_stale` 을 겹쳐 적지 않으므로 단독 판별이 가능하다). `cpi_not_loaded` 에 다른 사유가 함께 있으면 오류다. `internal_error` 는 오류. 끄기 손잡이(`cpi_fetch_status='disabled'`)로 생긴 `cpi_not_loaded` 단독 unknown 도 미로딩이다(운영 결정 — 보고서에 그 기간을 적는다). `cpi_fetch_status` 비-ok 는 라벨과 독립이라(수집 실패는 캐시를 덮지 않는다) 오류율에 넣지 않고 「마지막 시도 결과의 런 가중 노출」로 따로 보고한다.
+  ```sql
+  SELECT COUNT(*) AS runs,
+         SUM(label = 'unknown' AND reason_codes = 'cpi_not_loaded') AS unloaded_runs,
+         SUM(label = 'unknown' AND reason_codes <> 'cpi_not_loaded') AS error_runs,
+         SUM(label = 'unknown' AND reason_codes <> 'cpi_not_loaded') / COUNT(*) AS error_rate,
+         SUM(cpi_fetch_status NOT IN ('ok', 'not_attempted', 'disabled')) AS fetch_fail_exposed_runs,
+         SUM(cpi_fetch_status = 'ok' AND label <> 'unknown' AND cpi_cache_age_sec > 86400) AS stale_cache_runs
+  FROM macro_regime_label_log
+  WHERE rule_version = 'macro-regime-c0@1' AND as_of_et_date BETWEEN :from AND :to;
+  ```
+- **월 플립** = `label <> 'unknown'` 행만 `as_of_utc, id` 순으로 늘어놓고(국내·미국 섞어 시간순 — 라벨은 전역 값) 직전 행과 라벨이 다르면 1회, **뒤 행의 ET 달력월**에 귀속. unknown 을 빼고 이어 붙이므로 「A→unknown→A」는 0회, 「A→unknown→B」는 1회. 조건: 창 안 **모든** 달이 ≤ 2회. 🔴 `LAG` 는 **같은 `rule_version` 전체 행에서 먼저 계산한 뒤** 바깥에서 날짜 창을 거른다(G9-4 — 창 안에서만 계산하면 창 직전 마지막 라벨을 못 보고 창 경계의 플립을 놓친다. 예: 11/30=A, 12/01=B, 12/10=A, 12/20=B 를 12/01 부터 보면 12월 플립은 3회다). 검산: 플립 시각은 CPI 발표(08:30 ET)나 FOMC 효력일 직후여야 하고 다른 시각의 플립은 결함 신호다.
+  ```sql
+  WITH seq AS (
+    SELECT id, as_of_utc, as_of_et_date, label,
+           LAG(label) OVER (ORDER BY as_of_utc, id) AS prev_label
+    FROM macro_regime_label_log
+    WHERE rule_version = 'macro-regime-c0@1' AND label <> 'unknown'
+  )
+  SELECT DATE_FORMAT(as_of_et_date, '%Y-%m') AS et_month,
+         SUM(prev_label IS NOT NULL AND label <> prev_label) AS flips
+  FROM seq
+  WHERE as_of_et_date BETWEEN :from AND :to
+  GROUP BY 1 ORDER BY 1;
+  ```
