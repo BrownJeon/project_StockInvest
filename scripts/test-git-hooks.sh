@@ -25,12 +25,19 @@
 #   3) [T-090 임시 저장소 E2E] — 로직 시나리오 단계 끝에서 `mktemp -d` 아래에 **일회용 저장소**를 만들어 진짜
 #      `git commit` 으로 이 작업 트리의 훅($ROOT/scripts/git-hooks/commit-msg)을 호출한다. 실제 저장소의 index·HEAD·
 #      설정은 건드리지 않는다(위 2) 의 [E2E] 는 *설치된* 훅을, 이쪽은 *이 작업 트리의* 훅을 시험한다).
+#   4) [T-165 설치 범위] — WORK 아래의 독립 저장소·linked worktree 두 곳에서 설치/재설치와
+#      실제 훅 커밋을 시험한다. 현재 저장소/다른 머신의 config·설치된 shim 은 변경하지 않는다.
 #
 #   ⇒ **다른 세션이 stage 중이거나 커밋 직전일 때는 실행하지 말 것.** 실행 전에 index 가 비었는지 확인:
 #        git diff --cached --quiet && echo "stage 비어 있음 — 실행 가능" || git diff --cached --name-only
 #      파일 목록이 나오면 누군가 stage 중이다 — 그 세션과 조율한 뒤 실행한다.
 #
 set -u
+
+if declare -p GIT_CONFIG >/dev/null 2>&1; then
+  echo "❌ GIT_CONFIG 환경에서는 실제 hooksPath를 판별할 수 없습니다 — 해제한 뒤 실행하세요." >&2
+  exit 1
+fi
 
 VERBOSE=0
 [ "${1:-}" = "-v" ] && VERBOSE=1
@@ -2071,6 +2078,245 @@ e2e_commit "(t145-g10) 실 커밋: 이웃 4개(universex/·universe.ts·형제 �
   'chore: 이웃 정리'
 
 echo ""
+echo "[T-165 — 설치 설정 범위: 독립 저장소와 linked worktree만 사용]"
+
+installed_hook_blocked() {
+  [ "$1" -ne 0 ] && [ "$2" = "$3" ] || return 1
+  case "$4" in *'🛑 커밋 차단 — 안전 관련 코드 변경에는 Reviewer 독립감사 기록이 필요합니다.'*) return 0 ;; *) return 1 ;; esac
+}
+t165_check() {
+  local label="$1"; shift
+  if "$@"; then
+    printf '  ✅ %s\n' "$label"; PASS_N=$((PASS_N + 1))
+  else
+    printf '  ❌ %s\n' "$label"; FAIL_N=$((FAIL_N + 1))
+  fi
+}
+t165_env() {
+  env -u GIT_DIR -u GIT_COMMON_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE \
+    -u GIT_CONFIG -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS -u GIT_TEMPLATE_DIR \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$T165_GLOBAL" XDG_DATA_HOME="$WORK/t165-local-data" "$@"
+}
+t165_git() {
+  local repo="$1"; shift
+  t165_env "$T165_REAL_GIT" -C "$repo" "$@"
+}
+t165_install() {
+  (cd "$1" && t165_env bash "$ROOT/scripts/install-git-hooks.sh")
+}
+t165_commit() {
+  local repo="$1" label="$2" expected="$3" token="$4" message="$5"
+  local before after out rc ok=1
+  before="$(t165_git "$repo" rev-parse HEAD)"
+  out="$(t165_git "$repo" commit -m "$message" 2>&1)"; rc=$?
+  after="$(t165_git "$repo" rev-parse HEAD)"
+  case "$expected" in
+    block) installed_hook_blocked "$rc" "$before" "$after" "$out" || ok=0 ;;
+    commit) [ "$rc" -eq 0 ] && [ "$before" != "$after" ] || ok=0 ;;
+  esac
+  case "$out" in *"$token"*) ;; *) ok=0 ;; esac
+  t165_check "$label" [ "$ok" -eq 1 ]
+  if [ "$ok" -eq 0 ] || [ "$VERBOSE" -eq 1 ]; then printf '%s\n' "$out" | sed 's/^/       │ /'; fi
+}
+run_t165_installer_tests() {
+  local T165_REAL_GIT T165_GLOBAL main first peer first_dir peer_dir shared
+  local out rc shared_before peer_before first_before target before_hash selected_before state origin origin_before origin_after
+  T165_REAL_GIT="$(command -v git)"
+  T165_GLOBAL="$WORK/t165-global-config"
+  : > "$T165_GLOBAL"
+  main="$WORK/t165-main"; first="$WORK/t165-first"; peer="$WORK/t165-peer"
+  mkdir -p "$main/scripts/git-hooks" "$main/src/lib/safety" "$main/agent-vault/10-Flow/tasks"
+  cp "$ROOT/$HOOK" "$main/scripts/git-hooks/commit-msg" || { t165_check '(t165-setup) 훅 복사' false; return; }
+  printf 'synthetic seed\n' > "$main/README.md"
+  printf 'synthetic safety seed\n' > "$main/src/lib/safety/dry-run.ts"
+  cat > "$main/agent-vault/10-Flow/tasks/T-995-hooktest-t165-valid.md" <<'EOF'
+## Reviewer
+- **최종 판정: PASS (scope: src/lib/safety/)**
+EOF
+  cat > "$main/agent-vault/10-Flow/tasks/T-993-hooktest-t165-wrong-scope.md" <<'EOF'
+## Reviewer
+- **최종 판정: PASS (scope: docs/)**
+EOF
+  t165_git "$main" init -q || { t165_check '(t165-setup) git init' false; return; }
+  t165_git "$main" config --local user.name 'Synthetic hook fixture'
+  t165_git "$main" config --local user.email 'hook-fixture@example.invalid'
+  t165_git "$main" config --local commit.gpgsign false
+  t165_git "$main" add .
+  t165_git "$main" commit -qm 'synthetic seed before installing hooks' || { t165_check '(t165-setup) 초기 fixture' false; return; }
+
+  out="$(t165_install "$main" 2>&1)"; rc=$?
+  target="$(t165_git "$main" config --local --get core.hooksPath)"
+  t165_check '(t165-a1) 일반 clone은 기존 --local 설치 유지' [ "$rc:$target" = '0:scripts/git-hooks' ]
+  t165_check '(t165-a2) legacy clone에 worktree 설정을 만들지 않음' [ ! -e "$main/.git/config.worktree" ]
+
+  t165_git "$main" config --local extensions.worktreeConfig true
+  t165_git "$main" config --local core.hooksPath '/linux-sentinel/unchanged-hooks'
+  t165_git "$main" worktree add -qb t165-first "$first" || { t165_check '(t165-setup) 첫 worktree' false; return; }
+  t165_git "$main" worktree add -qb t165-peer "$peer" || { t165_check '(t165-setup) peer worktree' false; return; }
+  t165_git "$first" config --worktree t165.owner first
+  t165_git "$peer" config --worktree t165.owner peer
+  t165_git "$peer" config --worktree core.hooksPath '/peer-sentinel/unchanged-hooks'
+  first_dir="$(t165_git "$first" rev-parse --git-dir)"
+  peer_dir="$(t165_git "$peer" rev-parse --git-dir)"
+  shared="$main/.git/config"
+  shared_before="$(cksum < "$shared")"; peer_before="$(cksum < "$peer_dir/config.worktree")"
+  out="$(t165_install "$first" 2>&1)"; rc=$?
+  target="$(t165_git "$first" config --worktree --get core.hooksPath)"
+  t165_check '(t165-b1) enabled linked worktree는 --worktree에만 설치' [ "$rc:$target" = '0:scripts/git-hooks' ]
+  t165_check '(t165-b2) 공유 Linux hooksPath/config bytes 보존' [ "$(cksum < "$shared")" = "$shared_before" ]
+  t165_check '(t165-b3) peer worktree 전체 config bytes 보존' [ "$(cksum < "$peer_dir/config.worktree")" = "$peer_before" ]
+  t165_check '(t165-b4) 해당 worktree의 다른 설정 보존' [ "$(t165_git "$first" config --worktree --get t165.owner)" = first ]
+  t165_check '(t165-b5) 실제 읽는 hooksPath가 해당 worktree 대상' [ "$(t165_git "$first" config --get core.hooksPath)" = scripts/git-hooks ]
+  first_before="$(cksum < "$first_dir/config.worktree")"
+  out="$(t165_install "$first" 2>&1)"; rc=$?
+  t165_check '(t165-b6) 재설치 멱등: 선택/공유/peer config bytes 불변' \
+    [ "$rc:$(cksum < "$first_dir/config.worktree"):$(cksum < "$shared"):$(cksum < "$peer_dir/config.worktree")" = "0:$first_before:$shared_before:$peer_before" ]
+  out="$(t165_install "$main" 2>&1)"; rc=$?
+  t165_check '(t165-b7) enabled main도 --worktree 사용·공유/peer/linked 설정 보존' \
+    [ "$rc:$(t165_git "$main" config --worktree --get core.hooksPath):$(cksum < "$shared"):$(cksum < "$first_dir/config.worktree"):$(cksum < "$peer_dir/config.worktree")" = "0:scripts/git-hooks:$shared_before:$first_before:$peer_before" ]
+
+  t165_git "$main" config --local extensions.worktreeConfig false
+  chmod -x "$first/scripts/git-hooks/commit-msg"
+  shared_before="$(cksum < "$shared")"; first_before="$(cksum < "$first_dir/config.worktree")"
+  out="$(t165_install "$first" 2>&1)"; rc=$?
+  t165_check '(t165-c1) disabled linked worktree는 실패로 종료' [ "$rc" -ne 0 ]
+  t165_check '(t165-c2) disabled linked: 설정·실행권한을 쓰기 전에 차단' \
+    [ "$([ -x "$first/scripts/git-hooks/commit-msg" ] && printf executable):$(cksum < "$shared"):$(cksum < "$first_dir/config.worktree"):$(cksum < "$peer_dir/config.worktree")" = ":$shared_before:$first_before:$peer_before" ]
+  case "$out" in *'extensions.worktreeConfig'*) t165_check '(t165-c3) 독립 설정 준비 안내' true ;; *) t165_check '(t165-c3) 독립 설정 준비 안내' false ;; esac
+  chmod +x "$first/scripts/git-hooks/commit-msg"
+  chmod -x "$main/scripts/git-hooks/commit-msg"
+  out="$(t165_install "$main" 2>&1)"; rc=$?
+  t165_check '(t165-c4) 확장 OFF인 main+peers도 공유 설정·권한 쓰기 전 거절' \
+    [ "$rc:$([ -x "$main/scripts/git-hooks/commit-msg" ] && printf executable):$(cksum < "$shared")" = "1::$shared_before" ]
+  chmod +x "$main/scripts/git-hooks/commit-msg"
+  for state in absent false; do
+    if [ "$state" = absent ]; then t165_git "$main" config --local --unset extensions.worktreeConfig
+    else t165_git "$main" config --local extensions.worktreeConfig false; fi
+    "$T165_REAL_GIT" config --file "$T165_GLOBAL" extensions.worktreeConfig true
+    shared_before="$(cksum < "$shared")"
+    chmod -x "$first/scripts/git-hooks/commit-msg"
+    out="$(t165_install "$first" 2>&1)"; rc=$?
+    t165_check "(t165-c5-$state) global true만으로 공통 설정/권한을 쓰지 않음" \
+      [ "$rc:$([ -x "$first/scripts/git-hooks/commit-msg" ] && printf executable):$(cksum < "$shared")" = "1::$shared_before" ]
+    "$T165_REAL_GIT" config --file "$T165_GLOBAL" --unset extensions.worktreeConfig
+    out="$(cd "$first" && t165_env env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=extensions.worktreeConfig \
+      GIT_CONFIG_VALUE_0=true bash "$ROOT/scripts/install-git-hooks.sh" 2>&1)"; rc=$?
+    t165_check "(t165-c6-$state) command true만으로 공통 설정/권한을 쓰지 않음" \
+      [ "$rc:$([ -x "$first/scripts/git-hooks/commit-msg" ] && printf executable):$(cksum < "$shared")" = "1::$shared_before" ]
+    chmod +x "$first/scripts/git-hooks/commit-msg"
+  done
+  t165_git "$main" config --local extensions.worktreeConfig true
+  chmod -x "$first/scripts/git-hooks/commit-msg"
+  shared_before="$(cksum < "$shared")"
+  out="$(cd "$first" && t165_env env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=extensions.worktreeConfig \
+    GIT_CONFIG_VALUE_0=false bash "$ROOT/scripts/install-git-hooks.sh" 2>&1)"; rc=$?
+  t165_check '(t165-c7) local true와 command false 충돌은 쓰기 전 거절' \
+    [ "$rc:$([ -x "$first/scripts/git-hooks/commit-msg" ] && printf executable):$(cksum < "$shared")" = "1::$shared_before" ]
+  chmod +x "$first/scripts/git-hooks/commit-msg"
+
+  mv "$first_dir/config.worktree" "$first_dir/config.worktree.saved"
+  ln -s "$peer_dir/config.worktree" "$first_dir/config.worktree"
+  out="$(t165_install "$first" 2>&1)"; rc=$?
+  t165_check '(t165-c8) 타 worktree config를 가리키는 링크 거절·대상 bytes 보존' \
+    [ "$rc:$(cksum < "$shared"):$(cksum < "$peer_dir/config.worktree")" = "1:$shared_before:$peer_before" ]
+  rm "$first_dir/config.worktree"
+  mv "$first_dir/config.worktree.saved" "$first_dir/config.worktree"
+
+  mkdir -p "$WORK/t165-bin"
+  cat > "$WORK/t165-bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = config ] && [ "${2:-}" = --file ] && [ "${3:-}" = "$T165_FAIL_FILE" ] && [ "${4:-}" = core.hooksPath ] && [ "$#" -eq 5 ]; then
+  exit 91
+fi
+exec "$T165_REAL_GIT" "$@"
+EOF
+  chmod +x "$WORK/t165-bin/git"
+  t165_git "$first" config --worktree core.hooksPath 'prior-sentinel/hooks'
+  selected_before="$(cksum < "$first_dir/config.worktree")"; shared_before="$(cksum < "$shared")"
+  out="$(cd "$first" && t165_env env PATH="$WORK/t165-bin:$PATH" T165_REAL_GIT="$T165_REAL_GIT" \
+    T165_FAIL_FILE="$first_dir/config.worktree" bash "$ROOT/scripts/install-git-hooks.sh" 2>&1)"; rc=$?
+  t165_check '(t165-d1) 선택 scope 쓰기 실패를 성공으로 숨기지 않음' [ "$rc" -ne 0 ]
+  t165_check '(t165-d2) 쓰기 실패 시 선택/공유/peer 설정 보존' \
+    [ "$(cksum < "$first_dir/config.worktree"):$(cksum < "$shared"):$(cksum < "$peer_dir/config.worktree")" = "$selected_before:$shared_before:$peer_before" ]
+  t165_git "$first" config --worktree core.hooksPath scripts/git-hooks
+  selected_before="$(cksum < "$first_dir/config.worktree")"
+  out="$(cd "$first" && t165_env env \
+    GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/command-shadow/hooks \
+    bash "$ROOT/scripts/install-git-hooks.sh" 2>&1)"; rc=$?
+  case "$out" in *'실효값이 설치 대상과 다릅니다'*) before_hash=1 ;; *) before_hash=0 ;; esac
+  t165_check '(t165-e1) 명령 우선순위의 다른 실효 hooksPath는 검증 실패' [ "$rc:$before_hash" = '1:1' ]
+  t165_check '(t165-e2) shadow 거절 시 선택/공유/peer 설정 보존' \
+    [ "$(cksum < "$first_dir/config.worktree"):$(cksum < "$shared"):$(cksum < "$peer_dir/config.worktree")" = "$selected_before:$shared_before:$peer_before" ]
+
+  cat > "$WORK/t165-bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = config ] && [ "${2:-}" = --file ] && [ "${3:-}" = "$T165_WRITE_FILE" ] && [ "${4:-}" = core.hooksPath ] && [ "$#" -eq 5 ]; then
+  "$T165_REAL_GIT" config --file "$T165_COMMON_FILE" extensions.worktreeConfig false || exit 92
+fi
+exec "$T165_REAL_GIT" "$@"
+EOF
+  chmod +x "$WORK/t165-bin/git"
+  t165_git "$first" config --worktree core.hooksPath 'race-sentinel/hooks'
+  out="$(cd "$first" && t165_env env PATH="$WORK/t165-bin:$PATH" T165_REAL_GIT="$T165_REAL_GIT" \
+    T165_WRITE_FILE="$first_dir/config.worktree" T165_COMMON_FILE="$shared" \
+    bash "$ROOT/scripts/install-git-hooks.sh" 2>&1)"; rc=$?
+  t165_check '(t165-e3) 검사 후 확장 OFF 경합: 공통 hooksPath 쓰기 없이 실패' \
+    [ "$rc:$(t165_git "$main" config --local --get core.hooksPath):$(cksum < "$peer_dir/config.worktree")" = "1:/linux-sentinel/unchanged-hooks:$peer_before" ]
+  t165_git "$main" config --local extensions.worktreeConfig true
+  t165_check '(t165-e4) 확장 OFF 경합에서도 쓰기 대상은 자기 config.worktree' \
+    [ "$(t165_git "$first" config --worktree --get core.hooksPath)" = scripts/git-hooks ]
+
+  printf 'docs change\n' >> "$first/README.md"; t165_git "$first" add README.md
+  t165_commit "$first" '(t165-f1) 설치된 훅: 문서 커밋 허용' commit '' 'docs: synthetic installed hook'
+  printf 'safety change\n' >> "$first/src/lib/safety/dry-run.ts"; t165_git "$first" add src/lib/safety/dry-run.ts
+  t165_commit "$first" '(t165-f2) 설치된 훅: 무task 안전 변경 차단·HEAD 보존' block '커밋 차단' 'fix: synthetic safety without task'
+  t165_commit "$first" '(t165-f3) 설치된 훅: 다른 scope 차단·HEAD 보존' block '커밋 차단' 'fix(T-993): synthetic wrong scope'
+  t165_commit "$first" '(t165-f4) 설치된 훅: 유효 synthetic scope만 허용' commit "$T075_OK" 'fix(T-995): synthetic valid scope'
+
+  origin="$WORK/t165-poison-origin"
+  mkdir -p "$origin"
+  t165_git "$origin" init -q
+  t165_git "$origin" config --local t165.sentinel unchanged
+  printf 'origin\n' > "$origin/sentinel"
+  t165_git "$origin" add sentinel
+  origin_before="$(cksum < "$origin/.git/config"):$(cksum < "$origin/.git/index"):$(cksum < "$origin/.git/HEAD"):$(find "$origin/.git/objects" -type f -exec cksum {} + | LC_ALL=C sort | cksum)"
+  out="$(
+    export GIT_DIR="$origin/.git" GIT_COMMON_DIR="$origin/.git" GIT_WORK_TREE="$origin" GIT_INDEX_FILE="$origin/.git/index"
+    export GIT_OBJECT_DIRECTORY="$origin/.git/objects" GIT_ALTERNATE_OBJECT_DIRECTORIES="$origin/.git/objects"
+    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/poison/hooks
+    export GIT_CONFIG_PARAMETERS="'core.hooksPath'='/poison/hooks'" GIT_TEMPLATE_DIR="$origin/.git/hooks"
+    t165_git "$first" config --worktree t165.envIsolation fixture-only
+    t165_install "$first"
+  )"; rc=$?
+  origin_after="$(cksum < "$origin/.git/config"):$(cksum < "$origin/.git/index"):$(cksum < "$origin/.git/HEAD"):$(find "$origin/.git/objects" -type f -exec cksum {} + | LC_ALL=C sort | cksum)"
+  t165_check '(t165-g1) fixture helper는 Git 위치/config/template 환경을 제거' \
+    [ "$rc:$(t165_git "$first" config --worktree --get t165.envIsolation):$origin_after" = "0:fixture-only:$origin_before" ]
+  t165_git "$first" config --worktree --unset t165.envIsolation
+  chmod -x "$first/scripts/git-hooks/commit-msg"
+  selected_before="$(cksum < "$first_dir/config.worktree")"
+  out="$(cd "$first" && t165_env env GIT_DIR="$origin/.git" bash "$ROOT/scripts/install-git-hooks.sh" 2>&1)"; rc=$?
+  t165_check '(t165-g2) installer 자체도 별도 Git 대상 환경을 쓰기 전 거절' \
+    [ "$rc:$([ -x "$first/scripts/git-hooks/commit-msg" ] && printf executable):$(cksum < "$first_dir/config.worktree")" = "1::$selected_before" ]
+  printf '[core]\n\thooksPath = scripts/git-hooks\n' > "$WORK/t165-fake-config"
+  out="$(cd "$first" && t165_env env GIT_CONFIG="$WORK/t165-fake-config" bash "$ROOT/scripts/install-git-hooks.sh" 2>&1)"; rc=$?
+  t165_check '(t165-g3) config 전용 가짜 실효값 환경은 쓰기 전 거절' \
+    [ "$rc:$([ -x "$first/scripts/git-hooks/commit-msg" ] && printf executable):$(cksum < "$first_dir/config.worktree")" = "1::$selected_before" ]
+  chmod +x "$first/scripts/git-hooks/commit-msg"
+
+  if installed_hook_blocked 128 same-head same-head 'error: gpg failed to sign the data'; then
+    t165_check '(t165-h1) 서명 실패를 commit-msg 차단으로 오인하지 않음' false
+  else t165_check '(t165-h1) 서명 실패를 commit-msg 차단으로 오인하지 않음' true; fi
+  if installed_hook_blocked 128 same-head same-head 'fatal: unable to auto-detect email address'; then
+    t165_check '(t165-h2) 신원 실패를 commit-msg 차단으로 오인하지 않음' false
+  else t165_check '(t165-h2) 신원 실패를 commit-msg 차단으로 오인하지 않음' true; fi
+  if installed_hook_blocked 0 same-head same-head '🛑 커밋 차단 — 안전 관련 코드 변경에는 Reviewer 독립감사 기록이 필요합니다.'; then
+    t165_check '(t165-h3) 차단 문구만 있고 성공 exit이면 실패' false
+  else t165_check '(t165-h3) 차단 문구만 있고 성공 exit이면 실패' true; fi
+}
+run_t165_installer_tests
+
+echo ""
 echo "─────────────────────────────────────────────────────────────────────────"
 printf '결과: %d 통과 / %d 실패\n' "$PASS_N" "$FAIL_N"
 echo ""
@@ -2094,7 +2340,7 @@ echo ""
 echo "[E2E] git 이 실제로 훅을 호출하는지 — 실 커밋 시도(차단 기대)"
 echo "─────────────────────────────────────────────────────────────────────────"
 
-HOOKS_PATH="$(git config --local --get core.hooksPath 2>/dev/null || true)"
+HOOKS_PATH="$(env -u GIT_CONFIG git config --get core.hooksPath 2>/dev/null || true)"
 if [ -z "$HOOKS_PATH" ]; then
   echo "  ⚠ core.hooksPath 가 설정돼 있지 않습니다 — 훅 미설치 상태입니다."
   echo "    bash scripts/install-git-hooks.sh 를 먼저 실행하세요."
@@ -2139,6 +2385,12 @@ fi
 
 if [ "$E2E_RC" -eq 0 ]; then
   echo "  ❌ git commit 이 성공 코드로 끝났습니다 — 예상 밖입니다."
+  exit 1
+fi
+
+if ! installed_hook_blocked "$E2E_RC" "$HEAD_BEFORE" "$HEAD_AFTER" "$E2E_OUT"; then
+  echo "  ❌ git commit 은 실패했지만 commit-msg 차단 근거가 없습니다 — 서명/신원/다른 훅 오류를 확인하세요."
+  printf '%s\n' "$E2E_OUT" | sed 's/^/       │ /'
   exit 1
 fi
 

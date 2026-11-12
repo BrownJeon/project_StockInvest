@@ -21,12 +21,81 @@ set -u
 
 REPO_HOOKS_DIR="scripts/git-hooks"
 
+# An alternate Git directory/index could redirect installation outside this checkout.
+for GIT_LOCATION_VAR in GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG; do
+  if declare -p "$GIT_LOCATION_VAR" >/dev/null 2>&1; then
+    echo "❌ $GIT_LOCATION_VAR 환경에서는 설치하지 않습니다 — 해당 Git 대상 변수를 해제하고 실행하세요." >&2
+    exit 1
+  fi
+done
+
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 if [ -z "$ROOT" ]; then
   echo "❌ git 저장소 안에서 실행하세요." >&2
   exit 1
 fi
 cd "$ROOT" || exit 1
+
+# A linked worktree must never overwrite another machine/worktree's shared setting.
+# Choose the writable scope before chmod, shim creation or any config mutation.
+HOOK_GIT_DIR="$(git rev-parse --git-dir 2>/dev/null)"
+HOOK_GIT_COMMON="$(git rev-parse --git-common-dir 2>/dev/null)"
+HOOK_GIT_DIR_ABS="$(cd "$HOOK_GIT_DIR" 2>/dev/null && pwd -P)"
+HOOK_GIT_COMMON_ABS="$(cd "$HOOK_GIT_COMMON" 2>/dev/null && pwd -P)"
+if [ -z "$HOOK_GIT_DIR_ABS" ] || [ -z "$HOOK_GIT_COMMON_ABS" ]; then
+  echo "❌ git 디렉토리/공유 디렉토리를 확인할 수 없습니다 — 설정을 변경하지 않습니다." >&2
+  exit 1
+fi
+read_worktree_extension() {
+  git config --file "$HOOK_GIT_COMMON_ABS/config" --no-includes --bool --get extensions.worktreeConfig 2>/dev/null
+}
+WORKTREE_CONFIG="$(read_worktree_extension)"
+WORKTREE_CONFIG_RC=$?
+case "$WORKTREE_CONFIG_RC" in
+  0) ;;
+  1) WORKTREE_CONFIG="false" ;;
+  *) echo "❌ extensions.worktreeConfig 값을 확인할 수 없습니다 — 설정을 변경하지 않습니다." >&2; exit 1 ;;
+esac
+CONFIG_SCOPE="--local"
+CONFIG_FILE="$HOOK_GIT_COMMON_ABS/config"
+if [ "$WORKTREE_CONFIG" = "true" ]; then
+  CONFIG_SCOPE="--worktree"
+  CONFIG_FILE="$HOOK_GIT_DIR_ABS/config.worktree"
+elif [ "$HOOK_GIT_DIR_ABS" != "$HOOK_GIT_COMMON_ABS" ]; then
+  echo "❌ linked worktree의 독립 설정이 비활성입니다(extensions.worktreeConfig)." >&2
+  echo "   공유 core.hooksPath를 덮어쓰지 않습니다. 저장소 관리자가 worktree 설정을 먼저 준비하세요." >&2
+  exit 1
+else
+  if ! WORKTREE_LIST="$(git worktree list --porcelain 2>/dev/null)"; then
+    echo "❌ 등록된 worktree 목록을 확인할 수 없습니다 — 설정을 변경하지 않습니다." >&2
+    exit 1
+  fi
+  WORKTREE_COUNT="$(printf '%s\n' "$WORKTREE_LIST" | awk '/^worktree / { n++ } END { print n+0 }')"
+  if [ "$WORKTREE_COUNT" -ne 1 ]; then
+    echo "❌ 여러 worktree가 공유하는 설정입니다 — extensions.worktreeConfig 준비 전에는 설치하지 않습니다." >&2
+    exit 1
+  fi
+fi
+EFFECTIVE_WORKTREE_CONFIG="$(git config --bool --get extensions.worktreeConfig 2>/dev/null)"
+EFFECTIVE_WORKTREE_CONFIG_RC=$?
+if [ "$EFFECTIVE_WORKTREE_CONFIG_RC" -eq 1 ]; then EFFECTIVE_WORKTREE_CONFIG="false"; fi
+if [ "$EFFECTIVE_WORKTREE_CONFIG_RC" -gt 1 ] || [ "$EFFECTIVE_WORKTREE_CONFIG" != "$WORKTREE_CONFIG" ]; then
+  echo "❌ 공통 파일과 실효 extensions.worktreeConfig가 다릅니다 — 전역/명령 설정을 정리한 뒤 실행하세요." >&2
+  exit 1
+fi
+if [ -L "$CONFIG_FILE" ] || { [ -e "$CONFIG_FILE" ] && [ ! -f "$CONFIG_FILE" ]; }; then
+  echo "❌ 선택된 config가 일반 파일이 아닙니다 — 다른 설정으로의 쓰기를 거부합니다: $CONFIG_FILE" >&2
+  exit 1
+fi
+scoped_config() {
+  if [ "$CONFIG_SCOPE" = "--worktree" ]; then
+    # Pin the file: --worktree could fall back to shared --local if the extension
+    # is disabled concurrently between checking it and writing the setting.
+    git config --file "$CONFIG_FILE" "$@"
+  else
+    git config --local "$@"
+  fi
+}
 
 if [ ! -d "$REPO_HOOKS_DIR" ]; then
   echo "❌ $REPO_HOOKS_DIR 디렉토리가 없습니다. 저장소가 최신인지 확인하세요." >&2
@@ -62,11 +131,10 @@ for n in $NAMES; do
 done
 
 # 3) 기존 .git/hooks 에 활성 훅이 있으면 경고 (core.hooksPath 설정 시 무시된다)
-GIT_COMMON="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)"
-if [ -d "$GIT_COMMON/hooks" ]; then
-  LEGACY="$(find "$GIT_COMMON/hooks" -maxdepth 1 -type f ! -name '*.sample' 2>/dev/null)"
+if [ -d "$HOOK_GIT_COMMON/hooks" ]; then
+  LEGACY="$(find "$HOOK_GIT_COMMON/hooks" -maxdepth 1 -type f ! -name '*.sample' 2>/dev/null)"
   if [ -n "$LEGACY" ]; then
-    echo "⚠ $GIT_COMMON/hooks 에 아래 훅이 있습니다 — core.hooksPath 설정 후에는 실행되지 않습니다:" >&2
+    echo "⚠ $HOOK_GIT_COMMON/hooks 에 아래 훅이 있습니다 — core.hooksPath 설정 후에는 실행되지 않습니다:" >&2
     printf '%s\n' "$LEGACY" | sed 's/^/    /' >&2
     echo "   필요하면 $REPO_HOOKS_DIR 로 옮기세요." >&2
     echo "" >&2
@@ -130,20 +198,32 @@ EOF
 fi
 
 # 5) core.hooksPath 설정 (멱등)
-CURRENT="$(git config --local --get core.hooksPath 2>/dev/null || true)"
+CURRENT="$(scoped_config --get core.hooksPath 2>/dev/null || true)"
 if [ "$CURRENT" = "$TARGET" ]; then
-  echo "✅ 이미 설치되어 있습니다: core.hooksPath = $CURRENT  [$MODE]"
+  echo "ℹ 선택 범위에 동일한 설정이 있습니다: core.hooksPath = $CURRENT  [$CONFIG_SCOPE/$MODE]"
 else
   [ -n "$CURRENT" ] && echo "ℹ 기존 설정을 교체합니다: $CURRENT → $TARGET"
-  git config --local core.hooksPath "$TARGET" || { echo "❌ core.hooksPath 설정 실패" >&2; exit 1; }
-  echo "✅ 설치 완료: core.hooksPath = $TARGET  [$MODE]"
+  scoped_config core.hooksPath "$TARGET" || { echo "❌ core.hooksPath 설정 실패 ($CONFIG_SCOPE)" >&2; exit 1; }
+  echo "ℹ 설정 기록 완료: core.hooksPath = $TARGET  [$CONFIG_SCOPE/$MODE]"
 fi
 
 # 6) 검증 — git 이 실제로 실행할 수 있는 상태인지 확인 (조용한 fail-open 방지)
 echo ""
 echo "검증:"
 VERIFY_FAIL=0
-CONF="$(git config --local --get core.hooksPath)"
+VERIFY_WORKTREE_CONFIG="$(read_worktree_extension)"
+VERIFY_WORKTREE_CONFIG_RC=$?
+if [ "$VERIFY_WORKTREE_CONFIG_RC" -eq 1 ]; then VERIFY_WORKTREE_CONFIG="false"; fi
+if [ "$VERIFY_WORKTREE_CONFIG_RC" -gt 1 ] || [ "$VERIFY_WORKTREE_CONFIG" != "$WORKTREE_CONFIG" ]; then
+  echo "❌ 설치 중 extensions.worktreeConfig가 바뀌었습니다 — 선택된 설정 파일만 기록했고 재확인이 필요합니다." >&2
+  exit 1
+fi
+CONF="$(git config --get core.hooksPath 2>/dev/null)"
+if [ "$CONF" != "$TARGET" ]; then
+  echo "❌ core.hooksPath 실효값이 설치 대상과 다릅니다 — 상위/명령 설정의 덮어쓰기를 확인하세요." >&2
+  echo "   대상: $TARGET / 실효값: $CONF / 기록 범위: $CONFIG_SCOPE" >&2
+  exit 1
+fi
 case "$CONF" in
   /*) ABS="$CONF" ;;
   *)  ABS="$ROOT/$CONF" ;;
@@ -165,6 +245,7 @@ if [ "$VERIFY_FAIL" -ne 0 ]; then
   exit 1
 fi
 
+echo "✅ 설치 검증 완료: core.hooksPath = $CONF  [$CONFIG_SCOPE/$MODE]"
 echo ""
 echo "commit-msg 훅: 안전 관련 코드(주문·거래소·안전장치·cron·전략/시그널·인증) 변경 커밋은"
 echo "  커밋 메시지의 task ID(T-NNN) + 그 task 파일 '## Reviewer' 섹션 마지막 줄의"
@@ -178,4 +259,8 @@ echo "  shim 모드는 설치 시점의 훅만 활성화합니다 — 재실행 
 echo "  (commit-msg 훅이 매 커밋마다 이 불일치를 감지해 경고합니다)"
 echo ""
 echo "동작 확인: bash scripts/test-git-hooks.sh"
-echo "해제:      git config --local --unset core.hooksPath"
+if [ "$CONFIG_SCOPE" = "--worktree" ]; then
+  echo "해제(현재 worktree): git config --file \"$CONFIG_FILE\" --unset core.hooksPath"
+else
+  echo "해제:      git config --local --unset core.hooksPath"
+fi

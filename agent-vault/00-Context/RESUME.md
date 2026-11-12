@@ -1,6 +1,6 @@
 ---
 project: StockInvest
-updated: 2026-11-11
+updated: 2026-11-12
 tags:
   - type/context
 aliases:
@@ -9,6 +9,13 @@ aliases:
 ---
 
 # ▶ 이어서 작업 — 재개 진입점
+
+## T-166 맥 Git 훅 복구·양호스트 검증 완료
+
+- 2026-11-12 10:47 후속 발행 승인: 동결 스크립트2파일+T-166 문서5파일만 정상 훅으로 커밋·main 푸시하며 다른 작업 이력/변경과 Ubuntu 기존 훅은 보존한다. 발행 SHA·웹훅 결과는 Git 이력 및 별도 보호 영수증/최종 보고를 참조한다. 아래의 commit/push 없음은 앞선 복구·검증 단계의 기록이다.
+
+- [[T-166-worktree-git-hook-isolation]]: Mac 현 worktree만 scripts/git-hooks/direct로 적용, 공유 Linux 설정·기존 Ubuntu source/shim은 유지했다. installer/test2파일 동결·Reviewer/C2, 양호스트 격리 전체526/0 및 실제 설치 ABS 훅 fixture 각4/4를 확인했다. 실제 worktree 시험 커밋·Ubuntu installer·commit/push/배포·DB/매매 변경은 없다.
+- Mac HEAD/index 원바이트·메시지·공유/다른 config·기존 artifact를 보존했다. Ubuntu HEAD/staged entries/메시지·기존 tracked75파일과 훅/공유설정은 동일하나 raw index SHA·병행 untracked macro 문서 bytes 변화는 관찰해 원인 미확정/복구 없이 기록했다. 병행 T-165 macro와 번호 충돌해 본 작업만 T-166으로 이관했으며 원 영수증 T-165 표기는 보존했다. T-156의 기존 상태·예약은 그대로다.
 
 ## T-156 다음 미국장 마감분 신규 발행·메모리 관측 예약 — F59/exec-102
 
