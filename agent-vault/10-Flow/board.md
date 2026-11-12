@@ -4,6 +4,13 @@ tags:
 ---
 # 칸반 보드
 
+## 2026-11-12 12:55 — T-167 거시 레짐 라벨 장기 보관 전용 표 준비 완료 (DDL·이관·push 승인 대기)
+
+- [[T-165-macro-regime-label-c0]] 결정 항목 「라벨 기록 보관 기간」 사용자 선택 (a) → [[T-167-macro-regime-label-log]]: 새 표 `macro_regime_label_log`(평가 런 1회 = 1행, 라벨·수집 상태·CPI·금리 열 + 원본 JSON, 자동 삭제 없음, UNIQUE(run_id, as_of_utc)) DDL 파일 + 멱등 이관 SQL 파일(READ COMMITTED·원본 중복 최소 id·2분 상한·대조 쿼리) + 런 끝 기록기(flush 뒤 분리 실행·4초 상한·표 없음 무음, 스위치 `MACRO_REGIME_LABEL_LOG_ENABLED` 기본 켜짐). 판단 영향 0(불변식 시험 44건). 웹 0.7.0 → 0.8.0.
+- 검증: Reviewer 최종 pass(12:41, scope 안전 파일 9개) · QA 통과(12:49 — 전체 jest 신규 실패 0, tsc·build, 일회용 MariaDB 10.11.11 22건 실제 실행). Codex C1 `incomplete`(snapshot_modified)·C2 done(지적 2건 수용).
+- 번호 이관: 원격 `1bb312e` 가 T-166 을 먼저 써서 T-166 → T-167(메인 세션 결정). 서버 worktree `~/.node-local/stockinvest-t166` 커밋 `bd93fa3`(코드) + 기록 커밋, 기준 `1bb312e`.
+- **대기**: DDL + 이관 승인(마감 **2026-12-12 10:20 KST** — eval_funnel 30일 정리 시작 전, 권장 12-05 이전·장외) · push 승인. 권장 순서 DDL → 이관 1차 → push → 이관 2차 → 대조.
+
 ## T-166 맥 Git 훅 복구·양호스트 검증 완료
 
 - 2026-11-12 10:47 후속 발행 승인: 동결 스크립트2파일+T-166 문서5파일만 정상 훅으로 커밋·main 푸시하며 다른 작업 이력/변경과 Ubuntu 기존 훅은 보존한다. 발행 SHA·웹훅 결과는 Git 이력 및 별도 보호 영수증/최종 보고를 참조한다. 아래의 commit/push 없음은 앞선 복구·검증 단계의 기록이다.
