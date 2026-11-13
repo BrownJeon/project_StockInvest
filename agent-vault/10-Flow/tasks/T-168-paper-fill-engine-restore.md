@@ -2,11 +2,11 @@
 task_id: T-168
 title: 장중 엔진 미검증 매수 후보의 가상 체결(paper_fills) 기록 복구 — 무제한 한도(적응 배분) 모드에서 검증 관문(G1) 경로 재연결
 status: done
-waiting: [push_confirm]
+waiting: [domestic_session_observation]
 priority: high
 project: StockInvest
 created: 2026-11-13
-updated: 2026-11-13
+updated: 2026-11-14
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa]
 skills_used: "없음 — 화면 변경 0건(엔진·시그널 코드만), 디자인 스킬 선택 기준에 해당하지 않음"
@@ -31,7 +31,7 @@ execution_context:
   current_tool: claude
   current_procedure: claude_standard
   current_scope: "원인 확인·설계·구현·시험·Reviewer·QA·서버 worktree 커밋까지. push(=운영 배포)·DB 쓰기·DDL·system_config/.env 변경·소급 백필은 범위 밖(메인 세션이 사용자 승인을 따로 받는다)."
-  last_event_id: exec-001
+  last_event_id: exec-002
 demo_gate:
   required: true
   level: "delta"
@@ -65,6 +65,7 @@ demo_gate:
 | 이벤트 ID | 시각(KST) | 사건 | 이전 → 현재 담당 / 현재 절차 | 범위·남은 일 | 근거 |
 |---|---|---|---|---|---|
 | exec-001 | 2026-11-13 21:55 | start | 없음 → claude / claude_standard | 메인 세션(Claude)이 leader 서브에이전트에 위임. 설계·구현·Reviewer·QA·커밋. push 는 메인 세션 몫 | 메인 세션 지시(사용자 「2번 안으로 진행해줘」) |
+| exec-002 | 2026-11-14 02:15 | deploy | claude / claude_standard (담당 변경 없음) | 메인 세션이 `a105cf1`(코드 `cde5f1d` 포함)을 push → webhook blue/green 배포·첫 장중 확인. 남은 일: 국내 첫 장중 관측, 이 기록 커밋의 push | 사용자 「push 진행」(2026-11-14 02:15 무렵, 메인 세션 대화) |
 
 ## 관련 과거 이력 요약
 
@@ -261,19 +262,35 @@ demo_gate:
 - 원본: /Volumes/homes/brownjeon/project/.claude/state/codex-review/runs/20261113T135220Z-T-168-C2/
 - 다음: Reviewer가 지적 2건 채택·오탐 판정 (Leader 판단 대기 — 이 기록에서 채택·기각하지 않음)
 
+## 배포 결과 (메인 세션, 2026-11-14)
+
+- [02:15][main] **사용자 승인 수신** — 원문 「push 진행」(메인 세션 질문 「T-168 커밋 2개를 push(운영 배포)할까요?」에 대한 답).
+- [02:15][main] push 전 점검: `git-refs-clean.sh --check` 깨끗(ref 6개), `origin/main` = `3d0f3d0`(리베이스 불필요), `origin/main..HEAD` = `cde5f1d`·`a105cf1` 2개뿐(같은 배포에 실린 다른 작업 없음). `git push origin a105cf1b5a49…:refs/heads/main` → `3d0f3d0..a105cf1`.
+- [02:16][main] webhook 배포: START 02:15:34 → END 02:16:39 KST exit=0. `RELEASE_RESULT status=ok`, 릴리스 `20261114-021543-a105cf1b`, previous `20261112-165808-3d0f3d0e`, `migrated=false`.
+- [02:16][main] 배포 후 확인: `current` → 새 릴리스, `package.json` 0.9.0, pm2 `stockinvest`·`stockinvest-cron` online(재시작 0, cwd 새 릴리스). `/api/health` ok — db true, safetyStatus green, dryRun **true**, killSwitch **false**, autopilot `auto`.
+- [02:16][main] 배포 중 장중 평가 1회 누락: cron 로그 `02:16:16 strategy-eval HTTP=000`(웹 교체 순간). 직전 02:16:09·직후 02:17:19 는 OK. 다음 틱에 정상 재개 — 미국 장중 배포의 예상된 비용.
+- [02:19][main] **첫 장중 확인(미국, 운영 DB 읽기 전용)**:
+  - `paper_fills` origin=`engine` **재개** — 02:17:04~02:17:18 해외 5건(`rsi-oversold-v1` — NAS:AXON·DDOG·FTNT·MELI·ALNY), `gate_reason=unvalidated`, `fill_model=signal_limit_immediate`. 11-07 06:01:47 이후 첫 행.
+  - 같은 시각 생성 매수 시그널 5건 전부 `skipped`. 승인 가능한 상태(`skipped` 외)의 매수 시그널 **0건**.
+  - `eval_funnel` 매수 측 거절: 배포 전(02:00~02:16) `adaptive_buy_sizing` skip 14·`losing_position_buy_block` 3 → 배포 후 `validation_gate` skip 5·`losing_position_buy_block` 1. `adaptive_buy_sizing` 0, `validation_audit_only_passed` 0.
+  - 기록 금액 1,642,663원/건 — 최근 `portfolio_snapshots`(02:17:20) 총 19,211,440원에서 국내 보유(005930 2,717,000원)를 뺀 해외 약 1,650만 원의 10% − 수수료 여유분과 맞는다[가능성 높음]. 11-07 이전 해외 평균 883,329원보다 큰 것은 해외 평가액 증가 몫으로 본다.
+- **아직 못 본 것**: 국내 첫 장중(11-16 월 09:00 이후), 하루 단위 건수(예상 수십~200건대), 엔진 런이 겹칠 때의 실제 동작.
+- 관찰(이번 변경과 무관): `telegram-poller getUpdates` ETIMEDOUT 이 배포 전(00:17 기준 22회 연속)부터 이어지고 있다.
+
 ## 최종 요약
 
 > 작성 23:18 KST · Leader(claude) · 범위 = 커밋까지. push(=운영 배포)는 메인 세션이 사용자 승인을 받아 진행한다.
+> 갱신 2026-11-14 02:20 KST · 메인 세션(claude) — 상태·배포·결정 항목을 배포 결과로 갱신(상세는 위 「배포 결과」 절).
 
 ### [T-168] 장중 자동 분석의 「검증 안 된 전략」 매수 신호가 다시 가상 체결로 기록되도록 복구
 
-- **상태**: 구현·독립 감사·QA 완료, 서버 worktree 에 코드 커밋 `cde5f1d`. **운영 미배포(push 대기)**.
+- **상태**: 구현·독립 감사·QA 완료, 코드 커밋 `cde5f1d`. **운영 배포 완료 2026-11-14 02:16 KST**(릴리스 `20261114-021543-a105cf1b`). 미국 첫 장중에 엔진 가상 체결 재개를 확인했고, 국내 첫 장중은 관측 대기.
 - **무엇이 바뀌었나**
   - 1회 매수 한도를 「무제한」으로 저장한 뒤(11-07 23:28)부터, 장중 엔진은 매수 후보를 전부 AI 금액 배분 단계로 보냈다. 그 단계가 검증 안 된 전략을 걸러 버려서, 예전처럼 「가상 체결 + 승인 불가 기록 + 2시간 재발화 억제」가 남지 않았다. 마지막 장중 가상 체결은 11-07 06:01 이다.
   - 이제는 AI 배분 **앞에서** 후보를 전략 검증 여부로 나눈다. 검증된 전략만 AI 배분으로 간다(지금은 0개라 AI 호출도 0). 검증 안 된 전략은 예전 경로(검증 관문)로 가서 가상 체결로 기록된다. 금액은 무제한 전에 쓰던 1회 비율(10%)로 계산하며, 기록용이다.
   - 안전장치를 하나 더 넣었다. 분류한 뒤 그 사이에 전략이 「검증됨」으로 바뀌어도, 이 후보는 시그널·주문을 만들지 않고 기록만 남기고 끝난다.
   - 웹 버전 0.8.0 → 0.9.0.
-- **배포**: 미배포 — 사용자 승인 뒤 메인 세션이 push 한다(push = blue/green 배포). DB 변경·DDL 없음, 화면 변경 없음, 앱(APK) 무관.
+- **배포**: `a105cf1`(코드 `cde5f1d` + 기록) push → webhook blue/green, 2026-11-14 02:15:34~02:16:39 KST, `RELEASE_RESULT ok`, 마이그레이션 없음. 같은 배포에 실린 다른 작업 없음. DB 변경·DDL 없음, 화면 변경 없음, 앱(APK) 무관. 배포 중 장중 평가 1회(02:16:16) 누락.
   - **실매매 영향**: 주문·청산·승인 경로의 동작은 바꾸지 않았다. 검증 안 된 후보는 어떤 경우에도 주문 경로에 닿지 않는다(시험 확인). 스위치 상태(배포 전 읽기 전용 조회): DRY_RUN 켜짐, autopilot `auto`, 1회 한도 무제한(이전 10%), 일일 한도 무제한. 킬스위치 꺼짐은 메인 세션의 `/api/health` 조회 값이다. 배포 후 실측값은 미확인.
 - **AI 가 검증한 것**
   - 새 시험 39건 통과. 관련 시험 3,405건 통과·실패 0.
@@ -286,7 +303,7 @@ demo_gate:
 - **👉 사용자가 확인할 것**: 화면 변경이 없어 직접 확인할 화면은 없다. 배포 뒤 첫 장중에 AI(메인 세션)가 운영 DB 를 읽기 전용으로 조회해 확인한다 — 국내 09:00 이후, 미국 23:30 KST 이후.
   - 정상: `paper_fills` origin=`engine` 행이 다시 생긴다(하루 수십 ~ 200건대). `eval_funnel` 에 `validation_gate`(skip) 와 `cooldown_entry` 가 나타나고, `adaptive_buy_sizing/no_validated_candidates` 는 사라진다.
   - 이상: 장중인데 0건이 이어짐 / 하루 수천 건 / 검증 안 된 전략의 매수 시그널이 `pending`·`approved` 등 승인 가능한 상태로 생김 / `validation_audit_only_passed` 행이 생김(전략이 「검증됨」으로 바뀌지 않았다면 나오면 안 된다).
-- **👉 사용자가 결정할 것**: 운영 배포(push) 승인 — `waiting: push_confirm`. 이미 정한 것: 데모 생략(사용자 「데모 생략」, 22:20 무렵), 기록량 추가 억제 안 함.
+- **👉 사용자가 결정할 것**: 없음. push 는 사용자 「push 진행」(11-14 02:15 무렵)으로 승인·실행했다. 이미 정한 것: 데모 생략(사용자 「데모 생략」, 22:20 무렵), 기록량 추가 억제 안 함.
 - **남은 일**: push·배포 뒤 첫 장중 관측. 후속 후보(아래 「후속 후보」 절):
   - 11-07 이후 끊긴 기간 소급 백필(안 함)
   - `/api/analyst/run` 의 같은 모양 분기

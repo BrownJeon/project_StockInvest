@@ -4,9 +4,10 @@ tags:
 ---
 # 칸반 보드
 
-## 2026-11-13 22:02 — T-168 장중 엔진 미검증 매수 후보의 가상 체결 기록 복구 → 23:18 구현·검증 완료, 코드 커밋 `cde5f1d`(push 승인 대기)
+## 2026-11-13 22:02 — T-168 장중 엔진 미검증 매수 후보의 가상 체결 기록 복구 → 23:18 구현·검증 완료, 코드 커밋 `cde5f1d` → **11-14 02:16 운영 배포**(릴리스 `20261114-021543-a105cf1b`, 미국 장중 엔진 가상 체결 재개 확인 — 국내 첫 장중 관측 대기)
 
-- [[T-168-paper-fill-engine-restore]]: 무제한 매수 한도(적응 배분) 모드의 장중 엔진이 미검증 후보를 검증 관문 G1 에 넘기지 않아 `paper_fills` origin=engine 이 11-07 06:01 이후 0건. 설계 = 적응 배분 앞에서 미검증 후보를 분리해 기존 G1 경로로(LLM 0, 금액 = 이전 1회 비율), 감사 전용 선택지로 검증 상태 경합 시 주문 경로 차단(fail-closed). 버전 0.9.0 예정.
+- [[T-168-paper-fill-engine-restore]]: 무제한 매수 한도(적응 배분) 모드의 장중 엔진이 미검증 후보를 검증 관문 G1 에 넘기지 않아 `paper_fills` origin=engine 이 11-07 06:01 이후 0건. 설계 = 적응 배분 앞에서 미검증 후보를 분리해 기존 G1 경로로(LLM 0, 금액 = 이전 1회 비율), 감사 전용 선택지로 검증 상태 경합 시 주문 경로 차단(fail-closed). 버전 0.9.0.
+- 배포 후 첫 확인(11-14 02:19, 읽기 전용): `paper_fills` engine 해외 5건(02:17, rsi-oversold-v1, unvalidated) — 11-07 06:01 이후 첫 행. 매수 시그널 5건 전부 skipped·승인 가능 상태 0. `eval_funnel` 매수 거절이 `adaptive_buy_sizing` → `validation_gate` 로 바뀜, `validation_audit_only_passed` 0. health: dryRun true·killSwitch false.
 - 기록량 추정(읽기 전용, 120분 쿨다운 모의 — 이전 창 실측 796 대비 모의 810): 최근 5영업일 10,939행 → 926건(≈185건/일, 이전 ≈76건/일의 2.4배 — 11-07 활성 `price-breakout-v1` 등 전략 구성 변화 몫).
 - judge intake = R2·opus·**demo delta(`DM-kw-risky-cta` — 요약 부정 문맥 '화면' 오탐으로 Leader 판단)** → leader.md 대로 Developer 대기. judge 는 요약 수정 재판정을 거부(정당). `check.mjs init` 은 서버 worktree 미등록으로 거부 → frontmatter 를 판정값으로 수기 반영. 사후검증(메인 세션 21:46): rsi-oversold 판정 보류(주 4개 < 8).
 - 22:20 사용자 「데모 생략」(메인 세션 전달) → Developer(opus) 구현 → Reviewer pass(scope 12) → judge C2 codex_required → Codex C2 done(1차는 준비 오류로 미실행, 2차 지적 2건 — Reviewer 가 기존 패턴으로 판정해 후속) → QA ✅(신규 실패 0·tsc·build·일회용 DB) → 23:18 코드 커밋 `cde5f1d`(origin/main 3d0f3d0 그대로). 웹 0.9.0. push 는 메인 세션 몫.
