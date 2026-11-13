@@ -135,9 +135,23 @@ export async function getEffectiveOrderMax(_exchange?: ExchangeId, market: Marke
   return effectiveMaxFromPct('safety_order_max_pct', '1회', market);
 }
 
-export async function getLegacyAnalystSellAmount(): Promise<number> {
-  const amount = await effectiveMaxFromPct('safety_order_max_pct', '기존 RSI 매도', 'domestic', true);
+/**
+ * T-168 — 명시적 무제한으로 바꾸기 **직전**의 양수 1회 한도(저장된 `{"unlimitedPrevious": "<pct>"}` 비율) × **해당 시장** 평가액(KRW).
+ * T-159 이전 장중 엔진이 쓰던 1회 한도와 같은 계산(`effectiveMaxFromPct(…, market, previousOrderPct=true)`)이다.
+ *
+ * 주문 한도가 아니다 — 무제한 모드에서 미검증 전략의 매수 후보를 감사 기록(승인 불가 시그널 + 가상 체결)으로 남길 때
+ * T-159 이전과 같은 금액을 쓰기 위한 **기록용 금액**이다(엔진 감사 경로·`getLegacyAnalystSellAmount`).
+ * 이전 비율이 없거나(무제한이 아님·`"unlimited"` 만 저장·값 이상) 평가액을 못 읽으면 0. 던지지 않는다(`effectiveMaxFromPct` 불변식).
+ * @param label 경고 로그에 붙일 이름(호출 맥락 구분용)
+ */
+export async function getPreviousOrderMax(market: Market, label = '이전 1회(감사 기록)'): Promise<number> {
+  const amount = await effectiveMaxFromPct('safety_order_max_pct', label, market, true);
   return typeof amount === 'number' ? amount : 0;
+}
+
+export async function getLegacyAnalystSellAmount(): Promise<number> {
+  // T-168 — 위 시장별 함수를 국내로 부른다. 계산·로그 이름('기존 RSI 매도')·반환값 모두 이전과 같다.
+  return getPreviousOrderMax('domestic', '기존 RSI 매도');
 }
 
 /**

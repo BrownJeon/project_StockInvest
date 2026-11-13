@@ -61,7 +61,8 @@ test('대조: quantity_below_min 은 기존대로 skip + 경고(이 task 로 바
 test('게이트 라벨 등록 — stage 11, 한글 라벨, 목록 끝에 append(기존 ID 순서 불변)', () => {
   // append-only — T-058 때 끝이었던 insufficient_cash 뒤에 T-072 의 두 게이트, 그 뒤에 T-134 의 청산 상태 조회 실패가 붙었다(기존 ID 의 상대 순서는 그대로).
   expect(FUNNEL_GATES.indexOf('sell_proposal_preview')).toBe(FUNNEL_GATES.indexOf('insufficient_cash') - 1);
-  expect(FUNNEL_GATES.slice(FUNNEL_GATES.indexOf('insufficient_cash'))).toEqual(['insufficient_cash', 'validation_gate', 'validation_lookup_error', 'exit_state_load_failed', 'collect_threw']);
+  // T-148 의 collect_threw, T-168 의 validation_audit_only_passed 가 차례로 뒤에 붙었다.
+  expect(FUNNEL_GATES.slice(FUNNEL_GATES.indexOf('insufficient_cash'))).toEqual(['insufficient_cash', 'validation_gate', 'validation_lookup_error', 'exit_state_load_failed', 'collect_threw', 'validation_audit_only_passed']);
   expect(GATE_STAGE.insufficient_cash).toBe(11);
   expect(GATE_LABEL_KO.insufficient_cash).toBe('실시간 현금 부족 (매수 시그널 미생성)');
   expect(gateLabelKo('insufficient_cash')).toBe('실시간 현금 부족 (매수 시그널 미생성)');

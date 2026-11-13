@@ -4,10 +4,11 @@ import { kis, getBalancesDetailed } from '@/lib/exchanges/kis';
 import { mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
 import { getMarketFromSymbol, type Market } from '@/lib/exchanges/kis-symbols';
 import { getCurrentMarket, isDomesticOpen, isOverseasOpen } from '@/lib/strategy/market-hours';
-import { createSignal, getEffectiveChasePct, type CreateSignalErrorCode } from '@/lib/signals/service';
+import { createSignal, getEffectiveChasePct, type CreateSignalErrorCode, type CreateSignalOptions } from '@/lib/signals/service';
 import { getEngineSwitches } from '@/lib/signals/router';
 import type { AutopilotMode, SignalInput } from '@/lib/signals/router';
-import { getEffectiveOrderMax } from '@/lib/safety/order-limits';
+import { getEffectiveOrderMax, getPreviousOrderMax } from '@/lib/safety/order-limits';
+import { evaluateValidationGate } from '@/lib/safety/validation-gate';
 import { isBuyLimitConfigured, UNLIMITED_BUY_LIMIT } from '@/lib/safety/buy-limit-config';
 import { allocateAdaptiveBuys } from './adaptive-buy-sizing';
 // 장중 룰 판정에는 순수 지표만 사용한다. T-159의 모델은 명시적 무제한 매수의 금액 배정만 제안한다.
@@ -258,6 +259,11 @@ export async function createSignalGuarded(
   input: Candidate | (SignalInput & { strategyId: string }),
   rec: EvalFunnelRecorder,
   outcome?: OutcomeTracker,
+  /**
+   * T-168 D4 — `validationAuditOnly: true` 면 createSignal 에 감사 전용을 함께 넘긴다(G1 이 통과시키면 시그널 없이 끝난다).
+   * 장중 ④ 의 무제한 모드 미검증 매수 후보에만 켠다. 생략하면 넘기는 맥락이 이전과 바이트 동일하다.
+   */
+  opts: Pick<CreateSignalOptions, 'validationAuditOnly'> = {},
 ): Promise<GuardedSignalResult> {
   const base = {
     symbol: input.symbol,
@@ -268,7 +274,9 @@ export async function createSignalGuarded(
     // T-072 F-16 — 엔진은 같은 후보를 매 틱 재평가한다. 검증 관문에 막힌 매수는 진입 쿨다운을 **원자 선점**한 실행만
     // 감사 행·가상 체결을 남기고, 그 선점이 곧 진입 쿨다운(120분)이 된다 — 막힌 매수가 틱마다 재발화해 중복으로 쌓이지 않는다.
     // (매도·청산 입력에는 영향 없다 — 관문은 매수에만 걸리고 선점은 관문에 막혔을 때만 일어난다.)
-    const res = await createSignal(input, undefined, { origin: 'engine', claimEntryCooldown: true });
+    const res = await createSignal(input, undefined, opts.validationAuditOnly
+      ? { origin: 'engine', claimEntryCooldown: true, validationAuditOnly: true }
+      : { origin: 'engine', claimEntryCooldown: true });
     if (res.ok) {
       rec.pass('signal_created', { ...base, detail: { signalId: res.signalId } });
       outcome?.markSignal(input.symbol, res.signalId);
@@ -285,6 +293,8 @@ export async function createSignalGuarded(
       // T-072 — 검증 전 전략의 매수 차단은 정책 건너뜀(skip). 조회 실패로 막은 것은 인프라 이상이라 error 로 따로 센다.
       : res.errorCode === 'validation_gate'       ? 'validation_gate'
       : res.errorCode === 'validation_lookup_error' ? 'validation_lookup_error'
+      // T-168 — 감사 전용 후보를 G1 이 통과시킨 경합. 시그널·기록 없이 끝낸 정책 건너뜀(skip)이다(무기록 게이트 금지 §1).
+      : res.errorCode === 'validation_audit_only_passed' ? 'validation_audit_only_passed'
       :                                             'signal_create_failed';
     const verdict: FunnelVerdict = gate === 'signal_create_failed' || gate === 'validation_lookup_error' ? 'error' : 'skip';
     const v = res.validation;
@@ -1646,24 +1656,76 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
 
   if (deferred.size > 0) {
-    const chasePct = await getEffectiveChasePct(style.limitChasePct);
-    const allocation = await allocateAdaptiveBuys(market, [...deferred.keys()], chasePct, heldAmounts);
-    for (const [candidate, ctx] of deferred) {
-      const sized = allocation.orders.get(candidate);
-      if (!sized) {
-        rec.skip('adaptive_buy_sizing', {
-          symbol: ctx.symbol, strategyId: candidate.strategyId, side: 'buy',
-          reason: allocation.reason === 'allocated' ? 'candidate_not_allocated' : allocation.reason,
-        });
-        outcome.kill(ctx.symbol, 8, 'adaptive_buy_sizing');
-        continue;
+    // 🔴 T-168 D1 — 적응 배분 **앞에서** 매수 후보를 전략별 검증 상태로 두 묶음으로 나눈다.
+    //    T-159 는 모든 매수 후보를 `allocateAdaptiveBuys` 로 보냈고, 그 안의 검증 필터가 미검증 후보를
+    //    `no_validated_candidates` 로 끝내 createSignal G1 에 닿지 못했다 → 감사 행·가상 체결·진입 쿨다운 선점(F-16)이
+    //    모두 사라져 같은 후보가 매 틱 재평가됐다(11-07 이후 paper_fills origin=engine 0건).
+    //    - 검증됨 → 아래 T-159 경로 그대로(LLM 배분 → 포트폴리오 가드 → publish).
+    //    - 그 밖(미검증·미등록·귀속 없음·상태 이상·조회 실패 전부) → 감사 경로(T-159 이전 금액 → 포트폴리오 가드 → publish → G1).
+    //    판정은 런 안에서 전략당 1회(캐시). `allocateAdaptiveBuys` 안의 검증 필터는 2차 방어로 그대로 둔다.
+    const verdictByStrategy = new Map<string, Promise<boolean>>();
+    const isValidatedStrategy = (strategyId: string): Promise<boolean> => {
+      let verdict = verdictByStrategy.get(strategyId);
+      if (!verdict) {
+        // 관문 함수는 던지지 않지만 이중 방어 — 판정을 모르면 감사 경로(검증 안 됨 쪽)로 보낸다(fail-closed).
+        verdict = evaluateValidationGate({ side: 'buy', strategyId }).then(v => v.allowed, () => false);
+        verdictByStrategy.set(strategyId, verdict);
       }
-      const allowed = await applyPortfolioGuard(ctx, [sized], style, market, heldAmounts, rec, outcome, switches.autopilotMode);
-      await publish(ctx, allowed);
+      return verdict;
+    };
+    const validatedBuys = new Map<Candidate, CollectedContext>();
+    const auditBuys = new Map<Candidate, CollectedContext>();
+    for (const [candidate, ctx] of deferred) {
+      (await isValidatedStrategy(candidate.strategyId) ? validatedBuys : auditBuys).set(candidate, ctx);
+    }
+
+    // 검증된 후보가 없으면 배분을 부르지 않는다 — LLM 호출 0(비용·의미 없음).
+    if (validatedBuys.size > 0) {
+      const chasePct = await getEffectiveChasePct(style.limitChasePct);
+      const allocation = await allocateAdaptiveBuys(market, [...validatedBuys.keys()], chasePct, heldAmounts);
+      for (const [candidate, ctx] of validatedBuys) {
+        const sized = allocation.orders.get(candidate);
+        if (!sized) {
+          rec.skip('adaptive_buy_sizing', {
+            symbol: ctx.symbol, strategyId: candidate.strategyId, side: 'buy',
+            reason: allocation.reason === 'allocated' ? 'candidate_not_allocated' : allocation.reason,
+          });
+          outcome.kill(ctx.symbol, 8, 'adaptive_buy_sizing');
+          continue;
+        }
+        const allowed = await applyPortfolioGuard(ctx, [sized], style, market, heldAmounts, rec, outcome, switches.autopilotMode);
+        await publish(ctx, allowed);
+      }
+    }
+
+    if (auditBuys.size > 0) {
+      // T-168 D2 — 감사 기록 금액 = T-159 이전 장중 사이징 그대로: floor(이전 1회 한도 KRW × (1 − FEE_BUFFER_PCT)).
+      //    이전 1회 한도 = 무제한 전환 때 보존한 `unlimitedPrevious` 비율 × **이 시장** 평가액. 주문 금액이 아니라 기록용이다
+      //    (가상 체결의 사후검증은 가격 수익률로 계산). 이전 비율이 없거나 평가액을 못 읽으면 0 으로 기록을 계속한다(수량 0/NULL).
+      //    런당 1회, 감사 후보가 있을 때만 읽는다.
+      let auditAmountKRW = 0;
+      try {
+        const previousMax = await getPreviousOrderMax(market);
+        if (Number.isFinite(previousMax) && previousMax > 0) auditAmountKRW = Math.floor(previousMax * (1 - FEE_BUFFER_PCT));
+      } catch (e) {
+        console.warn(`[strategy-eval:${market}] 이전 1회 한도 조회 실패 — 감사 기록 금액 0 으로 진행: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      // T-168 D3·D4 — T-159 이전과 같은 순서: 포트폴리오 가드 → publish → createSignalGuarded → createSignal G1 →
+      //    finishValidationBlock(진입 쿨다운 원자 선점 F-16 → 감사 행 + 가상 체결, origin=engine). 새 기록 경로를 만들지 않는다.
+      //    감사 전용(`validationAuditOnly`)을 켜서, 분류 뒤 전략이 검증됨으로 바뀌어 G1 이 통과시키더라도 시그널·주문 없이 끝나게 한다.
+      for (const [candidate, ctx] of auditBuys) {
+        const sized: Candidate = { ...candidate, amountKRW: auditAmountKRW };
+        const allowed = await applyPortfolioGuard(ctx, [sized], style, market, heldAmounts, rec, outcome, switches.autopilotMode);
+        await publish(ctx, allowed, { validationAuditOnly: true });
+      }
     }
   }
 
-  async function publish(ctx: CollectedContext, survived: Candidate[]) {
+  async function publish(
+    ctx: CollectedContext,
+    survived: Candidate[],
+    signalOpts: Pick<CreateSignalOptions, 'validationAuditOnly'> = {},
+  ) {
     if (survived.length === 0) {
       if (!results.has(ctx.symbol)) results.set(ctx.symbol, {
         symbol: ctx.symbol, signalsCreated: 0, candidateCount: 0, rawCandidates: ctx.rawCandidateCount,
@@ -1676,8 +1738,9 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
     for (const cand of survived) {
       // createSignalGuarded 가 blacklist / duplicate_active_signal / 생성 실패를 전부
       // eval_funnel 에 기록한다 (무기록 게이트 금지 — §1).
-      const res = await createSignalGuarded(cand, rec, outcome);
+      const res = await createSignalGuarded(cand, rec, outcome, signalOpts);
       // T-072 — 검증 관문에 막힌 매수(`validation_gate`)는 createSignal 안에서 진입 쿨다운을 이미 선점했다(F-16). 여기서 다시 걸지 않는다.
+      // T-168 — 감사 전용 호출은 성공(ok)을 돌려주지 않는다 — 아래 쿨다운 설정에 오지 않는다.
       if (!res.ok) continue;
       createdCount++;
       // ③ entry 쿨다운 — 같은 (symbol, strategy, side)의 반복 발화를 봉 주기×2 동안 막는다.

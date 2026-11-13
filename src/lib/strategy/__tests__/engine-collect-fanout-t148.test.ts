@@ -119,6 +119,11 @@ const portfolioGuard = jest.fn(async (_input: unknown) => ({ verdict: 'pass' }))
 jest.mock('@/lib/strategy/portfolio-stability', () => ({ checkPortfolioStability: (input: unknown) => portfolioGuard(input) }));
 const allocate = jest.fn();
 jest.mock('@/lib/strategy/adaptive-buy-sizing', () => ({ allocateAdaptiveBuys: (...args: unknown[]) => allocate(...args) }));
+// T-168 — 무제한(적응 배분) 모드의 ④ 는 배분 앞에서 전략 검증 상태를 읽어 미검증 후보를 감사 경로로 뗀다.
+// 이 파일의 무제한 시험은 「검증된 후보의 배분 경로」(T-159)를 보므로 전략을 검증됨으로 둔다(미검증 경로는 engine-adaptive-validation-audit-t168.test.ts).
+jest.mock('@/lib/safety/validation-gate', () => ({
+  evaluateValidationGate: async ({ strategyId }: { strategyId: string }) => ({ allowed: true, kind: 'validated', strategyId, status: 'backtested' }),
+}));
 /**
  * ④ 의 **첫 per-candidate 단계**. `applyFilters` 가 `contexts` 순서로 호출하므로, 이 호출 순서가
  * 곧 집행 순서다 — reviewer M-2 가 지적한 "순서에 실제로 민감한 소비처"의 계기로 쓴다.

@@ -141,6 +141,12 @@ export type CreateSignalErrorCode =
   /** T-072 — 검증 상태 **조회 실패**(마이그레이션 전·DB 장애)로 같은 방식으로 막았다. 막는 것은 같고 인프라 이상이라 따로 센다 */
   | 'validation_lookup_error'
   /**
+   * T-168 — `validationAuditOnly` 로 부른 호출(장중 엔진이 미검증으로 분류한 감사 전용 후보)인데 검증 관문(G1)이 **통과**시켰다
+   * (분류와 G1 사이에 전략이 검증 상태로 바뀐 경합 등). 승인 가능한 시그널·감사 행·가상 체결·알림·RAG·현금 게이트·자동 제출·쿨다운
+   * 어디에도 닿지 않고 그 자리에서 끝냈다(`signalId` 0). 다음 틱에 검증된 후보로 적응 배분 경로를 탄다. 정책 건너뜀이다.
+   */
+  | 'validation_audit_only_passed'
+  /**
    * T-072 WP-2d — `side` 를 정규화(trim·소문자)해도 `'buy'`·`'sell'` 이 아니다. 시그널·감사 행·가상 체결·알림·주문 없음(`signalId` 0).
    * 입구(API)가 400 으로 먼저 거르므로 평소 0건 — 엔진 집계에서는 `signal_create_failed`(error)로 잡힌다.
    */
@@ -194,6 +200,14 @@ export interface CreateSignalOptions {
    * 기록만 생략한다(차단은 그대로). 선점 자체가 쿨다운이 되므로 막힌 매수도 실제 시그널과 같은 빈도로만 쌓인다.
    */
   claimEntryCooldown?: boolean;
+  /**
+   * 🔴 T-168 D4 — **감사 전용.** 이 호출은 검증 관문(G1)에 막힌 매수의 기록(승인 불가 감사 행 + 가상 체결)만을 위한 것이다.
+   * G1 이 막으면 이 값과 무관하게 기존 경로(`finishValidationBlock`)를 그대로 탄다. G1 이 **통과**시키면 그 자리에서
+   * `{ ok:false, errorCode:'validation_audit_only_passed' }` 로 끝낸다 — INSERT·알림·RAG·현금 게이트·`routeSignal`·자동 제출·쿨다운에 닿지 않는다.
+   * 막는 방향으로만 작동한다(매도·검증된 매수도 켜져 있으면 생성하지 않는다). 장중 엔진이 무제한(적응 배분) 모드에서 미검증으로 분류한
+   * 매수 후보에만 켠다 — 분류 뒤 전략이 검증됨으로 바뀌어도 LLM 배분·적응 현금 재검증 없이 이전 비율 금액으로 주문 경로에 가지 않게 한다.
+   */
+  validationAuditOnly?: boolean;
 }
 
 /**
@@ -562,6 +576,15 @@ export async function createSignal(
   const vg = await evaluateValidationGate({ side: input.side, strategyId: input.strategyId });
   if (!vg.allowed) {
     return finishValidationBlock(input, vg, cfg, switches, opts);
+  }
+  // 🔴 T-168 D4 — 감사 전용 호출이 G1 을 통과했다(경합). 여기서 끝낸다 — 아래 현금 게이트·routeSignal·INSERT·알림·RAG·자동 제출·
+  //    쿨다운(엔진 publish 의 setCooldown 은 ok 일 때만)에 닿지 않는다. G1 불통과 경로는 위에서 이미 끝나 이 값의 영향을 받지 않는다.
+  if (opts.validationAuditOnly) {
+    return {
+      ok: false, signalId: 0, autoSubmitted: false,
+      error: 'validation_audit_only_passed: 감사 전용 호출인데 검증 관문을 통과함 — 시그널·주문을 만들지 않음',
+      errorCode: 'validation_audit_only_passed',
+    };
   }
 
   // 🔴 T-058 — 실시간 현금 게이트. 현금이 모자라는 매수는 **행을 만들지 않는다**(→ RAG 색인·승인 요청 알림도 없다).

@@ -163,6 +163,12 @@ export const FUNNEL_GATES = [
    *    단계별 감쇠율을 볼 때 이 행은 "티커 단계 사망"이 아니라 "수집 중단"으로 읽어야 한다.
    */
   'collect_threw',
+  /**
+   * T-168 — stage 11(createSignal). 무제한(적응 배분) 모드에서 장중 엔진이 **미검증으로 분류**해 감사 전용(`validationAuditOnly`)으로
+   * 보낸 매수 후보를 검증 관문(G1)이 **통과**시켰다(분류와 G1 사이 검증 상태 변경 경합). 시그널·감사 행·가상 체결·주문·쿨다운 없이 끝냈다 —
+   * 다음 틱에 검증된 후보로 적응 배분 경로를 탄다. 정책 건너뜀(skip)이다. 평소 0건.
+   */
+  'validation_audit_only_passed',
 ] as const;
 
 export type FunnelGate = (typeof FUNNEL_GATES)[number];
@@ -256,6 +262,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   validation_gate: 11,
   validation_lookup_error: 11,
   exit_state_load_failed: 23,
+  validation_audit_only_passed: 11,
 };
 
 /** 사용자 화면·리포트용 한글 라벨 (T-002 §4 "한글 라벨 매핑") */
@@ -344,6 +351,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   validation_gate: '검증 전 전략 — 신규 매수 차단 (가상 체결만 기록)',
   validation_lookup_error: '전략 검증 상태 조회 실패 — 신규 매수 차단',
   exit_state_load_failed: '청산: 포지션 조회 실패',
+  validation_audit_only_passed: '감사 전용 매수가 검증 관문 통과(분류 뒤 상태 변경) — 시그널·주문 미생성',
 };
 
 /**
