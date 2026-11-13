@@ -6,6 +6,12 @@ tags:
 ---
 # 현재 상태
 
+## 2026-11-13 23:18 — T-168 장중 미검증 매수 후보 가상 체결 기록 복구 (커밋 `cde5f1d`, push 대기)
+
+- [[T-168-paper-fill-engine-restore]]: 1회 한도 무제한(적응 배분) 모드의 장중 엔진이 미검증 후보를 검증 관문 G1 에 넘기지 않아 `paper_fills` origin=engine 이 11-07 06:01 이후 0건이었다. 적응 배분 앞에서 검증 여부로 나눠 미검증은 기존 G1(감사 행·가상 체결·진입 쿨다운 선점)으로, 검증은 T-159 경로로. `createSignal` 감사 전용 선택지로 분류 뒤 검증 상태가 바뀌어도 주문 경로 0. 웹 0.9.0.
+- 검증: Reviewer pass(scope 12) · Codex C2 done(지적 2 — 기존 패턴, 후속) · QA 통과(전체 jest 기준 대조 신규 실패 0, tsc·build rc 0, 일회용 DB 17/17·15/15). 기록량 예상 하루 약 185건(이전 약 76건 — 11-07 활성 전략 구성 몫).
+- 대기: 운영 배포(push) 사용자 승인 → 첫 장중 관측(`paper_fills` origin=engine 재개·`validation_audit_only_passed` 0). 공유 NFS 트리는 이 커밋을 아직 모른다(서버 worktree `~/.node-local/stockinvest-t168` 에만 있음).
+
 - **2026-11-09 22:55:02 — [[T-012-zero-price-snapshot]] 새 독립 최종 검증 완료**: 실제 Claude Reviewer PASS_WITH_NOTES·QA8군198/198/typecheck0, 동결 배포본18경로불변·기존정리16행보관/부재근거와결합해TASK done/roadmap[x]. 첫하네스 INCOMPLETE·과거원보고서/비차단한계 보존. 본감사T163 done와다른진행항목은유지. Codex 공통조율반영이며제품/운영/배포변경없음.
 
 ## 2026-11-12 12:55 — T-167 거시 레짐 라벨 장기 보관 전용 표 준비 완료 → 13:40 DDL·이관·운영 배포 완료
