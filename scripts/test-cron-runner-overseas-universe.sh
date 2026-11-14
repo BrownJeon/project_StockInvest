@@ -99,7 +99,9 @@ uvat() { grep -E "$UVRE" "$1/calls" | awk '{print $2}' | tr '\n' ' '; }
 #   그래서 U4 의 「다른 잡 = 변경 전」 비교에서 **그 잡만 뺀다** — ⑨ 전에는 08:00 에 1회였다. 뺀 자리는 비지 않는다:
 #   그 잡의 새 일정·창 경계·틱 yield·curl 상한은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가
 #   블록 단위 시뮬레이션으로 본다(T-117 daily-bars·T-118 peek 가 서로의 잡을 뺀 것과 같은 방식).
-nouv() { grep -vE "$UVRE" "$1/calls" | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }
+# (T-170) 국내 일봉 저녁(daily-bars?market=KR, 18:10 하루 1회)은 이 블록보다 뒤에 더해진 잡이라 변경 전 러너에 없다 — 같은 방식으로 뺀다
+#   (그 잡의 일정·상한은 scripts/test-cron-runner-daily-bars-kr.sh 가 본다).
+nouv() { grep -vE "$UVRE" "$1/calls" | grep -v ' /api/cron/kis-fundamentals-snapshot$' | grep -v ' /api/cron/daily-bars?market=KR$' | awk '{print $1, $2, $4}'; }
 
 echo "U1. 2026-12-06(첫째 일요일) 하루 — 창 안 짝수 분에만 호출"
 R1="$(run_loop u1 "$RUNNER" '2026-12-06 00:00:00' 1440)"
@@ -116,10 +118,11 @@ eq "U1: 05:50(창 종료 점검) 정확히 1회" \
 eq "U1: curl 상한은 120(그 호출에만)" \
    "$(grep -c '/api/cron/overseas-universe-refresh max-time=120' "$R1/maxtime")" "141"
 # 120 을 쓰는 잡은 **원래** 둘 있다(실측): daily-bars(DAILY_BARS_CURL_MAX_TIME)·해외 post-market(PMO_CURL_MAX_TIME).
-# 그 둘 말고 다른 잡이 120 을 쓰기 시작하면(= 내 CALL_MAX_TIME 설정이 새면) 이 단언이 깨진다.
-eq "U1: 산출 호출 외에 120 상한을 쓰는 잡은 기존 둘뿐(상한이 새지 않았다)" \
+# (T-170) 국내 일봉 저녁(daily-bars?market=KR)이 같은 DAILY_BARS_CURL_MAX_TIME 을 쓴다 — 셋째로 더했다(의도된 상한, 그 블록 시험 K1 이 단언).
+# 그 셋 말고 다른 잡이 120 을 쓰기 시작하면(= 내 CALL_MAX_TIME 설정이 새면) 이 단언이 깨진다.
+eq "U1: 산출 호출 외에 120 상한을 쓰는 잡은 기존 셋뿐(상한이 새지 않았다)" \
    "$(grep 'max-time=120' "$R1/maxtime" | grep -v 'overseas-universe-refresh' | awk '{print $1}' | sort -u | tr '\n' ' ')" \
-   "/api/cron/daily-bars /api/cron/post-market-analysis?market=overseas "
+   "/api/cron/daily-bars /api/cron/daily-bars?market=KR /api/cron/post-market-analysis?market=overseas "
 
 echo
 echo "U2. 돌지 않아야 하는 날 — 호출 0회"
@@ -155,7 +158,7 @@ else
 fi
 eq "U4: 변경 전 러너에는 이 잡이 없다" "$(uvc "$RB")" "0"
 eq "U4: 변경 전 러너의 --max-time 목록 = 지금(산출 호출·T-145 ⑨ 스냅샷 제외)" \
-   "$(grep -v 'overseas-universe-refresh' "$R1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot ' | sort | uniq -c | sha256sum | cut -c1-16)" \
+   "$(grep -v 'overseas-universe-refresh' "$R1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot ' | grep -v '^/api/cron/daily-bars?market=KR ' | sort | uniq -c | sha256sum | cut -c1-16)" \
    "$(sort "$RB/maxtime" | uniq -c | sha256sum | cut -c1-16)"
 
 echo

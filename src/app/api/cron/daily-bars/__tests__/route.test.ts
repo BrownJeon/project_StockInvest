@@ -26,10 +26,14 @@ jest.mock('@/lib/exchanges/kis-http', () => ({ kisFetch: () => { throw new Error
 jest.mock('@/lib/exchanges/kis-auth', () => ({ getKisToken: () => { throw new Error('토큰 금지'); }, kisBaseUrl: () => 'x' }));
 
 import { POST } from '../route';
-import { parseDailyBarsBody } from '@/lib/profit-engine/daily-bars-request';
+import { parseDailyBarsBody, parseDailyBarsRequest } from '@/lib/profit-engine/daily-bars-request';
 
-function req(body?: string): NextRequest {
-  return { headers: new Headers(), text: async () => body ?? '' } as unknown as NextRequest;
+// (T-170) 라우트가 쿼리(`req.nextUrl.searchParams`)도 읽는다 — 쿼리 없는 기본 주소를 둔다
+function req(body?: string, query = ''): NextRequest {
+  return {
+    headers: new Headers(), text: async () => body ?? '',
+    nextUrl: new URL(`http://localhost:3003/api/cron/daily-bars${query}`),
+  } as unknown as NextRequest;
 }
 
 beforeEach(() => {
@@ -66,6 +70,10 @@ describe('본문 검증 — 오류면 400, 수집기 호출 0', () => {
     ['years 정수', '{"years":2.5}'],
     ['maxCalls 0', '{"maxCalls":0}'],
     ['maxCalls 상한', '{"maxCalls":601}'],
+    ['(T-170) market 모르는 값', '{"market":"JP"}'],
+    ['(T-170) market 소문자', '{"market":"kr"}'],
+    ['(T-170) market 문자열 아님', '{"market":1}'],
+    ['(T-170) market + symbols 동시', '{"market":"KR","symbols":["005930"]}'],
   ])('%s', async (_n, body) => {
     const r = await POST(req(body));
     expect(r.status).toBe(400);
@@ -85,6 +93,34 @@ describe('본문 검증 — 오류면 400, 수집기 호출 0', () => {
     expect(parseDailyBarsBody({ symbols: ['NAS:MU', 'NAS:MU', '005930', 'NYS:BRK.B'], years: 3, maxCalls: 40 }))
       .toEqual({ ok: true, opts: { symbols: ['NAS:MU', '005930', 'NYS:BRK.B'], years: 3, maxCalls: 40 } });
     expect(parseDailyBarsBody(null)).toEqual({ ok: true, opts: {} });
+  });
+  test('(T-170) market 은 KR·US 만, 다른 옵션과 함께 전달', () => {
+    expect(parseDailyBarsBody({ market: 'KR' })).toEqual({ ok: true, opts: { market: 'KR' } });
+    expect(parseDailyBarsBody({ market: 'US', years: 2, maxCalls: 50 })).toEqual({ ok: true, opts: { market: 'US', years: 2, maxCalls: 50 } });
+    expect(parseDailyBarsBody({ market: 'KR', symbols: ['005930'] })).toEqual({ ok: false, error: 'market cannot be combined with symbols' });
+  });
+  test.each([
+    ['(T-170) 쿼리 market 모르는 값', '', '?market=JP'],
+    ['(T-170) 쿼리 market 소문자', '', '?market=kr'],
+    ['(T-170) 쿼리 market 빈 값', '', '?market='],
+    ['(T-170) 쿼리 market 두 번', '', '?market=KR&market=KR'],
+    ['(T-170) 모르는 쿼리 키', '', '?symbols=005930'],
+    ['(T-170) 쿼리 market + 본문 market', '{"market":"KR"}', '?market=KR'],
+    ['(T-170) 쿼리 market + 본문 symbols', '{"symbols":["005930"]}', '?market=KR'],
+    ['(T-170) 쿼리 market + 본문이 배열', '[]', '?market=KR'],
+  ])('%s → 400, 수집기 호출 0', async (_n, body, query) => {
+    const r = await POST(req(body, query));
+    expect(r.status).toBe(400);
+    expect(runMock).not.toHaveBeenCalled();
+    expect(getPoolMock).not.toHaveBeenCalled();
+  });
+  test('(T-170) 쿼리 market = 본문 market 과 같은 뜻 · 쿼리 없으면 본문 검증 그대로', () => {
+    const q = (s: string) => new URLSearchParams(s);
+    expect(parseDailyBarsRequest(null, q('market=KR'))).toEqual({ ok: true, opts: { market: 'KR' } });
+    expect(parseDailyBarsRequest({}, q('market=US'))).toEqual({ ok: true, opts: { market: 'US' } });
+    expect(parseDailyBarsRequest({ years: 2, maxCalls: 30 }, q('market=KR'))).toEqual({ ok: true, opts: { market: 'KR', years: 2, maxCalls: 30 } });
+    expect(parseDailyBarsRequest({ years: 2 }, q(''))).toEqual(parseDailyBarsBody({ years: 2 }));
+    expect(parseDailyBarsRequest({ bogus: 1 }, q(''))).toEqual(parseDailyBarsBody({ bogus: 1 }));
   });
 });
 
@@ -108,6 +144,21 @@ describe('실행', () => {
   test('옵션 전달', async () => {
     await POST(req('{"symbols":["NAS:MU"],"years":5,"maxCalls":12}'));
     expect(runMock.mock.calls[0][1]).toEqual({ symbols: ['NAS:MU'], years: 5, maxCalls: 12 });
+  });
+  test('(T-170) 본문 {"market":"KR"} 을 그대로 수집기에 넘긴다', async () => {
+    const r = await POST(req('{"market":"KR"}'));
+    expect(r.status).toBe(200);
+    expect(runMock).toHaveBeenCalledWith({ db: poolMock }, { market: 'KR' });
+  });
+  test('🔴 (T-170) 국내 저녁 실행 = 러너가 보내는 그대로(본문 {} + ?market=KR) → { market: KR }', async () => {
+    const r = await POST(req('{}', '?market=KR'));
+    expect(r.status).toBe(200);
+    expect(runMock).toHaveBeenCalledWith({ db: poolMock }, { market: 'KR' });
+  });
+  test('(T-170) 결함 재현 고정: call() 이 본문 인자에 } 를 덧붙인 본문은 400(그래서 러너는 쿼리를 쓴다)', async () => {
+    const r = await POST(req('{"market":"KR"}}'));
+    expect(r.status).toBe(400);
+    expect(runMock).not.toHaveBeenCalled();
   });
   test('유량·레이트리밋·인증 중단은 503, 연속 실패 중단은 200(결과에 aborted)', async () => {
     runMock.mockResolvedValueOnce({ ok: false, aborted: 'kis_throttle' });

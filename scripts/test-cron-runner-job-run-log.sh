@@ -222,18 +222,22 @@ nojrl()   { grep -vE "$JRE" "$1/calls"; }                                   # �
 # 🔴 (T-145 ⑨) **기준 러너와 비교할 때만** 스냅샷을 추가로 뺀다. `nojrl` 자체를 좁히면 「후크가 호출당 한 줄을
 #   남긴다」·「경로별 줄 수 = 경로별 호출 수」 같은 **자기 정합 검사**가 스풀(그 잡 포함)과 어긋난다 —
 #   실제로 그렇게 고쳤다가 J1 두 건이 깨졌다(기대 5098 / 실제 5124 = 그 잡 호출 수만큼).
-nojrl_cmp() { nojrl "$1" | grep -vE "$KF_RE"; }
-nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot '; }
+# (T-170) 국내 일봉 저녁(경로 /api/cron/daily-bars?market=KR · 라벨 daily-bars-kr · 날짜파일 daily-bars-kr-last-date, 18:10 하루 1회)은
+#   T112_BASE_REF 뒤에 더해진 잡이다 — ⑨ 스냅샷과 같은 방식으로 **기준 러너와 비교할 때만** 호출·상한·로그 줄·날짜파일에서 뺀다
+#   (nojrl·스풀 자기 정합 검사는 그대로 그 호출을 센다). 그 잡의 일정·상한·로그는 scripts/test-cron-runner-daily-bars-kr.sh 가 본다.
+KR_RE=' /api/cron/daily-bars\?market=KR$'
+nojrl_cmp() { nojrl "$1" | grep -vE "$KF_RE" | grep -vE "$KR_RE"; }
+nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot ' | grep -v '^/api/cron/daily-bars?market=KR '; }
 # (T-147) 기동 로그의 레거시 모드 한 줄(`🔶 ALERT_TICKER_DISABLE=1 — 레거시 모드 …`)은 기준 러너에 없다 — 이 하네스가 그 모드로
 #   러너를 돌리기 때문에 생기는 **의도된 추가 한 줄**이라 로그 줄 비교에서 뺀다. 그 줄 자체(모드 표시·티커 미기동)는
 #   scripts/test-cron-runner-alert-ticker.sh E1 이 본다.
 no_t147_log() { grep -v 'ALERT_TICKER_DISABLE=1 — 레거시 모드'; }
-nokfout() { grep -v 'kis-fundamentals-snapshot' "$1" | no_t147_log; }       # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다 · (T-147) 레거시 모드 줄 제외
+nokfout() { grep -v 'kis-fundamentals-snapshot' "$1" | grep -v '\] daily-bars-kr ' | no_t147_log; }       # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다 · (T-170) 국내 일봉 저녁 · (T-147) 레거시 모드 줄 제외
 gap()     { awk 'NR>1 { g = $1 - p; if (g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }
 spool()   { cat "$1/home/.node-local/stockinvest/job-run-spool" "$1/home/.node-local/stockinvest/job-run-spool.sending" 2>/dev/null; }
 # (T-145 ⑨) kis-fundamentals-snapshot 의 날짜파일은 **판정에 쓰이지 않는 흔적**이 됐고(러너 블록 주석),
 #   호출 시각이 08:00 → 08:30~08:55 로 바뀌어 짧은 시나리오에서는 기준 러너와 존재 여부가 갈린다 → 비교에서 뺀다.
-dfiles()  { ( cd "$1/home/.node-local/stockinvest" && for f in *-last-date *-attempts; do [ -f "$f" ] && echo "$f=$(cat "$f")"; done ) 2>/dev/null | grep -v '^kis-fundamentals-snapshot-last-date=' | sort; }
+dfiles()  { ( cd "$1/home/.node-local/stockinvest" && for f in *-last-date *-attempts; do [ -f "$f" ] && echo "$f=$(cat "$f")"; done ) 2>/dev/null | grep -v '^kis-fundamentals-snapshot-last-date=' | grep -v '^daily-bars-kr-last-date=' | sort; }   # (T-170) 국내 일봉 저녁 날짜파일도 뺀다
 same_calls() {   # same_calls 라벨 새 기준
   if diff <(nojrl_cmp "$2") <(nojrl_cmp "$3") > /dev/null; then ok "🔴 $1: 기록 전송·⑨ 스냅샷을 뺀 모든 호출(시각·틱·경로) = 기준 러너 ($(nojrl_cmp "$2" | wc -l | tr -d ' ')건)"
   else bad "$1: 기록 전송을 뺀 호출 목록이 기준 러너와 다르다"; diff <(nojrl_cmp "$2") <(nojrl_cmp "$3") | head -10; fi

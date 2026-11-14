@@ -42,6 +42,9 @@
 #  - holdings-premarket: 미국 동부(ET) 08시 평일 첫 틱 하루 1회 — 보유 미국 종목 SEC 새 공시 확인, 새 공시가 있을 때만 알림 (T-119, 주문·분석 무관)
 #  - (T-112) 실행·상태 기록 후크: call() 이 끝날 때마다 로컬 스풀에 한 줄, 틱 경과 150초 미만인 틱 끝에서 POST /api/cron/job-run-log 로 일괄 전송
 #                        (기록 전용 — 잡 호출·시각·날짜파일·하트비트 불변, 아래 job-run-log-spool 블록)
+#  - daily-bars-kr     : 매일 18:10~18:54 KST 첫 틱 — 국내 일봉 저녁 증분 수집 (T-170, 같은 라우트에 ?market=KR = 국내 보유·시그널
+#                        종목만, 그날 15:40 확정 봉). 하루 1회(성공·실패 무관 날짜파일), 재시도 없음, curl 상한 DAILY_BARS_CURL_MAX_TIME.
+#                        해외 peek 가 같은 틱에 돌면 다음 틱으로 미루고, 18:55 이후에는 부르지 않는다(로그 한 줄). T-104 가 흡수한다(J8).
 
 set -u
 PROJECT_DIR="${PROJECT_DIR:-/home/brownjeon/NFS/homes/brownjeon/project/StockInvest}"
@@ -471,6 +474,7 @@ EDGAR_SYNC_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/edgar-sync-last-date"
 KIS_FUNDAMENTALS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/kis-fundamentals-snapshot-last-date"
 BROKER_FILLS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/broker-fills-last-date"   # (T-087 D1a)
 DAILY_BARS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/daily-bars-last-date"   # (T-117)
+DAILY_BARS_KR_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/daily-bars-kr-last-date"   # (T-170) 국내 저녁 실행
 HOLDINGS_PREMARKET_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/holdings-premarket-last-date"   # (T-119) KST 가 아니라 ET 날짜를 쓴다
 mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 
@@ -1158,6 +1162,49 @@ while true; do
     PEEK_RAN_LABEL="$PEEK_LABEL"
   done
   # <<< news-fetch-peek
+  # >>> daily-bars-daily-kr (T-170) — scripts/test-cron-runner-daily-bars-kr.sh 가 러너 전체를 가짜 시각·가짜 curl 로 돌려 시험한다
+  # 매일 18:10~18:54 KST 첫 틱: 국내 일봉 저녁 증분 수집. POST /api/cron/daily-bars?market=KR = 라우트 기본 대상을 국내로
+  #   좁힌 것(국내 보유 → 국내 시그널 종목, 저장된 마지막 거래일이 오래된 순). KIS 읽기 GET → daily_bars upsert 뿐 — 주문·시그널·알림 없음.
+  #   🔴 시장은 본문이 아니라 쿼리로 넘긴다 — call() 은 셋째 인자(본문)를 주면 끝에 `}` 를 하나 더 붙인다(`${3:-{}}` 확장, 지금까지 본문을
+  #   넘긴 호출이 없어 드러나지 않았다). call() 은 모든 잡이 쓰므로 고치지 않고 news-fetch(?market=) 처럼 쿼리를 쓴다(본문은 기본값 {}).
+  #   증분 판정·up_to_date 건너뛰기·single-flight·예산(호출 150·100초)·오프아워 판정은 라우트가 한다(07:40 블록과 같다).
+  # 왜 따로 부르나: 07:40 전 시장 실행(T-117) 한 번의 예산보다 대상이 많아져(T-156 이후 169종목) 목록 뒤의 국내 43종목이 11-09 부터
+  #   매일 닿지 못했다(T-170 조사 — 11-06 봉에서 멈춤). 국내(약 44호출·약 40초)를 저녁으로 떼면 아침 예산은 해외가 쓴다.
+  # 왜 18:10~18:54: ① 국내 봉 확정 15:40·시간외 단일가 18:00 종료 뒤라 그날 봉을 그날 받는다 ② 라우트 오프아워 창(15:40~22:20, 분 3~55)
+  #   안 ③ 16시 국내 분석·리서치, 17시 종목 메타, 21·22시 보유 공시 확인과 다른 시각 ④ 18시대의 다른 잡은 해외 peek(그 시의 첫 틱, 상한 40초)뿐.
+  # 한 번만 부른다(재시도 없음). 날짜파일은 호출했으면 성공·실패 무관 기록(T-036) — 하루 1회. 409·503·000 도 call() 의 로그 한 줄로 끝난다.
+  #   못 한 날은 다음 날 07:40 전 시장 실행이 이어받는다(대상이 낡은 순이라 못 받은 국내 종목이 앞으로 온다).
+  # 🔴 같은 틱에 해외 peek 가 돌았으면 미룬다(yield_tick, 날짜파일 안 씀) — 바로 위 peek 블록이 이 틱에 호출했으면 PEEK_RAN_LABEL 이 차 있다.
+  #   그래서 이 블록은 peek 블록 **뒤**에 둔다(07:40 블록처럼 호출 전에 읽어 둔 변수로 판단 — 날짜파일을 다시 읽지 않는다).
+  # 하트비트: 이 틱 최악 = curl 상한 DAILY_BARS_CURL_MAX_TIME 120 + stop-alert 20 + 매 분 잡 약 30 + sleep 60 = 약 230초 < 300초
+  #   (peek 와는 같은 틱에 겹치지 않는다 — 위 미루기).
+  # ⚠ 러너 가장자리(허용): 18:10~18:54 에 러너가 꺼져 있었으면 그날 저녁은 건너뛴다. 호출하지 않았으므로 날짜파일은 쓰지 않고,
+  #   18:55~23:59 의 첫 틱에 로그 한 줄만 남긴다(러너 변수 DBARS_KR_SKIP_LOGGED 로 중복 방지 — 재기동되면 한 줄 더 남을 수 있다).
+  # 이 블록은 호출 줄·조건을 새로 더하기만 한다 — 다른 잡(07:40 daily-bars 포함)의 호출·시각·순서는 그대로다.
+  #   T-104 단계 1(잡 정의·스케줄 DB 화)이 시작되면 이 하드코딩 블록도 잡 정의로 흡수한다(공동 인계서 J8).
+  DBARS_KR_MM=$(date '+%M')
+  case "$DBARS_KR_MM" in [0-5][0-9]) ;; *) DBARS_KR_MM=00 ;; esac   # 읽을 수 없으면 이 틱은 돌지 않는다
+  LAST_DAILY_BARS_KR=$(cat "$DAILY_BARS_KR_LAST_RUN_FILE" 2>/dev/null || echo "")
+  if [ "$HH" = "18" ] && [ "$DBARS_KR_MM" -ge 10 ] && [ "$DBARS_KR_MM" -le 54 ] && [ "$LAST_DAILY_BARS_KR" != "$TODAY" ]; then
+    if [ -n "$PEEK_RAN_LABEL" ]; then
+      echo "[$(date '+%F %T')] daily-bars-kr yield_tick — $PEEK_RAN_LABEL 가 이 틱에 돌아 다음 틱으로 미룸"
+    else
+      CALL_MAX_TIME="$DAILY_BARS_CURL_MAX_TIME"   # 이 호출에만 시간 상한
+      call "/api/cron/daily-bars?market=KR" "daily-bars-kr"
+      CALL_MAX_TIME=""
+      echo "$TODAY" > "$DAILY_BARS_KR_LAST_RUN_FILE"   # 성공·실패 무관 기록
+    fi
+  fi
+  DBARS_KR_LATE=no
+  case "$HH" in
+    18) [ "$DBARS_KR_MM" -ge 55 ] && DBARS_KR_LATE=yes ;;
+    19|2[0-3]) DBARS_KR_LATE=yes ;;
+  esac
+  if [ "$DBARS_KR_LATE" = "yes" ] && [ "$LAST_DAILY_BARS_KR" != "$TODAY" ] && [ "${DBARS_KR_SKIP_LOGGED:-}" != "$TODAY" ]; then
+    echo "[$(date '+%F %T')] daily-bars-kr skipped — 18:10~18:54 에 부르지 못해 오늘 국내 저녁 증분은 건너뜀(18:55 이후 호출 안 함, 다음 날 07:40 실행이 이어받음)"
+    DBARS_KR_SKIP_LOGGED="$TODAY"
+  fi
+  # <<< daily-bars-daily-kr
   # >>> holdings-premarket (T-119) — scripts/test-cron-runner-holdings-premarket.sh 가 러너 전체를 가짜 시각으로 돌려 시험한다
   # 보유 미국 종목 개장 전 공시 확인 — 새 공시가 있을 때만 텔레그램 정보 알림(주문·시그널·분석 입력 없음, us_filings 안 씀).
   # T-104 단계 1 에서 잡 정의로 흡수, ET 기준 시각(America/New_York 08:00) 표현이 필요 — 이 잡만 KST 고정 시각이 아니다.

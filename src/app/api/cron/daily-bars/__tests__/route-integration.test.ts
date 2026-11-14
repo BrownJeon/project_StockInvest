@@ -24,8 +24,12 @@ jest.mock('@/lib/exchanges/kis-auth', () => ({ getKisToken: () => { throw new Er
 
 import { POST } from '../route';
 
+// (T-170) 라우트가 쿼리(`req.nextUrl.searchParams`)도 읽는다 — 쿼리 없는 기본 주소를 둔다
 const req = (body: unknown): NextRequest =>
-  ({ headers: new Headers(), text: async () => JSON.stringify(body) }) as unknown as NextRequest;
+  ({
+    headers: new Headers(), text: async () => JSON.stringify(body),
+    nextUrl: new URL('http://localhost:3003/api/cron/daily-bars'),
+  }) as unknown as NextRequest;
 
 beforeEach(() => {
   db = new FakeBarsDb();

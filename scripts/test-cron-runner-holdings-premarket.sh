@@ -257,7 +257,9 @@ no_t135() {
 eq "H9: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
 # (T-143 병합) overseas-universe-refresh 블록·선언은 이 정적 비교의 대상이 아니다 — 양쪽에서 똑같이 뺀다
 #   (기준 ref 에는 없으므로 기준 쪽에서는 무효다). 그 블록 자체는 scripts/test-cron-runner-overseas-universe.sh 가 본다.
-noc() { awk '/^  # >>> (overseas-universe-refresh|kis-fundamentals-snapshot)/{s=1} s{ if (/^  # <<< (overseas-universe-refresh|kis-fundamentals-snapshot)/) s=0; next } {print}' "$1" | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-143 overseas-universe-refresh·T-145 ⑨ kis-fundamentals-snapshot) 블록·선언·틱 시각 줄 제외
+# (T-170 병합) 국내 일봉 저녁 블록(daily-bars-daily-kr)·선언 DAILY_BARS_KR_LAST_RUN_FILE 도 같은 이유로 뺀다(표지를 정확히 — 07:40 의
+#   daily-bars-daily 블록은 기준 ref 에도 있어 빼지 않는다). 그 블록 자체는 scripts/test-cron-runner-daily-bars-kr.sh 가 본다.
+noc() { awk '/^  # >>> (overseas-universe-refresh|kis-fundamentals-snapshot|daily-bars-daily-kr)/{s=1} s{ if (/^  # <<< (overseas-universe-refresh|kis-fundamentals-snapshot|daily-bars-daily-kr)/) s=0; next } {print}' "$1" | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^DAILY_BARS_KR_LAST_RUN_FILE=' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-143 overseas-universe-refresh·T-145 ⑨ kis-fundamentals-snapshot) 블록·선언·틱 시각 줄 제외
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
 #   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
 no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$' | no_t135; }

@@ -33,6 +33,10 @@
 #   그 호출(경로 /api/cron/holdings-premarket)은 비교·--max-time 목록에서 빼고, 정적 비교는 그 블록·선언(HOLDINGS_PREMARKET_*)도 뺀다.
 #   기대값은 바꾸지 않았다(범위만 정교화). holdings-premarket 자체의 시험과 "그 호출을 뺀 모든 호출 = 기준 러너" 증명은
 #   scripts/test-cron-runner-holdings-premarket.sh 가 한다.
+# T-170 — 국내 일봉 저녁 블록(daily-bars-daily-kr, 18:10~18:54 하루 1회, 경로 /api/cron/daily-bars?market=KR, --max-time 120)이 생겼다.
+#   07:40 daily-bars 처럼 그 호출(경로 ' /api/cron/daily-bars?market=KR')을 비교·--max-time 목록에서 뺀다. 정적 비교는 블록 표지
+#   daily-bars-daily-kr 이 기존 접두 정규식(daily-bars-daily)에, 선언 DAILY_BARS_KR_* 가 '^DAILY_BARS_' 에 이미 걸려 함께 빠진다.
+#   기대값은 바꾸지 않았다(범위만 정교화). 그 블록 자체의 시험은 scripts/test-cron-runner-daily-bars-kr.sh 가 한다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -132,7 +136,7 @@ EOF
 }
 
 news()   { grep ' /api/cron/news-fetch' "$1/calls" | grep -v 'mode=peek'; }   # (T-116) peek 제외
-others() { grep -v ' /api/cron/news-fetch' "$1/calls" | grep -v ' /api/cron/daily-bars$' | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }   # (T-117 daily-bars·T-119 holdings-premarket·T-145 ⑨ kis-fundamentals-snapshot) 제외
+others() { grep -v ' /api/cron/news-fetch' "$1/calls" | grep -v ' /api/cron/daily-bars$' | grep -v ' /api/cron/daily-bars?market=KR$' | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }   # (T-117 daily-bars·T-119 holdings-premarket·T-145 ⑨ kis-fundamentals-snapshot) 제외
 at()     { news "$1" | grep -F " $2" | awk '{print $1, $2}' | tr '\n' ' '; }   # at R 경로접미 → "MM-DD HH:MM ..."
 maxper() { news "$1" | awk '{print $1, $3}' | sort | uniq -c | awk '{ if ($1 > m) m = $1 } END { print m + 0 }'; }
 df()     { cat "$1/home/.node-local/stockinvest/$2" 2>/dev/null || echo none; }
@@ -205,7 +209,7 @@ if diff <(others "$NA") <(others "$BA") > /dev/null; then ok "🔴 D: 뉴스 외
 eq "D: 하루 뉴스 = 해외 06:00 · 국내 06:01 · (T-115) 국내 15:30" "$(news "$NA" | awk '{print $2, $4}' | tr '\n' ' ')" \
    "06:00 /api/cron/news-fetch?market=overseas 06:01 /api/cron/news-fetch?market=domestic 15:30 /api/cron/news-fetch?market=domestic "
 eq "D: 변경 전 하루 뉴스 = 06:00 1회" "$(news "$BA" | awk '{print $2, $4}' | tr '\n' ' ')" "06:00 /api/cron/news-fetch "
-if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime" | grep -v '^/api/cron/daily-bars ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') <(grep -v '^/api/cron/news-fetch' "$BA/maxtime") > /dev/null; then ok "D: --max-time 붙는 호출 목록 = 변경 전(T-117 daily-bars·T-119 holdings-premarket·T-145 ⑨ 스냅샷 제외)"; else bad "D: --max-time 목록이 다르다"; fi
+if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime" | grep -v '^/api/cron/daily-bars ' | grep -v '^/api/cron/daily-bars?market=KR ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') <(grep -v '^/api/cron/news-fetch' "$BA/maxtime") > /dev/null; then ok "D: --max-time 붙는 호출 목록 = 변경 전(T-117 daily-bars·T-119 holdings-premarket·T-145 ⑨ 스냅샷 제외)"; else bad "D: --max-time 목록이 다르다"; fi
 
 # ── E. 정적 ───────────────────────────────────────────────────────────────────────
 echo "E. 정적"
@@ -261,7 +265,7 @@ eq "해외 날짜파일 읽기는 블록 안 1곳(틱 시작)" "$(printf '%s\n' 
 echo "F. (T-115) 15:30~15:59 국내 두 번째 수집 — T-103 러너($T115_REF)와 비교"
 PMRE='^[0-9-]+ 15:[0-9][0-9] [0-9]+ /api/cron/news-fetch\?market=domestic$'
 pm()      { grep -E "$PMRE" "$1/calls"; }                                # 새 잡 호출(15시대 국내 뉴스)
-nopm()    { grep -vE "$PMRE" "$1/calls" | grep -v 'mode=peek' | grep -v ' /api/cron/daily-bars$' | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }   # 새 잡을 뺀 모든 호출(뉴스 포함, T-116 peek·T-117 daily-bars·T-119 holdings-premarket·T-145 ⑨ kis-fundamentals-snapshot 제외)
+nopm()    { grep -vE "$PMRE" "$1/calls" | grep -v 'mode=peek' | grep -v ' /api/cron/daily-bars$' | grep -v ' /api/cron/daily-bars?market=KR$' | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }   # 새 잡을 뺀 모든 호출(뉴스 포함, T-116 peek·T-117 daily-bars·T-119 holdings-premarket·T-145 ⑨ kis-fundamentals-snapshot 제외)
 allc()    { awk '{print $1, $2, $4}' "$1/calls"; }
 # (T-145 ⑨) 기준 러너 쪽에서도 kis-fundamentals-snapshot 을 뺀다(새 러너 쪽은 nopm·others 가 이미 뺀다)
 allc_nokf() { grep -v ' /api/cron/kis-fundamentals-snapshot$' "$1/calls" | awk '{print $1, $2, $4}'; }
@@ -342,7 +346,7 @@ eq "🔴 F6: 새 잡 = 하루 15:30 1회" "$(pmat "$NA")" "10-28 15:30 "
 same115 "F6 하루 전체" "$NA" "$GA"
 eq "F6: 하루 전체에서 건너뜀 로그 없음" "$(skiplog "$NA")" "0"
 eq "F6: 날짜파일 — 06시 국내·15시 국내 모두 오늘" "$(df "$NA" news-fetch-domestic-last-date) $(df "$NA" news-fetch-domestic-pm-last-date)" "2026-10-28 2026-10-28"
-if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime" | grep -v '^/api/cron/daily-bars ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') <(grep -v '^/api/cron/news-fetch' "$GA/maxtime") > /dev/null && \
+if diff <(grep -v '^/api/cron/news-fetch' "$NA/maxtime" | grep -v '^/api/cron/daily-bars ' | grep -v '^/api/cron/daily-bars?market=KR ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') <(grep -v '^/api/cron/news-fetch' "$GA/maxtime") > /dev/null && \
    [ "$(grep '^/api/cron/news-fetch' "$NA/maxtime" | grep -vc 'mode=peek')" = "0" ]; then ok "F6: --max-time 목록 = T-103 러너(뉴스 ingest 에는 없음 — T-118 peek 상한은 peek 시험)"; else bad "F6: --max-time 목록이 다르다"; fi
 
 # F7. 정적 — 새 블록·선언·주석을 빼면 T-103 러너와 실행 줄이 한 글자도 같다

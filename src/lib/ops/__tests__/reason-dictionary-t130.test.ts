@@ -148,9 +148,11 @@ describe('4-5 잡 이름', () => {
     ['edgar-sync', '미국 공시 수집'], ['holdings-premarket', '보유 종목 개장 전 공시 확인'], ['holding-checker', '보유 종목 점검'], ['stop-alert', '손절 알림'],
     // (T-143 WP-A) 해외 분석 대상 월간 산출 — 매월 첫째 일요일 창에서 돈다
     ['overseas-universe-refresh', '해외 분석 대상 갱신'],
+    // (T-170) 국내 일봉 저녁 증분 — 매일 18:10~18:54
+    ['daily-bars-kr', '국내 일봉 수집(저녁)'],
   ];
   test.each(TABLE)('%s → %s', (id, name) => { expect(dict.jobNameText(id)).toBe(name); });
-  test('표 전체(키 23개) — 위 표와 같다', () => {
+  test('표 전체(키 24개) — 위 표와 같다', () => {
     expect(dict.JOB_NAME_KO).toEqual(Object.fromEntries(TABLE));
   });
   test('뉴스 확인(peek): {HH} 는 id 의 두 자리 그대로', () => {

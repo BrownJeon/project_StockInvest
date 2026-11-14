@@ -238,45 +238,69 @@ describe('수동 수집 라우트 — 범위 고정', () => {
   // (T-117) 2026-10-28 사용자 승인(R13)으로 cron-runner 에 하루 1회 등록됐다. 예전의 "등록하지 않는다" 단언을 지우지 않고
   //   **등록 방식을 고정하는 단언**으로 바꿨다 — 블록 밖으로 새거나, 호출이 늘거나, 본문(대상·기간·호출 수)을 붙이거나,
   //   시간 상한이 다른 잡에 새면 실패한다. 동작 시험은 scripts/test-cron-runner-daily-bars.sh.
-  describe('(T-117) cron-runner 등록 방식 고정', () => {
+  // (T-170) 2026-11-14 사용자 지시(「근본 수정부터」 · 범위 「저녁 KR + 낡은 순」)로 국내 저녁 블록(daily-bars-daily-kr, 18:10~18:54
+  //   하루 1회)이 더해졌다. 두 블록을 같은 방식으로 고정한다 — 호출은 파일 전체에 정확히 두 줄(07:40 1 · 국내 저녁 1), 국내 저녁은 시장을
+  //   **쿼리**(?market=KR)로 넘기고 본문 인자가 없다(call() 은 본문 인자 끝에 `}` 를 덧붙이는 결함이 있다 — 라우트 머리 주석).
+  //   새 블록 표지가 옛 표지를 접두로 포함하므로 표지를 정확히 고른다. 동작 시험은 scripts/test-cron-runner-daily-bars-kr.sh.
+  describe('(T-117·T-170) cron-runner 등록 방식 고정', () => {
     const runner = read(path.join(ROOT, 'scripts/cron-runner.sh'));
     const lines = runner.split('\n');
-    const start = lines.findIndex((l) => l.startsWith('  # >>> daily-bars-daily'));
-    const end = lines.findIndex((l) => l === '  # <<< daily-bars-daily');
+    const isStart = (l: string) => /^  # >>> daily-bars-daily(?: |$)/.test(l);   // 07:40 블록 (T-117)
+    const isEnd = (l: string) => l === '  # <<< daily-bars-daily';
+    const isKrStart = (l: string) => /^  # >>> daily-bars-daily-kr(?: |$)/.test(l);   // 국내 저녁 블록 (T-170)
+    const isKrEnd = (l: string) => l === '  # <<< daily-bars-daily-kr';
+    const start = lines.findIndex(isStart);
+    const end = lines.findIndex(isEnd);
+    const kStart = lines.findIndex(isKrStart);
+    const kEnd = lines.findIndex(isKrEnd);
     /** 주석 줄·빈 줄을 버리고 줄 끝 주석을 떼어 낸 실행 줄 */
     const exec = (ls: string[]) => ls
       .filter((l) => !/^\s*(#|$)/.test(l))
       .map((l) => l.replace(/\s+#.*$/, ''));
     const block = exec(lines.slice(start + 1, end));
-    const outside = exec([...lines.slice(0, Math.max(start, 0)), ...lines.slice(end + 1)]);
+    const krBlock = exec(lines.slice(kStart + 1, kEnd));
+    const outside = exec(lines.filter((_, i) => !((i >= start && i <= end) || (i >= kStart && i <= kEnd))));
 
-    test('블록 표지 >>>/<<< 가 각 1개이고 순서가 맞다', () => {
-      expect(lines.filter((l) => l.startsWith('  # >>> daily-bars-daily')).length).toBe(1);
-      expect(lines.filter((l) => l === '  # <<< daily-bars-daily').length).toBe(1);
+    test('블록 표지 >>>/<<< 가 블록마다 각 1개이고 순서가 맞으며 두 블록이 겹치지 않는다', () => {
+      expect(lines.filter(isStart).length).toBe(1);
+      expect(lines.filter(isEnd).length).toBe(1);
+      expect(lines.filter(isKrStart).length).toBe(1);
+      expect(lines.filter(isKrEnd).length).toBe(1);
       expect(start).toBeGreaterThan(-1);
       expect(end).toBeGreaterThan(start);
+      expect(kStart).toBeGreaterThan(-1);
+      expect(kEnd).toBeGreaterThan(kStart);
+      expect(kStart > end || kEnd < start).toBe(true);
     });
 
-    test('블록 밖 실행 줄의 daily-bars 참조는 선언 2줄(상한 120·날짜파일)뿐이다', () => {
+    test('블록 밖 실행 줄의 daily-bars 참조는 선언 3줄(상한 120·날짜파일 2개)뿐이다', () => {
       expect(outside.filter((l) => /daily[-_]bars/i.test(l))).toEqual([
         'DAILY_BARS_CURL_MAX_TIME=120',
         'DAILY_BARS_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/daily-bars-last-date"',
+        'DAILY_BARS_KR_LAST_RUN_FILE="${HOME}/.node-local/stockinvest/daily-bars-kr-last-date"',
       ]);
     });
 
-    test('실행 호출 줄은 파일 전체에서 정확히 1개, 본문·symbols·years·maxCalls 인자 없음', () => {
+    test('실행 호출 줄은 파일 전체에서 정확히 2개(블록마다 1개), 본문·symbols·years·maxCalls 인자 없음', () => {
       const calls = exec(lines).filter((l) => /\bcall\b/.test(l) && /daily[-_]bars/i.test(l));
-      expect(calls.map((l) => l.trim())).toEqual(['call "/api/cron/daily-bars" "daily-bars"']);
+      expect(calls.map((l) => l.trim())).toEqual([
+        'call "/api/cron/daily-bars" "daily-bars"',
+        'call "/api/cron/daily-bars?market=KR" "daily-bars-kr"',
+      ]);
       expect(block.filter((l) => /^\s*call\s/.test(l)).map((l) => l.trim())).toEqual(['call "/api/cron/daily-bars" "daily-bars"']);
+      expect(krBlock.filter((l) => /^\s*call\s/.test(l)).map((l) => l.trim())).toEqual(['call "/api/cron/daily-bars?market=KR" "daily-bars-kr"']);
       // 본문(세 번째 인자)은 위 정확 일치가 막는다. 블록 어디에도 대상·기간·호출 수 지정이 없다.
       expect(block.join('\n')).not.toMatch(/symbols|years|maxCalls/);
+      expect(krBlock.join('\n')).not.toMatch(/symbols|years|maxCalls/);
     });
 
-    test('CALL_MAX_TIME 은 그 호출 바로 앞에서 켜고 바로 뒤에서 끈다(블록 안 다른 설정 없음)', () => {
-      const i = block.findIndex((l) => /^\s*call\s/.test(l));
-      expect(block[i - 1].trim()).toBe('CALL_MAX_TIME="$DAILY_BARS_CURL_MAX_TIME"');
-      expect(block[i + 1].trim()).toBe('CALL_MAX_TIME=""');
-      expect(block.filter((l) => /CALL_MAX_TIME/.test(l)).length).toBe(2);
+    test('CALL_MAX_TIME 은 호출마다 바로 앞에서 켜고 바로 뒤에서 끈다(블록 안 다른 설정 없음)', () => {
+      for (const b of [block, krBlock]) {
+        const i = b.findIndex((l) => /^\s*call\s/.test(l));
+        expect(b[i - 1].trim()).toBe('CALL_MAX_TIME="$DAILY_BARS_CURL_MAX_TIME"');
+        expect(b[i + 1].trim()).toBe('CALL_MAX_TIME=""');
+        expect(b.filter((l) => /CALL_MAX_TIME/.test(l)).length).toBe(2);
+      }
       expect(outside.filter((l) => /DAILY_BARS_CURL_MAX_TIME/.test(l))).toEqual(['DAILY_BARS_CURL_MAX_TIME=120']);
     });
   });

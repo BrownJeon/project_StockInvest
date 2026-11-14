@@ -223,6 +223,7 @@ export const JOB_NAME_KO: Readonly<Record<string, string>> = {
   'portfolio-snapshot': '포트폴리오 스냅샷',
   'trade-report': '거래 리포트 발송',
   'daily-bars': '일봉 수집',
+  'daily-bars-kr': '국내 일봉 수집(저녁)',   // (T-170) 18:10 국내 전용 실행
   'broker-fills': '브로커 원장 수집',
   'news-fetch-domestic': '국내 뉴스 수집(아침)',
   'news-fetch-domestic-pm': '국내 뉴스 수집(오후)',

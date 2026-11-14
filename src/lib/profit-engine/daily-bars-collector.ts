@@ -1,5 +1,6 @@
 /**
- * T-070 일봉 수집기 본체 — `POST /api/cron/daily-bars` 가 부른다(수동 호출 전용, cron-runner 미등록 — 정기 증분은 Phase 1).
+ * T-070 일봉 수집기 본체 — `POST /api/cron/daily-bars` 가 부른다(수동 호출, 그리고 cron-runner 정기 증분: T-117 매일 07:40 전 시장 ·
+ * T-170 매일 18:10 국내만 — 쿼리 `?market=KR`, 본문 아님: 러너 call() 은 본문 인자 끝에 `}` 를 덧붙인다 — daily-bars-request.ts).
  *
  * ⚠ 이 모듈은 **주문·시그널을 만들지 않는다.** KIS 읽기 GET → `daily_bars` upsert 뿐. 주문·안전장치·시그널·전략 모듈을 import 하지 않는다.
  *
@@ -62,6 +63,8 @@ export interface CollectOptions {
   symbols?: string[];
   years?: number;
   maxCalls?: number;
+  /** (T-170) 기본 대상을 이 시장만 남긴다(보유 포함). symbols 와 함께 주면 라우트가 400 으로 거부한다 — 여기서는 기본 대상에만 적용한다. */
+  market?: BarMarket;
 }
 
 export interface CollectDeps {
@@ -96,6 +99,8 @@ export interface SymbolReport {
 
 export interface CollectResult {
   ok: boolean;
+  /** (T-170) 기본 대상 시장 필터(없으면 전 시장). 로그·응답에서 아침(전 시장)·저녁(국내) 실행을 구별한다. */
+  market?: BarMarket;
   skipped?: 'tables_missing' | 'already_running';
   missing?: string[];
   aborted?: 'kis_throttle' | 'kis_rate_limited' | 'kis_auth' | 'consecutive_failures';
@@ -162,7 +167,7 @@ async function inner(deps: CollectDeps, opts: CollectOptions): Promise<CollectRe
       else targetErrors.push(`invalid_symbol:${symbol.slice(0, 40)}`);
     }
   } else {
-    const t = await loadDefaultTargets(db);
+    const t = await loadDefaultTargets(db, { market: opts.market });
     targets = t.targets;
     targetErrors = t.errors;
   }
@@ -191,6 +196,7 @@ async function inner(deps: CollectDeps, opts: CollectOptions): Promise<CollectRe
   };
 
   const res: CollectResult = { ok: true, years, targets: targets.length, targetErrors, symbols: [], remaining: [] };
+  if (opts.market && !(opts.symbols && opts.symbols.length)) res.market = opts.market;
   let consecutiveFailures = 0;
   let i = 0;
   for (; i < targets.length; i++) {
@@ -216,7 +222,7 @@ async function inner(deps: CollectDeps, opts: CollectOptions): Promise<CollectRe
   res.processed = res.symbols!.length;
   res.budget = { maxCalls, calls, maxMs, elapsedMs: nowFn().getTime() - t0, exhausted: budgetHit };
   const written = res.symbols!.reduce((a, s) => a + s.written, 0);
-  log(`[daily-bars] done ok=${res.ok} targets=${res.targets} processed=${res.processed} calls=${calls}/${maxCalls} written=${written}`
+  log(`[daily-bars] done market=${res.market ?? 'all'} ok=${res.ok} targets=${res.targets} processed=${res.processed} calls=${calls}/${maxCalls} written=${written}`
     + ` remaining=${res.remaining!.length}${res.aborted ? ` aborted=${res.aborted}` : ''}`
     + ` failed=${res.symbols!.filter((s) => s.status === 'failed').map((s) => s.symbol).join(',') || '-'}`);
   return res;

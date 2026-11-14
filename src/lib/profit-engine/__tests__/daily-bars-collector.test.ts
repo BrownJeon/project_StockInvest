@@ -16,7 +16,7 @@ jest.mock('@/lib/credentials', () => ({ getCredential: async () => 'x' }));
 import { readOverseasUniverse } from '@/lib/strategy/universe-overseas-static';
 import { __resetDailyBarsLockForTest, DEFAULT_GAP_MS, runDailyBarsCollect, type CollectDeps } from '../daily-bars-collector';
 import { KisDailyError, type FetchDailyPage } from '../daily-bars-kis';
-import { DAILY_BARS_UPSERT_SQL, upsertBars, type Queryable } from '../daily-bars-store';
+import { DAILY_BARS_UPSERT_SQL, loadDefaultTargets, TARGET_MAX_DATES_SQL, upsertBars, type Queryable } from '../daily-bars-store';
 import { findGaps } from '../daily-bars-quality';
 import type { RawBar } from '../daily-bars-quality';
 import { FakeBarsDb, fakeMarket, makeBars, type Row } from './fake-bars-db';
@@ -690,5 +690,106 @@ describe('대상·잠금·쓰기 범위', () => {
     await runDailyBarsCollect(deps(db, m.fetchPage, { now: () => NEXT }), { years: 1 });
     expect(db.queries.some((q) => q.sql.startsWith('UPDATE daily_bars'))).toBe(true);
     expect(db.writtenTables()).toEqual(['daily_bars']);
+  });
+});
+
+describe('(T-170) 기본 대상 「낡은 순」 정렬·시장 필터', () => {
+  /** 저장된 마지막 거래일만 흉내 내는 행 하나(정렬 입력 — 값 열은 이 시험의 관심이 아니다). */
+  const seedLast = (db: FakeBarsDb, symbol: string, d: string) => {
+    const market = /^\d{6}$/.test(symbol) ? 'KR' : 'US';
+    db.seed({ market, symbol, trade_date: d, open: 1, high: 1, low: 1, close: 1, volume: 1, turnover: null,
+      currency: market === 'KR' ? 'KRW' : 'USD', adj_mode: 'adjusted', is_final: 1, flags: '', source: 's', fetched_at: '2026-10-22 07:40:00' });
+  };
+  const maxDateQueries = (db: FakeBarsDb) => db.queries.filter((q) => q.sql === TARGET_MAX_DATES_SQL.replace(/\s+/g, ' ').trim()).length;
+
+  test('보유는 맨 앞 그대로, 나머지는 저장 마지막 거래일 오름차순 — 행 없음이 가장 앞, 같은 날짜는 모은 순서(분석 → 시그널)', async () => {
+    const db = new FakeBarsDb();
+    db.positions = ['NAS:MU'];
+    (readOverseasUniverse as jest.Mock).mockResolvedValue({ symbols: ['NAS:AAA', 'NAS:BBB', 'NAS:CCC'], degraded: false });
+    db.signalCounts = [{ symbol: '000660', n: 9 }, { symbol: '005380', n: 5 }];
+    seedLast(db, 'NAS:MU', '2026-10-21');      // 보유 — 가장 최신이어도 맨 앞
+    seedLast(db, 'NAS:AAA', '2026-10-21');
+    seedLast(db, 'NAS:BBB', '2026-10-01');
+    // NAS:CCC 행 없음
+    seedLast(db, '000660', '2026-10-01');      // BBB 와 동률 — 모은 순서(분석 BBB 가 먼저)
+    seedLast(db, '005380', '2026-09-01');
+    const t = await loadDefaultTargets(db as unknown as Queryable);
+    expect(t.errors).toEqual([]);
+    expect(t.targets.map((x) => `${x.symbol}:${x.origin}`)).toEqual([
+      'NAS:MU:holding', 'NAS:CCC:analysis', '005380:signal', 'NAS:BBB:analysis', '000660:signal', 'NAS:AAA:analysis',
+    ]);
+    expect(maxDateQueries(db)).toBe(1);
+  });
+
+  test('마지막 거래일 조회가 실패하면 모은 순서 그대로 계속하고 staleness_order 를 남긴다', async () => {
+    const db = new FakeBarsDb();
+    db.failMaxDates = true;
+    db.positions = ['NAS:MU'];
+    (readOverseasUniverse as jest.Mock).mockResolvedValue({ symbols: ['NAS:AAA', 'NAS:BBB'], degraded: false });
+    db.signalCounts = [{ symbol: '000660', n: 1 }];
+    seedLast(db, 'NAS:AAA', '2026-10-21');
+    const t = await loadDefaultTargets(db as unknown as Queryable);
+    expect(t.targets.map((x) => x.symbol)).toEqual(['NAS:MU', 'NAS:AAA', 'NAS:BBB', '000660']);
+    expect(t.errors).toEqual(['staleness_order']);
+  });
+
+  test('market KR: 보유·시그널 중 국내만, 해외 분석 목록은 읽지 않는다(저하 경고도 없음)', async () => {
+    const db = new FakeBarsDb();
+    (readOverseasUniverse as jest.Mock).mockClear();
+    db.positions = ['005930', 'NAS:MU'];
+    (readOverseasUniverse as jest.Mock).mockResolvedValue({ symbols: ['NAS:AAA'], degraded: true });
+    db.signalCounts = [{ symbol: 'NAS:INTC', n: 9 }, { symbol: '000660', n: 5 }, { symbol: '005380', n: 1 }];
+    seedLast(db, '000660', '2026-10-21');
+    const r = await runDailyBarsCollect(deps(db, fakeMarket({}).fetchPage), { years: 1, market: 'KR' });
+    expect(r.market).toBe('KR');
+    expect(r.symbols!.map((s) => s.symbol)).toEqual(['005930', '005380', '000660']);
+    expect(r.symbols!.every((s) => s.market === 'KR')).toBe(true);
+    expect(readOverseasUniverse).not.toHaveBeenCalled();
+    expect(r.targetErrors).toEqual([]);
+  });
+
+  test('market US: 국내 보유·시그널을 빼고 해외 분석 목록은 포함', async () => {
+    const db = new FakeBarsDb();
+    db.positions = ['005930', 'NAS:MU'];
+    (readOverseasUniverse as jest.Mock).mockResolvedValue({ symbols: ['NAS:AAA'], degraded: false });
+    db.signalCounts = [{ symbol: '000660', n: 9 }, { symbol: 'NAS:INTC', n: 1 }];
+    const t = await loadDefaultTargets(db as unknown as Queryable, { market: 'US' });
+    expect(t.targets.map((x) => x.symbol)).toEqual(['NAS:MU', 'NAS:AAA', 'NAS:INTC']);
+  });
+
+  test('시장 필터가 없으면 결과에 market 을 붙이지 않는다 · symbols 직접 지정이면 정렬 조회도 하지 않는다', async () => {
+    const db = new FakeBarsDb();
+    db.signalCounts = [{ symbol: 'NAS:INTC', n: 1 }, { symbol: '000660', n: 1 }];
+    const all = await runDailyBarsCollect(deps(db, fakeMarket({}).fetchPage), { years: 1 });
+    expect(all.market).toBeUndefined();
+    expect(maxDateQueries(db)).toBe(1);
+    const db2 = new FakeBarsDb();
+    seedLast(db2, 'NAS:BBB', '2026-09-01');
+    const req = await runDailyBarsCollect(deps(db2, fakeMarket({}).fetchPage), { symbols: ['NAS:AAA', 'NAS:BBB'], years: 1 });
+    expect(req.symbols!.map((s) => s.symbol)).toEqual(['NAS:AAA', 'NAS:BBB']);
+    expect(maxDateQueries(db2)).toBe(0);
+  });
+
+  test('🔴 회귀(11-09~14 굶주림): 매일 수요 > 예산이어도 못 받은 종목이 다음 실행 앞으로 와 같은 종목만 계속 밀리지 않는다', async () => {
+    // 4종목 모두 매일 증분이 필요하고(1호출씩) 예산은 2호출 — 고정 순서였다면 C·D 는 영영 닿지 못한다.
+    const db = new FakeBarsDb();
+    const syms = ['NAS:AAA', 'NAS:BBB', 'NAS:CCC', 'NAS:DDD'];
+    db.signalCounts = syms.map((symbol, i) => ({ symbol, n: 10 - i }));   // 발화 수 순 = A → B → C → D
+    const m = fakeMarket(Object.fromEntries(syms.map((s) => [s, US_DATA()])));
+    await runDailyBarsCollect(deps(db, m.fetchPage), { symbols: syms, years: 1 });   // 1년 백필 — 전부 10-21 까지
+    for (const s of syms) expect(db.rows('US', s).slice(-1)[0].trade_date).toBe('2026-10-21');
+
+    for (const s of syms) m.data.set(s, makeBars('2022-01-03', '2026-10-23'));
+    const day2 = await runDailyBarsCollect(deps(db, m.fetchPage, { now: () => NEXT }), { years: 1, maxCalls: 2 });
+    expect(day2.symbols!.filter((s) => s.status === 'done').map((s) => s.symbol)).toEqual(['NAS:AAA', 'NAS:BBB']);
+    expect(day2.remaining).toEqual(['NAS:CCC', 'NAS:DDD']);
+
+    const DAY3 = kst('2026-10-27 06:10');   // ET 10-26(월) 17:10 → 10-26 확정 — 네 종목 모두 다시 증분 필요
+    for (const s of syms) m.data.set(s, makeBars('2022-01-03', '2026-10-26'));
+    const day3 = await runDailyBarsCollect(deps(db, m.fetchPage, { now: () => DAY3 }), { years: 1, maxCalls: 2 });
+    // 낡은 순: C·D(10-21) 가 A·B(10-23) 보다 앞 — 고정 순서였다면 A·B 가 다시 예산을 다 썼다
+    expect(day3.symbols!.filter((s) => s.status === 'done').map((s) => s.symbol)).toEqual(['NAS:CCC', 'NAS:DDD']);
+    expect(db.rows('US', 'NAS:CCC').slice(-1)[0].trade_date).toBe('2026-10-26');
+    expect(db.rows('US', 'NAS:DDD').slice(-1)[0].trade_date).toBe('2026-10-26');
   });
 });

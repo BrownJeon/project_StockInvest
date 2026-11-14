@@ -24,6 +24,11 @@
 # (T-119 병합) holdings-premarket(ET 08시 평일 — KST 21·22시)은 현재 러너에만 있는 무관한 잡이라, 그 호출은 D1 등 호출 비교(nodb)와
 #   --max-time 목록 비교에서 빼고, D6 정적 비교는 그 블록(>>> ~ <<< holdings-premarket)·HOLDINGS_PREMARKET_* 선언을 양쪽에서 똑같이 뺀다
 #   (블록 안 HP_* 변수는 블록과 함께 빠진다). 범위 정교화일 뿐 daily-bars 기대값·단언 개수는 그대로다.
+# (T-170 병합) 국내 저녁 블록(daily-bars-daily-kr, 18:10~18:54)이 경로 /api/cron/daily-bars?market=KR 를 부른다(쿼리라 07:40 호출의
+#   경로 ' /api/cron/daily-bars$' 와 구별된다 — DBRE·본문 기록은 07:40 호출만 그대로 잡는다). 그 호출은 nodb·--max-time 비교에서 빼고
+#   (holdings-premarket 과 같은 방식), D6 정적은 07:40 블록 표지를 정확히 고른다(새 블록 표지 daily-bars-daily-kr 이 이 표지를 접두로
+#   포함한다 — strip_new 의 접두 정규식은 그 블록도 함께 지우는데, 그것이 원하는 동작이다). 저녁 블록 자체는
+#   scripts/test-cron-runner-daily-bars-kr.sh 가 본다. 07:40 블록의 기대값(시각·본문·상한·yield·건너뜀·하트비트)·단언은 그대로다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -139,7 +144,7 @@ EOF
 DBRE=' /api/cron/daily-bars$'
 dbc()    { grep -E "$DBRE" "$1/calls"; }
 dbat()   { dbc "$1" | awk '{print $1, $2}' | tr '\n' ' '; }
-nodb()   { grep -vE "$DBRE" "$1/calls" | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }   # (T-119 병합) holdings-premarket·(T-145 ⑨) kis-fundamentals-snapshot 제외 — ⑨ 가 그 잡을 08:30~08:55 창의 매 틱으로 바꿨다(사용자 승인). 그 일정은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 본다
+nodb()   { grep -vE "$DBRE" "$1/calls" | grep -v ' /api/cron/daily-bars?market=KR$' | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }   # (T-119 병합) holdings-premarket·(T-145 ⑨) kis-fundamentals-snapshot 제외 — ⑨ 가 그 잡을 08:30~08:55 창의 매 틱으로 바꿨다(사용자 승인). 그 일정은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 본다
 allc()   { awk '{print $1, $2, $4}' "$1/calls"; }
 # (T-145 ⑨) 기준 러너 쪽에서도 kis-fundamentals-snapshot 을 뺀다 — nodb 가 새 러너에서만 빼면 기준의 08:00 1회가 남아 어긋난다
 allc_nokf() { grep -v ' /api/cron/kis-fundamentals-snapshot$' "$1/calls" | awk '{print $1, $2, $4}'; }
@@ -169,8 +174,8 @@ eq "🔴 D1: 07:40~07:54 밖의 daily-bars 호출 0" "$(dbc "$NA" | awk '{print 
 eq "D1: 본문 = '{}'(본문 없음 → 라우트 기본 대상)" "$(sort -u "$NA/dbody" | tr '\n' ' ')" "{} "
 eq "🔴 D1: daily-bars 호출에 --max-time 120" "$(grep '^/api/cron/daily-bars ' "$NA/maxtime" | tr '\n' ' ')" "/api/cron/daily-bars max-time=120 "
 # (T-145 ⑨) 스냅샷의 --max-time(110)은 그 블록 시험이 본다 — 여기서는 뺀다
-if diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') "$BA/maxtime" > /dev/null; then ok "🔴 D1: daily-bars 를 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
-else bad "D1: --max-time 목록이 다르다"; diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') "$BA/maxtime" | head -5; fi
+if diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/daily-bars?market=KR ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') "$BA/maxtime" > /dev/null; then ok "🔴 D1: daily-bars 를 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
+else bad "D1: --max-time 목록이 다르다"; diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/daily-bars?market=KR ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') "$BA/maxtime" | head -5; fi
 eq "D1: 날짜파일 = 오늘" "$(df "$NA" daily-bars-last-date)" "$TD"
 eq "D1: OK 로그 1줄" "$(grep -c '\] daily-bars OK$' "$NA/stdout")" "1"
 eq "D1: yield 로그 없음(07:00·07:20 틱과 다른 틱)" "$(ylog "$NA")" "0"
@@ -304,9 +309,10 @@ eq "🔴 D6: 변경 전 러너의 모든 줄이 순서대로 남아 있다(추�
 eq "🔴 D6: no_t149_old 가 노리는 주석 줄이 지금 러너에 정확히 1개 있다" \
    "$(grep -c '^# (T-062 Codex C2 ②) 해외 post-market' "$RUNNER")" "1"
 eq "D6: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
-nb="$(awk '/^  # >>> daily-bars-daily/,/^  # <<< daily-bars-daily/' "$RUNNER")"
-eq "D6: 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> daily-bars-daily' "$RUNNER") $(grep -c '^  # <<< daily-bars-daily' "$RUNNER")" "1 1"
-eq "D6: 파일 전체 daily-bars 호출 줄 1개(블록 안)" "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -c 'call "/api/cron/daily-bars"') $(printf '%s\n' "$nb" | grep -c '^      call "/api/cron/daily-bars" "daily-bars"$')" "1 1"
+# (T-170) 국내 저녁 블록 표지(`daily-bars-daily-kr`)가 이 표지를 접두로 포함한다 — 07:40 블록 표지를 정확히 고른다
+nb="$(awk '/^  # >>> daily-bars-daily \(T-117\)/,/^  # <<< daily-bars-daily$/' "$RUNNER")"
+eq "D6: 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> daily-bars-daily (T-117)' "$RUNNER") $(grep -c '^  # <<< daily-bars-daily$' "$RUNNER")" "1 1"
+eq "D6: 파일 전체 daily-bars 호출 줄 1개(블록 안 — T-170 국내 저녁은 ?market=KR 경로라 이 줄에 걸리지 않는다)" "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -c 'call "/api/cron/daily-bars"') $(printf '%s\n' "$nb" | grep -c '^      call "/api/cron/daily-bars" "daily-bars"$')" "1 1"
 eq "D6: 호출 줄은 본문 인자 없음" "$(printf '%s\n' "$nb" | grep 'call "/api/cron/daily-bars"' | sed 's/^ *//')" 'call "/api/cron/daily-bars" "daily-bars"'
 if printf '%s\n' "$nb" | grep -Pzoq 'CALL_MAX_TIME="\$DAILY_BARS_CURL_MAX_TIME"[^\n]*\n\s*call "/api/cron/daily-bars" "daily-bars"\n\s*CALL_MAX_TIME=""'; then
   ok "D6: 상한은 그 호출 바로 앞에서 켜고 바로 뒤에서 비운다"; else bad "D6: CALL_MAX_TIME 설정·해제 위치가 다르다"; fi
@@ -317,8 +323,8 @@ if printf '%s\n' "$nb" | grep -q '^    if \[ "\$LAST_RESEARCH_OVS" != "\$TODAY" 
   ok "D6: yield 판단은 LAST_* 변수(호출 전 값) 세 개"; else bad "D6: yield 판단 줄이 사양과 다르다"; fi
 eq "D6: 블록 안에서 무거운 잡 날짜파일을 다시 읽지 않음" "$(printf '%s\n' "$nb" | grep -cE 'cat "\$(RESEARCH_OVERSEAS|EDGAR_SYNC|BROKER_FILLS)_LAST_RUN_FILE"')" "0"
 eq "D6: 블록 안에 비밀(CRON_SECRET·x-cron-secret)·curl 직접 호출 없음" "$(printf '%s\n' "$nb" | grep -v '^[[:space:]]*#' | grep -ciE 'cron_secret|x-cron-secret|curl ')" "0"
-iB="$(grep -n '^  # <<< broker-fills-daily' "$RUNNER" | cut -d: -f1)"; iD="$(grep -n '^  # >>> daily-bars-daily' "$RUNNER" | cut -d: -f1)"
-iE="$(grep -n '^  # <<< daily-bars-daily' "$RUNNER" | cut -d: -f1)"; iR="$(grep -n 'call "/api/cron/research-cycle-domestic"' "$RUNNER" | cut -d: -f1)"
+iB="$(grep -n '^  # <<< broker-fills-daily' "$RUNNER" | cut -d: -f1)"; iD="$(grep -n '^  # >>> daily-bars-daily (T-117)' "$RUNNER" | cut -d: -f1)"
+iE="$(grep -n '^  # <<< daily-bars-daily$' "$RUNNER" | cut -d: -f1)"; iR="$(grep -n 'call "/api/cron/research-cycle-domestic"' "$RUNNER" | cut -d: -f1)"
 eq "D6: 블록 위치 = broker-fills 블록 바로 뒤 · 국내 리서치 블록 앞" "$([ "$iD" -eq $((iB + 1)) ] && [ "$iR" -gt "$iE" ] && echo yes || echo no)" "yes"
 eq "D6: 상단 잡 목록 주석에 새 잡" "$(sed -n '1,50p' "$RUNNER" | grep -c '^#  - daily-bars        :')" "1"
 # 고정 문자열로 센다 — 이 서버의 ko_KR.UTF-8 에서 grep 이 한글 뒤 '.*' 를 맞추지 못하는 경우가 있었다(LC_ALL=C 에서는 맞음, 시험 작성 중 실측).

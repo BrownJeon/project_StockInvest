@@ -78,6 +78,8 @@ export const JOB_SPECS: readonly JobSpec[] = [
   daily('edgar-sync', 'ingest', 'overseas', 'sec', '07:00', 65),
   daily('broker-fills', 'ingest', 'common', 'kis', '07:20', 45),
   daily('daily-bars', 'ingest', 'common', 'kis', '07:40', 20),
+  // (T-170) 국내 일봉 저녁 증분 — 러너 창 18:10~18:54 + 같은 틱 앞 잡 여유 5분 = 50분
+  daily('daily-bars-kr', 'ingest', 'domestic', 'kis', '18:10', 50),
   daily('research-cycle-domestic', 'analysis', 'domestic', null, '16:00', 65),
   daily('news-fetch-overseas', 'ingest', 'overseas', 'rss', '06:00', 65),
   daily('news-fetch-domestic', 'ingest', 'domestic', 'rss', '06:00', 65),

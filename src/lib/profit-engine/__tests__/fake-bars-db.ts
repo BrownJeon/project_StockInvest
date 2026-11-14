@@ -6,7 +6,7 @@
  *  - 합성 종목·합성 가격만 쓴다. 실제 DB·KIS 호출 없음.
  */
 import { UpsertSim } from '@/lib/data/__tests__/sql-upsert-sim';
-import { MARK_STALE_SQL, RELABEL_ORPHAN_SQL } from '../daily-bars-store';
+import { MARK_STALE_SQL, RELABEL_ORPHAN_SQL, TARGET_MAX_DATES_SQL } from '../daily-bars-store';
 import type { RawBar } from '../daily-bars-quality';
 import type { FetchDailyPage, PageRequest } from '../daily-bars-kis';
 import { addDays } from '../daily-bars-time';
@@ -22,6 +22,8 @@ export class FakeBarsDb {
   signalCounts: Array<{ symbol: string; n: number }> = [];
   queries: Array<{ sql: string; params: unknown[] }> = [];
   failPositions = false;
+  /** (T-170) 기본 대상 「낡은 순」 정렬용 종목별 마지막 거래일 조회를 실패시킨다. */
+  failMaxDates = false;
 
   rows(market?: string, symbol?: string): Row[] {
     return [...this.sim.rows.values()]
@@ -78,6 +80,16 @@ export class FakeBarsDb {
       return [this.rows(String(params[0]), String(params[1]))
         .filter((r) => String(r.trade_date) >= from)
         .map((r) => ({ d: r.trade_date, close: r.close, is_final: r.is_final, flags: r.flags })), []];
+    }
+    if (sql === norm(TARGET_MAX_DATES_SQL)) {
+      if (this.failMaxDates) throw new Error('max dates unavailable');
+      const max = new Map<string, Row>();
+      for (const r of this.sim.rows.values()) {
+        const k = `${r.market}|${r.symbol}`;
+        const cur = max.get(k);
+        if (!cur || String(r.trade_date) > String(cur.max_d)) max.set(k, { market: r.market, symbol: r.symbol, max_d: r.trade_date });
+      }
+      return [[...max.values()], []];
     }
     if (sql === 'SELECT symbol FROM position_state ORDER BY symbol') {
       if (this.failPositions) throw new Error('position_state unavailable');

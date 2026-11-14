@@ -154,16 +154,40 @@ export const DEFAULT_SIGNAL_LOOKBACK_DAYS = 90;
 export const MAX_SIGNAL_TARGETS = 300;
 
 /**
- * 기본 대상 = 보유(position_state, 최우선) → 해외 분석 목록 → 최근 90일 시그널 종목(발화 수 많은 순, ≤300).
- * 각 SELECT 가 실패해도 나머지로 계속한다(출처 이름을 errors 에 남김). 심볼 이름 외의 값은 읽지 않는다.
+ * (T-170) 종목별 저장된 마지막 거래일 — 기본 대상의 「낡은 순」 정렬에만 쓴다. PK(market, symbol, trade_date) 묶음별 MAX 라 행을 다 읽지 않는다.
+ * 읽기 전용. 가격·수량 열은 읽지 않는다.
  */
-export async function loadDefaultTargets(db: Queryable): Promise<{ targets: Target[]; errors: string[] }> {
+export const TARGET_MAX_DATES_SQL =
+  `SELECT market, symbol, DATE_FORMAT(MAX(trade_date), '%Y-%m-%d') AS max_d FROM daily_bars GROUP BY market, symbol`;
+
+export interface DefaultTargetOptions {
+  /** (T-170) 이 시장의 종목만 남긴다(보유 포함). 'KR' 이면 해외 분석 목록을 읽지 않는다. */
+  market?: BarMarket;
+}
+
+/**
+ * 기본 대상 = 보유(position_state, 최우선) → 나머지(해외 분석 목록 → 최근 90일 시그널 종목, 발화 수 많은 순, ≤300)를
+ * **저장된 마지막 거래일이 오래된 순**으로(T-170).
+ *
+ * 왜 정렬하나(T-170): 한 번 실행 예산(호출 150·100초)보다 대상 수요가 크면 고정 순서의 뒤쪽 종목은 **영구히** 닿지 못한다
+ *   (2026-11-09~14 실측: 해외 분석 125종목이 앞에 오며 국내 43종목·해외 21종목이 11-06 에서 멈춤). 낡은 순이면 못 받은 종목이
+ *   다음 실행의 앞으로 오므로 굶주림이 「하루씩 돌아가며 늦음」으로 바뀐다.
+ *  - 보유는 그대로 맨 앞(심볼순). 정렬은 보유 다음부터다.
+ *  - 행이 없는 종목은 가장 낡은 것으로 본다(백필이 앞 — T-156 「신호 전에 이력 확보」).
+ *  - 같은 날짜끼리는 모은 순서(분석 → 시그널 발화 수 순)를 그대로 둔다(안정 정렬).
+ *  - 마지막 거래일 조회가 실패하면 모은 순서 그대로 계속하고 errors 에 'staleness_order' 를 남긴다.
+ * 각 SELECT 가 실패해도 나머지로 계속한다(출처 이름을 errors 에 남김). 심볼 이름·마지막 거래일 외의 값은 읽지 않는다.
+ */
+export async function loadDefaultTargets(
+  db: Queryable, opts: DefaultTargetOptions = {},
+): Promise<{ targets: Target[]; errors: string[] }> {
   const errors: string[] = [];
   const out: Target[] = [];
   const seen = new Set<string>();
   const add = (symbol: string, origin: Target['origin']) => {
     const market = marketOfSymbol(symbol);
     if (!market || seen.has(symbol)) return false;
+    if (opts.market && market !== opts.market) return false;
     seen.add(symbol);
     out.push({ symbol, market, origin });
     return true;
@@ -175,9 +199,12 @@ export async function loadDefaultTargets(db: Queryable): Promise<{ targets: Targ
     errors.push('position_state');
   }
   // T-156: configured analysis candidates need history before a signal exists.
-  const universe = await readOverseasUniverse(db);
-  for (const symbol of universe.symbols) add(symbol, 'analysis');
-  if (universe.degraded) errors.push('universe_list');
+  // (T-170) 해외 분석 목록은 해외 종목뿐이다 — 국내만 받는 실행은 읽지 않는다(읽기 실패 경고도 내지 않는다).
+  if (opts.market !== 'KR') {
+    const universe = await readOverseasUniverse(db);
+    for (const symbol of universe.symbols) add(symbol, 'analysis');
+    if (universe.degraded) errors.push('universe_list');
+  }
   try {
     const [rows] = await db.query<RowDataPacket[]>(
       `SELECT symbol, COUNT(*) AS n FROM signals
@@ -192,5 +219,27 @@ export async function loadDefaultTargets(db: Queryable): Promise<{ targets: Targ
   } catch {
     errors.push('signals');
   }
-  return { targets: out, errors };
+  return { targets: await orderByStaleness(db, out, errors), errors };
+}
+
+/** (T-170) 보유는 앞에 그대로, 나머지는 저장된 마지막 거래일 오름차순(행 없음 = 가장 낡음, 동률은 원래 순서). */
+async function orderByStaleness(db: Queryable, targets: Target[], errors: string[]): Promise<Target[]> {
+  const holdings = targets.filter((t) => t.origin === 'holding');
+  const rest = targets.filter((t) => t.origin !== 'holding');
+  if (rest.length < 2) return targets;
+  let maxDates: Map<string, string>;
+  try {
+    const [rows] = await db.query<RowDataPacket[]>(TARGET_MAX_DATES_SQL);
+    maxDates = new Map();
+    for (const r of rows ?? []) {
+      const d = typeof r.max_d === 'string' ? r.max_d : '';
+      if (d) maxDates.set(`${r.market}|${r.symbol}`, d);
+    }
+  } catch {
+    errors.push('staleness_order');
+    return targets;
+  }
+  const keyed = rest.map((t, i) => ({ t, i, d: maxDates.get(`${t.market}|${t.symbol}`) ?? '' }));
+  keyed.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.i - b.i));
+  return [...holdings, ...keyed.map((k) => k.t)];
 }
