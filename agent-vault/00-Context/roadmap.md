@@ -274,6 +274,7 @@ tags: [type/roadmap]
 - [x] (6) LLM 제공자 전환(claude-cli·home-m4-api)
 - [x] (2) RAG 검색·시그널 되먹임
 - [ ] (8) M4 주소·1단계 AI 필터 정합 [[T-038-llm-base-url-setting]]
+- [ ] (6) 비서 채팅 대화형 답변·수집 데이터 요약 첨부 — 2026-11-15 08:28 운영 배포(0.11.0), 사용자 화면 확인 대기 [[T-169-assistant-chat-data-context]]
 
 ## 인프라 · infra
 ### blue-green-release | 운영 배포
