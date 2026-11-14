@@ -37,6 +37,11 @@ const ROUTE = 'app/api/cron/news-fetch/route.ts';
 const ROUTE_TESTS = /^app\/api\/cron\/news-fetch\/__tests__\//;
 const HP_ROUTE = 'app/api/cron/holdings-premarket/route.ts';   // (T-119)
 const HP_ROUTE_TESTS = /^app\/api\/cron\/holdings-premarket\/__tests__\//;
+/**
+ * (T-169, 사용자 승인 2026-11-14 — 비서 채팅 B 범위 「뉴스 제목」) RSS 뉴스 제목을 `ci_raw_item` 에서 **SELECT 만** 하는 읽기 전용 채팅 요약 —
+ * 정확 일치 1개. 매매·판정 경로가 아니라 답변 프롬프트의 「뉴스 제목」 절이다. corp-intel 모듈은 import 하지 않는다(아래 T-169 시험이 고정).
+ */
+const CHAT_NEWS_READER = 'lib/chat/overview-context.ts';
 // (T-112) 잡 이름표 — 크론 러너가 부르는 이름 "holdings-premarket" 을 문자열로 적은 파일 3개(슬롯 표 1·그 시험 2). corp-intel 상수·키·모듈이 아니다.
 // (T-130) +2개: 홈·분석 화면의 잡 이름 한국어 라벨표(`lib/ops/reason-dictionary.ts` 의 JOB_NAME_KO)와 그 표 고정 시험 — 잡 이름 문자열을 키로만 쓴다.
 //   아래 두 번째 단언이 이름표 파일 전부에 그대로 적용된다: `holdings_premarket_*` 설정 키·`corp-intel` 참조가 들어오면 이 허용도 철회된다(약화 없음).
@@ -242,9 +247,26 @@ describe('src → corp-intel 참조는 허용 목록뿐', () => {
 
   test('🔴 corp-intel·ci_raw_item·ci_capture_ 를 언급하는 src 파일 = 라우트 둘(news-fetch·holdings-premarket)과 그 시험뿐', () => {
     const hits = others.filter((f) => /corp-intel|\bci_raw_item\b|\bci_capture_/.test(read(f))).map(rel);
-    expect(hits.filter((r) => !(r === ROUTE || ROUTE_TESTS.test(r) || r === HP_ROUTE || HP_ROUTE_TESTS.test(r)))).toEqual([]);
+    expect(hits.filter((r) => !(r === ROUTE || ROUTE_TESTS.test(r) || r === HP_ROUTE || HP_ROUTE_TESTS.test(r) || r === CHAT_NEWS_READER))).toEqual([]);
     expect(hits).toContain(ROUTE);
     expect(hits).toContain(HP_ROUTE);
+  });
+
+  test('🔴 (T-169) 허용된 채팅 뉴스 reader — lib/chat 의 참조는 그 파일 하나, ci_raw_item 은 SELECT 1문장뿐(쓰기·DDL 0), corp-intel 언급·import 0, ci_capture_ 0', () => {
+    // 위 「…라우트 둘과 그 시험뿐」은 base 의 다른 미등록 파일 때문에 실패할 수 있어 T-169 추가분만 따로 고정한다
+    expect(others.filter((f) => rel(f).startsWith('lib/chat/') && /corp-intel|\bci_raw_item\b|\bci_capture_/.test(read(f))).map(rel))
+      .toEqual([CHAT_NEWS_READER]);
+    const src = read(path.join(SRC, CHAT_NEWS_READER));
+    expect(src).not.toMatch(/corp-intel|\bci_capture_/);
+    expect(importsOf(src).filter((m) => /corp-intel|profit-engine/.test(m))).toEqual([]);
+    expect(src.match(/\bFROM ci_raw_item\b/g)).toHaveLength(1);
+    expect([...src.matchAll(/\b(\w+)\s+ci_raw_item\b/g)].map((m) => m[1].toUpperCase()).filter((w) => w !== 'FROM')).toEqual([]);
+    // 이 파일은 문자열 메서드 `.replace()` 를 써서 낱말 /i 검사는 오탐 — 대문자 SQL 키워드와 SQL 문장 모양을 따로 본다
+    expect(src).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|TRUNCATE|CREATE|ALTER|DROP)\b/);
+    expect(src).not.toMatch(/\b(insert\s+into|update\s+\w+\s+set|delete\s+from|replace\s+into|truncate\s+table|create\s+table|alter\s+table|drop\s+table)\b/i);
+    expect(src).not.toMatch(/\bsystem_config\b/);
+    // corp-intel 은 그 파일을 참조하지 않는다
+    expect(ownFiles.filter((f) => /lib\/chat|overview-context/.test(read(f))).map(rel)).toEqual([]);
   });
 
   test('🔴 (T-119) holdings-premarket 상수·키를 쓰는 src 파일 = corp-intel 과 그 라우트·시험뿐 (+ 잡 이름표 5파일 — T-112 3·T-130 2, 이름표 파일은 상수·키 0)', () => {

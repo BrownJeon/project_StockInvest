@@ -35,6 +35,11 @@ const ROUTE = 'app/api/cron/daily-bars/route.ts';
 const ROUTE_TESTS = /^app\/api\/cron\/daily-bars\/__tests__\//;
 /** (T-108, Leader 결정 2026-10-30) 일봉 테이블 이름을 쓸 수 있는 매매 경로 밖 ops 읽기 파일 — 정확 일치 1개(아래 시험이 읽기 전용·profit-engine import 0 을 확인). */
 const OPS_BARS_READER = 'lib/ops/metrics/daily-bars-read.ts';
+/**
+ * (T-169, 사용자 승인 2026-11-14 — 비서 채팅 B 범위 「수집 데이터 요약」) 일봉 테이블을 **SELECT 만** 하는 읽기 전용 채팅 요약 — 정확 일치 1개.
+ * 매매 경로가 아니라 표시 경로다(답변 프롬프트의 「후보 지표」 절). 아래 T-169 시험이 쓰기·DDL 0·profit-engine import 0 을 확인한다.
+ */
+const CHAT_OVERVIEW_BARS_READER = 'lib/chat/overview-context.ts';
 
 const engineFiles = ALL.filter((f) => OWN.test(rel(f)) && !isTest(rel(f)));
 const read = (f: string) => fs.readFileSync(f, 'utf8');
@@ -200,7 +205,7 @@ describe('매매 경로 → profit-engine 을 참조하지 않는다', () => {
     ['@/lib/profit-engine', /@\/lib\/profit-engine\b/, []],
     ['상대경로 profit-engine', /(from\s+|import\(\s*|require\(\s*)['"](\.{1,2}\/)+([^'"]*\/)?profit-engine(\/[^'"]*)?['"]/, []],
     ['daily-bars 모듈명', /daily-bars-(collector|kis|paginate|quality|store|time|request)\b/, []],
-    ['daily_bars 테이블', /\bdaily_bars\b/, [OPS_BARS_READER]],
+    ['daily_bars 테이블', /\bdaily_bars\b/, [OPS_BARS_READER, CHAT_OVERVIEW_BARS_READER]],
   ] as [string, RegExp, string[]][])('%s 참조 0건', (_n, re, allowed) => {
     const hits = guarded.filter((f) => re.test(read(f))).map(rel).filter((r) => !allowed.includes(r));
     expect(hits).toEqual([]);
@@ -211,6 +216,26 @@ describe('매매 경로 → profit-engine 을 참조하지 않는다', () => {
     expect(src).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|TRUNCATE|CREATE|ALTER|DROP)\b/i);
     expect(src).not.toMatch(/profit-engine/);
     expect(engineFiles.filter((f) => /ops\/metrics/.test(read(f))).map(rel)).toEqual([]);
+  });
+
+  test('(T-169) 허용된 채팅 요약 일봉 reader — lib/chat 의 일봉 참조는 그 파일 하나, SELECT 만(쓰기·DDL 0), profit-engine import 0, profit-engine 이 그 파일을 참조하지 않음', () => {
+    // 위 「daily_bars 테이블 참조 0건」은 base 의 다른 미등록 파일 때문에 실패할 수 있어 T-169 추가분만 따로 고정한다
+    expect(guarded.filter((f) => rel(f).startsWith('lib/chat/') && /\bdaily_bars\b/.test(read(f))).map(rel)).toEqual([CHAT_OVERVIEW_BARS_READER]);
+    const src = read(path.join(SRC, CHAT_OVERVIEW_BARS_READER));
+    // 이 파일은 문자열 메서드 `.replace()` 를 써서 낱말 /i 검사는 오탐 — 대문자 SQL 키워드와 SQL 문장 모양을 따로 본다
+    expect(src).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|TRUNCATE|CREATE|ALTER|DROP)\b/);
+    expect(src).not.toMatch(/\b(insert\s+into|update\s+\w+\s+set|delete\s+from|replace\s+into|truncate\s+table|create\s+table|alter\s+table|drop\s+table)\b/i);
+    // 일봉을 가리키는 SQL 은 `FROM daily_bars` 하나뿐이고, SQL 상수는 전부 SELECT 로 시작한다, DB 호출은 한 곳(읽기 도우미)
+    expect(src.match(/\bFROM daily_bars\b/g)).toHaveLength(1);
+    expect([...src.matchAll(/\b(\w+)\s+daily_bars\b/g)].map((m) => m[1].toUpperCase()).filter((w) => w !== 'FROM')).toEqual([]);
+    const sqlConsts = [...src.matchAll(/^const \w+_SQL =\s*'(\w+)/gm)].map((m) => m[1]);
+    expect(sqlConsts.length).toBeGreaterThanOrEqual(5);
+    expect(new Set(sqlConsts)).toEqual(new Set(['SELECT']));
+    expect(src.match(/\.query\(/g)).toHaveLength(1);
+    // (뉴스 수집 모듈 쪽 import 0 은 그 모듈의 격리 시험 T-169 항목이 같은 파일에 대해 따로 확인한다 — 이 파일에 그 모듈 이름을 쓰면 그 시험의 언급 금지에 걸린다)
+    expect(src).not.toMatch(/profit-engine/);
+    expect(importsOf(src).filter((m) => /profit-engine|daily-bars/.test(m))).toEqual([]);
+    expect(engineFiles.filter((f) => /lib\/chat|overview-context/.test(read(f))).map(rel)).toEqual([]);
   });
 });
 

@@ -135,6 +135,21 @@ export interface RunLlmOptions {
   stage?: 1 | 2;
   /** Hybrid Stage 1 도메인 모델 선택 — 'domestic' | 'overseas'. */
   domain?: 'domestic' | 'overseas';
+  /** T-169 — 별도 system 지시(비서 채팅 전용). 없으면 caller 에 넘기는 옵션·요청이 T-169 이전과 같다. */
+  system?: string;
+  /** T-169 — Ollama num_ctx(home-m4-api 전용). 없으면 넘기지 않는다. */
+  numCtx?: number;
+}
+
+/**
+ * T-169 — system·numCtx 는 **값이 있을 때만** caller 옵션에 키를 만든다. 다른 호출부(필드를 안 넘김)는 caller 가 받는
+ * 옵션 객체가 T-169 이전과 같다(`home-m4-api-system-t169.test.ts`).
+ */
+function chatOnlyOptions(o: RunLlmOptions): { system?: string; numCtx?: number } {
+  return {
+    ...(typeof o.system === 'string' && o.system.length > 0 ? { system: o.system } : {}),
+    ...(typeof o.numCtx === 'number' ? { numCtx: o.numCtx } : {}),
+  };
 }
 
 /** 1회 호출 (재시도 없음, 큐 없음). */
@@ -146,6 +161,7 @@ export async function runLlmOnce(prompt: string, opts: RunLlmOptions | number = 
     responseFormat: o.responseFormat ?? 'json',
     ...(o.toolFree ? { toolFree: true } : {}),
     model: o.model,
+    ...chatOnlyOptions(o),
   });
 }
 
@@ -161,6 +177,7 @@ export async function runLlm(prompt: string, opts: RunLlmOptions | number = {}):
   const timeoutMs = o.timeoutMs ?? 90000;
   const responseFormat = o.responseFormat ?? 'json';
   const model = o.model;
+  const chatOnly = chatOnlyOptions(o);
   const { provider, caller } = await buildCaller({ stage: o.stage, domain: o.domain });
 
   // hybrid stage 결정 — caller 종류로 직렬화 여부 판단
@@ -171,7 +188,7 @@ export async function runLlm(prompt: string, opts: RunLlmOptions | number = {}):
     let lastErr: unknown;
     for (let tries = 0; tries < 3; tries++) {
       try {
-        return await caller.call(prompt, { timeoutMs, responseFormat, model, ...(o.toolFree ? { toolFree: true } : {}) });
+        return await caller.call(prompt, { timeoutMs, responseFormat, model, ...(o.toolFree ? { toolFree: true } : {}), ...chatOnly });
       } catch (e) {
         lastErr = e;
         const msg = e instanceof Error ? e.message : String(e);

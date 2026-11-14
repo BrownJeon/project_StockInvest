@@ -11,6 +11,11 @@ import { trackCall } from '@/lib/api-usage';
  * 분석가가 단일 프롬프트(JSON 응답 강제)를 보내는 패턴이라
  * messages는 [{role:'user', content: prompt}] 한 개만 보낸다.
  *
+ * T-169: `opts.system` 이 있으면(비서 채팅) `[{role:'system'},{role:'user'}]` 두 개를 보낸다 — home-m4-api 는 첫 메시지가
+ * system 이 아닐 때만 「시그널 평가·JSON 단일 객체」 지시를 앞에 붙이므로, 대화형 답이 필요한 호출은 system 을 직접 준다.
+ * `opts.numCtx` 가 있으면 `options.num_ctx` 로 보낸다. **둘 다 없으면 요청 본문은 T-169 이전과 바이트 단위로 같다**
+ * (`home-m4-api-system-t169.test.ts` 가 고정).
+ *
  * 로깅: HOME_M4_API_DEBUG=1 환경변수로 요청·응답 본문 일부를 stdout에 출력.
  */
 const DEBUG = process.env.HOME_M4_API_DEBUG === '1';
@@ -38,14 +43,18 @@ export class HomeM4ApiCaller implements LlmCaller {
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     const startedAt = Date.now();
     const symbolCount = countSymbolsInPrompt(prompt);
+    // T-169 — 빈 문자열·비정상 값은 "없음"과 같다(요청 본문을 바꾸지 않는다).
+    const system = typeof opts?.system === 'string' && opts.system.length > 0 ? opts.system : null;
+    const numCtx = typeof opts?.numCtx === 'number' && Number.isInteger(opts.numCtx) && opts.numCtx > 0 ? opts.numCtx : null;
+    const extraLog = `${system ? ` sys=${system.length}` : ''}${numCtx ? ` num_ctx=${numCtx}` : ''}`;
 
     if (DEBUG) {
       console.log(
-        `[home-m4-api req] base=${this.base} model=${this.model} chars=${prompt.length} symbols=${symbolCount} temp=${this.temperature}`,
+        `[home-m4-api req] base=${this.base} model=${this.model} chars=${prompt.length} symbols=${symbolCount} temp=${this.temperature}${extraLog}`,
       );
     } else {
       // 운영용 짧은 로그 (항상 출력 — 분석·이상 탐지)
-      console.log(`[home-m4-api req] chars=${prompt.length} symbols=${symbolCount}`);
+      console.log(`[home-m4-api req] chars=${prompt.length} symbols=${symbolCount}${extraLog}`);
     }
 
     try {
@@ -58,8 +67,12 @@ export class HomeM4ApiCaller implements LlmCaller {
         },
         body: JSON.stringify({
           model: this.model,
-          messages: [{ role: 'user', content: prompt }],
-          options: { temperature: this.temperature },
+          messages: system
+            ? [{ role: 'system', content: system }, { role: 'user', content: prompt }]
+            : [{ role: 'user', content: prompt }],
+          options: numCtx
+            ? { temperature: this.temperature, num_ctx: numCtx }
+            : { temperature: this.temperature },
         }),
         signal: ctrl.signal,
         cache: 'no-store',

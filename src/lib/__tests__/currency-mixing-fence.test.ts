@@ -56,16 +56,38 @@ describe('🔴 통화 환산 경계 — 새 지점이 생기면 실패한다', (
     // 즐겨찾기 3종은 T-035 이전부터 USD 로 표시하던 별개 경로다(이번 작업 범위 밖).
     // T-068 stop-alert: 같은 틱 시세의 `price ÷ priceUsd` 로 표시용 환율만 만든다(알림 문구의 $ 표기). 판정(손절가 비교)은
     //   원화끼리(`priceKrw` vs `position_state.entry_price` 기반 손절가)이고 이 환율은 판정에 쓰이지 않는다.
+    // T-169 (사용자 승인 2026-11-14 — 비서 채팅 B 범위 「달러 표기」): 읽기 전용 채팅 요약. KIS 해외 시세의 `price` 가 원화 환산값이라
+    //   프롬프트에 달러를 적으려고 같은 틱의 `priceUsd` 를 담고 표시 글로만 쓴다(주문·판정·집계에 쓰지 않음 — 아래 T-169 시험이 고정).
     expect(filesContaining('priceUsd')).toEqual([
       'app/api/cron/stop-alert/route.ts',
       'app/api/favorites/route.ts',
       'app/favorites/FavoritesPage.tsx',
       'app/favorites/[symbol]/FavoriteDetailPage.tsx',
+      'lib/chat/context-builder.ts',
+      // T-169 Reviewer M1 (사용자 승인 2026-11-14 범위 안 — 읽기 전용 채팅 요청 검증): 클라이언트가 되돌려 보낸 첨부 종목의
+      //   `priceUsd` 가 유한수·null 인지 타입만 검사한다(값을 계산·환산하지 않음 — 아래 T-169 시험이 고정).
+      'lib/chat/request-guard.ts',
       'lib/display-amount.ts',
       'lib/exchanges/kis-overseas.ts',
       'lib/exchanges/types.ts',
       'lib/reports/trade-report.ts',
     ].sort());
+  });
+
+  test('(T-169) 채팅 쪽에서 priceUsd 를 읽는 파일은 context-builder.ts(표시용)·request-guard.ts(타입 검사)뿐이다', () => {
+    // 위 목록 시험은 base 의 다른 미등록 파일 때문에 실패할 수 있어 T-169 추가분만 따로 고정한다
+    expect(filesContaining('priceUsd').filter((p) => p.startsWith('lib/chat/'))).toEqual(['lib/chat/context-builder.ts', 'lib/chat/request-guard.ts']);
+    // request-guard.ts — import 는 SymbolContext 타입 하나뿐, 거래소·환산·SQL·연산 없음(유한수 검사와 복사만)
+    const guard = FILES.find((f) => f.path === 'lib/chat/request-guard.ts')!.text;
+    expect([...guard.matchAll(/^import\b[^;]*?from\s+['"]([^'"]+)['"]/gm)].map((m) => m[0])).toEqual(["import type { SymbolContext } from './context-builder'"]);
+    expect(guard).not.toMatch(/\bkis\b|fx|toDisplayAmount|usdPerKrwFromQuote|\b(INSERT|UPDATE|DELETE|SELECT)\b|priceUsd\s*[*\/+-]/);
+    const src = FILES.find((f) => f.path === 'lib/chat/context-builder.ts')!.text;
+    // import 는 시세 조회(kis 진입점)·지표 요약·같은 폴더 표기 도우미뿐 — 주문·안전장치·시그널·환산 모듈 없음
+    expect([...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]).sort())
+      .toEqual(['./money-format', './symbol-resolver', '@/lib/exchanges/kis', '@/lib/strategy/ai-filter']);
+    // kis 진입점은 읽기 함수 두 개만 부른다(createOrder 등 없음)
+    expect([...new Set([...src.matchAll(/\bkis\.(\w+)/g)].map((m) => m[1]))].sort()).toEqual(['getCandles', 'getTicker']);
+    expect(src).not.toMatch(/submitOrder|createOrder|toDisplayAmount|usdPerKrwFromQuote|\b(INSERT|UPDATE|DELETE|SELECT)\b/);
   });
 
   test('🔴 목표가(원통화)를 KRW 값과 직접 연산하는 줄이 없다', () => {

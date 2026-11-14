@@ -37,6 +37,11 @@ export class ClaudeCliCaller implements LlmCaller {
   private _invoke(prompt: string, opts: LlmCallOptions = {}): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? 90000;
     const model = resolveModel(opts.model);
+    // T-169 — system 지시는 `--system-prompt`(위 주석: 이 CLI 버전에서 Execution error)를 쓰지 않고 본문 앞에 합친다.
+    // system 이 없으면(다른 모든 호출부) 인자는 T-169 이전과 같다. numCtx 는 Ollama 전용이라 무시한다.
+    const fullPrompt = typeof opts.system === 'string' && opts.system.length > 0
+      ? `${opts.system}\n\n${prompt}`
+      : prompt;
     return new Promise((resolve, reject) => {
       // 부모가 Claude Code 세션일 때 claude CLI가 중첩 실행 감지 → SIGTERM(exit 143) 자종료.
       // 관련 감지 env 전부 제거해야 정상 동작.
@@ -64,7 +69,7 @@ export class ClaudeCliCaller implements LlmCaller {
       ]) delete cleanEnv[k];
 
       const proc = spawn('claude', [
-        '--print', prompt,
+        '--print', fullPrompt,
         ...(opts.toolFree
           ? ['--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
               '--setting-sources', '', '--settings', '{"disableAllHooks":true}',

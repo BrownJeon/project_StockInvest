@@ -142,7 +142,9 @@ test('successful reply is saved atomically after the LLM, under owner row lock',
   mockGetConnection.mockResolvedValue(conn);
   const res = await messages.POST(req('POST', { content: 'hello', draftPrompt: 'x' }), ctx('2'));
   expect(res.status).toBe(200);
-  expect(await res.json()).toMatchObject({ userMessageId: 10, assistantMessageId: 11, response: 'answer' });
+  // T-169: 새 답은 저장 전에 끝 줄 참고용 고지가 붙는다(승인 데모 구조 — answer-format.ts normalizeNewChatAnswer)
+  const { CHAT_DISCLAIMER } = require('@/lib/chat/answer-format') as typeof import('@/lib/chat/answer-format');
+  expect(await res.json()).toMatchObject({ userMessageId: 10, assistantMessageId: 11, response: `answer\n\n${CHAT_DISCLAIMER}` });
   expect(order).toEqual(['llm', 'begin', 'commit']);
   expect(conn.query.mock.calls[0][1]).toEqual([2, 7]);
   expect(conn.query.mock.calls[3][1]).toEqual(['hello', 2, 7]);

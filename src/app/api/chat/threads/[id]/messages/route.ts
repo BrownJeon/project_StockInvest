@@ -6,17 +6,22 @@ import { runLlm } from '@/lib/llm/provider';
 import { getActiveProvider, getProviderConfig } from '@/lib/llm/provider';
 import { resolveSymbolsInText } from '@/lib/chat/symbol-resolver';
 import { buildSymbolContexts, formatSymbolContextsAsText, type SymbolContext } from '@/lib/chat/context-builder';
+import { cleanDraftPrompt, normalizeChatAnswer, normalizeNewChatAnswer } from '@/lib/chat/answer-format';
+import { buildOverviewContext } from '@/lib/chat/overview-context';
+import { bodyText, checkChatTextLimits, explicitSymbols, validAttachedContext } from '@/lib/chat/request-guard';
 import {
-  buildAnalystSystemPrompt,
-  buildAnalystUserMessage,
-  buildDrafterSystemPrompt,
-  buildDrafterUserMessage,
-} from '@/lib/chat/system-prompt';
+  CHAT_HISTORY_LIMIT,
+  CHAT_NUM_CTX,
+  buildAnalystRequest,
+  buildDrafterRequest,
+  chatModelLabel,
+  formatRecentMessages,
+} from '@/lib/chat/chat-request';
 import { ANALYST_STYLE_LABEL, getStyleConfig } from '@/lib/strategy/style';
 
 export const dynamic = 'force-dynamic';
 
-const RECENT_HISTORY_LIMIT = 8;
+const RECENT_HISTORY_LIMIT = CHAT_HISTORY_LIMIT;
 
 interface BodyShape {
   content?: string;
@@ -27,7 +32,11 @@ interface BodyShape {
   skipDraftStage?: boolean;
 }
 
-/** GET — thread 메시지 목록 */
+/**
+ * GET — thread 메시지 목록.
+ * T-169 A4: assistant 메시지 본문은 **표시용으로만** 정규화한다(예전에 저장된 JSON 답도 문장으로 — 안내 문구 없이 문장만, 사용자 결정).
+ * DB 원본은 바꾸지 않는다. 사용자 메시지는 그대로.
+ */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireChatUser(req);
   if (!auth.ok) return auth.res;
@@ -55,7 +64,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     messages: rows.map(r => ({
       id:             databaseId(r.id),
       role:           r.role as 'user' | 'assistant' | 'system',
-      content:        r.content as string,
+      content:        r.role === 'assistant' ? normalizeChatAnswer(r.content) : (r.content as string),
       draftPrompt:    r.draft_prompt as string | null,
       draftPromptRaw: r.draft_prompt_raw as string | null,
       contextAttached: r.context_attached
@@ -79,8 +88,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   const body = (await req.json().catch(() => ({}))) as BodyShape;
-  const userContent = (body.content ?? '').trim();
+  const userContent = bodyText(body.content);
   if (!userContent) return NextResponse.json({ ok: false, error: 'content required' }, { status: 400 });
+  // T-169 Reviewer M1 — 질문·다듬은 질문 각각 2,000자 상한(DB·LLM 이전에 거절, 화면 오류 띠가 읽는 한국어 error)
+  const limitError = checkChatTextLimits({ content: userContent, draftPrompt: bodyText(body.draftPrompt) });
+  if (limitError) return NextResponse.json({ ok: false, error: limitError }, { status: 400 });
 
   const pool = getPool();
 
@@ -92,15 +104,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: false, error: 'thread not found' }, { status: 404 });
   }
 
-  // 컨텍스트 — body.attachedContext가 있으면 echo, 없으면 재계산
+  // 컨텍스트 — body.attachedContext 가 검증을 통과하면(최대 3개·필드 타입) echo, 아니면 서버에서 재계산(T-169 M1·L3)
   let symbolContexts: SymbolContext[];
-  if (Array.isArray(body.attachedContext) && body.attachedContext.length > 0) {
-    symbolContexts = body.attachedContext;
+  const echoed = validAttachedContext(body.attachedContext);
+  if (echoed) {
+    symbolContexts = echoed;
   } else {
     const resolved = await resolveSymbolsInText(userContent);
-    const explicit = (body.attachedSymbols ?? [])
-      .filter((s): s is string => typeof s === 'string' && s.length > 0)
-      .map(s => ({ symbol: s, name: s, matchedText: s }));
+    const explicit = explicitSymbols(body.attachedSymbols);
     const merged = [...resolved];
     for (const e of explicit) if (!merged.some(r => r.symbol === e.symbol)) merged.push(e);
     symbolContexts = await buildSymbolContexts(merged);
@@ -116,13 +127,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
      ORDER BY m.id DESC LIMIT ?`,
     [threadId, auth.userId, RECENT_HISTORY_LIMIT],
   );
-  const recentMessages = historyRows
-    .reverse()
-    .map(r => `${r.role === 'user' ? '사용자' : '분석가'}: ${String(r.content).slice(0, 500)}`)
-    .join('\n');
+  // T-169 — 메시지당 300자(B2), assistant 의 예전 JSON 답은 문장으로 바꿔 넣는다(다시 JSON 답을 부르지 않게)
+  const recentMessages = formatRecentMessages(historyRows.reverse());
+
+  // T-169 B1·B2 — 시스템 수집 데이터 요약. 읽기 전용, 절별 실패 격리라 던지지 않는다. drafter 와 겹쳐 돌린다.
+  const overviewPromise = buildOverviewContext({ userId: auth.userId, now: new Date() });
 
   // 정제 프롬프트 — skipDraftStage=true이거나 body.draftPrompt 미지정 시 즉석 생성
-  let draftPrompt = (body.draftPrompt ?? '').trim();
+  let draftPrompt = bodyText(body.draftPrompt);
   let draftPromptRaw: string | null = null;
 
   const analystStyle = ANALYST_STYLE_LABEL;   // 프롬프트 표기용 라벨 (룰 선별과 무관 — D3)
@@ -136,30 +148,49 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const finalModel = provider === 'claude'
     ? (isAllowedClaudeModel(body.modelOverride) ? body.modelOverride : 'sonnet')
     : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
+  // T-169 A5 — 기록·응답에는 실제 호출 모델(hybrid = stage1_model)
+  const recordedModel = chatModelLabel(provider, cfg, finalModel);
 
   if (!draftPrompt) {
-    // skipDraftStage 또는 누락 — 서버에서 즉석 정제
-    const drafterSystem = buildDrafterSystemPrompt({ analystStyle, style, attachedSummary, recentMessages });
-    const drafterUser = buildDrafterUserMessage(userContent, attachedSummary);
+    // skipDraftStage 또는 누락 — 서버에서 즉석 정제 (T-169: 지시는 system 으로 분리, JSON 이면 원문 질문으로 대체)
+    const drafter = buildDrafterRequest({ analystStyle, style, userInput: userContent, attachedSummary });
     const drafterModel = provider === 'claude' ? 'haiku' : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
-    draftPromptRaw = await runLlm(`${drafterSystem}\n\n${drafterUser}`, {
+    draftPromptRaw = await runLlm(drafter.user, {
+      system: drafter.system,
+      numCtx: CHAT_NUM_CTX,
       timeoutMs: 60_000,
       responseFormat: 'text',
       model: drafterModel,
     });
-    draftPrompt = draftPromptRaw.trim();
+    draftPrompt = cleanDraftPrompt(draftPromptRaw, userContent);
   }
 
-  // 본 응답 생성
-  const analystSystem = buildAnalystSystemPrompt({ analystStyle, style, attachedSummary, recentMessages });
-  const analystUser = buildAnalystUserMessage(draftPrompt, attachedSummary, recentMessages);
+  // 본 응답 생성 — 지시는 system 메시지로(home-m4-api 의 시그널 평가 JSON 지시 주입 차단), 수집 데이터 요약 첨부
+  const overview = await overviewPromise;
+  const analyst = buildAnalystRequest({
+    analystStyle, style, refinedPrompt: draftPrompt, attachedSummary, recentMessages, overviewText: overview.text,
+  });
   const t0 = Date.now();
-  const responseText = await runLlm(`${analystSystem}\n\n${analystUser}`, {
+  const rawResponse = await runLlm(analyst.user, {
+    system: analyst.system,
+    numCtx: CHAT_NUM_CTX,
     timeoutMs: 120_000,
     responseFormat: 'text',
     model: finalModel,
   });
   const latencyMs = Date.now() - t0;
+  // T-169 A4 — 저장 **전** 정규화: LLM JSON 을 그대로 저장·표시하지 않는다
+  //   + 새 답 전용 후처리(Leader 결정): 굵게·제목 기호 제거, 끝 줄 참고용 고지 보장. GET(예전 답 표시)에는 쓰지 않는다(D2 = 문장만).
+  //   + 언급한 엔진 후보의 상태 줄 — 판정 기준은 이 질문의 요약을 만들 때 쓴 후보 목록(답 본문에서 후보를 추정하지 않는다)
+  //   + 자료 기준 시각 줄(QA F4) — 기준 시각도 요약 빌더가 실제로 넣은 절의 값을 그대로 넘긴다(답에서 추정하지 않는다)
+  const normalized = normalizeNewChatAnswer(rawResponse, {
+    candidates: overview.candidates ?? [],
+    sourceTimes: overview.sourceTimes ?? [],
+  });
+  if (normalized.source !== 'text') {
+    console.warn(`[chat] answer normalized source=${normalized.source} provider=${provider} model=${recordedModel}`);
+  }
+  const responseText = normalized.text;
 
   // Lock only the short persistence transaction, never while waiting for the LLM.
   // Re-check ownership under lock so concurrent deletion/reassignment cannot write
@@ -187,7 +218,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const [asstIns] = await connection.query<ResultSetHeader>(
       `INSERT INTO chat_messages (thread_id, role, content, llm_provider, llm_model, latency_ms)
        VALUES (?, 'assistant', ?, ?, ?, ?)`,
-      [threadId, responseText, provider, finalModel, latencyMs],
+      [threadId, responseText, provider, recordedModel, latencyMs],
     );
     const currentTitle = String(locked[0].title);
     newTitle = currentTitle === '새 대화' && userContent.length > 0
@@ -218,7 +249,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     assistantMessageId,
     response: responseText,
     llmProvider: provider,
-    llmModel: finalModel,
+    llmModel: recordedModel,
     latencyMs,
     contextAttached: symbolContexts,
     threadTitle: newTitle,

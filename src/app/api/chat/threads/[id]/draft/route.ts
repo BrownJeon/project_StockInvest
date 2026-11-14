@@ -5,12 +5,20 @@ import { parseThreadId, ownedThread, requireChatUser } from '@/lib/chat/ownershi
 import { runLlm, getActiveProvider, getProviderConfig } from '@/lib/llm/provider';
 import { resolveSymbolsInText } from '@/lib/chat/symbol-resolver';
 import { buildSymbolContexts, formatSymbolContextsAsText } from '@/lib/chat/context-builder';
-import { buildDrafterSystemPrompt, buildDrafterUserMessage } from '@/lib/chat/system-prompt';
+import { cleanDraftPrompt } from '@/lib/chat/answer-format';
+import { bodyText, checkChatTextLimits, explicitSymbols } from '@/lib/chat/request-guard';
+import {
+  CHAT_HISTORY_LIMIT,
+  CHAT_NUM_CTX,
+  buildDrafterRequest,
+  chatModelLabel,
+  formatRecentMessages,
+} from '@/lib/chat/chat-request';
 import { ANALYST_STYLE_LABEL, getStyleConfig } from '@/lib/strategy/style';
 
 export const dynamic = 'force-dynamic';
 
-const RECENT_HISTORY_LIMIT = 8;
+const RECENT_HISTORY_LIMIT = CHAT_HISTORY_LIMIT;
 
 interface BodyShape {
   content?: string;
@@ -30,8 +38,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: false, error: 'invalid thread id' }, { status: 400 });
   }
   const body = (await req.json().catch(() => ({}))) as BodyShape;
-  const userContent = (body.content ?? '').trim();
+  const userContent = bodyText(body.content);
   if (!userContent) return NextResponse.json({ ok: false, error: 'content required' }, { status: 400 });
+  // T-169 Reviewer M1 — 질문 2,000자 상한(DB·LLM 이전에 거절, 화면 오류 띠가 읽는 한국어 error)
+  const limitError = checkChatTextLimits({ content: userContent });
+  if (limitError) return NextResponse.json({ ok: false, error: limitError }, { status: 400 });
 
   const pool = getPool();
   // thread 존재 확인 (스레드 없는데 draft만 시도하는 경우 차단)
@@ -41,9 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // 종목 인식 + 컨텍스트
   const resolved = await resolveSymbolsInText(userContent);
-  const explicit = (body.attachedSymbols ?? [])
-    .filter((s): s is string => typeof s === 'string' && s.length > 0)
-    .map(s => ({ symbol: s, name: s, matchedText: s }));
+  const explicit = explicitSymbols(body.attachedSymbols);
   const merged = [...resolved];
   for (const e of explicit) if (!merged.some(r => r.symbol === e.symbol)) merged.push(e);
   const contexts = await buildSymbolContexts(merged);
@@ -58,10 +67,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
      ORDER BY m.id DESC LIMIT ?`,
     [threadId, auth.userId, RECENT_HISTORY_LIMIT],
   );
-  const recentMessages = historyRows
-    .reverse()
-    .map(r => `${r.role === 'user' ? '사용자' : '분석가'}: ${String(r.content).slice(0, 300)}`)
-    .join('\n');
+  const recentMessages = formatRecentMessages(historyRows.reverse());
 
   // 모델 — Claude 활성 시 사용자 modelOverride(허용 시) 또는 haiku, 로컬LLM은 설정값
   const provider = await getActiveProvider();
@@ -74,16 +80,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const analystStyle = ANALYST_STYLE_LABEL;   // 프롬프트 표기용 라벨 (룰 선별과 무관 — D3)
   const style = await getStyleConfig();
-  const drafterSystem = buildDrafterSystemPrompt({ analystStyle, style, attachedSummary, recentMessages });
-  const drafterUser = buildDrafterUserMessage(userContent, attachedSummary);
+  // T-169 A2·A3 — 지시는 system 메시지로 분리(home-m4-api 의 시그널 평가 JSON 지시 주입 차단)
+  const drafter = buildDrafterRequest({ analystStyle, style, userInput: userContent, attachedSummary, recentMessages });
 
   const t0 = Date.now();
-  const draftPrompt = await runLlm(`${drafterSystem}\n\n${drafterUser}`, {
+  const draftRaw = await runLlm(drafter.user, {
+    system: drafter.system,
+    numCtx: CHAT_NUM_CTX,
     timeoutMs: 60_000,
     responseFormat: 'text',
     model: draftModel,
   });
   const draftLatencyMs = Date.now() - t0;
+  // T-169 A4 — JSON 이 섞이면 다듬은 질문 대신 사용자 원문을 돌려준다(사용자가 검토·편집한다)
+  const draftPrompt = cleanDraftPrompt(draftRaw, userContent);
 
   // A thread can be removed or transferred while the model is running.
   if (!(await ownedThread(pool, threadId, auth.userId))) {
@@ -91,10 +101,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
   return NextResponse.json({
     ok: true,
-    draftPrompt: draftPrompt.trim(),
+    draftPrompt,
     attachedContext: contexts,
     draftLatencyMs,
     draftProvider: provider,
-    draftModel,
+    draftModel: chatModelLabel(provider, cfg, draftModel),   // T-169 A5 — hybrid 는 실제 호출 모델(stage1_model)
   });
 }

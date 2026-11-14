@@ -21,6 +21,15 @@ export interface LlmCallOptions {
   stage?: 1 | 2;
   /** Hybrid Stage 1 모델·프롬프트 분기용 도메인. provider !== 'hybrid' 면 무시. */
   domain?: HybridDomain;
+  /**
+   * T-169 — 별도 system 지시(비서 채팅 전용). **비어 있거나 없으면 요청이 T-169 이전과 바이트 단위로 같다.**
+   *  - home-m4-api: `messages` 앞에 `{role:'system'}` 로 보낸다. 첫 메시지가 system 이 아니면 home-m4-api `/v1/chat` 이
+   *    「시그널 평가·JSON 단일 객체」 지시를 자동으로 붙이므로(분석가 채팅이 JSON 으로 답하던 원인) 대화형 호출은 이 필드를 쓴다.
+   *  - claude: `${system}\n\n${prompt}` 로 합쳐 기존 CLI 인자 형태 그대로 실행한다(채팅 route 가 하던 결합과 같은 결과).
+   */
+  system?: string;
+  /** T-169 — Ollama `num_ctx`(home-m4-api 전용). 없으면 `options` 에 넣지 않는다. claude 는 무시. */
+  numCtx?: number;
 }
 
 export interface LlmCaller {

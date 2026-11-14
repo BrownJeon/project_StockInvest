@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="demo-version" content="T-169-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<title>T-169 비서 답변 형식 · v1</title>
+<style>
+/* 앱 토큰 — src/app/globals.css 값을 그대로 복사(앱은 다크 단일 테마). 미리보기 휴대폰 안에서만 쓴다. */
+:root {
+  --bg: #0f1115;
+  --bg2: #171a21;
+  --bg3: #1f2430;
+  --bg4: #262b36;
+  --border: #262b36;
+  --border2: #323848;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --up: #ef4444;
+  --down: #3b82f6;
+  --accent: #f59e0b;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-h: 60px;
+}
+/* 데모 설명 영역 토큰(라이트 기본 · 다크 대응). 앱 화면에는 쓰지 않는다. */
+:root {
+  --d-bg: #f5f6f8; --d-bg2: #ffffff; --d-bg3: #eceef2; --d-border: #d5d9e1;
+  --d-text: #1a1d24; --d-muted: #565e6e; --d-accent: #9a4a06; --d-accent-bg: #fff4e2;
+  --d-ok: #17803d; --d-bad: #b42318;
+  --ann-core: #f59e0b; --ann-basis: #2dd4bf; --ann-cand: #a3e635; --ann-note: #aab2c5;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --d-bg: #0f1115; --d-bg2: #171a21; --d-bg3: #1f2430; --d-border: #323848;
+    --d-text: #e6e8ee; --d-muted: #9aa2b4; --d-accent: #f5a524; --d-accent-bg: #2a2214;
+    --d-ok: #4ade80; --d-bad: #f87171;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --d-bg: #0f1115; --d-bg2: #171a21; --d-bg3: #1f2430; --d-border: #323848;
+  --d-text: #e6e8ee; --d-muted: #9aa2b4; --d-accent: #f5a524; --d-accent-bg: #2a2214;
+  --d-ok: #4ade80; --d-bad: #f87171;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { max-width: 100vw; overflow-x: clip; }
+body { margin: 0; background: var(--d-bg); color: var(--d-text);
+  font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif; -webkit-text-size-adjust: 100%; }
+::selection { background: rgba(245,158,11,.35); }
+.num { font-variant-numeric: tabular-nums; }
+.wrap { max-width: 1320px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 20px; line-height: 1.3; margin: 0 0 6px; text-wrap: balance; }
+h2 { font-size: 15px; margin: 0 0 8px; }
+p { margin: 6px 0; }
+.muted { color: var(--d-muted); }
+.banner { border: 1px solid var(--d-accent); background: var(--d-accent-bg); color: var(--d-text);
+  padding: 10px 14px; border-radius: 10px; margin: 12px 0 16px; }
+.banner strong { color: var(--d-accent); }
+.box { border: 1px solid var(--d-border); background: var(--d-bg2); border-radius: 10px; padding: 14px 16px; margin: 0 0 16px; min-width: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; margin: 0 0 16px; }
+.ctl { display: grid; gap: 6px; min-width: 0; }
+.ctl > span { font-size: 12px; color: var(--d-muted); font-weight: 600; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button, .btn { font: inherit; font-size: 13px; color: var(--d-text); background: var(--d-bg2); border: 1px solid var(--d-border);
+  border-radius: 8px; min-height: 44px; padding: 8px 12px; cursor: pointer; }
+.seg button:hover, .btn:hover { background: var(--d-bg3); }
+.seg button[aria-pressed="true"] { border-color: var(--d-accent); color: var(--d-accent); font-weight: 700; box-shadow: inset 0 -2px 0 var(--d-accent); }
+:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.stage { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1100px) { .stage:not(.wide) { grid-template-columns: minmax(0, 1fr) 360px; } }
+.frames { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; align-items: flex-start; min-width: 0; }
+.fcol { width: var(--fw, 412px); max-width: 100%; min-width: 0; }
+.fcol[hidden] { display: none; }
+.fcap { font-size: 13px; font-weight: 700; margin: 0 0 4px; }
+.fsub { font-size: 12px; color: var(--d-muted); margin: 0 0 8px; min-height: 18px; }
+.tag-now { color: var(--d-muted); }
+.tag-new { color: var(--d-accent); }
+.meter { font-size: 12px; color: var(--d-muted); margin-top: 8px; }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; margin-top: 4px; }
+.checks .y { color: var(--d-ok); }
+.checks .n { color: var(--d-bad); }
+.side { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.rules ol { margin: 6px 0 0; padding-left: 20px; }
+.rules li { margin: 4px 0; }
+.legend { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 7px; border-radius: 6px; background: #171a21; border: 1px dashed currentColor; margin-right: 4px; }
+.lg-core { color: var(--ann-core); } .lg-basis { color: var(--ann-basis); } .lg-cand { color: var(--ann-cand); } .lg-note { color: var(--ann-note); }
+.dec { border-top: 1px solid var(--d-border); padding-top: 12px; margin-top: 12px; }
+.dec:first-of-type { border-top: 0; padding-top: 0; margin-top: 4px; }
+.dec h3 { font-size: 14px; margin: 0 0 4px; }
+.dec .seg button { flex: 1 1 140px; text-align: left; }
+.rec { font-size: 12px; color: var(--d-muted); margin-top: 6px; }
+details { border: 1px solid var(--d-border); background: var(--d-bg2); border-radius: 10px; padding: 0 16px; margin: 0 0 12px; }
+summary { cursor: pointer; font-weight: 700; min-height: 44px; display: flex; align-items: center; }
+details[open] { padding-bottom: 12px; }
+.tbl { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; min-width: 560px; }
+th, td { text-align: left; vertical-align: top; padding: 7px 8px; border-bottom: 1px solid var(--d-border); }
+th { color: var(--d-muted); font-weight: 600; }
+code { font-size: 12px; background: var(--d-bg3); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+ul.tight { margin: 6px 0; padding-left: 18px; }
+ul.tight li { margin: 3px 0; }
+
+/* ── 미리보기 휴대폰: src/app/ai/ChatPage.tsx 의 인라인 스타일을 옮겨 왔다(배치·크기·색 그대로) ── */
+.phone { width: 100%; height: 800px; border: 1px solid var(--d-border); border-radius: 18px; overflow: hidden;
+  display: flex; flex-direction: column; background: var(--bg); color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif; font-size: 14px; line-height: normal; }
+.p-hd { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid var(--border);
+  background: var(--bg2); flex-shrink: 0; height: 38px; }
+.p-hd .ic { font-size: 18px; color: var(--text); }
+.p-hd .plus { font-size: 18px; color: var(--accent); font-weight: 700; }
+.p-hd .ttl { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.p-main { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.p-row { display: flex; }
+.p-row.me { justify-content: flex-end; }
+.p-bub { max-width: 85%; padding: 10px 12px; border-radius: 14px; background: var(--bg2); border: 1px solid var(--border); min-width: 0; }
+.p-row.me .p-bub { background: rgba(251,191,36,.15); border-color: rgba(251,191,36,.3); }
+.p-meta { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+.p-txt { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.p-draftbtn { background: none; border: none; font: inherit; font-size: 10px; color: var(--muted); cursor: pointer; text-decoration: underline; padding: 0; margin-top: 6px; }
+.p-draft { margin-top: 4px; padding: 8px; background: var(--bg3); border-radius: 8px; font-size: 11px; color: var(--muted); white-space: pre-wrap; }
+.p-draft .ex { color: var(--accent); }
+.p-chips { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.p-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; padding: 2px 6px; border-radius: 8px;
+  background: var(--bg3); color: var(--muted); border: 1px solid var(--border2); }
+.p-chip b { color: var(--text); font-weight: 600; }
+.p-comp { border-top: 1px solid var(--border); background: var(--bg2); padding: 6px 8px; flex-shrink: 0; }
+.p-cr { display: flex; gap: 6px; align-items: flex-end; }
+.p-ta { flex: 1; padding: 8px 10px; font-size: 13px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg3);
+  color: var(--muted); min-height: 38px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-send { padding: 0 12px; height: 38px; display: inline-flex; align-items: center; border-radius: 10px; background: var(--bg3); color: var(--muted); font-weight: 700; font-size: 12px; flex-shrink: 0; }
+.p-opts { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 10px; }
+.p-pill { background: var(--bg3); border: 1px solid var(--border); color: var(--muted); padding: 2px 8px; border-radius: 6px; white-space: nowrap; flex-shrink: 0; }
+.p-sel { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.p-hint { margin-left: auto; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.p-nav { display: flex; height: var(--nav-h); border-top: 1px solid var(--border); background: var(--bg2); flex-shrink: 0; }
+.p-nav span { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; color: var(--muted); }
+.p-nav span::before { content: ""; width: 18px; height: 18px; border: 1.5px solid currentColor; border-radius: 5px; opacity: .8; }
+.p-nav .on { color: var(--accent); }
+
+/* 구조 표시(데모 전용 안내선) — 실제 화면에는 글자만 나온다 */
+.p-txt.ann .sg { display: block; position: relative; outline: 1px dashed var(--c); outline-offset: 3px; border-radius: 3px; margin: 18px 0 10px; }
+.p-txt.ann .sg:first-child { margin-top: 14px; }
+.p-txt.ann .sg::before { content: attr(data-tag); position: absolute; top: -17px; left: -2px; font-size: 11px; font-weight: 700; line-height: 14px;
+  color: var(--c); background: var(--bg2); padding: 0 4px; white-space: nowrap; }
+.sg.k-core { --c: var(--ann-core); } .sg.k-basis { --c: var(--ann-basis); } .sg.k-cand { --c: var(--ann-cand); } .sg.k-note { --c: var(--ann-note); }
+.p-txt:not(.ann) .sg { display: inline; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>비서 답변을 대화형 문장으로 — 답변 텍스트 규격</h1>
+  <p class="muted">T-169 · 데모 v1 (delta) · 화면 배치·컴포넌트는 그대로이고, 말풍선 안 글만 바뀝니다.</p>
+
+  <div class="banner" role="note">
+    <strong>답변 예시 — 실제 모델 출력 아님, 투자 권유 아님.</strong>
+    「변경 후」 말풍선은 이 규격으로 답하면 이런 모양이라는 예시 글입니다. 종목·수치는 운영 DB 를 읽기 전용으로 조회한 값(기준 시각 표기)이고, 일봉으로 계산한 지표는 대략치입니다. 「현재」 말풍선은 운영 DB 에 실제 저장된 답 그대로입니다.
+  </div>
+
+  <div class="box">
+    <h2>무엇이 바뀌나</h2>
+    <ul class="tight">
+      <li>지금: 비서 답이 매매 판정용 JSON(<code>selectedIndices</code>·<code>confidence</code>…)으로 나옵니다. 운영 기록상 홈서버 모델 답 15건이 모두 이 모양이었습니다.</li>
+      <li>변경 후: 일반 대화 문장으로 답하고, 질문에 종목이 없어도 시스템이 모은 데이터(경제 흐름·엔진 최근 후보·지표·뉴스 제목)를 근거로 씁니다.</li>
+      <li>예전에 저장된 JSON 답은 지우지 않고, 볼 때만 문장으로 바꿔 보여 줍니다(장면 ④).</li>
+    </ul>
+  </div>
+
+  <div class="controls">
+    <div class="ctl" role="group" aria-labelledby="lb-scene"><span id="lb-scene">장면</span>
+      <div class="seg" id="scene">
+        <button type="button" data-v="1" aria-pressed="true">① 추천 5개 질문</button>
+        <button type="button" data-v="2" aria-pressed="false">② 엔비디아 어때?</button>
+        <button type="button" data-v="3" aria-pressed="false">③ 자료가 부족한 질문</button>
+        <button type="button" data-v="4" aria-pressed="false">④ 예전 JSON 답 표시</button>
+      </div>
+    </div>
+    <div class="ctl" role="group" aria-labelledby="lb-side"><span id="lb-side">비교</span>
+      <div class="seg" id="side">
+        <button type="button" data-v="both" aria-pressed="true">나란히</button>
+        <button type="button" data-v="now" aria-pressed="false">현재만</button>
+        <button type="button" data-v="new" aria-pressed="false">변경 후만</button>
+      </div>
+    </div>
+    <div class="ctl" role="group" aria-labelledby="lb-w"><span id="lb-w">기기 폭</span>
+      <div class="seg" id="width">
+        <button type="button" data-v="360" aria-pressed="false">360px</button>
+        <button type="button" data-v="412" aria-pressed="true">412px</button>
+        <button type="button" data-v="1280" aria-pressed="false">1280px</button>
+      </div>
+    </div>
+    <div class="ctl" role="group" aria-labelledby="lb-ann"><span id="lb-ann">구조 안내선</span>
+      <div class="seg" id="ann">
+        <button type="button" data-v="on" aria-pressed="true">보이기</button>
+        <button type="button" data-v="off" aria-pressed="false">실제 화면처럼</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="frames" id="frames">
+      <section class="fcol" data-col="now" aria-labelledby="cap-now">
+        <p class="fcap tag-now" id="cap-now">현재 — 운영 DB 에 저장된 답</p>
+        <p class="fsub" id="sub-now"></p>
+        <div class="phone" id="ph-now" role="region" aria-label="현재 비서 화면 미리보기"></div>
+        <div class="checks" id="ck-now" aria-label="현재 답 형식 검사"></div>
+      </section>
+      <section class="fcol" data-col="new" aria-labelledby="cap-new">
+        <p class="fcap tag-new" id="cap-new">변경 후 — 답변 예시(실제 모델 출력 아님)</p>
+        <p class="fsub" id="sub-new"></p>
+        <div class="phone" id="ph-new" role="region" aria-label="변경 후 비서 화면 미리보기"></div>
+        <div class="checks" id="ck-new" aria-label="변경 후 답 형식 검사"></div>
+        <p class="meter num" id="meter" aria-live="polite"></p>
+      </section>
+    </div>
+
+    <aside class="side">
+      <div class="box rules">
+        <h2>답의 구조 규칙</h2>
+        <ol>
+          <li><span class="legend lg-core">핵심 답</span> 첫 문장에서 질문에 바로 답한다.</li>
+          <li><span class="legend lg-basis">근거·기준 시각</span> 첨부된 수치만 쓰고, 언제 값인지 「(11-14 05:55 기준)」처럼 붙인다. 없는 자료는 한 문장으로 밝히고 있는 자료로 답한다.</li>
+          <li><span class="legend lg-cand">검토 후보</span> 종목마다 근거 1~2개와 위험 1개. 「지금 사라」 같은 단정은 쓰지 않는다.</li>
+          <li><span class="legend lg-note">참고용 고지</span> 끝에 한 줄 — 이 시스템의 검증된 전략 판정이 아니라 참고용.</li>
+        </ol>
+        <p class="muted" style="margin-top:10px">형식: 화면이 글자를 그대로 보여 주므로(<code>pre-wrap</code>, 마크다운 해석 없음) 짧은 문단과 <code>1.</code>·<code>-</code> 목록만 쓴다. <code>**</code>·<code>#</code>·표·JSON·코드블록은 쓰지 않는다.</p>
+        <p class="muted">안내선(점선·이름표)은 데모에서 규칙을 보이려고 덧그린 것입니다. 「실제 화면처럼」을 누르면 사용자가 볼 모양 그대로입니다.</p>
+      </div>
+
+      <div class="box" id="decisions">
+        <h2>결정 필요</h2>
+        <p class="muted">고르면 미리보기가 바로 바뀝니다. 권고는 디자이너 의견입니다.</p>
+
+        <div class="dec">
+          <h3>D1. 추천 질문에 후보를 몇 개까지 자세히 쓸까</h3>
+          <div class="seg" id="d1" role="group" aria-label="D1 선택">
+            <button type="button" data-v="A" aria-pressed="true">A · 요청한 개수만큼(최대 5개)</button>
+            <button type="button" data-v="B" aria-pressed="false">B · 3개만 자세히, 나머지는 이름만</button>
+          </div>
+          <p class="rec">권고 A [가능성 높음] — 사용자가 「5개」라고 콕 집어 물었으므로 그대로 답하는 쪽이 맞다. 대신 종목당 세 줄(이름·근거·위험)로 줄였다. 412px 실측: A 766자 · 말풍선 600px 로 메시지 영역(622px)과 거의 같은 높이, B 654자 · 532px — 차이가 크지 않다. 어느 쪽이든 질문 말풍선까지 함께 보려면 한 번 스크롤한다. 장면 ①에 적용.</p>
+        </div>
+
+        <div class="dec">
+          <h3>D2. 예전 JSON 답을 문장으로 바꿔 보일 때 표시할까</h3>
+          <div class="seg" id="d2" role="group" aria-label="D2 선택">
+            <button type="button" data-v="A" aria-pressed="false">A · 문장만</button>
+            <button type="button" data-v="B" aria-pressed="true">B · 끝에 「예전 형식을 바꿔 보여 드림」 한 줄</button>
+          </div>
+          <p class="rec">권고 B [가능성 높음] — 저장된 원문과 화면 글이 달라지므로 그 사실을 한 줄로 밝히는 편이 오해가 적다. 화면 요소는 늘지 않고 글 한 줄만 붙는다. 장면 ④에 적용.</p>
+        </div>
+
+        <div class="dec">
+          <h3>D3. 경제 흐름 요약에 「다음 금리 결정일·물가 기준월」도 넣을까</h3>
+          <div class="seg" id="d3" role="group" aria-label="D3 선택">
+            <button type="button" data-v="A" aria-pressed="true">A · 넣는다(+40자 안팎)</button>
+            <button type="button" data-v="B" aria-pressed="false">B · 지금 설계대로(라벨·물가·금리·시각만)</button>
+          </div>
+          <p class="rec">권고 A [가능성 높음] — 이 값은 이미 같은 기록 행에 있다(다음 결정일 12-09). 빼면 모델이 「다음 주에 회의가 있다」는 질문의 전제를 확인하지 못한다. 장면 ③에 적용. 단, 경제 흐름 자료를 채팅에 쓰는 것 자체가 Leader 확인 사항이다(아래 메모 1).</p>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <details>
+    <summary>데모에 쓴 실제 값과 기준 시각 (운영 DB 읽기 전용 조회, 2026-11-14 17:5x KST)</summary>
+    <div class="tbl">
+      <table>
+        <caption class="muted" style="text-align:left;padding-bottom:6px">원천 · 값 · 기준 시각 · 데모에서 쓰인 곳</caption>
+        <thead><tr><th>원천</th><th>값</th><th>기준 시각</th><th>쓰인 곳</th></tr></thead>
+        <tbody>
+          <tr><td><code>chat_messages</code> 41·42</td><td>질문 원문·정제 프롬프트·JSON 답(318자), hybrid · qwen2.5:14b-instruct · 9.9s</td><td>11-14 17:32</td><td>①④ 현재</td></tr>
+          <tr><td><code>chat_messages</code> 37·38</td><td>「엔비디아 어때?」·JSON 답, 종목 첨부 없음, 8.7s</td><td>05-22 23:11</td><td>② 현재</td></tr>
+          <tr><td><code>chat_messages</code> 39·40</td><td>데이터센터 질문·JSON 답, 18.9s (③ 질문의 실제 기록은 없음)</td><td>11-08 14:34</td><td>③ 현재</td></tr>
+          <tr><td><code>chat_messages</code> 누적</td><td>홈서버(hybrid) 답 15건 중 JSON 15건(qwen 11·llama3 4), claude sonnet 3건은 문장</td><td>조회 시점</td><td>설명</td></tr>
+          <tr><td><code>macro_regime_label_log</code> 해외 최신</td><td>normal_tightening · CPI 전년비 3.7%(9월분, 10월분 미반영) · 금리 상단 4.00%(09-17부터) · 6개월 전 3.75% → +0.25 tightening · 다음 결정일 12-09</td><td>11-14 05:55</td><td>①②③ 후</td></tr>
+          <tr><td><code>signals</code> 최근 3일</td><td>119건. 사용: MCHP RSI 34.0(11-14 08:01)·FTNT 33.2·DDOG 31.4·ALNY 34.6(11-14 04:18)·한화오션 30.8, 진입 48,500~48,800원·목표 +3.5%·손절 -1.8%·신호 시점 48,750원(11-13 16:01)</td><td>11-13~14</td><td>① 후</td></tr>
+          <tr><td><code>paper_fills</code> 최근 3일</td><td>21건. 위 후보는 전략 미검증(unvalidated)·미등록(unregistered)이라 가상 체결로만 기록</td><td>11-12~14</td><td>① 후</td></tr>
+          <tr><td><code>daily_bars</code> 미국</td><td>11-13 종가 MCHP $62.25 · FTNT $128.00 · DDOG $183.84 · ALNY $167.00 · NVDA $161.11</td><td>11-13 장 마감(11-14 07:40 수집)</td><td>①② 후</td></tr>
+          <tr><td>일봉으로 계산(예시 · 대략치)</td><td>NVDA 5일 -13.7% · 20일 -24.8% · RSI14 25 · EMA20 $193.10 · EMA60 $215.17 · 60일 고점 $239.24 / MCHP 5일 +6.7% / FTNT 20일 -24.3% / DDOG 60일 고점 대비 약 -37% / ALNY 5일 +7.1%·20일 -28.0%</td><td>최근 60봉</td><td>①② 후</td></tr>
+          <tr><td><code>daily_bars</code> 국내</td><td>한화오션 마지막 일봉 11-06 47,650원 (국내 44종목 중 42종목이 11-06에서 멈춤)</td><td>11-06</td><td>① 후 위험 문구</td></tr>
+          <tr><td><code>ci_raw_item</code> 뉴스</td><td>최근 24시간 527건(마지막 수집 17:00). 데모 답에는 제목을 옮기지 않았다</td><td>11-14 17:00</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">매도·청산 신호와 보유·주문 수량·금액은 데모에 넣지 않았다(계좌 정보로 읽힐 수 있어서). 「NVIDIA CORP」 칩의 값(161.11, -13.7%)은 실제 화면에서는 질문 시점의 KIS 시세로 채워지며 여기서는 일봉 값으로 대신했다.</p>
+  </details>
+
+  <details>
+    <summary>Leader 확인 메모 (사용자 결정 아님)</summary>
+    <ul class="tight">
+      <li>1) 경제 흐름 기록을 채팅 요약에 쓰는 것 — <code>src/lib/strategy/macro-regime/types.ts</code> 머리 주석이 「AI 프롬프트에는 쓰이지 않는다」, 의존 경계 시험 주석이 「C1 프롬프트 승격은 별 task」라고 적는다. 표를 직접 SELECT 하면 시험(모듈 import 검사)은 통과하지만 그 의도와 맞는지 Leader·analyst 판단이 필요하다. 라벨 한국어 표기 코드도 없다(이 데모는 「보통·긴축」으로 적었다).</li>
+      <li>2) 국내 일봉이 11-07 수집 뒤 멈춰 있다(44종목 중 42종목 마지막 11-06). 후보 지표 절은 신호 시점 지표(<code>signals.indicators</code>)를 우선 쓰는 편이 정확하다.</li>
+      <li>3) <code>signals.price</code> 는 해외도 원화 환산값이다. 달러 표기는 일봉 종가나 <code>paper_fills.limit_price</code>(USD)에서 가져와야 한다. MCHP 는 일봉 종가 $62.25 와 신호 시점 $61.02 가 달라, 어느 값을 「현재가」로 쓸지 정해야 한다.</li>
+      <li>4) 최근 후보 절에 매도·청산 신호를 넣으면 보유 종목이 드러난다. 데모는 매수 후보만 썼다.</li>
+      <li>5) 기존 화면의 메타 줄·종목 칩·「정제 프롬프트 보기」 글자가 10px 로 11px 하한보다 작다. 이번 범위(배치·컴포넌트 불변) 밖이라 그대로 두었다.</li>
+    </ul>
+  </details>
+</main>
+
+<script>
+const MSG = {"37": {"content": "엔비디아 어때?", "draft": "투자 성향: aggressive, 보유 기간: 1일 ~ 3일, 목표 수익률: +2.5%\n\n엔비디아 주식에 대한 현재 시세와 기술적 지표를 바탕으로 매수 추천을 받고 싶습니다. 다음 정보를 참고하여 분석해주세요:\n\n- 최근 가격 및 거래량\n- RSI, MACD, EMA 등 주요 기술적 지표 수치\n\n1. 매수 결정 시 P_win, R_win, R_loss를 각각 얼마로 가정할까요?\n2. 손절가 설정은 어떻게 될까요?\n3. 매수 추천 시 주의해야 할 핵심 위험 요소는 무엇인가요?"}, "38": {"content": "{\n  \"selectedIndices\": [],\n  \"confidence\": 0,\n  \"ev\": {\n    \"pWin\": 0.0,\n    \"rWin\": 0.0,\n    \"rLoss\": -0.0,\n    \"evPct\": 0.0\n  },\n  \"reasoning\": \"엔비디아 주식에 대한 현재 시세와 기술적 지표 정보가 제공되지 않았습니다. RSI, MACD, EMA 등의 구체적인 수치가 필요합니다.\",\n  \"warnings\": [\"RSI, MACD, EMA 등 주요 기술적 지표 수치를 포함한 종목 컨텍스트가 필요합니다.\"]\n}", "draft": ""}, "39": {"content": "ai 데이터센터 관련해서 냉각모듈과 전력관련 주식의 주도주와 추천주식 정리해서 알려줘", "draft": "투자 성향: aggressive, 보유 기간: 1~10일, 목표 수익률: +2.5%\n\nAI 데이터센터 관련 냉각 모듈과 전력 관련 주식의 주도주와 추천 주식을 정리해 주세요. 특히, 해당 업종에서 강세를 보이는 기업들의 최근 주가 동향, RSI, EMA, MACD 등의 기술적 지표를 포함하여 분석해 주시기 바랍니다. 또한, 추천 주식의 매수 추천 시에는 P_win, R_win, R_loss를 가정하고, 손절가와 함께 주식 투자 시 주의해야 할 핵심 위험 3가지를 명시해 주세요."}, "40": {"content": "{\"selectedIndices\":[],\"confidence\":0,\"ev\":{\"pWin\":0.0,\"rWin\":0.0,\"rLoss\":-0.0,\"evPct\":0.0},\"reasoning\":\"AI 데이터센터 관련 냉각 모듈과 전력 관련 주식의 컨텍스트가 부족하여 구체적인 매수 추천이 불가능합니다. RSI, EMA, MACD 등의 기술적 지표와 최근 주가 동향이 제공되면 더 정확한 분석이 가능합니다.\",\"warnings\":[\"데이터 부족으로 구체적인 추천이 불가능합니다.\"]}", "draft": ""}, "41": {"content": "지금의 수집데이터와 지표나 경제흐름으로 추천해줄 종목 5개 추천해줘", "draft": "투자 성향: aggresive, 보유 기간: 1~10일, 목표 수익률: +2.5%\n\n다음 수집 데이터와 지표를 바탕으로 5개의 종목을 추천해주세요. 추천 종목은 RSI가 45 이하인 종목 중에서 골든크로스, 브레이크아웃, 역전략 등이 성립되는 종목을 우선적으로 고려합니다. 또한, 최근 경제 흐름과 시장 동향을 반영하여 안정성과 수익성을 동시에 고려한 종목을 추천해주세요."}, "42": {"content": "{\n  \"selectedIndices\": [],\n  \"confidence\": 0,\n  \"ev\": {\n    \"pWin\": 0,\n    \"rWin\": 0,\n    \"rLoss\": 0,\n    \"evPct\": 0\n  },\n  \"reasoning\": \"현재 제공된 데이터로는 RSI와 골든크로스, 브레이크아웃, 역전략 등이 성립되는 종목을 구체적으로 추천하기 어렵습니다. RSI, 이동평균, MACD, 5봉 변화율 등과 같은 지표의 구체적인 값이 필요합니다. 이를 통해 더 정확한 추천이 가능합니다.\",\n  \"warnings\": [\"데이터 부족으로 구체적인 추천 불가\"]\n}", "draft": ""}};
+
+const Q1 = MSG["41"].content;
+const Q2 = MSG["37"].content;
+const Q3 = '다음 주 FOMC 결과 예측해줘';
+const PROFILE = '투자 성향: aggressive, 보유 기간: 1~10일, 목표 수익률: +2.5%';
+const META_QWEN = 'hybrid · qwen2.5:14b-instruct';
+const DISCLAIM = '이 내용은 이 시스템의 검증된 전략 판정이 아니라 참고용입니다.';
+
+const MACRO_BASIS = '경제 흐름 (11-14 05:55 기준)\n- 미국 소비자물가 전년 대비 3.7%(9월분)로 과열 기준 4%보다 낮습니다.\n- 기준금리 상단 4.00%, 6개월 전보다 0.25%p 높아 「보통·긴축」으로 분류됩니다.';
+const CAND_HEAD = '검토 후보 (엔진 신호 11-13~14 · 미국 일봉 11-13 종가)';
+const C = {
+  mchp: '마이크로칩(NAS:MCHP) $62.25\n   근거: RSI 34 과매도, 5일 +6.7%\n   위험: 20일 평균이 60일 평균 아래',
+  ftnt: '포티넷(NAS:FTNT) $128.00\n   근거: RSI 33, 저점이 높아지는 중\n   위험: 20일 동안 -24.3% 하락',
+  ddog: '데이터독(NAS:DDOG) $183.84\n   근거: RSI 31, 저점 상승\n   위험: 60일 고점보다 약 37% 낮음',
+  alny: '앨나일람(NAS:ALNY) $167.00\n   근거: RSI 35, 5일 +7.1% 반등\n   위험: 20일 동안 -28.0% 하락',
+  hwo:  '한화오션(042660) 48,750원(11-13)\n   근거: RSI 31, 진입 구간 48,500~48,800원\n   위험: 국내 일봉이 11-06에 멈춰 있음'
+};
+const VALID_NOTE = '모두 아직 검증을 통과하지 않은 전략에서 나와, 실제 주문 없이 가상 체결로만 기록되고 있습니다.';
+
+const ANS = {
+  '1A': [
+    ['core', '① 핵심 답', '지금 데이터로는 크게 빠진 뒤 반등을 노리는 과매도 종목이 엔진 후보의 대부분이라, 그중 5개를 검토 후보로 골랐습니다. 금리가 오르는 쪽이라 반등이 짧게 끝날 수 있다는 점은 먼저 감안하세요.'],
+    ['basis', '② 근거 · 기준 시각', MACRO_BASIS],
+    ['cand', '③ 검토 후보 · 근거 1~2 · 위험 1', CAND_HEAD + '\n1. ' + C.mchp + '\n2. ' + C.ftnt + '\n3. ' + C.ddog + '\n4. ' + C.alny + '\n5. ' + C.hwo + '\n\n다섯 종목 ' + VALID_NOTE],
+    ['note', '④ 참고용 고지', DISCLAIM]
+  ],
+  '1B': [
+    ['core', '① 핵심 답', '지금 데이터로는 크게 빠진 뒤 반등을 노리는 과매도 종목이 엔진 후보의 대부분입니다. 가장 최근 신호 순으로 3개를 먼저 정리했고, 금리가 오르는 쪽이라 반등이 짧게 끝날 수 있다는 점은 먼저 감안하세요.'],
+    ['basis', '② 근거 · 기준 시각', MACRO_BASIS],
+    ['cand', '③ 검토 후보 · 근거 1~2 · 위험 1', CAND_HEAD + '\n1. ' + C.mchp + '\n2. ' + C.ftnt + '\n3. ' + C.ddog + '\n\n나머지 후보: 앨나일람(NAS:ALNY), 한화오션(042660). 더 보시려면 말씀해 주세요.\n세 종목 ' + VALID_NOTE],
+    ['note', '④ 참고용 고지', DISCLAIM]
+  ],
+  '2': [
+    ['core', '① 핵심 답', '엔비디아는 많이 빠져 과매도 구간에 들어왔지만 추세는 아직 아래를 향하고 있어, 「싸 보이는 것」과 「돌아선 것」은 구분해서 보셔야 합니다.'],
+    ['basis', '② 근거 · 기준 시각', '수치 (미국 일봉 11-13 종가 기준)\n- 종가 $161.11, 5일 -13.7%, 20일 -24.8%\n- RSI14 25로 과매도 구간\n- 20일 평균 $193.10이 60일 평균 $215.17보다 낮은 하락 추세\n- 60일 고점 $239.24보다 약 33% 낮음'],
+    ['cand', '③ 근거 1~2 · 위험 1', '보는 법\n- 반등 쪽 근거: RSI 25는 흔히 과매도로 보는 30보다 낮습니다.\n- 위험: 20일 평균을 되찾는 것처럼 추세가 돌아섰다는 신호는 아직 없습니다.\n- 엔진의 최근 3일 매수 후보에는 들어 있지 않습니다.'],
+    ['basis', '② 근거 · 기준 시각', '경제 흐름도 기준금리 상단 4.00%로 6개월 전보다 높아 성장주에 우호적인 환경은 아닙니다(11-14 05:55 기준).'],
+    ['note', '④ 참고용 고지', DISCLAIM]
+  ],
+  '3A': [
+    ['core', '① 핵심 답 · 없는 자료 한 문장', '다음 주(11-16~20)에는 FOMC 금리 결정이 없습니다. 이 시스템이 아는 다음 결정일은 12월 9일이고, 결과를 예측할 자료(금리 선물 같은 시장 기대치)는 수집하지 않아 확률로 말씀드리기는 어렵습니다.'],
+    ['basis', '② 근거 · 기준 시각', '대신 지금 있는 자료로 보면 (11-14 05:55 기준)\n- 기준금리 상단 4.00%, 9월 17일부터 적용\n- 6개월 전 3.75%보다 0.25%p 높아 「긴축」 방향\n- 소비자물가 전년 대비 3.7%(9월분, 10월분은 아직 반영 전)'],
+    ['cand', '③ 해석 · 위험', '물가가 과열 기준(4%) 아래이긴 하지만 3%대 후반이라, 금리를 서둘러 내릴 근거가 강하다고 보기는 어렵습니다. 금리에 민감한 성장주는 결정일 전후로 흔들릴 수 있습니다.'],
+    ['note', '④ 참고용 고지', DISCLAIM]
+  ],
+  '3B': [
+    ['core', '① 핵심 답 · 없는 자료 한 문장', '다음 주 FOMC 결과를 예측할 자료(회의 일정·금리 선물 같은 시장 기대치)는 이 시스템에 없어 확률로 말씀드리기는 어렵습니다.'],
+    ['basis', '② 근거 · 기준 시각', '대신 지금 있는 자료로 보면 (11-14 05:55 기준)\n- 기준금리 상단 4.00%, 6개월 전 3.75%보다 0.25%p 높아 「긴축」 방향\n- 소비자물가 전년 대비 3.7%'],
+    ['cand', '③ 해석 · 위험', '물가가 과열 기준(4%) 아래이긴 하지만 3%대 후반이라, 금리를 서둘러 내릴 근거가 강하다고 보기는 어렵습니다. 금리에 민감한 성장주는 변동이 클 수 있습니다.'],
+    ['note', '④ 참고용 고지', DISCLAIM]
+  ]
+};
+
+/* 장면 ④ — A4 normalizeChatAnswer 규칙대로 id 42 를 표시용으로 바꾼 결과(저장 원문은 그대로) */
+function convertLegacy(raw, mark) {
+  const o = JSON.parse(raw);
+  const body = ['answer', 'response', 'message', 'content', 'text', 'reasoning'].map(k => o[k]).find(v => typeof v === 'string' && v.trim());
+  let out = body.trim();
+  if (Array.isArray(o.warnings) && o.warnings.length) out += '\n\n참고: ' + o.warnings.filter(w => typeof w === 'string').join(' / ');
+  if (mark) out += '\n\n(예전 형식으로 저장된 답을 문장으로 바꿔 보여 드립니다.)';
+  return out;
+}
+
+const DRAFT_NEW = {
+  1: PROFILE + '\n\n지금 수집된 데이터(경제 흐름, 엔진 최근 후보, 지표)를 근거로 검토할 만한 종목 5개를 추천해 주세요.',
+  2: PROFILE + '\n\n엔비디아(NAS:NVDA)의 첨부된 시세·지표와 수집 데이터를 바탕으로 지금 상황을 설명해 주세요.',
+  3: PROFILE + '\n\n다음 주 FOMC 결과를 예측해 주세요.'
+};
+
+const state = { scene: '1', side: 'both', width: '412', ann: 'on', d1: 'A', d2: 'B', d3: 'A' };
+
+function sceneData(s) {
+  if (s === '1') return {
+    sub: ['같은 질문의 실제 답(11-14 17:32)', '원래 질문에 대한 대화형 답 · D1 ' + state.d1],
+    title: ['지금의 수집데이터와 지표나 경제흐름으로 추천해줄 종목 ', '지금의 수집데이터와 지표나 경제흐름으로 추천해줄 종목 '],
+    now: [{ me: 1, text: Q1, draft: MSG["41"].draft }, { meta: META_QWEN + ' · 9.9s', text: MSG["42"].content }],
+    neu: [{ me: 1, text: Q1, draft: DRAFT_NEW[1], draftEx: 1 }, { meta: META_QWEN, segs: ANS['1' + state.d1] }],
+    checks: 'full'
+  };
+  if (s === '2') return {
+    sub: ['같은 질문의 실제 답(05-22 23:11) — 종목 인식 0건', '「엔비디아」를 NAS:NVDA 로 인식 · 달러 표기'],
+    title: ['엔비디아 어때?', '엔비디아 어때?'],
+    now: [{ me: 1, text: Q2, draft: MSG["37"].draft }, { meta: META_QWEN + ' · 8.7s', text: MSG["38"].content }],
+    neu: [{ me: 1, text: Q2, draft: DRAFT_NEW[2], draftEx: 1, chips: [{ name: 'NVIDIA CORP', price: '161.11', chg: -13.7 }] }, { meta: META_QWEN, segs: ANS['2'] }],
+    checks: 'full'
+  };
+  if (s === '3') return {
+    sub: ['이 질문의 실제 기록은 없어, 같은 경로의 다른 실제 답(11-08)을 보입니다', '통째 거절 대신 있는 자료로 답 · D3 ' + state.d3],
+    title: ['ai 데이터센터 관련해서 냉각모듈과 전력관련 주식의 주', '다음 주 FOMC 결과 예측해줘'],
+    now: [{ me: 1, text: MSG["39"].content, draft: MSG["39"].draft }, { meta: META_QWEN + ' · 18.9s', text: MSG["40"].content }],
+    neu: [{ me: 1, text: Q3, draft: DRAFT_NEW[3], draftEx: 1 }, { meta: META_QWEN, segs: ANS['3' + state.d3] }],
+    checks: 'full'
+  };
+  return {
+    sub: ['대화 목록에서 예전 대화를 열면(저장 원문 그대로)', '같은 저장 원문을 볼 때만 문장으로 · D2 ' + state.d2],
+    title: ['지금의 수집데이터와 지표나 경제흐름으로 추천해줄 종목 ', '지금의 수집데이터와 지표나 경제흐름으로 추천해줄 종목 '],
+    now: [{ me: 1, text: Q1, draft: MSG["41"].draft }, { meta: META_QWEN + ' · 9.9s', text: MSG["42"].content }],
+    neu: [{ me: 1, text: Q1, draft: MSG["41"].draft }, { meta: META_QWEN + ' · 9.9s', segs: [['basis', '표시용 변환 — reasoning 본문 + warnings 를 「참고」 줄로', convertLegacy(MSG["42"].content, state.d2 === 'B')]] }],
+    checks: 'legacy'
+  };
+}
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+function bubble(m, annotate) {
+  const row = el('div', 'p-row' + (m.me ? ' me' : ''));
+  const b = el('div', 'p-bub');
+  if (m.meta) b.appendChild(el('div', 'p-meta', '🤖 ' + m.meta));
+  const t = el('div', 'p-txt');
+  if (m.segs) {
+    if (annotate) t.classList.add('ann');
+    m.segs.forEach(([k, tag, txt], i) => {
+      const s = el('span', 'sg k-' + k, txt + (annotate || i === m.segs.length - 1 ? '' : '\n\n'));
+      s.dataset.tag = tag;
+      t.appendChild(s);
+    });
+  } else {
+    t.textContent = m.text;
+  }
+  b.appendChild(t);
+  if (m.me && m.draft && m.draft !== m.text) {
+    const btn = el('button', 'p-draftbtn', '정제 프롬프트 보기 ▾');
+    btn.type = 'button';
+    const box = el('div', 'p-draft');
+    box.hidden = true;
+    if (m.draftEx) box.appendChild(el('div', 'ex', '[예시 — 바뀐 정제 지시로 다듬은 글]'));
+    box.appendChild(document.createTextNode(m.draft));
+    btn.setAttribute('aria-expanded', 'false');
+    btn.onclick = () => { const open = box.hidden; box.hidden = !open; btn.textContent = '정제 프롬프트 ' + (open ? '숨기기 ▴' : '보기 ▾'); btn.setAttribute('aria-expanded', String(open)); };
+    const wrap = el('div'); wrap.appendChild(btn); wrap.appendChild(box); b.appendChild(wrap);
+  }
+  if (m.chips) {
+    const cs = el('div', 'p-chips');
+    m.chips.forEach(c => {
+      const ch = el('span', 'p-chip');
+      ch.appendChild(el('b', null, c.name));
+      ch.appendChild(el('span', 'num', c.price));
+      const pc = el('span', 'num', (c.chg >= 0 ? '+' : '') + c.chg.toFixed(1) + '%');
+      pc.style.color = c.chg >= 0 ? 'var(--up)' : 'var(--down)';
+      ch.appendChild(pc);
+      cs.appendChild(ch);
+    });
+    b.appendChild(cs);
+  }
+  row.appendChild(b);
+  return row;
+}
+
+function phone(host, title, msgs, annotate) {
+  host.textContent = '';
+  const hd = el('div', 'p-hd');
+  const ic = el('span', 'ic', '☰'); ic.setAttribute('aria-hidden', 'true'); hd.appendChild(ic);
+  hd.appendChild(el('span', 'ttl', title));
+  const pl = el('span', 'plus', '+'); pl.setAttribute('aria-hidden', 'true'); hd.appendChild(pl);
+  const main = el('div', 'p-main');
+  msgs.forEach(m => main.appendChild(bubble(m, annotate)));
+  const comp = el('div', 'p-comp');
+  const cr = el('div', 'p-cr');
+  cr.appendChild(el('div', 'p-ta', '종목·전망·기업 분석을 자유롭게 질문하세요'));
+  cr.appendChild(el('span', 'p-send', '전송'));
+  const op = el('div', 'p-opts');
+  op.appendChild(el('span', 'p-pill', '⚡ 검토'));
+  op.appendChild(el('span', 'p-sel', 'qwen2.5:14b-instruct (설정값 고정)'));
+  op.appendChild(el('span', 'p-hint', '전송 버튼으로 보내기'));
+  comp.appendChild(cr); comp.appendChild(op);
+  const nav = el('div', 'p-nav');
+  ['홈', '거래', '분석', '비서', '설정'].forEach(n => nav.appendChild(el('span', n === '비서' ? 'on' : null, n)));
+  host.appendChild(hd); host.appendChild(main); host.appendChild(comp); host.appendChild(nav);
+  return main;
+}
+
+function plainOf(m) { return m.segs ? m.segs.map(s => s[2]).join('\n\n') : m.text; }
+
+function checks(host, text, kind) {
+  host.textContent = '';
+  const items = kind === 'legacy'
+    ? [['문장 답(JSON 아님)', !/^\s*[\[{]/.test(text)], ['수치 키 숨김', !/selectedIndices|"confidence"|"ev"/.test(text)]]
+    : [['문장 답(JSON 아님)', !/^\s*[\[{]/.test(text)], ['마크다운 기호 없음', !/\*\*|^#{1,6}\s|^\s*\|.*\|/m.test(text)], ['기준 시각', /기준/.test(text)], ['끝 줄 참고용', /참고용/.test(text.trim().split('\n').pop())]];
+  host.appendChild(el('span', 'muted', '형식 검사'));
+  items.forEach(([k, ok]) => host.appendChild(el('span', ok ? 'y' : 'n', k + ' ' + (ok ? '통과' : '미통과'))));
+}
+
+function render() {
+  const d = sceneData(state.scene);
+  const annotate = state.ann === 'on';
+  document.getElementById('sub-now').textContent = d.sub[0];
+  document.getElementById('sub-new').textContent = d.sub[1];
+  const mainNow = phone(document.getElementById('ph-now'), d.title[0], d.now, false);
+  const mainNew = phone(document.getElementById('ph-new'), d.title[1], d.neu, annotate);
+  checks(document.getElementById('ck-now'), plainOf(d.now[1]), d.checks);
+  checks(document.getElementById('ck-new'), plainOf(d.neu[1]), d.checks);
+  document.querySelectorAll('.fcol').forEach(c => { c.hidden = !(state.side === 'both' || state.side === c.dataset.col); });
+  document.getElementById('frames').style.setProperty('--fw', state.width + 'px');
+  document.getElementById('stage').classList.toggle('wide', state.width === '1280');
+  lastRender = { txt: plainOf(d.neu[1]), mainNew, annotate };
+  requestAnimationFrame(updateMeter);
+  setTimeout(updateMeter, 50);
+}
+
+let lastRender = null;
+function updateMeter() {
+  if (!lastRender) return;
+  const { txt, mainNew, annotate } = lastRender;
+  const bubs = mainNew.querySelectorAll('.p-row:not(.me) .p-bub');
+  const bub = bubs[bubs.length - 1];
+  if (!bub || !mainNew.clientHeight) return;
+  const ratio = bub.offsetHeight / mainNew.clientHeight;
+  const realW = Math.round(mainNew.closest('.phone').getBoundingClientRect().width);
+  document.getElementById('meter').textContent =
+    '변경 후 답 길이: ' + [...txt].length + '자 · 말풍선 높이 ' + bub.offsetHeight + 'px = 메시지 영역(' + mainNew.clientHeight + 'px)의 ' + ratio.toFixed(1) + '배 · 미리보기 폭 ' + realW + 'px' + (annotate ? ' (안내선 포함 — 「실제 화면처럼」에서 정확)' : '');
+}
+
+function bindSeg(id, key) {
+  const g = document.getElementById(id);
+  g.addEventListener('click', e => {
+    const b = e.target.closest('button[data-v]');
+    if (!b) return;
+    state[key] = b.dataset.v;
+    g.querySelectorAll('button[data-v]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    if (key === 'd1') setScene('1'); else if (key === 'd2') setScene('4'); else if (key === 'd3') setScene('3'); else render();
+  });
+}
+function setScene(v) {
+  state.scene = v;
+  document.querySelectorAll('#scene button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.v === v)));
+  render();
+}
+[['scene', 'scene'], ['side', 'side'], ['width', 'width'], ['ann', 'ann'], ['d1', 'd1'], ['d2', 'd2'], ['d3', 'd3']].forEach(([id, k]) => bindSeg(id, k));
+window.addEventListener('resize', () => requestAnimationFrame(updateMeter));
+render();
+</script>
+</body>
+</html>
