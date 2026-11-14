@@ -1,7 +1,7 @@
 ---
 task_id: T-170
 title: 일봉 수집 굶주림 해소 — KR 저녁 전용 실행 추가 + 보유 다음 「낡은 순」 대상 정렬
-status: review
+status: done
 priority: high
 project: StockInvest
 created: 2026-11-14
@@ -17,14 +17,14 @@ tags:
 aliases:
   - 일봉굶주림
   - KR일봉저녁수집
-waiting: [push_confirm, user_decision]
+waiting: [first_kr_evening_run_check, user_decision]
 execution_context:
   schema_version: 1
   origin_tool: claude
   current_tool: claude
   current_procedure: claude_standard
-  current_scope: 조사(읽기 전용)부터 구현·감사·QA·커밋까지. push·배포는 사용자 승인 후
-  last_event_id: E2
+  current_scope: 조사(읽기 전용)부터 구현·감사·QA·커밋·push(운영 배포)까지. push 는 2026-11-15 사용자 승인으로 실행
+  last_event_id: E3
 ---
 
 # T-170 일봉 수집 굶주림 해소 — KR 저녁 전용 실행 + 「낡은 순」 대상 정렬
@@ -152,9 +152,39 @@ execution_context:
 
 ## 배포 기록
 
+- [2026-11-15 08:2x] 승인 근거(사용자 원문): 「push 진행」 — 질문 「c29e685를 push해서 운영에 배포할까요?」에 대한 답. 부모 세션이 전달한 사용자 원문 「T-170 먼저 따로」(같은 `b90e2c9` 위에서 0.10.0 으로 올린 T-169 보다 먼저, 따로 배포 — T-169 는 이 커밋 위로 리베이스해 0.11.0 으로 배포 예정).
+- [08:26] push 직전 점검(서버 worktree `~/.node-local/stockinvest-t170`): `git-refs-clean.sh --check` 깨끗(실제 ref 6개), fetch 후 origin/main=`b90e2c9`, `origin/main..c29e685` = `c29e685` 1개.
+- [08:26:22 KST] `git push origin c29e685:main` — `b90e2c9..c29e685` fast-forward, 이 커밋 1개만. **같은 배포에 실린 다른 작업: 없음.**
+- [08:27:22 KST] webhook blue/green 배포 END exit=0. 마이그레이션 없음(`--with-migrate` 없음, DDL 없음).
+  - `RELEASE_RESULT {"status":"ok","release":"20261115-082639-c29e6858","sha":"c29e6858763d4e76e483a7c48dfad5c465ceae93","previous":"/home/brownjeon/apps/stockinvest/releases/20261114-100957-b90e2c9d","migrated":false}`
+  - 배포 스크립트가 stockinvest·stockinvest-cron 이 옛 릴리스 경로를 잡고 있는 것을 보고 delete 후 재등록했다(수 초 중단, 스크립트의 정상 경로). 두 앱 모두 새 릴리스 경로.
+- [08:3x] 배포 뒤 확인(읽기만): `current` → `releases/20261115-082639-c29e6858`, 릴리스 `package.json` version `0.10.0`, `GET /api/health` 200·`safetyStatus: green`, cron 로그 08:27:10 `strategy-eval`·`signal-followup`·`signal-expiry`·`portfolio-snapshot`·`trade-report` OK.
+- [08:28] 다음 배포가 곧바로 이어졌다(이 task 가 아님): 부모 세션의 비서 채팅 작업 커밋 `7c8f1ae`(이 커밋 위로 리베이스, 0.11.0) → 릴리스 `20261115-082807-7c8f1ae2`, `RELEASE_RESULT ok`, previous = 이 task 의 릴리스. 지금 운영은 0.11.0 이고 이 task 코드를 포함한다 [확실 — `merge-base --is-ancestor` 통과, `cron-runner.sh`·daily-bars 라우트·store·request·collector 가 `c29e685` 와 동일].
+- [08:4x] 밀린 국내 봉은 **배포 전에 이미 채워졌다** [확실 — 운영 cron 로그]: 2026-11-15(일) 07:40 실행(옛 코드)이 `[daily-bars] done ok=true targets=169 processed=169 calls=142/150 written=9686 remaining=0 failed=-` 로 끝났다. 주말이라 새 봉 수요가 적어 예산 안에 전부 닿았다. 마지막 거래일은 11-13(금)이다. (후속 세션의 보고로 알게 되어 로그로 직접 확인. 이 사실을 보기 전에 「오늘 18:10 실행이 11-09~11-13 봉을 받는다」고 적었던 것은 틀렸다.)
+- **아직 확인하지 못한 것**: 국내 저녁 실행. 러너 블록과 라우트 오프아워 판정(`daily-bars-time.ts` `checkOffHoursWindow`)에 요일 조건이 없어 **오늘(일요일) 18:10~18:54 KST 의 첫 틱**부터 돈다 [확실 — 코드 확인].
+  - 오늘 저녁: 국내가 이미 최신이므로 `daily-bars-kr` 줄이 남고 오류 없이 끝나며 호출은 0 근처여야 한다 [가능성 높음]. 호출 경로(쿼리 `?market=KR`)가 운영에서 400·409 없이 받아지는지 확인하는 데 쓴다.
+  - **이 수정의 실제 효과는 첫 평일 주기에서 드러난다**: 2026-11-16(월) 18:10 국내 실행이 11-16 봉을 받고, 11-17(화) 07:40 전 시장 실행이 `remaining=0` 이며 국내 종목 MAX(trade_date)가 밀리지 않아야 한다.
+  - 확인 위치: cron 로그(`apps/stockinvest/shared/logs/cron-out.log`)의 `daily-bars-kr` 줄과 `[daily-bars] done` 줄(targets·calls·remaining), `daily_bars` 국내 종목별 MAX(trade_date).
+
 ## 실행 도구·절차 이력
 
 - E1 2026-11-14 20:2x KST — 시작(origin_tool=claude, current_tool=claude, procedure=claude_standard). 범위: 조사부터 커밋까지, push·배포는 사용자 승인 후. 근거: 사용자 지시 「근본 수정부터」·범위 선택 「저녁 KR + 낡은 순」. 작업 위치: 서버 worktree `~/.node-local/stockinvest-t170`(base `b90e2c9`, 로컬 클론 `stockinvest-t157` 기반). 남은 일: judge 접수 → 구현 → Reviewer → C2 → QA → 커밋 → push 승인 요청.
 - E2 2026-11-15 02:5x KST — 담당 변경 없음(claude, claude_standard). Reviewer 최종 PASS·QA PASS·Codex C2 실패(설정 오류, 지적 0) 뒤 서버 worktree 에서 커밋, status `review`·waiting `push_confirm`(push = 운영 배포, 사용자 승인 필요)·`user_decision`(Codex 재실행 여부·데모 게이트 기록). 남은 일: push 승인 → push(`<커밋>:main`) → 배포 결과 확인(18:10 첫 국내 저녁 실행) → 최종 요약.
+- E3 2026-11-15 08:3x KST — 담당 변경 없음(claude, claude_standard). 사용자 승인 「push 진행」으로 `c29e685` push·배포(`RELEASE_RESULT ok`), 배포 기록·최종 요약 작성, status `done`·waiting `first_kr_evening_run_check`(오늘 18:10 첫 실행·11-16~17 첫 평일 주기 확인)·`user_decision`(Codex 재실행·데모 게이트 기록). 후속 3건(러너 `call()` 결함·일봉 감시 지표·기준 시험 부채)은 별도 세션에서 진행 중. 남은 일: 18:10 첫 실행 확인, 이 이력서 갱신 커밋의 push(push = 재배포라 사용자 승인 필요).
 
 ## 최종 요약
+
+### [T-170] 국내 일봉 수집 굶주림 해소 — 국내 저녁 전용 실행 + 「낡은 순」 정렬
+
+- **상태**: 배포 완료(2026-11-15 08:27 KST, 릴리스 `20261115-082639-c29e6858`, 웹 0.10.0). 08:28 에 다른 작업의 릴리스 `20261115-082807-7c8f1ae2`(0.11.0)가 이 코드를 그대로 포함한 채 이어 배포됐다. 첫 국내 저녁 실행 확인 대기.
+- **무엇이 바뀌었나**
+  - 매일 18:10~18:54 KST 첫 틱에 국내 종목만 일봉을 받는 실행이 추가됐다(`POST /api/cron/daily-bars?market=KR`). 07:40 전 시장 실행과 다른 잡은 그대로다.
+  - 보유종목 다음 순서가 「저장된 마지막 거래일이 가장 오래된 종목 먼저」로 바뀌었다. 예산(150호출·100초)을 못 채운 날 밀린 종목이 다음 날 앞으로 온다.
+  - 구현 중 러너 `call()` 의 숨은 결함(본문을 넘기면 끝에 `}` 하나가 더 붙는다)을 찾아, 시장을 쿼리로 넘겨 피했다. 결함 자체는 별도 후속 세션이 고친다.
+- **배포**: 커밋 `c29e685`, push 2026-11-15 08:26:22 KST → webhook blue/green, `RELEASE_RESULT ok`, 마이그레이션 없음. 같은 배포에 실린 다른 작업: 없음. 안드로이드 앱 변경 없음(재설치 불필요).
+- **AI 가 검증한 것**: Reviewer 최종 PASS·QA PASS, 러너 시험 12개 기준 대비 새 실패 0, tsc 0, 지정 jest 7 파일 새 실패 0, 배포 뒤 health 200·safetyStatus green·두 앱 새 경로·cron 정상 로그.
+- **AI 가 검증하지 못한 것**: Codex 외부 검토(서버 모델 설정 오류로 실패 — 검토 완료 아님), jest 전체 suite, 대상 정렬 쿼리의 실행 계획, 첫 국내 저녁 실행의 실제 결과.
+- **👉 사용자가 확인할 것**: 밀린 국내 봉(11-09~11-13)은 오늘 07:40 실행(배포 전)이 이미 채웠다. 남은 확인은 두 가지다. ① 오늘 18:55 KST 이후 cron 로그에 `daily-bars-kr` 줄이 있고 오류 없이 끝났는지(국내가 이미 최신이라 호출 0 근처가 정상). ② 첫 평일 주기 — 11-16(월) 18:10 국내 실행이 11-16 봉을 받고, 11-17(화) 07:40 실행의 `[daily-bars] done` 이 `remaining=0` 인지.
+- **👉 사용자가 결정할 것**: ① 서버 Codex 모델 설정을 고친 뒤 C2 재검토를 돌릴지 ② judge 의 데모 수준 delta(키워드 오탐, 화면 변경 없음)를 생략으로 기록할지(사용자 원문 필요) ③ 이 이력서 갱신 커밋을 push 할지(push = 같은 코드 재배포).
+- **남은 일**: 오늘 18:10 첫 실행과 11-16~17 첫 평일 주기 결과 기록. board·ACTIVE 갱신(공유 트리의 다른 미커밋 변경과 충돌을 피하려 이 task 에서는 건드리지 않았다).
+- **이슈·위험**: 계속 실패하는 종목 3개가 낡은 순으로 맨 앞에 서면 연속 실패 중단(`consecutive_failures`)으로 그날 실행이 일찍 멈출 수 있다 [추측 — 현재 실패 0건]. 정렬이 수정주가 재수집 표시(`adj_stale`)를 보지 않아, 예산이 모자란 기간에는 재수집이 늦어질 수 있다.
