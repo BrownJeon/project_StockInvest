@@ -1,8 +1,8 @@
 ---
 task_id: T-174
 title: 비서 채팅 후처리 보완 — 질문 다듬기의 지어낸 종목 식별자 제거(N1) + 본문 안 참고용 고지 중복 제거(N2)
-status: doing
-waiting: [user_push_approval]
+status: done
+waiting: [user_chat_check]
 priority: medium
 project: StockInvest
 created: 2026-11-15
@@ -109,6 +109,7 @@ demo_gate:
 - [2026-11-15 21:13] Leader: 시각 정정 — 위 Leader 줄 둘은 처음에 21:28·21:42 로 잘못 적었다(서버 `date` 를 보지 않고 적음, 실제 21:09·21:10 으로 고침). Developer 절의 `[21:05]`·`[21:25]`·`[21:40]`·`[21:50]` 도 실제와 다르다 — 시험 로그 수정 시각(`~/.node-local/t174-dev/`)으로는 1차 21:03, 2차 21:08, 2b 21:10:04, 2c 21:10:50 이다(역할 기록이라 원문은 두고 여기서 정정). 같은 줄의 「Leader 21:28·21:42」 인용도 각각 21:09·21:10 을 뜻한다.
 - [2026-11-15 21:16] codex_gate/C2 engine=jev → codex_required=false (wanted_before_budget=false), budget_rule=CX-limit-unknown-hold, codex_switch=on | overrides=- | fallback=- | tokens=928 → Codex 검토 없이 QA. Leader: Reviewer 3차 PASS 의 Low 4건(R3-L1 짧은 분석 절 8자 미만은 순수 고지로 분류 — 한 줄 답이면 고정 안내문, R3-L2 괄호 안 금액 목록 일부 삭제, R3-L3 쉼표 하나 남음, R3-L4 목록 밖 끝맺음은 내용으로 셈)은 이번 범위에서 수용하고 후속 후보로 둔다(빈도 낮음, R1).
 - [2026-11-15 21:20] Leader: QA PASS 확인. QA 가 짚은 운영 id 44 재처리 시 끝 고지 앞 빈 줄 1개 추가는 「이미 후처리된 글을 한 번 더 후처리」할 때만 생기는 차이이고 기준 코드도 같다 — 실제 경로는 모델 원문에 한 번만 적용하므로 결함 아님. 서버 worktree 커밋 → push(=운영 배포)는 사용자 승인 대기. 커밋 훅 SAFETY_PATHS 해당 파일 0.
+- [2026-11-15 22:13] Leader: 운영 배포 — 사용자 「push 진행」 → `git-refs-clean --check` 깨끗 · `origin/main..HEAD` = `5d0b5f3` 하나 · 뒤처짐 0 확인 후 `git push origin 5d0b5f3bcb111a7879c1254c50f6b882f9681809:refs/heads/main`(`c62bc7a..5d0b5f3`, 22:11:41 KST). webhook 22:11:44~22:12:35 KST `RELEASE_RESULT ok` 릴리스 `20261115-221149-5d0b5f3b`, previous `20261115-205735-c62bc7ad`, `migrated=false`. health 200·green·dryRun true·killSwitch false, `current` 0.14.0, pm2 `stockinvest`·`stockinvest-cron` 새 릴리스에서 online·재시작 0. `pm2-err.log` 22:10 이후는 텔레그램 getUpdates ETIMEDOUT 1줄(기존 패턴)뿐.
 
 ## Developer
 
@@ -160,3 +161,22 @@ demo_gate:
 ## Codex 검토
 
 ## 최종 요약
+
+> 작성 2026-11-15 22:13 KST · 메인 세션(claude, Leader 역할 겸임) · 범위 = 운영 배포까지.
+
+### [T-174] 비서 채팅: 질문 다듬기의 지어낸 종목 코드 제거(N1) + 본문 안 고지 문장 중복 제거(N2)
+
+- **상태**: Reviewer 3차 PASS·QA PASS, **운영 배포 완료 2026-11-15 22:12 KST**(릴리스 `20261115-221149-5d0b5f3b`, 웹 0.14.0). 운영 화면 확인은 사용자 대기.
+- **무엇이 바뀌었나**
+  - N1: 질문 다듬기 결과에서 사용자 원문·첨부 종목·최근 대화에 없는 식별자(괄호 안 목록 항목으로 홀로 선 6자리 코드, `NAS:XXXX` 같은 거래소:티커)만 지우고 구두점을 정리한다. 예: `NVIDIA (NVIDIA, 210140)` → `NVIDIA (NVIDIA)`. 금액·시각·회사 이름·단독 티커·사용자가 고친 다듬은 질문은 건드리지 않는다.
+  - N2: 답 본문 안의 순수 고지 문장(60자 이하, 고지 구절 밖 내용 8자 미만)만 지우고 끝 줄 고지 한 줄을 남긴다. 분석과 고지가 섞인 문장은 통째로 남긴다(정보 손실보다 고지 중복이 낫다 — Leader 결정).
+  - 과거 답 화면 표시 경로(GET)는 그대로.
+- **배포**: `5d0b5f3` push → webhook blue/green, 22:11:44~22:12:35 KST, `RELEASE_RESULT ok`, 마이그레이션 없음. 같은 배포에 실린 다른 작업 없음. DB·설정·앱(APK) 변경 없음, 커밋 훅 감시 경로 해당 0. 배포 후 health green·dryRun true·killSwitch false, pm2 재시작 0.
+- **AI 가 검증한 것**: typecheck 0·build 0, 채팅·llm 시험 227건 통과(새 44건), 경계 시험 실패 5건은 이름까지 기준과 같음, 저장된 실제 모델 출력 재생에서 N1(`210140` 제거)·N2(고지 2회 → 1회) 해소, 과거 답 15건·화면 표시 경로 기준과 차이 0, 배포 후 health·pm2 정상.
+- **AI 가 검증 못 한 것**: 실제 모델·KIS 호출과 운영 화면, 전체 jest, N1·N2 발생 빈도(실제 표본 각 1건). Codex 검토는 judge C2 가 불필요로 판정.
+- **👉 사용자가 확인할 것** (지금부터, 비서 메뉴): 「엔비디아 어때?」 — 다듬은 질문에 원문에 없는 6자리 코드가 없고, 답 끝 고지가 한 줄이면 정상. 이상하면 질문과 화면을 그대로 알려 주면 된다.
+- **👉 사용자가 결정할 것**: 없음.
+- **남은 일**: 사용자 화면 확인. 후속 후보(수용한 Low): R3-L1 분석이 8자 미만인 짧은 섞인 문장은 고지로 분류돼 지워짐(한 줄 답이면 고정 안내문) · R3-L2 괄호 안 금액 목록 일부 삭제 · R3-L3 쉼표 하나 남는 경우 · R3-L4 목록 밖 끝맺음은 내용으로 셈(고지 중복).
+- **이슈·위험**
+  - 기록 시각 오류: Leader 줄 둘(21:28·21:42 → 실제 21:09·21:10)과 Developer 줄 넷이 실제 시계와 달랐다. 위 21:13 Leader 줄에 정정했고 이후 기록은 서버 `date` 로 적었다.
+  - 오늘 09:56 운영 답의 내용 문제(9월분 CPI 를 「현재」로 씀, 일봉 RSI 와 1시간봉 규칙의 「과매도」 기준 혼용)는 모델 내용 문제라 이번 수정과 무관하다.

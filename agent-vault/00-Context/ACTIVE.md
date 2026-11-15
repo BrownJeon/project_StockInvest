@@ -6,6 +6,13 @@ tags:
 ---
 # 현재 상태
 
+## 2026-11-15 22:13 — T-174 비서 채팅 후처리 보완 N1·N2 (커밋 `5d0b5f3`, 11-15 22:12 운영 배포 0.14.0 · 사용자 화면 확인 대기)
+
+- [[T-174-chat-draft-code-and-disclaimer-dedupe]]: [[T-169-assistant-chat-data-context]] QA Low 후속. 다듬은 질문의 지어낸 종목 식별자 제거(괄호 안 목록 항목 6자리 코드·거래소:티커, 원문·첨부·최근 대화 허용) + 답 본문 안의 순수 고지 문장 제거(섞인 문장은 통째로 남김).
+- 검증: judge intake R1·sonnet·demo none, C2 codex 불필요 · Reviewer 1·2차 conditional_pass → 3차 PASS(Low 4 수용) · QA PASS(typecheck·build 0, chat+llm 227, 경계 실패 5건 기준 동일, 실제 출력 재생 N1·N2 해소).
+- 배포: 사용자 「push 진행」 → 22:11:44~22:12:35 `RELEASE_RESULT ok`, health green·dryRun true·killSwitch false, pm2 재시작 0.
+- 대기: 사용자 비서 메뉴 「엔비디아 어때?」 확인(T-169 의 KIS 실시간 첨부·달러 표기 확인도 같이 됨).
+
 ## 2026-11-15 08:35 — T-169 비서(분석가 채팅) 대화형 답변 + 수집 데이터 요약 첨부 (커밋 `7c8f1ae`, 11-15 08:28 운영 배포 0.11.0 · 사용자 화면 확인 대기)
 
 - [[T-169-assistant-chat-data-context]]: 홈서버 게이트웨이가 시그널 평가 JSON 지시를 덧붙이고 채팅이 수집 데이터와 연결돼 있지 않아 비서 답이 JSON·「데이터 부족」이었다. system 메시지 분리(다른 AI 호출 요청 불변) + 읽기 전용 수집 데이터 요약(경제 원자료·엔진 후보와 상태·DB 일봉 지표·즐겨찾기·뉴스 제목) + 답 정규화(JSON 제거·자료 기준 줄·후보 상태 줄·참고용 끝 줄) + 미국 티커·한글 별칭·달러 표기.
