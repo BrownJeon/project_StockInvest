@@ -1,7 +1,7 @@
 ---
 task_id: T-173
 title: 일봉 감시 지표 — 시장별 MAX 하나에서 「대상 중 밀린 종목 수」로
-status: review
+status: done
 priority: high
 project: StockInvest
 created: 2026-11-15
@@ -17,14 +17,14 @@ tags:
 aliases:
   - 일봉밀림지표
   - 일봉낡은종목수
-waiting: [push_confirm, demo_confirm, codex_config]
+waiting: [screen_check, demo_confirm, codex_config]
 execution_context:
   schema_version: 1
   origin_tool: claude
   current_tool: claude
   current_procedure: claude_standard
-  current_scope: 설계(사용자 승인)부터 구현·감사·QA·서버 worktree 커밋까지. push·배포는 사용자 승인 후
-  last_event_id: E2
+  current_scope: 설계(사용자 승인)부터 구현·감사·QA·서버 worktree 커밋·push 배포(사용자 승인 2026-11-15 14:5x)까지
+  last_event_id: E3
 ---
 
 # T-173 일봉 감시 지표 — 「대상 중 밀린 종목 수」
@@ -59,6 +59,8 @@ execution_context:
 - E1 2026-11-15 09:0x claude/claude_standard — daily-bars 세션(local_18d5f2cd)의 위임으로 시작. 설계 사용자 승인 08:5x. 서버 worktree `~/.node-local/stockinvest-dbstale`(기준 `7c8f1ae`). 남은 일: 구현·Reviewer·QA·커밋, push 는 사용자 승인 후.
 
 - E2 2026-11-15 10:3x claude/claude_standard — Reviewer 2회 CONDITIONAL_PASS(R-1·R-2 수정 재검증), QA PASS(체크 1~7, 화면 렌더 NOT_VERIFIED), Codex C1 실패·C2 미실행(서버 모델 설정). 서버 worktree `~/.node-local/stockinvest-dbstale-v2` 를 최신 origin/main `bd65785`(그 사이 들어온 것은 T-169·T-170 문서 커밋뿐 — 이 task 파일과 겹치지 않음)로 옮겨 커밋, 앱 버전 0.11.0 → 0.12.0. **push 안 함**(push = 운영 배포, 사용자 승인 대기). board·ACTIVE 는 다른 세션의 동시 갱신과 충돌을 피하려고 건드리지 않았다. 남은 일: ① push 승인 ② 데모 기록(사용자 확인) ③ 배포 뒤 화면 확인(데이터 상태 일봉 줄 · 412px) ④ 서버 Codex 설정(사용자 판단).
+
+- E3 2026-11-15 14:5x claude/claude_standard — 사용자 원문 **"push 진행"**(질문 「T-173 커밋(a3e2032)을 push(운영 배포)할까요?」에 대한 답). 직전 재확인: origin/main = `bd65785`(변동 없음) · `origin/main..HEAD` = `a3e2032` 1건 · `git-refs-clean.sh --check` 깨끗. 14:55:34 `git push origin a3e2032:main` → webhook blue/green `ok`(아래 「배포 기록」). 이 배포 기록·최종 요약은 별도 문서 커밋이며, 그 push 는 이번 승인 범위 밖이라 따로 묻는다. 남은 일: ① 사용자 화면 확인 ② 데모 기록(사용자 확인) ③ 서버 Codex 설정(사용자 판단).
 
 ## 판단 기록 (judge)
 - [2026-11-15 09:26] intake engine=jev → task_type=feature · risk=R2 · developer_model=opus · roles=designer,prompt-engineer?,developer,reviewer,qa · next=demo_first · demo=delta/designer(JV-ui_change) · actions=prepare_demo,request_demo_approval,assign_developer | overrides=R2-kw-payment | fallback=- | tokens=1502
@@ -147,4 +149,35 @@ execution_context:
 - 검토하지 못한 범위: 설계 가정 4개 전부 — 대상 규칙 복제·대등성 시험으로 충분한지, 임계값(2거래일·3종목), 판정 순서, 확인 불가 시 partial 표시. 서버 Codex 설정 `~/.codex/config.toml` 의 `model = "gpt-6.1-sol"` 을 ChatGPT 계정이 거부(HTTP 400, `model_not_found`). 설정·CLI 버전·모델은 바꾸지 않았고 재시도하지 않았다(사용자 결정 대기).
 - 원본: /home/brownjeon/NFS/homes/brownjeon/project/.claude/state/codex-review/runs/20261115T002954Z-T-173-C1/raw.txt · stderr: /home/brownjeon/NFS/homes/brownjeon/project/.claude/state/codex-review/runs/20261115T002954Z-T-173-C1/stderr.txt · 인계 묶음: /home/brownjeon/.node-local/t173-logs/handoff-T-173-C1.md · 래퍼 출력: /home/brownjeon/.node-local/t173-logs/codex-C1-run.json
 
+## 배포 기록
+
+| 항목 | 값 |
+|---|---|
+| 실행 | 메인 세션(이 task 진입점) — deployer 서브에이전트 없이 push(webhook) 로 배포. 사용자 승인 원문 "push 진행" |
+| 커밋 | `a3e2032` (부모 `bd65785` = push 직전 origin/main, 사이에 낀 커밋 없음) |
+| push | 2026-11-15 14:55:34 KST · `git push origin a3e2032:main` · `bd65785..a3e2032` |
+| 결과 | `RELEASE_RESULT {"status":"ok","release":"20261115-145551-a3e2032c","sha":"a3e2032c…","previous":"…/20261115-085857-bd657854","migrated":false}` · 웹훅 로그 종료 14:57:00 KST `exit=0` |
+| 같은 배포에 실린 다른 작업 | 없음(직전 운영 릴리스가 `bd65785` 였고 이번 push 는 `a3e2032` 1건) |
+| 확인 | pm2 `stockinvest`·`stockinvest-cron` 모두 online · `pm_cwd` = 새 릴리스 · 재시작 0 · 기동 14:56:22 / `GET /api/health` 200, `safetyStatus: green` / 운영 `package.json` version `0.12.0` |
+| 기동 로그 | `setup_db` 실패 줄 6개(ordinal 10·61·62·63·65·66, ALTER·CREATE) — 오늘 08:27·08:58 기동에도 같은 6개가 나오는 기존 현상이라 이번 변경과 무관(T-173 은 DDL 없음). 14:56:52 `telegram-poller getUpdates ETIMEDOUT` 1회 — 네트워크 일시 오류로 보이며 이번 변경과 무관(ops 지표는 알림을 import 하지 않는다) |
+| 롤백 | `git revert a3e2032` 후 push(= 재배포). 급하면 `current` 를 `…/20261115-085857-bd657854` 로 되돌리는 release 롤백 — `docs/deploy-order.md` 롤백 절 |
+| 확인 못 함 | 로그인이 필요한 데이터 상태 API·화면의 실제 응답(운영 덤프 재생으로 같은 코드 경로를 대신 확인 — QA 체크 4) |
+
 ## 최종 요약
+
+### [T-173] 일봉 감시 — 수집 대상 종목마다 밀림을 세어 「오래됨」을 판정
+
+- **상태**: ✅ 완료 · ⏳ 사용자 확인 대기(화면) · 결정 2건 대기(데모 기록·Codex 설정)
+- **무엇이 바뀌었나**: 일봉 감시가 시장별 「가장 최근 봉 하나」 대신 수집 대상 종목(국내 43·해외 126, 11-15 기준)을 하나씩 본다. 기대 거래일보다 2거래일 이상 밀린 종목과 일봉이 한 줄도 없는 종목이 시장별로 3개 이상이면 그 시장 일봉을 「오래됨」으로 띄운다(홈 「데이터 이상」). 분석 › 데이터 상태의 일봉 줄 뒤에 ` · 밀림 n/m종목`이 붙고(밀린 종목이 있을 때만), 이상 상세에 밀린 수·기대 거래일·예시 종목이 나온다. 이번 사고 모양(국내 42종목이 11-06 에 멈춤)은 11-11 08:30 에 잡힌다 — 예전 판정은 「정상」이었다. 앱 버전 0.12.0.
+- **배포**: ✅ 운영 반영 — 커밋 `a3e2032` · 2026-11-15 14:55 KST push(webhook blue/green) · 결과 ok(릴리스 `20261115-145551-a3e2032c`, 14:57 완료)
+  - 같은 배포에 함께 실린 작업: 없음
+- **AI 가 검증한 것**: 새 시험 107/107 · 관련 묶음 1,702건을 기준 커밋과 단언별 대조해 새 실패 0(기존 실패 92건은 기준과 메시지까지 같음) · tsc 0 · 운영 DB 읽기 전용 덤프 재생(국내 43종목 밀림 0, 해외 126종목 중 미수집 1 `NYS:BRK.B` → 둘 다 정상) · 수집기와 대상 목록 대등성 시험 · 안전 경로(SAFETY_PATHS) 변경 0 · 배포 후 pm2 2개 online·헬스 200·safetyStatus green·버전 0.12.0
+  - 검증 못 한 것: 실제 화면 렌더(412px 줄바꿈·가로 넘침) · 로그인 뒤 데이터 상태 API 실응답 · 느린 날 홈 전체 응답 시간(Reviewer R-3) · Codex 외부 검토(C1 실패·C2 미실행 — 서버 Codex 모델 설정 거부) · ESLint(저장소에 설정 없음)
+- **👉 사용자가 확인할 것**:
+  1. 지금부터 휴대폰 Chrome(또는 앱) → 분석 › 데이터 상태 → 「일봉 해외」 줄이 `… · 밀림 1/126종목`으로 보이고, 「일봉 국내」 줄에는 밀림 문구가 없으면 정상(BRK.B 1종목은 한 번도 수집되지 않았지만 3종목 미만이라 경고는 없다). 줄이 화면 밖으로 넘치거나 가로 스크롤이 생기면 이상.
+  2. 홈 「데이터 이상」에 일봉 항목이 없으면 정상(지금 밀린 종목은 해외 1개뿐).
+- **👉 사용자가 결정할 것**:
+  1. 데모 기록 — judge 가 화면 문구 한 줄에 delta 데모를 요구했다. 설계 승인 때 보신 문구 예(`일봉 국내 · 11/13(금) · 밀림 42/43종목`)를 데모 승인으로 기록할지, 생략(waive)으로 기록할지. AI 권고: 승인으로 기록(실제 구현 문구가 그 예와 형식이 같다). 기록은 사용자 확인 뒤 `check.mjs` 로만 한다.
+  2. 서버 Codex 설정 — `~/.codex/config.toml` 의 모델 값을 계정이 거부한다. 모델을 바꾸거나 CLI 를 갱신할지. AI 권고: CLI 갱신을 먼저 시도(Mac 10-31 사례에서 같은 증상이 갱신으로 풀렸다 — [추측]). 고치면 C2 를 다시 돌릴 수 있다.
+- **남은 일**: 이 배포 기록·최종 요약의 문서 커밋 push(push = 재배포라 별도 승인) · board·ACTIVE 반영(다른 세션 동시 갱신을 피해 손대지 않음) · BRK.B 미수집 원인 조사와 cron 의 `daily-bars OK` 줄에 남은 수 표시는 이 task 범위 밖(별건 후보)
+- **이슈·위험**: 분석 대상을 3종목 이상 새로 넣으면 다음 수집(07:40) 전까지 그 시장이 「오래됨」으로 보일 수 있다(실제로 일봉이 없으니 사실 그대로의 표시) · 국내 저녁 실행은 시그널 300 상한을 국내만으로 세 시그널 종목이 300을 넘으면 두 집합이 갈린다(11-15 실측 122) · 롤백: `git revert a3e2032` 후 push
