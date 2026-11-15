@@ -162,7 +162,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       responseFormat: 'text',
       model: drafterModel,
     });
-    draftPrompt = cleanDraftPrompt(draftPromptRaw, userContent);
+    draftPrompt = cleanDraftPrompt(draftPromptRaw, userContent, symbolContexts.map(c => c.symbol), historyRows.map((r) => String(r.content ?? '')).join('\n'));
   }
 
   // 본 응답 생성 — 지시는 system 메시지로(home-m4-api 의 시그널 평가 JSON 지시 주입 차단), 수집 데이터 요약 첨부

@@ -26,7 +26,28 @@ export const CHAT_ANSWER_FALLBACK = '답변을 대화 형식으로 만들지 못
 export const CHAT_DISCLAIMER = '이 내용은 이 시스템의 검증된 전략 판정이 아니라 참고용입니다.';
 /** 모델이 고지를 조금 바꿔 쓴 줄(「…아닌 참고용…」 등)도 고지로 본다 — 홀로 선 짧은 줄일 때만 */
 const DISCLAIMER_LINE_RE = /검증된\s*전략\s*판정이\s*아(?:니라|닌)\s*참고용/;
-const DISCLAIMER_LINE_MAX = 80;
+const DISCLAIMER_LINE_MAX = 60;
+/** 본문 줄 안에 끼어 있는 고지 **문장**의 길이 상한(T-174 N2) — 이보다 긴 문장은 다른 내용이 섞인 것으로 보고 둔다 */
+const DISCLAIMER_SENTENCE_MAX = 60;
+/** 고지 구절 = (머리말) + 「검증된 전략 판정이 아니라 참고용」 + (끝맺음). 머리말·끝맺음은 흔한 꼴만 안다. */
+const DISCLAIMER_CLAUSE_RE = new RegExp(
+  String.raw`(?:(?:이\s*내용은|이는|본\s*답변은|위\s*내용은|다만|단)[,，]?\s*)*(?:이\s*시스템의\s*)?` +
+  String.raw`검증된\s*전략\s*판정이\s*아(?:니라|닌)\s*참고용` +
+  String.raw`(?:일\s*뿐입니다|입니다만|입니다|이며|이고)?`,
+  'g',
+);
+/** 고지 구절을 뺀 나머지의 내용 글자(한글·영문·숫자)가 이 수 이상이면 분석이 섞인 문장이다 */
+const MIXED_CONTENT_MIN = 8;
+
+/**
+ * 60자 이하 고지 문장이 **순수 고지**인지 가른다 — 고지 구절(머리말·끝맺음 포함)을 빼고 남은 내용 글자가 8자 이상이면
+ * 앞뒤 어디에 있든, 쉼표가 있든 없든 혼합 문장이다. 혼합 문장은 통째로 남긴다(고지가 두 번 보여도 분석 문구를 조각내거나 잃지 않는다,
+ * Leader 결정 2026-11-15). 호출자는 이미 `DISCLAIMER_LINE_RE` 일치·길이 상한을 확인했다.
+ */
+function isPureDisclaimerSentence(sent: string): boolean {
+  const rest = sent.replace(DISCLAIMER_CLAUSE_RE, '');
+  return (rest.match(/[가-힣A-Za-z0-9]/g) ?? []).length < MIXED_CONTENT_MIN;
+}
 
 const BODY_KEYS = ['answer', 'response', 'message', 'content', 'text', 'reasoning'] as const;
 /** 줄 머리 JSON 블록을 찾을 때 한 블록으로 이어 볼 최대 줄 수(답 길이가 비정상이어도 계산량을 묶는다). */
@@ -341,9 +362,68 @@ export function normalizeChatAnswer(raw: unknown): string {
  * drafter(질문 다듬기) 결과 정리 — 일반 문장이면 정리한 문장, JSON 이 섞였거나 비었으면 **사용자 원문 질문**으로 대체한다
  * (JSON 의 reasoning 은 다듬은 질문이 아니라 메타 설명이라 질문으로 쓸 수 없다).
  */
-export function cleanDraftPrompt(raw: unknown, userContent: string): string {
+export function cleanDraftPrompt(
+  raw: unknown,
+  userContent: string,
+  allowedSymbols?: readonly string[],
+  historyText?: string,
+): string {
   const n = normalizeChatAnswerDetailed(raw);
-  return n.source === 'text' ? n.text : userContent.trim();
+  if (n.source !== 'text') return userContent.trim();
+  if (!allowedSymbols) return n.text;   // 인자 없음 — 기존과 완전히 같은 결과
+  const stripped = stripInventedSymbolIds(n.text, userContent, allowedSymbols, historyText ?? '');
+  return stripped || userContent.trim();
+}
+
+/** 금액·날짜·수량 맥락의 6자리 숫자는 종목 코드로 보지 않는다 — 앞뒤가 숫자·쉼표·소수점이거나 바로 뒤가 단위 */
+const KR_CODE_SRC = String.raw`(?<![\w.])(?<!\d,)\d{6}(?!\w|,\d|\.\d)(?!(?:원|주|%|년|월|일|개|명|건|회|배|달러|시|분|초)|\s(?:원|주|%|년|월|일|개|명|건|회|배|달러|시|분|초)(?![가-힣]))`;
+/** 맨 6자리 숫자는 괄호 안이거나 바로 앞이 「코드」·「종목코드」일 때만 종목 코드로 본다(T-174 L1) */
+const KR_PAREN_RE = /[(（][^()（）\n]*[)）]/g;
+const KR_LABELED_RE = new RegExp(String.raw`(?<=코드[ \t]*:?[ \t]*)${KR_CODE_SRC}`, 'g');
+/** 티커 끝의 `.`·`-` 는 토큰이 아니다 — 영숫자 사이의 `.`·`-`(BRK.B)만 티커 안으로 본다 */
+const US_CODE_RE = /(?<![\w:])(?:NAS|NYS|AMS):[A-Za-z][A-Za-z0-9]*(?:[.-][A-Za-z0-9]+)*/gi;
+const REMOVED = '\u0001';
+
+/**
+ * 다듬은 질문에서 사용자 원문·허용 목록·최근 대화에 없는 종목 식별자(국내 6자리 코드, `NAS:`·`NYS:`·`AMS:` 꼴)만 지운다.
+ * 회사 이름·단독 티커·코드 펜스 안은 지우지 않는다. 지운 자리의 구두점·공백을 정리하고, 지운 것이 없으면 입력을 그대로 돌려준다.
+ */
+function stripInventedSymbolIds(text: string, userContent: string, allowedSymbols: readonly string[], historyText: string): string {
+  const allowed = new Set(allowedSymbols.map((x) => x.toUpperCase()));
+  const idTokens = (txt: string) =>
+    new Set(txt.toUpperCase().match(/(?:NAS|NYS|AMS):[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*|\d+/g) ?? []);
+  const userTokens = idTokens(userContent);
+  const histTokens = idTokens(historyText);
+  const ok = (id: string) => {
+    const u = id.toUpperCase();
+    return allowed.has(u) || userTokens.has(u) || histTokens.has(u);   // 부분 문자열이 아니라 토큰 경계 일치
+  };
+  const drop = (m: string) => (ok(m) ? m : REMOVED);
+  const M = REMOVED;
+  // 괄호 안에서도 목록 한 항목으로 홀로 설 때만(왼쪽 `(`·`,`, 오른쪽 `,`·`)`) 코드로 본다
+  const krItem = new RegExp(String.raw`(?<=[(（,，][ \t]*)${KR_CODE_SRC}(?=[ \t]*[,，)）])`, 'g');
+  const parts = splitFences(text, true).map((p) => {
+    if (p.code) return p.text;
+    let t = p.text
+      .replace(KR_PAREN_RE, (grp) => grp.replace(krItem, drop))
+      .replace(KR_LABELED_RE, drop)
+      .replace(US_CODE_RE, drop);
+    if (!t.includes(M)) return t;
+    t = t
+      .replace(new RegExp(`[ \\t]*[,，、][ \\t]*${M}[ \\t]*([,，、])`, 'g'), '$1')   // 「A, 코드, B」 → 「A, B」 (쉼표 하나 유지)
+      .replace(new RegExp(`[ \\t]*[,，、][ \\t]*${M}`, 'g'), M)                       // 「A, 코드」 → 앞 쉼표까지
+      .replace(new RegExp(`${M}[ \\t]*[,，、][ \\t]*`, 'g'), M)                        // 「코드, A」 → 뒤 쉼표까지
+      .replace(new RegExp(`(^|\\n)${M}[ \\t]*`, 'g'), '$1')   // 줄 머리 코드 뒤 공백
+      .replace(new RegExp(`[ \\t]*${M}`, 'g'), '')
+      .replace(/[ \t]*[(（][ \t]*[)）]/g, '')                              // 빈 괄호
+      .replace(/([,，])[ \t]*[,，]/g, '$1')                                   // 겹친 쉼표
+      .replace(/([(（])[ \t]+/g, '$1')
+      .replace(/[ \t]+([,.)）!?])/g, '$1')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/[ \t]+$/gm, '');
+    return t;
+  });
+  return parts.join('').trim();
 }
 
 // ── 새 답 전용 후처리 ───────────────────────────────────────────────────────
@@ -383,6 +463,24 @@ function splitFences(text: string, keepFence = false): { code: boolean; text: st
   return parts;
 }
 
+/** 펜스 밖 본문 줄 안의 고지 문장만 지운다(같은 줄의 다른 문장·줄 머리 목록 기호는 남김). 고지가 없으면 입력 그대로. */
+function stripInlineDisclaimerSentences(seg: string): string {
+  if (!DISCLAIMER_LINE_RE.test(seg)) return seg;
+  return seg
+    .split('\n')
+    .map((line) => {
+      if (!DISCLAIMER_LINE_RE.test(line)) return line;
+      const prefix = /^[ \t]*(?:[-*•][ \t]+|\d+[.)][ \t]+)?/.exec(line)?.[0] ?? '';
+      const rest = line.slice(prefix.length);
+      const kept = rest
+        .split(/(?<=[.!?。])\s+/)
+        .filter((sent) => !(sent.trim().length <= DISCLAIMER_SENTENCE_MAX && DISCLAIMER_LINE_RE.test(sent) && isPureDisclaimerSentence(sent)));
+      return kept.length === 0 ? null : prefix + kept.join(' ');   // 고지만 있던 줄은 줄째 뺀다
+    })
+    .filter((l): l is string => l !== null)
+    .join('\n');
+}
+
 /**
  * 새 답 후처리 — 승인 데모 구조를 코드로 보장한다(마크다운 굵게·제목 기호 없음, 끝 줄 = {@link CHAT_DISCLAIMER} 한 줄).
  * 홀로 선 고지 줄(조금 바꿔 쓴 것 포함)은 끝으로 모아 정확한 문구 한 줄로 만든다.
@@ -391,12 +489,12 @@ function splitFences(text: string, keepFence = false): { code: boolean; text: st
  */
 export function finalizeNewChatAnswer(text: string, opts: FinalizeOptions = {}): string {
   const body = splitFences(text)
-    .map((p) => (p.code ? p.text : stripMarkdownOutsideCode(p.text)))
+    .map((p) => (p.code ? p.text : stripInlineDisclaimerSentences(stripMarkdownOutsideCode(p.text))))
     .join('')
     .replace(/^[ \t]*```[\w+-]*[ \t]*$/gm, '');   // 남은 홑 펜스 줄(닫히지 않은 것, 언어 표시만 있는 줄) — 화면에 기호로 보이지 않게
   const lines = body
     .split('\n')
-    .filter((l) => !(l.trim().length <= DISCLAIMER_LINE_MAX && DISCLAIMER_LINE_RE.test(l)));
+    .filter((l) => !(l.trim().length <= DISCLAIMER_LINE_MAX && DISCLAIMER_LINE_RE.test(l) && isPureDisclaimerSentence(l)));
   const content = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   if (!content) return CHAT_ANSWER_FALLBACK;
   // 끝부분 순서: 본문 → (자료 기준 시각 줄) → (언급한 후보의 상태 줄) → 고지 끝 줄

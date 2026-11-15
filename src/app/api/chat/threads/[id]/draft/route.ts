@@ -93,7 +93,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   });
   const draftLatencyMs = Date.now() - t0;
   // T-169 A4 — JSON 이 섞이면 다듬은 질문 대신 사용자 원문을 돌려준다(사용자가 검토·편집한다)
-  const draftPrompt = cleanDraftPrompt(draftRaw, userContent);
+  const draftPrompt = cleanDraftPrompt(draftRaw, userContent, merged.map(m => m.symbol), historyRows.map((r) => String(r.content ?? '')).join('\n'));
 
   // A thread can be removed or transferred while the model is running.
   if (!(await ownedThread(pool, threadId, auth.userId))) {

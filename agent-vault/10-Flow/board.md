@@ -4,6 +4,10 @@ tags:
 ---
 # 칸반 보드
 
+## 2026-11-15 20:57 — T-174 비서 채팅 후처리 보완(N1 지어낸 종목 식별자 제거·N2 본문 안 고지 중복 제거) → 21:20 Reviewer 3차 PASS·QA PASS, 서버 worktree 커밋(0.14.0) — push(운영 배포) 사용자 승인 대기
+
+- [[T-174-chat-draft-code-and-disclaimer-dedupe]]: [[T-169-assistant-chat-data-context]] QA Low N1·N2. 다듬은 질문에서 원문·첨부·최근 대화에 없는 식별자(괄호 안 목록 항목인 6자리 코드, 거래소:티커)만 지우고, 답 본문 안의 순수 고지 문장(60자 이하·고지 밖 내용 8자 미만)만 지운다. 섞인 문장은 통째로 남김(정보 손실보다 고지 중복). judge intake R1·sonnet·demo none, C2 codex 불필요. Reviewer 1·2차 conditional_pass → 3차 PASS(Low 4 수용). QA: typecheck 0·jest chat+llm 227·build 0·경계 실패 5건 기준과 이름 동일, 실제 모델 출력 재생에서 N1(`(NVIDIA, 210140)` → `(NVIDIA)`)·N2(고지 2회 → 1회) 해소, 과거 답 표시 경로 차이 0.
+
 ## 2026-11-14 17:51 — T-169 비서(분석가 채팅) 대화형 답변 복구 + 수집 데이터 요약 첨부 → 11-14 22:31 Reviewer·QA PASS 커밋 → **11-15 08:28 운영 배포**(릴리스 `20261115-082807-7c8f1ae2`, 0.11.0 — 사용자 화면 확인 대기)
 
 - [[T-169-assistant-chat-data-context]]: hybrid(홈서버 qwen) 경로에서 home-m4-api 가 시그널 평가 JSON 지시를 주입해 채팅 답이 `selectedIndices` JSON(15/15건), 수집 데이터 연결 0. 설계 = system 메시지 분리·대화형 지시·JSON 정규화 + 매크로 레짐·엔진 후보·DB 일봉 지표·본인 보유·뉴스 제목 요약 첨부, 미국 티커·한글 별칭 인식, 달러 단위.
