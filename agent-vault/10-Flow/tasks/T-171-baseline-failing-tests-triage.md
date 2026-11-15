@@ -1,7 +1,7 @@
 ---
 task_id: T-171
 title: 기준 커밋에서 이미 실패하던 시험 정리 — 판정표 + 「시험 낡음」 러너 시험 6개 갱신
-status: review
+status: done
 priority: high
 project: StockInvest
 created: 2026-11-15
@@ -16,7 +16,7 @@ tags:
   - domain/cron
 aliases:
   - 기준실패시험정리
-waiting: [user_decision, push_confirm]
+waiting: [user_decision]
 execution_context:
   schema_version: 1
   origin_tool: claude
@@ -41,6 +41,7 @@ execution_context:
 - 2026-11-15 08:2x (T-170 세션이 넘긴 작업 지시): "각 실패가 「시험이 낡음」인지 「실제 회귀」인지 판정해 사용자에게 표로 보여 주고, 시험 갱신이 맞는 것만 기대값 근거를 적어 고친다(기대값 약화 금지). 끝: 표 + 승인된 갱신, Reviewer·QA 통과, 커밋(서버 worktree), push 는 사용자 승인 후."
 - **이 지시가 허용하는 것**: 판정 조사(읽기 전용), 「시험 낡음」으로 판정한 시험의 갱신·감사·QA·서버 worktree 커밋.
 - **허용하지 않는 것**: push·배포, 제품 코드 수정, 경계 허용 목록 확장, 공유 환경 변경 — 아래 「사용자 결정 필요」 표.
+- 2026-11-15 14:55 (사용자, 이 세션의 다음 단계 버튼): "Push 11b720c" — T-171 커밋 1개의 push 승인. 첫 push 는 그 사이 origin/main 이 T-173(`a3e2032`)으로 나아가 거부됐고, 같은 커밋을 새 기준 위에 다시 만들어(`683a5dc`) push 했다(아래 「push·배포」).
 
 ## 판정표 (Leader — 2026-11-15, 기준 `c29e685`)
 
@@ -135,4 +136,28 @@ execution_context:
 |---|---|---|---|---|---|
 | E1 | 2026-11-15 08:2x | start | claude / claude_standard | 판정 조사부터 A 절 갱신·감사·QA·커밋까지 | T-170 세션(Claude)이 넘긴 작업 지시 |
 
+## push·배포 (메인 세션, claude)
+
+- [11:0x] 서버 worktree 커밋 `11b720c`(부모 `bd65785`), 훅 `✅ Reviewer 감사 기록 확인: T-171`.
+- [14:55] 사용자 push 승인 직후 점검: `git-refs-clean.sh --check` 깨끗 · fetch 시 origin/main `bd65785` · 앞선 커밋은 `11b720c` 하나. `git push origin 11b720c:main` → **non-fast-forward 거부**(그 사이 T-173 `a3e2032` 가 push 됨). 아무것도 올라가지 않았다.
+- [14:56] `bd65785..a3e2032` 는 T-173 1개(src/lib/ops/metrics·DataPanel·package 버전·T-173 이력서)이고 `scripts/`·T-171 이력서를 건드리지 않는다. 6개 시험이 읽는 저장소 파일(러너·자기 자신·`.env` 스텁·cron-runner-block 시험 경로 언급)도 변경 없음 → r1 결과(581/0) 그대로 유효.
+- [14:56] worktree 를 `a3e2032` 로 옮기고 `11b720c` 의 7개 파일을 그대로 가져와 같은 메시지 파일로 다시 커밋 → `683a5dc`. 훅이 다시 돌아 `✅ Reviewer 감사 기록 확인: T-171`. 대조: 7개 파일 `git diff 11b720c 683a5dc` 0줄 · patch-id 동일(`16f1ccde…`) · 메시지 동일.
+- [14:56:38] 재점검(refs 깨끗 · origin/main `a3e2032` · 앞선 커밋 `683a5dc` 하나) 후 `git push origin 683a5dc:main` → `a3e2032..683a5dc` 성공.
+- **배포: 실행되지 않음.** webhook 서버(`~/.local/webhook-deploy/server.js`)는 같은 저장소 배포가 돌고 있으면 새 push 를 **대기열에 넣지 않고 버린다**. 로그: `05:55:47 started sha=a3e2032` → `05:56:51 skip (already running)`(이 push) → `05:57:00 finished exit=0`(UTC). 운영은 `releases/20261115-145551-a3e2032c`(`RELEASE_RESULT status ok`, `/api/health` 200)로, `683a5dc` 는 아직 어느 릴리스에도 없다.
+- 영향 [확실]: `683a5dc` 는 시험 스크립트 6개와 이 이력서만 바꿔 실행 중인 앱·cron 동작은 같다. 다음 push(어떤 커밋이든)가 배포될 때 함께 실린다. 수동 배포(`scripts/deploy.sh`)는 사용자 승인 사항이라 하지 않았다.
+
 ## 최종 요약
+
+### [T-171] main 에서 이미 실패하던 시험 정리 — 러너 시험 6개 갱신 + 경계·환경 실패 판정표
+
+- **상태**: 완료(A 절 갱신 push 됨). B·C 절은 사용자 결정 대기 — 이 task 에서 고치지 않았다.
+- **무엇이 바뀌었나**: 러너 시험 6개(daily-bars·holdings-premarket·job-run-log·news-peek·news-split·overseas-universe)가 T-156(m40 잡)·T-160(call() 종료 코드 기록)으로 바뀐 러너를 기준 러너와 비교할 때 그 줄·호출만 빼도록 맞췄다. 빼는 줄이 다른 곳에 생기면 실패하는 단언을 더했고, 기대값 변경은 job-run-log J13 2 → 3(셋 다 상한 읽기인지 함께 단언) 하나다. 기존 단언 삭제·완화 없음.
+- **배포**: 커밋 `683a5dc`(첫 커밋 `11b720c` 를 T-173 `a3e2032` 위에 같은 내용으로 다시 만든 것), push 2026-11-15 14:56 KST. **webhook 배포는 T-173 배포와 겹쳐 건너뛰어졌다** — 운영은 `a3e2032` 릴리스 그대로(정상). 시험·문서만 바뀌어 운영 동작 차이는 없고, 다음 push 때 함께 배포된다. 같은 배포에 실린 다른 작업: 없음.
+- **AI 가 검증한 것**: 6개 시험 전체 실행 581 통과 / 0 실패(입력 sha256 고정) · Reviewer PASS(정적 절·변이) · QA PASS(로그·약화 없음 대조 + daily-bars 동적 변이 2종이 각각 4·5건 실패로 잡힘) · 재커밋 내용 동일(patch-id).
+- **AI 가 검증 못 한 것**: 나머지 5개 시험의 동적 변이, m40 블록 본문 내부 변경(이 6개 시험의 설계상 범위 밖 — m40 전용 시험 담당), 6개 밖의 러너 시험.
+- **👉 사용자가 확인할 것**: 없음(운영 화면·앱 변화 없음).
+- **👉 사용자가 결정할 것**:
+  1. B — T-156 경계 시험 8건(위 표 B): 항목마다 좁은 예외 승인 또는 코드 수정. 권고: job-slots 에 m40 2행 추가, `paper_only` 한국어 문구 추가, 격리·통화·용어 펜스는 지점별 검토 후 결정 — 안전 경로·화면 문구가 섞여 별도 task 로.
+  2. C — 공유 `node_modules` 안의 잘못된 링크 `StockInvest/node_modules/node_modules` 삭제 여부(링크만, 대상 폴더 유지). 지우기 전까지 렌더 jest 20개가 모든 worktree 에서 실패한다.
+- **남은 일**: B·C 결정 후 별도 task. 이 이력서 갱신 커밋의 push(push 하면 `683a5dc` 까지 함께 배포된다).
+- **이슈·위험**: B·C 가 풀릴 때까지 jest 실패 28개가 기준에 남아 같은 이름의 새 회귀를 가릴 수 있다. webhook 이 진행 중 배포와 겹친 push 를 버리는 동작은 다른 세션의 push 에도 같은 일을 만든다(push 직후 webhook 로그에 자기 sha 의 START 가 있는지 확인 필요).
