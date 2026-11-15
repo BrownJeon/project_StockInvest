@@ -288,7 +288,25 @@ export interface AnalysisVerifyDTO {
 }
 export interface DataSourceRow { id: DataSourceId; lastOkAt: string | null; state: MetricState; reason?: string;
   /** 일봉 = 마지막 trade_date(YYYY-MM-DD, 해외는 ET 날짜) · 뉴스 = 0건 연속 일수 · 그 밖 null */
-  dateRef: string | null; streak: number | null }
+  dateRef: string | null; streak: number | null;
+  /** (T-173) 일봉 원천만 — 수집 대상 종목별 밀림. 계산하지 못했으면 null, 일봉 밖 원천은 키 없음. */
+  lag?: BarsLag | null }
+/**
+ * (T-173) 일봉 수집 대상 중 밀린 종목 — 한 시장. 「밀림」= 마지막 확정 봉 다음 날부터 기대 거래일까지 거래일 2일 이상.
+ * 「하루 늦음」(1일)은 예산 순환 설계상 평일에 생길 수 있어 경고에 넣지 않는다. 「미수집」= 확정 봉이 한 줄도 없다.
+ */
+export interface BarsLag {
+  /** 있어야 하는 마지막 봉 날짜(현지 — 해외는 ET) */
+  expected: string;
+  targets: number;
+  late1: number;
+  behind: number;
+  missing: number;
+  /** 밀린 종목 중 가장 오래된 마지막 봉 날짜(미수집 제외). 밀린 종목이 없으면 null */
+  oldest: string | null;
+  /** 예시 종목(미수집 → 오래된 봉 순, 최대 5개) */
+  samples: string[];
+}
 export interface UptimeRow { group: 'analysis' | 'collection'; days: number; ok: number; expected: number | null; state: MetricState; reason?: string;
   /** job_run_log 첫 행 시각 — 「기록 {n}일째」 */
   firstRecordAt: string | null }

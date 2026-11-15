@@ -6,12 +6,14 @@
  *  | 포트폴리오 스냅샷 | `portfolio_snapshots MAX(ts)` | 3시간(장외에도 약 2시간마다 찍힌다) |
  *  | 환율 USD/KRW | `fx_rates(pair='USD_KRW').fetched_at` | 24시간 |
  *  | 일봉 국내·해외 | 일봉 reader(`daily-bars-read.ts`)의 시장별 마지막 확정 봉 날짜 | 수집 예정일(세션 다음 날 08:30 KST)이 지난 세션보다 이르면 |
+ *  |               | (T-173) 수집 대상 종목별 마지막 확정 봉(`bars-lag.ts`) | 2거래일 이상 밀림+미수집 ≥ 3종목(시장별) |
  *  | 뉴스 국내·해외 | `system_config news_zero_streak:<channel>:<market>` | 0건 연속 ≥ 2 → partial · 관측 30시간 공백 → stale |
  *  | 브로커 원장 | `broker_fill_runs` 완료(`complete`) 실행 `MAX(started_at)` | 26시간 |
  * 원천마다 따로 읽고, 한 원천의 실패는 그 행만 error 다(0·정상으로 위장하지 않는다).
  */
 import { num, OpsQueryError, parseJsonObject, type OpsReader } from './read-only';
 import { readLastBarDates } from './daily-bars-read';
+import { barsLagAlert, barsLagOf, readBarsLagInput, type BarsLagInput } from './bars-lag';
 import { addDaysYmd } from '@/lib/strategy/us-session';
 import { isTradingDay, kstDateOf, kstIso, kstWallToMs, localDateOf, toMs, type ClosedDays } from './sessions';
 import { counted, metric } from './metric';
@@ -85,14 +87,31 @@ export function expectedBarDate(market: Market, nowMs: number, closed: ReadonlyS
   return null;
 }
 
-/** 일봉 원천 1개 — 순수. */
-export function barsRow(id: DataSourceId, market: Market, last: string | null, nowMs: number, closed: ReadonlySet<string> | null): DataSourceRow {
+/**
+ * 일봉 원천 1개 — 순수.
+ *
+ * 판정 순서: 봉 없음(unknown) → 휴장표 모름(available·holidays_unknown, 밀림 계산 안 함) → 시장 마지막 봉이 기대일보다 이름(stale·bars_old)
+ * → (T-173) 대상 중 밀림+미수집 ≥ 임계값(stale·bars_symbols_behind) → 밀림을 확인하지 못함(partial — 종목별 봉 조회 실패 `bars_lag_unread`,
+ * 대상 목록 일부 조회 실패 `bars_targets_partial`) → 정상. 확인하지 못한 것을 정상으로 두지 않는다(A4 「데이터 이상」에 일부 저하로 오른다).
+ * `lagIn` 을 넘기지 않으면 T-173 전과 같다(`lag` 키도 없다). 넘기면 일봉 행에 `lag`(계산 못 하면 null)가 붙는다.
+ */
+export function barsRow(
+  id: DataSourceId, market: Market, last: string | null, nowMs: number, closed: ReadonlySet<string> | null, lagIn?: BarsLagInput,
+): DataSourceRow {
   if (last == null) return row(id, 'unknown', null, { reason: 'no_bars' });
   if (!closed) return row(id, 'available', null, { dateRef: last, reason: 'holidays_unknown' });
   const exp = expectedBarDate(market, nowMs, closed);
-  if (exp != null && last < exp) return row(id, 'stale', null, { dateRef: last, reason: 'bars_old' });
-  return row(id, 'available', null, { dateRef: last });
+  const lag = lagIn?.last && exp != null ? barsLagOf(market, lagIn.symbols, lagIn.last, exp, closed) : null;
+  const base = lagIn ? { dateRef: last, lag } : { dateRef: last };
+  if (exp != null && last < exp) return row(id, 'stale', null, { ...base, reason: 'bars_old' });
+  if (lag && barsLagAlert(lag)) return row(id, 'stale', null, { ...base, reason: 'bars_symbols_behind' });
+  if (lagIn && !lagIn.last) return row(id, 'partial', null, { ...base, reason: 'bars_lag_unread' });
+  if (lagIn && lagIn.targetErrors.length > 0) return row(id, 'partial', null, { ...base, reason: 'bars_targets_partial' });
+  return row(id, 'available', null, base);
 }
+
+/** (T-173) 밀림 입력을 읽지 못했을 때(예상 밖 예외) — 두 시장 모두 「종목별 봉을 읽지 못함」. */
+const LAG_UNREAD: BarsLagInput = { symbols: [], last: null, targetErrors: [] };
 
 interface NewsState { streak: number; lastDate: string | null; lastOkDate: string | null }
 
@@ -123,12 +142,13 @@ export function newsRows(rows: readonly { key: unknown; value: unknown }[], nowM
 /** 원천 7개 — 원천마다 독립(한 원천 실패 = 그 행만 error). */
 export async function readDataSources(r: OpsReader, closed: ClosedDays): Promise<DataSourceRow[]> {
   const now = r.nowMs;
-  const [snap, fx, bars, news, broker] = await Promise.allSettled([
+  const [snap, fx, bars, news, broker, lagIn] = await Promise.allSettled([
     r.rows<{ t: unknown }>(SNAPSHOT_MAX_SQL),
     r.rows<{ rate: unknown; fetched_at: unknown }>(FX_ROW_SQL),
     readLastBarDates(r),
     r.rows<{ key: unknown; value: unknown }>(NEWS_STREAK_SQL),
     r.rows<{ t: unknown }>(BROKER_LAST_SQL),
+    readBarsLagInput(r),
   ]);
   const out: DataSourceRow[] = [];
   out.push(snap.status === 'fulfilled' ? ageRow('portfolio_snapshot', toMs(snap.value[0]?.t), now, SNAPSHOT_LIMIT_MS) : errRow('portfolio_snapshot', snap.reason));
@@ -138,8 +158,9 @@ export async function readDataSources(r: OpsReader, closed: ClosedDays): Promise
     out.push(f && rate != null && rate > 0 ? ageRow('fx_usdkrw', toMs(f.fetched_at), now, FX_LIMIT_MS) : row('fx_usdkrw', 'unknown', null, { reason: 'no_rows' }));
   } else out.push(errRow('fx_usdkrw', fx.reason));
   if (bars.status === 'fulfilled') {
-    out.push(barsRow('daily_bars_kr', 'domestic', bars.value.domestic, now, closed.domestic));
-    out.push(barsRow('daily_bars_us', 'overseas', bars.value.overseas, now, closed.overseas));
+    const lag = lagIn.status === 'fulfilled' ? lagIn.value : { domestic: LAG_UNREAD, overseas: LAG_UNREAD };
+    out.push(barsRow('daily_bars_kr', 'domestic', bars.value.domestic, now, closed.domestic, lag.domestic));
+    out.push(barsRow('daily_bars_us', 'overseas', bars.value.overseas, now, closed.overseas, lag.overseas));
   } else {
     out.push(errRow('daily_bars_kr', bars.reason));
     out.push(errRow('daily_bars_us', bars.reason));

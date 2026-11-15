@@ -6,7 +6,7 @@ jest.mock('@/lib/db', () => ({ getPool: jest.fn() }));
 import {
   ageRow, barsRow, BROKER_LAST_SQL, buildAnomalies, DATA_SOURCE_IDS, expectedBarDate, FX_ROW_SQL, NEWS_STREAK_SQL, newsRows, readDataSources, SNAPSHOT_MAX_SQL,
 } from '../anomalies';
-import { LAST_BAR_DATE_SQL } from '../daily-bars-read';
+import { LAST_BAR_DATE_SQL, SYMBOL_LAST_BAR_SQL } from '../daily-bars-read';
 import {
   consecutiveSessionDays, gapMetric, groupExitGates, lastEvalMetric, noRunMetric, summarizeProposals,
 } from '../exit-lines';
@@ -190,6 +190,8 @@ describe('A4 — 준비 중(prep) 원천은 확인한 원천 수에서 뺀다 (T
     [SNAPSHOT_MAX_SQL, others === 'ok' ? [{ t: new Date(kst('2026-10-30 11:30')) }] : others],
     [FX_ROW_SQL, others === 'ok' ? [{ rate: 1380, fetched_at: new Date(kst('2026-10-30 11:55')) }] : others],
     [LAST_BAR_DATE_SQL, others === 'ok' ? [{ d: '2026-10-29' }] : others],
+    // (T-173) 일봉 대상 종목별 마지막 봉도 「정상」 — 해외 분석 목록 표가 비어 있으면 내장 목록이 대상이 되므로 요청받은 종목 전부 최신으로 답한다
+    [SYMBOL_LAST_BAR_SQL, others === 'ok' ? (p: unknown[]) => (p[1] as string[]).map((symbol) => ({ symbol, d: '2026-10-29' })) : others],
     [NEWS_STREAK_SQL, others === 'ok' ? [streak('domestic'), streak('overseas')] : others],
     [BROKER_LAST_SQL, broker],
   ];

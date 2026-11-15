@@ -23,11 +23,17 @@ export const SOURCE_LABEL: Record<DataSourceId, string> = {
   broker_ledger: '브로커 원장',
 };
 
-/** 원천 1줄의 기준 표시 — 뉴스 0건 연속이면 그 일수, 일봉은 마지막 봉 날짜(해외 ET), 그 밖은 마지막 성공 시각. */
+/** (T-173) 일봉 줄 뒤에 붙는 밀린 종목 수 — 2거래일 이상 밀림 + 미수집이 있을 때만(「하루 늦음」은 세지 않는다). */
+function barsLagText(r: DataSourceRow): string {
+  const n = r.lag ? r.lag.behind + r.lag.missing : 0;
+  return r.lag && n > 0 ? ` · 밀림 ${n}/${r.lag.targets}종목` : '';
+}
+
+/** 원천 1줄의 기준 표시 — 뉴스 0건 연속이면 그 일수, 일봉은 마지막 봉 날짜(해외 ET)와 밀린 종목 수, 그 밖은 마지막 성공 시각. */
 export function sourceWhen(r: DataSourceRow, nowMs: number): string {
   if ((r.id === 'news_domestic' || r.id === 'news_overseas') && r.streak != null && r.streak >= 1) return `${r.streak}일 연속 0건`;
-  if (r.id === 'daily_bars_kr' && r.dateRef) return fmtSessionDate(r.dateRef);
-  if (r.id === 'daily_bars_us' && r.dateRef) return fmtEtSession(r.dateRef);
+  if (r.id === 'daily_bars_kr' && r.dateRef) return fmtSessionDate(r.dateRef) + barsLagText(r);
+  if (r.id === 'daily_bars_us' && r.dateRef) return fmtEtSession(r.dateRef) + barsLagText(r);
   // 날짜만 있는 원천(뉴스 = 마지막 정상일)은 시각 대신 날짜
   if (!r.lastOkAt && r.dateRef) return fmtSessionDate(r.dateRef);
   return fmtKstTime(r.lastOkAt, nowMs);

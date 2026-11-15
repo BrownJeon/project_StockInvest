@@ -5,7 +5,7 @@
  * (연구 모듈 격리 시험의 정규식이 src 전체를 본다).
  *
  * 규칙:
- *  - 고정 SELECT 문장 상수 2개뿐. 읽는 열은 `market`·`symbol`·`trade_date`(+ 확정 봉 거르기용 `is_final` 조건)뿐 — 가격·거래량 열을 읽지 않는다.
+ *  - 고정 SELECT 문장 상수 3개뿐. 읽는 열은 `market`·`symbol`·`trade_date`(+ 확정 봉 거르기용 `is_final` 조건)뿐 — 가격·거래량 열을 읽지 않는다.
  *  - 연구 모듈을 import 하지 않는다(시장 코드 'KR'·'US' 는 여기 상수로 둔다).
  *  - 날짜는 DATE_FORMAT 문자열로 받는다(풀 시간대로 하루 밀리는 일 방지). 해외 날짜는 거래소 현지(ET) 날짜다.
  *  - 실패는 그대로 던진다 — 호출 섹션이 「조회 실패」로 둔다(0·빈 값으로 위장하지 않는다).
@@ -26,6 +26,15 @@ export const LAST_BAR_DATE_SQL =
 export const BAR_DATES_SQL =
   `SELECT symbol, DATE_FORMAT(trade_date, '%Y-%m-%d') AS d FROM daily_bars
     WHERE market = ? AND symbol IN (?) AND trade_date > ? AND is_final = 1`;
+
+/**
+ * (T-173) 대상 종목별 마지막 확정 봉 날짜 — PK(market, symbol, trade_date) 묶음별 MAX(종목마다 인덱스 끝 한 칸).
+ * 날짜 하한을 두지 않는다: 오래 멈춘 종목일수록 이 값이 필요하다(하한 밖이면 「미수집」으로 잘못 보인다).
+ */
+export const SYMBOL_LAST_BAR_SQL =
+  `SELECT symbol, DATE_FORMAT(MAX(trade_date), '%Y-%m-%d') AS d FROM daily_bars
+    WHERE market = ? AND symbol IN (?) AND is_final = 1
+    GROUP BY symbol`;
 
 /** 마지막 봉을 찾을 범위 — 이보다 오래되면 「없음」(null)으로 본다. */
 export const LAST_BAR_LOOKBACK_DAYS = 45;
@@ -48,6 +57,22 @@ async function readLastBarDatesOnce(r: OpsReader): Promise<ByMarket<string | nul
   };
   const [domestic, overseas] = await Promise.all([one('domestic'), one('overseas')]);
   return { domestic, overseas };
+}
+
+/**
+ * (T-173) 종목 → 마지막 확정 봉 날짜. 확정 봉이 없는 종목은 결과에 없다(= 미수집). 종목이 없으면 조회하지 않는다.
+ * 실패는 그대로 던진다(호출자가 「확인 못 함」으로 둔다).
+ */
+export async function readSymbolLastBars(r: OpsReader, market: Market, symbols: readonly string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = [...new Set(symbols)];
+  if (uniq.length === 0) return out;
+  const rows = await r.rows<{ symbol: unknown; d: unknown }>(SYMBOL_LAST_BAR_SQL, [BAR_MARKET[market], uniq]);
+  for (const row of rows) {
+    const d = String(row.d ?? '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) out.set(String(row.symbol), d);
+  }
+  return out;
 }
 
 /** 종목 → 확정 봉 날짜 목록(afterDate 초과). 종목이 없으면 조회하지 않는다. */

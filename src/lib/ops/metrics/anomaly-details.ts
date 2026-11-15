@@ -1,5 +1,6 @@
 import { ANALYSIS_REASON_KO, jobNameText } from '@/lib/ops/reason-dictionary';
 import { anomalySources, DATA_SOURCE_LABEL, JOB_FAILURES_SCOPE_SQL } from './anomalies';
+import { BARS_BEHIND_DAYS } from './bars-lag';
 import type { OpsReader } from './read-only';
 import { isoOrNull, kstDateOf, kstIso, toMs } from './sessions';
 import type { AnalysisAnomalyRow, DataSourceRow } from './types';
@@ -24,13 +25,35 @@ const SOURCE_SUMMARY = {
   partial: ['일부 데이터 부족', '수집 기록에서 일부 데이터가 확인되지 않았습니다.'],
 } as const;
 
+/** (T-173) 일봉 원천의 종목별 밀림 사유·근거 — 일봉 행이 아니거나 밀린 종목도 확인 실패도 없으면 null. */
+function barsLagDetail(s: DataSourceRow): Pick<AnalysisAnomalyRow, 'reason' | 'evidence'> | null {
+  if (s.reason === 'bars_lag_unread') {
+    return { reason: '대상 종목별 마지막 일봉을 조회하지 못해 밀린 종목 수를 확인하지 못했습니다.', evidence: s.dateRef ? `시장 마지막 일봉 ${s.dateRef}` : null };
+  }
+  const l = s.lag;
+  if (!l || l.behind + l.missing === 0) {
+    if (s.reason !== 'bars_targets_partial') return null;
+    return { reason: '수집 대상 목록 일부(보유·해외 분석 목록·시그널)를 읽지 못해 밀린 종목 수가 실제보다 적을 수 있습니다.', evidence: s.dateRef ? `시장 마지막 일봉 ${s.dateRef}` : null };
+  }
+  const parts = [l.behind > 0 ? `${l.behind}종목이 ${BARS_BEHIND_DAYS}거래일 이상 밀렸습니다` : null, l.missing > 0 ? `${l.missing}종목은 일봉이 한 줄도 없습니다` : null]
+    .filter(Boolean).join(' · ');
+  const partial = s.reason === 'bars_targets_partial' ? ' 대상 목록 일부를 읽지 못해 실제보다 적을 수 있습니다.' : '';
+  const rest = l.behind + l.missing - l.samples.length;
+  return {
+    reason: `수집 대상 ${l.targets}종목 중 ${parts}.${partial}`,
+    evidence: [`기대 거래일 ${l.expected}`, l.oldest ? `가장 오래된 봉 ${l.oldest}` : null,
+      l.samples.length ? `예: ${l.samples.join(', ')}${rest > 0 ? ` 외 ${rest}` : ''}` : null].filter(Boolean).join(' · '),
+  };
+}
+
 function sourceDetail(s: DataSourceRow): AnalysisAnomalyRow {
   const [summary, message] = SOURCE_SUMMARY[s.state as keyof typeof SOURCE_SUMMARY];
   const last = s.dateRef ?? s.lastOkAt;
+  const bars = barsLagDetail(s);
   return {
     id: s.id, kind: 'source', label: DATA_SOURCE_LABEL[s.id], at: null, summary,
-    reason: s.reason === 'zero_streak' && s.streak ? `뉴스 0건이 ${s.streak}일 연속 기록됐습니다.` : message,
-    evidence: last ? `마지막 확인 기록 ${last}` : null,
+    reason: bars?.reason ?? (s.reason === 'zero_streak' && s.streak ? `뉴스 0건이 ${s.streak}일 연속 기록됐습니다.` : message),
+    evidence: bars ? bars.evidence : last ? `마지막 확인 기록 ${last}` : null,
     laterOkAt: null,
   };
 }
