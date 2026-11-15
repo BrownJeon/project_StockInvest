@@ -35,6 +35,11 @@
 #      호출 도중 SIGKILL ×3 → 잔존은 늘 1개(다음 시작이 지움, 누적 없음) · 시작 정리는 죽은 pid 파일만(살아 있는 pid·다른 이름은 둔다)
 #  J13. (T-135) 정적: 블록 표지·위치 · `# T-135` 표지 1줄 · call() 의 경로 줄 3개·마스킹 로그 줄·마지막 줄 rm · 예전 고정 경로는 대체 경로 1곳뿐 ·
 #      jrl_hook 이 CALL_BODY_FILE 을 읽음 · trap 없음 · T-135 를 되돌리면(no_t135) call() = 기준 러너
+# (T-156·T-160 병합, T-171) 두 task 가 러너를 바꾸고 이 시험의 비교 범위를 넓히지 않아 J1·J8·J13 이 어긋났다(T-171 판정: 시험 낡음).
+#   T-156 의 m40 호출은 기준 러너와 비교할 때만 뺀다(⑨ 스냅샷·T-170 과 같은 방식 — nojrl_cmp·nojrlmt·nokfout·dfiles). 단 상태 확인 curl
+#   (/api/cron/m40-forward?status=1)은 **call() 을 거치지 않는 직접 호출**이라 후크 줄이 없다 — 「call() 마다 한 줄」 자기 정합 검사가 그 호출을
+#   call() 로 세지 않도록 nojrl 에서 뺀다(J1 의 기대 5137 / 실제 5129 = 그 호출 8건). J8 은 call() 비교에서 T-156 분기 2줄을 더 빼고, J13 은
+#   T-160 이 jrl_hook 에 더한 「성공 마커」 읽기 한 줄을 반영해 CALL_BODY_FILE 읽기를 2 → 3 으로 센다(셋 다 head -c 상한 읽기인지 함께 본다).
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 # T112_ONLY="J3 J8" 처럼 주면 그 묶음만 돈다(변이 시험을 빨리 돌리려는 것 — 평소에는 비워 전부 돈다).
 set -u
@@ -46,6 +51,29 @@ PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 eq()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (기대 '$3', 실제 '$2')"; fi; }
+
+# ── (T-171) T-156·T-160 이 기준 ref 뒤에 러너에 더한 것 — 비교에서 빼는 도우미(표준입력 → 표준출력) ─────────────
+#   T-156(m40 모의 평가, Reviewer PASS·운영 반영): 메인 루프 블록 m40-forward-daily·m40-forecast-daily, 최상위 함수 블록 m40-state-write,
+#     선언 M40_FORWARD_LAST_RUN_FILE, call() 의 「m40-forward 202 → ACCEPTED」 로그 분기 2줄. 호출은 call() 경유 /api/cron/m40-forward(상한 10)·
+#     /api/cron/m40-forecast(상한 150)와 call() 밖 상태 확인 curl /api/cron/m40-forward?status=1(상한 5) — ET 06:45~09:00 창이라
+#     하루 전체 시나리오에서는 KST 19:45~22:00(EDT)·20:45~23:00(EST)에 돈다. 그 블록·분기는 scripts/test-cron-runner-m40-forward.sh·m40-forecast.sh 가 본다.
+#   T-160(홈 실행 실패 표시, Reviewer PASS): call() 세 줄 — curl 종료 코드를 기록용 변수에 복사하는 두 줄(job-run-log 시험 J8 의 원래 no_t160 과
+#     같은 치환)과 그 값을 jrl_hook 에 넘기는 후크 호출 줄(`# T-112 jrl` 표지 줄이라 그 표지를 지우는 비교에는 영향 없음)을 되돌린다.
+#   빼거나 되돌리는 줄이 엉뚱한 곳에 생기면 범위가 무검사로 넓어지므로 정적 절(J8)이 그 줄들이 파일 전체에 각 1개(모두 call() 안)인지 따로 단언한다.
+M40RE=' /api/cron/m40-(forward(\?status=1)?|forecast)$'        # 호출 기록 줄(…경로)
+M40MT='^/api/cron/m40-(forward(\?status=1)?|forecast) '         # --max-time 기록 줄(경로 max-time=N)
+T156_L1='  elif [ "$label" = "m40-forward" ] && [ "$path" = "/api/cron/m40-forward" ] && [ "$code" = "202" ]; then'
+T156_L2='    echo "[$ts] $label ACCEPTED completed=false"'
+no_t156_call() { grep -vxF "$T156_L1" | grep -vxF "$T156_L2"; }
+no_t156() { awk '/^ *# >>> (m40-forward-daily|m40-forecast-daily|m40-state-write)$/{s=1} s{ if (/^ *# <<< (m40-forward-daily|m40-forecast-daily|m40-state-write)$/) s=0; next } {print}' \
+  | grep -v '^M40_FORWARD_LAST_RUN_FILE=' | no_t156_call; }
+T160_L3='  jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" "$curl_exit" 2>/dev/null || true   # T-112 jrl'
+no_t160() { sed -e 's/^  local code curl_exit=0$/  local code/' -e 's/|| { curl_exit=\$?; code="000"; }$/|| code="000"/' \
+                -e 's/^\(  jrl_hook "\$label" "\$path" "\$code" "\${jrl_t0:-}"\) "\$curl_exit" \(2>\/dev\/null || true   # T-112 jrl\)$/\1 \2/'; }
+t171_targets() {   # 러너 → "파일 전체 개수 5개 | call() 안 개수 5개" (T-156 2줄 · T-160 3줄)
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T156_L1" "$1") $(grep -cxF "$T156_L2" "$1") $(grep -c '^  local code curl_exit=0$' "$1") $(grep -c '|| { curl_exit=\$?; code="000"; }$' "$1") $(grep -cxF "$T160_L3" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T156_L1") $(printf '%s\n' "$cb" | grep -cxF "$T156_L2") $(printf '%s\n' "$cb" | grep -c '^  local code curl_exit=0$') $(printf '%s\n' "$cb" | grep -c '|| { curl_exit=\$?; code="000"; }$') $(printf '%s\n' "$cb" | grep -cxF "$T160_L3")"
+}
 
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
@@ -218,7 +246,9 @@ no_t135() {
 #   「그 변경은 있고 T-112 는 없는 ref」를 만들 수도 없다(T-112 가 먼저다) → 호출·로그·상한 비교에서 **그 잡만 뺀다**.
 #   뺀 자리는 비지 않는다: 그 잡의 창·틱 yield·상한은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 본다.
 KF_RE=' /api/cron/kis-fundamentals-snapshot$'
-nojrl()   { grep -vE "$JRE" "$1/calls"; }                                   # 기록 전송을 뺀 호출(시각·틱·경로)
+# (T-171) T-156 m40 상태 확인 curl(?status=1)은 call() 밖 직접 호출 — 후크 줄이 없어 「call() 호출」로 세지 않는다(nojrl 자기 정합 검사·비교 모두).
+M40P_RE=' /api/cron/m40-forward\?status=1$'
+nojrl()   { grep -vE "$JRE" "$1/calls" | grep -vE "$M40P_RE"; }                                   # 기록 전송을 뺀 호출(시각·틱·경로)
 # 🔴 (T-145 ⑨) **기준 러너와 비교할 때만** 스냅샷을 추가로 뺀다. `nojrl` 자체를 좁히면 「후크가 호출당 한 줄을
 #   남긴다」·「경로별 줄 수 = 경로별 호출 수」 같은 **자기 정합 검사**가 스풀(그 잡 포함)과 어긋난다 —
 #   실제로 그렇게 고쳤다가 J1 두 건이 깨졌다(기대 5098 / 실제 5124 = 그 잡 호출 수만큼).
@@ -226,18 +256,20 @@ nojrl()   { grep -vE "$JRE" "$1/calls"; }                                   # �
 #   T112_BASE_REF 뒤에 더해진 잡이다 — ⑨ 스냅샷과 같은 방식으로 **기준 러너와 비교할 때만** 호출·상한·로그 줄·날짜파일에서 뺀다
 #   (nojrl·스풀 자기 정합 검사는 그대로 그 호출을 센다). 그 잡의 일정·상한·로그는 scripts/test-cron-runner-daily-bars-kr.sh 가 본다.
 KR_RE=' /api/cron/daily-bars\?market=KR$'
-nojrl_cmp() { nojrl "$1" | grep -vE "$KF_RE" | grep -vE "$KR_RE"; }
-nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot ' | grep -v '^/api/cron/daily-bars?market=KR '; }
+# (T-171) T-156 m40 의 call() 경유 호출 2경로(/api/cron/m40-forward·m40-forecast)도 T112_BASE_REF 뒤에 더해진 잡이라 **기준 러너와 비교할 때만** 뺀다
+#   (nojrl·스풀 자기 정합 검사는 그 호출을 그대로 센다). 그 블록의 일정·상태 파일은 scripts/test-cron-runner-m40-forward.sh·m40-forecast.sh 가 본다.
+nojrl_cmp() { nojrl "$1" | grep -vE "$KF_RE" | grep -vE "$KR_RE" | grep -vE "$M40RE"; }
+nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot ' | grep -v '^/api/cron/daily-bars?market=KR ' | grep -vE "$M40MT"; }   # (T-171) T-156 m40 세 경로의 상한(10·150·5)
 # (T-147) 기동 로그의 레거시 모드 한 줄(`🔶 ALERT_TICKER_DISABLE=1 — 레거시 모드 …`)은 기준 러너에 없다 — 이 하네스가 그 모드로
 #   러너를 돌리기 때문에 생기는 **의도된 추가 한 줄**이라 로그 줄 비교에서 뺀다. 그 줄 자체(모드 표시·티커 미기동)는
 #   scripts/test-cron-runner-alert-ticker.sh E1 이 본다.
 no_t147_log() { grep -v 'ALERT_TICKER_DISABLE=1 — 레거시 모드'; }
-nokfout() { grep -v 'kis-fundamentals-snapshot' "$1" | grep -v '\] daily-bars-kr ' | no_t147_log; }       # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다 · (T-170) 국내 일봉 저녁 · (T-147) 레거시 모드 줄 제외
+nokfout() { grep -v 'kis-fundamentals-snapshot' "$1" | grep -v '\] daily-bars-kr ' | grep -vE '\] m40-(forward|forecast) |^\[m40-(forward|forecast)\] ' | no_t147_log; }       # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다 · (T-170) 국내 일봉 저녁 · (T-147) 레거시 모드 줄 제외 · (T-171) T-156 m40 로그 줄(call() 의 OK·HTTP=·ACCEPTED 줄, 예약 실패 줄)
 gap()     { awk 'NR>1 { g = $1 - p; if (g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }
 spool()   { cat "$1/home/.node-local/stockinvest/job-run-spool" "$1/home/.node-local/stockinvest/job-run-spool.sending" 2>/dev/null; }
 # (T-145 ⑨) kis-fundamentals-snapshot 의 날짜파일은 **판정에 쓰이지 않는 흔적**이 됐고(러너 블록 주석),
 #   호출 시각이 08:00 → 08:30~08:55 로 바뀌어 짧은 시나리오에서는 기준 러너와 존재 여부가 갈린다 → 비교에서 뺀다.
-dfiles()  { ( cd "$1/home/.node-local/stockinvest" && for f in *-last-date *-attempts; do [ -f "$f" ] && echo "$f=$(cat "$f")"; done ) 2>/dev/null | grep -v '^kis-fundamentals-snapshot-last-date=' | grep -v '^daily-bars-kr-last-date=' | sort; }   # (T-170) 국내 일봉 저녁 날짜파일도 뺀다
+dfiles()  { ( cd "$1/home/.node-local/stockinvest" && for f in *-last-date *-attempts; do [ -f "$f" ] && echo "$f=$(cat "$f")"; done ) 2>/dev/null | grep -v '^kis-fundamentals-snapshot-last-date=' | grep -v '^daily-bars-kr-last-date=' | grep -vE '^m40-(forward|forecast)-last-date=' | sort; }   # (T-170) 국내 일봉 저녁 날짜파일도 뺀다 · (T-171) T-156 m40 상태 파일 2개도 뺀다
 same_calls() {   # same_calls 라벨 새 기준
   if diff <(nojrl_cmp "$2") <(nojrl_cmp "$3") > /dev/null; then ok "🔴 $1: 기록 전송·⑨ 스냅샷을 뺀 모든 호출(시각·틱·경로) = 기준 러너 ($(nojrl_cmp "$2" | wc -l | tr -d ' ')건)"
   else bad "$1: 기록 전송을 뺀 호출 목록이 기준 러너와 다르다"; diff <(nojrl_cmp "$2") <(nojrl_cmp "$3") | head -10; fi
@@ -409,15 +441,17 @@ no_t147_old() { awk '/^  # 매 1분: stop-alert/{s=1} s{ if (/^  CALL_MAX_TIME="
 #   `call()` 본문 해시 비교(아래 J8)에는 영향이 없다 — 이 줄은 `call()` 밖이다.
 no_t149_old() { grep -v '^# (T-062 Codex C2 ②) 해외 post-market'; }
 # T-160은 curl 종료 코드를 기록용 변수에만 복사한다. 그 두 줄만 기준 형태로 되돌려 비교한다.
-no_t160() { sed -e 's/^  local code curl_exit=0$/  local code/' -e 's/|| { curl_exit=\$?; code="000"; }$/|| code="000"/'; }
+#   (T-171) no_t160 은 파일 위 T-171 도우미로 옮겼다 — 같은 두 치환에 후크 호출 줄의 종료 코드 인자 되돌림을 더했다. 그 줄은 기준 ref(T-112 이전)에
+#   없는 추가 줄이고 아래 call() 비교는 `# T-112 jrl` 줄을 먼저 지우므로 J8 의 두 비교 결과에는 영향이 없다.
 missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER" | no_t160) <(no_t147_old < "$BASE" | no_t149_old))"
 eq "🔴 J8: 기준 러너의 모든 줄(주석 포함)이 순서대로 남아 있다(T-135·T-160 변경만 되돌려 비교)" "${missing:-none}" "none"
 # (T-149 감사 L-7) 스트리퍼는 기준 ref 쪽에서 그 1줄을 지우므로, **지금 러너에서 그 줄이 사라져도** 위 대조가 깨지지 않는다.
 #   그래서 러너 쪽에 그 줄이 정확히 1개 있다는 단정을 따로 둔다 — 없으면 스트리퍼가 가린 범위가 무검사로 넓어진다.
 eq "🔴 J8: no_t149_old 가 노리는 주석 줄이 지금 러너에 정확히 1개 있다" \
    "$(grep -c '^# (T-062 Codex C2 ②) 해외 post-market' "$RUNNER")" "1"
-eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼고 T-135·T-160을 되돌리면 기준 러너와 같다" \
-   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
+eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼고 T-135·T-160을 되돌리고 T-156 분기 2줄을 빼면 기준 러너와 같다" \
+   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | no_t156_call | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
+eq "🔴 J8: (T-171) no_t156_call·no_t160 이 노리는 줄 = 파일 전체 각 1개 · 모두 call() 안" "$(t171_targets "$RUNNER")" "1 1 1 1 1 | 1 1 1 1 1"
 eq "J8: call() 안 표지 줄 2개, 파일 전체 4개" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -c '# T-112 jrl$') $(grep -c '# T-112 jrl$' "$RUNNER")" "2 4"
 cb="$(awk '/^call\(\) \{/,/^\}/' "$RUNNER")"
 eq "J8: 후크는 로그 줄 뒤·임시 본문 rm 바로 앞" "$(printf '%s\n' "$cb" | grep -A1 'jrl_hook ' | tail -1 | sed 's/^ *//')" 'rm -f "$CALL_BODY_FILE"'
@@ -717,7 +751,9 @@ eq "🔴 J13: 비-200 로그 줄 = 마스킹 뒤 앞 200바이트" "$(printf '%s
    'echo "[$ts] $label HTTP=$code body=$(head -c 2048 "$CALL_BODY_FILE" 2>/dev/null | jrl_mask_money 2>/dev/null | head -c 200)"'
 eq "🔴 J13: 예전 고정 경로는 실행 줄에서 대체 경로 1곳뿐(call_tmp_open)" \
    "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -c 'cron-runner-\$\$\.out') $(printf '%s\n' "$cbkx" | grep -c '^    CALL_BODY_FILE="/tmp/cron-runner-\$\$\.out"$')" "1 1"
-eq "🔴 J13: jrl_hook 은 CALL_BODY_FILE 을 두 번 읽는다(금액 라벨·일반)" "$(awk '/^jrl_hook\(\) \{/,/^\}/' "$RUNNER" | grep -c '"\${CALL_BODY_FILE:-}"')" "2"
+# (T-171) T-160 이 jrl_hook 에 성공 마커 읽기(head -c 2049 → node 판정) 한 줄을 더했다 — 읽는 곳 3개, 셋 다 head -c 상한 읽기(쓰기·삭제 없음)
+eq "🔴 J13: jrl_hook 은 CALL_BODY_FILE 을 세 번 읽는다(성공 마커(T-160)·금액 라벨·일반) — 모두 head -c 상한 읽기" \
+   "$(awk '/^jrl_hook\(\) \{/,/^\}/' "$RUNNER" | grep -c '"\${CALL_BODY_FILE:-}"') $(awk '/^jrl_hook\(\) \{/,/^\}/' "$RUNNER" | grep '"\${CALL_BODY_FILE:-}"' | grep -vc '^[[:space:]]*b64=\$(head -c "\$\(JRL_BODY_MAX_BYTES\|((JRL_BODY_MAX_BYTES + 1))\)" "\${CALL_BODY_FILE:-}" 2>/dev/null | ')" "3 0"
 eq "🔴 J13: mktemp 줄 · 기본 디렉터리 줄" \
    "$(printf '%s\n' "$cbkx" | grep -c '^  CALL_BODY_FILE=\$(mktemp "\${CALL_TMP_DIR:-/nonexistent}/cron-runner-\$\$\.XXXXXX" 2>/dev/null) || CALL_BODY_FILE=""$') $(printf '%s\n' "$cbkx" | grep -c '^CALL_TMP_DIR="\${CALL_TMP_DIR:-\${HOME}/\.node-local/stockinvest/call-tmp}"$')" "1 1"
 cto="$(awk '/^call_tmp_open\(\) \{/,/^\}/' "$RUNNER" | grep -v '^[[:space:]]*#')"
@@ -729,8 +765,8 @@ eq "🔴 J13: 시작 정리 — 숫자 pid 만 · 자기 pid 제외 · 살아 �
 eq "J13: trap 없음(TERM 에 바로 죽는 러너 동작 불변)" "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -cw 'trap')" "0"
 eq "🔴 J13: T-135 를 되돌리면(no_t135) 블록·표지·세 줄만 사라지고 나머지 줄 수가 맞다" \
    "$(( $(wc -l < "$RUNNER") - $(no_t135 < "$RUNNER" | wc -l) ))" "$(( $(printf '%s\n' "$cbk" | wc -l) + 1 ))"
-eq "J13: 되돌린 러너에 T-135 흔적 없음(CALL_BODY_FILE 은 jrl_hook 두 줄과 주석뿐)" \
-   "$(no_t135 < "$RUNNER" | grep -v '^[[:space:]]*#' | grep -c 'CALL_BODY_FILE\|call_tmp_')" "2"
+eq "J13: 되돌린 러너에 T-135 흔적 없음(CALL_BODY_FILE 은 jrl_hook 세 줄(T-171: T-160 성공 마커 포함)과 주석뿐)" \
+   "$(no_t135 < "$RUNNER" | grep -v '^[[:space:]]*#' | grep -c 'CALL_BODY_FILE\|call_tmp_')" "3"
 
 fi
 echo

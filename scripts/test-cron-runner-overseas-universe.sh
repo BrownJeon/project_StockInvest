@@ -18,6 +18,9 @@
 #      매 틱) 이 비교에서 뺀다. 그 잡의 일정은 자기 블록 시험이 본다(아래 nouv 주석).
 #  U5. 정적: 호출 줄 1개 · 상한은 그 호출에만(앞뒤로 CALL_MAX_TIME 설정·해제) · 비밀 헤더를 블록에서 다루지 않음 ·
 #      요일·일자·창 판정이 블록 안 변수로만 이뤄짐 · call() 불변
+# (T-156·T-160 병합, T-171) 두 task 가 러너를 바꾸고 이 시험의 비교 범위를 넓히지 않아 U4·U5 가 기준 ref 와 어긋났다(T-171 판정: 시험 낡음).
+#   U4 는 T-156 의 m40 호출 3경로를 호출·--max-time 비교에서 빼고, U5 의 call() 비교는 T-160 줄을 되돌리고 T-156 분기 2줄을 뺀다
+#   (아래 T-171 도우미). 이 블록의 기대값·기존 단언은 그대로다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +31,29 @@ PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 eq()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (기대 '$3', 실제 '$2')"; fi; }
+
+# ── (T-171) T-156·T-160 이 기준 ref 뒤에 러너에 더한 것 — 비교에서 빼는 도우미(표준입력 → 표준출력) ─────────────
+#   T-156(m40 모의 평가, Reviewer PASS·운영 반영): 메인 루프 블록 m40-forward-daily·m40-forecast-daily, 최상위 함수 블록 m40-state-write,
+#     선언 M40_FORWARD_LAST_RUN_FILE, call() 의 「m40-forward 202 → ACCEPTED」 로그 분기 2줄. 호출은 call() 경유 /api/cron/m40-forward(상한 10)·
+#     /api/cron/m40-forecast(상한 150)와 call() 밖 상태 확인 curl /api/cron/m40-forward?status=1(상한 5) — ET 06:45~09:00 창이라
+#     하루 전체 시나리오에서는 KST 19:45~22:00(EDT)·20:45~23:00(EST)에 돈다. 그 블록·분기는 scripts/test-cron-runner-m40-forward.sh·m40-forecast.sh 가 본다.
+#   T-160(홈 실행 실패 표시, Reviewer PASS): call() 세 줄 — curl 종료 코드를 기록용 변수에 복사하는 두 줄(job-run-log 시험 J8 의 원래 no_t160 과
+#     같은 치환)과 그 값을 jrl_hook 에 넘기는 후크 호출 줄(`# T-112 jrl` 표지 줄이라 그 표지를 지우는 비교에는 영향 없음)을 되돌린다.
+#   빼거나 되돌리는 줄이 엉뚱한 곳에 생기면 범위가 무검사로 넓어지므로 정적 절(U5)이 그 줄들이 파일 전체에 각 1개(모두 call() 안)인지 따로 단언한다.
+M40RE=' /api/cron/m40-(forward(\?status=1)?|forecast)$'        # 호출 기록 줄(…경로)
+M40MT='^/api/cron/m40-(forward(\?status=1)?|forecast) '         # --max-time 기록 줄(경로 max-time=N)
+T156_L1='  elif [ "$label" = "m40-forward" ] && [ "$path" = "/api/cron/m40-forward" ] && [ "$code" = "202" ]; then'
+T156_L2='    echo "[$ts] $label ACCEPTED completed=false"'
+no_t156_call() { grep -vxF "$T156_L1" | grep -vxF "$T156_L2"; }
+no_t156() { awk '/^ *# >>> (m40-forward-daily|m40-forecast-daily|m40-state-write)$/{s=1} s{ if (/^ *# <<< (m40-forward-daily|m40-forecast-daily|m40-state-write)$/) s=0; next } {print}' \
+  | grep -v '^M40_FORWARD_LAST_RUN_FILE=' | no_t156_call; }
+T160_L3='  jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" "$curl_exit" 2>/dev/null || true   # T-112 jrl'
+no_t160() { sed -e 's/^  local code curl_exit=0$/  local code/' -e 's/|| { curl_exit=\$?; code="000"; }$/|| code="000"/' \
+                -e 's/^\(  jrl_hook "\$label" "\$path" "\$code" "\${jrl_t0:-}"\) "\$curl_exit" \(2>\/dev\/null || true   # T-112 jrl\)$/\1 \2/'; }
+t171_targets() {   # 러너 → "파일 전체 개수 5개 | call() 안 개수 5개" (T-156 2줄 · T-160 3줄)
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T156_L1" "$1") $(grep -cxF "$T156_L2" "$1") $(grep -c '^  local code curl_exit=0$' "$1") $(grep -c '|| { curl_exit=\$?; code="000"; }$' "$1") $(grep -cxF "$T160_L3" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T156_L1") $(printf '%s\n' "$cb" | grep -cxF "$T156_L2") $(printf '%s\n' "$cb" | grep -c '^  local code curl_exit=0$') $(printf '%s\n' "$cb" | grep -c '|| { curl_exit=\$?; code="000"; }$') $(printf '%s\n' "$cb" | grep -cxF "$T160_L3")"
+}
 
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
@@ -101,7 +127,8 @@ uvat() { grep -E "$UVRE" "$1/calls" | awk '{print $2}' | tr '\n' ' '; }
 #   블록 단위 시뮬레이션으로 본다(T-117 daily-bars·T-118 peek 가 서로의 잡을 뺀 것과 같은 방식).
 # (T-170) 국내 일봉 저녁(daily-bars?market=KR, 18:10 하루 1회)은 이 블록보다 뒤에 더해진 잡이라 변경 전 러너에 없다 — 같은 방식으로 뺀다
 #   (그 잡의 일정·상한은 scripts/test-cron-runner-daily-bars-kr.sh 가 본다).
-nouv() { grep -vE "$UVRE" "$1/calls" | grep -v ' /api/cron/kis-fundamentals-snapshot$' | grep -v ' /api/cron/daily-bars?market=KR$' | awk '{print $1, $2, $4}'; }
+# (T-171) T-156 m40 호출 3경로(call() 경유 2 + call() 밖 상태 확인 curl 1)도 이 블록보다 뒤에 더해진 잡이라 같은 방식으로 뺀다(그 블록은 m40 시험이 본다).
+nouv() { grep -vE "$UVRE" "$1/calls" | grep -v ' /api/cron/kis-fundamentals-snapshot$' | grep -v ' /api/cron/daily-bars?market=KR$' | grep -vE "$M40RE" | awk '{print $1, $2, $4}'; }
 
 echo "U1. 2026-12-06(첫째 일요일) 하루 — 창 안 짝수 분에만 호출"
 R1="$(run_loop u1 "$RUNNER" '2026-12-06 00:00:00' 1440)"
@@ -158,7 +185,7 @@ else
 fi
 eq "U4: 변경 전 러너에는 이 잡이 없다" "$(uvc "$RB")" "0"
 eq "U4: 변경 전 러너의 --max-time 목록 = 지금(산출 호출·T-145 ⑨ 스냅샷 제외)" \
-   "$(grep -v 'overseas-universe-refresh' "$R1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot ' | grep -v '^/api/cron/daily-bars?market=KR ' | sort | uniq -c | sha256sum | cut -c1-16)" \
+   "$(grep -v 'overseas-universe-refresh' "$R1/maxtime" | grep -v '^/api/cron/kis-fundamentals-snapshot ' | grep -v '^/api/cron/daily-bars?market=KR ' | grep -vE "$M40MT" | sort | uniq -c | sha256sum | cut -c1-16)" \
    "$(sort "$RB/maxtime" | uniq -c | sha256sum | cut -c1-16)"
 
 echo
@@ -184,9 +211,10 @@ eq "U5: 종료 점검 줄은 창 끝 분(05:50)에서만 켜지는 한 줄이다
    "$(printf '%s\n' "$BLK" | grep -c '^  if \[ "\$HH" = "05" \] && \[ "\$UNIV_MM" = "50" \]; then UNIV_WINDOW=yes; fi$')" "1"
 eq "U5: 분을 읽을 수 없으면 돌지 않는다(방어 한 줄)" \
    "$(printf '%s\n' "$BLK" | grep -c 'case "\$UNIV_MM" in \[0-5\]\[0-9\]) ;; \*) UNIV_MM="" ;; esac')" "1"
-eq "U5: call() 은 변경 전과 같다" \
-   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | sha256sum | cut -c1-16)" \
+eq "U5: call() 은 변경 전과 같다(T-171: T-160 줄 되돌림 · T-156 분기 2줄 뺌)" \
+   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | no_t160 | no_t156_call | sha256sum | cut -c1-16)" \
    "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum | cut -c1-16)"
+eq "🔴 U5: (T-171) no_t156_call·no_t160 이 노리는 줄 = 파일 전체 각 1개 · 모두 call() 안" "$(t171_targets "$RUNNER")" "1 1 1 1 1 | 1 1 1 1 1"
 eq "U5: 날짜파일(상태)을 새로 만들지 않는다 — 창·간격이 호출 수를 묶는다" \
    "$(printf '%s\n' "$BLK" | grep -c 'LAST_RUN_FILE\|DONE_FILE')" "0"
 

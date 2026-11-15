@@ -29,6 +29,9 @@
 #   (holdings-premarket 과 같은 방식), D6 정적은 07:40 블록 표지를 정확히 고른다(새 블록 표지 daily-bars-daily-kr 이 이 표지를 접두로
 #   포함한다 — strip_new 의 접두 정규식은 그 블록도 함께 지우는데, 그것이 원하는 동작이다). 저녁 블록 자체는
 #   scripts/test-cron-runner-daily-bars-kr.sh 가 본다. 07:40 블록의 기대값(시각·본문·상한·yield·건너뜀·하트비트)·단언은 그대로다.
+# (T-156·T-160 병합, T-171) 두 task 가 러너를 바꾸고 이 시험의 비교 범위를 넓히지 않아 D1·D6 이 기준 ref 와 어긋났다(T-171 판정: 시험 낡음).
+#   T-156 의 m40 블록·선언·call() 분기 2줄·호출(call() 경유 2개 + call() 밖 상태 확인 curl 1개)을 호출·--max-time 비교와 D6 정적에서 빼고,
+#   T-160 의 call() 줄은 job-run-log 시험 J8 의 no_t160 과 같은 치환으로 되돌린다(아래 T-171 도우미). daily-bars 기대값·기존 단언은 그대로다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,6 +42,29 @@ PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 eq()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (기대 '$3', 실제 '$2')"; fi; }
+
+# ── (T-171) T-156·T-160 이 기준 ref 뒤에 러너에 더한 것 — 비교에서 빼는 도우미(표준입력 → 표준출력) ─────────────
+#   T-156(m40 모의 평가, Reviewer PASS·운영 반영): 메인 루프 블록 m40-forward-daily·m40-forecast-daily, 최상위 함수 블록 m40-state-write,
+#     선언 M40_FORWARD_LAST_RUN_FILE, call() 의 「m40-forward 202 → ACCEPTED」 로그 분기 2줄. 호출은 call() 경유 /api/cron/m40-forward(상한 10)·
+#     /api/cron/m40-forecast(상한 150)와 call() 밖 상태 확인 curl /api/cron/m40-forward?status=1(상한 5) — ET 06:45~09:00 창이라
+#     하루 전체 시나리오에서는 KST 19:45~22:00(EDT)·20:45~23:00(EST)에 돈다. 그 블록·분기는 scripts/test-cron-runner-m40-forward.sh·m40-forecast.sh 가 본다.
+#   T-160(홈 실행 실패 표시, Reviewer PASS): call() 세 줄 — curl 종료 코드를 기록용 변수에 복사하는 두 줄(job-run-log 시험 J8 의 원래 no_t160 과
+#     같은 치환)과 그 값을 jrl_hook 에 넘기는 후크 호출 줄(`# T-112 jrl` 표지 줄이라 그 표지를 지우는 비교에는 영향 없음)을 되돌린다.
+#   빼거나 되돌리는 줄이 엉뚱한 곳에 생기면 범위가 무검사로 넓어지므로 정적 절(D6)이 그 줄들이 파일 전체에 각 1개(모두 call() 안)인지 따로 단언한다.
+M40RE=' /api/cron/m40-(forward(\?status=1)?|forecast)$'        # 호출 기록 줄(…경로)
+M40MT='^/api/cron/m40-(forward(\?status=1)?|forecast) '         # --max-time 기록 줄(경로 max-time=N)
+T156_L1='  elif [ "$label" = "m40-forward" ] && [ "$path" = "/api/cron/m40-forward" ] && [ "$code" = "202" ]; then'
+T156_L2='    echo "[$ts] $label ACCEPTED completed=false"'
+no_t156_call() { grep -vxF "$T156_L1" | grep -vxF "$T156_L2"; }
+no_t156() { awk '/^ *# >>> (m40-forward-daily|m40-forecast-daily|m40-state-write)$/{s=1} s{ if (/^ *# <<< (m40-forward-daily|m40-forecast-daily|m40-state-write)$/) s=0; next } {print}' \
+  | grep -v '^M40_FORWARD_LAST_RUN_FILE=' | no_t156_call; }
+T160_L3='  jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" "$curl_exit" 2>/dev/null || true   # T-112 jrl'
+no_t160() { sed -e 's/^  local code curl_exit=0$/  local code/' -e 's/|| { curl_exit=\$?; code="000"; }$/|| code="000"/' \
+                -e 's/^\(  jrl_hook "\$label" "\$path" "\$code" "\${jrl_t0:-}"\) "\$curl_exit" \(2>\/dev\/null || true   # T-112 jrl\)$/\1 \2/'; }
+t171_targets() {   # 러너 → "파일 전체 개수 5개 | call() 안 개수 5개" (T-156 2줄 · T-160 3줄)
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T156_L1" "$1") $(grep -cxF "$T156_L2" "$1") $(grep -c '^  local code curl_exit=0$' "$1") $(grep -c '|| { curl_exit=\$?; code="000"; }$' "$1") $(grep -cxF "$T160_L3" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T156_L1") $(printf '%s\n' "$cb" | grep -cxF "$T156_L2") $(printf '%s\n' "$cb" | grep -c '^  local code curl_exit=0$') $(printf '%s\n' "$cb" | grep -c '|| { curl_exit=\$?; code="000"; }$') $(printf '%s\n' "$cb" | grep -cxF "$T160_L3")"
+}
 
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
@@ -144,7 +170,7 @@ EOF
 DBRE=' /api/cron/daily-bars$'
 dbc()    { grep -E "$DBRE" "$1/calls"; }
 dbat()   { dbc "$1" | awk '{print $1, $2}' | tr '\n' ' '; }
-nodb()   { grep -vE "$DBRE" "$1/calls" | grep -v ' /api/cron/daily-bars?market=KR$' | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | awk '{print $1, $2, $4}'; }   # (T-119 병합) holdings-premarket·(T-145 ⑨) kis-fundamentals-snapshot 제외 — ⑨ 가 그 잡을 08:30~08:55 창의 매 틱으로 바꿨다(사용자 승인). 그 일정은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 본다
+nodb()   { grep -vE "$DBRE" "$1/calls" | grep -v ' /api/cron/daily-bars?market=KR$' | grep -v ' /api/cron/holdings-premarket$' | grep -v ' /api/cron/kis-fundamentals-snapshot$' | grep -vE "$M40RE" | awk '{print $1, $2, $4}'; }   # (T-119 병합) holdings-premarket·(T-145 ⑨) kis-fundamentals-snapshot 제외 — ⑨ 가 그 잡을 08:30~08:55 창의 매 틱으로 바꿨다(사용자 승인). 그 일정은 src/app/api/cron/kis-fundamentals-snapshot/__tests__/cron-runner-block.test.ts 가 본다 · (T-171) T-156 m40 호출 3경로 제외
 allc()   { awk '{print $1, $2, $4}' "$1/calls"; }
 # (T-145 ⑨) 기준 러너 쪽에서도 kis-fundamentals-snapshot 을 뺀다 — nodb 가 새 러너에서만 빼면 기준의 08:00 1회가 남아 어긋난다
 allc_nokf() { grep -v ' /api/cron/kis-fundamentals-snapshot$' "$1/calls" | awk '{print $1, $2, $4}'; }
@@ -173,9 +199,9 @@ eq "🔴 D1: daily-bars = 07:40 하루 1회" "$(dbat "$NA")" "10-28 07:40 "
 eq "🔴 D1: 07:40~07:54 밖의 daily-bars 호출 0" "$(dbc "$NA" | awk '{print $2}' | grep -cvE '^07:(4[0-9]|5[0-4])$')" "0"
 eq "D1: 본문 = '{}'(본문 없음 → 라우트 기본 대상)" "$(sort -u "$NA/dbody" | tr '\n' ' ')" "{} "
 eq "🔴 D1: daily-bars 호출에 --max-time 120" "$(grep '^/api/cron/daily-bars ' "$NA/maxtime" | tr '\n' ' ')" "/api/cron/daily-bars max-time=120 "
-# (T-145 ⑨) 스냅샷의 --max-time(110)은 그 블록 시험이 본다 — 여기서는 뺀다
-if diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/daily-bars?market=KR ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') "$BA/maxtime" > /dev/null; then ok "🔴 D1: daily-bars 를 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
-else bad "D1: --max-time 목록이 다르다"; diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/daily-bars?market=KR ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ') "$BA/maxtime" | head -5; fi
+# (T-145 ⑨) 스냅샷의 --max-time(110)은 그 블록 시험이 본다 — 여기서는 뺀다 · (T-171) T-156 m40 세 경로의 상한(10·150·5)도 m40 시험 몫이라 뺀다
+if diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/daily-bars?market=KR ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ' | grep -vE "$M40MT") "$BA/maxtime" > /dev/null; then ok "🔴 D1: daily-bars 를 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
+else bad "D1: --max-time 목록이 다르다"; diff <(grep -v '^/api/cron/daily-bars ' "$NA/maxtime" | grep -v '^/api/cron/daily-bars?market=KR ' | grep -v '^/api/cron/holdings-premarket ' | grep -v '^/api/cron/kis-fundamentals-snapshot ' | grep -vE "$M40MT") "$BA/maxtime" | head -5; fi
 eq "D1: 날짜파일 = 오늘" "$(df "$NA" daily-bars-last-date)" "$TD"
 eq "D1: OK 로그 1줄" "$(grep -c '\] daily-bars OK$' "$NA/stdout")" "1"
 eq "D1: yield 로그 없음(07:00·07:20 틱과 다른 틱)" "$(ylog "$NA")" "0"
@@ -296,19 +322,22 @@ no_t135() {
           -e 's#-o "\$CALL_BODY_FILE" -w#-o /tmp/cron-runner-$$.out -w#' \
           -e 's#^  rm -f "\$CALL_BODY_FILE"$#  rm -f /tmp/cron-runner-$$.out#'
 }
-no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$' | no_t135; }
+# (T-171) T-156 블록·선언·call() 분기와 T-160 call() 줄도 새 러너 쪽에서만 빼거나 되돌린다(위 T-171 도우미 — 기준 ref 에는 없다)
+no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | no_t156; }
 RUNNER_NOJRL="$W/runner-nojrl.sh"; no_jrl "$RUNNER" > "$RUNNER_NOJRL"
 if diff <(strip_new "$RUNNER_NOJRL") <(strip_old "$BEFORE") > /dev/null; then ok "🔴 D6: daily-bars 블록·DAILY_BARS_* 선언·주석 밖 실행 줄 = 변경 전과 동일 ($(strip_new "$RUNNER_NOJRL" | wc -l | tr -d ' ')줄)"
 else bad "D6: 블록 밖 실행 줄이 바뀌었다"; diff <(strip_new "$RUNNER_NOJRL") <(strip_old "$BEFORE") | head -10; fi
 # 변경 전 러너의 모든 줄(주석 포함)이 순서대로 새 러너에 있다 = 삭제·수정 0, 추가만
 # (T-135) call() 의 본문 경로 세 줄은 T-135 가 의도해 바꿨다 — 그 세 줄만 되돌린 러너(no_t135)로 비교한다
-missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER") <(no_t147_old < "$BEFORE" | no_t149_old))"
+# (T-171) T-160 의 call() 줄도 같은 이유로 되돌린다(no_t160). T-156 은 줄을 더하기만 해서 되돌릴 것이 없다.
+missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t135 < "$RUNNER" | no_t160) <(no_t147_old < "$BEFORE" | no_t149_old))"
 eq "🔴 D6: 변경 전 러너의 모든 줄이 순서대로 남아 있다(추가만)" "${missing:-none}" "none"
 # (T-149 감사 L-7) 스트리퍼는 기준 ref 쪽에서 그 1줄을 지우므로, **지금 러너에서 그 줄이 사라져도** 위 대조가 깨지지 않는다.
 #   그래서 러너 쪽에 그 줄이 정확히 1개 있다는 단정을 따로 둔다 — 없으면 스트리퍼가 가린 범위가 무검사로 넓어진다.
 eq "🔴 D6: no_t149_old 가 노리는 주석 줄이 지금 러너에 정확히 1개 있다" \
    "$(grep -c '^# (T-062 Codex C2 ②) 해외 post-market' "$RUNNER")" "1"
-eq "D6: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+eq "D6: call() 함수 본문 = 변경 전(T-171: T-160 줄 되돌림 · T-156 분기 2줄 뺌)" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | no_t156_call | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+eq "🔴 D6: (T-171) no_t156_call·no_t160 이 노리는 줄 = 파일 전체 각 1개 · 모두 call() 안" "$(t171_targets "$RUNNER")" "1 1 1 1 1 | 1 1 1 1 1"
 # (T-170) 국내 저녁 블록 표지(`daily-bars-daily-kr`)가 이 표지를 접두로 포함한다 — 07:40 블록 표지를 정확히 고른다
 nb="$(awk '/^  # >>> daily-bars-daily \(T-117\)/,/^  # <<< daily-bars-daily$/' "$RUNNER")"
 eq "D6: 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> daily-bars-daily (T-117)' "$RUNNER") $(grep -c '^  # <<< daily-bars-daily$' "$RUNNER")" "1 1"

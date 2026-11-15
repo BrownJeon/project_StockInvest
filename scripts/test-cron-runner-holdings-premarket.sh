@@ -23,6 +23,9 @@
 #  H7. tzdata 없음(TZDIR 위조 → %Z 가 EDT/EST 아님): 호출 없음
 #  H8. 주말 ET(토·일)·ET 07·09시: 호출 없음 (H3 에 포함 + 하루 전체 시각 확인)
 #  H9. 정적: 블록 안 호출 줄 1개 · CALL_MAX_TIME 설정·해제 · 블록은 peek 블록 뒤 · call() 불변 · 블록·선언·머리 주석 밖 실행 줄 = 변경 전
+# (T-156·T-160 병합, T-171) 두 task 가 러너를 바꾸고 이 시험의 정적 비교 범위를 넓히지 않아 H9 의 call()·블록 밖 비교가 기준 ref 와 어긋났다
+#   (T-171 판정: 시험 낡음). 동적 비교(H1~H8)는 기준 러너가 「이 러너에서 hp 블록만 지운 사본」이라 영향이 없다. H9 는 T-156 의 m40 블록·선언·
+#   call() 분기 2줄을 빼고 T-160 의 call() 줄을 되돌려 비교한다(아래 T-171 도우미). hp 기대값·기존 단언은 그대로다.
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,6 +36,29 @@ PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 eq()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (기대 '$3', 실제 '$2')"; fi; }
+
+# ── (T-171) T-156·T-160 이 기준 ref 뒤에 러너에 더한 것 — 비교에서 빼는 도우미(표준입력 → 표준출력) ─────────────
+#   T-156(m40 모의 평가, Reviewer PASS·운영 반영): 메인 루프 블록 m40-forward-daily·m40-forecast-daily, 최상위 함수 블록 m40-state-write,
+#     선언 M40_FORWARD_LAST_RUN_FILE, call() 의 「m40-forward 202 → ACCEPTED」 로그 분기 2줄. 호출은 call() 경유 /api/cron/m40-forward(상한 10)·
+#     /api/cron/m40-forecast(상한 150)와 call() 밖 상태 확인 curl /api/cron/m40-forward?status=1(상한 5) — ET 06:45~09:00 창이라
+#     하루 전체 시나리오에서는 KST 19:45~22:00(EDT)·20:45~23:00(EST)에 돈다. 그 블록·분기는 scripts/test-cron-runner-m40-forward.sh·m40-forecast.sh 가 본다.
+#   T-160(홈 실행 실패 표시, Reviewer PASS): call() 세 줄 — curl 종료 코드를 기록용 변수에 복사하는 두 줄(job-run-log 시험 J8 의 원래 no_t160 과
+#     같은 치환)과 그 값을 jrl_hook 에 넘기는 후크 호출 줄(`# T-112 jrl` 표지 줄이라 그 표지를 지우는 비교에는 영향 없음)을 되돌린다.
+#   빼거나 되돌리는 줄이 엉뚱한 곳에 생기면 범위가 무검사로 넓어지므로 정적 절(H9)이 그 줄들이 파일 전체에 각 1개(모두 call() 안)인지 따로 단언한다.
+M40RE=' /api/cron/m40-(forward(\?status=1)?|forecast)$'        # 호출 기록 줄(…경로)
+M40MT='^/api/cron/m40-(forward(\?status=1)?|forecast) '         # --max-time 기록 줄(경로 max-time=N)
+T156_L1='  elif [ "$label" = "m40-forward" ] && [ "$path" = "/api/cron/m40-forward" ] && [ "$code" = "202" ]; then'
+T156_L2='    echo "[$ts] $label ACCEPTED completed=false"'
+no_t156_call() { grep -vxF "$T156_L1" | grep -vxF "$T156_L2"; }
+no_t156() { awk '/^ *# >>> (m40-forward-daily|m40-forecast-daily|m40-state-write)$/{s=1} s{ if (/^ *# <<< (m40-forward-daily|m40-forecast-daily|m40-state-write)$/) s=0; next } {print}' \
+  | grep -v '^M40_FORWARD_LAST_RUN_FILE=' | no_t156_call; }
+T160_L3='  jrl_hook "$label" "$path" "$code" "${jrl_t0:-}" "$curl_exit" 2>/dev/null || true   # T-112 jrl'
+no_t160() { sed -e 's/^  local code curl_exit=0$/  local code/' -e 's/|| { curl_exit=\$?; code="000"; }$/|| code="000"/' \
+                -e 's/^\(  jrl_hook "\$label" "\$path" "\$code" "\${jrl_t0:-}"\) "\$curl_exit" \(2>\/dev\/null || true   # T-112 jrl\)$/\1 \2/'; }
+t171_targets() {   # 러너 → "파일 전체 개수 5개 | call() 안 개수 5개" (T-156 2줄 · T-160 3줄)
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T156_L1" "$1") $(grep -cxF "$T156_L2" "$1") $(grep -c '^  local code curl_exit=0$' "$1") $(grep -c '|| { curl_exit=\$?; code="000"; }$' "$1") $(grep -cxF "$T160_L3" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T156_L1") $(printf '%s\n' "$cb" | grep -cxF "$T156_L2") $(printf '%s\n' "$cb" | grep -c '^  local code curl_exit=0$') $(printf '%s\n' "$cb" | grep -c '|| { curl_exit=\$?; code="000"; }$') $(printf '%s\n' "$cb" | grep -cxF "$T160_L3")"
+}
 
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
@@ -254,7 +280,8 @@ no_t135() {
           -e 's#-o "\$CALL_BODY_FILE" -w#-o /tmp/cron-runner-$$.out -w#' \
           -e 's#^  rm -f "\$CALL_BODY_FILE"$#  rm -f /tmp/cron-runner-$$.out#'
 }
-eq "H9: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+eq "H9: call() 함수 본문 = 변경 전(T-171: T-160 줄 되돌림 · T-156 분기 2줄 뺌)" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | no_t156_call | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+eq "🔴 H9: (T-171) no_t156_call·no_t160 이 노리는 줄 = 파일 전체 각 1개 · 모두 call() 안" "$(t171_targets "$RUNNER")" "1 1 1 1 1 | 1 1 1 1 1"
 # (T-143 병합) overseas-universe-refresh 블록·선언은 이 정적 비교의 대상이 아니다 — 양쪽에서 똑같이 뺀다
 #   (기준 ref 에는 없으므로 기준 쪽에서는 무효다). 그 블록 자체는 scripts/test-cron-runner-overseas-universe.sh 가 본다.
 # (T-170 병합) 국내 일봉 저녁 블록(daily-bars-daily-kr)·선언 DAILY_BARS_KR_LAST_RUN_FILE 도 같은 이유로 뺀다(표지를 정확히 — 07:40 의
@@ -262,7 +289,8 @@ eq "H9: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNE
 noc() { awk '/^  # >>> (overseas-universe-refresh|kis-fundamentals-snapshot|daily-bars-daily-kr)/{s=1} s{ if (/^  # <<< (overseas-universe-refresh|kis-fundamentals-snapshot|daily-bars-daily-kr)/) s=0; next } {print}' "$1" | grep -v '^UNIVERSE_CURL_MAX_TIME=' | grep -v '^DAILY_BARS_KR_LAST_RUN_FILE=' | grep -v '^KIS_FUND_' | grep -v '^[[:space:]]*KIS_FUND_TICK_T0=' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$'; }   # (T-143 overseas-universe-refresh·T-145 ⑨ kis-fundamentals-snapshot) 블록·선언·틱 시각 줄 제외
 # (T-112) 실행·상태 기록 후크(최상위 job-run-log-spool 블록 · `# T-112 jrl` 표지 줄 4개)는 이 정적 비교의 대상이 아니다 — 새 러너 쪽에서만 뺀다
 #   (기준 ref 에는 없다). 후크가 추가만 했는지·call() 의 나머지가 그대로인지는 scripts/test-cron-runner-job-run-log.sh J8 이 본다.
-no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$' | no_t135; }
+# (T-171) T-156 블록·선언·call() 분기와 T-160 call() 줄도 새 러너 쪽에서만 빼거나 되돌린다(위 T-171 도우미 — 기준 ref 에는 없다)
+no_jrl() { awk '/^# >>> job-run-log-spool/{s=1} s{ if (/^# <<< job-run-log-spool/) s=0; next } {print}' "$1" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | no_t156; }
 # (T-145 ⑨) **기준 러너 쪽**의 옛 kis-fundamentals-snapshot 구간을 범위로 지운다 — 지금 러너 쪽은
 #   `# >>> kis-fundamentals-snapshot` 블록 표식으로 지우지만 기준 ref 에는 그 표식이 없어 한쪽만 지워지면 어긋난다.
 #   (news-split 의 strip_old 가 뉴스 구간을 같은 방식으로 지우는 선례와 같다. 그 잡의 새 모양은 자기 블록 시험이 본다.)
