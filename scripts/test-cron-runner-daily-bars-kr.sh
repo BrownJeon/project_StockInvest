@@ -6,8 +6,8 @@
 # cron-runner.sh 를 **그대로** 돌린다 — curl·date·sleep 만 가짜(PATH 앞 스텁)로 바꿔 가짜 시각으로 틱을 흉내 낸다
 # (scripts/test-cron-runner-daily-bars.sh 와 같은 하네스). 변경 전 러너(git show $T170_BASE_REF:scripts/cron-runner.sh, 기본 b90e2c9 =
 # T-170 착수 기준)를 같은 하네스로 돌려 **국내 저녁 호출을 뺀 모든 호출이 완전히 같음**을 비교로 증명한다(07:40 daily-bars 포함).
-# 국내 저녁 호출 = 경로 /api/cron/daily-bars?market=KR(본문은 call() 기본값 {}) — call() 은 본문 인자를 주면 끝에 `}` 를 덧붙이는
-#   결함이 있어(`${3:-{}}`) 러너는 시장을 쿼리로 넘긴다. 07:40 블록의 호출은 쿼리 없는 /api/cron/daily-bars 그대로다.
+# 국내 저녁 호출 = 경로 /api/cron/daily-bars?market=KR(본문은 call() 기본값 {}) — 이 블록을 만들 때 call() 은 본문 인자를 주면 끝에 `}` 를
+#   덧붙이는 결함이 있어(`${3:-{}}`, T-172 가 고쳤다) 러너는 시장을 쿼리로 넘긴다. 07:40 블록의 호출은 쿼리 없는 /api/cron/daily-bars 그대로다.
 #  K1. 하루 전체(1440틱): 국내 저녁 = 18:10 1회뿐 · 본문 {} · --max-time 120 · 날짜파일 = 오늘 · OK 로그 1줄 ·
 #      yield/건너뜀 로그 없음 · 18:10 틱에 peek 없음(18:00 에 이미 돎) · 저녁 호출을 뺀 호출·--max-time 목록 = 변경 전 · 하트비트 60초
 #  K2. 오류 응답(409·503·000 상한 초과) × 이틀: 날마다 18:10 정확히 1회(재시도 없음) · HTTP 로그 · 날짜파일 = 둘째 날 ·
@@ -20,7 +20,7 @@
 #  K6. 정적: 변경 전 러너 + 추가분(상단 주석 3줄·날짜파일 선언 1줄·블록)뿐 — 추가분을 빼면 변경 전과 한 글자도 같다 · 변경 전 줄이 전부
 #      순서대로 남음 · 블록 표지 1쌍 · 호출 줄 1개(쿼리 ?market=KR, 본문 인자 없음) · 🔴 러너 전체에 본문 인자를 넘기는 call 줄 0 ·
 #      상한은 그 호출에만 · 조건 줄 · yield 는 PEEK_RAN_LABEL · 블록 위치(peek 블록 바로 뒤·holdings-premarket 앞) · 비밀·curl 직접 호출 없음 ·
-#      call() 불변
+#      call() 불변(T-172 의 본문 기본값 두 줄은 되돌려 비교 — no_t172)
 # 외부 호출 없음(curl 은 스텁), 실제 HOME·.env 를 읽지 않음(임시 디렉터리).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +31,20 @@ PASS=0; FAIL=0
 ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "  FAIL $1"; }
 eq()   { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (기대 '$3', 실제 '$2')"; fi; }
+
+# ── (T-172) call() 셋째 인자 기본값 고침 — 기준 ref 형태로 되돌리는 도우미(표준입력 → 표준출력) ─────────────
+#   T-172 는 call() 의 `local body="${3:-{}}"`(셋째 인자를 주면 본문 끝에 } 가 하나 더 붙는 결함) 한 줄을 두 줄(기본값 변수 + 본문)로 바꿨다.
+#   기준 ref 와 비교할 때만 기본값 줄을 지우고 본문 줄을 옛 형태로 되돌린다. 셋째 인자를 넘기는 call 줄이 0개라 운영 동작은 같다
+#   (고친 call() 의 동작·민감도는 scripts/test-cron-runner-call-body.sh 가 본다). 두 줄이 엉뚱한 곳에 생기면 비교 범위가 무검사로
+#   넓어지므로 정적 절이 두 줄이 파일 전체에 각 1개(모두 call() 안)이고 옛 줄이 0개인지 따로 단언한다(t172_targets).
+T172_L1="  local body_default='{}'   # T-172 본문 기본값(셋째 인자 없음·빈 값). 확장식 안에 중괄호를 바로 쓰면 인자를 줄 때 끝에 } 가 하나 더 붙었다"
+T172_L2='  local body="${3:-$body_default}"   # T-172'
+T172_OLD='  local body="${3:-{}}"'
+no_t172() { grep -vxF "$T172_L1" | sed 's/^  local body="\${3:-\$body_default}"   # T-172$/  local body="${3:-{}}"/'; }
+t172_targets() {   # 러너 → "파일 전체 L1 L2 옛 줄 | call() 안 L1 L2" — 기대 "1 1 0 | 1 1"
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T172_L1" "$1") $(grep -cxF "$T172_L2" "$1") $(grep -cxF "$T172_OLD" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T172_L1") $(printf '%s\n' "$cb" | grep -cxF "$T172_L2")"
+}
 
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
@@ -141,7 +155,7 @@ eq "(하네스 확인) 변경 전 러너: 국내 저녁 호출 없음" "$(krc "$
 eq "(하네스 확인) 변경 전 러너: 07:40 daily-bars 1회는 있다(본문 '{}')" "$(grep -c ' /api/cron/daily-bars$' "$BA/calls") $(sort -u "$BA/dbody" | tr '\n' ' ')" "1 {} "
 eq "🔴 K1: 국내 저녁 = 18:10 하루 1회" "$(krat "$NA")" "11-16 18:10 "
 eq "🔴 K1: 18:10~18:54 밖의 국내 저녁 호출 0" "$(krc "$NA" | awk '{print $2}' | grep -cvE '^18:(1[0-9]|[2-4][0-9]|5[0-4])$')" "0"
-eq "🔴 K1: 본문 = 07:40·국내 저녁 모두 '{}'(시장은 쿼리 — 본문 인자에 } 가 덧붙는 call() 결함을 타지 않음)" "$(cat "$NA/dbody" | tr '\n' ' ')" '{} {} '
+eq "🔴 K1: 본문 = 07:40·국내 저녁 모두 '{}'(시장은 쿼리 — T-172 전 call() 의 } 덧붙임 결함을 피한 방식, 고친 뒤에도 쿼리 그대로)" "$(cat "$NA/dbody" | tr '\n' ' ')" '{} {} '
 eq "🔴 K1: 국내 저녁 호출에 --max-time 120" "$(grep '?market=KR ' "$NA/maxtime" | tr '\n' ' ')" "/api/cron/daily-bars?market=KR max-time=120 "
 if diff <(grep -v '?market=KR ' "$NA/maxtime") "$BA/maxtime" > /dev/null; then ok "🔴 K1: 국내 저녁을 뺀 --max-time 목록 = 변경 전(상한이 다른 잡에 새지 않음)"
 else bad "K1: --max-time 목록이 다르다"; diff <(grep -v '?market=KR ' "$NA/maxtime") "$BA/maxtime" | head -5; fi
@@ -222,16 +236,18 @@ strip_t170() {
     | grep -v '^DAILY_BARS_KR_LAST_RUN_FILE=' \
     | awk '/^  # >>> daily-bars-daily-kr/{s=1} s{ if (/^  # <<< daily-bars-daily-kr$/) s=0; next } {print}'
 }
-if diff <(strip_t170 "$RUNNER") "$BEFORE" > /dev/null; then ok "🔴 K6: 추가분(상단 주석·선언·블록)을 빼면 변경 전 러너와 한 글자도 같다($(wc -l < "$BEFORE" | tr -d ' ')줄)"
-else bad "K6: 추가분 밖이 바뀌었다"; diff <(strip_t170 "$RUNNER") "$BEFORE" | head -10; fi
-missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' "$RUNNER" "$BEFORE")"
-eq "🔴 K6: 변경 전 러너의 모든 줄이 순서대로 남아 있다(추가만)" "${missing:-none}" "none"
-eq "K6: call() 함수 본문 = 변경 전" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+if diff <(strip_t170 "$RUNNER" | no_t172) "$BEFORE" > /dev/null; then ok "🔴 K6: 추가분(상단 주석·선언·블록)을 빼고 T-172 두 줄을 되돌리면 변경 전 러너와 한 글자도 같다($(wc -l < "$BEFORE" | tr -d ' ')줄)"
+else bad "K6: 추가분 밖이 바뀌었다"; diff <(strip_t170 "$RUNNER" | no_t172) "$BEFORE" | head -10; fi
+missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t172 < "$RUNNER") "$BEFORE")"
+eq "🔴 K6: 변경 전 러너의 모든 줄이 순서대로 남아 있다(추가만 — T-172 두 줄은 되돌려 비교)" "${missing:-none}" "none"
+eq "K6: call() 함수 본문 = 변경 전(T-172 두 줄 되돌림)" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | no_t172 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+eq "🔴 K6: (T-172) no_t172 가 노리는 두 줄 = 파일 전체 각 1개 · 모두 call() 안 · 옛 줄 0" "$(t172_targets "$RUNNER")" "1 1 0 | 1 1"
 kb="$(awk '/^  # >>> daily-bars-daily-kr/,/^  # <<< daily-bars-daily-kr$/' "$RUNNER")"
 eq "K6: 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> daily-bars-daily-kr (T-170)' "$RUNNER") $(grep -c '^  # <<< daily-bars-daily-kr$' "$RUNNER")" "1 1"
 eq "K6: 파일 전체 국내 저녁 호출 줄 1개(블록 안 — 쿼리 ?market=KR, 본문 인자 없음)" \
    "$(grep -v '^[[:space:]]*#' "$RUNNER" | grep -c '"daily-bars-kr"') $(printf '%s\n' "$kb" | grep -c '^      call "/api/cron/daily-bars?market=KR" "daily-bars-kr"$')" "1 1"
-# 🔴 call() 은 셋째 인자(본문)를 주면 끝에 } 를 덧붙인다(`${3:-{}}`) — 러너 어디에도 본문 인자를 넘기는 call 줄이 없어야 한다(변경 전과 같은 0)
+# 🔴 이 블록을 만들 때 call() 은 셋째 인자(본문)를 주면 끝에 } 를 덧붙였다(`${3:-{}}`, T-172 가 고쳤다) — 러너 어디에도 본문 인자를 넘기는
+#   call 줄이 없다는 단언은 남긴다(변경 전과 같은 0 — T-172 의 「운영 동작 불변」 근거이기도 하다)
 eq "🔴 K6: 본문 인자(셋째 인자)를 넘기는 call 줄 = 0 (변경 전도 0)" \
    "$(grep -v '^[[:space:]]*#' "$RUNNER" | sed 's/[[:space:]]#.*$//' | grep -cE '^[[:space:]]*call[[:space:]]+("[^"]*"|[^[:space:]"]+)[[:space:]]+("[^"]*"|[^[:space:]"]+)[[:space:]]+[^[:space:]]') $(grep -v '^[[:space:]]*#' "$BEFORE" | sed 's/[[:space:]]#.*$//' | grep -cE '^[[:space:]]*call[[:space:]]+("[^"]*"|[^[:space:]"]+)[[:space:]]+("[^"]*"|[^[:space:]"]+)[[:space:]]+[^[:space:]]')" "0 0"
 if printf '%s\n' "$kb" | grep -Pzoq 'CALL_MAX_TIME="\$DAILY_BARS_CURL_MAX_TIME"[^\n]*\n\s*call "/api/cron/daily-bars\?market=KR" "daily-bars-kr"\n\s*CALL_MAX_TIME=""'; then

@@ -55,6 +55,20 @@ t171_targets() {   # 러너 → "파일 전체 개수 5개 | call() 안 개수 5
   echo "$(grep -cxF "$T156_L1" "$1") $(grep -cxF "$T156_L2" "$1") $(grep -c '^  local code curl_exit=0$' "$1") $(grep -c '|| { curl_exit=\$?; code="000"; }$' "$1") $(grep -cxF "$T160_L3" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T156_L1") $(printf '%s\n' "$cb" | grep -cxF "$T156_L2") $(printf '%s\n' "$cb" | grep -c '^  local code curl_exit=0$') $(printf '%s\n' "$cb" | grep -c '|| { curl_exit=\$?; code="000"; }$') $(printf '%s\n' "$cb" | grep -cxF "$T160_L3")"
 }
 
+# ── (T-172) call() 셋째 인자 기본값 고침 — 기준 ref 형태로 되돌리는 도우미(표준입력 → 표준출력) ─────────────
+#   T-172 는 call() 의 `local body="${3:-{}}"`(셋째 인자를 주면 본문 끝에 } 가 하나 더 붙는 결함) 한 줄을 두 줄(기본값 변수 + 본문)로 바꿨다.
+#   기준 ref 와 비교할 때만 기본값 줄을 지우고 본문 줄을 옛 형태로 되돌린다. 셋째 인자를 넘기는 call 줄이 0개라 운영 동작은 같다
+#   (고친 call() 의 동작·민감도는 scripts/test-cron-runner-call-body.sh 가 본다). 두 줄이 엉뚱한 곳에 생기면 비교 범위가 무검사로
+#   넓어지므로 정적 절이 두 줄이 파일 전체에 각 1개(모두 call() 안)이고 옛 줄이 0개인지 따로 단언한다(t172_targets).
+T172_L1="  local body_default='{}'   # T-172 본문 기본값(셋째 인자 없음·빈 값). 확장식 안에 중괄호를 바로 쓰면 인자를 줄 때 끝에 } 가 하나 더 붙었다"
+T172_L2='  local body="${3:-$body_default}"   # T-172'
+T172_OLD='  local body="${3:-{}}"'
+no_t172() { grep -vxF "$T172_L1" | sed 's/^  local body="\${3:-\$body_default}"   # T-172$/  local body="${3:-{}}"/'; }
+t172_targets() {   # 러너 → "파일 전체 L1 L2 옛 줄 | call() 안 L1 L2" — 기대 "1 1 0 | 1 1"
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T172_L1" "$1") $(grep -cxF "$T172_L2" "$1") $(grep -cxF "$T172_OLD" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T172_L1") $(printf '%s\n' "$cb" | grep -cxF "$T172_L2")"
+}
+
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
@@ -211,10 +225,11 @@ eq "U5: 종료 점검 줄은 창 끝 분(05:50)에서만 켜지는 한 줄이다
    "$(printf '%s\n' "$BLK" | grep -c '^  if \[ "\$HH" = "05" \] && \[ "\$UNIV_MM" = "50" \]; then UNIV_WINDOW=yes; fi$')" "1"
 eq "U5: 분을 읽을 수 없으면 돌지 않는다(방어 한 줄)" \
    "$(printf '%s\n' "$BLK" | grep -c 'case "\$UNIV_MM" in \[0-5\]\[0-9\]) ;; \*) UNIV_MM="" ;; esac')" "1"
-eq "U5: call() 은 변경 전과 같다(T-171: T-160 줄 되돌림 · T-156 분기 2줄 뺌)" \
-   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | no_t160 | no_t156_call | sha256sum | cut -c1-16)" \
+eq "U5: call() 은 변경 전과 같다(T-171: T-160 줄 되돌림 · T-156 분기 2줄 뺌 · T-172: 본문 기본값 두 줄 되돌림)" \
+   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | no_t160 | no_t172 | no_t156_call | sha256sum | cut -c1-16)" \
    "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum | cut -c1-16)"
 eq "🔴 U5: (T-171) no_t156_call·no_t160 이 노리는 줄 = 파일 전체 각 1개 · 모두 call() 안" "$(t171_targets "$RUNNER")" "1 1 1 1 1 | 1 1 1 1 1"
+eq "🔴 U5: (T-172) no_t172 가 노리는 두 줄 = 파일 전체 각 1개 · 모두 call() 안 · 옛 줄 0" "$(t172_targets "$RUNNER")" "1 1 0 | 1 1"
 eq "U5: 날짜파일(상태)을 새로 만들지 않는다 — 창·간격이 호출 수를 묶는다" \
    "$(printf '%s\n' "$BLK" | grep -c 'LAST_RUN_FILE\|DONE_FILE')" "0"
 

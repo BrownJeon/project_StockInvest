@@ -1,6 +1,6 @@
 /**
  * T-070 일봉 수집기 본체 — `POST /api/cron/daily-bars` 가 부른다(수동 호출, 그리고 cron-runner 정기 증분: T-117 매일 07:40 전 시장 ·
- * T-170 매일 18:10 국내만 — 쿼리 `?market=KR`, 본문 아님: 러너 call() 은 본문 인자 끝에 `}` 를 덧붙인다 — daily-bars-request.ts).
+ * T-170 매일 18:10 국내만 — 쿼리 `?market=KR`, 본문 아님: T-170 때 러너 call() 은 본문 인자 끝에 `}` 를 덧붙였다(T-172 가 고침) — daily-bars-request.ts).
  *
  * ⚠ 이 모듈은 **주문·시그널을 만들지 않는다.** KIS 읽기 GET → `daily_bars` upsert 뿐. 주문·안전장치·시그널·전략 모듈을 import 하지 않는다.
  *

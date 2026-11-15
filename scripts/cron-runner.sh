@@ -129,7 +129,8 @@ call_tmp_init
 call() {
   local path="$1"
   local label="$2"
-  local body="${3:-{}}"
+  local body_default='{}'   # T-172 본문 기본값(셋째 인자 없음·빈 값). 확장식 안에 중괄호를 바로 쓰면 인자를 줄 때 끝에 } 가 하나 더 붙었다
+  local body="${3:-$body_default}"   # T-172
   local code curl_exit=0
   local jrl_t0; jrl_t0=$(jrl_now_ms 2>/dev/null)   # T-112 jrl
   call_tmp_open   # T-135
@@ -1165,8 +1166,8 @@ while true; do
   # >>> daily-bars-daily-kr (T-170) — scripts/test-cron-runner-daily-bars-kr.sh 가 러너 전체를 가짜 시각·가짜 curl 로 돌려 시험한다
   # 매일 18:10~18:54 KST 첫 틱: 국내 일봉 저녁 증분 수집. POST /api/cron/daily-bars?market=KR = 라우트 기본 대상을 국내로
   #   좁힌 것(국내 보유 → 국내 시그널 종목, 저장된 마지막 거래일이 오래된 순). KIS 읽기 GET → daily_bars upsert 뿐 — 주문·시그널·알림 없음.
-  #   🔴 시장은 본문이 아니라 쿼리로 넘긴다 — call() 은 셋째 인자(본문)를 주면 끝에 `}` 를 하나 더 붙인다(`${3:-{}}` 확장, 지금까지 본문을
-  #   넘긴 호출이 없어 드러나지 않았다). call() 은 모든 잡이 쓰므로 고치지 않고 news-fetch(?market=) 처럼 쿼리를 쓴다(본문은 기본값 {}).
+  #   🔴 시장은 본문이 아니라 쿼리로 넘긴다 — 이 블록을 만들 때 call() 은 셋째 인자(본문)를 주면 끝에 `}` 를 하나 더 붙였다(`${3:-{}}` 확장).
+  #   T-170 은 call() 을 고치지 않고 news-fetch(?market=) 처럼 쿼리를 썼고(본문은 기본값 {}), 그 결함은 T-172 가 고쳤다(call() 의 `# T-172` 두 줄).
   #   증분 판정·up_to_date 건너뛰기·single-flight·예산(호출 150·100초)·오프아워 판정은 라우트가 한다(07:40 블록과 같다).
   # 왜 따로 부르나: 07:40 전 시장 실행(T-117) 한 번의 예산보다 대상이 많아져(T-156 이후 169종목) 목록 뒤의 국내 43종목이 11-09 부터
   #   매일 닿지 못했다(T-170 조사 — 11-06 봉에서 멈춤). 국내(약 44호출·약 40초)를 저녁으로 떼면 아침 예산은 해외가 쓴다.

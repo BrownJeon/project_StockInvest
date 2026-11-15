@@ -265,7 +265,8 @@ describe('수동 수집 라우트 — 범위 고정', () => {
   //   시간 상한이 다른 잡에 새면 실패한다. 동작 시험은 scripts/test-cron-runner-daily-bars.sh.
   // (T-170) 2026-11-14 사용자 지시(「근본 수정부터」 · 범위 「저녁 KR + 낡은 순」)로 국내 저녁 블록(daily-bars-daily-kr, 18:10~18:54
   //   하루 1회)이 더해졌다. 두 블록을 같은 방식으로 고정한다 — 호출은 파일 전체에 정확히 두 줄(07:40 1 · 국내 저녁 1), 국내 저녁은 시장을
-  //   **쿼리**(?market=KR)로 넘기고 본문 인자가 없다(call() 은 본문 인자 끝에 `}` 를 덧붙이는 결함이 있다 — 라우트 머리 주석).
+  //   **쿼리**(?market=KR)로 넘기고 본문 인자가 없다(T-170 때 call() 은 본문 인자 끝에 `}` 를 덧붙이는 결함이 있었다 — T-172 가 고침,
+  //   라우트 머리 주석).
   //   새 블록 표지가 옛 표지를 접두로 포함하므로 표지를 정확히 고른다. 동작 시험은 scripts/test-cron-runner-daily-bars-kr.sh.
   describe('(T-117·T-170) cron-runner 등록 방식 고정', () => {
     const runner = read(path.join(ROOT, 'scripts/cron-runner.sh'));

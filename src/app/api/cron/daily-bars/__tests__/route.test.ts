@@ -155,7 +155,7 @@ describe('실행', () => {
     expect(r.status).toBe(200);
     expect(runMock).toHaveBeenCalledWith({ db: poolMock }, { market: 'KR' });
   });
-  test('(T-170) 결함 재현 고정: call() 이 본문 인자에 } 를 덧붙인 본문은 400(그래서 러너는 쿼리를 쓴다)', async () => {
+  test('(T-170) 결함 재현 고정: T-172 전 call() 이 본문 인자에 } 를 덧붙이던 본문은 400(그래서 러너는 쿼리를 쓴다)', async () => {
     const r = await POST(req('{"market":"KR"}}'));
     expect(r.status).toBe(400);
     expect(runMock).not.toHaveBeenCalled();

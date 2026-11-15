@@ -52,9 +52,10 @@ export function parseDailyBarsBody(raw: unknown): ParsedDailyBarsBody {
 
 /**
  * (T-170) 쿼리까지 합쳐 검증한다. 쿼리 `market` 은 본문 `market` 과 같은 뜻이다.
- * 왜 쿼리도 받나: cron-runner 의 call() 은 셋째 인자(본문)를 넘기면 끝에 `}` 를 하나 더 붙인다(`local body="${3:-{}}"` —
- *   bash 가 기본값 `{` 뒤의 첫 `}` 에서 확장을 닫아 나머지 `}` 가 글자로 남는다. 지금까지 본문을 넘긴 호출이 없어 드러나지 않았다).
- *   call() 은 모든 잡(주문 잡 포함)이 쓰므로 고치지 않고, 국내 저녁 실행은 뉴스 수집 잡처럼(`?market=`) 쿼리로 시장을 넘긴다.
+ * 왜 쿼리도 받나: T-170 때 cron-runner 의 call() 은 셋째 인자(본문)를 넘기면 끝에 `}` 를 하나 더 붙였다(`local body="${3:-{}}"` —
+ *   bash 가 기본값 `{` 뒤의 첫 `}` 에서 확장을 닫아 나머지 `}` 가 글자로 남는다. 그때까지 본문을 넘긴 호출이 없어 드러나지 않았다).
+ *   T-170 은 call() 을 고치지 않고 국내 저녁 실행이 뉴스 수집 잡처럼(`?market=`) 쿼리로 시장을 넘기게 했다. 결함은 T-172 가 고쳤고
+ *   (scripts/test-cron-runner-call-body.sh) 러너는 쿼리를 그대로 쓴다.
  * 거부(400): 모르는 쿼리 키 · market 을 두 번 · 본문에도 market · 본문이 객체가 아님 · (본문과 같은 규칙) 값이 KR|US 아님 · symbols 와 함께.
  */
 export function parseDailyBarsRequest(raw: unknown, query: URLSearchParams): ParsedDailyBarsBody {

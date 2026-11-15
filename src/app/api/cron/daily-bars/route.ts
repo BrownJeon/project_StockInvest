@@ -8,7 +8,8 @@
  *          -H 'Content-Type: application/json' -d '{"symbols":["NAS:MU"],"years":3,"maxCalls":40}'
  *   본문(모두 선택): symbols(최대 300, 국내 6자리·해외 NAS|NYS|AMS:티커) · years(1~5, 기본 3) · maxCalls(1~600, 기본 150)
  *     · market('KR'|'US' — 기본 대상을 그 시장만 남김, symbols 와 함께 주면 400, T-170).
- *   쿼리(T-170): `?market=KR|US` = 본문 market 과 같은 뜻(러너가 쓴다 — 본문을 넘기면 call() 이 `}` 를 덧붙이는 결함 때문).
+ *   쿼리(T-170): `?market=KR|US` = 본문 market 과 같은 뜻(러너가 쓴다 — T-170 때 본문을 넘기면 call() 이 `}` 를 덧붙이는 결함이 있었다.
+ *     그 결함은 T-172 가 고쳤고 러너는 쿼리를 그대로 쓴다).
  *     모르는 쿼리 키·market 두 번·본문에도 market 이면 400.
  *   생략하면 대상 = 보유 → 해외 분석 목록·최근 90일 시그널 종목(≤300)을 저장된 마지막 거래일이 오래된 순으로(T-170).
  *   한 번 실행 예산은 호출 maxCalls·100초 — 남으면 `remaining` 을 돌려주고 다음 호출이 이어 간다.
