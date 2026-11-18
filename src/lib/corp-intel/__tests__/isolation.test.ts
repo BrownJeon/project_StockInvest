@@ -16,6 +16,8 @@
  *  - 읽기 SQL(5.): `us_filings` 읽기는 holdings-premarket.ts 의 존재 확인 1문장·그 파일 하나뿐, `ci_raw_item` 읽기 파일은 feed-check.ts·
  *    holdings-premarket.ts 둘뿐이고 각 1문장(sec_filing 사전 SELECT). us_filings 쓰기 금지는 3.·6. 이 그대로 본다.
  *  6. (T-119) holdings-premarket 라우트의 import·직접 fetch·쓰기 금지 — 'holdings-premarket 라우트 import = 허용 목록뿐' 시험.
+ *     (T-175) 허용 목록에 `@/lib/notify/send-retry` 하나를 더한다 — 알림 전송 재시도(같은 실행 안, `dispatchAlert` 위의 얇은 층).
+ *     이미 허용된 `@/lib/notify` 와 같은 알림 영역이고, 그 모듈은 type 외에 아무것도 import 하지 않는다(아래 시험이 함께 본다).
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -280,8 +282,13 @@ describe('src → corp-intel 참조는 허용 목록뿐', () => {
     const src = read(path.join(SRC, HP_ROUTE));
     expect(importsOf(src).sort()).toEqual([
       '@/lib/corp-intel/holdings-premarket', '@/lib/cron-auth', '@/lib/data/us-edgar/parse', '@/lib/data/us-edgar/sec-client', '@/lib/db',
-      '@/lib/notify', 'mysql2', 'next/server',
+      '@/lib/notify', '@/lib/notify/send-retry', 'mysql2', 'next/server',   // (T-175) send-retry — 알림 재시도
     ]);
+    // (T-175) send-retry 는 알림 타입 외에 아무것도 가져오지 않는다 — 이 라우트의 import 경계를 우회로로 넓히지 않게 함께 고정한다
+    const retrySrc = read(path.join(SRC, 'lib/notify/send-retry.ts'));
+    expect(importsOf(retrySrc)).toEqual(['@/lib/notify']);
+    expect(retrySrc).toMatch(/^import type \{ AlertDispatch \} from '@\/lib\/notify';$/m);
+    expect(retrySrc).not.toMatch(/import\(|require\(|\bfetch\(/);
     for (const m of ['exchanges', 'safety', 'signals', 'strategy', 'orders', 'llm', 'analyst', 'rag', 'profit-engine', 'broker-ledger', 'ledger', 'risk']) {
       expect(importsOf(src).filter((x) => x.startsWith('@/lib/' + m))).toEqual([]);
     }

@@ -8,6 +8,8 @@
  *  3. 새 공시 → ci_raw_item 1행 + 알림 1건 · 같은 공시 재실행 → 알림 0·first_seen_at 불변 · 24시간 지난 공시·us_filings 에 있는 공시 → 알림 0
  *  4. SecBlockedError(429)·HTTP 500·타임아웃(Abort) → 상태 갱신·연속 실패 알림(2회째, ET 하루 1건)
  *  5. 테이블 없음(ci_raw_item·symbol_cik_map) · 🔴 us_filings 쓰기 0(모든 시나리오) · 요청 수 상한 8 · 10건 초과 요약 1건
+ *  6. T-175 알림 재시도 — 실패 후 재시도 성공 · 전부 실패(3회, 식별자 로그) · 첫 시도 성공 시 1회 · 채널 없음 재시도 없음 · 시간 예산 · 요약 실패
+ *     (재시도 간격 sleep 만 기록용 가짜로 바꾼다 — 재시도 규칙·예산 판단은 실제 `@/lib/notify/send-retry`)
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { __resetSecBlockStateForTest } from '@/lib/data/us-edgar/sec-client';
@@ -16,6 +18,16 @@ const authMock = jest.fn();
 const dispatchMock = jest.fn();
 jest.mock('@/lib/cron-auth', () => ({ checkCronAuth: (...a: unknown[]) => authMock(...a) }));
 jest.mock('@/lib/notify', () => ({ dispatchAlert: (...a: unknown[]) => dispatchMock(...a) }));
+// T-175 — 재시도 간격(2·5초)을 실제로 기다리지 않게 sleep 만 바꾼다. 간격 값은 기록해 확인한다.
+const mockRetrySleeps: number[] = [];
+jest.mock('@/lib/notify/send-retry', () => {
+  const actual = jest.requireActual('@/lib/notify/send-retry');
+  return {
+    ...actual,
+    sendWithRetry: (send: unknown, o: Record<string, unknown>) =>
+      actual.sendWithRetry(send, { ...o, sleep: async (ms: number) => { mockRetrySleeps.push(ms); } }),
+  };
+});
 
 // ── 가짜 DB ─────────────────────────────────────────────────────────────────
 interface CiRow { key: string; first: string; last: string; values: unknown[] }
@@ -159,6 +171,7 @@ beforeEach(() => {
   dispatchMock.mockReset().mockResolvedValue({ channel: 'both', delivered: ['telegram'], failed: [], unconfigured: [] });
   fetchMock.mockClear();
   secCalls.length = 0;
+  mockRetrySleeps.length = 0;
   realFetch = globalThis.fetch;
   globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
   process.env.SEC_USER_AGENT = 'StockInvest test ops@example.com';
@@ -389,5 +402,96 @@ describe('🔴 SEC 실패·상한·연속 실패 알림', () => {
     expect(r.body).toMatchObject({ ok: false, status: 'failed' });
     expect(status()).toMatchObject({ status: 'failed', consecutiveFailures: 1 });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('🔴 T-175 알림 전송 재시도·미전달 식별자', () => {
+  const FAIL = { channel: 'telegram', delivered: [], failed: [{ channel: 'telegram', error: 'fetch failed (ETIMEDOUT)' }], unconfigured: [] };
+  const OK = { channel: 'telegram', delivered: ['telegram'], failed: [], unconfigured: [] };
+  const NVDA_LIKE = { accession: '0000320193-26-000701', form: '8-K', acceptedAt: iso(-H), doc: 'n8k.htm' };
+  const URL_701 = 'https://www.sec.gov/Archives/edgar/data/320193/000032019326000701/n8k.htm';
+  const undeliveredLines = () => (console.warn as jest.Mock).mock.calls.map((c) => String(c[0])).filter((l) => l.includes('HP_ALERT_UNDELIVERED'));
+
+  test('첫 시도 실패 → 2초 뒤 재시도로 전달 → ok·alerted 1·미전달 로그 없음', async () => {
+    secPlan.set(AAPL, [NVDA_LIKE]);
+    dispatchMock.mockReset().mockResolvedValueOnce(FAIL).mockResolvedValueOnce(OK);
+    const r = await call();
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, status: 'ok', newFilings: 1, alerted: 1 });
+    expect(dispatchMock).toHaveBeenCalledTimes(2);
+    expect(dispatchMock.mock.calls[1]).toEqual(dispatchMock.mock.calls[0]);   // 같은 알림을 다시 보낸다
+    expect(mockRetrySleeps).toEqual([2_000]);
+    expect(undeliveredLines()).toEqual([]);
+  });
+
+  test('🔴 첫 시도 성공 → 1회만(중복 없음)', async () => {
+    secPlan.set(AAPL, [NVDA_LIKE]);
+    const r = await call();
+    expect(r.body).toMatchObject({ status: 'ok', alerted: 1 });
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(mockRetrySleeps).toEqual([]);
+  });
+
+  test('🔴 끝내 실패 → 3회 시도(간격 2·5초) · 503 failed(alert_undelivered=1) · 식별자(심볼·양식·접수번호·SEC 링크) 로그', async () => {
+    secPlan.set(AAPL, [NVDA_LIKE]);
+    dispatchMock.mockReset().mockResolvedValue(FAIL);
+    const r = await call();
+    expect(r.status).toBe(503);
+    expect(r.body).toMatchObject({ ok: false, status: 'failed', newFilings: 1, alerted: 0 });
+    expect(String(r.body.detail)).toContain('alert_undelivered=1');
+    expect(dispatchMock).toHaveBeenCalledTimes(3);
+    expect(mockRetrySleeps).toEqual([2_000, 5_000]);
+    const lines = undeliveredLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('reason=failed');
+    expect(lines[0]).toContain('symbols=NAS:AAPL');
+    expect(lines[0]).toContain('form=8-K');
+    expect(lines[0]).toContain('accession=0000320193-26-000701');
+    expect(lines[0]).toContain(`url=${URL_701}`);
+    expect(status()).toMatchObject({ status: 'failed' });
+    expect(st.ci.has('0000320193-26-000701')).toBe(true);   // 행은 남는다(실행 간 재전송은 범위 밖)
+  });
+
+  test('채널 없음(notify_channel=none) → 재시도 없이 미전달', async () => {
+    secPlan.set(AAPL, [NVDA_LIKE]);
+    dispatchMock.mockReset().mockResolvedValue({ channel: 'none', delivered: [], failed: [], unconfigured: [] });
+    const r = await call();
+    expect(r.body).toMatchObject({ status: 'failed', alerted: 0 });
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(undeliveredLines()[0]).toContain('reason=unconfigured');
+  });
+
+  test('🔴 시간 예산 — 알림 단계 끝(55초)을 넘기면 새 시도를 시작하지 않는다(재시도·다음 공시 모두)', async () => {
+    secPlan.set(AAPL, [NVDA_LIKE]);
+    secPlan.set(MSFT, [{ accession: '0000789019-26-000702', form: '8-K', acceptedAt: iso(-H) }]);
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    jest.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    dispatchMock.mockReset().mockImplementation(async () => { offset += 30_000; return FAIL; });
+    const r = await call();
+    // AAPL: 시도1(→30초) · 2초 뒤 시도2 가능(32≤55)(→60초) · 5초 뒤는 예산 밖 / MSFT: 60초>55초 → 시도 0
+    expect(dispatchMock).toHaveBeenCalledTimes(2);
+    expect(mockRetrySleeps).toEqual([2_000]);
+    expect(r.body).toMatchObject({ status: 'failed', newFilings: 2, alerted: 0 });
+    expect(String(r.body.detail)).toContain('alert_undelivered=2');
+    const lines = undeliveredLines();
+    expect(lines).toHaveLength(2);
+    expect(lines.map((l) => /accession=(\S+)/.exec(l)?.[1]).sort()).toEqual(['0000320193-26-000701', '0000789019-26-000702']);
+    expect(lines.every((l) => l.includes('reason=budget'))).toBe(true);
+  });
+
+  test('요약 알림(10건 초과)이 끝내 실패 → 새 공시 11건 전부의 식별자를 남긴다', async () => {
+    secPlan.set(AAPL, Array.from({ length: 11 }, (_, i) => ({
+      accession: `0000320193-26-0008${String(i).padStart(2, '0')}`, form: '8-K', acceptedAt: iso(-H - i * 60_000),
+    })));
+    dispatchMock.mockReset().mockResolvedValue(FAIL);
+    const r = await call();
+    expect(r.body).toMatchObject({ status: 'failed', newFilings: 11, alerted: 0 });
+    expect(String(r.body.detail)).toContain('alert_undelivered=1');
+    expect(dispatchMock).toHaveBeenCalledTimes(3);
+    expect(dispatchMock.mock.calls.every((c) => c[1] === '보유 종목 개장 전 공시 11건(요약)')).toBe(true);
+    const lines = undeliveredLines();
+    expect(lines).toHaveLength(11);
+    expect(new Set(lines.map((l) => /accession=(\S+)/.exec(l)?.[1])).size).toBe(11);
   });
 });

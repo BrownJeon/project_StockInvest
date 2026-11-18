@@ -33,7 +33,10 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '3003',
-        // IPv6 unreachable on this host (Telegram outbound ETIMEDOUT). 강제 IPv4-first DNS.
+        // 이 서버는 IPv6 기본 경로가 없다 → DNS 결과를 IPv4 먼저 정렬한다. 이것은 **순서만** 정한다 —
+        // Node 24 fetch(undici)의 Happy Eyeballs(autoSelectFamily)는 그대로 켜져 있어 IPv4 연결이 시도 시간 안에
+        // 안 되면 IPv6 로 넘어가 ENETUNREACH 로 실패한다. 그 시도 시간(기본 250ms → 2000ms)은 여기가 아니라
+        // src/instrumentation.ts 가 정한다(T-175 — 정본 하나. 여기에 --network-family-autoselection-attempt-timeout 을 넣지 말 것).
         NODE_OPTIONS: '--dns-result-order=ipv4first',
       },
       out_file: `${LOG_DIR}/pm2-out.log`,

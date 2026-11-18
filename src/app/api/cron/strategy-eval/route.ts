@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { runAll } from '@/lib/strategy/engine';
 import { syncPendingOrders } from '@/lib/safety/order-sync';
 import { checkCronAuth } from '@/lib/cron-auth';
+import { describeErrorCause } from '@/lib/notify/result';
 
 export const dynamic = 'force-dynamic';
 
@@ -90,7 +91,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
-    console.error('[cron/strategy-eval]', error);
+    // T-175 WP-3 — `fetch failed` 만으로는 어느 외부 호출(호스트)이 runAll 을 멈췄는지 알 수 없었다(2026-11-18 12:11).
+    // 원인 코드·주소(cause·AggregateError.errors)를 같은 줄에 남긴다. 비밀값·쿼리스트링은 가린다. 응답 본문·500 은 그대로.
+    const cause = describeErrorCause(e);
+    console.error('[cron/strategy-eval]', error, ...(cause ? [`| ${cause}`] : []));
     return NextResponse.json({ ok: false, error }, { status: 500 });
   }
 }

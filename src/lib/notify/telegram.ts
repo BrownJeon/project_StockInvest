@@ -7,16 +7,21 @@ import {
   isTransientNetworkError, redactSecrets, readBodySnippet, causeCodeOf,
 } from './result';
 
-// IPv6 outbound 가 unreachable 인 호스트에서 ETIMEDOUT 방지 — IPv4 우선 해석.
+// 연결 경로 — 이 서버는 IPv6 기본 경로가 없다.
 //
 // 이전에는 `new Agent({ connect: { family: 4 } })` (undici) 를 dispatcher 로 주입했으나
 // Phase 0(2026-08-02)에 제거했다. 사유:
 //  1) `undici` 는 초기 커밋 이래 package.json·package-lock·node_modules 어디에도 없었다.
 //     즉 이 dispatcher 는 한 번도 실제로 동작한 적이 없고, import 때문에 빌드만 깨져 있었다.
-//  2) 동일 목적(IPv4 강제)은 ecosystem.config.js 의
-//     `NODE_OPTIONS: '--dns-result-order=ipv4first'` 가 프로세스 전역으로 이미 달성한다.
+//  2) ecosystem.config.js 의 `NODE_OPTIONS: '--dns-result-order=ipv4first'` 가 IPv4 를 **먼저** 시도하게 한다.
+//     단 IPv4 를 강제하지는 않는다(순서만 정한다).
 //  3) 형제 모듈 slack.ts 가 같은 구조에서 표준 fetch 만으로 정상 동작한다.
-// Node 20+ 는 Happy Eyeballs(autoSelectFamily) 기본 활성이라 IPv4 실패 시 IPv6 로 폴백한다.
+//
+// ⚠ (T-175 정정) 예전 이 자리의 「Happy Eyeballs 라 IPv4 실패 시 IPv6 로 폴백한다」는 이 서버에서 거꾸로였다.
+// Node 20+ fetch 는 autoSelectFamily 가 기본 켜져 있고 주소당 시도 시간이 기본 250ms 라, 텔레그램처럼 TCP 연결이
+// 0.22~0.28초 걸리는 호스트는 IPv4 를 0.25초에 끊고 IPv6 로 넘어가 ENETUNREACH 로 실패했다
+// (`fetch failed (ETIMEDOUT / connect ETIMEDOUT 149.154.166.110:443 / connect ENETUNREACH 2001:…:443)`).
+// 시도 시간은 이제 src/instrumentation.ts 가 웹 프로세스 시작 때 2000ms 로 올린다 — 이 모듈은 따로 손대지 않는다.
 
 const LEVEL_PREFIX: Record<AlertLevel, string> = {
   critical: '🚨',

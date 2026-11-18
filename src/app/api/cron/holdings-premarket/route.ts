@@ -17,6 +17,9 @@
  *  7. `parseSubmissions`(us_filings 와 같은 양식 집합) → 24시간 창 후보 → `recordPremarketFilings` 가 새 공시만 돌려준다
  *     (`us_filings` 에 있거나 `ci_raw_item` 에 이미 있으면 알림 없음)
  *  8. 새 공시마다 정보 알림 1건(10건 넘으면 요약 1건). 상태 기록. 연속 2회 failed/blocked 면 실패 알림(ET 하루 1건).
+ *     T-175: 알림 전송이 실패하면 같은 실행 안에서 간격(2초·5초)을 두고 최대 2회 더 보낸다(`@/lib/notify/send-retry` — 중복 발송 없음).
+ *     끝내 못 보낸 공시는 식별자(심볼·양식·접수번호·SEC 링크)를 `HP_ALERT_UNDELIVERED` 줄로 남긴다 — 다음 실행에서는 「이미 수집됨」이라
+ *     다시 알리지 않으므로 사람이 이 줄로 확인한다. 상태 보고(`failed`·`alert_undelivered=N`)는 그대로다.
  *
  * 시간: 라우트 전체 약 60초 안(SEC 단계는 시작 후 40초 안에서만 새 종목을 시작, 요청 시간 상한 10초×최대 2회) — 러너 curl 상한
  * HOLDINGS_PREMARKET_CURL_MAX_TIME(90초)보다 짧다.
@@ -26,13 +29,14 @@ import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { checkCronAuth } from '@/lib/cron-auth';
 import { dispatchAlert } from '@/lib/notify';
+import { sendWithRetry, type SendRetryResult } from '@/lib/notify/send-retry';
 import { SecBlockedError, SecClient, readSecUserAgent, secSubmissionsUrl } from '@/lib/data/us-edgar/sec-client';
 import { parseSubmissions } from '@/lib/data/us-edgar/parse';
 import {
   HP_MAX_ALERTS, HP_MAX_REQUESTS, etDateOf, formatPremarketAlert, formatPremarketFailureAlert, formatPremarketSummary,
   isSnapshotStale, nextHpStatus, readHpStatus, readPremarketSwitch, recordPremarketFilings, selectPremarketCandidates,
   shouldSendFailureAlert, usHoldingsFromPositions, writeHpStatus,
-  type HpStatus, type HpStatusInput, type PremarketFilingInput,
+  type HpStatus, type HpStatusInput, type PremarketCandidate, type PremarketFilingInput,
 } from '@/lib/corp-intel/holdings-premarket';
 
 export const dynamic = 'force-dynamic';
@@ -44,10 +48,18 @@ const SEC_REQUEST_TIMEOUT_MS = 10_000;
 const CIK_WORST_MS = 22_000;
 /** SEC 단계 끝 — 시작 후 이 시각까지 끝날 수 있을 때만 새 CIK 를 시작한다. */
 const SEC_STAGE_END_MS = 40_000;
-/** 알림 1건 발송 대기 상한 */
+/** 알림 1건 발송 대기 상한(시도 1회) */
 const SEND_TIMEOUT_MS = 5_000;
-/** 시작 후 이 시각이 지나면 남은 개별 알림을 시도하지 않는다(총 예산 약 60초). */
+/**
+ * T-175 — 전송 실패 시 재시도 전 간격. 시도는 최대 3회(첫 시도 + 2회). 텔레그램 계층이 이미 0.5초 뒤 1회 재시도하므로
+ * 그보다 길게 둔다 — 순간적인 연결 실패(2026-11-18 22:01 ETIMEDOUT/ENETUNREACH)가 지나가기를 기다린다.
+ * 알림 1건 최악 = 5 + 2 + 5 + 5 + 5 = 22초지만, 새 시도는 아래 알림 단계 끝(55초) 전에만 시작한다.
+ */
+const SEND_RETRY_GAPS_MS = [2_000, 5_000] as const;
+/** 시작 후 이 시각이 지나면 새 알림 시도(재시도 포함)를 시작하지 않는다(총 예산 약 60초). */
 const SEND_STAGE_END_MS = 55_000;
+/** 미전달 식별자 로그 줄 수 상한(요약 알림 실패 시 새 공시 전부를 적는다) */
+const UNDELIVERED_LOG_MAX = 50;
 /** 앞선 실행이 이보다 오래 끝나지 않았으면 걸린 것으로 보고 새 실행을 허용한다 */
 const STALE_RUN_MS = 5 * 60_000;
 
@@ -71,16 +83,34 @@ interface RunOutcome {
   extra?: Record<string, unknown>;
 }
 
-async function sendOne(title: string, body: string): Promise<boolean> {
-  try {
-    const d = await withTimeout(dispatchAlert('info', title, body), SEND_TIMEOUT_MS);
-    if (d === 'timeout') { console.warn(`${LOG} 알림 발송 대기 ${SEND_TIMEOUT_MS}ms 초과`); return false; }
-    if (d.delivered.length === 0) { console.warn(`${LOG} 전달된 채널 없음(channel=${d.channel})`); return false; }
-    return true;
-  } catch (e) {
-    console.warn(`${LOG} 알림 발송 예외: ${errName(e)}`);
-    return false;
+/** 로그 한 줄 안전화 — 외부(SEC) 문자열의 제어문자를 지우고 길이를 자른다. */
+const oneLine = (v: unknown, max = 200) => String(v ?? '').replace(/[\u0000-\u001F\u007F]+/g, ' ').slice(0, max);
+
+/** T-175 — 알림 1건을 같은 실행 안에서 간격을 두고 다시 보낸다. 던지지 않는다. */
+async function sendOne(title: string, body: string, canStart: (gapMs: number) => boolean): Promise<SendRetryResult> {
+  const r = await sendWithRetry(() => dispatchAlert('info', title, body), {
+    timeoutMs: SEND_TIMEOUT_MS, gapsMs: SEND_RETRY_GAPS_MS, canStart,
+  });
+  if (r.delivered) {
+    if (r.attempts > 1) console.log(`${LOG} 알림 재시도 끝에 전달(시도 ${r.attempts}회)`);
+  } else {
+    console.warn(`${LOG} 알림 미전달 reason=${r.reason} attempts=${r.attempts}`
+      + (r.reason === 'unresolved' ? ` (마지막 시도가 ${SEND_TIMEOUT_MS}ms 안에 끝나지 않음 — 늦게 도착했을 수 있다)` : '')
+      + (r.lastError ? ` last=${oneLine(r.lastError, 300)}` : ''));
   }
+  return r;
+}
+
+/**
+ * 끝내 보내지 못한 공시의 식별자 — 다음 실행은 이 공시를 「이미 수집됨」으로 보고 다시 알리지 않으므로(실행 간 재전송 없음),
+ * 사람이 `HP_ALERT_UNDELIVERED` 로 찾아 SEC 링크로 확인할 수 있게 남긴다. 비밀값 없음(공개 SEC 식별자뿐).
+ */
+function logUndelivered(list: readonly PremarketCandidate[], why: string): void {
+  for (const c of list.slice(0, UNDELIVERED_LOG_MAX)) {
+    console.warn(`${LOG} HP_ALERT_UNDELIVERED reason=${oneLine(why, 20)} symbols=${oneLine(c.symbols.join(','), 80)}`
+      + ` form=${oneLine(c.form, 16)} accession=${oneLine(c.accession, 30)} url=${oneLine(c.url, 200)}`);
+  }
+  if (list.length > UNDELIVERED_LOG_MAX) console.warn(`${LOG} HP_ALERT_UNDELIVERED … 외 ${list.length - UNDELIVERED_LOG_MAX}건(ci_raw_item 에 기록됨)`);
 }
 
 async function run(startedAt: number): Promise<RunOutcome> {
@@ -171,17 +201,22 @@ async function run(startedAt: number): Promise<RunOutcome> {
   const rec = await recordPremarketFilings(sel.candidates, now);
 
   // ── 알림 — 새 행이 생긴 것만 ──
+  // 새 시도(재시도 포함)는 알림 단계 끝 전에만 시작한다 — 기존 「55초가 지나면 남은 알림을 시도하지 않는다」와 같은 기준.
+  const canStart = (gapMs: number) => elapsed() + gapMs <= SEND_STAGE_END_MS;
   let alerted = 0;
   let undelivered = 0;
   if (rec.status !== 'skipped_no_table' && rec.fresh.length > 0) {
     if (rec.fresh.length > HP_MAX_ALERTS) {
       const s = formatPremarketSummary(rec.fresh, now);
-      if (await sendOne(s.title, s.body)) alerted++; else undelivered++;
+      const r = await sendOne(s.title, s.body, canStart);
+      if (r.delivered) alerted++;
+      else { undelivered++; logUndelivered(rec.fresh, r.reason ?? 'failed'); }
     } else {
       for (const c of rec.fresh) {
-        if (elapsed() > SEND_STAGE_END_MS) { undelivered++; continue; }
         const a = formatPremarketAlert(c, now);
-        if (await sendOne(a.title, a.body)) alerted++; else undelivered++;
+        const r = await sendOne(a.title, a.body, canStart);
+        if (r.delivered) alerted++;
+        else { undelivered++; logUndelivered([c], r.reason ?? 'failed'); }
       }
     }
   }
