@@ -34,6 +34,25 @@ t172_targets() {   # 러너 → "파일 전체 L1 L2 옛 줄 | call() 안 L1 L2"
   echo "$(grep -cxF "$T172_L1" "$1") $(grep -cxF "$T172_L2" "$1") $(grep -cxF "$T172_OLD" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T172_L1") $(printf '%s\n' "$cb" | grep -cxF "$T172_L2")"
 }
 
+# ── (T-177) 연결 거부 재시도·웹 기동 대기 — 기준 ref 형태로 되돌리는 도우미(표준입력 → 표준출력) ─────────────
+#   T-177 은 러너에 ① 최상위 connect-retry 블록(시작 대기·판정 함수 — 표지 `# >>> connect-retry (T-177)` ~ `# <<< connect-retry`)
+#   ② call() 의 `# T-177` 표지 줄 5개(curl 줄을 한 번 더 도는 while 과 판정 호출 — curl 줄 자체는 그대로) ③ 메인 루프의 예산 채움 줄 1개를
+#   **더하기만** 했다(기존 줄 변경 0). 기준 ref 와 비교할 때만 그것들을 뺀다(러너 전체 no_t177 · call() 비교 no_t177_call). 빼는 줄이
+#   엉뚱한 곳에 생기면 비교 범위가 무검사로 넓어지므로 정적 절이 그 줄들이 파일 전체에 각 1개(call() 줄은 모두 call() 안)인지 따로 단언한다
+#   (t177_targets). 재시도·시작 대기의 동작은 scripts/test-cron-runner-connect-retry.sh 가 본다.
+T177_C1='  local t177_retried=0   # T-177 연결 거부(curl 7)일 때만 아래 curl 줄을 한 번 더 — 판단은 connect-retry 블록의 call_connect_retry_due'
+T177_C2='  while :; do   # T-177 (안의 curl 줄은 한 글자도 바꾸지 않았다 — 들여쓰기도 그대로)'
+T177_C3='  [ "$t177_retried" = "0" ] && call_connect_retry_due "$label" "$curl_exit" 2>/dev/null || break   # T-177 7 이 아님·이미 다시 보냄·웹 준비 안 됨 → 끝'
+T177_C4='  t177_retried=1; curl_exit=0   # T-177 다시 보내기 전 종료 코드를 비운다(성공하면 0 이어야 후크가 예전과 같다)'
+T177_C5='  done   # T-177'
+T177_M1='  CALL_RETRY_BUDGET_LEFT="$CALL_RETRY_TICK_BUDGET_SEC"   # T-177 틱마다 연결 거부 재시도의 대기 예산을 다시 채운다(connect-retry 블록)'
+no_t177_call() { grep -vxF "$T177_C1" | grep -vxF "$T177_C2" | grep -vxF "$T177_C3" | grep -vxF "$T177_C4" | grep -vxF "$T177_C5"; }
+no_t177() { awk '/^# >>> connect-retry \(T-177\)/{s=1} s{ if (/^# <<< connect-retry$/) s=0; next } {print}' | no_t177_call | grep -vxF "$T177_M1"; }
+t177_targets() {   # 러너 → "C1~C5·M1 파일 전체 개수 | C1~C5 call() 안 개수 | 블록 시작·끝 표지 개수" — 기대 "1 1 1 1 1 1 | 1 1 1 1 1 | 1 1"
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T177_C1" "$1") $(grep -cxF "$T177_C2" "$1") $(grep -cxF "$T177_C3" "$1") $(grep -cxF "$T177_C4" "$1") $(grep -cxF "$T177_C5" "$1") $(grep -cxF "$T177_M1" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T177_C1") $(printf '%s\n' "$cb" | grep -cxF "$T177_C2") $(printf '%s\n' "$cb" | grep -cxF "$T177_C3") $(printf '%s\n' "$cb" | grep -cxF "$T177_C4") $(printf '%s\n' "$cb" | grep -cxF "$T177_C5") | $(grep -c '^# >>> connect-retry (T-177)' "$1") $(grep -cx '# <<< connect-retry' "$1")"
+}
+
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
@@ -116,8 +135,9 @@ eq "B2: 로그 줄(시각 뺌) = 기준과 같음" "$(nots n-none) | $(nots n-kr
 echo "B3. 정적"
 eq "bash -n" "$(bash -n "$RUNNER" 2>&1 && echo ok)" "ok"
 eq "🔴 B3: T-172 두 줄 = 파일 전체 각 1개 · 옛 줄 0 · 모두 call() 안" "$(t172_targets "$RUNNER")" "1 1 0 | 1 1"
+eq "🔴 B3: (T-177) no_t177 이 노리는 줄 = 파일 전체 각 1개 · call() 줄은 모두 call() 안 · 블록 표지 1쌍" "$(t177_targets "$RUNNER")" "1 1 1 1 1 1 | 1 1 1 1 1 | 1 1"
 eq "B3: 두 줄은 call() 넷째·다섯째 줄(기본값 줄이 본문 줄 바로 앞)" "$(sed -n 4p "$CALL_NEW") | $(sed -n 5p "$CALL_NEW")" "$T172_L1 | $T172_L2"
-eq "🔴 B3: 두 줄을 되돌리면(no_t172) call() = 기준 ref $BASE_REF" "$(no_t172 < "$CALL_NEW" | sha256sum)" "$(sha256sum < "$CALL_OLD")"
+eq "🔴 B3: 두 줄을 되돌리면(no_t172) call() = 기준 ref $BASE_REF" "$(no_t172 < "$CALL_NEW" | no_t177_call | sha256sum)" "$(sha256sum < "$CALL_OLD")"
 eq "B3: (도우미 확인) 기준 call() 에 no_t172 를 걸어도 그대로" "$(no_t172 < "$CALL_OLD" | sha256sum)" "$(sha256sum < "$CALL_OLD")"
 # 셋째 인자를 넘기는 call 줄: 주석 줄·줄 끝 주석을 떼고 `call <경로> <라벨> <무엇이든>` 꼴을 센다(test-cron-runner-daily-bars-kr.sh K6 와 같은 식)
 third() { grep -v '^[[:space:]]*#' "$1" | sed 's/[[:space:]]#.*$//' | grep -cE '^[[:space:]]*call[[:space:]]+("[^"]*"|[^[:space:]"]+)[[:space:]]+("[^"]*"|[^[:space:]"]+)[[:space:]]+[^[:space:]]'; }
