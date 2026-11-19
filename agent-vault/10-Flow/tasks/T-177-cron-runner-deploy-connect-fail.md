@@ -1,8 +1,8 @@
 ---
 task_id: T-177
 title: 배포 때 크론 잡이 「연결 실패·응답 없음」으로 기록되는 문제 — 러너가 웹 기동을 기다리고 연결 거부만 재시도
-status: review
-waiting: PR 소스검토 후 사용자의 main 반영(=운영 배포) 승인
+status: done
+waiting: 다음 배포 때 새 러너의 실제 재시작 동작 확인(이번 배포의 실패 3건은 옛 러너가 남긴 것)
 priority: high
 project: StockInvest
 created: 2026-11-19
@@ -24,8 +24,8 @@ execution_context:
   origin_tool: claude
   current_tool: claude
   current_procedure: claude_standard
-  current_scope: 원인 확인·설계부터 구현·감사·QA·서버 worktree 커밋·작업 브랜치 push·PR 생성까지. main 반영(=운영 배포)은 PR 검토 후 사용자 승인
-  last_event_id: E2
+  current_scope: 원인 확인·설계부터 구현·감사·QA·커밋·PR·사용자 승인 후 main 머지(=운영 배포)·배포 확인까지
+  last_event_id: E3
 ---
 
 # T-177 배포 때 크론 잡이 「연결 실패·응답 없음」으로 기록되는 문제
@@ -197,6 +197,8 @@ execution_context:
 ## 배포 기록
 
 - 2026-11-19 미배포 — 작업 브랜치 `t177-cron-connect-retry`(커밋 `7feda13`) push, PR https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/1 생성(base `main` = `d17f689`). main 머지 = webhook blue/green 운영 배포라 **사용자 소스검토·승인 뒤에만** 머지한다.
+- 2026-11-19 17:08 KST **배포 완료** — 사용자 「Merge after review」(PR 검토 후 머지 승인)로 Gitea API 머지(merge commit `e822ad4`, PR #1 closed). webhook blue/green 릴리스 `20261119-170855-e822ad4e` `RELEASE_RESULT ok`(migrated false). 같은 배포에 실린 다른 작업: 없음(base `d17f689` 이후 이 PR 커밋 2개만). health green·`dryRun true`·`killSwitch false`, pm2 `stockinvest`·`stockinvest-cron` 모두 새 릴리스 경로 online.
+- **배포 확인(읽기 전용)**: 두 번째(새 코드) 러너 17:09:28 기동 → `웹 응답 확인 — 2초 대기` 로그 후 첫 틱 잡 전부 OK(signal-followup·signal-expiry·portfolio-snapshot·trade-report). **그러나 이 배포 중에도 job_run_log 실패 3건이 생겼다** — signal-followup `HTTP=000/curl=52`(17:09:26)·signal-expiry·trade-report `HTTP=000/curl=7`(17:09:28). 남긴 쪽은 **옛 러너**다: release.sh 가 먼저 옛 경로(`…093417-d17f6896`)로 cron 을 재시작했고(17:09:26 기동, 시작 대기 로그 없음 = T-177 코드 없음), 이어서 「pm2 stockinvest-cron 이 아직 옛 경로를 잡고 있다 → delete 후 재등록」으로 다시 죽였다. 즉 이번 배포는 수정본이 자기 배포를 덮을 수 없는 구조라 그 3건은 예상 범위다. 새 러너가 「재시작 중 연결 거부 → 기다렸다 재시도」를 실제로 하는지는 **다음 배포에서** 확인한다(재시도 로그 `연결 거부(curl=7) — 웹 응답 확인(N초 대기) 뒤 1회 재시도`).
 
 ## 실행 도구·절차 이력
 
@@ -204,13 +206,15 @@ execution_context:
 |---|---|---|---|---|---|
 | E1 | 2026-11-19 10:1x | start | claude / claude_standard | 원인 확인·설계부터 구현·감사·QA·커밋·브랜치 push·PR 생성까지(main 반영 제외) | 사용자 「원인확인해서 수정작업 진행해줘 … 푸시전에 pr생성해서 소스검토」 |
 | E2 | 2026-11-19 | handoff-wait | claude / claude_standard | 커밋·작업 브랜치 push·PR 생성 완료, main 반영은 사용자 대기 | 같은 지시(「푸시전에 pr생성해서 소스검토」) |
+| E3 | 2026-11-19 17:08 | deploy | claude / claude_standard | PR #1 main 머지(=운영 배포)·배포 확인 | 사용자 「Merge after review」 |
 
 ## 최종 요약
 
 ### [T-177] 배포 때 크론 잡이 「연결 실패·응답 없음」으로 기록되던 문제
-- **상태**: 구현·Reviewer pass(낮음 3 + Codex 낮음 1 수용)·Codex C2 실행(0.167.0)·QA pass. 작업 브랜치 `t177-cron-connect-retry` push·PR 생성. **main 반영(=운영 배포) 전 사용자 소스검토·승인 대기.**
+- **상태**: 구현·Reviewer pass(낮음 3 + Codex 낮음 1 수용)·Codex C2 실행(0.167.0)·QA pass. PR #1 사용자 검토·승인 후 main 머지 → **운영 배포 완료 2026-11-19 17:08 KST**(릴리스 `20261119-170855-e822ad4e`, `RELEASE_RESULT ok`).
 - **원인**: 11-19 홈 「데이터 이상·실행 실패 11건」은 같은 날 오전 배포 2회(release.sh 가 web·cron 을 배포마다 2번씩 재시작) 직후에 몰렸다. 새로 뜬 크론 러너가 웹 포트가 열리기 전에 첫 틱 호출을 쏴서 curl 7(연결 거부 → 「연결 실패」), 재시작에 끊긴 진행 중 요청이 curl 52(「응답 없음」).
 - **무엇이 바뀌었나**: `scripts/cron-runner.sh` — ① 시작 시 웹 응답 확인 대기(최대 60초, `/api/health` 무인증 GET, 응답 코드나 TCP 연결이면 준비) ② `call()` 이 curl 7 일 때만 웹 준비를 확인한 뒤 1회 재시도(틱당 대기 예산 15초, 손절 알림 티커는 호출마다 15초). 52·28·56 은 재시도하지 않는다(요청이 서버에 닿았을 수 있어 이중 실행 위험). 기록(로그·job_run_log·CALL_LAST_CODE)은 최종 결과로 1회. 버전 0.16.0 → 0.17.0.
 - **검증**: 러너 시험 14개 전부 실패 0(새 시험 67건 포함) · 훅 시험 526/0 · tsc 0 · 전체 jest 변경 전과 실패 이름 동일(새 실패 0) · 변이 시험으로 새 시험이 잘못된 재시도를 잡음 확인.
-- **못 한 것**: 실제 pm2 재시작에서의 동작(배포 후 cron 로그로 확인) · shellcheck(서버 미설치).
+- **배포 확인**: 새 러너가 기동 시 웹을 2초 기다린 뒤 첫 틱 잡 전부 성공. 단 이 배포 중 실패 3건(curl 52 1·curl 7 2)은 release.sh 가 먼저 재시작한 **옛 러너**가 남겼다 — 수정본이 자기 배포는 덮지 못한다.
+- **못 한 것**: 새 러너가 재시작 중 연결 거부를 기다렸다 재시도하는 동작(다음 배포에서 cron 로그로 확인) · shellcheck(서버 미설치).
 - **남는 것(범위 밖)**: curl 52(재시작에 끊긴 요청)는 여전히 「응답 없음」으로 남을 수 있다 · release.sh 의 앱별 이중 재시작(전 프로젝트 공용) · 15:30 틱 여유 약 5~8초(잡 추가 시 재계산) · 예산을 초 단위로 세는 오차(밀리초 전환은 다음에 러너를 건드릴 때 선택 개선).
