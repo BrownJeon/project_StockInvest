@@ -436,6 +436,78 @@ function isExcluded(symbol: string, name: string, volume: number): boolean {
   return false;
 }
 
+/**
+ * T-176 WP-3 — 시총 순위 조회가 `[]` 로 끝난 **이유**를 남긴다(반환값·동작은 그대로).
+ *
+ * 운영 로그(10-25~11-18, 25일)상 이 API 는 매 호출 HTTP 200 + `rt_cd≠0` 이었고 성공은 0회였다. 그런데 응답 메시지를
+ * 기록하지 않아 원인(요청 파라미터·권한·API 사양)을 알 수 없었다. 이 로그로 별도 결정 사항(순위 API 수정·tier 설계)의
+ * 원인을 확정한다.
+ *
+ * - 남기는 것: 시장 구분(J 코스피·Q 코스닥)·HTTP 상태·`rt_cd`·`msg_cd`·`msg1`(KIS 오류 문구 — 비밀 아님). 각 값은 길이를
+ *   자르고 제어문자를 지운다. **응답 본문 전체·헤더·토큰·URL 은 남기지 않는다.**
+ * - 로그 홍수 방지: (시장, HTTP, rt_cd, msg_cd) 조합마다 **프로세스당 1시간에 1줄**. 억제한 건수는 다음 줄에 `(이전 n건 생략)`
+ *   으로 붙인다. 조합 수는 상한(50)을 두어 메모리가 자라지 않게 한다(넘으면 가장 오래된 조합을 지운다).
+ */
+const MCAP_DIAG_WINDOW_MS = 60 * 60 * 1000;
+const MCAP_DIAG_MAX_KEYS = 50;
+const mcapDiagSeen = new Map<string, { at: number; suppressed: number }>();
+
+/** 시험 전용 — 억제 상태 초기화 */
+export function __resetMarketCapDiagForTest(): void {
+  mcapDiagSeen.clear();
+}
+
+function diagField(v: unknown, max: number): string {
+  if (v === undefined || v === null) return '-';
+  if (typeof v !== 'string' && typeof v !== 'number') return '-';
+  const t = String(v).replace(/[\u0000-\u001F\u007F]+/g, ' ').trim().slice(0, max);
+  return t === '' ? '-' : t;
+}
+
+function logMarketCapEmpty(
+  market: 'J' | 'Q',
+  why: 'http' | 'rt_cd' | 'output',
+  status: number,
+  body: { rt_cd?: unknown; msg_cd?: unknown; msg1?: unknown } | null,
+): void {
+  try {
+    const rtCd = diagField(body?.rt_cd, 8);
+    const msgCd = diagField(body?.msg_cd, 24);
+    const key = `${market}|${status}|${rtCd}|${msgCd}`;
+    const now = Date.now();
+    const prev = mcapDiagSeen.get(key);
+    if (prev && now - prev.at < MCAP_DIAG_WINDOW_MS) {
+      prev.suppressed++;
+      return;
+    }
+    const suppressed = prev?.suppressed ?? 0;
+    mcapDiagSeen.delete(key);
+    if (mcapDiagSeen.size >= MCAP_DIAG_MAX_KEYS) {
+      const oldest = mcapDiagSeen.keys().next().value;
+      if (oldest !== undefined) mcapDiagSeen.delete(oldest);
+    }
+    mcapDiagSeen.set(key, { at: now, suppressed: 0 });
+    console.warn(
+      `[kis-domestic] 시총 순위 빈 결과 market=${market}(${market === 'J' ? '코스피' : '코스닥'}) why=${why} `
+      + `http=${status} rt_cd=${rtCd} msg_cd=${msgCd} msg1=${diagField(body?.msg1, 120)}`
+      + (suppressed > 0 ? ` (이전 ${suppressed}건 생략)` : ''),
+    );
+  } catch { /* 진단 로그 실패가 조회 결과를 바꾸면 안 된다 */ }
+}
+
+/** `!res.ok` 응답의 본문에서 rt_cd·msg_cd·msg1 만 꺼낸다(본문 자체는 반환·기록하지 않는다). 실패하면 null. */
+async function readKisErrorFields(res: Response): Promise<{ rt_cd?: unknown; msg_cd?: unknown; msg1?: unknown } | null> {
+  try {
+    const text = kisBodyText(res) ?? await res.text();
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const o = parsed as Record<string, unknown>;
+    return { rt_cd: o.rt_cd, msg_cd: o.msg_cd, msg1: o.msg1 };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchMarketCapPage(market: 'J' | 'Q', inputIscd: string): Promise<Array<{
   symbol: string; name: string; marketCap: number; quoteVolume: number; volume: number;
 }>> {
@@ -451,9 +523,15 @@ async function fetchMarketCapPage(market: 'J' | 'Q', inputIscd: string): Promise
   });
   const url = `${PROD_BASE}/uapi/domestic-stock/v1/ranking/market-cap?${params}`;
   const res = await kisFetch(url, { headers }, { label: 'domestic marketCapRanking' });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    logMarketCapEmpty(market, 'http', res.status, await readKisErrorFields(res));
+    return [];
+  }
   const data = await res.json();
-  if (data.rt_cd !== '0' || !Array.isArray(data.output)) return [];
+  if (data.rt_cd !== '0' || !Array.isArray(data.output)) {
+    logMarketCapEmpty(market, data.rt_cd !== '0' ? 'rt_cd' : 'output', res.status, data);
+    return [];
+  }
   return (data.output as Record<string, string>[]).map(o => ({
     symbol:      o.mksc_shrn_iscd,
     name:        o.hts_kor_isnm,

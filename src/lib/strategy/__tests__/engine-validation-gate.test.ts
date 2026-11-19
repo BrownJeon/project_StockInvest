@@ -88,7 +88,8 @@ test('대조: 기존 매핑 불변 — insufficient_cash skip · 코드 없음 s
 test('게이트 라벨 — 목록 끝에 append, stage 11, 한글 라벨, VARCHAR(48) 이내', () => {
   // append-only — T-072 의 두 게이트 뒤에 T-134(청산 상태 조회 실패) → T-148(수집 중단) → T-168(감사 전용 경합)이 차례로 붙었다
   // (T-072 두 게이트의 상대 순서는 그대로).
-  expect(FUNNEL_GATES.slice(-5)).toEqual(['validation_gate', 'validation_lookup_error', 'exit_state_load_failed', 'collect_threw', 'validation_audit_only_passed']);
+  // T-176 이 universe_refresh_failed 를 끝에 append 했다(기존 ID 의 상대 순서는 그대로).
+  expect(FUNNEL_GATES.slice(-6)).toEqual(['validation_gate', 'validation_lookup_error', 'exit_state_load_failed', 'collect_threw', 'validation_audit_only_passed', 'universe_refresh_failed']);
   expect(GATE_STAGE.validation_gate).toBe(11);
   expect(GATE_STAGE.validation_lookup_error).toBe(11);
   expect(gateLabelKo('validation_gate')).toBe(GATE_LABEL_KO.validation_gate);

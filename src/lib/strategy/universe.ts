@@ -4,6 +4,7 @@ import { fetchMarketCapRanking, getKisTickers, getKisOverseasTickers, kis } from
 import { withKisPriority, mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
 import type { Market } from '@/lib/exchanges/kis-symbols';
 import { getStaticOverseasUniverse } from '@/lib/strategy/universe-overseas-static';
+import { describeErrorCause } from '@/lib/notify/result';
 import { atrLast } from '@/lib/strategy/indicators/atr';
 import { emaLast } from '@/lib/strategy/indicators/ema';
 import { rsiLast } from '@/lib/strategy/indicators/rsi';
@@ -168,6 +169,39 @@ export function refreshUniverse(market: Market = 'domestic', force = false): Pro
   return withKisPriority('bulk', () => refreshUniverseImpl(market, force));
 }
 
+/**
+ * T-176 WP-1 — 시총 순위 조회가 **던지면** 빈 배열과 같게 취급한다(호출부의 기존 대체 경로 `getKisTickers(ALL_SYMBOLS)` 로 간다).
+ *
+ * 2026-11-18 12:11 KST 장중 평가가 이 조회의 네트워크 예외(`fetch failed`) 하나로 회차째 HTTP 500 이 됐다.
+ * `fetchMarketCapPage` 는 `!res.ok`·`rt_cd≠0` 을 이미 `[]` 로 바꾸지만 **던진 예외**(연결 실패·토큰 발급 실패·
+ * JSON 파싱 실패 등)는 잡는 곳이 없었다. 순위가 빈 경우의 대체 경로는 지난 25일 매일 실제로 돈 경로라 새 동작이 아니다.
+ *
+ * - `fetchMarketCapRanking` 의 `Promise.all` 은 그대로 둔다 — 한 페이지만 성공한 부분 결과로 tier 를 매기면
+ *   (코스피만 core 가 되는 등) tier 의 뜻이 바뀐다. 부분 결과 대신 전부 대체 경로로 보내는 쪽이 기존 동작과 같다.
+ * - 원인은 T-175 `describeErrorCause`(코드·주소, 비밀·쿼리스트링 가림)로 한 줄 남긴다. 순위 갱신은 TTL(15분)당
+ *   최대 1회라 억제하지 않는다.
+ */
+async function fetchMarketCapRankingOrEmpty(limit: number): Promise<Awaited<ReturnType<typeof fetchMarketCapRanking>>> {
+  try {
+    return await fetchMarketCapRanking(limit);
+  } catch (e) {
+    // 메시지에 URL 이 섞여도 쿼리스트링은 가린다(describeErrorCause 와 같은 규칙) — 시총 순위 URL 에는 비밀이 없지만 방어한다.
+    // 문자열화 자체가 던질 수 있다(`Object.create(null)` 을 던진 경우) — 격리하려는 catch 가 다시 던지면 안 된다(T-148 QA L-3).
+    let raw: string;
+    try { raw = e instanceof Error ? e.message : String(e); } catch { raw = '(문자열화 불가)'; }
+    const msg = raw
+      .replace(/\?[^\s'"<>()[\]]*/g, '?***')
+      .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+      .slice(0, 200);
+    const cause = describeErrorCause(e);
+    console.warn(
+      `[universe:domestic] 시총 순위 조회 실패 — 정적 목록으로 대체: ${msg}`
+      + (cause ? ` | ${cause}` : ''),
+    );
+    return [];
+  }
+}
+
 async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ refreshed: boolean }> {
   const pool = getPool();
 
@@ -188,7 +222,7 @@ async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ re
   let top20: Array<{ symbol: string; quoteVolume24h: number }>;
   if (market === 'domestic') {
     // 시총 상위 200까지 fetch — core(1~100) / satellite(101~200) tier 분류용
-    const ranked = await fetchMarketCapRanking(TIER_SATELLITE_LIMIT);
+    const ranked = await fetchMarketCapRankingOrEmpty(TIER_SATELLITE_LIMIT);
     if (ranked.length > 0) {
       // stock_meta에 종목명 upsert (검색·표시용)
       try {

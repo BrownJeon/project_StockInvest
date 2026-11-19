@@ -169,6 +169,12 @@ export const FUNNEL_GATES = [
    * 다음 틱에 검증된 후보로 적응 배분 경로를 탄다. 정책 건너뜀(skip)이다. 평소 0건.
    */
   'validation_audit_only_passed',
+  /**
+   * T-176 — stage 0(런 게이트). universe(분석 후보 목록) **갱신이 던졌다**(시총 순위·시세 조회·토큰·유량 대기열·DB 등).
+   * 회차를 멈추지 않고 이전 universe(최대 30분)로 평가를 계속했다는 표시다 — 종목 행이 아니라 회차 행(symbol 없음)이다.
+   * 2026-11-18 12:11 KST 에는 이 예외가 회차 전체를 HTTP 500 으로 멈췄다. verdict error.
+   */
+  'universe_refresh_failed',
 ] as const;
 
 export type FunnelGate = (typeof FUNNEL_GATES)[number];
@@ -263,6 +269,7 @@ export const GATE_STAGE: Record<FunnelGate, number> = {
   validation_lookup_error: 11,
   exit_state_load_failed: 23,
   validation_audit_only_passed: 11,
+  universe_refresh_failed: 0,
 };
 
 /** 사용자 화면·리포트용 한글 라벨 (T-002 §4 "한글 라벨 매핑") */
@@ -352,6 +359,7 @@ export const GATE_LABEL_KO: Record<FunnelGate, string> = {
   validation_lookup_error: '전략 검증 상태 조회 실패 — 신규 매수 차단',
   exit_state_load_failed: '청산: 포지션 조회 실패',
   validation_audit_only_passed: '감사 전용 매수가 검증 관문 통과(분류 뒤 상태 변경) — 시그널·주문 미생성',
+  universe_refresh_failed: '분석 후보 목록 갱신 실패 — 이전 목록으로 평가 계속',
 };
 
 /**

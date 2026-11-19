@@ -334,7 +334,8 @@ describe('③ 감사 전용 + G1 통과(경합)', () => {
   });
 
   test('게이트 라벨 — 목록 끝 append, stage 11, 한글 라벨, VARCHAR(48) 이내', () => {
-    expect(FUNNEL_GATES[FUNNEL_GATES.length - 1]).toBe('validation_audit_only_passed');
+    // T-176 이 그 뒤에 `universe_refresh_failed` 를 append 했으므로 끝에서 두 번째다(append-only 규약 확인 — 꼬리 위치 자체가 계약은 아니다).
+    expect(FUNNEL_GATES[FUNNEL_GATES.length - 2]).toBe('validation_audit_only_passed');
     expect(FUNNEL_GATES.filter((g) => g === 'validation_audit_only_passed')).toHaveLength(1);
     expect(GATE_STAGE.validation_audit_only_passed).toBe(11);
     expect(gateLabelKo('validation_audit_only_passed')).toBe(GATE_LABEL_KO.validation_audit_only_passed);

@@ -49,6 +49,7 @@ import { classifyMarketState, type MarketStateCategory } from './market-state';
 import type { StyleConfig } from './style';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
+import { describeErrorCause } from '@/lib/notify/result';
 import { EvalFunnelRecorder } from './eval-funnel';
 import { kickMacroRegimeRefresh, getMacroRegimeRecord, recordMacroRegimeLabel } from './macro-regime';
 import type { FunnelGate, FunnelVerdict } from './eval-funnel-labels';
@@ -1405,7 +1406,42 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
      WHERE enabled = 1`,
   );
 
-  const { refreshed: universeRefreshed } = await refreshUniverse(market, opts.force);
+  /**
+   * T-176 WP-2 — universe 갱신 실패가 **회차 전체를 멈추지 않게** 한다(방어선).
+   *
+   * 2026-11-18 12:11 KST: 갱신 안의 KIS 시총 순위 조회가 네트워크 예외를 던졌고, 잡는 곳이 없어 `runMarket` →
+   * `runAll` → 라우트 catch → HTTP 500 이 됐다(그 회차 진입 평가 전체 생략). 원인 지점은 WP-1(universe.ts)이 막고,
+   * 여기는 그 밖의 던짐(토큰·유량 대기열·DB)이 같은 결과를 내지 않게 하는 두 번째 줄이다.
+   *
+   * - 실패하면 `universeRefreshed=false` 로 계속한다 — TTL(15분) 안이라 갱신을 건너뛴 회차와 **같은 상태**다.
+   *   `getUniverseSymbols` 가 이전 universe 를 최대 30분(TTL×2)까지 읽고, 그보다 낡으면 [] 라 보유 + always-include 만 평가한다.
+   *   `refreshed_at` 이 갱신되지 않으므로 다음 회차가 자연히 다시 갱신을 시도한다.
+   * - **감싸는 범위 = 갱신 전체(DB 오류 포함).** 외부 호출 실패만 골라 잡으려면 오류 종류를 판별해야 하는데 판별이 틀리면
+   *   회차가 다시 통째로 멈춘다. DB 가 정말 죽었다면 뒤의 평가(universe 조회·쿨다운·기록)도 DB 를 쓰므로 거기서 종전처럼
+   *   실패해 500 이 된다 — 일시 오류였다면 이전 universe 로 이번 회차를 살린다. 어느 쪽도 잃는 것이 없다.
+   * - 해외 분기도 같은 감싸기 안이다 — 해외 갱신이 던져도(분석 대상 목록 원천은 자체 폴백이 있어 드물다) 회차가 계속된다.
+   * - 조용히 버리지 않는다: 로그 한 줄 + 평가 기록(`universe_refresh_failed`, verdict=error → 분석 화면 이상 배너) +
+   *   응답 `errors[]` 에 `<market>_universe_refresh_failed`. 응답은 종전처럼 200 `{ok:true}` 라 `job_run_log` 판정은
+   *   `ok` 다(`classifyRun` 은 strategy-eval 의 `errors[]` 를 `all_markets_closed` 외에는 보지 않는다) — 성공한 회차를
+   *   실패로 바꾸지 않는다.
+   */
+  let universeRefreshed = false;
+  let universeRefreshFailed = false;
+  try {
+    ({ refreshed: universeRefreshed } = await refreshUniverse(market, opts.force));
+  } catch (e) {
+    universeRefreshFailed = true;
+    const detail = safeReasonText(e);
+    let cause = '';
+    try { cause = describeErrorCause(e); } catch { /* 진단 보조 — 실패해도 계속 */ }
+    rec.error('universe_refresh_failed', { detail: { error: detail, ...(cause ? { cause } : {}) } });
+    console.error(
+      `[strategy-eval:${market}] universe 갱신 실패 — 이전 후보 목록으로 평가 계속(최대 30분): ${detail}`
+      + (cause ? ` | ${cause}` : ''),
+    );
+  }
+  /** 응답 `errors[]` 에 싣는 코드 — 오류 문구는 싣지 않는다(로그·평가 기록에만). */
+  const universeRefreshErrors: string[] = universeRefreshFailed ? [`${market}_universe_refresh_failed`] : [];
 
   const activeStrategies: ActiveStrategy[] = [];
   const skippedStrategyIds: string[] = [];
@@ -1436,10 +1472,13 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       gate: 'run',
       verdict: 'skip',
       reason: 'no_active_strategies',
-      detail: { unregistered: skippedStrategyIds, heldSymbols: heldAmounts.size, ...exitTrack },
+      detail: {
+        unregistered: skippedStrategyIds, heldSymbols: heldAmounts.size, ...exitTrack,
+        ...(universeRefreshFailed ? { universeRefreshFailed: true } : {}),
+      },
     });
     await rec.flush();
-    return { ran: 0, skipped: skippedStrategyIds.length, skippedStrategyIds, results: [], errors: [], universeRefreshed };
+    return { ran: 0, skipped: skippedStrategyIds.length, skippedStrategyIds, results: [], errors: [...universeRefreshErrors], universeRefreshed };
   }
 
   // 해외 시장은 universeSource 'volume-top' 고정 (KOSPI 분류 미적용). 국내만 style 분기.
@@ -1459,7 +1498,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   const orderLimitConfigured = isBuyLimitConfigured(rawMax);
   const defaultAmountKRW = !adaptive && orderLimitConfigured ? Math.floor(rawMax * (1 - FEE_BUFFER_PCT)) : 0;
 
-  const errors: string[] = [];
+  const errors: string[] = [...universeRefreshErrors];
   if (!orderLimitConfigured) {
     console.error(
       `[strategy-eval:${market}] 주문 한도 미설정(effectiveOrderMax=0) — 신규 매수 후보 전면 스킵. ` +
@@ -1811,6 +1850,7 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
       buyBlocked,
       signalsCreated: totalApproved,
       errors: errors.length,
+      ...(universeRefreshFailed ? { universeRefreshFailed: true } : {}),
       // T-165 — 거시 레짐 라벨 C0: **기록만** 한다. 이 값을 이 행과 아래 장기 보관 기록 밖 어디에도 쓰지 않는다(판단 영향 0).
       macroRegime,
     },
