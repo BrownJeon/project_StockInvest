@@ -46,6 +46,25 @@ t172_targets() {   # 러너 → "파일 전체 L1 L2 옛 줄 | call() 안 L1 L2"
   echo "$(grep -cxF "$T172_L1" "$1") $(grep -cxF "$T172_L2" "$1") $(grep -cxF "$T172_OLD" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T172_L1") $(printf '%s\n' "$cb" | grep -cxF "$T172_L2")"
 }
 
+# ── (T-177) 연결 거부 재시도·웹 기동 대기 — 기준 ref 형태로 되돌리는 도우미(표준입력 → 표준출력) ─────────────
+#   T-177 은 러너에 ① 최상위 connect-retry 블록(시작 대기·판정 함수 — 표지 `# >>> connect-retry (T-177)` ~ `# <<< connect-retry`)
+#   ② call() 의 `# T-177` 표지 줄 5개(curl 줄을 한 번 더 도는 while 과 판정 호출 — curl 줄 자체는 그대로) ③ 메인 루프의 예산 채움 줄 1개를
+#   **더하기만** 했다(기존 줄 변경 0). 기준 ref 와 비교할 때만 그것들을 뺀다(러너 전체 no_t177 · call() 비교 no_t177_call). 빼는 줄이
+#   엉뚱한 곳에 생기면 비교 범위가 무검사로 넓어지므로 정적 절이 그 줄들이 파일 전체에 각 1개(call() 줄은 모두 call() 안)인지 따로 단언한다
+#   (t177_targets). 재시도·시작 대기의 동작은 scripts/test-cron-runner-connect-retry.sh 가 본다.
+T177_C1='  local t177_retried=0   # T-177 연결 거부(curl 7)일 때만 아래 curl 줄을 한 번 더 — 판단은 connect-retry 블록의 call_connect_retry_due'
+T177_C2='  while :; do   # T-177 (안의 curl 줄은 한 글자도 바꾸지 않았다 — 들여쓰기도 그대로)'
+T177_C3='  [ "$t177_retried" = "0" ] && call_connect_retry_due "$label" "$curl_exit" 2>/dev/null || break   # T-177 7 이 아님·이미 다시 보냄·웹 준비 안 됨 → 끝'
+T177_C4='  t177_retried=1; curl_exit=0   # T-177 다시 보내기 전 종료 코드를 비운다(성공하면 0 이어야 후크가 예전과 같다)'
+T177_C5='  done   # T-177'
+T177_M1='  CALL_RETRY_BUDGET_LEFT="$CALL_RETRY_TICK_BUDGET_SEC"   # T-177 틱마다 연결 거부 재시도의 대기 예산을 다시 채운다(connect-retry 블록)'
+no_t177_call() { grep -vxF "$T177_C1" | grep -vxF "$T177_C2" | grep -vxF "$T177_C3" | grep -vxF "$T177_C4" | grep -vxF "$T177_C5"; }
+no_t177() { awk '/^# >>> connect-retry \(T-177\)/{s=1} s{ if (/^# <<< connect-retry$/) s=0; next } {print}' | no_t177_call | grep -vxF "$T177_M1"; }
+t177_targets() {   # 러너 → "C1~C5·M1 파일 전체 개수 | C1~C5 call() 안 개수 | 블록 시작·끝 표지 개수" — 기대 "1 1 1 1 1 1 | 1 1 1 1 1 | 1 1"
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T177_C1" "$1") $(grep -cxF "$T177_C2" "$1") $(grep -cxF "$T177_C3" "$1") $(grep -cxF "$T177_C4" "$1") $(grep -cxF "$T177_C5" "$1") $(grep -cxF "$T177_M1" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T177_C1") $(printf '%s\n' "$cb" | grep -cxF "$T177_C2") $(printf '%s\n' "$cb" | grep -cxF "$T177_C3") $(printf '%s\n' "$cb" | grep -cxF "$T177_C4") $(printf '%s\n' "$cb" | grep -cxF "$T177_C5") | $(grep -c '^# >>> connect-retry (T-177)' "$1") $(grep -cx '# <<< connect-retry' "$1")"
+}
+
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
@@ -100,6 +119,9 @@ done
 path="\${url#http://stub}"
 # (T-112) 실행·상태 기록 전송은 이 시험의 대상이 아니다(scripts/test-cron-runner-job-run-log.sh 가 본다) — 기록·시계에 넣지 않는다.
 [ "\$path" = "/api/cron/job-run-log" ] && { printf '200'; exit 0; }
+# (T-177) 러너 시작 때 웹 준비 확인(GET /api/health — connect-retry 블록, call() 밖)도 이 시험의 대상이 아니다: 호출·--max-time 목록과 시계에
+#   넣지 않고 곧바로 「준비됨」으로 답한다. 시작 대기·연결 거부 재시도 자체는 scripts/test-cron-runner-connect-retry.sh 가 본다.
+[ "\$path" = "/api/health" ] && { printf '200 1'; exit 0; }
 rec="\$path"
 echo "\$("$REAL_DATE" -d "@\$(cat "$R/clock")" '+%m-%d %H:%M') \$(cat "$R/ticks" 2>/dev/null || echo 0) \$rec" >> "$R/calls"
 [ -n "\$mt" ] && echo "\$rec max-time=\$mt" >> "$R/maxtime"
@@ -236,12 +258,13 @@ strip_t170() {
     | grep -v '^DAILY_BARS_KR_LAST_RUN_FILE=' \
     | awk '/^  # >>> daily-bars-daily-kr/{s=1} s{ if (/^  # <<< daily-bars-daily-kr$/) s=0; next } {print}'
 }
-if diff <(strip_t170 "$RUNNER" | no_t172) "$BEFORE" > /dev/null; then ok "🔴 K6: 추가분(상단 주석·선언·블록)을 빼고 T-172 두 줄을 되돌리면 변경 전 러너와 한 글자도 같다($(wc -l < "$BEFORE" | tr -d ' ')줄)"
-else bad "K6: 추가분 밖이 바뀌었다"; diff <(strip_t170 "$RUNNER" | no_t172) "$BEFORE" | head -10; fi
+if diff <(strip_t170 "$RUNNER" | no_t172 | no_t177) "$BEFORE" > /dev/null; then ok "🔴 K6: 추가분(상단 주석·선언·블록)을 빼고 T-172 두 줄을 되돌리면 변경 전 러너와 한 글자도 같다($(wc -l < "$BEFORE" | tr -d ' ')줄)"
+else bad "K6: 추가분 밖이 바뀌었다"; diff <(strip_t170 "$RUNNER" | no_t172 | no_t177) "$BEFORE" | head -10; fi
 missing="$(awk 'NR==FNR { cur[++n] = $0; next } { while (j < n && cur[j+1] != $0) j++; if (j >= n) { print FNR": "$0; exit } j++ }' <(no_t172 < "$RUNNER") "$BEFORE")"
 eq "🔴 K6: 변경 전 러너의 모든 줄이 순서대로 남아 있다(추가만 — T-172 두 줄은 되돌려 비교)" "${missing:-none}" "none"
-eq "K6: call() 함수 본문 = 변경 전(T-172 두 줄 되돌림)" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | no_t172 | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
+eq "K6: call() 함수 본문 = 변경 전(T-172 두 줄 되돌림)" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | no_t172 | no_t177_call | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BEFORE" | sha256sum)"
 eq "🔴 K6: (T-172) no_t172 가 노리는 두 줄 = 파일 전체 각 1개 · 모두 call() 안 · 옛 줄 0" "$(t172_targets "$RUNNER")" "1 1 0 | 1 1"
+eq "🔴 K6: (T-177) no_t177 이 노리는 줄 = 파일 전체 각 1개 · call() 줄은 모두 call() 안 · 블록 표지 1쌍" "$(t177_targets "$RUNNER")" "1 1 1 1 1 1 | 1 1 1 1 1 | 1 1"
 kb="$(awk '/^  # >>> daily-bars-daily-kr/,/^  # <<< daily-bars-daily-kr$/' "$RUNNER")"
 eq "K6: 블록 표지 >>>/<<< 각 1개" "$(grep -c '^  # >>> daily-bars-daily-kr (T-170)' "$RUNNER") $(grep -c '^  # <<< daily-bars-daily-kr$' "$RUNNER")" "1 1"
 eq "K6: 파일 전체 국내 저녁 호출 줄 1개(블록 안 — 쿼리 ?market=KR, 본문 인자 없음)" \

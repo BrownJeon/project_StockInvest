@@ -134,11 +134,16 @@ call() {
   local code curl_exit=0
   local jrl_t0; jrl_t0=$(jrl_now_ms 2>/dev/null)   # T-112 jrl
   call_tmp_open   # T-135
+  local t177_retried=0   # T-177 연결 거부(curl 7)일 때만 아래 curl 줄을 한 번 더 — 판단은 connect-retry 블록의 call_connect_retry_due
+  while :; do   # T-177 (안의 curl 줄은 한 글자도 바꾸지 않았다 — 들여쓰기도 그대로)
   # (T-062 Codex C2 ②) CALL_MAX_TIME 이 비어 있지 않을 때만 --max-time 을 붙인다 — 지금은 해외 post-market 호출만 쓴다.
   # 비어 있으면 아래 curl 명령은 예전과 같다(다른 모든 잡 불변).
   code=$(curl -s ${CALL_MAX_TIME:+--max-time "$CALL_MAX_TIME"} -o "$CALL_BODY_FILE" -w "%{http_code}" -X POST \
     -H "x-cron-secret: $CRON_SECRET" -H 'Content-Type: application/json' \
     "$BASE_URL$path" -d "$body" 2>/dev/null) || { curl_exit=$?; code="000"; }
+  [ "$t177_retried" = "0" ] && call_connect_retry_due "$label" "$curl_exit" 2>/dev/null || break   # T-177 7 이 아님·이미 다시 보냄·웹 준비 안 됨 → 끝
+  t177_retried=1; curl_exit=0   # T-177 다시 보내기 전 종료 코드를 비운다(성공하면 0 이어야 후크가 예전과 같다)
+  done   # T-177
   CALL_LAST_CODE="$code"   # (T-062) 응답 코드를 보는 잡(post-market-overseas)만 읽는다. 다른 잡의 동작은 그대로다.
   local ts; ts=$(date '+%F %T')
   if [ "$code" = "200" ]; then
@@ -483,6 +488,133 @@ mkdir -p "$(dirname "$META_LAST_RUN_FILE")"
 # 이제 /api/cron/news-fetch 라우트가 process.env로 직접 읽는다. `.env`의 값 자체는
 # 다른 코드(src/lib/rag/m4-kb.ts 등)도 쓰므로 그대로 둔다.
 
+# >>> connect-retry (T-177) — 웹 기동 대기(러너 시작 때 1회) + 연결 거부(curl 7)만 1회 재시도. scripts/test-cron-runner-connect-retry.sh 가 시험한다
+# 왜: 배포(HOME-SERVER release.sh)는 웹(stockinvest)과 이 러너(stockinvest-cron)를 차례로 재시작하고, 그 뒤 `ensure_current_cwd` 가 둘을
+#   한 번 더 delete+재등록한다(배포 1회에 웹·러너가 각각 두 번 뜬다). 러너는 시작하자마자 첫 틱(i=0)에서 5·15·30·60분 잡을 한꺼번에 부르는데,
+#   웹이 그 순간 포트를 열지 않았으면 전부 curl=7(연결 거부)로 같은 초에 실패해 job_run_log 에 「연결 실패」로 남았다
+#   (2026-11-19 08:39:14 5건 · 09:34:5x 4건 — T-177 이력서). 실패한 회차는 다음 주기에야 다시 돈다.
+# 무엇:
+#   ① (WP-1) 러너 시작 때 한 번, **알림 티커를 띄우기 전·메인 루프 전**에 웹이 요청을 받는지 확인한다. 받으면 바로 진행하고, 아니면
+#      WEB_READY_STARTUP_MAX_SEC 까지 기다린 뒤 **기다리지 않고 예전처럼 진행**한다(러너가 서 있으면 손절 알림·진입 감시가 같이 선다).
+#      결과는 로그 한 줄(걸린 초 / 상한 초과).
+#   ② (WP-2) call() 의 curl 종료 코드가 **7 일 때만** 웹 준비를 잠깐 기다린 뒤 **같은 요청을 1회** 다시 보낸다(call() 의 `# T-177` 표지 줄 5개).
+#      🔴 7 = 연결 자체가 거부됨 = 요청이 서버에 닿지 않았다 → 다시 보내도 서버에서 두 번 실행될 수 없다.
+#      🔴 52(빈 응답)·28(시간 초과)·56(수신 실패) 등 **7 이 아닌 실패는 재시도하지 않는다** — 요청이 서버에 닿아 이미 (일부) 실행됐을 수 있다.
+#         진입 감시는 자동 주문이라 이중 주문 위험이고, 손절 알림은 「호출 1회 = 1표」 횟수 규칙(alert-ticker 블록)이 깨진다.
+#         (52 의 실제 사례: 배포 재시작이 처리 중이던 전략 평가 요청을 끊었다 — 서버에서 일부 실행됐을 수 있는 요청이다.)
+#   ③ 기록은 **최종 결과로 1회**: CALL_LAST_CODE·로그 줄·jrl_hook(job_run_log) 는 재시도 뒤 결과 하나만 남긴다(재시도 성공 = OK).
+#      재시도가 있었다는 사실은 이 블록이 로그 한 줄로 남긴다. 후크의 시작 시각(jrl_t0)은 첫 시도 시각이다.
+#      해외 장마감 분석의 하루 시도 횟수(pmo_*)는 call() 바깥에서 call() 1번 = 1회로 센다 — 7 재시도는 서버에 닿지 않은 요청을 다시 보내는
+#      것이라 서버가 받는 요청은 여전히 call() 1번에 1회 이하다(하루 3회 상한 불변). CALL_MAX_TIME 은 시도마다 같은 curl 줄에 그대로 붙는다.
+# 준비 판정(웹이 요청을 받는가): GET $BASE_URL/api/health 에 짧은 curl. **HTTP 코드가 000 이 아니면(어떤 응답이든) 준비됨**이고, 응답 코드
+#   (200/503)는 보지 않는다(health 는 DB ping 등을 한다). 하나 더 — **연결이 맺어졌으면(curl num_connects ≥ 1) 응답이 아직 없어도 준비됨**으로 본다.
+#   이유: health 는 부팅 설정(ensureSetup)이 끝날 때까지 응답을 미룬다 — 2026-11-19 08:39 운영 로그 실측 health_setup_wait 10,177·17,182ms
+#   (웹 자체는 「Ready in 194~255ms」). 코드만 보면 포트가 열린 뒤에도 그 10~17초를 「준비 안 됨」으로 읽어 ② 의 짧은 예산을 헛쓰는데,
+#   같은 시각 실제 잡 호출은 이미 정상 응답했다(08:39:15 OK 로그). 실측(서버 curl 7.81.0): 거부 = 종료 7 · 「000 0」, 연결 뒤 무응답 = 종료 28 · 「000 1」.
+# 상한과 근거:
+#   WEB_READY_STARTUP_MAX_SEC=60 — 웹은 재시작 뒤 1초 안에 포트를 연다(위 Ready 실측). 60초는 느린 기동까지 덮는 여유이고 지시된 권장 90초 안쪽이다.
+#   CALL_RETRY_TICK_BUDGET_SEC=15 — 메인 루프 **한 틱의 대기 총량**. 틱 시작에서 다시 채운다(메인 루프의 `# T-177` 표지 줄). 한 번 「준비 안 됨」으로
+#     예산을 다 쓰면 그 틱의 남은 연결 거부는 기다리지 않고 예전처럼 즉시 실패한다(웹이 정말 죽어 있을 때 call 마다 기다리지 않는다).
+#     웹이 포트를 여는 데 1초 안팎이라 15초면 재시작 한 번을 덮는다.
+#   알림 티커 자식(alert_ticker_once → call)도 이 규칙을 탄다. 자식은 별도 프로세스라 메인 루프의 예산을 나눠 쓸 수 없으므로 **호출 1번(= 회차 1번)
+#     마다** 같은 15초 예산을 쓴다(아래 BASHPID 분기). 회차 최악 = 첫 시도(거부는 즉시) + 대기 16 + 재시도 curl 상한 20 = 약 36초 < 60초 →
+#     다음 분 경계를 넘기지 않는다. 대기 동안 락을 쥐고 있지만 그 락은 겹친 러너의 티커만 막고(경합 = 그 회차 건너뜀 — 설계대로), 호출자는
+#     그대로 하나이며, 첫 시도가 서버에 닿지 않았으므로 횟수 규칙의 표도 한 번만 들어간다.
+# 하트비트(T-037 워치독·HOME-SERVER 순찰 300초):
+#   - 대기 함수는 실제 경과(date +%s, 정수 초)를 재서 상한에 닿으면 끝난다 — probe 의 curl 상한을 남은 시간으로 줄이고, 상한에 닿은 뒤에는
+#     sleep 하지 않는다. 초 단위 절사·프로세스 시간 때문에 실제로는 상한 + 1초 미만까지 갈 수 있어 아래 계산은 +1 로 잡는다.
+#     시각을 못 읽으면 기다리지 않고, 시계가 안 가거나 sleep 이 즉시 돌아와도 반복 횟수 상한(MAX_SEC + 1)으로 끝난다.
+#   - 메인 루프 한 틱에 더해지는 시간 ≤ 예산 15 + 1 = 16초. 첫 시도의 연결 거부는 즉시 끝나고, 재시도 호출의 길이는 웹이 살아 있었다면 그 호출이
+#     원래 걸렸을 시간이라 기존 계산에 이미 들어 있다. 기존 주석의 보수적 계산(틱 길이 + sleep 60) 중 지금 코드에서 가장 큰 것은 15:30 국내 뉴스
+#     276초 → 292초 < 300초. (job-run-log-spool 블록의 290.2초는 KIS 스냅샷·손절 알림이 08:00 틱에 같이 돈다는 전제인데, 지금은 스냅샷이
+#     08:30~55 자기 틱 + 60초 yield(T-145)이고 손절 알림은 티커(T-147)라 그 조합이 한 틱에 오지 않는다 — 08:00 틱은 해외 분석 120 + 매 분 잡 30 +
+#     티커가 죽었을 때의 손절 알림 20 + sleep 60 = 230 → 246초.) 기본 모드는 틱 끝에도 하트비트를 써서 실제 나이는 이보다 60초 작다(heartbeat-refresh).
+#   - 시작 대기(①)는 메인 루프 진입 **전**이라 첫 하트비트가 최대 61초 늦어진다. 대기 중에는 하트비트를 쓰지 않는다 — 「루프가 살아 돈다」가 아닌
+#     신호가 섞이고(T-037 의미, alert-ticker 블록 ⓒ 와 같은 이유) 쓰는 곳은 2곳으로 고정돼 있다. 그 61초는 옛 러너의 마지막 기록 나이에 더해진다:
+#     배포 때 옛 러너는 대개 sleep 중(≤ 60초)이라 ≤ 약 121초 < 300초. 옛 러너가 긴 틱 도중에 죽었다면 「그 틱의 경과 + 61초」라 드물게 넘을 수
+#     있다 — 넘어도 순찰은 대기 중인 러너를 재시작할 뿐이고, 앱 워치독은 같은 배포에서 웹도 새로 떠 bootGrace(600초) 안이다.
+# 범위 밖(이 블록이 고치지 않는 것): release.sh 의 이중 재시작(HOME-SERVER 공용 배포 스크립트 — 사용자 결정 사항), 처리 중 요청이 재시작에 끊기는
+#   curl=52(웹 graceful shutdown·배포 순서 문제 — 위 ② 대로 재시도하지 않는다).
+WEB_READY_STARTUP_MAX_SEC=60
+WEB_READY_PROBE_MAX_TIME=2
+CALL_RETRY_TICK_BUDGET_SEC=15
+CALL_RETRY_BUDGET_LEFT="$CALL_RETRY_TICK_BUDGET_SEC"
+WEB_READY_WAITED=0
+# web_ready_probe [MAX_TIME] — 웹이 요청을 받는가. 0 = 받음(응답 코드가 있거나 연결이 맺어짐) / 1 = 아직. 출력 없음.
+#   curl 인자는 call() 이 쓰는 것(-s -o --max-time -w)만 쓴다 — 기존 러너 시험 하네스의 curl 스텁이 그 인자만 해석한다.
+web_ready_probe() {
+  local mt="${1:-$WEB_READY_PROBE_MAX_TIME}" out="" hc="" nc=""
+  out=$(curl -s -o /dev/null --max-time "$mt" -w '%{http_code} %{num_connects}' "$BASE_URL/api/health" 2>/dev/null)
+  hc="${out%% *}"
+  case "$out" in *" "*) nc="${out#* }" ;; esac
+  case "$hc" in [1-9][0-9][0-9]) return 0 ;; esac
+  case "$nc" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$nc" -ge 1 ] && return 0
+  return 1
+}
+# web_ready_wait MAX_SEC — 준비될 때까지 최대 MAX_SEC 초 기다린다. 0 = 준비됨 / 1 = 상한까지 안 됨(또는 MAX_SEC·시각이 숫자가 아님).
+#   실제로 흐른 초를 WEB_READY_WAITED 에 둔다(예산 차감·로그용). 반복 횟수도 MAX_SEC + 1 로 묶는다 — sleep 이 즉시 돌아오거나 시계가 멈춘
+#   환경에서도 끝난다(alert-ticker 블록의 바쁜 루프 방지와 같은 뜻). probe 의 curl 상한은 남은 시간을 넘지 않게 줄인다.
+web_ready_wait() {
+  local max="${1:-}" t0="" now="" left=0 n=0 mt=0
+  WEB_READY_WAITED=0
+  case "$max" in ''|*[!0-9]*) return 1 ;; esac
+  t0=$(date +%s 2>/dev/null)
+  case "$t0" in ''|*[!0-9]*) return 1 ;; esac
+  while :; do
+    now=$(date +%s 2>/dev/null)
+    case "$now" in ''|*[!0-9]*) return 1 ;; esac
+    WEB_READY_WAITED=$((now - t0))
+    left=$((max - WEB_READY_WAITED))
+    { [ "$left" -gt 0 ] && [ "$n" -le "$max" ]; } || return 1
+    n=$((n + 1))
+    mt="$WEB_READY_PROBE_MAX_TIME"
+    [ "$left" -lt "$mt" ] && mt="$left"
+    if web_ready_probe "$mt"; then
+      now=$(date +%s 2>/dev/null)
+      case "$now" in ''|*[!0-9]*) ;; *) WEB_READY_WAITED=$((now - t0)) ;; esac
+      return 0
+    fi
+    now=$(date +%s 2>/dev/null)
+    case "$now" in ''|*[!0-9]*) return 1 ;; esac
+    WEB_READY_WAITED=$((now - t0))
+    [ "$WEB_READY_WAITED" -lt "$max" ] || return 1   # 상한에 닿았으면 sleep 없이 끝낸다
+    sleep 1 2>/dev/null || true
+  done
+}
+# call_connect_retry_due LABEL CURL_EXIT — call() 이 첫 시도 직후 부른다. 0 = 같은 요청을 1회 다시 보낸다 / 1 = 그대로 끝낸다(예전 동작).
+#   🔴 7 만 다시 보낸다(위 ②). 예산: 메인 루프는 CALL_RETRY_BUDGET_LEFT(틱마다 채움)에서 실제 대기만큼 깎고, 「준비 안 됨」이면 0 으로 만든다.
+#   알림 티커 자식(BASHPID ≠ $$ — `$$` 는 서브셸에서도 러너 pid 다)은 호출마다 CALL_RETRY_TICK_BUDGET_SEC 전부를 쓰고 부모 예산은 건드리지 않는다.
+#   예산이 이미 0 이면 기다리지 않고 1 — 이 함수의 로그는 남기지 않는다(call 마다 반복하지 않게. 그 call 의 HTTP=000 로그 줄은 call() 이 예전처럼 남긴다).
+call_connect_retry_due() {
+  local label="${1:-}" ce="${2:-}" left=0 sub=0
+  [ "$ce" = "7" ] || return 1
+  if [ "${BASHPID:-$$}" != "$$" ]; then
+    sub=1; left="$CALL_RETRY_TICK_BUDGET_SEC"
+  else
+    left="${CALL_RETRY_BUDGET_LEFT:-0}"
+  fi
+  case "$left" in ''|*[!0-9]*) left=0 ;; esac
+  [ "$left" -gt 0 ] || return 1
+  if web_ready_wait "$left"; then
+    if [ "$sub" = "0" ]; then
+      left=$((left - WEB_READY_WAITED)); [ "$left" -ge 0 ] || left=0
+      CALL_RETRY_BUDGET_LEFT="$left"
+    fi
+    echo "[$(date '+%F %T')] $label 연결 거부(curl=7) — 웹 응답 확인(${WEB_READY_WAITED}초 대기) 뒤 1회 재시도"
+    return 0
+  fi
+  [ "$sub" = "1" ] || CALL_RETRY_BUDGET_LEFT=0
+  echo "[$(date '+%F %T')] $label 연결 거부(curl=7) — 웹이 ${WEB_READY_WAITED}초 안에 응답하지 않아 재시도하지 않음(이 틱의 남은 연결 거부는 기다리지 않는다)"
+  return 1
+}
+# ① 시작 대기 — 아래 alert-ticker 블록이 티커를 띄우기 전, 메인 루프 전에 한 번.
+if web_ready_wait "$WEB_READY_STARTUP_MAX_SEC"; then
+  echo "[cron-runner] 웹 응답 확인 — ${WEB_READY_WAITED}초 대기($BASE_URL/api/health)"
+else
+  echo "[cron-runner] 🔶 웹이 ${WEB_READY_STARTUP_MAX_SEC}초 안에 응답하지 않음 — 기다리지 않고 진행(첫 틱 호출은 실패할 수 있다)"
+fi
+# <<< connect-retry
 # >>> alert-ticker (T-147) — 손절 알림(stop-alert) 전용 60초 티커(자식 프로세스 1개). scripts/test-cron-runner-alert-ticker.sh 가 이 블록을 잘라 시험한다
 # 왜: 아래 메인 루프는 **동기 호출의 직렬 사슬**이라, 장중 `strategy-eval` 한 번이 끝날 때까지 분당 잡이
 #   전부 멈춘다 — 2026-11-03 운영 cron 로그 **3,119틱** 실측: 틱 **주기** mean 66.3초 · max 412초 · 300초 초과 12틱 /
@@ -756,6 +888,7 @@ while true; do
   #   T-112 의 `JRL_TICK_T0` 를 쓰지 않는다: 그쪽은 **관찰 전용**이고 「기록이 실패·지연돼도 잡 호출·순서가 바뀌지
   #   않는다」가 규약이다(위 jrl 블록 주석). 그 변수로 호출 여부를 정하면 그 규약이 깨진다.
   KIS_FUND_TICK_T0=$(date +%s 2>/dev/null)
+  CALL_RETRY_BUDGET_LEFT="$CALL_RETRY_TICK_BUDGET_SEC"   # T-177 틱마다 연결 거부 재시도의 대기 예산을 다시 채운다(connect-retry 블록)
 
   # 매 1분: entry-watcher — 진입 구간 도달 시 자동 주문 실행
   call /api/cron/entry-watcher "entry-watcher"

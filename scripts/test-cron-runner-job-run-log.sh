@@ -89,6 +89,25 @@ t172_targets() {   # 러너 → "파일 전체 L1 L2 옛 줄 | call() 안 L1 L2"
   echo "$(grep -cxF "$T172_L1" "$1") $(grep -cxF "$T172_L2" "$1") $(grep -cxF "$T172_OLD" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T172_L1") $(printf '%s\n' "$cb" | grep -cxF "$T172_L2")"
 }
 
+# ── (T-177) 연결 거부 재시도·웹 기동 대기 — 기준 ref 형태로 되돌리는 도우미(표준입력 → 표준출력) ─────────────
+#   T-177 은 러너에 ① 최상위 connect-retry 블록(시작 대기·판정 함수 — 표지 `# >>> connect-retry (T-177)` ~ `# <<< connect-retry`)
+#   ② call() 의 `# T-177` 표지 줄 5개(curl 줄을 한 번 더 도는 while 과 판정 호출 — curl 줄 자체는 그대로) ③ 메인 루프의 예산 채움 줄 1개를
+#   **더하기만** 했다(기존 줄 변경 0). 기준 ref 와 비교할 때만 그것들을 뺀다(러너 전체 no_t177 · call() 비교 no_t177_call). 빼는 줄이
+#   엉뚱한 곳에 생기면 비교 범위가 무검사로 넓어지므로 정적 절이 그 줄들이 파일 전체에 각 1개(call() 줄은 모두 call() 안)인지 따로 단언한다
+#   (t177_targets). 재시도·시작 대기의 동작은 scripts/test-cron-runner-connect-retry.sh 가 본다.
+T177_C1='  local t177_retried=0   # T-177 연결 거부(curl 7)일 때만 아래 curl 줄을 한 번 더 — 판단은 connect-retry 블록의 call_connect_retry_due'
+T177_C2='  while :; do   # T-177 (안의 curl 줄은 한 글자도 바꾸지 않았다 — 들여쓰기도 그대로)'
+T177_C3='  [ "$t177_retried" = "0" ] && call_connect_retry_due "$label" "$curl_exit" 2>/dev/null || break   # T-177 7 이 아님·이미 다시 보냄·웹 준비 안 됨 → 끝'
+T177_C4='  t177_retried=1; curl_exit=0   # T-177 다시 보내기 전 종료 코드를 비운다(성공하면 0 이어야 후크가 예전과 같다)'
+T177_C5='  done   # T-177'
+T177_M1='  CALL_RETRY_BUDGET_LEFT="$CALL_RETRY_TICK_BUDGET_SEC"   # T-177 틱마다 연결 거부 재시도의 대기 예산을 다시 채운다(connect-retry 블록)'
+no_t177_call() { grep -vxF "$T177_C1" | grep -vxF "$T177_C2" | grep -vxF "$T177_C3" | grep -vxF "$T177_C4" | grep -vxF "$T177_C5"; }
+no_t177() { awk '/^# >>> connect-retry \(T-177\)/{s=1} s{ if (/^# <<< connect-retry$/) s=0; next } {print}' | no_t177_call | grep -vxF "$T177_M1"; }
+t177_targets() {   # 러너 → "C1~C5·M1 파일 전체 개수 | C1~C5 call() 안 개수 | 블록 시작·끝 표지 개수" — 기대 "1 1 1 1 1 1 | 1 1 1 1 1 | 1 1"
+  local cb; cb="$(awk '/^call\(\) \{/,/^\}/' "$1")"
+  echo "$(grep -cxF "$T177_C1" "$1") $(grep -cxF "$T177_C2" "$1") $(grep -cxF "$T177_C3" "$1") $(grep -cxF "$T177_C4" "$1") $(grep -cxF "$T177_C5" "$1") $(grep -cxF "$T177_M1" "$1") | $(printf '%s\n' "$cb" | grep -cxF "$T177_C1") $(printf '%s\n' "$cb" | grep -cxF "$T177_C2") $(printf '%s\n' "$cb" | grep -cxF "$T177_C3") $(printf '%s\n' "$cb" | grep -cxF "$T177_C4") $(printf '%s\n' "$cb" | grep -cxF "$T177_C5") | $(grep -c '^# >>> connect-retry (T-177)' "$1") $(grep -cx '# <<< connect-retry' "$1")"
+}
+
 W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 
@@ -157,6 +176,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 path="${url#http://stub}"
+# (T-177) 러너 시작 때 웹 준비 확인(GET /api/health — connect-retry 블록, call() 밖)도 이 시험의 대상이 아니다: 호출·--max-time 목록과 시계에
+#   넣지 않고 곧바로 「준비됨」으로 답한다. 시작 대기·연결 거부 재시도 자체는 scripts/test-cron-runner-connect-retry.sh 가 본다.
+[ "$path" = "/api/health" ] && { printf '200 1'; exit 0; }
 adv() { echo $(( $(cat "$R/clock") + $1 )) > "$R/clock"; }
 tk=$(cat "$R/ticks" 2>/dev/null || echo 0)
 echo "$("$STUB_REAL_DATE" -d "@$(cat "$R/clock")" '+%m-%d %H:%M:%S') $tk $path" >> "$R/calls"
@@ -278,7 +300,10 @@ nojrlmt() { grep -v '^/api/cron/job-run-log ' "$1/maxtime" | grep -v '^/api/cron
 #   러너를 돌리기 때문에 생기는 **의도된 추가 한 줄**이라 로그 줄 비교에서 뺀다. 그 줄 자체(모드 표시·티커 미기동)는
 #   scripts/test-cron-runner-alert-ticker.sh E1 이 본다.
 no_t147_log() { grep -v 'ALERT_TICKER_DISABLE=1 — 레거시 모드'; }
-nokfout() { grep -v 'kis-fundamentals-snapshot' "$1" | grep -v '\] daily-bars-kr ' | grep -vE '\] m40-(forward|forecast) |^\[m40-(forward|forecast)\] ' | no_t147_log; }       # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다 · (T-170) 국내 일봉 저녁 · (T-147) 레거시 모드 줄 제외 · (T-171) T-156 m40 로그 줄(call() 의 OK·HTTP=·ACCEPTED 줄, 예약 실패 줄)
+# (T-177) 러너 시작 때 웹 준비 확인 로그 한 줄도 기준 러너에 없는 **의도된 추가**다. 이 하네스의 curl 스텁은 health 에 바로 「준비됨」으로 답하므로
+#   그 줄은 정확히 「0초 대기」여야 한다 — 정확 일치로만 뺀다(다른 문구·대기 초가 찍히면 비교가 깨져 드러난다). 그 줄 자체는 connect-retry 시험 E1·E2 가 본다.
+no_t177_log() { grep -vxF '[cron-runner] 웹 응답 확인 — 0초 대기(http://stub/api/health)'; }
+nokfout() { grep -v 'kis-fundamentals-snapshot' "$1" | grep -v '\] daily-bars-kr ' | grep -vE '\] m40-(forward|forecast) |^\[m40-(forward|forecast)\] ' | no_t147_log | no_t177_log; }       # (T-145 ⑨) 로그 줄 비교에서도 그 잡을 뺀다 · (T-170) 국내 일봉 저녁 · (T-147) 레거시 모드 줄 제외 · (T-177) 웹 준비 확인 줄 제외 · (T-171) T-156 m40 로그 줄(call() 의 OK·HTTP=·ACCEPTED 줄, 예약 실패 줄)
 gap()     { awk 'NR>1 { g = $1 - p; if (g > m) m = g } { p = $1 } END { print m + 0 }' "$1/heartbeats"; }
 spool()   { cat "$1/home/.node-local/stockinvest/job-run-spool" "$1/home/.node-local/stockinvest/job-run-spool.sending" 2>/dev/null; }
 # (T-145 ⑨) kis-fundamentals-snapshot 의 날짜파일은 **판정에 쓰이지 않는 흔적**이 됐고(러너 블록 주석),
@@ -464,9 +489,10 @@ eq "🔴 J8: 기준 러너의 모든 줄(주석 포함)이 순서대로 남아 �
 eq "🔴 J8: no_t149_old 가 노리는 주석 줄이 지금 러너에 정확히 1개 있다" \
    "$(grep -c '^# (T-062 Codex C2 ②) 해외 post-market' "$RUNNER")" "1"
 eq "🔴 J8: call() 에서 '# T-112 jrl' 두 줄을 빼고 T-135·T-160·T-172를 되돌리고 T-156 분기 2줄을 빼면 기준 러너와 같다" \
-   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | no_t172 | no_t156_call | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
+   "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -v '# T-112 jrl$' | no_t135 | no_t160 | no_t172 | no_t177_call | no_t156_call | sha256sum)" "$(awk '/^call\(\) \{/,/^\}/' "$BASE" | sha256sum)"
 eq "🔴 J8: (T-171) no_t156_call·no_t160 이 노리는 줄 = 파일 전체 각 1개 · 모두 call() 안" "$(t171_targets "$RUNNER")" "1 1 1 1 1 | 1 1 1 1 1"
 eq "🔴 J8: (T-172) no_t172 가 노리는 두 줄 = 파일 전체 각 1개 · 모두 call() 안 · 옛 줄 0" "$(t172_targets "$RUNNER")" "1 1 0 | 1 1"
+eq "🔴 J8: (T-177) no_t177 이 노리는 줄 = 파일 전체 각 1개 · call() 줄은 모두 call() 안 · 블록 표지 1쌍" "$(t177_targets "$RUNNER")" "1 1 1 1 1 1 | 1 1 1 1 1 | 1 1"
 eq "J8: call() 안 표지 줄 2개, 파일 전체 4개" "$(awk '/^call\(\) \{/,/^\}/' "$RUNNER" | grep -c '# T-112 jrl$') $(grep -c '# T-112 jrl$' "$RUNNER")" "2 4"
 cb="$(awk '/^call\(\) \{/,/^\}/' "$RUNNER")"
 eq "J8: 후크는 로그 줄 뒤·임시 본문 rm 바로 앞" "$(printf '%s\n' "$cb" | grep -A1 'jrl_hook ' | tail -1 | sed 's/^ *//')" 'rm -f "$CALL_BODY_FILE"'
@@ -700,7 +726,7 @@ eq "🔴 J12: trade-report 502 body= = 마스킹 뒤" "$(logbody "$T2" trade-rep
 eq "J12: 금액 키·detail 없는 본문(signal-followup 500, 300바이트)은 예전처럼 원문 앞 200바이트" "$(logbody "$T2" signal-followup)" "$(printf '%s' "$EB_SF" | head -c 200)"
 eq "J12: 401 짧은 본문은 그대로" "$(logbody "$T2" holding-checker)" '{"ok":false,"error":"unauthorized"}'
 eq "J12: 000(curl 실패) 은 body= 빈 값(예전과 같음)" "$(grep -c ' entry-watcher HTTP=000 body=$' "$T2/stdout") $(grep -c ' entry-watcher HTTP=000 body=$' "$T2B/stdout")" "1 1"
-eq "J12: 로그 줄 형식·순서 = 기준 러너(body= 뒤만 다름)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2/stdout" | no_t147_log | md5sum)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2B/stdout" | no_t147_log | md5sum)"
+eq "J12: 로그 줄 형식·순서 = 기준 러너(body= 뒤만 다름)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2/stdout" | no_t147_log | no_t177_log | md5sum)" "$(LC_ALL=C sed 's/ body=.*$/ body=/' "$T2B/stdout" | no_t147_log | md5sum)"
 dec1() { awk -F'\t' -v l="$2" '$2 == l {print $7}' "$1/received" | head -1 | base64 -d; }
 eq "🔴 J12: 스풀 본문 — strategy-eval 은 원문 그대로(T-127 라벨 규칙 불변) · portfolio-snapshot 은 마스킹" \
    "$([ "$(dec1 "$T2" strategy-eval)" = "$EB_SE" ] && echo raw) $(dec1 "$T2" portfolio-snapshot | grep -cE "$MONEY")" "raw 0"
