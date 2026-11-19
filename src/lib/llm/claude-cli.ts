@@ -68,7 +68,9 @@ export class ClaudeCliCaller implements LlmCaller {
         'ANTHROPIC_API_KEY',
       ]) delete cleanEnv[k];
 
-      const proc = spawn('claude', [
+      // task-004 S-C1: CLAUDE_CLI_PATH 가 있으면 그 실행 파일(운영 전환 시 cliclaude shim), 없거나 공백이면 기존 'claude'(PATH).
+      // 호출마다 읽어 env 미설정 시 동작이 이전과 같다. 실패 시 기존 CLI 로 되돌아가는 폴백은 두지 않는다(구현 사양 §5).
+      const proc = spawn(process.env.CLAUDE_CLI_PATH?.trim() || 'claude', [
         '--print', fullPrompt,
         ...(opts.toolFree
           ? ['--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',

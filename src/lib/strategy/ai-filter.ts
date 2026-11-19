@@ -420,7 +420,8 @@ function runClaudeOnce(prompt: string, timeoutMs: number): Promise<string> {
       'ANTHROPIC_API_KEY',
     ]) delete cleanEnv[k];
 
-    const proc = spawn('claude', [
+    // task-004 S-C1: llm/claude-cli.ts 와 같은 실행 파일 결정 — CLAUDE_CLI_PATH 가 있으면 그 경로, 없으면 기존 'claude'.
+    const proc = spawn(process.env.CLAUDE_CLI_PATH?.trim() || 'claude', [
       '--print', prompt,
       '--permission-mode', 'bypassPermissions',
       '--model', 'sonnet',
