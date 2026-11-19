@@ -196,6 +196,8 @@ execution_context:
 
 ## 배포 기록
 
+- 2026-11-19 미배포 — 작업 브랜치 `t177-cron-connect-retry`(커밋 `7feda13`) push, PR https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/1 생성(base `main` = `d17f689`). main 머지 = webhook blue/green 운영 배포라 **사용자 소스검토·승인 뒤에만** 머지한다.
+
 ## 실행 도구·절차 이력
 
 | event | 시각 | 종류 | 도구 / 절차 | 범위 | 근거 |
