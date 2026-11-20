@@ -164,7 +164,7 @@ async function cancelOrder(req: CancelRequest): Promise<OrderResult> {
 export const kis: ExchangeClient & {
   getMarket: (s: string) => Market;
   fetchMarketCapRanking: (limit?: number) => Promise<Array<{
-    symbol: string; name: string; marketCap: number; quoteVolume: number; volume: number;
+    symbol: string; name: string; marketCap: number; volume: number;
   }>>;
 } = {
   id: 'kis',

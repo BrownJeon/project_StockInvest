@@ -106,6 +106,8 @@ export async function getTicker(symbol: string): Promise<Ticker> {
   }
   const o = data.output;
   if (!o) throw new Error(`KIS getTicker no output: ${JSON.stringify(data)}`);
+  const marketCapKrw = parseMarketCapKrw(o.hts_avls);
+  const indexTag = parseIndexTag(o.rprs_mrkt_kor_name);
   return {
     symbol,
     price:        Number(o.stck_prpr),
@@ -115,7 +117,35 @@ export async function getTicker(symbol: string): Promise<Ticker> {
     low24h:       Number(o.stck_lwpr),
     volume24h:    Number(o.acml_vol),
     quoteVolume24h: Number(o.acml_tr_pbmn),
+    // T-181 — 값이 없으면 키 자체를 싣지 않는다(기존 반환 모양 그대로).
+    ...(marketCapKrw !== undefined ? { marketCapKrw } : {}),
+    ...(indexTag !== undefined ? { indexTag } : {}),
   };
+}
+
+/**
+ * T-181 — 시세 응답 `hts_avls`(HTS 시가총액, **단위 억원**)를 원으로 바꾼다.
+ * 2026-11-20 운영 실측: 005930 의 `hts_avls` 10,575,918 이 순위 API `stck_avls` 와 같았다(≈1,058조 원).
+ * 유한수가 아니거나 0 이하(빈 문자열·"0"·음수·문자·필드 없음)면 `undefined`.
+ */
+export function parseMarketCapKrw(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'string' && typeof raw !== 'number') return undefined;
+  if (typeof raw === 'string' && raw.trim() === '') return undefined;
+  const v = Number(raw);
+  if (!Number.isFinite(v) || v <= 0) return undefined;
+  return v * 1e8;
+}
+
+/**
+ * T-181 — 시세 응답 `rprs_mrkt_kor_name`(대표 시장명)을 그대로(앞뒤 공백만 제거) 돌려준다.
+ * 실측 값: `KOSPI200`(코스피200 편입) · `KSQ150`(코스닥150 편입) · `KOSPI`. 빈 값이면 `undefined`.
+ * 등급 해석(core·satellite)은 universe 쪽이 한다 — 여기서는 원문만 옮긴다.
+ */
+export function parseIndexTag(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const t = raw.trim();
+  return t === '' ? undefined : t;
 }
 
 // ── 캔들 조회 ────────────────────────────────────────────────────────────────
@@ -443,7 +473,8 @@ function isExcluded(symbol: string, name: string, volume: number): boolean {
  * 기록하지 않아 원인(요청 파라미터·권한·API 사양)을 알 수 없었다. 이 로그로 별도 결정 사항(순위 API 수정·tier 설계)의
  * 원인을 확정한다.
  *
- * - 남기는 것: 시장 구분(J 코스피·Q 코스닥)·HTTP 상태·`rt_cd`·`msg_cd`·`msg1`(KIS 오류 문구 — 비밀 아님). 각 값은 길이를
+ * - 남기는 것: 시장 구분(T-181 부터 `fid_input_iscd` 기준 — 0001 코스피·1001 코스닥)·HTTP 상태·`rt_cd`·`msg_cd`·`msg1`
+ *   (KIS 오류 문구 — 비밀 아님). 각 값은 길이를
  *   자르고 제어문자를 지운다. **응답 본문 전체·헤더·토큰·URL 은 남기지 않는다.**
  * - 로그 홍수 방지: (시장, HTTP, rt_cd, msg_cd) 조합마다 **프로세스당 1시간에 1줄**. 억제한 건수는 다음 줄에 `(이전 n건 생략)`
  *   으로 붙인다. 조합 수는 상한(50)을 두어 메모리가 자라지 않게 한다(넘으면 가장 오래된 조합을 지운다).
@@ -465,7 +496,7 @@ function diagField(v: unknown, max: number): string {
 }
 
 function logMarketCapEmpty(
-  market: 'J' | 'Q',
+  market: MarketCapIscd,
   why: 'http' | 'rt_cd' | 'output',
   status: number,
   body: { rt_cd?: unknown; msg_cd?: unknown; msg1?: unknown } | null,
@@ -488,7 +519,7 @@ function logMarketCapEmpty(
     }
     mcapDiagSeen.set(key, { at: now, suppressed: 0 });
     console.warn(
-      `[kis-domestic] 시총 순위 빈 결과 market=${market}(${market === 'J' ? '코스피' : '코스닥'}) why=${why} `
+      `[kis-domestic] 시총 순위 빈 결과 iscd=${market}(${MARKET_CAP_ISCD_LABEL[market]}) why=${why} `
       + `http=${status} rt_cd=${rtCd} msg_cd=${msgCd} msg1=${diagField(body?.msg1, 120)}`
       + (suppressed > 0 ? ` (이전 ${suppressed}건 생략)` : ''),
     );
@@ -508,45 +539,76 @@ async function readKisErrorFields(res: Response): Promise<{ rt_cd?: unknown; msg
   }
 }
 
-async function fetchMarketCapPage(market: 'J' | 'Q', inputIscd: string): Promise<Array<{
-  symbol: string; name: string; marketCap: number; quoteVolume: number; volume: number;
+/**
+ * T-181 — 시총 순위(`FHPST01740000`)의 시장 구분은 `fid_input_iscd` 로만 한다(0001 거래소=코스피 · 1001 코스닥).
+ * `fid_cond_mrkt_div_code` 는 두 시장 모두 `'J'` 다 — 예전 코드의 `'Q'` 는 규격 밖이라 코스닥은
+ * `OPSQ2001 ERROR INVALID FID_COND_MRKT_DIV_CODE` 로 매번 거부됐다(2026-11-20 운영 로그).
+ */
+export type MarketCapIscd = '0001' | '1001';
+const MARKET_CAP_ISCD_LABEL: Record<MarketCapIscd, string> = { '0001': '코스피', '1001': '코스닥' };
+
+/**
+ * T-181 — 요청 쿼리를 KIS 공식 예제(`examples_llm/domestic_stock/market_cap`)와 2026-11-20 운영 실측에서
+ * `rt_cd=0` 을 받은 형태 그대로 만든다. 키 9개·소문자, `FID_BLNG_CLS_CODE` 없음(예전 코드는 이 키를 보내고
+ * `fid_input_price_1` 을 빠뜨려 코스피가 `OPSQ2001 ERROR INPUT FIELD NOT FOUND [FID_INPUT_PRICE_1]` 로 거부됐다).
+ * 시험이 쿼리 문자열을 정확히 고정하므로 export 한다.
+ */
+export function buildMarketCapQuery(iscd: MarketCapIscd): URLSearchParams {
+  return new URLSearchParams({
+    fid_input_price_2:      '',
+    fid_cond_mrkt_div_code: 'J',
+    fid_cond_scr_div_code:  '20174',
+    fid_div_cls_code:       '0',
+    fid_input_iscd:         iscd,
+    fid_trgt_cls_code:      '0',
+    fid_trgt_exls_cls_code: '0',
+    fid_input_price_1:      '',
+    fid_vol_cnt:            '',
+  });
+}
+
+/**
+ * 시총 순위 한 페이지(시장 하나).
+ *
+ * T-181 — 2026-11-20 실측: 한 번에 **30행이 상한**이고 연속조회 표시(`tr_cont`)가 없다. 응답 행에 누적 거래대금
+ * (`acml_tr_pbmn`)이 **없어서** 반환값에서 `quoteVolume` 을 뺐다(예전처럼 읽으면 `NaN`). `stck_avls` 단위는 억원.
+ * universe 갱신 경로는 T-181 부터 이 함수를 부르지 않는다(등급은 시세의 `rprs_mrkt_kor_name` 으로 매긴다).
+ */
+async function fetchMarketCapPage(iscd: MarketCapIscd): Promise<Array<{
+  symbol: string; name: string; marketCap: number; volume: number;
 }>> {
   const headers = await kisHeaders('FHPST01740000');
-  const params = new URLSearchParams({
-    FID_COND_MRKT_DIV_CODE:  market,
-    FID_COND_SCR_DIV_CODE:   '20174',
-    FID_INPUT_ISCD:          inputIscd,
-    FID_DIV_CLS_CODE:        '0',
-    FID_BLNG_CLS_CODE:       '0',
-    FID_TRGT_CLS_CODE:       '111111111',
-    FID_TRGT_EXLS_CLS_CODE:  '0000000000',
-  });
+  const params = buildMarketCapQuery(iscd);
   const url = `${PROD_BASE}/uapi/domestic-stock/v1/ranking/market-cap?${params}`;
   const res = await kisFetch(url, { headers }, { label: 'domestic marketCapRanking' });
   if (!res.ok) {
-    logMarketCapEmpty(market, 'http', res.status, await readKisErrorFields(res));
+    logMarketCapEmpty(iscd, 'http', res.status, await readKisErrorFields(res));
     return [];
   }
   const data = await res.json();
   if (data.rt_cd !== '0' || !Array.isArray(data.output)) {
-    logMarketCapEmpty(market, data.rt_cd !== '0' ? 'rt_cd' : 'output', res.status, data);
+    logMarketCapEmpty(iscd, data.rt_cd !== '0' ? 'rt_cd' : 'output', res.status, data);
     return [];
   }
   return (data.output as Record<string, string>[]).map(o => ({
     symbol:      o.mksc_shrn_iscd,
     name:        o.hts_kor_isnm,
     marketCap:   Number(o.stck_avls) * 1e8,
-    quoteVolume: Number(o.acml_tr_pbmn),
     volume:      Number(o.acml_vol),
   }));
 }
 
+/**
+ * 코스피·코스닥 시총 순위를 합쳐 시총 내림차순으로 `limit` 개까지. 시장당 최대 30행이라 합쳐 최대 60행이다(T-181 실측).
+ * T-181 부터 운영 코드 호출부가 없다 — 규격대로 고쳐 두고 시험용으로 남긴다.
+ * 두 시장 중 하나라도 던지면 전체가 던진다(`Promise.all` — 부분 결과로 쓰지 않는다, T-176 원칙).
+ */
 export async function fetchMarketCapRanking(limit = 50): Promise<Array<{
-  symbol: string; name: string; marketCap: number; quoteVolume: number; volume: number;
+  symbol: string; name: string; marketCap: number; volume: number;
 }>> {
   const [kospi, kosdaq] = await Promise.all([
-    fetchMarketCapPage('J', '0001'),
-    fetchMarketCapPage('Q', '1001'),
+    fetchMarketCapPage('0001'),
+    fetchMarketCapPage('1001'),
   ]);
   return [...kospi, ...kosdaq]
     .filter(r => !isExcluded(r.symbol, r.name, r.volume))

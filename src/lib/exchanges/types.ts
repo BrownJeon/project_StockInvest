@@ -66,6 +66,10 @@ export interface Ticker {
   quoteVolume24h?: number;
   /** 해외주식 USD 원가 (kis-overseas만 제공, 환산 전) */
   priceUsd?: number;
+  /** T-181 — 시가총액(원). 국내 시세(`hts_avls` 억원 × 1e8)만 채운다. 값이 없거나 0 이하면 미정의 */
+  marketCapKrw?: number;
+  /** T-181 — 국내 대표 시장명(`rprs_mrkt_kor_name`, 예: KOSPI200·KSQ150·KOSPI). 국내 시세만 채운다. 빈 값이면 미정의 */
+  indexTag?: string;
 }
 
 export interface Balance {
