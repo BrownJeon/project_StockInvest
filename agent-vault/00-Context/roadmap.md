@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: StockInvest
-updated: 2026-11-13
+updated: 2026-11-20
 phases:
   - { id: 0, name: "안전 기반",              status: done }
   - { id: 1, name: "관측·소생 핫픽스",       status: done }
@@ -207,6 +207,7 @@ tags: [type/roadmap]
 - [ ] (4) 거시 레짐 승격(C1 AI 참고자료 → B 사이징 계수) — C0 60거래일 관측 뒤 검토, 전면 차단(A)은 승격 금지(T-164 검토 결론)
 - [ ] (4) 백테스트 MA100 레짐 필터가 라이브 엔진에 없음 — T-164 검토 중 부수 발견, 미판정
 - [ ] (4) 장중 미검증 매수 후보 가상 체결 기록 복구(무제한 한도 모드) — 코드 커밋 `cde5f1d`·QA 통과, **11-14 02:16 운영 배포**·미국 장중 재개 확인, 국내 첫 장중 관측 대기 [[T-168-paper-fill-engine-restore]]
+- [ ] (4) 국내 종목 등급을 지수 편입 표시로(KOSPI200 core·코스닥150 satellite) — 코어 비율 가드의 국내 매수 전면 차단 해소, 2026-11-20 23:20 운영 배포(0.20.0)·국내 첫 장중 관측 대기 [[T-181-domestic-market-cap-ranking-params]]
 
 ### holding-checker | 보유 점검·청산 엔진
 - [x] (8) 자동 청산 마스터 스위치(꺼짐·fail-closed) [[T-015-disable-auto-exit-engine]]
