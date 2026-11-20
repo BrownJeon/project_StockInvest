@@ -9,6 +9,7 @@ created: 2026-11-20
 updated: 2026-11-20
 base_ref: 2a3ae448e72259c4f0577fb89e587702d339096e
 branch: t179-boot-setup-ddl
+pr: https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/3
 risk_level: R2
 roles_involved: [leader, developer, reviewer, qa, deployer]
 related_tasks: [T-177-cron-runner-deploy-connect-fail, T-175-outbound-connect-timeout-and-alert-retry, T-156-us-stock-entry-exit-forecast-design]
@@ -148,6 +149,8 @@ execution_context:
 - [12:2x] 배포 스크립트(release.sh)가 매 배포마다 옛 경로로 프로세스를 잠깐 띄웠다 지우는 동작(3번째 setupDB)은 공용 인프라(HOME-SERVER_CONFIG) 범위라 이 task 밖이다 — 사용자 결정 후보.
 
 ## 배포 기록
+
+- [12:3x] 미배포 — PR #3(https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/3) 생성, 브랜치 `t179-boot-setup-ddl`(`c01b6bd`). 머지(=운영 배포)는 사용자 승인 대기. 생성 시 Gitea mergeable=true, 그 사이 main 에 들어온 T-178(`08657ef`)과 바뀐 파일이 겹치지 않음.
 
 ## 실행 도구·절차 이력
 
