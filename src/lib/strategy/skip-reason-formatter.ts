@@ -43,7 +43,7 @@ const CATEGORY_LABEL: Record<SkipCategory, { label: string; explain: (a: FormatS
   },
   portfolio_guard: {
     label: '포트폴리오 안전 가드',
-    explain: () => 'KOSPI 100 코어 비율 미달 또는 종목당 24h 매수 한도 초과로 차단',
+    explain: () => '코어(KOSPI200 편입) 비율 미달 또는 종목당 24h 매수 한도 초과로 차단',
   },
   market_state_neutral: {
     label: '시장 상태 관망',

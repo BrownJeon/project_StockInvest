@@ -8,6 +8,7 @@ import { atrLast } from '@/lib/strategy/indicators/atr';
 import { emaLast } from '@/lib/strategy/indicators/ema';
 import { rsiLast } from '@/lib/strategy/indicators/rsi';
 import { bollinger } from '@/lib/strategy/indicators/bollinger';
+import { saveIndexTierObservations } from '@/lib/strategy/index-tier-store';
 
 export type StrategyProfile = 'trend' | 'mean-rev' | 'breakout';
 export type UniverseTier = 'core' | 'satellite' | 'speculative';
@@ -61,7 +62,8 @@ const KOSPI_TOP = [
   '000880', // 한화
   '010140', // 삼성중공업
   '009540', // HD한국조선해양
-  '042670', // 두산밥캣
+  // T-184 — '042670'(두산밥캣) 제거: T-181 실측(2026-11-20)에서 시세 응답이 rt_cd=0 인데 가격·시총·상장주수가 전부 0
+  //   이었고 symbol_universe 에 한 번도 저장된 적이 없다(분석 불가). 상장폐지·코드 변경으로 보인다.
   '034020', // 두산에너빌리티
   '011200', // HMM
   '086280', // 현대글로비스
@@ -75,7 +77,7 @@ const KOSDAQ_TOP = [
   '247540', // 에코프로비엠
   '086520', // 에코프로
   '196170', // 알테오젠
-  '091990', // 셀트리온헬스케어
+  // T-184 — '091990'(셀트리온헬스케어) 제거: 2023-12 셀트리온에 합병돼 상장폐지(T-181 실측도 가격·시총 0).
   '263750', // 펄어비스
   '357780', // 솔브레인
   '293490', // 카카오게임즈
@@ -207,6 +209,8 @@ async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ re
      * 경로 그대로 정적 목록 시세 → 거래대금 정렬이고, 등급은 **같은 시세 응답**의 지수 편입 표시로 매긴다(추가 호출 0).
      * 시세가 실패한 종목은 후보에서 빠질 뿐 다른 종목 등급에 영향이 없다(종목 단위 — 부분 실패 개념이 없다).
      */
+    // T-184 — 등급 관측 시각은 시세를 **요청하기 전** 시각으로 둔다(겹친 갱신에서 더 이른 관측이 최신 등급을 덮지 않게).
+    const tierObservedAtMs = Date.now();
     const tickers = await getKisTickers([...ALL_SYMBOLS]);
     let tagged = 0;
     for (const t of tickers) {
@@ -217,6 +221,20 @@ async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ re
     if (tickers.length > 0 && tagged === 0) {
       // KIS 시세 응답 형식(필드명·값)이 바뀐 신호다 — 전 종목 speculative 면 코어 비율 가드가 국내 매수를 다시 전부 막는다.
       console.warn('[universe:domestic] 지수 편입 표시 없음 — 전 종목 speculative');
+    }
+    /**
+     * T-184 — 코어 비율 가드가 읽는 등급은 아래 전략 점수 선별(30·40·30)과 **무관하게** 시세를 받은 전 종목 것을 보존한다
+     * (`index-tier-store.ts`). 선별에서 빠진 보유 종목도 매 갱신 최신 등급을 갖게 되어, 강등된 종목이 과거 core 로
+     * 통과하거나 48시간 뒤 unknown 으로 막히는 일이 없다. 저장 실패는 갱신을 멈추지 않는다 — 이번 관측은 같은 프로세스의
+     * 가드에 메모리로 반영되고(DB 에는 못 남음), DB 값은 최신성 한도(24시간) 안에서만 쓰이며 넘으면 unknown(차단 방향)이다.
+     */
+    if (tierMap.size > 0) {
+      try {
+        await saveIndexTierObservations([...tierMap].map(([symbol, tier]) => ({ symbol, tier })), tierObservedAtMs);
+      } catch (e) {
+        const msg = (e instanceof Error ? `${e.name}: ${e.message}` : 'non-error thrown').replace(/[\r\n\t]+/g, ' ').slice(0, 200);
+        console.warn(`[universe:domestic] 등급 보존 저장 실패 — 이번 관측은 이 프로세스의 가드에만 반영(재시작 뒤엔 DB 값·24시간 한도): ${msg}`);
+      }
     }
     top20 = tickers
       .sort((a, b) => (b.quoteVolume24h ?? 0) - (a.quoteVolume24h ?? 0))

@@ -297,7 +297,7 @@ ${fewShotAggressive}`
 - 평균 목표 수익률: ${targetPct}% (R_win 최소 ${minRWin}% 권장)
 - 재매수 쿨다운: ${style?.rebuyCooldownMin ?? 30}분
 - 종목당 최대 동시 진입: ${maxPos}건
-- 포트폴리오 안정 코어 비율: ≥ ${(stableCoreMin * 100).toFixed(0)}% (KOSPI 100 종목)
+- 포트폴리오 안정 코어 비율: ≥ ${(stableCoreMin * 100).toFixed(0)}% (KOSPI200 편입 종목)
 - universe 종목 풀: ${universeSrc}
 
 → EV 추정 시 R_win은 보유 기간 ${holdMin}~${holdMax}일 내 도달 가능 수준으로 평가하세요.
@@ -730,7 +730,7 @@ async function buildBatchPrompt(
 - 평균 목표 수익률: ${targetPct}% (R_win 최소 ${minRWin}% 권장)
 - 재매수 쿨다운: ${style?.rebuyCooldownMin ?? 30}분
 - 종목당 최대 동시 진입: ${maxPos}건
-- 포트폴리오 안정 코어 비율: ≥ ${(stableCoreMin * 100).toFixed(0)}% (KOSPI 100 종목)
+- 포트폴리오 안정 코어 비율: ≥ ${(stableCoreMin * 100).toFixed(0)}% (KOSPI200 편입 종목)
 - universe 종목 풀: ${universeSrc}
 
 → EV 추정 시 R_win은 보유 기간 ${holdMin}~${holdMax}일 내 도달 가능 수준으로 평가하세요.

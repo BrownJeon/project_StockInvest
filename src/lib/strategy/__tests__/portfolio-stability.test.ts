@@ -20,7 +20,7 @@ const STYLE_STABLE: StyleConfig = {
 const STYLE_AGGRESSIVE: StyleConfig = { ...STYLE_STABLE, stableCoreRatioMin: 0.20, maxPositionsPerSymbol: 3 };
 
 interface MockBehavior {
-  /** symbol → tier in symbol_universe */
+  /** symbol → 등급 보존소의 tier (관측 시각 = 지금) */
   tiers?: Record<string, 'core' | 'satellite' | 'speculative'>;
   /** symbol → recent 24h 실주문(orders) buy count */
   recentBuys?: Record<string, number>;
@@ -31,10 +31,13 @@ function setupPool(behavior: MockBehavior = {}): void {
     const sql = String(sqlArg);
     const params = paramsArg ?? [];
 
-    if (/FROM symbol_universe WHERE symbol = \?/i.test(sql)) {
-      const sym = String(params[0]);
-      const tier = behavior.tiers?.[sym];
-      return tier ? [[{ tier }]] : [[]];
+    // T-184 — 등급은 symbol_universe 가 아니라 system_config 의 등급 보존소(방금 관측)에서 읽는다.
+    if (/FROM system_config WHERE `key` = \?/i.test(sql)) {
+      expect(params[0]).toBe('domestic_index_tier');
+      const at = new Date().toISOString();
+      const symbols: Record<string, { tier: string; at: string }> = {};
+      for (const [sym, tier] of Object.entries(behavior.tiers ?? {})) symbols[sym] = { tier, at };
+      return [[{ value: JSON.stringify({ v: 1, symbols }) }]];
     }
     // countRecentBuysForSymbol 은 signals 가 아니라 **orders**(실주문) 기준이다.
     // signals.auto_submitted 기준이면 dry_run·blocked 주문까지 세어 실거래 없이 한도에

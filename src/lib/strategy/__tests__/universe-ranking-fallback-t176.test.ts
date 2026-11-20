@@ -21,6 +21,8 @@ async function poolQuery(sql: unknown, params?: unknown) {
   if (/SELECT refreshed_at FROM symbol_universe/i.test(s)) return [[], []];   // 이전 갱신 없음 → TTL 스킵 안 함
   if (/INSERT INTO symbol_universe/i.test(s)) { inserts.push({ table: 'symbol_universe', params: p }); return [{ affectedRows: 1 }, []]; }
   if (/INSERT INTO stock_meta/i.test(s)) { inserts.push({ table: 'stock_meta', params: p }); return [{ affectedRows: 1 }, []]; }
+  // T-184 — 등급 보존소(system_config.domestic_index_tier): 읽기는 행 없음, 쓰기(INSERT IGNORE/조건부 UPDATE)는 1행 성공
+  if (/system_config/i.test(s)) return /^\s*SELECT/i.test(s) ? [[], []] : [{ affectedRows: 1 }, []];
   return [[], []];
 }
 jest.mock('@/lib/db', () => ({ getPool: () => ({ query: (...a: unknown[]) => poolQuery(a[0], a[1]) }) }));

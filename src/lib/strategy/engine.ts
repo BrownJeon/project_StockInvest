@@ -1228,7 +1228,7 @@ async function applyPortfolioGuard(
       });
       if (decision.verdict === 'skip') {
         const reasonKor = decision.reason === 'core_ratio_below_min'
-          ? '코어(KOSPI 100) 비율 미달'
+          ? '코어(KOSPI200 편입) 비율 미달'
           : decision.reason === 'max_positions_exceeded'
             ? '24h 종목당 매수 한도 초과'
             : (decision.reason ?? '안전성 가드');
