@@ -1,8 +1,8 @@
 ---
 task_id: T-180
 title: 모의분석(M40) 버크셔 새 8-K(11-19 엔화 사채 발행) 본문 검토 후 검토 목록 추가 — 차단 조기 해제
-status: review
-waiting: PR 사용자 검토·머지(= 운영 배포) 시점 결정 — 수집·예측 창(KST 20:45~23:00) 밖, 세션 11-20 을 살리려면 토 11-21 20:30 KST 전 · 머지 직전·직후 배포 조건 확인(배포 기록 절)
+status: done
+waiting: 세션 11-20 모의분석 회차(토 11-21 20:45 KST)가 forward 로 저장되는지 · 앱 「분석 → 모의분석」 배너(사용자 확인)
 priority: high
 project: StockInvest
 created: 2026-11-20
@@ -23,8 +23,8 @@ execution_context:
   origin_tool: claude
   current_tool: claude
   current_procedure: claude_standard
-  current_scope: 8-K 본문 1건 SEC 조회·검토부터 구현·감사·QA·커밋·작업 브랜치 push·PR 생성까지(main 반영 = 운영 배포는 PR 검토 뒤 사용자 결정)
-  last_event_id: E2
+  current_scope: 8-K 본문 1건 SEC 조회·검토부터 구현·감사·QA·PR 생성·사용자 지시 머지(= 운영 배포)·배포 확인까지
+  last_event_id: E3
 ---
 
 # T-180 버크셔 새 8-K 검토 후 검토 목록 추가
@@ -180,6 +180,11 @@ SEC 원본 보관(임시, 작업 끝나면 정리): 서버 `~/.node-local/tmp/t1
 - **머지 직전 확인(읽기 전용, Leader/deployer — Analyst·Codex C1·C2·Reviewer 근거)**: ① 지금이 수집·예측 창(KST 20:45~23:00) 밖이고, 창 끝 접수분이 남지 않았는지(창 직후 바로 머지하지 않는다) ② 최신 마감 세션의 캐시 번들이 없거나, 있으면 그 세션 예측이 이미 발행됐고 가장 최근 번들에 `quarantine.reason` 이 없는지 ③ `t156_paper_account` 리스가 비어 있고(`lease_until>UTC_TIMESTAMP(6)` 아님) `t156_forecast_job` 에 `status='running' AND lease_until>UTC_TIMESTAMP(6)` 행이 없는지 ④ `cron-out.log` 에 그 시점 m40-forward·m40-forecast 진행 줄이 없는지. **머지 직후** 새 앱 기동 시점에 ③ 재확인.
 - 2026-11-20 22:5x 작업 브랜치 `t180-brk-8k-review` push(코드 커밋 `6e6ddaa`, 커밋 훅 「Reviewer 감사 기록 확인: T-180」) → **PR #7** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/7 (base `main` = `72b9729`, mergeable). 웹훅은 브랜치 push 를 배포하지 않았다(새 START 없음, 운영 릴리스 `20261120-183916-72b9729f` 그대로).
 - 같은 배포에 실리는 다른 작업: `f71ba24` — T-178 첫 회차 확인 기록(문서 전용, 이 브랜치의 base) + 머지 시점 main 의 선행 커밋.
+- 2026-11-20 22:4x **사용자 머지 지시** 「지금 바로 머지해줘」. 머지 직전 확인(22:42 KST, 읽기 전용): 명목상 수집·예측 창 끝자락(22:42 < 23:00)이었으나 ① 오늘 m40-forward·m40-forecast 시도가 상태 파일상 모두 4/4 소진(`m40-forward-last-date` = `2026-11-20 4 … accepted`, `m40-forecast-last-date` = `2026-11-20 4 … source_not_ready`) — 더 실행될 작업 없음 ② 최신 마감 세션 11-19 는 이미 격리 차단(배포로 더 잃을 세션 없음), 세션 11-20 번들은 아직 없음 ③ `t156_paper_account` 리스 NULL, `t156_forecast_job` 진행 중 리스 0 ④ `cron-out` 마지막 m40 줄 22:17:09(그 뒤 진행 없음). PR head `130938b` = 검토본, main `72b9729`(PR 밖 선행 커밋 없음).
+- 2026-11-20 22:42:47 KST **PR #7 머지**(Gitea API, `head_commit_id`=`130938b` 고정) → 머지 커밋 `8d9e980`. webhook `START sha=8d9e980` 13:42:52 UTC(22:42:52 KST) → `RELEASE_RESULT {"status":"ok","release":"20261120-224257-8d9e9803","previous":".../20261120-183916-72b9729f","migrated":false}` → `END exit=0` 13:43:28 UTC. 롤백 지점 `20261120-183916-72b9729f`. 같은 배포에 실린 다른 작업: `f71ba24`(T-178 첫 회차 확인 기록, 문서).
+- 배포 후 확인(22:43~22:5x KST, 읽기 전용): `current` → `20261120-224257-8d9e9803` · health ok·db true·`safetyStatus green`·dryRun true · pm2 `stockinvest`·`stockinvest-cron` online·restarts 0·cwd 새 릴리스 · 크론 러너 1개(+ 손절 알림 티커 자식) · 배포 소스에 v2 목록·새 접수번호 존재 · **머지 직후 리스 재확인**: `t156_paper_account` 리스 NULL, 진행 중 예측 리스 0 · `stop-alert` 22:42·22:43 정상, 러너 재시작 시 「웹 응답 확인 — 1초 대기」 · 배포 뒤 `cron-out` `FAILED`·`HTTP=000` 0줄, `pm2-err` 새 줄 0.
+- ⚠ **관찰(이번 배포와 무관)**: `safety_kill_switch` 가 **true** — 21:42:27 KST 앱 자동 손실 차단이 켬(`[kill-switch:drawdown] 자동 발동: 24h 손실 -10.2% (-1,884,476원) — 임계 -10% 초과`, 포트폴리오 스냅샷 직후). 스냅샷 대조: 11-19 21:24 18,541,628원 → 11-20 21:42 16,657,152원, 보유 8종목 동일·환율 1332.33 → 1328.45(−0.3%), 가격 하락 MU −11.7%·삼성전자 −8.4%·SMH −8.8%·ORCL −9.1%·NVDA −7.8%·CVX −0.2% → [가능성 높음] 실제 시장 하락. 해제는 사용자 전용(이 task 에서 손대지 않음). M40 은 킬스위치를 보지 않고 `safety_dry_run=true` 만 요구(`forward-store.ts:27-30`)하므로 모의분석 회차에는 영향 없음.
+- 미확인: 배포 뒤 첫 회차(세션 11-20, 토 11-21 20:45 KST) · 11-20 이후 새 버크셔 공시 · 앱 화면(로그인 필요). 이 기록은 작업 브랜치에만 남긴다(main push = 재배포).
 
 ## 실행 도구·절차 이력
 
@@ -187,19 +192,21 @@ SEC 원본 보관(임시, 작업 끝나면 정리): 서버 `~/.node-local/tmp/t1
 |---|---|---|---|---|---|
 | E1 | 2026-11-20 21:2x | start | claude / claude_standard | 8-K 1건 SEC 조회·검토부터 PR 생성까지(main 반영 제외) | 사용자 선택 「검토 목록 추가 착수」 |
 | E2 | 2026-11-20 22:4x | handoff-wait | claude / claude_standard | 구현·Reviewer pass·Codex C1/C2·QA pass·작업 브랜치 커밋·push·PR 생성 완료, main 반영은 사용자 대기 | 사용자 선택 「검토 목록 추가 착수」(main 반영은 별도 승인) |
+| E3 | 2026-11-20 22:42 | deploy | claude / claude_standard | PR #7 main 머지(= 운영 배포)·배포 확인 | 사용자 「지금 바로 머지해줘」 |
 
 ## 최종 요약
 
 ### [T-180] 모의분석을 막은 버크셔 새 8-K 를 검토 목록에 추가
 
-- **상태**: review — 구현·Reviewer pass(C2 지적 채택 후 유지)·Codex C1/C2·QA pass(결함 0). PR 사용자 검토·머지 대기.
+- **상태**: done — 구현·Reviewer pass(C2 지적 채택 후 유지)·Codex C1/C2·QA pass(결함 0)·PR #7 사용자 지시 머지·**운영 배포 완료 2026-11-20 22:43 KST**(릴리스 `20261120-224257-8d9e9803`). 남은 것은 세션 11-20 회차(토 11-21 20:45 KST) 확인.
 - **무엇이 바뀌었나**: 모의분석(M40, 실주문 없음) 게이트의 검토 목록 `BRK_MATERIAL_REVIEW` 에 11-19 버크셔 8-K(접수 `0001193125-26-468549`, 엔화 선순위 사채 5종 ¥182.3bn 발행 마감 보고)를 4번째 항목으로 추가(버전 `brkb_finite_material_review_20261120_v2`, `reviewKnownAt` 2026-11-20 12:30Z). 판정 로직·종류 통과 집합·기존 3건은 그대로. 목록 해시 `e226bd65…` → `40378ba0…`. 시험 4파일(11-20 실데이터 fixture·변형 차단·옛 목록 봉투 거부 고정).
 - **검토 근거**: 에이전트(analyst)가 본문·EX-1.1·EX-4.2·EX-5.1 전문, EX-4.3~4.6 은 4.2 와 단어 비교, XBRL 표지 값만 읽음 — 주식 기준 변화(분할·주식배당·전환비율·분사·권리 공모·합병·공개매수·특별배당) 공시·예고 미발견. 미검토: 참조 편입 Indenture·S-3·11-17 424B5·11-13 FWP 본문·XBRL 분류 파일. 이름은 「사람 검토 목록」이지만 이번 항목은 **에이전트 검토**다(Reviewer low-1).
 - **해시 기준 변경**: 새 항목만 `rawBodySha256` 을 SEC 앞단이 끼우는 `<script>` 태그(119B)를 뺀 EDGAR 보관 바이트로 계산(`rawBodyBasis` 명시) + 전체 제출본 `.txt` 해시(재조회로 재현 가능). 기존 3건은 받은 그대로라 재현 불가였다.
-- **배포**: 미배포 — **PR #7** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/7 사용자 검토 대기. PR 머지 = 운영 배포. 같은 배포에 실리는 다른 작업: `f71ba24`(T-178 첫 회차 확인 기록, 문서).
+- **배포**: 2026-11-20 22:42:52~22:43:28 KST webhook blue/green `RELEASE_RESULT ok`(머지 커밋 `8d9e980`, migrated false) — **PR #7** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/7. 같은 배포에 실리는 다른 작업: `f71ba24`(T-178 첫 회차 확인 기록, 문서).
 - **AI 가 검증한 것**: m40 시험 721/721, 전체 jest 13,159건 — base 와 실패 11건 동일(새 실패 0, `forecast-engine` 5초 시간 초과는 기존·실행 순서 의존), `tsc` 0, 해시 2종 원본 재계산 일치, 판정 4필드 SEC 목록과 글자 단위 일치, 시험이 결함을 잡는지 변이로 확인.
 - **AI 가 검증하지 못한 것**: eslint(저장소에 설정 없음), 11-20 이후 새 버크셔 공시(SEC 재조회는 승인 범위 밖), 운영 DB 배포 조건(머지 시점에 확인), 배포 뒤 실제 회차.
 - 👉 **사용자가 확인할 것**: PR 소스 검토. 배포 뒤 다음 회차(세션 11-20 은 토 11-21 20:45 KST, 놓치면 세션 11-23 은 11-24(화) 20:45 KST)가 `forward` 로 저장되는지와 앱 「분석 → 모의분석」 배너.
 - 👉 **사용자가 결정할 것**: 머지 시점 — 수집·예측 창(KST 20:45~23:00) 밖이어야 하며, 세션 11-20 을 살리려면 토 11-21 20:30 KST 전.
 - **남은 일**: 8-K 는 올 때마다 같은 검토가 필요하다(이번 절차의 재사용). 옛 버전 작업이 리스를 쥔 채 교체되면 그 세션을 잃는 위험은 T-178 부터 있던 것으로, 코드로 막으려면 별도 설계(`archiveForwardSources` 목록 해시 검증) — 이번 범위 밖.
 - **이슈·위험**: 검토 범위 밖 문서(편입 Indenture 등)에 주식 사건이 숨어 있을 가능성은 낮지만 0 은 아니다. 영향은 모의 평가 한정.
+- **배포 시점 관찰**: 같은 날 21:42 앱 자동 손실 차단이 킬스위치를 켰다(24h −10.2%, 반도체 하락 — 배포와 무관, 해제는 사용자 결정). 모의분석 회차에는 영향 없음.
