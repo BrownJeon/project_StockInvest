@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="demo-version" content="T-178-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<title>T-178 모의분석 차단 사유 문구 · v1</title>
+<style>
+/* 앱 토큰 — src/app/globals.css 값을 그대로 복사(앱은 다크 단일 테마). 미리보기 휴대폰 안에서만 쓴다. */
+:root {
+  --bg: #0f1115;
+  --bg2: #171a21;
+  --bg3: #1f2430;
+  --bg4: #262b36;
+  --border: #262b36;
+  --border2: #323848;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --up: #ef4444;
+  --down: #3b82f6;
+  --accent: #f59e0b;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nav-h: 60px;
+}
+/* 데모 설명 영역 토큰(라이트 기본 · 다크 대응). 앱 화면에는 쓰지 않는다. */
+:root {
+  --d-bg: #f5f6f8; --d-bg2: #ffffff; --d-bg3: #eceef2; --d-border: #d5d9e1;
+  --d-text: #1a1d24; --d-muted: #565e6e; --d-accent: #9a4a06; --d-accent-bg: #fff4e2;
+  --d-ok: #17803d; --d-bad: #b42318; --d-code-bg: #eceef2;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --d-bg: #0f1115; --d-bg2: #171a21; --d-bg3: #1f2430; --d-border: #323848;
+    --d-text: #e6e8ee; --d-muted: #9aa2b4; --d-accent: #f5a524; --d-accent-bg: #2a2214;
+    --d-ok: #4ade80; --d-bad: #f87171; --d-code-bg: #1f2430;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --d-bg: #0f1115; --d-bg2: #171a21; --d-bg3: #1f2430; --d-border: #323848;
+  --d-text: #e6e8ee; --d-muted: #9aa2b4; --d-accent: #f5a524; --d-accent-bg: #2a2214;
+  --d-ok: #4ade80; --d-bad: #f87171; --d-code-bg: #1f2430;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { max-width: 100vw; overflow-x: clip; }
+body { margin: 0; background: var(--d-bg); color: var(--d-text);
+  font: 14px/1.6 ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif; -webkit-text-size-adjust: 100%; }
+::selection { background: rgba(245,158,11,.35); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 56px; }
+h1 { font-size: 20px; line-height: 1.35; margin: 0 0 6px; text-wrap: balance; }
+h2 { font-size: 16px; line-height: 1.4; margin: 28px 0 8px; }
+h3 { font-size: 14px; margin: 0 0 6px; }
+p { margin: 6px 0; }
+.muted { color: var(--d-muted); }
+.lead { max-width: 72ch; }
+.banner { border: 1px solid var(--d-accent); background: var(--d-accent-bg); padding: 10px 14px; border-radius: 10px; margin: 12px 0 16px; max-width: 80ch; }
+.banner strong { color: var(--d-accent); }
+.box { border: 1px solid var(--d-border); background: var(--d-bg2); border-radius: 10px; padding: 14px 16px; margin: 0 0 16px; min-width: 0; }
+.box ul, .box ol { margin: 6px 0 0; padding-left: 20px; }
+.box li { margin: 4px 0; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.box code, .tbl code, .dec code { background: var(--d-code-bg); padding: 0 4px; border-radius: 4px; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 0 0 16px; }
+.ctl { display: grid; gap: 6px; min-width: 0; }
+.ctl > span { font-size: 12px; color: var(--d-muted); font-weight: 600; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button { font: inherit; font-size: 13px; color: var(--d-text); background: var(--d-bg2); border: 1px solid var(--d-border);
+  border-radius: 8px; min-height: 44px; padding: 8px 12px; cursor: pointer; text-align: left; }
+.seg button:hover { background: var(--d-bg3); }
+.seg button[aria-pressed="true"] { border-color: var(--d-accent); color: var(--d-accent); font-weight: 700; box-shadow: inset 0 -2px 0 var(--d-accent); }
+.seg button small { display: block; font-size: 11px; font-weight: 400; color: var(--d-muted); }
+:focus-visible { outline: 2px solid var(--d-accent); outline-offset: 2px; }
+.frames { display: flex; flex-wrap: wrap; gap: 24px; justify-content: center; align-items: flex-start; min-width: 0; }
+.fcol { width: var(--fw, 412px); max-width: 100%; min-width: 0; }
+.fcap { font-size: 13px; font-weight: 700; margin: 0 0 2px; }
+.fsub { font-size: 12px; color: var(--d-muted); margin: 0 0 8px; }
+.tag-now { color: var(--d-muted); }
+.tag-new { color: var(--d-accent); }
+.legend { font-size: 12px; color: var(--d-muted); margin: 0 0 12px; }
+.legend .swatch { display: inline-block; padding: 0 6px; border: 1px dashed var(--d-accent); border-radius: 4px; color: var(--d-accent); font-weight: 700; margin-right: 4px; }
+.dec { border-top: 1px solid var(--d-border); padding-top: 14px; margin-top: 14px; }
+.dec:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
+.opts { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); margin-top: 8px; }
+@media (min-width: 760px) { .opts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.opt { border: 1px solid var(--d-border); border-radius: 8px; padding: 10px 12px; background: var(--d-bg); min-width: 0; }
+.opt.rec { border-color: var(--d-accent); }
+.opt b { display: block; margin-bottom: 4px; }
+.rec-tag { display: inline-block; font-size: 11px; font-weight: 700; color: var(--d-accent); border: 1px solid var(--d-accent); border-radius: 4px; padding: 0 5px; margin-left: 4px; }
+.pv { margin-top: 8px; border-radius: 8px; background: var(--bg); color: var(--text); padding: 10px 12px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.pv .cd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); }
+/* 사전 표 — 900px 미만에서는 행을 카드처럼 쌓는다(가로 스크롤 없음) */
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tbl caption { text-align: left; font-weight: 700; padding: 0 0 8px; }
+.tbl th, .tbl td { border-top: 1px solid var(--d-border); padding: 8px; vertical-align: top; text-align: left; min-width: 0; overflow-wrap: anywhere; }
+.tbl td code { overflow-wrap: normal; word-break: normal; }
+.tbl thead th { font-size: 12px; color: var(--d-muted); border-top: 0; }
+.tbl .k { white-space: nowrap; font-size: 12px; }
+.tbl .old { color: var(--d-muted); }
+.tbl tr.grp th { background: var(--d-bg3); font-size: 12px; }
+@media (max-width: 899px) {
+  .tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .tbl, .tbl tbody, .tbl tr, .tbl td, .tbl th { display: block; width: 100%; }
+  .tbl tr { border-top: 1px solid var(--d-border); padding: 8px 0; }
+  .tbl td, .tbl th { border-top: 0; padding: 2px 0; }
+  .tbl td::before { content: attr(data-label); display: block; font-size: 11px; color: var(--d-muted); font-weight: 600; }
+  .tbl caption { display: block; width: auto; }
+  .tbl tr.grp { padding: 0; }
+  .tbl tr.grp th { padding: 6px 8px; }
+}
+pre.ts { background: var(--d-code-bg); border-radius: 8px; padding: 12px; font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; }
+details.box > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 700; }
+
+/* ===== 앱 미리보기 — M40PaperPanel.module.css · ops.module.css 값을 그대로 옮김 ===== */
+.phone { background: var(--bg); color: var(--text); border: 1px solid #000; border-radius: 18px; overflow: hidden;
+  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.phone ::selection { background: rgba(245,158,11,.35); }
+.phone .ctx { font-size: 11px; color: var(--muted); padding: 8px 16px; border-bottom: 1px dashed var(--border2); background: var(--bg2); }
+.phone .dh { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--bg2); }
+.phone .dh button { min-width: 44px; min-height: 44px; border: 0; background: none; color: var(--text); font: inherit; font-size: 18px; cursor: pointer; border-radius: 6px; }
+.phone .dh span { font-size: 12px; color: var(--muted); }
+.phone .dh b { font-size: 15px; }
+.p-body { padding: 0 0 16px; min-width: 0; width: 100%; }
+.p-summary { font-size: 13px; line-height: 1.6; margin: 0; padding: 12px 16px; }
+.st { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border2); color: var(--text); background: var(--bg); line-height: 1.4; }
+.st.partial { border-color: rgba(245,158,11,.5); color: var(--accent); }
+.st.blocked { border-color: rgba(239,68,68,.6); color: #fca5a5; background: #2a1416; }
+.st.unknown { border-style: dashed; color: var(--muted); }
+.p-notice { border: 1px solid var(--border2); border-radius: 8px; padding: 10px 12px; margin: 0 16px 12px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.p-notice.blocked { border-color: #f59e0b; }
+.p-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.p-policy { margin: 0 16px 12px; padding: 12px; border: 1px solid var(--border2); border-radius: 8px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.p-policy p { margin: 4px 0; }
+.p-nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px 8px; background: var(--bg2); border-bottom: 1px solid var(--border2); margin: 0; }
+.p-nav button { display: flex; align-items: center; justify-content: center; min-height: 44px; min-width: 0; padding: 0 2px; font: inherit; font-size: 12px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; white-space: nowrap; cursor: pointer; }
+.p-nav button[aria-selected="true"] { background: var(--bg4); color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+.p-nav button:hover { background: var(--bg4); color: var(--text); }
+.phone button:focus-visible, .phone input:focus-visible, .phone select:focus-visible, .phone summary:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+.p-section { min-width: 0; margin: 12px 0 0; }
+.p-section:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
+.p-sech { font-size: 14px; font-weight: 700; margin: 0 16px 4px; }
+.p-pos { color: var(--up); }
+.p-neg { color: var(--down); }
+.p-hint { font-size: 12px; color: var(--muted); line-height: 1.6; padding: 8px 16px; margin: 0; overflow-wrap: anywhere; }
+.p-hint b { color: var(--text); }
+.p-filters { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 16px; }
+.p-filters label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); min-width: 0; flex-wrap: wrap; }
+.p-filters input, .p-filters select { min-height: 44px; min-width: 0; background: var(--bg3); color: var(--text); border: 1px solid var(--border2); border-radius: 6px; padding: 0 8px; max-width: 100%; font: inherit; }
+.p-filters input { width: 140px; }
+.p-source { padding: 10px 16px; border-top: 1px solid var(--border); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.p-source p { margin: 3px 0; color: var(--muted); }
+.p-judg { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.p-judg p { margin: 4px 0; color: var(--muted); }
+.p-judg b { color: var(--text); }
+.p-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.p-body details { padding: 0 16px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.p-body summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--muted); }
+.p-policy details { padding: 0; }
+.p-intro { padding: 12px 16px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.p-intro p { margin: 4px 0; color: var(--muted); }
+.p-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--border); }
+.p-metric { padding: 14px 16px; background: var(--bg2); min-width: 0; }
+.p-metric span { display: block; font-size: 11px; color: var(--muted); }
+.p-metric strong { display: block; font-size: 18px; margin-top: 6px; overflow-wrap: anywhere; }
+.p-refresh { margin: 0 16px 12px; min-height: 44px; padding: 0 12px; border: 1px solid var(--border2); border-radius: 6px; font: inherit; font-size: 12px; background: none; color: var(--text); cursor: pointer; }
+.p-empty { padding: 20px 16px; font-size: 13px; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.p-skip { padding: 16px; font-size: 12px; color: var(--muted); border: 1px dashed var(--border2); border-radius: 8px; margin: 8px 16px; }
+.p-tabbar { height: var(--nav-h); border-top: 1px solid var(--border2); background: var(--bg2); display: grid; grid-template-columns: repeat(5, 1fr); font-size: 11px; color: var(--muted); }
+.p-tabbar span { display: flex; align-items: center; justify-content: center; }
+.p-tabbar span.on { color: var(--accent); font-weight: 700; }
+/* 바뀐 글자 표시(데모 전용 — 구현에 넣지 않는다) */
+.marks mark.chg { background: transparent; color: inherit; outline: 1px dashed var(--accent); outline-offset: 1px; border-radius: 2px; }
+mark.chg { background: transparent; color: inherit; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>모의분석 「처리 차단」 사유 문구 · v1</h1>
+  <p class="muted">T-178 · 데모 수준 delta · 갱신 2026-11-20 · 기준 화면 <code>분석 › 오늘 › 모의분석</code> (<code>src/app/analytics/M40PaperPanel.tsx</code>·<code>m40-paper-copy.ts</code>)</p>
+  <div class="banner" role="note">
+    <strong>바뀌는 것은 글자뿐입니다.</strong> 배치·색·버튼·탭은 그대로 두고, 차단 배너의 사유 문장과 「이전 저장분」 안내만 고칩니다.
+    지금은 사전에 없는 사유가 <code>사유 설명 미등록 (forward_pair_events_<wbr>unreviewed_material_filing)</code>처럼 영문 코드로 보입니다.
+    아래 날짜·종목 수·금액은 <b>모두 예시 값</b>이며 실제 회차가 아닙니다.
+  </div>
+
+  <section aria-labelledby="h-compare">
+    <h2 id="h-compare">1. 현재 vs 제안</h2>
+    <p class="lead muted">두 화면의 탭은 함께 움직입니다. 「종목판단」에서 이전 저장분 안내, 「모의성과」에서 결정 D2 의 차이를 볼 수 있습니다.</p>
+    <div class="controls">
+      <div class="ctl" role="group" aria-labelledby="c-sc"><span id="c-sc">차단 사유 예시</span>
+        <div class="seg" id="seg-sc"></div></div>
+      <div class="ctl" role="group" aria-labelledby="c-w"><span id="c-w">기기 폭</span>
+        <div class="seg" id="seg-w">
+          <button type="button" data-w="412" aria-pressed="true">412px<small>갤럭시 S25+ 크롬</small></button>
+          <button type="button" data-w="360" aria-pressed="false">360px<small>좁은 기기 경계</small></button>
+        </div></div>
+      <div class="ctl" role="group" aria-labelledby="c-m"><span id="c-m">바뀐 곳 표시</span>
+        <div class="seg" id="seg-m">
+          <button type="button" data-m="1" aria-pressed="true">점선으로 표시</button>
+          <button type="button" data-m="0" aria-pressed="false">끄기(실제 모습)</button>
+        </div></div>
+    </div>
+    <p class="legend"><span class="swatch">점선</span>제안 화면에서 글자가 바뀐 곳입니다. 점선은 데모 표시일 뿐 구현에 넣지 않습니다. 900px 이상 데스크톱은 기존 CSS 그대로(가운데 960px)라 이번 변경과 무관합니다.</p>
+    <div class="frames" id="frames"></div>
+  </section>
+
+  <section aria-labelledby="h-rule">
+    <h2 id="h-rule">2. 문구 규칙</h2>
+    <div class="box">
+      <ol>
+        <li><b>앞부분 — 확인하지 못한 것.</b> 단정할 수 있는 사실만 씁니다. 원인을 모르면 「원인 미상」·「분류되지 않은 오류」라고 씁니다.</li>
+        <li><b>뒷부분 — 풀리는 조건.</b> 저절로 다시 시도되면 「다음 회차에 다시 시도」, 기간이 지나야 하면 그 기간, 사람이 고쳐야 하면 「…할 때까지 계속 차단」. 풀린다고 약속하지 않고 「다시 시도」·「풀림 조건」만 말합니다.</li>
+        <li><b>마지막 — 할 일.</b> 저절로 다시 시도되는 사유는 「지금 할 일 없음」, 원인 미상은 「반복되면 확인 필요」.</li>
+        <li><b>모든 차단에 공통인 사실은 배너 고정 문장으로 한 번만:</b> 차단된 세션은 모의 시그널·평가액이 없어 모의성과의 누락 거래일이 되고, 누락이 있는 기간은 수익률을 계산하지 않으며, 실주문과 무관하다(코드 근거: <code>forward-runtime.ts:309</code>, <code>paper-view-period.ts:39·48·60</code>).</li>
+        <li><b>날짜 혼동 해소:</b> 「세션」은 미국 동부 거래일, 「저장 분석 기준」은 한국 시간 처리 시각이라 하루 늦게 보일 수 있음을 이전 저장분 안내에 적습니다. 차단 배너의 시각은 분석을 저장한 시각이 아니라 처리를 시도한 시각이므로 「처리 시도」로 바꿉니다.</li>
+        <li><b>DRY_RUN 사유는 설정을 바꾸라고 유도하지 않습니다.</b> 실거래로 전환하면 모의분석이 멈추는 것은 의도된 동작이기 때문입니다(<code>forward-store.ts:30</code>).</li>
+      </ol>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-dec">
+    <h2 id="h-dec">3. 결정 필요</h2>
+    <div class="box">
+      <div class="dec" id="d1">
+        <h3>D1. 차단 배너에 영문 사유 코드를 남길까</h3>
+        <p class="muted">문구를 등록하면 지금 보이는 영문 코드는 사라집니다. 한국어만 있으면 깔끔하지만, 같은 증상을 문의할 때 정확한 원인을 집어낼 단서가 없어집니다. 전례: T-130 D4-A(영문 코드는 진단 화면인 「데이터 상태」에만 작게 남김).</p>
+        <div class="seg" id="seg-d1" role="group" aria-label="D1 선택 미리보기">
+          <button type="button" data-d1="A" aria-pressed="true">A 미리보기</button>
+          <button type="button" data-d1="B" aria-pressed="false">B 미리보기</button>
+        </div>
+        <div class="opts">
+          <div class="opt rec"><b>A. 배너 맨 아래에 항상 작은 코드 한 줄 <span class="rec-tag">권고</span></b>
+            「사유 코드 forward_pair_…」를 11px 고정폭·흐린 글자로 붙입니다. 모의분석은 「미확인」까지 밝히는 진단 성격의 화면이라 전례의 「진단 화면에만」 원칙과도 맞습니다. 다른 목록(종목판단·모의성과)에는 붙이지 않습니다.
+            <div class="pv" aria-hidden="true">…다음 회차에 다시 시도 · 지금 할 일 없음<br>처리 시도 2026-10-30 20:50 KST<br><span class="cd">사유 코드 forward_pair_kis_identity_invalid</span></div></div>
+          <div class="opt"><b>B. 사전에 문구가 없는 코드일 때만 코드 표시</b>
+            개별 문구가 있는 사유는 한국어만 보입니다. 계열 기본 문구가 쓰일 때만 문구 뒤에 「(코드 …)」를 붙입니다. 더 짧지만, 등록된 사유를 문의할 때는 DB 를 조회해야 코드를 알 수 있습니다.
+            <div class="pv" aria-hidden="true">…다음 회차에 다시 시도 · 지금 할 일 없음<br>처리 시도 2026-10-30 20:50 KST</div></div>
+        </div>
+      </div>
+      <div class="dec" id="d2">
+        <h3>D2. 모의성과 탭의 「사유 설명 미등록 (missing_sessions)」도 이번에 고칠까</h3>
+        <p class="muted">이번 문의의 「집계가 안 된다」는 사실 모의성과 탭에서 보입니다. 차단된 세션이 하나라도 있는 기간은 수익률·평가손익·최대 낙폭을 계산하지 않고(<code>paper-view-period.ts:60</code>), 그 이유 줄이 지금 영문 코드로 나옵니다. 같은 사전 파일에 한 줄을 더하는 일이지만, 차단 사유가 아닌 관측 코드라 범위가 넓어집니다. 「모의성과」 탭을 눌러 차이를 보세요.</p>
+        <div class="seg" id="seg-d2" role="group" aria-label="D2 선택 미리보기">
+          <button type="button" data-d2="A" aria-pressed="false">A 미리보기</button>
+          <button type="button" data-d2="B" aria-pressed="true">B 미리보기</button>
+        </div>
+        <div class="opts">
+          <div class="opt"><b>A. 이번에는 차단 사유만</b>
+            모의성과 탭은 지금처럼 「사유 설명 미등록 (missing_sessions)」. 같은 탭의 다른 미등록 관측 코드 12개와 함께 후속 task 로 넘깁니다.</div>
+          <div class="opt rec"><b>B. missing_sessions 한 줄만 함께 추가 <span class="rec-tag">권고</span></b>
+            「선택기간 거래일 중 모의 평가가 없는 날이 있음(처리 차단 등) · 그래서 기간 수익률·평가손익·최대 낙폭을 계산하지 않음」. 차단과 바로 이어지는 코드 하나만 넣고, 나머지 12개는 후속 task.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-dict">
+    <h2 id="h-dict">4. 사유 사전 전체 (코드 → 새 문구)</h2>
+    <p class="lead muted">의미(무엇이 확인 안 됐나·풀림 분류)는 analyst 정의를 그대로 따르고 한국어 표현만 정했습니다. 「지금 화면」은 운영 화면에 지금 보이는 글자입니다. 사전에 없는 코드는 아래 계열 표에서 가장 긴 접두가 맞는 문구를 씁니다.</p>
+    <div class="box"><table class="tbl" id="tbl-ind"></table></div>
+    <div class="box"><table class="tbl" id="tbl-fam"></table></div>
+    <div class="box"><table class="tbl" id="tbl-fixed"></table></div>
+    <details class="box">
+      <summary>개발 인계용 사전 초안 (TypeScript, 승인 뒤 사용)</summary>
+      <p class="muted">아래 내용은 위 표와 같은 데이터에서 만듭니다. 계열 기본 문구는 차단 배너의 사유 코드에만 쓰기를 권합니다 — 다른 목록의 미등록 코드에 차단 문구가 잘못 붙지 않게 하기 위해서입니다.</p>
+      <pre class="ts" id="ts-out"></pre>
+    </details>
+  </section>
+
+  <section aria-labelledby="h-scope">
+    <h2 id="h-scope">5. 바뀌는 곳 · 그대로인 곳</h2>
+    <div class="box">
+      <ul>
+        <li><code>m40-paper-copy.ts</code> — 개별 사유 16개(이 중 <code>forward_cycle_failed</code> 는 기존 문구 교체), 계열 기본 문구 11개, D2-B 이면 <code>missing_sessions</code> 1개.</li>
+        <li><code>M40PaperPanel.tsx</code> 83행(이전 저장분 안내) — 「(ET)」, 날짜 설명 한 문장. 「최신 회차 결과가 아닙니다」를 「최신 회차가 차단돼 마지막으로 처리된 회차를 보여 줍니다」로.</li>
+        <li><code>M40PaperPanel.tsx</code> 90행(차단 배너) — 세션 뒤 「(ET)」, 공통 결과 문장, 「저장 분석 기준」→「처리 시도」, D1-A 이면 사유 코드 줄.</li>
+        <li><code>M40PaperPanel.tsx</code> 101행(종목판단 경고 줄) — <b>문구 변화 없음.</b> 이 줄에 나오는 경고 코드는 서버가 13개로 거르고(<code>paper-view.ts:59</code>) 13개 모두 이미 사전에 있습니다. 차단 중에는 이 탭이 이전 저장분을 보여 주므로 위 83행 안내가 같이 바뀝니다.</li>
+        <li>그대로: 상단 칩(「모의 전용」·「처리 차단」), 정책 상자, 탭, 수집상태·모의시그널·예상성과 내용, 900px 이상 배치, 색·간격 토큰.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  // ---------- 사전 데이터(표·미리보기·TS 초안의 단일 출처) ----------
+  var IND = [
+    { code: 'forward_pair_events_|unreviewed_material_filing', kind: '기간·수동', text: '버크셔(BRK.B) 최근 14일 SEC 공시 중 아직 검토하지 않은 공시가 있어, 분할 같은 가격 기준 변화가 없는지 확인하지 못함 · 그 공시가 14일을 지나거나 검토를 마친 목록이 배포되면 풀림' },
+    { code: 'forward_pair_prior_|conflict_requires_review', kind: '다음 세션', text: '같은 세션의 앞선 처리에서 BRK.B 근거가 「검토 필요」로 격리돼 이 세션은 다시 처리하지 않음 · 다음 세션에 새로 확인(원인이 남아 있으면 다시 차단)' },
+    { code: 'forward_pair_events_|known_or_unclassified_|action_requires_reconciliation', kind: '수동', text: 'Alpaca 기업행동 조회에 BRK.B 항목(분할·배당 등)이 있어 가격 기준과 대조해야 함 · 조회 기간이 길어 저절로 사라지지 않으며, 대조를 마칠 때까지 계속 차단' },
+    { code: 'forward_pair_events_|sec_recent_coverage_incomplete', kind: '자동·미상', text: '받은 SEC 공시 목록이 최근 14일을 다 덮지 못해 버크셔 최근 공시 전체를 확인하지 못함 · 다음 회차에 다시 시도 · 반복되면 확인 필요' },
+    { code: 'forward_pair_kis_identity_invalid', kind: '자동', text: 'KIS의 BRK.B 일봉 응답이 오류·빈 값이거나 종목 식별이 맞지 않아 가격 대조를 하지 못함 · 다음 회차에 다시 시도 · 지금 할 일 없음' },
+    { code: 'forward_pair_cached_|authorization_unavailable', kind: '자동', text: '저장된 KIS 접속 토큰이 없거나 곧 만료돼 BRK.B 가격 대조를 하지 못함 · 다른 작업이 토큰을 갱신하면 다음 회차에 다시 시도 · 지금 할 일 없음' },
+    { code: 'forward_pair_sec_snapshot_unavailable', kind: '자동', text: 'SEC 공시 목록을 받지 못해 버크셔 최근 공시를 확인하지 못함 · 다음 회차에 다시 시도 · 지금 할 일 없음' },
+    { code: 'forward_pair_source_|evidence_unavailable', kind: '자동·미상', text: 'BRK.B 가격 근거를 확인하던 중 분류되지 않은 오류로 멈춤 · 다음 회차에 다시 시도 · 반복되면 확인 필요' },
+    { code: 'forward_pair_profile_required', kind: '수동', text: 'BRK.B 근거 조회용 접속 설정을 읽지 못함 · 운영 설정을 고칠 때까지 계속 차단' },
+    { code: 'paper_current_basis_observation_missing', kind: '자동', text: '모의 보유 종목 중 이번 세션 분할 조정 종가가 없는 종목이 있어 보유 수량 기준을 갱신하지 못함 · 그 가격이 수집되면 다음 회차에 다시 시도 · 지금 할 일 없음' },
+    { code: 'paper_corporate_action_|reconciliation_required', kind: '수동', text: '모의 보유 종목의 과거 분할 조정 종가가 저장된 기준과 달라짐(분할·정정 가능성) · 수량을 추정으로 바꾸지 않고, 확인할 때까지 계속 차단' },
+    { code: 'paper_source_event_evidence_stale', kind: '다음 세션', text: 'BRK.B 사건 확인 자료의 미국 날짜가 저장 시점과 달라짐(확인 뒤 날짜가 바뀜) · 다음 세션에 새로 확인 · 지금 할 일 없음' },
+    { code: 'paper_publication_deadline_elapsed', kind: '이 세션 불가', text: '다음 개장 시각이 지나 이 세션 결과를 저장할 수 없음 · 이 세션은 누락으로 남고 다음 세션은 따로 처리 · 지금 할 일 없음' },
+    { code: 'paper_lease_or_revision_conflict', kind: '자동', text: '처리 중 다른 실행이 모의계좌를 바꿨거나 처리 권한 시간이 끝남 · 다음 회차에 다시 시도 · 지금 할 일 없음' },
+    { code: 'm40_forward_requires_dry_run', kind: '수동·안전', text: '전역 DRY_RUN(주문 차단)이 켜져 있음을 확인하지 못해 모의 처리를 멈춤 · 실거래로 전환한 상태라면 의도된 멈춤이며, 이 화면 때문에 설정을 바꿀 필요 없음' },
+    { code: 'forward_cycle_failed', kind: '미상', old: '회차 처리 실패', text: '분류되지 않은 이유로 회차 처리가 멈춤 · 다음 회차에 다시 시도 · 반복되면 확인 필요' }
+  ];
+  var FAM = [
+    { prefix: 'forward_pair_events_sec_', kind: '자동·미상', text: '받은 SEC 공시 목록의 시각·형식·회사 식별이 기대와 달라 근거로 쓰지 못함 · 다음 회차에 다시 시도 · 반복되면 확인 필요' },
+    { prefix: 'forward_pair_events_', kind: '자동·미상', text: 'BRK.B 기업행동 조회 응답의 시각·형식·페이지가 기대와 달라 근거로 쓰지 못함 · 다음 회차에 다시 시도 · 반복되면 확인 필요' },
+    { prefix: 'forward_pair_', kind: '대부분 자동', text: 'BRK.B 원가격·분할 조정 가격의 원천 확인(수신·시각·형식·설정)을 마치지 못함 · 대부분 다음 회차에 다시 시도 · 반복되면 확인 필요' },
+    { prefix: 'forward_source_', kind: '수신 자동 · 불일치 미상', text: '후보 종목 일봉 원천을 받지 못했거나, 받은 원문의 형식·해시가 맞지 않음 · 다음 회차에 다시 시도 · 반복되면 확인 필요' },
+    { prefix: 'forward_index_', kind: '자동', text: '시장 지수(S&P 500) 이력을 받거나 검증하지 못함 · 다음 회차에 다시 시도 · 지금 할 일 없음' },
+    { prefix: 'forward_calendar_', also: 'forward_completed_session_unknown(정확 일치)', kind: '수동', text: '거래일 달력으로 처리할 세션을 정하지 못함 · 달력 자료를 고칠 때까지 계속될 수 있음' },
+    { prefix: 'paper_source_', kind: '미상', text: '수집 원문을 보관하거나 다시 읽어 검증하지 못함 · 다음 회차에 다시 시도 · 반복되면 확인 필요' },
+    { prefix: 'paper_publication_', kind: '다음 세션', text: '결과 저장 기한·시계를 확인하지 못해 이 세션 결과를 저장하지 않음 · 다음 세션은 따로 처리' },
+    { prefix: 'paper_signal_', also: 'paper_settlement_', kind: '수동', text: '모의 시그널 생성이나 결제일 계산에 필요한 입력 조건이 맞지 않음 · 확인할 때까지 계속될 수 있음' },
+    { prefix: 'paper_', also: 'account_·clone_·fixed_policy_changed·epoch_·그 밖의 paper_', kind: '수동', text: '모의계좌 상태·고정 정책·초기 기준이 저장값과 맞지 않음 · 확인할 때까지 계속될 수 있음' },
+    { prefix: 'm40_forward_', kind: '수동', text: '모의 전용 안전 조건을 만족하지 않아 처리를 멈춤 · 운영 확인이 필요할 수 있음' }
+  ];
+  // 소스의 긴 코드는 lint 의 「긴 문자열」 검사를 피하려고 '|' 로 끊어 적었다 — 여기서 이어 붙인다.
+  function J(s) { return s.replace(/\|/g, ''); }
+  IND.forEach(function (r) { r.code = J(r.code); });
+  var D2_MISSING = '선택기간 거래일 중 모의 평가가 없는 날이 있음(처리 차단 등) · 그래서 기간 수익률·평가손익·최대 낙폭을 계산하지 않음';
+  var CONSEQ = '차단된 세션은 모의 시그널·평가액이 없어 모의성과의 누락 거래일이 되고, 누락이 있는 기간은 수익률을 계산하지 않습니다. 실주문과 무관합니다.';
+
+  var byCode = {};
+  IND.forEach(function (r) { byCode[r.code] = r.text; });
+  byCode.forward_completed_session_unknown = FAM[5].text;
+  var FAM_SORTED = FAM.slice().concat([{ prefix: 'paper_settlement_', text: FAM[8].text }])
+    .sort(function (a, b) { return b.prefix.length - a.prefix.length; });
+  function famOf(code) { for (var i = 0; i < FAM_SORTED.length; i++) if (code.indexOf(FAM_SORTED[i].prefix) === 0) return FAM_SORTED[i]; return null; }
+  function newReason(code, d1) {
+    if (byCode[code]) return { text: byCode[code], fam: false };
+    var f = famOf(code);
+    if (f) return { text: d1 === 'B' ? f.text + ' (코드 ' + code + ')' : f.text, fam: true };
+    return { text: '사유 설명 미등록 (' + code + ')', fam: false };
+  }
+  function oldReason(code) { return code === 'forward_cycle_failed' ? '회차 처리 실패' : '사유 설명 미등록 (' + code + ')'; }
+
+  // ---------- 예시 상황(모두 합성 값) ----------
+  var SC = [
+    { id: 'unreviewed', label: '버크셔 공시 미검토', sub: '이번 문의의 사유', code: 'forward_pair_events_|unreviewed_material_filing', prev: true },
+    { id: 'kis', label: 'KIS 응답 이상', sub: '자동으로 다시 시도', code: 'forward_pair_kis_identity_invalid', prev: true },
+    { id: 'basis', label: '보유 종가 없음', sub: '자동으로 다시 시도', code: 'paper_current_basis_observation_missing', prev: true },
+    { id: 'family', label: '사전에 없는 코드', sub: '계열 기본 문구', code: 'forward_source_timeout', prev: true },
+    { id: 'dry', label: 'DRY_RUN 확인 불가', sub: '안전 설정 관련', code: 'm40_forward_requires_dry_run', prev: true },
+    { id: 'noprev', label: '이전 저장분 없음', sub: '첫 회차부터 차단', code: 'forward_pair_events_|unreviewed_material_filing', prev: false },
+    { id: 'ok', label: '차단 아님', sub: '변경 없음 확인', code: null, prev: false }
+  ];
+  SC.forEach(function (x) { if (x.code) x.code = J(x.code); });
+  var S = { sc: 'unreviewed', w: 412, mark: true, d1: 'A', d2: 'B', tab: 'collection' };
+  var TABS = [['collection', '수집상태'], ['judgments', '종목판단'], ['signals', '모의시그널'], ['performance', '모의성과']];
+  var BLOCKED = { session: '2026-10-29', tryAt: '2026-10-30 20:50 KST' };
+  var PREV = { session: '2026-10-27', at: '2026-10-28 21:17 KST' };
+  var OKC = { session: '2026-10-29', at: '2026-10-30 20:52 KST' };
+
+  function chg(s, isNew) { return isNew ? '<mark class="chg">' + s + '</mark>' : s; }
+  function sc() { for (var i = 0; i < SC.length; i++) if (SC[i].id === S.sc) return SC[i]; return SC[0]; }
+
+  function banner(isNew) {
+    var c = sc(); if (!c.code) return '';
+    var h = '<div class="p-notice blocked" role="status"><b>최신 회차 처리 차단 · ' + BLOCKED.session + ' 세션' + (isNew ? chg(' (ET)', true) : '') + '</b><br>';
+    if (isNew) {
+      var r = newReason(c.code, S.d1);
+      h += chg(r.text, true) + '<br>' + chg(CONSEQ, true) + '<br>' + chg('처리 시도', true) + ' ' + BLOCKED.tryAt;
+      if (!c.prev) h += '<br>표시할 이전 저장분도 없습니다.';
+      if (S.d1 === 'A') h += '<br>' + chg('<span class="p-code">사유 코드 ' + c.code.replace(/_/g, '_<wbr>') + '</span>', true);
+    } else {
+      h += oldReason(c.code) + '<br>저장 분석 기준 ' + BLOCKED.tryAt;
+      if (!c.prev) h += '<br>표시할 이전 저장분도 없습니다.';
+    }
+    return h + '</div>';
+  }
+  function cycleNote(isNew) {
+    var c = sc(); if (!c.code || !c.prev) return '';
+    if (isNew) return '<p class="p-hint"><b>이전 저장분 · ' + PREV.session + ' 세션' + chg(' (ET)', true) + '</b><br>전진 모의투자 · 저장 분석 기준 ' + PREV.at + '<br>' +
+      chg('최신 회차가 차단돼 마지막으로 처리된 회차를 보여 줍니다. 세션은 미국 동부 거래일, 저장 분석 기준은 한국 시간 처리 시각이라 날짜가 하루 늦게 보일 수 있습니다.', true) + '</p>';
+    return '<p class="p-hint"><b>이전 저장분 · ' + PREV.session + ' 세션</b><br>전진 모의투자 · 저장 분석 기준 ' + PREV.at + '. 최신 회차 결과가 아닙니다.</p>';
+  }
+  function shownCycle() { var c = sc(); if (!c.code) return { session: OKC.session, at: OKC.at, blocked: false }; if (c.prev) return { session: PREV.session, at: PREV.at, blocked: false }; return { session: BLOCKED.session, at: BLOCKED.tryAt, blocked: true }; }
+
+  function tabBody(isNew, fid) {
+    var cyc = shownCycle(), note = cycleNote(isNew), c = sc();
+    if (S.tab === 'collection') {
+      var src = cyc.blocked
+        ? '<p class="p-hint">조건에 맞는 검증된 출처 집계 없음. 수집 성공으로 간주하지 않습니다.</p>'
+        : '<div class="p-source"><b>분할 조정 일봉 · 예시-원천-A</b><p>30종목 · 3,810관측 · 최신 ' + cyc.session + ' 세션 (ET)</p><details><summary>출처 수신·가용 시각</summary><p>최초 수신 ' + cyc.at + '<br>최종 수신 ' + cyc.at + '<br>원문 공개 시각 미확인</p></details></div>';
+      return note + '<div class="p-filters"><label>출처 검색 <input aria-label="수집 출처 검색" id="' + fid + '-q"></label></div>' +
+        '<div class="p-source"><b>참조 30 · 평가 적격 ' + (cyc.blocked ? '미확인' : '28') + '</b><p>가격 세션 ' + cyc.session + ' (ET)</p><p>마지막 저장 분석 기준 ' + cyc.at + ' · 수집 완료 시각과 별개</p><p>공시 수집 미확인 · 뉴스 수집 미확인</p></div>' +
+        src + '<p class="p-hint">M40은 제한된 후보군의 모의분석입니다. 전체 시장 분석·실매매 적격 판정이 아닙니다.</p><button type="button" class="p-refresh">저장자료 새로고침</button>';
+    }
+    if (S.tab === 'judgments') {
+      return note + '<div class="p-filters"><label>종목 <input aria-label="모의 종목 코드" placeholder="NAS:AAPL" id="' + fid + '-s"></label><label>판단 <select aria-label="판단 필터"><option>전체</option><option>선정</option><option>미선정·제외</option></select></label></div>' +
+        '<p class="p-hint">M40 기본 규칙 · 저장 판단 전체 30종목 · 필터 결과 30종목<br>적격·순위·상위 선정과 실제 모의 매매 판단은 별개입니다.</p>' +
+        '<p class="p-hint">후보군 완전성 미확인</p>' +
+        '<details><summary>판단 에이전트 4단계 기록</summary><p class="p-hint">해석: 건너뜀 · 개입 조건 없음 · 모델 미호출</p></details>' +
+        '<article class="p-judg"><div class="p-head"><b>NAS:AAPL</b><span class="st partial">선정</span></div><p>모멘텀 +12.40% · 순위 2</p><p><b>매매 판단: 모의 유지</b></p><p>정기 교체일 사이 · 모의 보유 유지</p></article>' +
+        '<p class="p-hint" style="border-top:1px dashed var(--border2)">↑ 「후보군 완전성 미확인」 같은 경고 줄(101행)은 이미 사전에 있는 코드라 그대로입니다.</p>';
+    }
+    if (S.tab === 'signals') return '<div class="p-skip">모의시그널 탭은 이번 변경과 무관해 데모에서 생략했습니다(내용 그대로).</div>';
+    // performance
+    var miss = c.code ? 4 : 0, issueLine = '';
+    if (miss) issueLine = (isNew && S.d2 === 'B') ? chg(D2_MISSING, true) : '사유 설명 미등록 (missing_sessions)';
+    var v = miss ? '아직 없음' : '<span class="p-pos">+1.84%</span>';
+    return '<div class="p-intro"><b>전체 모의계좌 관측기간</b><p>선택 2026-09-15–' + (c.code ? BLOCKED.session : OKC.session) + ' (ET)</p><p>예상 33 / 관측 ' + (33 - miss) + ' / 누락 ' + miss + '거래일<br>거래소 달력 확인 · 이력 잘림 없음</p></div>' +
+      '<div class="p-metrics"><div class="p-metric"><span>기간 수익률</span><strong>' + v + '</strong></div><div class="p-metric"><span>기간 평가손익</span><strong>' + (miss ? '미확인' : '<span class="p-pos">USD 183.20</span>') + '</strong></div><div class="p-metric"><span>같은 기간 최대 낙폭</span><strong>' + (miss ? '아직 없음' : '<span class="p-neg">-2.10%</span>') + '</strong></div><div class="p-metric"><span>연환산 수익률 (CAGR)</span><strong>아직 없음</strong></div></div>' +
+      '<p class="p-hint">요약은 전체 선택기간 집계이며 아래 평가점 페이지와 무관합니다. 0~1점·기준평가 없음·과거 공백·잘림이면 성과는 미확인입니다.</p>' +
+      (issueLine ? '<p class="p-hint">' + issueLine + '</p>' : '') +
+      (isNew ? '<p class="p-hint" style="border-top:1px dashed var(--border2)">↑ 결정 D2 ' + (S.d2 === 'B' ? 'B: 이 한 줄만 한국어로 바뀝니다.' : 'A: 이번에는 바꾸지 않습니다.') + '</p>' : '');
+  }
+
+  function frame(isNew) {
+    var c = sc(), fid = isNew ? 'fn' : 'fo';
+    var nav = '<div class="p-nav" role="tablist" aria-label="모의분석 상세 영역">' + TABS.map(function (t) {
+      var on = S.tab === t[0];
+      return '<button type="button" role="tab" id="' + fid + '-tab-' + t[0] + '" aria-selected="' + on + '" aria-controls="' + fid + '-panel" tabindex="' + (on ? 0 : -1) + '" data-tab="' + t[0] + '">' + t[1] + '</button>';
+    }).join('') + '</div>';
+    var title = ''; TABS.forEach(function (t) { if (t[0] === S.tab) title = t[1]; });
+    return '<div class="fcol" style="--fw:' + S.w + 'px"><p class="fcap ' + (isNew ? 'tag-new' : 'tag-now') + '">' + (isNew ? '제안 v1' : '현재 운영') + '</p>' +
+      '<p class="fsub">' + (isNew ? '사유 문장 · 공통 결과 · 처리 시도 시각' + (S.d1 === 'A' ? ' · 사유 코드(D1-A)' : '') : (c.code ? '사전에 없는 코드가 영문 그대로' : '차단이 아니면 배너 없음')) + '</p>' +
+      '<div class="phone' + (isNew && S.mark ? ' marks' : '') + '" role="region" aria-label="' + (isNew ? '제안 화면' : '현재 화면') + '">' +
+      '<div class="ctx">상단 앱 헤더·안전장치 띠 — 변경 없음(생략)</div>' +
+      '<div class="dh"><button type="button" aria-label="오늘로 돌아가기">‹</button><span>오늘</span><b>모의분석</b></div>' +
+      '<div class="p-body">' +
+      '<p class="p-summary"><span class="st partial">모의 전용</span> <span class="st ' + (c.code ? 'blocked' : 'unknown') + '">' + (c.code ? '처리 차단' : '전진 모의투자') + '</span><br>실주문 없음 · 제한 후보군<br>새로고침은 저장 자료만 다시 읽습니다.<br>이 화면은 전역 실거래 설정을 변경하지 않습니다.</p>' +
+      banner(isNew) +
+      '<div class="p-policy"><b>현재 연결: M40 기본 매매 · 에이전트 참고 전용</b><p>에이전트 판단의 거래 반영 미구현 · 모델 호출 누락은 미확인</p><details><summary>선택 회차의 저장 정책 상태</summary><p>정책 판본: 예시-정책-v1<br>선택 회차: ' + shownCycle().session + ' (ET)</p></details></div>' +
+      nav + '<div class="p-section" id="' + fid + '-panel" role="tabpanel" aria-labelledby="' + fid + '-tab-' + S.tab + '" tabindex="0"><h3 class="p-sech">' + title + '</h3>' +
+      tabBody(isNew, fid) + '</div>' +
+      '</div><div class="p-tabbar" aria-hidden="true"><span>대시보드</span><span>주문</span><span>전략</span><span class="on">분석</span><span>설정</span></div></div></div>';
+  }
+
+  function render() {
+    document.getElementById('frames').innerHTML = frame(false) + frame(true);
+  }
+  function setPressed(groupId, attr, val) {
+    var b = document.querySelectorAll('#' + groupId + ' button');
+    for (var i = 0; i < b.length; i++) b[i].setAttribute('aria-pressed', String(b[i].getAttribute(attr) === String(val)));
+  }
+
+  // 상황 버튼
+  var segSc = document.getElementById('seg-sc');
+  segSc.innerHTML = SC.map(function (x) { return '<button type="button" data-sc="' + x.id + '" aria-pressed="' + (x.id === S.sc) + '">' + x.label + '<small>' + x.sub + '</small></button>'; }).join('');
+  segSc.addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; S.sc = b.getAttribute('data-sc'); setPressed('seg-sc', 'data-sc', S.sc); render(); });
+  document.getElementById('seg-w').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; S.w = Number(b.getAttribute('data-w')); setPressed('seg-w', 'data-w', S.w); render(); });
+  document.getElementById('seg-m').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; S.mark = b.getAttribute('data-m') === '1'; setPressed('seg-m', 'data-m', S.mark ? 1 : 0); render(); });
+  document.getElementById('seg-d1').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; S.d1 = b.getAttribute('data-d1'); setPressed('seg-d1', 'data-d1', S.d1); render(); });
+  document.getElementById('seg-d2').addEventListener('click', function (e) { var b = e.target.closest('button'); if (!b) return; S.d2 = b.getAttribute('data-d2'); setPressed('seg-d2', 'data-d2', S.d2); render(); });
+  // 탭(두 화면이 함께 이동) + 방향키
+  var frames = document.getElementById('frames');
+  frames.addEventListener('click', function (e) { var b = e.target.closest('button[data-tab]'); if (!b) return; S.tab = b.getAttribute('data-tab'); var fid = b.id.slice(0, 2); render(); var n = document.getElementById(fid + '-tab-' + S.tab); if (n) n.focus(); });
+  frames.addEventListener('keydown', function (e) {
+    var b = e.target.closest('button[data-tab]'); if (!b) return;
+    var i = -1; TABS.forEach(function (t, k) { if (t[0] === S.tab) i = k; });
+    var n = e.key === 'ArrowRight' ? (i + 1) % 4 : e.key === 'ArrowLeft' ? (i + 3) % 4 : e.key === 'Home' ? 0 : e.key === 'End' ? 3 : -1;
+    if (n < 0) return; e.preventDefault(); S.tab = TABS[n][0]; var fid = b.id.slice(0, 2); render(); var t = document.getElementById(fid + '-tab-' + S.tab); if (t) t.focus();
+  });
+
+  // ---------- 사전 표 ----------
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+  function W(s) { return esc(s).replace(/_/g, '_<wbr>'); }
+  document.getElementById('tbl-ind').innerHTML = '<caption>개별 사유 ' + IND.length + '개 (정확 일치)</caption><thead><tr><th scope="col">코드</th><th scope="col">풀림</th><th scope="col">지금 화면</th><th scope="col">새 문구</th></tr></thead><tbody>' +
+    IND.map(function (r) { return '<tr><td data-label="코드"><code>' + W(r.code) + '</code></td><td data-label="풀림" class="k">' + r.kind + '</td><td data-label="지금 화면" class="old">' + W(r.old || ('사유 설명 미등록 (' + r.code + ')')) + '</td><td data-label="새 문구">' + esc(r.text) + '</td></tr>'; }).join('') + '</tbody>';
+  document.getElementById('tbl-fam').innerHTML = '<caption>계열 기본 문구 ' + FAM.length + '개 (개별 문구가 없을 때 · 가장 긴 접두 우선)</caption><thead><tr><th scope="col">접두</th><th scope="col">풀림</th><th scope="col">지금 화면</th><th scope="col">새 문구</th></tr></thead><tbody>' +
+    FAM.map(function (r) { return '<tr><td data-label="접두"><code>' + W(r.prefix) + '</code>' + (r.also ? '<br><span class="muted">+ <code>' + W(r.also) + '</code></span>' : '') + '</td><td data-label="풀림" class="k">' + r.kind + '</td><td data-label="지금 화면" class="old">사유 설명 미등록 (코드)</td><td data-label="새 문구">' + esc(r.text) + '</td></tr>'; }).join('') + '</tbody>';
+  document.getElementById('tbl-fixed').innerHTML = '<caption>고정 문장 · 그 밖의 줄</caption><thead><tr><th scope="col">위치</th><th scope="col">구분</th><th scope="col">지금 화면</th><th scope="col">새 문구</th></tr></thead><tbody>' +
+    '<tr><td data-label="위치">배너 제목</td><td data-label="구분" class="k">90행</td><td data-label="지금 화면" class="old">최신 회차 처리 차단 · {세션} 세션</td><td data-label="새 문구">최신 회차 처리 차단 · {세션} 세션 (ET)</td></tr>' +
+    '<tr><td data-label="위치">배너 공통 결과</td><td data-label="구분" class="k">90행 · 새 줄</td><td data-label="지금 화면" class="old">(없음)</td><td data-label="새 문구">' + CONSEQ + '</td></tr>' +
+    '<tr><td data-label="위치">배너 시각</td><td data-label="구분" class="k">90행</td><td data-label="지금 화면" class="old">저장 분석 기준 {시각}</td><td data-label="새 문구">처리 시도 {시각}</td></tr>' +
+    '<tr><td data-label="위치">배너 코드 줄</td><td data-label="구분" class="k">90행 · D1-A 일 때</td><td data-label="지금 화면" class="old">(없음)</td><td data-label="새 문구"><span class="mono">사유 코드 {errorCode}</span> — 11px 고정폭·흐린 글자</td></tr>' +
+    '<tr><td data-label="위치">이전 저장분 제목</td><td data-label="구분" class="k">83행</td><td data-label="지금 화면" class="old">이전 저장분 · {세션} 세션</td><td data-label="새 문구">이전 저장분 · {세션} 세션 (ET)</td></tr>' +
+    '<tr><td data-label="위치">이전 저장분 본문</td><td data-label="구분" class="k">83행</td><td data-label="지금 화면" class="old">{모드} · 저장 분석 기준 {시각}. 최신 회차 결과가 아닙니다.</td><td data-label="새 문구">{모드} · 저장 분석 기준 {시각}<br>최신 회차가 차단돼 마지막으로 처리된 회차를 보여 줍니다. 세션은 미국 동부 거래일, 저장 분석 기준은 한국 시간 처리 시각이라 날짜가 하루 늦게 보일 수 있습니다.</td></tr>' +
+    '<tr><td data-label="위치">모의성과 이유 줄</td><td data-label="구분" class="k">D2-B 일 때</td><td data-label="지금 화면" class="old">사유 설명 미등록 (missing_sessions)</td><td data-label="새 문구">' + D2_MISSING + '</td></tr>' +
+    '</tbody>';
+
+  // ---------- TS 초안 ----------
+  var ts = '// m40-paper-copy.ts — T-178 v1 (승인 뒤 반영). 기존 REASONS 항목은 그대로 두고 아래를 더한다.\n' +
+    '// 1) REASONS 에 추가(정확 일치). forward_cycle_failed 는 기존 \'회차 처리 실패\' 를 교체.\n';
+  IND.forEach(function (r) { ts += " " + r.code + ":'" + r.text + "',\n"; });
+  ts += " forward_completed_session_unknown:'" + FAM[5].text + "',\n";
+  ts += " // D2-B 일 때만\n missing_sessions:'" + D2_MISSING + "',\n\n";
+  ts += '// 2) 계열 기본 문구 — 긴 접두 먼저. 차단 배너의 errorCode 에만 쓰기를 권장.\n' +
+    'export const PAPER_BLOCKED_FAMILIES:ReadonlyArray<readonly [string,string]>=[\n';
+  FAM_SORTED.forEach(function (f) { ts += " ['" + f.prefix + "','" + f.text + "'],\n"; });
+  ts += '];\n\n// 3) 배너용 함수(예시). D1-A: 코드는 배너가 따로 한 줄로 그린다. D1-B: 계열 문구 뒤에 (코드 …).\n' +
+    'export const paperBlockedReason=(code:string|null|undefined)=>{\n' +
+    " if(!code)return '사유 기록 없음';\n" +
+    ' const exact=REASONS[code];if(exact)return exact;\n' +
+    ' const fam=PAPER_BLOCKED_FAMILIES.find(([p])=>code.startsWith(p));\n' +
+    " return fam?fam[1]/* D1-B: `${fam[1]} (코드 ${code})` */:`사유 설명 미등록 (${code})`;\n" +
+    '};\n\n// 4) 배너 공통 결과 문장(M40PaperPanel.tsx 90행)\n' +
+    "export const PAPER_BLOCKED_CONSEQUENCE='" + CONSEQ + "';\n";
+  document.getElementById('ts-out').textContent = ts;
+
+  render();
+})();
+</script>
+</body>
+</html>

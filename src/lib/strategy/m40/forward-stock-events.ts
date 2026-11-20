@@ -39,6 +39,25 @@ export const BRK_MATERIAL_REVIEW=Object.freeze({
 for(const material of BRK_MATERIAL_REVIEW.materials){if('exhibit' in material)Object.freeze(material.exhibit);Object.freeze(material);}
 Object.freeze(BRK_MATERIAL_REVIEW.materials);Object.freeze(BRK_MATERIAL_REVIEW.artifacts);
 export const brkMaterialReviewSha=()=>hash(JSON.stringify(BRK_MATERIAL_REVIEW));
+/**
+ * T-178 form-class pass set — a separate constant: BRK_MATERIAL_REVIEW (bytes and hash) stays pinned to the envelope contract.
+ * Judged on SEC `form` metadata only; filing bodies are never read, so a stock event merely mentioned inside a passing form is not caught here
+ * (remaining defenses: 8-K/10-Q/10-K/proxy stay under finite review, any Alpaca BRK.B corporate-action row blocks, KIS/Kibot pair cross-checks).
+ * Exact string match, no trim/case/space normalization: unknown or re-labelled forms (e.g. legacy `SC 13G`) fail closed.
+ * One frozen tuple per group so dropping a group is a one-line deletion; bump `version` if the set changes after a release has run with it.
+ */
+export const BRK_SEC_FORM_PASS=Object.freeze({
+ version:'brkb_sec_form_class_20261120_v1',
+ groups:Object.freeze({
+  insiderOwnership:Object.freeze(['3','3/A','4','4/A','5','5/A','144'] as const), // filed by officers/major holders, not an issuer stock-event channel (absorbs the pre-T-178 Form 4 exception)
+  institutionalHoldings:Object.freeze(['13F-HR','13F-HR/A','13F-NT','13F-NT/A'] as const), // Berkshire as investment manager listing other issuers' holdings
+  passiveBeneficialOwnership:Object.freeze(['SCHEDULE 13G','SCHEDULE 13G/A'] as const), // >5% passive ownership reports (filer or subject)
+  activeBeneficialOwnership:Object.freeze(['SCHEDULE 13D','SCHEDULE 13D/A'] as const), // kept by user decision 2026-11-20 (T-178 C1 Codex medium not adopted; residual risk: may disclose exchange/merger terms where BRK is the subject)
+  registeredOffering:Object.freeze(['FWP','424B2','424B5'] as const), // kept by user decision 2026-11-20 (T-178 C1 Codex high not adopted; residual risk: a rights-type offering is not distinguishable by form)
+ }),
+});
+const BRK_SEC_FORM_PASS_FORMS:ReadonlySet<string>=new Set(Object.values(BRK_SEC_FORM_PASS.groups).flat());
+const brkSecFormPasses=(form:unknown):boolean=>typeof form==='string'&&BRK_SEC_FORM_PASS_FORMS.has(form);
 export function validateBrkSecSnapshot(page:BrkEvidencePage,queryDate:string,asOfClose:string,now:string):{observedAt:string;reviewManifestSha256:string}{
  const at=normalizeForwardUtc(page.observedAt),cutoff=normalizeForwardUtc(now),close=normalizeForwardUtc(asOfClose);
  if(page.http!==200||!at||!cutoff||!close||at<close||at>cutoff||brkNyDate(at)!==queryDate||brkNyDate(cutoff)!==queryDate||Object.keys(page.request).length!==0||hash(page.rawJson)!==page.sha256||Buffer.byteLength(page.rawJson)>512*1024)return fail('sec_proof_invalid');
@@ -51,9 +70,12 @@ export function validateBrkSecSnapshot(page:BrkEvidencePage,queryDate:string,asO
   const date=r.filingDate[i],acceptance=normalizeForwardUtc(r.acceptanceDateTime[i] as string),accession=r.accessionNumber[i];
   if(typeof date!=='string'||!validForwardSessionDate(date)||date>queryDate||!acceptance||acceptance>at||typeof accession!=='string'||!/^\d{10}-\d{2}-\d{6}$/.test(accession)||seen.has(accession))return fail('sec_clock_or_identity_invalid');
   seen.add(accession);if(date<oldest)oldest=date;if(date<from)continue;
-  if(r.form[i]==='4'&&r.items[i]===''&&typeof r.primaryDocument[i]==='string'&&r.primaryDocument[i])continue; // ownership metadata only; not a whole-body financial/basis review.
+  // 1) Finite human review first: a reviewed accession must match all four fields and never falls through to the form-class rule.
   const known=BRK_MATERIAL_REVIEW.materials.find(m=>m.accession===accession);
-  if(!known||known.form!==r.form[i]||known.primaryDocument!==r.primaryDocument[i]||known.items!==r.items[i]||known.acceptedAt!==acceptance)return fail('unreviewed_material_filing');
+  if(known){if(known.form!==r.form[i]||known.primaryDocument!==r.primaryDocument[i]||known.items!==r.items[i]||known.acceptedAt!==acceptance)return fail('unreviewed_material_filing');continue;}
+  // 2) Form-class metadata only (not a whole-body financial/basis review): exact pass-set form, empty items, named primary document. 3) Anything else stays closed.
+  if(brkSecFormPasses(r.form[i])&&r.items[i]===''&&typeof r.primaryDocument[i]==='string'&&r.primaryDocument[i])continue;
+  return fail('unreviewed_material_filing');
  }
  if(oldest>from)return fail('sec_recent_coverage_incomplete');return {observedAt:at,reviewManifestSha256:brkMaterialReviewSha()};
 }
