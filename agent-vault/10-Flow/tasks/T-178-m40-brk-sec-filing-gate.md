@@ -25,7 +25,7 @@ execution_context:
   current_tool: claude
   current_procedure: claude_standard
   current_scope: 원인 확인·설계부터 구현·감사·QA·커밋·작업 브랜치 push·PR 생성까지(main 반영 = 운영 배포는 PR 검토 뒤 사용자 결정)
-  last_event_id: E2
+  last_event_id: E3
 ---
 
 # T-178 모의분석 회차가 버크셔 SEC 공시 때문에 연속 차단되는 문제
@@ -412,6 +412,7 @@ execution_context:
 
 - 2026-11-20 미배포 — 작업 브랜치 `t178-m40-brk-sec-form-gate` push + Gitea PR 생성(base `main`). main 머지 = webhook blue/green 운영 배포라 **사용자 PR 검토·승인 뒤에만**. PR 링크는 아래 최종 요약.
 - 2026-11-20 11:5x 작업 브랜치 `t178-m40-brk-sec-form-gate` push(코드 커밋 `2cad62e`, 커밋 훅 「Reviewer 감사 기록 확인: T-178」) → **PR #2** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/2 (base `main` = `2a3ae448`, mergeable). 웹훅은 브랜치 push 를 배포하지 않았다(웹훅 로그에 새 START 없음, 운영 릴리스 `20261120-105307-2a3ae448` 그대로).
+- 2026-11-20 11:5x **사용자 머지 승인**: 「검토 후 머지해줘」 + 시점 질문(국내 장중 11:51 KST, `docs/deploy-order.md` 「장중 임의 배포 — 사용자 합의 없이 하지 않는다」)에 선택형 답변 「지금 머지(장중 배포)」. 머지 전 검토: PR head `99548f3`(QA 검증 코드 커밋 `2cad62e` + 기록 커밋), main `2a3ae44` 는 b85a557 대비 `AGENTS.md`·`CLAUDE.md` 각 1줄(다른 세션 문서)만 앞서 있고 이번 파일과 겹침 0, 운영 `20261120-105307-2a3ae448` health green(dryRun true·killSwitch false). 같은 배포에 실리는 다른 작업: `2a3ae44`(문서, 이미 운영 반영본과 동일 sha 계열). 배포 결과는 머지 뒤 이 절에 덧붙인다(main 에 다시 push 하면 재배포가 일어나므로 결과 기록은 작업 브랜치에만 남긴다).
 
 ## 실행 도구·절차 이력
 
@@ -419,6 +420,7 @@ execution_context:
 |---|---|---|---|---|---|
 | E1 | 2026-11-20 10:1x | start | claude / claude_standard | 원인 확인·설계부터 구현·감사·QA·커밋·브랜치 push·PR 생성까지(main 반영 제외) | 사용자 「PR을 생성하여 사용자가 검토 후 커밋 및 푸시」 + 「권고안대로 진행」 |
 | E2 | 2026-11-20 11:5x | handoff-wait | claude / claude_standard | 작업 브랜치 커밋·push·PR 생성 완료, main 반영은 사용자 대기 | 같은 지시(「PR을 생성하여 사용자가 검토 후 커밋 및 푸시」) |
+| E3 | 2026-11-20 11:5x | deploy | claude / claude_standard | PR #2 main 머지(=운영 배포)·배포 확인 | 사용자 「검토 후 머지해줘」 + 「지금 머지(장중 배포)」 |
 
 ## 최종 요약
 
