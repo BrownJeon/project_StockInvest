@@ -139,6 +139,8 @@ Reviewer(T-181 23:12) 권고안 ①+② 결합. `lookupTier` 만 최신 행으�
 
 ## 배포 기록
 
+- [23:59] 서버 worktree 브랜치 `t184-held-symbol-tier` 커밋 `812e0fd`(코드+기록, 커밋 훅 「Reviewer 감사 기록 확인: T-184」 — 다른 task ID 없음) → 브랜치 push(웹훅은 `/main` 으로 끝나는 ref 만 배포 — 배포 없음) → **PR #9** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/9 (head `812e0fd`, base `main`=`774bef6`, 본문 U+FFFD 0·원본 일치 확인). 머지(=운영 배포)는 사용자 승인 대기.
+
 ## 실행 도구·절차 이력
 
 - E1 2026-11-20 23:30 KST — 시작 도구 claude(T-181 세션이 시작한 하위 세션의 메인 세션이 Leader 역할 겸임), 절차 claude_standard. 범위: 설계·구현·감사·QA·서버 커밋·PR 생성. 근거: 상위 세션 지시(위 원문). 남은 일: Reviewer → judge C2/Codex → QA → PR.
