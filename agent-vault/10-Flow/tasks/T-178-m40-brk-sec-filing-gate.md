@@ -1,8 +1,8 @@
 ---
 task_id: T-178
 title: 모의분석(M40) 회차가 버크셔 SEC 공시 때문에 11-13 세션부터 연속 차단되는 문제 — 공시 판정 규칙 개선 + 화면 차단 사유 문구 보강
-status: review
-waiting: 사용자 PR 검토 후 main 머지(= webhook 운영 배포) 결정 · 머지 뒤 첫 정상 회차와 앱 화면 문구 확인
+status: done
+waiting: 오늘(11-20) 20:45 KST 이후 모의분석 첫 회차가 forward 로 저장되는지 · 앱 「분석 → 모의분석」 배너가 사라지거나 한국어 사유로 보이는지(사용자 확인)
 priority: high
 project: StockInvest
 created: 2026-11-20
@@ -413,6 +413,10 @@ execution_context:
 - 2026-11-20 미배포 — 작업 브랜치 `t178-m40-brk-sec-form-gate` push + Gitea PR 생성(base `main`). main 머지 = webhook blue/green 운영 배포라 **사용자 PR 검토·승인 뒤에만**. PR 링크는 아래 최종 요약.
 - 2026-11-20 11:5x 작업 브랜치 `t178-m40-brk-sec-form-gate` push(코드 커밋 `2cad62e`, 커밋 훅 「Reviewer 감사 기록 확인: T-178」) → **PR #2** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/2 (base `main` = `2a3ae448`, mergeable). 웹훅은 브랜치 push 를 배포하지 않았다(웹훅 로그에 새 START 없음, 운영 릴리스 `20261120-105307-2a3ae448` 그대로).
 - 2026-11-20 11:5x **사용자 머지 승인**: 「검토 후 머지해줘」 + 시점 질문(국내 장중 11:51 KST, `docs/deploy-order.md` 「장중 임의 배포 — 사용자 합의 없이 하지 않는다」)에 선택형 답변 「지금 머지(장중 배포)」. 머지 전 검토: PR head `99548f3`(QA 검증 코드 커밋 `2cad62e` + 기록 커밋), main `2a3ae44` 는 b85a557 대비 `AGENTS.md`·`CLAUDE.md` 각 1줄(다른 세션 문서)만 앞서 있고 이번 파일과 겹침 0, 운영 `20261120-105307-2a3ae448` health green(dryRun true·killSwitch false). 같은 배포에 실리는 다른 작업: `2a3ae44`(문서, 이미 운영 반영본과 동일 sha 계열). 배포 결과는 머지 뒤 이 절에 덧붙인다(main 에 다시 push 하면 재배포가 일어나므로 결과 기록은 작업 브랜치에만 남긴다).
+- 2026-11-20 11:56:36 KST **PR #2 머지**(Gitea API, `head_commit_id`=`a3f02cc` 고정) → 머지 커밋 `08657ef`. webhook `START sha=08657ef` 02:57:12 UTC(11:57:12 KST) → `RELEASE_RESULT {"status":"ok","release":"20261120-115721-08657efd","previous":".../20261120-105307-2a3ae448","migrated":false}` → `END exit=0` 02:58:23 UTC. 롤백 지점 `20261120-105307-2a3ae448`.
+- 배포 후 확인(11:58~12:00 KST, 읽기 전용): `current` → `20261120-115721-08657efd` · health `ok`·db true·`safetyStatus green`·dryRun true·killSwitch false · pm2 `stockinvest`·`stockinvest-cron` online·restarts 0·cwd 새 릴리스 · 러너 1개(+ 손절 알림 티커 자식) · 안전 키 6개 불변(`safety_dry_run` true·`safety_kill_switch` false·`exit_engine_enabled` true·`exit_hard_stop_enabled` false·`autopilot_mode` auto·`engine_enabled` true, updated_at 변동 없음) · 배포된 소스에 `BRK_SEC_FORM_PASS`·`paperBlockedReason` 존재 · `stop-alert` 11:57:00·11:58:00 정상(장중 공백 없음) · 배포 뒤 `cron-out` 의 `FAILED`·`HTTP=000` 0줄, 러너 재시작 시 「웹 응답 확인 — 2초 대기」로 기동 대기 동작 · `pm2-err` 배포 뒤 새 줄 0(마지막 11:56:31 은 배포 전 상시 간헐 `job-run-log` 503, 11:57:32 회복).
+- 미확인: M40 효과는 오늘 20:45 KST 정기 수집(세션 11-19) 뒤에야 보인다 · 앱 화면(로그인 필요) · 앱 화면은 로그인이 필요해 미확인.
+- 2026-11-20 12:1x KST 사용자 지시 「배포 결과 기록도 main에 올려줘」로 이 기록을 main 에 반영(문서 전용 커밋 — push 가 webhook 재배포를 한 번 더 일으킴, 국내 장중; 그 재배포 결과는 채팅 보고와 다음 기록에 남긴다).
 
 ## 실행 도구·절차 이력
 
@@ -426,12 +430,12 @@ execution_context:
 
 ### [T-178] 모의분석이 버크셔 공시 때문에 계속 「처리 차단」되는 문제
 
-- **상태**: review — 구현·Reviewer pass(2회)·Codex C1/C2·QA pass(결함 0). 작업 브랜치 PR 로 사용자 검토 대기, **main 미반영·미배포**.
+- **상태**: done — 구현·Reviewer pass(2회)·Codex C1/C2·QA pass(결함 0)·PR #2 사용자 승인 머지·**운영 배포 완료 2026-11-20 11:58 KST**(릴리스 `20261120-115721-08657efd`, 장중 배포는 사용자 결정). 남은 것은 오늘 밤 첫 회차·앱 화면 확인.
 - **무엇이 바뀌었나**
   - 원인: 모의분석(M40, 실주문 없음)은 회차마다 버크셔(BRK.B)의 최근 14일 SEC 공시를 보고, Form 4 외 공시가 코드 속 「검토 완료 목록」(3건)에 없으면 회차 전체를 막았다. 11-13 FWP 이후 13F-HR·13G/13G/A·13D/A·424B5 등 **목록 밖 9건** 때문에 11-13·11-16·11-17·11-18 세션이 연속 차단됐다(11-17 은 KIS 응답 오류 별건). 차단 회차는 신호·평가액이 없어 성과 집계에서 빠지고, 누락 거래일이 있는 기간은 수익률을 계산하지 않는다.
   - 규칙: 검토 목록을 먼저 보고(4항목 정확 일치), 목록 밖이면 **공시 종류가 고정 통과 집합에 정확히 일치할 때만** 통과 — 내부자 지분(3·4·5 및 /A, 144)·기관 보유(13F-HR·13F-NT 및 /A)·대량보유(SCHEDULE 13G·13D 및 /A)·채권 공모 서류(FWP·424B2·424B5). 8-K·10-Q·10-K·위임장·모르는 종류는 지금처럼 차단. 정규화 없음. `BRK_MATERIAL_REVIEW` 와 그 해시 불변(`forward-stock-events.ts`).
   - 화면: 분석 → 모의분석 차단 배너가 원 코드(「사유 설명 미등록 (…)」) 대신 한국어 사유를 보이고, 세션에 「(ET)」, 시각 라벨 「처리 시도」, 공통 결과 문장(누락 거래일 → 기간 수익률 미계산, 실주문 무관), 작은 사유 코드 줄을 둔다. 모의성과 탭 `missing_sessions` 문구 추가.
-- **배포**: 미배포 — **PR #2** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/2 사용자 검토 대기. PR 머지가 곧 운영 배포다. 같은 배포에 실릴 다른 작업: 머지 시점 `main` 의 선행 커밋(작성 시점 `2a3ae448` — 다른 세션의 `AGENTS.md`·`CLAUDE.md` 변경).
+- **배포**: 2026-11-20 11:57~11:58 KST webhook blue/green `RELEASE_RESULT ok`(머지 커밋 `08657ef`, migrated false). 같은 배포에 실린 다른 작업: `2a3ae44`(다른 세션 문서 `AGENTS.md`·`CLAUDE.md`). 원래 PR: **PR #2** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/2 사용자 검토 대기. PR 머지가 곧 운영 배포다. 같은 배포에 실릴 다른 작업: 머지 시점 `main` 의 선행 커밋(작성 시점 `2a3ae448` — 다른 세션의 `AGENTS.md`·`CLAUDE.md` 변경).
 - **AI 가 검증한 것**: m40·화면 시험(forward-stock-events 92·t178 41·t156 렌더 44 통과), `tsc` 0, 전체 jest 13,129건 — base 와 실패 10건 이름·메시지 동일(새 실패 0), 변이 시험(접두 일치·대소문자·items 조건·8-K 추가·판정 순서) 전부 포착, 커밋 훅 사전 실행 rc 0, 실제 9건이 새 규칙에서 통과(보관 원본 추출 fixture).
 - **AI 가 검증하지 못한 것**: 브라우저·실기기 화면 렌더, `next build`(운영 `shared/` 의 `file:` 의존성 5건으로 base 도 같은 실패 — 번들 단계 미검증), 공시 본문 내용(종류만 봄), 데모 게이트 도구 기록(`check.mjs` 가 서버 worktree 를 미등록으로 거부 — 승인은 선택형 답변 원문으로 기록).
 - 👉 **사용자가 확인할 것**: ① PR 소스 검토 ② 승인 데모 v1 과 다른 문구 2곳 — DRY_RUN 사유의 「서버 공용 실거래여부가 꺼져 있음(주문 차단)」(화면 용어 규칙), 미검토 공시 사유 끝 「…배포된 뒤의 다음 세션부터 풀림 · 이미 차단된 세션은 복구되지 않음」(Codex C2 사실 정정) ③ 머지 뒤 첫 정상 세션 회차가 `forward` 로 저장되는지(정기 수집 20:45 KST 이후), 앱 「분석 → 모의분석」 배너가 사라지거나 한국어 사유로 보이는지.
