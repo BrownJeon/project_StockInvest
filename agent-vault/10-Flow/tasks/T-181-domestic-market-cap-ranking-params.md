@@ -1,8 +1,8 @@
 ---
 task_id: T-181
 title: 국내 시총 순위 조회 요청 파라미터 오류 수정 — 국내 universe 등급(core·satellite)이 매겨지지 않아 국내 매수 후보 전부가 코어 비율 가드에 막히는 문제
-status: review
-waiting: [pr_merge_approval]
+status: done
+waiting: [domestic_session_observation, kill_switch_user_decision]
 priority: high
 project: StockInvest
 created: 2026-11-20
@@ -373,6 +373,8 @@ demo_gate:
 ## 배포 기록
 
 - [23:25] 서버 worktree 브랜치 `t181-domestic-index-tier` 커밋 `cfaa186`(코드, 커밋 훅 「Reviewer 감사 기록 확인: T-181」) + `ea5ba80`(기록) → 브랜치 push(웹훅은 `/main` 으로 끝나는 ref 만 배포 — 배포 없음) → **PR #8** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/8 (head `ea5ba80`, base `main`=`8d9e980`). 머지(=운영 배포)는 사용자 승인 대기.
+- [23:20] 사용자 「지금 머지해줘」(23:18) → 승인 원문 커밋 `0bb9535` 를 브랜치에 push 한 뒤 Gitea API 머지(`head_commit_id=0bb9535`, 검토한 head 고정) → 머지 커밋 **`774bef6`** → 웹훅 `START sha=774bef6`(23:19:31 KST) → `RELEASE_RESULT ok` 릴리스 `20261120-231945-774bef64`, `migrated:false`, `END exit=0`(23:20:17). 롤백 대상 `20261120-224257-8d9e9803`. 배포 후 확인(23:20): 운영 `package.json` 0.20.0 · pm2 `stockinvest`·`stockinvest-cron` online·restarts 0 · health ok·db·safetyStatus green·dryRun true. 같은 배포에 실린 다른 작업 없음. 미국 장중 배포(사용자 합의).
+- [23:21] ⚠ health `killSwitch:true` — **T-181 과 무관**: `system_config.safety_kill_switch=true` updated 21:42:26, 로그 `[kill-switch:drawdown] 자동 발동: 24h 손실 -10.2% (-1,884,476원) — 임계 -10% 초과`(21:42:27, 배포 37분 전). 해제는 사용자 전용이라 건드리지 않음. 켜져 있는 동안 국내 장중 관측(가상 체결 발생)이 영향을 받을 수 있다 [추측 — 엔진의 킬스위치 처리 경로 미확인].
 
 ## 실행 도구·절차 이력
 
@@ -398,16 +400,16 @@ demo_gate:
 
 ### [T-181] 국내 종목 등급을 지수 편입 표시로 매기기 — 국내 매수 후보 전면 차단 해소
 
-- **상태**: ⏳ 구현·감사·QA 완료, **PR 검토·머지(=운영 배포) 승인 대기**.
+- **상태**: ✅ 운영 배포 완료(2026-11-20 23:20 KST, 0.20.0) · ⏳ 다음 국내 장중 관측 대기 · ⚠ 킬스위치 자동 발동 중(이 task 와 무관, 21:42).
 - **무엇이 바뀌었나**
   - 원인: 국내 시총 순위 조회가 KIS 규격과 다른 요청(코스피 필수 필드 누락·코스닥 시장코드 `Q`)이라 처음부터 한 번도 성공하지 않았다. 그래서 국내 종목이 전부 `speculative` 로 매겨졌고, 자동 모드의 코어 비율 가드가 11-16 이후 국내 매수 후보 3,630건을 모두 막았다(국내 가상 체결 0건).
   - 국내 등급을 시세 응답의 지수 편입 표시로 매긴다: KOSPI200 → core, 코스닥150 → satellite, 그 밖 → speculative(사용자 결정). 순위 조회는 갱신 경로에서 뺐고, 함수는 KIS 규격대로 고쳐 남겼다.
   - 분석 후보 선택(정적 목록 → 거래대금 순 상위)은 그대로다. 정적 목록 중복 1개 제거. 웹 버전 0.19.0 → 0.20.0.
-- **배포**: ⏸ 미배포 — PR 머지가 곧 main push = 운영 blue/green 배포라 사용자 승인 뒤. 같은 배포에 실릴 다른 작업: 없음(base `8d9e980` 위 이 task 커밋만). DB 구조 변경·앱(APK) 변경 없음.
+- **배포**: ✅ PR #8 머지 커밋 `774bef6` · 2026-11-20 23:19:31~23:20:17 KST webhook blue/green · `RELEASE_RESULT ok`(릴리스 `20261120-231945-774bef64`, 마이그레이션 없음) · 사용자 「지금 머지해줘」(미국 장중 배포 합의). 같은 배포에 실린 다른 작업: 없음. DB 구조·앱(APK) 변경 없음. 롤백: 이전 릴리스 `20261120-224257-8d9e9803`.
 - **AI 가 검증한 것**: 운영 KIS 읽기 전용 실측(순위 API 규격·30행 상한, 시세의 `hts_avls` 억원 단위·`rprs_mrkt_kor_name` 값) · 새 시험 41건 포함 관련 시험 통과 · 전체 jest base 대비 새 실패 0 · `tsc` 0 · `next build` rc 0 · Reviewer PASS(low 3 + Codex 지적 부분 채택) · QA pass(안전장치 경로 diff 변경 0).
   - 검증 못 한 것: 실제 운영 갱신에서의 등급 저장 결과와 국내 가상 체결 건수(배포 뒤 첫 국내 장중에 읽기 전용으로 확인) · 안전장치 런타임 mock 실행(이번 diff 가 그 경로를 건드리지 않음만 확인) · lint(설정 없음).
 - **👉 사용자가 확인할 것**: PR 의 소스 검토. 배포 뒤 화면 확인은 필수 아님 — 다음 국내 장중(평일 09:00~) 이후 AI 가 `symbol_universe` 국내 core·satellite 행 생성, `eval_funnel` 의 `portfolio_core_ratio` skip 감소, 국내 `paper_fills origin=engine` 발생(하루 수십~백여 건 추정)을 읽기 전용으로 확인한다. 이상 기준: 장중인데 국내 core 0개 / 승인 가능 상태 매수 시그널 생성 / 하루 수천 건.
-- **👉 사용자가 결정할 것**: ① PR 머지(=배포) 승인 — 권고: 장 마감 뒤 창(15:40~20:00 KST 또는 05:10~06:50)에 머지 ② 후속 task 「코어 비율 가드의 보유 종목 등급 보존」 등록 여부(아래).
+- **👉 사용자가 결정할 것**: ① 킬스위치 해제 여부(21:42 drawdown 자동 발동, 사용자 전용 — 이 task 와 무관) ② 후속 task 「코어 비율 가드의 보유 종목 등급 보존」 등록 여부(아래).
 - **남은 일 (후속 후보)**
   - 코어 비율 가드의 보유 종목 등급 보존: 등급 저장이 전략 점수 선별에 묶여 있어, 보유 종목이 선별에서 빠지면 과거 등급이 최대 48시간 남거나(낡은 core 로 통과 — Codex 지적) 48시간 뒤 unknown 으로 차단된다. 현 보유(삼성전자)에선 가능성 매우 낮음. 저장소 분리가 필요해 DDL 승인 사항일 수 있다.
   - 화면·로그 문구 「코어(KOSPI 100) 비율 미달」 → 새 기준(KOSPI200 편입)에 맞게(`engine.ts`·`portfolio-stability.ts`·`ai-filter.ts`·`skip-reason-formatter.ts`).
