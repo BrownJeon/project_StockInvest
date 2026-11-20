@@ -25,7 +25,7 @@ execution_context:
   current_tool: claude
   current_procedure: claude_standard
   current_scope: 원인 확인·설계부터 구현·감사·QA·PR 생성까지. main 머지(=운영 배포)는 PR 검토 후 사용자 승인
-  last_event_id: E4
+  last_event_id: E5
 ---
 
 # T-179 앱 시작 시 DB 준비(setupDB) 지연 해소
@@ -170,6 +170,8 @@ execution_context:
 
 ## 배포 기록
 
+- [17:36] 후속 1 — PR #5(https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/5) 머지, 머지 커밋 `b3e1d3e`(한글 문구, 검토한 head `7e5726a` 고정). 사용자 「머지해줘」(2026-11-20). 첫 요청은 head SHA 오기로 409, 둘째는 405 로 거부됐고 같은 요청 재시도에서 머지됨(검토하지 않은 커밋 혼입 없음).
+- [17:37] webhook blue/green 배포 `RELEASE_RESULT ok` — 릴리스 `20261120-173633-b3e1d3ea`(이전 `20261120-121651-cbe24e2e`), 마이그레이션 없음. 같은 배포에 실린 다른 작업: 없음. 헬스 ok·db true·schemaFatal false·safety green. 시작 진단 `ensure_setup` complete 592 ms·5221 ms(둘 중 하나는 release.sh 가 잠깐 띄운 옛 경로 프로세스). 바뀐 것은 훅·훅 시험·문서뿐이라 운영 동작 변화 없음.
 - [12:10] PR #3 머지 — 머지 커밋 `a6125c8`(한글 문구, Gitea API). 머지 직전 main `08657ef`(T-178) 와 바뀐 파일 겹침 없음, mergeable=true.
 - [12:11] webhook blue/green 배포 `RELEASE_RESULT ok` — 릴리스 `20261120-121047-a6125c85`(이전 `20261120-115721-08657efd`). DB 마이그레이션 없음. 같은 배포에 실린 다른 작업: 없음(main 은 T-178 병합 `08657ef` 위에 이 머지만).
 - [12:11] 운영 시작 진단: 새 프로세스의 `ensure_setup` **5.1초** 완료(변경 전 배포들 13~124초), complete 1건. `ensure_setup start` 2줄 중 1줄은 release.sh 가 옛 경로(옛 코드)로 잠깐 띄운 프로세스(예상대로). 헬스 200·db true·schemaFatal false·safety green·DRY_RUN 켜짐·Kill Switch 꺼짐. `1205`·부팅 DDL 알림 0건.
@@ -183,6 +185,7 @@ execution_context:
 | E2 | 2026-11-20 12:2x | handoff | claude / claude_standard | Reviewer PASS(재검증 포함)·QA pass 후 브랜치 커밋·push·Gitea PR 생성. 머지는 사용자 승인 대기 | 사용자 「이번에는 PR등록해서 관리」 |
 | E3 | 2026-11-20 12:10 | deploy | claude / claude_standard | PR #3 검토·한글 문구로 머지(=운영 배포)·배포 확인 | 사용자 「검토 후 머지해주고 머지할 때의 문구도 한글로 기록해줘」 |
 | E4 | 2026-11-20 17:0x | resume | claude / claude_standard | 후속 1 — 커밋 훅 감시 목록에 새 시험 3개 추가(구현·Reviewer·QA·브랜치 커밋·PR 생성). 머지는 PR 검토 후 | 사용자 「커밋 훅 감시 목록에 새 시험 추가 PR로 진행」 |
+| E5 | 2026-11-20 17:36 | deploy | claude / claude_standard | 후속 1 PR #5 한글 문구 머지(=운영 배포)·배포 확인 | 사용자 「머지해줘」 |
 
 ## 최종 요약
 
@@ -195,5 +198,5 @@ execution_context:
 - **AI 가 검증하지 못한 것**: 공유 DB 가 바쁜 시각(장중·다른 앱 부하)의 시작 시간 — 다음 배포들의 시작 진단으로 확인.
 - **👉 사용자가 확인할 것**: 없음.
 - **👉 사용자가 결정할 것**: release.sh 가 배포마다 옛 경로로 프로세스를 잠깐 띄우는 동작을 고칠지(공용 인프라, 다른 앱에도 영향).
-- **남은 일**: 새 필수 컬럼은 배포 전 마이그레이션으로. (후속 1 — 커밋 훅 감시 목록에 새 시험 3개 추가: Reviewer PASS·QA pass 후 PR 로 진행, 머지 결과는 배포 기록에 적는다.)
+- **남은 일**: 새 필수 컬럼은 배포 전 마이그레이션으로. (후속 1 — 커밋 훅 감시 목록에 새 시험 3개 추가: PR #5 머지 `b3e1d3e`, 2026-11-20 17:37 배포 ok. 새 DB 시험 파일을 만들면 목록에 한 줄을 더해야 감시된다.)
 - **이슈·위험**: 실패 무시 DDL 묶음에 앱이 읽는 컬럼이 섞여 있다 — 잠금 대기 5초 초과로 빠지면 알림이 간다(30분 간격).
