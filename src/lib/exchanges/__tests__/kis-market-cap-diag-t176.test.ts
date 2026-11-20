@@ -4,6 +4,10 @@
  * 배경: 운영 로그(10-25~11-18)상 이 API 는 매 호출 HTTP 200 + `rt_cd≠0` 이었고 성공 0회였다. 응답 메시지를
  * 기록하지 않아 원인을 몰랐다. 이 시험은 ① 남기는 값(시장·HTTP·rt_cd·msg_cd·msg1) ② 반복 억제 ③ 비밀·본문 미포함
  * ④ 반환값 불변(`[]`)·정상 응답 무로그를 고정한다.
+ *
+ * T-181 — 시장 구분을 `fid_input_iscd`(0001 코스피·1001 코스닥)로 바꿨으므로 로그 표기 `market=J(코스피)`·`market=Q(코스닥)` 를
+ * `iscd=0001(코스피)`·`iscd=1001(코스닥)` 으로, 정상 응답의 반환 모양에서 `quoteVolume`(응답에 없는 필드)을 뺐다.
+ * 그 밖의 단언(줄 수·억제·비밀 미포함·길이·HTTP 오류)은 그대로다. 요청 쿼리 자체는 kis-domestic-t181.test.ts 가 고정한다.
  */
 jest.mock('../kis-auth', () => ({
   getKisToken:        jest.fn(async () => 'TOKEN-SECRET-abc123'),
@@ -64,10 +68,10 @@ describe('rt_cd≠0 (HTTP 200 업무 실패)', () => {
     await expect(fetchMarketCapRanking(200)).resolves.toEqual([]);
     const l = lines();
     expect(l).toHaveLength(2);
-    expect(l.find((x) => x.includes('market=J(코스피)'))).toContain(
+    expect(l.find((x) => x.includes('iscd=0001(코스피)'))).toContain(
       'why=rt_cd http=200 rt_cd=1 msg_cd=OPSQ0002 msg1=입력 필드값이 잘못되었습니다',
     );
-    expect(l.find((x) => x.includes('market=Q(코스닥)'))).toContain('rt_cd=1 msg_cd=OPSQ0002');
+    expect(l.find((x) => x.includes('iscd=1001(코스닥)'))).toContain('rt_cd=1 msg_cd=OPSQ0002');
   });
 
   test('같은 조합은 1시간 안에 다시 찍지 않고, 창이 지나면 생략 건수를 붙여 1줄', async () => {
@@ -134,16 +138,20 @@ describe('HTTP 오류(!res.ok)', () => {
 
 describe('정상 응답 — 동작 불변', () => {
   test('rt_cd=0 이면 로그 없이 파싱한다', async () => {
+    // T-181 — 실제 응답(2026-11-20 실측)에는 acml_tr_pbmn 이 없다. 시장은 fid_input_iscd 로 가른다(두 시장 모두 J).
     (kisFetch as jest.Mock).mockImplementation(async (url: string) => res(200, {
       rt_cd: '0', msg_cd: 'MCA00000', msg1: '정상처리 되었습니다.',
-      output: url.includes('FID_COND_MRKT_DIV_CODE=J')
-        ? [{ mksc_shrn_iscd: '005930', hts_kor_isnm: '삼성전자', stck_avls: '4000000', acml_tr_pbmn: '900', acml_vol: '10' }]
-        : [{ mksc_shrn_iscd: '247540', hts_kor_isnm: '에코프로비엠', stck_avls: '200000', acml_tr_pbmn: '100', acml_vol: '5' }],
+      output: url.includes('fid_input_iscd=0001')
+        ? [{ mksc_shrn_iscd: '005930', hts_kor_isnm: '삼성전자', stck_avls: '4000000', acml_vol: '10' }]
+        : [{ mksc_shrn_iscd: '247540', hts_kor_isnm: '에코프로비엠', stck_avls: '200000', acml_vol: '5' }],
     }));
-    await expect(fetchMarketCapRanking(200)).resolves.toEqual([
-      { symbol: '005930', name: '삼성전자', marketCap: 4_000_000 * 1e8, quoteVolume: 900, volume: 10 },
-      { symbol: '247540', name: '에코프로비엠', marketCap: 200_000 * 1e8, quoteVolume: 100, volume: 5 },
+    const rows = await fetchMarketCapRanking(200);
+    expect(rows).toEqual([
+      { symbol: '005930', name: '삼성전자', marketCap: 4_000_000 * 1e8, volume: 10 },
+      { symbol: '247540', name: '에코프로비엠', marketCap: 200_000 * 1e8, volume: 5 },
     ]);
+    // 응답에 없는 거래대금을 NaN 으로 만들어 싣지 않는다(키 자체가 없어야 한다)
+    for (const r of rows) expect(Object.keys(r)).not.toContain('quoteVolume');
     expect(warn).not.toHaveBeenCalled();
   });
 

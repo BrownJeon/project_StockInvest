@@ -1,10 +1,9 @@
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
-import { fetchMarketCapRanking, getKisTickers, getKisOverseasTickers, kis } from '@/lib/exchanges/kis';
+import { getKisTickers, getKisOverseasTickers, kis } from '@/lib/exchanges/kis';
 import { withKisPriority, mapWithLimit, DEFAULT_FANOUT_CONCURRENCY } from '@/lib/exchanges/kis-throttle';
 import type { Market } from '@/lib/exchanges/kis-symbols';
 import { getStaticOverseasUniverse } from '@/lib/strategy/universe-overseas-static';
-import { describeErrorCause } from '@/lib/notify/result';
 import { atrLast } from '@/lib/strategy/indicators/atr';
 import { emaLast } from '@/lib/strategy/indicators/ema';
 import { rsiLast } from '@/lib/strategy/indicators/rsi';
@@ -15,11 +14,25 @@ export type UniverseTier = 'core' | 'satellite' | 'speculative';
 
 const UNIVERSE_TOP_N = 150;
 const UNIVERSE_TTL_MS = 15 * 60 * 1000;
-/** KOSPI 100/200 근사 — KIS 시총 랭킹 기준 */
-const TIER_CORE_LIMIT      = 100;  // 시총 상위 1~100 = core (KOSPI 100 근사)
-const TIER_SATELLITE_LIMIT = 200;  // 시총 상위 101~200 = satellite (KOSPI 200 근사)
+/**
+ * T-181 — 국내 등급은 **지수 편입 표시**로 매긴다(2026-11-20 사용자 결정 「지수 편입 기준」).
+ * 시세 응답의 대표 시장명(`rprs_mrkt_kor_name` → `Ticker.indexTag`)이 `KOSPI200` 이면 core, `KSQ150`(코스닥150)이면
+ * satellite, 그 밖·없음은 speculative. 예전의 「KIS 시총 순위 1~100 = core, 101~200 = satellite」는 순위 조회가
+ * 한 번도 성공하지 못해(요청 파라미터 오류) 실제로 쓰인 적이 없고, 고쳐도 시장당 30행이 상한이라 채울 수 없었다.
+ */
+const INDEX_TAG_TIER: Readonly<Record<string, UniverseTier>> = {
+  KOSPI200: 'core',
+  KSQ150:   'satellite',
+};
 
-/** 동적 조회 실패 시 폴백 목록 — always-include 기본값으로도 사용 */
+/** 대표 시장명 → 등급. 앞뒤 공백을 지우고 대문자로 바꾼 뒤 **정확히** 일치할 때만 core·satellite. 시험용 export. */
+export function tierFromIndexTag(indexTag: string | undefined | null): UniverseTier {
+  if (typeof indexTag !== 'string') return 'speculative';
+  const key = indexTag.trim().toUpperCase();
+  return Object.prototype.hasOwnProperty.call(INDEX_TAG_TIER, key) ? INDEX_TAG_TIER[key] : 'speculative';
+}
+
+/** 국내 분석 후보 목록(정적) — always-include 기본값으로도 사용. T-181 부터 순위 조회 없이 항상 이 목록에서 후보를 고른다 */
 const KOSPI_TOP = [
   '005930', // 삼성전자
   '000660', // SK하이닉스
@@ -71,7 +84,8 @@ const KOSDAQ_TOP = [
   '041510', // SM엔터테인먼트
 ];
 
-const ALL_SYMBOLS = [...KOSPI_TOP, ...KOSDAQ_TOP];
+/** T-181 — `247540` 이 두 목록에 모두 있어 시세를 두 번 불렀다. 순서를 지키며 중복을 지운다. 시험용 export */
+export const ALL_SYMBOLS: readonly string[] = [...new Set([...KOSPI_TOP, ...KOSDAQ_TOP])];
 
 const MIN_ATR_PCT = 0.005;
 
@@ -162,44 +176,11 @@ export function refreshUniverse(market: Market = 'domestic', force = false): Pro
   /**
    * T-017 — universe 갱신 전체를 `bulk` lane 에서 돌린다.
    *
-   * 이 함수는 KIS 호출량이 가장 큰 단일 경로다: 시총 랭킹 2건 + 상위 `UNIVERSE_TOP_N`(=150)
-   * 종목의 일봉. 지연돼도 무해한 배치이므로, 이 스캔이 `entry-watcher` 의 단건 시세나
+   * 이 함수는 KIS 호출량이 가장 큰 단일 경로다: 후보 시세(국내 정적 목록 — T-181 부터 시총 랭킹 2건은 부르지 않는다)
+   * + 상위 `UNIVERSE_TOP_N`(=150) 종목의 일봉. 지연돼도 무해한 배치이므로, 이 스캔이 `entry-watcher` 의 단건 시세나
    * 실주문 앞에 서지 않도록 가장 낮은 lane 에 둔다.
    */
   return withKisPriority('bulk', () => refreshUniverseImpl(market, force));
-}
-
-/**
- * T-176 WP-1 — 시총 순위 조회가 **던지면** 빈 배열과 같게 취급한다(호출부의 기존 대체 경로 `getKisTickers(ALL_SYMBOLS)` 로 간다).
- *
- * 2026-11-18 12:11 KST 장중 평가가 이 조회의 네트워크 예외(`fetch failed`) 하나로 회차째 HTTP 500 이 됐다.
- * `fetchMarketCapPage` 는 `!res.ok`·`rt_cd≠0` 을 이미 `[]` 로 바꾸지만 **던진 예외**(연결 실패·토큰 발급 실패·
- * JSON 파싱 실패 등)는 잡는 곳이 없었다. 순위가 빈 경우의 대체 경로는 지난 25일 매일 실제로 돈 경로라 새 동작이 아니다.
- *
- * - `fetchMarketCapRanking` 의 `Promise.all` 은 그대로 둔다 — 한 페이지만 성공한 부분 결과로 tier 를 매기면
- *   (코스피만 core 가 되는 등) tier 의 뜻이 바뀐다. 부분 결과 대신 전부 대체 경로로 보내는 쪽이 기존 동작과 같다.
- * - 원인은 T-175 `describeErrorCause`(코드·주소, 비밀·쿼리스트링 가림)로 한 줄 남긴다. 순위 갱신은 TTL(15분)당
- *   최대 1회라 억제하지 않는다.
- */
-async function fetchMarketCapRankingOrEmpty(limit: number): Promise<Awaited<ReturnType<typeof fetchMarketCapRanking>>> {
-  try {
-    return await fetchMarketCapRanking(limit);
-  } catch (e) {
-    // 메시지에 URL 이 섞여도 쿼리스트링은 가린다(describeErrorCause 와 같은 규칙) — 시총 순위 URL 에는 비밀이 없지만 방어한다.
-    // 문자열화 자체가 던질 수 있다(`Object.create(null)` 을 던진 경우) — 격리하려는 catch 가 다시 던지면 안 된다(T-148 QA L-3).
-    let raw: string;
-    try { raw = e instanceof Error ? e.message : String(e); } catch { raw = '(문자열화 불가)'; }
-    const msg = raw
-      .replace(/\?[^\s'"<>()[\]]*/g, '?***')
-      .replace(/[\u0000-\u001F\u007F]+/g, ' ')
-      .slice(0, 200);
-    const cause = describeErrorCause(e);
-    console.warn(
-      `[universe:domestic] 시총 순위 조회 실패 — 정적 목록으로 대체: ${msg}`
-      + (cause ? ` | ${cause}` : ''),
-    );
-    return [];
-  }
 }
 
 async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ refreshed: boolean }> {
@@ -217,42 +198,30 @@ async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ re
   }
 
   // 시장별 종목 후보 구성
-  // tierMap: 시총 랭킹 기반 종목별 tier 분류 (KOSPI 100/200 근사). 거래대금 상위 fallback은 'speculative'.
+  // tierMap: 종목별 등급. 국내만 채운다(T-181 지수 편입 기준 — `tierFromIndexTag`). 없으면 'speculative'.
   const tierMap = new Map<string, UniverseTier>();
   let top20: Array<{ symbol: string; quoteVolume24h: number }>;
   if (market === 'domestic') {
-    // 시총 상위 200까지 fetch — core(1~100) / satellite(101~200) tier 분류용
-    const ranked = await fetchMarketCapRankingOrEmpty(TIER_SATELLITE_LIMIT);
-    if (ranked.length > 0) {
-      // stock_meta에 종목명 upsert (검색·표시용)
-      try {
-        for (const r of ranked) {
-          if (!r.symbol || !r.name) continue;
-          await pool.query(
-            `INSERT INTO stock_meta (symbol, name, market) VALUES (?, ?, 'domestic')
-               ON DUPLICATE KEY UPDATE name = VALUES(name), market = VALUES(market)`,
-            [r.symbol, r.name],
-          );
-        }
-      } catch { /* meta upsert 실패는 universe에 영향 없음 */ }
-      // 시총 순으로 tier 부여 (ranked는 이미 시총 내림차순 가정 — 안전을 위해 재정렬)
-      const byMarketCap = [...ranked].sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
-      byMarketCap.forEach((r, idx) => {
-        if (idx < TIER_CORE_LIMIT)            tierMap.set(r.symbol, 'core');
-        else if (idx < TIER_SATELLITE_LIMIT)  tierMap.set(r.symbol, 'satellite');
-      });
-      // top20은 거래대금 상위 — universe 평가용 (현행 동등)
-      top20 = ranked
-        .sort((a, b) => b.quoteVolume - a.quoteVolume)
-        .slice(0, UNIVERSE_TOP_N)
-        .map(r => ({ symbol: r.symbol, quoteVolume24h: r.quoteVolume }));
-    } else {
-      const tickers = await getKisTickers(ALL_SYMBOLS);
-      top20 = tickers
-        .sort((a, b) => (b.quoteVolume24h ?? 0) - (a.quoteVolume24h ?? 0))
-        .slice(0, UNIVERSE_TOP_N)
-        .map(t => ({ symbol: t.symbol, quoteVolume24h: t.quoteVolume24h ?? 0 }));
+    /**
+     * T-181 — 시총 순위 조회를 이 경로에서 뺐다(사용자 결정 「갱신 경로에서 제거」). 후보는 10-25 이후 매일 실제로 돌던
+     * 경로 그대로 정적 목록 시세 → 거래대금 정렬이고, 등급은 **같은 시세 응답**의 지수 편입 표시로 매긴다(추가 호출 0).
+     * 시세가 실패한 종목은 후보에서 빠질 뿐 다른 종목 등급에 영향이 없다(종목 단위 — 부분 실패 개념이 없다).
+     */
+    const tickers = await getKisTickers([...ALL_SYMBOLS]);
+    let tagged = 0;
+    for (const t of tickers) {
+      const tier = tierFromIndexTag(t.indexTag);
+      if (tier !== 'speculative') tagged++;
+      tierMap.set(t.symbol, tier);
     }
+    if (tickers.length > 0 && tagged === 0) {
+      // KIS 시세 응답 형식(필드명·값)이 바뀐 신호다 — 전 종목 speculative 면 코어 비율 가드가 국내 매수를 다시 전부 막는다.
+      console.warn('[universe:domestic] 지수 편입 표시 없음 — 전 종목 speculative');
+    }
+    top20 = tickers
+      .sort((a, b) => (b.quoteVolume24h ?? 0) - (a.quoteVolume24h ?? 0))
+      .slice(0, UNIVERSE_TOP_N)
+      .map(t => ({ symbol: t.symbol, quoteVolume24h: t.quoteVolume24h ?? 0 }));
   } else {
     // 해외: 시총 랭킹 API 부재 → 분석 대상 목록(T-143 수동 ∪ 자동, DB > env > 코드) + 거래대금 정렬.
     // 즉 해외의 「동적 선별」은 이 목록을 **정렬**하는 일이다 — 목록 자체를 바꾸는 곳은 설정 › 해외 분석 대상이다.
@@ -330,8 +299,8 @@ async function refreshUniverseImpl(market: Market, force: boolean): Promise<{ re
  * DB가 비어있거나 TTL 초과 시 빈 배열 반환 (fallback은 호출부 책임).
  *
  * universeSource:
- *  - 'kospi100'   → tier=core 만 (시총 상위 100)
- *  - 'kospi200'   → tier IN (core, satellite) (시총 상위 200)
+ *  - 'kospi100'   → tier=core 만 (T-181 부터 core = KOSPI200 편입 — 이름과 달리 KOSPI 100 이 아니다)
+ *  - 'kospi200'   → tier IN (core, satellite) (KOSPI200 ∪ 코스닥150)
  *  - 'volume-top' → 모든 tier 허용 (현행 거래대금 상위 — 기본값)
  */
 export async function getUniverseSymbols(

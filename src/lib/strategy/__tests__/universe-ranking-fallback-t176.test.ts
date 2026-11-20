@@ -4,6 +4,13 @@
  *
  * 2026-11-18 12:11 KST: 이 조회의 네트워크 예외 하나로 장중 평가 회차 전체가 HTTP 500 으로 끝났다.
  * 빈 배열일 때·정상일 때의 동작이 종전과 같다는 것도 함께 고정한다.
+ *
+ * T-181 — 국내 갱신 경로가 시총 순위 조회를 **아예 부르지 않게** 바뀌었다(사용자 결정 「갱신 경로에서 제거」).
+ * 그래서 이 파일의 목적(순위 조회 실패가 갱신을 멈추지 않는다)은 「순위 조회가 던지든 비든 값을 주든 **호출되지 않고**
+ * 항상 정적 목록 시세 경로로 간다」로 더 강하게 고정한다. 순위 조회 예외를 잡던 래퍼(`fetchMarketCapRankingOrEmpty`)와
+ * 그 실패 로그는 코드에서 삭제됐으므로 그 로그 문구·가림 처리를 보던 두 시험은 지웠다(대상 코드가 없다).
+ * 등급은 시세의 `indexTag` 로 매긴다 — 이 파일의 시세 모의값에는 `indexTag` 가 없으므로 전부 speculative 다.
+ * 등급 매핑 자체는 universe-index-tier-t181.test.ts 가 맡는다.
  */
 
 // ─── 모의 DB ─────────────────────────────────────────────────────────────────
@@ -75,62 +82,54 @@ function networkError() {
   return e;
 }
 
-describe('순위 조회가 던질 때 — 대체 경로', () => {
-  test('🔴 던져도 refreshUniverse 는 끝까지 가서 refreshed:true, 정적 목록 시세로 후보를 만든다', async () => {
+describe('순위 조회가 던질 때 — 대체 경로(T-181: 아예 부르지 않는다)', () => {
+  test('🔴 순위 조회가 던지게 해 둬도 호출되지 않고 refreshed:true, 정적 목록 시세로 후보를 만든다', async () => {
     fetchMarketCapRanking.mockRejectedValue(networkError());
     await expect(refreshUniverse('domestic', true)).resolves.toEqual({ refreshed: true });
 
+    expect(fetchMarketCapRanking).not.toHaveBeenCalled();
     expect(getKisTickers).toHaveBeenCalledTimes(1);
     const fallbackSymbols = getKisTickers.mock.calls[0][0] as string[];
     expect(fallbackSymbols).toEqual(expect.arrayContaining(['005930', '000660', '247540']));
-    expect(fallbackSymbols.length).toBeGreaterThanOrEqual(40);   // ALL_SYMBOLS(KOSPI_TOP ∪ KOSDAQ_TOP)
+    expect(fallbackSymbols.length).toBeGreaterThanOrEqual(40);   // ALL_SYMBOLS(KOSPI_TOP ∪ KOSDAQ_TOP, 중복 제거)
     expect(symbolsOf()).toEqual(new Set(['005930', '000660', '247540']));
-    expect(tiersOf()).toEqual(new Set(['speculative']));          // 빈 배열일 때와 같은 결과
+    expect(tiersOf()).toEqual(new Set(['speculative']));          // indexTag 없는 시세 → speculative
     expect(inserts.filter((r) => r.table === 'stock_meta')).toHaveLength(0);
   });
 
-  test('원인(코드·주소)을 한 줄 남긴다', async () => {
+  test('순위 조회 실패 로그는 남지 않는다(부르지 않으므로) — 갱신은 끝까지 간다', async () => {
     fetchMarketCapRanking.mockRejectedValue(networkError());
-    await refreshUniverse('domestic', true);
+    await expect(refreshUniverse('domestic', true)).resolves.toEqual({ refreshed: true });
     const l = warn.mock.calls.map((c) => c.map(String).join(' '));
-    const line = l.find((x) => x.includes('[universe:domestic] 시총 순위 조회 실패'));
-    expect(line).toBeDefined();
-    expect(line).toContain('정적 목록으로 대체: fetch failed');
-    expect(line).toContain('cause=ECONNREFUSED connect 10.0.0.1:9443');
-  });
-
-  test('메시지의 URL 쿼리스트링·제어문자는 가린다, Error 가 아닌 값(문자열화 불가 포함)도 대체 경로로', async () => {
-    fetchMarketCapRanking.mockRejectedValue(new Error('bad https://x/ranking?appkey=SECRET123&b=1\nnext'));
-    await expect(refreshUniverse('domestic', true)).resolves.toEqual({ refreshed: true });
-    const l1 = warn.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
-    expect(l1).not.toContain('SECRET123');
-    expect(l1).toContain('?***');
-
-    warn.mockClear();
-    fetchMarketCapRanking.mockRejectedValue(Object.create(null));
-    await expect(refreshUniverse('domestic', true)).resolves.toEqual({ refreshed: true });
-    expect(warn.mock.calls.map((c) => c.map(String).join(' ')).join('\n')).toContain('(문자열화 불가)');
+    expect(l.some((x) => x.includes('시총 순위 조회 실패'))).toBe(false);
   });
 });
 
 describe('종전 동작 불변', () => {
-  test('순위가 빈 배열이면 같은 대체 경로 — 실패 로그는 없다', async () => {
+  test('순위가 빈 배열이어도 같은 경로 — 순위 조회는 호출되지 않는다', async () => {
     fetchMarketCapRanking.mockResolvedValue([]);
     await expect(refreshUniverse('domestic', true)).resolves.toEqual({ refreshed: true });
+    expect(fetchMarketCapRanking).not.toHaveBeenCalled();
     expect(getKisTickers).toHaveBeenCalledTimes(1);
     expect(tiersOf()).toEqual(new Set(['speculative']));
     expect(warn.mock.calls.some((c) => String(c[0]).includes('시총 순위 조회 실패'))).toBe(false);
   });
 
-  test('순위가 오면 대체 경로를 타지 않고 시총 순으로 tier 를 매긴다', async () => {
+  test('T-181: 순위가 값을 줄 수 있어도 쓰지 않는다 — 정적 목록 시세 경로 + 등급은 시세의 indexTag 로', async () => {
     fetchMarketCapRanking.mockResolvedValue([
-      { symbol: '005930', name: '삼성전자', marketCap: 4e14, quoteVolume: 900, volume: 10 },
-      { symbol: '000660', name: 'SK하이닉스', marketCap: 2e14, quoteVolume: 800, volume: 10 },
+      { symbol: '005930', name: '삼성전자', marketCap: 4e14, volume: 10 },
+      { symbol: '000660', name: 'SK하이닉스', marketCap: 2e14, volume: 10 },
+    ]);
+    getKisTickers.mockResolvedValue([
+      { symbol: '005930', price: 100, quoteVolume24h: 900, indexTag: 'KOSPI200' },
+      { symbol: '000660', price: 100, quoteVolume24h: 800, indexTag: 'KOSPI200' },
+      { symbol: '247540', price: 100, quoteVolume24h: 700, indexTag: 'KSQ150' },
     ]);
     await expect(refreshUniverse('domestic', true)).resolves.toEqual({ refreshed: true });
-    expect(getKisTickers).not.toHaveBeenCalled();
-    expect(tiersOf()).toEqual(new Set(['core']));
-    expect(inserts.filter((r) => r.table === 'stock_meta')).toHaveLength(2);
+    expect(fetchMarketCapRanking).not.toHaveBeenCalled();
+    expect(getKisTickers).toHaveBeenCalledTimes(1);
+    expect(tiersOf()).toEqual(new Set(['core', 'satellite']));
+    expect(inserts.filter((r) => r.table === 'stock_meta')).toHaveLength(0);   // 순위 기반 종목명 저장도 제거
     expect(warn).not.toHaveBeenCalled();
   });
 
@@ -139,5 +138,7 @@ describe('종전 동작 불변', () => {
     getKisTickers.mockResolvedValue([]);
     await expect(refreshUniverse('domestic', true)).resolves.toEqual({ refreshed: false });
     expect(universeRows()).toHaveLength(0);
+    // 시세 0건은 「지수 표시 없음」 경고 대상이 아니다(볼 시세가 없다)
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('지수 편입 표시 없음'))).toBe(false);
   });
 });
