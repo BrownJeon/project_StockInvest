@@ -115,6 +115,8 @@ demo_gate:
   - 변화 수용(국내 매수 후보가 코어 비율 가드를 처음 통과, 국내 가상 체결·감사 기록 하루 약 80~120건 추정, DRY_RUN 유지): 「수용하고 진행」.
   - 데모: 「데모 생략」. ⚠ `check.mjs waive --quote "데모 생략"` 은 `DEMO_GATE_REFUSED`(질문 카드 답은 사람 입력 턴 기록에 없음) — 게이트 상태는 `drafting`(init, `DM-kw-risky-cta`) 그대로이고 도구 증거는 없다. 화면 파일 변경이 없어 편집 전 훅 대상도 없다. 판정은 키워드 오탐으로 본다([[T-168-paper-fill-engine-restore]] 와 같은 유형).
 
+- 2026-11-20 23:18 KST, PR #8 머지 시점 질문(권고: 다음 날 05:10 이후 — 미국 장중 재시작 영향 고지)에 사용자가 처음 「내일 05:10 이후」를 고른 뒤 바로 「지금 머지해줘」 로 바꿈 → 즉시 머지(=운영 배포) 승인. 미국 장중 배포는 사용자 합의 아래 진행(`docs/deploy-order.md` 「장중 임의 배포 — 사용자 합의 없이 하지 않는다」).
+
 ## 설계 (Leader — Developer 구현 사양)
 
 사용자 결정(위)과 [Analyst 절](#analyst)·실측 결과 1·2 를 근거로 한다. 범위는 아래 파일과 그 시험뿐이다. **화면·DB 구조·주문·청산·안전장치 코드는 바꾸지 않는다.**
@@ -369,6 +371,8 @@ demo_gate:
 - [23:09] QA 결과: pass
 
 ## 배포 기록
+
+- [23:25] 서버 worktree 브랜치 `t181-domestic-index-tier` 커밋 `cfaa186`(코드, 커밋 훅 「Reviewer 감사 기록 확인: T-181」) + `ea5ba80`(기록) → 브랜치 push(웹훅은 `/main` 으로 끝나는 ref 만 배포 — 배포 없음) → **PR #8** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/8 (head `ea5ba80`, base `main`=`8d9e980`). 머지(=운영 배포)는 사용자 승인 대기.
 
 ## 실행 도구·절차 이력
 
