@@ -81,7 +81,8 @@ export function observeSetupPool<T extends object>(raw: T): { pool: T; close: ()
       if (methods.has(key)) return methods.get(key);
       const method = key === 'query' || key === 'execute' ? (...args: unknown[]) => {
         const sql = typeof args[0] === 'string' ? args[0] : '';
-        const token = /^\s*(CREATE|ALTER|SELECT|INSERT|UPDATE|DELETE|SHOW|DROP)\b/i.exec(sql)?.[1]?.toUpperCase() ?? 'OTHER';
+        // T-179: setupDB 의 선택 DDL 은 `SET STATEMENT lock_wait_timeout=N FOR <문장>` 으로 나간다 — 앞머리를 건너뛰고 본 문장으로 분류한다.
+        const token = /^\s*(?:SET\s+STATEMENT\s+[\w@=,\s.']*?\s+FOR\s+)?(CREATE|ALTER|SELECT|INSERT|UPDATE|DELETE|SHOW|DROP)\b/i.exec(sql)?.[1]?.toUpperCase() ?? 'OTHER';
         const fields = { ordinal: ++ordinal, sql_class: token, timing: 'pool_and_execution' };
         const finish = span('setup_db', fields, true);
         try {

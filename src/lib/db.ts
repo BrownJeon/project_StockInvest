@@ -12,14 +12,55 @@ import {
   isSchemaFatalError,
 } from '@/lib/signals/statuses';
 
-let pool: mysql.Pool | null = null;
-let setupPromise: Promise<void> | null = null;
-
 /**
- * 코드-DB 스키마 불일치처럼 **회복 불가능한** 부팅 오류. 설정되면 getPool() 이 계속 throw 해
- * 이 프로세스의 모든 DB 접근(=주문·시그널·조회 전부)이 차단된다 — fail-closed.
+ * 이 모듈의 상태는 **프로세스 전역 하나**다 (T-179).
+ *
+ * Next 는 같은 `db.ts` 를 레이어마다 따로 번들한다 — 운영 빌드(20261120-105307)에서 확인한 것:
+ * instrumentation 레이어(`chunks/1835.js`, 모듈 95192 — 워치독·텔레그램 폴러가 부른다)와
+ * 라우트(rsc) 레이어(`chunks/5589.js`, 모듈 65179 — API 라우트 123개가 부른다). 둘은 같은
+ * webpack-runtime 을 쓰지만 모듈 id 가 달라 **모듈 변수가 두 벌**이 된다. 모듈 변수에 두면
+ * 한 프로세스에 풀 2개(각 connectionLimit 10)·setupDB 2회가 생기고, 같은 DDL 묶음이 같은 테이블에
+ * 동시에 나가 서로의 메타데이터 잠금(MDL)을 기다렸다(11-20 배포 롤백).
+ *
+ * 그래서 풀·setup 약속·치명 오류·OAuth 스키마 상태를 `globalThis` 의 `Symbol.for` 키 하나에 둔다
+ * (cron-watchdog·telegram-poller 와 같은 방식). 어느 번들에서 불러도 같은 객체를 본다:
+ *  - 풀 1개, setupDB 1회
+ *  - fail-closed(`setupFatalError`)가 서면 **모든 번들의** getPool() 이 던진다 — 한 번들만 막히는 상태가 없다
+ *  - dev 핫리로드로 모듈이 다시 평가돼도 풀을 새로 만들지 않는다(예전에는 리로드마다 풀이 늘었다).
+ *    대신 리로드만으로는 setupDB 가 다시 돌지 않는다 — 스키마 코드를 고쳤으면 dev 서버를 재시작한다.
+ *
+ * 필드를 더할 때는 "번들마다 따로 있으면 안 되는 상태인가"를 기준으로 한다.
  */
-let setupFatalError: Error | null = null;
+interface DbProcessState {
+  pool: mysql.Pool | null;
+  setupPromise: Promise<void> | null;
+  /**
+   * 코드-DB 스키마 불일치처럼 **회복 불가능한** 부팅 오류. 설정되면 getPool() 이 계속 throw 해
+   * 이 프로세스의 모든 DB 접근(=주문·시그널·조회 전부)이 차단된다 — fail-closed.
+   */
+  setupFatalError: Error | null;
+  /** `isOAuthSchemaReady()` 참조. setupDB 를 실제로 돈 번들만 값을 알기 때문에 함께 전역에 둔다. */
+  oauthSchemaReady: boolean | null;
+  /** 이번 setupDB 에서 잠금 대기 초과로 빠진 선택 DDL 이름(테이블.컬럼/인덱스). setupDB 끝에 알림 1건으로 묶는다. */
+  optionalDdlLockTimeouts: string[];
+  /** 마지막 「부팅 DDL 잠금 대기 초과」 알림 시각(ms) — 알림 간격 제한용. */
+  optionalDdlAlertAt: number | null;
+}
+
+const DB_STATE_KEY = Symbol.for('stockinvest.db.state');
+
+function dbState(): DbProcessState {
+  const g = globalThis as Record<symbol, unknown>;
+  let s = g[DB_STATE_KEY] as DbProcessState | undefined;
+  if (!s) {
+    s = {
+      pool: null, setupPromise: null, setupFatalError: null, oauthSchemaReady: null,
+      optionalDdlLockTimeouts: [], optionalDdlAlertAt: null,
+    };
+    g[DB_STATE_KEY] = s;
+  }
+  return s;
+}
 
 /**
  * 코드가 signals.status 로 기록하는 값 목록.
@@ -52,12 +93,13 @@ function createPool(): mysql.Pool {
 
 export function getPool(): mysql.Pool {
   // fail-closed — 스키마 불일치 상태로는 단 한 건도 쓰지 않는다 (T-003 §4-2).
-  if (setupFatalError) throw setupFatalError;
-  if (!pool) {
-    pool = createPool();
+  const state = dbState();
+  if (state.setupFatalError) throw state.setupFatalError;
+  if (!state.pool) {
+    state.pool = createPool();
     ensureSetup().catch((e) => console.error('[db] setup failed:', e));
   }
-  return pool;
+  return state.pool;
 }
 
 export async function withRetry<T>(fn: () => Promise<T>, attempts = 3, baseDelayMs = 200): Promise<T> {
@@ -97,10 +139,11 @@ function notifyCritical(title: string, body: string): void {
 }
 
 export function ensureSetup(): Promise<void> {
-  if (!setupPromise) {
-    setupPromise = observeBootPromise('ensure_setup', setupDB()).catch((e) => {
+  const state = dbState();
+  if (!state.setupPromise) {
+    state.setupPromise = observeBootPromise('ensure_setup', setupDB()).catch((e) => {
       if (isSchemaFatalError(e)) {
-        setupFatalError = e as Error;
+        state.setupFatalError = e as Error;
         const msg = e instanceof Error ? e.message : String(e);
         console.error(
           '\n' +
@@ -122,12 +165,12 @@ export function ensureSetup(): Promise<void> {
       throw e;
     });
   }
-  return setupPromise;
+  return state.setupPromise;
 }
 
 /** 부팅 검증 실패로 DB 접근이 차단된 상태인가 (health 엔드포인트 진단용). */
 export function getSetupFatalError(): Error | null {
-  return setupFatalError;
+  return dbState().setupFatalError;
 }
 
 /**
@@ -183,10 +226,125 @@ export async function runOnceMigration(
   }
 }
 
+/**
+ * 선택 DDL 의 메타데이터 잠금(MDL) 대기 상한(초) — T-179 WP-3.
+ *
+ * 서버 전역 `lock_wait_timeout` 이 86400(하루)이라, 잠금을 못 얻은 ALTER 는 하루까지 기다리며 그 사이
+ * 같은 테이블로 오는 모든 쿼리를 뒤에 세운다(대기 중인 배타 잠금 요청이 새 읽기를 막는다). 클라이언트가
+ * 죽어도 서버 쪽 문장은 남는다. 그래서 **원래부터 실패를 무시하던** 선택 DDL 에만 문장 단위 상한을 둔다
+ * (`SET STATEMENT ... FOR` — 그 문장 하나에만 적용되고 풀 연결의 세션 값은 그대로다).
+ * 5초는 T-088 마이그레이션(`SET SESSION lock_wait_timeout = 5`)과 같은 값이다.
+ *
+ * 적용하지 않는 것(필수 DDL — 실패 처리가 지금과 같아야 한다):
+ *  - `CREATE TABLE IF NOT EXISTS` — 실패하면 setupDB 가 실패한다. 상한을 두면 그 경로가 새로 열린다.
+ *  - signals.status ENUM 확장 — 실패하면 fail-closed(SchemaVerificationError). 의미를 바꾸지 않는다.
+ *  - users OAuth 컬럼(alterPinned) — 이미 "없을 때만" 보내고 실패를 알림까지 한다. 인증 경로라 손대지 않는다.
+ */
+const OPTIONAL_DDL_LOCK_WAIT_SEC = 5;
+
+/** 잠금 대기 초과 — MariaDB 는 MDL 대기 초과도 이 번호(ER_LOCK_WAIT_TIMEOUT)로 돌려준다. */
+const ER_LOCK_WAIT_TIMEOUT = 1205;
+/** 「이미 있어서 실패」 — 중복 컬럼(ER_DUP_FIELDNAME)·중복 인덱스 이름(ER_DUP_KEYNAME). 원래부터 조용히 넘기던 오류다. */
+const ALREADY_EXISTS_ERRNOS: ReadonlySet<number> = new Set([1060, 1061]);
+/** 「부팅 DDL 잠금 대기 초과」 알림 최소 간격 — setupDB 는 프로세스당 1회지만 혹시 다시 돌 때 알림이 쌓이지 않게. */
+const OPTIONAL_DDL_ALERT_INTERVAL_MS = 30 * 60 * 1000;
+
+function sqlErrno(e: unknown): number | undefined {
+  const n = (e as { errno?: unknown } | null)?.errno;
+  return typeof n === 'number' ? n : undefined;
+}
+
+function isLockWaitTimeout(e: unknown): boolean {
+  return sqlErrno(e) === ER_LOCK_WAIT_TIMEOUT || (e as { code?: unknown } | null)?.code === 'ER_LOCK_WAIT_TIMEOUT';
+}
+
+/**
+ * 이번 setupDB 에서 잠금 대기 초과로 빠진 선택 DDL 을 **알림 1건**으로 보낸다(T-179 Reviewer Medium-1).
+ * 본문에는 테이블·컬럼·인덱스 이름만 넣는다(값·비밀 없음). 간격 제한 안이면 로그만 남기고 알림은 생략한다.
+ */
+function flushOptionalDdlLockTimeouts(): void {
+  const state = dbState();
+  const labels = state.optionalDdlLockTimeouts.splice(0);
+  if (labels.length === 0) return;
+  const now = Date.now();
+  if (state.optionalDdlAlertAt !== null && now - state.optionalDdlAlertAt < OPTIONAL_DDL_ALERT_INTERVAL_MS) {
+    console.error(
+      `[db] 부팅 DDL 잠금 대기 초과 ${labels.length}건 — 직전 알림 뒤 ${OPTIONAL_DDL_ALERT_INTERVAL_MS / 60000}분 안이라 ` +
+      `알림은 생략합니다: ${labels.join(', ')}`,
+    );
+    return;
+  }
+  state.optionalDdlAlertAt = now;
+  notifyCritical(
+    '부팅 DDL 잠금 대기 초과 — 스키마 일부 없이 기동',
+    `다른 세션이 테이블 잠금을 잡고 있어 ${OPTIONAL_DDL_LOCK_WAIT_SEC}초 안에 아래 ${labels.length}개를 적용하지 못했습니다:\n` +
+    `${labels.join(', ')}\n\n` +
+    '이 컬럼·인덱스를 읽는 기능은 다음 기동(재시작·배포)에서 적용될 때까지 실패할 수 있습니다. ' +
+    '잠금을 잡은 세션(SHOW PROCESSLIST)을 확인한 뒤 재시작하세요.',
+  );
+}
+
+/**
+ * 선택 DDL — **이미 원하는 상태라고 확인되면 보내지 않는다**(T-179 WP-2). 확인 못 했으면(없음·조회 실패) 보낸다.
+ *
+ * 여기 오는 문장은 모두 변경 전에도 `.catch(() => {})`/`try {} catch {}` 로 실패를 무시하던 것이다 —
+ * 실패 처리는 그대로 "무시하고 계속"이다. 다만 메타데이터 조회가 성공해 "없다"를 확인하고 보냈는데
+ * 실패했다면 그 컬럼·인덱스가 실제로 빠진 채 뜬 것이므로 경고를 남긴다.
+ * 잠금 대기 초과(1205)는 메타데이터를 알든 모르든 로그 + setupDB 끝 알림 1건(`flushOptionalDdlLockTimeouts`).
+ * 중복(1060·1061)은 「이미 있음」이라 조용히 넘긴다.
+ *
+ * ⚠️ 이름은 「선택」이지만 여기 든 컬럼 다수는 코드가 읽는다. 5초 안에 잠금을 못 얻으면 그 컬럼 없이 뜬다 —
+ *    **처음 추가하는 컬럼을 코드가 곧바로 필수로 읽는다면** 이 함수에 넣지 말고 배포 전 마이그레이션으로 적용한다.
+ */
+async function optionalDdl(
+  p: mysql.Pool,
+  label: string,
+  alreadyDone: boolean,
+  metadataKnown: boolean,
+  ddl: string,
+): Promise<void> {
+  if (alreadyDone) return;
+  try {
+    await p.query(`SET STATEMENT lock_wait_timeout=${OPTIONAL_DDL_LOCK_WAIT_SEC} FOR ${ddl.trim()}`);
+  } catch (e) {
+    if (isLockWaitTimeout(e)) {
+      // 컬럼·인덱스가 없는 채로 뜰 수 있다 — 경고 한 줄로 넘기지 않고 setupDB 끝에 알림으로 묶는다.
+      // 메타데이터를 몰랐다면 실제로는 이미 있었을 수도 있지만, 잠금을 못 얻은 사실은 알린다.
+      console.error(
+        `[db] 부팅 DDL 잠금 대기 초과 (${label}, ${OPTIONAL_DDL_LOCK_WAIT_SEC}초) — 이 항목 없이 기동합니다. ` +
+        `다음 기동에 다시 시도합니다. (사전 확인: ${metadataKnown ? '없음' : '모름'})`,
+      );
+      dbState().optionalDdlLockTimeouts.push(label);
+      return;
+    }
+    const errno = sqlErrno(e);
+    if (errno !== undefined && ALREADY_EXISTS_ERRNOS.has(errno)) return; // 이미 있음 — 원래대로 조용히
+    if (metadataKnown) {
+      console.warn(`[db] 부팅 DDL 실패 (${label}) — 다음 기동에 다시 시도합니다: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+}
+
 async function setupDB(): Promise<void> {
-  const observation = observeSetupPool(pool ?? (pool = createPool()));
+  const state = dbState();
+  state.optionalDdlLockTimeouts.length = 0;
+  const observation = observeSetupPool(state.pool ?? (state.pool = createPool()));
   const p = observation.pool;
   try {
+
+  // T-179 — 선택 DDL 을 보낼지 판단할 메타데이터를 **맨 앞에서 한 번** 읽는다(INFORMATION_SCHEMA 2회).
+  // 예전(T-156)에는 signals 생성 뒤에 읽었다. 이 함수는 객체를 더하기만 하므로 "시작 때 있었다"면 끝까지 있다 —
+  // 앞에서 읽어도 건너뛰는 판단은 같고, strategies 처럼 앞쪽 문장도 판단할 수 있게 된다. 빈 DB 에서는
+  // 전부 "없음"이라 지금처럼 모든 문장을 보낸다. 조회 실패·3초 초과도 "모름" → 지금처럼 보낸다.
+  const presence = await readBootstrapPresence(p);
+  const colsKnown = presence.columnsKnown;
+  const idxKnown = presence.indexesKnown;
+  if (!colsKnown || !idxKnown) {
+    console.warn(
+      `[db] 부팅 메타데이터 조회 실패(시간 초과·오류·낯선 응답) — 컬럼=${colsKnown ? '확인' : '모름'}, ` +
+      `인덱스=${idxKnown ? '확인' : '모름'}. 모르는 쪽 선택 DDL 은 확인 없이 보냅니다.`,
+    );
+  }
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS accounts (
@@ -297,19 +455,22 @@ async function setupDB(): Promise<void> {
   `);
 
   // Migrate backtest_interval_h from INT to FLOAT to support sub-hour intervals (e.g. 1 min = 1/60 h)
-  await p.query(`
-    ALTER TABLE strategies MODIFY COLUMN backtest_interval_h FLOAT NOT NULL DEFAULT 6
-  `).catch(() => { /* already FLOAT or alter failed — non-fatal */ });
+  // T-179: 정의가 이미 `float NOT NULL DEFAULT 6` 과 **완전히 같을 때만** 건너뛴다(운영 로그 ordinal 9 —
+  // 매 기동 성공하지만 같은 정의로 바꾸는 ALTER 라 MDL 만 잡고 7.8초(중앙값)·최대 30초 걸렸다).
+  await optionalDdl(p, 'strategies.backtest_interval_h FLOAT',
+    presence.columnIs('strategies', 'backtest_interval_h', { columnType: 'float', isNullable: 'NO', columnDefault: '6' }),
+    colsKnown,
+    `ALTER TABLE strategies MODIFY COLUMN backtest_interval_h FLOAT NOT NULL DEFAULT 6`);
 
   // applicable_styles: 전략별 적용 가능한 투자 성향 (SET — 다중 선택 가능)
   // engine.ts에서 현재 analystStyle이 set에 포함된 전략만 후보 평가
   // 기본값 'aggressive,neutral,stable' (모두 허용 — 기존 전략 영향 없음)
-  await p.query(`
+  await optionalDdl(p, 'strategies.applicable_styles', presence.hasColumn('strategies', 'applicable_styles'), colsKnown, `
     ALTER TABLE strategies
       ADD COLUMN applicable_styles SET('aggressive','neutral','stable')
         NOT NULL DEFAULT 'aggressive,neutral,stable'
         AFTER tags
-  `).catch(() => { /* already exists */ });
+  `);
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS system_config (
@@ -804,7 +965,7 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
-  const bootstrapPresence = await readBootstrapPresence(p);
+  // (T-156 의 메타데이터 조회는 T-179 에서 setupDB 맨 앞으로 옮겼다 — `presence`)
 
   // AI 스킵 시점의 시세 기록 + 후속 변화율 추적 컬럼 (signal-followup cron 용)
   // Phase Q: 4h/24h 장기 추적 컬럼 추가 — fine-tune 학습 라벨 노이즈 감소 목적
@@ -817,25 +978,21 @@ async function setupDB(): Promise<void> {
     ['price_24h_after',       'DECIMAL(36,8) NULL'],
     ['price_change_pct_24h',  'DECIMAL(10,4) NULL'],
   ] as const) {
-    try {
-      if (!bootstrapPresence.hasColumn('signals', col[0])) await p.query(`ALTER TABLE signals ADD COLUMN ${col[0]} ${col[1]}`);
-    } catch { /* 이미 존재하는 경우 무시 */ }
+    await optionalDdl(p, `signals.${col[0]}`, presence.hasColumn('signals', col[0]), colsKnown,
+      `ALTER TABLE signals ADD COLUMN ${col[0]} ${col[1]}`);
   }
 
   // 듀얼 시장 (국내/해외) 컬럼 — signals/orders/symbol_universe
   for (const tbl of ['signals', 'orders', 'symbol_universe'] as const) {
-    try {
-      if (!bootstrapPresence.hasColumn(tbl, 'market')) await p.query(
-        `ALTER TABLE ${tbl} ADD COLUMN market ENUM('domestic','overseas') NOT NULL DEFAULT 'domestic'`,
-      );
-    } catch { /* 이미 존재하는 경우 무시 */ }
+    // ⚠️ 빈 DB 첫 기동에서는 symbol_universe 가 아직 없어(CREATE 가 아래에 있다) 이 ALTER 가 실패하고
+    //    두 번째 기동에서 붙는다 — T-179 이전부터의 순서이며 그대로 둔다(스키마 결과를 바꾸지 않는 task).
+    await optionalDdl(p, `${tbl}.market`, presence.hasColumn(tbl, 'market'), colsKnown,
+      `ALTER TABLE ${tbl} ADD COLUMN market ENUM('domestic','overseas') NOT NULL DEFAULT 'domestic'`);
   }
-  try {
-    if (!bootstrapPresence.hasIndex('signals', 'idx_signals_market')) await p.query(`CREATE INDEX idx_signals_market ON signals (market, created_at DESC)`);
-  } catch { /* 이미 존재 */ }
-  try {
-    if (!bootstrapPresence.hasIndex('orders', 'idx_orders_market')) await p.query(`CREATE INDEX idx_orders_market ON orders (market, created_at DESC)`);
-  } catch { /* 이미 존재 */ }
+  await optionalDdl(p, 'signals.idx_signals_market', presence.hasIndex('signals', 'idx_signals_market'), idxKnown,
+    `CREATE INDEX idx_signals_market ON signals (market, created_at DESC)`);
+  await optionalDdl(p, 'orders.idx_orders_market', presence.hasIndex('orders', 'idx_orders_market'), idxKnown,
+    `CREATE INDEX idx_orders_market ON orders (market, created_at DESC)`);
 
   // ── signals.status ENUM — 코드 상수(SIGNAL_STATUSES)가 유일한 진실 ─────────
   //
@@ -919,17 +1076,16 @@ async function setupDB(): Promise<void> {
   // 이후 모든 getPool() 이 throw 한다 (= 이 프로세스는 아무것도 쓰지 못한다).
   assertSignalStatusEnum(statusColType);
 
-  try {
-    await p.query(`ALTER TABLE signals ADD COLUMN scenario_source VARCHAR(32) NULL`);
-  } catch { /* 이미 존재 */ }
+  // T-179 — 아래 다섯 문장은 운영에서 **매 기동 실패**하던 것이다(ordinal 61·62·63·65·66, 이미 있음 → Duplicate).
+  //         실패하는 문장도 MDL 을 먼저 얻어야 해서 4~9초씩 걸렸다. 이제 있으면 보내지 않는다.
+  await optionalDdl(p, 'signals.scenario_source', presence.hasColumn('signals', 'scenario_source'), colsKnown,
+    `ALTER TABLE signals ADD COLUMN scenario_source VARCHAR(32) NULL`);
 
   // Phase AC: 장 마감 후 익일 시나리오 사전 등록용 — valid_from 시점 이전엔 entry-watcher가 무시
-  try {
-    await p.query(`ALTER TABLE signals ADD COLUMN valid_from DATETIME NULL AFTER expires_at`);
-  } catch { /* 이미 존재 */ }
-  try {
-    await p.query(`CREATE INDEX idx_signals_valid_from ON signals (valid_from, status)`);
-  } catch { /* 이미 존재 */ }
+  await optionalDdl(p, 'signals.valid_from', presence.hasColumn('signals', 'valid_from'), colsKnown,
+    `ALTER TABLE signals ADD COLUMN valid_from DATETIME NULL AFTER expires_at`);
+  await optionalDdl(p, 'signals.idx_signals_valid_from', presence.hasIndex('signals', 'idx_signals_valid_from'), idxKnown,
+    `CREATE INDEX idx_signals_valid_from ON signals (valid_from, status)`);
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS symbol_universe (
@@ -948,16 +1104,13 @@ async function setupDB(): Promise<void> {
 
   // tier 컬럼 추가 — 'core'(시총 상위 100) / 'satellite'(101~200) / 'speculative'(거래대금 보강)
   // universeSource(style.ts)가 kospi100/kospi200/volume-top일 때 필터에 사용
-  try {
-    await p.query(`
+  await optionalDdl(p, 'symbol_universe.tier', presence.hasColumn('symbol_universe', 'tier'), colsKnown, `
       ALTER TABLE symbol_universe
         ADD COLUMN tier ENUM('core','satellite','speculative') NOT NULL DEFAULT 'speculative'
         AFTER atr_pct
     `);
-  } catch { /* already exists */ }
-  try {
-    await p.query(`CREATE INDEX idx_universe_tier ON symbol_universe (tier)`);
-  } catch { /* already exists */ }
+  await optionalDdl(p, 'symbol_universe.idx_universe_tier', presence.hasIndex('symbol_universe', 'idx_universe_tier'), idxKnown,
+    `CREATE INDEX idx_universe_tier ON symbol_universe (tier)`);
 
   // 종목별 변동성 → 적응형 interval 추천
   // ATR(14) / 종가 × 100 → atr_pct
@@ -1222,9 +1375,13 @@ async function setupDB(): Promise<void> {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
   // 기존 테이블에 신규 컬럼 추가 (idempotent)
-  await p.query(`ALTER TABLE position_state ADD COLUMN IF NOT EXISTS scenario_exit JSON NULL`).catch(() => {});
-  await p.query(`ALTER TABLE position_state ADD COLUMN IF NOT EXISTS holding_deadline DATETIME NULL`).catch(() => {});
-  await p.query(`ALTER TABLE position_state ADD INDEX IF NOT EXISTS idx_position_state_deadline (holding_deadline)`).catch(() => {});
+  // T-179 — `IF NOT EXISTS` 여도 서버는 ALTER 로서 MDL 을 잡는다(아래 symbol_universe rs_* 참조). 있으면 보내지 않는다.
+  await optionalDdl(p, 'position_state.scenario_exit', presence.hasColumn('position_state', 'scenario_exit'), colsKnown,
+    `ALTER TABLE position_state ADD COLUMN IF NOT EXISTS scenario_exit JSON NULL`);
+  await optionalDdl(p, 'position_state.holding_deadline', presence.hasColumn('position_state', 'holding_deadline'), colsKnown,
+    `ALTER TABLE position_state ADD COLUMN IF NOT EXISTS holding_deadline DATETIME NULL`);
+  await optionalDdl(p, 'position_state.idx_position_state_deadline', presence.hasIndex('position_state', 'idx_position_state_deadline'), idxKnown,
+    `ALTER TABLE position_state ADD INDEX IF NOT EXISTS idx_position_state_deadline (holding_deadline)`);
 
   await p.query(`
     CREATE TABLE IF NOT EXISTS backtests (
@@ -1259,9 +1416,8 @@ async function setupDB(): Promise<void> {
 
   // 리서치 추적 on/off (T-032) — 즐겨찾기 종목별 사이클 패턴 리서치 대상 지정.
   // 기존 테이블에도 안전하게 재실행되도록 idempotent ALTER (position_state 관례와 동일).
-  await p.query(
-    `ALTER TABLE stock_favorites ADD COLUMN IF NOT EXISTS research_enabled TINYINT(1) NOT NULL DEFAULT 0`,
-  ).catch(() => {});
+  await optionalDdl(p, 'stock_favorites.research_enabled', presence.hasColumn('stock_favorites', 'research_enabled'), colsKnown,
+    `ALTER TABLE stock_favorites ADD COLUMN IF NOT EXISTS research_enabled TINYINT(1) NOT NULL DEFAULT 0`);
 
   // ── 리서치: 급등·급락 사이클 패턴 분석 결과 (T-032) ─────────────────────
   // 심볼×실행일 1행. 매일 장 마감 후 cron이 upsert. 실매매와 무관한 조회 전용 데이터.
@@ -1291,16 +1447,14 @@ async function setupDB(): Promise<void> {
   // 없으면 매수/매도 추천을 만들 때마다 캔들을 다시 받아 재계산해야 하고, 화면(ResearchTab)과
   // 08:00 리포트가 서로 다른 시점의 데이터로 다른 숫자를 낼 수 있다. `null`(미저장)과
   // `[]`(오늘 충족 규칙 없음)은 서로 다른 뜻이므로 DEFAULT 를 두지 않는다.
-  await p.query(
-    `ALTER TABLE research_rally_results ADD COLUMN IF NOT EXISTS today_active_rule_ids JSON NULL`,
-  ).catch(() => {});
+  await optionalDdl(p, 'research_rally_results.today_active_rule_ids', presence.hasColumn('research_rally_results', 'today_active_rule_ids'), colsKnown,
+    `ALTER TABLE research_rally_results ADD COLUMN IF NOT EXISTS today_active_rule_ids JSON NULL`);
   // T-034 — 차트 지표 기반 매수 희망가·매도 목표가(`PriceTargets`)를 리서치 cron 이 계산해 저장.
   // 조회(ResearchTab·08:00 리포트)는 읽기만 한다. 매번 Yahoo 를 다시 받으면 느릴 뿐 아니라
   // 두 화면이 서로 다른 시점의 캔들로 다른 목표가를 내게 된다. 산출 불가는 NULL 이며,
   // 통화(KRW/USD)는 JSON 안의 `currency` 필드에 들어간다 — 값만 보고 통화를 추측하지 말 것.
-  await p.query(
-    `ALTER TABLE research_rally_results ADD COLUMN IF NOT EXISTS price_targets JSON NULL`,
-  ).catch(() => {});
+  await optionalDdl(p, 'research_rally_results.price_targets', presence.hasColumn('research_rally_results', 'price_targets'), colsKnown,
+    `ALTER TABLE research_rally_results ADD COLUMN IF NOT EXISTS price_targets JSON NULL`);
 
   // ── 재무·가치 캐시 (Phase A) — 1일 TTL ──────────────────────────────────
   await p.query(`
@@ -1503,11 +1657,17 @@ async function setupDB(): Promise<void> {
   `);
 
   // ── symbol_universe: RS Rating 컬럼 추가 (Phase D) ──────────────────────
-  await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_rating     TINYINT UNSIGNED`).catch(() => {});
-  await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS near_52w_high BOOLEAN DEFAULT FALSE`).catch(() => {});
-  await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS vol_ratio_20d DECIMAL(8,4)`).catch(() => {});
-  await p.query(`ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_updated_at DATETIME`).catch(() => {});
-  await p.query(`ALTER TABLE symbol_universe ADD INDEX IF NOT EXISTS idx_rs_rating (rs_rating DESC)`).catch(() => {});
+  // T-179 — 운영 ordinal 259·260(rs_rating·near_52w_high)이 이 형태로 매 기동 6~10초 걸렸다. 있으면 보내지 않는다.
+  for (const [col, ddl] of [
+    ['rs_rating',     `ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_rating     TINYINT UNSIGNED`],
+    ['near_52w_high', `ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS near_52w_high BOOLEAN DEFAULT FALSE`],
+    ['vol_ratio_20d', `ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS vol_ratio_20d DECIMAL(8,4)`],
+    ['rs_updated_at', `ALTER TABLE symbol_universe ADD COLUMN IF NOT EXISTS rs_updated_at DATETIME`],
+  ] as const) {
+    await optionalDdl(p, `symbol_universe.${col}`, presence.hasColumn('symbol_universe', col), colsKnown, ddl);
+  }
+  await optionalDdl(p, 'symbol_universe.idx_rs_rating', presence.hasIndex('symbol_universe', 'idx_rs_rating'), idxKnown,
+    `ALTER TABLE symbol_universe ADD INDEX IF NOT EXISTS idx_rs_rating (rs_rating DESC)`);
 
   // ── T-012 (2026-08-09) — `price=0` 오염 스냅샷 12행 정리 ───────────────────
   //
@@ -1560,7 +1720,10 @@ async function setupDB(): Promise<void> {
   } catch (e) {
     console.warn(`[db] T-011 소유자 계정 이관 모듈 로드 실패: ${e instanceof Error ? e.message : String(e)}`);
   }
-  } finally { observation.close(); }
+  } finally {
+    flushOptionalDdlLockTimeouts();
+    observation.close();
+  }
 }
 
 // ── T-009 OAuth 스키마 ───────────────────────────────────────────────────────
@@ -1574,11 +1737,11 @@ async function setupDB(): Promise<void> {
  *
  * `null` = 아직 확인 전(부팅 DDL 미실행).
  */
-let oauthSchemaReady: boolean | null = null;
+// 값은 프로세스 전역 상태(`dbState().oauthSchemaReady`)에 둔다 — 위 DbProcessState 주석 참조.
 
 /** OAuth 전용 계정 생성이 가능한 스키마 상태인지. `null` 이면 아직 확인 전. */
 export function isOAuthSchemaReady(): boolean | null {
-  return oauthSchemaReady;
+  return dbState().oauthSchemaReady;
 }
 
 interface UsersColumnMeta {
@@ -1652,7 +1815,7 @@ async function ensureUsersOAuthColumns(p: mysql.Pool): Promise<void> {
   } catch (e) {
     // 메타데이터를 못 읽으면 무엇을 고쳐야 할지 알 수 없다. 조용히 넘어가면
     // OAuth 가입이 원인 불명 500 으로 죽으므로 상태를 "준비 안 됨"으로 확정한다.
-    oauthSchemaReady = false;
+    dbState().oauthSchemaReady = false;
     console.error(
       `[db] users 컬럼 메타데이터 조회 실패 — OAuth 스키마 상태를 확인할 수 없습니다. ` +
       `(${e instanceof Error ? e.message : String(e)})`,
@@ -1719,7 +1882,7 @@ async function ensureUsersOAuthColumns(p: mysql.Pool): Promise<void> {
   }
 
   if (meta.passwordHashNullable) {
-    oauthSchemaReady = true;
+    dbState().oauthSchemaReady = true;
     return;
   }
 
@@ -1730,12 +1893,12 @@ async function ensureUsersOAuthColumns(p: mysql.Pool): Promise<void> {
   );
   // 실제로 바뀌었는지 재확인한다 — ALTER 가 성공을 반환해도 상태를 눈으로 확인하고 기록한다.
   try {
-    oauthSchemaReady = (await readUsersColumnMeta(p)).passwordHashNullable;
+    dbState().oauthSchemaReady = (await readUsersColumnMeta(p)).passwordHashNullable;
   } catch {
-    oauthSchemaReady = ok;
+    dbState().oauthSchemaReady = ok;
   }
 
-  if (oauthSchemaReady !== true) {
+  if (dbState().oauthSchemaReady !== true) {
     console.error(
       '[db] ❌ users.password_hash 가 여전히 NOT NULL 입니다 — OAuth 전용 계정을 만들 수 없습니다.\n' +
       '      소셜 로그인의 "신규 가입"만 막히고 기존 이메일 로그인·매매 기능은 정상 동작합니다.',
