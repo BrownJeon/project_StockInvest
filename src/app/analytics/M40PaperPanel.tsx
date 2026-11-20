@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Keyb
 import { useOpsPoll, type PollState } from '@/components/ops/useOpsPoll';
 import { Section, StatusChip } from '@/components/ops/ui';
 import type { PaperView, PaperViewV6, PaperViewCycle, PaperViewQuery, PaperViewPage, PaperViewSignal, PaperForecastHorizon } from '@/lib/strategy/m40/paper-view-types';
-import { paperAction, paperJudgmentRows, paperMode, paperNumber, paperPct, paperReason, paperSignalStatus, paperTime, paperUsd } from './m40-paper-copy';
+import { PAPER_BLOCKED_CONSEQUENCE, paperAction, paperBlockedReason, paperJudgmentRows, paperMode, paperNumber, paperPct, paperReason, paperSignalStatus, paperTime, paperUsd } from './m40-paper-copy';
 import { paperQueryAfterAuthError,PAPER_INITIAL_QUERY, paperHorizonLabel, paperLocalPage, paperNextQuery, paperQueryUrl, paperTabIndex, paperSafePoll, paperCalendarSpan } from './m40-paper-ui';
 import css from './M40PaperPanel.module.css';
 
@@ -17,6 +17,8 @@ export type PaperPerformanceView='observed'|'forecast'|'comparison';
 const STAGES=[['interpretation','해석'],['observation','관찰'],['condition','조건'],['priority','우선순위']] as const;
 const SOURCE_KIND:Record<string,string>={raw_quote:'원가격 시세',split_bar:'분할 조정 일봉',sp500_bar:'S&P 500 지수'};
 const pctClass=(n:number|null)=>n==null?'':n>0?css.positive:n<0?css.negative:'';
+/** T-178 D1-A — 긴 사유 코드를 밑줄 뒤에서만 줄바꿈. */
+const codeBreaks=(code:string)=>code.split('_').flatMap((part,i,all)=>i<all.length-1?[`${part}_`,<wbr key={i}/>]:[part]);
 
 /** Each URL owns a polling instance. A changed query cannot briefly render the old DTO. */
 function PaperRequest({url,onPoll}:{url:string;onPoll:(url:string,poll:PollState<ViewData>,refresh:()=>void)=>void}){
@@ -80,14 +82,14 @@ export function M40PaperView({poll:incomingPoll,onRefresh,query=PAPER_INITIAL_QU
  useEffect(()=>{if(poll.status==='error')pendingPage.current=null;},[poll.status]);
  const failure=poll.error==='unauthorized'?'로그인이 필요합니다':poll.error==='http_403'?'조회 권한이 없습니다':'조회하지 못했습니다';
  const unavailable=<div className={css.empty} role={poll.status==='error'?'alert':'status'} aria-busy={poll.status==='loading'}>{poll.status==='error'?<><b>{failure}</b><br/>저장된 비공개 자료는 표시하지 않습니다.<br/><button className={css.refresh} onClick={onRefresh}>다시 조회</button></>:<>불러오는 중…<br/>저장 자료만 조회합니다. 수집·분석을 실행하지 않습니다.</>}</div>;
- const cycleNote=previous?<p className={css.hint}><b>이전 저장분 · {previous.session} 세션</b><br/>{paperMode(previous.mode)} · 저장 분석 기준 {paperTime(previous.decisionAt)}. 최신 회차 결과가 아닙니다.</p>:null;
+ const cycleNote=previous?<p className={css.hint}><b>이전 저장분 · {previous.session} 세션 (ET)</b><br/>{paperMode(previous.mode)} · 저장 분석 기준 {paperTime(previous.decisionAt)}<br/>최신 회차가 차단돼 마지막으로 처리된 회차를 보여 줍니다. 세션은 미국 동부 거래일, 저장 분석 기준은 한국 시간 처리 시각이라 날짜가 하루 늦게 보일 수 있습니다.</p>:null;
  function selectTab(index:number,focus=false){pendingPage.current=null;const id=AREAS[index][0];setActive(id);if(focus)navRef.current?.querySelector<HTMLButtonElement>(`#m40-tab-${id}`)?.focus();}
  function tabKey(e:KeyboardEvent<HTMLButtonElement>,i:number){const next=paperTabIndex(i,e.key,AREAS.length);if(next!==null){e.preventDefault();selectTab(next,true);}}
  function pageChange(direction:'previous'|'next',page:number,setPage:(n:number)=>void){pendingPage.current=direction;setPage(page);}
  const style={'--m40-sticky-top':`${stickyTop}px`,'--m40-scroll-top':`${stickyTop+navHeight+12}px`} as CSSProperties;
  return <div className={css.body} style={style}>
   <p className={css.summary}><StatusChip kind="partial">모의 전용</StatusChip> <StatusChip kind={current?.mode==='blocked'?'blocked':'unknown'}>{paperMode(current?.mode)}</StatusChip><br/>실주문 없음 · 제한 후보군<br/>새로고침은 저장 자료만 다시 읽습니다.<br/>이 화면은 전역 실거래 설정을 변경하지 않습니다.</p>
-  {current?.mode==='blocked'&&<div className={`${css.notice} ${css.blocked}`} role="status"><b>최신 회차 처리 차단 · {current.session} 세션</b><br/>{paperReason(current.errorCode)}<br/>저장 분석 기준 {paperTime(current.decisionAt)}{!previous&&<><br/>표시할 이전 저장분도 없습니다.</>}</div>}
+  {current?.mode==='blocked'&&<div className={`${css.notice} ${css.blocked}`} role="status"><b>최신 회차 처리 차단 · {current.session} 세션 (ET)</b><br/>{paperBlockedReason(current.errorCode)}<br/>{PAPER_BLOCKED_CONSEQUENCE}<br/>처리 시도 {paperTime(current.decisionAt)}{!previous&&<><br/>표시할 이전 저장분도 없습니다.</>}{current.errorCode&&<><br/><span className={css.reasonCode}>사유 코드 {codeBreaks(current.errorCode)}</span></>}</div>}
   {d&&<Policy data={d} cycle={cycle}/>}
   <div className={css.nav} ref={navRef} role="tablist" aria-label="모의분석 상세 영역">{AREAS.map(([id,label],i)=><button type="button" role="tab" id={`m40-tab-${id}`} aria-selected={active===id} aria-controls={`m40-panel-${id}`} tabIndex={active===id?0:-1} key={id} onClick={()=>selectTab(i)} onKeyDown={e=>tabKey(e,i)}>{label}</button>)}</div>
   <div ref={panelRef} className={css.section} id={`m40-panel-${active}`} role="tabpanel" aria-labelledby={`m40-tab-${active}`} tabIndex={0} aria-busy={poll.status==='loading'}>
