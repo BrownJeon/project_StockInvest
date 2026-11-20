@@ -668,6 +668,23 @@ check_hook_sync || true
 #                               다음 후보로 남긴다 — 사용자 결정 범위가 `kis-fundamentals-snapshot` 쪽까지였다.
 #     - src/lib/data/us-edgar/·src/lib/data/__tests__/sql-upsert-sim.ts   SEC 자료 수집과 upsert 모사 대역. 위 T-143
 #                               "넣지 않은 것"의 판단(자료 수집이고 주문·대상 확정 판단이 없다)을 그대로 유지한다.
+# T-179 추가 (2026-11-20, 사용자 지시 "커밋 훅 감시 목록에 새 시험 추가 PR로 진행" — T-179 Reviewer 의견 5·Leader 판단):
+#   + src/lib/db/__tests__/process-state.test.ts → db.ts 가 Next 번들 두 벌(instrumentation 청크·라우트 청크)에 따로 실려도
+#                               풀·setupPromise·setupFatalError 를 globalThis 한 객체로 공유하는지 지키는 유일한 회귀망이다.
+#                               이 시험이 무검토로 느슨해지면 부팅 DDL 이 프로세스당 두 번 돌거나(메타데이터 잠금 경합 재발)
+#                               스키마 치명 오류(fail-closed)가 한쪽 번들에만 보이는 상태로 되돌아가도 "시험 통과"가 된다.
+#                               같은 논리로 bootstrap-presence.test.ts 가 이미 들어 있다(T-156).
+#   + src/lib/db/__tests__/optional-ddl-alerts.test.ts → 선택 DDL 이 잠금 대기 5초를 넘겨(1205) 빠지면 알림으로 올리고, 알림
+#                               본문에 SQL·오류 원문·접속 정보를 싣지 않는다는 계약을 고정한다. 「5초 포기」가 조용한 컬럼
+#                               누락이 되지 않게 하는 장치의 회귀망이다.
+#   + src/lib/db/__tests__/setup-ddl-disposable-mariadb.test.ts → 일회용 MariaDB 에 setupDB 를 실제로 돌려 스키마 결과와
+#                               재기동 시 DDL 건너뛰기를 확인한다. 평소에는 DB 미지정으로 건너뛰지만, T-093 이 일회용 DB 시험
+#                               (t088-disposable-mariadb)을 넣은 선례와 같이 그 경로의 회귀망이므로 포함한다.
+#   세 항목 모두 파일 하나씩 정확 일치다. 디렉토리(`^src/lib/db/__tests__/`)로 넣지 않은 이유: 이 디렉토리에 안전과 무관한
+#   시험이 생겨도 과도차단하지 않고, T-156 이 정확 일치로 넣은 방식과 맞추기 위해서다 — 새 DB 시험 파일은 목록에 한 줄을
+#   더해야 감시된다.
+#   넣지 않은 것: src/lib/diagnostics/boot-diagnostics.ts(+ 시험) — 부팅 진단 로그의 SQL 분류 전용이라 권한·스키마 판단이
+#   없다(T-179 Reviewer 의견 5).
 # ---------------------------------------------------------------------------
 SAFETY_PATHS=(
   '^src/lib/safety/'
@@ -682,6 +699,10 @@ SAFETY_PATHS=(
   # T-156: bootstrap DDL skip decisions moved out of db.ts; helper and its regression must remain independently reviewed.
   '^src/lib/db/bootstrap-presence\.ts$'
   '^src/lib/db/__tests__/bootstrap-presence\.test\.ts$'
+  # T-179: 번들 간 DB 프로세스 상태 공유·선택 DDL 잠금 대기 알림·일회용 DB setupDB 회귀망.
+  '^src/lib/db/__tests__/process-state\.test\.ts$'
+  '^src/lib/db/__tests__/optional-ddl-alerts\.test\.ts$'
+  '^src/lib/db/__tests__/setup-ddl-disposable-mariadb\.test\.ts$'
   '^src/lib/notify/telegram-api\.ts$'
   '^src/instrumentation\.ts$'
   '^src/lib/notify/__tests__/telegram-api\.test\.ts$'

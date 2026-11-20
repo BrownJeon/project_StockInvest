@@ -980,6 +980,35 @@ task_id: T-980
 EOF
 
 echo ""
+echo "[T-179 — DB 프로세스 상태·선택 DDL 알림·일회용 DB 시험 독립 변경 실제 커밋]"
+stage_and_run 0 "(t179-neighbor) 새 시험 이웃3경로·task ID 없음 → 통과" \
+  "$(msg 'test: db test neighbors')" src/lib/db/__tests__/process-state.test.ts.snap src/lib/db/__tests__/optional-ddl-alerts.test.ts.bak src/lib/db/__tests__/other.test.ts
+# 일회용 저장소에서만: 항목마다 ①미검토 → 차단 ②이웃 scope → 차단 ③정확 scope → 통과. 목록에서 한 줄만 빠져도 그 항목의 ①·② 가 실패한다.
+for T179_PATH in src/lib/db/__tests__/process-state.test.ts src/lib/db/__tests__/optional-ddl-alerts.test.ts src/lib/db/__tests__/setup-ddl-disposable-mariadb.test.ts; do
+  mkdir -p "$E2E_REPO/$(dirname "$T179_PATH")"
+  cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-980-hooktest-t090-scoped.md" <<EOF
+---
+task_id: T-980
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: $T179_PATH)**
+EOF
+  printf 'db test %s\n' "$T179_PATH" > "$E2E_REPO/$T179_PATH"
+  e2e_git add "$T179_PATH"
+  e2e_commit "(t179) $T179_PATH 단독·미검토 → 차단" block "커밋 차단" 'test: db process state'
+  e2e_commit "(t179) $T179_PATH 단독·이웃 scope → 차단" block "커밋 차단" 'test(T-979): db process state'
+  e2e_commit "(t179) $T179_PATH 단독·정확 scope → 통과" commit "$T075_OK" 'test(T-980): db process state'
+done
+# Later authentication E2E scenarios reuse this task fixture; restore its original scope.
+cat > "$E2E_REPO/agent-vault/10-Flow/tasks/T-980-hooktest-t090-scoped.md" <<'EOF'
+---
+task_id: T-980
+---
+## Reviewer 기록
+- [09:00] **최종 판정: PASS (scope: src/app/api/auth/)**
+EOF
+
+echo ""
 echo "[T-092 — 인증 관련 구현·시험 파일(6곳 + 시험 4) 추가]"
 
 # T-090 이 잠근 인증 입구 라우트가 기대는 불변식의 구현 쪽. 디렉토리 항목은 profile/password/ 하나뿐이고 나머지는 정확 일치다.

@@ -25,7 +25,7 @@ execution_context:
   current_tool: claude
   current_procedure: claude_standard
   current_scope: 원인 확인·설계부터 구현·감사·QA·PR 생성까지. main 머지(=운영 배포)는 PR 검토 후 사용자 승인
-  last_event_id: E3
+  last_event_id: E4
 ---
 
 # T-179 앱 시작 시 DB 준비(setupDB) 지연 해소
@@ -51,6 +51,8 @@ execution_context:
 
 - 2026-11-20 10:5x 「이슈기록 등록 및 작업 진행해줘. 이번에는 PR등록해서 관리하도록 해주는데 …」 → 진행 작업 선택: 「시작 시 DB 준비 지연」
 - main 머지(=운영 배포)는 이 승인 범위가 아니다 — PR 검토 후 별도 승인.
+
+- 2026-11-20 16:5x 후속 1: 「커밋 훅 감시 목록에 새 시험 추가 PR로 진행」
 
 ## 설계 (Leader — Developer 구현 사양)
 
@@ -105,6 +107,8 @@ execution_context:
 - [11:45] Medium-1 시험 — 신규 `src/lib/db/__tests__/optional-ddl-alerts.test.ts` 5개(가짜 풀, process-state.test 와 같은 방식, 알림은 제목으로 걸러 셈 — 가짜 DB 에선 OAuth 경로도 알림을 보내므로): 「1205 두 문장(symbol_universe.tier·idx_universe_tier) → 라벨 로그 2줄 + 알림 1건(본문에 두 이름, SQL·비밀 없음), 부팅 계속·뒤 문장도 전송」·「setupDB 재실행 → 알림 여전히 1건, 로그 2줄 + 생략 로그 1줄」·「1060·1061 → 알림·경고·error 0」·「COLUMNS 조회 실패 → 「모름」 warn 1줄(컬럼=모름·인덱스=확인, 원 오류 문구 없음), DDL 은 전송, 알림 0」·「조회 성공 → 「모름」 로그 없음」. **변경 전 db.ts(Medium-1 직전)로 돌리면 4개 실패·1개 통과**(마지막 것만 통과 — 정상 대조군)를 확인하고 되돌림(cmp 일치). `npx jest src/lib/db src/lib/diagnostics`: 스위트 4 통과·1 건너뜀(일회용 DB), 시험 25 통과·4 건너뜀. `tsc --noEmit` 종료 0. 전체 jest·`next build`·일회용 MariaDB 시험은 이번엔 돌리지 않음(QA 몫 — 스키마 결과를 바꾸는 줄은 없음). 로그: 서버 `~/.node-local/t179-medium1-{jest,jest-before,tsc}.log`, 수정 전 사본 `~/.node-local/t179-db.ts.before-medium1`.
 - [11:45] Medium-1 남은 점 — ① 이 알림은 「5초 안에 못 붙였다」를 알릴 뿐 컬럼을 붙이지는 않는다(다음 기동에 재시도). 기다림을 늘리거나 재시도하는 안(Reviewer ②의 「더 긴 상한 1회 재시도」)은 MDL 대기열을 다시 길게 만드는 쪽이라 택하지 않았다 — 필요하면 Leader 판단. ② 메타데이터를 「모름」인 채 1205 가 나면 실제로는 이미 있던 컬럼이어도 알림이 간다(오탐 쪽 — 잠금 경합 자체는 사실이라 알릴 가치가 있다고 봄). ③ 빈 DB 첫 기동의 symbol_universe.market warn(Low-1, ER_NO_SUCH_TABLE)은 그대로다. ④ 새 시험 파일도 커밋 훅 SAFETY_PATHS 밖이다(Reviewer 의견 5와 같은 판단 대상). 커밋·push 하지 않음.
 
+- [17:0x] (실행 도구: claude, 메인 세션이 developer 겸임) **후속 1 — 커밋 훅 감시 목록에 새 시험 3개 추가.** 서버 worktree `~/.node-local/stockinvest-t179s`(브랜치 `t179-safety-tests`, 기준 `origin/main` `cbe24e2`). 바꾼 파일 2개: `scripts/git-hooks/commit-msg` — `SAFETY_PATHS` 에 `src/lib/db/__tests__/process-state.test.ts`·`optional-ddl-alerts.test.ts`·`setup-ddl-disposable-mariadb.test.ts` 정확 일치 3줄 + 항목별 근거 주석(「T-179 추가」 블록, 넣지 않은 것 `boot-diagnostics.ts` 포함). `scripts/test-git-hooks.sh` — T-156 블록과 같은 형식의 T-179 블록(이웃 3경로 통과 1건 + 항목마다 실제 커밋 미검토 차단·이웃 scope 차단·정확 scope 통과 = 9건). `bash -n` 두 파일 통과, `bash scripts/test-git-hooks.sh` 종료 0·「전체 검증 통과」(T-179 10건 포함, 로그 `~/.node-local/t179s-hooktest.log`). 앱 코드·시험 본문·배포 대상 파일 무변경.
+
 ## Reviewer
 
 - [11:41] (실행 도구: claude, reviewer) 감사 범위: `src/lib/db.ts`(전체 diff + 호출 경로), `src/lib/db/bootstrap-presence.ts`, `src/lib/diagnostics/boot-diagnostics.ts`, `src/lib/db/__tests__/{process-state,setup-ddl-disposable-mariadb,bootstrap-presence}.test.ts`, `package.json`·`package-lock.json`. 변경 파일 8개는 설계 범위와 일치(범위 밖 변경 없음, 버전 0.18.0 → 0.19.0 외 package 변경 없음). 주문·체결·safety 경로 무변경. 직접 재실행: `jest src/lib/db src/lib/diagnostics` 3개 스위트 통과(20 통과·4 건너뜀=일회용 DB 시험). 변경 전 `2a3ae44` 를 `git archive` 로 임시 디렉터리에 풀어 `process-state.test.ts` 만 넣고 실행 → 2개 모두 실패(createPool 3회·strategies 생성 3회 등), 임시 디렉터리 삭제 확인. 즉 "변경 전 코드에서 실패" 주장은 사실. 일회용 MariaDB 시험은 직접 재실행하지 않음(개발자 실행 결과와 시험 코드 구조만 확인 — 미검증).
@@ -123,6 +127,13 @@ execution_context:
 - [11:48] ④ 재시도 안 넣음 — 동의. 5초 포기는 MDL 대기열 연쇄(WP-3)를 막으려는 설계라 더 긴 재시도는 같은 문제를 되살린다. 대신 알림 + 「필수로 읽는 신규 컬럼은 배포 전 마이그레이션」 주석(db.ts:238 부근)으로 위험을 사람이 보게 했으므로 Medium-1 의 요구(실패가 조용하지 않을 것)를 충족한다. 한계: 알림은 사실 통지일 뿐 컬럼을 붙이지 않는다(다음 기동까지) — Developer 도 명시했다.
 - [11:48] ⑤ 범위 — 이상 없음. 변경은 db.ts 의 상태 필드 2개·상수·헬퍼 3개·optionalDdl catch 분기·setupDB 의 reset/「모름」 로그/finally flush 뿐이며 스키마 결과·필수 DDL·fail-closed 로직·주문 안전장치는 건드리지 않았다. 새 시험의 「모름」 로그 시험은 원 오류 문구가 안 실림을 확인한다. Low(차단 아님): 메타데이터를 「모름」인 채 1205 가 나면 이미 있던 컬럼이어도 알림이 가는 오탐 쪽 — 잠금 경합은 사실이므로 허용. 신규 시험 파일은 commit-msg 훅 `SAFETY_PATHS` 밖 — 1차 의견 5와 같이 추가 여부는 Leader 판단. 요약: Critical 0 · High 0 · Medium 0(Medium-1 해소) · Low 신규 1(throttle 시각 선갱신) 포함 기존 Low 유지.
 - [11:48] **최종 판정: PASS (scope: src/lib/db.ts, src/lib/db/bootstrap-presence.ts, src/lib/diagnostics/boot-diagnostics.ts, src/lib/db/__tests__/process-state.test.ts, src/lib/db/__tests__/bootstrap-presence.test.ts, src/lib/db/__tests__/setup-ddl-disposable-mariadb.test.ts, src/lib/db/__tests__/optional-ddl-alerts.test.ts, package.json, package-lock.json)**
+- [17:05] (실행 도구: claude, reviewer) 후속 1(커밋 훅 감시 목록 보강) 독립 감사. 범위: `scripts/git-hooks/commit-msg`(SAFETY_PATHS 추가 3줄·근거 주석), `scripts/test-git-hooks.sh`(T-179 블록), 이 이력서 diff. 파일 3개 외 변경 없음(git diff --stat 56줄 추가, 삭제 0).
+- [17:05] 1) 정규식 — 통과. 3개 모두 `^…\.test\.ts$` 정확 일치. 후보 10개(원본 3개, `.snap`·`.bak`·`.tsx`·하위 디렉토리·접두 `x`·같은 디렉토리의 bootstrap-presence/other 시험)를 grep -E 로 대조: 원본 3개만 1건씩, 나머지는 0건. 대상 3개 파일은 worktree 에 실재하고 `git ls-files` 에도 추적 중이다.
+- [17:05] 2) 근거 주석 사실관계 — 통과. ① db.ts 가 `Symbol.for(stockinvest.db.state)` 한 객체에 pool·setupPromise·setupFatalError·oauthSchemaReady 를 두고, process-state.test 가 `jest.isolateModules` 로 두 벌 평가해 풀 1개·setupDB 1회·fail-closed 공유를 단언한다. ② 알림 본문은 `labels`(테이블.컬럼/인덱스 이름)와 고정 안내문뿐이고 시험이 `ALTER TABLE|CREATE INDEX|DB_PWD|password` 부재를 단언한다. ③ t088-disposable-mariadb 는 commit-msg 에 이미 정확 일치로 있고(T-093 주석), 같은 `describe.skip`(포트 환경변수 없으면 건너뜀) 구조다. 주석의 「잠금 대기 5초」도 db.ts 상수와 같다. Low: 주석 표현 「SQL·오류 원문·접속 정보를 싣지 않는다」 중 오류 원문 부재는 다른 시험(optional-ddl-alerts 163-165행, 로그 쪽)이 확인하고 알림 본문은 코드로 확인했다 — 사실과 어긋나지 않는다.
+- [17:05] 3) 변이 시험 — 통과. 임시 저장소 사본(worktree 밖, 작업 트리 미수정)에서 process-state 줄 하나만 뺀 사본은 `bash scripts/test-git-hooks.sh` 가 533 통과/3 실패로 종료 1, 실패는 정확히 `(t179) process-state.test.ts` 의 ①미검토 ②이웃 scope ③정확 scope 3건이다. 원본 사본은 install-git-hooks.sh 설치 뒤 536 통과/0 실패, 종료 0, 「전체 검증 통과」. 단 임시 저장소에 hooksPath 가 없으면 E2E 단계가 안내만 내고 종료 1 이 된다 — 설치 전제 문제이지 이번 변경 결함이 아니다.
+- [17:05] 4) 범위·fixture — 통과. T-179 블록은 항목마다 T-980 fixture 를 덮어쓴 뒤 끝에서 원래 내용(`scope: src/app/api/auth/`)으로 복원하고, 이후 T-092 시나리오가 그대로 통과했다(원본 사본 536/0). 기존 시험 블록 수정 없음. 이번 worktree 에서는 test-git-hooks.sh 를 돌리지 않았고 git status 는 감사 전과 같다.
+- [17:05] 미확인: 실제 worktree 의 core.hooksPath 설치 상태에서의 E2E 단계, setup-ddl-disposable-mariadb 실제 DB 실행, 서버 외 머신(Mac) 훅 무검사 문제(CLAUDE.md 에 기록된 기존 한계). 발견 사항: Critical 0, High 0, Medium 0, Low 1(위 주석 표현).
+- [17:05] **최종 판정: PASS (scope: scripts/git-hooks/commit-msg, scripts/test-git-hooks.sh, src/lib/db/__tests__/process-state.test.ts, src/lib/db/__tests__/optional-ddl-alerts.test.ts, src/lib/db/__tests__/setup-ddl-disposable-mariadb.test.ts)**
 
 ## QA
 - [12:01] (실행 도구: claude, qa) 환경 — 서버 home-dev-x600, worktree `~/.node-local/stockinvest-t179` (HEAD 2a3ae44 + 미커밋 9파일), node v24.22.2. 일회용 컨테이너 `t179-qa-db`(mariadb:10.11.19, 127.0.0.1:33179 만 리슨, 임시 비밀번호는 실행 후 삭제). 변경 후 DB `si_qa_w`, 변경 전 DB `si_base_w`(git archive 2a3ae44 사본을 next build 해 실행). 운영 DB·pm2·`/api/cron/*`·운영 `.env` 미사용. 기동 env 는 KIS·텔레그램·메일·OAuth·LLM 키 없음, 요청 목록에 없던 `CRON_WATCHDOG_ENABLED=false` 를 추가했다(하트비트 없는 상태의 정지 알림을 막기 위함, DB 설정 횟수에는 영향 없음).
@@ -140,12 +151,22 @@ execution_context:
 - [12:01] 12) 미검증·남은 위험 — ① 운영 시간 개선(79.6초 지연 감소)은 재현하지 못했다 ② 운영 `release.sh` blue/green 재배포 경로(pm2 reload 가 만드는 세 번째 start 가 별도 프로세스인지)는 실행하지 않았다 ③ 두 번째 setup 의 번들 출처는 확정하지 않았다 ④ 빈 DB 첫 기동의 실패 2건(symbol_universe.market)은 Reviewer Low-1 그대로 남는다(로그 소음, 운영 영향 없음 — 운영 DB 는 이미 스키마가 있다) ⑤ 워치독을 끈 상태로 측정했다.
 - [12:01] 13) 정리 — 컨테이너 `t179-qa-db` 제거(`docker rm -f`, 남은 수 0), 변경 전 사본 `~/.node-local/t179-qa-base` 제거, 임시 비밀번호 파일 제거. 띄운 next 4기동(변경 후 2 · 변경 전 2)은 모두 PID 로 종료했고 `t179-qa-*.result` 에 `stopped … alive_after=no` 기록, 3179·3180·33179 포트는 비어 있다. 다른 프로젝트의 `next-server`(운영 pm2) 프로세스는 건드리지 않았다. 로그·.gl·.result·스키마 파일은 `~/.node-local/` 에 남김.
 - [12:01] QA 판정: pass — 전체 jest 새 실패 0(416 = 기준, 이름 집합 일치), tsc·next build 종료 0, 실기동 2회에서 ensure_setup 1회·재기동 시 실패 DDL 0, 변경 전 2벌·실패 12건과 대비, 스키마 동일. 미검증: 운영 시간 개선, 주문 경로 실행 검증, release.sh 재배포 경로(위 9·11·12 참고).
+- [17:05] (실행 도구: claude, qa) 후속 1 — 환경: 서버 `~/.node-local/stockinvest-t179s`(브랜치 `t179-safety-tests`, HEAD `cbe24e2`, 미커밋 M 3개 + `node_modules`). 운영 pm2·운영 DB·`.env` 미사용. 훅 시험의 실 커밋 시나리오는 스크립트 안의 `mktemp -d` 일회용 저장소에서 수행됨을 스크립트로 확인.
+- [17:05] 1) `bash scripts/test-git-hooks.sh > ~/.node-local/t179s-qa-hooktest.log 2>&1` — 종료 코드 0, 마지막 줄 「✅ 전체 검증 통과.」, 결과 `536 통과 / 0 실패`. 로그의 ❌ 줄 0건. `(t179` 로 시작하는 10건(`(t179-neighbor)` 1건 + `(t179)` 9건) 전부 통과 표시. 세 신규 시험 파일 각각에 대해 「미검토 차단 · 이웃 scope 차단 · 정확 scope 통과」가 확인됐다(`process-state` · `optional-ddl-alerts` · `setup-ddl-disposable-mariadb`, 로그 159–167행).
+- [17:05] 2) 실행 전 `git status --short` = 실행 후 동일: `M agent-vault/10-Flow/tasks/T-179-boot-setup-ddl-contention.md` · `M scripts/git-hooks/commit-msg` · `M scripts/test-git-hooks.sh` · `?? node_modules`. fixture 잔존 없음. 실행 후 HEAD 는 `cbe24e2` 그대로이고 reflog 최신 항목은 16:58:21(실행 전부터 있던 기록)이라, 이 worktree 에 커밋이 만들어지지 않았다.
+- [17:05] 3) 훅 적용 확인 — `git config --get core.hooksPath` = `scripts/git-hooks`(상대 경로, 이 worktree 기준). `scripts/git-hooks/commit-msg` 존재, 권한 `-rwxrwxr-x`, 실행 가능(`test -x` 통과). 시험 로그의 E2E 에서 실 `git commit` 이 훅에 의해 차단됨(exit 1, HEAD 변동 없음)을 확인했다. 따라서 이 worktree 의 커밋에는 훅이 실제로 적용된다.
+- [17:05] 4) 감시 목록 — `scripts/git-hooks/commit-msg` 의 `SAFETY_PATHS` 에 세 시험 파일이 정확 일치 항목(라인 703–705, 경로 정확 일치 형식)으로 들어 있음을 확인. diff 는 `scripts/git-hooks/commit-msg` 21행 추가, `scripts/test-git-hooks.sh` 29행 추가, 기록 파일 13행 추가로 설명된 범위와 일치.
+- [17:05] 범위 메모 — 이번 QA 는 커밋 훅 시험과 훅 적용만 검증했다. 앱 코드 변경의 검증은 위 12:01 기록(전체 jest 새 실패 0, tsc·build, 실기동)이 맡으며 이번에 다시 실행하지 않았다.
+- [17:05] 미검증 — ① 다른 worktree·다른 머신에서의 훅 적용. 특히 Mac 세션은 `core.hooksPath` 경로가 서버에만 있어 CLAUDE.md 기록대로 커밋이 무검사일 수 있다(이번 확인 범위 밖) ② 훅 시험이 통과해도 실제 Reviewer 판정 줄(scope)은 이 QA 가 판정하지 않는다 ③ 앱 기능 자체는 이번에 실행하지 않았다.
+- [17:05] QA 판정: pass — 훅 시험 536 통과 / 0 실패, `(t179` 10건 전부 통과, 실행 전후 워킹트리 동일(fixture 잔존 0), 실 커밋 차단과 `commit-msg` 실행 가능 확인, 신규 시험 3개 감시 등록 확인. 미검증 항목은 위 ①~③.
 
 ## Leader 판단
 
 - [12:2x] Medium-1 후속에서 「더 긴 상한으로 1회 재시도」는 넣지 않는다 — 재시도가 MDL 대기열을 다시 길게 만들 수 있다. 대신 1205 실패를 알림으로 알리고, 앱이 바로 필수로 읽는 새 컬럼은 배포 전 마이그레이션으로 넣는다(db.ts 주석).
 - [12:2x] 커밋 훅 감시 목록(SAFETY_PATHS)에 새 시험 `process-state.test.ts`(권고)·`setup-ddl-disposable-mariadb.test.ts`·`optional-ddl-alerts.test.ts`(선택)를 넣는 일은 훅 파일 자체가 감시 대상이라 이 PR 과 섞지 않고 후속으로 분리한다.
 - [12:2x] 배포 스크립트(release.sh)가 매 배포마다 옛 경로로 프로세스를 잠깐 띄웠다 지우는 동작(3번째 setupDB)은 공용 인프라(HOME-SERVER_CONFIG) 범위라 이 task 밖이다 — 사용자 결정 후보.
+
+- [17:0x] 후속 1 범위: Reviewer 의견 5의 권고(process-state)와 선택 2개(optional-ddl-alerts·setup-ddl-disposable-mariadb)를 모두 넣는다 — 둘 다 이번 변경의 안전 주장(5초 포기가 조용하지 않음·스키마 결과 동일)을 지키는 시험이고, 넣어도 평소 커밋 마찰은 이 시험을 고칠 때만 생긴다. 디렉토리 단위가 아니라 파일 정확 일치(T-156 방식). `boot-diagnostics.ts` 는 넣지 않는다.
 
 ## 배포 기록
 
@@ -161,6 +182,7 @@ execution_context:
 | E1 | 2026-11-20 11:1x | start | claude / claude_standard | 원인 확인·설계부터 구현·감사·QA·PR 생성까지(머지 제외) | 사용자 「이슈기록 등록 및 작업 진행해줘. 이번에는 PR등록해서 관리」 + 작업 선택 「시작 시 DB 준비 지연」 |
 | E2 | 2026-11-20 12:2x | handoff | claude / claude_standard | Reviewer PASS(재검증 포함)·QA pass 후 브랜치 커밋·push·Gitea PR 생성. 머지는 사용자 승인 대기 | 사용자 「이번에는 PR등록해서 관리」 |
 | E3 | 2026-11-20 12:10 | deploy | claude / claude_standard | PR #3 검토·한글 문구로 머지(=운영 배포)·배포 확인 | 사용자 「검토 후 머지해주고 머지할 때의 문구도 한글로 기록해줘」 |
+| E4 | 2026-11-20 17:0x | resume | claude / claude_standard | 후속 1 — 커밋 훅 감시 목록에 새 시험 3개 추가(구현·Reviewer·QA·브랜치 커밋·PR 생성). 머지는 PR 검토 후 | 사용자 「커밋 훅 감시 목록에 새 시험 추가 PR로 진행」 |
 
 ## 최종 요약
 
@@ -173,5 +195,5 @@ execution_context:
 - **AI 가 검증하지 못한 것**: 공유 DB 가 바쁜 시각(장중·다른 앱 부하)의 시작 시간 — 다음 배포들의 시작 진단으로 확인.
 - **👉 사용자가 확인할 것**: 없음.
 - **👉 사용자가 결정할 것**: release.sh 가 배포마다 옛 경로로 프로세스를 잠깐 띄우는 동작을 고칠지(공용 인프라, 다른 앱에도 영향).
-- **남은 일**: 커밋 훅 감시 목록에 새 시험(`process-state.test.ts` 등) 추가(훅 파일 자체가 감시 대상이라 별도 커밋) · 새 필수 컬럼은 배포 전 마이그레이션으로.
+- **남은 일**: 새 필수 컬럼은 배포 전 마이그레이션으로. (후속 1 — 커밋 훅 감시 목록에 새 시험 3개 추가: Reviewer PASS·QA pass 후 PR 로 진행, 머지 결과는 배포 기록에 적는다.)
 - **이슈·위험**: 실패 무시 DDL 묶음에 앱이 읽는 컬럼이 섞여 있다 — 잠금 대기 5초 초과로 빠지면 알림이 간다(30분 간격).
