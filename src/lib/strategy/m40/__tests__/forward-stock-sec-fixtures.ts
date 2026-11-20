@@ -30,6 +30,35 @@ export const BRK_SEC_REAL_ROWS_20261119:readonly BrkSecRow[]=Object.freeze([
  row('0001193125-26-438090','2026-10-29','2026-10-29T21:21:38.000Z','4','xslF345X06/ownership.xml',''),
  row('0001728451-26-000005','2026-10-23','2026-10-23T20:38:16.000Z','4','xslF345X06/primary_doc.xml',''),
 ]);
+/**
+ * T-180: the same six fields as archived by the blocked 2026-11-19 (ET) session cycle that ran on query day 2026-11-20 (blocked under v1 by the 8-K 0001193125-26-468549).
+ * Source (read-only, analyst 2026-11-20): t156_dataset `paper-src-eda1359a…` → nonPriceEvidence.quarantine.rawJson → events.sec (page sha256
+ * 0cc926217df75fa0f9445f53602d5732dba1076fd170f0724a64466666d6ef53, 1018 rows). Only rows with filingDate >= 2026-10-20 (20 of 1018), copied verbatim.
+ * `now` is set to the SEC receipt time (the cycle's own clock is not part of the archived page). Window starts 2026-11-06.
+ */
+export const BRK_SEC_REAL_CLOCK_20261120=Object.freeze({queryDate:'2026-11-20',asOfClose:'2026-11-19T21:00:00Z',observedAt:'2026-11-20T11:50:12.395Z',now:'2026-11-20T11:50:12.395Z',windowStart:'2026-11-06'});
+export const BRK_SEC_REAL_ROWS_20261120:readonly BrkSecRow[]=Object.freeze([
+ row('0001193125-26-468887','2026-11-19','2026-11-19T23:15:11.000Z','4','xslF345X06/ownership.xml',''),
+ row('0001193125-26-468549','2026-11-19','2026-11-19T21:05:28.000Z','8-K','d197844d8k.htm','8.01,9.01'),
+ row('0001193125-26-465884','2026-11-17','2026-11-18T00:23:48.000Z','SCHEDULE 13D/A','xslSCHEDULE_13D_X02/primary_doc.xml',''),
+ row('0001193125-26-465872','2026-11-17','2026-11-18T00:18:44.000Z','4','xslF345X06/ownership.xml',''),
+ row('0001193125-26-465047','2026-11-17','2026-11-17T16:32:44.000Z','424B5','d86634d424b5.htm',''),
+ row('0001193125-26-464219','2026-11-16','2026-11-17T01:57:17.000Z','SCHEDULE 13G/A','xslSCHEDULE_13G_X02/primary_doc.xml',''),
+ row('0001193125-26-464218','2026-11-16','2026-11-17T01:57:12.000Z','SCHEDULE 13G','xslSCHEDULE_13G_X02/primary_doc.xml',''),
+ row('0001193125-26-464214','2026-11-16','2026-11-17T01:52:46.000Z','SCHEDULE 13G/A','xslSCHEDULE_13G_X02/primary_doc.xml',''),
+ row('0001193125-26-464211','2026-11-16','2026-11-17T01:50:03.000Z','SCHEDULE 13G/A','xslSCHEDULE_13G_X02/primary_doc.xml',''),
+ row('0001193125-26-464189','2026-11-16','2026-11-17T01:19:40.000Z','SCHEDULE 13G/A','xslSCHEDULE_13G_X02/primary_doc.xml',''),
+ row('0001193125-26-464003','2026-11-16','2026-11-16T23:10:11.000Z','4','xslF345X06/ownership.xml',''),
+ row('0001193125-26-463989','2026-11-16','2026-11-16T23:01:19.000Z','4','xslF345X06/ownership.xml',''),
+ row('0001193125-26-463399','2026-11-16','2026-11-16T21:00:04.000Z','13F-HR','xslForm13F_X02/primary_doc.xml',''),
+ row('0001193125-26-459815','2026-11-13','2026-11-13T16:57:39.000Z','FWP','d127427dfwp.htm',''),
+ row('0001193125-26-452592','2026-11-09','2026-11-09T11:40:01.000Z','424B5','d86634d424b5.htm',''),
+ row('0001193125-26-452530','2026-11-09','2026-11-09T11:10:14.000Z','8-K','brka-20261107.htm','2.02,9.01'),
+ row('0001193125-26-452412','2026-11-09','2026-11-09T11:01:15.000Z','10-Q','brka-20260930.htm',''),
+ row('0001193125-26-445930','2026-11-03','2026-11-04T02:30:04.000Z','4','xslF345X06/ownership.xml',''),
+ row('0001193125-26-438090','2026-10-29','2026-10-29T21:21:38.000Z','4','xslF345X06/ownership.xml',''),
+ row('0001728451-26-000005','2026-10-23','2026-10-23T20:38:16.000Z','4','xslF345X06/primary_doc.xml',''),
+]);
 /** Column-oriented SEC `submissions` page around the given rows (synthetic wrapper, real field layout). */
 export function brkSecPage(rows:readonly BrkSecRow[],observedAt:string=BRK_SEC_REAL_CLOCK.observedAt):BrkEvidencePage{
  const keys=['accessionNumber','filingDate','acceptanceDateTime','form','primaryDocument','items'] as const;

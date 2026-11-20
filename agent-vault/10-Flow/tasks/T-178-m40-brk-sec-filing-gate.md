@@ -2,7 +2,7 @@
 task_id: T-178
 title: 모의분석(M40) 회차가 버크셔 SEC 공시 때문에 11-13 세션부터 연속 차단되는 문제 — 공시 판정 규칙 개선 + 화면 차단 사유 문구 보강
 status: done
-waiting: 오늘(11-20) 20:45 KST 이후 모의분석 첫 회차가 forward 로 저장되는지 · 앱 「분석 → 모의분석」 배너가 사라지거나 한국어 사유로 보이는지(사용자 확인)
+waiting: 버크셔 새 8-K(11-19 접수 `0001193125-26-468549`)로 세션 11-19 회차도 차단 — 처리 방식 사용자 결정(그대로 두면 세션 12-03 회차 = 12-04 20:50 KST 부터 풀림 / 본문 검토 후 검토 목록 추가는 별도 task) · 앱 「분석 → 모의분석」 배너가 한국어 사유로 보이는지(사용자 확인)
 priority: high
 project: StockInvest
 created: 2026-11-20
@@ -417,6 +417,8 @@ execution_context:
 - 배포 후 확인(11:58~12:00 KST, 읽기 전용): `current` → `20261120-115721-08657efd` · health `ok`·db true·`safetyStatus green`·dryRun true·killSwitch false · pm2 `stockinvest`·`stockinvest-cron` online·restarts 0·cwd 새 릴리스 · 러너 1개(+ 손절 알림 티커 자식) · 안전 키 6개 불변(`safety_dry_run` true·`safety_kill_switch` false·`exit_engine_enabled` true·`exit_hard_stop_enabled` false·`autopilot_mode` auto·`engine_enabled` true, updated_at 변동 없음) · 배포된 소스에 `BRK_SEC_FORM_PASS`·`paperBlockedReason` 존재 · `stop-alert` 11:57:00·11:58:00 정상(장중 공백 없음) · 배포 뒤 `cron-out` 의 `FAILED`·`HTTP=000` 0줄, 러너 재시작 시 「웹 응답 확인 — 2초 대기」로 기동 대기 동작 · `pm2-err` 배포 뒤 새 줄 0(마지막 11:56:31 은 배포 전 상시 간헐 `job-run-log` 503, 11:57:32 회복).
 - 미확인: M40 효과는 오늘 20:45 KST 정기 수집(세션 11-19) 뒤에야 보인다 · 앱 화면(로그인 필요) · 앱 화면은 로그인이 필요해 미확인.
 - 2026-11-20 12:1x KST 사용자 지시 「배포 결과 기록도 main에 올려줘」로 이 기록을 main 에 반영(문서 전용 커밋 — push 가 webhook 재배포를 한 번 더 일으킴, 국내 장중; 그 재배포 결과는 채팅 보고와 다음 기록에 남긴다).
+- 2026-11-20 12:12 KST 위 기록의 main 반영(`ccc5a28`, T-179 배포본 `a6125c8` 위에 얹음) 재배포 결과: `RELEASE_RESULT ok`(릴리스 `20261120-121206-ccc5a282`, migrated false), health green·dryRun true·killSwitch false·pm2 2개 restarts 0. 재시작 순간 옛 러너의 `signal-followup` 1건 `HTTP=000`(12:12:38) — 다음 주기 재실행, 실주문 무관.
+- 2026-11-20 21:1x KST **첫 회차 확인(읽기 전용, 예약 확인)**: 정기 실행 20:45:16 `m40-forward ACCEPTED` → 20:50:20 세션 11-19 회차 **`blocked` · `forward_pair_events_unreviewed_material_filing`**(실행 릴리스 `20261120-183916-72b9729f` = 다른 세션 후속 배포본, `BRK_SEC_FORM_PASS` 포함 확인). 원천 데이터(데이터셋 `paper-src-eda1359a…`, blob `6e450c42…` 조각·전체 해시 일치, SEC 원본 해시 일치)를 운영 코드 규칙 그대로 재판정 — 14일 창(11-06~11-20) 17건 중 검토 목록 3건과 통과 집합 13건(Form 4 ×4·SCHEDULE 13G/13G/A ×5·13D/A·13F-HR·424B5·FWP)은 **새 규칙으로 통과**, 차단 원인은 **새 8-K 1건**(접수 `0001193125-26-468549`, 11-19 16:05 ET 장 마감 뒤, items `8.01,9.01`, `d197844d8k.htm`) — 8-K 는 설계상 사람 검토 대상이라 의도된 차단. Alpaca 기업행동 0행. 8-K 본문은 읽지 않음(SEC 호출 안 함). 이 8-K 는 queryDate 12-04(세션 12-03)부터 14일 창에서 빠짐 → 그대로 두면 세션 11-20~12-02(약 8거래일) 차단 예상. 21:16 이후 재시도는 같은 세션 격리로 `forward_pair_prior_conflict_requires_review` 예상(11-18·11-19 와 같은 유형). health green·dryRun true·killSwitch false · pm2 2개 online restarts 0 · 20:40 이후 cron `FAILED` 0(20:45:19 `job-run-log` 503 은 상시 간헐 유형). 임시 추출 파일 삭제.
 
 ## 실행 도구·절차 이력
 
@@ -442,3 +444,4 @@ execution_context:
 - 👉 **사용자가 결정할 것**: PR 머지(= 운영 배포) 여부·시점.
 - **남은 일**: 11-13~11-18 차단 세션은 복구되지 않는다(구조상). 8-K·10-Q 등은 계속 사람 검토가 필요해 차단이 줄 뿐 없어지지 않는다(지난 12개월 근사: 평일 79% → 55% 차단일) — 「검토 → 목록 갱신 PR」 절차는 후속 후보. 비차단 지적 LOW-1~4(규칙 버전 미기록, fixture 추출본, 계열 문구 「대부분 다음 회차」 한 경우 부정확 등).
 - **이슈·위험**: Codex C1 이 지적한 이월 위험(사용자 수용) — 채권 공모 서류로 권리 공모를, 버크셔 대상 13D 로 교환·합병 조건을 먼저 공개하는 경우를 종류만으로는 구분하지 못한다. 완화: 8-K 전부 검토 유지, Alpaca 기업행동 조회에 BRK.B 항목이 있으면 차단. 영향은 모의 평가 한정(실주문 없음)이나 모의 성과는 실매매 전환 판단 근거다.
+- **첫 회차 결과(2026-11-20 21:1x 추가)**: 새 규칙은 이전 차단 원인 13건을 모두 통과시켰지만, 11-19 장 마감 뒤 올라온 **새 8-K(항목 8.01·9.01)** 가 설계대로 막아 세션 11-19 도 차단. 그대로 두면 세션 12-03 회차(12-04 20:50 KST)부터 풀린다. 앞당기려면 8-K 본문 검토 → 검토 목록 추가(코드 변경·배포, 목록 해시가 바뀌어 저장된 증거 봉투 검증 `forward-stock-contract.ts:85` 영향 분석 필요) — 사용자 결정 대기.
