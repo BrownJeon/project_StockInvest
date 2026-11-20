@@ -178,6 +178,7 @@ SEC 원본 보관(임시, 작업 끝나면 정리): 서버 `~/.node-local/tmp/t1
 ## 배포 기록
 - 2026-11-20 미배포 — 작업 브랜치 `t180-brk-8k-review` push + Gitea PR(base `main`). main 머지 = webhook blue/green 운영 배포라 **사용자 PR 검토·머지 시점 결정 뒤에만**.
 - **머지 직전 확인(읽기 전용, Leader/deployer — Analyst·Codex C1·C2·Reviewer 근거)**: ① 지금이 수집·예측 창(KST 20:45~23:00) 밖이고, 창 끝 접수분이 남지 않았는지(창 직후 바로 머지하지 않는다) ② 최신 마감 세션의 캐시 번들이 없거나, 있으면 그 세션 예측이 이미 발행됐고 가장 최근 번들에 `quarantine.reason` 이 없는지 ③ `t156_paper_account` 리스가 비어 있고(`lease_until>UTC_TIMESTAMP(6)` 아님) `t156_forecast_job` 에 `status='running' AND lease_until>UTC_TIMESTAMP(6)` 행이 없는지 ④ `cron-out.log` 에 그 시점 m40-forward·m40-forecast 진행 줄이 없는지. **머지 직후** 새 앱 기동 시점에 ③ 재확인.
+- 2026-11-20 22:5x 작업 브랜치 `t180-brk-8k-review` push(코드 커밋 `6e6ddaa`, 커밋 훅 「Reviewer 감사 기록 확인: T-180」) → **PR #7** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/7 (base `main` = `72b9729`, mergeable). 웹훅은 브랜치 push 를 배포하지 않았다(새 START 없음, 운영 릴리스 `20261120-183916-72b9729f` 그대로).
 - 같은 배포에 실리는 다른 작업: `f71ba24` — T-178 첫 회차 확인 기록(문서 전용, 이 브랜치의 base) + 머지 시점 main 의 선행 커밋.
 
 ## 실행 도구·절차 이력
@@ -195,7 +196,7 @@ SEC 원본 보관(임시, 작업 끝나면 정리): 서버 `~/.node-local/tmp/t1
 - **무엇이 바뀌었나**: 모의분석(M40, 실주문 없음) 게이트의 검토 목록 `BRK_MATERIAL_REVIEW` 에 11-19 버크셔 8-K(접수 `0001193125-26-468549`, 엔화 선순위 사채 5종 ¥182.3bn 발행 마감 보고)를 4번째 항목으로 추가(버전 `brkb_finite_material_review_20261120_v2`, `reviewKnownAt` 2026-11-20 12:30Z). 판정 로직·종류 통과 집합·기존 3건은 그대로. 목록 해시 `e226bd65…` → `40378ba0…`. 시험 4파일(11-20 실데이터 fixture·변형 차단·옛 목록 봉투 거부 고정).
 - **검토 근거**: 에이전트(analyst)가 본문·EX-1.1·EX-4.2·EX-5.1 전문, EX-4.3~4.6 은 4.2 와 단어 비교, XBRL 표지 값만 읽음 — 주식 기준 변화(분할·주식배당·전환비율·분사·권리 공모·합병·공개매수·특별배당) 공시·예고 미발견. 미검토: 참조 편입 Indenture·S-3·11-17 424B5·11-13 FWP 본문·XBRL 분류 파일. 이름은 「사람 검토 목록」이지만 이번 항목은 **에이전트 검토**다(Reviewer low-1).
 - **해시 기준 변경**: 새 항목만 `rawBodySha256` 을 SEC 앞단이 끼우는 `<script>` 태그(119B)를 뺀 EDGAR 보관 바이트로 계산(`rawBodyBasis` 명시) + 전체 제출본 `.txt` 해시(재조회로 재현 가능). 기존 3건은 받은 그대로라 재현 불가였다.
-- **배포**: 미배포. PR 머지 = 운영 배포. 같은 배포에 실리는 다른 작업: `f71ba24`(T-178 첫 회차 확인 기록, 문서).
+- **배포**: 미배포 — **PR #7** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/7 사용자 검토 대기. PR 머지 = 운영 배포. 같은 배포에 실리는 다른 작업: `f71ba24`(T-178 첫 회차 확인 기록, 문서).
 - **AI 가 검증한 것**: m40 시험 721/721, 전체 jest 13,159건 — base 와 실패 11건 동일(새 실패 0, `forecast-engine` 5초 시간 초과는 기존·실행 순서 의존), `tsc` 0, 해시 2종 원본 재계산 일치, 판정 4필드 SEC 목록과 글자 단위 일치, 시험이 결함을 잡는지 변이로 확인.
 - **AI 가 검증하지 못한 것**: eslint(저장소에 설정 없음), 11-20 이후 새 버크셔 공시(SEC 재조회는 승인 범위 밖), 운영 DB 배포 조건(머지 시점에 확인), 배포 뒤 실제 회차.
 - 👉 **사용자가 확인할 것**: PR 소스 검토. 배포 뒤 다음 회차(세션 11-20 은 토 11-21 20:45 KST, 놓치면 세션 11-23 은 11-24(화) 20:45 KST)가 `forward` 로 저장되는지와 앱 「분석 → 모의분석」 배너.
