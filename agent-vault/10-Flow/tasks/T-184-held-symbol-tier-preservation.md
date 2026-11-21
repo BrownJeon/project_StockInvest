@@ -23,7 +23,7 @@ execution_context:
   current_tool: claude
   current_procedure: claude_standard
   current_scope: 설계·구현·감사·QA·서버 worktree 커밋·PR 생성까지. 머지(=운영 배포)는 사용자 승인 후
-  last_event_id: E2
+  last_event_id: E3
 ---
 
 # T-184 코어 비율 가드의 보유 종목 등급 보존
@@ -141,6 +141,7 @@ Reviewer(T-181 23:12) 권고안 ①+② 결합. `lookupTier` 만 최신 행으�
 ## 배포 기록
 
 - [23:59] 서버 worktree 브랜치 `t184-held-symbol-tier` 커밋 `812e0fd`(코드+기록, 커밋 훅 「Reviewer 감사 기록 확인: T-184」 — 다른 task ID 없음) → 브랜치 push(웹훅은 `/main` 으로 끝나는 ref 만 배포 — 배포 없음) → **PR #9** https://git.xn--lh0b87pnudm10a4vd.com/brownjeon/project_StockInvest/pulls/9 (head `812e0fd`, base `main`=`774bef6`, 본문 U+FFFD 0·원본 일치 확인). 머지(=운영 배포)는 사용자 승인 대기.
+- [10:16] 2026-11-21 사용자 승인(「머지 승인」) 원문을 브랜치 커밋 `974eb2b` 로 기록 → Gitea API 로 PR #9 머지(`head_commit_id`=`974eb2b`, 검토 커밋 `cee7d8b` 이후 차이는 이 기록 파일 1개) → 머지 커밋 `e8dbee9` → webhook blue/green 배포 `RELEASE_RESULT status=ok release=20261121-101616-e8dbee92 migrated=false`(이전 `20261120-231945-774bef64`). pm2 `stockinvest`·`stockinvest-cron` online·재시작 0, `/api/health` ok(db true, dryRun true, killSwitch true), 운영 `package.json` 0.21.0, 배포 뒤 `pm2-err.log`·`cron-err.log` 에 새 오류 없음(10:17 기준). 토요일이라 국내 장 갱신은 아직 돌지 않음 — 보존 행 생성은 다음 국내 장중(11-23 월)에 확인.
 
 ## 실행 도구·절차 이력
 
@@ -148,17 +149,19 @@ Reviewer(T-181 23:12) 권고안 ①+② 결합. `lookupTier` 만 최신 행으�
 
 - E2 2026-11-20 23:55 KST — 같은 도구(claude)·절차(claude_standard). 구현·Reviewer PASS(23:36)·judge C2·Codex(1/4, done, high 1·medium 1)·Codex 지적 수정·Reviewer 재감사 PASS(23:50, 두 건 채택)·QA pass(23:52)까지 끝. 서버 worktree 브랜치 커밋 → 브랜치 push → PR 생성. 남은 일: 사용자 PR 검토·머지 승인 → 머지(=운영 배포) → 다음 국내 장중 관측.
 
+- E3 2026-11-21 10:17 KST — 같은 도구(claude)·절차(claude_standard). 사용자 「머지 승인」 → PR #9 머지 `e8dbee9` → 운영 배포 ok. 남은 일: 다음 국내 장중(11-23 월) 보존 행·등급 읽기 전용 확인.
+
 ## 최종 요약
 
 ### [T-184] 코어 비율 가드가 보유 종목의 최신 등급을 쓰게 하기
 
-- **상태**: ⏳ 구현·감사·QA 완료, **PR 검토·머지(=운영 배포) 승인 대기**.
+- **상태**: ✅ 머지·운영 배포 완료(2026-11-21 10:16 KST) — 다음 국내 장중(11-23 월) 관측 대기.
 - **무엇이 바뀌었나**
   - 원인: 국내 종목 등급(KOSPI200 → core 등)이 전략 점수 선별을 통과한 종목에만 저장되고, 코어 비율 가드는 그 기록의 나이를 보지 않았다. 그래서 보유 종목이 선별에서 빠지면 강등돼도 옛 core 로 최대 48시간 통과하거나, 48시간 뒤에는 등급 없음으로 국내 매수가 전부 막힐 수 있었다.
   - 이제 universe 갱신 때 시세를 받은 **모든** 국내 종목의 등급을 따로 보존하고(설정 표 `system_config` 한 행, DB 구조 변경 없음), 가드는 **24시간 안에 확인된 등급만** 쓴다. 없거나 낡았으면 「등급 모름」 → 코어로 세지 않는다(막는 쪽).
   - 외부 검토(Codex) 지적 2건도 고쳤다: 갱신이 겹쳐도 더 늦게 확인한 등급이 이기게(조건부 저장·재시도), DB 저장이 실패해도 방금 확인한 강등이 같은 프로세스의 가드에 바로 반영되게.
   - 차단 사유 문구 「코어(KOSPI 100) 비율 미달」 → 「코어(KOSPI200 편입) 비율 미달」(분석 화면·AI 프롬프트 문구 포함, 판정 로직 변화 없음). 정적 후보 목록에서 상장폐지 코드 2개(`042670`·`091990`) 삭제(44 → 42종목). 웹 버전 0.20.0 → 0.21.0.
-- **배포**: ⏸ 미배포 — PR 머지가 곧 main push = 운영 blue/green 배포라 사용자 승인 뒤. 같은 배포에 실릴 다른 작업: 없음(base `774bef6` 위 이 task 커밋만). DB 구조 변경·앱(APK) 변경 없음. ⚠ T-183(다른 세션, 진행 중)도 버전을 올리면 `package.json` 이 충돌한다 — 나중에 머지되는 쪽이 리베이스하며 버전을 다시 올린다.
+- **배포**: ✅ 2026-11-21 10:16 KST, PR #9 머지 커밋 `e8dbee9` → webhook blue/green, 릴리스 `20261121-101616-e8dbee92`, 결과 ok(마이그레이션 없음). 같은 배포에 실린 다른 작업: 없음(base `774bef6` 위 이 task 커밋만). DB 구조 변경·앱(APK) 변경 없음. ⚠ T-183(다른 세션, 진행 중)도 버전을 올리면 `package.json` 이 충돌한다 — 나중에 머지되는 쪽이 리베이스하며 버전을 다시 올린다.
 - **AI 가 검증한 것**: 완료 기준 시험 (가) 선별에서 빠져도 등급 유지 (나) 강등+탈락에서 옛 core 로 통과하지 않음 (다) 24시간 초과 시 등급 모름 — 전부 통과 · 겹친 갱신·저장 충돌·저장 실패 시험 통과 · 관련 6 suites/86 tests · 전체 jest base 대비 새 실패 0(기존 실패 427건은 base 와 이름까지 동일) · `tsc` 0 · `next build` rc 0 · Reviewer PASS(재감사 포함, Low 4) · QA pass(안전장치 경로 diff 0, 안전장치 시험 194건 통과) · 운영 MariaDB 의 `JSON_VALUE` 동작(읽기 전용).
   - 검증 못 한 것: 실제 DB 에 대한 저장 왕복·동시 실행 재현(모의 DB 시험만) · 운영 갱신에서의 실제 저장 결과(배포 뒤 첫 국내 장중에 읽기 전용 확인) · lint(설정 없음) · 데모 게이트 기록(화면 구조 변경 없이 문구 1줄이라 데모를 만들지 않음 — judge 는 delta 판정).
 - **👉 사용자가 확인할 것**: PR 의 소스 검토. 배포 뒤 화면 확인은 필수 아님 — 다음 국내 장중(월 11-23 09:00~) 이후 AI 가 `system_config.domestic_index_tier` 행 생성(약 42종목, 005930 core)과 `portfolio_core_ratio` 차단 사유의 `tier=` 값을 읽기 전용으로 확인한다. 이상 기준: 장중인데 그 행이 없거나 1시간 넘게 갱신되지 않음 / 로그에 「등급 보존 저장 실패」가 반복.
