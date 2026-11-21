@@ -331,7 +331,9 @@ describe('소비자 정적 점검 — lifoPnlKRW 를 낡은 의미로 읽는 경
   test('lifoPnlKRW 를 읽는 파일은 모두 unmatchedSellCount 도 읽는다', () => {
     const readers = files.filter(f => f.rel !== SELF && /\blifoPnlKRW\b/.test(f.text));
     // 현재 소비자 목록 — 새 소비자가 생기면 이 목록과 함께 표지 처리 여부를 다시 본다.
-    expect(readers.map(f => f.rel).sort()).toEqual(['app/api/cron/trade-report/route.ts']);
+    // T-182 — 요약·보관 화면 공용 순수 모듈이 소비자로 더해졌다. `realizedPnlText()` 가 원가 미상 규칙(숫자 대신
+    //         「원가 미상」·「일부 원가 미상」)을 그대로 지킨다(trade-report-view 시험이 고정). 화면(.tsx)은 그 함수만 쓴다.
+    expect(readers.map(f => f.rel).sort()).toEqual(['app/api/cron/trade-report/route.ts', 'lib/reports/trade-report-view.ts']);
     for (const f of readers) {
       expect({ file: f.rel, handles: /\bunmatchedSellCount\b/.test(f.text) }).toEqual({ file: f.rel, handles: true });
     }

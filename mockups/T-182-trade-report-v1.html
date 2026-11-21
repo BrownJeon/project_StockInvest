@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="demo-version" content="T-182-v1">
+<meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+<title>T-182 거래 리포트 요약·전문 화면 (v1)</title>
+<style>
+  /* 토큰 스냅샷 — src/app/globals.css 값을 그대로 고정(원본 링크 금지) */
+  :root {
+    --bg: #0f1115; --bg2: #171a21; --bg3: #1f2430; --bg4: #262b36;
+    --border: #262b36; --border2: #323848;
+    --text: #e6e8ee; --muted: #8b93a7;
+    --up: #ef4444; --down: #3b82f6;
+    --accent: #f59e0b; --ok: #22c55e; --warn: #f59e0b; --danger: #ef4444;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --nav-h: 60px;
+    /* 텔레그램 말풍선 재현용(데모 틀 전용 — 앱 토큰 아님, T-097 데모와 같은 값) */
+    --tg-bg: #0e1621; --tg-bubble: #182533; --tg-text: #e8eef5; --tg-muted: #8fa3b8; --tg-btn: #2b5278; --tg-link: #5eb5f7;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100vw; overflow-x: clip; margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Noto Sans KR", sans-serif; font-size: 14px; -webkit-text-size-adjust: 100%; }
+  button, select { font: inherit; color: inherit; }
+  a { color: inherit; }
+  ::selection { background: #f59e0b55; color: var(--text); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--bg3); padding: 0 4px; border-radius: 4px; overflow-wrap: anywhere; }
+
+  /* ── 데모 문서 틀 (앱 화면 아님) ── */
+  .doc { max-width: 1320px; margin: 0 auto; padding: 16px 16px calc(80px + var(--safe-bottom)); }
+  .doc > header h1 { font-size: 18px; line-height: 1.45; margin: 0 0 8px; }
+  .tag { display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--border2); border-radius: 6px; padding: 2px 8px; margin: 0 6px 6px 0; }
+  .banner { font-size: 13px; line-height: 1.6; background: var(--bg2); border: 1px dashed var(--accent); border-radius: 8px; padding: 10px 12px; margin: 8px 0 0; max-width: 900px; }
+  .banner b { color: var(--accent); }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+  .toc a { font-size: 12px; min-height: 44px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--border2); text-decoration: none; }
+  .toc a:hover { background: var(--bg3); }
+  section.block { margin-top: 40px; scroll-margin-top: 12px; }
+  section.block > h2 { font-size: 16px; margin: 0 0 6px; line-height: 1.45; }
+  .lead { font-size: 13px; color: var(--muted); line-height: 1.6; max-width: 900px; margin: 0 0 12px; }
+  .lead b, .note b { color: var(--text); }
+  .note { font-size: 12px; color: var(--muted); line-height: 1.6; max-width: 900px; margin: 8px 0; padding: 8px 12px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; }
+  ul.plain { margin: 6px 0 0; padding-left: 18px; } ul.plain li { margin: 2px 0; }
+  .ctl { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 12px 0 4px; }
+  .ctl label.sel { display: grid; gap: 4px; font-size: 12px; color: var(--muted); flex: 1 1 240px; min-width: 0; max-width: 420px; }
+  select { background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; min-height: 44px; padding: 8px 10px; width: 100%; min-width: 0; }
+  .wgrp { display: flex; gap: 6px; flex-wrap: wrap; }
+  .wbtn { min-height: 44px; padding: 0 14px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); cursor: pointer; font-size: 13px; }
+  .wbtn:hover { background: var(--bg4); }
+  .wbtn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .desc { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.55; min-height: 1.55em; }
+
+  /* ── 텔레그램 말풍선 ── */
+  .tg-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); margin-top: 8px; }
+  @media (min-width: 900px) { .tg-grid { grid-template-columns: 1fr 1fr; align-items: start; } }
+  .tg { background: var(--tg-bg); border: 1px solid #1f2d3d; border-radius: 12px; padding: 12px; min-width: 0; }
+  .tg h3 { font-size: 13px; margin: 0 0 8px; color: var(--tg-link); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .tg h3 .cnt { color: var(--tg-muted); font-weight: 400; }
+  .bubble { background: var(--tg-bubble); color: var(--tg-text); border-radius: 12px 12px 12px 4px; padding: 10px 12px; max-width: 412px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.5; }
+  .bubble b { font-weight: 700; }
+  .kb { max-width: 412px; margin-top: 6px; }
+  .kb button { width: 100%; min-height: 44px; border-radius: 8px; background: var(--tg-btn); color: var(--tg-text); border: 0; cursor: pointer; font-size: 14px; }
+  .kb button:hover { background: #346293; }
+  .kb .none { font-size: 12px; color: var(--tg-muted); padding: 6px 2px 0; }
+
+  /* ── 앱 미리보기 (리포트 전문 화면) ── */
+  .stage { display: flex; justify-content: center; margin: 12px 0 0; }
+  .app { container: app / inline-size; width: 412px; max-width: 100%; border: 1px solid var(--border2); border-radius: 14px; overflow: hidden; background: var(--bg); display: flex; flex-direction: column; min-height: 680px; }
+  .ah { display: flex; align-items: center; gap: 6px; padding: calc(6px + var(--safe-top)) 10px 6px 4px; border-bottom: 1px solid var(--border); }
+  .iconbtn { width: 44px; height: 44px; flex: none; border-radius: 8px; display: grid; place-items: center; background: none; border: 0; cursor: pointer; color: var(--text); }
+  .iconbtn:hover { background: var(--bg3); }
+  .iconbtn:disabled { color: var(--border2); cursor: default; background: none; }
+  .iconbtn svg { width: 22px; height: 22px; }
+  .ah .tt { flex: 1; min-width: 0; }
+  .ah h3 { font-size: 17px; margin: 0; line-height: 1.3; }
+  .ah .sub { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
+  .chip { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; border: 1px solid var(--border2); border-radius: 6px; padding: 2px 6px; color: var(--muted); white-space: nowrap; line-height: 1.4; }
+  .chip.ex { color: var(--accent); border-color: #f59e0b66; }
+  .chip.wn { color: var(--warn); border-color: #f59e0b66; }
+  .hist { display: flex; gap: 4px; padding: 6px 8px; background: var(--bg2); border-bottom: 1px solid var(--border); align-items: center; }
+  .hist select { flex: 1; }
+  .now { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 6px 12px; min-height: 36px; font-size: 12px; color: var(--muted); background: var(--bg2); border-bottom: 1px solid var(--border); }
+  .now > span { white-space: nowrap; }
+  .now b { color: var(--text); }
+  .abody { flex: 1; display: grid; gap: 12px; padding: 12px; align-content: start; grid-template-columns: minmax(0, 1fr); }
+  .colsum, .coldet { display: grid; gap: 12px; align-content: start; min-width: 0; }
+  @container app (min-width: 900px) {
+    .abody { grid-template-columns: 340px minmax(0, 1fr); max-width: 1100px; width: 100%; margin: 0 auto; gap: 16px; padding: 16px; }
+    .colsum { position: sticky; top: 12px; align-self: start; }
+    .bn { max-width: 720px; width: 100%; margin: 0 auto; }
+    .hist { justify-content: center; }
+    .hist select { flex: 0 1 360px; }
+  }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; min-width: 0; overflow: hidden; }
+  .asset { padding: 14px 16px 12px; scroll-margin-top: 12px; }
+  .asset .lbl { font-size: 12px; color: var(--muted); }
+  .asset .big { display: block; font-size: 24px; font-weight: 700; margin: 2px 0; letter-spacing: -0.01em; }
+  .asset .dl { font-size: 14px; font-weight: 600; }
+  .asset .base { font-size: 12px; color: var(--muted); margin: 4px 0 0; line-height: 1.5; }
+  .kv { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); margin: 0; }
+  .kv > div { padding: 10px 12px; min-width: 0; }
+  .kv > div + div { border-left: 1px solid var(--border); }
+  .kv dt { font-size: 11px; color: var(--muted); }
+  .kv dd { margin: 2px 0 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+  .cardh { display: flex; align-items: center; gap: 8px; padding: 12px 16px 8px; }
+  .cardh h4 { font-size: 14px; margin: 0; }
+  .crow { display: grid; grid-template-columns: 22px minmax(0, 1fr) 12px; gap: 10px; align-items: center; padding: 8px 16px; min-height: 56px; border-top: 1px solid var(--border); text-decoration: none; color: inherit; cursor: pointer; }
+  a.crow:hover { background: var(--bg3); }
+  .crow .t { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+  .crow .s { font-size: 12px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+  .crow .go { width: 8px; height: 8px; border-right: 2px solid var(--muted); border-top: 2px solid var(--muted); transform: rotate(45deg); }
+  .sev { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: var(--warn); background: #f59e0b1f; border: 1px solid #f59e0b66; }
+  .sev.e { color: var(--danger); background: #ef44441f; border-color: #ef444466; }
+  .sev.ok { color: var(--ok); background: #22c55e1f; border-color: #22c55e66; }
+  .tools { display: flex; justify-content: flex-end; }
+  .tools button { min-height: 44px; padding: 0 12px; border-radius: 8px; background: none; border: 1px solid var(--border2); cursor: pointer; font-size: 12px; color: var(--muted); }
+  .tools button:hover { color: var(--text); background: var(--bg3); }
+  details.sec { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; min-width: 0; scroll-margin-top: 12px; }
+  details.sec > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 8px 14px 8px 16px; min-height: 56px; cursor: pointer; border-radius: 10px; }
+  details.sec > summary::-webkit-details-marker { display: none; }
+  details.sec > summary:hover { background: var(--bg3); }
+  details.sec > summary::after { content: ""; flex: none; width: 8px; height: 8px; margin: 0 4px 4px 2px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .18s cubic-bezier(.2,.8,.2,1); }
+  details.sec[open] > summary::after { transform: rotate(-135deg); margin-bottom: -4px; }
+  details.sec[open] > summary { border-radius: 10px 10px 0 0; }
+  summary .st { font-size: 14px; font-weight: 700; flex: none; }
+  summary .meta { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); text-align: right; overflow-wrap: anywhere; line-height: 1.4; }
+  .in { border-top: 1px solid var(--border); }
+  .expl { font-size: 12px; color: var(--muted); line-height: 1.6; padding: 10px 16px; background: var(--bg); margin: 0; }
+  .expl b { color: var(--text); }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 10px 16px; min-height: 56px; border-top: 1px solid var(--border); align-content: center; }
+  .in > .row:first-child { border-top: 0; }
+  .row .t { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; line-height: 1.4; }
+  .row .t small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .row .r { text-align: right; font-size: 14px; font-weight: 600; white-space: nowrap; }
+  .row .r small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); }
+  .row .s { grid-column: 1 / -1; font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+  .row .s b { color: var(--text); font-weight: 600; }
+  .names { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px 14px; }
+  .names .chip { font-weight: 500; color: var(--text); }
+  .names .chip i { font-style: normal; color: var(--muted); margin-left: 4px; }
+  pre.raw { margin: 0; padding: 12px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.6; color: var(--text); }
+  .bn { display: flex; min-height: var(--nav-h); border-top: 1px solid var(--border); background: var(--bg2); padding-bottom: var(--safe-bottom); }
+  .bn span { flex: 1; display: grid; place-items: center; font-size: 11px; color: var(--muted); }
+  .stbox { padding: 32px 20px; text-align: center; display: grid; gap: 10px; justify-items: center; }
+  .stbox h4 { margin: 0; font-size: 15px; }
+  .stbox p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.6; max-width: 34ch; }
+  .btn { min-height: 44px; padding: 0 16px; border-radius: 8px; background: var(--bg3); border: 1px solid var(--border2); cursor: pointer; font-weight: 600; font-size: 13px; }
+  .btn:hover { background: var(--bg4); }
+  .btn.pri { background: var(--accent); color: #111; border-color: var(--accent); }
+  .btn.pri:hover { background: #fbbf24; }
+  .skel { border-radius: 6px; background: linear-gradient(90deg, var(--bg3) 0%, var(--bg4) 50%, var(--bg3) 100%); background-size: 200% 100%; animation: sh 1.2s linear infinite; }
+  @keyframes sh { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .skel { animation: none; } details.sec > summary::after { transition: none; } }
+
+  /* ── 결정 필요 ── */
+  .decs { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 900px) { .decs { grid-template-columns: 1fr 1fr; } }
+  fieldset.dec { border: 1px solid var(--border2); border-radius: 10px; padding: 12px; margin: 0; min-width: 0; background: var(--bg2); }
+  fieldset.dec legend { font-size: 14px; font-weight: 700; padding: 0 6px; }
+  .dec .q { font-size: 12px; color: var(--muted); margin: 0 0 4px; line-height: 1.6; }
+  .dec .q b { color: var(--text); }
+  .opt { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; cursor: pointer; min-height: 44px; }
+  .opt:hover { background: var(--bg3); }
+  .opt:has(input:checked) { border-color: var(--accent); background: #f59e0b12; }
+  .opt input, .chk input { margin: 1px 0 0; accent-color: var(--accent); width: 18px; height: 18px; }
+  .opt .ot { font-size: 13px; font-weight: 700; line-height: 1.45; }
+  .opt .od { font-size: 12px; color: var(--muted); line-height: 1.55; margin-top: 2px; }
+  .rec { font-size: 11px; font-weight: 700; color: #111; background: var(--accent); border-radius: 4px; padding: 1px 6px; margin-left: 6px; white-space: nowrap; }
+  .chk { display: flex; gap: 8px; align-items: center; min-height: 44px; font-size: 13px; cursor: pointer; }
+  .chk.fix { color: var(--muted); cursor: default; }
+  .sub2 { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border2); }
+  .sub2 .lbl { font-size: 12px; font-weight: 700; margin: 0 0 2px; }
+  .jump { display: inline-flex; align-items: center; min-height: 44px; font-size: 12px; color: var(--accent); }
+
+  /* ── 표 ── */
+  .tw { max-width: 100%; overflow-x: auto; margin-top: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  caption { text-align: left; font-weight: 700; padding: 0 0 8px; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; background: var(--bg2); }
+  td small { color: var(--muted); }
+</style>
+</head>
+<body>
+<main class="doc">
+  <header>
+    <h1>T-182 거래 리포트 — 텔레그램은 핵심만, 전문은 앱의 리포트 화면에서</h1>
+    <span class="tag">T-182 · 데모 v1</span><span class="tag">검토 수준 full</span><span class="tag">412px 우선 · 900px↑ 데스크톱 복원</span>
+    <p class="banner"><b>예시 수치</b> — 11/20 08:04 리포트의 <b>구조와 종목 이름</b>은 그대로 두고, 금액·수량·투자금·비율·희망가는 모두 <b>예시 값으로 바꿨습니다</b>. 실제 계좌 값이 아닙니다. 이 데모의 버튼·선택은 화면 안에서만 바뀌며 실제 메시지 발송·주문·설정 변경은 없습니다.</p>
+    <nav class="toc" aria-label="데모 목차">
+      <a href="#s-tg">1 텔레그램 지금 vs 제안</a>
+      <a href="#s-app">2 리포트 전문 화면</a>
+      <a href="#s-decide">3 결정 필요 (4가지)</a>
+      <a href="#s-rule">4 확인 필요 규칙·흐름</a>
+      <a href="#s-diff">5 지금 vs 제안 요약표</a>
+    </nav>
+  </header>
+
+  <!-- 1. 텔레그램 비교 -->
+  <section class="block" id="s-tg" aria-labelledby="h-tg">
+    <h2 id="h-tg">1. 텔레그램 메시지 — 지금 vs 제안</h2>
+    <p class="lead">지금은 보유 상세·매수 후보·리서치 근거까지 <b>한 통에 다 보내 60줄이 넘습니다</b>. 제안은 <b>매일 확인할 숫자와 「확인 필요」만</b> 보내고, 나머지는 버튼으로 여는 리포트 화면에 둡니다. 아래 「샘플 상태」로 경고 0건·총자산 조회 불가일 때의 요약도 볼 수 있습니다.</p>
+    <div class="ctl">
+      <label class="sel">샘플 상태 (텔레그램·앱 화면 공통)
+        <select id="sample1" aria-describedby="tg-desc"></select>
+      </label>
+    </div>
+    <p class="desc" id="tg-desc" aria-live="polite"></p>
+    <div class="tg-grid">
+      <div class="tg" aria-labelledby="h-cur">
+        <h3 id="h-cur"><span>지금 — 11/20 08:04 발송분 구조</span><span class="cnt" id="cur-count"></span></h3>
+        <div class="bubble num" id="cur-bubble"></div>
+        <div class="kb"><p class="none">버튼 없음 — 지금 거래 리포트에는 앱 링크 버튼이 붙지 않습니다.</p></div>
+      </div>
+      <div class="tg" aria-labelledby="h-new">
+        <h3 id="h-new"><span>제안 — 핵심 요약</span><span class="cnt" id="new-count"></span></h3>
+        <div class="bubble num" id="new-bubble"></div>
+        <div class="kb"><button type="button" id="tg-open">👉 앱에서 자세히 보기</button></div>
+      </div>
+    </div>
+    <p class="note">맨 위 굵은 줄(<code>[StockInvest] ℹ️ …</code>)과 맨 아래 <code>🕐 … KST</code> 는 지금도 공통 알림 함수가 자동으로 붙이는 줄입니다. 지금은 그 제목 줄과 본문 첫 줄 「📊 거래 리포트 (24h)」가 <b>같은 말을 두 번</b> 합니다 — 제안에서는 제목 줄 하나로 합쳤습니다.</p>
+  </section>
+
+  <!-- 2. 리포트 전문 화면 -->
+  <section class="block" id="s-app" aria-labelledby="h-app">
+    <h2 id="h-app">2. 리포트 전문 화면 (새 화면 · 탭 밖 상세 화면)</h2>
+    <p class="lead">지금 메시지의 <b>모든 정보</b>(포트폴리오·거래 요약·매도 신호·보유 상세·매수 후보·리서치 근거와 면책 문장)를 담습니다. 위에는 <b>총자산과 「확인 필요」</b>, 아래는 <b>섹션별 접기/펼치기</b>입니다. 확인 필요 항목이 있는 섹션은 처음부터 펼쳐 둡니다. 지금은 이런 화면이 없습니다 — 「현재」 비교 대상은 위 텔레그램 메시지입니다.</p>
+    <div class="ctl">
+      <label class="sel">샘플 상태
+        <select id="sample2" aria-describedby="app-desc"></select>
+      </label>
+      <div class="wgrp" role="group" aria-label="미리보기 폭">
+        <button type="button" class="wbtn" data-w="360" aria-pressed="false">360px</button>
+        <button type="button" class="wbtn" data-w="412" aria-pressed="true">412px (S25+)</button>
+        <button type="button" class="wbtn" data-w="1280" aria-pressed="false">1280px</button>
+      </div>
+    </div>
+    <p class="desc" id="app-desc" aria-live="polite"></p>
+    <div class="stage"><div class="app" id="app" role="region" aria-label="리포트 전문 화면 미리보기"></div></div>
+    <p class="note">화면 폭이 미리보기 폭보다 좁으면(예: 휴대폰에서 1280px 선택) 미리보기는 화면 폭에 맞춰 줄어듭니다. 데스크톱 배치는 넓은 화면에서 확인해 주세요. 하단 메뉴는 <b>활성 탭 없음</b>(탭 밖 상세 화면, 왼쪽 위 뒤로 버튼으로 돌아감)입니다.</p>
+  </section>
+
+  <!-- 3. 결정 필요 -->
+  <section class="block" id="s-decide" aria-labelledby="h-dec">
+    <h2 id="h-dec">3. 결정 필요 — 4가지</h2>
+    <p class="lead">각 선택은 위 두 미리보기에 <b>바로 반영</b>됩니다. <span class="rec" style="margin:0">권고</span> 표시는 디자이너 권고이며, 확정은 사용자 결정입니다.</p>
+    <div class="decs">
+      <fieldset class="dec" id="d1">
+        <legend>① 요약에 넣을 항목·순서</legend>
+        <p class="q">고정 항목: <b>총자산 · 체결 수 · 확인 필요</b>(빼면 요약의 목적이 사라짐). 나머지는 켜고 끌 수 있습니다.</p>
+        <label class="opt"><input type="radio" name="order" value="A" checked><span><span class="ot">A. 총자산 → 체결 → 확인 필요 → 보유 → 리서치<span class="rec">권고</span></span><span class="od">사용자 샘플 순서. 대신 <b>제목 줄에 「⚠️ 확인 n」</b>을 붙여, 알림 미리보기 한 줄만 봐도 확인할 것이 있는지 알 수 있게 합니다.</span></span></label>
+        <label class="opt"><input type="radio" name="order" value="B"><span><span class="ot">B. 확인 필요를 맨 앞으로</span><span class="od">경고가 첫 블록. 경고가 없는 날에는 A와 같아집니다. 매일 보는 총자산이 한 칸 내려갑니다.</span></span></label>
+        <div class="sub2">
+          <p class="lbl">켜고 끌 수 있는 항목</p>
+          <label class="chk"><input type="checkbox" data-item="hold" checked> 보유 요약 한 줄 (종목 수 · 손절 임박 · 매도 고려)</label>
+          <label class="chk"><input type="checkbox" data-item="res" checked> 리서치 매수 고려 종목 이름 (참고용 표시 포함)</label>
+          <label class="chk"><input type="checkbox" data-item="disc"> 리서치 면책 한 줄 (전문은 앱 화면에 항상 있음)</label>
+          <p class="q">권고: 위 두 줄 켜기 · 면책 줄 끄기(종목 이름 줄에 「리서치 참고용」을 붙이고, 면책 전문은 앱 리서치 섹션 맨 위에 둠). 면책 줄을 켜면 1줄 늘어납니다.</p>
+          <p class="q">버튼 문구는 지시대로 「👉 앱에서 자세히 보기」입니다. 참고로 승인 요청 메시지의 기존 버튼은 「🔗 앱에서 자세히」(홈으로 열림)라 문구가 다릅니다 — 이동처가 달라 구분되는 편이 낫다고 보고 그대로 두었습니다.</p>
+        </div>
+        <a class="jump" href="#s-tg">미리보기로 이동 ›</a>
+      </fieldset>
+
+      <fieldset class="dec" id="d2">
+        <legend>② 「매도 손익」 문구</legend>
+        <p class="q">지금 「📉 매도 손익 (총 −₩…)」은 <b>체결이 아니라 매도 신호</b>에서 계산한 값입니다. 체결 매도 0건인 날에도 손익처럼 읽힙니다.</p>
+        <label class="opt"><input type="radio" name="sell" value="A" checked><span><span class="ot">A. 「매도 신호 · 미체결」로 바꾸고 「신호 기준」 금액으로 표시<span class="rec">권고</span></span><span class="od">요약: 「삼성전자 매도 신호 2건 미체결 (… 신호 기준 −₩…)」. 앱: 섹션 이름 「매도 신호」+「미체결」 표시, 맨 위에 「체결된 매도가 아닙니다」 설명. 실제 손익은 「거래 요약」의 실현 손익(체결 기준)에만 둡니다.</span></span></label>
+        <label class="opt"><input type="radio" name="sell" value="B"><span><span class="ot">B. 「매도 손익」 이름은 두고 「체결 아님」 꼬리표만</span><span class="od">익숙한 이름 유지. 다만 금액이 맨 앞에 와서 여전히 손익으로 먼저 읽힙니다.</span></span></label>
+        <a class="jump" href="#s-app">미리보기로 이동 ›</a>
+      </fieldset>
+
+      <fieldset class="dec" id="d3">
+        <legend>③ 이전 회차 리포트 보기</legend>
+        <p class="q">어느 쪽이든 <b>옛 텔레그램 메시지의 버튼을 누르면 그 회차</b>가 열립니다(링크에 회차 번호가 들어감). 차이는 화면 안에서 다른 날로 옮겨 갈 수 있느냐입니다.</p>
+        <label class="opt"><input type="radio" name="hist" value="B" checked><span><span class="ot">A. 회차 이동 넣기 — ‹ 이전 · 날짜 선택 · 다음 ›<span class="rec">권고</span></span><span class="od">어제와 비교하려고 텔레그램을 거슬러 올라가지 않아도 됩니다. 원문 보관 테이블이 어차피 생기므로 추가 비용이 작습니다[가능성 높음].</span></span></label>
+        <label class="opt"><input type="radio" name="hist" value="A"><span><span class="ot">B. 연 회차만 보기</span><span class="od">화면이 가장 단순. 다른 날은 해당 날짜의 텔레그램 메시지 버튼으로만 엽니다.</span></span></label>
+        <div class="sub2">
+          <p class="lbl">보관 기간 (원문·상세 데이터)</p>
+          <label class="opt"><input type="radio" name="keep" value="1y" checked><span><span class="ot">1년<span class="rec">권고</span></span><span class="od">하루 1건이라 양이 작고[추측: 회차당 수 KB], 계절·연간 비교가 가능합니다.</span></span></label>
+          <label class="opt"><input type="radio" name="keep" value="90d"><span><span class="ot">90일</span><span class="od">최근 석 달만. 그보다 옛 메시지 버튼은 「보관 기간 지남」 화면으로 열립니다.</span></span></label>
+          <label class="opt"><input type="radio" name="keep" value="inf"><span><span class="ot">지우지 않음</span><span class="od">정리 작업이 필요 없음. 대신 오래된 데이터가 계속 쌓입니다.</span></span></label>
+        </div>
+        <a class="jump" href="#s-app">미리보기로 이동 ›</a>
+      </fieldset>
+
+      <fieldset class="dec" id="d4">
+        <legend>④ 「확인 필요」 표시 규칙</legend>
+        <p class="q">공통 규칙(확인 요청): <b>확인 필요 항목이 1건이라도 있으면 요약에서 빼지 않는다</b> — 항목 수가 많아도 종류별 한 줄로 묶어 모두 보이고, 줄 수 목표(약 12줄)보다 우선합니다. 종류·조건은 아래 4절 표. 남은 선택은 <b>0건인 날</b>의 표시입니다.</p>
+        <label class="opt"><input type="radio" name="warn" value="A" checked><span><span class="ot">A. 0건이면 「✅ 확인 필요 없음」 한 줄<span class="rec">권고</span></span><span class="od">「확인했고 없음」과 「읽지 못해 빠짐」이 구분됩니다. 홈 화면 「확인 필요」의 「비어 있는 것이 아닙니다」 원칙과 같습니다.</span></span></label>
+        <label class="opt"><input type="radio" name="warn" value="B"><span><span class="ot">B. 0건이면 줄 자체를 생략</span><span class="od">1줄 짧아집니다. 대신 경고가 사라진 이유를 메시지만으로는 알 수 없습니다.</span></span></label>
+        <p class="q">0건 요약 보기: 위 「샘플 상태」에서 <b>확인 필요 0건</b>을 고르세요.</p>
+        <a class="jump" href="#s-tg">미리보기로 이동 ›</a>
+      </fieldset>
+    </div>
+  </section>
+
+  <!-- 4. 규칙·흐름 -->
+  <section class="block" id="s-rule" aria-labelledby="h-rule">
+    <h2 id="h-rule">4. 「확인 필요」 종류와 화면 흐름</h2>
+    <div class="tw">
+      <table>
+        <caption>확인 필요 종류 (요약에 나오는 순서 — 돈과 직결되는 것부터)</caption>
+        <thead><tr><th scope="col">종류</th><th scope="col">조건</th><th scope="col">요약 문구 예</th><th scope="col">앱 화면</th></tr></thead>
+        <tbody>
+          <tr><td>총자산 조회 실패</td><td>잔고·예수금·환율 중 하나라도 못 읽음 <small>(지금 「조회 불가」 처리 그대로)</small></td><td>총자산 조회 실패 — 증권사 잔고·환율을 읽지 못함</td><td>맨 위 총자산 칸</td></tr>
+          <tr><td>손절 임박</td><td>보유 종목 고점대비 −1.5% 이하 <small>(지금 리포트 기준 그대로)</small></td><td>손절 임박 1종목: 삼성전자 (고점대비 −1.80%)</td><td>보유</td></tr>
+          <tr><td>매도 신호 미체결</td><td>기간 안 매도 신호 중 체결되지 않은 것</td><td>삼성전자 매도 신호 2건 미체결 (…)</td><td>매도 신호</td></tr>
+          <tr><td>회전매매</td><td>지금 「경고 · 회전매매」 조건 그대로</td><td>회전매매: 종목 이름</td><td>거래 요약</td></tr>
+          <tr><td>매수 후보 전부 차단</td><td>후보가 1개 이상이고 전부 차단</td><td>매수 후보 15종목 전부 차단 (포트폴리오 보호)</td><td>매수 후보</td></tr>
+          <tr><td>일부 정보 조회 실패 <small>(제안)</small></td><td>보유·후보·리서치 중 읽지 못한 영역</td><td>보유 정보를 읽지 못함 — 0종목이 아님</td><td>해당 섹션에 오류 표시</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tw">
+      <table>
+        <caption>버튼을 누른 뒤 흐름</caption>
+        <thead><tr><th scope="col">상황</th><th scope="col">결과</th></tr></thead>
+        <tbody>
+          <tr><td>앱 설치된 폰에서 버튼</td><td>앱이 열리고 이 회차 리포트 화면으로 이동 <small>(링크는 사이트 루트 + 쿼리 — 네이티브 변경 없이 되는지 실기기 확인 필요, Leader 설계 4번)</small></td></tr>
+          <tr><td>PC 텔레그램·브라우저에서 버튼</td><td>같은 리포트 화면(웹). 로그인 안 돼 있으면 로그인 후 이 리포트로 돌아옴</td></tr>
+          <tr><td>보관 기간이 지난 회차 버튼</td><td>「보관 기간이 지났습니다」 화면 + 「최신 리포트 보기」</td></tr>
+          <tr><td>리포트 화면에서 뒤로</td><td>앱 이전 화면(없으면 홈)</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <b>구현 전 확인할 것 (결정 아님 — Leader 전달용)</b>
+      <ul class="plain">
+        <li>지금 공통 텔레그램 알림 함수는 버튼(인라인 키보드)을 붙이지 않습니다[확실]. 요약에 버튼을 달려면 발송 경로 변경이 필요합니다.</li>
+        <li>발송 채널이 Slack 을 포함하면(지금 설정은 텔레그램만) Slack 본문도 요약으로 바뀌는지 정해야 합니다.</li>
+        <li>매도 신호 손익률(−21%대)과 같은 종목 보유 고점대비(−1%대)는 계산 기준이 다릅니다 — 원인 미조사. 화면 문구 「신호 기준」은 기준이 확인된 뒤 구체화합니다.</li>
+        <li>해외 종목의 요약용 짧은 이름 규칙(예: 「VANECK ETF TR SEMICONDUCTOR ETF」)은 구현 가이드에서 정합니다. 데모는 사용자 샘플대로 첫 단어를 썼습니다.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 5. 지금 vs 제안 -->
+  <section class="block" id="s-diff" aria-labelledby="h-diff">
+    <h2 id="h-diff">5. 지금 vs 제안 한눈에</h2>
+    <div class="tw">
+      <table>
+        <thead><tr><th scope="col">항목</th><th scope="col">지금</th><th scope="col">제안</th></tr></thead>
+        <tbody>
+          <tr><td>텔레그램 길이</td><td id="diff-cur">약 70줄</td><td id="diff-new">약 14줄</td></tr>
+          <tr><td>경고 위치</td><td>섹션 사이에 흩어짐(경고 섹션은 회전매매만)</td><td>「확인 필요」 한 블록 + 제목 줄 건수</td></tr>
+          <tr><td>매도 손익</td><td>신호 값이 「매도 손익」으로 보임</td><td>결정 ② 에 따름</td></tr>
+          <tr><td>보유·후보·리서치 상세</td><td>메시지 본문</td><td>앱 리포트 화면(섹션 접기/펼치기)</td></tr>
+          <tr><td>앱으로 가기</td><td>버튼 없음</td><td>「👉 앱에서 자세히 보기」 → 그 회차 리포트 화면</td></tr>
+          <tr><td>보낸 원문</td><td>어디에도 저장 안 됨</td><td>회차별 보관(보관 기간은 결정 ③), 화면 맨 아래 「보낸 요약 원문」</td></tr>
+          <tr><td>그대로인 것</td><td colspan="2">발송 시각(08:00 기준)·분석 기간(24시간)·계산 방식·면책 문장 원문·안전장치. 이 작업은 표시와 보관만 바꾸며 주문·한도·신호 생성을 바꾸지 않습니다.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+  // ── 상태 ──
+  const S = { sample: 'normal', width: 412, order: 'A', sell: 'A', hist: 'B', keep: '1y', warn: 'A', items: { hold: true, res: true, disc: false }, dateIdx: 0, expandAll: null };
+
+  const SAMPLES = [
+    ['normal', '기본 — 11/20 예시 (확인 필요 2건)'],
+    ['nowarn', '확인 필요 0건'],
+    ['noasset', '총자산 조회 불가 (확인 필요 3건)'],
+    ['loading', '앱: 불러오는 중'],
+    ['empty', '앱: 보관된 리포트 없음'],
+    ['error', '앱: 불러오기 실패'],
+    ['unauth', '앱: 로그인 필요'],
+    ['expired', '앱: 보관 기간 지난 회차'],
+  ];
+  const TG_ONLY = ['normal', 'nowarn', 'noasset'];
+
+  // ── 예시 데이터 (실제 값 아님) ──
+  const D = {
+    total: '₩12,480,000', base: '₩12,950,000', pct: '−3.63%', amt: '−₩470,000',
+    sells: [
+      { n: '삼성전자', amt: '−₩412,000', pct: '−21.40%', kind: '마감손절' },
+      { n: '삼성전자', amt: '−₩338,000', pct: '−17.60%', kind: '마감손절' },
+    ],
+    sellTotal: '−₩750,000',
+    holds: [
+      { n: 'MICRON TECHNOLOGY INC', q: 8, p: 2.6, inv: '₩9,800,000', fx: true, judge: '판단 보류 (14일 내 도달 근거 없음)', days: 41 },
+      { n: 'NVIDIA CORP', q: 5, p: 1.4, inv: '₩1,120,000', fx: true },
+      { n: 'CHEVRON CORPORATION', q: 2, p: 1.2, inv: '₩260,000', fx: true },
+      { n: 'VANECK ETF TR SEMICONDUCTOR ETF', q: 3, p: 0.9, inv: '₩2,050,000', fx: true },
+      { n: 'ORACLE CORP', q: 4, p: -0.7, inv: '₩980,000', fx: true },
+      { n: '삼성전자', q: 10, p: -1.1, inv: '₩1,940,000', judge: '판단 보류 (14일 내 도달 근거 없음)', days: 19 },
+    ],
+    cands: ['한화', '현대글로비스', '스피어', '두산에너빌리티', '삼성바이오로직스', '현대모비스', '삼성중공업', '에코프로비엠', '에코프로', 'SK', '삼성생명', '포스코퓨처엠', 'SK하이닉스', '삼성에스디에스', '셀트리온'],
+    research: [
+      { n: '삼성바이오로직스', asof: '2026-11-20', ev: '누적낙폭 ＞ 15% + %B ＜ 0.20 — 과거 적중률 29%(70건 중 20건), lift ×12.1, 표본 신뢰도 높음', price: '₩1,290,000', basis: '최근 20거래일 저점' },
+      { n: '삼성전자', asof: '2026-11-20', ev: '누적낙폭 ＞ 25% — 과거 적중률 13%(110건 중 14건), lift ×10.9, 표본 신뢰도 높음', price: '₩171,000', basis: '최근 20거래일 저점' },
+      { n: 'SYNOPSYS INC', asof: '2026-11-19', ev: '누적낙폭 ＞ 15% + %B ＜ 0.20 — 과거 적중률 24%(140건 중 34건), lift ×4.2, 표본 신뢰도 높음', price: '$410.00', basis: '볼린저 하단(20,2)' },
+      { n: 'MICRON TECHNOLOGY INC', asof: '2026-11-19', ev: '누적낙폭 ＞ 25% — 과거 적중률 22%(140건 중 31건), lift ×4.1, 표본 신뢰도 높음', price: '$630.00', basis: '최근 20거래일 저점' },
+    ],
+    disclaimer: '이 수치는 예측 규칙이 아니라 사후 관찰입니다. 과거 구간에서 규칙이 얼마나 자주 저점 근방에 걸렸는지를 셀 뿐이며, 향후 수익을 보장하지 않습니다.',
+    dates: ['11/20 (목) 08:04', '11/19 (수) 08:03', '11/18 (화) 08:04', '11/17 (월) 08:04', '11/16 (일) 08:04'],
+  };
+  const NOWARN_WAIT = new Set(['한화', '두산에너빌리티', '현대모비스', 'SK하이닉스', '셀트리온', '삼성생명']);
+
+  const sgn = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2) + '%';
+  const sgnPlain = (v) => (v >= 0 ? '+' : '-') + Math.abs(v).toFixed(2) + '%';
+  const cls = (v) => (v > 0 ? 'up' : v < 0 ? 'down' : '');
+
+  // ── 지금 메시지 (구조 재현, 예시 값) ──
+  function currentLines() {
+    const L = [];
+    L.push('<b>[StockInvest] ℹ️ 거래 리포트 (24h)</b>');
+    L.push('<b>📊 거래 리포트 (24h)</b>');
+    L.push('🕐 분석 기간: 2026-11-19 08:04 ~ 08:04 KST', '');
+    L.push('<b>포트폴리오</b>');
+    L.push('• 총 자산: ' + D.total + '  (기간 시작 ' + D.base + ', -3.63%)', '');
+    L.push('<b>거래 요약</b>', '• 매수 0건 / ₩0', '• 매도 0건 / ₩0', '');
+    L.push('<b>📉 매도 손익 (총 ' + D.sellTotal + ')</b>');
+    D.sells.forEach((s) => L.push('🔵 ' + s.n + ' ' + s.amt + ' (' + s.pct.replace('−', '-') + ') [' + s.kind + ']'));
+    L.push('', '<b>📦 현재 보유</b>');
+    D.holds.forEach((h) => {
+      const icon = h.p >= 2.5 ? '🔴' : h.p <= -1.5 ? '🔵' : '⚪';
+      L.push(icon + ' ' + h.n + ' 고점대비 ' + sgnPlain(h.p) + ' · 최근추이 데이터 없음 (' + h.q + '주)');
+      L.push('   └ 투자금 ' + h.inv + (h.fx ? ' (달러 환산 불가 — 원화 표시)' : ''));
+      if (h.judge) L.push('   └ 🔬 ' + h.judge);
+      if (h.days) L.push('   └ ℹ️ 보유 ' + h.days + '일째 (참고 정보)');
+    });
+    L.push('', '<b>👀 매수 후보 모니터링</b>');
+    D.cands.forEach((c) => L.push('• ' + c + ' RSI - [차단]'));
+    L.push('', '<b>🔬 리서치분석 요약 (참고용)</b>', '추적 5종목 중 매수 고려 4종목');
+    D.research.forEach((r) => {
+      L.push('📈 ' + r.n + ' — 매수 고려 (' + r.asof + ' 종가 기준)');
+      L.push('   근거: ' + r.ev);
+      L.push('   가격: 매수 희망가 ' + r.price + ' (' + r.basis + '), 14일 이내');
+    });
+    L.push('', D.disclaimer, '', '🕐 2026. 11. 20. 오전 8:04:53 KST');
+    return L;
+  }
+
+  // ── 확인 필요 항목 ──
+  function warnItems() {
+    const w = [];
+    if (S.sample === 'noasset') w.push({ sev: 'e', tg: '총자산 조회 실패 — 증권사 잔고·환율을 읽지 못함', t: '총자산을 조회하지 못했습니다', s: '잔고·예수금·환율 중 확인 실패 · 0원이 아닙니다', to: 'r-asset' });
+    if (S.sample !== 'nowarn') {
+      w.push(S.sell === 'A'
+        ? { sev: 'w', tg: '삼성전자 매도 신호 2건 미체결 (마감손절 · 신호 기준 ' + D.sellTotal + ')', t: '삼성전자 매도 신호 2건 — 체결 0건', s: '마감손절 · 신호 기준 ' + D.sellTotal + ' · 실제 손익 아님', to: 'r-sell' }
+        : { sev: 'w', tg: '매도 손익 ' + D.sellTotal + ' (삼성전자 마감손절 2건 · 체결 아님)', t: '매도 손익 ' + D.sellTotal + ' (체결 아님)', s: '삼성전자 마감손절 2건', to: 'r-sell' });
+      w.push({ sev: 'w', tg: '매수 후보 15종목 전부 차단 (포트폴리오 보호)', t: '매수 후보 15종목이 모두 차단됨', s: '사유 포트폴리오 보호 · 새 매수가 나가지 않는 상태', to: 'r-cand' });
+    }
+    return w;
+  }
+
+  // ── 제안 요약 ──
+  function summaryLines() {
+    const w = warnItems();
+    const n = w.length;
+    const title = '<b>[StockInvest] ℹ️ 거래 리포트 · 11/20 08:04 (최근 24시간)' + (S.order === 'A' && n ? ' · ⚠️ 확인 ' + n : '') + '</b>';
+    const money = [
+      S.sample === 'noasset' ? '💰 총자산 조회 불가 (기간 시작 ' + D.base + ')' : '💰 총자산 ' + D.total + '  (' + D.pct + ', ' + D.amt + ')',
+      '🔁 체결 없음 (매수 0 · 매도 0)',
+    ];
+    const warn = n ? ['<b>⚠️ 확인 필요 ' + n + '</b>'].concat(w.map((x) => '• ' + x.tg)) : (S.warn === 'A' ? ['✅ 확인 필요 없음'] : []);
+    const tail = [];
+    if (S.items.hold) tail.push('📦 보유 6종목 — 손절 임박 0 · 매도 고려 0');
+    if (S.items.res) tail.push('🔬 매수 고려 4종목 (리서치 참고용): 삼성바이오로직스 · 삼성전자 · SYNOPSYS · MICRON');
+    if (S.items.disc) tail.push('ℹ️ 리서치는 사후 관찰이며 수익을 보장하지 않습니다');
+    const blocks = S.order === 'A' ? [[title], money, warn, tail] : [[title], warn, money, tail];
+    const L = [];
+    blocks.filter((b) => b.length).forEach((b, i) => { if (i) L.push(''); L.push(...b); });
+    L.push('', '🕐 2026. 11. 20. 오전 8:04:53 KST');
+    return L;
+  }
+  const plain = (L) => L.join('\n').replace(/<[^>]+>/g, '');
+
+  function renderTg() {
+    const cur = currentLines();
+    const nw = summaryLines();
+    $('#cur-bubble').innerHTML = cur.join('\n');
+    $('#new-bubble').innerHTML = nw.join('\n');
+    $('#cur-count').textContent = cur.length + '줄 · ' + plain(cur).length.toLocaleString() + '자';
+    $('#new-count').textContent = nw.length + '줄 · ' + plain(nw).length.toLocaleString() + '자 + 버튼';
+    $('#diff-cur').textContent = '약 ' + cur.length + '줄 (빈 줄 포함)';
+    $('#diff-new').textContent = '약 ' + nw.length + '줄 (빈 줄 포함) + 버튼';
+    const tgNote = TG_ONLY.includes(S.sample) ? '' : ' 텔레그램은 앱 화면 상태와 무관하므로 기본 요약을 보여 줍니다.';
+    $('#tg-desc').textContent = '줄 수는 빈 줄 포함, 412px 폭에서 긴 줄은 더 접힐 수 있습니다.' + tgNote;
+  }
+
+  // ── 앱 화면 조각 ──
+  const ICON_BACK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>';
+  const ICON_NEXT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>';
+
+  function header(sub) {
+    return '<div class="ah"><button type="button" class="iconbtn" aria-label="뒤로">' + ICON_BACK + '</button>' +
+      '<div class="tt"><h3>거래 리포트</h3><p class="sub num">' + sub + '</p></div><span class="chip ex">예시 수치</span></div>';
+  }
+  function histBar() {
+    if (S.hist !== 'B') return '';
+    const opts = D.dates.map((d, i) => '<option value="' + i + '"' + (i === S.dateIdx ? ' selected' : '') + '>' + d + (i === 0 ? ' · 최신' : '') + '</option>').join('');
+    return '<div class="hist"><button type="button" class="iconbtn" id="h-prev" aria-label="이전 회차"' + (S.dateIdx >= D.dates.length - 1 ? ' disabled' : '') + '>' + ICON_BACK + '</button>' +
+      '<select id="h-sel" aria-label="리포트 회차 선택">' + opts + '</select>' +
+      '<button type="button" class="iconbtn" id="h-next" aria-label="다음 회차"' + (S.dateIdx === 0 ? ' disabled' : '') + '>' + ICON_NEXT + '</button></div>';
+  }
+  function nowBar() {
+    return '<div class="now" role="note" aria-label="지금 안전 상태 — 리포트 시각이 아닌 현재 값"><span class="chip">지금</span><span><b>관찰 단계</b></span><span>실거래여부 OFF</span><span>모든거래차단 OFF</span><span>손실한도 손절 ON</span></div>';
+  }
+  const NAV = '<nav class="bn" aria-label="주 메뉴 (활성 탭 없음)"><span>홈</span><span>거래</span><span>분석</span><span>비서</span><span>설정</span></nav>';
+
+  function stbox(h, p, btns) {
+    return '<div class="abody"><div class="card stbox" role="status"><h4>' + h + '</h4><p>' + p + '</p>' + (btns || '') + '</div></div>';
+  }
+  function skeleton() {
+    const bar = (w, h) => '<div class="skel" style="width:' + w + ';height:' + h + 'px"></div>';
+    const sec = '<div class="card" style="padding:16px;display:grid;gap:8px">' + bar('40%', 14) + bar('70%', 12) + '</div>';
+    return '<div class="abody" aria-busy="true" aria-label="리포트를 불러오는 중"><div class="colsum"><div class="card" style="padding:16px;display:grid;gap:10px">' + bar('30%', 12) + bar('60%', 26) + bar('45%', 14) + '</div>' + sec + '</div><div class="coldet">' + sec + sec + sec + '</div></div>';
+  }
+
+  function sec(id, title, meta, inner, open, chip) {
+    return '<details class="sec" id="' + id + '"' + (open ? ' open' : '') + '><summary><span class="st">' + title + '</span>' + (chip ? '<span class="chip wn">' + chip + '</span>' : '') + '<span class="meta">' + meta + '</span></summary><div class="in">' + inner + '</div></details>';
+  }
+
+  function body() {
+    const w = warnItems();
+    const na = S.sample === 'noasset', nw = S.sample === 'nowarn';
+    const keyOpen = (id) => (S.expandAll !== null ? S.expandAll : w.some((x) => x.to === id));
+
+    // 요약 열
+    const asset = na
+      ? '<div class="asset" id="r-asset"><span class="lbl">총자산</span><span class="big">조회 불가</span><p class="base">증권사 잔고·예수금·환율을 확인하지 못했습니다. 0원이 아닙니다.<br><span class="num">기간 시작 ' + D.base + ' (11/19 08:04)</span></p></div>'
+      : '<div class="asset" id="r-asset"><span class="lbl">총자산 · 11/20 08:04 기준</span><span class="big num">' + D.total + '</span><span class="dl down num">▼ ' + D.pct + ' · ' + D.amt + '</span><p class="base num">기간 시작 ' + D.base + ' (11/19 08:04)</p></div>';
+    const kv = '<dl class="kv"><div><dt>체결</dt><dd class="num">0건</dd></div><div><dt>보유</dt><dd class="num">6종목</dd></div><div><dt>매수 고려 (참고)</dt><dd class="num">4종목</dd></div></dl>';
+    const chkRows = w.length
+      ? w.map((x) => '<a class="crow" href="#' + x.to + '" data-to="' + x.to + '"><span class="sev' + (x.sev === 'e' ? ' e' : '') + '" aria-hidden="true">!</span><span><span class="t">' + x.t + '</span><br><span class="s">' + x.s + '</span></span><span class="go" aria-hidden="true"></span></a>').join('')
+      : '<div class="crow" style="cursor:default"><span class="sev ok" aria-hidden="true">✓</span><span><span class="t">확인할 것 없음</span><br><span class="s">총자산 조회·손절 임박·미체결 신호·회전매매·후보 전면 차단 모두 0건</span></span><span></span></div>';
+    const chk = '<section class="card" aria-labelledby="chk-h"><div class="cardh"><h4 id="chk-h">확인 필요</h4><span class="chip' + (w.length ? ' wn' : '') + '">' + w.length + '건</span></div>' + chkRows + '</section>';
+
+    // 거래 요약
+    const trade = sec('r-trade', '거래 요약', '체결 매수 0 · 매도 0',
+      '<div class="row"><span class="t">매수</span><span class="r num">0건 · ₩0</span></div>' +
+      '<div class="row"><span class="t">매도</span><span class="r num">0건 · ₩0</span></div>' +
+      '<div class="row"><span class="t">실현 손익 <small>체결 기준</small></span><span class="r">— <small>체결 매도 없음</small></span></div>' +
+      '<div class="row"><span class="t">회전매매</span><span class="r">없음</span></div>', keyOpen('r-trade'));
+
+    // 매도 신호
+    let sell;
+    if (nw) {
+      sell = sec('r-sell', S.sell === 'A' ? '매도 신호' : '매도 손익', '이 기간 없음', '<p class="expl">이 기간에 만들어진 매도 신호가 없습니다.</p>', keyOpen('r-sell'));
+    } else {
+      const rows = D.sells.map((s) => '<div class="row"><span class="t">' + s.n + ' <small>' + s.kind + (S.sell === 'A' ? ' 신호 · 체결 안 됨' : '') + '</small></span><span class="r down num">' + s.amt + '<small>' + (S.sell === 'A' ? '신호 기준 ' : '') + s.pct + '</small></span></div>').join('');
+      sell = S.sell === 'A'
+        ? sec('r-sell', '매도 신호', '2건 · 신호 기준 ' + D.sellTotal, '<p class="expl"><b>체결된 매도가 아닙니다.</b> 매도 신호가 만들어질 때 계산한 값이며, 이 기간 체결된 매도는 0건입니다. 실제 손익은 체결된 뒤 「거래 요약」의 실현 손익에 잡힙니다.</p>' + rows, keyOpen('r-sell'), '미체결')
+        : sec('r-sell', '매도 손익', '총 ' + D.sellTotal, '<p class="expl">신호 기준 값입니다(체결 아님).</p>' + rows, keyOpen('r-sell'), '체결 아님');
+    }
+
+    // 보유
+    const holdRows = D.holds.map((h) => {
+      const sub = ['투자금 <b class="num">' + h.inv + '</b>' + (h.fx ? ' (달러 환산 불가 — 원화 표시)' : ''), '최근추이 데이터 없음'];
+      if (h.judge) sub.push(h.judge);
+      if (h.days) sub.push('보유 ' + h.days + '일째');
+      return '<div class="row"><span class="t">' + h.n + ' <small class="num">' + h.q + '주</small></span><span class="r num ' + cls(h.p) + '">' + sgn(h.p) + '<small>고점대비</small></span><span class="s">' + sub.join(' · ') + '</span></div>';
+    }).join('');
+    const hold = sec('r-hold', '보유', '6종목 · 손절 임박 0 · 매도 고려 0', '<p class="expl"><b>고점대비</b>는 보유 중 최고가와 비교한 등락입니다. 수익률이 아닙니다. 손절 임박 기준: 고점대비 −1.5% 이하.</p>' + holdRows, keyOpen('r-hold'));
+
+    // 매수 후보
+    const candChips = D.cands.map((c) => {
+      const wait = nw && NOWARN_WAIT.has(c);
+      return '<span class="chip">' + c + '<i>' + (wait ? '대기' : '차단') + '</i></span>';
+    }).join('');
+    const cand = nw
+      ? sec('r-cand', '매수 후보', '15종목 · 대기 6 · 차단 9', '<p class="expl">차단 사유: 포트폴리오 보호 9종목. RSI 값 없음(15종목 모두).</p><div class="names">' + candChips + '</div>', keyOpen('r-cand'))
+      : sec('r-cand', '매수 후보', '15종목 · 전부 차단', '<p class="expl"><b>15종목 모두 차단</b> — 사유 포트폴리오 보호. 이 상태에서는 새 매수 신호가 나가지 않습니다. RSI 값 없음(15종목 모두).</p><div class="names">' + candChips + '</div>', keyOpen('r-cand'), '전부 차단');
+
+    // 리서치
+    const resRows = D.research.map((r) => '<div class="row"><span class="t">' + r.n + ' <small>' + r.asof + ' 종가 기준</small></span><span class="r">매수 고려</span><span class="s">근거: ' + r.ev + '<br>가격: 매수 희망가 <b class="num">' + r.price + '</b> (' + r.basis + ') · 14일 이내</span></div>').join('');
+    const res = sec('r-res', '리서치 참고', '추적 5 · 매수 고려 4', '<p class="expl"><b>참고용</b> — ' + D.disclaimer + '</p>' + resRows, keyOpen('r-res'));
+
+    // 원문
+    const raw = sec('r-raw', '보낸 요약 원문', '텔레그램 · ' + summaryLines().length + '줄 · 보관됨', '<pre class="raw">' + plain(summaryLines()) + '</pre>', S.expandAll === true);
+
+    const tools = '<div class="tools"><button type="button" id="t-all">' + (S.expandAll === true ? '모두 접기' : '모두 펼치기') + '</button></div>';
+    return '<div class="abody"><div class="colsum"><section class="card" aria-label="포트폴리오 요약">' + asset + kv + '</section>' + chk + '</div>' +
+      '<div class="coldet">' + tools + trade + sell + hold + cand + res + raw + '</div></div>';
+  }
+
+  const KEEP_LABEL = { '1y': '1년', '90d': '90일', inf: '지우지 않음' };
+  function renderApp() {
+    const el = $('#app');
+    el.style.width = S.width + 'px';
+    const s = S.sample;
+    const date = D.dates[S.dateIdx];
+    let h = '';
+    let desc = '';
+    if (s === 'unauth') {
+      h = header('로그인 후 볼 수 있습니다') + stbox('로그인이 필요합니다', '리포트에는 계좌 정보가 있어 로그인해야 볼 수 있습니다. 로그인하면 이 리포트로 돌아옵니다.', '<button type="button" class="btn pri">로그인</button>');
+      desc = '로그인 필요 — 텔레그램 버튼을 PC 브라우저에서 눌렀을 때 등. 회차 이동·안전 상태 띠는 숨깁니다.';
+    } else if (s === 'loading') {
+      h = header(date + ' · 최근 24시간') + histBar() + nowBar() + skeleton();
+      desc = '불러오는 중 — 가운데 회전 표시 대신 자리 표시 막대.';
+    } else if (s === 'empty') {
+      h = header('보관된 리포트 없음') + nowBar() + stbox('아직 보관된 리포트가 없습니다', '리포트 보관은 이 기능을 배포한 뒤 첫 발송(매일 08:00)부터 시작됩니다. 그 전에 보낸 리포트는 원문이 남아 있지 않아 볼 수 없습니다.', '<button type="button" class="btn">홈으로</button>');
+      desc = '빈 상태 — 배포 직후, 첫 발송 전.';
+    } else if (s === 'error') {
+      h = header(date + ' · 최근 24시간') + histBar() + nowBar() + stbox('리포트를 불러오지 못했습니다', '비어 있는 것이 아닙니다. 잠시 뒤 다시 시도해 주세요. 계속되면 서버 상태를 확인해야 합니다.', '<button type="button" class="btn pri">다시 시도</button>');
+      desc = '오류 — 0건이나 빈 화면으로 보이지 않게 실패를 그대로 알립니다. 회차 이동은 계속 가능.';
+    } else if (s === 'expired') {
+      h = header('2025-08-12 회차') + histBar() + nowBar() + stbox('보관 기간이 지난 리포트입니다', S.keep === 'inf' ? '「지우지 않음」을 고르면 이 상태는 생기지 않습니다(예시 보기용).' : '보관 기간(' + KEEP_LABEL[S.keep] + ')이 지나 원문이 정리되었습니다.', '<button type="button" class="btn pri">최신 리포트 보기</button>');
+      desc = '보관 기간 지난 회차 — 오래된 텔레그램 메시지의 버튼을 눌렀을 때.';
+    } else {
+      h = header(date + ' 발송 · 최근 24시간') + histBar() + nowBar() + body();
+      desc = s === 'nowarn' ? '확인 필요 0건 — 「확인할 것 없음」을 명시하고 섹션은 모두 접힘.' : s === 'noasset' ? '총자산 조회 불가 — 숫자 대신 「조회 불가」, 확인 필요 맨 위에 오류 항목.' : '기본 — 확인 필요가 있는 섹션(매도 신호·매수 후보)은 펼친 채로 엽니다.';
+      if (S.dateIdx > 0) desc += ' (이전 회차 — 데모는 날짜 표시만 바뀝니다)';
+    }
+    el.innerHTML = h + NAV;
+    $('#app-desc').textContent = '[' + S.width + 'px] ' + desc;
+    wireApp();
+  }
+
+  function wireApp() {
+    const el = $('#app');
+    $$('a.crow', el).forEach((a) => a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const t = document.getElementById(a.dataset.to);
+      if (!t) return;
+      if (t.tagName === 'DETAILS') t.open = true;
+      t.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      const f = t.querySelector('summary') || t;
+      if (f === t) t.setAttribute('tabindex', '-1');
+      f.focus({ preventScroll: true });
+    }));
+    const all = $('#t-all', el);
+    if (all) all.addEventListener('click', () => { S.expandAll = S.expandAll === true ? false : true; renderApp(); $('#t-all').focus(); });
+    const prev = $('#h-prev', el), next = $('#h-next', el), sel = $('#h-sel', el);
+    if (prev) prev.addEventListener('click', () => { S.dateIdx = Math.min(D.dates.length - 1, S.dateIdx + 1); renderApp(); $('#h-sel').focus(); });
+    if (next) next.addEventListener('click', () => { S.dateIdx = Math.max(0, S.dateIdx - 1); renderApp(); $('#h-sel').focus(); });
+    if (sel) sel.addEventListener('change', () => { S.dateIdx = +sel.value; renderApp(); $('#h-sel').focus(); });
+  }
+
+  function renderAll() { renderTg(); renderApp(); }
+
+  // ── 조작 연결 ──
+  ['#sample1', '#sample2'].forEach((id) => {
+    const sel = $(id);
+    sel.innerHTML = SAMPLES.map(([v, l]) => '<option value="' + v + '">' + l + '</option>').join('');
+    sel.addEventListener('change', () => {
+      S.sample = sel.value; S.expandAll = null;
+      $$('#sample1, #sample2').forEach((o) => { o.value = S.sample; });
+      renderAll();
+    });
+  });
+  $$('.wbtn').forEach((b) => b.addEventListener('click', () => {
+    S.width = +b.dataset.w;
+    $$('.wbtn').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
+    renderApp();
+  }));
+  $$('input[type=radio]').forEach((r) => r.addEventListener('change', () => {
+    if (!r.checked) return;
+    S[r.name] = r.value;
+    if (r.name === 'hist') S.dateIdx = 0;
+    renderAll();
+  }));
+  $$('input[data-item]').forEach((c) => c.addEventListener('change', () => { S.items[c.dataset.item] = c.checked; renderAll(); }));
+  $('#tg-open').addEventListener('click', () => {
+    if (!TG_ONLY.includes(S.sample)) { S.sample = 'normal'; $$('#sample1, #sample2').forEach((o) => { o.value = 'normal'; }); }
+    S.dateIdx = 0; S.expandAll = null;
+    renderAll();
+    $('#app-desc').textContent = '텔레그램 「앱에서 자세히 보기」로 연 화면 — 그 회차(11/20 08:04)가 바로 열립니다. ' + $('#app-desc').textContent;
+    const target = $('#s-app');
+    target.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    const back = $('#app .iconbtn');
+    if (back) back.focus({ preventScroll: true });
+  });
+
+  renderAll();
+})();
+</script>
+</body>
+</html>
