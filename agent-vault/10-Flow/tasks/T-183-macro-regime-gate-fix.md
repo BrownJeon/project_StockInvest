@@ -256,6 +256,7 @@ analyst 의 11월 분석(메인 세션 의뢰, 읽기 전용)과 위 실측을 �
 - [2026-11-21 10:30 KST] 재적용 커밋 `23fba5c`(부모 `10e7f33`, 커밋 훅 `✅ Reviewer 감사 기록 확인: T-183` — 다른 ID 없음) → 브랜치 강제 갱신(`--force-with-lease` 로 `1bbb0b5` 확인) → Gitea 충돌 재계산 대기 후 `head_commit_id=23fba5c` 고정 머지, HTTP 200, 머지 커밋 `aec552cd12db2af0d0e6c4faff6682aa676c1277`.
 - [2026-11-21 10:30:33~10:31:13 KST] webhook blue/green 배포 `RELEASE_RESULT {"status":"ok","release":"20261121-103041-aec552cd","migrated":false}`, exit=0. 확인: `current` → `releases/20261121-103041-aec552cd`, 버전 0.23.0, pm2 `stockinvest`·`stockinvest-cron` online(재시작 0), `/api/health` ok·safety green·dryRun true·killSwitch true, `cron-err.log` 배포 뒤 새 줄 없음. 같은 배포에 실린 다른 작업 없음(T-184·T-182 는 각자 10:16·10:22 에 먼저 배포됨). 토요일이라 게이트 실발동 확인은 다음 장(월요일)부터 가능.
 - 이 이력서의 배포 기록·최종 요약과 roadmap 반영은 머지 뒤에 쓴 것이라 별도 문서 브랜치 `t183-deploy-record` 로 커밋하고, 사용자 「지금 PR 만들기」 지시로 문서 PR 을 만들었다(main 반영 = 코드 변경 없는 재배포 1회, 머지는 별도 승인).
+- [2026-11-21 10:5x KST] 문서 PR #12 생성(head `3d93c3c`). 메인 세션 질문 「PR #12 를 머지할까요?」(선택지: 머지 승인 / 나중에)에 대한 사용자 답: 「머지 승인」 — 코드 변경 없는 재배포 1회를 알린 뒤 받은 승인. 이 줄을 더한 커밋을 head 로 고정해 머지한다.
 
 ## 실행 도구·절차 이력
 
