@@ -148,6 +148,9 @@ export async function getTicker(symbol: string): Promise<Ticker> {
     low24h:         Number(o.low ?? 0) * fx,
     volume24h:      Number(o.tvol ?? 0),
     quoteVolume24h: Number(o.tamt ?? 0) * fx,
+    // (T-183) `base` = 전일 종가. 빈 값·0·NaN 은 `> 0` 비교에서 걸러 키 자체를 싣지 않는다
+    // (국내 getTicker·T-181 과 같은 방식).
+    ...(Number(o.base) > 0 ? { prevClose: Number(o.base) * fx } : {}),
   };
 }
 

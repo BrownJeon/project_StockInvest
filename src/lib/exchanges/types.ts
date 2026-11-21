@@ -70,6 +70,12 @@ export interface Ticker {
   marketCapKrw?: number;
   /** T-181 — 국내 대표 시장명(`rprs_mrkt_kor_name`, 예: KOSPI200·KSQ150·KOSPI). 국내 시세만 채운다. 빈 값이면 미정의 */
   indexTag?: string;
+  /**
+   * (T-183) 전일 종가 — `price` 와 같은 통화 단위(해외는 KRW 환산). 국내 `stck_sdpr`(기준가),
+   * 해외 `base`. 값이 없거나 0·NaN·빈 문자열이면 `undefined`(0 을 넣지 않는다).
+   * 「전일 종가 대비」 계산용이다 — `open24h` 는 국내=당일 시가·해외=전일 종가로 시장마다 의미가 달라 대신 쓰면 안 된다.
+   */
+  prevClose?: number;
 }
 
 export interface Balance {

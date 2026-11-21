@@ -120,6 +120,9 @@ export async function getTicker(symbol: string): Promise<Ticker> {
     // T-181 — 값이 없으면 키 자체를 싣지 않는다(기존 반환 모양 그대로).
     ...(marketCapKrw !== undefined ? { marketCapKrw } : {}),
     ...(indexTag !== undefined ? { indexTag } : {}),
+    // (T-183) 기준가 = 전일 종가. 빈 값·0·NaN 은 `> 0` 비교에서 걸러 키 자체를 싣지 않는다
+    // (T-181 과 같은 방식 — 값이 없으면 반환 모양이 예전과 같다).
+    ...(Number(o.stck_sdpr) > 0 ? { prevClose: Number(o.stck_sdpr) } : {}),
   };
 }
 

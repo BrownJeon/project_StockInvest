@@ -87,6 +87,9 @@ const sendAlert = jest.fn();
 jest.mock('@/lib/notify', () => ({ sendAlert: (...a: unknown[]) => sendAlert(...a) }));
 const sendAlertThrottled = jest.fn();
 jest.mock('@/lib/notify/throttle', () => ({ sendAlertThrottled: (...a: unknown[]) => sendAlertThrottled(...a), resetAlertThrottle: () => {} }));
+/** T-183 라운드 2 — 거시 게이트 차단 알림은 전달 확인 후 억제하는 `sendAlertUntilDelivered` 로 나간다 */
+const sendAlertUntilDelivered = jest.fn();
+jest.mock('@/lib/safety/confirmed-alert', () => ({ sendAlertUntilDelivered: (...a: unknown[]) => sendAlertUntilDelivered(...a) }));
 jest.mock('@/lib/signals/router', () => ({ getEngineSwitches: async () => ({ engineEnabled, autopilotMode: 'assist', source: 'config' }) }));
 const setCooldown = jest.fn(async () => true);
 jest.mock('@/lib/strategy/cooldowns', () => ({
@@ -363,6 +366,7 @@ async function runOnce(scene: Scene, mode: 'baseline' | 'real', setup: () => Pro
     setCooldown: setCooldown.mock.calls,
     sendAlert: sendAlert.mock.calls,
     sendAlertThrottled: sendAlertThrottled.mock.calls,
+    sendAlertUntilDelivered: sendAlertUntilDelivered.mock.calls,
     dbQueries,
   });
   return { observable, macroRegimeRows, runRowsWithKey, labelResults, labelSettledAtReturn, labelInserts, evalFunnelInsertIdx, runId };
@@ -523,14 +527,17 @@ describe.each(SCENES.map((s) => [s.name, s] as const))('장면: %s', (_name, sce
       // 빈 비교 금지 — 룰이 매수 후보를 냈고(게이트 skip 행은 매수 후보가 있을 때만 남는다) 게이트가 실제로 막았다
       expect(gates.filter((g) => g === 'regime_gate_macro_bear').length).toBe(SYMBOLS.length);
       expect(obs.createSignal).toHaveLength(0);
-      expect(obs.sendAlert.some((c: unknown[]) => String(c[1]).includes('신규 매수 차단'))).toBe(true);
+      // T-183 — 차단 알림은 시장별·날짜별, 전달 확인 후 억제하는 알림이다(제목은 인자 2번). 공용 스로틀로는 나가지 않는다
+      expect(obs.sendAlertUntilDelivered.some((c: unknown[]) => String(c[2]).includes('신규 매수 차단'))).toBe(true);
+      expect(obs.sendAlertThrottled.some((c: unknown[]) => String(c[2]).includes('신규 매수 차단'))).toBe(false);
     } else {
       // 빈 비교 금지 — 실제 시그널이 1건 이상 생겼다(프리필터·포트폴리오 가드도 실제로 돌았다)
       expect(obs.createSignal.length).toBeGreaterThanOrEqual(1);
       expect(obs.prefilter.length).toBeGreaterThanOrEqual(1);
       expect(obs.portfolioGuard.length).toBeGreaterThanOrEqual(1);
       expect(gates).not.toContain('regime_gate_macro_bear');
-      expect(obs.sendAlert.some((c: unknown[]) => String(c[1]).includes('신규 매수 차단'))).toBe(false);
+      expect(obs.sendAlertUntilDelivered.some((c: unknown[]) => String(c[2]).includes('신규 매수 차단'))).toBe(false);
+      expect(obs.sendAlertThrottled.some((c: unknown[]) => String(c[2]).includes('신규 매수 차단'))).toBe(false);
     }
     if (scene.orderMax === 'unlimited') {
       expect(obs.allocate).toHaveLength(1);
