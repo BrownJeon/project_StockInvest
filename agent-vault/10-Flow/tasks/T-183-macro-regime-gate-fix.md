@@ -1,8 +1,8 @@
 ---
 task_id: T-183
 title: 거시 하락 게이트 작동 불능 수정 — 11월 급락일에 한 번도 발동하지 않은 신규 매수 차단 게이트(기준 시점·S&P 대용 심볼·시장별 판정·실패 기록)
-status: doing
-waiting: [user_approval_merge]
+status: done
+waiting: [user_check_gate_alert_on_drop_day]
 priority: high
 project: StockInvest
 created: 2026-11-20
@@ -24,7 +24,7 @@ execution_context:
   current_tool: claude
   current_procedure: claude_standard
   current_scope: 원인 확인·설계부터 구현·감사·QA·서버 worktree 커밋·PR 까지. PR 머지(=운영 배포)는 사용자 승인 후
-  last_event_id: E7
+  last_event_id: E8
 demo_gate:
   level: "none"
   status: "not_required"
@@ -253,6 +253,10 @@ analyst 의 11월 분석(메인 세션 의뢰, 읽기 전용)과 위 실측을 �
 - [2026-11-21 10:2x KST] 재적용 커밋 `1bbb0b5`(0.22.0)를 브랜치에 강제 갱신(`--force-with-lease` 로 `6a87cbb` 확인). ⚠ 커밋 메시지 본문에 버전 사정을 설명하려고 다른 task ID 를 적어, 훅이 그 task 의 판정까지 함께 참조했다(`Reviewer 감사 기록 확인: T-183` 뒤에 그 ID 가 붙음). T-183 판정만으로도 통과하는 커밋이었지만 설명용 task ID 인용은 금지라 다음 커밋에서 그 문구를 지웠다. 그 직후 main 이 다시 `10e7f33`(다른 세션 T-182 PR #11, 10:22 머지·0.22.0 배포)로 전진 → E7.
 - [2026-11-21 10:3x KST] `10e7f33` 위 재적용: 겹치는 파일은 `package.json`·`package-lock.json` 뿐, 그쪽 추가 줄에 게이트 관련 토큰(prevClose·open24h·getTicker·regime·macro·sendAlertUntilDelivered) 0건. `cherry-pick -n` 충돌 없음, 코드 patch-id 동일(`d0d2e30a…`), 버전 **0.23.0**(변경 줄 6), 권한 변경 0.
 - [2026-11-21 10:4x KST] `10e7f33` 위 합친 트리 전체 jest(496 묶음) 13,058 통과 / 11 실패(8 묶음) · tsc 0. 7 묶음·10건은 `10e7f33` 단독과 위반 항목 17개까지 동일한 기존 실패. 8번째 `m40/forecast-engine` 1건은 전체 실행 부하 속 5초 시간 초과였고, 합친 트리 단독 재실행 21/21 통과(`10e7f33` 단독도 통과) — T-183 무관. 코드 변경분이 리뷰본과 동일하고 겹침이 버전 파일뿐이라 Reviewer 재호출 없이 [10:25] 판정을 유지(Leader 판단, LSN-0009 범위 대조).
+- [2026-11-21 10:30 KST] 재적용 커밋 `23fba5c`(부모 `10e7f33`, 커밋 훅 `✅ Reviewer 감사 기록 확인: T-183` — 다른 ID 없음) → 브랜치 강제 갱신(`--force-with-lease` 로 `1bbb0b5` 확인) → Gitea 충돌 재계산 대기 후 `head_commit_id=23fba5c` 고정 머지, HTTP 200, 머지 커밋 `aec552cd12db2af0d0e6c4faff6682aa676c1277`.
+- [2026-11-21 10:30:33~10:31:13 KST] webhook blue/green 배포 `RELEASE_RESULT {"status":"ok","release":"20261121-103041-aec552cd","migrated":false}`, exit=0. 확인: `current` → `releases/20261121-103041-aec552cd`, 버전 0.23.0, pm2 `stockinvest`·`stockinvest-cron` online(재시작 0), `/api/health` ok·safety green·dryRun true·killSwitch true, `cron-err.log` 배포 뒤 새 줄 없음. 같은 배포에 실린 다른 작업 없음(T-184·T-182 는 각자 10:16·10:22 에 먼저 배포됨). 토요일이라 게이트 실발동 확인은 다음 장(월요일)부터 가능.
+- 이 이력서의 배포 기록·최종 요약과 roadmap 반영은 머지 뒤에 쓴 것이라 별도 문서 브랜치 `t183-deploy-record` 로 커밋하고, 사용자 「지금 PR 만들기」 지시로 문서 PR 을 만들었다(main 반영 = 코드 변경 없는 재배포 1회, 머지는 별도 승인).
+- [2026-11-21 10:5x KST] 문서 PR #12 생성(head `3d93c3c`). 메인 세션 질문 「PR #12 를 머지할까요?」(선택지: 머지 승인 / 나중에)에 대한 사용자 답: 「머지 승인」 — 코드 변경 없는 재배포 1회를 알린 뒤 받은 승인. 이 줄을 더한 커밋을 head 로 고정해 머지한다.
 
 ## 실행 도구·절차 이력
 
@@ -263,6 +267,7 @@ analyst 의 11월 분석(메인 세션 의뢰, 읽기 전용)과 위 실측을 �
 - E5 2026-11-21 10:1x KST — Leader(메인 세션): 사용자 「머지 승인」 수신. 범위: 이력서 커밋 → PR #10 머지 → webhook 배포 결과·health 확인 → 배포 기록·최종 요약. 남은 일: 운영 cron 발동·알림 관찰(사용자).
 - E6 2026-11-21 10:2x KST — Leader(메인 세션): 머지 직전 T-184 선머지로 base 변경 → 서버 worktree 를 `origin/main`(`e8dbee9`)에 detach 후 T-183 재적용(코드 동일), 버전 0.22.0, 전체 jest·tsc(기존 실패만 확인), Reviewer 병합 후 재검증 PASS. 이전 브랜치 head `6a87cbb` 는 서버 로컬 태그 `t183-before-t184-rebase` 로 보존. 브랜치를 새 커밋으로 강제 갱신(내 PR 브랜치만) 후 그 head 로 고정해 머지. 사용자 승인 범위(PR #10 머지) 안 — 코드 변경 없음, 버전만 정책대로.
 - E7 2026-11-21 10:3x KST — Leader(메인 세션): 강제 갱신 직후 main 이 `10e7f33`(T-182 0.22.0)으로 다시 전진 → 같은 방식으로 재적용, 버전 0.23.0, 이전 head `1bbb0b5` 는 서버 로컬 태그 `t183-before-t182-rebase` 로 보존. 커밋 메시지에서 설명용 다른 task ID 제거. 전체 jest·tsc 재실행 후 커밋·강제 갱신·즉시 머지(경합 창을 줄이려고 갱신과 머지를 붙여 실행).
+- E8 2026-11-21 10:3x KST — Leader(메인 세션): PR #10 머지(`aec552c`)·운영 배포 0.23.0 확인, 최종 요약 작성, status done(waiting: 급락일 알림 관찰). 남은 일: 사용자 관찰, 아래 남은 일 목록.
 
 ## Codex 검토
 
@@ -281,3 +286,20 @@ analyst 의 11월 분석(메인 세션 의뢰, 읽기 전용)과 위 실측을 �
 - 다음: Reviewer 가 지적 2건의 채택·오탐 판정. 이 기록은 채택·수정 판단이 아니다.
 
 ## 최종 요약
+
+### [T-183] 거시 하락 게이트 작동 불능 수정
+
+- **상태**: 완료. 운영 배포 0.23.0(2026-11-21 10:31 KST).
+- **무엇이 바뀌었나**
+  - S&P 대용 심볼 `NYS:SPY` → `AMS:SPY`(빈 값만 받아 미국 하락을 한 번도 감지 못 했다).
+  - 하락률 기준을 당일 시가 → 전일 종가로 바꿔 갭 하락을 잡는다.
+  - 시장별 독립 판정: 국내 매수는 KOSPI 대용(069500), 해외 매수는 S&P 대용이 −1.5% 이하일 때만 막는다.
+  - 지수를 못 받으면 막지 않고(fail-open) `regime_gate_macro_error` 로 기록한다.
+  - 차단 알림은 전달이 확인된 뒤에만 그날(시장 현지 날짜) 다시 보내지 않는다.
+- **배포**: 머지 커밋 `aec552c`(코드 커밋 `23fba5c`), webhook blue/green, `RELEASE_RESULT ok`, 마이그레이션 없음. 같은 배포에 실린 다른 작업 없음. 머지 직전 다른 세션의 T-184(0.21.0)·T-182(0.22.0)가 차례로 먼저 배포돼 두 번 새 main 위에 다시 적용했다 — 코드 변경분은 리뷰본과 patch-id 동일, 버전만 0.23.0.
+- **AI 가 검증한 것**: Reviewer 최종 PASS(T-181 병합 후·T-184 병합 후 재검증 포함), QA 배포 전 전체 PASS, Codex C2 지적 2건 반영, 최종 합친 트리 전체 jest 13,058 통과·tsc 0(실패 11건은 모두 main 에 이미 있던 것 — 아래 이슈), 실 KIS 응답으로 계산한 하락률 = KIS 등락률, 배포 후 health·pm2·버전.
+- **AI 가 검증하지 못한 것**: 운영 cron 에서의 실제 발동과 텔레그램 알림 도착, 장 시작 직후·휴장 다음 날·배당락일의 "전일 종가" 값, 차단된 날 보유 종목 매도의 실제 실행.
+- **👉 사용자가 확인할 것**: 다음 국내·미국 급락일(전일 종가 대비 −1.5% 이하)에 텔레그램 "거시 지수 하락 — 신규 매수 차단" 알림이 시장별로 하루 1회 오는지. 오지 않거나 같은 날 여러 번 오면 알려 주기.
+- **👉 사용자가 결정할 것**: 없음(이전 질문 — 11-06·07 의 자동 모드·주문 한도 무제한·변동성 가드 완화가 의도였는지, 실매매 재개 여부 — 은 이 task 밖이며 여전히 답을 기다린다).
+- **남은 일**: 경미 L-1(두 지수를 항상 함께 조회), L-2(오류 기록 상세 키 이름 변경). 범위 밖 발견: 포트폴리오·즐겨찾기의 "등락"이 `open24h`(국내=당일 시가, 해외=전일 종가)를 써서 시장마다 기준이 다르다. 이 배포 기록·요약 커밋.
+- **이슈·위험**: 국내 신규 매수가 연간 약 23% 의 날 막힌다(승인한 정책의 결과). main 에 기존 실패 시험 7 묶음(corp-intel·profit-engine isolation, reason-dictionary-keys, job-slots E11, currency-mixing·usd-cash-balance·t108-terms fence)이 있고, 전체 실행 때 `m40/forecast-engine` 이 시간 초과로 흔들린다. 여러 세션이 같은 버전 번호로 동시에 머지를 노려 이번에 두 번 재적용이 필요했다.
