@@ -49,6 +49,7 @@ import { classifyMarketState, type MarketStateCategory } from './market-state';
 import type { StyleConfig } from './style';
 import { sendAlert } from '@/lib/notify';
 import { sendAlertThrottled } from '@/lib/notify/throttle';
+import { sendAlertUntilDelivered } from '@/lib/safety/confirmed-alert';
 import { describeErrorCause } from '@/lib/notify/result';
 import { EvalFunnelRecorder } from './eval-funnel';
 import { kickMacroRegimeRefresh, getMacroRegimeRecord, recordMacroRegimeLabel } from './macro-regime';
@@ -1508,38 +1509,55 @@ async function runMarket(market: Market, opts: { force?: boolean } = {}): Promis
   }
   const results = new Map<string, EvalResult>();
 
-  // ─── Regime Gate — 거시 지수 하드 게이트 ──────────────────────────────────
-  // KOSPI 또는 S&P500 전일 대비 -1.5% 이하 하락 시 신규 매수 전면 차단.
+  // ─── Regime Gate — 거시 지수 하드 게이트 (T-183: 시장별 독립 · 전일 종가 기준) ───────
+  // **이 시장의** 지수 대용이 전일 종가 대비 −1.5% 이하이면 이 시장의 신규 매수를 전면 차단한다.
+  //   국내 평가 → KOSPI 대용(KODEX 200)만, 해외 평가 → S&P500 대용(AMS:SPY)만 본다. 다른 시장 지수는 보지 않는다.
+  //   (2026-11-20 사용자 결정 「시장별 독립」. 종전 "두 지수 모두 −1.5% 이하(AND)"는 시장 간 시차가 있었고,
+  //    S&P 대용 `NYS:SPY` 가 늘 빈 값이라 한 번도 성립하지 않았다 — 게이트가 처음부터 작동 불능이었다.)
   // 주식은 코인(-2%)보다 낮은 임계(-1.5%)로 더 민감하게 반응 (변동성이 작음).
   // 보유 종목 손절·매도는 계속 진행 (exit-engine은 이미 완료된 상태).
-  // macro API 실패 시 게이트 미발동 — 가용성 우선.
+  // 이 시장의 지수를 판정할 수 없으면(시세 예외·빈 값·전일 종가 없음) 게이트 미발동 — fail-open + error 기록.
   let regimeGateBlocked = false;
+  const REGIME_GATE_THRESHOLD_PCT = -1.5;
+  const gateIndex = market === 'domestic' ? 'kospi' : 'sp500';
+  const gateIndexLabel = market === 'domestic' ? 'KOSPI(KODEX 200)' : 'S&P500(SPY)';
+  // §1 — macro 는 **fail-open 유지 + error 기록**. 억제 필터지 자금 안전장치가 아니라서
+  // fail-closed 로 하면 외부 API 장애가 매수를 전면 차단한다(제품 사망 재발 패턴).
+  // 다만 무기록으로 넘어가면 "왜 매수가 걸러지지 않았나"를 사후에 못 본다 — 종전에는 예외만 기록하고
+  // 빈 값·null 은 무기록이었다(T-183). 이제 판정 불가는 사유와 함께 모두 남긴다.
+  const recordGateError = (reason: string) => {
+    const why = reason.slice(0, 300);
+    console.warn(`[regime-gate:${market}] ${gateIndexLabel} 판정 불가 — 게이트 미발동 (매수 허용): ${why}`);
+    rec.error('regime_gate_macro_error', { detail: { index: gateIndex, reason: why, failOpen: true } });
+  };
   try {
     const macro = await fetchMacroIndicators();
-    const bearConditions = [
-      macro.kospiChangePct != null && macro.kospiChangePct <= -1.5,
-      macro.sp500ChangePct != null && macro.sp500ChangePct <= -1.5,
-    ].filter(Boolean).length;
-
-    // KOSPI와 S&P500 모두 -1.5% 이하일 때만 차단 (OR은 S&P500 단독 야간 급락에 KOSPI 정상일 때도 발동하는 오발동 위험)
-    if (bearConditions >= 2) {
-      const kospiStr = macro.kospiChangePct != null ? `${macro.kospiChangePct.toFixed(2)}%` : 'N/A';
-      const sp500Str = macro.sp500ChangePct != null ? `${macro.sp500ChangePct.toFixed(2)}%` : 'N/A';
-      console.log(`[regime-gate] BLOCKED: kospi=${kospiStr} sp500=${sp500Str} — 신규 매수 차단`);
-      sendAlert(
+    const pct = market === 'domestic' ? macro.kospiChangePct : macro.sp500ChangePct;
+    if (pct == null || !Number.isFinite(pct)) {
+      recordGateError((market === 'domestic' ? macro.kospiError : macro.sp500Error) ?? 'unavailable');
+    } else if (pct <= REGIME_GATE_THRESHOLD_PCT) {
+      const pctStr = `${pct.toFixed(2)}%`;
+      const marketLabel = market === 'domestic' ? '국내' : '해외';
+      console.log(`[regime-gate:${market}] BLOCKED: ${gateIndex}=${pctStr}(전일 종가 대비) — ${marketLabel} 신규 매수 차단`);
+      // 5분 틱마다 반복 발송하지 않는다 — 시장별·그 시장 현지 날짜별 1회(해외 세션은 KST 자정을 넘으므로 ET 날짜).
+      // 라운드 2(Codex C2 지적 2): 공용 `sendAlertThrottled` 는 발송 **전에** 보냈다고 기록해, 전 채널이 실패한 첫 알림도
+      // 하루 내내 억제됐다. `sendAlertUntilDelivered` 는 한 채널이라도 전달된 뒤에만 억제하고, 실패면 다음 틱에 다시 보낸다.
+      // 결과를 기다리지 않으므로(호출부 비차단) 차단 판정·매수 후보 제거는 알림 I/O 와 무관하게 이 틱에 바로 적용된다.
+      const tz = market === 'domestic' ? 'Asia/Seoul' : 'America/New_York';
+      const localDate = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+      sendAlertUntilDelivered(
+        `regime_gate_macro_bear:${market}:${localDate}`,
         'warning',
-        '거시 지수 하락 — 신규 매수 차단',
-        `KOSPI: ${kospiStr} / S&P500: ${sp500Str}\n전일 대비 -1.5% 이하 하락 감지. 보유 종목 매도·손절은 계속 진행.`,
+        `거시 지수 하락 — ${marketLabel} 신규 매수 차단`,
+        `${gateIndexLabel}: ${pctStr} (전일 종가 대비)\n`
+        + `−1.5% 이하 하락 감지 — ${marketLabel} 신규 매수를 차단합니다. 보유 종목 매도·손절은 계속 진행.`,
+        24 * 60 * 60 * 1000,
       );
       regimeGateBlocked = true;
     }
   } catch (e) {
-    const error = e instanceof Error ? e.message : String(e);
-    console.warn(`[regime-gate] macro 조회 실패 — 게이트 미발동 (매수 허용): ${error}`);
-    // §1 — macro 는 **fail-open 유지 + error 기록**. 억제 필터지 자금 안전장치가 아니라서
-    // fail-closed 로 하면 외부 API 장애가 매수를 전면 차단한다(제품 사망 재발 패턴).
-    // 다만 무기록으로 넘어가면 "왜 매수가 걸러지지 않았나"를 사후에 못 본다.
-    rec.error('regime_gate_macro_error', { detail: { error: error.slice(0, 300), failOpen: true } });
+    // fetchMacroIndicators 는 지수별 예외를 사유로 돌려주므로 여기 오는 것은 예상 밖 결함이다 — 같은 기록으로 남긴다.
+    recordGateError(e instanceof Error ? e.message : String(e));
   }
 
   // ─── ② 룰 발화 + ③ 억제 — 심볼별 후보 수집 (AI 호출 없음) ────────────────
