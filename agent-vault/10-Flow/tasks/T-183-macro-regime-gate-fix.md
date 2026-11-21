@@ -255,7 +255,7 @@ analyst 의 11월 분석(메인 세션 의뢰, 읽기 전용)과 위 실측을 �
 - [2026-11-21 10:4x KST] `10e7f33` 위 합친 트리 전체 jest(496 묶음) 13,058 통과 / 11 실패(8 묶음) · tsc 0. 7 묶음·10건은 `10e7f33` 단독과 위반 항목 17개까지 동일한 기존 실패. 8번째 `m40/forecast-engine` 1건은 전체 실행 부하 속 5초 시간 초과였고, 합친 트리 단독 재실행 21/21 통과(`10e7f33` 단독도 통과) — T-183 무관. 코드 변경분이 리뷰본과 동일하고 겹침이 버전 파일뿐이라 Reviewer 재호출 없이 [10:25] 판정을 유지(Leader 판단, LSN-0009 범위 대조).
 - [2026-11-21 10:30 KST] 재적용 커밋 `23fba5c`(부모 `10e7f33`, 커밋 훅 `✅ Reviewer 감사 기록 확인: T-183` — 다른 ID 없음) → 브랜치 강제 갱신(`--force-with-lease` 로 `1bbb0b5` 확인) → Gitea 충돌 재계산 대기 후 `head_commit_id=23fba5c` 고정 머지, HTTP 200, 머지 커밋 `aec552cd12db2af0d0e6c4faff6682aa676c1277`.
 - [2026-11-21 10:30:33~10:31:13 KST] webhook blue/green 배포 `RELEASE_RESULT {"status":"ok","release":"20261121-103041-aec552cd","migrated":false}`, exit=0. 확인: `current` → `releases/20261121-103041-aec552cd`, 버전 0.23.0, pm2 `stockinvest`·`stockinvest-cron` online(재시작 0), `/api/health` ok·safety green·dryRun true·killSwitch true, `cron-err.log` 배포 뒤 새 줄 없음. 같은 배포에 실린 다른 작업 없음(T-184·T-182 는 각자 10:16·10:22 에 먼저 배포됨). 토요일이라 게이트 실발동 확인은 다음 장(월요일)부터 가능.
-- 이 이력서의 배포 기록·최종 요약은 머지 뒤에 쓴 것이라 공유 NFS 작업 트리에만 있고 아직 커밋되지 않았다(main 직접 push 는 재배포를 일으키므로 다음 vault 문서 커밋에 함께 싣는다).
+- 이 이력서의 배포 기록·최종 요약과 roadmap 반영은 머지 뒤에 쓴 것이라 별도 문서 브랜치 `t183-deploy-record` 로 커밋하고, 사용자 「지금 PR 만들기」 지시로 문서 PR 을 만들었다(main 반영 = 코드 변경 없는 재배포 1회, 머지는 별도 승인).
 
 ## 실행 도구·절차 이력
 
