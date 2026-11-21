@@ -2,11 +2,11 @@
 task_id: T-184
 title: 코어 비율 가드의 보유 종목 등급 보존 — 등급 저장을 전략 점수 선별과 분리하고 가드가 최신성 한도 안의 값만 쓰게
 status: review
-waiting: [pr_merge_approval]
+waiting: [post_deploy_observation]
 priority: medium
 project: StockInvest
 created: 2026-11-20
-updated: 2026-11-20
+updated: 2026-11-21
 base_ref: 774bef64ac8f4674cb117a3682da320b1e5cf9fb
 risk_level: R2
 roles_involved: [leader, judge, developer, reviewer, qa]
@@ -44,6 +44,7 @@ execution_context:
 ## 사용자 지시·승인 (원문 보존)
 
 - T-181 세션(상위 세션)의 지시: 「새 task … 로 「코어 비율 가드의 보유 종목 등급 보존」을 설계·구현한다 … 완료 기준: 시험(보유 종목 탈락 시 등급 유지 / 강등+탈락 연속에서 낡은 core 로 통과하지 않음 / 한도 초과 시 unknown) 통과, 전체 jest 새 실패 0, tsc·next build 통과, Reviewer PASS·QA pass, PR 생성 후 사용자 머지 승인 대기」. DDL 이 필요하면 사용자 승인 사항 — 이 설계는 DDL 이 없다.
+- 2026-11-21 10:14 KST 사용자(이 세션 대화 직접 입력) 원문: 「머지 승인」 — PR #9 를 검토한 head `cee7d8b` 기준으로 머지(=운영 배포)하는 승인. 토요일 오전이라 국내 장 영향 없음.
 
 ## 설계 (Leader)
 
