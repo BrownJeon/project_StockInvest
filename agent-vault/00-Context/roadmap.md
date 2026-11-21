@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: StockInvest
-updated: 2026-11-13
+updated: 2026-11-21
 phases:
   - { id: 0, name: "안전 기반",              status: done }
   - { id: 1, name: "관측·소생 핫픽스",       status: done }
@@ -206,6 +206,7 @@ tags: [type/roadmap]
 - [x] (4) 거시 레짐 라벨 장기 보관(전용 표 `macro_regime_label_log`) — 2026-11-12 13:34 DDL·이관(31행)·13:35 운영 배포(0.8.0)·실시간 기록 확인 [[T-167-macro-regime-label-log]]
 - [ ] (4) 거시 레짐 승격(C1 AI 참고자료 → B 사이징 계수) — C0 60거래일 관측 뒤 검토, 전면 차단(A)은 승격 금지(T-164 검토 결론)
 - [ ] (4) 백테스트 MA100 레짐 필터가 라이브 엔진에 없음 — T-164 검토 중 부수 발견, 미판정
+- [x] (8) 거시 하락 게이트 — 전일 종가 기준·시장별 판정(국내 KOSPI 대용·해외 AMS:SPY, −1.5% 이하 신규 매수 차단), 2026-11-21 10:31 운영 배포(0.23.0)·급락일 알림 관찰 대기 [[T-183-macro-regime-gate-fix]]
 - [ ] (4) 장중 미검증 매수 후보 가상 체결 기록 복구(무제한 한도 모드) — 코드 커밋 `cde5f1d`·QA 통과, **11-14 02:16 운영 배포**·미국 장중 재개 확인, 국내 첫 장중 관측 대기 [[T-168-paper-fill-engine-restore]]
 
 ### holding-checker | 보유 점검·청산 엔진
