@@ -1,8 +1,8 @@
 ---
 task_id: T-182
 title: 거래 리포트 텔레그램 메시지를 핵심 요약으로 줄이고, 「앱에서 자세히 보기」로 여는 리포트 전문 화면 추가
-status: doing
-waiting: [user_approval_migration_and_deploy]
+status: done
+waiting: [first_summary_0800_check, user_device_app_link_check]
 priority: medium
 project: StockInvest
 created: 2026-11-20
@@ -24,7 +24,7 @@ execution_context:
   current_tool: claude
   current_procedure: claude_standard
   current_scope: 현황 조사·설계·데모부터 구현·감사·QA·배포까지. 데모 승인 전 화면·메시지 코드 작성 금지, DB 마이그레이션·배포는 사용자 승인 후
-  last_event_id: E4
+  last_event_id: E5
 demo_gate:
   required: true
   level: "full"
@@ -241,12 +241,20 @@ demo_gate:
 
 ## 배포 기록
 
+- [10:19] 운영 DB: `scripts/migrations/T-182-trade-report-archive.sql` 1건만 수동 적용(Node mysql2, `shared/.env` 접속값은 출력 안 함). 적용 전 테이블 부재 확인 → 생성 후 컬럼 10개·인덱스 `PRIMARY`·`idx_trade_report_list`·0행 확인. 사용자 승인 원문 「둘 다 승인」.
+- [10:22:14] PR #11 머지(`head_commit_id` = `c1f9d46` 고정), 머지 커밋 `10e7f33`. 머지 직전 `origin/main..브랜치` = 이 커밋 1개(동승 없음).
+- [10:22:57] webhook blue/green: `RELEASE_RESULT {"status":"ok","release":"20261121-102226-10e7f332","sha":"10e7f33…","previous":"…/20261121-101616-e8dbee92","migrated":false}`.
+- [10:23] 확인: `/api/health` ok·db·schemaFatal false·safety green(dryRun true·killSwitch true — 배포 전과 동일), pm2 `stockinvest`·`stockinvest-cron` online·재시작 0·새 릴리스 경로, 웹 버전 0.22.0, `/report` 비로그인 → 307 `/login?next=%2Freport`, `/api/reports/trade` 비로그인 → 401. 배포 뒤 첫 크론 `trade-report OK`(10:23:13 — 발송 시각 아님, 판단만), `pm2-err.log` 배포 뒤 의미 있는 오류 0.
+- 롤백: 이전 릴리스 `20261121-101616-e8dbee92`(T-184)로 되돌리면 된다. 테이블은 남아도 이전 코드가 읽지 않으므로 무해.
+- 같은 배포에 실린 다른 작업: 없음(T-184 는 10:16 에 먼저 별도 배포).
+
 ## 실행 도구·절차 이력
 
 - E1 2026-11-20 22:45 KST — claude 시작(origin=current=claude, claude_standard). 범위: 조사·설계·데모~배포. 근거: 위 사용자 지시 3건. 남은 일: judge 접수 → designer 데모 → 사용자 승인.
 - E2 2026-11-20 23:53 KST — 데모 v1 승인(22:52) 뒤 구현(developer)·Reviewer PASS(Medium 1 수정·재검증 PASS)·QA PASS(23:51) 완료. 미커밋. 남은 일: 사용자 승인 ① 운영 DB 마이그레이션 `T-182-trade-report-archive.sql` ② 커밋·PR·main 반영(=배포, 권고 창 05:10~07:30 KST) → 배포 후 08:00 첫 요약 확인 · 실기기 링크 확인.
 - E3 2026-11-21 10:20 KST — 사용자 「둘 다 승인」 수신. 작업 폴더를 원격 main `774bef6`(T-181, 0.20.0) 위 브랜치 `T-182-trade-report-summary` 로 옮김(겹치는 파일 0). 웹 버전 0.20.0 → **0.21.0**(기본 마이너 증가, `package.json`·`package-lock.json` — 안전 경로 아님). 재시험: 관련 15 suite 251건 통과(T-181 시험 2개 포함)·`tsc --noEmit` 0. 남은 일: 커밋 → PR → 운영 DB 테이블 생성 → 머지(=배포) → 결과 기록.
 - E4 2026-11-21 10:2x KST — 커밋 후 PR #11 생성. **운영 DB `trade_report_archive` 생성 10:19:43 KST**(적용 전 부재 확인 → 컬럼 10개·인덱스 PRIMARY·idx_trade_report_list·0행 확인, 이 SQL 1건만 수동 적용). 머지 직전 재확인에서 원격 main 이 `e8dbee9`(다른 세션 T-184, 10:16 배포, 웹 버전 **0.21.0**)로 움직여 있어 그 위로 리베이스 — 겹친 파일은 버전 두 파일뿐. 같은 버전 중복을 피해 T-182 를 **0.22.0** 으로 정정. 재시험: 관련 15 suite 256건(T-184 시험 2개 포함) 통과·`tsc` 0.
+- E5 2026-11-21 10:30 KST — PR #11 머지·배포 `status: ok`(위 배포 기록). Leader 최종 요약 작성, status done. 남은 일(waiting): 다음 08:00 발송의 요약·버튼 확인, 사용자 실기기에서 버튼 → 앱 리포트 화면 이동 확인.
 
 ## Codex 검토
 
@@ -261,6 +269,16 @@ demo_gate:
 - [23:46] C2(judge `codex_required=true`, adversarial-review/data_integrity): **skipped(codex_config_error) — 호출하지 않음.** C1(23:00)이 서버 `~/.codex/config.toml` 모델 값 거부(HTTP 400 `model_not_found`)로 incomplete 였고, 23:46 재확인에서 같은 설정(수정 시각 11-16 15:44) 그대로라 같은 실패가 확정적이다. 외부 반증 없이 Reviewer PASS·QA 로 진행한다. 설정 수정은 사용자 결정 사항(보고 예정). 이것은 검토 통과가 아니다.
 
 ## 최종 요약
+
+**[T-182] 거래 리포트 요약 + 리포트 전문 화면 — 운영 반영 완료(2026-11-21 10:22, 웹 0.22.0)**
+
+- 무엇이 바뀌었나: 아침 텔레그램 거래 리포트가 약 13줄 요약과 「👉 앱에서 자세히 보기」 버튼으로 바뀐다. 확인할 항목이 있으면 제목에 「⚠️ 확인 n」이 붙고 그 항목은 항상 보인다. 「매도 손익」은 「매도 신호 · 미체결」로 바뀌었다. 버튼을 누르면 새 리포트 화면(`/report`)에서 전문을 섹션별로 보고 이전 회차로 넘겨 볼 수 있다(보관 1년).
+- 배포: PR #11 → 머지 `10e7f33` → 릴리스 `20261121-102226-10e7f332` ok. 운영 DB 새 테이블 `trade_report_archive` 생성(10:19). 같은 배포에 실린 다른 작업 없음. 앱(네이티브) 변경 없음 — 재설치 불필요.
+- AI 가 검증한 것: 관련 시험 256건·타입 검사 통과, 배포 결과·health·새 화면/API 의 로그인 검사, 배포 뒤 첫 크론 정상.
+- AI 가 못 한 것: 실제 텔레그램 버튼 표시, 실기기에서 버튼 → 앱 화면 이동, 운영 DB 실제 저장(다음 발송 때 첫 행), Codex 외부 검토(서버 Codex 설정 모델 거부로 실패·생략).
+- 👉 사용자 확인: ① 다음 08:00 리포트가 짧은 요약 + 버튼으로 오는지 ② 폰에서 버튼을 누르면 앱이 열리고 리포트 화면이 나오는지(브라우저로 열리면 알려 주기 — 앱 링크 경로 추가안으로 바꿔야 한다).
+- 👉 사용자 결정: 서버 Codex 설정 모델 값 수정 여부(11-15부터 Codex 검토 전부 실패).
+- 남은 일·위험(Low): 발송 실패 회차의 미발송 보관 행 누적, 로그인 회원 전원이 리포트 계좌 수치를 봄(기존 홈과 같은 모델), 매도 신호 체결 여부는 발송 시점 값. 별건 후보: 매도 신호 손익률과 보유 고점대비의 기준 차이.
 
 ## 데모 검토 (demo gate)
 
