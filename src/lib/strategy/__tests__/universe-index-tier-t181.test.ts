@@ -19,6 +19,8 @@ async function poolQuery(sql: unknown, params?: unknown) {
   if (/SELECT refreshed_at FROM symbol_universe/i.test(s)) return [[], []];
   if (/INSERT INTO symbol_universe/i.test(s)) { inserts.push({ table: 'symbol_universe', params: p }); return [{ affectedRows: 1 }, []]; }
   if (/INSERT INTO stock_meta/i.test(s)) { inserts.push({ table: 'stock_meta', params: p }); return [{ affectedRows: 1 }, []]; }
+  // T-184 — 등급 보존소(system_config.domestic_index_tier): 읽기는 행 없음, 쓰기(INSERT IGNORE/조건부 UPDATE)는 1행 성공
+  if (/system_config/i.test(s)) return /^\s*SELECT/i.test(s) ? [[], []] : [{ affectedRows: 1 }, []];
   return [[], []];
 }
 jest.mock('@/lib/db', () => ({ getPool: () => ({ query: (...a: unknown[]) => poolQuery(a[0], a[1]) }) }));
@@ -181,7 +183,10 @@ describe('⑥ 정적 후보 목록 중복 제거', () => {
   test('ALL_SYMBOLS 에 중복이 없고 247540 은 한 번만 — 갱신 때 같은 목록을 넘긴다', async () => {
     expect(new Set(ALL_SYMBOLS).size).toBe(ALL_SYMBOLS.length);
     expect(ALL_SYMBOLS.filter((s) => s === '247540')).toHaveLength(1);
-    expect(ALL_SYMBOLS).toHaveLength(44);                         // KOSPI_TOP 35 + KOSDAQ_TOP 10 − 중복 1
+    // T-184 — 상장폐지 코드 042670·091990 을 뺐다: KOSPI_TOP 34 + KOSDAQ_TOP 9 − 중복 1 = 42
+    expect(ALL_SYMBOLS).toHaveLength(42);
+    expect(ALL_SYMBOLS).not.toContain('042670');
+    expect(ALL_SYMBOLS).not.toContain('091990');
     expect(ALL_SYMBOLS.slice(0, 2)).toEqual(['005930', '000660']); // 순서 유지
 
     getKisTickers.mockResolvedValue([]);
