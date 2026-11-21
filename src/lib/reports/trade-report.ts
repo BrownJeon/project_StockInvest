@@ -25,6 +25,11 @@ import {
   type DisplayAmount,
   type SymbolQuote,
 } from '@/lib/display-amount';
+import {
+  REPORT_PAYLOAD_SCHEMA_VERSION,
+  type ReportCoverage,
+  type TradeReportPayload,
+} from './trade-report-view';
 
 export interface BuyCandidate {
   symbol: string;
@@ -67,6 +72,8 @@ export interface HoldingStatus {
    * 🔴 위 KRW 필드들이 여전히 계산의 원본이고, 이 값은 화면에 찍는 용도로만 쓴다.
    */
   display: HoldingDisplay;
+  /** T-182 — `position_state.market`(보관 화면의 국내/해외 구분용). 구버전 호출부는 없을 수 있다 */
+  market?: string;
 }
 
 /**
@@ -88,6 +95,15 @@ export interface SellPnl {
   pnlPct: number;
   pnlKRW: number;     // (current_price - entry_price) × qty
   sellAmountKRW: number;
+  /** T-182 — 신호 id(보관 화면 행 식별용) */
+  signalId?: number | null;
+  /** T-182 — 신호 생성 시각(ISO) */
+  signalAt?: string | null;
+  /**
+   * T-182 — 신호가 소비한 주문(`consumed_order_id`)이 **체결(filled)** 됐는가.
+   * 🔴 이 목록은 체결이 아니라 **매도 신호**다. false 면 요약·화면이 「미체결 · 신호 기준」으로 적는다.
+   */
+  filled?: boolean;
 }
 
 export interface SignalCandidates {
@@ -1133,12 +1149,14 @@ export async function fetchSignalCandidates(rangeStart?: Date): Promise<SignalCa
       sellSignal,
       priceTargets,
       display,
+      market: p.market,
     };
   });
 
   // 최근 25시간 매도 시그널에서 실제 손익 (exit-engine indicators 기준)
   const [sellRows] = await pool.query<RowDataPacket[]>(`
-    SELECT s.symbol,
+    SELECT s.id AS signal_id, s.created_at AS signal_at, o.status AS order_status,
+      s.symbol,
       JSON_UNQUOTE(JSON_EXTRACT(s.indicators, '$.exit_kind'))   AS exit_kind,
       CAST(JSON_EXTRACT(s.indicators, '$.pnl_pct')     AS DECIMAL(10,4)) AS pnl_pct,
       CAST(JSON_EXTRACT(s.indicators, '$.entry_price') AS DECIMAL(20,4)) AS entry_price,
@@ -1162,12 +1180,17 @@ export async function fetchSignalCandidates(rangeStart?: Date): Promise<SignalCa
     // 실제 손익 = (현재가 - 매입가) × 수량 = 매도금액 - 매입원가
     const costBasis = entry * qty;
     const pnlKRW   = costBasis > 0 ? sellAmt - costBasis : pnlPct / 100 * sellAmt;
+    const signalAt = r.signal_at != null ? new Date(r.signal_at as string | Date) : null;
     return {
       symbol:        String(r.symbol),
       exitKind:      String(r.exit_kind ?? ''),
       pnlPct,
       pnlKRW,
       sellAmountKRW: sellAmt,
+      // T-182 — 신호 ↔ 체결 연결. 주문이 없거나 체결(filled)이 아니면 「미체결」이다.
+      signalId:      r.signal_id != null && Number.isFinite(Number(r.signal_id)) ? Number(r.signal_id) : null,
+      signalAt:      signalAt && !Number.isNaN(signalAt.getTime()) ? signalAt.toISOString() : null,
+      filled:        String(r.order_status ?? '') === 'filled',
     };
   });
 
@@ -1227,6 +1250,8 @@ export async function fetchResearchDigest(): Promise<ResearchDigest> {
     return { trackedCount: tracked.length, activeCount, items, note: PRECURSOR_NOTE };
   } catch (e) {
     console.warn(`[trade-report] 리서치 요약 조회 실패: ${e instanceof Error ? e.message : String(e)}`);
+    // 🔴 T-182 — **이 상수 객체 그 자체**를 돌려준다(복사본 금지). 크론 라우트가 `=== EMPTY_RESEARCH_DIGEST`
+    //    로 「조회 실패」와 「추적 0종목」을 구분해 보관 화면에 「리서치 정보를 읽지 못함」을 띄운다(시험이 고정).
     return EMPTY_RESEARCH_DIGEST;
   }
 }
@@ -1248,4 +1273,107 @@ export function collectReportSymbols(
   for (const s of candidates?.sellPnl ?? []) out.add(s.symbol);
   for (const i of research?.items ?? []) out.add(i.symbol);
   return [...out];
+}
+
+// ─── T-182 보관 payload 조립 ────────────────────────────────────────────────
+
+/** 기존 메시지 줄의 앞 장식(`   └ 🔬 `·`   └ ℹ️ `·`   근거: `)을 떼고 문장만 남긴다 — 화면은 줄 장식을 따로 그린다. */
+function stripLineDecoration(line: string | null, prefix: RegExp): string | null {
+  if (line == null) return null;
+  const t = line.replace(prefix, '').trim();
+  return t.length > 0 ? t : null;
+}
+
+export interface BuildPayloadArgs {
+  report: TradeReport;
+  /** null = 조회 불가(T-056) */
+  totalKRW: number | null;
+  baselineKRW: number | null;
+  candidates: SignalCandidates;
+  research: ResearchDigest;
+  labels?: Map<string, string>;
+  coverage: ReportCoverage;
+}
+
+/**
+ * 보관·화면용 구조화 데이터(T-182). **발송 시점의 값**을 그대로 담는다 — 이름은 그날 라벨, 판단 문구는 그날 계산.
+ *
+ * 🔴 계산을 새로 하지 않는다. 문구는 이 파일의 기존 포맷터(`formatDisplayAmount`·`formatSellSignalLine`·
+ *    `formatHoldingInfoLine`·`formatBuyEvidence`·`formatTargetFragment`)가 만든 것을 앞 장식만 떼어 쓴다 —
+ *    텔레그램 전문(`formatReportMessage`)과 화면이 같은 문장을 보이게 하려는 것이다.
+ * 🔴 이 값은 보관 테이블·화면으로만 흘러간다(주문·신호·안전장치와 무관).
+ */
+export function buildReportPayload(args: BuildPayloadArgs): TradeReportPayload {
+  const { report: rep, candidates, research, labels, coverage } = args;
+  const nameOf = (sym: string) => labels?.get(sym) ?? sym;
+  const marketOf = (sym: string, m?: string | null): 'domestic' | 'overseas' =>
+    resolveMarket(sym, m ?? null);
+
+  return {
+    schemaVersion: REPORT_PAYLOAD_SCHEMA_VERSION,
+    rangeStart: rep.rangeStart.toISOString(),
+    rangeEnd: rep.rangeEnd.toISOString(),
+    coverage,
+    asset: { totalKRW: args.totalKRW, baselineKRW: args.baselineKRW },
+    trade: {
+      buys: rep.buys,
+      buysAmountKRW: rep.buysAmountKRW,
+      sells: rep.sells,
+      sellsAmountKRW: rep.sellsAmountKRW,
+      lifoPnlKRW: rep.lifoPnlKRW,
+      matchedSellCount: rep.matchedSellCount ?? 0,
+      unmatchedSellCount: rep.unmatchedSellCount ?? 0,
+      churnSymbols: rep.churnSymbols.map((s) => ({ symbol: s, name: nameOf(s) })),
+    },
+    sellSignals: candidates.sellPnl.map((p) => ({
+      symbol: p.symbol,
+      name: nameOf(p.symbol),
+      signalId: p.signalId ?? null,
+      exitKind: p.exitKind,
+      pnlPct: p.pnlPct,
+      pnlKRW: p.pnlKRW,
+      signalAt: p.signalAt ?? null,
+      filled: p.filled === true,
+    })),
+    holdings: candidates.holdings.map((h) => ({
+      symbol: h.symbol,
+      name: nameOf(h.symbol),
+      market: marketOf(h.symbol, h.market),
+      qty: h.qty,
+      profitPct: h.profitPct,
+      periodChangePct: h.periodChangePct,
+      investedKRW: h.investedKRW,
+      investedText: h.investedKRW > 0 ? formatDisplayAmount(h.display?.invested, h.investedKRW) : null,
+      sellAction: h.sellSignal?.action ?? null,
+      sellJudgeText: stripLineDecoration(formatSellSignalLine(h), /^\s*└\s*🔬\s*/u),
+      holdingInfoText: stripLineDecoration(formatHoldingInfoLine(h), /^\s*└\s*ℹ️\s*/u),
+      holdingDays: h.sellSignal?.daysSinceEntry ?? null,
+    })),
+    candidates: candidates.buyWatchlist.map((c) => ({
+      symbol: c.symbol,
+      name: nameOf(c.symbol),
+      status: c.status,
+      skipReason: c.skipReason,
+      rsi: c.rsi,
+      evPct: c.evPct,
+      aiConf: c.aiConf,
+    })),
+    research: {
+      trackedCount: research.trackedCount,
+      activeCount: research.activeCount,
+      note: research.note,
+      items: research.items.map((i) => ({
+        symbol: i.symbol,
+        name: nameOf(i.symbol),
+        market: i.market,
+        asOfDate: i.asOfDate,
+        action: i.buy.action,
+        triggerCount: i.buy.triggerCount,
+        evidenceText: stripLineDecoration(formatBuyEvidence(i.buy), /^\s*근거:\s*/u),
+        priceText: i.buy.action === 'buy'
+          ? formatTargetFragment(i.targets, 'buy', i.targets?.horizonDays ?? null)
+          : null,
+      })),
+    },
+  };
 }

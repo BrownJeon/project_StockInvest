@@ -284,6 +284,7 @@
 - 홈 「확인 필요」 줄 → 해당 화면(`/settings` · `/recommend?tab=now|log` · `/analytics?tab=verify|data`) · 홈 섹션 머리 `분석 ›`·`거래 ›`·`상세 ›`·`전체 ›`·`기록 ›`
 - 안전 상태 띠 `설정 ›` → `/settings` · 분석 머리 띠 단계 배지 → `/`
 - 텔레그램 「🔗 앱에서 자세히」 = 사이트 루트 `/`(홈) — 경로 변경 없음, 앱 App Link(`/` 정확 일치)도 그대로
+- 탭 밖 화면 — `/report`(거래 리포트, T-182): 텔레그램 거래 리포트 「👉 앱에서 자세히 보기」 버튼 = `/?open=report&id=<숫자>` → 홈이 `/report?id=<숫자>` 로 교체 이동(네이티브 변경 없음). 하단 탭은 그대로 보이고 활성 탭 없음. 승인 데모 `mockups/T-182-trade-report-v1.html`
 - 거래 › 운영 기록 주문 기록 `전체 ›` → `/recommend?tab=log&detail=orders`(옛 `/analytics?tab=orders` 는 여기로 자동 교체)
 
 **T-108 이전**(기록용):

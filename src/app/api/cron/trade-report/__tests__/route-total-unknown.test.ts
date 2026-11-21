@@ -38,6 +38,13 @@ jest.mock('@/lib/reports/trade-report', () => ({
   fetchSignalCandidates: async () => ({ buyWatchlist: [], holdings: [], sellPnl: [] }),
   fetchResearchDigest: async () => ({ trackedCount: 0, activeCount: 0, items: [], note: 'note' }),
   collectReportSymbols: () => [],
+  // T-182 — 요약·보관 payload 조립. 이 파일의 관심사(발송·갱신 정책·합계 배선)와 무관해 최소 모양만 돌려준다.
+  buildReportPayload: (a: { report: { rangeStart: Date; rangeEnd: Date }; totalKRW: number | null; baselineKRW: number | null; coverage: unknown }) => ({
+    schemaVersion: 1, rangeStart: a.report.rangeStart.toISOString(), rangeEnd: a.report.rangeEnd.toISOString(),
+    coverage: a.coverage, asset: { totalKRW: a.totalKRW, baselineKRW: a.baselineKRW },
+    trade: { buys: 0, buysAmountKRW: 0, sells: 0, sellsAmountKRW: 0, lifoPnlKRW: 0, matchedSellCount: 0, unmatchedSellCount: 0, churnSymbols: [] },
+    sellSignals: [], holdings: [], candidates: [], research: { trackedCount: 0, activeCount: 0, note: 'note', items: [] },
+  }),
   EMPTY_CANDIDATES: { buyWatchlist: [], holdings: [], sellPnl: [] },
   EMPTY_RESEARCH_DIGEST: { trackedCount: 0, activeCount: 0, items: [], note: 'note' },
 }));
