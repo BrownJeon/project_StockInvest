@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { ClaudeCliCaller } from './claude-cli';
 import { HomeM4ApiCaller } from './home-m4-api';
+import { DEFAULT_STAGE1_MODEL } from './stage1-models';
 import type { LlmCaller, LlmProvider, LlmProviderConfig } from './types';
 
 const VALID_PROVIDERS: LlmProvider[] = ['claude', 'home-m4-api', 'hybrid'];
@@ -64,10 +65,10 @@ export async function getProviderConfig(): Promise<LlmProviderConfig> {
   // Hybrid Stage 1 — 통합 모델 (도메인 분리 제거, Phase AB)
   // 옛 키(stage1_model_domestic/overseas) fallback 으로 호환 유지
   const stage1Model =
-    (await readSystemConfig('stage1_model')) ??
-    (await readSystemConfig('stage1_model_domestic')) ??
-    process.env.STAGE1_MODEL ??
-    'qwen2.5:14b-instruct';
+    (await readSystemConfig('stage1_model'))?.trim() ||
+    (await readSystemConfig('stage1_model_domestic'))?.trim() ||
+    process.env.STAGE1_MODEL?.trim() ||
+    DEFAULT_STAGE1_MODEL;
   const stage1TimeoutRaw =
     (await readSystemConfig('stage1_timeout_ms')) ??
     process.env.STAGE1_TIMEOUT_MS ??
@@ -80,15 +81,12 @@ export async function getProviderConfig(): Promise<LlmProviderConfig> {
     process.env.RAG_ENABLED ??
     'true';
   const ragEnabled = String(ragEnabledRaw).toLowerCase() === 'true';
-  const ragTopKSignals = Number((await readSystemConfig('rag_topk_signals')) ?? process.env.RAG_TOPK_SIGNALS ?? 5) || 5;
-  const ragTopKNews    = Number((await readSystemConfig('rag_topk_news'))    ?? process.env.RAG_TOPK_NEWS    ?? 3) || 3;
-  const ragLookbackDays = Number((await readSystemConfig('rag_lookback_days')) ?? process.env.RAG_LOOKBACK_DAYS ?? 7) || 7;
 
   return {
     provider,
     homeM4ApiBase, homeM4ApiModel, homeM4ApiTemperature,
     stage1Model, stage1TimeoutMs,
-    ragEnabled, ragTopKSignals, ragTopKNews, ragLookbackDays,
+    ragEnabled,
   };
 }
 
@@ -104,7 +102,7 @@ async function buildCaller(opts?: { stage?: 1 | 2; domain?: 'domestic' | 'overse
         caller: new HomeM4ApiCaller(
           cfg.homeM4ApiBase ?? 'http://192.168.219.100:8000',
           process.env.AI_API_KEY ?? '',
-          cfg.stage1Model ?? 'qwen2.5:14b-instruct',
+          cfg.stage1Model ?? DEFAULT_STAGE1_MODEL,
           cfg.homeM4ApiTemperature ?? 0.3,
         ),
       };

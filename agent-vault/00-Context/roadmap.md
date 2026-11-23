@@ -1,7 +1,7 @@
 ---
 type: roadmap
 project: StockInvest
-updated: 2026-11-21
+updated: 2026-11-23
 phases:
   - { id: 0, name: "안전 기반",              status: done }
   - { id: 1, name: "관측·소생 핫픽스",       status: done }
@@ -117,6 +117,7 @@ tags: [type/roadmap]
 - [x] (8) 자동 청산 마스터 스위치 표시 [[T-015-disable-auto-exit-engine]]
 - [x] (2) 국내·해외 공통 자동승인모드 전환 [[T-154-auto-approval-mode-setting]]
 - [ ] (8) AI 제공자 M4 주소 설정·표시 [[T-038-llm-base-url-setting]]
+- [~] (8) 하이브리드 Stage 1 모델 선택·검사와 RAG 활성 설정 [[T-185-hybrid-stage1-model-picker]]
 - [x] (6) 거래소 계정·알람 채널·정기 거래 리포트
 
 ## API · api

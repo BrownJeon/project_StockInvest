@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useToast } from '@/components/ui/Toast';
+import { DEFAULT_STAGE1_MODEL, isStage1Model, STAGE1_MODEL_OPTIONS } from '@/lib/llm/stage1-models';
 
 type Provider = 'claude' | 'home-m4-api' | 'hybrid';
 
@@ -15,9 +16,6 @@ interface ApiResponse {
     stage1Model?: string;
     stage1TimeoutMs?: number;
     ragEnabled?: boolean;
-    ragTopKSignals?: number;
-    ragTopKNews?: number;
-    ragLookbackDays?: number;
   };
   overrides?: Record<string, unknown>;
   env?: Record<string, string | null>;
@@ -26,7 +24,7 @@ interface ApiResponse {
 const LABEL: Record<Provider, string> = {
   claude:        'Claude CLI',
   'home-m4-api': '로컬 LLM (home-m4-api)',
-  hybrid:        '🔀 Hybrid (M4 + Claude) [권장]',
+  hybrid:        '🔀 Hybrid(로컬LLM + Claude) [권장]',
 };
 
 const DESC: Record<Provider, string> = {
@@ -55,12 +53,12 @@ export function LlmProviderSection() {
   const [m4Temp, setM4Temp]   = useState('0.3');
   const [apiKeySet, setApiKeySet] = useState<boolean>(false);
   // Hybrid + RAG (Phase AB)
-  const [stage1Model, setStage1Model] = useState('qwen2.5:14b-instruct');
+  const [stage1Model, setStage1Model] = useState<string>(DEFAULT_STAGE1_MODEL);
+  const [activeStage1Model, setActiveStage1Model] = useState<string>(DEFAULT_STAGE1_MODEL);
   const [stage1Timeout, setStage1Timeout] = useState('30000');
   const [ragEnabled, setRagEnabled] = useState<boolean>(true);
-  const [ragTopKSignals, setRagTopKSignals] = useState('5');
-  const [ragTopKNews, setRagTopKNews] = useState('3');
-  const [ragLookback, setRagLookback] = useState('7');
+  const [activeRagEnabled, setActiveRagEnabled] = useState(true);
+  const [activeStage1Timeout, setActiveStage1Timeout] = useState('30000');
 
   const [activeProvider, setActiveProvider] = useState<Provider>('claude');
   const toast = useToast();
@@ -79,12 +77,15 @@ export function LlmProviderSection() {
         if (d.active.homeM4ApiTemperature != null) setM4Temp(String(d.active.homeM4ApiTemperature));
         setApiKeySet(d.env?.AI_API_KEY_set === 'yes');
         // Phase AB
-        if (d.active.stage1Model)        setStage1Model(d.active.stage1Model);
-        if (d.active.stage1TimeoutMs != null) setStage1Timeout(String(d.active.stage1TimeoutMs));
-        if (d.active.ragEnabled != null) setRagEnabled(!!d.active.ragEnabled);
-        if (d.active.ragTopKSignals != null) setRagTopKSignals(String(d.active.ragTopKSignals));
-        if (d.active.ragTopKNews != null)    setRagTopKNews(String(d.active.ragTopKNews));
-        if (d.active.ragLookbackDays != null) setRagLookback(String(d.active.ragLookbackDays));
+        const model = d.active.stage1Model || DEFAULT_STAGE1_MODEL;
+        setStage1Model(model);
+        setActiveStage1Model(model);
+        const timeout = String(d.active.stage1TimeoutMs ?? 30000);
+        setStage1Timeout(timeout);
+        setActiveStage1Timeout(timeout);
+        const rag = d.active.ragEnabled ?? true;
+        setRagEnabled(rag);
+        setActiveRagEnabled(rag);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -132,13 +133,10 @@ export function LlmProviderSection() {
         if (Number.isFinite(t)) body.homeM4ApiTemperature = t;
       }
       if (provider === 'hybrid') {
-        body.stage1Model = stage1Model.trim() || 'qwen2.5:14b-instruct';
+        if (isStage1Model(stage1Model) && stage1Model !== activeStage1Model) body.stage1Model = stage1Model;
         const t1 = Number(stage1Timeout);
         if (Number.isFinite(t1)) body.stage1TimeoutMs = t1;
         body.ragEnabled = ragEnabled;
-        const k1 = Number(ragTopKSignals); if (Number.isFinite(k1)) body.ragTopKSignals = k1;
-        const k2 = Number(ragTopKNews);    if (Number.isFinite(k2)) body.ragTopKNews = k2;
-        const k3 = Number(ragLookback);    if (Number.isFinite(k3)) body.ragLookbackDays = k3;
       }
       const res = await fetch('/api/settings/llm-provider', {
         method: 'POST',
@@ -148,6 +146,11 @@ export function LlmProviderSection() {
       const json = await res.json() as ApiResponse & { error?: string };
       if (!json.ok) throw new Error(json.error ?? 'save failed');
       setActiveProvider(json.active.provider);
+      if (provider === 'hybrid') {
+        setActiveStage1Model(json.active.stage1Model || DEFAULT_STAGE1_MODEL);
+        setActiveStage1Timeout(String(json.active.stage1TimeoutMs ?? 30000));
+        setActiveRagEnabled(json.active.ragEnabled ?? true);
+      }
       toast.show('저장됨 — 다음 cron tick부터 적용', 'success');
     } catch (e) {
       toast.show(`저장 실패: ${e instanceof Error ? e.message : String(e)}`, 'error');
@@ -160,7 +163,9 @@ export function LlmProviderSection() {
     return <div style={{ padding: 16, color: 'var(--muted)', fontSize: 13 }}>AI 제공자 설정 불러오는 중...</div>;
   }
 
-  const isDirty = provider !== activeProvider;
+  const isDirty = provider !== activeProvider || (provider === 'hybrid' && (
+    stage1Model !== activeStage1Model || stage1Timeout !== activeStage1Timeout || ragEnabled !== activeRagEnabled
+  ));
 
   return (
     <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
@@ -223,9 +228,7 @@ export function LlmProviderSection() {
       {/* hybrid 세부 설정 — Phase AB */}
       {provider === 'hybrid' && (
         <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <Field label="Stage 1 모델 (도메인 통합)" hint="default glm-4.7-flash. 도메인 fine-tune 후 stockinvest-* 로 변경.">
-            <input value={stage1Model} onChange={e => setStage1Model(e.target.value)} placeholder="qwen2.5:14b-instruct" style={inputStyle} />
-          </Field>
+          <Stage1ModelField model={stage1Model} onChange={setStage1Model} />
           <Field label="Stage 1 Timeout (ms)" hint="5000~120000">
             <input type="number" value={stage1Timeout} onChange={e => setStage1Timeout(e.target.value)} style={{ ...inputStyle, width: 120 }} />
           </Field>
@@ -235,33 +238,6 @@ export function LlmProviderSection() {
               <input type="checkbox" checked={ragEnabled} onChange={e => setRagEnabled(e.target.checked)} style={{ cursor: 'pointer' }} />
               <span style={{ fontSize: 13, fontWeight: 600 }}>📚 RAG 활성 (과거 시그널·뉴스·매크로 컨텍스트 자동 첨부)</span>
             </label>
-            {ragEnabled && (
-              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <Field label="top_k 과거시그널" hint="0~20">
-                  <input type="number" value={ragTopKSignals} onChange={e => setRagTopKSignals(e.target.value)} style={{ ...inputStyle, width: 80 }} />
-                </Field>
-                <Field label="top_k 뉴스" hint="0~20">
-                  <input type="number" value={ragTopKNews} onChange={e => setRagTopKNews(e.target.value)} style={{ ...inputStyle, width: 80 }} />
-                </Field>
-                <Field label="lookback days" hint="1~90">
-                  <input type="number" value={ragLookback} onChange={e => setRagLookback(e.target.value)} style={{ ...inputStyle, width: 80 }} />
-                </Field>
-              </div>
-            )}
-          </div>
-
-          <div style={{
-            padding: '8px 10px', borderRadius: 6, fontSize: 11,
-            background: 'rgba(245,158,11,.08)',
-            color: 'var(--muted)',
-            border: '1px solid rgba(245,158,11,.3)',
-          }}>
-            <div style={{ marginBottom: 4 }}>
-              <strong>Stage 1 → Stage 2 임계값 (read-only):</strong>
-            </div>
-            <div>· pass     : EV ≥ +0.5% AND confidence ≥ 70%</div>
-            <div>· reject   : EV ≤ -0.3% OR confidence &lt; 40%</div>
-            <div>· escalate : 그 외 (Claude Sonnet 최종 결정)</div>
           </div>
           <div style={{
             padding: '8px 10px', borderRadius: 6, fontSize: 11,
@@ -294,6 +270,115 @@ export function LlmProviderSection() {
           {saving ? '저장 중...' : '저장'}
         </button>
       </div>
+    </div>
+  );
+}
+
+type Stage1Check =
+  | { state: 'idle' | 'pending' | 'success' }
+  | { state: 'failure'; reason: string };
+
+const CHECK_ICONS = { idle: '✓', pending: '…', success: '○', failure: '×' } as const;
+const GRAPHEMES = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter('ko', { granularity: 'grapheme' }) : null;
+
+function shortenCheckReason(reason: string): string {
+  const letters = GRAPHEMES ? Array.from(GRAPHEMES.segment(reason), part => part.segment) : Array.from(reason);
+  return letters.length > 20 ? letters.slice(0, 17).join('') + '...' : reason;
+}
+
+function Stage1ModelField({ model, onChange }: { model: string; onChange: (model: string) => void }) {
+  const [check, setCheck] = useState<Stage1Check>({ state: 'idle' });
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
+
+  const supported = isStage1Model(model);
+  const runCheck = async () => {
+    if (!isStage1Model(model) || request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setCheck({ state: 'pending' });
+    try {
+      const response = await fetch('/api/settings/llm-provider/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'hybrid', stage1Model: model }),
+        signal: controller.signal,
+      });
+      const result = await response.json() as { ok?: boolean; model?: string; error?: string };
+      if (controller.signal.aborted) return;
+      if (response.ok && result.ok === true && result.model === model) {
+        setCheck({ state: 'success' });
+      } else {
+        const reason = typeof result.error === 'string' ? result.error.replace(/\s+/g, ' ').trim() : '';
+        setCheck({ state: 'failure', reason: reason || '모델 검사 응답 오류' });
+      }
+    } catch {
+      if (!controller.signal.aborted) setCheck({ state: 'failure', reason: '검사 서버에 연결하지 못했습니다.' });
+    } finally {
+      if (request.current === controller) request.current = null;
+    }
+  };
+
+  const pending = check.state === 'pending';
+  const reason = check.state === 'failure' ? check.reason : '';
+  const status = pending ? '선택한 모델 검사 중' : check.state === 'success' ? '연결·예시 응답 정상' : '';
+  const checkLabel = check.state === 'success' || check.state === 'failure' ? '선택한 모델 다시 검사' : '선택한 모델 검사';
+  const color = check.state === 'failure' ? 'var(--up)' : check.state === 'success' ? 'var(--ok)' : 'var(--accent)';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+      <label htmlFor="stage1-model" style={{ fontSize: 12, fontWeight: 600 }}>Stage 1 모델 (도메인 통합)</label>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <select
+          id="stage1-model"
+          value={supported ? model : ''}
+          aria-describedby={supported ? 'stage1-model-id stage1-model-default' : 'stage1-model-legacy stage1-model-default'}
+          onChange={e => {
+            request.current?.abort();
+            request.current = null;
+            setCheck({ state: 'idle' });
+            onChange(e.target.value);
+          }}
+          style={{ ...inputStyle, outline: undefined, flex: 1, minWidth: 0, minHeight: 44 }}
+        >
+          <option value="" disabled hidden>지원 모델 선택</option>
+          {STAGE1_MODEL_OPTIONS.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+        </select>
+        <button
+          type="button"
+          aria-label={checkLabel}
+          title={checkLabel + ' (연결 및 예시 응답 확인)'}
+          aria-disabled={pending || undefined}
+          disabled={!supported}
+          onClick={runCheck}
+          style={{
+            flex: '0 0 44px', minHeight: 44, borderRadius: 6, border: '1px solid var(--border)',
+            background: 'var(--bg)', color: pending || !supported ? 'var(--muted)' : color,
+            fontSize: 20, fontWeight: 600, cursor: pending || !supported ? 'default' : 'pointer',
+          }}
+        >
+          <span aria-hidden="true">{CHECK_ICONS[check.state]}</span>
+        </button>
+      </div>
+      <div role="status" aria-atomic="true" style={{ fontSize: 12, minWidth: 0 }}>
+        {reason ? (
+          <>
+            <span aria-hidden="true" title={reason} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {shortenCheckReason(reason)}
+            </span>
+            <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap' }}>
+              {model} 검사 실패. {reason}
+            </span>
+          </>
+        ) : status}
+      </div>
+      {supported && <code id="stage1-model-id" style={{ fontSize: 12, color: 'var(--muted)' }}>{model}</code>}
+      <span id="stage1-model-default" style={{ fontSize: 12, color: 'var(--muted)' }}>모델 미설정 시 Gemma 4 12B를 사용합니다.</span>
+      {!supported && (
+        <span id="stage1-model-legacy" style={{ fontSize: 12, color: 'var(--muted)', overflowWrap: 'anywhere' }}>
+          현재 저장 모델 <code>{model}</code>. 변경하려면 목록에서 지원 모델을 선택하세요.
+        </span>
+      )}
     </div>
   );
 }

@@ -15,8 +15,9 @@
  */
 import type { BatchSymbolInput } from './ai-filter';
 import { runLlmOnce, getProviderConfig } from '@/lib/llm/provider';
+import { STAGE1_SCREEN_TIMEOUT_MS } from '@/lib/llm/stage1-models';
 import type { Market } from '@/lib/exchanges/kis-symbols';
-import { retrieveRagContext } from '@/lib/rag/retrieval';
+import { DEFAULT_TOP_K_SIGNALS, retrieveRagContext } from '@/lib/rag/retrieval';
 import { formatRagSection } from '@/lib/rag/format';
 import { fetchMarketContext } from './market-context-client';
 
@@ -37,8 +38,6 @@ export interface Stage1Result {
   rawResponseChars: number;
   elapsedMs: number;
 }
-
-const STAGE1_TIMEOUT_MS = 30_000;
 
 /** 임계값: pass 조건 (둘 다 만족) */
 const PASS_EV_MIN = 0.5;       // %
@@ -114,18 +113,16 @@ async function buildStage1Prompt(inputs: BatchSymbolInput[], market: Market): Pr
       // D-10: 종목 수에 따라 query 분기
       if (inputs.length > PER_SYMBOL_QUERY_THRESHOLD) {
         // 종목별 병렬 호출 (캐시 D-4 가 macro/news 중복 흡수)
-        const perSymbolTopK = Math.max(2, Math.ceil((cfg.ragTopKSignals ?? 5) / inputs.length));
+        const perSymbolTopK = Math.max(2, Math.ceil(DEFAULT_TOP_K_SIGNALS / inputs.length));
         const perSymbolResults = await Promise.all(
           inputs.map(i => retrieveRagContext(buildSingleSymbolQuery(i), ragMarket, {
             topKSignals: perSymbolTopK,
-            topKNews:    cfg.ragTopKNews,
-            lookbackDays: cfg.ragLookbackDays,
           })),
         );
         // signals 는 종목별 결과 머지 (id 중복 제거), news/macro 는 첫 결과만 (모두 동일 — 캐시 적중)
         const merged = perSymbolResults[0] ?? { pastSignals: [], recentNews: [], macroContext: [], totalChars: 0, elapsedMs: 0, errors: [] };
         const allSignals = perSymbolResults.flatMap(r => r.pastSignals);
-        merged.pastSignals = mergeKbHits(perSymbolResults.map(r => r.pastSignals), cfg.ragTopKSignals ?? 5);
+        merged.pastSignals = mergeKbHits(perSymbolResults.map(r => r.pastSignals), DEFAULT_TOP_K_SIGNALS);
         merged.totalChars = merged.pastSignals.reduce((s, h) => s + h.text.length, 0)
                           + merged.recentNews.reduce((s, h) => s + h.text.length, 0)
                           + merged.macroContext.reduce((s, h) => s + h.text.length, 0);
@@ -135,11 +132,7 @@ async function buildStage1Prompt(inputs: BatchSymbolInput[], market: Market): Pr
       } else {
         // 결합 query (≤3 종목)
         const queryText = buildRagQueryText(inputs);
-        rag = await retrieveRagContext(queryText, ragMarket, {
-          topKSignals: cfg.ragTopKSignals,
-          topKNews:    cfg.ragTopKNews,
-          lookbackDays: cfg.ragLookbackDays,
-        });
+        rag = await retrieveRagContext(queryText, ragMarket);
       }
       if (rag.totalChars > 0) {
         ragSection = formatRagSection(rag);
@@ -302,7 +295,7 @@ export async function runStage1Screen(
 
   const raw = await runLlmOnce(prompt, {
     stage: 1,
-    timeoutMs: STAGE1_TIMEOUT_MS,
+    timeoutMs: STAGE1_SCREEN_TIMEOUT_MS,
     responseFormat: 'json',
   });
 

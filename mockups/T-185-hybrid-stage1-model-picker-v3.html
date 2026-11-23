@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="demo-version" content="T-185-v3">
+  <meta name="demo-token-source" content="src/app/globals.css@sha256:04e7b5bc8394">
+  <title>StockInvest 설정 · Stage 1 모델 선택</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --bg2: #171a21;
+      --bg3: #1f2430;
+      --bg4: #262b36;
+      --border: #262b36;
+      --border2: #323848;
+      --text: #e6e8ee;
+      --muted: #8b93a7;
+      --accent: #f59e0b;
+      --ok: #22c55e;
+      --up: #ef4444;
+      --down: #3b82f6;
+      --nav-h: 60px;
+      font-family: system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; font-size: 13px; line-height: 1.5; }
+    main { max-width: 1040px; margin: auto; padding: 20px 16px 32px; }
+    h1, h2, p { margin: 0; }
+    h1 { margin-top: 4px; font-size: 22px; }
+    h2 { margin-bottom: 8px; font-size: 14px; }
+    .path, .hint, .caption { color: var(--muted); }
+    .path, .caption { font-size: 12px; }
+    .caption { margin-top: 4px; }
+    .demo-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 18px 0 20px; }
+    .demo-states { min-width: 0; margin: 0; padding: 0; border: 0; }
+    .demo-states legend { margin-bottom: 6px; padding: 0; font-weight: 600; }
+    .state-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+    button, input, select { font: inherit; }
+    .state-button {
+      min-height: 44px;
+      padding: 6px 10px;
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      background: var(--bg2);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .state-button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+    :is(button, input, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .comparison { display: grid; gap: 20px; }
+    .comparison > section { min-width: 0; }
+    @media (min-width: 900px) { .comparison { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .settings-card { border: 1px solid var(--border); border-radius: 12px; background: var(--bg2); }
+    .active { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+    .active strong { color: var(--accent); }
+    .provider {
+      margin: 12px 16px;
+      padding: 10px 12px;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      background: rgba(245, 158, 11, .1);
+    }
+    .provider strong { font-size: 14px; }
+    .settings-fields { display: grid; gap: 8px; padding: 0 16px 12px; }
+    .field { display: grid; gap: 4px; }
+    .field label, .field-title { font-size: 12px; font-weight: 600; }
+    .hint { font-size: 12px; overflow-wrap: anywhere; }
+    .control {
+      width: 100%;
+      min-height: 44px;
+      padding: 6px 10px;
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .model-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; }
+    .check-model {
+      display: grid;
+      width: 44px;
+      min-height: 44px;
+      padding: 0;
+      place-items: center;
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--accent);
+      font: 600 20px/1 system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .check-model:not(:disabled, [aria-disabled="true"]):hover { border-color: currentColor; }
+    .check-model:disabled, .check-model[aria-disabled="true"] { color: var(--muted); cursor: default; }
+    .check-model[data-check-state="success"] { color: var(--ok); }
+    .check-model[data-check-state="failure"] { color: var(--up); }
+    .check-status { min-width: 0; color: var(--text); }
+    .check-status[data-state="failure"] .check-message {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      margin: -1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .timeout { width: 120px; font-variant-numeric: tabular-nums; }
+    .rag {
+      margin-top: 6px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg3);
+    }
+    .rag-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+    .rag-toggle input { flex: none; margin: 0; accent-color: var(--accent); }
+    .rag-toggle span { word-break: keep-all; text-wrap: pretty; }
+    .legacy { color: var(--accent); font-size: 12px; overflow-wrap: anywhere; }
+    code { font-size: 1em; }
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+    }
+    .message { font-size: 12px; overflow-wrap: anywhere; }
+    .saved { color: var(--ok); }
+    .save {
+      flex: none;
+      min-height: 44px;
+      padding: 7px 16px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #000;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .save:disabled { opacity: .6; cursor: default; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="path">설정 › LLM 제공자 › 하이브리드</p>
+      <h1>Stage 1 모델 선택</h1>
+      <p class="caption">샘플 데이터로 모델 선택, 모의 검사, 저장을 확인할 수 있습니다.</p>
+    </header>
+
+    <div class="demo-controls">
+      <fieldset class="demo-states">
+        <legend>변경안에서 확인할 상태</legend>
+        <div class="state-buttons">
+          <button class="state-button" type="button" data-demo-state="stored" aria-pressed="true">저장된 모델</button>
+          <button class="state-button" type="button" data-demo-state="unset" aria-pressed="false">미설정</button>
+          <button class="state-button" type="button" data-demo-state="legacy" aria-pressed="false">이전 모델</button>
+        </div>
+      </fieldset>
+      <fieldset class="demo-states">
+        <legend>모의 검사 응답</legend>
+        <div class="state-buttons">
+          <button class="state-button" type="button" data-demo-result="success" aria-pressed="true">성공</button>
+          <button class="state-button" type="button" data-demo-result="short-failure" aria-pressed="false">짧은 실패</button>
+          <button class="state-button" type="button" data-demo-result="long-failure" aria-pressed="false">긴 실패</button>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="comparison">
+      <section aria-labelledby="proposed-heading">
+        <h2 id="proposed-heading">변경안 · 목록에서 선택</h2>
+        <div class="settings-card">
+          <p class="active caption">현재 활성: <strong>🔀 Hybrid(로컬LLM + Claude) [권장]</strong></p>
+          <div class="provider">
+            <strong>🔀 Hybrid(로컬LLM + Claude) [권장]</strong>
+            <p class="caption">Stage 1에서 종목을 선별하고 추가 판단이 필요한 경우 Stage 2(Claude)로 보냅니다.</p>
+          </div>
+          <div class="settings-fields">
+            <div class="field">
+              <label for="stage1-model">Stage 1 모델 (도메인 통합)</label>
+              <div class="model-row">
+                <select class="control" id="stage1-model" aria-describedby="model-id model-hint legacy-model">
+                  <option value="" disabled hidden>지원 모델 선택</option>
+                  <option value="gemma4:12b">Gemma 4 12B</option>
+                  <option value="qwen3:8b">Qwen3 8B</option>
+                  <option value="qwen2.5:14b-instruct" selected>Qwen2.5 14B Instruct</option>
+                </select>
+                <button class="check-model" id="check-model" type="button" aria-label="선택한 Stage 1 모델 검사" title="선택한 모델 검사" data-check-state="idle">
+                  <span id="check-icon" aria-hidden="true">✓</span>
+                </button>
+              </div>
+              <p class="check-status hint" id="check-status" role="status" aria-atomic="true"><span id="check-message" class="check-message" aria-hidden="true"></span><span id="check-announcement" class="sr-only"></span></p>
+              <p class="hint" id="model-id"><code id="selected-tag">qwen2.5:14b-instruct</code></p>
+              <p class="hint" id="model-hint">모델 미설정 시 Gemma 4 12B를 사용합니다.</p>
+              <p class="legacy" id="legacy-model" hidden>현재 저장 모델 <code id="legacy-tag"></code>. 변경하려면 목록에서 지원 모델을 선택하세요.</p>
+            </div>
+            <div class="field">
+              <span class="field-title">Stage 1 Timeout (ms)</span>
+              <div class="control timeout">30000</div>
+              <p class="hint">5000~120000</p>
+            </div>
+            <label class="rag rag-toggle">
+              <input id="rag-enabled" type="checkbox" checked>
+              <span>📚 RAG 활성 (과거 시그널·뉴스·매크로 컨텍스트 자동 첨부)</span>
+            </label>
+          </div>
+          <div class="card-footer">
+            <p class="message hint" id="save-status" role="status"></p>
+            <button class="save" id="save-model" type="button" disabled>저장</button>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="previous-heading">
+        <h2 id="previous-heading">현재 · 직접 입력</h2>
+        <div class="settings-card">
+          <p class="active caption">현재 활성: <strong>🔀 Hybrid (M4 + Claude) [권장]</strong></p>
+          <div class="provider">
+            <strong>🔀 Hybrid (M4 + Claude) [권장]</strong>
+            <p class="caption">Stage 1에서 종목을 선별하고 추가 판단이 필요한 경우 Stage 2(Claude)로 보냅니다.</p>
+          </div>
+          <div class="settings-fields">
+            <div class="field">
+              <label for="previous-model">Stage 1 모델 (도메인 통합)</label>
+              <input class="control" id="previous-model" value="qwen2.5:14b-instruct" aria-describedby="previous-model-hint" spellcheck="false">
+              <p class="hint" id="previous-model-hint">default glm-4.7-flash. 도메인 fine-tune 후 stockinvest-* 로 변경.</p>
+            </div>
+            <div class="field">
+              <span class="field-title">Stage 1 Timeout (ms)</span>
+              <div class="control timeout">30000</div>
+              <p class="hint">5000~120000</p>
+            </div>
+            <div class="rag">📚 RAG 활성 (과거 시그널·뉴스·매크로 컨텍스트 자동 첨부)</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const defaultModel = 'gemma4:12b';
+    const sampleValues = {
+      stored: 'qwen2.5:14b-instruct',
+      unset: null,
+      legacy: 'legacy-analysis:8b'
+    };
+    const stateButtons = document.querySelectorAll('[data-demo-state]');
+    const resultButtons = document.querySelectorAll('[data-demo-result]');
+    const modelSelect = document.getElementById('stage1-model');
+    const checkButton = document.getElementById('check-model');
+    const checkIcon = document.getElementById('check-icon');
+    const checkStatus = document.getElementById('check-status');
+    const checkMessage = document.getElementById('check-message');
+    const checkAnnouncement = document.getElementById('check-announcement');
+    const ragEnabled = document.getElementById('rag-enabled');
+    const selectedTag = document.getElementById('selected-tag');
+    const legacyMessage = document.getElementById('legacy-model');
+    const legacyTag = document.getElementById('legacy-tag');
+    const saveStatus = document.getElementById('save-status');
+    const saveButton = document.getElementById('save-model');
+    const supported = new Set(Array.from(modelSelect.options, option => option.value).filter(Boolean));
+    const checkIcons = { idle: '✓', pending: '…', success: '○', failure: '×' };
+    const failureReasons = {
+      'short-failure': '모델 응답 시간 초과',
+      'long-failure': '로컬 LLM 서버 연결이 거절되어 모델 응답을 받지 못했습니다'
+    };
+    const graphemes = new Intl.Segmenter('ko', { granularity: 'grapheme' });
+    let storedModel = sampleValues.stored;
+    let storedRagEnabled = true;
+    let demoResult = 'success';
+    let checkRequestId = 0;
+
+    function truncateCheckReason(reason) {
+      const characters = Array.from(graphemes.segment(reason), item => item.segment);
+      return characters.length > 20 ? characters.slice(0, 17).join('') + '...' : reason;
+    }
+
+    function showCheck(state, message = '', reason = '') {
+      checkButton.dataset.checkState = state;
+      checkButton.disabled = !supported.has(modelSelect.value);
+      if (state === 'pending') {
+        checkButton.setAttribute('aria-disabled', 'true');
+      } else {
+        checkButton.removeAttribute('aria-disabled');
+      }
+      checkButton.title = state === 'success' || state === 'failure' ? '선택한 모델 다시 검사' : '선택한 모델 검사';
+      checkIcon.textContent = checkIcons[state];
+      const displayMessage = reason ? truncateCheckReason(reason) : message;
+      checkStatus.dataset.state = state;
+      checkMessage.textContent = displayMessage;
+      checkAnnouncement.textContent = reason ? message + ' ' + reason : message;
+      if (reason && displayMessage !== reason) {
+        checkMessage.title = reason;
+      } else {
+        checkMessage.removeAttribute('title');
+      }
+    }
+
+    function resetCheck() {
+      checkRequestId += 1;
+      showCheck('idle');
+    }
+
+    function render(message = '') {
+      const selection = modelSelect.value;
+      const legacy = storedModel !== null && !supported.has(storedModel);
+      const modelChanged = supported.has(selection) && selection !== (storedModel ?? defaultModel);
+      const changed = modelChanged || ragEnabled.checked !== storedRagEnabled;
+
+      selectedTag.textContent = selection;
+      selectedTag.parentElement.hidden = !selection;
+      legacyTag.textContent = legacy ? storedModel : '';
+      legacyMessage.hidden = !legacy;
+      saveButton.disabled = !changed;
+      saveStatus.classList.toggle('saved', message !== '');
+      saveStatus.textContent = message || (changed ? '변경사항 있음 — 저장 후 적용' : '');
+    }
+
+    for (const button of stateButtons) {
+      button.addEventListener('click', () => {
+        for (const state of stateButtons) {
+          state.setAttribute('aria-pressed', String(state === button));
+        }
+        storedModel = sampleValues[button.dataset.demoState];
+        const effectiveModel = storedModel ?? defaultModel;
+        modelSelect.value = supported.has(effectiveModel) ? effectiveModel : '';
+        ragEnabled.checked = true;
+        storedRagEnabled = true;
+        resetCheck();
+        render();
+      });
+    }
+
+    for (const button of resultButtons) {
+      button.addEventListener('click', () => {
+        if (demoResult === button.dataset.demoResult) return;
+        demoResult = button.dataset.demoResult;
+        for (const result of resultButtons) {
+          result.setAttribute('aria-pressed', String(result === button));
+        }
+        resetCheck();
+      });
+    }
+
+    modelSelect.addEventListener('change', () => {
+      resetCheck();
+      render();
+    });
+
+    checkButton.addEventListener('click', () => {
+      const selected = modelSelect.value;
+      if (!supported.has(selected) || checkButton.dataset.checkState === 'pending') return;
+
+      const requestId = ++checkRequestId;
+      const modelName = modelSelect.selectedOptions[0].text;
+      const result = demoResult;
+      showCheck('pending', modelName + ' 모의 검사 중…');
+      setTimeout(() => {
+        if (requestId !== checkRequestId || modelSelect.value !== selected) return;
+        if (result === 'success') {
+          showCheck('success', modelName + ' 모의 검사 성공.');
+        } else {
+          showCheck('failure', modelName + ' 모의 검사 실패.', failureReasons[result]);
+        }
+      }, 700);
+    });
+
+    ragEnabled.addEventListener('change', () => render());
+    saveButton.addEventListener('click', () => {
+      const selection = modelSelect.value;
+      const modelChanged = supported.has(selection) && selection !== (storedModel ?? defaultModel);
+      if (modelChanged) storedModel = selection;
+      storedRagEnabled = ragEnabled.checked;
+      (modelChanged ? modelSelect : ragEnabled).focus();
+      render('데모에서 저장했습니다.');
+    });
+  </script>
+</body>
+</html>

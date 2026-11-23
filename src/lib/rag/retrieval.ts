@@ -27,7 +27,7 @@ const EMPTY_CONTEXT: RagContext = {
   totalChars: 0, elapsedMs: 0, errors: [],
 };
 
-const DEFAULT_TOP_K_SIGNALS = 5;
+export const DEFAULT_TOP_K_SIGNALS = 5;
 const DEFAULT_TOP_K_NEWS = 3;
 const DEFAULT_TOP_K_MACRO = 2;
 const DEFAULT_LOOKBACK_DAYS = 7;          // news/macro — 신선도 강하게

@@ -30,6 +30,8 @@ export interface LlmCallOptions {
   system?: string;
   /** T-169 — Ollama `num_ctx`(home-m4-api 전용). 없으면 `options` 에 넣지 않는다. claude 는 무시. */
   numCtx?: number;
+  /** 선택 모델 검사에서 게이트웨이가 돌려준 모델 태그가 일치해야 한다. */
+  requireModelMatch?: boolean;
 }
 
 export interface LlmCaller {
@@ -45,16 +47,10 @@ export interface LlmProviderConfig {
   homeM4ApiModel?: string;
   /** home-m4-api temperature */
   homeM4ApiTemperature?: number;
-  /** Hybrid Stage 1 — 통합 모델 (default glm-4.7-flash, 도메인 분리 없음) */
+  /** Hybrid Stage 1 — 국내·해외 통합 모델 */
   stage1Model?: string;
   /** Hybrid Stage 1 timeout (ms). 기본 30000 */
   stage1TimeoutMs?: number;
   /** RAG 활성 여부 (Phase AB) */
   ragEnabled?: boolean;
-  /** RAG top_k — past signals */
-  ragTopKSignals?: number;
-  /** RAG top_k — recent news */
-  ragTopKNews?: number;
-  /** RAG lookback days for news/macro */
-  ragLookbackDays?: number;
 }

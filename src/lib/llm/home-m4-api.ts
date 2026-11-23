@@ -109,6 +109,9 @@ export class HomeM4ApiCaller implements LlmCaller {
         message?: { content?: string };
         thinking_mode?: { requested?: boolean; observed?: boolean; done_reason?: string };
       };
+      if (opts?.requireModelMatch && data?.model !== this.model) {
+        throw new Error('home-m4-api model mismatch');
+      }
       if (chat) {
         const mode = data?.thinking_mode;
         if (data?.model !== this.model || mode?.requested !== chat.think || mode.observed !== chat.think) {

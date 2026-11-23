@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { getProviderConfig } from '@/lib/llm/provider';
+import { isStage1Model } from '@/lib/llm/stage1-models';
 import type { LlmProvider } from '@/lib/llm/types';
 
 export const dynamic = 'force-dynamic';
@@ -18,17 +19,6 @@ interface UpsertBody {
   stage1Model?: string;
   stage1TimeoutMs?: number;
   ragEnabled?: boolean;
-  ragTopKSignals?: number;
-  ragTopKNews?: number;
-  ragLookbackDays?: number;
-}
-
-async function upsert(key: string, value: unknown): Promise<void> {
-  const pool = getPool();
-  await pool.query(
-    'INSERT INTO system_config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
-    [key, JSON.stringify(value)],
-  );
 }
 
 async function readSystemConfig(key: string): Promise<unknown | null> {
@@ -55,9 +45,6 @@ export async function GET() {
   const dbStage1Model  = await readSystemConfig('stage1_model');
   const dbStage1Timeout = await readSystemConfig('stage1_timeout_ms');
   const dbRagEnabled   = await readSystemConfig('rag_enabled');
-  const dbRagTopkSig   = await readSystemConfig('rag_topk_signals');
-  const dbRagTopkNews  = await readSystemConfig('rag_topk_news');
-  const dbRagLookback  = await readSystemConfig('rag_lookback_days');
 
   return NextResponse.json({
     ok: true,
@@ -70,9 +57,6 @@ export async function GET() {
       stage1_model:           dbStage1Model,
       stage1_timeout_ms:      dbStage1Timeout,
       rag_enabled:            dbRagEnabled,
-      rag_topk_signals:       dbRagTopkSig,
-      rag_topk_news:          dbRagTopkNews,
-      rag_lookback_days:      dbRagLookback,
     },
     env: {
       LLM_PROVIDER:        process.env.LLM_PROVIDER ?? null,
@@ -88,11 +72,22 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as UpsertBody;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ ok: false, error: 'invalid JSON body' }, { status: 400 });
+    }
+    const updates: [string, string][] = [];
+    const stage1Model = body.stage1Model;
+    if (stage1Model !== undefined && !isStage1Model(stage1Model)) {
+      return NextResponse.json(
+        { ok: false, error: '목록에서 Stage 1 모델을 선택해 주세요.' },
+        { status: 400 },
+      );
+    }
     if (body.provider !== undefined) {
       if (!(VALID_PROVIDERS as string[]).includes(body.provider)) {
         return NextResponse.json({ ok: false, error: `invalid provider (must be one of ${VALID_PROVIDERS.join('|')})` }, { status: 400 });
       }
-      await upsert('llm_provider', body.provider);
+      updates.push(['llm_provider', JSON.stringify(body.provider)]);
     }
 
     // home-m4-api 필드
@@ -101,54 +96,38 @@ export async function POST(req: NextRequest) {
       if (url && !/^https?:\/\//.test(url)) {
         return NextResponse.json({ ok: false, error: 'homeM4ApiBase must start with http:// or https://' }, { status: 400 });
       }
-      await upsert('home_m4_api_base', url);
+      updates.push(['home_m4_api_base', JSON.stringify(url)]);
     }
     if (body.homeM4ApiModel !== undefined) {
-      await upsert('home_m4_api_model', String(body.homeM4ApiModel).trim());
+      updates.push(['home_m4_api_model', JSON.stringify(String(body.homeM4ApiModel).trim())]);
     }
     if (body.homeM4ApiTemperature !== undefined) {
       const t = Number(body.homeM4ApiTemperature);
       if (!Number.isFinite(t) || t < 0 || t > 2) {
         return NextResponse.json({ ok: false, error: 'homeM4ApiTemperature must be 0~2' }, { status: 400 });
       }
-      await upsert('home_m4_api_temperature', t);
+      updates.push(['home_m4_api_temperature', JSON.stringify(t)]);
     }
 
     // Phase AB — Hybrid Stage 1 + RAG 옵션
-    if (body.stage1Model !== undefined) {
-      const m = String(body.stage1Model).trim();
-      if (m) await upsert('stage1_model', m);
+    if (stage1Model !== undefined) {
+      updates.push(['stage1_model', JSON.stringify(stage1Model)]);
     }
     if (body.stage1TimeoutMs !== undefined) {
       const t = Number(body.stage1TimeoutMs);
       if (!Number.isFinite(t) || t < 5000 || t > 120000) {
         return NextResponse.json({ ok: false, error: 'stage1TimeoutMs must be 5000~120000' }, { status: 400 });
       }
-      await upsert('stage1_timeout_ms', t);
+      updates.push(['stage1_timeout_ms', JSON.stringify(t)]);
     }
     if (body.ragEnabled !== undefined) {
-      await upsert('rag_enabled', String(!!body.ragEnabled));
+      updates.push(['rag_enabled', JSON.stringify(String(!!body.ragEnabled))]);
     }
-    if (body.ragTopKSignals !== undefined) {
-      const n = Number(body.ragTopKSignals);
-      if (!Number.isFinite(n) || n < 0 || n > 20) {
-        return NextResponse.json({ ok: false, error: 'ragTopKSignals must be 0~20' }, { status: 400 });
-      }
-      await upsert('rag_topk_signals', n);
-    }
-    if (body.ragTopKNews !== undefined) {
-      const n = Number(body.ragTopKNews);
-      if (!Number.isFinite(n) || n < 0 || n > 20) {
-        return NextResponse.json({ ok: false, error: 'ragTopKNews must be 0~20' }, { status: 400 });
-      }
-      await upsert('rag_topk_news', n);
-    }
-    if (body.ragLookbackDays !== undefined) {
-      const n = Number(body.ragLookbackDays);
-      if (!Number.isFinite(n) || n < 1 || n > 90) {
-        return NextResponse.json({ ok: false, error: 'ragLookbackDays must be 1~90' }, { status: 400 });
-      }
-      await upsert('rag_lookback_days', n);
+    if (updates.length > 0) {
+      await getPool().query(
+        'INSERT INTO system_config (`key`, value) VALUES ? ON DUPLICATE KEY UPDATE value = VALUES(value)',
+        [updates],
+      );
     }
 
     const cfg = await getProviderConfig();
