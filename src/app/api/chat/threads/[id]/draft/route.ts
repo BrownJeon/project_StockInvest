@@ -1,17 +1,16 @@
+import { chatPostResponse } from '@/lib/chat/response-heartbeat';
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { parseThreadId, ownedThread, requireChatUser } from '@/lib/chat/ownership';
-import { runLlm, getActiveProvider, getProviderConfig } from '@/lib/llm/provider';
+import { STOCK_CHAT_MODEL, STOCK_CHAT_PROVIDER, runStockChat } from '@/lib/chat/model';
 import { resolveSymbolsInText } from '@/lib/chat/symbol-resolver';
 import { buildSymbolContexts, formatSymbolContextsAsText } from '@/lib/chat/context-builder';
 import { cleanDraftPrompt } from '@/lib/chat/answer-format';
 import { bodyText, checkChatTextLimits, explicitSymbols } from '@/lib/chat/request-guard';
 import {
   CHAT_HISTORY_LIMIT,
-  CHAT_NUM_CTX,
   buildDrafterRequest,
-  chatModelLabel,
   formatRecentMessages,
 } from '@/lib/chat/chat-request';
 import { ANALYST_STYLE_LABEL, getStyleConfig } from '@/lib/strategy/style';
@@ -23,7 +22,7 @@ const RECENT_HISTORY_LIMIT = CHAT_HISTORY_LIMIT;
 interface BodyShape {
   content?: string;
   attachedSymbols?: string[];
-  modelOverride?: string;
+  modelOverride?: string;   // 계약상 수용만 한다(무시) — 채팅 모델은 Gemma 고정
 }
 
 /**
@@ -31,6 +30,10 @@ interface BodyShape {
  * 응답을 사용자가 검토·편집 후 POST /messages로 확정 전송.
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return chatPostResponse(req, () => handlePost(req, params));
+}
+
+async function handlePost(req: NextRequest, params: Promise<{ id: string }>) {
   const auth = await requireChatUser(req);
   if (!auth.ok) return auth.res;
   const threadId = parseThreadId((await params).id);
@@ -69,28 +72,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   );
   const recentMessages = formatRecentMessages(historyRows.reverse());
 
-  // 모델 — Claude 활성 시 사용자 modelOverride(허용 시) 또는 haiku, 로컬LLM은 설정값
-  const provider = await getActiveProvider();
-  const cfg = await getProviderConfig();
-  const isAllowed = (m: unknown): m is 'sonnet' | 'opus' | 'haiku' =>
-    typeof m === 'string' && (m === 'sonnet' || m === 'opus' || m === 'haiku');
-  const draftModel = provider === 'claude'
-    ? (isAllowed(body.modelOverride) ? body.modelOverride : 'haiku')
-    : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
-
+  // 모델 — 채팅 전용 호출자(Gemma 고정). body.modelOverride 는 예전 호출이 깨지지 않게 받기만 하고 쓰지 않는다.
   const analystStyle = ANALYST_STYLE_LABEL;   // 프롬프트 표기용 라벨 (룰 선별과 무관 — D3)
   const style = await getStyleConfig();
   // T-169 A2·A3 — 지시는 system 메시지로 분리(home-m4-api 의 시그널 평가 JSON 지시 주입 차단)
   const drafter = buildDrafterRequest({ analystStyle, style, userInput: userContent, attachedSummary, recentMessages });
 
   const t0 = Date.now();
-  const draftRaw = await runLlm(drafter.user, {
-    system: drafter.system,
-    numCtx: CHAT_NUM_CTX,
-    timeoutMs: 60_000,
-    responseFormat: 'text',
-    model: draftModel,
-  });
+  // 호출이 던지면(모드·정상 완료 검증 실패 포함) 그대로 전파 — 빈 정제문으로 성공 처리하지 않는다
+  const draftRaw = await runStockChat(drafter, 'draft');
   const draftLatencyMs = Date.now() - t0;
   // T-169 A4 — JSON 이 섞이면 다듬은 질문 대신 사용자 원문을 돌려준다(사용자가 검토·편집한다)
   const draftPrompt = cleanDraftPrompt(draftRaw, userContent, merged.map(m => m.symbol), historyRows.map((r) => String(r.content ?? '')).join('\n'));
@@ -104,7 +94,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     draftPrompt,
     attachedContext: contexts,
     draftLatencyMs,
-    draftProvider: provider,
-    draftModel: chatModelLabel(provider, cfg, draftModel),   // T-169 A5 — hybrid 는 실제 호출 모델(stage1_model)
+    draftProvider: STOCK_CHAT_PROVIDER,
+    draftModel: STOCK_CHAT_MODEL,
   });
 }

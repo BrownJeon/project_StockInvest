@@ -11,7 +11,7 @@
  * 실제 home-m4-api 서버 호출 안 함 — global.fetch mock으로 격리.
  */
 
-import { HomeM4ApiCaller } from '../home-m4-api';
+import { HomeM4ApiCaller, HomeM4ChatOutputLimitError } from '../home-m4-api';
 
 describe('HomeM4ApiCaller', () => {
   let originalFetch: typeof globalThis.fetch;
@@ -51,6 +51,59 @@ describe('HomeM4ApiCaller', () => {
     expect(body.model).toBe('llama3');
     expect(body.messages).toEqual([{ role: 'user', content: 'hello prompt' }]);
     expect(body.options).toEqual({ temperature: 0.3 });
+    expect(body).not.toHaveProperty('think');
+    expect(headers).not.toHaveProperty('X-LLM-Read-Timeout');
+  });
+
+  test.each([false, true])('챗봇 전용 사고 모드 %s와 완료 영수증 검증', async think => {
+    const fetchSpy = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        model: 'gemma4:12b', message: { content: '완료' },
+        thinking_mode: { requested: think, observed: think, done_reason: 'stop' },
+      }),
+    });
+    globalThis.fetch = fetchSpy;
+    const caller = new HomeM4ApiCaller('http://fixture.local', 'fixture', 'gemma4:12b', 0.3);
+    await expect(caller.call('질문', { timeoutMs: 60000 }, {
+      system: '지침', think, contextTokens: 8192, outputTokens: 2048,
+    })).resolves.toBe('완료');
+    const [, init] = fetchSpy.mock.calls[0];
+    expect(init.headers['X-LLM-Read-Timeout']).toBe('60');
+    expect(JSON.parse(init.body)).toEqual({
+      model: 'gemma4:12b',
+      messages: [{ role: 'system', content: '지침' }, { role: 'user', content: '질문' }],
+      think, options: { temperature: 0.3, num_ctx: 8192, num_predict: 2048 },
+    });
+  });
+
+  test.each([
+    undefined,
+    { requested: true, observed: false, done_reason: 'stop' },
+    { requested: false, observed: false, done_reason: 'length' },
+  ])('영수증이 없거나 모드/완주가 맞지 않으면 답변을 채택하지 않는다', thinking_mode => {
+    globalThis.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ model: 'gemma4:12b', message: { content: '채택 금지' }, thinking_mode }),
+    });
+    const caller = new HomeM4ApiCaller('http://fixture.local', 'fixture', 'gemma4:12b', 0.3);
+    return expect(caller.call('질문', undefined, {
+      system: '지침', think: false, contextTokens: 8192, outputTokens: 2048,
+    })).rejects.toThrow('could not be verified');
+  });
+
+  test('정확한 모델·사고 모드의 출력 제한 응답은 원문을 반환하지 않고 별도로 알린다', async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        model: 'gemma4:12b', message: { content: '부분 답변을 표시하지 않는다' },
+        thinking_mode: { requested: true, observed: true, done_reason: 'length' },
+      }),
+    });
+    const caller = new HomeM4ApiCaller('http://fixture.local', 'fixture', 'gemma4:12b', 0.3);
+    await expect(caller.call('질문', undefined, {
+      system: '지침', think: true, contextTokens: 8192, outputTokens: 6144,
+    })).rejects.toBeInstanceOf(HomeM4ChatOutputLimitError);
   });
 
   test('정상 응답 — message.content 추출', async () => {

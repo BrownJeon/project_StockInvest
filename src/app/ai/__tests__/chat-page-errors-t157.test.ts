@@ -1310,3 +1310,15 @@ describe('ChatPage — ⑬ 띠·머리글 문구는 승인 데모 v1 글자 그�
     expect(textOf(row)).toBe('↩ 「반도체 섹터 전망」 대화로 전송합니다');
   });
 });
+
+test('채팅 연결 유지 응답을 풀어 정상·소유권 오류·로그인 요구 상태를 복원한다', async () => {
+  const { CHAT_HEARTBEAT_HEADER } = await import('@/lib/chat/response-heartbeat');
+  const wrap = (status: number, body: object) => new Response('\n'+JSON.stringify({status,body}), {
+    headers: { [CHAT_HEARTBEAT_HEADER]: '1', 'Content-Type': 'application/json' },
+  });
+  await expect(readChatResponse(wrap(200,{ok:true}), '응답 실패')).resolves.toMatchObject({kind:'ok'});
+  await expect(readChatResponse(wrap(404,{ok:false,error:'thread not found'}), '응답 실패')).resolves.toEqual({
+    kind:'not_found', error:'thread not found',
+  });
+  await expect(readChatResponse(wrap(401,{ok:false}), '응답 실패')).resolves.toEqual({kind:'unauthorized'});
+});

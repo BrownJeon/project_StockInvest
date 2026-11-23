@@ -11,8 +11,14 @@ const mockContexts = jest.fn();
 jest.mock('@/lib/auth/current-user', () => ({ requireUserId: (...a: unknown[]) => mockAuth(...a) }));
 jest.mock('@/lib/auth/users', () => ({ findUserById: (...a: unknown[]) => mockFindUser(...a) }));
 jest.mock('@/lib/db', () => ({ getPool: () => ({ query: mockQuery, getConnection: mockGetConnection }) }));
+// 채팅 route 는 채팅 전용 호출자(Gemma 고정)만 쓴다 — 공용 제공자 호출은 있으면 실패하게 둔다(models route 용 설정 읽기만 남김)
+jest.mock('@/lib/chat/model', () => ({
+  STOCK_CHAT_MODEL: 'gemma4:12b',
+  STOCK_CHAT_PROVIDER: 'home-m4-api',
+  runStockChat: (...a: unknown[]) => mockLlm(...a),
+}));
 jest.mock('@/lib/llm/provider', () => ({
-  runLlm: (...a: unknown[]) => mockLlm(...a),
+  runLlm: () => { throw new Error('chat routes must not call the shared provider'); },
   getActiveProvider: async () => 'claude', getProviderConfig: async () => ({}),
 }));
 jest.mock('@/lib/chat/symbol-resolver', () => ({ resolveSymbolsInText: (...a: unknown[]) => mockSymbols(...a) }));

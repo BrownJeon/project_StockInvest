@@ -8,16 +8,15 @@ const mockAuth = jest.fn();
 const mockQuery = jest.fn();
 const mockGetConnection = jest.fn();
 const mockLlm = jest.fn();
-const mockProvider = jest.fn();
-const mockConfig = jest.fn();
 const mockOverview = jest.fn();
 jest.mock('@/lib/auth/current-user', () => ({ requireUserId: (...a: unknown[]) => mockAuth(...a) }));
 jest.mock('@/lib/auth/users', () => ({ findUserById: async () => ({ id: 7 }) }));
 jest.mock('@/lib/db', () => ({ getPool: () => ({ query: mockQuery, getConnection: mockGetConnection }) }));
-jest.mock('@/lib/llm/provider', () => ({
-  runLlm: (...a: unknown[]) => mockLlm(...a),
-  getActiveProvider: () => mockProvider(),
-  getProviderConfig: () => mockConfig(),
+// 채팅 전용 호출자만 모의한다 — 전역 제공자(@/lib/llm/provider)는 route 가 더 이상 읽지 않는다
+jest.mock('@/lib/chat/model', () => ({
+  STOCK_CHAT_MODEL: 'gemma4:12b',
+  STOCK_CHAT_PROVIDER: 'home-m4-api',
+  runStockChat: (...a: unknown[]) => mockLlm(...a),
 }));
 jest.mock('@/lib/chat/symbol-resolver', () => ({ resolveSymbolsInText: async () => [] }));
 const mockBuildContexts = jest.fn();
@@ -32,7 +31,6 @@ jest.mock('@/lib/strategy/style', () => ({
 jest.mock('@/lib/chat/overview-context', () => ({ buildOverviewContext: (...a: unknown[]) => mockOverview(...a) }));
 
 import { CHAT_ANSWER_FALLBACK } from '../answer-format';
-import { CHAT_NUM_CTX } from '../chat-request';
 import { CHAT_TEXT_MAX_CHARS } from '../request-guard';
 import { buildAnalystSystemPrompt, buildDrafterSystemPrompt, CHAT_DISCLAIMER } from '../system-prompt';
 
@@ -65,9 +63,8 @@ function conn() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockLlm.mockReset();   // 거절·once 설정이 다음 시험으로 새지 않게
   mockAuth.mockResolvedValue({ ok: true, userId: 7 });
-  mockProvider.mockResolvedValue('hybrid');
-  mockConfig.mockResolvedValue({ provider: 'hybrid', homeM4ApiModel: 'qwen-home', stage1Model: 'qwen-stage1' });
   mockOverview.mockResolvedValue({ text: OVERVIEW_TEXT, sections: ['macro'] });
   mockBuildContexts.mockResolvedValue([]);
   jest.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -75,17 +72,17 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks());
 
 describe('messages POST', () => {
-  test('지시는 system 으로, 본문은 user 로 분리 — 요약·첨부·질문이 user 에, numCtx 8192', async () => {
+  test('지시는 system 으로, 본문은 user 로 분리 — 요약·첨부·질문이 user 에, 채팅 전용 answer 단계(단순 = 사고 끔)', async () => {
     mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
     mockGetConnection.mockResolvedValue(conn());
     mockLlm.mockResolvedValue('지금 자료로는 과매도 후보가 많습니다.\n\n' + CHAT_DISCLAIMER);
     const res = await messages.POST(req('POST', { content: '추천 5개', draftPrompt: '다듬은 질문' }), ctx('2'));
     expect(res.status).toBe(200);
     expect(mockLlm).toHaveBeenCalledTimes(1);
-    const [user, opts] = mockLlm.mock.calls[0] as [string, Record<string, unknown>];
-    expect(opts.system).toBe(buildAnalystSystemPrompt(STYLE_CTX));
-    expect(opts).toMatchObject({ numCtx: CHAT_NUM_CTX, responseFormat: 'text', timeoutMs: 120_000 });
-    expect(CHAT_NUM_CTX).toBe(8192);
+    const [prompt, stage, think] = mockLlm.mock.calls[0] as [{ system: string; user: string }, string, boolean];
+    const user = prompt.user;
+    expect(prompt.system).toBe(buildAnalystSystemPrompt(STYLE_CTX));
+    expect([stage, think]).toEqual(['answer', false]);
     expect(user).toContain(OVERVIEW_TEXT);
     expect(user).toContain('[첨부 종목 — 질문 시점 KIS 시세·일봉 지표]\n- NVIDIA CORP(엔비디아, NAS:NVDA): 현재 $161.11');
     expect(user.endsWith('[질문]\n다듬은 질문')).toBe(true);
@@ -160,29 +157,40 @@ describe('messages POST', () => {
     expect(c.query.mock.calls[2][1][1]).toBe(CHAT_ANSWER_FALLBACK);
   });
 
-  test('hybrid — llm_model 에 실제 호출 모델(stage1_model)을 기록·응답', async () => {
-    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
-    const c = conn();
-    mockGetConnection.mockResolvedValue(c);
-    mockLlm.mockResolvedValue('답');
-    const res = await messages.POST(req('POST', { content: 'q', draftPrompt: 'x' }), ctx('2'));
-    expect((await res.json()).llmModel).toBe('qwen-stage1');
-    expect(c.query.mock.calls[2][1]).toEqual([2, `답\n\n${CHAT_DISCLAIMER}`, 'hybrid', 'qwen-stage1', expect.any(Number)]);
+  test('모델 고정 — llm_provider·llm_model 은 항상 home-m4-api / gemma4:12b, body.modelOverride 는 무시', async () => {
+    for (const modelOverride of [undefined, 'opus', 'qwen2.5:14b-instruct']) {
+      mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+      const c = conn();
+      mockGetConnection.mockResolvedValue(c);
+      mockLlm.mockClear();
+      mockLlm.mockResolvedValue('답');
+      const res = await messages.POST(req('POST', { content: 'q', draftPrompt: 'x', modelOverride }), ctx('2'));
+      const body = await res.json();
+      expect([body.llmProvider, body.llmModel]).toEqual(['home-m4-api', 'gemma4:12b']);
+      expect(c.query.mock.calls[2][1]).toEqual([2, `답\n\n${CHAT_DISCLAIMER}`, 'home-m4-api', 'gemma4:12b', expect.any(Number)]);
+      expect(mockLlm.mock.calls[0]).toHaveLength(3);   // (prompt, 'answer', think) — 모델 인자 없음
+    }
   });
 
-  test('home-m4-api·claude 는 이전과 같은 모델 이름', async () => {
-    for (const [prov, cfg, want] of [
-      ['home-m4-api', { homeM4ApiModel: 'qwen-home', stage1Model: 'qwen-stage1' }, 'qwen-home'],
-      ['claude', {}, 'sonnet'],
-    ] as const) {
-      mockProvider.mockResolvedValue(prov);
-      mockConfig.mockResolvedValue(cfg);
-      mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
-      mockGetConnection.mockResolvedValue(conn());
-      mockLlm.mockResolvedValue('답');
-      const res = await messages.POST(req('POST', { content: 'q', draftPrompt: 'x' }), ctx('2'));
-      expect((await res.json()).llmModel).toBe(want);
-    }
+  test('복합 질문은 answer 단계 사고 ON, 단순 draft 는 사고 인자 없음', async () => {
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    mockGetConnection.mockResolvedValue(conn());
+    mockLlm.mockResolvedValueOnce('다듬은 질문').mockResolvedValueOnce('복합 답');
+    await messages.POST(req('POST', { content: 'RSI 40 미만·MACD 양수 조건을 모두 만족하는 종목은?', skipDraftStage: true }), ctx('2'));
+    expect(mockLlm).toHaveBeenCalledTimes(2);
+    expect(mockLlm.mock.calls[0]).toEqual([expect.objectContaining({ system: buildDrafterSystemPrompt(STYLE_CTX) }), 'draft']);
+    expect(mockLlm.mock.calls[1][1]).toBe('answer');
+    expect(mockLlm.mock.calls[1][2]).toBe(true);
+  });
+
+  test('모델 호출이 던지면(모드·완료 검증 실패) 저장·성공 응답 없이 그대로 전파', async () => {
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    mockLlm.mockRejectedValue(new Error('gemma verification failed'));
+    await expect(messages.POST(req('POST', { content: '삼성전자 목표가 계산해줘', draftPrompt: 'x' }), ctx('2'))).rejects.toThrow('gemma verification failed');
+    expect(mockGetConnection).not.toHaveBeenCalled();
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    await expect(messages.POST(req('POST', { content: 'q', skipDraftStage: true }), ctx('2'))).rejects.toThrow('gemma verification failed');
+    expect(mockGetConnection).not.toHaveBeenCalled();
   });
 
   test('draftPrompt 없음 — drafter 도 system 분리, JSON drafter 결과는 원문 질문으로 대체', async () => {
@@ -192,13 +200,94 @@ describe('messages POST', () => {
     mockLlm.mockResolvedValueOnce('{"reasoning":"메타 설명"}').mockResolvedValueOnce('답');
     await messages.POST(req('POST', { content: '원래 질문', skipDraftStage: true }), ctx('2'));
     expect(mockLlm).toHaveBeenCalledTimes(2);
-    const [drafterUser, drafterOpts] = mockLlm.mock.calls[0] as [string, Record<string, unknown>];
-    expect(drafterOpts.system).toBe(buildDrafterSystemPrompt(STYLE_CTX));
-    expect(drafterOpts.numCtx).toBe(CHAT_NUM_CTX);
-    expect(drafterUser.startsWith('[사용자 원문]\n원래 질문')).toBe(true);
+    const [drafter, drafterStage] = mockLlm.mock.calls[0] as [{ system: string; user: string }, string];
+    expect(drafter.system).toBe(buildDrafterSystemPrompt(STYLE_CTX));
+    expect(drafterStage).toBe('draft');
+    expect(drafter.user.startsWith('[사용자 원문]\n원래 질문')).toBe(true);
     // 사용자 행: draft_prompt = 원문, draft_prompt_raw = 모델 원문(감사용)
     expect(c.query.mock.calls[1][1]).toEqual([2, '원래 질문', '원래 질문', '{"reasoning":"메타 설명"}', null]);
-    expect((mockLlm.mock.calls[1][0] as string).endsWith('[질문]\n원래 질문')).toBe(true);
+    expect((mockLlm.mock.calls[1][0] as { user: string }).user.endsWith('[질문]\n원래 질문')).toBe(true);
+  });
+
+  test('신뢰 자료의 알려진 수치(CPI 3.7%)·단순 답은 지우지 않고, 근거 없는 수치 승률은 JSON 변환 뒤에도 막는다', async () => {
+    mockOverview.mockResolvedValue({ text: OVERVIEW_TEXT, sections: ['macro'], candidates: [], sourceTimes: [] });
+    for (const [answer, check] of [
+      ['CPI 는 3.7% 입니다. 금리 인하 가능성은 낮습니다.', (r: string) => expect(r).toContain('CPI 는 3.7% 입니다. 금리 인하 가능성은 낮습니다.')],
+      [JSON.stringify({ answer: 'CPI 는 3.7% 입니다.' }), (r: string) => expect(r).toContain('CPI 는 3.7% 입니다.')],
+      [JSON.stringify({ answer: '5거래일 승률은 약 72% 입니다.' }), (r: string) => {
+        expect(r).toContain('승률은 산출할 수 없습니다');
+        expect(r).not.toMatch(/72/);
+      }],
+      [JSON.stringify({ response: '상승 확률은 7/10 입니다.' }), (r: string) => {
+        expect(r).toContain('승률은 산출할 수 없습니다');
+        expect(r).not.toMatch(/7\/10/);
+      }],
+    ] as const) {
+      mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+      const c = conn();
+      mockGetConnection.mockResolvedValue(c);
+      mockLlm.mockResolvedValue(answer);
+      const body = await (await messages.POST(req('POST', { content: '시장 어때?', draftPrompt: 'x' }), ctx('2'))).json();
+      check(body.response);
+      expect(c.query.mock.calls[2][1][1]).toBe(body.response);
+    }
+  });
+
+  test('국내 계산은 원문으로만 — 정제문·모델 수치는 쓰지 않고 서버 값을 prompt·응답에 쓴다', async () => {
+    const krw = { symbol: '005930', name: '삼성전자', price: 98500, priceUsd: null, priceChange5: -1.25, rsi14: null,
+      ema20: null, ema60: null, macdHistogram: null, atrPct: null, high24h: null, low24h: null };
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    mockGetConnection.mockResolvedValue(conn());
+    mockLlm.mockResolvedValue('목표가 999원, 승률 80%.');
+    const body = await (await messages.POST(req('POST', {
+      content: '삼성전자 10주 목표가와 차익은?', draftPrompt: '삼성전자 99주를 +50%로 계산', attachedContext: [krw],
+    }), ctx('2'))).json();
+    const prompt = mockLlm.mock.calls[0][0] as { user: string };
+    expect(prompt.user).toContain('## 서버 확인·계산 결과');
+    expect(body.response).toContain('100,962.5원');
+    expect(body.response).toContain('24,625원');
+    expect(body.response).not.toMatch(/999|80%|99주/);
+    expect(body.response.endsWith(CHAT_DISCLAIMER)).toBe(true);
+  });
+
+  test('해외 계산은 priceUsd(달러)로만 — 원화 환산 price 로 계산하거나 환율을 가정하지 않는다', async () => {
+    const nvda = { symbol: 'NAS:NVDA', name: 'NVIDIA CORP', matchedText: '엔비디아', price: 215420.6, priceUsd: 161.11,
+      priceChange5: -13.7, rsi14: 25, ema20: 1, ema60: 2, macdHistogram: null, atrPct: 3.2, high24h: null, low24h: null };
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    mockGetConnection.mockResolvedValue(conn());
+    mockLlm.mockResolvedValue('모델 답');
+    const usd = await (await messages.POST(req('POST', {
+      content: '엔비디아 10주 목표가와 차익은?', draftPrompt: 'x', attachedContext: [nvda],
+    }), ctx('2'))).json();
+    expect(usd.response).toContain('$161.11/주');
+    expect(usd.response).toContain('$165.13775');
+    expect(usd.response).not.toMatch(/215,420|원\/주/);
+
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    mockGetConnection.mockResolvedValue(conn());
+    const missing = await (await messages.POST(req('POST', {
+      content: '엔비디아 10주 목표가와 차익은?', draftPrompt: 'x', attachedContext: [{ ...nvda, priceUsd: null }],
+    }), ctx('2'))).json();
+    expect(missing.response).toContain('달러 현재가가 첨부에 없어');
+    expect(missing.response).not.toMatch(/215,420|221,/);
+  });
+
+  test('뉴스 제목 요청 — 수집 요약에 뉴스 절이 있으면 모델 답을 쓰고, 없으면 자료 없음으로 답한다', async () => {
+    mockOverview.mockResolvedValue({ text: OVERVIEW_TEXT, sections: ['macro', 'news'], candidates: [], sourceTimes: [] });
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    mockGetConnection.mockResolvedValue(conn());
+    mockLlm.mockResolvedValue('수집 요약의 뉴스 제목은 11-14 17:00 기준으로 확인됩니다.');
+    const withNews = await (await messages.POST(req('POST', { content: '뉴스 제목 알려줘', draftPrompt: 'x' }), ctx('2'))).json();
+    expect(withNews.response).toContain('수집 요약의 뉴스 제목은');
+    expect((mockLlm.mock.calls[0][0] as { user: string }).user).toContain('첨부 스냅샷에는 기사 제목과 발표 시각이 없습니다');
+
+    mockOverview.mockResolvedValue({ text: OVERVIEW_TEXT, sections: ['macro'], candidates: [], sourceTimes: [] });
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    mockGetConnection.mockResolvedValue(conn());
+    mockLlm.mockResolvedValue('모델이 지어낸 뉴스');
+    const noNews = await (await messages.POST(req('POST', { content: '뉴스 제목 알려줘', draftPrompt: 'x' }), ctx('2'))).json();
+    expect(noNews.response).toContain('수집 요약에는 요청하신 기사 제목과 발표 시각 자료가 없습니다');
+    expect(noNews.response).not.toContain('지어낸');
   });
 
   test('최근 대화 — 예전 JSON 답은 문장으로 바꿔 넣고, 메시지당 300자', async () => {
@@ -210,7 +299,7 @@ describe('messages POST', () => {
     mockGetConnection.mockResolvedValue(conn());
     mockLlm.mockResolvedValue('답');
     await messages.POST(req('POST', { content: 'q', draftPrompt: 'x' }), ctx('2'));
-    const user = mockLlm.mock.calls[0][0] as string;
+    const user = (mockLlm.mock.calls[0][0] as { user: string }).user;
     expect(user).toContain(`[최근 대화]\n사용자: ${'가'.repeat(300)}\n비서: 데이터가 부족합니다.`);
     expect(user).not.toContain('가'.repeat(301));
     expect(user).not.toMatch(/selectedIndices/);
@@ -242,18 +331,26 @@ describe('messages GET — 표시용 변환(DB 원본 불변)', () => {
 });
 
 describe('draft POST', () => {
-  test('system 분리·numCtx, 일반 문장은 그대로, hybrid draftModel 은 stage1', async () => {
+  test('system 분리·draft 단계, 일반 문장은 그대로, 표시 모델은 Gemma 고정(modelOverride 무시)', async () => {
     mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]).mockResolvedValueOnce([[{ id: 2 }], []]);
     mockLlm.mockResolvedValue('  투자 성향: aggressive\n\n수집 데이터를 근거로 검토할 종목 5개를 추천해 주세요.  ');
-    const res = await draft.POST(req('POST', { content: '추천 5개' }), ctx('2'));
+    const res = await draft.POST(req('POST', { content: '추천 5개', modelOverride: 'opus' }), ctx('2'));
     const body = await res.json();
-    const [user, opts] = mockLlm.mock.calls[0] as [string, Record<string, unknown>];
-    expect(opts.system).toBe(buildDrafterSystemPrompt(STYLE_CTX));
-    expect(opts).toMatchObject({ numCtx: CHAT_NUM_CTX, responseFormat: 'text', timeoutMs: 60_000 });
-    expect(user).not.toContain('다듬습니다');
+    expect(mockLlm).toHaveBeenCalledTimes(1);
+    const call = mockLlm.mock.calls[0] as [{ system: string; user: string }, string];
+    expect(call).toHaveLength(2);
+    expect(call[1]).toBe('draft');
+    expect(call[0].system).toBe(buildDrafterSystemPrompt(STYLE_CTX));
+    expect(call[0].user).not.toContain('다듬습니다');
     expect(body.draftPrompt).toBe('투자 성향: aggressive\n\n수집 데이터를 근거로 검토할 종목 5개를 추천해 주세요.');
-    expect(body.draftModel).toBe('qwen-stage1');
+    expect([body.draftProvider, body.draftModel]).toEqual(['home-m4-api', 'gemma4:12b']);
     expect(mockOverview).not.toHaveBeenCalled();   // drafter 에는 요약을 붙이지 않는다(수치를 지어 넣지 않게)
+  });
+
+  test('draft 모델 호출이 던지면 빈 정제문으로 성공 처리하지 않고 전파', async () => {
+    mockQuery.mockResolvedValueOnce([[{ id: 2 }], []]).mockResolvedValueOnce([[], []]);
+    mockLlm.mockRejectedValue(new Error('gemma verification failed'));
+    await expect(draft.POST(req('POST', { content: '추천 5개' }), ctx('2'))).rejects.toThrow('gemma verification failed');
   });
 
   test('drafter 가 JSON 으로 답하면 사용자 원문을 돌려준다', async () => {

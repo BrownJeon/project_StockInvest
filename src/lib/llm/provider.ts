@@ -40,15 +40,17 @@ export async function getActiveProvider(): Promise<LlmProvider> {
   return 'claude';
 }
 
+/** 공용 게이트웨이 주소 해석. 챗봇 모델 선택과 공용 모델 설정은 독립적이다. */
+export async function getHomeM4ApiBase(): Promise<string> {
+  return (await readSystemConfig('home_m4_api_base')) ?? process.env.AI_API_BASE ?? 'http://192.168.219.100:8000';
+}
+
 /** 현재 provider 설정 전체 조회 (UI 표시용 + caller 빌드용). */
 export async function getProviderConfig(): Promise<LlmProviderConfig> {
   const provider = await getActiveProvider();
 
   // home-m4-api 설정
-  const homeM4ApiBase =
-    (await readSystemConfig('home_m4_api_base')) ??
-    process.env.AI_API_BASE ??
-    'http://192.168.219.100:8000';
+  const homeM4ApiBase = await getHomeM4ApiBase();
   const homeM4ApiModel =
     (await readSystemConfig('home_m4_api_model')) ??
     process.env.AI_API_MODEL ??

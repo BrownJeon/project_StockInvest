@@ -1,5 +1,6 @@
 'use client';
 
+import { CHAT_HEARTBEAT_HEADER } from '@/lib/chat/response-heartbeat';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface Thread {
@@ -85,16 +86,28 @@ export type ChatResponse =
  * `fallback` 은 화면의 기존 오류 문구(예: '응답 실패') — 서버가 `error` 를 주지 않을 때만 쓰고 HTTP 상태를 붙인다.
  */
 export async function readChatResponse(
-  res: Pick<Response, 'status' | 'ok' | 'json'>,
+  res: Pick<Response, 'status' | 'ok' | 'json'> & Partial<Pick<Response, 'headers'>>,
   fallback: string,
 ): Promise<ChatResponse> {
   if (res.status === 401) return { kind: 'unauthorized' };
   let body: unknown = null;
   try { body = await res.json(); } catch { body = null; }
+  let status = res.status;
+  let ok = res.ok;
+  if (res.headers?.get(CHAT_HEARTBEAT_HEADER) === '1' && body !== null && typeof body === 'object') {
+    const result = body as { status?: unknown; body?: unknown };
+    if (typeof result.status === 'number' && Number.isInteger(result.status) &&
+        result.status >= 200 && result.status <= 599) {
+      status = result.status;
+      ok = status >= 200 && status < 300;
+      body = result.body;
+    }
+  }
+  if (status === 401) return { kind: 'unauthorized' };
   const obj = body !== null && typeof body === 'object' ? (body as Record<string, any>) : null;
   const serverError = obj && typeof obj.error === 'string' && obj.error ? (obj.error as string) : null;
-  if (res.status === 404) return { kind: 'not_found', error: serverError ?? `${fallback} (HTTP 404)` };
-  if (!res.ok || !obj || obj.ok !== true) return { kind: 'error', error: serverError ?? `${fallback} (HTTP ${res.status})` };
+  if (status === 404) return { kind: 'not_found', error: serverError ?? `${fallback} (HTTP 404)` };
+  if (!ok || !obj || obj.ok !== true) return { kind: 'error', error: serverError ?? `${fallback} (HTTP ${status})` };
   return { kind: 'ok', body: obj };
 }
 
@@ -102,6 +115,12 @@ export async function readChatResponse(
 export async function chatFetch(url: string, fallback: string, init?: RequestInit): Promise<ChatResponse> {
   let r: ChatResponse;
   try {
+    const isMessagePost = init?.method === 'POST' && /^\/api\/chat\/threads\/\d+\/(?:draft|messages)$/u.test(url);
+    if (isMessagePost) {
+      const headers = new Headers(init?.headers);
+      headers.set(CHAT_HEARTBEAT_HEADER, '1');
+      init = { ...init, headers };
+    }
     r = await readChatResponse(await fetch(url, init), fallback);
   } catch (e) {
     r = { kind: 'error', error: String(e) };
@@ -754,7 +773,7 @@ function Composer({
             value={selectedModel}
             onChange={(e) => onModelChange(e.target.value)}
             disabled={modelInfo.fixed}
-            title={modelInfo.fixed ? '설정에서 변경 가능' : 'CLI 모델 선택'}
+            title={modelInfo.fixed ? '챗봇 전용 모델' : 'CLI 모델 선택'}
             style={{
               fontSize: 10, padding: '3px 6px', borderRadius: 6,
               background: 'var(--bg3)', color: 'var(--text)',

@@ -26,6 +26,20 @@ function countSymbolsInPrompt(prompt: string): number {
   return matches ? matches.length : 1;
 }
 
+export interface VerifiedChatRequest {
+  system: string;
+  think: boolean;
+  contextTokens: number;
+  outputTokens: number;
+}
+
+export class HomeM4ChatOutputLimitError extends Error {
+  constructor() {
+    super('home-m4-api verified chat response reached the output limit');
+    this.name = 'HomeM4ChatOutputLimitError';
+  }
+}
+
 export class HomeM4ApiCaller implements LlmCaller {
   constructor(
     private readonly base: string,
@@ -34,7 +48,7 @@ export class HomeM4ApiCaller implements LlmCaller {
     private readonly temperature: number,
   ) {}
 
-  async call(prompt: string, opts?: LlmCallOptions): Promise<string> {
+  async call(prompt: string, opts?: LlmCallOptions, chat?: VerifiedChatRequest): Promise<string> {
     if (!this.apiKey) {
       throw new Error('AI_API_KEY not configured for home-m4-api provider');
     }
@@ -44,11 +58,12 @@ export class HomeM4ApiCaller implements LlmCaller {
     const startedAt = Date.now();
     const symbolCount = countSymbolsInPrompt(prompt);
     // T-169 — 빈 문자열·비정상 값은 "없음"과 같다(요청 본문을 바꾸지 않는다).
-    const system = typeof opts?.system === 'string' && opts.system.length > 0 ? opts.system : null;
-    const numCtx = typeof opts?.numCtx === 'number' && Number.isInteger(opts.numCtx) && opts.numCtx > 0 ? opts.numCtx : null;
+    const system = chat?.system ?? (typeof opts?.system === 'string' && opts.system.length > 0 ? opts.system : null);
+    const numCtx = chat?.contextTokens ??
+      (typeof opts?.numCtx === 'number' && Number.isInteger(opts.numCtx) && opts.numCtx > 0 ? opts.numCtx : null);
     const extraLog = `${system ? ` sys=${system.length}` : ''}${numCtx ? ` num_ctx=${numCtx}` : ''}`;
 
-    if (DEBUG) {
+    if (DEBUG && !chat) {
       console.log(
         `[home-m4-api req] base=${this.base} model=${this.model} chars=${prompt.length} symbols=${symbolCount} temp=${this.temperature}${extraLog}`,
       );
@@ -64,15 +79,19 @@ export class HomeM4ApiCaller implements LlmCaller {
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': this.apiKey,
+          ...(chat ? { 'X-LLM-Read-Timeout': String(Math.ceil(timeoutMs / 1000)) } : {}),
         },
         body: JSON.stringify({
           model: this.model,
           messages: system
             ? [{ role: 'system', content: system }, { role: 'user', content: prompt }]
             : [{ role: 'user', content: prompt }],
-          options: numCtx
-            ? { temperature: this.temperature, num_ctx: numCtx }
-            : { temperature: this.temperature },
+          options: {
+            temperature: this.temperature,
+            ...(numCtx ? { num_ctx: numCtx } : {}),
+            ...(chat ? { num_predict: chat.outputTokens } : {}),
+          },
+          ...(chat ? { think: chat.think } : {}),
         }),
         signal: ctrl.signal,
         cache: 'no-store',
@@ -85,7 +104,21 @@ export class HomeM4ApiCaller implements LlmCaller {
         throw new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
       }
 
-      const data = (await res.json()) as { message?: { content?: string } };
+      const data = (await res.json()) as {
+        model?: string;
+        message?: { content?: string };
+        thinking_mode?: { requested?: boolean; observed?: boolean; done_reason?: string };
+      };
+      if (chat) {
+        const mode = data?.thinking_mode;
+        if (data?.model !== this.model || mode?.requested !== chat.think || mode.observed !== chat.think) {
+          throw new Error('home-m4-api chat mode or completion could not be verified');
+        }
+        if (chat.think && mode.done_reason === 'length') throw new HomeM4ChatOutputLimitError();
+        if (mode.done_reason !== 'stop') {
+          throw new Error('home-m4-api chat mode or completion could not be verified');
+        }
+      }
       const content = data?.message?.content ?? '';
       const elapsedMs = Date.now() - startedAt;
 
@@ -94,7 +127,7 @@ export class HomeM4ApiCaller implements LlmCaller {
         throw new Error('empty content from home-m4-api');
       }
 
-      if (DEBUG) {
+      if (DEBUG && !chat) {
         console.log(
           `[home-m4-api resp] elapsedMs=${elapsedMs} chars=${content.length} sample=${content.slice(0, 200).replace(/\n/g, ' ')}`,
         );

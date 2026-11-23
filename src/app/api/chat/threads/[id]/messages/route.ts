@@ -1,20 +1,19 @@
+import { chatPostResponse } from '@/lib/chat/response-heartbeat';
 import { NextRequest, NextResponse } from 'next/server';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { getPool } from '@/lib/db';
 import { databaseId, parseThreadId, ownedThread, requireChatUser } from '@/lib/chat/ownership';
-import { runLlm } from '@/lib/llm/provider';
-import { getActiveProvider, getProviderConfig } from '@/lib/llm/provider';
+import { STOCK_CHAT_MODEL, STOCK_CHAT_PROVIDER, runStockChat } from '@/lib/chat/model';
 import { resolveSymbolsInText } from '@/lib/chat/symbol-resolver';
 import { buildSymbolContexts, formatSymbolContextsAsText, type SymbolContext } from '@/lib/chat/context-builder';
-import { cleanDraftPrompt, normalizeChatAnswer, normalizeNewChatAnswer } from '@/lib/chat/answer-format';
+import { cleanDraftPrompt, normalizeChatAnswer } from '@/lib/chat/answer-format';
 import { buildOverviewContext } from '@/lib/chat/overview-context';
+import { answerStockChat } from '@/lib/chat/grounded-answer';
 import { bodyText, checkChatTextLimits, explicitSymbols, validAttachedContext } from '@/lib/chat/request-guard';
 import {
   CHAT_HISTORY_LIMIT,
-  CHAT_NUM_CTX,
   buildAnalystRequest,
   buildDrafterRequest,
-  chatModelLabel,
   formatRecentMessages,
 } from '@/lib/chat/chat-request';
 import { ANALYST_STYLE_LABEL, getStyleConfig } from '@/lib/strategy/style';
@@ -28,7 +27,7 @@ interface BodyShape {
   attachedSymbols?: string[];      // 명시 첨부 종목 코드
   attachedContext?: SymbolContext[]; // /draft 응답 echo (재계산 회피)
   draftPrompt?: string;             // 사용자가 편집·확정한 정제 프롬프트
-  modelOverride?: string;
+  modelOverride?: string;           // 계약상 수용만 한다(무시) — 채팅 모델은 Gemma 고정
   skipDraftStage?: boolean;
 }
 
@@ -80,6 +79,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 /** POST — 사용자 정제 프롬프트(또는 원문)로 본 응답 생성 + DB 저장 */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  return chatPostResponse(req, () => handlePost(req, params));
+}
+
+async function handlePost(req: NextRequest, params: Promise<{ id: string }>) {
   const auth = await requireChatUser(req);
   if (!auth.ok) return auth.res;
   const threadId = parseThreadId((await params).id);
@@ -134,34 +137,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const overviewPromise = buildOverviewContext({ userId: auth.userId, now: new Date() });
 
   // 정제 프롬프트 — skipDraftStage=true이거나 body.draftPrompt 미지정 시 즉석 생성
-  let draftPrompt = bodyText(body.draftPrompt);
+  const confirmedQuestion = bodyText(body.draftPrompt);
+  let draftPrompt = confirmedQuestion;
   let draftPromptRaw: string | null = null;
 
   const analystStyle = ANALYST_STYLE_LABEL;   // 프롬프트 표기용 라벨 (룰 선별과 무관 — D3)
   const style = await getStyleConfig();
-  const provider = await getActiveProvider();
-  const cfg = await getProviderConfig();
-
-  // 모델 화이트리스트 (Claude 한정)
-  const isAllowedClaudeModel = (m: unknown): m is 'sonnet' | 'opus' | 'haiku' =>
-    typeof m === 'string' && (m === 'sonnet' || m === 'opus' || m === 'haiku');
-  const finalModel = provider === 'claude'
-    ? (isAllowedClaudeModel(body.modelOverride) ? body.modelOverride : 'sonnet')
-    : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
-  // T-169 A5 — 기록·응답에는 실제 호출 모델(hybrid = stage1_model)
-  const recordedModel = chatModelLabel(provider, cfg, finalModel);
+  // 채팅 전용 호출자(Gemma 고정)의 표시·저장 이름 — 전역 제공자·모델 설정은 읽지 않는다
+  const provider = STOCK_CHAT_PROVIDER;
+  const recordedModel = STOCK_CHAT_MODEL;
 
   if (!draftPrompt) {
     // skipDraftStage 또는 누락 — 서버에서 즉석 정제 (T-169: 지시는 system 으로 분리, JSON 이면 원문 질문으로 대체)
     const drafter = buildDrafterRequest({ analystStyle, style, userInput: userContent, attachedSummary });
-    const drafterModel = provider === 'claude' ? 'haiku' : (cfg.homeM4ApiModel ?? 'qwen2.5:14b-instruct');
-    draftPromptRaw = await runLlm(drafter.user, {
-      system: drafter.system,
-      numCtx: CHAT_NUM_CTX,
-      timeoutMs: 60_000,
-      responseFormat: 'text',
-      model: drafterModel,
-    });
+    // 호출이 던지면(모드·정상 완료 검증 실패 포함) 그대로 전파 — 빈 정제문으로 저장·성공 처리하지 않는다
+    draftPromptRaw = await runStockChat(drafter, 'draft');
     draftPrompt = cleanDraftPrompt(draftPromptRaw, userContent, symbolContexts.map(c => c.symbol), historyRows.map((r) => String(r.content ?? '')).join('\n'));
   }
 
@@ -170,23 +160,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const analyst = buildAnalystRequest({
     analystStyle, style, refinedPrompt: draftPrompt, attachedSummary, recentMessages, overviewText: overview.text,
   });
-  const t0 = Date.now();
-  const rawResponse = await runLlm(analyst.user, {
-    system: analyst.system,
-    numCtx: CHAT_NUM_CTX,
-    timeoutMs: 120_000,
-    responseFormat: 'text',
-    model: finalModel,
-  });
-  const latencyMs = Date.now() - t0;
-  // T-169 A4 — 저장 **전** 정규화: LLM JSON 을 그대로 저장·표시하지 않는다
-  //   + 새 답 전용 후처리(Leader 결정): 굵게·제목 기호 제거, 끝 줄 참고용 고지 보장. GET(예전 답 표시)에는 쓰지 않는다(D2 = 문장만).
-  //   + 언급한 엔진 후보의 상태 줄 — 판정 기준은 이 질문의 요약을 만들 때 쓴 후보 목록(답 본문에서 후보를 추정하지 않는다)
-  //   + 자료 기준 시각 줄(QA F4) — 기준 시각도 요약 빌더가 실제로 넣은 절의 값을 그대로 넘긴다(답에서 추정하지 않는다)
-  const normalized = normalizeNewChatAnswer(rawResponse, {
-    candidates: overview.candidates ?? [],
-    sourceTimes: overview.sourceTimes ?? [],
-  });
+  let latencyMs = 0;
+  // 계산·확인은 사용자 원문(userContent)으로만 한다 — 다듬은 질문의 수치로 계산하지 않는다.
+  // 정규화(JSON → 문장) → 승률·계산 제한 → 새 답 후처리(굵게·제목 기호 제거, 끝 줄 참고용 고지,
+  //   언급한 엔진 후보의 상태 줄 = 요약을 만들 때 쓴 후보 목록, 자료 기준 시각 줄 = 요약 빌더가 넣은 절의 값)를 저장 **전**에 한다.
+  // 복합 계산의 확인된 출력 한도만 서버 계산으로 대체하며, 모델·사고 모드가 맞지 않으면 저장하지 않는다.
+  const normalized = await answerStockChat(
+    { question: userContent, confirmedQuestion, rows: symbolContexts, style, request: analyst, attachedSummary },
+    async (prompt, think) => {
+      const t0 = Date.now();
+      try {
+        return await runStockChat(prompt, 'answer', think);
+      } finally {
+        latencyMs = Date.now() - t0;
+      }
+    },
+    {
+      overviewText: overview.text,
+      sources: { news: (overview.sections ?? []).includes('news') },
+      finalize: { candidates: overview.candidates ?? [], sourceTimes: overview.sourceTimes ?? [] },
+    },
+  );
   if (normalized.source !== 'text') {
     console.warn(`[chat] answer normalized source=${normalized.source} provider=${provider} model=${recordedModel}`);
   }
